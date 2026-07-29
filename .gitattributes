@@ -1,0 +1,22 @@
+# Normalize line endings in the repository to LF, and let Git check out the
+# platform-native form. Without this, committing from Windows and from
+# macOS/Linux produces whole-file diffs on the same content.
+* text=auto eol=lf
+
+# Windows-only entry point — keep CRLF so cmd.exe parses it reliably.
+*.cmd text eol=crlf
+
+# Binary assets: never touch, never diff.
+*.png binary
+*.jpg binary
+*.jpeg binary
+*.gif binary
+*.ico binary
+*.webp binary
+*.woff binary
+*.woff2 binary
+*.mp3 binary
+*.webm binary
+
+# Generated — collapse in diffs and reviews so real changes stay visible.
+package-lock.json linguist-generated=true -diff

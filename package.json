@@ -1,0 +1,13 @@
+{
+  "name": "vega-canva-platform",
+  "version": "1.0.0",
+  "description": "Real-time collaborative infinite canvas",
+  "private": true,
+  "workspaces": [
+    "apps/*"
+  ],
+  "scripts": {
+    "dev": "npm run dev --workspaces",
+    "build": "npm run build --workspaces"
+  }
+}

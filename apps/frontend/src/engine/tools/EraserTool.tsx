@@ -1,0 +1,289 @@
+import React from 'react';
+import { Circle } from 'react-konva';
+import { nanoid } from 'nanoid';
+import { getStroke } from 'perfect-freehand';
+import type { Tool, ToolContext } from './Tool';
+import { objectsMap, deleteNode } from '../document';
+
+function svgPathFromStroke(stroke: number[][]) {
+  if (!stroke.length) return '';
+  const d = stroke.reduce(
+    (acc: any[], [x0, y0]: number[], i: number, arr: number[][]) => {
+      const [x1, y1] = arr[(i + 1) % arr.length];
+      acc.push(x0, y0, (x0 + x1) / 2, (y0 + y1) / 2);
+      return acc;
+    },
+    ['M', ...stroke[0], 'Q']
+  );
+  d.push('Z');
+  return d.join(' ');
+}
+
+function flattenCubic(p0: any, c1: any, c2: any, p1: any, steps = 8) {
+  const pts: { x: number; y: number }[] = [];
+  for (let i = 1; i <= steps; i++) {
+    const t = i / steps, mt = 1 - t;
+    pts.push({
+      x: mt * mt * mt * p0.x + 3 * mt * mt * t * c1.x + 3 * mt * t * t * c2.x + t * t * t * p1.x,
+      y: mt * mt * mt * p0.y + 3 * mt * mt * t * c1.y + 3 * mt * t * t * c2.y + t * t * t * p1.y,
+    });
+  }
+  return pts;
+}
+
+function distanceToSegment(px: number, py: number, ax: number, ay: number, bx: number, by: number) {
+  const dx = bx - ax, dy = by - ay;
+  const lenSq = dx * dx + dy * dy;
+  let t = lenSq > 0 ? ((px - ax) * dx + (py - ay) * dy) / lenSq : 0;
+  t = Math.max(0, Math.min(1, t));
+  const cx = ax + t * dx, cy = ay + t * dy;
+  return Math.hypot(px - cx, py - cy);
+}
+
+/** Runs of consecutive indices NOT in `hitSet`, e.g. hits={2,3} over 6 points -> [[0,1],[4,5]]. */
+function splitRuns(count: number, hitSet: Set<number>): number[][] {
+  const runs: number[][] = [];
+  let current: number[] = [];
+  for (let i = 0; i < count; i++) {
+    if (hitSet.has(i)) {
+      if (current.length) runs.push(current);
+      current = [];
+    } else {
+      current.push(i);
+    }
+  }
+  if (current.length) runs.push(current);
+  return runs;
+}
+
+export class EraserTool implements Tool {
+  id = 'eraser';
+  cursor = 'none';
+
+  private isErasing = false;
+  private currentX = 0;
+  private currentY = 0;
+
+  onPointerDown(ctx: ToolContext, e: any) {
+    if (!this.updatePos(ctx, e)) return;
+    this.isErasing = true;
+    this.eraseAtPointer(ctx);
+  }
+
+  onPointerMove(ctx: ToolContext, e: any) {
+    if (!this.updatePos(ctx, e)) return;
+    if (!this.isErasing) return;
+    this.eraseAtPointer(ctx);
+  }
+
+  onPointerUp() {
+    this.isErasing = false;
+  }
+
+  onDeactivate(ctx: ToolContext) {
+    // A tool switch triggered by a keyboard shortcut mid-drag never fires
+    // onPointerUp (that only happens on mouseup), so isErasing could stay
+    // stuck true and the cursor-replacement overlay circle stuck on screen
+    // — same class of bug as PenTool's mid-stroke tool switch.
+    this.isErasing = false;
+    ctx.setOverlayState?.(null);
+  }
+
+  /** Returns false (leaving currentX/Y untouched) if the pointer isn't over the stage. */
+  private updatePos(ctx: ToolContext, e: any): boolean {
+    const stage = e.target.getStage();
+    const pos = stage?.getPointerPosition();
+    if (!pos) return false;
+
+    this.currentX = (pos.x - ctx.camera.x) / ctx.camera.zoom;
+    this.currentY = (pos.y - ctx.camera.y) / ctx.camera.zoom;
+
+    ctx.setOverlayState?.({ type: 'eraser', x: this.currentX, y: this.currentY, zoom: ctx.camera.zoom });
+    return true;
+  }
+
+  private eraseAtPointer(ctx: ToolContext) {
+    const eraserRadius = 15 / ctx.camera.zoom;
+    const cx = this.currentX, cy = this.currentY;
+
+    Array.from(objectsMap.entries()).forEach(([id, objMap]) => {
+      const obj = objMap.toJSON() as any;
+      if (obj.locked || obj.hidden) return;
+
+      if (obj.type === 'path') {
+        if (this.erasePath(ctx, id, obj, cx, cy, eraserRadius)) return;
+        // Legacy path data with neither `points` nor `segments` (old
+        // documents) falls through to the precise-shape / bbox check below,
+        // same as any other object.
+      }
+
+      if (this.hitsObject(obj, cx, cy, eraserRadius)) {
+        deleteNode(id);
+      }
+    });
+  }
+
+  /** Precise-enough hit test per object kind, instead of always testing the raw bounding box (which erased empty corners of e.g. a circle or a sticky far from its visible content). Returns true if the object should be deleted whole. */
+  private hitsObject(obj: any, cx: number, cy: number, radius: number): boolean {
+    const w = obj.width;
+    const h = obj.height;
+
+    if (obj.type === 'shape' && (obj.geometry?.kind === 'ellipse')) {
+      const rx = w / 2, ry = h / 2;
+      const centerX = obj.x + rx, centerY = obj.y + ry;
+      // Normalized-radius test approximates an ellipse well enough for an eraser cursor.
+      const nx = (cx - centerX) / (rx + radius);
+      const ny = (cy - centerY) / (ry + radius);
+      return nx * nx + ny * ny <= 1;
+    }
+
+    const left = obj.x, right = obj.x + w, top = obj.y, bottom = obj.y + h;
+    return cx >= left - radius && cx <= right + radius && cy >= top - radius && cy <= bottom + radius;
+  }
+
+  /** Returns true if this was a 'path' object it knew how to precisely erase (and handled deletion/splitting itself). */
+  private erasePath(ctx: ToolContext, id: string, obj: any, cx: number, cy: number, radius: number): boolean {
+    // Bezier/anchor path from the Pen tool — erase at anchor granularity.
+    if (obj.geometry?.kind === 'bezier' && obj.geometry.segments.length > 0) {
+      const absPoints = obj.geometry.segments.map((s: any) => ({ x: obj.x + s.x, y: obj.y + s.y }));
+      const hitSet = new Set<number>();
+      absPoints.forEach((p: any, i: number) => {
+        if (Math.hypot(p.x - cx, p.y - cy) <= radius) hitSet.add(i);
+      });
+      // Anchors can be far apart on a long curve — also test along the
+      // flattened curve itself, otherwise erasing the middle of a segment
+      // (far from either endpoint) would silently do nothing.
+      for (let i = 1; i < absPoints.length; i++) {
+        const seg = obj.geometry.segments[i];
+        const p0 = absPoints[i - 1], p1 = absPoints[i];
+        const c1 = { x: obj.x + seg.cp1x, y: obj.y + seg.cp1y };
+        const c2 = { x: obj.x + seg.cp2x, y: obj.y + seg.cp2y };
+        if (flattenCubic(p0, c1, c2, p1).some(fp => Math.hypot(fp.x - cx, fp.y - cy) <= radius)) {
+          hitSet.add(i - 1);
+          hitSet.add(i);
+        }
+      }
+      // Known gap: for a *closed* path, the wrap-around edge from the last
+      // anchor back to the first (drawn as a plain SVG "Z", not a stored
+      // curve — see BezierPenTool/ObjectRenderer) isn't tested here, so
+      // erasing precisely on that edge, away from either endpoint anchor,
+      // does nothing. Fixing it means detecting a hit with no anchor
+      // removed and reopening the loop rather than splitting it, which is a
+      // different code path from the anchor-removal one below — left alone
+      // rather than risk getting that subtly wrong.
+      if (hitSet.size === 0) return true; // it's a path, just not hit — skip the generic delete-whole-object fallback
+
+      const runs = splitRuns(absPoints.length, hitSet);
+      deleteNode(id);
+      runs.forEach(run => {
+        if (run.length < 2) return;
+        const pts = run.map(i => absPoints[i]);
+        this.createSubPath(ctx, obj, pts);
+      });
+      return true;
+    }
+
+    // Freehand stroke — erase at centerline-point granularity.
+    if (obj.geometry?.kind === 'freehand' && obj.geometry.points.length > 0) {
+      const absPoints = obj.geometry.points.map((p: any) => ({ x: obj.x + p.x, y: obj.y + p.y }));
+      const hitSet = new Set<number>();
+      absPoints.forEach((p: any, i: number) => {
+        if (Math.hypot(p.x - cx, p.y - cy) <= radius) hitSet.add(i);
+      });
+      // Consecutive mouse samples can be sparse relative to the eraser radius
+      // — also test along each segment, marking both endpoints when hit.
+      for (let i = 0; i < absPoints.length - 1; i++) {
+        const a = absPoints[i], b = absPoints[i + 1];
+        if (distanceToSegment(cx, cy, a.x, a.y, b.x, b.y) <= radius) {
+          hitSet.add(i);
+          hitSet.add(i + 1);
+        }
+      }
+      if (hitSet.size === 0) return true;
+
+      const runs = splitRuns(absPoints.length, hitSet);
+      deleteNode(id);
+      runs.forEach(run => {
+        if (run.length < 2) return;
+        const pts = run.map(i => absPoints[i]);
+        this.createFreehandSubPath(ctx, obj, pts);
+      });
+      return true;
+    }
+
+    return false;
+  }
+
+  private createSubPath(ctx: ToolContext, original: any, absAnchors: { x: number; y: number }[]) {
+    let minX = Infinity, minY = Infinity, maxX = -Infinity, maxY = -Infinity;
+    for (const p of absAnchors) {
+      minX = Math.min(minX, p.x); maxX = Math.max(maxX, p.x);
+      minY = Math.min(minY, p.y); maxY = Math.max(maxY, p.y);
+    }
+    const segments = absAnchors.map((p, i) => {
+      if (i === 0) return { x: p.x - minX, y: p.y - minY };
+      const prev = absAnchors[i - 1];
+      // Cutting a curve at an anchor granularity straightens that particular
+      // joint (the original control points belonged to the removed anchor);
+      // still correct where the cut wasn't made, and avoids re-deriving
+      // curve handles from a path that's being severed anyway.
+      return {
+        x: p.x - minX, y: p.y - minY,
+        cp1x: prev.x - minX, cp1y: prev.y - minY,
+        cp2x: p.x - minX, cp2y: p.y - minY,
+      };
+    });
+
+    ctx.editor.createNode({
+      ...original,
+      id: nanoid(),
+      x: minX, y: minY,
+      width: Math.max(1, maxX - minX),
+      height: Math.max(1, maxY - minY),
+      geometry: { kind: 'bezier', segments, closed: false },
+    });
+  }
+
+  private createFreehandSubPath(ctx: ToolContext, original: any, absPoints: { x: number; y: number }[]) {
+    let minX = Infinity, minY = Infinity, maxX = -Infinity, maxY = -Infinity;
+    for (const p of absPoints) {
+      minX = Math.min(minX, p.x); maxX = Math.max(maxX, p.x);
+      minY = Math.min(minY, p.y); maxY = Math.max(maxY, p.y);
+    }
+    const size = original.geometry?.strokeSize || 6;
+    const pad = size;
+    minX -= pad; minY -= pad; maxX += pad; maxY += pad;
+
+    const relPoints = absPoints.map(p => ({ x: p.x - minX, y: p.y - minY }));
+    const stroke = getStroke(relPoints.map(p => [p.x, p.y]), {
+      size, thinning: 0.5, smoothing: 0.5, streamline: 0.5,
+    });
+
+    ctx.editor.createNode({
+      ...original,
+      id: nanoid(),
+      x: minX, y: minY,
+      width: Math.max(1, maxX - minX),
+      height: Math.max(1, maxY - minY),
+      geometry: { kind: 'freehand', svgPath: svgPathFromStroke(stroke), points: relPoints, strokeSize: size },
+    });
+  }
+
+  renderOverlay(ctx: ToolContext, overlayState: any) {
+    if (overlayState?.type === 'eraser') {
+      const radius = 15 / overlayState.zoom;
+      return (
+        <Circle
+          x={overlayState.x}
+          y={overlayState.y}
+          radius={radius}
+          fill="rgba(239, 68, 68, 0.2)"
+          stroke="#EF4444"
+          strokeWidth={2 / overlayState.zoom}
+          listening={false}
+        />
+      );
+    }
+    return null;
+  }
+}

@@ -1,0 +1,245 @@
+import { describe, expect, it } from 'vitest';
+import { isCanonical, normalizeNode } from './normalize';
+import type { ShapeNode, StickyNode, TextNode, PathNode, ImageNode, AudioNode } from '../model/schema';
+
+/**
+ * These fixtures are real pre-v2 node shapes, taken from what the old tools
+ * actually persisted — not from what the old schema *claimed* they persisted.
+ * That divergence is the entire reason this layer exists.
+ */
+
+describe('normalizeNode — legacy shapes', () => {
+  it('maps a legacy shape node onto geometry + appearance', () => {
+    const legacy = {
+      id: 'a1',
+      type: 'shape',
+      x: 260,
+      y: -140,
+      rotation: 0,
+      scaleX: 1,
+      scaleY: 1,
+      zIndex: 1785009520064,
+      createdBy: 'guest',
+      createdAt: 1785009520064,
+      content: { shapeType: 'rect', fill: '#e9a81c', stroke: '#625b5b', width: 120, height: 100 },
+      locked: false,
+    };
+
+    const node = normalizeNode(legacy) as ShapeNode;
+
+    expect(node.type).toBe('shape');
+    // Size was only ever in `content` here.
+    expect(node.width).toBe(120);
+    expect(node.height).toBe(100);
+    expect(node.geometry.kind).toBe('rect');
+    expect(node.appearance.fill?.[0]).toEqual({ type: 'solid', color: '#e9a81c' });
+    expect(node.appearance.stroke?.color).toBe('#625b5b');
+    expect(node.hidden).toBe(false);
+    // No legacy carrier survives.
+    expect((node as unknown as Record<string, unknown>).content).toBeUndefined();
+  });
+
+  it('reads size from geometry when content has none', () => {
+    const node = normalizeNode({
+      id: 'a2', type: 'shape', x: 0, y: 0,
+      geometry: { kind: 'ellipse', width: 190, height: 120, cornerRadius: 8 },
+    }) as ShapeNode;
+
+    expect(node.width).toBe(190);
+    expect(node.height).toBe(120);
+    expect(node.geometry.kind).toBe('ellipse');
+    // cornerRadius is a paint concern in the canonical model.
+    expect(node.appearance.cornerRadius).toBe(8);
+  });
+
+  it('collapses the legacy "polygon" kind onto triangle', () => {
+    const node = normalizeNode({ id: 'a3', type: 'shape', content: { shapeType: 'polygon' } }) as ShapeNode;
+    expect(node.geometry.kind).toBe('triangle');
+  });
+
+  it('treats the legacy "circle" kind as an ellipse', () => {
+    const node = normalizeNode({ id: 'a4', type: 'shape', geometry: { kind: 'circle' } }) as ShapeNode;
+    expect(node.geometry.kind).toBe('ellipse');
+  });
+
+  it('splits legacy text styling into orthogonal typography fields', () => {
+    const node = normalizeNode({
+      id: 'b1',
+      type: 'text',
+      width: 200,
+      height: 40,
+      content: {
+        text: 'Hello',
+        color: '#111827',
+        fontFamily: 'Inter',
+        fontSize: 28,
+        // Weight encoded in the free-form style string, the old way.
+        fontStyle: 'bold italic',
+        textDecoration: 'underline',
+        // The UI wrote `textAlign`; the renderer read `align`.
+        textAlign: 'right',
+        lineHeight: 1.6,
+        letterSpacing: 2,
+      },
+    }) as TextNode;
+
+    expect(node.text).toBe('Hello');
+    expect(node.typography.fontWeight).toBe(700);
+    expect(node.typography.italic).toBe(true);
+    expect(node.typography.underline).toBe(true);
+    expect(node.typography.align).toBe('right');
+    expect(node.typography.fontSize).toBe(28);
+    expect(node.typography.letterSpacing).toBe(2);
+  });
+
+  it('prefers a numeric fontWeight over the style string', () => {
+    const node = normalizeNode({
+      id: 'b2', type: 'text', content: { fontWeight: 400, fontStyle: 'italic' },
+    }) as TextNode;
+    expect(node.typography.fontWeight).toBe(400);
+    expect(node.typography.italic).toBe(true);
+  });
+
+  it('discards placeholder strings that were persisted as real content', () => {
+    for (const placeholder of ['Double click to edit', 'Write something...', 'Add comment...']) {
+      const node = normalizeNode({ id: 'c', type: 'text', content: { text: placeholder } }) as TextNode;
+      expect(node.text).toBe('');
+    }
+  });
+
+  it('lifts sticky theme, author and reactions out of appearance/metadata', () => {
+    const node = normalizeNode({
+      id: 'd1',
+      type: 'sticky',
+      width: 200,
+      height: 200,
+      text: 'stale top-level text',
+      content: { text: 'the edited text', fontSize: 22 },
+      appearance: { theme: 'mint' },
+      metadata: {
+        authorId: '3298301619',
+        authorName: 'Emmanuel',
+        authorColor: '#EF4444',
+        reactions: { '👍': 2 },
+        tags: ['x'],
+        pinned: true,
+      },
+    }) as StickyNode;
+
+    // content.text wins: that is where the editor committed, while the
+    // renderer read the stale top-level field.
+    expect(node.text).toBe('the edited text');
+    expect(node.theme).toBe('mint');
+    expect(node.fontSize).toBe(22);
+    expect(node.author).toEqual({ id: '3298301619', name: 'Emmanuel', color: '#EF4444' });
+    expect(node.reactions).toEqual({ '👍': 2 });
+    expect(node.pinned).toBe(true);
+    expect(node.tags).toEqual(['x']);
+  });
+
+  it('falls back to yellow for an unknown sticky theme', () => {
+    const node = normalizeNode({ id: 'd2', type: 'sticky', appearance: { theme: 'chartreuse' } }) as StickyNode;
+    expect(node.theme).toBe('yellow');
+  });
+
+  it('resolves the asset URL from either assetId or content.url', () => {
+    const fromAssetId = normalizeNode({ id: 'e1', type: 'image', assetId: 'https://cdn/x.png' }) as ImageNode;
+    const fromContent = normalizeNode({ id: 'e2', type: 'image', content: { url: 'https://cdn/y.png' } }) as ImageNode;
+    // assetId is authoritative when the two disagree — that mismatch is what
+    // left images pointing at a dead blob: URL after upload.
+    const both = normalizeNode({
+      id: 'e3', type: 'image', assetId: 'https://cdn/real.png', content: { url: 'blob:stale' },
+    }) as ImageNode;
+
+    expect(fromAssetId.src).toBe('https://cdn/x.png');
+    expect(fromContent.src).toBe('https://cdn/y.png');
+    expect(both.src).toBe('https://cdn/real.png');
+  });
+
+  it('maps bezier and freehand paths onto discriminated geometry', () => {
+    const bezier = normalizeNode({
+      id: 'f1', type: 'path',
+      segments: [{ x: 0, y: 0 }, { x: 10, y: 10, cp1x: 2, cp1y: 2, cp2x: 8, cp2y: 8 }],
+      closed: true,
+    }) as PathNode;
+
+    const freehand = normalizeNode({
+      id: 'f2', type: 'path',
+      content: { svgPath: 'M0 0 L5 5', points: [{ x: 0, y: 0 }, { x: 5, y: 5 }], strokeSize: 8 },
+    }) as PathNode;
+
+    expect(bezier.geometry.kind).toBe('bezier');
+    expect(bezier.geometry.kind === 'bezier' && bezier.geometry.closed).toBe(true);
+    expect(freehand.geometry.kind).toBe('freehand');
+    expect(freehand.geometry.kind === 'freehand' && freehand.geometry.strokeSize).toBe(8);
+  });
+
+  it('carries audio duration, waveform and author across', () => {
+    const node = normalizeNode({
+      id: 'g1', type: 'audio', assetId: 'data:audio/webm;base64,AAA',
+      durationMs: 4200, waveform: [0.1, 0.9, 'bad' as unknown as number],
+      metadata: { authorName: 'Ada', authorColor: '#10B981', authorId: '7' },
+    }) as AudioNode;
+
+    expect(node.durationMs).toBe(4200);
+    // Non-numeric samples are dropped rather than reaching the renderer.
+    expect(node.waveform).toEqual([0.1, 0.9]);
+    expect(node.author.name).toBe('Ada');
+  });
+
+  it('translates visible:false into hidden:true', () => {
+    expect(normalizeNode({ id: 'h1', type: 'shape', visible: false }).hidden).toBe(true);
+    expect(normalizeNode({ id: 'h2', type: 'shape', visible: true }).hidden).toBe(false);
+  });
+
+  it('maps the legacy artboard type onto frame', () => {
+    expect(normalizeNode({ id: 'i1', type: 'artboard' }).type).toBe('frame');
+  });
+});
+
+describe('normalizeNode — totality', () => {
+  it('never throws and always yields usable bounds for degenerate input', () => {
+    const inputs: unknown[] = [
+      {}, null, undefined, { type: 'nonsense' },
+      { id: 'z', type: 'shape', x: NaN, y: Infinity, width: -5, height: 'wide' },
+      { id: 'z2', type: 'text', content: null },
+      { id: 'z3', type: 'path', segments: 'not-an-array' },
+      { id: 'z4', type: 'sticky', metadata: 'not-an-object' },
+    ];
+
+    for (const input of inputs) {
+      const node = normalizeNode(input);
+      expect(Number.isFinite(node.x)).toBe(true);
+      expect(Number.isFinite(node.y)).toBe(true);
+      expect(node.width).toBeGreaterThan(0);
+      expect(node.height).toBeGreaterThan(0);
+      expect(typeof node.hidden).toBe('boolean');
+      expect(typeof node.opacity).toBe('number');
+    }
+  });
+
+  it('is idempotent — normalizing a canonical node changes nothing', () => {
+    const fixtures = [
+      { id: 'a', type: 'shape', content: { shapeType: 'star', fill: '#fff', width: 50, height: 60 } },
+      { id: 'b', type: 'sticky', appearance: { theme: 'sky' }, content: { text: 'hi', fontSize: 18 } },
+      { id: 'c', type: 'text', content: { text: 'x', fontStyle: 'bold', textAlign: 'center' } },
+      { id: 'd', type: 'path', segments: [{ x: 1, y: 1 }], closed: false },
+      { id: 'e', type: 'image', assetId: 'u' },
+      { id: 'f', type: 'audio', assetId: 'u', durationMs: 10 },
+    ];
+
+    for (const fixture of fixtures) {
+      const once = normalizeNode(fixture);
+      const twice = normalizeNode(once);
+      // createdAt/updatedAt default to Date.now() only when absent; once
+      // stamped they must be stable.
+      expect(twice).toEqual(once);
+    }
+  });
+
+  it('reports canonical output as canonical', () => {
+    const legacy = { id: 'a', type: 'sticky', appearance: { theme: 'pink' }, content: { text: 'q' } };
+    expect(isCanonical(legacy)).toBe(false);
+    expect(isCanonical(normalizeNode(legacy))).toBe(true);
+  });
+});

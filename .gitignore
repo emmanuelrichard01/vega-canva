@@ -1,0 +1,55 @@
+# Dependencies — restored with `npm install` at the repo root (npm workspaces)
+node_modules/
+
+# Build output
+dist/
+dist-ssr/
+build/
+apps/server/dist/
+
+# Caches
+.vite/
+*.tsbuildinfo
+coverage/
+.eslintcache
+
+# Logs
+logs/
+*.log
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+pnpm-debug.log*
+
+# Environment / secrets. docker-compose.yml carries dev-only defaults on
+# purpose; anything real belongs in an untracked .env.
+.env
+.env.*
+!.env.example
+*.pem
+*.key
+
+# Locally uploaded media. The directory itself is kept (see .gitkeep) because
+# docker-compose bind-mounts it.
+uploads/*
+!uploads/.gitkeep
+
+# Claude Code machine-local tool permissions. `.claude/settings.json` (shared,
+# if it ever exists) is intentionally NOT ignored.
+.claude/settings.local.json
+
+# Editors
+.vscode/*
+!.vscode/extensions.json
+.idea/
+*.suo
+*.ntvs*
+*.njsproj
+*.sln
+*.sw?
+
+# OS. `desktop.ini` matters here specifically because this tree lives inside
+# a OneDrive folder, which scatters them.
+.DS_Store
+Thumbs.db
+desktop.ini
