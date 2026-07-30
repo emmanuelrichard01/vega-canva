@@ -1,6 +1,21 @@
 import { provider } from '../document';
 import type { PresenceState } from "./PresenceTypes";
 
+/**
+ * The single writer of ephemeral presence.
+ *
+ * It was not, and that was a live bug. Two places wrote the awareness `cursor`
+ * field: `Canvas` set it directly through `setLocalStateField` on stage
+ * mousemove and set it to `null` on mouse-leave, while `CursorRenderer` called
+ * `updateCursor` from a `window` mousemove that fired over panels, the header,
+ * everywhere. They disagreed about leaving. `pushToAwareness` merges
+ * `localState` *over* whatever is already there, so the moment any other
+ * presence update went out — a selection, a tool change, the idle timer — it
+ * put the stale cursor back, and a collaborator who had moved to a side panel
+ * kept a ghost pointer parked on the canvas.
+ *
+ * Writing awareness anywhere else reintroduces that. Route it through here.
+ */
 class PresenceEngine {
   private localState: Partial<PresenceState> = {
     cursor: null,
@@ -13,7 +28,11 @@ class PresenceEngine {
 
   private pendingUpdate = false;
   private lastUpdateTime = 0;
-  private THROTTLE_MS = 1000 / 30; // 30fps max
+  // 15Hz. This one gate now covers the cursor too, which used to have its own
+  // throttle in `Canvas`; remote cursors are interpolated at frame rate on the
+  // way in (`engine/cursor/remoteCursor.ts`), so the broadcast rate only has
+  // to be high enough to describe the path, not to draw it.
+  private THROTTLE_MS = 1000 / 15;
   private idleTimeout: any = null;
   private IDLE_MS = 60000; // 60 seconds
 
@@ -59,9 +78,24 @@ class PresenceEngine {
     }, this.IDLE_MS);
   }
 
+  /** World-space pointer position. Called only from the canvas surface. */
   public updateCursor(x: number, y: number) {
     this.localState.cursor = { x, y };
     this.resetIdleTimer();
+    this.scheduleUpdate();
+  }
+
+  /**
+   * The pointer left the canvas — over a panel, or out of the window.
+   *
+   * This has to clear `localState`, not just the published field: anything
+   * that only cleared awareness would be undone by the next `pushToAwareness`.
+   * It deliberately does not touch the idle timer, because moving onto a panel
+   * is still working.
+   */
+  public clearCursor() {
+    if (this.localState.cursor === null) return;
+    this.localState.cursor = null;
     this.scheduleUpdate();
   }
 

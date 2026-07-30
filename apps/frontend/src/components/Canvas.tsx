@@ -10,7 +10,7 @@ import { editor } from '../engine/api/EditorAPI';
 import { ObjectRenderer } from "./ObjectRenderer";
 import { PresenceRenderer } from "../engine/presence/PresenceRenderer";
 import { presenceManager } from "../engine/presence/PresenceManager";
-import { cursorManager } from '../engine/cursor/CursorManager';
+import { cursorModeForTool } from '../engine/cursor';
 import { GestureOverlay } from "./GestureOverlay";
 import { ToolManager, SelectTool, ShapeTool, TextTool, StickyTool, AudioTool, PenTool, BezierPenTool, HandTool, EraserTool, CommentTool } from '../engine/tools';
 import { CommentsOverlay } from "./CommentsOverlay";
@@ -28,22 +28,6 @@ interface CanvasProps {
   selectedIds: string[];
   setSelectedIds: React.Dispatch<React.SetStateAction<string[]>>;
 }
-
-/** Coarse pointer / no hover — used to skip cursor affordances that need a mouse. */
-const isTouchDevice =
-  typeof window !== 'undefined' && window.matchMedia('(hover: none)').matches;
-
-// Simple throttle
-const useThrottle = (cb: Function, delay: number) => {
-  const lastCall = useRef(0);
-  return useCallback((...args: any[]) => {
-    const now = new Date().getTime();
-    if (now - lastCall.current >= delay) {
-      lastCall.current = now;
-      cb(...args);
-    }
-  }, [cb, delay]);
-};
 
 export const navigateToViewport = (x: number, y: number, zoom: number) => {
   window.dispatchEvent(new CustomEvent('navigateViewport', { detail: { x, y, zoom } }));
@@ -470,48 +454,9 @@ export const Canvas: React.FC<CanvasProps> = ({ activeTool, selectedIds, setSele
     };
   }, []);
 
-  useEffect(() => {
-    if (containerRef.current) {
-      // Space now pans regardless of the active tool (see handleStageClick),
-      // so the cursor needs to reflect that universally too — previously
-      // this only switched to the pan cursor when the Hand tool itself was
-      // selected, so e.g. holding Space while the Shape tool was active
-      // still showed a crosshair while you were actually panning.
-      if (isSpacePressed) {
-        cursorManager.setState('drag');
-        return;
-      }
-      switch (activeTool) {
-        case 'hand':
-          cursorManager.setState('idle');
-          break;
-        case 'pen':
-        case 'bezier-pen':
-        case 'shape':
-        case 'shape-rect':
-        case 'shape-ellipse':
-        case 'shape-triangle':
-        case 'shape-hexagon':
-        case 'shape-star':
-          cursorManager.setState('draw');
-          break;
-        case 'eraser':
-          cursorManager.setState('draw'); // or eraser specific state
-          break;
-        case 'text':
-          cursorManager.setState('typing');
-          break;
-        case 'sticky':
-        case 'comment':
-          cursorManager.setState('comment');
-          break;
-        case 'select':
-        default:
-          cursorManager.setState('idle');
-          break;
-      }
-    }
-  }, [activeTool, isSpacePressed]);
+  // The container carries this as `data-cursor-mode` and `index.css` turns it
+  // into a real CSS cursor. Nothing here draws a pointer any more.
+  const cursorMode = cursorModeForTool(activeTool, { spacePressed: isSpacePressed });
 
   // Room.tsx's export handlers (and ExportModal) read this to reach
   // PNGExporter, which requires a live Stage reference — Canvas.tsx is the
@@ -532,12 +477,14 @@ export const Canvas: React.FC<CanvasProps> = ({ activeTool, selectedIds, setSele
     };
   }, []);
 
-  const updateCursor = useThrottle((x: number, y: number) => {
-    provider.awareness?.setLocalStateField("cursor", { x, y });
-  }, 66); // Throttle to 15Hz for massive bandwidth savings, local LERP smooths it
-
   // Reads the pointer from the stage rather than the event, so it works
   // identically for mouse and touch.
+  //
+  // Both of these go through `presenceManager` rather than writing awareness
+  // directly. It owns the throttle and the idle timer, and — the reason this
+  // changed — it is now the only writer of the `cursor` field, so leaving the
+  // canvas actually clears it instead of being overwritten by the next
+  // presence update. See the comment on `PresenceEngine`.
   const handleMouseMove = () => {
     const stage = stageRef.current;
     if (!stage) return;
@@ -545,12 +492,12 @@ export const Canvas: React.FC<CanvasProps> = ({ activeTool, selectedIds, setSele
     if (pointerPosition) {
       const x = (pointerPosition.x - stage.x()) / stage.scaleX();
       const y = (pointerPosition.y - stage.y()) / stage.scaleY();
-      updateCursor(x, y);
+      presenceManager.updateCursor(x, y);
     }
   };
 
   const handleMouseLeave = () => {
-    provider.awareness?.setLocalStateField("cursor", null);
+    presenceManager.clearCursor();
   };
 
   const handleWheel = (e: any) => {
@@ -770,15 +717,17 @@ export const Canvas: React.FC<CanvasProps> = ({ activeTool, selectedIds, setSele
     toolManager.handlePointerUp(e);
   };
 
-  // Cursors and remote selections are now handled via DOM overlay (PresenceRenderer)
+  // Remote cursors and selections are DOM overlays (RemoteCursors,
+  // PresenceRenderer). The local pointer is the OS one.
 
   return (
     <div
       className="canvas-container relative w-full h-full overflow-hidden select-none"
-      // `cursor: none` hides the system cursor in favour of the custom one,
-      // but a touch device has no cursor to replace — and CursorRenderer only
-      // tracks mousemove, so on touch this left no pointer feedback at all.
-      style={{ touchAction: 'none', cursor: isTouchDevice ? 'default' : 'none' }}
+      // `index.css` resolves this to a real CSS cursor. A coarse pointer has
+      // no cursor to style, so the rule is simply ignored there — which is why
+      // the old touch special-case is gone.
+      data-cursor-mode={cursorMode}
+      style={{ touchAction: 'none' }}
       ref={containerRef}
       onMouseMove={handleMouseMove}
       onMouseLeave={handleMouseLeave}

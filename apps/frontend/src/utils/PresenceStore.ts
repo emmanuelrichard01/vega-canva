@@ -1,4 +1,5 @@
 import { provider } from '../engine/document';
+import { smoothingFactor } from '../engine/cursor';
 
 export interface Presence {
   userId: number;
@@ -27,7 +28,9 @@ export interface Presence {
 
 class PresenceEngine {
   public users: Map<number, Presence> = new Map();
-  private LERP_FACTOR = 0.2; // Adjust for smoothness vs responsiveness
+  // Smoothing lives in `engine/cursor/remoteCursor.ts` — this used to carry its
+  // own `LERP_FACTOR = 0.2`, a second copy of the same tuning with the same
+  // frame-rate dependence the cursor rebuild fixed.
 
   constructor() {
     this.init();
@@ -118,13 +121,17 @@ class PresenceEngine {
   };
 
   /**
-   * Called every frame by the MinimapEngine to step interpolation
+   * Step interpolation. Called every frame by the MinimapEngine, which passes
+   * how long the frame actually took — the factor is derived from elapsed time
+   * so a 144Hz display and a 60Hz one land in the same place.
    */
-  public updateInterpolation() {
+  public updateInterpolation(dtMs: number) {
+    const alpha = smoothingFactor(dtMs);
+    if (alpha === 0) return;
     this.users.forEach((presence) => {
       if (presence.cursor) {
-        presence.cursor.currentX += (presence.cursor.targetX - presence.cursor.currentX) * this.LERP_FACTOR;
-        presence.cursor.currentY += (presence.cursor.targetY - presence.cursor.currentY) * this.LERP_FACTOR;
+        presence.cursor.currentX += (presence.cursor.targetX - presence.cursor.currentX) * alpha;
+        presence.cursor.currentY += (presence.cursor.targetY - presence.cursor.currentY) * alpha;
       }
     });
   }

@@ -19,8 +19,6 @@ export class HandTool implements Tool {
       this.lastPos = { x: pos.x, y: pos.y };
       this.lastTime = performance.now();
       this.velocity = { x: 0, y: 0 };
-      const container = stage.container();
-      if (container) container.style.cursor = 'grabbing';
     }
   }
 
@@ -42,13 +40,14 @@ export class HandTool implements Tool {
     }
   }
 
-  onPointerUp(ctx: ToolContext, e: any) {
+  // The grab/grabbing swap used to be done here, by writing
+  // `container.style.cursor` on pointer down and up. That is an inline style
+  // on the same element React owns, so the two fought on every re-render, and
+  // it only covered a press that started on the stage. `index.css` does it
+  // with `:active` on the container instead — no state, no race, and it also
+  // catches Space-pan, which this never did.
+  onPointerUp(ctx: ToolContext, _e: any) {
     this.isDragging = false;
-    const stage = e.target?.getStage?.();
-    if (stage) {
-      const container = stage.container();
-      if (container) container.style.cursor = 'grab';
-    }
 
     const applyMomentum = () => {
       if (this.isDragging) return;

@@ -22,22 +22,22 @@ Verify in ~30 seconds:
 ```bash
 cd apps/frontend
 npx tsc -b            # must be silent
-npm test              # 89 tests, 6 files
+npm test              # 114 tests, 7 files
 npx oxlint            # must exit 0 (4 known cosmetic warnings)
 npx vite build        # must succeed
 ```
 
 ## 2. Where the work lives
 
-All of this session's work is on the branch **`rebuild/time-travel-and-physics`**,
-eight commits, nothing pushed, nothing merged to `main`. Each commit builds on
-its own (verified by checking out each and typechecking) and the messages carry
-the reasoning — read `git log` before changing any of it.
+All of this work is on the branch **`rebuild/time-travel-and-physics`**, nine
+commits, nothing pushed, nothing merged to `main`. Each commit builds on its own
+(verified by checking out each and typechecking) and the messages carry the
+reasoning — read `git log` before changing any of it.
 
 | | |
 | --- | --- |
 | Typecheck | clean |
-| Tests | **89** (was 33) across 6 files |
+| Tests | **114** (was 33) across 7 files |
 | Lint | exits 0; 4 `only-export-components` warnings, all cosmetic |
 | Build | clean, ~1.17MB JS (still no code splitting) |
 
@@ -70,6 +70,13 @@ What works instead:
 
 **Because of all this, the simulation was extracted so it can be tested in
 Node.** Prefer writing a failing test over trying to watch the bug.
+
+**But static rendering *can* be checked**, and you should when the work is
+visual. Nothing static needs rAF or pointer events. Write a standalone page to
+the scratchpad, serve it (`file://` is blocked — run a one-line Node static
+server), open it and screenshot. That is how the tool cursors and the remote
+cursor chips in §4 were judged at real size on both themes rather than guessed
+at. Do this before shipping anything you cannot otherwise see.
 
 ## 4. What changed, and the rules that now hold
 
@@ -137,6 +144,40 @@ Five user-selectable materials in the Properties panel. `material` is optional o
 documents behaving as before. Air drag was cut ~3× so a flick actually carries
 (Paper 120px → 431px) with the ordering preserved and locked by tests.
 
+### Cursors (`engine/cursor/`, `index.css`)
+
+Rebuilt. The old system was 8 files and 362 lines to draw one arrow; it is now
+4 files, and half of what it did was wrong.
+
+- **The local cursor is gone.** It was a `rAF`-positioned `<div>` under
+  `cursor: none` — one frame late by construction, blind to every OS cursor
+  accessibility setting, and dead on any surface that wasn't the canvas. Tools
+  now resolve to a *mode* (`cursorModeForTool`, pure and tested) which the
+  container carries as `data-cursor-mode`, and `index.css` maps to a real CSS
+  cursor. Native keywords where one means the right thing; authored SVG
+  cursors, drawn in the dock's own icon language, for erase/note/comment where
+  none does. Each has a native fallback — **Safari does not render SVG
+  cursors** — and forced-colors gets the OS cursor back.
+- **There were four cursor authorities**, which is why none of them worked:
+  `Canvas`'s inline style, `HandTool` writing `container.style.cursor`
+  imperatively (fighting React for the same inline style), `cursorManager`, and
+  a `Tool.cursor` field with a `ToolManager.getCursor()` that nothing ever
+  called. Now one.
+- **The awareness `cursor` field had two writers** — the bug the last handoff
+  flagged. `presenceManager` is the only one now; `Canvas` routes through it.
+  Note *why* it was worse than a race: `pushToAwareness` merges `localState`
+  over what is already published, so the stale cursor was put back by the next
+  unrelated presence update. Mouse-leave never stuck.
+- **Remote cursors keep custom rendering** — nothing native to defer to. Three
+  things moved into `remoteCursor.ts` and under test: frame-rate-independent
+  smoothing (the old per-frame lerp converged 2.5× faster at 144Hz than at
+  60Hz), WCAG-safe chip colours derived from the presence colour, and edge
+  flipping so a chip near the viewport edge is not clipped away.
+- **Do not paint a label in the raw presence colour.** Half the palette fails
+  AA with white text and the other half fails with black; `chipColorsFor` moves
+  the fill the shorter way to readability and is pinned by tests over every
+  palette entry plus arbitrary input, because sign-in lets people choose.
+
 ### UI (`ToolWorkspace`, `WorkspaceShell`, `index.css`)
 
 - The dock **must not clip**: it used `overflow-y: hidden`, which cut off every
@@ -151,23 +192,29 @@ documents behaving as before. Air drag was cut ~3× so a flick actually carries
 
 ## 5. Next up, in the order I'd do it
 
-1. **Rebuild the cursor** (`engine/cursor/`). Evaluated but not touched. It sets
-   `cursor: none` on the canvas and replaces the pointer with a rAF-positioned
-   div, which is always a frame late, discards OS accessibility settings, and
-   declares 19 states of which exactly three are ever set. Recommendation: keep
-   custom rendering for *remote* cursors, drop the local one in favour of native
-   CSS `cursor` per tool. **There is also a live bug**: two independent writers
-   of the awareness `cursor` field — `Canvas.tsx:536` (throttled) and
-   `CursorRenderer.tsx:98` via `presenceManager.updateCursor` (every window
-   mousemove, unthrottled, fires over panels too). They disagree on mouse-leave.
-2. **Auth and room lifecycle screens** — sign-in, create, delete, welcome-back.
+1. **Auth and room lifecycle screens** — sign-in, create, delete, welcome-back.
    Design together; they share one visual system. Note deletion has no confirm
    flow, and see the dashboard bug below.
-3. **Landing page** — depends on the identity established in 2.
-4. **A real first-run moment** — the empty state teaches the core gesture and
+2. **Landing page** — depends on the identity established in 1.
+3. **A real first-run moment** — the empty state teaches the core gesture and
    nothing introduces Forces, History or materials.
-5. **Bundle splitting** — 1.17MB, no chunks. Konva, Matter and framer-motion are
+4. **Bundle splitting** — 1.17MB, no chunks. Konva, Matter and framer-motion are
    the obvious lazy candidates.
+
+### Design direction
+
+There is a `design inspirations/` folder at the repo root (untracked) with
+reference screenshots — canvas tools with dot grids, floating segmented docks,
+hairline borders, tight radii on chrome, and one dark board showing remote
+presence done well. Look at it before designing any new surface. Two
+independent design-skill references are also worth reading for their rules
+rather than their tooling: `github.com/pbakaus/impeccable` (craft floor:
+contrast, depth with offset *and* blur, motion as one authored moment,
+exponential ease-out over bounce) and `github.com/Leonxlnx/taste-skill`.
+
+Where those rules collide with this codebase, the codebase wins — both tell you
+to avoid Inter, and `--font-sans` is Inter. A committed visual world beats a
+generic anti-pattern list.
 
 ### Known gaps
 
@@ -177,6 +224,9 @@ documents behaving as before. Air drag was cut ~3× so a flick actually carries
 - Adapter-level physics code (Konva writes, awareness broadcasts) is still
   untested — that is exactly where the landing-jump bug lived. Extracting the
   pose-write into a pure function would close it.
+- `RemoteCursors` is mounted behind `isUiVisible` in `Room.tsx`, so
+  presentation mode hides collaborators entirely. Someone chose that; it is
+  worth deciding whether other people count as chrome.
 - PNG export omits audio players (DOM overlays, not canvas).
 - Groups are flat; no permissions; auth is a display identity, not an account.
 
@@ -203,3 +253,4 @@ documents behaving as before. Air drag was cut ~3× so a flick actually carries
 3. `hooks/useStore.ts` — the one bridge from document to UI
 4. `engine/physics/simulation.ts` — physics, with nothing else attached
 5. `components/Canvas.tsx` — input, tools, camera, the shared transformer
+6. `engine/presence/PresenceManager.ts` — the single writer of ephemeral state

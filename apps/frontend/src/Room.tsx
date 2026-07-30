@@ -25,7 +25,7 @@ import { CommandPalette } from './components/CommandPalette';
 import { processOfflineMediaQueue, queueOfflineMedia } from './utils/offlineMediaQueue';
 import { calculateLayout, animateToLayout, type LayoutMode } from './utils/spatialLayout';
 import { Mic } from 'lucide-react';
-import { CursorRenderer } from './engine/cursor';
+import { RemoteCursors } from './engine/cursor';
 import { ExportModal } from './components/ui/ExportModal';
 import { cameraSystem } from './engine/CameraSystem';
 import { useBreakpoint } from './hooks/useBreakpoint';
@@ -493,8 +493,8 @@ export default function Room() {
           }}
         />
         
-        {/* Cursor System */}
-        {isUiVisible && <CursorRenderer />}
+        {/* Other people's pointers. The local one is a CSS cursor now. */}
+        {isUiVisible && <RemoteCursors />}
         
         <ActivityFeed />
 

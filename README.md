@@ -202,11 +202,47 @@ regardless of where the camera happens to be.
 
 Cursors, selection outlines, the viewport radar, per-object "editing" badges and
 emoji gestures all ride on Yjs awareness rather than the document, so ephemeral
-state never enters history. Cursor positions are throttled to 15Hz and smoothed
-by local interpolation.
+state never enters history.
+
+`PresenceManager` is the **only** writer of local awareness state. It owns one
+throttle (15Hz) and the idle timer, and everything ephemeral goes through it —
+having two writers for the `cursor` field is what left ghost pointers parked on
+the canvas after someone moved to a side panel.
 
 Authorship is denormalized onto each node at creation, so a node still shows who
 made it after that person disconnects.
+
+### Cursors — `engine/cursor/`
+
+Two different problems, deliberately solved two different ways.
+
+**Your own pointer is the OS pointer.** Tools resolve to a *cursor mode*
+(`cursorModeForTool`, pure and tested) which the container carries as
+`data-cursor-mode`, and `index.css` turns into a real CSS `cursor`. Native
+keywords do the work wherever one means the right thing; the three tools with
+no native equivalent — erase, note, comment — get an authored SVG cursor drawn
+in the same 24px, 2px-stroke language as the dock icon they came from, each
+with a native fallback for Safari and forced-colors. This replaced a
+`rAF`-positioned `<div>` under `cursor: none`, which was permanently one frame
+late and threw away every OS cursor accessibility setting.
+
+**Other people's pointers are content**, so they keep custom rendering.
+`RemoteCursors` mounts and unmounts through React and moves through `rAF`,
+writing transforms straight to the DOM rather than re-rendering at broadcast
+rate. Three things there are arithmetic, and therefore live in
+`remoteCursor.ts` under test:
+
+- **Interpolation is frame-rate independent.** The old fixed per-frame lerp
+  made a 144Hz display converge nearly 2.5× faster than a 60Hz one on identical
+  network updates.
+- **Name chips derive their colours.** A chip painted in the raw presence
+  colour with white text failed WCAG AA on half the palette — Amber `#F59E0B`
+  at about 2:1 — and sign-in lets people pick an arbitrary colour, so a lookup
+  table would not have covered it. `chipColorsFor` moves the fill the *shorter*
+  way to readability, so deep colours stay saturated with white text and bright
+  ones stay bright with hue-tinted dark text. The arrow always keeps the raw
+  colour and the chip is outlined in it.
+- **Chips flip at the viewport edge** instead of being clipped by the overlay.
 
 ### Design system — `index.css`
 
@@ -236,7 +272,7 @@ apps/
         physics/     the simulation, force specs, shared in-flight state
         history/     session timeline for Time Travel
         interaction/ grid snapping
-        cursor/      custom cursor system
+        cursor/      tool cursor modes, remote cursor rendering
       components/
         canvas/      renderers, node editor, shared transformer
         workspace/   header, tool dock, presence avatars
@@ -271,7 +307,8 @@ perfect-freehand, framer-motion, Vitest
 - **PNG export omits audio players**, as noted above.
 - **Tests cover pure logic, CRDT behaviour and the physics simulation** (schema
   normalization, migration convergence, geometry, session timeline, camera zoom,
-  and the simulation itself). There are still no component or interaction tests —
-  the adapter layer between the simulation and Konva is the notable gap.
+  cursor modes and remote-cursor colour/placement/smoothing, and the simulation
+  itself). There are still no component or interaction tests — the adapter layer
+  between the simulation and Konva is the notable gap.
 - **The dashboard lists workspaces from local storage** and does not verify they
   still exist on the server, so a deleted room can linger as a card.

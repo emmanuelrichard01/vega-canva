@@ -116,9 +116,16 @@ export class MinimapEngine {
     };
   }
 
-  private render = () => {
+  private lastFrame = 0;
+
+  // rAF hands the callback a timestamp, so the frame length is already
+  // available — presence interpolation needs it to be frame-rate independent.
+  private render = (now: number = performance.now()) => {
+    const dt = this.lastFrame ? now - this.lastFrame : 1000 / 60;
+    this.lastFrame = now;
+
     // 1. Advance Interpolation (Presence Engine)
-    presenceStore.updateInterpolation();
+    presenceStore.updateInterpolation(dt);
 
     // 2. Clear & Calculate Bounds
     const w = this.canvas.width;
@@ -257,6 +264,9 @@ export class MinimapEngine {
     if (this.frameId) {
       cancelAnimationFrame(this.frameId);
       this.frameId = 0;
+      // Restarting after a pause must not be handed the whole gap as one
+      // frame; that would snap every remote cursor instead of easing it.
+      this.lastFrame = 0;
     }
   }
 
