@@ -181,6 +181,39 @@ describe('PhysicsSimulation - forces', () => {
   });
 });
 
+describe('PhysicsSimulation - material feel', () => {
+  /** Distance a hard flick carries an object, with nothing in its way. */
+  const throwDistance = (material: string) => {
+    const { sim } = simWith([node('a', { material })]);
+    sim.launch('a', 60, 60, 30, 0);
+    runToRestTransforms(sim, 3000);
+    return Math.round(sim.getBody('a')!.position.x - 60);
+  };
+
+  it('carries a flick far enough to cross a workable stretch of canvas', () => {
+    // Air drag was tuned so hard that a full-speed flick died in ~120px, which
+    // on an infinite canvas reads as the object refusing to move — and meant
+    // thrown objects almost never reached anything to collide with.
+    expect(throwDistance('paper')).toBeGreaterThan(300);
+  });
+
+  it('orders the materials by how far a flick carries them', () => {
+    const feather = throwDistance('feather');
+    const paper = throwDistance('paper');
+    const wood = throwDistance('wood');
+    const rubber = throwDistance('rubber');
+    const stone = throwDistance('stone');
+
+    // The ordering is the material identity — it must survive any retuning.
+    expect(feather).toBeLessThan(paper);
+    expect(paper).toBeLessThan(wood);
+    expect(wood).toBeLessThan(rubber);
+    expect(rubber).toBeLessThan(stone);
+    // And they have to be tellable apart, not clustered within a few pixels.
+    expect(stone).toBeGreaterThan(feather * 4);
+  });
+});
+
 describe('PhysicsSimulation - materials', () => {
   it('gives a heavier, slicker material more travel than a light draggy one', () => {
     const travel = (material: string) => {

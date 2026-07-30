@@ -34,9 +34,38 @@ export class CameraSystem {
     this.emitChange();
   }
 
+  /**
+   * Step the zoom by one notch. **Positive zooms in.**
+   *
+   * The sign used to mean the opposite of what every caller assumed: positive
+   * divided by the zoom factor, i.e. zoomed *out*. The wheel handler computed
+   * `+1` for "the user wants to zoom in" and got the reverse, so pinching
+   * outward on a trackpad shrank the canvas.
+   */
   zoomAt(direction: number, screenX: number, screenY: number) {
-    const zoomFactor = 1.1;
-    this.zoomBy(direction > 0 ? 1 / zoomFactor : zoomFactor, screenX, screenY);
+    const ZOOM_STEP = 1.1;
+    this.zoomBy(direction > 0 ? ZOOM_STEP : 1 / ZOOM_STEP, screenX, screenY);
+  }
+
+  /**
+   * Zoom from a raw wheel/pinch delta, continuously.
+   *
+   * A trackpad pinch is not a notch — it streams many small deltas — so
+   * quantising it to fixed 1.1x steps makes a smooth gesture arrive as a
+   * staircase. Mapping the delta through an exponential keeps the gesture
+   * proportional and, because zoom is multiplicative, makes it symmetric:
+   * pinching out and back returns to exactly the zoom you started from.
+   *
+   * Negative `deltaY` means zoom in, which is what both trackpad pinch-out and
+   * ctrl+scroll-up produce on every platform.
+   */
+  zoomByWheel(deltaY: number, screenX: number, screenY: number) {
+    if (!Number.isFinite(deltaY) || deltaY === 0) return;
+    const SENSITIVITY = 0.0125;
+    // Clamped so one violent wheel notch (some mice report deltas in the
+    // hundreds) cannot leap several zoom levels in a single event.
+    const factor = Math.min(2, Math.max(0.5, Math.exp(-deltaY * SENSITIVITY)));
+    this.zoomBy(factor, screenX, screenY);
   }
 
   /**

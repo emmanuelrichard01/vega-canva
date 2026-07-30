@@ -557,8 +557,10 @@ export const Canvas: React.FC<CanvasProps> = ({ activeTool, selectedIds, setSele
     const evt = e.evt || e;
     if (evt.preventDefault) evt.preventDefault();
     if (evt.ctrlKey) {
-      const direction = evt.deltaY > 0 ? -1 : 1;
-      cameraSystem.zoomAt(direction, evt.clientX, evt.clientY);
+      // The browser reports a trackpad pinch as ctrl+wheel with a continuous
+      // delta, so pass it through rather than reducing the gesture to a
+      // direction and a fixed step.
+      cameraSystem.zoomByWheel(evt.deltaY, evt.clientX, evt.clientY);
     } else {
       cameraSystem.pan(evt.deltaX, evt.deltaY);
     }
