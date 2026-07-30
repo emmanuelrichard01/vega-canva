@@ -215,6 +215,11 @@ canvas. The viewport is where someone is *working*, and it persists while they
 read, think, or use a panel — so it, not the cursor, is what keeps a
 collaborator on the radar and in "Jump to…".
 
+`ViewportState` stores the **top-left corner** of what someone can see, in world
+coordinates, plus the viewport in screen pixels. The minimap wants that corner
+because it draws a rectangle; everything that navigates *to* a person wants the
+middle instead, via `viewportCenter()`.
+
 Authorship is denormalized onto each node at creation, so a node still shows who
 made it after that person disconnects.
 
@@ -247,6 +252,11 @@ surface back to them on a coarse pointer or under `forced-colors`, where a
 drawn cursor cannot honour the pointer size and contrast the OS was asked for.
 The attribute that suppresses the native cursor is set by `LocalCursor` itself,
 so the canvas is never left with `cursor: none` and nothing drawn on top.
+
+**Other people's pointers** are rendered by `RemoteCursors`: React mounts and
+unmounts them and decides whether each is visible, while a frame loop does
+position and interpolation only. Splitting it that way is deliberate — when the
+frame loop also owned visibility, a throttled tab showed an empty room.
 
 **Other people's pointers are content**, so they keep custom rendering.
 `RemoteCursors` mounts and unmounts through React and moves through `rAF`,
@@ -334,3 +344,7 @@ perfect-freehand, framer-motion, Vitest
   between the simulation and Konva is the notable gap.
 - **The dashboard lists workspaces from local storage** and does not verify they
   still exist on the server, so a deleted room can linger as a card.
+- **Remote collaborator cursors are not confirmed working end to end.** Several
+  bugs in that path were fixed and each link verified in isolation, but it has
+  not been watched with two live browsers. See the box at the top of
+  `HANDOFF.md`.

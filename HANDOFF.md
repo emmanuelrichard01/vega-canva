@@ -1,11 +1,29 @@
 # Handoff
 
-Written at the end of a session that rebuilt Time Travel and physics, so the
-next session can start cold. Read this, then `README.md`. Delete this file once
-its "next up" list is exhausted.
+Written so the next session can start cold. Read this, then `README.md`. Delete
+this file once its "next up" list is exhausted.
 
 **This supersedes the previous handoff.** If anything here contradicts an older
 note, this is newer.
+
+> ## Read this first: one thing is unresolved
+>
+> **The owner reports that remote collaborator cursors do not appear**, and that
+> is not confirmed fixed. Several real bugs in that path *were* found and fixed
+> this session (see §4), any of which could have been the cause — but the last
+> one landed without a confirmation from a second real browser.
+>
+> Every link in the chain was verified individually: the cursor publishes, the
+> DOM node is created, it is positioned at the peer's coordinates, the chip
+> colours resolve, and React sets `opacity: 1` when the peer has a cursor. What
+> was **never** done is watch two *visible* browser windows with real mice at
+> the same time — see §3 for why the automation tab cannot do it.
+>
+> **Start by reproducing it that way**, with two real windows, before changing
+> any code. If it is still broken, instrument it: put a temporary on-screen
+> readout of `state.cursor`, the node's `inlineOpacity`, and its `transform` on
+> the page. Do not diagnose this one by inference — that already cost the owner
+> several rounds this session (§4, "the mistakes").
 
 ---
 
@@ -22,24 +40,27 @@ Verify in ~30 seconds:
 ```bash
 cd apps/frontend
 npx tsc -b            # must be silent
-npm test              # 114 tests, 7 files
-npx oxlint            # must exit 0 (4 known cosmetic warnings)
+npm test              # 119 tests, 7 files
+npx oxlint            # must exit 0 (8 known cosmetic warnings)
 npx vite build        # must succeed
 ```
 
 ## 2. Where the work lives
 
-All of this work is on the branch **`rebuild/time-travel-and-physics`**, nine
+All of this work is on the branch **`rebuild/time-travel-and-physics`**, fifteen
 commits, nothing pushed, nothing merged to `main`. Each commit builds on its own
-(verified by checking out each and typechecking) and the messages carry the
-reasoning — read `git log` before changing any of it.
+and the messages carry the reasoning — read `git log` before changing any of it.
 
 | | |
 | --- | --- |
 | Typecheck | clean |
-| Tests | **114** (was 33) across 7 files |
-| Lint | exits 0; 4 `only-export-components` warnings, all cosmetic |
+| Tests | **119** (was 33) across 7 files |
+| Lint | exits 0; 8 `only-export-components` warnings, all cosmetic |
 | Build | clean, ~1.17MB JS (still no code splitting) |
+
+The last four commits are cursor and presence work and are the least settled
+part of the branch. `a7a5dce` is the newest; the open question above sits on
+top of it.
 
 ## 3. The one thing that will waste your time if you don't know it
 
@@ -71,12 +92,28 @@ What works instead:
 **Because of all this, the simulation was extracted so it can be tested in
 Node.** Prefer writing a failing test over trying to watch the bug.
 
+**Two automation tabs cannot stand in for two users.** Both report
+`visibilityState: "hidden"`, which means no rAF *and no CSS transitions* — an
+element mid-fade is frozen at its start value, so `getComputedStyle(...).opacity`
+reads `0` while the inline style correctly says `1`. Neither tab ever has a
+pointer over the canvas either, so both publish `cursor: null` and drift to
+`status: "away"`. Nearly every "the cursor is not rendering" reading collected
+this session traced to that, not to the code. Read the **inline** style, not the
+computed one, and ask the owner to confirm anything that needs two live users.
+
 **But static rendering *can* be checked**, and you should when the work is
-visual. Nothing static needs rAF or pointer events. Write a standalone page to
-the scratchpad, serve it (`file://` is blocked — run a one-line Node static
-server), open it and screenshot. That is how the tool cursors and the remote
-cursor chips in §4 were judged at real size on both themes rather than guessed
-at. Do this before shipping anything you cannot otherwise see.
+visual. Nothing static needs rAF or pointer events. Two harnesses, both used
+this session:
+
+- A standalone page in the scratchpad, served over HTTP (`file://` is rejected
+  by the navigate tool — a one-line Node `http.createServer` is enough).
+- Better, because it uses the real modules and the real tokens: import them into
+  the running app and render into an injected overlay.
+  `await import('/node_modules/.vite/deps/react.js')` (note: `.default`), and
+  `react-dom_client.js` exposes `createRoot` on **`.default`**, not as a named
+  export. Bust Vite's module cache with `?bust=${Date.now()}` after editing.
+  That is how the cursor art in §4 was judged, and it caught three shapes that
+  were genuinely bad and would otherwise have shipped.
 
 ## 4. What changed, and the rules that now hold
 
@@ -188,23 +225,41 @@ Rebuilt. The old system was 8 files and 362 lines to draw one arrow; it is now
 - The native fallback cursors rasterise at **32px**, not the 24 of their
   viewBox. Windows' own pointers are about 32, and a smaller one reads as
   incidental. Hotspots are in 32ths — multiply a viewBox coordinate by 4/3.
+- **The rule that hides the OS cursor must out-specify the mode rules.**
+  `.canvas-container[data-custom-cursor="on"]` ties with
+  `.canvas-container[data-cursor-mode="…"]`, and a tie is broken by source
+  order — so written above them it lost to every one, and the system arrow was
+  painted on top of the drawn one while everything else worked perfectly. It
+  now carries both attributes. If you add another `.canvas-container[…]` cursor
+  rule, check it against that one.
+- **Remote cursor visibility must not depend on the frame loop.** It renders at
+  `opacity: 0` and if only rAF raised it, a throttled tab showed nobody at all —
+  indistinguishable from an empty room. `onCanvas` is part of the React identity
+  signature and the JSX sets opacity; the loop does position only.
 
-### The two mistakes worth not repeating
+### The mistakes worth not repeating
 
-Both cost a lot of the owner's time, and both were avoidable.
+All three cost the owner real time, and all three were avoidable.
 
 1. **I took the previous handoff's "drop the local cursor for native CSS" as
    settled and never checked it against what the product is supposed to feel
    like.** It is a whiteboard for creative work; a plain OS arrow on the canvas
    is the wrong answer no matter how good the accessibility argument is. The
-   direction was reversed after shipping. Ask before removing something
-   expressive on technical grounds.
+   direction was reversed after shipping, at the owner's instruction. Ask before
+   removing something expressive on technical grounds.
 2. **I diagnosed "you can't see the change" three times without looking at
-   what the change actually was.** Every reload theory was wrong. The console
-   line number `Canvas.tsx:505` settled it in one step, because that line only
-   exists after the edit — compare `git show <before>:file | sed -n '505p'`
-   against the current file. **Line numbers in a stack trace are a version
-   fingerprint.** Reach for that before theorising about caches.
+   what the change actually was.** Every reload and cache theory was wrong. The
+   console line number `Canvas.tsx:505` settled it in one step, because that
+   line only exists after the edit — compare
+   `git show <before>:file | sed -n '505p'` against the current file. **A line
+   number in a stack trace is a version fingerprint.** Reach for that before
+   theorising. More generally: the owner's own observations ("clicking the
+   avatar pans to empty canvas") were worth more than any of my inference, and
+   led straight to a real bug in one step.
+3. **I changed the meaning of a shared field and audited one of its four
+   consumers.** Redefining `viewport` to store a top-left corner was right for
+   the minimap and silently wrong for everything that navigates *to* a person.
+   Grep every reader before changing what a published field means.
 
 ### Cursor art: fixed colours, not tokens
 
@@ -242,6 +297,16 @@ viewport is "where this person is working" and is meant to persist.** Anything
 that needs someone to stay visible — radar, "Jump to…", off-screen markers —
 reads viewport.
 
+**`viewport.x`/`y` is the top-left corner, and almost nothing wants that.**
+`navigateViewport` centres the camera on the point it is handed, so passing the
+corner straight through lands you half a screen up and to the left — on empty
+canvas. Three call sites did exactly that (the avatar row, follow mode, the
+off-screen markers); only the minimap, which draws an actual rectangle, wanted
+the corner. Use **`viewportCenter()`** from `engine/presence/PresenceTypes.ts`.
+It lives next to the type so the units and the trap are documented together, it
+degrades to the corner for peers on older builds that publish no `width`, and
+it is covered by tests. Do not inline that arithmetic a fifth time.
+
 ### Wheel input (`Canvas.tsx`)
 
 `onWheel` was on **both** the container and the Konva `Stage`, so every scroll
@@ -265,6 +330,10 @@ only way to get a non-passive wheel handler; do not put it back on a React prop.
 
 ## 5. Next up, in the order I'd do it
 
+0. **Confirm remote collaborator cursors actually render** — the open item at
+   the top of this file. Two real browser windows, mouse moving on the canvas in
+   one, watching the other. This blocks nothing else, but it is the thing the
+   owner last reported broken, so do not start feature work with it unresolved.
 1. **Auth and room lifecycle screens** — sign-in, create, delete, welcome-back.
    Design together; they share one visual system. Note deletion has no confirm
    flow, and see the dashboard bug below.
@@ -275,6 +344,12 @@ only way to get a non-passive wheel handler; do not put it back on a React prop.
    the obvious lazy candidates.
 
 ### Design direction
+
+**The owner has been explicit about this and it overrides technical
+preferences**: the interface should feel dynamic, clean and modern, not generic.
+That is what reversed the native-cursor decision. When a change would make the
+product plainer in exchange for a technical virtue, raise it — do not just take
+it.
 
 There is a `design inspirations/` folder at the repo root (untracked) with
 reference screenshots — canvas tools with dot grids, floating segmented docks,
@@ -291,9 +366,20 @@ generic anti-pattern list.
 
 ### Known gaps
 
+- **Remote collaborator cursors are unconfirmed** — see the box at the top.
+- **A remote cursor that fades in depends on a CSS transition completing.** In a
+  hidden tab that transition is frozen at `opacity: 0`. It resolves when the tab
+  becomes visible, so this is probably benign, but it is the same shape as the
+  rAF bug that was just fixed and is worth a second look if cursors turn out to
+  be genuinely invisible.
+- **`clearCursor()` fires on the canvas's `mouseleave`.** That is semantically
+  right, but if any sibling overlay ever covers the canvas, moving over it
+  clears the cursor and the collaborator's arrow winks out. The radar no longer
+  depends on this (viewport does that job), but the arrows do. Unverified
+  suspect for the open item.
 - **The dashboard lists workspaces from `localStorage` and never checks the
   server**, so a deleted room lingers as a card. Hit repeatedly while testing;
-  fix this as part of item 2.
+  fix this as part of item 1.
 - Adapter-level physics code (Konva writes, awareness broadcasts) is still
   untested — that is exactly where the landing-jump bug lived. Extracting the
   pose-write into a pure function would close it.
@@ -327,3 +413,16 @@ generic anti-pattern list.
 4. `engine/physics/simulation.ts` — physics, with nothing else attached
 5. `components/Canvas.tsx` — input, tools, camera, the shared transformer
 6. `engine/presence/PresenceManager.ts` — the single writer of ephemeral state
+7. `engine/presence/PresenceTypes.ts` — small, but it documents the units that
+   three call sites got wrong
+
+The cursor system, if you are picking up the open item:
+
+| File | What it owns |
+| --- | --- |
+| `engine/cursor/toolCursor.ts` | tool id → cursor mode. Pure, tested. |
+| `engine/cursor/cursorArt.tsx` | the drawn shapes, one per mode |
+| `engine/cursor/LocalCursor.tsx` | your pointer: hit-testing, positioning, native fallback |
+| `engine/cursor/RemoteCursors.tsx` | everyone else's pointers **← the open item** |
+| `engine/cursor/remoteCursor.ts` | chip colour, edge flipping, smoothing. Pure, tested. |
+| `index.css` (§ "CANVAS CURSORS") | native fallbacks + the `cursor: none` handover |
