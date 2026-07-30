@@ -1,10 +1,11 @@
 import { usePhysics } from '../hooks/usePhysics';
 import React, { useRef, useState, useEffect, useCallback, useMemo } from "react";
-import { Stage, Layer } from "react-konva";
+import { Stage, Layer, Circle, Group } from "react-konva";
 import Konva from "konva";
 import { provider, deleteNode, updateNode, nextZIndex, lowestZIndex } from '../engine/document';
 import { nanoid } from 'nanoid';
 import { useStore } from '../hooks/useStore';
+import { FORCE_SPECS, isForceTool } from '../engine/physics/forces';
 import { editor } from '../engine/api/EditorAPI';
 import { ObjectRenderer } from "./ObjectRenderer";
 import { PresenceRenderer } from "../engine/presence/PresenceRenderer";
@@ -54,11 +55,12 @@ export const Canvas: React.FC<CanvasProps> = ({ activeTool, selectedIds, setSele
   const containerRef = useRef<HTMLDivElement>(null);
   const [dimensions, setDimensions] = useState({ width: 800, height: 600 });
 
-  // Single-object convenience accessor + a plain setter, for the many code
-  // paths below (tool-created nodes, per-object keyboard shortcuts) that only
-  // ever deal with one object at a time.
-  const selectedId = selectedIds.length === 1 ? selectedIds[0] : null;
-  const setSelectedId = (id: string | null) => setSelectedIds(id ? [id] : []);
+  // There used to be a derived `selectedId` and a `setSelectedId` helper here,
+  // for the code paths that only ever deal with one object. Both were removed:
+  // each was a fresh value on every render, and the effects that closed over
+  // them could not state that honestly in a dependency list. The single-object
+  // paths now narrow `selectedIds` where they use it, and call the stable
+  // `setSelectedIds` directly.
 
   // Stable-identity ref mirroring selectedIds, read imperatively by
   // ObjectRenderer during drags so a move on one selected object carries the
@@ -80,6 +82,12 @@ export const Canvas: React.FC<CanvasProps> = ({ activeTool, selectedIds, setSele
     const handleKeyDown = (e: KeyboardEvent) => {
       // Do not intercept if user is typing in an input or textarea
       if (document.activeElement?.tagName === 'INPUT' || document.activeElement?.tagName === 'TEXTAREA') return;
+      // Viewing history is read-only. The canvas is showing a past state while
+      // the live document sits untouched behind it, so Delete or Cmd+D here
+      // would edit objects the user cannot currently see. Read through
+      // getState() rather than subscribing: this is an event-time question, and
+      // a dependency would re-register the listener on every replay frame.
+      if (useStore.getState().isReplaying) return;
       if (selectedIds.length === 0) return;
 
       if (e.key === 'Escape') {
@@ -138,7 +146,12 @@ export const Canvas: React.FC<CanvasProps> = ({ activeTool, selectedIds, setSele
 
       // Everything below only makes sense for exactly one selected object.
       if (selectedIds.length !== 1) return;
-      const obj = useStore.getState().objects[selectedId!];
+      // Narrow to the sole id here rather than closing over a value derived up
+      // in the component body. Identical result, but the dependency list can be
+      // checked statically instead of resting on a reader noticing that the
+      // outer value was a function of `selectedIds` all along.
+      const soleId = selectedIds[0];
+      const obj = useStore.getState().objects[soleId];
       if (!obj) return;
 
       // Typography lives in one canonical place now, so Cmd+B/I/U and the
@@ -150,13 +163,13 @@ export const Canvas: React.FC<CanvasProps> = ({ activeTool, selectedIds, setSele
         const typography = (obj as any).typography ?? DEFAULT_TYPOGRAPHY;
         e.preventDefault();
         if (e.key.toLowerCase() === 'b') {
-          updateNode(selectedId!, {
+          updateNode(soleId, {
             typography: { ...typography, fontWeight: typography.fontWeight >= 600 ? 400 : 700 },
           });
         } else if (e.key.toLowerCase() === 'i') {
-          updateNode(selectedId!, { typography: { ...typography, italic: !typography.italic } });
+          updateNode(soleId, { typography: { ...typography, italic: !typography.italic } });
         } else {
-          updateNode(selectedId!, { typography: { ...typography, underline: !typography.underline } });
+          updateNode(soleId, { typography: { ...typography, underline: !typography.underline } });
         }
         return;
       }
@@ -166,13 +179,13 @@ export const Canvas: React.FC<CanvasProps> = ({ activeTool, selectedIds, setSele
           // We can't directly trigger isEditing inside ObjectRenderer from Canvas easily without an event or ref.
           // But since ObjectRenderer listens to global clicks, we can dispatch an event to the document that ObjectRenderer can catch.
           // For now we'll fire a custom event that ObjectRenderer can listen to.
-          document.dispatchEvent(new CustomEvent('requestEditNode', { detail: { id: selectedId } }));
+          document.dispatchEvent(new CustomEvent('requestEditNode', { detail: { id: soleId } }));
         }
       }
     };
     window.addEventListener('keydown', handleKeyDown);
     return () => window.removeEventListener('keydown', handleKeyDown);
-  }, [selectedIds]);
+  }, [selectedIds, setSelectedIds]);
 
   useEffect(() => {
     const handleNavigate = (e: any) => {
@@ -208,7 +221,12 @@ export const Canvas: React.FC<CanvasProps> = ({ activeTool, selectedIds, setSele
 
   useEffect(() => {
     const handleSelectNode = (e: any) => {
-      setSelectedId(e.detail.id);
+      // Calls the stable `setSelectedIds` directly. This went through a
+      // single-object helper defined in the component body, which was a fresh
+      // closure every render — so listing it as a dependency would have torn
+      // down and re-registered both listeners on every single render.
+      const id = e.detail?.id ?? null;
+      setSelectedIds(id ? [id] : []);
     };
     const handleMarqueeSelect = (e: any) => {
       const { minX, minY, maxX, maxY, additive } = e.detail;
@@ -239,8 +257,31 @@ export const Canvas: React.FC<CanvasProps> = ({ activeTool, selectedIds, setSele
 
   const { visibleIds } = useVisibleSet();
   const objects = useStore(state => state.objects);
-  const isReplaying = useStore(state => state.isReplaying);
-  const { handleThrow, applyAttractRepel, commitNudges, applyGlobalForce } = usePhysics(objects, stageRef);
+  const { handleThrow, applyGlobalForce, beginHeldForce, moveHeldForce, endHeldForce } = usePhysics(objects, stageRef);
+
+  /**
+   * Cursor position while a force tool is held, in world space.
+   *
+   * Drives the field ring below. A force you cannot see the extent of is a
+   * force you cannot aim, which is most of why these tools felt like a slot
+   * machine: you pressed, and some unpredictable set of objects reacted.
+   */
+  const forceCursorRef = useRef<{ x: number; y: number } | null>(null);
+  const forceRingRef = useRef<Konva.Group>(null);
+  const activeForce = isForceTool(activeTool) ? FORCE_SPECS[activeTool] : null;
+
+  // Entering a force tool snapshots the layout so the whole session can be put
+  // back, and leaving it drops the ring.
+  useEffect(() => {
+    const armed = isForceTool(activeTool);
+    useStore.getState().setForceToolActive(armed);
+    if (armed) {
+      if (!useStore.getState().layoutSnapshot) useStore.getState().captureLayoutSnapshot();
+    } else {
+      forceCursorRef.current = null;
+      endHeldForce();
+    }
+  }, [activeTool, endHeldForce]);
 
   useEffect(() => {
     const updateSize = () => {
@@ -330,14 +371,15 @@ export const Canvas: React.FC<CanvasProps> = ({ activeTool, selectedIds, setSele
   const visibleObjects = useMemo(() => {
     const storeObjects = Object.values(objects);
     if (storeObjects.length === 0) return [];
-    
-    // Time Travel Replay bypass: replay snapshots don't update the Spatial Index
-    // to save performance. So we render all objects directly during replay.
-    if (isReplaying) {
-      return storeObjects.sort((a: any, b: any) => (a.zIndex || 0) - (b.zIndex || 0));
-    }
-    
-    // If spatial culling returned IDs, use them — but always include selected + anything 
+
+    // There used to be a Time Travel bypass here that rendered every object in
+    // the document while replaying, because replay snapshots never reached the
+    // spatial index. `applyReplaySnapshot` now keeps the index in sync, so
+    // replay culls like any other frame and the bypass — a performance cliff on
+    // exactly the large documents culling exists for — is gone. Nothing needs to
+    // gate on `isReplaying` in this memo any more.
+
+    // If spatial culling returned IDs, use them — but always include selected + anything
     // in the store that the spatial index missed (race-condition guard).
     if (visibleIds.length > 0) {
       const visibleSet = new Set(visibleIds);
@@ -369,6 +411,29 @@ export const Canvas: React.FC<CanvasProps> = ({ activeTool, selectedIds, setSele
       if (containerRef.current) {
         containerRef.current.style.backgroundPosition = `${cameraSystem.x}px ${cameraSystem.y}px`;
         containerRef.current.style.backgroundSize = `${20 * cameraSystem.zoom}px ${20 * cameraSystem.zoom}px`;
+      }
+
+      // The force field ring rides the same imperative path as the camera. It
+      // was React state written on every mousemove, which re-rendered the whole
+      // canvas 60 times a second precisely while a force was being applied —
+      // the one moment the frame budget is already spoken for.
+      const ring = forceRingRef.current;
+      if (ring) {
+        const cursor = forceCursorRef.current;
+        if (cursor) {
+          ring.position(cursor);
+          ring.visible(true);
+          // Keep the outline a constant thickness on screen at any zoom.
+          const invZoom = 1 / (cameraSystem.zoom || 1);
+          ring.getChildren().forEach((child) => {
+            if (typeof (child as Konva.Circle).strokeWidth === 'function' && (child as Konva.Circle).stroke()) {
+              (child as Konva.Circle).strokeWidth(2 * invZoom);
+              (child as Konva.Circle).dash([10 * invZoom, 8 * invZoom]);
+            }
+          });
+        } else if (ring.visible()) {
+          ring.visible(false);
+        }
       }
     };
     engineEvents.on('RenderTick', handleRenderTick);
@@ -629,16 +694,22 @@ export const Canvas: React.FC<CanvasProps> = ({ activeTool, selectedIds, setSele
       setSelectedIds([]);
     }
 
-    if (activeTool === 'shockwave') {
+    if (isForceTool(activeTool)) {
       const stage = stageRef.current;
-      if (stage) {
-        const pointerPosition = stage.getPointerPosition();
-        if (pointerPosition) {
-          const x = (pointerPosition.x - cameraSystem.x) / cameraSystem.zoom;
-          const y = (pointerPosition.y - cameraSystem.y) / cameraSystem.zoom;
+      const pointerPosition = stage?.getPointerPosition();
+      if (pointerPosition) {
+        const x = (pointerPosition.x - cameraSystem.x) / cameraSystem.zoom;
+        const y = (pointerPosition.y - cameraSystem.y) / cameraSystem.zoom;
+        if (activeTool === 'shockwave') {
+          // An impulse, not a hold — one burst per press.
           applyGlobalForce(x, y, 'shockwave');
+        } else {
+          beginHeldForce(activeTool, x, y);
         }
       }
+      // A force press is not a selection or a tool gesture; don't let the
+      // select tool start a marquee underneath the force being applied.
+      return;
     }
 
     toolManager.handlePointerDown(e);
@@ -665,14 +736,15 @@ export const Canvas: React.FC<CanvasProps> = ({ activeTool, selectedIds, setSele
     const x = (pointerPosition.x - cameraSystem.x) / cameraSystem.zoom;
     const y = (pointerPosition.y - cameraSystem.y) / cameraSystem.zoom;
 
-    if (e.evt && e.evt.buttons === 1) { // Mouse is held down
-      if (activeTool === 'magnet') {
-        applyGlobalForce(x, y, 'magnet');
-      } else if (activeTool === 'repel') {
-        applyGlobalForce(x, y, 'repel');
-      } else if (activeTool === 'wind') {
-        applyGlobalForce(x, y, 'wind', { dx: e.evt.movementX, dy: e.evt.movementY });
-      }
+    // Track the cursor in world space while a force tool is active, so the field
+    // ring can be drawn where the force will actually land. Only while a force
+    // tool is active — this is a per-move setState and must not exist otherwise.
+    if (isForceTool(activeTool)) {
+      // A ref, not state: the ring is repositioned by the render tick above.
+      forceCursorRef.current = { x, y };
+      // Steer the held force. The force itself is applied by the physics frame
+      // loop, not from here, so holding still keeps working.
+      moveHeldForce(x, y, e.evt?.movementX ?? 0, e.evt?.movementY ?? 0);
     }
   };
 
@@ -683,6 +755,9 @@ export const Canvas: React.FC<CanvasProps> = ({ activeTool, selectedIds, setSele
       spacePanTool.onPointerUp({ editor, camera: cameraSystem, setOverlayState }, e);
       return;
     }
+    // Releasing always ends a held force, including when the release happens
+    // over a panel or outside the stage.
+    endHeldForce();
     toolManager.handlePointerUp(e);
   };
 
@@ -732,13 +807,30 @@ export const Canvas: React.FC<CanvasProps> = ({ activeTool, selectedIds, setSele
                 isSelected={selectedIds.includes(id)}
                 onSelect={handleObjectSelect}
                 onThrow={handleThrow}
-                onDragMoveHandler={applyAttractRepel}
-                onDragEndHandler={commitNudges}
                 stageScale={cameraSystem.zoom}
                 selectedIdsRef={selectedIdsRef}
               />
             );
           })}
+
+          {/* The force field, drawn at the radius the simulation will actually
+              use. Non-interactive so it never intercepts the press that applies
+              the force. */}
+          {activeForce && (
+            <Group ref={forceRingRef} listening={false} visible={false}>
+              <Circle
+                radius={activeForce.radius}
+                stroke={activeForce.colorToken}
+                strokeWidth={2}
+                dash={[10, 8]}
+                opacity={0.7}
+              />
+              <Circle radius={activeForce.radius} fill={activeForce.colorToken} opacity={0.06} />
+              {/* A solid centre mark, so the point the force originates from is
+                  unmistakable even when the ring runs off-screen. */}
+              <Circle radius={5} fill={activeForce.colorToken} />
+            </Group>
+          )}
 
           {/* One shared Transformer for the whole canvas.
               There used to be one mounted per object — with 100 objects that

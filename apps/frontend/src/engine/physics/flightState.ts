@@ -29,8 +29,19 @@ class PhysicsFlightState {
     const states = provider.awareness?.getStates();
     if (!states) return;
 
+    const localClientId = provider.awareness?.clientID;
+
     const next: Record<string, FlightPose> = {};
-    states.forEach((state) => {
+    states.forEach((state, clientId) => {
+      // Skip our own broadcast. This is what made a throw judder on the screen
+      // of the person who threw it: the physics loop writes the Konva node
+      // every frame, but our own pose came back through awareness at 30Hz and
+      // re-rendered the object at a position up to a frame and a half stale.
+      // Two writers, alternating — which looks exactly like the object phasing
+      // rapidly back and forth. The owner already sees its own motion applied
+      // imperatively; this map is only for rendering *other* people's throws.
+      if (clientId === localClientId) return;
+
       const throws = (state as { throws?: Record<string, FlightPose | null> } | undefined)?.throws;
       if (!throws) return;
       Object.entries(throws).forEach(([id, pose]) => {
@@ -63,15 +74,27 @@ class PhysicsFlightState {
   };
 
   getPose = (id: string): FlightPose | undefined => this.poses[id];
-
-  /** Subscribe a component to one object's flight pose. */
-  useFlight(id: string): FlightPose | undefined {
-    return useSyncExternalStore(
-      this.subscribe,
-      () => this.poses[id],
-      () => undefined
-    );
-  }
 }
 
 export const physicsFlight = new PhysicsFlightState();
+
+/**
+ * Subscribe a component to one object's flight pose.
+ *
+ * A module-level function rather than a method on `PhysicsFlightState`: a hook
+ * living on a class is invisible to `react-hooks/rules-of-hooks`, which can
+ * only see "a hook called inside a class" and reports it as an error. The call
+ * was always legal — `ObjectRenderer` invokes it unconditionally from its
+ * function body — but keeping the hook where static analysis can verify that is
+ * worth more than the syntactic nicety of `physicsFlight.useFlight(id)`.
+ *
+ * `subscribe` and `getPose` are bound arrow properties, so the references
+ * handed to `useSyncExternalStore` are stable and it never resubscribes.
+ */
+export function useFlight(id: string): FlightPose | undefined {
+  return useSyncExternalStore(
+    physicsFlight.subscribe,
+    () => physicsFlight.getPose(id),
+    () => undefined
+  );
+}

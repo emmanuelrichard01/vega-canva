@@ -6,7 +6,7 @@ import { useStore } from '../hooks/useStore';
 import { cameraSystem } from '../engine/CameraSystem';
 import { gridSnap } from '../engine/interaction/gridSnap';
 import { presenceManager } from '../engine/presence/PresenceManager';
-import { physicsFlight } from '../engine/physics/flightState';
+import { useFlight } from '../engine/physics/flightState';
 import { hasText, type AnyNode, type TextBearingNode } from '../engine/model/schema';
 import { ObjectPresenceIndicator } from './canvas/ObjectPresenceIndicator';
 import { NodeEditor } from './canvas/NodeEditor';
@@ -22,8 +22,6 @@ interface ObjectRendererProps {
   isSelected: boolean;
   onSelect: (id: string, e?: Konva.KonvaEventObject<MouseEvent>) => void;
   onThrow?: (id: string, x: number, y: number, vx: number, vy: number) => void;
-  onDragMoveHandler?: (id: string, x: number, y: number, mode: 'attract' | 'repel' | null) => void;
-  onDragEndHandler?: (id: string) => void;
   stageScale?: number;
   /**
    * Stable-identity ref holding the live multi-selection, read imperatively
@@ -55,8 +53,9 @@ interface SiblingDragState {
  * single shared transformer lives in Canvas and is pointed at the selection.
  */
 export const ObjectRenderer = React.memo(
-  ({ objId, isSelected, onSelect, onThrow, onDragMoveHandler, onDragEndHandler, stageScale = 1, selectedIdsRef }: ObjectRendererProps) => {
+  ({ objId, isSelected, onSelect, onThrow, stageScale = 1, selectedIdsRef }: ObjectRendererProps) => {
     const node = useStore((state) => state.objects[objId]);
+    const forceToolActive = useStore((state) => state.forceToolActive);
 
     const shapeRef = useRef<Konva.Group>(null);
     const lastPos = useRef({ x: 0, y: 0, time: 0 });
@@ -70,7 +69,7 @@ export const ObjectRenderer = React.memo(
     // Previously every object scanned every peer's awareness state on every
     // render to find this — O(objects x peers) per frame. It is now a single
     // shared subscription publishing an id-keyed map.
-    const flight = physicsFlight.useFlight(objId);
+    const flight = useFlight(objId);
 
     useEffect(() => {
       const handleRequestEdit = (e: Event) => {
@@ -157,16 +156,9 @@ export const ObjectRenderer = React.memo(
             }
           });
           stage?.batchDraw();
-          return;
-        }
-
-        if (onDragMoveHandler) {
-          const evt = e.evt;
-          const mode = evt?.shiftKey ? 'attract' : evt?.altKey ? 'repel' : null;
-          onDragMoveHandler(objId, e.target.x(), e.target.y(), mode);
         }
       },
-      [objId, onDragMoveHandler]
+      []
     );
 
     const handleDragEnd = useCallback(
@@ -193,8 +185,6 @@ export const ObjectRenderer = React.memo(
           return;
         }
 
-        onDragEndHandler?.(objId);
-
         const speed = Math.hypot(velocity.current.x, velocity.current.y);
         if (speed > 0.5 && onThrow) {
           // Matter positions bodies by their centre, which is precisely what
@@ -204,7 +194,7 @@ export const ObjectRenderer = React.memo(
           updateNode(objId, { x: e.target.x() - halfW, y: e.target.y() - halfH });
         }
       },
-      [objId, onDragEndHandler, onThrow]
+      [objId, onThrow]
     );
 
     const handleDblClick = useCallback(() => {
@@ -265,7 +255,10 @@ export const ObjectRenderer = React.memo(
           scaleX={node.scaleX}
           scaleY={node.scaleY}
           opacity={node.opacity}
-          draggable={!flight && !node.locked}
+          // Not draggable while a force tool is armed: pressing on or near an
+          // object would otherwise start a drag instead of applying the force,
+          // which made the tools look inert exactly where you would aim them.
+          draggable={!flight && !node.locked && !forceToolActive}
           listening={!node.locked}
           onClick={(e) => onSelect(objId, e)}
           onTap={(e) => onSelect(objId, e as unknown as Konva.KonvaEventObject<MouseEvent>)}
