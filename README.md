@@ -209,6 +209,12 @@ throttle (15Hz) and the idle timer, and everything ephemeral goes through it —
 having two writers for the `cursor` field is what left ghost pointers parked on
 the canvas after someone moved to a side panel.
 
+**Cursor and viewport answer different questions.** The cursor is where a
+pointer is right now, and it is cleared the moment that pointer leaves the
+canvas. The viewport is where someone is *working*, and it persists while they
+read, think, or use a panel — so it, not the cursor, is what keeps a
+collaborator on the radar and in "Jump to…".
+
 Authorship is denormalized onto each node at creation, so a node still shows who
 made it after that person disconnects.
 

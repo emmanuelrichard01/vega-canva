@@ -500,18 +500,43 @@ export const Canvas: React.FC<CanvasProps> = ({ activeTool, selectedIds, setSele
     presenceManager.clearCursor();
   };
 
-  const handleWheel = (e: any) => {
-    const evt = e.evt || e;
-    if (evt.preventDefault) evt.preventDefault();
-    if (evt.ctrlKey) {
-      // The browser reports a trackpad pinch as ctrl+wheel with a continuous
-      // delta, so pass it through rather than reducing the gesture to a
-      // direction and a fixed step.
-      cameraSystem.zoomByWheel(evt.deltaY, evt.clientX, evt.clientY);
-    } else {
-      cameraSystem.pan(evt.deltaX, evt.deltaY);
-    }
-  };
+  /**
+   * Wheel and trackpad, bound natively and exactly once.
+   *
+   * This used to be a React `onWheel` on *both* the container and the Stage.
+   * That was two bugs at once:
+   *
+   * 1. **It fired twice.** Konva's stage handler ran, and the same native
+   *    event then bubbled to the container's React handler, so every scroll
+   *    panned and every pinch zoomed twice as far as it should.
+   * 2. **`preventDefault` did nothing.** React attaches wheel listeners as
+   *    passive, so the call was rejected — hundreds of "Unable to
+   *    preventDefault inside passive event listener invocation" warnings, and,
+   *    worse, the browser went on to apply its own page zoom and scroll on top
+   *    of the canvas camera.
+   *
+   * A passive listener cannot be opted out of through the React prop, so this
+   * has to be bound directly. `{ passive: false }` is the entire point.
+   */
+  useEffect(() => {
+    const el = containerRef.current;
+    if (!el) return;
+
+    const onWheel = (evt: WheelEvent) => {
+      evt.preventDefault();
+      if (evt.ctrlKey) {
+        // The browser reports a trackpad pinch as ctrl+wheel with a continuous
+        // delta, so pass it through rather than reducing the gesture to a
+        // direction and a fixed step.
+        cameraSystem.zoomByWheel(evt.deltaY, evt.clientX, evt.clientY);
+      } else {
+        cameraSystem.pan(evt.deltaX, evt.deltaY);
+      }
+    };
+
+    el.addEventListener('wheel', onWheel, { passive: false });
+    return () => el.removeEventListener('wheel', onWheel);
+  }, []);
 
   /**
    * Two-finger pinch-zoom and pan.
@@ -570,6 +595,33 @@ export const Canvas: React.FC<CanvasProps> = ({ activeTool, selectedIds, setSele
       if (e.touches.length === 0) isMultiTouchRef.current = false;
     }
   };
+
+  /**
+   * Publish where this client is looking, so other people stay on the radar.
+   *
+   * The camera is the durable presence signal — it says where someone is
+   * working even when they are reading rather than moving the mouse, or have
+   * the pointer over a panel. The cursor cannot do that job: it is correctly
+   * cleared when the pointer leaves the canvas, which is exactly when a
+   * collaborator used to disappear from the minimap entirely.
+   *
+   * `cameraSystem.x/y` is the stage translate, so the world point at the
+   * top-left of the screen is `-x / zoom`.
+   */
+  useEffect(() => {
+    const publish = () => {
+      presenceManager.updateViewport({
+        x: -cameraSystem.x / cameraSystem.zoom,
+        y: -cameraSystem.y / cameraSystem.zoom,
+        width: cameraSystem.width,
+        height: cameraSystem.height,
+        zoom: cameraSystem.zoom,
+      });
+    };
+    publish();
+    engineEvents.on('CameraChanged', publish);
+    return () => { engineEvents.off('CameraChanged', publish); };
+  }, []);
 
   // Push ephemeral state to PresenceManager
   useEffect(() => {
@@ -731,7 +783,6 @@ export const Canvas: React.FC<CanvasProps> = ({ activeTool, selectedIds, setSele
       ref={containerRef}
       onMouseMove={handleMouseMove}
       onMouseLeave={handleMouseLeave}
-      onWheel={handleWheel}
       onTouchStart={handleTouchStartNative}
       onTouchMove={handleTouchMoveNative}
       onTouchEnd={handleTouchEndNative}
@@ -745,7 +796,6 @@ export const Canvas: React.FC<CanvasProps> = ({ activeTool, selectedIds, setSele
         y={cameraSystem.y}
         scaleX={cameraSystem.zoom}
         scaleY={cameraSystem.zoom}
-        onWheel={handleWheel}
         onMouseDown={handleStageClick}
         onTouchStart={handleStageClick}
         onMouseMove={handleMouseMoveExt}

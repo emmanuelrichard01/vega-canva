@@ -1,5 +1,8 @@
 import { provider } from '../engine/document';
-import { smoothingFactor } from '../engine/cursor';
+// Imported from the leaf, not the `engine/cursor` barrel: the barrel also
+// exports the RemoteCursors component, and pulling React and the whole
+// document layer into a plain util is how import cycles start.
+import { smoothingFactor } from '../engine/cursor/remoteCursor';
 
 export interface Presence {
   userId: number;

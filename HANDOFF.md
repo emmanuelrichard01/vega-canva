@@ -177,6 +177,39 @@ Rebuilt. The old system was 8 files and 362 lines to draw one arrow; it is now
   AA with white text and the other half fails with black; `chipColorsFor` moves
   the fill the shorter way to readability and is pinned by tests over every
   palette entry plus arbitrary input, because sign-in lets people choose.
+- Authored cursors rasterise at **32px**, not the 24 of their viewBox. Windows'
+  own pointers are about 32, and a smaller one reads as incidental. Hotspots
+  are in 32ths — multiply a viewBox coordinate by 4/3.
+
+### Presence: cursor is not the same signal as viewport
+
+Making mouse-leave actually clear the cursor exposed that `updateViewport` had
+**never been called by anything**, so `state.viewport` was permanently `null`.
+The radar had only the raw cursor to go on, and the old unthrottled window
+mousemove had been hiding that by publishing a cursor from anywhere on the
+page. Clear the cursor honestly and collaborators vanish from the minimap the
+moment they touch a panel.
+
+`ViewportState` was also the wrong shape — it stored only `x`/`y`/`zoom`, while
+`MinimapEngine` reads `u.viewport.width / u.viewport.zoom`, so remote viewport
+rectangles computed `NaN` and drew nothing. It now carries `width`/`height`
+too, `Canvas` publishes on every `CameraChanged`, and the units are documented
+on the type: `x`/`y` are **world** coordinates of the top-left, `width`/`height`
+are **screen** pixels.
+
+The rule: **cursor is "where the pointer is now" and is meant to disappear;
+viewport is "where this person is working" and is meant to persist.** Anything
+that needs someone to stay visible — radar, "Jump to…", off-screen markers —
+reads viewport.
+
+### Wheel input (`Canvas.tsx`)
+
+`onWheel` was on **both** the container and the Konva `Stage`, so every scroll
+panned twice and every pinch zoomed twice. React also attaches wheel listeners
+as passive, so the `preventDefault()` was rejected — hundreds of console
+warnings, and the browser applied its own page zoom on top of the canvas
+camera. It is now one native listener with `{ passive: false }`, which is the
+only way to get a non-passive wheel handler; do not put it back on a React prop.
 
 ### UI (`ToolWorkspace`, `WorkspaceShell`, `index.css`)
 

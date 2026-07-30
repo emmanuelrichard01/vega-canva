@@ -99,9 +99,19 @@ class PresenceEngine {
     this.scheduleUpdate();
   }
 
-  public updateViewport(x: number, y: number, zoom: number) {
-    this.localState.viewport = { x, y, zoom };
-    this.resetIdleTimer();
+  /**
+   * Where this client is looking. See `ViewportState` for the units.
+   *
+   * Nothing ever called this, so `viewport` was permanently `null` and the
+   * radar had only a raw cursor to go on — which meant a collaborator vanished
+   * from it the moment their pointer touched a panel. Viewport is the durable
+   * signal: it says where someone is working whether or not they are moving
+   * the mouse.
+   */
+  public updateViewport(viewport: { x: number; y: number; width: number; height: number; zoom: number }) {
+    this.localState.viewport = viewport;
+    // Deliberately does not reset the idle timer: panning is activity, but a
+    // window resize or a programmatic fly-to is not, and this fires for both.
     this.scheduleUpdate();
   }
 

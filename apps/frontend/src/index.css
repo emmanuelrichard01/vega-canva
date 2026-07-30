@@ -790,11 +790,17 @@ textarea:focus-visible {
 
    Native keywords do the work wherever one actually means the right thing.
    Three tools have no native equivalent — erase, note, comment — and get an
-   authored cursor drawn in the same 24px, 2px-stroke language as the dock
+   authored cursor drawn in the same 2px-stroke, 24-unit language as the dock
    icons they came from, so picking a tool visibly puts that tool in your hand.
    Each carries a white halo so it survives on canvas content of any colour,
    and each falls back to a native keyword: Safari does not render SVG cursors,
    and a forced-colors user should not be handed a bitmap at all.
+
+   They rasterise at 32px, not at the 24 of the viewBox. Windows' own pointers
+   are around 32, and an authored cursor drawn smaller than the system one
+   reads as incidental rather than as the tool you just picked. 32 is also the
+   largest size every platform honours without quietly ignoring the image.
+   Hotspots are therefore in 32ths: multiply a viewBox coordinate by 4/3.
    ========================================= */
 
 .canvas-container[data-cursor-mode="pointer"] { cursor: default; }
@@ -810,15 +816,15 @@ textarea:focus-visible {
 .canvas-container[data-cursor-mode="pan"]:active { cursor: grabbing; }
 
 .canvas-container[data-cursor-mode="erase"] {
-  cursor: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='24' height='24' viewBox='0 0 24 24' fill='none' stroke-linecap='round' stroke-linejoin='round'%3E%3Cg stroke='%23ffffff' stroke-width='5'%3E%3Cpath d='m7 20-3.3-3.3a2 2 0 0 1 0-2.8l9.6-9.6a2 2 0 0 1 2.8 0l4.6 4.6a2 2 0 0 1 0 2.8L13 20'/%3E%3Cpath d='M20 20H7'/%3E%3Cpath d='m6 11 7 7'/%3E%3C/g%3E%3Cg stroke='%23111827' stroke-width='2'%3E%3Cpath d='m7 20-3.3-3.3a2 2 0 0 1 0-2.8l9.6-9.6a2 2 0 0 1 2.8 0l4.6 4.6a2 2 0 0 1 0 2.8L13 20'/%3E%3Cpath d='M20 20H7'/%3E%3Cpath d='m6 11 7 7'/%3E%3C/g%3E%3C/svg%3E") 5 19, crosshair;
+  cursor: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='32' height='32' viewBox='0 0 24 24' fill='none' stroke-linecap='round' stroke-linejoin='round'%3E%3Cg stroke='%23ffffff' stroke-width='5'%3E%3Cpath d='m7 20-3.3-3.3a2 2 0 0 1 0-2.8l9.6-9.6a2 2 0 0 1 2.8 0l4.6 4.6a2 2 0 0 1 0 2.8L13 20'/%3E%3Cpath d='M20 20H7'/%3E%3Cpath d='m6 11 7 7'/%3E%3C/g%3E%3Cg stroke='%23111827' stroke-width='2'%3E%3Cpath d='m7 20-3.3-3.3a2 2 0 0 1 0-2.8l9.6-9.6a2 2 0 0 1 2.8 0l4.6 4.6a2 2 0 0 1 0 2.8L13 20'/%3E%3Cpath d='M20 20H7'/%3E%3Cpath d='m6 11 7 7'/%3E%3C/g%3E%3C/svg%3E") 7 25, crosshair;
 }
 
 .canvas-container[data-cursor-mode="note"] {
-  cursor: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='24' height='24' viewBox='0 0 24 24' fill='none' stroke-linecap='round' stroke-linejoin='round'%3E%3Cg stroke='%23ffffff' stroke-width='5'%3E%3Cpath d='M4 4h16v10l-6 6H4z'/%3E%3Cpath d='M20 14h-6v6'/%3E%3C/g%3E%3Cpath d='M4 4h16v10l-6 6H4z' fill='%23ffffff'/%3E%3Cg stroke='%23111827' stroke-width='2'%3E%3Cpath d='M4 4h16v10l-6 6H4z'/%3E%3Cpath d='M20 14h-6v6'/%3E%3C/g%3E%3C/svg%3E") 4 4, copy;
+  cursor: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='32' height='32' viewBox='0 0 24 24' fill='none' stroke-linecap='round' stroke-linejoin='round'%3E%3Cg stroke='%23ffffff' stroke-width='5'%3E%3Cpath d='M4 4h16v10l-6 6H4z'/%3E%3Cpath d='M20 14h-6v6'/%3E%3C/g%3E%3Cpath d='M4 4h16v10l-6 6H4z' fill='%23ffffff'/%3E%3Cg stroke='%23111827' stroke-width='2'%3E%3Cpath d='M4 4h16v10l-6 6H4z'/%3E%3Cpath d='M20 14h-6v6'/%3E%3C/g%3E%3C/svg%3E") 5 5, copy;
 }
 
 .canvas-container[data-cursor-mode="comment"] {
-  cursor: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='24' height='24' viewBox='0 0 24 24' fill='none' stroke-linecap='round' stroke-linejoin='round'%3E%3Cg stroke='%23ffffff' stroke-width='5'%3E%3Cpath d='M21 14a2 2 0 0 1-2 2H8l-5 5V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z'/%3E%3C/g%3E%3Cpath d='M21 14a2 2 0 0 1-2 2H8l-5 5V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z' fill='%23ffffff'/%3E%3Cpath d='M21 14a2 2 0 0 1-2 2H8l-5 5V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z' stroke='%23111827' stroke-width='2'/%3E%3C/svg%3E") 3 20, copy;
+  cursor: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='32' height='32' viewBox='0 0 24 24' fill='none' stroke-linecap='round' stroke-linejoin='round'%3E%3Cg stroke='%23ffffff' stroke-width='5'%3E%3Cpath d='M21 14a2 2 0 0 1-2 2H8l-5 5V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z'/%3E%3C/g%3E%3Cpath d='M21 14a2 2 0 0 1-2 2H8l-5 5V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z' fill='%23ffffff'/%3E%3Cpath d='M21 14a2 2 0 0 1-2 2H8l-5 5V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z' stroke='%23111827' stroke-width='2'/%3E%3C/svg%3E") 4 27, copy;
 }
 
 /* A bitmap cursor ignores the user's contrast and pointer-size settings, so

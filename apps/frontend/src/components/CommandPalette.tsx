@@ -135,8 +135,15 @@ export const CommandPalette: React.FC<CommandPaletteProps> = ({ onClose, onSelec
         group: 'People',
         icon: <MousePointer2 size={16} color={state.user.color} />,
         perform: () => {
-          const target = state.viewport ?? state.cursor;
-          if (target) flyTo(target.x, target.y);
+          // Their viewport is stored as its top-left corner, so jump to the
+          // middle of what they can see rather than to its corner. Falling
+          // back to the raw cursor covers someone whose camera has not moved.
+          const v = state.viewport;
+          if (v && v.width && v.zoom) {
+            flyTo(v.x + v.width / (2 * v.zoom), v.y + v.height / (2 * v.zoom));
+          } else if (state.cursor) {
+            flyTo(state.cursor.x, state.cursor.y);
+          }
         },
       });
     });
