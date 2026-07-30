@@ -1,4 +1,4 @@
-import React, { useEffect, useMemo, useRef, useState } from 'react';
+import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import ReactDOM from 'react-dom';
 import { provider } from '../document';
 import { cameraSystem } from '../CameraSystem';
@@ -33,6 +33,8 @@ interface RemoteIdentity {
   color: string;
   activity: string | null;
   away: boolean;
+  /** Their pointer is on the canvas — i.e. there is a cursor to draw at all. */
+  onCanvas: boolean;
 }
 
 /** Live interpolation state for one remote pointer. */
@@ -41,8 +43,6 @@ interface Track {
   y: number;
   /** False until the first broadcast arrives, so a cursor never flies in from 0,0. */
   seeded: boolean;
-  /** Last opacity/scale written, so the loop only touches the DOM on change. */
-  shown: boolean | null;
 }
 
 const OVERLAY_Z = 999999999;
@@ -113,12 +113,17 @@ export const RemoteCursors: React.FC = () => {
           color: state.user.color || '#6B7280',
           activity: state.activity ?? null,
           away: state.status === 'away',
+          onCanvas: !!state.cursor,
         });
       });
       next.sort((a, b) => a.clientId - b.clientId);
 
+      // `onCanvas` is in the signature on purpose. Whether a cursor is shown at
+      // all is React's job, not the frame loop's — see the note on the loop.
+      // It only flips when someone enters or leaves the canvas, so this costs
+      // a render per crossing, not per broadcast.
       const nextSignature = next
-        .map((r) => `${r.clientId}:${r.name}:${r.color}:${r.activity}:${r.away}`)
+        .map((r) => `${r.clientId}:${r.name}:${r.color}:${r.activity}:${r.away}:${r.onCanvas}`)
         .join('|');
       if (nextSignature === signature) return;
       signature = nextSignature;
@@ -148,83 +153,80 @@ export const RemoteCursors: React.FC = () => {
     }
   }, [labelSignature, remotes]);
 
+  /**
+   * Write every remote pointer's position to the DOM. `alpha` of 1 snaps.
+   *
+   * **Position only.** Whether a cursor is *visible* is decided in React from
+   * `onCanvas`, and that split matters: visibility used to be set here, which
+   * meant a collaborator stayed at `opacity: 0` until the next animation frame.
+   * In a backgrounded or throttled tab that frame can be a second away or never
+   * arrive at all, so the person was simply not there.
+   */
+  const place = useCallback((alpha: number) => {
+    const root = rootRef.current;
+    const states = provider.awareness?.getStates();
+    if (!root || !states) return;
+
+    const viewport = { width: window.innerWidth, height: window.innerHeight };
+    const mine = provider.awareness?.clientID;
+
+    states.forEach((state: any, clientId: number) => {
+      if (clientId === mine || !state.user) return;
+
+      if (!state.cursor) {
+        // Off the canvas. Re-seed so that returning at a different edge fades
+        // in where they are rather than sliding across from where they left.
+        const stale = tracks.current.get(clientId);
+        if (stale) stale.seeded = false;
+        return;
+      }
+
+      const node = root.querySelector<HTMLElement>(`[data-cursor="${clientId}"]`);
+      if (!node) return;
+
+      const targetX = state.cursor.x * cameraSystem.zoom + cameraSystem.x;
+      const targetY = state.cursor.y * cameraSystem.zoom + cameraSystem.y;
+
+      let track = tracks.current.get(clientId);
+      if (!track || !track.seeded) {
+        track = { x: targetX, y: targetY, seeded: true };
+        tracks.current.set(clientId, track);
+      } else {
+        track.x += (targetX - track.x) * alpha;
+        track.y += (targetY - track.y) * alpha;
+      }
+
+      node.style.transform = `translate3d(${track.x}px, ${track.y}px, 0)`;
+
+      const chip = node.querySelector<HTMLElement>(`[data-chip="${clientId}"]`);
+      const size = chipSizes.current.get(clientId);
+      if (chip && size) {
+        const p = placeChip({ x: track.x, y: track.y }, size, viewport);
+        chip.style.transform = `translate3d(${p.left - track.x}px, ${p.top - track.y}px, 0)`;
+      }
+    });
+  }, []);
+
+  // Place as soon as the roster changes, so a cursor is already in the right
+  // spot on the frame it appears instead of one frame later at the origin.
+  useEffect(() => { place(1); }, [place, labelSignature, remotes]);
+
   useEffect(() => {
     let frame = 0;
     let last = performance.now();
 
     const tick = (now: number) => {
       frame = requestAnimationFrame(tick);
-
       const dt = now - last;
       last = now;
-      const root = rootRef.current;
-      const states = provider.awareness?.getStates();
-      if (!root || !states) return;
-
       // Snapping is the honest reading of "reduce motion" here: interpolation
       // exists to smooth network jitter, and smoothing *is* the motion.
-      const alpha = reducedMotion ? 1 : smoothingFactor(dt);
-      const viewport = { width: window.innerWidth, height: window.innerHeight };
-      const mine = provider.awareness?.clientID;
-
-      states.forEach((state: any, clientId: number) => {
-        if (clientId === mine || !state.user) return;
-        const node = root.querySelector<HTMLElement>(`[data-cursor="${clientId}"]`);
-        if (!node) return;
-
-        const body = node.firstElementChild as HTMLElement | null;
-        const chip = node.querySelector<HTMLElement>(`[data-chip="${clientId}"]`);
-        if (!body) return;
-
-        // No cursor field means they are off the canvas — over a panel, or
-        // gone from the window. Fade out, but hold position so returning to
-        // roughly where they left does not look like a teleport.
-        const present = !!state.cursor;
-        if (present) {
-          const targetX = state.cursor.x * cameraSystem.zoom + cameraSystem.x;
-          const targetY = state.cursor.y * cameraSystem.zoom + cameraSystem.y;
-
-          let track = tracks.current.get(clientId);
-          if (!track || !track.seeded) {
-            track = { x: targetX, y: targetY, seeded: true, shown: track?.shown ?? null };
-            tracks.current.set(clientId, track);
-          } else {
-            track.x += (targetX - track.x) * alpha;
-            track.y += (targetY - track.y) * alpha;
-          }
-
-          node.style.transform = `translate3d(${track.x}px, ${track.y}px, 0)`;
-
-          if (chip) {
-            const size = chipSizes.current.get(clientId);
-            if (size) {
-              const placement = placeChip({ x: track.x, y: track.y }, size, viewport);
-              chip.style.transform = `translate3d(${placement.left - track.x}px, ${placement.top - track.y}px, 0)`;
-            }
-          }
-        }
-
-        const track = tracks.current.get(clientId);
-        // Re-seed on the way out, so someone who leaves at one edge and comes
-        // back at the other fades in where they are rather than sliding there.
-        if (track && !present) track.seeded = false;
-
-        if (track && track.shown !== present) {
-          track.shown = present;
-          body.style.transitionDuration = reducedMotion ? '0ms' : `${present ? ENTER_MS : EXIT_MS}ms`;
-          body.style.opacity = present ? (state.status === 'away' ? '0.45' : '1') : '0';
-          body.style.transform = present ? 'scale(1)' : 'scale(0.82)';
-        } else if (track && present) {
-          // Away can flip without presence changing.
-          const wanted = state.status === 'away' ? '0.45' : '1';
-          if (body.style.opacity !== wanted) body.style.opacity = wanted;
-        }
-      });
+      place(reducedMotion ? 1 : smoothingFactor(dt));
     };
 
     frame = requestAnimationFrame(tick);
     return () => cancelAnimationFrame(frame);
-  }, [reducedMotion]);
+  }, [place, reducedMotion]);
 
   const palettes = useMemo(() => {
     const map = new Map<number, ChipColors>();
@@ -257,12 +259,14 @@ export const RemoteCursors: React.FC = () => {
                 the per-frame translate is never fighting a transition. */}
             <div
               style={{
-                opacity: 0,
-                transform: 'scale(0.82)',
+                opacity: remote.onCanvas ? (remote.away ? 0.45 : 1) : 0,
+                transform: remote.onCanvas ? 'scale(1)' : 'scale(0.82)',
                 transformOrigin: `${HOTSPOT.x}px ${HOTSPOT.y}px`,
                 transitionProperty: 'opacity, transform',
                 transitionTimingFunction: EASE,
-                transitionDuration: `${ENTER_MS}ms`,
+                transitionDuration: reducedMotion
+                  ? '0ms'
+                  : `${remote.onCanvas ? ENTER_MS : EXIT_MS}ms`,
                 willChange: 'opacity, transform',
               }}
             >
