@@ -559,8 +559,6 @@ textarea:focus-visible {
   .workspace-header { padding: 0 16px; gap: 16px; }
   /* The avatar stack already communicates who is here. */
   .hdr-collab-count { display: none; }
-  /* Toggle labels; the switches keep their tooltips. */
-  .hdr-switch-label { display: none; }
 }
 
 /* ---------- ≤1200px: shed the remaining decorative labels ---------- */
@@ -568,6 +566,12 @@ textarea:focus-visible {
   /* The status dot is colour-coded and tooltipped; the word is redundant. */
   .hdr-sync-text { display: none; }
   .hdr-play-text { display: none; }
+  /* Toggle labels go last, and reluctantly.
+     They used to drop at 1400px, which is above the width of a typical laptop
+     — so on most screens the header showed two unlabelled pills and the only
+     way to learn what they did was to hover one. A switch with no name is not
+     a control, it is a guess. Everything else decorative is shed first. */
+  .hdr-switch-label { display: none; }
   .workspace-header { gap: 12px; }
   .hdr-divider { display: none; }
 }

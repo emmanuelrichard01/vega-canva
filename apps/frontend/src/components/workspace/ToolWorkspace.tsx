@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useEffect, useState } from 'react';
 import { MousePointer2, Hand, Pen, PenTool as PenToolIcon, Type, Square, StickyNote, MessageSquare, ImageIcon, Mic, Sparkles, Magnet, Radiation, Waves, Zap, ArrowDownToLine } from 'lucide-react';
 import { FORCE_IDS, FORCE_SPECS, isForceTool, type ForceId } from '../../engine/physics/forces';
 
@@ -16,8 +16,30 @@ const FORCE_ICONS: Record<ForceId, React.ReactNode> = {
 
 export const ToolWorkspace: React.FC<Props> = ({ activeToolId }) => {
   const [showShapeMenu, setShowShapeMenu] = useState(false);
-  const [showMagicMenu, setShowMagicMenu] = useState(false);
   const [showPenMenu, setShowPenMenu] = useState(false);
+  /**
+   * The forces menu opens on hover *or* on click, and only a click keeps it
+   * open. Hover alone is a trap: it is invisible until you happen to pass over
+   * the icon, and on a touch device there is no hover at all — the five forces
+   * simply could not be reached.
+   */
+  const [forcesPinned, setForcesPinned] = useState(false);
+  const [forcesHovered, setForcesHovered] = useState(false);
+  const showMagicMenu = forcesPinned || forcesHovered;
+
+  // Clicking elsewhere, or pressing Escape, closes a pinned menu — otherwise a
+  // click-opened menu has no obvious way out.
+  useEffect(() => {
+    if (!forcesPinned) return;
+    const close = () => setForcesPinned(false);
+    const onKey = (e: KeyboardEvent) => { if (e.key === 'Escape') setForcesPinned(false); };
+    window.addEventListener('pointerdown', close);
+    window.addEventListener('keydown', onKey);
+    return () => {
+      window.removeEventListener('pointerdown', close);
+      window.removeEventListener('keydown', onKey);
+    };
+  }, [forcesPinned]);
 
   // Canvas.tsx owns the real ToolManager instance and reacts to this event —
   // there used to be a second, entirely unused ToolRegistry here that this
@@ -110,13 +132,25 @@ export const ToolWorkspace: React.FC<Props> = ({ activeToolId }) => {
           reaching for a force tool is itself the decision to use force. */}
       <div
         style={{ position: 'relative' }}
-        onMouseEnter={() => setShowMagicMenu(true)}
-        onMouseLeave={() => setShowMagicMenu(false)}
+        onMouseEnter={() => setForcesHovered(true)}
+        onMouseLeave={() => setForcesHovered(false)}
+        // Keep presses inside the menu away from the close-on-outside-click
+        // listener, which would otherwise cancel the button's own toggle.
+        onPointerDown={(e) => e.stopPropagation()}
       >
         <button
           className={`btn-icon ${isForceTool(activeToolId) ? 'active' : ''}`}
           aria-pressed={isForceTool(activeToolId)}
-          onClick={() => setTool(isForceTool(activeToolId) ? activeToolId : 'magnet')}
+          aria-haspopup="menu"
+          aria-expanded={showMagicMenu}
+          // Click opens the menu rather than silently selecting Pull. The five
+          // forces used to be reachable *only* by hovering — undiscoverable
+          // with a mouse and completely unreachable on a touch device, where
+          // you could press the icon but never see what was behind it.
+          onClick={() => setForcesPinned(open => !open)}
+          onKeyDown={(e) => {
+            if (e.key === 'Escape') setForcesPinned(false);
+          }}
           data-tooltip={showMagicMenu ? undefined : 'Forces — push, pull and drop objects'}
           aria-label="Forces"
           style={{ padding: '6px' }}
@@ -124,19 +158,23 @@ export const ToolWorkspace: React.FC<Props> = ({ activeToolId }) => {
           <Sparkles size={18} />
         </button>
         {showMagicMenu && (
-          <div style={{ position: 'absolute', bottom: '100%', left: '50%', transform: 'translateX(-50%)', paddingBottom: 4, zIndex: 20 }}>
+          <div role="menu" style={{ position: 'absolute', bottom: '100%', left: '50%', transform: 'translateX(-50%)', paddingBottom: 4, zIndex: 20 }}>
             <div className="panel-surface" style={{ display: 'flex', gap: 2, padding: 4 }}>
               {FORCE_IDS.map(id => (
                 <button
                   key={id}
+                  role="menuitemradio"
                   className={`btn-icon ${activeToolId === id ? 'active' : ''}`}
-                  aria-pressed={activeToolId === id}
-                  onClick={() => setTool(id)}
-                  data-tooltip={`${FORCE_SPECS[id].label} — ${FORCE_SPECS[id].hint}`}
-                  aria-label={FORCE_SPECS[id].label}
-                  style={{ padding: '6px' }}
+                  aria-checked={activeToolId === id}
+                  // Naming each force next to its icon, because five abstract
+                  // glyphs in a row tell you nothing about which one pulls.
+                  onClick={() => { setTool(id); setForcesPinned(false); }}
+                  data-tooltip={FORCE_SPECS[id].hint}
+                  aria-label={`${FORCE_SPECS[id].label} — ${FORCE_SPECS[id].hint}`}
+                  style={{ padding: '6px 8px', display: 'flex', alignItems: 'center', gap: 6, fontSize: 12, fontWeight: 500 }}
                 >
                   {FORCE_ICONS[id]}
+                  <span>{FORCE_SPECS[id].label}</span>
                 </button>
               ))}
             </div>

@@ -1,7 +1,7 @@
 import React, { useState, useRef } from 'react';
 import { useRoomState } from '../../hooks/useSync';
 import { CollaborationLayer } from './CollaborationLayer';
-import { Moon, Sun, Undo2, Redo2, Share2, Download, EyeOff, Play, PanelLeft } from 'lucide-react';
+import { Moon, Sun, Undo2, Redo2, Share2, Download, EyeOff, History, PanelLeft } from 'lucide-react';
 import { editor } from '../../engine/api/EditorAPI';
 import { useStore } from '../../hooks/useStore';
 import { Switch } from '../ui/Switch';
@@ -158,16 +158,22 @@ export const WorkspaceShell: React.FC<Props> = ({ localTitle, setLocalTitle, onT
 
         <div className="hdr-divider" style={{ width: 1, height: 24, background: 'var(--border-divider)' }} />
 
-        {/* Timeline Toggle */}
+        {/* Time Travel.
+            This read "Play" behind a play triangle, which any first-time user
+            takes for presentation mode — it is the one control in the header
+            whose label described none of what it does. It opens the session
+            replay, so it says so, and borrows that feature's own icon and
+            accent so the button and the bar it opens are recognisably the
+            same thing. */}
         <button
           className="btn-icon"
-          style={{ padding: '8px 10px', fontSize: 14, fontWeight: 600, display: 'flex', alignItems: 'center', gap: 6, color: 'var(--amber-500)', flexShrink: 0 }}
+          style={{ padding: '8px 10px', fontSize: 14, fontWeight: 600, display: 'flex', alignItems: 'center', gap: 6, color: 'var(--history-accent)', flexShrink: 0 }}
           onClick={onToggleTimeline}
-          data-tooltip="Play Session (Time Travel)"
+          data-tooltip="Replay everything that happened in this room"
           data-tooltip-pos="bottom"
-          aria-label="Play session (Time Travel)"
+          aria-label="History — replay this session"
         >
-          <Play size={16} fill="currentColor" /> <span className="hdr-play-text">Play</span>
+          <History size={16} /> <span className="hdr-play-text">History</span>
         </button>
 
         <div className="hdr-divider" style={{ width: 1, height: 24, background: 'var(--border-divider)' }} />

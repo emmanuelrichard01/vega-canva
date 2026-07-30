@@ -311,17 +311,28 @@ export const PropertiesPanel: React.FC<PropertiesPanelProps> = ({ selectedId, ov
           see why, or make a sticky heavy. */}
       {isPhysicalType(node.type) && (
         <Accordion title="Physics">
-          <Row label="Material">
+          {/* Full width rather than squeezed into a label/control row: five
+              named choices need the space, and the description below changes
+              with the selection so you can tell what you are picking before
+              you throw anything. */}
+          <div style={{ display: 'flex', flexDirection: 'column', gap: 'var(--space-2)' }}>
+            <label
+              htmlFor="material-select"
+              style={{ fontSize: 'var(--text-sm)', color: 'var(--text-secondary)' }}
+            >
+              Material
+            </label>
             <select
+              id="material-select"
               value={resolveMaterial(node).id}
               onChange={(e) => set({ material: e.target.value } as Partial<AnyNode>)}
-              aria-label="Material"
               style={{
+                width: '100%',
                 background: 'var(--surface-secondary)',
                 color: 'var(--text-primary)',
                 border: '1px solid var(--border-divider)',
                 borderRadius: 'var(--radius-md)',
-                padding: '4px 8px',
+                padding: '6px 8px',
                 fontSize: 'var(--text-sm)',
                 fontFamily: 'var(--font-sans)',
                 cursor: 'pointer',
@@ -331,10 +342,10 @@ export const PropertiesPanel: React.FC<PropertiesPanelProps> = ({ selectedId, ov
                 <option key={id} value={id}>{MATERIALS[id].label}</option>
               ))}
             </select>
-          </Row>
-          <p style={{ margin: '2px 0 0', fontSize: 'var(--text-xs)', color: 'var(--text-tertiary)', lineHeight: 1.4 }}>
-            {resolveMaterial(node).hint}
-          </p>
+            <p style={{ margin: 0, fontSize: 'var(--text-xs)', color: 'var(--text-tertiary)', lineHeight: 1.4 }}>
+              {resolveMaterial(node).hint}
+            </p>
+          </div>
         </Accordion>
       )}
 
