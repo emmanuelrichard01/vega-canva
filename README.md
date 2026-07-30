@@ -152,17 +152,37 @@ Built around the assumption that the document is large and the viewport is small
 
 Measured on a 500-object scene: **~5.7ms** to commit a single object move.
 
-### Physics — `hooks/usePhysics.ts`
+### Physics — `engine/physics/simulation.ts`
 
-Matter.js, client-authoritative, with **single-writer ownership**: every client
-runs its own world, so exactly one client owns an object while it is in motion.
-The owner simulates and commits the final position; everyone else renders the
-owner's broadcast flight path. Without that, two clients settle the same object
-at slightly different resting positions and fight over the write.
+The simulation is a plain module: node data in, transforms out. It imports
+Matter and the material profiles and **nothing else** — no React, no Konva, no
+Yjs, no awareness — so it runs in Node with no canvas and is covered by tests.
+`hooks/usePhysics.ts` is only the adapter: it decides when to step, writes
+in-flight poses straight to Konva, commits settled ones to the CRDT in a single
+transaction, and arbitrates ownership.
 
-Objects have material profiles (`utils/behaviorSystem.ts`) — a sticky floats, an
-image carries momentum, a voice note is bouncy. Physics is a global toggle and is
-persisted.
+**Single-writer ownership**: every client runs its own world, so exactly one
+client owns an object while it is in motion. The owner simulates and commits the
+final position; everyone else renders the owner's broadcast flight path. Without
+that, two clients settle the same object at slightly different resting positions
+and fight over the write.
+
+Objects collide, and being hit promotes a resting object to a moving one — a
+static body in Matter has infinite mass, so without that it behaves as a wall.
+
+**Force is a mode, not an ambient setting.** Picking a force tool (Pull, Push,
+Drop, Wind, Shockwave) turns force on by itself and shows a field ring at the
+radius the simulation will actually use. Entering the mode snapshots the layout,
+so "Restore layout" can undo the whole session in one action. The header switch
+governs only whether a flick throws.
+
+There is deliberately **no world gravity**: an infinite canvas has no floor, so a
+constant field would pull content off the board forever and nothing would ever
+settle. "Drop" is a force you aim and hold. `engine/physics/forces.ts` records
+the full reasoning.
+
+Every object has a **material** — Feather, Paper, Rubber, Wood or Stone — chosen
+in the Properties panel, deciding how far it carries and how hard it bounces.
 
 ### Export — `engine/export/`
 
@@ -213,7 +233,8 @@ apps/
         tools/       tool implementations behind one interface
         export/      exporter registry
         presence/    awareness-backed collaboration state
-        physics/     shared in-flight state
+        physics/     the simulation, force specs, shared in-flight state
+        history/     session timeline for Time Travel
         interaction/ grid snapping
         cursor/      custom cursor system
       components/
@@ -248,7 +269,9 @@ perfect-freehand, framer-motion, Vitest
 - **Groups are flat.** Members share a synthetic `parentId`; there is no
   enter-group editing and no nesting.
 - **PNG export omits audio players**, as noted above.
-- **Tests cover pure logic and CRDT behaviour** (schema normalization, migration
-  convergence, geometry). There are no component or interaction tests yet.
+- **Tests cover pure logic, CRDT behaviour and the physics simulation** (schema
+  normalization, migration convergence, geometry, session timeline, camera zoom,
+  and the simulation itself). There are still no component or interaction tests —
+  the adapter layer between the simulation and Konva is the notable gap.
 - **The dashboard lists workspaces from local storage** and does not verify they
   still exist on the server, so a deleted room can linger as a card.
