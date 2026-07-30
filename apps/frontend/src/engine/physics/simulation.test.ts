@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { PhysicsSimulation, FIXED_DT, type SimNode } from './simulation';
+import { PhysicsSimulation, FIXED_DT, type SimNode, type SimTransform } from './simulation';
 
 /**
  * Every case here corresponds to a bug that actually shipped and had to be
@@ -27,16 +27,20 @@ function simWith(nodes: SimNode[]) {
 }
 
 /** Run until everything settles, returning the last committed transforms. */
-function runToRest(sim: PhysicsSimulation, maxFrames = 600) {
-  const settled = new Map<string, { x: number; y: number; rotation: number }>();
+function runToRestTransforms(sim: PhysicsSimulation, maxFrames = 600) {
+  const settled = new Map<string, SimTransform>();
+  const woken: string[] = [];
   let frames = 0;
   while (sim.activeCount > 0 && frames < maxFrames) {
     const result = sim.advance(FIXED_DT);
     result.settled.forEach(t => settled.set(t.id, t));
+    result.woken.forEach(id => woken.push(id));
     frames++;
   }
-  return { settled, frames };
+  return { settled, woken, frames };
 }
+
+const runToRest = runToRestTransforms;
 
 describe('PhysicsSimulation - bodies', () => {
   it('creates a body per physical node and skips anchors', () => {
@@ -260,15 +264,75 @@ describe('PhysicsSimulation - stepping and settling', () => {
     expect(settled.has('a')).toBe(true);
   });
 
-  it('reports transforms in document space, not body centres', () => {
+  it('reports both coordinate spaces, and does not confuse them', () => {
+    // Conflating these shipped once: the renderer was handed the document's
+    // top-left, so a flying object drew half its own size off and visibly
+    // jumped when it landed and React took the position back over.
     const { sim } = simWith([node('a', { x: 200, y: 0 })]);
     sim.applyForce(0, 0, 'shockwave');
     const { moving } = sim.advance(FIXED_DT);
     const t = moving.find(m => m.id === 'a')!;
     const body = sim.getBody('a')!;
-    // Nodes store their top-left corner; bodies are positioned by centre.
-    expect(t.x).toBeCloseTo(body.position.x - 60, 5);
-    expect(t.y).toBeCloseTo(body.position.y - 60, 5);
+
+    // Konva groups are positioned by their centre, which is the body position.
+    expect(t.centerX).toBeCloseTo(body.position.x, 5);
+    expect(t.centerY).toBeCloseTo(body.position.y, 5);
+    // Nodes store their top-left corner, half the size back from the centre.
+    expect(t.x).toBeCloseTo(t.centerX - 60, 5);
+    expect(t.y).toBeCloseTo(t.centerY - 60, 5);
+  });
+
+  it('keeps both spaces consistent on the settled transform too', () => {
+    const { sim } = simWith([node('a', { x: 200, y: 0 })]);
+    sim.applyForce(0, 0, 'shockwave');
+    const { settled } = runToRestTransforms(sim);
+    const t = settled.get('a')!;
+    expect(t.x).toBeCloseTo(t.centerX - 60, 5);
+    expect(t.y).toBeCloseTo(t.centerY - 60, 5);
+  });
+});
+
+describe('PhysicsSimulation - collisions', () => {
+  it('knocks a resting object out of the way instead of bouncing off it', () => {
+    // Objects rest as static bodies, and a static body has infinite mass — so
+    // a thrown object collided with what it hit, but the target behaved like a
+    // wall and never moved. Contact has to promote the target to dynamic.
+    const { sim } = simWith([node('thrown'), node('target', { x: 130, y: 0 })]);
+    const targetStart = sim.getBody('target')!.position.x;
+
+    sim.launch('thrown', 60, 60, 12, 0); // centre of 'thrown', heading right
+    const { woken } = runToRestTransforms(sim);
+
+    expect(woken).toContain('target');
+    expect(sim.getBody('target')!.position.x).toBeGreaterThan(targetStart);
+  });
+
+  it('reports a collision-woken object so the caller can claim it', () => {
+    const { sim } = simWith([node('thrown'), node('target', { x: 130, y: 0 })]);
+    sim.launch('thrown', 60, 60, 12, 0);
+
+    let reported: string[] = [];
+    for (let i = 0; i < 200 && sim.activeCount > 0; i++) {
+      reported = reported.concat(sim.advance(FIXED_DT).woken);
+    }
+    // Reported once, not on every frame it remains in motion.
+    expect(reported.filter(id => id === 'target')).toHaveLength(1);
+  });
+
+  it('commits the object that was hit, not just the one thrown', () => {
+    const { sim } = simWith([node('thrown'), node('target', { x: 130, y: 0 })]);
+    sim.launch('thrown', 60, 60, 12, 0);
+    const { settled } = runToRestTransforms(sim);
+    expect(settled.has('thrown')).toBe(true);
+    expect(settled.has('target')).toBe(true);
+  });
+
+  it('leaves objects nowhere near the action alone', () => {
+    const { sim } = simWith([node('thrown'), node('far', { x: 5000, y: 5000 })]);
+    sim.launch('thrown', 60, 60, 12, 0);
+    const { woken, settled } = runToRestTransforms(sim);
+    expect(woken).not.toContain('far');
+    expect(settled.has('far')).toBe(false);
   });
 });
 

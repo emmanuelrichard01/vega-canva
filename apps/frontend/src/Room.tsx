@@ -63,7 +63,6 @@ export default function Room() {
   const isDarkTheme = useStore((s) => s.darkTheme);
   const setIsDarkTheme = useStore((s) => s.setDarkTheme);
   const applyReplaySnapshot = useStore((s) => s.applyReplaySnapshot);
-  const clearLayoutSnapshot = useStore((s) => s.clearLayoutSnapshot);
   const [isUiVisible, setIsUiVisible] = useState(true);
 
   // Below the compact breakpoint the side panels stop being docked columns —
@@ -398,11 +397,10 @@ export default function Room() {
       const el = document.activeElement?.tagName;
       if (el === 'INPUT' || el === 'TEXTAREA') return;
       setActiveTool('select');
-      clearLayoutSnapshot();
     };
     window.addEventListener('keydown', onKey);
     return () => window.removeEventListener('keydown', onKey);
-  }, [activeTool, clearLayoutSnapshot]);
+  }, [activeTool]);
 
 
   const handleOrganize = (mode: LayoutMode) => {
@@ -535,10 +533,9 @@ export default function Room() {
           <ForcesBar
             activeForce={activeTool as ForceId}
             onPickForce={(id) => setActiveTool(id)}
-            onExit={() => {
-              setActiveTool('select');
-              clearLayoutSnapshot();
-            }}
+            /* Leaving the tool is enough — Canvas clears the layout snapshot
+               for every exit path, including picking another tool. */
+            onExit={() => setActiveTool('select')}
           />
         )}
 

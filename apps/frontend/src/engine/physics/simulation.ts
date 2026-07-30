@@ -69,11 +69,26 @@ export interface SimNode {
   material?: string;
 }
 
-/** A pose in document space (top-left origin, degrees), as nodes are stored. */
+/**
+ * A pose, carrying both coordinate spaces the canvas uses.
+ *
+ * These differ, and conflating them is a bug that has already shipped once.
+ * Nodes store their **top-left corner**, so that is what gets committed to the
+ * document. Konva groups are positioned by their **centre** (they sit at the
+ * centre with their contents offset back, so rotation and scale happen about
+ * the middle), so that is what the renderer needs. Writing `x`/`y` to a Konva
+ * node draws the object half its own size off — invisible during flight
+ * because the offset is constant, then a visible jump the moment React takes
+ * the position back over on landing.
+ */
 export interface SimTransform {
   id: string;
+  /** Document space: the node's top-left corner. Commit this. */
   x: number;
   y: number;
+  /** Screen graph space: the Konva group's origin. Render this. */
+  centerX: number;
+  centerY: number;
   rotation: number;
 }
 
@@ -82,6 +97,11 @@ export interface StepResult {
   moving: SimTransform[];
   /** Came to rest during this step — commit these to the document. */
   settled: SimTransform[];
+  /**
+   * Set in motion *during* this step, by being hit rather than by a force.
+   * The caller must claim ownership of these the same way it does for a force.
+   */
+  woken: string[];
 }
 
 interface ActiveEntry {
@@ -135,13 +155,42 @@ export class PhysicsSimulation {
   /** Simulated clock, so settle timeouts do not depend on wall time. */
   private clock = 0;
 
+  /** Ids hit by a moving object, to be woken between steps. */
+  private pendingWake = new Set<string>();
+
   constructor() {
     // No world gravity: an infinite canvas has no floor, so a constant pull
     // would drag every object off the board forever and nothing would ever
     // settle. Weight is expressed through mass and drag instead — see
     // `engine/physics/forces` for the full reasoning.
     this.engine = Matter.Engine.create({ gravity: { x: 0, y: 0, scale: 0 } });
+    Matter.Events.on(this.engine, 'collisionStart', this.handleCollision);
   }
+
+  /**
+   * Wake whatever gets hit.
+   *
+   * Objects rest as static bodies, and a static body in Matter has infinite
+   * mass — so a thrown object *did* collide with the things it hit, but they
+   * behaved like walls: all the momentum bounced back and nothing was knocked
+   * out of the way. Objects only push each other around once the one being hit
+   * is dynamic too, so contact has to promote it.
+   *
+   * Recorded here and applied between steps rather than during one, because
+   * changing a body's mass in the middle of collision resolution is asking for
+   * trouble.
+   */
+  private handleCollision = (event: { pairs: { bodyA: Matter.Body; bodyB: Matter.Body }[] }) => {
+    event.pairs.forEach(({ bodyA, bodyB }) => {
+      // Exactly one side moving: the other is the one that needs waking. Two
+      // moving bodies already resolve properly, and two resting ones are not a
+      // collision anyone can see.
+      if (bodyA.isStatic === bodyB.isStatic) return;
+      const sleeper = bodyA.isStatic ? bodyA : bodyB;
+      const id = sleeper.plugin?.id;
+      if (typeof id === 'string') this.pendingWake.add(id);
+    });
+  };
 
   /** Bodies currently being simulated. */
   get activeCount(): number {
@@ -368,14 +417,19 @@ export class PhysicsSimulation {
   }
 
   private toTransform(id: string, body: Matter.Body, entry: ActiveEntry): SimTransform | null {
-    const x = body.position.x - entry.width / 2;
-    const y = body.position.y - entry.height / 2;
+    // Matter positions bodies by their centre of mass, which is exactly what a
+    // Konva group wants; the document wants the top-left corner. Both are
+    // returned so neither consumer has to remember to convert.
+    const centerX = body.position.x;
+    const centerY = body.position.y;
+    const x = centerX - entry.width / 2;
+    const y = centerY - entry.height / 2;
     const rotation = body.angle * (180 / Math.PI);
     // A degenerate step must never escape the simulation. Downstream this
     // would reach the document, and Y.Map stores NaN happily — `toJSON()`
     // turns it into null, so the node loses its coordinates permanently.
     if (!finite(x) || !finite(y) || !finite(rotation)) return null;
-    return { id, x, y, rotation };
+    return { id, x, y, centerX, centerY, rotation };
   }
 
   /**
@@ -390,14 +444,25 @@ export class PhysicsSimulation {
   advance(deltaMs: number): StepResult {
     const moving: SimTransform[] = [];
     const settled: SimTransform[] = [];
-    if (this.active.size === 0) return { moving, settled };
+    const woken: string[] = [];
+    if (this.active.size === 0) return { moving, settled, woken };
 
     this.accumulator = Math.min(this.accumulator + Math.max(deltaMs, 0), FIXED_DT * MAX_STEPS_PER_FRAME);
     while (this.accumulator >= FIXED_DT - STEP_EPSILON) {
-      this.applyClustering();
       Matter.Engine.update(this.engine, FIXED_DT);
       this.accumulator = Math.max(0, this.accumulator - FIXED_DT);
       this.clock += FIXED_DT;
+
+      // Promote anything that was struck, so momentum carries into it instead
+      // of bouncing off an immovable wall.
+      if (this.pendingWake.size > 0) {
+        this.pendingWake.forEach((id) => {
+          const body = this.bodies.get(id);
+          if (body && this.activate(id, body)) woken.push(id);
+        });
+        this.pendingWake.clear();
+      }
+
       // Settling is evaluated per physics step, not per call. Counting calls
       // made "at rest for 10 frames" mean something different depending on how
       // the caller chunked its time, so a laggy client settled objects later —
@@ -413,7 +478,7 @@ export class PhysicsSimulation {
       if (transform) moving.push(transform);
     });
 
-    return { moving, settled };
+    return { moving, settled, woken };
   }
 
   /** Retire anything that has come to rest, appending its final transform. */
@@ -443,42 +508,19 @@ export class PhysicsSimulation {
     finished.forEach((id) => this.active.delete(id));
   }
 
-  /**
-   * Stickies drift toward other stickies while one of them is moving.
-   *
-   * Kept as it was, but note it is the one behaviour here nobody asked for and
-   * nothing documents — it quietly pulls deliberately-placed notes together.
-   */
-  private applyClustering(): void {
-    const activeStickies: Matter.Body[] = [];
-    this.active.forEach((_entry, id) => {
-      const body = this.bodies.get(id);
-      if (body && body.label === 'sticky') activeStickies.push(body);
-    });
-    if (activeStickies.length === 0) return;
-
-    this.bodies.forEach((otherBody) => {
-      if (otherBody.label !== 'sticky') return;
-      for (const activeBody of activeStickies) {
-        if (activeBody === otherBody) continue;
-        const dx = otherBody.position.x - activeBody.position.x;
-        const dy = otherBody.position.y - activeBody.position.y;
-        const dist = Math.sqrt(dx * dx + dy * dy);
-        if (dist > 80 && dist < 250) {
-          const mass = finite(activeBody.mass) ? activeBody.mass : 1;
-          const force = 0.00001 * mass;
-          Matter.Body.applyForce(activeBody, activeBody.position, {
-            x: (dx / dist) * force,
-            y: (dy / dist) * force,
-          });
-        }
-      }
-    });
-  }
+  // "Emergent magnetic clustering" used to run here: every moving sticky
+  // quietly pulled every other sticky within 80–250px toward it. It is gone.
+  // Nothing documented it, nobody asked for it, and it silently dragged
+  // deliberately-placed notes together on a surface whose entire job is
+  // deliberate placement — the same objection that retired the cursor ripple.
+  // It also cost an O(active x bodies) pass every single step. Objects now
+  // affect each other only by actually colliding, which is a rule you can see.
 
   destroy(): void {
+    Matter.Events.off(this.engine, 'collisionStart', this.handleCollision);
     Matter.Engine.clear(this.engine);
     this.bodies.clear();
     this.active.clear();
+    this.pendingWake.clear();
   }
 }

@@ -133,7 +133,11 @@ export function usePhysics(objects: Record<string, any>, stageRef: React.RefObje
         held.dy = 0;
       }
 
-      const { moving, settled } = sim.advance(delta);
+      const { moving, settled, woken } = sim.advance(delta);
+
+      // Objects set moving by being hit need owning too, or a peer could start
+      // simulating the same collision and the two results would fight.
+      if (woken.length > 0) claimOwnershipAll(woken);
 
       // One broadcast per frame carrying both the live poses and the nulls that
       // retire finished ones. Sending them as two throttled calls let lodash
@@ -144,17 +148,23 @@ export function usePhysics(objects: Record<string, any>, stageRef: React.RefObje
       // In-flight poses go straight to Konva. The node handle is cached because
       // `findOne('#id')` is a scene-graph search, and doing one per object per
       // frame is a tree walk 60 times a second for everything in the air.
-      moving.forEach(({ id, x, y, rotation }) => {
+      moving.forEach(({ id, x, y, centerX, centerY, rotation }) => {
         let node = konvaNodes.current.get(id);
         if (!node || !node.getStage()) {
           node = stageRef.current?.findOne('#' + id) as Konva.Node | undefined;
           if (node) konvaNodes.current.set(id, node);
         }
         if (node) {
-          node.x(x);
-          node.y(y);
+          // Konva groups are positioned by their centre — writing the node's
+          // top-left here drew every flying object half its own size off, which
+          // was invisible mid-flight and a visible jump the moment it landed
+          // and React took the position back over.
+          node.x(centerX);
+          node.y(centerY);
           node.rotation(rotation);
         }
+        // Peers receive document space: their renderer adds the centre offset
+        // itself, exactly as it does for a committed position.
         broadcast[id] = { x, y, rotation };
       });
 

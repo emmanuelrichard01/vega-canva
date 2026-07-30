@@ -280,6 +280,13 @@ export const Canvas: React.FC<CanvasProps> = ({ activeTool, selectedIds, setSele
     } else {
       forceCursorRef.current = null;
       endHeldForce();
+      // Clearing lives here, not in the bar's Done/Escape handlers, because
+      // this is the one place that sees *every* way of leaving force mode.
+      // Picking another tool from the dock skipped those handlers entirely, so
+      // the snapshot survived — and since re-entering only captures when none
+      // exists, "Restore layout" would silently put you back to a baseline
+      // from some earlier session with the tool.
+      useStore.getState().clearLayoutSnapshot();
     }
   }, [activeTool, endHeldForce]);
 
