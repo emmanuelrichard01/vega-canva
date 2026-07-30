@@ -65,6 +65,18 @@ export const objectsMap = doc.getMap<Y.Map<unknown>>('objects');
 /** Room-level metadata (title, schema version). */
 export const metadataMap = doc.getMap<string>('metadata');
 
+/**
+ * Display identity per Yjs clientID: `{ name, color }`.
+ *
+ * Authorship is denormalised onto each node at creation, which covers "who made
+ * this" but not "who changed it". The session timeline attributes every edit by
+ * the clientID on the update, and could only put a name to clients that had
+ * created something — so anyone who joined and only *edited* showed up as "a
+ * collaborator". Recording identity in the document puts it in the update log,
+ * where replay can read it back long after that person has disconnected.
+ */
+export const identitiesMap = doc.getMap<{ name: string; color: string }>('identities');
+
 /** Comment threads, keyed by thread id. */
 export const commentsMap = doc.getMap<Y.Map<unknown>>('comments');
 

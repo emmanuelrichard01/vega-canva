@@ -60,6 +60,98 @@ export const getMaterialProfile = (type: string): MaterialProfile => {
   return MATERIAL_PROFILES[type] || MATERIAL_PROFILES.shape;
 };
 
+/**
+ * Materials a person can actually choose.
+ *
+ * The profiles above are keyed by node *type*, which meant how an object
+ * behaved was decided entirely by what it was — a sticky always floated, an
+ * image always carried momentum — with no way to see that, let alone change
+ * it. The physics had personality that never surfaced anywhere in the UI.
+ *
+ * These are the same three dials (drag, bounce, density) expressed as things
+ * you can picture. Named for how they feel rather than what they compute,
+ * because "restitution 0.8" is not a choice anyone can make confidently.
+ */
+export type MaterialId = 'feather' | 'paper' | 'rubber' | 'wood' | 'stone';
+
+export interface Material {
+  id: MaterialId;
+  label: string;
+  /** One line describing the behaviour, shown as the control's help text. */
+  hint: string;
+  frictionAir: number;
+  restitution: number;
+  density: number;
+}
+
+export const MATERIALS: Record<MaterialId, Material> = {
+  feather: {
+    id: 'feather',
+    label: 'Feather',
+    hint: 'Barely any weight — drifts a short way and settles almost at once',
+    frictionAir: 0.35,
+    restitution: 0.1,
+    density: 0.0002,
+  },
+  paper: {
+    id: 'paper',
+    label: 'Paper',
+    hint: 'Light and easy to move, with a soft landing',
+    frictionAir: 0.2,
+    restitution: 0.25,
+    density: 0.0005,
+  },
+  rubber: {
+    id: 'rubber',
+    label: 'Rubber',
+    hint: 'Bounces off whatever it hits',
+    frictionAir: 0.08,
+    restitution: 0.85,
+    density: 0.002,
+  },
+  wood: {
+    id: 'wood',
+    label: 'Wood',
+    hint: 'Solid and predictable — slides and stops',
+    frictionAir: 0.1,
+    restitution: 0.4,
+    density: 0.001,
+  },
+  stone: {
+    id: 'stone',
+    label: 'Stone',
+    // Not "hard to shift": force scales with mass, so it accelerates like
+    // anything else. What actually distinguishes stone is that almost nothing
+    // slows it down once it is moving.
+    hint: 'Heavy and slick — once it is moving it carries a long way',
+    frictionAir: 0.04,
+    restitution: 0.1,
+    density: 0.006,
+  },
+};
+
+export const MATERIAL_IDS: MaterialId[] = ['feather', 'paper', 'rubber', 'wood', 'stone'];
+
+/** What each node type behaves like until someone chooses otherwise. */
+const DEFAULT_MATERIAL_BY_TYPE: Record<string, MaterialId> = {
+  sticky: 'paper',
+  text: 'stone',
+  image: 'stone',
+  audio: 'rubber',
+  shape: 'wood',
+  path: 'feather',
+};
+
+export const defaultMaterialForType = (type: string): MaterialId =>
+  DEFAULT_MATERIAL_BY_TYPE[type] ?? 'wood';
+
+/** The material a node actually simulates with. */
+export const resolveMaterial = (node: { type: string; material?: string }): Material => {
+  const chosen = node.material as MaterialId | undefined;
+  if (chosen && MATERIALS[chosen]) return MATERIALS[chosen];
+  return MATERIALS[defaultMaterialForType(node.type)];
+};
+
 export const calculateDragSkew = (vx: number, vy: number, type: string): number => {
   const profile = getMaterialProfile(type);
   const speed = Math.hypot(vx, vy);

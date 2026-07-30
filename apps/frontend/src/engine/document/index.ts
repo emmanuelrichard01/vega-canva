@@ -14,6 +14,7 @@ export {
   indexeddbProvider,
   objectsMap,
   metadataMap,
+  identitiesMap,
   commentsMap,
   historyArray,
   undoManager,
@@ -33,6 +34,7 @@ export {
   lowestZIndex,
   localAuthorId,
   localAuthor,
+  publishLocalIdentity,
 } from './mutations';
 export type { NewNodeInput } from './mutations';
 

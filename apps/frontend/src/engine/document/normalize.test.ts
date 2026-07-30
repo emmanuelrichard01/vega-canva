@@ -192,6 +192,14 @@ describe('normalizeNode — legacy shapes', () => {
     expect(normalizeNode({ id: 'h2', type: 'shape', visible: true }).hidden).toBe(false);
   });
 
+  it('carries a chosen material through, and leaves it absent when unset', () => {
+    expect(normalizeNode({ id: 'm1', type: 'sticky', material: 'stone' }).material).toBe('stone');
+    // Absent means "this type's default", which is what keeps documents written
+    // before materials existed behaving exactly as they did.
+    expect(normalizeNode({ id: 'm2', type: 'sticky' }).material).toBeUndefined();
+    expect(normalizeNode({ id: 'm3', type: 'sticky', material: 42 }).material).toBeUndefined();
+  });
+
   it('maps the legacy artboard type onto frame', () => {
     expect(normalizeNode({ id: 'i1', type: 'artboard' }).type).toBe('frame');
   });

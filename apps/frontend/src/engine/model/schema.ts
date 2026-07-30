@@ -132,6 +132,15 @@ export interface BaseNode {
   locked: boolean;
   /** Renderer and Layers panel both gate on this. There is no `visible` field. */
   hidden: boolean;
+  /**
+   * How this object behaves under force — 'feather' | 'paper' | 'rubber' |
+   * 'wood' | 'stone', from `utils/behaviorSystem`.
+   *
+   * Optional because behaviour used to be implied entirely by `type`. Absent
+   * means "whatever this type defaults to", so existing documents keep the
+   * behaviour they already had.
+   */
+  material?: string;
   /** User-supplied name shown in the Layers panel, if renamed. */
   title?: string;
 

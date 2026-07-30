@@ -283,6 +283,9 @@ export function normalizeNode(raw: any, id?: string): AnyNode {
     // Layers panel have always gated on `hidden`.
     hidden: bool(raw?.hidden, raw?.visible === false),
     title: typeof raw?.title === 'string' ? raw.title : undefined,
+    // Absent means "this type's default material", so documents written before
+    // materials existed keep behaving exactly as they did.
+    material: typeof raw?.material === 'string' ? raw.material : undefined,
     createdBy: str(raw?.createdBy, 'unknown'),
     createdByName: typeof raw?.createdByName === 'string' ? raw.createdByName : raw?.metadata?.authorName,
     createdByColor:

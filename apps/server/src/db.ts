@@ -22,9 +22,20 @@ export const pool = new Pool({
 export const MAX_UPDATES_PER_ROOM = 2000;
 const PRUNE_INTERVAL_MS = 10 * 60 * 1000;
 
-/** Trim the update log for one room down to the retention limit. */
+/**
+ * Trim the update log for one room down to the retention limit.
+ *
+ * The number of discarded rows is accumulated onto the room, because it is the
+ * only record that they existed. `room_updates.id` is a global SERIAL, so gaps
+ * in it say nothing about whether *this* room was trimmed — and without that
+ * fact the client can only guess, which is what Time Travel was doing when it
+ * inferred "partial history" from having exactly the cap's worth of rows. That
+ * guess is wrong in both directions: a room sitting at exactly 2000 rows that
+ * was never trimmed reads as partial, and a trimmed room that has since fallen
+ * below the cap reads as complete.
+ */
 export const pruneRoomUpdates = async (roomId: string) => {
-  await pool.query(
+  const result = await pool.query(
     `DELETE FROM room_updates
       WHERE room_id = $1
         AND id < (
@@ -37,6 +48,15 @@ export const pruneRoomUpdates = async (roomId: string) => {
         )`,
     [roomId, MAX_UPDATES_PER_ROOM]
   );
+
+  const discarded = result.rowCount ?? 0;
+  if (discarded > 0) {
+    await pool.query(
+      `UPDATE rooms SET updates_trimmed = COALESCE(updates_trimmed, 0) + $2 WHERE id = $1`,
+      [roomId, discarded]
+    );
+  }
+  return discarded;
 };
 
 /** Periodic sweep, so rooms nobody touches still get cleaned up. */
@@ -99,6 +119,12 @@ export const initDb = async (retries = 10, delayMs = 2000) => {
           -- a full scan of every update ever recorded, for every room.
           CREATE INDEX IF NOT EXISTS room_updates_room_id_idx
             ON room_updates (room_id, id);
+
+          -- How many update rows retention has discarded for this room, ever.
+          -- Added separately because CREATE TABLE IF NOT EXISTS will not alter
+          -- a table that already exists on a deployed database.
+          ALTER TABLE rooms
+            ADD COLUMN IF NOT EXISTS updates_trimmed BIGINT NOT NULL DEFAULT 0;
         `);
         console.log("Database initialized successfully");
         return;

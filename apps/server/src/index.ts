@@ -9,7 +9,7 @@ import { S3Client, CreateBucketCommand, PutBucketPolicyCommand } from "@aws-sdk/
 import path from "path";
 import { nanoid } from "nanoid";
 import { WebSocketServer } from "ws";
-import { pool, initDb, startRetentionSweep } from "./db";
+import { pool, initDb, startRetentionSweep, MAX_UPDATES_PER_ROOM } from "./db";
 
 // Initialize Postgres schema, then start trimming the append-only update log.
 initDb().then(startRetentionSweep);
@@ -125,7 +125,23 @@ app.get("/rooms/:roomId/history", async (req, res) => {
       createdAt: row.created_at,
       update: row.update_data.toString("base64")
     }));
-    res.json({ roomId, updates });
+
+    // Whether retention has discarded anything for this room, so replay can say
+    // plainly that it does not reach the beginning instead of presenting a
+    // partial session as the whole story.
+    const trimmedResult = await pool.query<{ updates_trimmed: string }>(
+      `SELECT COALESCE(updates_trimmed, 0) AS updates_trimmed FROM rooms WHERE id = $1`,
+      [roomId]
+    );
+    const trimmedCount = Number(trimmedResult.rows[0]?.updates_trimmed ?? 0);
+
+    res.json({
+      roomId,
+      updates,
+      trimmed: trimmedCount > 0,
+      trimmedCount,
+      retentionLimit: MAX_UPDATES_PER_ROOM,
+    });
   } catch (err) {
     console.error("Error fetching room history:", err);
     res.status(500).json({ error: "Failed to fetch room history" });

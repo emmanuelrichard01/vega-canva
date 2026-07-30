@@ -4,7 +4,8 @@ import { useStore } from '../hooks/useStore';
 import { editor } from '../engine/api/EditorAPI';
 import { Type, Square, Image as ImageIcon, StickyNote, Mic, LayoutTemplate, MessageSquare, PenTool, Lock, Unlock, Copy, Trash2, Eye, EyeOff, Layers, FolderOpen, Ungroup } from 'lucide-react';
 import { nanoid } from 'nanoid';
-import { hasText, type AnyNode } from '../engine/model/schema';
+import { type AnyNode } from '../engine/model/schema';
+import { nodeLabel } from '../engine/model/nodeLabel';
 import { useVirtualRows } from '../hooks/useVirtualRows';
 
 /** Row pitch, in px. Uniform by design so the list can be windowed. */
@@ -80,17 +81,9 @@ export const LayersPanel: React.FC<LayersPanelProps> = ({ selectedIds, overrideO
     }
   };
 
-  // Text-bearing nodes label themselves with their first line of content, so
-  // the panel reads like an outline rather than a list of "Text, Text, Text".
-  const getName = (obj: AnyNode) => {
-    if (obj.title) return obj.title;
-    if (hasText(obj)) {
-      const label = (obj.text ?? '').trim().split('\n')[0].slice(0, 24);
-      if (label) return label;
-    }
-    if (obj.type === 'sticky') return 'Idea Card';
-    return `${obj.type.charAt(0).toUpperCase()}${obj.type.slice(1)}`;
-  };
+  // Naming lives in engine/model/nodeLabel so the session timeline describes
+  // objects with exactly the words this panel uses.
+  const getName = nodeLabel;
 
   const handleDragStart = (e: React.DragEvent, id: string) => {
     setDraggedId(id);

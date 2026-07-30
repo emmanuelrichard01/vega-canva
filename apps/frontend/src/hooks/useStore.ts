@@ -1,21 +1,81 @@
 import { create } from 'zustand';
-import { normalizeNode, objectsMap, observeNodes, provider, scheduleMigration } from '../engine/document';
+import { normalizeNode, objectsMap, observeNodes, provider, scheduleMigration, updateNode } from '../engine/document';
 import type { AnyNode } from '../engine/model/schema';
 import { sceneGraph } from '../engine/SceneGraph';
+import { DEFAULT_FORCE_SCALE, MAX_FORCE_SCALE, MIN_FORCE_SCALE } from '../engine/physics/forces';
 
 interface StoreState {
   /** Latest snapshot of every node, keyed by id. */
   objects: Record<string, AnyNode>;
   /** Bumped on every applied change, for coarse subscriptions. */
   version: number;
+  /**
+   * Ids touched by the change that produced the current `version`.
+   *
+   * Published here so consumers that need a dirty set — physics rebuilding
+   * Matter bodies, most of all — can react to what actually changed instead of
+   * walking the whole document. `observe.ts` is still the only observer of
+   * `objectsMap`; this just forwards the change set it already computes, rather
+   * than each consumer registering its own `observeDeep`.
+   */
+  lastChangedIds: string[];
+  lastRemovedIds: string[];
   isReplaying: boolean;
   setIsReplaying: (val: boolean) => void;
   setObjects: (objects: Record<string, AnyNode>) => void;
+  /**
+   * Show a Time Travel snapshot on the canvas, or `null` to return to live.
+   *
+   * This is the piece Time Travel was missing. `isReplaying` existed and the
+   * live observer already deferred to it, but nothing ever *set* it and no
+   * replayed state ever reached this store — the snapshot went only to the
+   * Layers and Properties panels as `overrideObjects`. So scrubbing history
+   * moved two side panels while the canvas kept rendering the live document,
+   * which is the whole reason replay looked broken.
+   */
+  applyReplaySnapshot: (objects: Record<string, unknown> | null) => void;
   zenMode: boolean;
   setZenMode: (val: boolean) => void;
-  /** Global physics on/off, persisted so turning it off sticks across visits. */
+  /**
+   * Whether a flick carries momentum when you let go of an object.
+   *
+   * This used to gate the force tools as well, which conflated two unrelated
+   * questions: "does dragging throw?" and "do the force tools work?". One
+   * persisted boolean silently changed what the canvas's most-used gesture
+   * meant, and separately greyed out a whole tool group elsewhere in the UI.
+   * Picking a force tool now turns force on by itself; this only governs throws.
+   */
   physicsEnabled: boolean;
   setPhysicsEnabled: (val: boolean) => void;
+
+  /** User-facing strength multiplier applied to every force tool. */
+  forceScale: number;
+  setForceScale: (val: number) => void;
+
+  /**
+   * Whether a force tool is armed. Lives here rather than being threaded down
+   * as a prop so each renderer can subscribe to the flip itself, instead of
+   * every object on the canvas taking a new prop on every tool change.
+   */
+  forceToolActive: boolean;
+  setForceToolActive: (val: boolean) => void;
+
+  /**
+   * Positions captured on entering a force tool, so the whole session can be
+   * undone in one action.
+   *
+   * Force is destructive to layout in a way ordinary editing is not: one
+   * shockwave rewrites the position of every object in range. Undo technically
+   * covers it, but a settle commits many nodes across many transactions, so
+   * unpicking it by hand is hopeless. Knowing there is a way back is what makes
+   * the tools safe to play with at all.
+   */
+  layoutSnapshot: Record<string, { x: number; y: number; rotation: number }> | null;
+  captureLayoutSnapshot: () => void;
+  restoreLayout: () => void;
+  clearLayoutSnapshot: () => void;
+  /** Number of objects a restore would move back, for the bar's label. */
+  layoutDriftCount: () => number;
   /**
    * Whether dragging snaps to the layout grid. Off by default: the previous
    * behaviour hard-snapped every drag to a 20px grid with no way to opt out,
@@ -33,6 +93,13 @@ interface StoreState {
   setDarkTheme: (val: boolean) => void;
 }
 
+const loadNumberPref = (key: string, fallback: number, min: number, max: number) => {
+  if (typeof window === 'undefined') return fallback;
+  const stored = Number(window.localStorage.getItem(key));
+  if (!Number.isFinite(stored) || stored === 0) return fallback;
+  return Math.min(max, Math.max(min, stored));
+};
+
 const loadBoolPref = (key: string, fallback: boolean) => {
   if (typeof window === 'undefined') return fallback;
   const stored = window.localStorage.getItem(key);
@@ -46,15 +113,114 @@ const prefersDarkScheme = () =>
 export const useStore = create<StoreState>((set) => ({
   objects: {},
   version: 0,
+  lastChangedIds: [],
+  lastRemovedIds: [],
   isReplaying: false,
   setIsReplaying: (val) => set({ isReplaying: val }),
   setObjects: (objects) => set({ objects }),
+  applyReplaySnapshot: (snapshot) => {
+    const previous = useStore.getState().objects;
+
+    if (!snapshot) {
+      // Leaving replay: rebuild from the live document and clear the flag in
+      // the *same* update. Done as two writes, whichever landed first would
+      // leave one frame rendered under the wrong rule.
+      const live: Record<string, AnyNode> = {};
+      objectsMap.forEach((_ymap, id) => {
+        const node = readCanonical(id);
+        if (node) live[id] = node;
+      });
+      Object.keys(previous).forEach((id) => {
+        if (!live[id]) sceneGraph.removeNode(id);
+      });
+      Object.entries(live).forEach(([id, node]) => sceneGraph.upsertNode(id, node));
+      set((state) => ({
+        objects: live,
+        version: state.version + 1,
+        lastChangedIds: Object.keys(live),
+        lastRemovedIds: Object.keys(previous).filter((id) => !live[id]),
+        isReplaying: false,
+      }));
+      return;
+    }
+
+    // Replayed nodes go through the same normalization as live ones, so a
+    // snapshot from early in the room's life — written before the current
+    // schema — renders exactly as it does after migration.
+    const next: Record<string, AnyNode> = {};
+    Object.entries(snapshot).forEach(([id, raw]) => {
+      const node = normalizeNode(raw as Record<string, unknown>, id);
+      if (node) next[id] = node;
+    });
+
+    // Keep the spatial index honest during replay rather than switching culling
+    // off. The old code rendered every object in the document while replaying,
+    // which turned Time Travel into a performance cliff on exactly the large
+    // documents the rest of the engine is built to handle.
+    Object.keys(previous).forEach((id) => {
+      if (!next[id]) sceneGraph.removeNode(id);
+    });
+    Object.entries(next).forEach(([id, node]) => sceneGraph.upsertNode(id, node));
+
+    set((state) => ({
+      objects: next,
+      version: state.version + 1,
+      lastChangedIds: Object.keys(next),
+      lastRemovedIds: Object.keys(previous).filter((id) => !next[id]),
+      isReplaying: true,
+    }));
+  },
   zenMode: false,
   setZenMode: (val) => set({ zenMode: val }),
   physicsEnabled: loadBoolPref('vega_physics_enabled', true),
   setPhysicsEnabled: (val) => {
     window.localStorage.setItem('vega_physics_enabled', String(val));
     set({ physicsEnabled: val });
+  },
+  forceScale: loadNumberPref('vega_force_scale', DEFAULT_FORCE_SCALE, MIN_FORCE_SCALE, MAX_FORCE_SCALE),
+  setForceScale: (val) => {
+    const clamped = Math.min(MAX_FORCE_SCALE, Math.max(MIN_FORCE_SCALE, val));
+    window.localStorage.setItem('vega_force_scale', String(clamped));
+    set({ forceScale: clamped });
+  },
+  forceToolActive: false,
+  setForceToolActive: (val) => set({ forceToolActive: val }),
+  layoutSnapshot: null,
+  captureLayoutSnapshot: () => {
+    const { objects } = useStore.getState();
+    const snapshot: Record<string, { x: number; y: number; rotation: number }> = {};
+    Object.values(objects).forEach((node) => {
+      snapshot[node.id] = { x: node.x, y: node.y, rotation: node.rotation ?? 0 };
+    });
+    set({ layoutSnapshot: snapshot });
+  },
+  restoreLayout: () => {
+    const { objects, layoutSnapshot } = useStore.getState();
+    if (!layoutSnapshot) return;
+    // Through the canonical write path, not straight into the Y.Map, so the
+    // restore is one undo step and carries proper `updatedAt` stamps — and so
+    // every collaborator watching sees the board snap back together.
+    Object.entries(layoutSnapshot).forEach(([id, before]) => {
+      const now = objects[id];
+      if (!now) return; // deleted since; nothing to put back
+      if (Math.abs(now.x - before.x) <= 1 && Math.abs(now.y - before.y) <= 1) return;
+      updateNode(id, { x: before.x, y: before.y, rotation: before.rotation });
+    });
+  },
+  clearLayoutSnapshot: () => set({ layoutSnapshot: null }),
+  layoutDriftCount: () => {
+    const { objects, layoutSnapshot } = useStore.getState();
+    if (!layoutSnapshot) return 0;
+    let moved = 0;
+    Object.entries(layoutSnapshot).forEach(([id, before]) => {
+      const now = objects[id];
+      if (!now) return;
+      // A whole pixel of tolerance: a settle rarely lands on exactly the
+      // starting float, and offering to "restore" a layout nobody perceives as
+      // changed would be noise.
+      if (Math.abs(now.x - before.x) > 1 || Math.abs(now.y - before.y) > 1) moved++;
+    });
+    return moved;
   },
   snapToGrid: loadBoolPref('vega_snap_to_grid', false),
   setSnapToGrid: (val) => {
@@ -112,7 +278,12 @@ export const initSyncBridge = () => {
       sceneGraph.upsertNode(id, node);
     }
   });
-  useStore.setState({ objects: initialObjects, version: 1 });
+  useStore.setState({
+    objects: initialObjects,
+    version: 1,
+    lastChangedIds: Object.keys(initialObjects),
+    lastRemovedIds: [],
+  });
 
   bridgeDisposer = observeNodes(({ changed, removed }) => {
     // Time Travel drives the store directly from replayed snapshots; live
@@ -134,7 +305,12 @@ export const initSyncBridge = () => {
         sceneGraph.upsertNode(id, node);
       });
 
-      return { objects, version: state.version + 1 };
+      return {
+        objects,
+        version: state.version + 1,
+        lastChangedIds: [...changed],
+        lastRemovedIds: [...removed],
+      };
     });
   });
 

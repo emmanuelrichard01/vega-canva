@@ -1,6 +1,6 @@
 import * as Y from 'yjs';
 import { nanoid } from 'nanoid';
-import { doc, objectsMap, provider } from './doc';
+import { doc, identitiesMap, objectsMap, provider } from './doc';
 
 /**
  * The write path for canvas objects.
@@ -85,6 +85,25 @@ export function localAuthor(): { id: string; name: string; color: string } {
     name: user?.name ?? 'Unknown',
     color: user?.color ?? '#3B82F6',
   };
+}
+
+/**
+ * Record the local user's display identity in the document, once per session.
+ *
+ * Awareness carries this for live presence, but awareness is ephemeral and
+ * never lands in the update log — so replay could only name people who had
+ * created a node. Writing it here means a person who joins and only *edits*
+ * still gets attributed by name in Time Travel.
+ *
+ * Guarded so it costs one tiny transaction per participant rather than one per
+ * reload: an unchanged identity writes nothing.
+ */
+export function publishLocalIdentity(name: string, color: string): void {
+  const id = localAuthorId();
+  if (id === 'local') return; // awareness not ready; the caller retries on change
+  const existing = identitiesMap.get(id);
+  if (existing && existing.name === name && existing.color === color) return;
+  identitiesMap.set(id, { name, color });
 }
 
 export function createNode(input: NewNodeInput): string {
