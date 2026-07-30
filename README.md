@@ -222,15 +222,31 @@ made it after that person disconnects.
 
 Two different problems, deliberately solved two different ways.
 
-**Your own pointer is the OS pointer.** Tools resolve to a *cursor mode*
-(`cursorModeForTool`, pure and tested) which the container carries as
-`data-cursor-mode`, and `index.css` turns into a real CSS `cursor`. Native
-keywords do the work wherever one means the right thing; the three tools with
-no native equivalent — erase, note, comment — get an authored SVG cursor drawn
-in the same 24px, 2px-stroke language as the dock icon they came from, each
-with a native fallback for Safari and forced-colors. This replaced a
-`rAF`-positioned `<div>` under `cursor: none`, which was permanently one frame
-late and threw away every OS cursor accessibility setting.
+**Your own pointer is drawn by the app**, over the canvas only. Tools resolve
+to a *cursor mode* (`cursorModeForTool`, pure and tested), and `LocalCursor`
+renders the matching art from `cursorArt.tsx`: a solid pointer with a small
+tool badge in its tail, or a crosshair where the job is to hit a point rather
+than indicate a direction. Tools swap instantly — no tweening, no press
+response.
+
+Two things make this work where the version it replaces did not:
+
+- **The transform is written inside the pointer event, never in a frame.** The
+  old implementation stored a coordinate and applied it in `requestAnimationFrame`,
+  so it was a frame behind by construction. It also subscribes to
+  `pointerrawupdate` where that exists, which is not coalesced, so a
+  high-polling mouse lands on positions `pointermove` never reports.
+- **The art has fixed colours, not theme tokens.** A cursor sits over
+  *content*, not over the background: a `--surface-primary` fill is invisible
+  against a dark canvas and against any dark object in a light one. White fill,
+  near-black outline, offset shadow — legible over everything.
+
+Panels and chrome keep the real OS pointer. `index.css` also keeps a full set
+of native `[data-cursor-mode]` cursors underneath, and `LocalCursor` hands the
+surface back to them on a coarse pointer or under `forced-colors`, where a
+drawn cursor cannot honour the pointer size and contrast the OS was asked for.
+The attribute that suppresses the native cursor is set by `LocalCursor` itself,
+so the canvas is never left with `cursor: none` and nothing drawn on top.
 
 **Other people's pointers are content**, so they keep custom rendering.
 `RemoteCursors` mounts and unmounts through React and moves through `rAF`,

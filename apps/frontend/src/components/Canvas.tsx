@@ -10,7 +10,7 @@ import { editor } from '../engine/api/EditorAPI';
 import { ObjectRenderer } from "./ObjectRenderer";
 import { PresenceRenderer } from "../engine/presence/PresenceRenderer";
 import { presenceManager } from "../engine/presence/PresenceManager";
-import { cursorModeForTool } from '../engine/cursor';
+import { cursorModeForTool, LocalCursor } from '../engine/cursor';
 import { GestureOverlay } from "./GestureOverlay";
 import { ToolManager, SelectTool, ShapeTool, TextTool, StickyTool, AudioTool, PenTool, BezierPenTool, HandTool, EraserTool, CommentTool } from '../engine/tools';
 import { CommentsOverlay } from "./CommentsOverlay";
@@ -788,6 +788,10 @@ export const Canvas: React.FC<CanvasProps> = ({ activeTool, selectedIds, setSele
       onTouchEnd={handleTouchEndNative}
       onTouchCancel={handleTouchEndNative}
     >
+      {/* Our own pointer, over the canvas only. It sets `data-custom-cursor`
+          on this container itself, so if it bails out — touch, forced colors —
+          the native `[data-cursor-mode]` cursors stay in force. */}
+      <LocalCursor mode={cursorMode} containerRef={containerRef} />
       <Stage
         ref={stageRef}
         width={dimensions.width}

@@ -803,6 +803,16 @@ textarea:focus-visible {
    Hotspots are therefore in 32ths: multiply a viewBox coordinate by 4/3.
    ========================================= */
 
+/* The drawn pointer is live (LocalCursor mounted, fine pointer, normal colors),
+   so hand the surface over to it. `cursor` inherits, so this covers the Konva
+   content and canvas beneath without naming them.
+
+   This attribute is set by LocalCursor itself, never in markup. If that
+   component is absent or bails out, the rules below are still in force and the
+   canvas always has *a* pointer — the failure mode of the system this replaced
+   was `cursor: none` with nothing drawn on top, which left no pointer at all. */
+.canvas-container[data-custom-cursor="on"] { cursor: none; }
+
 .canvas-container[data-cursor-mode="pointer"] { cursor: default; }
 .canvas-container[data-cursor-mode="pan"]     { cursor: grab; }
 .canvas-container[data-cursor-mode="draw"]    { cursor: crosshair; }

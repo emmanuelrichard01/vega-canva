@@ -149,15 +149,23 @@ documents behaving as before. Air drag was cut ~3× so a flick actually carries
 Rebuilt. The old system was 8 files and 362 lines to draw one arrow; it is now
 4 files, and half of what it did was wrong.
 
-- **The local cursor is gone.** It was a `rAF`-positioned `<div>` under
-  `cursor: none` — one frame late by construction, blind to every OS cursor
-  accessibility setting, and dead on any surface that wasn't the canvas. Tools
-  now resolve to a *mode* (`cursorModeForTool`, pure and tested) which the
-  container carries as `data-cursor-mode`, and `index.css` maps to a real CSS
-  cursor. Native keywords where one means the right thing; authored SVG
-  cursors, drawn in the dock's own icon language, for erase/note/comment where
-  none does. Each has a native fallback — **Safari does not render SVG
-  cursors** — and forced-colors gets the OS cursor back.
+- **The local cursor is custom-drawn** (`LocalCursor`, `cursorArt.tsx`), over
+  the canvas only. This was briefly replaced with native CSS cursors — that was
+  the wrong call for this product and was reversed; see "the two mistakes"
+  below. Tools resolve to a *mode* (`cursorModeForTool`, pure and tested), and
+  the art is a solid pointer with a tool badge in its tail, or a crosshair for
+  the modes that need a point rather than a direction. Swaps are instant: no
+  tween, no press response, by explicit decision.
+- **Write the transform in the pointer event, never in a frame.** That single
+  line is why the original custom cursor felt broken and this one does not — it
+  stored a coordinate and applied it in `rAF`, so it was always a frame stale.
+  `pointerrawupdate` is used where available because it is not coalesced.
+- **`index.css` still carries a full set of native `[data-cursor-mode]`
+  cursors.** They are the fallback for coarse pointers and `forced-colors`,
+  where a drawn cursor cannot honour OS pointer size or contrast.
+  `LocalCursor` sets `data-custom-cursor` on the container *itself*, so if it
+  is absent or bails the canvas still has a pointer. Never put `cursor: none`
+  in the markup — that is how the original ended up with no pointer at all.
 - **There were four cursor authorities**, which is why none of them worked:
   `Canvas`'s inline style, `HandTool` writing `container.style.cursor`
   imperatively (fighting React for the same inline style), `cursorManager`, and
@@ -177,9 +185,41 @@ Rebuilt. The old system was 8 files and 362 lines to draw one arrow; it is now
   AA with white text and the other half fails with black; `chipColorsFor` moves
   the fill the shorter way to readability and is pinned by tests over every
   palette entry plus arbitrary input, because sign-in lets people choose.
-- Authored cursors rasterise at **32px**, not the 24 of their viewBox. Windows'
-  own pointers are about 32, and a smaller one reads as incidental. Hotspots
-  are in 32ths — multiply a viewBox coordinate by 4/3.
+- The native fallback cursors rasterise at **32px**, not the 24 of their
+  viewBox. Windows' own pointers are about 32, and a smaller one reads as
+  incidental. Hotspots are in 32ths — multiply a viewBox coordinate by 4/3.
+
+### The two mistakes worth not repeating
+
+Both cost a lot of the owner's time, and both were avoidable.
+
+1. **I took the previous handoff's "drop the local cursor for native CSS" as
+   settled and never checked it against what the product is supposed to feel
+   like.** It is a whiteboard for creative work; a plain OS arrow on the canvas
+   is the wrong answer no matter how good the accessibility argument is. The
+   direction was reversed after shipping. Ask before removing something
+   expressive on technical grounds.
+2. **I diagnosed "you can't see the change" three times without looking at
+   what the change actually was.** Every reload theory was wrong. The console
+   line number `Canvas.tsx:505` settled it in one step, because that line only
+   exists after the edit — compare `git show <before>:file | sed -n '505p'`
+   against the current file. **Line numbers in a stack trace are a version
+   fingerprint.** Reach for that before theorising about caches.
+
+### Cursor art: fixed colours, not tokens
+
+`cursorArt.tsx` draws in a fixed white/near-black, and the first version did
+not — it used `--surface-primary` and `--text-primary` so it would follow the
+theme. That is wrong for a cursor and looking at it made the reason obvious: a
+pointer sits over **content**, not over the background. A `--surface-primary`
+fill is near-black in dark mode, so the pointer dissolved into the canvas and
+read as a hollow outline; it would have done the same over any dark object in
+light mode. White fill, near-black outline, offset shadow.
+
+Two shapes also had to be redrawn after seeing them rendered: a fine dashed
+reticle stopped resolving as dashes at 28px and read as a wireframe globe, and
+an outlined four-finger hand turned to mush below ~20px. **Render the art and
+look at it** — the harness for that is in §3.
 
 ### Presence: cursor is not the same signal as viewport
 
