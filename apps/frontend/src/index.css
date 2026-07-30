@@ -457,17 +457,23 @@ textarea:focus-visible {
   display: flex;
   align-items: center;
   gap: 4px;
-  padding: 6px;
+  padding: 6px 8px;
+  border-radius: var(--radius-lg);
   z-index: 100;
-  /* The dock is a single non-wrapping row of ~13 tools. Without a width cap
-     and its own scroll container it simply ran off both edges of a narrow
-     viewport, taking the tools at each end out of reach entirely. */
+  /* The dock must never clip its own children.
+     It used to scroll horizontally with `overflow-y: hidden` to stop ~13 tools
+     running off a narrow viewport — but every tooltip and every flyout in this
+     dock is positioned *above* its button, so the same rule cut all of them
+     off. No z-index can escape an ancestor's overflow, which is why they were
+     invisible however high it was set. Wrapping solves the narrow-viewport
+     problem without a clipping context: on a wide screen the row is unchanged,
+     and on a narrow one the tools fold onto a second line where they stay
+     reachable, instead of hiding in a scroller with no scrollbar. */
+  flex-wrap: wrap;
+  justify-content: center;
+  row-gap: 4px;
   max-width: calc(100vw - 2 * var(--gutter));
-  overflow-x: auto;
-  overflow-y: hidden;
-  scrollbar-width: none;
 }
-.tool-dock::-webkit-scrollbar { display: none; }
 
 /* Context Inspector (Right Sidebar) */
 .context-inspector {
