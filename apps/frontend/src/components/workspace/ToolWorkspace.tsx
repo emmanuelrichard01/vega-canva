@@ -87,13 +87,13 @@ export const ToolWorkspace: React.FC<Props> = ({ activeToolId }) => {
          which meant two sources of truth for the same box — and the inline
          z-index of 10 quietly overrode the stylesheet's 100. */
     >
-      <button className={`btn-icon ${activeToolId === 'select' ? 'active' : ''}`} aria-pressed={activeToolId === 'select'} onClick={() => setTool('select')} data-tooltip="Select (V)" aria-label="Select (V)" style={{ padding: '6px' }}>
+      <button className={`btn-icon ${activeToolId === 'select' ? 'active' : ''}`} aria-pressed={activeToolId === 'select'} onClick={() => setTool('select')} data-tooltip="Select (V)" aria-label="Select (V)" data-label="Select" style={{ padding: '6px' }}>
         <MousePointer2 size={18} />
       </button>
-      <button className={`btn-icon ${activeToolId === 'hand' ? 'active' : ''}`} aria-pressed={activeToolId === 'hand'} onClick={() => setTool('hand')} data-tooltip="Hand (H)" aria-label="Hand (H)" style={{ padding: '6px' }}>
+      <button className={`btn-icon ${activeToolId === 'hand' ? 'active' : ''}`} aria-pressed={activeToolId === 'hand'} onClick={() => setTool('hand')} data-tooltip="Hand (H)" aria-label="Hand (H)" data-label="Hand" style={{ padding: '6px' }}>
         <Hand size={18} />
       </button>
-      <div style={{ width: 1, height: 18, background: 'var(--border-divider)', margin: 'auto 4px' }} />
+      <div className="dock-divider" />
       <div style={{ position: 'relative' }} {...hoverProps('pen')}>
         <button
           className={`btn-icon ${['pen', 'bezier-pen'].includes(activeToolId) ? 'active' : ''}`}
@@ -102,7 +102,7 @@ export const ToolWorkspace: React.FC<Props> = ({ activeToolId }) => {
           aria-expanded={openMenu === 'pen'}
           onClick={() => toggleMenu('pen')}
           data-tooltip={openMenu === 'pen' ? undefined : 'Drawing tools'}
-          aria-label="Drawing tools"
+          aria-label="Drawing tools" data-label="Draw"
           style={{ padding: '6px' }}
         >
           {activeToolId === 'bezier-pen' ? <PenToolIcon size={18} /> : <Pen size={18} />}
@@ -116,10 +116,10 @@ export const ToolWorkspace: React.FC<Props> = ({ activeToolId }) => {
           </div>
         )}
       </div>
-      <button className={`btn-icon ${activeToolId === 'eraser' ? 'active' : ''}`} aria-pressed={activeToolId === 'eraser'} onClick={() => setTool('eraser')} data-tooltip="Eraser (E)" aria-label="Eraser (E)" style={{ padding: '6px' }}>
+      <button className={`btn-icon ${activeToolId === 'eraser' ? 'active' : ''}`} aria-pressed={activeToolId === 'eraser'} onClick={() => setTool('eraser')} data-tooltip="Eraser (E)" aria-label="Eraser (E)" data-label="Eraser" style={{ padding: '6px' }}>
         <svg xmlns="http://www.w3.org/2000/svg" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="m7 21-4.3-4.3c-1-1-1-2.5 0-3.4l9.6-9.6c1-1 2.5-1 3.4 0l5.6 5.6c1 1 1 2.5 0 3.4L13 21"/><path d="M22 21H7"/><path d="m5 11 9 9"/></svg>
       </button>
-      <button className={`btn-icon ${activeToolId === 'text' ? 'active' : ''}`} aria-pressed={activeToolId === 'text'} onClick={() => setTool('text')} data-tooltip="Text (T)" aria-label="Text (T)" style={{ padding: '6px' }}>
+      <button className={`btn-icon ${activeToolId === 'text' ? 'active' : ''}`} aria-pressed={activeToolId === 'text'} onClick={() => setTool('text')} data-tooltip="Text (T)" aria-label="Text (T)" data-label="Text" style={{ padding: '6px' }}>
         <Type size={18} />
       </button>
       
@@ -131,7 +131,7 @@ export const ToolWorkspace: React.FC<Props> = ({ activeToolId }) => {
           aria-expanded={openMenu === 'shape'}
           onClick={() => toggleMenu('shape')}
           data-tooltip={openMenu === 'shape' ? undefined : 'Shapes (R)'}
-          aria-label="Shapes"
+          aria-label="Shapes" data-label="Shape"
           style={{ padding: '6px' }}
         >
           {renderShapeIcon()}
@@ -149,13 +149,22 @@ export const ToolWorkspace: React.FC<Props> = ({ activeToolId }) => {
         )}
       </div>
 
-      <button className={`btn-icon ${activeToolId === 'sticky' ? 'active' : ''}`} aria-pressed={activeToolId === 'sticky'} onClick={() => setTool('sticky')} data-tooltip="Sticky Note (S)" aria-label="Sticky Note (S)" style={{ padding: '6px' }}>
+      <button className={`btn-icon ${activeToolId === 'sticky' ? 'active' : ''}`} aria-pressed={activeToolId === 'sticky'} onClick={() => setTool('sticky')} data-tooltip="Sticky Note (S)" aria-label="Sticky Note (S)" data-label="Sticky" style={{ padding: '6px' }}>
         <StickyNote size={18} />
       </button>
-      <button className={`btn-icon ${activeToolId === 'comment' ? 'active' : ''}`} aria-pressed={activeToolId === 'comment'} onClick={() => setTool('comment')} data-tooltip="Comment (C)" aria-label="Comment (C)" style={{ padding: '6px' }}>
+      <button className={`btn-icon ${activeToolId === 'comment' ? 'active' : ''}`} aria-pressed={activeToolId === 'comment'} onClick={() => setTool('comment')} data-tooltip="Comment (C)" aria-label="Comment (C)" data-label="Comment" style={{ padding: '6px' }}>
         <MessageSquare size={18} />
       </button>
       
+
+      <div className="dock-divider" />
+      <button className={`btn-icon ${activeToolId === 'image' ? 'active' : ''}`} aria-pressed={activeToolId === 'image'} onClick={() => setTool('image')} data-tooltip="Image" aria-label="Image" data-label="Image" style={{ padding: '6px' }}>
+        <ImageIcon size={18} />
+      </button>
+      <button className={`btn-icon ${activeToolId === 'audio' ? 'active' : ''}`} aria-pressed={activeToolId === 'audio'} onClick={() => setTool('audio')} data-tooltip="Voice Note" aria-label="Voice Note" data-label="Voice" style={{ padding: '6px' }}>
+        <Mic size={18} />
+      </button>
+      <div className="dock-divider" />
       {/* Forces. No longer gated on a switch elsewhere in the UI: this used to
           sit dimmed at 40% opacity with a tooltip telling you to go and turn
           Physics on in the header first. A disabled control whose enabling
@@ -179,7 +188,7 @@ export const ToolWorkspace: React.FC<Props> = ({ activeToolId }) => {
             if (e.key === 'Escape') setPinnedMenu(null);
           }}
           data-tooltip={openMenu === 'forces' ? undefined : 'Forces — push, pull and drop objects'}
-          aria-label="Forces"
+          aria-label="Forces" data-label="Forces"
           style={{ padding: '6px' }}
         >
           <Sparkles size={18} />
@@ -208,13 +217,6 @@ export const ToolWorkspace: React.FC<Props> = ({ activeToolId }) => {
           </div>
         )}
       </div>
-
-      <button className={`btn-icon ${activeToolId === 'image' ? 'active' : ''}`} aria-pressed={activeToolId === 'image'} onClick={() => setTool('image')} data-tooltip="Image" aria-label="Image" style={{ padding: '6px' }}>
-        <ImageIcon size={18} />
-      </button>
-      <button className={`btn-icon ${activeToolId === 'audio' ? 'active' : ''}`} aria-pressed={activeToolId === 'audio'} onClick={() => setTool('audio')} data-tooltip="Voice Note" aria-label="Voice Note" style={{ padding: '6px' }}>
-        <Mic size={18} />
-      </button>
     </div>
   );
 };

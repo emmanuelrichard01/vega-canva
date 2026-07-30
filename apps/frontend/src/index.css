@@ -475,6 +475,50 @@ textarea:focus-visible {
   max-width: calc(100vw - 2 * var(--gutter));
 }
 
+/* Separates the dock into what the tools are *for* — navigate, create, place
+   media, apply force — rather than presenting eleven glyphs as one
+   undifferentiated row. */
+.dock-divider {
+  width: 1px;
+  height: 18px;
+  align-self: center;
+  margin: 0 4px;
+  background: var(--border-divider);
+  flex-shrink: 0;
+}
+
+/* Where there is no hover there are no tooltips (see the `hover: none` rule
+   further down), which left touch users with a row of unlabelled glyphs and no
+   way at all to learn them — the tooltip was the only thing naming these
+   controls. Without hover to reveal it, the name becomes permanent. */
+@media (pointer: coarse) {
+  .tool-dock .btn-icon[data-label] {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    gap: 2px;
+    padding: 6px 10px;
+  }
+  .tool-dock .btn-icon[data-label]::after {
+    content: attr(data-label);
+    position: static;
+    display: block;
+    opacity: 1;
+    transform: none;
+    background: none;
+    border: none;
+    box-shadow: none;
+    padding: 0;
+    color: inherit;
+    font-size: 10px;
+    font-weight: 500;
+    white-space: nowrap;
+    pointer-events: none;
+  }
+  /* The tooltip caret has nothing to point at once the label is inline. */
+  .tool-dock .btn-icon[data-label]::before { display: none; }
+}
+
 /* Context Inspector (Right Sidebar) */
 .context-inspector {
   position: absolute;
