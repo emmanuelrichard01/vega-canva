@@ -5,6 +5,7 @@ import {
 } from 'lucide-react';
 import { motion } from 'framer-motion';
 import { provider } from '../engine/document';
+import { viewportCenter } from '../engine/presence/PresenceTypes';
 import { useStore } from '../hooks/useStore';
 import { useFocusTrap } from '../hooks/useFocusTrap';
 import { hasText, type AnyNode } from '../engine/model/schema';
@@ -136,11 +137,11 @@ export const CommandPalette: React.FC<CommandPaletteProps> = ({ onClose, onSelec
         icon: <MousePointer2 size={16} color={state.user.color} />,
         perform: () => {
           // Their viewport is stored as its top-left corner, so jump to the
-          // middle of what they can see rather than to its corner. Falling
-          // back to the raw cursor covers someone whose camera has not moved.
-          const v = state.viewport;
-          if (v && v.width && v.zoom) {
-            flyTo(v.x + v.width / (2 * v.zoom), v.y + v.height / (2 * v.zoom));
+          // middle of what they can see. Falling back to the raw cursor covers
+          // someone whose camera has not moved.
+          if (state.viewport) {
+            const c = viewportCenter(state.viewport);
+            flyTo(c.x, c.y);
           } else if (state.cursor) {
             flyTo(state.cursor.x, state.cursor.y);
           }

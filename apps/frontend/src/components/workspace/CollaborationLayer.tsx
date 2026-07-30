@@ -1,5 +1,6 @@
 import React, { useState } from 'react';
 import { provider } from '../../engine/document';
+import { viewportCenter } from '../../engine/presence/PresenceTypes';
 import { useRoomState } from '../../hooks/useSync';
 
 export const CollaborationLayer: React.FC = () => {
@@ -29,9 +30,13 @@ export const CollaborationLayer: React.FC = () => {
             onMouseEnter={() => setHoveredUser(clientId)}
             onMouseLeave={() => setHoveredUser(null)}
             onClick={() => {
-              // Jump to user's viewport
+              // Jump to the middle of what they are looking at. `navigateViewport`
+              // centres on the point it is given, and `viewport` stores its
+              // top-left corner — passing the corner straight through landed you
+              // half a screen off, on empty canvas.
               if (clientId !== provider.awareness?.clientID && u.viewport) {
-                window.dispatchEvent(new CustomEvent('navigateViewport', { detail: { x: u.viewport.x, y: u.viewport.y, zoom: u.viewport.zoom || 1 } }));
+                const c = viewportCenter(u.viewport);
+                window.dispatchEvent(new CustomEvent('navigateViewport', { detail: { x: c.x, y: c.y, zoom: u.viewport.zoom || 1 } }));
               }
             }}
             style={{

@@ -1,5 +1,6 @@
 import { describe, it, expect } from 'vitest';
 import { cursorModeForTool } from './toolCursor';
+import { viewportCenter } from '../presence/PresenceTypes';
 import {
   chipColorsFor,
   contrastRatio,
@@ -58,6 +59,36 @@ describe('cursorModeForTool', () => {
   it('falls back to the pointer for anything it does not recognise', () => {
     expect(cursorModeForTool('some-future-tool')).toBe('pointer');
     expect(cursorModeForTool(undefined)).toBe('pointer');
+  });
+});
+
+describe('viewportCenter', () => {
+  // Four separate call sites each converted this by hand, and three of them
+  // simply forgot to — clicking a collaborator, following one, and the
+  // off-screen markers all pointed half a screen up and to the left.
+  it('returns the middle of the visible area, not its corner', () => {
+    expect(viewportCenter({ x: 0, y: 0, width: 1000, height: 800, zoom: 1 })).toEqual({ x: 500, y: 400 });
+  });
+
+  it('accounts for zoom, because width and height are screen pixels', () => {
+    // Zoomed to 2x, a 1000px-wide screen shows 500 world units.
+    expect(viewportCenter({ x: 100, y: 100, width: 1000, height: 800, zoom: 2 })).toEqual({ x: 350, y: 300 });
+  });
+
+  it('handles a negative origin, which is most of the board', () => {
+    expect(viewportCenter({ x: -400, y: -300, width: 800, height: 600, zoom: 1 })).toEqual({ x: 0, y: 0 });
+  });
+
+  it('falls back to the corner for a peer on an older build', () => {
+    // Those clients publish x/y/zoom and no size at all.
+    const legacy = { x: 250, y: 125, zoom: 1 } as any;
+    expect(viewportCenter(legacy)).toEqual({ x: 250, y: 125 });
+  });
+
+  it('does not divide by a zero zoom', () => {
+    const c = viewportCenter({ x: 0, y: 0, width: 800, height: 600, zoom: 0 });
+    expect(Number.isFinite(c.x)).toBe(true);
+    expect(Number.isFinite(c.y)).toBe(true);
   });
 });
 

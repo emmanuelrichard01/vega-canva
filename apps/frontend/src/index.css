@@ -803,16 +803,6 @@ textarea:focus-visible {
    Hotspots are therefore in 32ths: multiply a viewBox coordinate by 4/3.
    ========================================= */
 
-/* The drawn pointer is live (LocalCursor mounted, fine pointer, normal colors),
-   so hand the surface over to it. `cursor` inherits, so this covers the Konva
-   content and canvas beneath without naming them.
-
-   This attribute is set by LocalCursor itself, never in markup. If that
-   component is absent or bails out, the rules below are still in force and the
-   canvas always has *a* pointer — the failure mode of the system this replaced
-   was `cursor: none` with nothing drawn on top, which left no pointer at all. */
-.canvas-container[data-custom-cursor="on"] { cursor: none; }
-
 .canvas-container[data-cursor-mode="pointer"] { cursor: default; }
 .canvas-container[data-cursor-mode="pan"]     { cursor: grab; }
 .canvas-container[data-cursor-mode="draw"]    { cursor: crosshair; }
@@ -837,9 +827,29 @@ textarea:focus-visible {
   cursor: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='32' height='32' viewBox='0 0 24 24' fill='none' stroke-linecap='round' stroke-linejoin='round'%3E%3Cg stroke='%23ffffff' stroke-width='5'%3E%3Cpath d='M21 14a2 2 0 0 1-2 2H8l-5 5V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z'/%3E%3C/g%3E%3Cpath d='M21 14a2 2 0 0 1-2 2H8l-5 5V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z' fill='%23ffffff'/%3E%3Cpath d='M21 14a2 2 0 0 1-2 2H8l-5 5V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z' stroke='%23111827' stroke-width='2'/%3E%3C/svg%3E") 4 27, copy;
 }
 
-/* A bitmap cursor ignores the user's contrast and pointer-size settings, so
-   in forced colors hand every one of them back to the OS. */
+/* The drawn pointer is live — LocalCursor is mounted, on a fine pointer, with
+   normal colors — so hand the surface over to it. `cursor` inherits, so this
+   covers the Konva content and the canvas beneath without naming them.
+
+   Two things about this rule are load-bearing:
+
+   1. **It carries both attributes**, giving it a higher specificity than the
+      single-attribute mode rules above. Written with one attribute it ties
+      with them, and a tie is decided by source order — which is exactly the
+      bug that left the OS arrow showing on top of the drawn one.
+   2. **`data-custom-cursor` is set by LocalCursor itself, never in markup.**
+      If that component is absent or bails out, the mode rules above are still
+      in force and the canvas always has *a* pointer. The failure mode of the
+      cursor system this replaces was `cursor: none` with nothing drawn over
+      it, which left no pointer at all. */
+.canvas-container[data-custom-cursor="on"][data-cursor-mode] { cursor: none; }
+
+/* A bitmap cursor ignores the user's contrast and pointer-size settings, so in
+   forced colors hand every one of them back to the OS. LocalCursor also stands
+   down here and stops setting `data-custom-cursor`, but this outranks it
+   either way rather than depending on that. */
 @media (forced-colors: active) {
+  .canvas-container[data-custom-cursor="on"][data-cursor-mode],
   .canvas-container[data-cursor-mode="erase"]   { cursor: crosshair; }
   .canvas-container[data-cursor-mode="note"],
   .canvas-container[data-cursor-mode="comment"] { cursor: copy; }

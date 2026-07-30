@@ -1,6 +1,7 @@
 import { nanoid } from 'nanoid';
 import React, { useState, useRef, useEffect } from 'react';
 import { Canvas } from './components/Canvas';
+import { viewportCenter } from './engine/presence/PresenceTypes';
 import { AuthModal } from './components/AuthModal';
 import { ShareModal } from './components/ShareModal';
 import { WorkspaceShell } from './components/workspace/WorkspaceShell';
@@ -140,8 +141,12 @@ export default function Room() {
       const states = provider.awareness?.getStates();
       (states || new Map()).forEach((state: any, clientId: number) => {
         if (clientId === followingClientId && state.viewport) {
+          // Centre on the middle of their view. `viewport` stores its top-left
+          // corner, so following someone used to sit permanently half a screen
+          // up and left of them.
+          const c = viewportCenter(state.viewport);
           window.dispatchEvent(new CustomEvent('navigateViewport', {
-            detail: { x: state.viewport.x, y: state.viewport.y, zoom: state.viewport.zoom || 1 }
+            detail: { x: c.x, y: c.y, zoom: state.viewport.zoom || 1 }
           }));
         }
       });

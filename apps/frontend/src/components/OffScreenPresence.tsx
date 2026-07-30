@@ -1,6 +1,7 @@
 import React from 'react';
 import { LocateFixed } from 'lucide-react';
 import { provider } from '../engine/document';
+import { viewportCenter } from '../engine/presence/PresenceTypes';
 
 interface OffScreenPresenceProps {
   stageScale: number;
@@ -38,8 +39,10 @@ export const OffScreenPresence: React.FC<OffScreenPresenceProps> = ({
   (states || new Map()).forEach((state: any, clientId: number) => {
     if (clientId === myClientId || !state.user || !state.viewport) return;
 
-    const targetX = state.viewport.x;
-    const targetY = state.viewport.y;
+    // Point the marker at the middle of their view, not at its top-left
+    // corner — the corner is off in the same direction for everyone, so every
+    // arrow was biased up and to the left of where the person actually is.
+    const { x: targetX, y: targetY } = viewportCenter(state.viewport);
 
     // Check if target is outside visible viewport
     const isOffScreen =

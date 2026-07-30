@@ -15,6 +15,30 @@ export interface ViewportState {
   zoom: number;
 }
 
+/**
+ * The world point in the middle of someone's screen.
+ *
+ * `ViewportState` stores the **top-left corner**, because that is what a
+ * rectangle needs and the minimap draws rectangles. Everything that *navigates*
+ * to a person wants the middle instead — fly to the corner and you land half a
+ * screen up and to the left of whatever they are actually looking at.
+ *
+ * That is not hypothetical: clicking a collaborator's avatar panned to empty
+ * canvas, and so did follow mode and the off-screen markers, because three
+ * separate call sites each passed the corner straight to a "centre on this
+ * point" navigator. One function now, used by all of them.
+ *
+ * Falls back to the corner when `width`/`height` are missing, which is what a
+ * peer running an older build still publishes.
+ */
+export function viewportCenter(v: ViewportState): { x: number; y: number } {
+  const zoom = v.zoom || 1;
+  return {
+    x: v.x + (v.width ?? 0) / (2 * zoom),
+    y: v.y + (v.height ?? 0) / (2 * zoom),
+  };
+}
+
 export interface CursorState {
   x: number;
   y: number;
