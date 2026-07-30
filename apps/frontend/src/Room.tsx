@@ -493,8 +493,16 @@ export default function Room() {
           }}
         />
         
-        {/* Other people's pointers. The local one is a CSS cursor now. */}
-        {isUiVisible && <RemoteCursors />}
+        {/* Other people's pointers. The local one is a CSS cursor now.
+
+            Deliberately not behind `isUiVisible`: that flag hides *chrome*, and
+            other people are not chrome. Hiding them was also inconsistent —
+            remote selection outlines (PresenceRenderer) and off-screen
+            collaborator markers (OffScreenPresence, just above) both stay up in
+            presentation mode, so presenting used to leave everyone's selections
+            visible while their cursors vanished. Presenting is usually
+            presenting *to* the people whose pointers these are. */}
+        <RemoteCursors />
         
         <ActivityFeed />
 

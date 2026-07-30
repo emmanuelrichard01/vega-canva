@@ -224,9 +224,9 @@ generic anti-pattern list.
 - Adapter-level physics code (Konva writes, awareness broadcasts) is still
   untested — that is exactly where the landing-jump bug lived. Extracting the
   pose-write into a pure function would close it.
-- `RemoteCursors` is mounted behind `isUiVisible` in `Room.tsx`, so
-  presentation mode hides collaborators entirely. Someone chose that; it is
-  worth deciding whether other people count as chrome.
+- Presentation mode (`isUiVisible`) hides chrome. Remote cursors are
+  deliberately **not** behind it — see the comment at their mount in `Room.tsx`
+  before putting them back.
 - PNG export omits audio players (DOM overlays, not canvas).
 - Groups are flat; no permissions; auth is a display identity, not an account.
 
