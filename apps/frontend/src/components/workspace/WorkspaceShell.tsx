@@ -126,12 +126,16 @@ export const WorkspaceShell: React.FC<Props> = ({ localTitle, setLocalTitle, onT
 
         <div className="hdr-divider" style={{ width: 1, height: 24, background: 'var(--border-divider)' }} />
 
-        {/* Physics On/Off */}
+        {/* Throw on flick. Narrowed from a general "Physics" switch, which also
+            silently disabled the force tools — so one control governed both the
+            meaning of every drag and the availability of a whole tool group.
+            The force tools are self-enabling now; this only decides whether
+            letting go of a fast drag launches the object or just drops it. */}
         <Switch
           checked={physicsEnabled}
           onChange={setPhysicsEnabled}
-          label="Physics"
-          tooltip={physicsEnabled ? "Physics is on — throws, magic tools, and cursor ripple are active" : "Physics is off — objects move exactly where you drop them"}
+          label="Throw"
+          tooltip={physicsEnabled ? "Flick an object and it keeps moving. Turn off to place objects exactly where you drop them." : "Objects stop exactly where you drop them. Turn on to throw them with a flick."}
         />
 
         {/* Grid snapping. Previously hardcoded on with no control at all. */}

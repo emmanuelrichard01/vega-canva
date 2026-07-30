@@ -89,6 +89,29 @@
   --status-offline: var(--red-500);
   --status-danger: var(--red-500);
 
+  /* ---------- SEMANTIC: history / Time Travel ----------
+     Replay is a distinct *mode*, not just another panel, so it gets its own
+     roles rather than borrowing the status colours. The Time Travel bar used to
+     reach straight for the --amber-500 primitive, which is what these exist to
+     stop. `--history-elapsed` is the part of the session already played;
+     `--history-track` is what remains; `--history-tick` marks an authored
+     moment on the track. */
+  --history-accent: var(--amber-600);
+  --history-elapsed: var(--amber-500);
+  --history-track: var(--gray-200);
+  --history-tick: var(--gray-400);
+  --history-playhead: var(--gray-900);
+
+  /* ---------- SEMANTIC: forces ----------
+     One hue per force so the field ring on the canvas, the selected chip in
+     the Forces bar, and the strength slider all agree on what is armed. Blue
+     pulls in, red pushes out, violet drops, teal blows, orange bursts. */
+  --force-pull: var(--blue-500);
+  --force-push: var(--red-500);
+  --force-drop: #8B5CF6;
+  --force-wind: #14B8A6;
+  --force-shock: var(--amber-500);
+
   /* ---------- ELEVATION ---------- */
   --shadow-sm: 0 1px 2px rgba(0, 0, 0, 0.05);
   --shadow-md: 0 4px 12px -4px rgba(0, 0, 0, 0.08);
@@ -183,6 +206,24 @@
   --text-tertiary: var(--zinc-400);
   --text-disabled: var(--zinc-500);
   --text-accent: var(--amber-300);
+
+  /* History roles, brightened for a dark surface: --amber-600 is too muddy to
+     read as "elapsed" against zinc-900, and the light-mode track/tick greys
+     disappear entirely. The playhead inverts to stay the brightest mark on
+     the track. */
+  --history-accent: var(--amber-300);
+  --history-elapsed: var(--amber-500);
+  --history-track: rgba(255, 255, 255, 0.14);
+  --history-tick: var(--zinc-500);
+  --history-playhead: var(--zinc-050);
+
+  /* Force hues lifted for a dark surface — the 500-weights used in light mode
+     sit too close to the background to read as a field ring on zinc-950. */
+  --force-pull: #60A5FA;
+  --force-push: #F87171;
+  --force-drop: #A78BFA;
+  --force-wind: #2DD4BF;
+  --force-shock: var(--amber-300);
 
   /* Shadows read as almost nothing on a dark surface unless deepened, and
      only --shadow-float was previously adjusted. */

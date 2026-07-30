@@ -84,6 +84,22 @@ export const ObjectContextToolbar: React.FC<Props> = ({ selectedId, selectedIds,
   const bulkIds = selectedIds || [];
   const activeId = isBulk ? null : selectedId;
 
+  // Stable-identity mirror of the selection, read imperatively by the RAF loop
+  // in the positioning effect below. That effect used to depend on
+  // `bulkIds.join(',')` — a string rebuilt every render specifically to avoid
+  // re-subscribing when the parent handed down a new array with identical
+  // contents. It worked, but it hid `bulkIds` from the dependency checker and
+  // made the whole listener set tear down and rebuild whenever the selection
+  // changed. The loop recomputes bounds every frame anyway, so reading the
+  // current selection from a ref is both cheaper and statically honest.
+  // Keyed on the `selectedIds` prop, not on `bulkIds`: the latter is
+  // `selectedIds || []`, so it is a brand-new array on any render where the
+  // prop is absent, which would make this effect run every render.
+  const bulkIdsRef = useRef(bulkIds);
+  useEffect(() => {
+    bulkIdsRef.current = selectedIds || [];
+  }, [selectedIds]);
+
   // The single-select panel below used to read `objectsMap.get(activeId).toJSON()`
   // directly on every render — which only happens when this component's own state
   // changes (position/visibility), not when the Yjs doc does. So any edit made
@@ -109,7 +125,7 @@ export const ObjectContextToolbar: React.FC<Props> = ({ selectedId, selectedIds,
       }
 
       let minX = Infinity, minY = Infinity, maxX = -Infinity, maxY = -Infinity;
-      const ids = isBulk ? bulkIds : (activeId ? [activeId] : []);
+      const ids = isBulk ? bulkIdsRef.current : (activeId ? [activeId] : []);
       // Bounds come from the canonical store rather than raw Y.Maps, so a
       // legacy node reports the same size here as it renders at.
       const store = useStore.getState().objects;
@@ -190,7 +206,7 @@ export const ObjectContextToolbar: React.FC<Props> = ({ selectedId, selectedIds,
       window.removeEventListener('canvas-drag-end', handleDragEnd);
       cancelAnimationFrame(frame);
     };
-  }, [activeId, isBulk, bulkIds.join(','), sidebarsVisible]);
+  }, [activeId, isBulk, sidebarsVisible]);
 
   // The reactions popover previously only closed when you picked an emoji or
   // hit its own clear button — clicking anywhere else on the canvas (or just

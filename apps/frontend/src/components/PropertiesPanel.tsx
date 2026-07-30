@@ -19,6 +19,14 @@ import { NumberStepper } from './ui/NumberStepper';
 import { FontSelector } from './ui/FontSelector';
 import { SegmentedControl } from './ui/SegmentedControl';
 import { THEMES, nearestTheme } from './canvas/renderers/StickyRenderer';
+import { MATERIALS, MATERIAL_IDS, resolveMaterial } from '../utils/behaviorSystem';
+
+/**
+ * Types that are simulated at all. Comments and frames are anchors — offering
+ * them a material would imply a behaviour they deliberately do not have.
+ */
+const NON_PHYSICAL_TYPES = new Set(['comment', 'artboard', 'frame']);
+const isPhysicalType = (type: string) => !NON_PHYSICAL_TYPES.has(type);
 
 interface PropertiesPanelProps {
   selectedId: string | null;
@@ -294,6 +302,39 @@ export const PropertiesPanel: React.FC<PropertiesPanelProps> = ({ selectedId, ov
           <Row label="Pinned">
             <input type="checkbox" checked={node.pinned} onChange={(e) => set({ pinned: e.target.checked })} />
           </Row>
+        </Accordion>
+      )}
+
+      {/* What the object is made of, and therefore how it moves under force.
+          The material profiles have always driven the simulation but were keyed
+          to node type and invisible — an audio note was bouncy and nobody could
+          see why, or make a sticky heavy. */}
+      {isPhysicalType(node.type) && (
+        <Accordion title="Physics">
+          <Row label="Material">
+            <select
+              value={resolveMaterial(node).id}
+              onChange={(e) => set({ material: e.target.value } as Partial<AnyNode>)}
+              aria-label="Material"
+              style={{
+                background: 'var(--surface-secondary)',
+                color: 'var(--text-primary)',
+                border: '1px solid var(--border-divider)',
+                borderRadius: 'var(--radius-md)',
+                padding: '4px 8px',
+                fontSize: 'var(--text-sm)',
+                fontFamily: 'var(--font-sans)',
+                cursor: 'pointer',
+              }}
+            >
+              {MATERIAL_IDS.map((id) => (
+                <option key={id} value={id}>{MATERIALS[id].label}</option>
+              ))}
+            </select>
+          </Row>
+          <p style={{ margin: '2px 0 0', fontSize: 'var(--text-xs)', color: 'var(--text-tertiary)', lineHeight: 1.4 }}>
+            {resolveMaterial(node).hint}
+          </p>
         </Accordion>
       )}
 

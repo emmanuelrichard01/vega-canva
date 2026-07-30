@@ -10,7 +10,7 @@ import { ObjectContextToolbar } from './components/ObjectContextToolbar';
 import { PropertiesPanel } from './components/PropertiesPanel';
 import { LayersPanel } from './components/LayersPanel';
 import { useAuth } from './hooks/AuthContext';
-import { provider, metadataMap, undoManager, updateNode, localAuthor } from './engine/document';
+import { provider, metadataMap, undoManager, updateNode, localAuthor, publishLocalIdentity } from './engine/document';
 import { useRoomState } from './hooks/useSync';
 import { initSyncBridge, useStore } from './hooks/useStore';
 import { editor } from './engine/api/EditorAPI';
@@ -18,6 +18,8 @@ import { ActivityFeed } from './components/ActivityFeed';
 import { OffScreenPresence } from './components/OffScreenPresence';
 import { ExportService } from './engine/export';
 import { TimeTravelBar } from './components/TimeTravelBar';
+import { ForcesBar } from './components/ForcesBar';
+import { isForceTool, type ForceId } from './engine/physics/forces';
 import { mediaUploadUrl } from './utils/endpoints';
 import { CommandPalette } from './components/CommandPalette';
 import { processOfflineMediaQueue, queueOfflineMedia } from './utils/offlineMediaQueue';
@@ -60,6 +62,8 @@ export default function Room() {
   // reload (and starts from the OS preference).
   const isDarkTheme = useStore((s) => s.darkTheme);
   const setIsDarkTheme = useStore((s) => s.setDarkTheme);
+  const applyReplaySnapshot = useStore((s) => s.applyReplaySnapshot);
+  const clearLayoutSnapshot = useStore((s) => s.clearLayoutSnapshot);
   const [isUiVisible, setIsUiVisible] = useState(true);
 
   // Below the compact breakpoint the side panels stop being docked columns —
@@ -155,6 +159,11 @@ export default function Room() {
         name: user.name,
         color: user.color,
       });
+      // Awareness is ephemeral and never reaches the update log, so the same
+      // identity is recorded in the document too. That is what lets Time Travel
+      // name someone who joined and only edited — attribution used to require
+      // having created a node.
+      publishLocalIdentity(user.name, user.color);
       // pushActivity('join', user.name, user.color, 'joined the workspace'); // Removed to stop spam
       hasJoined.current = true;
     }
@@ -379,6 +388,22 @@ export default function Room() {
     return () => input.removeEventListener('cancel', handleCancel);
   }, []);
 
+  // Escape leaves Forces the same way it leaves every other mode here. A mode
+  // you can only exit by finding the right button is a mode people feel stuck
+  // in, and force is the one mode where feeling stuck is alarming.
+  useEffect(() => {
+    if (!isForceTool(activeTool)) return;
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key !== 'Escape') return;
+      const el = document.activeElement?.tagName;
+      if (el === 'INPUT' || el === 'TEXTAREA') return;
+      setActiveTool('select');
+      clearLayoutSnapshot();
+    };
+    window.addEventListener('keydown', onKey);
+    return () => window.removeEventListener('keydown', onKey);
+  }, [activeTool, clearLayoutSnapshot]);
+
 
   const handleOrganize = (mode: LayoutMode) => {
     const currentObjects = useStore.getState().objects;
@@ -492,13 +517,31 @@ export default function Room() {
         />
         
         {showTimeTravel && (
-          <TimeTravelBar 
-            roomId={roomId} 
-            onClose={() => { setShowTimeTravel(false); setTimeTravelSnapshot(null); }} 
-            onApplySnapshot={(snap) => setTimeTravelSnapshot(snap)} 
+          <TimeTravelBar
+            roomId={roomId}
+            onClose={() => { setShowTimeTravel(false); applyReplaySnapshot(null); setTimeTravelSnapshot(null); }}
+            /* The snapshot has to reach the store, not just these two panels —
+               that is what puts the replay on the canvas. It stays in local
+               state as well because Layers and Properties read it directly to
+               show history without subscribing to replay state. */
+            onApplySnapshot={(snap) => { applyReplaySnapshot(snap); setTimeTravelSnapshot(snap); }}
           />
         )}
         
+        {/* Forces mode owns the bottom of the screen while it is active, in the
+            same slot and the same shell as Time Travel — both are modes you
+            enter, work inside, and leave. */}
+        {isForceTool(activeTool) && (
+          <ForcesBar
+            activeForce={activeTool as ForceId}
+            onPickForce={(id) => setActiveTool(id)}
+            onExit={() => {
+              setActiveTool('select');
+              clearLayoutSnapshot();
+            }}
+          />
+        )}
+
         {showCommandPalette && (
           <CommandPalette 
             onClose={() => setShowCommandPalette(false)} 

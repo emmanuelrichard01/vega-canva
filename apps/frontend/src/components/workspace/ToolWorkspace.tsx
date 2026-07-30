@@ -1,16 +1,23 @@
 import React, { useState } from 'react';
-import { MousePointer2, Hand, Pen, PenTool as PenToolIcon, Type, Square, StickyNote, MessageSquare, ImageIcon, Mic, Sparkles, Magnet, Radiation, Waves, Zap } from 'lucide-react';
-import { useStore } from '../../hooks/useStore';
+import { MousePointer2, Hand, Pen, PenTool as PenToolIcon, Type, Square, StickyNote, MessageSquare, ImageIcon, Mic, Sparkles, Magnet, Radiation, Waves, Zap, ArrowDownToLine } from 'lucide-react';
+import { FORCE_IDS, FORCE_SPECS, isForceTool, type ForceId } from '../../engine/physics/forces';
 
 interface Props {
   activeToolId: string;
 }
 
+const FORCE_ICONS: Record<ForceId, React.ReactNode> = {
+  magnet: <Magnet size={16} />,
+  repel: <Radiation size={16} />,
+  gravity: <ArrowDownToLine size={16} />,
+  wind: <Waves size={16} />,
+  shockwave: <Zap size={16} />,
+};
+
 export const ToolWorkspace: React.FC<Props> = ({ activeToolId }) => {
   const [showShapeMenu, setShowShapeMenu] = useState(false);
   const [showMagicMenu, setShowMagicMenu] = useState(false);
   const [showPenMenu, setShowPenMenu] = useState(false);
-  const physicsEnabled = useStore(state => state.physicsEnabled);
 
   // Canvas.tsx owns the real ToolManager instance and reacts to this event —
   // there used to be a second, entirely unused ToolRegistry here that this
@@ -96,26 +103,42 @@ export const ToolWorkspace: React.FC<Props> = ({ activeToolId }) => {
         <MessageSquare size={18} />
       </button>
       
+      {/* Forces. No longer gated on a switch elsewhere in the UI: this used to
+          sit dimmed at 40% opacity with a tooltip telling you to go and turn
+          Physics on in the header first. A disabled control whose enabling
+          condition lives in another corner of the screen is a dead end —
+          reaching for a force tool is itself the decision to use force. */}
       <div
-        style={{ position: 'relative', opacity: physicsEnabled ? 1 : 0.4 }}
-        onMouseEnter={() => physicsEnabled && setShowMagicMenu(true)}
+        style={{ position: 'relative' }}
+        onMouseEnter={() => setShowMagicMenu(true)}
         onMouseLeave={() => setShowMagicMenu(false)}
       >
         <button
-          className={`btn-icon ${['magnet', 'repel', 'wind', 'shockwave'].includes(activeToolId) ? 'active' : ''}`}
-          onClick={() => physicsEnabled && setTool(['magnet', 'repel', 'wind', 'shockwave'].includes(activeToolId) ? activeToolId : 'magnet')}
-          data-tooltip={showMagicMenu ? undefined : (physicsEnabled ? "Magic Tools" : "Magic Tools — turn Physics on to use these")}
-          style={{ padding: '6px', cursor: physicsEnabled ? 'pointer' : 'default' }}
+          className={`btn-icon ${isForceTool(activeToolId) ? 'active' : ''}`}
+          aria-pressed={isForceTool(activeToolId)}
+          onClick={() => setTool(isForceTool(activeToolId) ? activeToolId : 'magnet')}
+          data-tooltip={showMagicMenu ? undefined : 'Forces — push, pull and drop objects'}
+          aria-label="Forces"
+          style={{ padding: '6px' }}
         >
           <Sparkles size={18} />
         </button>
-        {showMagicMenu && physicsEnabled && (
+        {showMagicMenu && (
           <div style={{ position: 'absolute', bottom: '100%', left: '50%', transform: 'translateX(-50%)', paddingBottom: 4, zIndex: 20 }}>
             <div className="panel-surface" style={{ display: 'flex', gap: 2, padding: 4 }}>
-              <button className={`btn-icon ${activeToolId === 'magnet' ? 'active' : ''}`} aria-pressed={activeToolId === 'magnet'} onClick={() => setTool('magnet')} data-tooltip="Magnet — pull objects in" aria-label="Magnet — pull objects in" style={{ padding: '6px' }}><Magnet size={16} /></button>
-              <button className={`btn-icon ${activeToolId === 'repel' ? 'active' : ''}`} aria-pressed={activeToolId === 'repel'} onClick={() => setTool('repel')} data-tooltip="Repel — push objects apart" aria-label="Repel — push objects apart" style={{ padding: '6px' }}><Radiation size={16} /></button>
-              <button className={`btn-icon ${activeToolId === 'shockwave' ? 'active' : ''}`} aria-pressed={activeToolId === 'shockwave'} onClick={() => setTool('shockwave')} data-tooltip="Shockwave — burst from a point" aria-label="Shockwave — burst from a point" style={{ padding: '6px' }}><Zap size={16} /></button>
-              <button className={`btn-icon ${activeToolId === 'wind' ? 'active' : ''}`} aria-pressed={activeToolId === 'wind'} onClick={() => setTool('wind')} data-tooltip="Wind — drag to blow objects" aria-label="Wind — drag to blow objects" style={{ padding: '6px' }}><Waves size={16} /></button>
+              {FORCE_IDS.map(id => (
+                <button
+                  key={id}
+                  className={`btn-icon ${activeToolId === id ? 'active' : ''}`}
+                  aria-pressed={activeToolId === id}
+                  onClick={() => setTool(id)}
+                  data-tooltip={`${FORCE_SPECS[id].label} — ${FORCE_SPECS[id].hint}`}
+                  aria-label={FORCE_SPECS[id].label}
+                  style={{ padding: '6px' }}
+                >
+                  {FORCE_ICONS[id]}
+                </button>
+              ))}
             </div>
           </div>
         )}
