@@ -11,3 +11,4 @@ export * from './HandTool';
 export * from './EraserTool';
 export * from './CommentTool';
 // Trigger HMR cache clear
+export * from './FrameTool';

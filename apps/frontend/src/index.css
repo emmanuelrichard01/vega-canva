@@ -2451,3 +2451,66 @@ textarea:focus-visible {
   background: var(--surface-hover);
   color: var(--text-primary);
 }
+
+/* ---------------------------------------------------------------------------
+   FRAME PICKER
+
+   Unlike the pen and shape flyouts, this one is a *list*: its entries differ
+   by a pair of numbers, not by a silhouette, and nine icons that all look like
+   a rectangle would tell you nothing. So it reads as names with their sizes,
+   grouped by what they are for.
+   --------------------------------------------------------------------------- */
+
+.frame-menu {
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
+  padding: var(--space-2);
+  min-width: 190px;
+  /* The dock sits at the bottom of the screen and this opens upward, so a long
+     list has to be allowed to scroll rather than run off the top edge. */
+  max-height: 60vh;
+  overflow-y: auto;
+}
+
+.frame-menu__item {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: var(--space-4);
+  width: 100%;
+  padding: 5px var(--space-2);
+  border-radius: var(--radius-sm);
+  text-align: left;
+}
+
+.frame-menu__label {
+  font-size: var(--text-base);
+  font-weight: var(--weight-medium);
+  color: var(--text-primary);
+  white-space: nowrap;
+}
+
+/* A measurement, so it is tabular and quiet — you scan the names and read the
+   numbers only once you are close. */
+.frame-menu__size {
+  font-family: var(--font-mono);
+  font-size: var(--text-xs);
+  font-variant-numeric: tabular-nums;
+  color: var(--text-tertiary);
+  white-space: nowrap;
+}
+
+.frame-menu__group {
+  padding: var(--space-3) var(--space-2) var(--space-1);
+  font-size: var(--text-2xs);
+  font-weight: var(--weight-semibold);
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: var(--text-tertiary);
+}
+
+/* No space above the first group — the heading is already the top of the list. */
+.frame-menu__group:first-child {
+  padding-top: var(--space-1);
+}

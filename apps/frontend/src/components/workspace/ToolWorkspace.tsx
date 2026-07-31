@@ -1,6 +1,7 @@
 import React, { useEffect, useState } from 'react';
-import { MousePointer2, Hand, Pen, PenTool as PenToolIcon, Type, Square, StickyNote, MessageSquare, ImageIcon, Mic, Sparkles, Magnet, Radiation, Waves, Zap, ArrowDownToLine } from 'lucide-react';
+import { MousePointer2, Hand, Pen, PenTool as PenToolIcon, Type, Square, StickyNote, MessageSquare, ImageIcon, Mic, Sparkles, Magnet, Radiation, Waves, Zap, ArrowDownToLine, Frame } from 'lucide-react';
 import { FORCE_IDS, FORCE_SPECS, isForceTool, type ForceId } from '../../engine/physics/forces';
+import { FRAME_PRESETS, FRAME_PRESET_GROUPS } from '../../engine/model/frames';
 import { ShapeIcon, SHAPE_KINDS, SHAPE_LABELS, shapeToolId, shapeKindFromToolId } from './shapeIcons';
 
 interface Props {
@@ -25,7 +26,7 @@ export const ToolWorkspace: React.FC<Props> = ({ activeToolId }) => {
    * these three buttons simply could not be reached. One piece of state rather
    * than a pair per menu also guarantees only one can ever be open.
    */
-  type DockMenu = 'pen' | 'shape' | 'forces';
+  type DockMenu = 'pen' | 'shape' | 'forces' | 'frame';
   const [pinnedMenu, setPinnedMenu] = useState<DockMenu | null>(null);
   const [hoveredMenu, setHoveredMenu] = useState<DockMenu | null>(null);
   const openMenu = pinnedMenu ?? hoveredMenu;
@@ -67,6 +68,7 @@ export const ToolWorkspace: React.FC<Props> = ({ activeToolId }) => {
 
   const isShape = activeToolId.startsWith('shape');
   const armedShape = shapeKindFromToolId(activeToolId);
+  const isFrame = activeToolId === 'frame' || activeToolId.startsWith('frame-');
 
 
 
@@ -150,6 +152,61 @@ export const ToolWorkspace: React.FC<Props> = ({ activeToolId }) => {
                   </button>
                 );
               })}
+            </div>
+          </div>
+        )}
+      </div>
+
+      {/* Frames. The flyout is a size picker rather than a tool switcher: every
+          entry draws a frame, and the one you pick decides what a *click*
+          produces. Dragging always sizes it by hand, whichever is armed. */}
+      <div style={{ position: 'relative' }} {...hoverProps('frame')}>
+        <button
+          className={`btn-icon ${isFrame ? 'active' : ''}`}
+          aria-pressed={isFrame}
+          aria-haspopup="menu"
+          aria-expanded={openMenu === 'frame'}
+          onClick={() => toggleMenu('frame')}
+          data-tooltip={openMenu === 'frame' ? undefined : 'Frame (F) — a bounded region with a size'}
+          aria-label="Frame" data-label="Frame"
+          style={{ padding: '6px' }}
+        >
+          <Frame size={18} />
+        </button>
+        {openMenu === 'frame' && (
+          <div role="menu" style={{ position: 'absolute', bottom: '100%', left: '50%', transform: 'translateX(-50%)', paddingBottom: 6, zIndex: 20 }}>
+            <div className="panel-surface frame-menu">
+              <button
+                role="menuitemradio"
+                className={`btn-icon frame-menu__item ${activeToolId === 'frame' ? 'active' : ''}`}
+                aria-checked={activeToolId === 'frame'}
+                onClick={() => { setTool('frame'); setPinnedMenu(null); }}
+                aria-label="Custom frame — drag to size"
+              >
+                <span className="frame-menu__label">Custom</span>
+                <span className="frame-menu__size">drag</span>
+              </button>
+              {FRAME_PRESET_GROUPS.map((group) => (
+                <React.Fragment key={group}>
+                  <div className="frame-menu__group" role="presentation">{group}</div>
+                  {FRAME_PRESETS.filter((p) => p.group === group).map((preset) => {
+                    const id = `frame-${preset.id}`;
+                    return (
+                      <button
+                        key={preset.id}
+                        role="menuitemradio"
+                        className={`btn-icon frame-menu__item ${activeToolId === id ? 'active' : ''}`}
+                        aria-checked={activeToolId === id}
+                        onClick={() => { setTool(id); setPinnedMenu(null); }}
+                        aria-label={`${preset.label}, ${preset.width} by ${preset.height}`}
+                      >
+                        <span className="frame-menu__label">{preset.label}</span>
+                        <span className="frame-menu__size">{preset.width} × {preset.height}</span>
+                      </button>
+                    );
+                  })}
+                </React.Fragment>
+              ))}
             </div>
           </div>
         )}

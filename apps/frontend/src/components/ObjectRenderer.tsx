@@ -348,7 +348,7 @@ export const ObjectRenderer = React.memo(
             };
           }}
         >
-          <NodeContent node={node} isEditing={isEditing} />
+          <NodeContent node={node} isEditing={isEditing} stageScale={stageScale} />
 
           {isHovered && !isSelected && (
             // Sized from the node's real bounds. This used to read
@@ -395,7 +395,11 @@ ObjectRenderer.displayName = 'ObjectRenderer';
  * drawn once, above, for every object type. The sticky was the last holdout
  * with a look of its own.
  */
-const NodeContent: React.FC<{ node: AnyNode; isEditing: boolean }> = ({ node, isEditing }) => {
+const NodeContent: React.FC<{ node: AnyNode; isEditing: boolean; stageScale?: number }> = ({
+  node,
+  isEditing,
+  stageScale = 1,
+}) => {
   switch (node.type) {
     case 'text':
       return <TextRenderer node={node} visible={!isEditing} />;
@@ -436,7 +440,27 @@ const NodeContent: React.FC<{ node: AnyNode; isEditing: boolean }> = ({ node, is
             shadowOpacity={0.05}
             shadowOffsetY={10}
           />
-          <Text text={node.title ?? 'Frame'} y={-24} fontSize={14} fill="#9CA3AF" fontFamily="Inter" listening={false} />
+          {/* The name is chrome, not content, so it holds a constant size on
+              screen instead of scaling with the board — at 10% zoom a
+              world-space label is sub-pixel, which is exactly when you most
+              need to tell one frame from another. Dividing by the stage scale
+              is the same trick the selection ring uses one level up.
+              `perfectDrawEnabled={false}` because this is a flat fill with no
+              stroke, and the extra offscreen pass it disables buys nothing. */}
+          <Text
+            text={node.title ?? 'Frame'}
+            y={-18 / stageScale}
+            fontSize={12 / stageScale}
+            /* A fixed grey, not a token: Konva paints to a canvas and cannot
+               resolve a CSS custom property, so `var(--text-tertiary)` here is
+               simply an invalid colour. This mid grey holds up against both
+               the light and the dark board — the same call `cursorArt` makes,
+               and for the same reason. */
+            fill="#9CA3AF"
+            fontFamily="Inter, sans-serif"
+            perfectDrawEnabled={false}
+            listening={false}
+          />
         </Group>
       );
   }

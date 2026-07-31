@@ -263,6 +263,7 @@ export default function Room() {
         case 'h': selectTool('hand'); break; // Advertised by the dock tooltip but never bound
         case 't': selectTool('text'); break;
         case 'r': selectTool('shape'); break;
+        case 'f': selectTool('frame'); break;
         case 's': selectTool('sticky'); break;
         case 'c': selectTool('comment'); break; // Advertised by the dock tooltip but never bound
         case 'p': selectTool('bezier-pen'); break; // Pen (anchor points), matching Illustrator

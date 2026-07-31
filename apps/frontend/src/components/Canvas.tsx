@@ -28,10 +28,17 @@ const DRAWING_TOOLS = new Set([
   'shape-triangle',
   'shape-hexagon',
   'shape-star',
+  // Drawing a frame is authoring too, and it is the one gesture where a
+  // collaborator most wants to know something is being laid out before it
+  // appears. The preset variants are matched by prefix below.
+  'frame',
 ]);
+
+/** `frame-desktop`, `frame-a4`, … all count as authoring. */
+const isDrawingTool = (toolId: string) => DRAWING_TOOLS.has(toolId) || toolId.startsWith('frame-');
 import { cursorModeForTool, LocalCursor } from '../engine/cursor';
 import { GestureOverlay } from "./GestureOverlay";
-import { ToolManager, SelectTool, ShapeTool, TextTool, StickyTool, AudioTool, PenTool, BezierPenTool, HandTool, EraserTool, CommentTool } from '../engine/tools';
+import { ToolManager, SelectTool, ShapeTool, TextTool, StickyTool, AudioTool, PenTool, BezierPenTool, HandTool, EraserTool, CommentTool, FrameTool } from '../engine/tools';
 import { CommentsOverlay } from "./CommentsOverlay";
 import { AudioRecordingHUD } from "./AudioRecordingHUD";
 import { useComments } from "../hooks/useComments";
@@ -43,6 +50,7 @@ import { DEFAULT_TYPOGRAPHY } from '../engine/model/schema';
 import { SelectionTransformer } from './canvas/SelectionTransformer';
 import { CropOverlay } from './canvas/CropOverlay';
 import { cropMode } from '../engine/interaction/cropMode';
+import { FRAME_PRESETS } from '../engine/model/frames';
 
 interface CanvasProps {
   activeTool: string;
@@ -738,6 +746,10 @@ export const Canvas: React.FC<CanvasProps> = ({ activeTool, selectedIds, setSele
     tm.registerTool(new HandTool());
     tm.registerTool(new EraserTool());
     tm.registerTool(new CommentTool());
+    // One instance per preset, like the shape kinds, so the dock's flyout, the
+    // tool id and the frame that gets created cannot drift apart.
+    tm.registerTool(new FrameTool());
+    FRAME_PRESETS.forEach((preset) => tm.registerTool(new FrameTool(preset.id)));
     return tm;
   }, []);
 
@@ -807,7 +819,7 @@ export const Canvas: React.FC<CanvasProps> = ({ activeTool, selectedIds, setSele
     // an activity so collaborators' name chips stay up and the radar pings
     // where the work is happening — but deliberately *not* as a word next to
     // their name, because the stroke appearing is already the message.
-    if (DRAWING_TOOLS.has(activeTool)) presenceManager.updateActivity('drawing');
+    if (isDrawingTool(activeTool)) presenceManager.updateActivity('drawing');
 
     toolManager.handlePointerDown(e);
   };
