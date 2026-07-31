@@ -204,10 +204,27 @@ Cursors, selection outlines, the viewport radar, per-object "editing" badges and
 emoji gestures all ride on Yjs awareness rather than the document, so ephemeral
 state never enters history.
 
-`PresenceManager` is the **only** writer of local awareness state. It owns one
-throttle (15Hz) and the idle timer, and everything ephemeral goes through it —
-having two writers for the `cursor` field is what left ghost pointers parked on
-the canvas after someone moved to a side panel.
+**One writer, one reader.** `PresenceManager` is the only thing that writes
+local awareness state: it owns one throttle (15Hz) and the idle timer, and
+everything ephemeral goes through it. Having two writers for `cursor` is what
+left ghost pointers parked on the canvas after someone moved to a side panel,
+and having two for `viewport` meant a single pan broadcast an update on every
+frame to every peer.
+
+`engine/presence/collaboratorStore.ts` is the mirror image: the only thing that
+*reads* other people's state. It normalizes awareness into a `Collaborator[]`
+and runs **one** frame loop that every presence surface subscribes to. There
+used to be four independent readers with four different answers — and the frame
+loop belonged to the radar, so collapsing the radar froze the interpolation the
+cursors depended on.
+
+It publishes two kinds of change, deliberately kept apart:
+
+- **Roster changes** — joins, leaves, renames, going idle, crossing on or off
+  the canvas — go to React through `useCollaborators()`. A few times a minute.
+- **Positions** are read inside the frame loop and written straight to the DOM.
+  Re-rendering a component tree at broadcast rate to move a 22px arrow is how a
+  presence layer starts costing more than the document it decorates.
 
 **Cursor and viewport answer different questions.** The cursor is where a
 pointer is right now, and it is cleared the moment that pointer leaves the
@@ -250,8 +267,13 @@ Panels and chrome keep the real OS pointer. `index.css` also keeps a full set
 of native `[data-cursor-mode]` cursors underneath, and `LocalCursor` hands the
 surface back to them on a coarse pointer or under `forced-colors`, where a
 drawn cursor cannot honour the pointer size and contrast the OS was asked for.
-The attribute that suppresses the native cursor is set by `LocalCursor` itself,
-so the canvas is never left with `cursor: none` and nothing drawn on top.
+
+**The attribute that suppresses the native cursor is applied only while the
+drawn one is actually visible**, so the canvas is never left with `cursor:
+none` and nothing on top of it. Setting it at mount time instead is subtly
+broken, because no `pointerenter` is delivered for a pointer that was already
+inside the element: mounting with the mouse over the canvas — which is what
+every reload and every sign-in does — hid the system cursor and drew nothing.
 
 **Other people's pointers** are rendered by `RemoteCursors`: React mounts and
 unmounts them and decides whether each is visible, while a frame loop does
@@ -259,22 +281,252 @@ position and interpolation only. Splitting it that way is deliberate — when th
 frame loop also owned visibility, a throttled tab showed an empty room.
 
 **Other people's pointers are content**, so they keep custom rendering.
-`RemoteCursors` mounts and unmounts through React and moves through `rAF`,
-writing transforms straight to the DOM rather than re-rendering at broadcast
-rate. Three things there are arithmetic, and therefore live in
-`remoteCursor.ts` under test:
+`RemoteCursors` mounts and unmounts through React and moves through the shared
+presence frame loop, writing transforms straight to the DOM rather than
+re-rendering at broadcast rate. Three things there are arithmetic, and
+therefore live in `remoteCursor.ts` under test:
 
-- **Interpolation is frame-rate independent.** The old fixed per-frame lerp
-  made a 144Hz display converge nearly 2.5× faster than a 60Hz one on identical
-  network updates.
+- **Interpolation is frame-rate independent, and happens in world space.** The
+  old fixed per-frame lerp made a 144Hz display converge nearly 2.5× faster
+  than a 60Hz one on identical network updates; smoothing *screen* positions
+  additionally meant that panning your own canvas dragged everybody else's
+  pointer along a fifth of a second behind the content it was sitting on.
 - **Name chips derive their colours.** A chip painted in the raw presence
   colour with white text failed WCAG AA on half the palette — Amber `#F59E0B`
   at about 2:1 — and sign-in lets people pick an arbitrary colour, so a lookup
   table would not have covered it. `chipColorsFor` moves the fill the *shorter*
   way to readability, so deep colours stay saturated with white text and bright
   ones stay bright with hue-tinted dark text. The arrow always keeps the raw
-  colour and the chip is outlined in it.
-- **Chips flip at the viewport edge** instead of being clipped by the overlay.
+  colour and the chip is ringed in it — which is also what separates a deepened
+  chip from a dark canvas, since solving text-on-chip contrast can take a deep
+  colour very close to black.
+- **Chips flip at the viewport edge** instead of being clipped by the overlay,
+  and are dropped entirely once the pointer itself is off screen — the clamp
+  that rescues a chip near an edge otherwise strands a lone name in the corner
+  with no arrow attached to it.
+
+A name fades out after six seconds of stillness and the arrow stays, unless
+the person is mid-task — six people in a room is otherwise six permanent name
+tags over the work.
+
+### What you see while someone else works
+
+One channel per question, and no surface exists twice.
+
+| Question | Answer |
+| --- | --- |
+| Where is Mike? | his arrow, in his colour |
+| What is he holding? | a **tool badge in the arrow's tail** |
+| What is he doing that I can't see? | one word beside his name |
+| Which object is his? | a name tag on the selection outline |
+| Is anyone busy off-screen? | the radar's ping, and the edge marker |
+
+**The badge is the load-bearing idea.** Your own pointer already wears a small
+glyph for the tool in your hand (`cursorArt.tsx`); a collaborator's pointer
+wears *the same glyph* in their colour. Nothing has to be learned twice, no
+legend is needed, and it costs no screen space — the badge sits in the arrow's
+tail where there was nothing. It also needed no new data: `tool` has always
+been published by `presenceManager.updateTool` and had never been read.
+
+The glyphs are drawn into a 9px disc at a heavy stroke weight, so they must be
+**two or three strokes with no small features**. A lucide-weight pencil became
+a diagonal slash inside a circle — which reads as a prohibition sign — and an
+outlined hand became a blob. Both were caught by rendering the whole set at 4×
+and looking at it, and the rule is written into `TOOL_GLYPHS`.
+
+Two deliberate blanks: **select and pan carry no badge.** Selecting is the
+default state, so badging it decorates every pointer in the room with nothing;
+panning changes only what *that person* can see, so there is no outcome for
+anyone else to anticipate.
+
+**Activities are a closed set** — `typing`, `recording`, `drawing`, `moving` —
+and only the first two get a word next to a name. Recording is invisible, and
+typing nearly so. Drawing and moving are already fully visible: the stroke is
+appearing, the object is sliding. Labelling those writes on screen what the
+screen has already said. They still travel, because they hold the name chip up
+while someone works and they drive the radar's ping.
+
+This replaced a free-text field written in two places as `'✏️ Typing'` and
+`'🎤 Recording'` — an icon, a word and a state fused into one value that went
+on the wire and was rendered verbatim, so it could not be styled, translated
+or tested.
+
+### Off-screen collaborators — `components/PresenceEdgeMarkers.tsx`
+
+On an infinite canvas, two people who have panned apart have no way of knowing
+the other is there. A marker rides the edge you would leave by: their initials
+in their own colour, on a pill in the inverse of the page surface so it reads
+as chrome over the board rather than as another object on it, with a chevron
+pointing their way. Clicking it flies to them.
+
+**Hovering expands the pill** to show their name and how far away they are,
+rather than opening a tooltip beneath it. One surface that grows is one object;
+an avatar plus a floating tooltip is two, and the tooltip lands off-screen at
+exactly the edge the marker is pinned to. For the same reason the label grows
+*inwards* when the marker is near the right-hand edge (`data-flip`).
+
+- It walks the **ray** from the middle of the screen and takes where it crosses
+  the edge. Clamping each axis independently instead — which is what the
+  version this replaces did — lands everything diagonal in the same corner, so
+  three people in three directions stack up and none of the arrows point at
+  anyone.
+- The edge it uses is the edge of the **visible canvas**, measured from the
+  DOM, not the window: the right-hand edge is exactly where the Properties
+  panel is, so markers placed against the window went behind it.
+- A marker is suppressed only while that person's **pointer** is on screen —
+  that is when `RemoteCursors` is drawing them and a marker would contradict
+  what you can see. Otherwise the marker *is* how they are represented, and it
+  follows them onto the screen rather than vanishing: at the edge with a
+  chevron while they are off it, at the middle of their view with the chevron
+  dropped once they are on it.
+
+That last rule matters more than it looks. **A cursor is cleared the moment
+someone's pointer leaves their own canvas** — a panel, another window, another
+app — which is correct, because a stale arrow parked on the board is worse than
+no arrow. But it means a collaborator who is present and simply not pointing
+has no cursor to draw, and hiding the marker as soon as their viewport came on
+screen meant that following an arrow to someone and arriving showed you nothing
+at all.
+
+It also means **you cannot see a remote cursor while testing alone with two
+windows**: your pointer is in one of them, so the other one has correctly
+published `cursor: null`. The avatar marker is what you will see instead, and
+that is the system working.
+
+### Radar — `components/Minimap.tsx`, `engine/presence/RadarEngine.ts`
+
+The whole board at a glance, with everyone on it: objects in their own colours,
+each collaborator as a dot with their viewport rectangle, an ambient ping while
+they are active, and your own viewport as a draggable frame. Drag to scrub the
+camera, click someone to fly to them, and the zoom control is here too — until
+now nothing in the app displayed the zoom level at all.
+
+The framing is the part that matters, and it is pure and tested
+(`radarProjection.ts`). The radar holds its frame until content actually falls
+outside it or the frame has become much larger than it needs to be, then eases
+to the new one. Re-fitting every frame — which the previous implementation did
+— means that panning, since your own viewport is part of the bounds, rescales
+the map continuously and objects that have not moved appear to swim.
+
+### Sticky notes
+
+**A new note opens ready to type in**, and Escape backs out of it — an empty
+note removes itself rather than leaving a coloured square that looks like
+content. `Tab` chains another note beside it, so a run of ideas costs one
+keystroke each.
+
+That flow rests on a **latch, not an event**
+(`engine/interaction/pendingEdit.ts`). Creating the node and then dispatching
+"now edit it" is a race the tool always loses: the renderer has not mounted,
+so nothing is listening. The tool claims the id first and the renderer picks it
+up during its own first render, which has no window to miss.
+
+**The type is fitted to the note, not stored.** A fixed size meant Konva
+clipped anything past the bottom edge — typing past the fold made your own
+words invisible, in silence. The canvas and the editor overlay both go through
+`stickyFit`, which measures with a Konva probe, because the only thing that
+knows how Konva wraps a line is Konva; two "close enough" implementations make
+the words reflow under the caret. Height alone is not a sufficient test —
+a lone long word fits by height at a large size because the renderer
+hard-breaks it, so "Onboarding" rendered as "Onboar / ding".
+
+### Voice notes — `AudioTool`, `AudioRenderer`, `engine/model/audioPlayback.ts`
+
+Record by picking the mic and clicking the board; the note lands where you
+started talking, not where the pointer ended up. Escape or Discard throws the
+take away, and a five-minute cap stops an unattended recording holding the
+microphone open. A refused or missing microphone says so — it used to fail into
+`console.error`, which from the user's side is a click that does nothing.
+
+**The waveform is the scrubber**, not decoration: drag it, or use arrows,
+Home/End and Space, because it is a real `role="slider"`. Playback speed cycles
+1× / 1.5× / 2×. Only one note plays at a time. Duration is taken from the audio
+element rather than the document, since uploaded clips are stored with
+`durationMs: 0` and showed `0:00 / 0:00` while plainly playing; the first client
+to load one writes the real value back.
+
+The player is a DOM overlay, which has one consequence worth knowing: the node
+needs a **`Rect` with a fill** underneath it purely to exist in Konva's hit
+graph, and the card itself is **`pointer-events: none`** with only its controls
+opting back in. Without both, a voice note cannot be selected or dragged —
+every other object type has real Konva shapes and never shows the problem.
+
+### Tags — `engine/model/tags.ts`, `tagFilter.ts`
+
+Sticky tags, normalised so "Needs Design" and "needs-design" are one tag, with
+a filter in the Layers panel. They shipped together deliberately: a tag with no
+way to act on it is decoration, which is what the field had been for the whole
+life of the project.
+
+Selecting tags matches **any** of them — an all-of filter over hand-typed tags
+returns nothing almost every time — and the canvas **dims** non-matching notes
+rather than hiding them, because seeing the matches among their neighbours is
+the reason to filter on a canvas rather than in a list. The filter lives outside
+the document and is not persisted: it is a way of looking, not a property of
+the board, so it must not empty anyone else's screen or outlive the session.
+
+### Sticky reactions — `engine/document/reactions.ts`
+
+The one node field stored as a nested CRDT type rather than a plain value, and
+the reason is worth knowing before touching it.
+
+Every other field — position, text, colour — is edited by one person at a time,
+so a plain value with last-write-wins is correct and simplest. Reactions are
+the opposite: they are *designed* to be written by several people in the same
+instant. Stored as `emoji → count` and incremented on click, two people
+reacting simultaneously both read the same number, both wrote number + 1, and
+one reaction silently disappeared.
+
+They are a single flat `Y.Array` of `emoji\0authorId` entries, created with the
+node. The obvious shape — `Y.Map<emoji, Y.Array<authorId>>` — is a trap:
+**concurrent `set` on the same key is last-write-wins**, so any container
+created on demand can be created twice and one copy, reaction included, is
+thrown away. That bites when two people react to a new note, and again when two
+people react with the same new emoji to any note. One flat array has exactly
+one container, created once, and everything after that is an insert or delete
+that merges.
+
+Because reactions record *who*, a reaction is a toggle: clicking your own emoji
+again removes it, and nobody can clear anyone else's.
+
+### Comments — `engine/comments/`, `components/comments/`
+
+Threads pinned to a point or to an object, with replies, author-only editing,
+resolve, mentions, per-person unread state and an inbox. Threads live in their
+own `Y.Map` (`commentsMap`), separate from the objects map — a comment is not a
+thing on the canvas, and mixing them would put every reply into the scene
+graph.
+
+**Identity is the persisted user id, not the session's client id.** This is the
+whole feature working or not: edit and delete are author-only and compare
+against it, and `awareness.clientID` is re-minted on every reload, so a reload
+used to make your own comments permanently read-only to you — and because
+client ids are random, a later visitor could inherit edit rights over someone
+else's words.
+
+**Read state is per person and deliberately not in the document.** It lives in
+`localStorage` keyed by room. In the CRDT it would mean your colleague opening
+a thread marks it read for you, and it would grow the update log with data
+nobody else can use. It is the one piece of comment state allowed to be lossy:
+losing it shows a few threads as new again, which beats every alternative.
+
+**A mention is stored as `@[Display Name](authorId)`.** The position is part of
+the meaning, so the id travels inline rather than only in a side array, and the
+display name is captured at write time and never re-resolved — silently
+rewriting a year-old message because someone changed their profile is editing
+history. Each message also carries a denormalised `mentions` array, because
+"does anything unread name me" runs over every message of every thread on each
+render of both the pins and the inbox.
+
+The inbox exists because on an infinite canvas a comment you have not scrolled
+to does not exist. Its order is fixed and not configurable, because there is a
+right answer: threads that name you, then unread, then by recency, then
+resolved.
+
+An open thread is **portaled above the chrome**. The comments overlay sits
+inside the canvas beneath both side panels and clips to its own bounds, so a
+thread near either edge rendered underneath a panel and could not be read or
+typed into. Pins stay in the overlay; only the focused surface floats.
 
 ### Design system — `index.css`
 
@@ -300,7 +552,8 @@ apps/
         objects/     per-type capability registry (drives the inspector)
         tools/       tool implementations behind one interface
         export/      exporter registry
-        presence/    awareness-backed collaboration state
+        presence/    awareness state: one writer, one reader, one frame loop
+                     + the radar's projection and painter
         physics/     the simulation, force specs, shared in-flight state
         history/     session timeline for Time Travel
         interaction/ grid snapping
@@ -310,7 +563,7 @@ apps/
         workspace/   header, tool dock, presence avatars
         ui/          primitives (Switch, NumberStepper, colour picker, …)
       hooks/         store, sync binding, breakpoints, focus trap, virtualization
-      utils/         minimap engine, layout, offline media queue, path simplifier
+      utils/         layout, offline media queue, path simplifier
   server/
     src/             Express + Hocuspocus, S3 uploads, snapshots, retention
 docs/                architecture notes, data model, PRD, build plan
@@ -339,12 +592,14 @@ perfect-freehand, framer-motion, Vitest
 - **PNG export omits audio players**, as noted above.
 - **Tests cover pure logic, CRDT behaviour and the physics simulation** (schema
   normalization, migration convergence, geometry, session timeline, camera zoom,
-  cursor modes and remote-cursor colour/placement/smoothing, and the simulation
-  itself). There are still no component or interaction tests — the adapter layer
-  between the simulation and Konva is the notable gap.
+  cursor modes, remote-cursor colour/placement/smoothing, presence normalization
+  and radar framing, and the simulation itself). There are still no component or
+  interaction tests — the adapter layer between the simulation and Konva is the
+  notable gap.
 - **The dashboard lists workspaces from local storage** and does not verify they
   still exist on the server, so a deleted room can linger as a card.
-- **Remote collaborator cursors are not confirmed working end to end.** Several
-  bugs in that path were fixed and each link verified in isolation, but it has
-  not been watched with two live browsers. See the box at the top of
-  `HANDOFF.md`.
+- **The presence surfaces have been watched rendering, but not yet with two
+  real mice.** Remote cursors, edge markers and the radar were driven with
+  synthetic peers injected into awareness and inspected on screen, which is how
+  five real bugs in them were found. Two live browsers is still the last check
+  nobody has run — see `HANDOFF.md`.
