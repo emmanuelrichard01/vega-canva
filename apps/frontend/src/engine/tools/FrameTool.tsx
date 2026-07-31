@@ -4,6 +4,7 @@ import * as React from 'react';
 import type { Tool, ToolContext } from './Tool';
 import { useStore } from '../../hooks/useStore';
 import { DEFAULT_FRAME, frameBoxFromDrag, framePreset, nextFrameName } from '../model/frames';
+import { captureExistingIntoFrame } from '../interaction/frameMembership';
 
 /**
  * Drawing a frame.
@@ -97,6 +98,12 @@ export class FrameTool implements Tool {
       title,
       appearance: { fill: [{ type: 'solid', color: '#FFFFFF', opacity: 1 }] },
     });
+
+    // Drawing a frame around existing objects means "these belong together" —
+    // that is why it was drawn there. Without this the frame appears behind
+    // them owning nothing, and the only way to fill it is to drag every object
+    // out and back in again.
+    captureExistingIntoFrame(nodeId);
 
     ctx.editor.select(nodeId);
     window.dispatchEvent(new CustomEvent('legacy_tool_change', { detail: 'select' }));

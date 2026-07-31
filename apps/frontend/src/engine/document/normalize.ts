@@ -385,6 +385,7 @@ export function normalizeNode(raw: any, id?: string): AnyNode {
     opacity: num(raw?.opacity, 1),
     zIndex: num(raw?.zIndex, 0),
     parentId: typeof raw?.parentId === 'string' ? raw.parentId : undefined,
+    frameId: typeof raw?.frameId === 'string' ? raw.frameId : undefined,
     locked: bool(raw?.locked, false),
     // Pre-v2 tools wrote `visible: true`, which nothing read; the renderer and
     // Layers panel have always gated on `hidden`.

@@ -142,11 +142,15 @@ export function centreIsInside(
  * one on top and therefore the one being pointed at.
  */
 export function frameForNode(
-  node: { x: number; y: number; width: number; height: number },
+  node: { id?: string; x: number; y: number; width: number; height: number },
   frames: Array<{ id: string; x: number; y: number; width: number; height: number; zIndex: number }>
 ): string | null {
   let best: { id: string; area: number; zIndex: number } | null = null;
   for (const frame of frames) {
+    // A frame cannot contain itself. Without this a frame dropped anywhere
+    // becomes its own child, and every rule that walks a frame's contents
+    // then has a cycle to fall into.
+    if (node.id !== undefined && frame.id === node.id) continue;
     if (!centreIsInside(node, frame)) continue;
     const area = frame.width * frame.height;
     if (!best || area < best.area || (area === best.area && frame.zIndex > best.zIndex)) {
@@ -154,4 +158,42 @@ export function frameForNode(
     }
   }
   return best?.id ?? null;
+}
+
+/**
+ * Everything a frame owns, directly or through a nested frame.
+ *
+ * Used for the operations that treat a frame and its contents as one thing —
+ * moving it, and deleting it. Walks breadth-first from the frame and is
+ * **cycle-safe**: `frameForNode` cannot create a cycle, but a hand-edited or
+ * concurrently-merged document is not bound by that, and a cycle here would
+ * hang the tab rather than misplace a rectangle.
+ */
+export function descendantsOfFrame(
+  frameId: string,
+  nodes: Array<{ id: string; frameId?: string }>
+): string[] {
+  const childrenOf = new Map<string, string[]>();
+  for (const node of nodes) {
+    if (!node.frameId) continue;
+    const siblings = childrenOf.get(node.frameId);
+    if (siblings) siblings.push(node.id);
+    else childrenOf.set(node.frameId, [node.id]);
+  }
+
+  const found: string[] = [];
+  const seen = new Set<string>([frameId]);
+  const queue = [frameId];
+
+  while (queue.length > 0) {
+    const current = queue.shift()!;
+    for (const child of childrenOf.get(current) ?? []) {
+      if (seen.has(child)) continue;
+      seen.add(child);
+      found.push(child);
+      queue.push(child);
+    }
+  }
+
+  return found;
 }

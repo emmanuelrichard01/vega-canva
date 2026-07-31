@@ -4,6 +4,7 @@ import {
   FRAME_PRESETS,
   MIN_FRAME_SIZE,
   centreIsInside,
+  descendantsOfFrame,
   frameBoxFromDrag,
   frameForNode,
   framePreset,
@@ -139,10 +140,64 @@ describe('frameForNode', () => {
     expect(frameForNode(node(90, 90), [inner, outer])).toBe('inner');
   });
 
+  it('never lets a frame contain itself', () => {
+    // Otherwise a frame dropped anywhere becomes its own child, and every rule
+    // that walks a frame's contents has a cycle to fall into.
+    const self = { id: 'outer', x: 10, y: 10, width: 20, height: 20 };
+    expect(frameForNode(self, [outer, inner])).toBeNull();
+  });
+
+  it('still places a frame inside another frame', () => {
+    const small = { id: 'small', x: 60, y: 60, width: 20, height: 20 };
+    expect(frameForNode(small, [outer, inner])).toBe('inner');
+  });
+
   it('breaks a tie toward the frame on top', () => {
     const a = { id: 'a', x: 0, y: 0, width: 100, height: 100, zIndex: 5 };
     const b = { id: 'b', x: 0, y: 0, width: 100, height: 100, zIndex: 9 };
     expect(frameForNode(node(40, 40), [a, b])).toBe('b');
     expect(frameForNode(node(40, 40), [b, a])).toBe('b');
+  });
+});
+
+describe('descendantsOfFrame', () => {
+  it('is empty for a frame owning nothing', () => {
+    expect(descendantsOfFrame('f1', [{ id: 'a' }, { id: 'b', frameId: 'other' }])).toEqual([]);
+  });
+
+  it('collects direct children', () => {
+    const nodes = [{ id: 'a', frameId: 'f1' }, { id: 'b', frameId: 'f1' }, { id: 'c' }];
+    expect(descendantsOfFrame('f1', nodes).sort()).toEqual(['a', 'b']);
+  });
+
+  it('follows nested frames', () => {
+    // Moving or deleting a frame has to take everything below it, not just
+    // the objects sitting directly on it.
+    const nodes = [
+      { id: 'inner', frameId: 'outer' },
+      { id: 'a', frameId: 'inner' },
+      { id: 'b', frameId: 'outer' },
+      { id: 'far', frameId: 'elsewhere' },
+    ];
+    expect(descendantsOfFrame('outer', nodes).sort()).toEqual(['a', 'b', 'inner']);
+  });
+
+  it('terminates on a cycle instead of hanging', () => {
+    // `frameForNode` cannot produce one, but a hand-edited document or a
+    // concurrent merge is not bound by that — and a hang is far worse than a
+    // misplaced rectangle.
+    const nodes = [
+      { id: 'f1', frameId: 'f2' },
+      { id: 'f2', frameId: 'f1' },
+      { id: 'leaf', frameId: 'f2' },
+    ];
+    const found = descendantsOfFrame('f1', nodes);
+    expect(found).toContain('f2');
+    expect(found).toContain('leaf');
+    expect(new Set(found).size).toBe(found.length);
+  });
+
+  it('does not report the frame itself', () => {
+    expect(descendantsOfFrame('f1', [{ id: 'f1', frameId: 'f1' }])).toEqual([]);
   });
 });

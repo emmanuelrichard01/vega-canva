@@ -152,6 +152,20 @@ export interface BaseNode {
   zIndex: number;
   /** Shared synthetic id linking the members of a group. */
   parentId?: string;
+  /**
+   * The frame this node sits inside, by node id.
+   *
+   * **Deliberately not `parentId`.** That is a *synthetic* id shared by the
+   * members of a group and belonging to no node at all, and the two answer
+   * different questions: everything sharing a `parentId` is selected together
+   * as one group, which is emphatically not what should happen when you click
+   * one object inside a frame. Overloading it would also make the Layers
+   * panel render a frame's contents as an anonymous group cluster.
+   *
+   * An object can therefore be in a group *and* in a frame, which is correct —
+   * they are independent facts about it.
+   */
+  frameId?: string;
 
   locked: boolean;
   /** Renderer and Layers panel both gate on this. There is no `visible` field. */

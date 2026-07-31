@@ -4,6 +4,7 @@ import Konva from 'konva';
 import { deleteNode, localAuthorId, toggleReaction, updateNode } from '../engine/document';
 import { consumePendingEdit } from '../engine/interaction/pendingEdit';
 import { cropMode } from '../engine/interaction/cropMode';
+import { moveFrameWithChildren, reassignFrame } from '../engine/interaction/frameMembership';
 import { tagFilter } from '../engine/model/tagFilter';
 import { matchesTagFilter } from '../engine/model/tags';
 import { useStore } from '../hooks/useStore';
@@ -58,6 +59,21 @@ interface SiblingDragState {
 export const ObjectRenderer = React.memo(
   ({ objId, isSelected, onSelect, onThrow, stageScale = 1, selectedIdsRef }: ObjectRendererProps) => {
     const node = useStore((state) => state.objects[objId]);
+    /**
+     * The frame that owns this object, if any.
+     *
+     * Selected as the node itself rather than as a derived rectangle: the
+     * store hands back a stable reference between changes, whereas returning a
+     * fresh `{x, y, width, height}` from the selector would be a new object on
+     * every read and re-render this component forever.
+     */
+    const ownerFrame = useStore((state) =>
+      node?.frameId ? state.objects[node.frameId] : undefined
+    );
+    const clipRect =
+      ownerFrame && ownerFrame.type === 'frame'
+        ? { x: ownerFrame.x, y: ownerFrame.y, width: ownerFrame.width, height: ownerFrame.height }
+        : null;
     const forceToolActive = useStore((state) => state.forceToolActive);
 
     const shapeRef = useRef<Konva.Group>(null);
@@ -210,7 +226,21 @@ export const ObjectRenderer = React.memo(
           // e.target reports here — no conversion needed.
           onThrow(objId, e.target.x(), e.target.y(), velocity.current.x * 15, velocity.current.y * 15);
         } else {
-          updateNode(objId, { x: e.target.x() - halfW, y: e.target.y() - halfH });
+          const nextX = e.target.x() - halfW;
+          const nextY = e.target.y() - halfH;
+          updateNode(objId, { x: nextX, y: nextY });
+
+          // Dragging a frame takes its contents with it. Computed from the
+          // committed position rather than from Konva's, so it stays correct
+          // when the drag was snapped to the grid.
+          if (current?.type === 'frame') {
+            moveFrameWithChildren(objId, nextX - current.x, nextY - current.y);
+          }
+
+          // Where it landed decides which frame it belongs to. Deliberately
+          // after the move is committed, because membership is derived from
+          // the object's new centre.
+          reassignFrame(objId);
         }
       },
       [objId, onThrow]
@@ -329,6 +359,48 @@ export const ObjectRenderer = React.memo(
           onTap={(e) => onSelect(objId, e as unknown as Konva.KonvaEventObject<MouseEvent>)}
           onDblClick={handleDblClick}
           onDblTap={handleDblClick}
+          /**
+           * Clip this object to the frame that owns it.
+           *
+           * Children are siblings of their frame in the layer, not nested
+           * inside its `Group` — the flat list is what makes per-object
+           * subscriptions and spatial culling work, and nesting frames would
+           * mean rebuilding both. So the clip is applied to the *child*, and
+           * has to be expressed in the child's own local space, which is
+           * rotated, scaled and offset to its centre.
+           *
+           * Inverting the group's absolute transform and mapping the frame's
+           * four corners through it is what makes that correct under rotation:
+           * clipping to a plain rectangle in local coordinates would rotate
+           * the clip along with the object, so a tilted sticky would be cut by
+           * a tilted window instead of by the frame's actual edge.
+           */
+          clipFunc={
+            clipRect
+              ? (ctx: Konva.Context) => {
+                  const group = shapeRef.current;
+                  const stage = group?.getStage();
+                  if (!group || !stage) return;
+                  // World -> absolute is the stage's transform, since the
+                  // camera lives there. Absolute -> this group's local space is
+                  // the inverse of its own absolute transform. Composing the
+                  // two maps a frame's world rectangle into the coordinates
+                  // this clip path is drawn in.
+                  const toAbsolute = stage.getAbsoluteTransform();
+                  const toLocal = group.getAbsoluteTransform().copy().invert();
+                  const corners = [
+                    { x: clipRect.x, y: clipRect.y },
+                    { x: clipRect.x + clipRect.width, y: clipRect.y },
+                    { x: clipRect.x + clipRect.width, y: clipRect.y + clipRect.height },
+                    { x: clipRect.x, y: clipRect.y + clipRect.height },
+                  ].map((corner) => toLocal.point(toAbsolute.point(corner)));
+                  ctx.beginPath();
+                  ctx.moveTo(corners[0].x, corners[0].y);
+                  for (let i = 1; i < corners.length; i++) ctx.lineTo(corners[i].x, corners[i].y);
+                  ctx.closePath();
+                }
+              : undefined
+          }
           onDragStart={handleDragStart}
           onDragMove={handleDragMove}
           onDragEnd={handleDragEnd}

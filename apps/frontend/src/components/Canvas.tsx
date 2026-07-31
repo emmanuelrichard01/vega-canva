@@ -2,7 +2,7 @@ import { usePhysics } from '../hooks/usePhysics';
 import React, { useRef, useState, useEffect, useCallback, useMemo, useSyncExternalStore } from "react";
 import { Stage, Layer, Circle, Group } from "react-konva";
 import Konva from "konva";
-import { provider, deleteNode, updateNode, nextZIndex, lowestZIndex } from '../engine/document';
+import { provider, updateNode, nextZIndex, lowestZIndex } from '../engine/document';
 import { nanoid } from 'nanoid';
 import { useStore } from '../hooks/useStore';
 import { FORCE_SPECS, isForceTool } from '../engine/physics/forces';
@@ -51,6 +51,7 @@ import { SelectionTransformer } from './canvas/SelectionTransformer';
 import { CropOverlay } from './canvas/CropOverlay';
 import { cropMode } from '../engine/interaction/cropMode';
 import { FRAME_PRESETS } from '../engine/model/frames';
+import { deleteNodesWithFrames } from '../engine/interaction/frameMembership';
 
 interface CanvasProps {
   activeTool: string;
@@ -178,7 +179,9 @@ export const Canvas: React.FC<CanvasProps> = ({ activeTool, selectedIds, setSele
       }
 
       if (e.key === 'Backspace' || e.key === 'Delete') {
-        selectedIds.forEach(id => deleteNode(id));
+        // Through the frame-aware path: deleting a frame has to take its
+        // contents, or they are stranded in place still pointing at it.
+        deleteNodesWithFrames(selectedIds);
         setSelectedIds([]);
         return;
       }

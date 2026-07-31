@@ -1,10 +1,11 @@
 import React, { useEffect, useState, useRef, useSyncExternalStore } from 'react';
-import { objectsMap, updateNode, deleteNode, nextZIndex, lowestZIndex, toggleReaction, localAuthorId } from '../engine/document';
+import { objectsMap, updateNode, nextZIndex, lowestZIndex, toggleReaction, localAuthorId } from '../engine/document';
 import { useStore } from '../hooks/useStore';
 import { cameraSystem } from '../engine/CameraSystem';
 import { engineEvents } from '../engine/EventBus';
 import { Copy, Trash2, Type, Square, Bold, Italic, Underline, AlignLeft, AlignCenter, AlignRight, MessageSquarePlus, BringToFront, SendToBack, ImageIcon, StickyNote, Pin, SmilePlus, Mic, MessageSquare, PenLine, Layers, Group, Ungroup, Download, Crop } from 'lucide-react';
 import { cropMode } from '../engine/interaction/cropMode';
+import { deleteNodesWithFrames } from '../engine/interaction/frameMembership';
 import { editor } from '../engine/api/EditorAPI';
 import { nanoid } from 'nanoid';
 import { ColorPickerPopover } from './ui/ColorPickerPopover';
@@ -246,7 +247,7 @@ export const ObjectContextToolbar: React.FC<Props> = ({ selectedId, selectedIds,
       });
     };
     const handleBulkDelete = () => {
-      bulkIds.forEach(id => deleteNode(id));
+      deleteNodesWithFrames(bulkIds);
       onDeselect();
     };
     const handleBulkZ = (dir: 'front' | 'back') => {
@@ -318,7 +319,7 @@ export const ObjectContextToolbar: React.FC<Props> = ({ selectedId, selectedIds,
   };
 
   const handleDelete = () => {
-    deleteNode(activeId!);
+    deleteNodesWithFrames([activeId!]);
     onDeselect();
   };
 

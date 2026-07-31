@@ -1,5 +1,6 @@
 import React, { useEffect, useMemo, useRef, useState, useSyncExternalStore } from 'react';
-import { updateNode, deleteNode, provider } from '../engine/document';
+import { updateNode, provider } from '../engine/document';
+import { deleteNodesWithFrames } from '../engine/interaction/frameMembership';
 import { useStore } from '../hooks/useStore';
 import { editor } from '../engine/api/EditorAPI';
 import { Type, Square, Image as ImageIcon, StickyNote, Mic, LayoutTemplate, MessageSquare, PenTool, Lock, Unlock, Copy, Trash2, Eye, EyeOff, Layers, FolderOpen, Ungroup } from 'lucide-react';
@@ -157,12 +158,12 @@ export const LayersPanel: React.FC<LayersPanelProps> = ({ selectedIds, overrideO
   };
 
   const handleDelete = (id: string) => {
-    deleteNode(id);
+    deleteNodesWithFrames([id]);
     if (selectedId === id) setSelectedId(null);
   };
 
   const handleBulkDelete = () => {
-    selectedIds.forEach(id => deleteNode(id));
+    deleteNodesWithFrames(selectedIds);
     setSelectedIds?.([]);
   };
 
