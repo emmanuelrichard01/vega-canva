@@ -39,6 +39,55 @@ describe('normalizeNode — legacy shapes', () => {
     expect((node as unknown as Record<string, unknown>).content).toBeUndefined();
   });
 
+  describe('star geometry', () => {
+    const starOf = (geometry: Record<string, unknown>) =>
+      (normalizeNode({ id: 'st1', type: 'shape', x: 0, y: 0, width: 10, height: 10, geometry }) as ShapeNode)
+        .geometry;
+
+    it('defaults to a five-pointed star at half depth', () => {
+      expect(starOf({ kind: 'star' })).toEqual({ kind: 'star', points: 5, innerRatio: 0.5 });
+    });
+
+    it('keeps values inside the range', () => {
+      expect(starOf({ kind: 'star', points: 9, innerRatio: 0.3 })).toEqual({
+        kind: 'star', points: 9, innerRatio: 0.3,
+      });
+    });
+
+    it('clamps degenerate point counts rather than drawing them', () => {
+      // Two points is a pair of crossed spikes, not a star, and there is no
+      // way back to a sane value from the control once it is stored.
+      expect(starOf({ kind: 'star', points: 2 }).points).toBe(3);
+      expect(starOf({ kind: 'star', points: 0 }).points).toBe(3);
+      expect(starOf({ kind: 'star', points: -8 }).points).toBe(3);
+      expect(starOf({ kind: 'star', points: 5000 }).points).toBe(60);
+    });
+
+    it('rounds a fractional point count', () => {
+      expect(starOf({ kind: 'star', points: 6.7 }).points).toBe(7);
+    });
+
+    it('clamps a degenerate inner radius', () => {
+      // Zero draws lines to the centre; above 1 turns the star inside out.
+      expect(starOf({ kind: 'star', innerRatio: 0 }).innerRatio).toBe(0.05);
+      expect(starOf({ kind: 'star', innerRatio: -3 }).innerRatio).toBe(0.05);
+      expect(starOf({ kind: 'star', innerRatio: 4 }).innerRatio).toBe(1);
+    });
+
+    it('falls back for non-finite values', () => {
+      expect(starOf({ kind: 'star', points: NaN, innerRatio: Infinity })).toEqual({
+        kind: 'star', points: 5, innerRatio: 0.5,
+      });
+    });
+
+    it('leaves star fields off shapes that are not stars', () => {
+      // `points` is documented as star-only; carrying it on a hexagon would be
+      // a field nothing reads, which is the thing this pass exists to remove.
+      const hex = starOf({ kind: 'hexagon', points: 9, innerRatio: 0.2 });
+      expect(hex).toEqual({ kind: 'hexagon' });
+    });
+  });
+
   describe('stroke dash', () => {
     const strokeOf = (stroke: unknown) =>
       (normalizeNode({ id: 's1', type: 'shape', x: 0, y: 0, width: 10, height: 10, appearance: { stroke } }) as ShapeNode)

@@ -181,11 +181,34 @@ export interface BaseNode {
 
 export type ShapeKind = 'rect' | 'ellipse' | 'triangle' | 'hexagon' | 'star';
 
+/**
+ * The bounds a star's parameters are clamped to at the CRDT boundary.
+ *
+ * These live on the schema rather than in the panel because the normalizer
+ * enforces them and the control has to agree — a control offering a value the
+ * boundary silently rewrites is a control that appears broken. Both ends
+ * import these.
+ *
+ * Two points draw a pair of crossed spikes and a zero inner radius draws lines
+ * to the centre; both are degenerate rather than merely ugly, and neither is
+ * recoverable from the control once it is stored. Past 60 points a star reads
+ * as a disc at any size this canvas draws.
+ */
+export const MIN_STAR_POINTS = 3;
+export const MAX_STAR_POINTS = 60;
+export const MIN_STAR_RATIO = 0.05;
+export const MAX_STAR_RATIO = 1;
+
 export interface ShapeGeometry {
   kind: ShapeKind;
-  /** Star only. */
+  /** Star only. Clamped to `MIN_STAR_POINTS`..`MAX_STAR_POINTS`. */
   points?: number;
-  /** Star only: inner radius as a fraction of the outer radius. */
+  /**
+   * Star only: inner radius as a fraction of the outer radius, clamped to
+   * `MIN_STAR_RATIO`..`MAX_STAR_RATIO`. At 1 the points vanish and the shape
+   * becomes a regular polygon of twice the point count, which is a legitimate
+   * end of the range rather than a broken state.
+   */
   innerRatio?: number;
 }
 

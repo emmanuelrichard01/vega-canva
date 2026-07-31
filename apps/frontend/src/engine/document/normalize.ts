@@ -1,5 +1,9 @@
 import {
   DEFAULT_TYPOGRAPHY,
+  MAX_STAR_POINTS,
+  MAX_STAR_RATIO,
+  MIN_STAR_POINTS,
+  MIN_STAR_RATIO,
   type AnyNode,
   type Appearance,
   type Author,
@@ -32,6 +36,9 @@ import {
 
 const num = (value: unknown, fallback: number): number =>
   typeof value === 'number' && Number.isFinite(value) ? value : fallback;
+
+const clamp = (value: number, min: number, max: number): number =>
+  Math.min(max, Math.max(min, value));
 
 const str = (value: unknown, fallback: string): string =>
   typeof value === 'string' ? value : fallback;
@@ -231,8 +238,14 @@ function normalizeShapeGeometry(raw: any): ShapeGeometry {
   const kind = SHAPE_KIND_ALIASES[rawKind] ?? 'rect';
   const geometry: ShapeGeometry = { kind };
   if (kind === 'star') {
-    geometry.points = num(raw?.geometry?.points, 5);
-    geometry.innerRatio = num(raw?.geometry?.innerRatio, 0.5);
+    // Clamped at the boundary, like every other value that reaches a renderer.
+    // Konva draws a "star" with two points as a pair of crossed spikes and one
+    // with zero inner radius as a set of lines to the centre — both are
+    // degenerate rather than merely ugly, and neither is recoverable from the
+    // control once stored. 60 is past the point where more points read as a
+    // disc at any size this canvas draws.
+    geometry.points = Math.round(clamp(num(raw?.geometry?.points, 5), MIN_STAR_POINTS, MAX_STAR_POINTS));
+    geometry.innerRatio = clamp(num(raw?.geometry?.innerRatio, 0.5), MIN_STAR_RATIO, MAX_STAR_RATIO);
   }
   return geometry;
 }

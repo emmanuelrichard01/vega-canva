@@ -9,8 +9,13 @@ import { useStore } from '../hooks/useStore';
 import { objectRegistry } from '../engine/objects';
 import {
   DEFAULT_TYPOGRAPHY,
+  MAX_STAR_POINTS,
+  MAX_STAR_RATIO,
+  MIN_STAR_POINTS,
+  MIN_STAR_RATIO,
   type AnyNode,
   type Appearance,
+  type ShapeGeometry,
   type Stroke,
   type TextAlign,
   type Typography,
@@ -165,6 +170,17 @@ export const PropertiesPanel: React.FC<PropertiesPanelProps> = ({ selectedId, ov
     setAppearance({ stroke: buildStroke({ color, width }, restyleForWidth(current, width)) });
   };
 
+  /**
+   * Patch a shape's geometry, preserving `kind`.
+   *
+   * `updateNode` replaces the whole `geometry` value, so a patch that omitted
+   * `kind` would turn a star into a rect — the same trap `setAppearance` has.
+   */
+  const setGeometry = (patch: Partial<ShapeGeometry>) => {
+    if (node.type !== 'shape') return;
+    set({ geometry: { ...node.geometry, ...patch } } as Partial<AnyNode>);
+  };
+
   const setStrokeStyle = (style: StrokeStyleId) => {
     const current = appearance?.stroke;
     const color = current?.color ?? '#000000';
@@ -292,6 +308,37 @@ export const PropertiesPanel: React.FC<PropertiesPanelProps> = ({ selectedId, ov
               <NumberStepper value={Math.round(node.opacity * 100)} onChange={(v) => set({ opacity: v / 100 })} min={0} max={100} step={10} />
             </Row>
           )}
+        </Accordion>
+      )}
+
+      {/* Star geometry. The renderer has always honoured `points` and
+          `innerRatio` and nothing has ever set them, so every star in every
+          document has been five-pointed at half depth. */}
+      {node.type === 'shape' && node.geometry.kind === 'star' && (
+        <Accordion title="Star">
+          <Row label="Points">
+            <NumberStepper
+              value={node.geometry.points ?? 5}
+              onChange={(points) => setGeometry({ points })}
+              min={MIN_STAR_POINTS}
+              max={MAX_STAR_POINTS}
+            />
+          </Row>
+          <Row label="Depth">
+            {/* Stored as a fraction of the outer radius; shown as a
+                percentage, because "0.35" is not a quantity anyone has an
+                intuition for. Inverted so that more depth means spikier: the
+                stored value is an inner *radius*, where a bigger number is a
+                blunter star, and a control that gets sharper as you turn it
+                down is one nobody predicts. */}
+            <NumberStepper
+              value={Math.round((1 - (node.geometry.innerRatio ?? 0.5)) * 100)}
+              onChange={(depth) => setGeometry({ innerRatio: 1 - depth / 100 })}
+              min={Math.round((1 - MAX_STAR_RATIO) * 100)}
+              max={Math.round((1 - MIN_STAR_RATIO) * 100)}
+              step={5}
+            />
+          </Row>
         </Accordion>
       )}
 
