@@ -303,7 +303,24 @@ export interface ImageNode extends BaseNode {
   naturalHeight?: number;
   appearance: Appearance;
   crop?: { x: number; y: number; width: number; height: number };
-  filters?: { brightness?: number; contrast?: number; blur?: number };
+  /**
+   * Non-destructive adjustments, each **-100..100 with 0 meaning untouched**
+   * (blur has no negative half). Absent means nothing has been adjusted, and
+   * an adjustment returned to 0 is removed rather than stored as 0 — see
+   * `engine/model/imageAdjustments.ts`, which owns these units and is the only
+   * thing that knows what Konva's filters want instead.
+   *
+   * Deliberately *not* Konva's own scales. Its filters disagree with each
+   * other — `Brighten` takes ±1, `Contrast` takes ±100, `HSL` takes a power of
+   * two — and storing a renderer's private conventions in the CRDT would mean
+   * a Konva range change silently re-interpreting every document ever written.
+   */
+  filters?: {
+    brightness?: number;
+    contrast?: number;
+    saturation?: number;
+    blur?: number;
+  };
 }
 
 export interface AudioNode extends BaseNode {

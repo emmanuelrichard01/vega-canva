@@ -2292,3 +2292,162 @@ textarea:focus-visible {
     display: none;
   }
 }
+
+/* ---------------------------------------------------------------------------
+   SLIDER
+
+   The three ranges already in this app are bare `input[type="range"]` elements
+   with inline styles, so each one inherits the browser's default track and
+   thumb: they do not follow the theme, do not take the global focus ring, and
+   do not match each other across platforms. This is the shared primitive they
+   should become. The image adjustments use it first.
+   --------------------------------------------------------------------------- */
+
+.slider {
+  display: grid;
+  grid-template-columns: 68px 1fr 38px;
+  align-items: center;
+  gap: var(--space-2);
+}
+
+.slider__label {
+  font-size: var(--text-sm);
+  color: var(--text-secondary);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+/* The readout is a measurement, so it is tabular and monospaced — the value
+   must not shuffle sideways while a slider is being dragged. It dims at its
+   default, because "0" on four rows is noise until one of them is not 0. */
+.slider__value {
+  font-family: var(--font-mono);
+  font-size: var(--text-xs);
+  font-variant-numeric: tabular-nums;
+  text-align: right;
+  color: var(--text-primary);
+}
+
+.slider__value[data-default='true'] {
+  color: var(--text-tertiary);
+}
+
+.slider__input {
+  -webkit-appearance: none;
+  appearance: none;
+  width: 100%;
+  height: 16px;
+  margin: 0;
+  background: transparent;
+  cursor: pointer;
+}
+
+/* The filled segment runs between the origin and the value in either
+   direction, painted as a gradient with hard stops rather than as an extra
+   element — a bipolar fill has no single edge to anchor a second box to. */
+.slider__input::-webkit-slider-runnable-track {
+  height: 4px;
+  border-radius: var(--radius-pill);
+  background: linear-gradient(
+    to right,
+    var(--surface-sunken) var(--slider-fill-start),
+    var(--text-primary) var(--slider-fill-start),
+    var(--text-primary) var(--slider-fill-end),
+    var(--surface-sunken) var(--slider-fill-end)
+  );
+}
+
+.slider__input::-moz-range-track {
+  height: 4px;
+  border-radius: var(--radius-pill);
+  background: linear-gradient(
+    to right,
+    var(--surface-sunken) var(--slider-fill-start),
+    var(--text-primary) var(--slider-fill-start),
+    var(--text-primary) var(--slider-fill-end),
+    var(--surface-sunken) var(--slider-fill-end)
+  );
+}
+
+/* Elevation is declared once, as a shadow with an offset and a blur. The
+   border is what separates the thumb from the filled track it sits on, which
+   is the same ink colour. */
+.slider__input::-webkit-slider-thumb {
+  -webkit-appearance: none;
+  appearance: none;
+  width: 13px;
+  height: 13px;
+  margin-top: -4.5px;
+  border: 1px solid var(--border-strong);
+  border-radius: 50%;
+  background: var(--surface-primary);
+  box-shadow: 0 1px 2px rgba(0, 0, 0, 0.16);
+  transition: transform var(--motion-hover);
+}
+
+.slider__input::-moz-range-thumb {
+  width: 13px;
+  height: 13px;
+  border: 1px solid var(--border-strong);
+  border-radius: 50%;
+  background: var(--surface-primary);
+  box-shadow: 0 1px 2px rgba(0, 0, 0, 0.16);
+  transition: transform var(--motion-hover);
+}
+
+.slider__input:hover::-webkit-slider-thumb {
+  transform: scale(1.15);
+}
+
+.slider__input:hover::-moz-range-thumb {
+  transform: scale(1.15);
+}
+
+.slider__input:active::-webkit-slider-thumb {
+  transform: scale(1.05);
+}
+
+/* The global `:focus-visible` ring is on the element, but the element is a
+   16px-tall transparent box around a 4px track — a ring on that reads as a
+   floating rectangle. Ring the thumb instead, in the same colour and width. */
+.slider__input:focus {
+  outline: none;
+}
+
+.slider__input:focus-visible::-webkit-slider-thumb {
+  outline: 2px solid var(--border-focus);
+  outline-offset: 2px;
+}
+
+.slider__input:focus-visible::-moz-range-thumb {
+  outline: 2px solid var(--border-focus);
+  outline-offset: 2px;
+}
+
+/* ---------------------------------------------------------------------------
+   IMAGE ADJUSTMENTS
+   --------------------------------------------------------------------------- */
+
+/* Reset appears only once something has been adjusted. A permanently visible
+   reset on an untouched image is a control that does nothing, and it is the
+   only control in the section that is ever disabled — so it is removed rather
+   than dimmed. */
+.adjustments__reset {
+  align-self: flex-start;
+  padding: 3px var(--space-2);
+  border: none;
+  border-radius: var(--radius-sm);
+  background: transparent;
+  color: var(--text-secondary);
+  font-family: inherit;
+  font-size: var(--text-sm);
+  font-weight: var(--weight-medium);
+  cursor: pointer;
+  transition: background var(--motion-hover), color var(--motion-hover);
+}
+
+.adjustments__reset:hover {
+  background: var(--surface-hover);
+  color: var(--text-primary);
+}

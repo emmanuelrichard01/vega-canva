@@ -33,6 +33,16 @@ import { ColorPickerPopover } from './ui/ColorPickerPopover';
 import { NumberStepper } from './ui/NumberStepper';
 import { FontSelector } from './ui/FontSelector';
 import { SegmentedControl } from './ui/SegmentedControl';
+import { Slider } from './ui/Slider';
+import {
+  ADJUSTMENT_IDS,
+  ADJUSTMENT_LABELS,
+  ADJUSTMENT_MIN,
+  hasAdjustments,
+  packAdjustments,
+  readAdjustments,
+  type AdjustmentId,
+} from '../engine/model/imageAdjustments';
 import { THEMES, nearestTheme } from './canvas/renderers/StickyRenderer';
 import { MATERIALS, MATERIAL_IDS, resolveMaterial } from '../utils/behaviorSystem';
 import { TagEditor } from './ui/TagEditor';
@@ -168,6 +178,19 @@ export const PropertiesPanel: React.FC<PropertiesPanelProps> = ({ selectedId, ov
     const color = patch.color ?? current?.color ?? '#000000';
     const width = patch.width ?? current?.width ?? 2;
     setAppearance({ stroke: buildStroke({ color, width }, restyleForWidth(current, width)) });
+  };
+
+  /**
+   * The image's adjustments, read through the same clamp the renderer uses.
+   *
+   * `packAdjustments` strips anything back at 0 rather than storing it, so a
+   * slider nudged and returned leaves no trace — and `filters` stays a reliable
+   * answer to "has this image been adjusted at all", which is what keeps an
+   * untouched image out of Konva's cache.
+   */
+  const adjustments = readAdjustments(node.type === 'image' ? node.filters : undefined);
+  const setAdjustment = (id: AdjustmentId, value: number) => {
+    set({ filters: packAdjustments({ ...adjustments, [id]: value }) } as Partial<AnyNode>);
   };
 
   /**
@@ -307,6 +330,37 @@ export const PropertiesPanel: React.FC<PropertiesPanelProps> = ({ selectedId, ov
             <Row label="Opacity">
               <NumberStepper value={Math.round(node.opacity * 100)} onChange={(v) => set({ opacity: v / 100 })} min={0} max={100} step={10} />
             </Row>
+          )}
+        </Accordion>
+      )}
+
+      {/* Image adjustments. `filters` sat on the schema for the project's
+          whole life and `ImageRenderer` read four properties, none of them
+          this — so a stored adjustment was silently ignored. */}
+      {node.type === 'image' && (
+        <Accordion title="Adjust">
+          {ADJUSTMENT_IDS.map((id) => (
+            <Slider
+              key={id}
+              label={ADJUSTMENT_LABELS[id]}
+              value={adjustments[id]}
+              min={ADJUSTMENT_MIN[id]}
+              max={100}
+              /* Blur runs from zero, so its fill starts at the left like a
+                 quantity. The other three are departures from "as shot" and
+                 fill outward from the middle. */
+              origin={0}
+              onChange={(v) => setAdjustment(id, v)}
+            />
+          ))}
+          {hasAdjustments(adjustments) && (
+            <button
+              type="button"
+              className="adjustments__reset"
+              onClick={() => set({ filters: undefined } as Partial<AnyNode>)}
+            >
+              Reset adjustments
+            </button>
           )}
         </Accordion>
       )}

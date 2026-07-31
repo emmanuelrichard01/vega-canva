@@ -19,6 +19,7 @@ import {
   type TextAlign,
   type Typography,
 } from '../model/schema';
+import { packAdjustments, readAdjustments } from '../model/imageAdjustments';
 
 /**
  * Legacy -> canonical mapping.
@@ -450,7 +451,12 @@ export function normalizeNode(raw: any, id?: string): AnyNode {
         naturalHeight: typeof raw?.naturalHeight === 'number' ? raw.naturalHeight : undefined,
         appearance: normalizeAppearance(raw),
         crop: raw?.crop,
-        filters: raw?.filters,
+        // Clamped and stripped at the boundary like everything else. These
+        // were passed straight through, which was harmless only because
+        // nothing read them: a `NaN` reaching Konva's pixel loop does not
+        // throw, it turns every channel it touches into transparent black —
+        // so a bad value would present as "the image failed to load".
+        filters: packAdjustments(readAdjustments(raw?.filters)),
       };
 
     case 'audio':
