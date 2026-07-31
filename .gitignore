@@ -38,6 +38,18 @@ uploads/*
 # if it ever exists) is intentionally NOT ignored.
 .claude/settings.local.json
 
+# Vendored design-skill packs, ~300 files of third-party tooling that is not
+# this project's source. `skills-lock.json` pins them and is tracked, so the
+# set is reproducible with `npx impeccable install` — checking in the packs
+# themselves would bury every real diff.
+.agents/skills/
+.claude/skills/
+.codex/
+
+# Reference screenshots collected for design work. Other people's UI, kept
+# locally to look at; not ours to redistribute.
+design inspirations/
+
 # Editors
 .vscode/*
 !.vscode/extensions.json
