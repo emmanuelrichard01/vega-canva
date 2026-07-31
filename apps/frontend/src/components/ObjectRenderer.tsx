@@ -1,14 +1,16 @@
-import React, { useCallback, useEffect, useRef, useState } from 'react';
+import React, { useCallback, useEffect, useRef, useState, useSyncExternalStore } from 'react';
 import { Circle, Group, Rect, Text } from 'react-konva';
 import Konva from 'konva';
-import { deleteNode, updateNode } from '../engine/document';
+import { deleteNode, localAuthorId, toggleReaction, updateNode } from '../engine/document';
+import { consumePendingEdit } from '../engine/interaction/pendingEdit';
+import { tagFilter } from '../engine/model/tagFilter';
+import { matchesTagFilter } from '../engine/model/tags';
 import { useStore } from '../hooks/useStore';
 import { cameraSystem } from '../engine/CameraSystem';
 import { gridSnap } from '../engine/interaction/gridSnap';
 import { presenceManager } from '../engine/presence/PresenceManager';
 import { useFlight } from '../engine/physics/flightState';
 import { hasText, type AnyNode, type TextBearingNode } from '../engine/model/schema';
-import { ObjectPresenceIndicator } from './canvas/ObjectPresenceIndicator';
 import { NodeEditor } from './canvas/NodeEditor';
 import { AudioRenderer } from './canvas/renderers/AudioRenderer';
 import { ImageRenderer } from './canvas/renderers/ImageRenderer';
@@ -62,8 +64,20 @@ export const ObjectRenderer = React.memo(
     const velocity = useRef({ x: 0, y: 0 });
     const groupDragRef = useRef<{ startX: number; startY: number; siblings: Record<string, SiblingDragState> } | null>(null);
 
-    const [isEditing, setIsEditing] = useState(false);
+    // Claimed during the first render, which is the point: a tool that has
+    // just created this node asked for it to open ready to type in, and there
+    // is no window between mounting and listening for the request to fall
+    // through. See `engine/interaction/pendingEdit.ts`.
+    const [isEditing, setIsEditing] = useState(() => consumePendingEdit(objId));
     const [isHovered, setIsHovered] = useState(false);
+
+    // A tag filter is a way of looking, so it lives outside the document —
+    // narrowing to `risk` must not empty everyone else's board.
+    const activeTags = useSyncExternalStore(
+      tagFilter.subscribe,
+      tagFilter.getSnapshot,
+      tagFilter.getSnapshot
+    );
 
     // A physics throw broadcast by whichever client owns the simulation.
     // Previously every object scanned every peer's awareness state on every
@@ -82,7 +96,7 @@ export const ObjectRenderer = React.memo(
 
     useEffect(() => {
       if (!isEditing) return;
-      presenceManager.updateActivity('✏️ Typing');
+      presenceManager.updateActivity('typing');
       // The floating toolbar anchors to the last committed bounds, which don't
       // move while typing — a growing text box would slide out from under it.
       // Reusing the drag-hide signal keeps it clear for the whole edit.
@@ -107,6 +121,9 @@ export const ObjectRenderer = React.memo(
     const handleDragStart = useCallback(
       (e: Konva.KonvaEventObject<DragEvent>) => {
         window.dispatchEvent(new CustomEvent('canvas-drag-start'));
+        // Not labelled next to their name — you can see the object moving.
+        // It keeps their name chip up while they work and pings the radar.
+        presenceManager.updateActivity('moving');
         lastPos.current = { x: e.target.x(), y: e.target.y(), time: performance.now() };
         velocity.current = { x: 0, y: 0 };
 
@@ -164,6 +181,7 @@ export const ObjectRenderer = React.memo(
     const handleDragEnd = useCallback(
       (e: Konva.KonvaEventObject<DragEvent>) => {
         window.dispatchEvent(new CustomEvent('canvas-drag-end'));
+        presenceManager.updateActivity(null);
 
         // The Konva group sits at the object's centre (see the offset in the
         // render below), so committing its position back to the document has
@@ -215,6 +233,20 @@ export const ObjectRenderer = React.memo(
           return;
         }
 
+        // An empty sticky is worse than invisible — it is a coloured square
+        // that looks like content. Clicking away from one you never wrote in,
+        // or emptying one, removes it, which is what makes "drop a note and
+        // start typing" safe to do freely.
+        //
+        // Unless somebody reacted to it: a note other people have engaged with
+        // is not yours to delete by clearing its text.
+        if (node.type === 'sticky' && !text.trim()) {
+          if (Object.keys(node.reactions).length === 0) {
+            deleteNode(objId);
+            return;
+          }
+        }
+
         updateNode(objId, size ? { text, ...size } : { text });
       },
       [node, objId]
@@ -222,10 +254,22 @@ export const ObjectRenderer = React.memo(
 
     const handleCancel = useCallback(() => {
       setIsEditing(false);
-      if (node?.type === 'text' && !node.text.trim()) deleteNode(objId);
+      if (!node) return;
+      // Escape out of a note you never wrote in and it should not survive
+      // either — same reasoning as committing an empty one.
+      const abandonedText = node.type === 'text' && !node.text.trim();
+      const abandonedSticky =
+        node.type === 'sticky' &&
+        !node.text.trim() &&
+        Object.keys(node.reactions).length === 0;
+      if (abandonedText || abandonedSticky) deleteNode(objId);
     }, [node, objId]);
 
     if (!node || node.hidden) return null;
+
+    // Only stickies carry tags, so nothing else can ever be excluded by a tag
+    // filter — dimming an image because it has no tags would be nonsense.
+    const filteredOut = node.type === 'sticky' && !matchesTagFilter(node, activeTags as Set<string>);
 
     // A node in flight renders at the owner's broadcast position rather than
     // its (stale) committed one.
@@ -254,12 +298,17 @@ export const ObjectRenderer = React.memo(
           rotation={rotation}
           scaleX={node.scaleX}
           scaleY={node.scaleY}
-          opacity={node.opacity}
+          // Dimmed, not hidden, when a tag filter excludes this object. Hiding
+          // would make the board look emptied and lose the spatial context —
+          // the point of filtering on a canvas is to see the matches *among*
+          // everything else, which is the difference between a canvas filter
+          // and a list filter.
+          opacity={node.opacity * (filteredOut ? 0.12 : 1)}
+          listening={!node.locked && !filteredOut}
           // Not draggable while a force tool is armed: pressing on or near an
           // object would otherwise start a drag instead of applying the force,
           // which made the tools look inert exactly where you would aim them.
-          draggable={!flight && !node.locked && !forceToolActive}
-          listening={!node.locked}
+          draggable={!flight && !node.locked && !forceToolActive && !filteredOut}
           onClick={(e) => onSelect(objId, e)}
           onTap={(e) => onSelect(objId, e as unknown as Konva.KonvaEventObject<MouseEvent>)}
           onDblClick={handleDblClick}
@@ -283,7 +332,7 @@ export const ObjectRenderer = React.memo(
             };
           }}
         >
-          <NodeContent node={node} isSelected={isSelected} isEditing={isEditing} />
+          <NodeContent node={node} isEditing={isEditing} />
 
           {isHovered && !isSelected && (
             // Sized from the node's real bounds. This used to read
@@ -300,7 +349,13 @@ export const ObjectRenderer = React.memo(
             />
           )}
 
-          <ObjectPresenceIndicator objId={objId} width={node.width} cx={0} cy={0} />
+          {/* `ObjectPresenceIndicator` was mounted here on every object. It
+              read an awareness field called `editing` that nothing has ever
+              written (`EditorAPI.setEditingMode` has no callers), so it had
+              never rendered — a per-object awareness subscription and a
+              react-konva `Html` portal, on every object in the document, to
+              draw nothing. Who has an object is now shown on the remote
+              selection outline itself: see `engine/presence/PresenceRenderer`. */}
         </Group>
 
         {isEditing && hasText(node) && (
@@ -317,15 +372,28 @@ export const ObjectRenderer = React.memo(
 
 ObjectRenderer.displayName = 'ObjectRenderer';
 
-/** Typed dispatch to the per-type renderer. */
-const NodeContent: React.FC<{ node: AnyNode; isSelected: boolean; isEditing: boolean }> = ({ node, isSelected, isEditing }) => {
+/**
+ * Typed dispatch to the per-type renderer.
+ *
+ * No renderer takes `isSelected` any more: selection is one hairline ring
+ * drawn once, above, for every object type. The sticky was the last holdout
+ * with a look of its own.
+ */
+const NodeContent: React.FC<{ node: AnyNode; isEditing: boolean }> = ({ node, isEditing }) => {
   switch (node.type) {
     case 'text':
       return <TextRenderer node={node} visible={!isEditing} />;
     case 'shape':
       return <ShapeRenderer node={node} showLabel={!isEditing} />;
     case 'sticky':
-      return <StickyRenderer node={node} isSelected={isSelected} showText={!isEditing} />;
+      return (
+        <StickyRenderer
+          node={node}
+          showText={!isEditing}
+          myAuthorId={localAuthorId()}
+          onToggleReaction={(emoji) => toggleReaction(node.id, emoji, localAuthorId())}
+        />
+      );
     case 'image':
       return <ImageRenderer node={node} />;
     case 'audio':

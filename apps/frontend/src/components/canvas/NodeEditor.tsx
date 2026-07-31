@@ -5,6 +5,9 @@ import { engineEvents } from '../../engine/EventBus';
 import { DEFAULT_TYPOGRAPHY, type TextBearingNode } from '../../engine/model/schema';
 import { domTextStyle } from './renderers/shared';
 import { STICKY_PADDING, THEMES } from './renderers/StickyRenderer';
+import { measureStickyHeight, stickyFit, STICKY_FONT_FAMILY } from './renderers/stickyFit';
+import { STICKY_LINE_HEIGHT } from '../../engine/model/stickyText';
+import { chainSticky } from '../../engine/tools/stickyChain';
 
 interface Props {
   node: TextBearingNode;
@@ -32,6 +35,7 @@ export const NodeEditor: React.FC<Props> = ({ node, onCommit, onCancel }) => {
   const [value, setValue] = useState(node.text ?? '');
   const [, forceReposition] = useState(0);
   const cancelledRef = React.useRef(false);
+  const chainRef = React.useRef(false);
   const sizeRef = React.useRef({ width: node.width, height: node.height });
 
   // Nothing else forces a re-render while the camera moves, so without this
@@ -49,17 +53,47 @@ export const NodeEditor: React.FC<Props> = ({ node, onCommit, onCancel }) => {
   const isSticky = node.type === 'sticky';
   const padding = isSticky ? STICKY_PADDING * zoom : 0;
 
+  /**
+   * A sticky's size is fitted to what is being typed, live.
+   *
+   * Computed from `value` — the text in the box right now, not the committed
+   * text — so the type resizes as you write, exactly as it will once you stop.
+   * It goes through the same `stickyFit` the renderer uses; two independent
+   * "close enough" implementations would make the words jump on commit.
+   */
+  const stickyBox = isSticky
+    ? {
+        width: node.width - STICKY_PADDING * 2,
+        height: node.height - STICKY_PADDING * 2 - 18,
+      }
+    : null;
+  const stickySize = stickyBox
+    ? stickyFit(value, stickyBox.width, stickyBox.height).fontSize
+    : 0;
+
+  // How far down to push the first line so the block sits centred, in screen
+  // pixels. Measured with the same Konva probe the renderer uses.
+  const stickyTopPad = stickyBox
+    ? Math.max(
+        0,
+        ((stickyBox.height - measureStickyHeight(value, stickySize, stickyBox.width)) / 2) * zoom
+      )
+    : 0;
+
   // Stickies render in a fixed handwriting face rather than carrying their own
   // typography; comments have none at all.
   const typography =
     node.type === 'sticky'
       ? {
           ...DEFAULT_TYPOGRAPHY,
-          fontFamily: 'Caveat, cursive',
-          fontWeight: 700,
-          fontSize: node.fontSize,
+          fontFamily: STICKY_FONT_FAMILY,
+          // 600, not 700: only 400 and 600 of Caveat are loaded, and asking
+          // for bold gets a synthesised one that does not match the canvas.
+          fontWeight: 600,
+          fontSize: stickySize,
           color: THEMES[node.theme]?.text ?? DEFAULT_TYPOGRAPHY.color,
-          lineHeight: 1.4,
+          lineHeight: STICKY_LINE_HEIGHT,
+          align: 'center' as const,
         }
       : node.type === 'comment'
         ? { ...DEFAULT_TYPOGRAPHY, fontSize: 13 }
@@ -72,6 +106,13 @@ export const NodeEditor: React.FC<Props> = ({ node, onCommit, onCancel }) => {
       return;
     }
     onCommit(value, node.type === 'text' ? sizeRef.current : undefined);
+
+    // After the commit, so the note this chains from has its text saved before
+    // the next one takes the caret.
+    if (chainRef.current) {
+      chainRef.current = false;
+      if (node.type === 'sticky' && value.trim()) chainSticky(node);
+    }
   };
 
   return (
@@ -122,6 +163,15 @@ export const NodeEditor: React.FC<Props> = ({ node, onCommit, onCancel }) => {
             cancelledRef.current = true;
             e.currentTarget.blur();
           }
+          // Tab chains a new note beside this one and puts the caret in it, so
+          // a run of ideas costs one keystroke each instead of a round trip to
+          // the toolbar. A literal tab character in a sticky is worth nothing,
+          // so nothing is lost by taking the key.
+          if (e.key === 'Tab' && isSticky) {
+            e.preventDefault();
+            chainRef.current = true;
+            e.currentTarget.blur();
+          }
           // Stop canvas-level shortcuts (tool switches, delete) from firing
           // while typing.
           e.stopPropagation();
@@ -142,6 +192,11 @@ export const NodeEditor: React.FC<Props> = ({ node, onCommit, onCancel }) => {
           overflow: 'hidden',
           pointerEvents: 'auto',
           textAlign: node.type === 'shape' ? 'center' : typography.align,
+          // A `<textarea>` cannot centre its content vertically, so the note's
+          // padding is nudged instead: the gap above the first line is however
+          // much of the box the text does not use. Without this the words sit
+          // at the top while editing and snap to the middle on commit.
+          ...(isSticky ? { paddingTop: `${stickyTopPad}px` } : null),
         }}
       />
     </Html>

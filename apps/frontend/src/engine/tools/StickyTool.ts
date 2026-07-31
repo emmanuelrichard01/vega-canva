@@ -2,6 +2,7 @@ import { nanoid } from 'nanoid';
 import type { Tool, ToolContext } from './Tool';
 import type { StickyTheme } from '../model/schema';
 import { localAuthor } from '../document';
+import { requestEditOnMount } from '../interaction/pendingEdit';
 
 const THEME_CYCLE: StickyTheme[] = [
   'yellow',
@@ -33,8 +34,16 @@ export class StickyTool implements Tool {
     const theme = THEME_CYCLE[themeIndex % THEME_CYCLE.length];
     themeIndex++;
 
+    const id = nanoid();
+
+    // Claimed *before* the node exists, so the renderer picks it up on its
+    // first render. A note you have to hunt down and double-click is a note
+    // whose thought you have already lost. See `pendingEdit.ts` for why this
+    // is a latch and not an event.
+    requestEditOnMount(id);
+
     ctx.editor.createNode({
-      id: nanoid(),
+      id,
       type: 'sticky',
       // Centre the note on the cursor.
       x: x - STICKY_SIZE / 2,
@@ -43,6 +52,8 @@ export class StickyTool implements Tool {
       height: STICKY_SIZE,
       text: '',
       theme,
+      // Superseded by `stickyText.fitFontSize`, which sizes the type to the
+      // note. Kept on the schema so older documents still normalize.
       fontSize: 16,
       author: localAuthor(),
       reactions: {},
