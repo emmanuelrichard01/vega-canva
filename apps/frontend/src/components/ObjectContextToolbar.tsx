@@ -1,9 +1,9 @@
 import React, { useEffect, useState, useRef } from 'react';
-import { objectsMap, updateNode, deleteNode, nextZIndex, lowestZIndex } from '../engine/document';
+import { objectsMap, updateNode, deleteNode, nextZIndex, lowestZIndex, toggleReaction, localAuthorId } from '../engine/document';
 import { useStore } from '../hooks/useStore';
 import { cameraSystem } from '../engine/CameraSystem';
 import { engineEvents } from '../engine/EventBus';
-import { Copy, Trash2, Type, Square, Bold, Italic, Underline, AlignLeft, AlignCenter, AlignRight, MessageSquarePlus, BringToFront, SendToBack, ImageIcon, StickyNote, Pin, SmilePlus, X, Mic, MessageSquare, PenLine, Layers, Group, Ungroup } from 'lucide-react';
+import { Copy, Trash2, Type, Square, Bold, Italic, Underline, AlignLeft, AlignCenter, AlignRight, MessageSquarePlus, BringToFront, SendToBack, ImageIcon, StickyNote, Pin, SmilePlus, Mic, MessageSquare, PenLine, Layers, Group, Ungroup, Download } from 'lucide-react';
 import { editor } from '../engine/api/EditorAPI';
 import { nanoid } from 'nanoid';
 import { ColorPickerPopover } from './ui/ColorPickerPopover';
@@ -69,6 +69,7 @@ export const ObjectContextToolbar: React.FC<Props> = ({ selectedId, selectedIds,
   const [placement, setPlacement] = useState<'top' | 'bottom'>('top');
   const [isVisible, setIsVisible] = useState(false);
   const [showReactions, setShowReactions] = useState(false);
+  const myAuthorId = localAuthorId();
   const isDraggingRef = useRef(false);
   const reactionsRef = useRef<HTMLDivElement>(null);
   // Mirrors state, read inside the RAF loop so it can skip setState (and the
@@ -444,6 +445,25 @@ export const ObjectContextToolbar: React.FC<Props> = ({ selectedId, selectedIds,
             </div>
           )}
 
+          {/* Voice notes had *no* quick actions at all — every other type has
+              them, and this one is the hardest to get anything out of, because
+              PNG export omits the player and SVG draws a placeholder. Saving
+              the file is the action that was actually missing. */}
+          {node.type === 'audio' && node.src && (
+            <div style={{ display: 'flex', alignItems: 'center', gap: '4px' }}>
+              <a
+                className="btn-icon"
+                href={node.src}
+                download={`voice-note-${node.author.name.replace(/\s+/g, '-').toLowerCase()}.webm`}
+                data-tooltip="Download recording"
+                aria-label="Download recording"
+                style={{ padding: '4px', display: 'flex', color: 'var(--text-secondary)' }}
+              >
+                <Download size={14} />
+              </a>
+            </div>
+          )}
+
           {node.type === 'sticky' && (
             <div style={{ display: 'flex', alignItems: 'center', gap: '12px' }}>
               <ColorPickerPopover
@@ -498,55 +518,49 @@ export const ObjectContextToolbar: React.FC<Props> = ({ selectedId, selectedIds,
                       padding: 4,
                       borderRadius: 8,
                       zIndex: 30,
-                      animation: 'popIn 160ms cubic-bezier(0.175, 0.885, 0.32, 1.275)',
+                      animation: 'popIn 160ms var(--ease-settle)',
                     }}
                   >
-                    {REACTION_SET.map(emoji => (
-                      <button
-                        key={emoji}
-                        onClick={() => {
-                          const current = node.reactions;
-                          updateProp({
-                            reactions: { ...current, [emoji]: (current[emoji] || 0) + 1 },
-                          });
-                          setShowReactions(false);
-                        }}
-                        style={{
-                          background: 'transparent',
-                          border: 'none',
-                          cursor: 'pointer',
-                          fontSize: 16,
-                          lineHeight: 1,
-                          padding: '4px 6px',
-                          borderRadius: 6,
-                          transition: 'var(--motion-hover)',
-                        }}
-                        onMouseEnter={e => (e.currentTarget.style.background = 'var(--surface-hover)')}
-                        onMouseLeave={e => (e.currentTarget.style.background = 'transparent')}
-                      >
-                        {emoji}
-                      </button>
-                    ))}
-                    {Object.keys(node.reactions).length > 0 && (
-                      <button
-                        onClick={() => {
-                          updateProp({ reactions: {} });
-                          setShowReactions(false);
-                        }}
-                        title="Clear reactions"
-                        style={{
-                          background: 'transparent',
-                          border: 'none',
-                          cursor: 'pointer',
-                          color: 'var(--text-tertiary)',
-                          padding: '4px 6px',
-                          display: 'flex',
-                          alignItems: 'center',
-                        }}
-                      >
-                        <X size={13} />
-                      </button>
-                    )}
+                    {REACTION_SET.map(emoji => {
+                      const mine = (node.reactions[emoji] ?? []).includes(myAuthorId);
+                      return (
+                        <button
+                          key={emoji}
+                          // A toggle, not a counter. This used to write
+                          // `count + 1`, so one person could react five times
+                          // and nobody could take a reaction back.
+                          onClick={() => {
+                            toggleReaction(node.id, emoji, myAuthorId);
+                            setShowReactions(false);
+                          }}
+                          aria-pressed={mine}
+                          title={mine ? `Remove ${emoji}` : `React ${emoji}`}
+                          style={{
+                            background: mine ? 'var(--surface-active)' : 'transparent',
+                            border: 'none',
+                            cursor: 'pointer',
+                            fontSize: 16,
+                            lineHeight: 1,
+                            padding: '4px 6px',
+                            borderRadius: 6,
+                            transition: 'var(--motion-hover)',
+                          }}
+                          onMouseEnter={e => (e.currentTarget.style.background = 'var(--surface-hover)')}
+                          onMouseLeave={e =>
+                            (e.currentTarget.style.background = mine
+                              ? 'var(--surface-active)'
+                              : 'transparent')
+                          }
+                        >
+                          {emoji}
+                        </button>
+                      );
+                    })}
+                    {/* "Clear reactions" used to live here. It deleted
+                        *everyone's* reactions, which is not a thing any
+                        participant should be able to do to the others — and it
+                        only existed because there was no way to take your own
+                        back. Picking your own emoji again removes it. */}
                   </div>
                 )}
               </div>

@@ -1,0 +1,95 @@
+/* IconButton
+   -------------------------------------------------------------------------
+   Square, icon-only. The workhorse of every dock, header and panel row.
+
+   Replaces `.btn-icon` plus a per-instance inline `padding: '6px'` — which
+   meant the same visual control was 30px tall in the dock, 34px in the header
+   and 32px in a panel, depending on which inline padding it happened to carry.
+   Size is a token here and padding does not exist: the icon centres itself in
+   a fixed square. */
+
+.iconButton {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  flex-shrink: 0;
+
+  padding: 0;
+  border: none;
+  background: transparent;
+  color: var(--text-secondary);
+  border-radius: var(--radius-lg);
+  cursor: pointer;
+
+  transition:
+    background-color var(--motion-hover),
+    color var(--motion-hover);
+}
+
+.iconButton:disabled {
+  cursor: default;
+  opacity: 0.4;
+}
+
+.iconButton:not(:disabled):hover {
+  background: var(--surface-hover);
+  color: var(--text-primary);
+}
+
+/* Selected/armed. Distinct from hover, and it must survive the pointer moving
+   away — a tool that looks armed only while hovered tells you nothing about
+   what is actually in your hand. */
+.iconButton[aria-pressed='true'],
+.iconButton[data-active='true'] {
+  background: var(--surface-active);
+  color: var(--text-primary);
+}
+
+/* ---------- sizes ---------- */
+
+.sm {
+  width: var(--control-h-sm);
+  height: var(--control-h-sm);
+}
+
+.md {
+  width: var(--control-h-md);
+  height: var(--control-h-md);
+}
+
+.lg {
+  width: var(--control-h-lg);
+  height: var(--control-h-lg);
+}
+
+/* ---------- grouped-tool variant ----------
+   A tool that owns a submenu (draw, shapes, forces) is wider than a square and
+   carries a chevron, so the submenu is visible before you hover — the previous
+   dock revealed its variants on hover only, which made them undiscoverable
+   with a mouse and completely unreachable by touch. */
+
+.hasMenu {
+  width: auto;
+  gap: 1px;
+  padding-inline: 5px 3px;
+}
+
+.chevron {
+  color: var(--text-tertiary);
+  flex-shrink: 0;
+  transition: transform var(--motion-hover);
+}
+
+.iconButton[aria-expanded='true'] .chevron {
+  transform: rotate(180deg);
+}
+
+.iconButton:not(:disabled):hover .chevron {
+  color: var(--text-secondary);
+}
+
+/* Danger. For destructive row actions: delete layer, discard take. */
+.danger:not(:disabled):hover {
+  background: color-mix(in srgb, var(--status-danger) 12%, transparent);
+  color: var(--status-danger);
+}

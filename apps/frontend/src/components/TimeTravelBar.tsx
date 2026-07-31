@@ -185,7 +185,7 @@ export const TimeTravelBar: React.FC<TimeTravelBarProps> = ({ roomId, onClose, o
     fontFamily: 'var(--font-sans)',
     boxShadow: 'var(--shadow-float)',
     borderRadius: 'var(--radius-xl)',
-    animation: 'popIn 200ms cubic-bezier(0.175, 0.885, 0.32, 1.275)',
+    animation: 'popIn 200ms var(--ease-settle)',
   };
 
   if (loading) {

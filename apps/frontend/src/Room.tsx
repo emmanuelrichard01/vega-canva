@@ -1,5 +1,5 @@
 import { nanoid } from 'nanoid';
-import React, { useState, useRef, useEffect } from 'react';
+import React, { useState, useRef, useEffect, useSyncExternalStore } from 'react';
 import { Canvas } from './components/Canvas';
 import { viewportCenter } from './engine/presence/PresenceTypes';
 import { AuthModal } from './components/AuthModal';
@@ -11,12 +11,12 @@ import { ObjectContextToolbar } from './components/ObjectContextToolbar';
 import { PropertiesPanel } from './components/PropertiesPanel';
 import { LayersPanel } from './components/LayersPanel';
 import { useAuth } from './hooks/AuthContext';
-import { provider, metadataMap, undoManager, updateNode, localAuthor, publishLocalIdentity } from './engine/document';
+import { provider, metadataMap, undoManager, updateNode, localAuthor, localAuthorId, publishLocalIdentity } from './engine/document';
 import { useRoomState } from './hooks/useSync';
 import { initSyncBridge, useStore } from './hooks/useStore';
 import { editor } from './engine/api/EditorAPI';
 import { ActivityFeed } from './components/ActivityFeed';
-import { OffScreenPresence } from './components/OffScreenPresence';
+import { PresenceEdgeMarkers } from './components/PresenceEdgeMarkers';
 import { ExportService } from './engine/export';
 import { TimeTravelBar } from './components/TimeTravelBar';
 import { ForcesBar } from './components/ForcesBar';
@@ -25,12 +25,16 @@ import { mediaUploadUrl } from './utils/endpoints';
 import { CommandPalette } from './components/CommandPalette';
 import { processOfflineMediaQueue, queueOfflineMedia } from './utils/offlineMediaQueue';
 import { calculateLayout, animateToLayout, type LayoutMode } from './utils/spatialLayout';
-import { Mic } from 'lucide-react';
+import { Mic, TriangleAlert } from 'lucide-react';
 import { RemoteCursors } from './engine/cursor';
 import { ExportModal } from './components/ui/ExportModal';
 import { cameraSystem } from './engine/CameraSystem';
 import { useBreakpoint } from './hooks/useBreakpoint';
 import { CanvasEmptyState } from './components/CanvasEmptyState';
+import { useComments } from './hooks/useComments';
+import { CommentInbox } from './components/comments/CommentInbox';
+import { readMarks } from './engine/comments/readMarks';
+import { anchorPoint, unreadCount } from './engine/comments/threads';
 
 export default function Room() {
   const { user } = useAuth();
@@ -59,6 +63,21 @@ export default function Room() {
     const [showTimeTravel, setShowTimeTravel] = useState(false);
   const [timeTravelSnapshot, setTimeTravelSnapshot] = useState<Record<string, any> | null>(null);
   const [showCommandPalette, setShowCommandPalette] = useState(false);
+  const [showInbox, setShowInbox] = useState(false);
+
+  // A second `useComments()` subscription, deliberately. `commentsMap` is a
+  // module-level Y.Map, so both this and the canvas's read the same source and
+  // update on the same observer — there is no drift to worry about, only one
+  // extra (cheap) observer. The alternative was drilling seven comment props
+  // through Canvas to reach an overlay several levels down.
+  const { comments } = useComments();
+  const commentObjects = useStore((s) => s.objects);
+  const commentMarks = useSyncExternalStore(
+    readMarks.subscribe,
+    readMarks.getSnapshot,
+    readMarks.getSnapshot
+  );
+  const myAuthorId = localAuthorId();
   // Persisted in the store rather than local state, so the choice survives a
   // reload (and starts from the OS preference).
   const isDarkTheme = useStore((s) => s.darkTheme);
@@ -94,19 +113,44 @@ export default function Room() {
   // the way once recording genuinely starts, instead of a second, disconnected
   // recording flow that never fired.
   const [isRecording, setIsRecording] = useState(false);
+  // A blocked or missing microphone used to fail into `console.error` — from
+  // the user's side, clicking the canvas simply did nothing at all.
+  const [micError, setMicError] = useState<string | null>(null);
   useEffect(() => {
-    const onStart = () => setIsRecording(true);
+    const onStart = () => {
+      setIsRecording(true);
+      setMicError(null);
+    };
     const onStop = () => setIsRecording(false);
+    const onError = (e: Event) => {
+      setIsRecording(false);
+      setMicError((e as CustomEvent<{ message: string }>).detail?.message ?? null);
+    };
     window.addEventListener('audio-recording-start', onStart);
     window.addEventListener('audio-recording-stop', onStop);
+    window.addEventListener('audio-recording-error', onError);
     return () => {
       window.removeEventListener('audio-recording-start', onStart);
       window.removeEventListener('audio-recording-stop', onStop);
+      window.removeEventListener('audio-recording-error', onError);
     };
   }, []);
 
   const fileInputRef = useRef<HTMLInputElement>(null);
   const { roomId, status, metadata } = useRoomState();
+
+  // Read state is per person and per room, so it has to be pointed at the room
+  // before anything asks what is unread.
+  useEffect(() => {
+    if (roomId) readMarks.load(roomId);
+  }, [roomId]);
+
+  // Drop marks for threads that no longer exist, so the store does not grow a
+  // permanent tail of deleted conversations.
+  useEffect(() => {
+    if (comments.length === 0) return;
+    readMarks.prune(comments.map((c) => c.id));
+  }, [comments]);
 
   useEffect(() => {
     if (!roomId || roomId === 'home') return;
@@ -160,6 +204,10 @@ export default function Room() {
   useEffect(() => {
     if (user && !hasJoined.current) {
       provider.awareness?.setLocalStateField('user', {
+        // The persisted identity, not the per-session client id — this is what
+        // `localAuthorId()` stamps on comments and nodes, and it has to survive
+        // a reload or "your own" comment stops being yours. See mutations.ts.
+        id: user.id,
         name: user.name,
         color: user.color,
       });
@@ -439,6 +487,19 @@ export default function Room() {
         </div>
       )}
 
+      {/* Microphone refused or missing. Dismissible, and it says what to do
+          about it — a permission a browser is auto-denying is invisible
+          otherwise, and the feature just appears broken. */}
+      {micError && (
+        <div className="mic-error panel-surface" role="alert">
+          <TriangleAlert size={15} />
+          <span>{micError}</span>
+          <button type="button" onClick={() => setMicError(null)} aria-label="Dismiss">
+            ×
+          </button>
+        </div>
+      )}
+
       {/* First tab stop: lets keyboard users reach the canvas without
           traversing the entire header and tool dock. */}
       <a href="#canvas-surface" className="skip-link">Skip to canvas</a>
@@ -470,6 +531,8 @@ export default function Room() {
           onExportClick={() => setShowExportMenu(true)}
           onHideUi={() => setIsUiVisible(false)}
           onToggleTimeline={() => setShowTimeTravel(v => !v)}
+          onToggleComments={() => setShowInbox(v => !v)}
+          commentUnread={unreadCount(comments, commentMarks, myAuthorId)}
           onTogglePanels={() => setPanelsOpen(v => !v)}
         />
       )}
@@ -489,24 +552,21 @@ export default function Room() {
         {/* Spatial Intelligence & Radar */}
         {isUiVisible && <Minimap />}
         
-        <OffScreenPresence
-          stageScale={1}
-          stagePos={{ x: 0, y: 0 }}
-          dimensions={{ width: window.innerWidth, height: window.innerHeight }}
-          onFlyTo={(x, y) => {
-            window.dispatchEvent(new CustomEvent('navigateViewport', { detail: { x, y, zoom: 1 } }));
-          }}
-        />
-        
-        {/* Other people's pointers. The local one is a CSS cursor now.
+        {/* Which way everyone is, when they are off the edge of your screen.
+            Takes no props: it reads the camera singleton directly, which is
+            what the version it replaces got wrong — it was handed a hardcoded
+            identity camera and so described a view nobody was looking at. */}
+        <PresenceEdgeMarkers />
+
+        {/* Other people's pointers.
 
             Deliberately not behind `isUiVisible`: that flag hides *chrome*, and
             other people are not chrome. Hiding them was also inconsistent —
-            remote selection outlines (PresenceRenderer) and off-screen
-            collaborator markers (OffScreenPresence, just above) both stay up in
-            presentation mode, so presenting used to leave everyone's selections
-            visible while their cursors vanished. Presenting is usually
-            presenting *to* the people whose pointers these are. */}
+            remote selection outlines (PresenceRenderer) and the off-screen
+            collaborator markers just above both stay up in presentation mode,
+            so presenting used to leave everyone's selections visible while
+            their cursors vanished. Presenting is usually presenting *to* the
+            people whose pointers these are. */}
         <RemoteCursors />
         
         <ActivityFeed />
@@ -580,6 +640,34 @@ export default function Room() {
           className="panel-scrim"
           aria-label="Close panels"
           onClick={() => setPanelsOpen(false)}
+        />
+      )}
+
+      {/* COMMENT INBOX — every thread in the room, in one list.
+          Sits above the Properties panel rather than beside it: both own the
+          right-hand column, and two 300px columns leave no canvas. */}
+      {isUiVisible && showInbox && (
+        <CommentInbox
+          threads={comments}
+          objects={commentObjects}
+          marks={commentMarks}
+          myAuthorId={myAuthorId}
+          onClose={() => setShowInbox(false)}
+          onOpenThread={(thread) => {
+            const at = anchorPoint(
+              thread,
+              thread.objectId ? commentObjects[thread.objectId] : null
+            );
+            window.dispatchEvent(
+              new CustomEvent('navigateViewport', {
+                detail: { x: at.x, y: at.y, zoom: Math.max(cameraSystem.zoom, 0.6) },
+              })
+            );
+            // After the fly-to, so the thread opens where the camera lands.
+            window.dispatchEvent(
+              new CustomEvent('focusCommentThread', { detail: { id: thread.id } })
+            );
+          }}
         />
       )}
 

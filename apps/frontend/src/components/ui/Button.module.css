@@ -1,0 +1,125 @@
+/* Button
+   -------------------------------------------------------------------------
+   One button. Every text button in the app was a bespoke inline style object,
+   which is why no two of them shared a height, a radius, or a hover.
+
+   Height comes from --control-h-*; padding is derived from it rather than
+   stated alongside it, so a size change cannot desynchronise the two.
+   Elevation is declared once per variant: primary and secondary carry a
+   shadow, ghost and danger-ghost carry neither shadow nor border. */
+
+.button {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: var(--space-2);
+
+  font-family: var(--font-sans);
+  font-weight: var(--weight-medium);
+  line-height: 1;
+  white-space: nowrap;
+
+  border: none;
+  border-radius: var(--radius-md);
+  cursor: pointer;
+  user-select: none;
+
+  /* Paint properties only. `transition: all` on a button animates its width
+     during a label change and turns every hover into a potential reflow. */
+  transition:
+    background-color var(--motion-hover),
+    color var(--motion-hover),
+    box-shadow var(--motion-hover),
+    opacity var(--motion-hover);
+}
+
+.button:disabled {
+  cursor: default;
+  opacity: 0.45;
+  /* Not pointer-events: none — a disabled control must still be hoverable so
+     its tooltip can explain why it is disabled. */
+}
+
+/* The press. A 1px settle rather than a scale, because these sit in dense
+   chrome where a scaling button visibly nudges its neighbours. */
+.button:not(:disabled):active {
+  transform: translateY(1px);
+}
+
+/* ---------- sizes ---------- */
+
+.sm {
+  height: var(--control-h-sm);
+  padding: var(--control-pad-sm);
+  font-size: var(--text-sm);
+}
+
+.md {
+  height: var(--control-h-md);
+  padding: var(--control-pad-md);
+  font-size: var(--text-base);
+}
+
+.lg {
+  height: var(--control-h-lg);
+  padding: var(--control-pad-lg);
+  font-size: var(--text-md);
+}
+
+/* ---------- variants ---------- */
+
+/* Primary is the inverse of the page surface rather than a brand colour. The
+   product has one accent (amber) and it is spent on Time Travel, forces and
+   status; spending it again on every confirm button would leave the accent
+   meaning nothing. Inverse also themes itself for free. */
+.primary {
+  background: var(--text-primary);
+  color: var(--surface-primary);
+  box-shadow: var(--shadow-sm);
+}
+
+.primary:not(:disabled):hover {
+  background: var(--text-secondary);
+}
+
+.secondary {
+  background: var(--surface-elevated);
+  color: var(--text-primary);
+  box-shadow: var(--shadow-sm), 0 0 0 1px var(--border-divider);
+}
+
+.secondary:not(:disabled):hover {
+  background: var(--surface-hover);
+}
+
+.ghost {
+  background: transparent;
+  color: var(--text-secondary);
+}
+
+.ghost:not(:disabled):hover {
+  background: var(--surface-hover);
+  color: var(--text-primary);
+}
+
+.danger {
+  background: transparent;
+  color: var(--status-danger);
+}
+
+.danger:not(:disabled):hover {
+  /* Tinted from the danger hue rather than the neutral hover, so the intent
+     survives the hover instead of going grey at the moment of commitment. */
+  background: color-mix(in srgb, var(--status-danger) 12%, transparent);
+}
+
+/* Fills its container. For dialog footers and full-width mobile actions. */
+.block {
+  width: 100%;
+}
+
+/* Icons inside a button inherit the label colour and never shrink when the
+   label is long enough to ellipsize. */
+.button > svg {
+  flex-shrink: 0;
+}

@@ -1,7 +1,7 @@
 import React, { useState, useRef } from 'react';
 import { useRoomState } from '../../hooks/useSync';
 import { CollaborationLayer } from './CollaborationLayer';
-import { Moon, Sun, Undo2, Redo2, Share2, Download, EyeOff, History, PanelLeft } from 'lucide-react';
+import { Moon, Sun, Undo2, Redo2, Share2, Download, EyeOff, History, PanelLeft, MessageSquare } from 'lucide-react';
 import { editor } from '../../engine/api/EditorAPI';
 import { useStore } from '../../hooks/useStore';
 import { Switch } from '../ui/Switch';
@@ -16,11 +16,14 @@ interface Props {
   onExportClick?: () => void;
   onHideUi: () => void;
   onToggleTimeline: () => void;
+  onToggleComments: () => void;
+  /** Unresolved threads with something you have not read. */
+  commentUnread: number;
   /** Shown only once the side panels become overlays (below the compact breakpoint). */
   onTogglePanels?: () => void;
 }
 
-export const WorkspaceShell: React.FC<Props> = ({ localTitle, setLocalTitle, onTitleSave, isDarkTheme, setIsDarkTheme, onShareClick, onExportClick, onHideUi, onToggleTimeline, onTogglePanels }) => {
+export const WorkspaceShell: React.FC<Props> = ({ localTitle, setLocalTitle, onTitleSave, isDarkTheme, setIsDarkTheme, onShareClick, onExportClick, onHideUi, onToggleTimeline, onToggleComments, commentUnread, onTogglePanels }) => {
   const { status, synced, awarenessUsers } = useRoomState();
   const [isEditingTitle, setIsEditingTitle] = useState(false);
   // What the title was when editing started, so Escape can revert to it
@@ -155,6 +158,30 @@ export const WorkspaceShell: React.FC<Props> = ({ localTitle, setLocalTitle, onT
 
         {/* Presence Avatars */}
         <CollaborationLayer />
+
+        <div className="hdr-divider" style={{ width: 1, height: 24, background: 'var(--border-divider)' }} />
+
+        {/* Comments. The count is the whole point of putting this in the
+            header: on an infinite canvas a comment you have not scrolled to
+            does not exist, so the only place a "something needs you" signal
+            can live is chrome that is always on screen. */}
+        <button
+          className="btn-icon"
+          style={{ padding: '8px 10px', position: 'relative', flexShrink: 0 }}
+          onClick={onToggleComments}
+          data-tooltip={commentUnread > 0 ? `${commentUnread} unread` : 'Comments'}
+          data-tooltip-pos="bottom"
+          aria-label={
+            commentUnread > 0 ? `Comments, ${commentUnread} unread` : 'Comments'
+          }
+        >
+          <MessageSquare size={17} />
+          {commentUnread > 0 && (
+            <span className="hdr-badge" aria-hidden="true">
+              {commentUnread > 9 ? '9+' : commentUnread}
+            </span>
+          )}
+        </button>
 
         <div className="hdr-divider" style={{ width: 1, height: 24, background: 'var(--border-divider)' }} />
 
