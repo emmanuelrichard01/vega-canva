@@ -11,9 +11,19 @@ import {
   DEFAULT_TYPOGRAPHY,
   type AnyNode,
   type Appearance,
+  type Stroke,
   type TextAlign,
   type Typography,
 } from '../engine/model/schema';
+import {
+  STROKE_STYLE_IDS,
+  STROKE_STYLE_LABELS,
+  buildStroke,
+  dashFor,
+  restyleForWidth,
+  styleOf,
+  type StrokeStyleId,
+} from '../engine/model/strokeStyle';
 import { ColorPickerPopover } from './ui/ColorPickerPopover';
 import { NumberStepper } from './ui/NumberStepper';
 import { FontSelector } from './ui/FontSelector';
@@ -56,6 +66,35 @@ const Accordion: React.FC<{ title: string; children: React.ReactNode; defaultOpe
     </div>
   );
 };
+
+/**
+ * A specimen of the stroke style, not a symbol for it.
+ *
+ * Three lucide glyphs would approximate a thing the control can simply show,
+ * and 20px is enough room to draw the pattern itself. `currentColor` inherits
+ * the segment's own active/inactive colour, so the specimen dims with its
+ * label instead of sitting at full strength on an inactive segment.
+ *
+ * The numbers here are tuned for legibility at 20px and are deliberately *not*
+ * the ones `dashFor` produces — that pattern is derived from the stroke's own
+ * weight, which this 2px specimen does not have. At the real `[w*3, w*2]` only
+ * two dashes fit in the icon, which reads as "two dashes" rather than as a
+ * dashed line; three is the point where the eye sees a repeat. Dotted needs
+ * its round cap for the same reason the real thing does — `0 gap` with a butt
+ * cap draws nothing at all.
+ */
+const StrokeStyleIcon: React.FC<{ style: StrokeStyleId }> = ({ style }) => (
+  <svg width="20" height="12" viewBox="0 0 20 12" aria-hidden="true" focusable="false">
+    <line
+      x1="1" y1="6" x2="19" y2="6"
+      stroke="currentColor"
+      strokeWidth="2"
+      strokeLinecap={style === 'dotted' ? 'round' : 'butt'}
+      strokeDasharray={style === 'solid' ? undefined : style === 'dotted' ? '0 4.5' : '4 3'}
+      vectorEffect="non-scaling-stroke"
+    />
+  </svg>
+);
 
 const Row: React.FC<{ label: string; children: React.ReactNode }> = ({ label, children }) => (
   <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 8 }}>
@@ -109,6 +148,32 @@ export const PropertiesPanel: React.FC<PropertiesPanelProps> = ({ selectedId, ov
     set({ appearance: { ...(appearance ?? {}), ...patch } } as Partial<AnyNode>);
   const setTypography = (patch: Partial<Typography>) =>
     set({ typography: { ...(typography ?? DEFAULT_TYPOGRAPHY), ...patch } } as Partial<AnyNode>);
+
+  /**
+   * Write the stroke, keeping its dash pattern proportional to its weight.
+   *
+   * A dash array is absolute, so a pattern authored at 1px closes up into a
+   * near-solid line by the time the stroke is 12px. Re-deriving on every write
+   * means the *style* is what persists, which is what someone who picked
+   * "Dashed" actually chose. `buildStroke` omits the dash keys entirely for a
+   * solid stroke rather than writing `undefined` into a nested value.
+   */
+  const setStroke = (patch: Partial<Pick<Stroke, 'color' | 'width'>>) => {
+    const current = appearance?.stroke;
+    const color = patch.color ?? current?.color ?? '#000000';
+    const width = patch.width ?? current?.width ?? 2;
+    setAppearance({ stroke: buildStroke({ color, width }, restyleForWidth(current, width)) });
+  };
+
+  const setStrokeStyle = (style: StrokeStyleId) => {
+    const current = appearance?.stroke;
+    const color = current?.color ?? '#000000';
+    // Picking a dash on a shape with no outline yet is a request for an
+    // outline — a control that visibly changes nothing is worse than no
+    // control, and a 0-width stroke is exactly that.
+    const width = current?.width && current.width > 0 ? current.width : 2;
+    setAppearance({ stroke: buildStroke({ color, width }, dashFor(style, width)) });
+  };
 
   // Resizing writes width/height only. There is no second copy of the size to
   // keep in step any more — this used to fan a single edit out to `width`,
@@ -235,14 +300,29 @@ export const PropertiesPanel: React.FC<PropertiesPanelProps> = ({ selectedId, ov
           <Row label="Color">
             <ColorPickerPopover
               color={appearance.stroke?.color ?? 'transparent'}
-              onChange={(color) => setAppearance({ stroke: { width: appearance.stroke?.width ?? 2, ...appearance.stroke, color } })}
+              onChange={(color) => setStroke({ color })}
             />
           </Row>
           <Row label="Width">
             <NumberStepper
               value={appearance.stroke?.width ?? 0}
-              onChange={(width) => setAppearance({ stroke: { color: appearance.stroke?.color ?? '#000000', ...appearance.stroke, width } })}
+              /* The dash pattern is re-derived from the new weight, so a
+                 dashed line stays visibly dashed instead of closing up into a
+                 near-solid one as it gets thicker. */
+              onChange={(width) => setStroke({ width })}
               min={0} max={100}
+            />
+          </Row>
+          <Row label="Style">
+            <SegmentedControl
+              ariaLabel="Stroke style"
+              value={styleOf(appearance.stroke)}
+              onChange={(id) => setStrokeStyle(id as StrokeStyleId)}
+              segments={STROKE_STYLE_IDS.map((id) => ({
+                value: id,
+                label: STROKE_STYLE_LABELS[id],
+                icon: <StrokeStyleIcon style={id} />,
+              }))}
             />
           </Row>
         </Accordion>

@@ -93,6 +93,20 @@ function rotationTransform(node: AnyNode): string {
   return ` transform="rotate(${node.rotation} ${cx} ${cy})"`;
 }
 
+/**
+ * `stroke-dasharray` and `stroke-linecap`, or an empty string.
+ *
+ * SVG and Canvas2D define dash arrays identically, so the stored value goes
+ * out verbatim with no conversion. The cap has to travel with it: a dotted
+ * pattern is `0 gap`, and an SVG viewer applying the default butt cap to that
+ * renders nothing at all — an exported dotted outline would silently vanish.
+ */
+function dashAttrs(stroke: ShapeNode['appearance']['stroke']): string {
+  if (!stroke?.dash || stroke.dash.length === 0) return '';
+  const cap = stroke.cap ? ` stroke-linecap="${stroke.cap}"` : '';
+  return ` stroke-dasharray="${stroke.dash.join(' ')}"${cap}`;
+}
+
 function shapeMarkup(node: ShapeNode): string {
   const { x, y, width: w, height: h } = node;
   const cx = x + w / 2;
@@ -101,7 +115,7 @@ function shapeMarkup(node: ShapeNode): string {
   const stroke = node.appearance.stroke?.color ?? 'none';
   const sw = node.appearance.stroke?.width ?? 0;
   const rot = rotationTransform(node);
-  const paint = `fill="${fill}" stroke="${stroke}" stroke-width="${sw}"`;
+  const paint = `fill="${fill}" stroke="${stroke}" stroke-width="${sw}"${dashAttrs(node.appearance.stroke)}`;
 
   switch (node.geometry.kind) {
     case 'rect':
@@ -163,8 +177,12 @@ export class SVGExporter implements Exporter {
           const fill = node.appearance.fill?.[0]?.color;
 
           if (node.geometry.kind === 'bezier') {
+            const dash = dashAttrs(node.appearance.stroke);
+            // The round cap is this renderer's default for pen paths, so it is
+            // only emitted when the dash pattern has not already supplied one.
+            const cap = node.appearance.stroke?.cap ? '' : ' stroke-linecap="round"';
             parts.push(
-              `<path d="${bezierPathData(node, node.x, node.y)}" fill="${fill && fill !== 'transparent' ? fill : 'none'}" stroke="${stroke ?? 'none'}" stroke-width="${sw}" stroke-linecap="round" stroke-linejoin="round" />`
+              `<path d="${bezierPathData(node, node.x, node.y)}" fill="${fill && fill !== 'transparent' ? fill : 'none'}" stroke="${stroke ?? 'none'}" stroke-width="${sw}"${dash}${cap} stroke-linejoin="round" />`
             );
           } else if (node.geometry.svgPath) {
             // Freehand strokes store their outline relative to the node origin.

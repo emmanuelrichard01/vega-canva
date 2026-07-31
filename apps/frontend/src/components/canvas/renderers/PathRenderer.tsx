@@ -1,7 +1,7 @@
 import React from 'react';
 import { Path } from 'react-konva';
 import type { PathNode } from '../../../engine/model/schema';
-import { fillColor, strokeColor, strokeWidth } from './shared';
+import { fillColor, strokeColor, strokeDashProps, strokeWidth } from './shared';
 
 interface Props {
   node: PathNode;
@@ -31,7 +31,10 @@ function segmentsToPathData(node: PathNode): string {
 export const PathRenderer: React.FC<Props> = React.memo(({ node }) => {
   if (node.geometry.kind === 'freehand') {
     // perfect-freehand produces a filled outline polygon, not a stroked line,
-    // so the stroke colour is irrelevant here.
+    // so the stroke colour is irrelevant here — and so is the dash pattern.
+    // Dashing this shape would chop up the *outline* of the stroke rather than
+    // the stroke itself, which looks like a rendering fault, not a dashed
+    // pencil line. Deliberately not forwarded.
     return (
       <Path
         data={node.geometry.svgPath}
@@ -51,7 +54,7 @@ export const PathRenderer: React.FC<Props> = React.memo(({ node }) => {
       fill={fill && fill !== 'transparent' ? fill : undefined}
       stroke={stroke}
       strokeWidth={sw}
-      lineCap="round"
+      {...strokeDashProps(node.appearance, 'round')}
       lineJoin="round"
       hitStrokeWidth={Math.max(20, sw)}
     />

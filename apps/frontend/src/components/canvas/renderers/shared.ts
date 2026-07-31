@@ -1,4 +1,4 @@
-import type { Appearance, Typography } from '../../../engine/model/schema';
+import type { Appearance, LineCap, Typography } from '../../../engine/model/schema';
 
 /**
  * Compose Konva's single `fontStyle` string from the orthogonal weight and
@@ -38,6 +38,28 @@ export function strokeColor(appearance: Appearance | undefined): string | undefi
 
 export function strokeWidth(appearance: Appearance | undefined): number {
   return appearance?.stroke?.width ?? 0;
+}
+
+/**
+ * The dash-pattern props Konva wants, spread onto any stroked shape.
+ *
+ * Returned as one object rather than two accessors because the two travel
+ * together: a dotted pattern is `[0, gap]`, which draws nothing at all without
+ * the round cap that gives each zero-length segment its extent. Splitting them
+ * across two call sites is how one of them ends up forgotten on a renderer.
+ *
+ * Konva reads `undefined` as "no dash" and "default cap", so the absent case
+ * needs no branch at the call site.
+ */
+export function strokeDashProps(
+  appearance: Appearance | undefined,
+  fallbackCap?: LineCap
+): { dash?: number[]; lineCap?: LineCap } {
+  const stroke = appearance?.stroke;
+  return {
+    dash: stroke?.dash,
+    lineCap: stroke?.cap ?? fallbackCap,
+  };
 }
 
 /** CSS font shorthand pieces for the DOM textareas used during editing. */

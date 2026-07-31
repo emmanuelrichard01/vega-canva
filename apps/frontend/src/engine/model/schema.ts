@@ -47,7 +47,31 @@ export const SCHEMA_VERSION = 2;
 // ---------------------------------------------------------------------------
 
 export type Paint = { type: 'solid'; color: string; opacity?: number };
-export type Stroke = { color: string; width: number; dash?: number[] };
+
+export type LineCap = 'butt' | 'round' | 'square';
+
+export type Stroke = {
+  color: string;
+  width: number;
+  /**
+   * Dash pattern, in absolute units, as SVG and Canvas2D define it. Absent is
+   * a solid line; an empty array is not used.
+   *
+   * The patterns a user can pick are derived from the stroke weight — see
+   * `engine/model/strokeStyle.ts`, which owns that arithmetic and the reason
+   * for it. Arbitrary arrays from an older document still render.
+   */
+  dash?: number[];
+  /**
+   * How the line terminates, including at every dash gap.
+   *
+   * Present because a dotted line is not a pattern on its own: `[0, gap]`
+   * draws a run of round caps around nothing, and draws literally nothing with
+   * the default butt cap. The cap therefore travels with the dash rather than
+   * waiting for a separate control.
+   */
+  cap?: LineCap;
+};
 export type Shadow = { color: string; blur: number; offsetX: number; offsetY: number };
 export type Point = { x: number; y: number };
 

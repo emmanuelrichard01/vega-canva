@@ -1,7 +1,7 @@
 import React from 'react';
 import { Ellipse, Group, Rect, RegularPolygon, Star, Text } from 'react-konva';
 import type { ShapeNode } from '../../../engine/model/schema';
-import { fillColor, konvaFontStyle, konvaTextDecoration, strokeColor, strokeWidth } from './shared';
+import { fillColor, konvaFontStyle, konvaTextDecoration, strokeColor, strokeDashProps, strokeWidth } from './shared';
 
 interface Props {
   node: ShapeNode;
@@ -25,14 +25,17 @@ export const ShapeRenderer: React.FC<Props> = React.memo(({ node, showLabel }) =
   const stroke = strokeColor(node.appearance);
   const sw = strokeWidth(node.appearance);
   const radius = node.appearance?.cornerRadius ?? 0;
+  // Dash pattern and the cap that goes with it. Spread rather than passed as
+  // two props, because a dotted pattern draws nothing without its round cap.
+  const dashProps = strokeDashProps(node.appearance);
 
   let shape: React.ReactNode;
 
   if (node.geometry.kind === 'rect') {
-    shape = <Rect width={w} height={h} fill={fill} stroke={stroke} strokeWidth={sw} cornerRadius={Math.max(0, radius)} />;
+    shape = <Rect width={w} height={h} fill={fill} stroke={stroke} strokeWidth={sw} {...dashProps} cornerRadius={Math.max(0, radius)} />;
   } else if (node.geometry.kind === 'ellipse') {
     // Independent radii, so a non-square ellipse stays elliptical.
-    shape = <Ellipse x={w / 2} y={h / 2} radiusX={w / 2} radiusY={h / 2} fill={fill} stroke={stroke} strokeWidth={sw} />;
+    shape = <Ellipse x={w / 2} y={h / 2} radiusX={w / 2} radiusY={h / 2} fill={fill} stroke={stroke} strokeWidth={sw} {...dashProps} />;
   } else {
     // Konva's polygon primitives take one radius. Build on the smaller
     // dimension and stretch the node itself to fill the w x h box.
@@ -51,6 +54,7 @@ export const ShapeRenderer: React.FC<Props> = React.memo(({ node, showLabel }) =
       stroke,
       strokeWidth: sw,
       strokeScaleEnabled: false,
+      ...dashProps,
     };
 
     shape =

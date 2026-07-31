@@ -39,6 +39,54 @@ describe('normalizeNode — legacy shapes', () => {
     expect((node as unknown as Record<string, unknown>).content).toBeUndefined();
   });
 
+  describe('stroke dash', () => {
+    const strokeOf = (stroke: unknown) =>
+      (normalizeNode({ id: 's1', type: 'shape', x: 0, y: 0, width: 10, height: 10, appearance: { stroke } }) as ShapeNode)
+        .appearance.stroke;
+
+    it('keeps a valid pattern and a valid cap', () => {
+      expect(strokeOf({ color: '#000', width: 2, dash: [6, 4], cap: 'round' })).toEqual({
+        color: '#000',
+        width: 2,
+        dash: [6, 4],
+        cap: 'round',
+      });
+    });
+
+    it('drops a pattern containing a non-finite or negative segment', () => {
+      // `setLineDash` throws on these, and one bad entry from a corrupt
+      // document would take down the whole render rather than this outline.
+      for (const dash of [[6, NaN], [6, -2], [Infinity], [6, '4']]) {
+        expect(strokeOf({ color: '#000', width: 2, dash })?.dash).toBeUndefined();
+      }
+    });
+
+    it('drops an empty and an all-zero pattern', () => {
+      // An all-zero pattern is an invisible line, not a dash.
+      expect(strokeOf({ color: '#000', width: 2, dash: [] })?.dash).toBeUndefined();
+      expect(strokeOf({ color: '#000', width: 2, dash: [0, 0] })?.dash).toBeUndefined();
+    });
+
+    it('keeps a zero-length segment when something else in the pattern is drawn', () => {
+      // This is exactly how a dotted line is spelled.
+      expect(strokeOf({ color: '#000', width: 2, dash: [0, 4] })?.dash).toEqual([0, 4]);
+    });
+
+    it('rejects a cap it does not recognise, without dropping the stroke', () => {
+      const stroke = strokeOf({ color: '#000', width: 2, cap: 'triangle' });
+      expect(stroke?.color).toBe('#000');
+      expect(stroke?.cap).toBeUndefined();
+    });
+
+    it('never writes an undefined dash key into the normalized value', () => {
+      // A literal `undefined` nested inside `appearance` survives `toJSON()`
+      // and defeats the `?? fallback` reads downstream.
+      const stroke = strokeOf({ color: '#000', width: 2 });
+      expect(Object.hasOwn(stroke!, 'dash')).toBe(false);
+      expect(Object.hasOwn(stroke!, 'cap')).toBe(false);
+    });
+  });
+
   it('reads size from geometry when content has none', () => {
     const node = normalizeNode({
       id: 'a2', type: 'shape', x: 0, y: 0,

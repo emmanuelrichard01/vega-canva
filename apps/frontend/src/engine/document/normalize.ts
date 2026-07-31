@@ -3,6 +3,7 @@ import {
   type AnyNode,
   type Appearance,
   type Author,
+  type LineCap,
   type NodeType,
   type Paint,
   type PathGeometry,
@@ -87,11 +88,42 @@ function toPaintArray(value: unknown, legacyColor: unknown): Paint[] | undefined
   return undefined;
 }
 
+const LINE_CAPS = new Set<LineCap>(['butt', 'round', 'square']);
+
+/**
+ * A dash pattern, or nothing.
+ *
+ * Every entry has to be a finite, non-negative number before this reaches a
+ * canvas: `setLineDash` throws on a negative or non-finite segment, and one
+ * bad entry from a corrupt document would take down the whole render, not just
+ * that node's outline. `Array.isArray` alone — which is what this used to
+ * do — checks the container and never the contents.
+ *
+ * An all-zero pattern is dropped rather than kept. It is not a dash, it is an
+ * invisible line, and it would leave a stroke that cannot be seen with no
+ * indication of why.
+ */
+function toDash(value: unknown): number[] | undefined {
+  if (!Array.isArray(value) || value.length === 0) return undefined;
+  const clean = value.filter(
+    (n): n is number => typeof n === 'number' && Number.isFinite(n) && n >= 0
+  );
+  if (clean.length !== value.length) return undefined;
+  return clean.some((n) => n > 0) ? clean : undefined;
+}
+
 function toStroke(value: unknown, legacyColor: unknown, legacyWidth: unknown): Stroke | undefined {
   if (value && typeof value === 'object') {
     const s = value as any;
     if (typeof s.color === 'string') {
-      return { color: s.color, width: num(s.width, 2), dash: Array.isArray(s.dash) ? s.dash : undefined };
+      const stroke: Stroke = { color: s.color, width: num(s.width, 2) };
+      // Assigned only when present, never set to `undefined`. A literal
+      // `undefined` inside a nested plain value survives `toJSON()` and
+      // defeats the `?? fallback` reads downstream.
+      const dash = toDash(s.dash);
+      if (dash) stroke.dash = dash;
+      if (LINE_CAPS.has(s.cap)) stroke.cap = s.cap;
+      return stroke;
     }
   }
   if (typeof legacyColor === 'string' && legacyColor && legacyColor !== 'transparent') {
