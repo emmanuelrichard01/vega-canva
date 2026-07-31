@@ -1,4 +1,4 @@
-import React, { useState, useRef } from 'react';
+import React, { useEffect, useMemo, useRef, useState, useSyncExternalStore } from 'react';
 import { updateNode, deleteNode, provider } from '../engine/document';
 import { useStore } from '../hooks/useStore';
 import { editor } from '../engine/api/EditorAPI';
@@ -6,6 +6,8 @@ import { Type, Square, Image as ImageIcon, StickyNote, Mic, LayoutTemplate, Mess
 import { nanoid } from 'nanoid';
 import { type AnyNode } from '../engine/model/schema';
 import { nodeLabel } from '../engine/model/nodeLabel';
+import { tagFilter } from '../engine/model/tagFilter';
+import { tagCounts } from '../engine/model/tags';
 import { useVirtualRows } from '../hooks/useVirtualRows';
 
 /** Row pitch, in px. Uniform by design so the list can be windowed. */
@@ -29,6 +31,19 @@ export const LayersPanel: React.FC<LayersPanelProps> = ({ selectedIds, overrideO
   // panel can't momentarily disagree with Properties/Canvas/the toolbar.
   const liveObjects = useStore(state => state.objects);
   const objects = overrideObjects || liveObjects;
+
+  const activeTags = useSyncExternalStore(
+    tagFilter.subscribe,
+    tagFilter.getSnapshot,
+    tagFilter.getSnapshot
+  ) as Set<string>;
+  const allTags = useMemo(() => tagCounts(Object.values(objects)), [objects]);
+
+  // A tag whose last note was deleted stays selected and invisible otherwise,
+  // and the board filters to nothing with no visible cause.
+  useEffect(() => {
+    tagFilter.prune(allTags.map((t) => t.tag));
+  }, [allTags]);
   const [hoveredId, setHoveredId] = useState<string | null>(null);
   const [draggedId, setDraggedId] = useState<string | null>(null);
   const [dragOverId, setDragOverId] = useState<string | null>(null);
@@ -378,6 +393,36 @@ export const LayersPanel: React.FC<LayersPanelProps> = ({ selectedIds, overrideO
           </div>
         )}
       </div>
+
+      {/* Tag filter.
+          Tags were on the schema for the project's whole life with nothing to
+          act on them, which made them decoration. This is the thing that makes
+          them worth typing: pick tags and the board dims everything else, so
+          you can see the matches *in place* rather than as a list somewhere. */}
+      {allTags.length > 0 && (
+        <div className="tag-filter">
+          <div className="tag-filter-row">
+            {allTags.map(({ tag, count }) => (
+              <button
+                key={tag}
+                type="button"
+                className="tag-filter-chip"
+                data-active={activeTags.has(tag) || undefined}
+                aria-pressed={activeTags.has(tag)}
+                onClick={() => tagFilter.toggle(tag)}
+              >
+                {tag}
+                <span className="tag-filter-count">{count}</span>
+              </button>
+            ))}
+          </div>
+          {activeTags.size > 0 && (
+            <button type="button" className="tag-filter-clear" onClick={() => tagFilter.clear()}>
+              Clear filter
+            </button>
+          )}
+        </div>
+      )}
 
       <div
         ref={containerRef}

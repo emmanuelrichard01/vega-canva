@@ -20,6 +20,7 @@ import { FontSelector } from './ui/FontSelector';
 import { SegmentedControl } from './ui/SegmentedControl';
 import { THEMES, nearestTheme } from './canvas/renderers/StickyRenderer';
 import { MATERIALS, MATERIAL_IDS, resolveMaterial } from '../utils/behaviorSystem';
+import { TagEditor } from './ui/TagEditor';
 
 /**
  * Types that are simulated at all. Comments and frames are anchors — offering
@@ -296,12 +297,14 @@ export const PropertiesPanel: React.FC<PropertiesPanelProps> = ({ selectedId, ov
               onChange={(color) => set({ theme: nearestTheme(color) })}
             />
           </Row>
-          <Row label="Text Size">
-            <NumberStepper value={node.fontSize} onChange={(fontSize) => set({ fontSize })} min={8} max={72} />
-          </Row>
+          {/* "Text Size" used to live here. It set a `fontSize` that nothing
+              reads any more: the type is fitted to the note so the words
+              always fit, which is a promise a manual size cannot keep. See
+              `engine/model/stickyText.ts`. */}
           <Row label="Pinned">
             <input type="checkbox" checked={node.pinned} onChange={(e) => set({ pinned: e.target.checked })} />
           </Row>
+          <TagEditor tags={node.tags} onChange={(tags: string[]) => set({ tags })} />
         </Accordion>
       )}
 
