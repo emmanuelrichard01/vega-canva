@@ -1,8 +1,22 @@
-import React, { useState, useEffect, useRef } from 'react';
-import { MessageSquare, Check, X, Send, Pencil, Trash2, CornerDownLeft } from 'lucide-react';
+import React, { useState, useEffect, useMemo, useRef, useSyncExternalStore } from 'react';
+import ReactDOM from 'react-dom';
+import { Check, X, Send, Pencil, Trash2, CornerDownLeft } from 'lucide-react';
 import { cameraSystem } from '../engine/CameraSystem';
 import { engineEvents } from '../engine/EventBus';
 import type { CommentThread } from '../hooks/useComments';
+import {
+  anchorPoint,
+  isUnread,
+  lastMessage,
+  mentionsMe,
+  relativeTime,
+  type MentionCandidate,
+} from '../engine/comments/threads';
+import { readMarks } from '../engine/comments/readMarks';
+import { commentView } from '../engine/comments/commentView';
+import { useCollaborators } from '../engine/presence/useCollaborators';
+import { MentionInput } from './comments/MentionInput';
+import { MessageBody } from './comments/MessageBody';
 
 interface CommentsOverlayProps {
   comments: CommentThread[];
@@ -14,6 +28,12 @@ interface CommentsOverlayProps {
   onResolveComment: (commentId: string) => void;
   currentAuthorId: string;
 }
+
+/** The expanded thread's box, used to decide which way it opens. */
+const THREAD_WIDTH = 320;
+const THREAD_MAX_HEIGHT = 420;
+/** Keep-out band at the viewport edge. */
+const EDGE_GAP = 16;
 
 /** Initials for an avatar chip, e.g. "Dev E" -> "DE". */
 const initialsOf = (name?: string) =>
@@ -35,9 +55,69 @@ export const CommentsOverlay: React.FC<CommentsOverlayProps> = ({
   currentAuthorId,
 }) => {
   const [activeCommentId, setActiveCommentId] = useState<string | null>(null);
+  const marks = useSyncExternalStore(readMarks.subscribe, readMarks.getSnapshot, readMarks.getSnapshot);
+  const showResolved = useSyncExternalStore(
+    commentView.subscribe,
+    commentView.getSnapshot,
+    commentView.getSnapshot
+  );
+  const collaborators = useCollaborators();
+
+  /**
+   * Who can be mentioned: everyone in the room right now, plus everyone who
+   * has ever written in this document's comments.
+   *
+   * The second half matters more than the first. Comments outlive sessions —
+   * the person you most want to reply to is usually the one who left the note
+   * and then closed the tab, and a picker built only from live awareness
+   * cannot offer them at all.
+   */
+  const mentionCandidates = useMemo<MentionCandidate[]>(() => {
+    const byId = new Map<string, MentionCandidate>();
+    for (const person of collaborators) {
+      byId.set(person.clientId.toString(), {
+        id: person.clientId.toString(),
+        name: person.name,
+        color: person.color,
+      });
+    }
+    for (const thread of comments) {
+      for (const message of thread.messages ?? []) {
+        if (message.authorId === currentAuthorId) continue;
+        byId.set(message.authorId, {
+          id: message.authorId,
+          name: message.authorName,
+          color: message.authorColor,
+        });
+      }
+    }
+    return [...byId.values()].sort((a, b) => a.name.localeCompare(b.name));
+  }, [collaborators, comments, currentAuthorId]);
+
+  /** Opening a thread is what marks it read. */
+  useEffect(() => {
+    if (!activeCommentId) return;
+    const thread = comments.find((c) => c.id === activeCommentId);
+    const newest = thread ? lastMessage(thread)?.createdAt : undefined;
+    if (newest) readMarks.markRead(activeCommentId, newest);
+  }, [activeCommentId, comments]);
+
+  // The inbox asks for a thread by event rather than by prop, matching how the
+  // rest of the app talks across the Room/Canvas boundary (`navigateViewport`,
+  // `requestEditNode`). The camera fly-to is dispatched by the inbox; this only
+  // has to expand the right thread when it arrives.
+  useEffect(() => {
+    const onFocus = (e: Event) => {
+      const id = (e as CustomEvent<{ id: string }>).detail?.id;
+      if (!id) return;
+      setDraft(null);
+      setActiveCommentId(id);
+    };
+    window.addEventListener('focusCommentThread', onFocus);
+    return () => window.removeEventListener('focusCommentThread', onFocus);
+  }, []);
   const [replyText, setReplyText] = useState('');
   const [, setForceRender] = useState(0);
-  const [showResolved, setShowResolved] = useState(false);
   const expandedPanelRef = useRef<HTMLDivElement>(null);
 
   // A pending thread that hasn't been committed to the doc yet. Keeping the draft
@@ -94,9 +174,14 @@ export const CommentsOverlay: React.FC<CommentsOverlayProps> = ({
   useEffect(() => {
     if (!activeCommentId) return;
     const handleClickOutside = (e: MouseEvent) => {
-      if (expandedPanelRef.current && !expandedPanelRef.current.contains(e.target as Node)) {
-        setActiveCommentId(null);
-      }
+      const target = e.target as Node;
+      if (expandedPanelRef.current?.contains(target)) return;
+      // The pin lives in the canvas overlay and the thread is portaled above
+      // the chrome, so they are no longer in one subtree. Without this, the
+      // pin's own mousedown counts as "outside", closing the thread a moment
+      // before its click reopens it — the toggle appears dead.
+      if (target instanceof Element && target.closest('[data-comment-pin]')) return;
+      setActiveCommentId(null);
     };
     document.addEventListener('mousedown', handleClickOutside);
     return () => document.removeEventListener('mousedown', handleClickOutside);
@@ -112,7 +197,15 @@ export const CommentsOverlay: React.FC<CommentsOverlayProps> = ({
     setDraftText('');
   };
 
+  const submitReply = () => {
+    const body = replyText.trim();
+    if (!body || !activeCommentId) return;
+    onAddReply(activeCommentId, body);
+    setReplyText('');
+  };
+
   const visibleComments = comments.filter(c => showResolved || !c.resolved);
+
 
   const toScreen = (wx: number, wy: number) => ({
     x: wx * cameraSystem.zoom + cameraSystem.x,
@@ -121,43 +214,28 @@ export const CommentsOverlay: React.FC<CommentsOverlayProps> = ({
 
   return (
     <div style={{ position: 'absolute', inset: 0, pointerEvents: 'none', zIndex: 40, overflow: 'hidden' }}>
-      {/* Show Resolved Toggle */}
-      {comments.some(c => c.resolved) && (
-        <div style={{ position: 'absolute', bottom: 24, right: 280, pointerEvents: 'auto' }}>
-          <button
-            onClick={() => setShowResolved(!showResolved)}
-            className="panel-surface"
-            style={{
-              padding: '8px 16px',
-              color: 'var(--text-secondary)',
-              fontSize: 12,
-              fontWeight: 600,
-              cursor: 'pointer',
-              display: 'flex',
-              alignItems: 'center',
-              gap: 8,
-              borderRadius: 20,
-              transition: 'var(--motion-hover)',
-            }}
-          >
-            {showResolved ? <Check size={14} /> : <MessageSquare size={14} />}
-            {showResolved ? 'Hide Resolved' : 'Show Resolved'}
-          </button>
-        </div>
-      )}
+      {/* The floating "Show Resolved" pill used to live here, pinned to the
+          bottom-right — the same corner the comment inbox occupies, so opening
+          the inbox buried it. It was also a second control for a preference
+          the inbox already exposes as a filter. One control now, in the inbox,
+          backed by `commentView`. */}
 
       {/* New-thread composer */}
       {draft && (() => {
         const s = toScreen(draft.x, draft.y);
-        return (
+        // Portaled for the same reason the thread is: a new comment dropped
+        // near a panel opened its composer underneath that panel.
+        const flip = s.x + 280 + EDGE_GAP > window.innerWidth;
+        return ReactDOM.createPortal(
           <div
             style={{
-              position: 'absolute',
-              left: s.x,
-              top: s.y,
+              position: 'fixed',
+              left: flip ? undefined : s.x,
+              right: flip ? window.innerWidth - s.x : undefined,
+              top: Math.min(s.y, window.innerHeight - 220),
               pointerEvents: 'auto',
-              zIndex: 120,
-              animation: 'popIn 180ms cubic-bezier(0.175, 0.885, 0.32, 1.275)',
+              zIndex: 200,
+              animation: 'popIn 180ms var(--ease-settle)',
             }}
           >
             <div
@@ -176,30 +254,16 @@ export const CommentsOverlay: React.FC<CommentsOverlayProps> = ({
               >
                 New comment
               </div>
-              <textarea
-                ref={draftInputRef}
+              <MentionInput
+                inputRef={draftInputRef}
                 value={draftText}
-                onChange={e => setDraftText(e.target.value)}
-                onKeyDown={e => {
-                  if (e.key === 'Enter' && !e.shiftKey) {
-                    e.preventDefault();
-                    commitDraft();
-                  }
-                }}
-                placeholder="Add a comment…"
+                onChange={setDraftText}
+                onSubmit={commitDraft}
+                onCancel={() => setDraft(null)}
+                candidates={mentionCandidates}
+                placeholder="Add a comment…  @ to mention"
+                aria-label="New comment"
                 rows={3}
-                style={{
-                  width: '100%',
-                  resize: 'none',
-                  background: 'var(--surface-secondary)',
-                  border: '1px solid var(--border-divider)',
-                  borderRadius: 8,
-                  padding: '8px 10px',
-                  color: 'var(--text-primary)',
-                  fontSize: 13,
-                  fontFamily: 'Inter, sans-serif',
-                  outline: 'none',
-                }}
               />
               <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginTop: 10 }}>
                 <span style={{ fontSize: 10, color: 'var(--text-tertiary)', display: 'flex', alignItems: 'center', gap: 4 }}>
@@ -243,22 +307,32 @@ export const CommentsOverlay: React.FC<CommentsOverlayProps> = ({
                 </div>
               </div>
             </div>
-          </div>
+          </div>,
+          document.body
         );
       })()}
 
       {visibleComments.map(comment => {
-        let worldX = comment.x;
-        let worldY = comment.y;
+        // Rotation-aware, so a pin stays on the corner of a rotated object
+        // instead of hanging in the air where that corner used to be.
+        const world = anchorPoint(
+          comment,
+          comment.objectId ? objects[comment.objectId] : null
+        );
+        const s = toScreen(world.x, world.y);
 
-        if (comment.objectId && objects[comment.objectId]) {
-          const targetObj = objects[comment.objectId];
-          worldX = targetObj.x + targetObj.width;
-          worldY = targetObj.y;
-        }
-
-        const s = toScreen(worldX, worldY);
+        const unread = isUnread(comment, marks, currentAuthorId);
+        const forMe = mentionsMe(comment, marks, currentAuthorId);
         const isExpanded = activeCommentId === comment.id;
+
+        // Which way the thread opens. Pinned below-right of the pin by
+        // default, but a comment near the right edge — which is exactly where
+        // people leave comments, because that is where the work is — opened a
+        // 320px panel straight off the screen with no way to read or scroll
+        // it. Same failure the cursor name chips had, same fix: flip across
+        // the anchor rather than clamp, so the panel stays attached to its pin.
+        const flipX = s.x + THREAD_WIDTH + EDGE_GAP > window.innerWidth;
+        const flipY = s.y + THREAD_MAX_HEIGHT + EDGE_GAP > window.innerHeight;
 
         // The thread's identity color comes from whoever started it, so you can tell
         // at a glance whose comment a pin belongs to without opening it.
@@ -268,10 +342,6 @@ export const CommentsOverlay: React.FC<CommentsOverlayProps> = ({
         return (
           <div
             key={comment.id}
-            // Attached only while expanded: keeps the pin's own toggle click
-            // "inside" the ref'd region so the outside-click handler doesn't
-            // race the button's onClick and immediately reopen what it just closed.
-            ref={isExpanded ? expandedPanelRef : undefined}
             style={{
               position: 'absolute',
               left: s.x,
@@ -283,14 +353,28 @@ export const CommentsOverlay: React.FC<CommentsOverlayProps> = ({
           >
             {/* Collapsed pin — author-colored, with avatar initials */}
             <button
+              data-comment-pin={comment.id}
               onClick={() => setActiveCommentId(isExpanded ? null : comment.id)}
-              title={`${threadAuthor} · ${comment.messages?.length || 0} message${(comment.messages?.length || 0) === 1 ? '' : 's'}`}
+              title={`${threadAuthor} · ${comment.messages?.length || 0} message${(comment.messages?.length || 0) === 1 ? '' : 's'}${unread ? ' · unread' : ''}`}
+              aria-label={`${forMe ? 'You were mentioned. ' : ''}${unread ? 'Unread thread' : 'Thread'} by ${threadAuthor}, ${comment.messages?.length || 0} messages`}
               style={{
+                position: 'relative',
                 background: 'var(--surface-elevated)',
                 border: `2px solid ${threadColor}`,
                 borderRadius: '16px 16px 16px 4px',
                 padding: '3px 8px 3px 3px',
-                boxShadow: isExpanded ? 'var(--shadow-float)' : 'var(--shadow-md)',
+                // An unread thread carries a ring in the accent colour. Colour
+                // alone would be the only signal, so the dot below repeats it
+                // as a shape — the pin is already author-coloured, and "which
+                // shade of border is this" is not a distinction anyone can make
+                // across a board.
+                boxShadow: unread
+                  ? `0 0 0 3px var(--surface-primary), 0 0 0 5px ${
+                      forMe ? 'var(--amber-500)' : threadColor
+                    }, var(--shadow-md)`
+                  : isExpanded
+                    ? 'var(--shadow-float)'
+                    : 'var(--shadow-md)',
                 display: 'flex',
                 alignItems: 'center',
                 gap: 6,
@@ -303,6 +387,21 @@ export const CommentsOverlay: React.FC<CommentsOverlayProps> = ({
                 opacity: comment.resolved ? 0.55 : 1,
               }}
             >
+              {unread && (
+                <span
+                  aria-hidden="true"
+                  style={{
+                    position: 'absolute',
+                    top: -4,
+                    right: -4,
+                    width: 10,
+                    height: 10,
+                    borderRadius: '50%',
+                    background: forMe ? 'var(--amber-500)' : threadColor,
+                    border: '2px solid var(--surface-elevated)',
+                  }}
+                />
+              )}
               <span
                 style={{
                   width: 20,
@@ -323,24 +422,39 @@ export const CommentsOverlay: React.FC<CommentsOverlayProps> = ({
               <span>{comment.messages?.length || 0}</span>
             </button>
 
-            {/* Expanded thread */}
-            {isExpanded && (
-              <div
-                className="panel-surface"
-                style={{
-                  position: 'absolute',
-                  top: 40,
-                  left: 0,
-                  width: 320,
-                  borderRadius: 12,
-                  padding: 14,
-                  color: 'var(--text-primary)',
-                  fontSize: 13,
-                  fontFamily: 'Inter, sans-serif',
-                  boxShadow: 'var(--shadow-float)',
-                  animation: 'popIn 180ms cubic-bezier(0.175, 0.885, 0.32, 1.275)',
-                }}
-              >
+            {/* Expanded thread.
+                Portaled to <body>, not rendered inside the pin. The comments
+                overlay sits at z-index 40 *inside* the canvas, beneath both
+                side panels — so an open thread anywhere near the left or right
+                edge rendered underneath the Layers or Properties column and
+                could not be read or typed into. It is also clipped by the
+                overlay's own `overflow: hidden`. An open thread is a focused,
+                transient surface; it belongs above the chrome, and the pins
+                stay below it where they belong. */}
+            {isExpanded &&
+              ReactDOM.createPortal(
+                <div
+                  ref={expandedPanelRef}
+                  className="panel-surface"
+                  style={{
+                    position: 'fixed',
+                    left: flipX ? undefined : s.x,
+                    right: flipX ? window.innerWidth - s.x : undefined,
+                    top: flipY ? undefined : s.y + 26,
+                    bottom: flipY ? window.innerHeight - s.y + 26 : undefined,
+                    width: THREAD_WIDTH,
+                    maxHeight: THREAD_MAX_HEIGHT,
+                    overflowY: 'auto',
+                    zIndex: 200,
+                    borderRadius: 12,
+                    padding: 14,
+                    color: 'var(--text-primary)',
+                    fontSize: 13,
+                    fontFamily: 'var(--font-sans)',
+                    boxShadow: 'var(--shadow-overlay)',
+                    animation: 'popIn 180ms var(--ease-settle)',
+                  }}
+                >
                 <div
                   style={{
                     display: 'flex',
@@ -463,8 +577,8 @@ export const CommentsOverlay: React.FC<CommentsOverlayProps> = ({
                               {msg.authorName}
                               {isMine && <span style={{ color: 'var(--text-tertiary)', fontWeight: 500 }}> (you)</span>}
                             </span>
-                            <span>
-                              · {new Date(msg.createdAt).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}
+                            <span title={new Date(msg.createdAt).toLocaleString()}>
+                              · {relativeTime(msg.createdAt)}
                             </span>
                             {(msg as any).editedAt && (
                               <span style={{ fontStyle: 'italic' }}>· edited</span>
@@ -549,7 +663,9 @@ export const CommentsOverlay: React.FC<CommentsOverlayProps> = ({
                               </div>
                             </div>
                           ) : (
-                            <div style={{ color: 'var(--text-secondary)', whiteSpace: 'pre-wrap' }}>{msg.body}</div>
+                            <div style={{ color: 'var(--text-secondary)' }}>
+                              <MessageBody body={msg.body} myAuthorId={currentAuthorId} />
+                            </div>
                           )}
                         </div>
                       );
@@ -557,40 +673,30 @@ export const CommentsOverlay: React.FC<CommentsOverlayProps> = ({
                   </div>
                 )}
 
-                <form
-                  onSubmit={e => {
-                    e.preventDefault();
-                    if (!replyText.trim()) return;
-                    onAddReply(comment.id, replyText.trim());
-                    setReplyText('');
-                  }}
-                  style={{ display: 'flex', gap: 8 }}
-                >
-                  <input
-                    type="text"
-                    placeholder="Reply…"
-                    value={replyText}
-                    onChange={e => setReplyText(e.target.value)}
-                    style={{
-                      flex: 1,
-                      background: 'var(--surface-secondary)',
-                      border: '1px solid var(--border-divider)',
-                      borderRadius: 8,
-                      padding: '8px 12px',
-                      color: 'var(--text-primary)',
-                      fontSize: 13,
-                      outline: 'none',
-                    }}
-                  />
+                <div style={{ display: 'flex', gap: 8, alignItems: 'flex-end' }}>
+                  <div style={{ flex: 1, minWidth: 0 }}>
+                    <MentionInput
+                      value={replyText}
+                      onChange={setReplyText}
+                      onSubmit={submitReply}
+                      candidates={mentionCandidates}
+                      placeholder="Reply…  @ to mention"
+                      aria-label="Reply to thread"
+                      rows={2}
+                    />
+                  </div>
                   <button
-                    type="submit"
+                    type="button"
+                    onClick={submitReply}
+                    disabled={!replyText.trim()}
+                    aria-label="Send reply"
                     style={{
-                      background: 'var(--text-primary)',
+                      background: replyText.trim() ? 'var(--text-primary)' : 'var(--surface-secondary)',
                       border: 'none',
                       borderRadius: 8,
                       padding: '8px 12px',
-                      color: 'var(--surface-primary)',
-                      cursor: 'pointer',
+                      color: replyText.trim() ? 'var(--surface-primary)' : 'var(--text-tertiary)',
+                      cursor: replyText.trim() ? 'pointer' : 'not-allowed',
                       display: 'flex',
                       alignItems: 'center',
                       justifyContent: 'center',
@@ -598,9 +704,10 @@ export const CommentsOverlay: React.FC<CommentsOverlayProps> = ({
                   >
                     <Send size={14} />
                   </button>
-                </form>
-              </div>
-            )}
+                </div>
+                </div>,
+                document.body
+              )}
           </div>
         );
       })}

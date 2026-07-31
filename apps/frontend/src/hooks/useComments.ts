@@ -1,6 +1,7 @@
 import { useState, useEffect, useCallback } from 'react';
 import * as Y from 'yjs';
-import { commentsMap, provider, doc } from '../engine/document';
+import { commentsMap, doc, localAuthor, localAuthorId } from '../engine/document';
+import { extractMentions } from '../engine/comments/threads';
 import { nanoid } from 'nanoid';
 
 export interface Message {
@@ -8,8 +9,19 @@ export interface Message {
   authorId: string;
   authorName: string;
   authorColor: string;
+  /** Stored form, mention markup included — see `engine/comments/threads`. */
   body: string;
   createdAt: number;
+  editedAt?: number;
+  /**
+   * Author ids named in `body`, denormalised at write time.
+   *
+   * Derivable by re-parsing the body, and stored anyway: "does anything unread
+   * name me" runs over every message of every thread on each render of the
+   * pins and the inbox, and a regex scan of every comment in the document is
+   * not a thing to do sixty times a second.
+   */
+  mentions?: string[];
 }
 
 export interface CommentThread {
@@ -47,14 +59,15 @@ export function useComments() {
     };
   }, []);
 
+  /**
+   * Who is writing. Routed through `localAuthor()` so comments are stamped
+   * with the same identity as every node in the document — this used to read
+   * `awareness.clientID` directly, which is a per-session number, so after a
+   * reload none of your own comments were "yours" any more.
+   */
   const getAuthorInfo = () => {
-    const localState = provider.awareness?.getLocalState();
-    const user = localState?.user as any;
-    return {
-      authorId: provider.awareness?.clientID.toString() || 'local',
-      authorName: user?.name || 'You',
-      authorColor: user?.color || '#3B82F6',
-    };
+    const author = localAuthor();
+    return { authorId: author.id, authorName: author.name, authorColor: author.color };
   };
 
   const addComment = useCallback((x: number, y: number, body: string, objectId?: string) => {
@@ -70,13 +83,14 @@ export function useComments() {
     newMap.set('resolved', false);
     newMap.set('createdAt', Date.now());
 
-    const message = {
+    const message: Message = {
       id: messageId,
       authorId: author.authorId,
       authorName: author.authorName,
       authorColor: author.authorColor,
       body,
       createdAt: Date.now(),
+      mentions: extractMentions(body),
     };
 
     const messagesArray = new Y.Array();
@@ -94,20 +108,21 @@ export function useComments() {
     if (!messagesArray) return;
 
     const author = getAuthorInfo();
-    const message = {
+    const message: Message = {
       id: nanoid(),
       authorId: author.authorId,
       authorName: author.authorName,
       authorColor: author.authorColor,
       body,
       createdAt: Date.now(),
+      mentions: extractMentions(body),
     };
 
     messagesArray.push([message]);
   }, []);
 
-  /** Stable identity for "did I write this?" checks. */
-  const currentAuthorId = provider.awareness?.clientID.toString() || 'local';
+  /** Stable identity for "did I write this?" checks — see `localAuthorId`. */
+  const currentAuthorId = localAuthorId();
 
   /**
    * Edit a single message. Only the original author may edit their own message —
@@ -122,13 +137,21 @@ export function useComments() {
     const messagesArray = threadMap.get('messages') as Y.Array<any>;
     if (!messagesArray) return;
 
-    const myId = provider.awareness?.clientID.toString() || 'local';
+    const myId = localAuthorId();
     const items = messagesArray.toArray();
     const idx = items.findIndex((m: any) => m.id === messageId);
     if (idx === -1) return;
     if (items[idx].authorId !== myId) return; // not the author — refuse
 
-    const updated = { ...items[idx], body: newBody, editedAt: Date.now() };
+    // Mentions are re-derived: an edit that adds or removes a name has to
+    // change who the thread is "for", or the inbox keeps flagging someone who
+    // was edited out of the message.
+    const updated = {
+      ...items[idx],
+      body: newBody,
+      editedAt: Date.now(),
+      mentions: extractMentions(newBody),
+    };
     // Y.Array has no in-place set; delete + insert at the same index preserves order.
     doc.transact(() => {
       messagesArray.delete(idx, 1);
@@ -144,7 +167,7 @@ export function useComments() {
     const messagesArray = threadMap.get('messages') as Y.Array<any>;
     if (!messagesArray) return;
 
-    const myId = provider.awareness?.clientID.toString() || 'local';
+    const myId = localAuthorId();
     const items = messagesArray.toArray();
     const idx = items.findIndex((m: any) => m.id === messageId);
     if (idx === -1) return;
