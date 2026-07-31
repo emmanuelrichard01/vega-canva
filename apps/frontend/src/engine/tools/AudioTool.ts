@@ -3,6 +3,16 @@ import type { Tool, ToolContext } from './Tool';
 import { localAuthor } from '../document';
 import { presenceManager } from '../presence/PresenceManager';
 
+/**
+ * Hard stop for a single take.
+ *
+ * A voice note is a remark, not a podcast, and an unattended recording holds
+ * the microphone open and accumulates sixty peak samples a second until the
+ * tab closes. Reaching the cap *keeps* the take rather than discarding it —
+ * the words were still said.
+ */
+const MAX_RECORDING_MS = 5 * 60 * 1000;
+
 export class AudioTool implements Tool {
   id = 'audio';
   cursor = 'crosshair';
@@ -15,6 +25,7 @@ export class AudioTool implements Tool {
   private dataArray: Uint8Array<ArrayBuffer> | null = null;
   private animationFrameId: number | null = null;
   private waveformData: number[] = [];
+  private keyHandler: ((e: KeyboardEvent) => void) | null = null;
   private isRecording = false;
   /** World-space point captured when recording begins (see onPointerDown). */
   private dropPoint: { x: number; y: number } = { x: 0, y: 0 };
@@ -64,7 +75,8 @@ export class AudioTool implements Tool {
       this.mediaRecorder.start(100);
       this.startTime = Date.now();
       this.isRecording = true;
-      presenceManager.updateActivity('🎤 Recording');
+      presenceManager.updateActivity('recording');
+      this.attachKeys(ctx);
       ctx.setOverlayState?.({ type: 'audio-recording' });
       // Lets Room.tsx's "click anywhere to record" hint get out of the way
       // once recording actually starts, instead of sitting there stale.
@@ -72,6 +84,16 @@ export class AudioTool implements Tool {
       
       const recordWaveform = () => {
         if (!this.analyser || !this.dataArray || !this.isRecording) return;
+
+        // A recording nobody stopped runs until the tab closes, holding the
+        // microphone open and growing the peak array by 60 samples a second.
+        // Stopping at the cap keeps what was said rather than discarding it.
+        const elapsed = Date.now() - this.startTime;
+        if (elapsed >= MAX_RECORDING_MS) {
+          this.stopRecording(ctx);
+          return;
+        }
+
         this.analyser.getByteFrequencyData(this.dataArray);
 
         let sum = 0;
@@ -91,9 +113,11 @@ export class AudioTool implements Tool {
         // the overlay state was previously set once and never rendered by anything.
         ctx.setOverlayState?.({
           type: 'audio-recording',
-          elapsedMs: Date.now() - this.startTime,
+          elapsedMs: elapsed,
+          remainingMs: MAX_RECORDING_MS - elapsed,
           level,
           levels: [...this.recentLevels],
+          onCancel: () => this.cancelRecording(ctx),
         });
 
         this.animationFrameId = requestAnimationFrame(recordWaveform);
@@ -101,13 +125,74 @@ export class AudioTool implements Tool {
       recordWaveform();
 
     } catch (err) {
-      console.error("Microphone access denied or error:", err);
+      /**
+       * A denied or missing microphone used to `console.error` and stop.
+       *
+       * From the user's side that is: pick the tool, click the canvas, and
+       * nothing whatsoever happens — no note, no message, no hint that the
+       * browser is holding a permission prompt or that it was refused three
+       * months ago and is now auto-denying. Silence is the worst possible
+       * response to the one failure this feature has.
+       */
+      this.isRecording = false;
+      ctx.setOverlayState?.(null);
+      const reason =
+        (err as DOMException)?.name === 'NotAllowedError'
+          ? 'Microphone access was blocked. Allow it in your browser’s site settings to record.'
+          : (err as DOMException)?.name === 'NotFoundError'
+            ? 'No microphone found. Connect one and try again.'
+            : 'Could not start recording.';
+      window.dispatchEvent(new CustomEvent('audio-recording-error', { detail: { message: reason } }));
     }
+  }
+
+  /**
+   * Throw the take away.
+   *
+   * Stop was the only exit, and it *keeps* the recording — so a false start, a
+   * cough, or realising the mic caught nothing meant placing a note on the
+   * board and then hunting it down to delete it. Every recorder has a discard.
+   */
+  private cancelRecording(ctx: ToolContext) {
+    if (!this.mediaRecorder || !this.isRecording) return;
+    this.isRecording = false;
+    presenceManager.updateActivity(null);
+    ctx.setOverlayState?.(null);
+    window.dispatchEvent(new CustomEvent('audio-recording-stop'));
+    this.recentLevels = [];
+    if (this.animationFrameId) cancelAnimationFrame(this.animationFrameId);
+
+    // Drop the chunks before stopping, so `onstop` has nothing to build from.
+    this.audioChunks = [];
+    this.mediaRecorder.onstop = () => {
+      this.mediaRecorder?.stream.getTracks().forEach((track) => track.stop());
+      this.audioContext?.close();
+    };
+    this.mediaRecorder.stop();
+    this.detachKeys();
+  }
+
+  /** Escape discards, exactly as it does in every other mode in this app. */
+  private attachKeys(ctx: ToolContext) {
+    this.detachKeys();
+    this.keyHandler = (e: KeyboardEvent) => {
+      if (e.key !== 'Escape') return;
+      e.preventDefault();
+      this.cancelRecording(ctx);
+    };
+    window.addEventListener('keydown', this.keyHandler);
+  }
+
+  private detachKeys() {
+    if (!this.keyHandler) return;
+    window.removeEventListener('keydown', this.keyHandler);
+    this.keyHandler = null;
   }
 
   private stopRecording(ctx: ToolContext) {
     if (!this.mediaRecorder || !this.isRecording) return;
     this.isRecording = false;
+    this.detachKeys();
     presenceManager.updateActivity(null);
     ctx.setOverlayState?.(null);
     window.dispatchEvent(new CustomEvent('audio-recording-stop'));
