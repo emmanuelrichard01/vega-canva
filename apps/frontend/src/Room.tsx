@@ -1,7 +1,6 @@
 import { nanoid } from 'nanoid';
 import React, { useState, useRef, useEffect, useSyncExternalStore } from 'react';
 import { Canvas } from './components/Canvas';
-import { viewportCenter } from './engine/presence/PresenceTypes';
 import { AuthModal } from './components/AuthModal';
 import { ShareModal } from './components/ShareModal';
 import { WorkspaceShell } from './components/workspace/WorkspaceShell';
@@ -17,6 +16,7 @@ import { initSyncBridge, useStore } from './hooks/useStore';
 import { editor } from './engine/api/EditorAPI';
 import { ActivityFeed } from './components/ActivityFeed';
 import { PresenceEdgeMarkers } from './components/PresenceEdgeMarkers';
+import { FollowIndicator } from './components/FollowIndicator';
 import { ExportService } from './engine/export';
 import { TimeTravelBar } from './components/TimeTravelBar';
 import { ForcesBar } from './components/ForcesBar';
@@ -178,27 +178,13 @@ export default function Room() {
 
   // ActivityFeed now sources itself from the shared authoring log rather than
   // from a local array here whose only producer had been commented out.
-  const [followingClientId] = useState<number | null>(null);
-
-  useEffect(() => {
-    const handleAwarenessUpdate = () => {
-      const states = provider.awareness?.getStates();
-      (states || new Map()).forEach((state: any, clientId: number) => {
-        if (clientId === followingClientId && state.viewport) {
-          // Centre on the middle of their view. `viewport` stores its top-left
-          // corner, so following someone used to sit permanently half a screen
-          // up and left of them.
-          const c = viewportCenter(state.viewport);
-          window.dispatchEvent(new CustomEvent('navigateViewport', {
-            detail: { x: c.x, y: c.y, zoom: state.viewport.zoom || 1 }
-          }));
-        }
-      });
-    };
-
-    provider.awareness?.on('change', handleAwarenessUpdate);
-    return () => provider.awareness?.off('change', handleAwarenessUpdate);
-  }, [followingClientId]);
+  //
+  // Follow mode used to live here as `const [followingClientId] =
+  // useState(null)` — declared without a setter, so the value was permanently
+  // null and the awareness effect underneath it could never fire. It is
+  // `engine/presence/followMode.ts` now, driven from the shared presence frame
+  // loop, because a viewport change never reaches React: `collaboratorStore`
+  // mutates positions in place and publishes only roster changes.
 
   const hasJoined = useRef(false);
   useEffect(() => {
@@ -568,8 +554,15 @@ export default function Room() {
             their cursors vanished. Presenting is usually presenting *to* the
             people whose pointers these are. */}
         <RemoteCursors />
-        
+
         <ActivityFeed />
+
+        {/* Deliberately outside `isUiVisible`, for the same reason the remote
+            cursors are: this is not chrome. Following takes control of the
+            camera, and a canvas that moves on its own with nothing on screen
+            to explain it reads as a broken app — presentation mode most of
+            all, where it would be least expected. */}
+        <FollowIndicator />
 
         {/* Teaches the core gesture on a blank canvas, and gets out of the way
             the moment anything exists. */}

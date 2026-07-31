@@ -2174,3 +2174,121 @@ textarea:focus-visible {
     opacity: 0;
   }
 }
+
+/* ---------------------------------------------------------------------------
+   FOLLOW MODE
+
+   Following someone takes control of the camera, which is the most alarming
+   thing this interface can do silently: the canvas moves on its own, and with
+   no explanation the first reading is that the app has broken. Two surfaces,
+   one question each — the ring says *why*, the chip says *who* and *how to
+   stop*.
+   --------------------------------------------------------------------------- */
+
+/* Drawn in the leader's raw identity colour, set inline. This sits over
+   arbitrary user content rather than over a theme surface, so it follows the
+   same rule as the remote cursor arrow: coloured for contrast against the
+   content, not against a token. The chip beside it derives a readable fill
+   instead, because it carries text. */
+.follow-ring {
+  position: fixed;
+  inset: 0;
+  z-index: 900;
+  border: 2px solid transparent;
+  border-radius: var(--radius-lg);
+  pointer-events: none;
+}
+
+.follow-chip {
+  position: fixed;
+  top: 72px;
+  left: 50%;
+  z-index: 901;
+  display: flex;
+  align-items: center;
+  gap: var(--space-3);
+  padding: var(--space-2) var(--space-2) var(--space-2) var(--space-3);
+  border-radius: var(--radius-pill);
+  /* The one authored moment here: the chip drops in from under the header,
+     from the direction the header is in, and settles. `translateX` is carried
+     through both keyframes because the element is centred with it — animating
+     `transform` without it would fling the chip to the left edge first. */
+  animation: followChipIn var(--motion-nav) both;
+  transform: translateX(-50%);
+}
+
+@keyframes followChipIn {
+  from {
+    opacity: 0;
+    transform: translateX(-50%) translateY(-8px);
+  }
+  to {
+    opacity: 1;
+    transform: translateX(-50%) translateY(0);
+  }
+}
+
+/* Identity, at the smallest size that still registers as a person. */
+.follow-chip__who {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  flex: 0 0 auto;
+  width: 22px;
+  height: 22px;
+  border-radius: 50%;
+  font-size: var(--text-2xs);
+  font-weight: var(--weight-bold);
+  letter-spacing: 0;
+}
+
+.follow-chip__label {
+  font-size: var(--text-base);
+  color: var(--text-secondary);
+  white-space: nowrap;
+}
+
+/* The name is the content of this chip and reads at content weight; the word
+   "Following" is the label around it. */
+.follow-chip__label strong {
+  font-weight: var(--weight-semibold);
+  color: var(--text-primary);
+}
+
+.follow-chip__stop {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  padding: 3px var(--space-2) 3px var(--space-3);
+  border: none;
+  border-radius: var(--radius-pill);
+  background: var(--surface-secondary);
+  color: var(--text-primary);
+  font-family: inherit;
+  font-size: var(--text-sm);
+  font-weight: var(--weight-medium);
+  cursor: pointer;
+  transition: background var(--motion-hover);
+}
+
+.follow-chip__stop:hover {
+  background: var(--surface-active);
+}
+
+.follow-chip__stop kbd {
+  padding: 1px 5px;
+  border-radius: var(--radius-sm);
+  background: var(--surface-primary);
+  color: var(--text-tertiary);
+  font-family: var(--font-sans);
+  font-size: var(--text-2xs);
+  font-weight: var(--weight-medium);
+}
+
+/* Below the touch breakpoint there is no Escape key to advertise, and the
+   canvas cannot spare the width. */
+@media (pointer: coarse) {
+  .follow-chip__stop kbd {
+    display: none;
+  }
+}

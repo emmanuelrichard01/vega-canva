@@ -11,6 +11,35 @@ export class CameraSystem {
   private minZoom = 0.05;
   private maxZoom = 5;
 
+  /**
+   * The zoom range, for callers that compute a pose before assigning one.
+   *
+   * Follow mode fits someone else's viewport into this window, and has to
+   * clamp the result itself — a target it cannot reach would otherwise leave
+   * the easing chasing a zoom the camera silently refuses, never arriving and
+   * never settling.
+   */
+  get zoomLimits(): { minZoom: number; maxZoom: number } {
+    return { minZoom: this.minZoom, maxZoom: this.maxZoom };
+  }
+
+  /**
+   * Assign a pose directly, clamped, emitting one change.
+   *
+   * Follow mode writes the camera every frame while it is active. Doing that
+   * through `pan` and `zoomBy` would emit two `CameraChanged` events per frame
+   * and route a fitted zoom through an anchor-preserving path that exists to
+   * keep a point under the pointer — which is not what "show me what they see"
+   * means.
+   */
+  setPose(x: number, y: number, zoom: number) {
+    if (!Number.isFinite(x) || !Number.isFinite(y) || !Number.isFinite(zoom)) return;
+    this.x = x;
+    this.y = y;
+    this.zoom = Math.max(this.minZoom, Math.min(zoom, this.maxZoom));
+    this.emitChange();
+  }
+
   resize(w: number, h: number) {
     const safeW = w > 0 ? w : (typeof window !== 'undefined' ? window.innerWidth : 1920);
     const safeH = h > 0 ? h : (typeof window !== 'undefined' ? window.innerHeight : 1080);
