@@ -58,7 +58,7 @@ it.
 | --- | --- | --- |
 | Pen tool | **Shipped** | `BezierPenTool`. Anchors placed with a drag get a forward handle; the backward handle mirrors it. |
 | Pencil tool | **Shipped** | `PenTool` with `perfect-freehand`, simplified through `utils/pathSimplifier.ts`. Stores both the filled outline and the centreline the eraser splits on. |
-| Shape tools | **Partial** | Rect, ellipse, triangle, hexagon, star. **No general N-gon** (the spec asks for pentagon/heptagon/octagon and up), **no line**, **no arrow**. `ShapeGeometry` carries `points`/`innerRatio` for stars and `ShapeRenderer` honours them, but no control sets either — a star is always 5-pointed at 0.5. |
+| Shape tools | **Partial** | Rect, ellipse, triangle, hexagon, star. Stars are now parametric — point count and depth are controls, clamped at the CRDT boundary. Still **no general N-gon** (the spec asks for pentagon/heptagon/octagon and up), **no line**, **no arrow**. |
 | Text tool | **Shipped** | `TextTool` + one shared `NodeEditor`. |
 | Eyedropper | **Absent** | No colour, style or text-style sampling anywhere. |
 | Place image / media | **Partial** | Raster images and audio upload to MinIO, referenced by URL. **SVG is not imported as vector** (it would land as a raster `<img>`), and video is not supported at all. |
@@ -110,7 +110,7 @@ it.
 | Image / video fill | **Absent** | An image is its own node type; it cannot fill a vector shape. |
 | Stroke weight | **Shipped** | |
 | Stroke alignment | **Absent** | Konva strokes are always centred. Inside/outside needs an offset path or a clip, which is real work, not a flag. |
-| Dash pattern | **Dead** | `Stroke.dash?: number[]` is on the schema; **no renderer reads it and no control sets it.** (The dashes visible on a broken image are a hardcoded placeholder, unrelated.) |
+| Dash pattern | **Shipped** | Solid / Dashed / Dotted, with the pattern derived from the stroke weight so it stays legible at any thickness. `Stroke.cap` was added and used in the same change, because a dotted line is `[0, gap]` and draws nothing at all under the default butt cap. A full pattern editor belongs with cap and join in Phase 4. |
 | Layer opacity | **Shipped** | |
 | Blend modes | **Absent** | Konva exposes `globalCompositeOperation`, which covers most of the list, so this is unusually cheap for its visual payoff. |
 
@@ -161,9 +161,9 @@ overridable per instance. They share a word and nothing else.
 
 | Item | Status | Notes |
 | --- | --- | --- |
-| Image cropping | **Dead** | `ImageNode.crop` is on the schema. `ImageRenderer` reads `src`, `width`, `height` and `cornerRadius` — **and nothing else**. A stored crop is silently ignored. |
-| Masking / clipping path | **Absent** | |
-| Non-destructive adjustments | **Dead** | `ImageNode.filters` declares `brightness`, `contrast` and `blur`. Same renderer, same story: never read. Exposure, saturation, temperature/tint and highlights/shadows are not even on the schema. |
+| Image cropping | **Shipped** | Double-click an image, or the Crop button on its toolbar. Eight handles trim the frame, dragging the picture slides it under the window, thirds guides, and what is being cut away is shown at low opacity rather than hidden — you cannot judge a crop without seeing what is just outside it. The arithmetic is pure and tested (`engine/model/imageCrop.ts`): it clamps in natural pixels and derives the node's box from the result, never the reverse. Escape restores the framing you started with, which undo cannot do because one drag is many writes. |
+| Masking / clipping path | **Absent** | Cropping is a rectangular special case of this; masking to an arbitrary vector shape is still Phase 8. |
+| Non-destructive adjustments | **Partial** | Brightness, contrast, saturation and blur are wired end to end, in document units of -100..100 rather than Konva's disagreeing native scales. Exposure, temperature/tint and highlights/shadows need custom filters and are deliberately **not** declared on the schema until they work. |
 | Background removal | **Absent** | Needs a model or a service. This is a product decision before it is an engineering one — flagging rather than assuming. |
 
 ## 12. Prototyping and interactive behaviours
@@ -185,7 +185,7 @@ Nothing in this section exists, and all of it depends on frames.
 | --- | --- | --- |
 | Comments mode | **Shipped** | Threads on a point or an object, replies, author-only edit/delete, resolve, mentions with `@[Name](id)`, per-person unread state outside the CRDT, and an inbox. 31 tests. The strongest feature in the app. |
 | Cursor chat | **Absent** | Would ride awareness like everything else ephemeral; `PresenceManager` is the only writer and already has the throttle. |
-| Follow mode | **Dead** | `Room.tsx:181` is `const [followingClientId] = useState<number | null>(null)` — **no setter exists**, so the value is permanently `null` and the effect below it can never fire. The navigation code inside it is correct and unreachable. |
+| Follow mode | **Shipped** | Click a collaborator's avatar. Fits their viewport into your window rather than copying their zoom, so you provably see everything they see whatever the window sizes. Ends when you take the wheel — detected by comparing the camera against what the driver last wrote, so no input path has to know follow mode exists — or on Escape, the Stop button, or their leaving. |
 | Version history | **Shipped** | Time Travel over semantic moments — a 14-step drag is one "Dave moved Ship the beta", not 14 entries. Keyframes make seeking backwards cheap, and the server reports how many updates retention discarded rather than presenting a partial session as the whole one. |
 
 ## 14. Export and file pipelines
@@ -206,10 +206,27 @@ Nothing in this section exists, and all of it depends on frames.
 
 Roughly, across the ~100 discrete items above:
 
-- **Shipped: ~30** — concentrated in the canvas core, collaboration, and the parts of the transform/typography blocks that a whiteboard needs.
-- **Partial: ~13**
-- **Dead: 7** — frames, auto-layout, stroke dash, image crop, image filters, star parameters, follow mode.
+- **Shipped: ~34** — concentrated in the canvas core, collaboration, and the parts of the transform/typography blocks that a whiteboard needs.
+- **Partial: ~14**
+- **Dead: 2** — frames and auto-layout, both of which Phase 1 settles.
 - **Absent: ~50** — almost the whole of vector manipulation, design systems, prototyping, effects, and the paint model beyond flat colour.
+
+**Phase 0 is otherwise done** (2026-07-31). Stroke dash, star parameters,
+follow mode, image adjustments and image cropping each shipped with the control
+that gives them a purpose. A **ninth** dead field turned up during the work and
+went with them: `ImageNode.naturalWidth`/`naturalHeight` were declared, read by
+the normalizer, and written by nothing, so they were always `undefined` — and
+cropping cannot clamp against a bitmap whose size nobody ever recorded. The
+first client to load an image now writes it back, the same fix the voice note
+that showed `0:00 / 0:00` needed.
+
+The honest note on verification: the pure arithmetic behind all five is
+covered by tests, follow mode was driven end to end in the running app, and the
+image filters were measured pixel-by-pixel against real Konva in an isolated
+harness. What has **not** been watched is the crop overlay in the running app,
+because the canvas culls through a rAF loop that never fires in an automation
+tab, so no Konva image is ever mounted there. It wants ten minutes with a real
+mouse.
 
 The shape of that is worth stating plainly: **this is an excellent real-time
 collaborative whiteboard and it is not yet a vector design tool.** The gap is
@@ -223,10 +240,10 @@ possible rather than painful.
 Ordered by what unlocks the most and what the model already leans toward, not
 by section number.
 
-**Phase 0 — Settle the seven dead items.** Frames, auto-layout, dash, crop,
-filters, star parameters, follow mode. Each is either wired to a control or
-removed. Cheap, and it stops the schema lying about what the product does.
-Phase 1 subsumes the frame and auto-layout half of it.
+**Phase 0 — Settle the dead items. Done, apart from what Phase 1 covers.**
+Dash, star parameters, follow mode, image adjustments, image crop and the
+natural-size fields all now ship with the control that gives them a purpose.
+Frames and auto-layout are the remaining two, and Phase 1 is where they belong.
 
 **Phase 1 — Frames and artboards.** The structural unlock. Sections,
 constraints, auto-layout, safe zones, per-frame export and the whole of

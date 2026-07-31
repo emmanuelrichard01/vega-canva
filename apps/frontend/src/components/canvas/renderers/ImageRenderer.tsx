@@ -3,6 +3,8 @@ import Konva from 'konva';
 import { Image as KonvaImage, Rect } from 'react-konva';
 import useImage from 'use-image';
 import type { ImageNode } from '../../../engine/model/schema';
+import { updateNode } from '../../../engine/document';
+import { isCropped, readCrop } from '../../../engine/model/imageCrop';
 import {
   activeFilterIds,
   hasAdjustments,
@@ -26,6 +28,36 @@ const KONVA_FILTER: Record<AdjustmentId, typeof Konva.Filters.Blur> = {
 export const ImageRenderer: React.FC<Props> = React.memo(({ node }) => {
   const [image, status] = useImage(node.src, 'anonymous');
   const shapeRef = useRef<Konva.Image>(null);
+
+  /**
+   * Record the bitmap's own size, once, from the first client to load it.
+   *
+   * `naturalWidth`/`naturalHeight` were declared on the schema, read by the
+   * normalizer, and written by **nothing** — so they were always undefined.
+   * Cropping needs them: a crop is stored in natural pixels and has to be
+   * clamped against the bitmap's real bounds, and there is nothing to clamp
+   * against without this. Same fix as the voice note that showed `0:00 / 0:00`
+   * while audibly playing, and the same rule: the document should learn a fact
+   * about its own asset the first time anyone is in a position to know it.
+   */
+  useEffect(() => {
+    if (status !== 'loaded' || !image) return;
+    if (!image.naturalWidth || !image.naturalHeight) return;
+    if (node.naturalWidth === image.naturalWidth && node.naturalHeight === image.naturalHeight) return;
+    updateNode(node.id, {
+      naturalWidth: image.naturalWidth,
+      naturalHeight: image.naturalHeight,
+    });
+  }, [image, status, node.id, node.naturalWidth, node.naturalHeight]);
+
+  const natural = {
+    width: node.naturalWidth ?? image?.naturalWidth ?? 0,
+    height: node.naturalHeight ?? image?.naturalHeight ?? 0,
+  };
+  const crop = readCrop(node.crop, natural);
+  // Konva reads `crop` in source pixels. Omitted entirely when nothing is
+  // cropped, so an uncropped image takes the plain `drawImage` path.
+  const cropProp = isCropped(crop, natural) ? crop : undefined;
 
   const adjustments = readAdjustments(node.filters);
   const adjusted = hasAdjustments(adjustments);
@@ -83,6 +115,13 @@ export const ImageRenderer: React.FC<Props> = React.memo(({ node }) => {
     filterKey,
     node.width,
     node.height,
+    // A cache taken before the crop moved is a snapshot of the old window, so
+    // an adjusted image would keep showing the previous framing until
+    // something else happened to invalidate it.
+    crop.x,
+    crop.y,
+    crop.width,
+    crop.height,
     konva.brightness,
     konva.contrast,
     konva.saturation,
@@ -115,6 +154,7 @@ export const ImageRenderer: React.FC<Props> = React.memo(({ node }) => {
       // Konva clips natively to the corner radius; nothing read this before,
       // so rounding an image's corners had no visible effect.
       cornerRadius={node.appearance?.cornerRadius ?? 0}
+      crop={cropProp}
       filters={filters}
       brightness={konva.brightness}
       contrast={konva.contrast}

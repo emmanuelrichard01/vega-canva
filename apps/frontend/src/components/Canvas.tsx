@@ -1,5 +1,5 @@
 import { usePhysics } from '../hooks/usePhysics';
-import React, { useRef, useState, useEffect, useCallback, useMemo } from "react";
+import React, { useRef, useState, useEffect, useCallback, useMemo, useSyncExternalStore } from "react";
 import { Stage, Layer, Circle, Group } from "react-konva";
 import Konva from "konva";
 import { provider, deleteNode, updateNode, nextZIndex, lowestZIndex } from '../engine/document';
@@ -41,6 +41,8 @@ import { cameraSystem } from '../engine/CameraSystem';
 import { useVisibleSet } from '../engine/useVisibleSet';
 import { DEFAULT_TYPOGRAPHY } from '../engine/model/schema';
 import { SelectionTransformer } from './canvas/SelectionTransformer';
+import { CropOverlay } from './canvas/CropOverlay';
+import { cropMode } from '../engine/interaction/cropMode';
 
 interface CanvasProps {
   activeTool: string;
@@ -79,6 +81,75 @@ export const Canvas: React.FC<CanvasProps> = ({ activeTool, selectedIds, setSele
     canvasEngine.start();
     return () => canvasEngine.stop();
   }, []);
+
+  // -- crop mode ------------------------------------------------------------
+
+  const cropSnapshot = useSyncExternalStore(
+    cropMode.subscribe,
+    cropMode.getSnapshot,
+    cropMode.getSnapshot
+  );
+  const croppingId = cropSnapshot?.nodeId ?? null;
+
+  /**
+   * Put back exactly what the crop started from.
+   *
+   * Cropping writes to the document on every drag frame, which is what makes
+   * it feel direct — so cancelling cannot mean "stop writing". Undo is not the
+   * answer either: one drag is many writes, and the user thinks of the whole
+   * gesture as one action.
+   */
+  const cancelCrop = useCallback(() => {
+    const restoring = cropMode.cancel();
+    if (!restoring) return;
+    updateNode(restoring.nodeId, {
+      x: restoring.node.x,
+      y: restoring.node.y,
+      width: restoring.node.width,
+      height: restoring.node.height,
+      crop: restoring.crop,
+    });
+  }, []);
+
+  useEffect(() => {
+    if (!croppingId) return;
+    const onKey = (e: KeyboardEvent) => {
+      const el = document.activeElement?.tagName;
+      if (el === 'INPUT' || el === 'TEXTAREA') return;
+      if (e.key === 'Escape') {
+        e.stopPropagation();
+        cancelCrop();
+      } else if (e.key === 'Enter') {
+        e.stopPropagation();
+        cropMode.commit();
+      }
+    };
+    // Capture, so Escape ends the crop rather than clearing the selection —
+    // the selection handler below is on the same event and would otherwise
+    // both fire, leaving you cropping an object you can no longer see selected.
+    window.addEventListener('keydown', onKey, true);
+    return () => window.removeEventListener('keydown', onKey, true);
+  }, [croppingId, cancelCrop]);
+
+  /**
+   * Picking any tool ends the crop, keeping what is there.
+   *
+   * Crop is a mode belonging to one object, not a tool, so it has no entry in
+   * the dock and nothing in `ToolManager` clears it. Committing on a tool
+   * change is what stops it outliving the reason it was entered — otherwise
+   * the handles sit on the image while you draw somewhere else entirely.
+   */
+  useEffect(() => {
+    if (croppingId) cropMode.commit();
+    // Deliberately keyed on the tool alone: re-running this when `croppingId`
+    // changes would commit the crop on the frame it was entered.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [activeTool]);
+
+  // Deselecting is leaving the object, so it ends the crop too.
+  useEffect(() => {
+    if (croppingId && !selectedIds.includes(croppingId)) cropMode.commit();
+  }, [selectedIds, croppingId]);
 
   // Keyboard Shortcuts
   useEffect(() => {
@@ -870,7 +941,14 @@ export const Canvas: React.FC<CanvasProps> = ({ activeTool, selectedIds, setSele
               There used to be one mounted per object — with 100 objects that
               is 100 Transformer instances, 99 of them holding an empty node
               list and each still participating in layer draws. */}
-          <SelectionTransformer selectedIds={selectedIds} stageRef={stageRef} />
+          {/* Hidden while cropping: the crop overlay draws its own handles on
+              the same rectangle, and two sets of handles on one object is a
+              question with no right answer for whichever one you grab. */}
+          {!croppingId && <SelectionTransformer selectedIds={selectedIds} stageRef={stageRef} />}
+
+          {/* Above the transformer's slot so its handles are never buried
+              under a selection outline drawn afterwards. */}
+          <CropOverlay />
 
           {toolManager.renderOverlay(overlayState)}
         </Layer>

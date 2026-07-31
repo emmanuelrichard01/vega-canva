@@ -1,9 +1,10 @@
-import React, { useEffect, useState, useRef } from 'react';
+import React, { useEffect, useState, useRef, useSyncExternalStore } from 'react';
 import { objectsMap, updateNode, deleteNode, nextZIndex, lowestZIndex, toggleReaction, localAuthorId } from '../engine/document';
 import { useStore } from '../hooks/useStore';
 import { cameraSystem } from '../engine/CameraSystem';
 import { engineEvents } from '../engine/EventBus';
-import { Copy, Trash2, Type, Square, Bold, Italic, Underline, AlignLeft, AlignCenter, AlignRight, MessageSquarePlus, BringToFront, SendToBack, ImageIcon, StickyNote, Pin, SmilePlus, Mic, MessageSquare, PenLine, Layers, Group, Ungroup, Download } from 'lucide-react';
+import { Copy, Trash2, Type, Square, Bold, Italic, Underline, AlignLeft, AlignCenter, AlignRight, MessageSquarePlus, BringToFront, SendToBack, ImageIcon, StickyNote, Pin, SmilePlus, Mic, MessageSquare, PenLine, Layers, Group, Ungroup, Download, Crop } from 'lucide-react';
+import { cropMode } from '../engine/interaction/cropMode';
 import { editor } from '../engine/api/EditorAPI';
 import { nanoid } from 'nanoid';
 import { ColorPickerPopover } from './ui/ColorPickerPopover';
@@ -70,6 +71,10 @@ export const ObjectContextToolbar: React.FC<Props> = ({ selectedId, selectedIds,
   const [isVisible, setIsVisible] = useState(false);
   const [showReactions, setShowReactions] = useState(false);
   const myAuthorId = localAuthorId();
+  // Above the early returns below, because it is a hook. The toolbar needs it
+  // so the Crop button can read as pressed and offer the way out, rather than
+  // being a one-way door into a mode.
+  const cropping = useSyncExternalStore(cropMode.subscribe, cropMode.getSnapshot, cropMode.getSnapshot);
   const isDraggingRef = useRef(false);
   const reactionsRef = useRef<HTMLDivElement>(null);
   // Mirrors state, read inside the RAF loop so it can skip setState (and the
@@ -305,6 +310,7 @@ export const ObjectContextToolbar: React.FC<Props> = ({ selectedId, selectedIds,
 
   if (!liveNode) return null;
   const node = liveNode;
+  const isCropping = cropping?.nodeId === node.id;
 
   const handleDuplicate = () => {
     const clone = { ...node, id: nanoid(), x: node.x + 20, y: node.y + 20 };
@@ -585,6 +591,32 @@ export const ObjectContextToolbar: React.FC<Props> = ({ selectedId, selectedIds,
                 {Math.round((node.opacity ?? 1) * 100)}%
               </span>
             </div>
+            {/* Cropping is also on double-click, which is the convention — but
+                a gesture with no visible affordance is a feature most people
+                never find out exists. */}
+            {node.type === 'image' && (
+              <>
+                <div style={{ width: '1px', height: '20px', margin: '0 2px', backgroundColor: 'var(--border-divider)' }} />
+                <button
+                  className={`btn-icon ${isCropping ? 'active' : ''}`}
+                  aria-pressed={isCropping}
+                  data-tooltip={isCropping ? 'Done cropping (Enter)' : 'Crop image'}
+                  aria-label={isCropping ? 'Done cropping' : 'Crop image'}
+                  style={{ padding: '6px' }}
+                  onClick={() =>
+                    isCropping
+                      ? cropMode.commit()
+                      : cropMode.enter({
+                          nodeId: node.id,
+                          node: { x: node.x, y: node.y, width: node.width, height: node.height },
+                          crop: node.crop,
+                        })
+                  }
+                >
+                  <Crop size={16} />
+                </button>
+              </>
+            )}
             <div style={{ width: '1px', height: '20px', margin: '0 2px', backgroundColor: 'var(--border-divider)' }} />
             <button className="btn-icon" data-tooltip="Comment on this object" style={{ padding: '6px' }} onClick={handleAddComment}><MessageSquarePlus size={16} /></button>
             <div style={{ width: '1px', height: '20px', margin: '0 2px', backgroundColor: 'var(--border-divider)' }} />

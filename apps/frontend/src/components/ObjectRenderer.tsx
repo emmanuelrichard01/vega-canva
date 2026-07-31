@@ -3,6 +3,7 @@ import { Circle, Group, Rect, Text } from 'react-konva';
 import Konva from 'konva';
 import { deleteNode, localAuthorId, toggleReaction, updateNode } from '../engine/document';
 import { consumePendingEdit } from '../engine/interaction/pendingEdit';
+import { cropMode } from '../engine/interaction/cropMode';
 import { tagFilter } from '../engine/model/tagFilter';
 import { matchesTagFilter } from '../engine/model/tags';
 import { useStore } from '../hooks/useStore';
@@ -218,7 +219,22 @@ export const ObjectRenderer = React.memo(
     const handleDblClick = useCallback(() => {
       if (!node) return;
       if (!isSelected) onSelect(objId);
-      if (hasText(node)) setIsEditing(true);
+      if (hasText(node)) {
+        setIsEditing(true);
+        return;
+      }
+      // Double-click means "go inside this object". For text that is the
+      // editor; for an image the inside is its framing. The snapshot is taken
+      // here rather than in the overlay because this is the moment before
+      // anything has changed — the overlay's first render already sees a
+      // document that a stray drag could have touched.
+      if (node.type === 'image') {
+        cropMode.enter({
+          nodeId: objId,
+          node: { x: node.x, y: node.y, width: node.width, height: node.height },
+          crop: node.crop,
+        });
+      }
     }, [isSelected, node, objId, onSelect]);
 
     const handleCommit = useCallback(
