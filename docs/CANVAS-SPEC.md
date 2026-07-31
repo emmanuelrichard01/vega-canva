@@ -33,7 +33,7 @@ it.
 | Item | Status | Notes |
 | --- | --- | --- |
 | Infinite canvas | **Shipped** | `CameraSystem` + `SpatialIndex` (rbush). Treated as a large finite bound (±1,000,000) to avoid float drift at extreme pan. |
-| Artboard / Frame / Page | **Dead** | `FrameNode` is in `schema.ts`, `ObjectRenderer` renders it, `SVGExporter` serializes it, `normalize.ts` migrates legacy `artboard` → `frame` — and **no tool creates one**. The registered tool ids are select, hand, pen, bezier-pen, eraser, text, shape, sticky, comment, image, audio. There is no frame tool, so a frame cannot exist in a real document. |
+| Artboard / Frame / Page | **Shipped** | Frame tool (`F`) with a preset picker and drag-to-size. Frames own what is inside them — membership derived from the object's centre, recomputed on every drop — clip their children, move and delete with their contents, and claim whatever they are drawn around. Named at creation, because they are the one type people refer to by name. Nested frames work, smallest containing frame wins. Not yet: safe zones, and a proper place in the Layers panel. |
 | Sections | **Absent** | Nothing groups frames on the canvas. |
 | Layout grids | **Partial** | `engine/interaction/gridSnap.ts` snaps drags to a grid, off by default, held on with a modifier. There is no column/row/square grid *overlay* and no per-frame grid definition. |
 | Rulers and guides | **Absent** | No ruler, no draggable guide, no guide storage. |
@@ -192,13 +192,13 @@ Nothing in this section exists, and all of it depends on frames.
 
 | Item | Status | Notes |
 | --- | --- | --- |
-| Export scale (1x/2x/3x) | **Absent** | No multiplier anywhere; PNG is clamped to a maximum canvas edge and that is the only sizing control. |
+| Export scale (1x/2x/3x) | **Shipped** | PNG only — SVG and JSON have no pixels to multiply. Each option shows the pixels it will produce when a frame is the target, and the filename carries the `@2x` suffix. |
 | PNG | **Shipped** | Reframes the stage onto the document bounds, captures, restores. Omits audio players, which are DOM overlays. |
 | SVG | **Shipped** | Serializes CRDT state to real vector primitives rather than rasterizing, with user text escaped. |
 | JSON | **Shipped** | Canonical node data plus comment threads. |
 | PDF / EPS | **Absent** | |
 | CSS / SVG code / Swift / Android XML | **Absent** | |
-| Export selection vs. document | **Absent** | All three formats frame the whole document bounds. There is no "export this selection". |
+| Export selection vs. document | **Partial** | A **frame** can be exported on its own, at its own declared size, resolved once in the service so all three formats agree on what is in it. Exporting an arbitrary *selection* is still not offered, though `ExportOptions.selectedOnly` supports it. |
 
 ---
 
@@ -206,10 +206,10 @@ Nothing in this section exists, and all of it depends on frames.
 
 Roughly, across the ~100 discrete items above:
 
-- **Shipped: ~34** — concentrated in the canvas core, collaboration, and the parts of the transform/typography blocks that a whiteboard needs.
-- **Partial: ~14**
-- **Dead: 2** — frames and auto-layout, both of which Phase 1 settles.
-- **Absent: ~50** — almost the whole of vector manipulation, design systems, prototyping, effects, and the paint model beyond flat colour.
+- **Shipped: ~37** — the canvas core, collaboration, frames, and the parts of the transform/typography blocks that a whiteboard needs.
+- **Partial: ~15**
+- **Dead: 1** — `FrameNode.layout`, the auto-layout declaration, which Phase 6 owns.
+- **Absent: ~47** — almost the whole of vector manipulation, design systems, prototyping, effects, and the paint model beyond flat colour.
 
 **Phase 0 is otherwise done** (2026-07-31). Stroke dash, star parameters,
 follow mode, image adjustments and image cropping each shipped with the control
@@ -245,11 +245,26 @@ Dash, star parameters, follow mode, image adjustments, image crop and the
 natural-size fields all now ship with the control that gives them a purpose.
 Frames and auto-layout are the remaining two, and Phase 1 is where they belong.
 
-**Phase 1 — Frames and artboards.** The structural unlock. Sections,
-constraints, auto-layout, safe zones, per-frame export and the whole of
-prototyping all depend on frames existing. The node type and renderer are
-already written; what is missing is the tool, clipping, child ownership, and
-frames as export targets.
+**Phase 1 — Frames and artboards. Mostly done.** The tool, presets, ownership,
+clipping, move-and-delete-with-contents, capture-on-draw, and per-frame export
+at 1×/2×/3× have shipped. **Two pieces remain**, both deliberately left rather
+than rushed:
+
+- **Frames in the Layers panel.** They appear as ordinary rows today, so a
+  frame's contents are not shown as belonging to it. The panel already renders
+  `parentId` clusters for groups, and `frameId` is a *different* relationship —
+  it needs its own nesting rather than being folded into the group cluster.
+- **Safe zones and bleed.** Per-frame margin guides that never export.
+
+One caveat recorded honestly: **none of Phase 1 has been watched running.** The
+canvas culls through a `requestAnimationFrame` loop that does not fire in an
+automation tab, so no Konva node is ever mounted there and the frame tool, the
+clipping and the crop overlay have all been verified by types, by tests over
+their geometry, and by reading — not by looking. The clip path in particular
+(inverting a child's absolute transform to map a frame's world rectangle into
+its local space) is the kind of thing that is either exactly right or visibly
+wrong, and it wants ten minutes with a real mouse before anything is built on
+top of it.
 
 **Phase 2 — The paint model.** Gradients (linear, radial, then conic/diamond
 via generated patterns), blend modes, stroke alignment, dash and cap/join,
