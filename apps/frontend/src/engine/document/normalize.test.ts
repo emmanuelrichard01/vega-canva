@@ -132,9 +132,39 @@ describe('normalizeNode — legacy shapes', () => {
     expect(node.theme).toBe('mint');
     expect(node.fontSize).toBe(22);
     expect(node.author).toEqual({ id: '3298301619', name: 'Emmanuel', color: '#EF4444' });
-    expect(node.reactions).toEqual({ '👍': 2 });
+    // A legacy bare count carries no idea who reacted, so it is preserved as
+    // synthetic reactors rather than discarded: the tally a room already had
+    // survives, and no real author id can collide with these.
+    expect(node.reactions).toEqual({ '👍': ['legacy:👍:0', 'legacy:👍:1'] });
     expect(node.pinned).toBe(true);
     expect(node.tags).toEqual(['x']);
+  });
+
+  it('keeps a modern reaction list as it is, minus duplicates', () => {
+    const node = normalizeNode({
+      id: 'd3',
+      type: 'sticky',
+      reactions: { '👍': ['u1', 'u2', 'u1'], '🎉': ['u3'] },
+    }) as StickyNode;
+    expect(node.reactions).toEqual({ '👍': ['u1', 'u2'], '🎉': ['u3'] });
+  });
+
+  it('drops reaction entries that carry nothing usable', () => {
+    const node = normalizeNode({
+      id: 'd4',
+      type: 'sticky',
+      reactions: { '👍': [], '🎉': 0, '🔥': null, '💡': 'nope' },
+    }) as StickyNode;
+    expect(node.reactions).toEqual({});
+  });
+
+  it('bounds a corrupt reaction count instead of building a huge array', () => {
+    const node = normalizeNode({
+      id: 'd5',
+      type: 'sticky',
+      reactions: { '👍': 1e9 },
+    }) as StickyNode;
+    expect(node.reactions['👍']).toHaveLength(99);
   });
 
   it('falls back to yellow for an unknown sticky theme', () => {

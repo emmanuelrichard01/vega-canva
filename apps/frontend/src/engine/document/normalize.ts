@@ -250,6 +250,67 @@ function normalizeType(raw: any): NodeType {
   return (known as string[]).includes(t) ? (t as NodeType) : 'shape';
 }
 
+/**
+ * Separator inside a stored reaction entry. A control character, because an
+ * emoji and an author id can both contain almost anything printable.
+ */
+const REACTION_SEP = '\u0000';
+
+/** `👍` + `ada` → the single string actually stored in the document. */
+export function encodeReaction(emoji: string, authorId: string): string {
+  return `${emoji}${REACTION_SEP}${authorId}`;
+}
+
+/**
+ * Sticky reactions, from any shape they have ever been stored in.
+ *
+ * Three shapes exist and all three are read:
+ *
+ * 1. **`string[]` of `emoji\0authorId`** — current. One flat list, because it
+ *    is the only structure where the container is created exactly once (see
+ *    `reactions.ts`).
+ * 2. **`Record<emoji, string[]>`** — the intermediate nested form.
+ * 3. **`Record<emoji, number>`** — original. A bare count cannot be attributed
+ *    after the fact, so it is preserved as synthetic reactor ids rather than
+ *    thrown away: `legacy:👍:0`, `legacy:👍:1`, … Those can never equal a real
+ *    author id, so a room keeps the tally it had, nobody can un-react on
+ *    behalf of someone who was never recorded, and a real reaction simply
+ *    joins the same list.
+ */
+export function normalizeReactions(raw: unknown): Record<string, string[]> {
+  if (!raw || typeof raw !== 'object') return {};
+
+  const out: Record<string, string[]> = {};
+  const add = (emoji: string, id: string) => {
+    if (!emoji || !id) return;
+    const ids = (out[emoji] ??= []);
+    if (!ids.includes(id)) ids.push(id);
+  };
+
+  if (Array.isArray(raw)) {
+    for (const entry of raw) {
+      if (typeof entry !== 'string') continue;
+      const at = entry.indexOf(REACTION_SEP);
+      if (at <= 0) continue;
+      add(entry.slice(0, at), entry.slice(at + 1));
+    }
+    return out;
+  }
+
+  for (const [emoji, value] of Object.entries(raw as Record<string, unknown>)) {
+    if (Array.isArray(value)) {
+      for (const id of value) if (typeof id === 'string') add(emoji, id);
+      continue;
+    }
+    if (typeof value === 'number' && Number.isFinite(value) && value > 0) {
+      // Bounded: a corrupt or hostile count must not build a huge array.
+      const count = Math.min(Math.floor(value), 99);
+      for (let i = 0; i < count; i++) add(emoji, `legacy:${emoji}:${i}`);
+    }
+  }
+  return out;
+}
+
 /** Sizes were stored in up to three places, with per-module precedence. */
 function resolveSize(raw: any): { width: number; height: number } {
   const width = raw?.width ?? raw?.geometry?.width ?? raw?.content?.width;
@@ -327,12 +388,7 @@ export function normalizeNode(raw: any, id?: string): AnyNode {
         theme: STICKY_THEMES.includes(theme) ? theme : 'yellow',
         fontSize: num(raw?.fontSize ?? raw?.content?.fontSize, 16),
         author: normalizeAuthor(raw),
-        reactions:
-          raw?.reactions && typeof raw.reactions === 'object'
-            ? raw.reactions
-            : raw?.metadata?.reactions && typeof raw.metadata.reactions === 'object'
-              ? raw.metadata.reactions
-              : {},
+        reactions: normalizeReactions(raw?.reactions ?? raw?.metadata?.reactions),
         tags: Array.isArray(raw?.tags) ? raw.tags : Array.isArray(raw?.metadata?.tags) ? raw.metadata.tags : [],
         pinned: bool(raw?.pinned, bool(raw?.metadata?.pinned, false)),
       };

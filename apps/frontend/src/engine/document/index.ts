@@ -27,6 +27,7 @@ export type { ConnectionStatus } from './doc';
 export {
   createNode,
   updateNode,
+  toggleReaction,
   deleteNode,
   readNode,
   readAllNodes,

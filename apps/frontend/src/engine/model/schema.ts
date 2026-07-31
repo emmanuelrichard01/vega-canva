@@ -232,8 +232,18 @@ export interface StickyNode extends BaseNode {
   /** Stickies render in a fixed handwriting face; only the size is variable. */
   fontSize: number;
   author: Author;
-  /** Emoji -> count. */
-  reactions: Record<string, number>;
+  /**
+   * Emoji → the author ids who reacted with it.
+   *
+   * A list, not a count. A bare `Record<emoji, number>` incremented on click
+   * cannot express the three things a reaction is actually for: it let one
+   * person react five times, gave no way to take a reaction back except a
+   * "clear" button that wiped everyone's, and recorded nobody. It also **lost
+   * reactions** — two people reacting at the same moment each read the same
+   * count and each wrote count + 1, so one of them silently vanished, which is
+   * precisely the case a collaborative canvas exists to handle.
+   */
+  reactions: Record<string, string[]>;
   tags: string[];
   pinned: boolean;
 }

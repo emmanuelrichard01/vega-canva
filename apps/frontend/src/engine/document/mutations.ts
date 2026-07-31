@@ -1,6 +1,7 @@
 import * as Y from 'yjs';
 import { nanoid } from 'nanoid';
 import { doc, identitiesMap, objectsMap, provider } from './doc';
+import { applyReactionToggle, seedReactions } from './reactions';
 
 /**
  * The write path for canvas objects.
@@ -63,8 +64,31 @@ export function lowestZIndex(): number {
   return min;
 }
 
-/** The local client's id, used as the authorship stamp. */
+/**
+ * The local **person's** id, used as the authorship stamp.
+ *
+ * This returned `awareness.clientID`, which is a **per-session** number: Yjs
+ * mints a fresh one every time the document is constructed, so it changed on
+ * every reload, in every tab, forever. Everything that asks "is this mine?"
+ * was therefore asking "did I do this in *this* browser session?" — which
+ * quietly broke the two places it matters most:
+ *
+ * - **Comments.** Edit and delete are author-only and compare against this. A
+ *   reload made your own comments read-only to you, permanently.
+ * - **Attribution.** `createdBy` is stamped on every node, so one person's
+ *   work across two sessions looked like two people's.
+ *
+ * Worse than useless, it is *reassigned*: Yjs client ids are random 32-bit
+ * numbers, so a future visitor can be handed an id that an old comment was
+ * written under and inherit the right to edit it.
+ *
+ * The stable id is the one `AuthContext` mints and persists, published on the
+ * awareness `user` field. The client id remains the fallback for the moment
+ * before sign-in has been published.
+ */
 export function localAuthorId(): string {
+  const user = provider.awareness?.getLocalState()?.user as { id?: string } | undefined;
+  if (typeof user?.id === 'string' && user.id) return user.id;
   return provider.awareness?.clientID?.toString() ?? 'local';
 }
 
@@ -135,6 +159,13 @@ export function createNode(input: NewNodeInput): string {
     Object.entries(node).forEach(([key, value]) => {
       if (value !== undefined) ymap.set(key, value);
     });
+    // `reactions` is created here, as a real `Y.Map`, and never lazily on the
+    // first reaction. Creating the container on demand looks harmless and is
+    // the whole bug over again: two people reacting to a *fresh* note each
+    // build their own `Y.Map` and `set` it at the same key, so one map — and
+    // the reaction inside it — is discarded. The container has to exist before
+    // anyone can race for it. See `reactions.ts`.
+    if (node.type === 'sticky') seedReactions(ymap, node.reactions);
     objectsMap.set(id, ymap);
   });
 
@@ -155,6 +186,36 @@ export function updateNode(id: string, updates: Record<string, unknown>): void {
       else ymap.set(key, value);
     });
     ymap.set('updatedAt', Date.now());
+  });
+}
+
+/**
+ * Add or remove your reaction to a node.
+ *
+ * The one node field stored as a **nested Y type** rather than a plain value,
+ * and the reason is the whole point of the feature. Every other field —
+ * position, text, colour — is edited by one person at a time, so
+ * last-write-wins is the right and simplest model for them. Reactions are the
+ * opposite: they are *designed* to be written by several people at the same
+ * moment, and a plain value means the last write erases the others.
+ *
+ * As a `Y.Map<emoji, Y.Array<authorId>>`:
+ * - two people reacting with different emoji never touch the same key;
+ * - two people reacting with the *same* emoji both land, because concurrent
+ *   inserts into a `Y.Array` merge instead of clobbering.
+ *
+ * `toJSON()` flattens this back to `Record<emoji, string[]>`, so nothing
+ * downstream of the document layer knows or cares that it is a Y type.
+ *
+ * **Do not write `reactions` through `updateNode`.** That sets a plain object
+ * and would replace the shared structure with a snapshot of one client's view
+ * of it, reintroducing exactly the lost-update bug this exists to fix.
+ */
+export function toggleReaction(nodeId: string, emoji: string, authorId: string): void {
+  const ymap = objectsMap.get(nodeId);
+  if (!ymap) return;
+  doc.transact(() => {
+    applyReactionToggle(ymap, emoji, authorId);
   });
 }
 
