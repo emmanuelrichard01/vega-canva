@@ -2514,3 +2514,84 @@ textarea:focus-visible {
 .frame-menu__group:first-child {
   padding-top: var(--space-1);
 }
+
+/* ---------------------------------------------------------------------------
+   EXPORT OPTIONS
+
+   What to export and how densely. Below the format list because these modify
+   the choice above rather than compete with it.
+   --------------------------------------------------------------------------- */
+
+.export-options {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-3);
+  padding: 0 var(--space-6) var(--space-5);
+}
+
+.export-options__row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--space-3);
+}
+
+.export-options__label {
+  flex: 0 0 auto;
+  font-size: var(--text-base);
+  color: var(--text-secondary);
+}
+
+.export-options__select {
+  flex: 1 1 auto;
+  min-width: 0;
+  padding: 6px var(--space-2);
+  border: 1px solid var(--border-divider);
+  border-radius: var(--radius-md);
+  background: var(--surface-primary);
+  color: var(--text-primary);
+  font-family: inherit;
+  font-size: var(--text-base);
+  cursor: pointer;
+}
+
+.export-options__scales {
+  display: flex;
+  gap: var(--space-1);
+}
+
+/* Each option shows the pixels it will produce, so picking a density is a
+   decision about an outcome rather than about a multiplier. */
+.export-options__scale {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 1px;
+  padding: 4px var(--space-3);
+  border: 1px solid var(--border-divider);
+  border-radius: var(--radius-md);
+  background: var(--surface-primary);
+  color: var(--text-secondary);
+  font-family: inherit;
+  font-size: var(--text-base);
+  font-weight: var(--weight-medium);
+  cursor: pointer;
+  transition: border-color var(--motion-hover), color var(--motion-hover);
+}
+
+.export-options__scale:hover {
+  border-color: var(--border-strong);
+  color: var(--text-primary);
+}
+
+.export-options__scale.is-active {
+  border-color: var(--border-focus);
+  color: var(--text-primary);
+}
+
+.export-options__px {
+  font-family: var(--font-mono);
+  font-size: var(--text-2xs);
+  font-variant-numeric: tabular-nums;
+  color: var(--text-tertiary);
+}

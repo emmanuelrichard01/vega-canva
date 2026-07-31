@@ -3,12 +3,25 @@ import { motion } from 'framer-motion';
 import { X, Image as ImageIcon, FileJson, Download, CheckCircle2, Loader2, PenTool } from 'lucide-react';
 import { ExportService } from '../../engine/export';
 import { useFocusTrap } from '../../hooks/useFocusTrap';
+import { useStore } from '../../hooks/useStore';
 import type { ExportFormat } from '../../engine/export/ExportTypes';
 
 interface Props {
   onClose: () => void;
   title: string;
 }
+
+/** Sentinel for "not a frame". An empty string would collide with a real id. */
+const WHOLE_DOCUMENT = '__document__';
+
+/**
+ * Density multipliers.
+ *
+ * PNG only: SVG and JSON have no pixels to multiply, and offering a scale that
+ * silently does nothing for two of the three formats is worse than not
+ * offering it.
+ */
+const SCALES = [1, 2, 3];
 
 export const ExportModal: React.FC<Props> = ({ onClose, title }) => {
   const [format, setFormat] = useState<ExportFormat>('png');
@@ -17,8 +30,23 @@ export const ExportModal: React.FC<Props> = ({ onClose, title }) => {
   const [hoveredFormat, setHoveredFormat] = useState<ExportFormat | null>(null);
   const [cancelHovered, setCancelHovered] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [target, setTarget] = useState<string>(WHOLE_DOCUMENT);
+  const [scale, setScale] = useState(2);
   // Escape to dismiss, Tab confined to the dialog, focus restored on close.
   const dialogRef = useFocusTrap(true, onClose);
+
+  // Frames are export targets, so they have to be offered as such. Sorted by
+  // name rather than by z-index: this is a list you find a name in.
+  const frames = useStore((s) => s.objects);
+  const frameList = React.useMemo(
+    () =>
+      Object.values(frames)
+        .filter((n) => n.type === 'frame')
+        .map((f) => ({ id: f.id, label: f.title ?? 'Frame', width: f.width, height: f.height }))
+        .sort((a, b) => a.label.localeCompare(b.label, undefined, { numeric: true })),
+    [frames]
+  );
+  const activeFrame = frameList.find((f) => f.id === target);
 
   const handleExport = async () => {
     setIsExporting(true);
@@ -26,11 +54,15 @@ export const ExportModal: React.FC<Props> = ({ onClose, title }) => {
     setError(null);
 
     try {
+      // A frame's name is what the file should be called — "checkout-flow.png"
+      // rather than the room's title repeated for every frame in it.
+      const base = (activeFrame?.label ?? title).replace(/\s+/g, '-').toLowerCase();
       await ExportService.export(format, {
-        filename: `${title.replace(/\s+/g, '-').toLowerCase()}-export.${format}`,
+        filename: `${base}${activeFrame ? '' : '-export'}${format === 'png' && scale !== 1 ? `@${scale}x` : ''}.${format}`,
         // `scale` is the option the exporters actually read — `pixelRatio` was not a
         // valid ExportOptions key, so this request was silently dropped.
-        scale: 2,
+        scale,
+        frameId: activeFrame ? target : undefined,
         // PNGExporter throws without this — it was never being passed here at
         // all, so every PNG export from this modal failed unconditionally.
         stage: (window as any)._konva_stage,
@@ -120,6 +152,56 @@ export const ExportModal: React.FC<Props> = ({ onClose, title }) => {
               </div>
             </button>
           ))}
+        </div>
+
+        {/* What to export, and how densely. Both live below the format list
+            because they modify it rather than compete with it — and the scale
+            row appears only for PNG, since SVG and JSON have no pixels to
+            multiply and a control that silently does nothing for two of three
+            formats is worse than no control. */}
+        <div className="export-options">
+          {frameList.length > 0 && (
+            <label className="export-options__row">
+              <span className="export-options__label">Export</span>
+              <select
+                className="export-options__select"
+                value={target}
+                onChange={(e) => setTarget(e.target.value)}
+              >
+                <option value={WHOLE_DOCUMENT}>Whole canvas</option>
+                {frameList.map((f) => (
+                  <option key={f.id} value={f.id}>
+                    {f.label} — {Math.round(f.width)} × {Math.round(f.height)}
+                  </option>
+                ))}
+              </select>
+            </label>
+          )}
+
+          {format === 'png' && (
+            <div className="export-options__row">
+              <span className="export-options__label">Size</span>
+              <div role="radiogroup" aria-label="Export scale" className="export-options__scales">
+                {SCALES.map((s) => (
+                  <button
+                    key={s}
+                    type="button"
+                    role="radio"
+                    aria-checked={scale === s}
+                    className={`export-options__scale ${scale === s ? 'is-active' : ''}`}
+                    onClick={() => setScale(s)}
+                  >
+                    {s}×
+                    <span className="export-options__px">
+                      {activeFrame
+                        ? `${Math.round(activeFrame.width * s)} × ${Math.round(activeFrame.height * s)}`
+                        : 'auto'}
+                    </span>
+                  </button>
+                ))}
+              </div>
+            </div>
+          )}
         </div>
 
         {error && (
