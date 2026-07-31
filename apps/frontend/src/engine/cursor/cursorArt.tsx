@@ -32,7 +32,13 @@ export interface CursorArtSpec {
 }
 
 /** Rendered 1:1 with the viewBox, so every coordinate below is also a pixel. */
-const SIZE = 28;
+export const CURSOR_SIZE = 28;
+const SIZE = CURSOR_SIZE;
+
+/** The arrow's tip inside the box. Both cursors position themselves by it. */
+export const ARROW_TIP = { x: 2, y: 1 };
+/** Keeps the arrow clear of the badge in its tail. */
+export const ARROW_SCALE = 0.82;
 
 const PAPER = '#FFFFFF';
 const INK = '#141821';
@@ -60,38 +66,158 @@ const Svg = ({ children }: { children: React.ReactNode }) => (
  * your pointer and everyone else's are unmistakably the same object — theirs
  * just carries their colour instead of white.
  */
-const ARROW_D =
+export const ARROW_D =
   'M5.65376 21.2183L2.36881 2.50576C2.17937 1.42629 3.32766 0.584311 4.30138 1.08742L21.2335 9.83549C22.2599 10.366 22.1802 11.8315 21.1011 12.2612L13.8821 15.1363C13.5604 15.2644 13.3082 15.5146 13.1782 15.8361L10.2828 23.0132C9.84996 24.0864 8.38466 24.1565 7.86311 23.1239L5.65376 21.2183Z';
 
 const Arrow = () => (
-  <g transform="scale(0.82)">
+  <g transform={`scale(${ARROW_SCALE})`}>
     <path d={ARROW_D} fill={PAPER} stroke={INK} strokeWidth={1.7} strokeLinejoin="round" />
   </g>
 );
 
 /**
- * A tool glyph in the arrow's tail.
+ * One glyph per tool, authored in a 24-unit box.
+ *
+ * Shared by both cursors on purpose. Your pointer wears a pen badge when you
+ * pick up the pen; a collaborator's pointer wears the *same* pen badge in
+ * their colour when they pick up theirs. That is the whole reason a
+ * collaborator's tool is legible without a legend — it is a shape you have
+ * already learned from your own hand.
+ *
+ * `pan`, `draw`, `text` and `aim` replace your entire local cursor rather than
+ * badging it, so those glyphs are only ever drawn on remote pointers. They are
+ * defined here anyway so the vocabulary has no holes.
+ *
+ * **Two or three strokes, and no small features.** The glyph is drawn into a
+ * 9-unit disc at `strokeWidth: 5` in its own 24-unit box, which is a very
+ * heavy line — a lucide-weight pencil turned into a diagonal slash and an
+ * outlined hand into a blob when they were first rendered at size. Anything
+ * with an internal detail smaller than about a fifth of the box will close up.
+ * Draw these, look at them at 4×, and only then keep them.
+ */
+export const TOOL_GLYPHS: Record<CursorMode, React.ReactNode | null> = {
+  // A plain arrow. Selecting is the default state, and badging the default
+  // means every pointer in the room carries a decoration that says nothing.
+  pointer: null,
+  // Also nothing. Panning changes only what *they* can see; there is no
+  // outcome for anyone else to anticipate, and the badge would be noise on the
+  // one activity that never touches the document. A hand at this size was also
+  // illegible, but that is not why it is gone.
+  pan: null,
+  // A single confident mark, not a pencil: a drawing implement dissolves at
+  // this size. It has to be a *curve* — the first version was near enough to
+  // straight that a diagonal bar inside a disc read as a prohibition sign.
+  draw: <path d="M4 18C6.5 9.5 13 5.5 20 5.5" />,
+  text: <path d="M4 7V4h16v3M12 4v16M9 20h6" />,
+  aim: (
+    <>
+      <circle cx="12" cy="12" r="5.5" />
+      <path d="M12 1.5v3.5M12 19v3.5M1.5 12h3.5M19 12h3.5" />
+    </>
+  ),
+  erase: (
+    <>
+      <path d="m7 20-3.3-3.3a2 2 0 0 1 0-2.8l9.6-9.6a2 2 0 0 1 2.8 0l4.6 4.6a2 2 0 0 1 0 2.8L13 20" />
+      <path d="M20 20H7" />
+    </>
+  ),
+  note: (
+    <>
+      <path d="M4 4h16v10l-6 6H4z" />
+      <path d="M20 14h-6v6" />
+    </>
+  ),
+  comment: <path d="M21 14a2 2 0 0 1-2 2H8l-5 5V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z" />,
+  place: <path d="M12 4v16M4 12h16" />,
+};
+
+/**
+ * Glyph overrides keyed by **tool id** rather than by cursor mode.
+ *
+ * The badge answers a finer question than the cursor does. `image` and `audio`
+ * share the `place` cursor because both drop something where you click — but
+ * "Priya is placing a thing" and "Priya has a live microphone" are not the
+ * same news, and a `+` badge for a recording says nothing at all. Modes stay
+ * as coarse as the pointer needs; the badge gets to be specific.
+ */
+const GLYPH_BY_TOOL: Record<string, React.ReactNode> = {
+  // Shapes and the pen share the `draw` cursor because both drag out a region
+  // with a crosshair. As a badge that conflates them for no reason: a square
+  // says "a box is coming", and it is the single most legible glyph available
+  // at this size.
+  shape: <path d="M4 4h16v16H4z" />,
+  'shape-rect': <path d="M4 4h16v16H4z" />,
+  'shape-ellipse': <circle cx="12" cy="12" r="8.5" />,
+  'shape-triangle': <path d="M12 3.5 21 20H3z" />,
+  'shape-hexagon': <path d="M12 3l7.5 4.5v9L12 21l-7.5-4.5v-9z" />,
+  'shape-star': <path d="M12 3l2.7 6.2 6.3.5-4.8 4.2 1.5 6.1L12 16.8 6.3 20l1.5-6.1L3 9.7l6.3-.5z" />,
+  audio: (
+    <>
+      {/* Capsule and cradle. The stem below the cradle is dropped — at this
+          stroke weight it merges into the arc and reads as a smudge. */}
+      <path d="M12 2.5a3.5 3.5 0 0 1 3.5 3.5v5a3.5 3.5 0 0 1-7 0V6A3.5 3.5 0 0 1 12 2.5z" />
+      <path d="M5 11a7 7 0 0 0 14 0" />
+    </>
+  ),
+  image: (
+    <>
+      <path d="M3 5h18v14H3z" />
+      <path d="M3 16l5-5 5 5 3-3 5 5" />
+    </>
+  ),
+};
+
+/** The glyph a tool wears in a badge: its own, or its cursor mode's. */
+export function glyphForTool(toolId: string | undefined, mode: CursorMode): React.ReactNode | null {
+  if (toolId && GLYPH_BY_TOOL[toolId]) return GLYPH_BY_TOOL[toolId];
+  return TOOL_GLYPHS[mode];
+}
+
+/**
+ * The badge in the arrow's tail, in whatever colours the caller needs.
  *
  * Small and set back on purpose. The first attempt made it two thirds the size
  * of the arrow, which read as two icons colliding rather than as one pointer
- * that knows what it is holding. The arrow itself never changes shape, so the
- * hotspot never appears to move when you switch tools.
+ * that knows what it is holding. The arrow never changes shape, so the hotspot
+ * never appears to move when a tool changes.
  */
-const Badge = ({ children }: { children: React.ReactNode }) => (
-  <g transform="translate(20 20)">
-    <circle cx="0" cy="0" r="7.4" fill={INK} />
-    <circle cx="0" cy="0" r="7.4" fill="none" stroke={PAPER} strokeWidth={1.6} />
-    <g
-      transform="translate(-4.6 -4.6) scale(0.383)"
-      stroke={PAPER}
-      strokeWidth={5}
-      fill="none"
-      strokeLinecap="round"
-      strokeLinejoin="round"
-    >
-      {children}
+export const ToolBadge = ({
+  mode,
+  tool,
+  fill,
+  ink,
+  ring,
+}: {
+  mode: CursorMode;
+  /** Optional: lets a tool override its mode's glyph. See `GLYPH_BY_TOOL`. */
+  tool?: string;
+  fill: string;
+  ink: string;
+  ring: string;
+}) => {
+  const glyph = glyphForTool(tool, mode);
+  if (!glyph) return null;
+  return (
+    <g transform="translate(20 20)">
+      <circle cx="0" cy="0" r="7.4" fill={fill} />
+      <circle cx="0" cy="0" r="7.4" fill="none" stroke={ring} strokeWidth={1.6} />
+      <g
+        transform="translate(-4.6 -4.6) scale(0.383)"
+        stroke={ink}
+        strokeWidth={5}
+        fill="none"
+        strokeLinecap="round"
+        strokeLinejoin="round"
+      >
+        {glyph}
+      </g>
     </g>
-  </g>
+  );
+};
+
+/** Your own badge: dark disc, white glyph, white ring. */
+const Badge = ({ mode }: { mode: CursorMode }) => (
+  <ToolBadge mode={mode} fill={INK} ink={PAPER} ring={PAPER} />
 );
 
 /** Crosshair for the modes that need a point, not a direction. */
@@ -163,53 +289,8 @@ export const CURSOR_ART: Record<CursorMode, CursorArtSpec> = {
     ),
   },
 
-  erase: {
-    ...tip,
-    render: () => (
-      <Svg>
-        <Arrow />
-        <Badge>
-          <path d="m7 20-3.3-3.3a2 2 0 0 1 0-2.8l9.6-9.6a2 2 0 0 1 2.8 0l4.6 4.6a2 2 0 0 1 0 2.8L13 20" />
-          <path d="M20 20H7" />
-        </Badge>
-      </Svg>
-    ),
-  },
-
-  note: {
-    ...tip,
-    render: () => (
-      <Svg>
-        <Arrow />
-        <Badge>
-          <path d="M4 4h16v10l-6 6H4z" />
-          <path d="M20 14h-6v6" />
-        </Badge>
-      </Svg>
-    ),
-  },
-
-  comment: {
-    ...tip,
-    render: () => (
-      <Svg>
-        <Arrow />
-        <Badge>
-          <path d="M21 14a2 2 0 0 1-2 2H8l-5 5V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z" />
-        </Badge>
-      </Svg>
-    ),
-  },
-
-  place: {
-    ...tip,
-    render: () => (
-      <Svg>
-        <Arrow />
-        <Badge>
-          <path d="M12 4v16M4 12h16" />
-        </Badge>
-      </Svg>
-    ),
-  },
+  erase: { ...tip, render: () => <Svg><Arrow /><Badge mode="erase" /></Svg> },
+  note: { ...tip, render: () => <Svg><Arrow /><Badge mode="note" /></Svg> },
+  comment: { ...tip, render: () => <Svg><Arrow /><Badge mode="comment" /></Svg> },
+  place: { ...tip, render: () => <Svg><Arrow /><Badge mode="place" /></Svg> },
 };

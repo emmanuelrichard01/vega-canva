@@ -1,4 +1,4 @@
-import React, { useEffect, useRef, useState } from 'react';
+import React, { useEffect, useLayoutEffect, useRef, useState } from 'react';
 import ReactDOM from 'react-dom';
 import { CURSOR_ART } from './cursorArt';
 import type { CursorMode } from './toolCursor';
@@ -58,19 +58,14 @@ const useNativePointer = () => {
 export const LocalCursor: React.FC<LocalCursorProps> = ({ mode, containerRef }) => {
   const nodeRef = useRef<HTMLDivElement>(null);
   const [inside, setInside] = useState(false);
+  const insideRef = useRef(false);
   const native = useNativePointer();
 
   useEffect(() => {
     const container = containerRef.current;
     if (!container || native) return;
 
-    // Tells `index.css` to drop the native cursor for this surface. Set from
-    // here rather than in the markup so that if this component is not mounted
-    // — or bails out above — the native cursors are still in force and the
-    // canvas is never left with no pointer at all.
-    container.dataset.customCursor = 'on';
-
-    const move = (e: PointerEvent) => {
+    const place = (e: PointerEvent) => {
       const node = nodeRef.current;
       if (!node) return;
       // Written now, in the event, not in a later frame. This is the whole
@@ -78,31 +73,75 @@ export const LocalCursor: React.FC<LocalCursorProps> = ({ mode, containerRef }) 
       node.style.transform = `translate3d(${e.clientX}px, ${e.clientY}px, 0)`;
     };
 
-    const enter = (e: PointerEvent) => {
+    /**
+     * Any pointer event on the canvas proves the pointer is on the canvas.
+     *
+     * This used to key off `pointerenter` alone, and that left the canvas with
+     * **no pointer at all** in a very ordinary situation: whenever this mounts
+     * while the mouse is already over it. Reloading with the cursor on the
+     * board does it, and so does signing in, because the auth modal unmounts
+     * and the room appears underneath a mouse that never crossed a boundary.
+     * No `pointerenter` is ever sent for a pointer that was already there, so
+     * the drawn cursor stayed at `opacity: 0` while the native one was hidden,
+     * until you moved off the canvas and back on.
+     */
+    const track = (e: PointerEvent) => {
       if (e.pointerType !== 'mouse') return;
-      move(e);
-      setInside(true);
+      place(e);
+      if (!insideRef.current) {
+        insideRef.current = true;
+        setInside(true);
+      }
     };
-    const leave = () => setInside(false);
+
+    const leave = () => {
+      if (!insideRef.current) return;
+      insideRef.current = false;
+      setInside(false);
+    };
 
     // Not coalesced, so it reports positions `pointermove` skips. Chromium and
     // Firefox have it; Safari does not, hence the pair.
     const RAW = 'onpointerrawupdate' in window ? 'pointerrawupdate' : 'pointermove';
-    container.addEventListener(RAW, move as EventListener, { passive: true });
-    container.addEventListener('pointerenter', enter, { passive: true });
+    container.addEventListener(RAW, track as EventListener, { passive: true });
+    container.addEventListener('pointerenter', track as EventListener, { passive: true });
     container.addEventListener('pointerleave', leave, { passive: true });
     // A drag can carry the pointer outside the canvas; keep drawing it there
-    // rather than having it wink out mid-gesture.
-    window.addEventListener('pointerup', move as EventListener, { passive: true });
+    // rather than having it wink out mid-gesture. Position only — being over a
+    // panel is not being on the canvas.
+    window.addEventListener('pointerup', place as EventListener, { passive: true });
 
     return () => {
-      delete container.dataset.customCursor;
-      container.removeEventListener(RAW, move as EventListener);
-      container.removeEventListener('pointerenter', enter);
+      container.removeEventListener(RAW, track as EventListener);
+      container.removeEventListener('pointerenter', track as EventListener);
       container.removeEventListener('pointerleave', leave);
-      window.removeEventListener('pointerup', move as EventListener);
+      window.removeEventListener('pointerup', place as EventListener);
     };
   }, [containerRef, native]);
+
+  /**
+   * Hand the surface over to the drawn cursor **only while one is being
+   * drawn**.
+   *
+   * `data-custom-cursor` is what makes `index.css` apply `cursor: none`, and
+   * it used to be set the moment this mounted — before this component had any
+   * idea where the pointer was, or whether it was over the canvas at all. That
+   * is a hidden system cursor with nothing in its place, which is the exact
+   * failure the previous cursor system was rewritten to eliminate.
+   *
+   * Tying it to `inside` makes the invariant structural rather than a matter of
+   * getting the event bookkeeping right: the attribute cannot be on unless the
+   * drawn pointer is visible. A layout effect, so both flip in the same paint
+   * and you never see two cursors for a frame.
+   */
+  useLayoutEffect(() => {
+    const container = containerRef.current;
+    if (!container || native || !inside) return;
+    container.dataset.customCursor = 'on';
+    return () => {
+      delete container.dataset.customCursor;
+    };
+  }, [containerRef, native, inside]);
 
   if (native) return null;
 

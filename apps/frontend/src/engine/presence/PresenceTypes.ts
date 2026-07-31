@@ -52,6 +52,6 @@ export interface PresenceState {
   viewport: ViewportState | null;
   selection: string[];
   tool: string;
-  activity: string | null;
+  activity: import('./collaborators').ActivityKind | null;
   status: 'online' | 'away';
 }

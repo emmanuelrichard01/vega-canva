@@ -2,6 +2,15 @@ import React, { useState } from 'react';
 import { provider } from '../../engine/document';
 import { viewportCenter } from '../../engine/presence/PresenceTypes';
 import { useRoomState } from '../../hooks/useSync';
+import type { ActivityKind } from '../../engine/presence/collaborators';
+
+/** Every activity gets a word here — see the note at the call site. */
+const ROSTER_ACTIVITY: Record<ActivityKind, string> = {
+  typing: 'Typing',
+  recording: 'Recording',
+  drawing: 'Drawing',
+  moving: 'Moving objects',
+};
 
 export const CollaborationLayer: React.FC = () => {
   const { awarenessUsers } = useRoomState();
@@ -18,11 +27,16 @@ export const CollaborationLayer: React.FC = () => {
         const isMe = clientId === provider.awareness?.clientID;
 
         // `editing.mode` is written by EditorAPI.setEditingMode, which is
-        // never actually called anywhere — that field is permanently null,
-        // so this always read as "Viewing" regardless of what someone was
-        // doing. `activity` is the field presenceManager (and the canvas'
-        // own per-object presence badges) actually keep live.
-        const statusText = (u as any).activity || 'Viewing';
+        // never actually called anywhere — that field is permanently null, so
+        // this always read as "Viewing" regardless of what someone was doing.
+        // `activity` is what presenceManager actually keeps live.
+        //
+        // Unlike the cursor chip, this row *does* name every activity: you
+        // came here to ask what someone is up to, so "Drawing" is the answer
+        // rather than clutter. `ACTIVITY_LABEL` only covers the two that are
+        // worth interrupting the canvas for, hence the second lookup.
+        const activity = (u as any).activity as ActivityKind | null | undefined;
+        const statusText = activity ? ROSTER_ACTIVITY[activity] : 'Viewing';
 
         return (
           <div 
@@ -55,7 +69,7 @@ export const CollaborationLayer: React.FC = () => {
               border: '2px solid var(--surface-elevated)', 
               zIndex: isHovered ? 50 : 10 - i,
               cursor: isMe ? 'default' : 'pointer',
-              transition: 'transform var(--motion-spring), box-shadow var(--motion-hover)',
+              transition: 'transform var(--motion-settle), box-shadow var(--motion-hover)',
               transform: isHovered ? 'translateY(-4px)' : 'none',
               boxShadow: isHovered ? 'var(--shadow-md)' : 'var(--shadow-sm)'
             }}

@@ -10,6 +10,25 @@ import { editor } from '../engine/api/EditorAPI';
 import { ObjectRenderer } from "./ObjectRenderer";
 import { PresenceRenderer } from "../engine/presence/PresenceRenderer";
 import { presenceManager } from "../engine/presence/PresenceManager";
+
+/**
+ * Tools whose press begins a mark on the shared canvas.
+ *
+ * Not derived from `cursorModeForTool`'s `draw` mode: that groups shapes with
+ * the pen because they share a crosshair, while this is about whether anything
+ * is being *authored*, which is a different question and will drift.
+ */
+const DRAWING_TOOLS = new Set([
+  'pen',
+  'bezier-pen',
+  'eraser',
+  'shape',
+  'shape-rect',
+  'shape-ellipse',
+  'shape-triangle',
+  'shape-hexagon',
+  'shape-star',
+]);
 import { cursorModeForTool, LocalCursor } from '../engine/cursor';
 import { GestureOverlay } from "./GestureOverlay";
 import { ToolManager, SelectTool, ShapeTool, TextTool, StickyTool, AudioTool, PenTool, BezierPenTool, HandTool, EraserTool, CommentTool } from '../engine/tools';
@@ -302,20 +321,13 @@ export const Canvas: React.FC<CanvasProps> = ({ activeTool, selectedIds, setSele
     return () => observer.disconnect();
   }, []);
 
-  // Update viewport awareness (handled by CameraSystem changes, but we still broadcast it here for legacy components)
-  useEffect(() => {
-    const handleCameraChange = () => {
-      provider.awareness?.setLocalStateField("viewport", {
-        x: -cameraSystem.x / cameraSystem.zoom,
-        y: -cameraSystem.y / cameraSystem.zoom,
-        zoom: cameraSystem.zoom,
-        width: dimensions.width,
-        height: dimensions.height,
-      });
-    };
-    engineEvents.on('CameraChanged', handleCameraChange);
-    return () => engineEvents.off('CameraChanged', handleCameraChange);
-  }, [dimensions]);
+  // The viewport used to be published from *here as well*, with a raw
+  // `setLocalStateField` on every `CameraChanged` — the same two-writer bug
+  // that the `cursor` field had, and worse in one way: it had no throttle at
+  // all, so a single pan broadcast an awareness update on every frame to
+  // every peer, and every peer's presence subscribers woke up for each one.
+  // The one publisher is the `presenceManager.updateViewport` call further
+  // down, which shares the 15Hz gate with everything else ephemeral.
 
   // Update selection awareness
   useEffect(() => {
@@ -720,6 +732,12 @@ export const Canvas: React.FC<CanvasProps> = ({ activeTool, selectedIds, setSele
       return;
     }
 
+    // A gesture that is about to put marks on the shared canvas. Broadcast as
+    // an activity so collaborators' name chips stay up and the radar pings
+    // where the work is happening — but deliberately *not* as a word next to
+    // their name, because the stroke appearing is already the message.
+    if (DRAWING_TOOLS.has(activeTool)) presenceManager.updateActivity('drawing');
+
     toolManager.handlePointerDown(e);
   };
 
@@ -766,6 +784,10 @@ export const Canvas: React.FC<CanvasProps> = ({ activeTool, selectedIds, setSele
     // Releasing always ends a held force, including when the release happens
     // over a panel or outside the stage.
     endHeldForce();
+    // Cleared unconditionally: this runs for every release, including ones
+    // that end over a panel, which is exactly where a "still drawing" state
+    // would otherwise get stuck forever.
+    presenceManager.updateActivity(null);
     toolManager.handlePointerUp(e);
   };
 
@@ -860,6 +882,8 @@ export const Canvas: React.FC<CanvasProps> = ({ activeTool, selectedIds, setSele
           elapsedMs={overlayState.elapsedMs || 0}
           level={overlayState.level || 0}
           levels={overlayState.levels || []}
+          remainingMs={overlayState.remainingMs}
+          onCancel={overlayState.onCancel}
           onStop={() => toolManager.handlePointerDown({ target: { getStage: () => stageRef.current } })}
         />
       )}

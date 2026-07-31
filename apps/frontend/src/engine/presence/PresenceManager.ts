@@ -1,4 +1,5 @@
 import { provider } from '../document';
+import type { ActivityKind } from './collaborators';
 import type { PresenceState } from "./PresenceTypes";
 
 /**
@@ -127,7 +128,16 @@ class PresenceEngine {
     this.scheduleUpdate();
   }
 
-  public updateActivity(activity: string | null) {
+  /**
+   * What this client is doing, as one of `ActivityKind` — never a phrase.
+   *
+   * This took a free string, and the two callers that used it wrote
+   * `'✏️ Typing'` and `'🎤 Recording'`: an icon, a word and a state fused into
+   * one value that then went on the wire and was rendered verbatim. The kind
+   * is the fact; the wording and the styling belong where it is drawn.
+   */
+  public updateActivity(activity: ActivityKind | null) {
+    if (this.localState.activity === activity) return;
     this.localState.activity = activity;
     this.resetIdleTimer();
     this.scheduleUpdate();
