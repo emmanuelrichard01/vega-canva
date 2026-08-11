@@ -6,7 +6,6 @@ import { consumePendingEdit } from '../engine/interaction/pendingEdit';
 import { cropMode } from '../engine/interaction/cropMode';
 import { EXPORT_CHROME } from '../engine/export/chrome';
 import { moveFrameWithChildren, reassignFrame } from '../engine/interaction/frameMembership';
-import { safeAreaBox } from '../engine/model/frames';
 import { tagFilter } from '../engine/model/tagFilter';
 import { matchesTagFilter } from '../engine/model/tags';
 import { useStore } from '../hooks/useStore';
@@ -21,6 +20,8 @@ import { ImageRenderer } from './canvas/renderers/ImageRenderer';
 import { PathRenderer } from './canvas/renderers/PathRenderer';
 import { ShapeRenderer } from './canvas/renderers/ShapeRenderer';
 import { StickyRenderer } from './canvas/renderers/StickyRenderer';
+import { FrameRenderer } from './canvas/renderers/FrameRenderer';
+import { useLayerFilters } from './canvas/renderers/useLayerFilters';
 import { TextRenderer } from './canvas/renderers/TextRenderer';
 
 interface ObjectRendererProps {
@@ -78,6 +79,20 @@ export const ObjectRenderer = React.memo(
         : null;
     const forceToolActive = useStore((state) => state.forceToolActive);
 
+    /**
+     * Paint that belongs to the whole layer rather than to one shape inside it.
+     *
+     * Blend mode and layer blur are read here, not in the per-type renderers,
+     * because they apply to everything the object draws — a shape *and* its
+     * text label, an image *and* its border. Applying them one level down
+     * would blur the fill and leave the caption sharp.
+     *
+     * `audio`, `sticky` and `comment` carry no `appearance`, so this is
+     * undefined for them and both features are simply absent — which is
+     * correct: there is no control offering either on those types.
+     */
+    const appearance = node && 'appearance' in node ? node.appearance : undefined;
+
     const shapeRef = useRef<Konva.Group>(null);
     const lastPos = useRef({ x: 0, y: 0, time: 0 });
     const velocity = useRef({ x: 0, y: 0 });
@@ -89,6 +104,12 @@ export const ObjectRenderer = React.memo(
     // through. See `engine/interaction/pendingEdit.ts`.
     const [isEditing, setIsEditing] = useState(() => consumePendingEdit(objId));
     const [isHovered, setIsHovered] = useState(false);
+
+    // Layer blur, and the Konva cache it requires. The dependency list is
+    // everything the cached bitmap depends on: the object's size, and the
+    // paint drawn into it. `appearance` is a stable reference between changes
+    // because the store hands back the node itself.
+    useLayerFilters(shapeRef, appearance?.blur, [node?.width, node?.height, appearance]);
 
     // A tag filter is a way of looking, so it lives outside the document —
     // narrowing to `risk` must not empty everyone else's board.
@@ -352,6 +373,14 @@ export const ObjectRenderer = React.memo(
           // everything else, which is the difference between a canvas filter
           // and a list filter.
           opacity={node.opacity * (filteredOut ? 0.12 : 1)}
+          // How this object's pixels combine with what is beneath it. Konva
+          // takes Canvas2D's own vocabulary, which is what the model stores,
+          // so there is no lookup table between the two to fall out of step.
+          // `normal` is stored as absent and Konva's default is `source-over`,
+          // which is the same thing under a different name.
+          globalCompositeOperation={
+            (appearance?.blendMode as GlobalCompositeOperation | undefined) ?? undefined
+          }
           listening={!node.locked && !filteredOut}
           // Not draggable while a force tool is armed: pressing on or near an
           // object would otherwise start a drag instead of applying the force,
@@ -503,78 +532,6 @@ const NodeContent: React.FC<{ node: AnyNode; isEditing: boolean; stageScale?: nu
         </Group>
       );
     case 'frame':
-      return (
-        <Group>
-          <Rect
-            width={node.width}
-            height={node.height}
-            fill={node.appearance.fill?.[0]?.color ?? '#FFFFFF'}
-            cornerRadius={node.appearance.cornerRadius ?? 0}
-            shadowColor="black"
-            shadowBlur={20}
-            shadowOpacity={0.05}
-            shadowOffsetY={10}
-          />
-          {/* The name is chrome, not content, so it holds a constant size on
-              screen instead of scaling with the board — at 10% zoom a
-              world-space label is sub-pixel, which is exactly when you most
-              need to tell one frame from another. Dividing by the stage scale
-              is the same trick the selection ring uses one level up.
-              `perfectDrawEnabled={false}` because this is a flat fill with no
-              stroke, and the extra offscreen pass it disables buys nothing. */}
-          <Text
-            text={node.title ?? 'Frame'}
-            /* The name is how you find the frame on the board, not part of
-               what the frame contains — so it does not appear in the export.
-               It sits above the frame's own box, outside the export bounds,
-               but a frame nested inside another frame would put its label
-               squarely inside the outer one's. */
-            name={EXPORT_CHROME}
-            y={-18 / stageScale}
-            fontSize={12 / stageScale}
-            /* A fixed grey, not a token: Konva paints to a canvas and cannot
-               resolve a CSS custom property, so `var(--text-tertiary)` here is
-               simply an invalid colour. This mid grey holds up against both
-               the light and the dark board — the same call `cursorArt` makes,
-               and for the same reason. */
-            fill="#9CA3AF"
-            fontFamily="Inter, sans-serif"
-            perfectDrawEnabled={false}
-            listening={false}
-          />
-          {/* The safe area, for the sizes where part of the rectangle is
-              covered by something that is not yours: a story's reply bar, a
-              grid thumbnail's crop, the margin a desktop printer cannot reach.
-              A guide only — nothing clips or snaps to it, because a frame that
-              promised a safe area and then quietly moved things into it would
-              be worse than no guide at all.
-
-              Measured through `safeAreaBox` against an origin-anchored copy of
-              the frame, which yields the box in the frame's own local space
-              and keeps one implementation of the clamping. Chrome, so it never
-              lands in an export; hairline at every zoom, for the same reason
-              the selection ring is. */}
-          {(() => {
-            const safe = safeAreaBox({ x: 0, y: 0, width: node.width, height: node.height, safeArea: node.safeArea });
-            if (!safe) return null;
-            return (
-              <Rect
-                name={EXPORT_CHROME}
-                x={safe.x}
-                y={safe.y}
-                width={safe.width}
-                height={safe.height}
-                stroke="#38BDF8"
-                strokeWidth={1}
-                strokeScaleEnabled={false}
-                dash={[6, 5]}
-                opacity={0.55}
-                listening={false}
-                perfectDrawEnabled={false}
-              />
-            );
-          })()}
-        </Group>
-      );
+      return <FrameRenderer node={node} stageScale={stageScale} />;
   }
 };

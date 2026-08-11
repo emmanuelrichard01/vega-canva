@@ -46,7 +46,60 @@ export const SCHEMA_VERSION = 2;
 // Shared value types
 // ---------------------------------------------------------------------------
 
-export type Paint = { type: 'solid'; color: string; opacity?: number };
+/**
+ * What fills a shape.
+ *
+ * Solid, linear, radial, conic and diamond. Defined in `model/paint.ts`
+ * alongside the arithmetic that reads it, and re-exported here so the schema
+ * still reads as one description of the document.
+ */
+export type { GradientStop, Paint, PaintType } from './paint';
+import type { Paint } from './paint';
+
+/**
+ * How a layer's pixels combine with what is already beneath them.
+ *
+ * The names are Canvas2D's `globalCompositeOperation` values, not CSS's, so
+ * the renderer forwards the stored string without a lookup table in between —
+ * the two vocabularies agree on all sixteen of these and disagree on the
+ * spelling of nothing that is here.
+ */
+export type BlendMode =
+  | 'normal'
+  | 'darken'
+  | 'multiply'
+  | 'color-burn'
+  | 'lighten'
+  | 'screen'
+  | 'color-dodge'
+  | 'overlay'
+  | 'soft-light'
+  | 'hard-light'
+  | 'difference'
+  | 'exclusion'
+  | 'hue'
+  | 'saturation'
+  | 'color'
+  | 'luminosity';
+
+export const BLEND_MODES: BlendMode[] = [
+  'normal',
+  'darken',
+  'multiply',
+  'color-burn',
+  'lighten',
+  'screen',
+  'color-dodge',
+  'overlay',
+  'soft-light',
+  'hard-light',
+  'difference',
+  'exclusion',
+  'hue',
+  'saturation',
+  'color',
+  'luminosity',
+];
 
 export type LineCap = 'butt' | 'round' | 'square';
 
@@ -81,6 +134,23 @@ export interface Appearance {
   shadow?: Shadow;
   /** Applies to rectangles and images. */
   cornerRadius?: number;
+  /**
+   * How this layer's pixels combine with what is beneath. Absent is `normal`.
+   *
+   * Stored on `appearance` rather than the base node because it is a property
+   * of the paint — what the object *looks like* against its background —
+   * rather than of the object's place on the board, which is what opacity and
+   * z-index are.
+   */
+  blendMode?: BlendMode;
+  /**
+   * Gaussian blur applied to the whole layer, in world units. Absent is none.
+   *
+   * A layer blur, not a shadow blur: it diffuses the object itself. Konva
+   * cannot filter an uncached node, so anything above zero puts the object on
+   * its own bitmap — see `useLayerFilters`, which owns that lifecycle.
+   */
+  blur?: number;
 }
 
 export type TextAlign = 'left' | 'center' | 'right';

@@ -8,6 +8,7 @@ import { lowestZIndex, nextZIndex, provider, updateNode } from '../engine/docume
 import { useStore } from '../hooks/useStore';
 import { objectRegistry } from '../engine/objects';
 import {
+  BLEND_MODES,
   DEFAULT_TYPOGRAPHY,
   MAX_STAR_POINTS,
   MAX_STAR_RATIO,
@@ -15,6 +16,7 @@ import {
   MIN_STAR_RATIO,
   type AnyNode,
   type Appearance,
+  type BlendMode,
   type ShapeGeometry,
   type Stroke,
   type TextAlign,
@@ -30,6 +32,7 @@ import {
   type StrokeStyleId,
 } from '../engine/model/strokeStyle';
 import { ColorPickerPopover } from './ui/ColorPickerPopover';
+import { FillEditor } from './ui/FillEditor';
 import { NumberStepper } from './ui/NumberStepper';
 import { FontSelector } from './ui/FontSelector';
 import { SegmentedControl } from './ui/SegmentedControl';
@@ -134,6 +137,31 @@ function typographyOf(node: AnyNode): Typography | null {
   if (node.type === 'shape') return node.typography ?? DEFAULT_TYPOGRAPHY;
   return null;
 }
+
+/**
+ * Blend modes as people name them, not as a canvas does.
+ *
+ * The stored values are Canvas2D's, which are hyphenated and lower-case
+ * because they are API identifiers. A menu is read, not parsed.
+ */
+const BLEND_LABELS: Record<BlendMode, string> = {
+  normal: 'Normal',
+  darken: 'Darken',
+  multiply: 'Multiply',
+  'color-burn': 'Color Burn',
+  lighten: 'Lighten',
+  screen: 'Screen',
+  'color-dodge': 'Color Dodge',
+  overlay: 'Overlay',
+  'soft-light': 'Soft Light',
+  'hard-light': 'Hard Light',
+  difference: 'Difference',
+  exclusion: 'Exclusion',
+  hue: 'Hue',
+  saturation: 'Saturation',
+  color: 'Color',
+  luminosity: 'Luminosity',
+};
 
 /** The four safe-area edges, in the order a CSS inset is written. */
 const SAFE_EDGES = [
@@ -335,9 +363,9 @@ export const PropertiesPanel: React.FC<PropertiesPanelProps> = ({ selectedId, ov
         <Accordion title="Appearance">
           {capabilities.supportsFill && appearance && (
             <Row label="Fill">
-              <ColorPickerPopover
-                color={appearance.fill?.[0]?.color ?? '#000000'}
-                onChange={(color) => setAppearance({ fill: [{ type: 'solid', color, opacity: 1 }] })}
+              <FillEditor
+                paint={appearance.fill?.[0]}
+                onChange={(fill) => setAppearance({ fill: [fill] })}
               />
             </Row>
           )}
@@ -353,6 +381,45 @@ export const PropertiesPanel: React.FC<PropertiesPanelProps> = ({ selectedId, ov
           {capabilities.supportsOpacity && (
             <Row label="Opacity">
               <NumberStepper value={Math.round(node.opacity * 100)} onChange={(v) => set({ opacity: v / 100 })} min={0} max={100} step={10} />
+            </Row>
+          )}
+          {/* Blend mode and layer blur sit with the rest of the paint because
+              that is what they are: how the object looks against what is
+              behind it. Offered wherever `appearance` exists, because
+              `ObjectRenderer` applies both to the whole node group and not to
+              one shape inside it — so they work on an image and a path exactly
+              as they work on a rectangle. */}
+          {appearance && (
+            <Row label="Blend">
+              <select
+                className="prop-select"
+                value={appearance.blendMode ?? 'normal'}
+                onChange={(e) =>
+                  setAppearance({
+                    // `normal` is stored as absent, matching the normalizer:
+                    // the common case costs nothing and "has a blend mode"
+                    // stays a question about presence.
+                    blendMode: e.target.value === 'normal' ? undefined : (e.target.value as BlendMode),
+                  })
+                }
+              >
+                {BLEND_MODES.map((mode) => (
+                  <option key={mode} value={mode}>
+                    {BLEND_LABELS[mode]}
+                  </option>
+                ))}
+              </select>
+            </Row>
+          )}
+          {appearance && (
+            <Row label="Layer Blur">
+              <NumberStepper
+                value={Math.round(appearance.blur ?? 0)}
+                onChange={(v) => setAppearance({ blur: v > 0 ? v : undefined })}
+                min={0}
+                max={100}
+                step={2}
+              />
             </Row>
           )}
         </Accordion>

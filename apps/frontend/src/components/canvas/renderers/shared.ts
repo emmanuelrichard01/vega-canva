@@ -1,3 +1,4 @@
+import { paintColor } from '../../../engine/model/paint';
 import type { Appearance, LineCap, Typography } from '../../../engine/model/schema';
 
 /**
@@ -22,9 +23,16 @@ export function konvaTextDecoration(typography: Typography | undefined): string 
   return typography?.underline ? 'underline' : '';
 }
 
-/** First solid fill, or a fallback. */
+/**
+ * One colour standing for the first fill.
+ *
+ * For the places that can only take a colour — a DOM overlay, an SVG
+ * attribute, a swatch. A gradient answers with its first stop; see
+ * `paintColor`. Anything that can paint properly should use `useFillProps`
+ * instead, which returns the gradient itself.
+ */
 export function fillColor(appearance: Appearance | undefined, fallback: string): string {
-  return appearance?.fill?.[0]?.color ?? fallback;
+  return paintColor(appearance?.fill?.[0], fallback);
 }
 
 export function fillOpacity(appearance: Appearance | undefined): number {

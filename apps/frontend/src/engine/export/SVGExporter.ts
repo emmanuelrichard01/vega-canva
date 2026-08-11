@@ -3,6 +3,7 @@ import { useStore } from '../../hooks/useStore';
 import { computeContentBounds } from './bounds';
 import { THEMES } from '../../components/canvas/renderers/StickyRenderer';
 import type { AnyNode, PathNode, ShapeNode, Typography } from '../model/schema';
+import { SvgPaintDefs } from './svgPaint';
 
 /**
  * Embedding raw user text into an SVG without escaping is an XML-corruption
@@ -107,11 +108,16 @@ function dashAttrs(stroke: ShapeNode['appearance']['stroke']): string {
   return ` stroke-dasharray="${stroke.dash.join(' ')}"${cap}`;
 }
 
-function shapeMarkup(node: ShapeNode): string {
+function shapeMarkup(node: ShapeNode, defs: SvgPaintDefs): string {
   const { x, y, width: w, height: h } = node;
   const cx = x + w / 2;
   const cy = y + h / 2;
-  const fill = node.appearance.fill?.[0]?.color ?? 'none';
+  // The node's world box: gradient geometry is stored in unit space against
+  // it, and `SvgPaintDefs` emits absolute coordinates so the SVG and the
+  // canvas measure the same gradient.
+  const fill = node.appearance.fill?.length
+    ? defs.fill(node.appearance.fill[0], { x, y, width: w, height: h }, 'none')
+    : 'none';
   const stroke = node.appearance.stroke?.color ?? 'none';
   const sw = node.appearance.stroke?.width ?? 0;
   const rot = rotationTransform(node);
@@ -148,11 +154,12 @@ export class SVGExporter implements Exporter {
     nodes = nodes.filter((n) => !n.hidden).sort((a, b) => a.zIndex - b.zIndex);
 
     const parts: string[] = [];
+    const defs = new SvgPaintDefs();
 
     nodes.forEach((node) => {
       switch (node.type) {
         case 'shape': {
-          parts.push(shapeMarkup(node));
+          parts.push(shapeMarkup(node, defs));
           if (node.text && node.typography) {
             const t = node.typography;
             const tx = node.x + node.width / 2;
@@ -174,7 +181,10 @@ export class SVGExporter implements Exporter {
         case 'path': {
           const stroke = node.appearance.stroke?.color;
           const sw = node.appearance.stroke?.width ?? 2;
-          const fill = node.appearance.fill?.[0]?.color;
+          const paintBox = { x: node.x, y: node.y, width: node.width, height: node.height };
+          const fill = node.appearance.fill?.length
+            ? defs.fill(node.appearance.fill[0], paintBox, 'none')
+            : undefined;
 
           if (node.geometry.kind === 'bezier') {
             const dash = dashAttrs(node.appearance.stroke);
@@ -228,7 +238,7 @@ export class SVGExporter implements Exporter {
 
         case 'frame': {
           parts.push(
-            `<rect x="${node.x}" y="${node.y}" width="${node.width}" height="${node.height}" rx="${node.appearance.cornerRadius ?? 0}" fill="${node.appearance.fill?.[0]?.color ?? '#FFFFFF'}" />`
+            `<rect x="${node.x}" y="${node.y}" width="${node.width}" height="${node.height}" rx="${node.appearance.cornerRadius ?? 0}" fill="${defs.fill(node.appearance.fill?.[0], { x: node.x, y: node.y, width: node.width, height: node.height }, '#FFFFFF')}" />`
           );
           break;
         }

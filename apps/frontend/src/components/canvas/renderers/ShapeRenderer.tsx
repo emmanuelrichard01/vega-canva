@@ -1,7 +1,8 @@
 import React from 'react';
 import { Ellipse, Group, Rect, RegularPolygon, Star, Text } from 'react-konva';
 import type { ShapeNode } from '../../../engine/model/schema';
-import { fillColor, konvaFontStyle, konvaTextDecoration, strokeColor, strokeDashProps, strokeWidth } from './shared';
+import { konvaFontStyle, konvaTextDecoration, strokeColor, strokeDashProps, strokeWidth } from './shared';
+import { useFillProps } from './useFillProps';
 
 interface Props {
   node: ShapeNode;
@@ -21,7 +22,18 @@ interface Props {
 export const ShapeRenderer: React.FC<Props> = React.memo(({ node, showLabel }) => {
   const w = node.width;
   const h = node.height;
-  const fill = fillColor(node.appearance, '#4F46E5');
+  // Gradient geometry is unit-space against the shape's *own* box, and the
+  // three primitives here do not share an origin: a Rect is drawn from its
+  // top-left, an Ellipse and a RegularPolygon from their centre. Passing the
+  // right box per branch is what keeps a top-to-bottom gradient running
+  // top-to-bottom on all three rather than starting halfway down the ellipse.
+  // Konva's polygon primitives take a single radius, so they are built on a
+  // square of the smaller dimension and stretched to the box; their gradient
+  // is measured against that square and stretched with them.
+  const base = Math.min(w, h) || 1;
+  const rectFill = useFillProps(node.appearance, { x: 0, y: 0, width: w, height: h }, '#4F46E5');
+  const ellipseFill = useFillProps(node.appearance, { x: -w / 2, y: -h / 2, width: w, height: h }, '#4F46E5');
+  const polygonFill = useFillProps(node.appearance, { x: -base / 2, y: -base / 2, width: base, height: base }, '#4F46E5');
   const stroke = strokeColor(node.appearance);
   const sw = strokeWidth(node.appearance);
   const radius = node.appearance?.cornerRadius ?? 0;
@@ -32,17 +44,16 @@ export const ShapeRenderer: React.FC<Props> = React.memo(({ node, showLabel }) =
   let shape: React.ReactNode;
 
   if (node.geometry.kind === 'rect') {
-    shape = <Rect width={w} height={h} fill={fill} stroke={stroke} strokeWidth={sw} {...dashProps} cornerRadius={Math.max(0, radius)} />;
+    shape = <Rect width={w} height={h} {...rectFill} stroke={stroke} strokeWidth={sw} {...dashProps} cornerRadius={Math.max(0, radius)} />;
   } else if (node.geometry.kind === 'ellipse') {
     // Independent radii, so a non-square ellipse stays elliptical.
-    shape = <Ellipse x={w / 2} y={h / 2} radiusX={w / 2} radiusY={h / 2} fill={fill} stroke={stroke} strokeWidth={sw} {...dashProps} />;
+    shape = <Ellipse x={w / 2} y={h / 2} radiusX={w / 2} radiusY={h / 2} {...ellipseFill} stroke={stroke} strokeWidth={sw} {...dashProps} />;
   } else {
-    // Konva's polygon primitives take one radius. Build on the smaller
-    // dimension and stretch the node itself to fill the w x h box.
-    // `strokeScaleEnabled={false}` keeps the outline an even weight despite
-    // that non-uniform stretch, which would otherwise make the vertical edges
-    // of a widened hexagon visibly thicker than the horizontal ones.
-    const base = Math.min(w, h) || 1;
+    // Build on the smaller dimension and stretch the node itself to fill the
+    // w x h box. `strokeScaleEnabled={false}` keeps the outline an even weight
+    // despite that non-uniform stretch, which would otherwise make the
+    // vertical edges of a widened hexagon visibly thicker than the horizontal
+    // ones.
     const scaleX = w / base;
     const scaleY = h / base;
     const common = {
@@ -50,7 +61,7 @@ export const ShapeRenderer: React.FC<Props> = React.memo(({ node, showLabel }) =
       y: h / 2,
       scaleX,
       scaleY,
-      fill,
+      ...polygonFill,
       stroke,
       strokeWidth: sw,
       strokeScaleEnabled: false,

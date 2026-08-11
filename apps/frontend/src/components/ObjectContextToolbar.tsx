@@ -9,6 +9,7 @@ import { deleteNodesWithFrames } from '../engine/interaction/frameMembership';
 import { editor } from '../engine/api/EditorAPI';
 import { nanoid } from 'nanoid';
 import { ColorPickerPopover } from './ui/ColorPickerPopover';
+import { FillEditor } from './ui/FillEditor';
 import { NumberStepper } from './ui/NumberStepper';
 import { SegmentedControl } from './ui/SegmentedControl';
 import { FontSelector } from './ui/FontSelector';
@@ -385,10 +386,14 @@ export const ObjectContextToolbar: React.FC<Props> = ({ selectedId, selectedIds,
           {/* Dynamic tools based on node type */}
           {(node.type === 'shape' || node.type === 'path') && (
             <div style={{ display: 'flex', alignItems: 'center', gap: '12px' }}>
-              <ColorPickerPopover
-                color={appearance.fill?.[0]?.color ?? '#000000'}
-                onChange={(color) => setAppearance({ fill: [{ type: 'solid', color, opacity: 1 }] })}
-                label="Fill"
+              {/* The same editor the Properties panel uses, not a colour-only
+                  shortcut. A fill control on the floating toolbar that can
+                  only make flat colours would quietly discard a gradient the
+                  moment anyone reached for the nearest swatch. */}
+              <span style={{ fontSize: '10px', textTransform: 'uppercase', fontWeight: 'bold', color: 'var(--text-secondary)' }}>Fill</span>
+              <FillEditor
+                paint={appearance.fill?.[0]}
+                onChange={(fill) => setAppearance({ fill: [fill] })}
               />
               {/* A freehand (Pencil) stroke is a filled outline blob with no
                   separate stroke render path — showing stroke controls for it

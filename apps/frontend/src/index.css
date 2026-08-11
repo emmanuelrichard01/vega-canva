@@ -2595,3 +2595,190 @@ textarea:focus-visible {
   font-variant-numeric: tabular-nums;
   color: var(--text-tertiary);
 }
+
+/* ---------------------------------------------------------------------------
+   FILL EDITOR
+
+   Five kinds of fill, and the stops that make four of them. Replaces a bare
+   colour swatch, which was the whole fill interface — and the reason every
+   shape on every board was a flat colour.
+
+   The gradient bar is the control rather than a preview: the stops sit on the
+   thing they describe, at the position they describe. A table of offsets would
+   be the same data and none of the information.
+   --------------------------------------------------------------------------- */
+
+/* The swatch shows the actual paint, gradient and all, so the panel row says
+   what the shape is filled with rather than approximating it with one colour.
+   The chequerboard underneath is what makes a semi-transparent fill legible as
+   transparent rather than as a paler colour. */
+.fill-swatch {
+  width: 24px;
+  height: 24px;
+  border-radius: 50%;
+  border: 1px solid var(--border-divider);
+  box-shadow: var(--shadow-sm);
+  cursor: pointer;
+  padding: 0;
+  overflow: hidden;
+  line-height: 0;
+  background-color: #fff;
+  background-image:
+    linear-gradient(45deg, #d4d4d8 25%, transparent 25%, transparent 75%, #d4d4d8 75%),
+    linear-gradient(45deg, #d4d4d8 25%, transparent 25%, transparent 75%, #d4d4d8 75%);
+  background-size: 8px 8px;
+  background-position: 0 0, 4px 4px;
+}
+
+.fill-swatch > span {
+  display: block;
+  width: 100%;
+  height: 100%;
+}
+
+.fill-editor {
+  position: absolute;
+  top: 100%;
+  right: 0;
+  margin-top: var(--space-2);
+  z-index: 60;
+  width: 232px;
+  padding: var(--space-3);
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-3);
+  border-radius: var(--radius-lg);
+  box-shadow: var(--shadow-overlay);
+}
+
+.fill-editor__types {
+  display: flex;
+  gap: var(--space-1);
+}
+
+/* Each option is drawn as the gradient it produces. A picker for a visual
+   property whose options are named in words is one you read instead of
+   recognise. */
+.fill-editor__type {
+  flex: 1;
+  padding: 2px;
+  border: 1.5px solid transparent;
+  border-radius: var(--radius-md);
+  background: transparent;
+  cursor: pointer;
+  line-height: 0;
+}
+
+.fill-editor__type span {
+  display: block;
+  width: 100%;
+  height: 22px;
+  border-radius: 3px;
+  border: 1px solid var(--border-divider);
+}
+
+.fill-editor__type:hover {
+  border-color: var(--border-strong);
+}
+
+.fill-editor__type.is-active {
+  border-color: var(--border-focus);
+}
+
+.fill-editor__row {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+}
+
+.fill-editor__label {
+  flex: 0 0 40px;
+  font-size: var(--text-sm);
+  color: var(--text-secondary);
+}
+
+.fill-editor__row input[type='range'] {
+  flex: 1 1 auto;
+  min-width: 0;
+  accent-color: var(--amber-500);
+}
+
+.fill-editor__value {
+  flex: 0 0 34px;
+  text-align: right;
+  font-family: var(--font-mono);
+  font-size: var(--text-2xs);
+  font-variant-numeric: tabular-nums;
+  color: var(--text-tertiary);
+}
+
+.fill-editor__color {
+  flex: 0 0 auto;
+  width: 26px;
+  height: 26px;
+  padding: 0;
+  border: 1px solid var(--border-divider);
+  border-radius: var(--radius-md);
+  background: transparent;
+  cursor: pointer;
+}
+
+.fill-editor__alpha {
+  flex: 1 1 auto;
+  min-width: 0;
+  accent-color: var(--amber-500);
+}
+
+/* Room below the bar for the handles, which hang off its bottom edge so they
+   never cover the colours they are positioned against. */
+.fill-editor__bar-wrap {
+  position: relative;
+  height: 34px;
+}
+
+.fill-editor__bar {
+  height: 20px;
+  border-radius: var(--radius-md);
+  border: 1px solid var(--border-divider);
+  cursor: pointer;
+}
+
+.fill-editor__stop {
+  position: absolute;
+  top: 14px;
+  width: 13px;
+  height: 13px;
+  margin-left: -6.5px;
+  padding: 0;
+  border-radius: 50%;
+  border: 2px solid var(--surface-primary);
+  box-shadow: 0 0 0 1px var(--border-strong);
+  cursor: grab;
+}
+
+.fill-editor__stop.is-active {
+  box-shadow: 0 0 0 2px var(--border-focus);
+}
+
+.fill-editor__stop:active {
+  cursor: grabbing;
+}
+
+/* A select in the Properties panel. Matches the export dialog's, which was
+   the only styled select in the app and had no reason to stay the only one. */
+.prop-select {
+  flex: 1 1 auto;
+  min-width: 0;
+  padding: 5px var(--space-2);
+  border: 1px solid var(--border-divider);
+  border-radius: var(--radius-md);
+  background: var(--surface-primary);
+  color: var(--text-primary);
+  font-family: inherit;
+  font-size: var(--text-sm);
+  cursor: pointer;
+}
+
+.prop-select:hover {
+  border-color: var(--border-strong);
+}

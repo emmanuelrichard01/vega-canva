@@ -1,0 +1,93 @@
+import React from 'react';
+import { Group, Rect, Text } from 'react-konva';
+import { EXPORT_CHROME } from '../../../engine/export/chrome';
+import { safeAreaBox } from '../../../engine/model/frames';
+import type { FrameNode } from '../../../engine/model/schema';
+import { useFillProps } from './useFillProps';
+
+interface Props {
+  node: FrameNode;
+  stageScale: number;
+}
+
+/**
+ * A frame: its background, its name, and its safe-area guide.
+ *
+ * Lifted out of `ObjectRenderer`'s switch when the background became a paint
+ * rather than a colour. A gradient fill is a hook, and a hook cannot live in a
+ * `case` — but the more honest reason is that this is now three things with
+ * three different rules about what exports and what does not, which is more
+ * than a switch arm should be carrying.
+ */
+export const FrameRenderer: React.FC<Props> = React.memo(({ node, stageScale }) => {
+  const fill = useFillProps(node.appearance, { x: 0, y: 0, width: node.width, height: node.height }, '#FFFFFF');
+
+  // The frame's own box, origin-anchored, so `safeAreaBox` hands back the
+  // guide in local coordinates and the clamping has one implementation.
+  const safe = safeAreaBox({ x: 0, y: 0, width: node.width, height: node.height, safeArea: node.safeArea });
+
+  return (
+    <Group>
+      <Rect
+        width={node.width}
+        height={node.height}
+        {...fill}
+        cornerRadius={node.appearance.cornerRadius ?? 0}
+        shadowColor="black"
+        shadowBlur={20}
+        shadowOpacity={0.05}
+        shadowOffsetY={10}
+      />
+
+      {/* The name holds a constant size on screen instead of scaling with the
+          board — at 10% zoom a world-space label is sub-pixel, which is
+          exactly when you most need to tell one frame from another. Dividing
+          by the stage scale is the same trick the selection ring uses.
+
+          It is how you find the frame, not part of what the frame contains, so
+          it carries the chrome name and never appears in an export. It sits
+          above the frame's own box and so outside the export bounds anyway —
+          but a frame nested inside another would put its label squarely inside
+          the outer one's.
+
+          A fixed grey rather than a token: Konva paints to a canvas and cannot
+          resolve a CSS custom property, so `var(--text-tertiary)` would simply
+          be an invalid colour. This mid grey holds up against both boards. */}
+      <Text
+        text={node.title ?? 'Frame'}
+        name={EXPORT_CHROME}
+        y={-18 / stageScale}
+        fontSize={12 / stageScale}
+        fill="#9CA3AF"
+        fontFamily="Inter, sans-serif"
+        perfectDrawEnabled={false}
+        listening={false}
+      />
+
+      {/* The safe area, for the sizes where part of the rectangle is covered by
+          something that is not yours: a story's reply bar, a grid thumbnail's
+          crop, the margin a desktop printer cannot reach. A guide only —
+          nothing clips or snaps to it, because a frame that promised a safe
+          area and then quietly moved things into it would be worse than no
+          guide at all. Chrome, and a hairline at every zoom. */}
+      {safe && (
+        <Rect
+          name={EXPORT_CHROME}
+          x={safe.x}
+          y={safe.y}
+          width={safe.width}
+          height={safe.height}
+          stroke="#38BDF8"
+          strokeWidth={1}
+          strokeScaleEnabled={false}
+          dash={[6, 5]}
+          opacity={0.55}
+          listening={false}
+          perfectDrawEnabled={false}
+        />
+      )}
+    </Group>
+  );
+});
+
+FrameRenderer.displayName = 'FrameRenderer';

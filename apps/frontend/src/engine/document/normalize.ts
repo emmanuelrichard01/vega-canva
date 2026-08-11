@@ -1,4 +1,5 @@
 import {
+  BLEND_MODES,
   DEFAULT_TYPOGRAPHY,
   MAX_STAR_POINTS,
   MAX_STAR_RATIO,
@@ -8,6 +9,7 @@ import {
   type Appearance,
   type Author,
   type FrameNode,
+  type GradientStop,
   type LineCap,
   type NodeType,
   type Paint,
@@ -98,21 +100,102 @@ const STICKY_THEMES: StickyTheme[] = [
   'dark',
 ];
 
+/** A unit-space point, defaulted, for gradient geometry. */
+function toUnitPoint(value: unknown, fallback: Point): Point {
+  const p = value as { x?: unknown; y?: unknown } | undefined;
+  if (!p || typeof p !== 'object') return fallback;
+  return { x: num(p.x, fallback.x), y: num(p.y, fallback.y) };
+}
+
+/**
+ * Gradient stops, or nothing.
+ *
+ * Offsets are clamped and colours are required. A stop with no colour is not a
+ * stop with a default colour — it is a stop nobody meant to write, and
+ * inventing one for it puts a band of some arbitrary hue into the middle of
+ * somebody's gradient. `sortedStops` supplies a usable pair when the list
+ * comes back empty, so dropping bad entries here is safe.
+ */
+function toStops(value: unknown): GradientStop[] | undefined {
+  if (!Array.isArray(value)) return undefined;
+  const stops = value
+    .map((entry): GradientStop | null => {
+      if (!entry || typeof entry !== 'object') return null;
+      const e = entry as Record<string, unknown>;
+      if (typeof e.color !== 'string' || !e.color) return null;
+      return {
+        offset: clamp(num(e.offset, 0), 0, 1),
+        color: e.color,
+        opacity: typeof e.opacity === 'number' ? clamp(e.opacity, 0, 1) : undefined,
+      };
+    })
+    .filter((s): s is GradientStop => s !== null);
+  return stops.length ? stops : undefined;
+}
+
+/**
+ * One paint, of whichever kind it declares.
+ *
+ * An unrecognised `type` falls through to solid rather than being dropped.
+ * A document written by a newer client with a paint kind this one has never
+ * heard of should render the shape in *some* colour — a missing fill reads as
+ * a deleted object, and this is a CRDT: the two clients are looking at the
+ * same board at the same time.
+ */
+function toPaint(entry: unknown): Paint | null {
+  if (typeof entry === 'string') return entry ? { type: 'solid', color: entry } : null;
+  if (!entry || typeof entry !== 'object') return null;
+
+  const e = entry as Record<string, any>;
+  const opacity = typeof e.opacity === 'number' ? clamp(e.opacity, 0, 1) : undefined;
+  const stops = toStops(e.stops);
+
+  if (stops) {
+    switch (e.type) {
+      case 'linear':
+        return {
+          type: 'linear',
+          stops,
+          opacity,
+          from: toUnitPoint(e.from, { x: 0.5, y: 0 }),
+          to: toUnitPoint(e.to, { x: 0.5, y: 1 }),
+        };
+      case 'radial':
+        return {
+          type: 'radial',
+          stops,
+          opacity,
+          center: toUnitPoint(e.center, { x: 0.5, y: 0.5 }),
+          radius: Math.max(0, num(e.radius, 0.5)),
+        };
+      case 'conic':
+        return {
+          type: 'conic',
+          stops,
+          opacity,
+          center: toUnitPoint(e.center, { x: 0.5, y: 0.5 }),
+          angle: num(e.angle, 0),
+        };
+      case 'diamond':
+        return {
+          type: 'diamond',
+          stops,
+          opacity,
+          center: toUnitPoint(e.center, { x: 0.5, y: 0.5 }),
+          radius: Math.max(0, num(e.radius, 0.5)),
+        };
+    }
+    // Stops but no kind we know: the first stop is the colour it most nearly is.
+    return { type: 'solid', color: stops[0].color, opacity };
+  }
+
+  if (typeof e.color === 'string') return { type: 'solid', color: e.color, opacity };
+  return null;
+}
+
 function toPaintArray(value: unknown, legacyColor: unknown): Paint[] | undefined {
   if (Array.isArray(value)) {
-    const paints = value
-      .map((entry): Paint | null => {
-        if (typeof entry === 'string') return { type: 'solid', color: entry };
-        if (entry && typeof entry === 'object' && typeof (entry as any).color === 'string') {
-          return {
-            type: 'solid',
-            color: (entry as any).color,
-            opacity: typeof (entry as any).opacity === 'number' ? (entry as any).opacity : undefined,
-          };
-        }
-        return null;
-      })
-      .filter((p): p is Paint => p !== null);
+    const paints = value.map(toPaint).filter((p): p is Paint => p !== null);
     if (paints.length) return paints;
   }
   // Pre-v2 shapes stored a bare hex string in `content.fill`.
@@ -192,6 +275,17 @@ function normalizeAppearance(raw: any): Appearance {
   if (typeof radius === 'number' && Number.isFinite(radius)) {
     appearance.cornerRadius = Math.max(0, radius);
   }
+
+  // `normal` is stored as absent, so the common case costs no bytes and
+  // "has a blend mode" stays a question about presence rather than value.
+  if (BLEND_MODES.includes(source.blendMode) && source.blendMode !== 'normal') {
+    appearance.blendMode = source.blendMode;
+  }
+
+  // Zero is absent for the same reason, and a negative radius is one Konva's
+  // blur filter reads as a very large positive one.
+  const blur = num(source.blur, 0);
+  if (blur > 0) appearance.blur = blur;
 
   return appearance;
 }
