@@ -3,7 +3,7 @@ import { updateNode, provider } from '../engine/document';
 import { deleteNodesWithFrames } from '../engine/interaction/frameMembership';
 import { useStore } from '../hooks/useStore';
 import { editor } from '../engine/api/EditorAPI';
-import { Type, Square, Image as ImageIcon, StickyNote, Mic, LayoutTemplate, MessageSquare, PenTool, Lock, Unlock, Copy, Trash2, Eye, EyeOff, Layers, FolderOpen, Ungroup } from 'lucide-react';
+import { Type, Square, Image as ImageIcon, StickyNote, Mic, LayoutTemplate, MessageSquare, PenTool, Lock, Unlock, Copy, Trash2, Eye, EyeOff, Layers, FolderOpen, Ungroup, Frame as FrameIcon, ChevronRight, ChevronDown } from 'lucide-react';
 import { nanoid } from 'nanoid';
 import { type AnyNode } from '../engine/model/schema';
 import { nodeLabel } from '../engine/model/nodeLabel';
@@ -50,6 +50,10 @@ export const LayersPanel: React.FC<LayersPanelProps> = ({ selectedIds, overrideO
   const [dragOverId, setDragOverId] = useState<string | null>(null);
   const [editingTitleId, setEditingTitleId] = useState<string | null>(null);
   const [titleInput, setTitleInput] = useState('');
+  // Which frames are folded shut. A way of looking, not a fact about the
+  // document — collapsing a frame to get it out of your way must not fold it
+  // for everyone else in the room, so this never goes near the CRDT.
+  const [collapsedFrames, setCollapsedFrames] = useState<Set<string>>(() => new Set());
   // Shift-range-select anchor — the last item clicked without a modifier key.
   const lastClickedRef = useRef<string | null>(null);
 
@@ -92,6 +96,7 @@ export const LayersPanel: React.FC<LayersPanelProps> = ({ selectedIds, overrideO
       case 'sticky': return <StickyNote size={14} color={c} />;
       case 'audio': return <Mic size={14} color={c} />;
       case 'artboard': return <LayoutTemplate size={14} color={c} />;
+      case 'frame': return <FrameIcon size={14} color={c} />;
       case 'comment': return <MessageSquare size={14} color={c} />;
       default: return <Square size={14} color={c} />;
     }
@@ -178,6 +183,102 @@ export const LayersPanel: React.FC<LayersPanelProps> = ({ selectedIds, overrideO
     setSelectedIds?.(newIds);
   };
 
+  // Objects sharing a parentId render as one indented cluster under a group
+  // header, and a frame's contents render indented under the frame itself. The
+  // tree is flattened into a single list of uniform-height rows (frames, group
+  // headers and object rows alike) so the list can be virtualized — rendering a
+  // DOM row per object measured at 27ms per document change with 500 objects on
+  // canvas, against 3ms with the panel unmounted, making this panel roughly 88%
+  // of the cost of moving a single object.
+  type FlatRow =
+    | { kind: 'object'; obj: AnyNode; indent: number }
+    | { kind: 'frame'; obj: AnyNode; indent: number; childCount: number }
+    | { kind: 'group'; groupId: string; members: AnyNode[]; indent: number };
+
+  /**
+   * Indent per level of frame nesting, in px.
+   *
+   * Smaller than the group cluster's 20 because frames nest and groups do not:
+   * three levels deep at 20px leaves no room for a name in a 260px panel.
+   */
+  const FRAME_INDENT = 16;
+
+  const flatRows: FlatRow[] = React.useMemo(() => {
+    // Children keyed by owning frame. A `frameId` pointing at something that is
+    // no longer a frame — deleted, or merged away by a concurrent edit — is
+    // treated as no owner at all, so the object stays visible at the top level
+    // rather than disappearing from the panel while sitting on the canvas.
+    const childrenOf = new Map<string, AnyNode[]>();
+    const roots: AnyNode[] = [];
+    sortedObjects.forEach((obj: any) => {
+      const owner = obj.frameId && objects[obj.frameId]?.type === 'frame' ? obj.frameId : null;
+      if (!owner || owner === obj.id) {
+        roots.push(obj);
+        return;
+      }
+      const siblings = childrenOf.get(owner);
+      if (siblings) siblings.push(obj);
+      else childrenOf.set(owner, [obj]);
+    });
+
+    const rows: FlatRow[] = [];
+    // `frameForNode` cannot produce a cycle, but a hand-edited or concurrently
+    // merged document is not bound by that, and a cycle here would hang the tab
+    // rather than mis-indent a rectangle.
+    const openFrames = new Set<string>();
+
+    const emit = (list: AnyNode[], indent: number) => {
+      const seenGroups = new Set<string>();
+      list.forEach((obj: any) => {
+        if (obj.parentId) {
+          if (seenGroups.has(obj.parentId)) return;
+          seenGroups.add(obj.parentId);
+          const members = list.filter((o: any) => o.parentId === obj.parentId);
+          rows.push({ kind: 'group', groupId: obj.parentId, members, indent });
+          members.forEach((m) => rows.push({ kind: 'object', obj: m, indent: indent + 20 }));
+          return;
+        }
+
+        if (obj.type === 'frame' && !openFrames.has(obj.id)) {
+          const children = childrenOf.get(obj.id) ?? [];
+          rows.push({ kind: 'frame', obj, indent, childCount: children.length });
+          if (children.length > 0 && !collapsedFrames.has(obj.id)) {
+            openFrames.add(obj.id);
+            emit(children, indent + FRAME_INDENT);
+            openFrames.delete(obj.id);
+          }
+          return;
+        }
+
+        rows.push({ kind: 'object', obj, indent });
+      });
+    };
+
+    emit(roots, 0);
+    return rows;
+  }, [sortedObjects, objects, collapsedFrames]);
+
+  /**
+   * The object rows in the order they are *shown*.
+   *
+   * Shift-range has to follow the list you can see. Ranging over the flat
+   * z-order instead would, once frames nest, select objects between two rows
+   * that are nowhere near each other on screen.
+   */
+  const visibleObjectIds = React.useMemo(
+    () => flatRows.filter((r) => r.kind !== 'group').map((r) => (r as { obj: AnyNode }).obj.id),
+    [flatRows]
+  );
+
+  const toggleFrameCollapsed = (id: string) => {
+    setCollapsedFrames((prev) => {
+      const next = new Set(prev);
+      if (next.has(id)) next.delete(id);
+      else next.add(id);
+      return next;
+    });
+  };
+
   const handleRowClick = (e: React.MouseEvent, id: string) => {
     if (!setSelectedIds) {
       setSelectedId(id);
@@ -185,7 +286,7 @@ export const LayersPanel: React.FC<LayersPanelProps> = ({ selectedIds, overrideO
     }
 
     if (e.shiftKey && lastClickedRef.current) {
-      const ids = sortedObjects.map(o => o.id);
+      const ids = visibleObjectIds;
       const anchorIdx = ids.indexOf(lastClickedRef.current);
       const targetIdx = ids.indexOf(id);
       if (anchorIdx !== -1 && targetIdx !== -1) {
@@ -230,37 +331,10 @@ export const LayersPanel: React.FC<LayersPanelProps> = ({ selectedIds, overrideO
     editor.ungroupNodes(memberIds);
   };
 
-  // Objects sharing a parentId render as one indented cluster under a group
-  // header. The tree is flattened into a single list of uniform-height rows
-  // (group headers and object rows alike) so the list can be virtualized —
-  // rendering a DOM row per object measured at 27ms per document change with
-  // 500 objects on canvas, against 3ms with the panel unmounted, making this
-  // panel roughly 88% of the cost of moving a single object.
-  type FlatRow =
-    | { kind: 'object'; obj: AnyNode; indent: number }
-    | { kind: 'group'; groupId: string; members: AnyNode[] };
-
-  const flatRows: FlatRow[] = React.useMemo(() => {
-    const rows: FlatRow[] = [];
-    const seenGroups = new Set<string>();
-    sortedObjects.forEach((obj) => {
-      if (obj.parentId) {
-        if (seenGroups.has(obj.parentId)) return;
-        seenGroups.add(obj.parentId);
-        const members = sortedObjects.filter((o) => o.parentId === obj.parentId);
-        rows.push({ kind: 'group', groupId: obj.parentId, members });
-        members.forEach((m) => rows.push({ kind: 'object', obj: m, indent: 20 }));
-      } else {
-        rows.push({ kind: 'object', obj, indent: 0 });
-      }
-    });
-    return rows;
-  }, [sortedObjects]);
-
   const { containerRef, window: vwindow } = useVirtualRows(flatRows.length, ROW_HEIGHT);
   const visibleRows = flatRows.slice(vwindow.start, vwindow.end);
 
-  const renderRow = (obj: any, indent: number) => {
+  const renderRow = (obj: any, indent: number, disclosure?: React.ReactNode) => {
     const activeEditor = activeEditorsMap.get(obj.id);
     const isEditingThisTitle = editingTitleId === obj.id;
     const isSelected = selectedIds.includes(obj.id);
@@ -293,6 +367,10 @@ export const LayersPanel: React.FC<LayersPanelProps> = ({ selectedIds, overrideO
           opacity: obj.hidden ? 0.4 : (draggedId === obj.id ? 0.5 : 1)
         }}
       >
+        {/* Every row reserves the twisty slot, whether or not it has one, so a
+            frame's icon sits on the same vertical line as its siblings' rather
+            than shunted right by the width of a chevron. */}
+        {disclosure ?? <span style={{ width: 14, flexShrink: 0 }} aria-hidden />}
         {getIcon(obj.type, isSelected)}
 
         {isEditingThisTitle ? (
@@ -445,6 +523,32 @@ export const LayersPanel: React.FC<LayersPanelProps> = ({ selectedIds, overrideO
               {visibleRows.map((item) => {
                 if (item.kind === 'object') return renderRow(item.obj, item.indent);
 
+                if (item.kind === 'frame') {
+                  const collapsed = collapsedFrames.has(item.obj.id);
+                  return renderRow(
+                    item.obj,
+                    item.indent,
+                    <button
+                      type="button"
+                      onClick={(e) => { e.stopPropagation(); toggleFrameCollapsed(item.obj.id); }}
+                      // An empty frame has nothing to fold, so its twisty is a
+                      // dead control — present for alignment, invisible and
+                      // unreachable by keyboard.
+                      disabled={item.childCount === 0}
+                      aria-expanded={item.childCount === 0 ? undefined : !collapsed}
+                      aria-label={collapsed ? `Expand ${getName(item.obj)}` : `Collapse ${getName(item.obj)}`}
+                      style={{
+                        background: 'transparent', border: 'none', padding: 0, display: 'flex',
+                        color: 'inherit', width: 14, flexShrink: 0,
+                        cursor: item.childCount === 0 ? 'default' : 'pointer',
+                        visibility: item.childCount === 0 ? 'hidden' : 'visible',
+                      }}
+                    >
+                      {collapsed ? <ChevronRight size={14} /> : <ChevronDown size={14} />}
+                    </button>
+                  );
+                }
+
                 const memberIds = item.members.map((m) => m.id);
                 const groupSelected = memberIds.length > 0 && memberIds.every((id) => selectedIds.includes(id));
                 const groupHovered = hoveredId === `group:${item.groupId}`;
@@ -459,6 +563,7 @@ export const LayersPanel: React.FC<LayersPanelProps> = ({ selectedIds, overrideO
                     onMouseLeave={() => setHoveredId(null)}
                     style={{
                       display: 'flex', alignItems: 'center', gap: '8px', padding: '0 12px',
+                      paddingLeft: `${12 + item.indent}px`,
                       height: ROW_HEIGHT - ROW_GAP,
                       marginBottom: ROW_GAP,
                       boxSizing: 'border-box',
@@ -468,6 +573,7 @@ export const LayersPanel: React.FC<LayersPanelProps> = ({ selectedIds, overrideO
                       transition: 'background 0.2s',
                     }}
                   >
+                    <span style={{ width: 14, flexShrink: 0 }} aria-hidden />
                     <FolderOpen size={14} />
                     <span style={{ flex: 1 }}>Group ({item.members.length})</span>
                     <button
