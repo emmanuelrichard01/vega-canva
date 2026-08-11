@@ -12,6 +12,7 @@ import {
   toKonvaValues,
   type AdjustmentId,
 } from '../../../engine/model/imageAdjustments';
+import { shadowProps } from './shared';
 
 interface Props {
   node: ImageNode;
@@ -153,6 +154,7 @@ export const ImageRenderer: React.FC<Props> = React.memo(({ node }) => {
     <KonvaImage
       ref={shapeRef}
       image={image}
+      {...shadowProps(node.appearance)}
       width={node.width}
       height={node.height}
       // Konva clips natively to the corner radius; nothing read this before,

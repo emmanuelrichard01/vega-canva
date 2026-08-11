@@ -1,7 +1,7 @@
 import React from 'react';
 import { Text } from 'react-konva';
 import type { TextNode } from '../../../engine/model/schema';
-import { konvaFontStyle, konvaTextDecoration } from './shared';
+import { konvaFontStyle, konvaTextDecoration, shadowProps } from './shared';
 
 interface Props {
   node: TextNode;
@@ -13,8 +13,12 @@ export const TextRenderer: React.FC<Props> = React.memo(({ node, visible }) => {
   if (!visible) return null;
 
   return (
+    // No spread: growing a glyph's silhouette by stroking it would fatten the
+    // letterforms rather than the shadow, so `supportsShadowSpread` is false
+    // for text.
     <Text
       text={node.text}
+      {...shadowProps(node.appearance)}
       width={node.width}
       fontSize={node.typography.fontSize}
       fontFamily={node.typography.fontFamily}

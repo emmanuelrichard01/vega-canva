@@ -125,7 +125,34 @@ export type Stroke = {
    */
   cap?: LineCap;
 };
-export type Shadow = { color: string; blur: number; offsetX: number; offsetY: number };
+/**
+ * A drop shadow.
+ *
+ * This existed on `Appearance` from the first commit, the normalizer read and
+ * wrote it, and five object types declared `supportsShadow: true` — while no
+ * renderer ever looked at it. Every shadow visible on the canvas was a
+ * hardcoded constant on the frame, the sticky and the comment pin. It is now
+ * real.
+ *
+ * `spread` is the piece Konva has no equivalent for: it grows the shadow's
+ * silhouette before the blur, which is what makes a shadow read as a shape
+ * sitting above the page rather than as a smudge behind it.
+ *
+ * Deliberately one shadow rather than a list. Several at once is a genuinely
+ * useful thing that Figma offers, but it needs an effects *list* in the panel
+ * and one draw pass per shadow — Konva paints one shadow per shape — and that
+ * is a larger change than making the field work at all.
+ */
+export type Shadow = {
+  color: string;
+  blur: number;
+  offsetX: number;
+  offsetY: number;
+  /** Outset of the shadow's silhouette, in world units, before the blur. */
+  spread?: number;
+  /** 0..1, applied on top of any alpha in `color`. Absent is fully opaque. */
+  opacity?: number;
+};
 export type Point = { x: number; y: number };
 
 export interface Appearance {
@@ -334,6 +361,17 @@ export interface TextNode extends BaseNode {
   typography: Typography;
   /** Height tracks the content rather than being set explicitly. */
   autoHeight: boolean;
+  /**
+   * Paint that is not the glyph colour: shadow, blend mode, layer blur.
+   *
+   * Text was the one type declaring `supportsShadow` with nowhere to put a
+   * shadow — it had no `appearance` at all — so the capability was a promise
+   * the schema could not keep. The letterforms' own colour stays in
+   * `typography.color`, where the text tools already look for it; `appearance`
+   * here is the same block every other visible type carries, so blend mode and
+   * layer blur reach a text node for free.
+   */
+  appearance?: Appearance;
 }
 
 export interface ShapeNode extends BaseNode {

@@ -9,6 +9,16 @@ export interface ObjectCapabilities {
   supportsRadius?: boolean;
   supportsOpacity?: boolean;
   supportsShadow?: boolean;
+  /**
+   * Whether a shadow on this type can have spread.
+   *
+   * Separate from `supportsShadow` because it is drawn differently: the
+   * silhouette is grown by stroking the same path, which works for a closed
+   * primitive and not for a pen path (already stroked) or a freehand blob
+   * (already an outline), where a second stroke would change the shape rather
+   * than the shadow.
+   */
+  supportsShadowSpread?: boolean;
   supportsReactions?: boolean;
   supportsComments?: boolean;
 }

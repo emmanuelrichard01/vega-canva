@@ -264,9 +264,14 @@ function normalizeAppearance(raw: any): Appearance {
   if (source.shadow && typeof source.shadow === 'object') {
     appearance.shadow = {
       color: str(source.shadow.color, 'rgba(0,0,0,0.2)'),
-      blur: num(source.shadow.blur, 8),
+      // A negative blur or spread is not a smaller shadow; Konva reads the
+      // first as a very large positive one and the second inverts the stroke
+      // that draws it.
+      blur: Math.max(0, num(source.shadow.blur, 8)),
       offsetX: num(source.shadow.offsetX, 0),
       offsetY: num(source.shadow.offsetY, 2),
+      spread: Math.max(0, num(source.shadow.spread, 0)),
+      opacity: clamp(num(source.shadow.opacity, 1), 0, 1),
     };
   }
 
@@ -530,6 +535,7 @@ export function normalizeNode(raw: any, id?: string): AnyNode {
         text: normalizeText(raw),
         typography: normalizeTypography(raw),
         autoHeight: bool(raw?.autoHeight, true),
+        appearance: normalizeAppearance(raw),
       };
 
     case 'shape': {

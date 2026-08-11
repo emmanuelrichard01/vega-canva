@@ -1,7 +1,7 @@
 import React from 'react';
 import { Ellipse, Group, Rect, RegularPolygon, Star, Text } from 'react-konva';
 import type { ShapeNode } from '../../../engine/model/schema';
-import { konvaFontStyle, konvaTextDecoration, strokeColor, strokeDashProps, strokeWidth } from './shared';
+import { konvaFontStyle, konvaTextDecoration, shadowProps, shadowSpreadProps, strokeColor, strokeDashProps, strokeWidth } from './shared';
 import { useFillProps } from './useFillProps';
 
 interface Props {
@@ -40,14 +40,19 @@ export const ShapeRenderer: React.FC<Props> = React.memo(({ node, showLabel }) =
   // Dash pattern and the cap that goes with it. Spread rather than passed as
   // two props, because a dotted pattern draws nothing without its round cap.
   const dashProps = strokeDashProps(node.appearance);
+  // The shadow rides on the shape itself unless it has spread, which Konva has
+  // no property for — then it rides on a copy drawn behind, and the shape
+  // itself casts none.
+  const spread = shadowSpreadProps(node.appearance);
+  const shadow = spread ? {} : shadowProps(node.appearance);
 
-  let shape: React.ReactNode;
+  let shape: React.ReactElement;
 
   if (node.geometry.kind === 'rect') {
-    shape = <Rect width={w} height={h} {...rectFill} stroke={stroke} strokeWidth={sw} {...dashProps} cornerRadius={Math.max(0, radius)} />;
+    shape = <Rect width={w} height={h} {...rectFill} {...shadow} stroke={stroke} strokeWidth={sw} {...dashProps} cornerRadius={Math.max(0, radius)} />;
   } else if (node.geometry.kind === 'ellipse') {
     // Independent radii, so a non-square ellipse stays elliptical.
-    shape = <Ellipse x={w / 2} y={h / 2} radiusX={w / 2} radiusY={h / 2} {...ellipseFill} stroke={stroke} strokeWidth={sw} {...dashProps} />;
+    shape = <Ellipse x={w / 2} y={h / 2} radiusX={w / 2} radiusY={h / 2} {...ellipseFill} {...shadow} stroke={stroke} strokeWidth={sw} {...dashProps} />;
   } else {
     // Build on the smaller dimension and stretch the node itself to fill the
     // w x h box. `strokeScaleEnabled={false}` keeps the outline an even weight
@@ -62,6 +67,7 @@ export const ShapeRenderer: React.FC<Props> = React.memo(({ node, showLabel }) =
       scaleX,
       scaleY,
       ...polygonFill,
+      ...shadow,
       stroke,
       strokeWidth: sw,
       strokeScaleEnabled: false,
@@ -83,6 +89,13 @@ export const ShapeRenderer: React.FC<Props> = React.memo(({ node, showLabel }) =
 
   return (
     <Group>
+      {/* Spread is the shadow cast by a *grown* silhouette, so it is the same
+          shape drawn once more underneath with a `2 * spread` stroke, in the
+          shadow's colour, carrying the shadow props. Cloning rather than
+          rebuilding keeps the two silhouettes identical by construction —
+          a second hand-written copy is a second place for the star's point
+          count to be forgotten. */}
+      {spread && React.cloneElement(shape, spread)}
       {shape}
       {showLabel && node.text && node.typography && (
         <Text

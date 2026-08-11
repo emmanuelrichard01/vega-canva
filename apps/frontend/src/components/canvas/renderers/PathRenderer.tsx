@@ -1,7 +1,7 @@
 import React from 'react';
 import { Path } from 'react-konva';
 import type { PathNode } from '../../../engine/model/schema';
-import { strokeColor, strokeDashProps, strokeWidth } from './shared';
+import { shadowProps, strokeColor, strokeDashProps, strokeWidth } from './shared';
 import { useFillProps } from './useFillProps';
 
 interface Props {
@@ -34,6 +34,11 @@ export const PathRenderer: React.FC<Props> = React.memo(({ node }) => {
   // path take the same fill, and a conditional hook is not a thing React
   // permits even when the condition never changes for a given node.
   const pathFill = useFillProps(node.appearance, { x: 0, y: 0, width: node.width, height: node.height }, '#1F2937');
+  // No spread here: the grown-silhouette trick strokes the path, and a
+  // freehand blob is already a filled outline while a pen path is already
+  // stroked — in both cases a second stroke changes the shape rather than the
+  // shadow. `supportsShadowSpread` is therefore false for paths.
+  const shadow = shadowProps(node.appearance);
 
   if (node.geometry.kind === 'freehand') {
     // perfect-freehand produces a filled outline polygon, not a stroked line,
@@ -45,6 +50,7 @@ export const PathRenderer: React.FC<Props> = React.memo(({ node }) => {
       <Path
         data={node.geometry.svgPath}
         {...pathFill}
+        {...shadow}
         hitStrokeWidth={Math.max(20, node.geometry.strokeSize)}
       />
     );
@@ -57,6 +63,7 @@ export const PathRenderer: React.FC<Props> = React.memo(({ node }) => {
     <Path
       data={segmentsToPathData(node)}
       {...pathFill}
+      {...shadow}
       stroke={stroke}
       strokeWidth={sw}
       {...strokeDashProps(node.appearance, 'round')}

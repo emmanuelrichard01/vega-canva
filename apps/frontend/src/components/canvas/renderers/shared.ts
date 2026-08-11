@@ -70,6 +70,73 @@ export function strokeDashProps(
   };
 }
 
+/**
+ * The Konva shadow props for a node, spread onto the shape that casts it.
+ *
+ * `Appearance.shadow` was on the schema from the first commit, read and
+ * written by the normalizer, and declared as a capability by five object
+ * types — and no renderer ever looked at it. Every shadow on the canvas was a
+ * hardcoded constant. This is the translation that was missing.
+ *
+ * Returns nothing at all when there is no shadow. Konva treats
+ * `shadowBlur: 0` as a shadow it still has to consider on every draw, and a
+ * board is mostly objects with no shadow.
+ *
+ * `spread` is absent from this object on purpose: Konva has no equivalent, and
+ * growing the silhouette needs a second draw of the shape. See
+ * `shadowSpreadProps`.
+ */
+export function shadowProps(appearance: Appearance | undefined): Record<string, unknown> {
+  const shadow = appearance?.shadow;
+  if (!shadow) return {};
+  return {
+    shadowColor: shadow.color,
+    shadowBlur: Math.max(0, shadow.blur),
+    shadowOffsetX: shadow.offsetX,
+    shadowOffsetY: shadow.offsetY,
+    shadowOpacity: shadow.opacity ?? 1,
+    // The shadow must not scale with a non-uniformly stretched polygon, for
+    // the same reason its stroke must not: a widened hexagon would cast a
+    // shadow blurred further horizontally than vertically.
+    shadowForStrokeEnabled: false,
+  };
+}
+
+/**
+ * Props for the shadow-only copy of a shape drawn behind it, or null.
+ *
+ * Spread grows the shadow's silhouette before the blur, and Konva has no such
+ * property. Stroking the same path with a line of `2 * spread` expands its
+ * silhouette by exactly `spread` in every direction, whatever the path is —
+ * which is why this works for a star and a bezier as well as a rectangle, and
+ * why it is one prop rather than per-shape geometry.
+ *
+ * The copy carries the shadow and the real shape carries none, so the shadow
+ * is cast by the grown silhouette rather than by the shape itself.
+ */
+export function shadowSpreadProps(appearance: Appearance | undefined): Record<string, unknown> | null {
+  const shadow = appearance?.shadow;
+  if (!shadow || !shadow.spread || shadow.spread <= 0) return null;
+  return {
+    ...shadowProps(appearance),
+    // The silhouette is all that matters — it is about to be blurred and
+    // offset, and only its shape contributes. Painting it in the shadow's own
+    // colour means the ring left visible at zero offset, which is what spread
+    // looks like in CSS too, is the right colour.
+    fill: shadow.color,
+    fillPriority: 'color',
+    stroke: shadow.color,
+    strokeWidth: shadow.spread * 2,
+    strokeScaleEnabled: false,
+    dash: undefined,
+    listening: false,
+    perfectDrawEnabled: false,
+    // Konva skips a stroke's shadow by default, and here the stroke *is* the
+    // silhouette being cast.
+    shadowForStrokeEnabled: true,
+  };
+}
+
 /** CSS font shorthand pieces for the DOM textareas used during editing. */
 export function domTextStyle(typography: Typography): React.CSSProperties {
   return {

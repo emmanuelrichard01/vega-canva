@@ -19,6 +19,10 @@ objectRegistry.register({
     supportsRadius: true,
     supportsOpacity: true,
     supportsShadow: true,
+    // Spread is drawn by stroking the same path with a `2 * spread` line, so
+    // it needs a shape whose silhouette a stroke can grow. See
+    // `shadowSpreadProps`.
+    supportsShadowSpread: true,
     // Shapes carry an optional centered text label (double-click to edit).
     supportsTypography: true,
   },
@@ -56,7 +60,11 @@ objectRegistry.register({
     // color are offered through the dedicated Sticky accordion instead,
     // which does reach the renderer.
     supportsOpacity: true,
-    supportsShadow: true,
+    // Deliberately NOT supportsShadow either, for the same reason.
+    // `StickyRenderer` draws its own — the soft lift that makes a note read as
+    // paper on a board is part of what a sticky *is* — and a second,
+    // user-controlled shadow on top would sit beside it rather than replace
+    // it. A control whose result is two shadows is worse than no control.
     supportsReactions: true,
     supportsComments: true,
   },

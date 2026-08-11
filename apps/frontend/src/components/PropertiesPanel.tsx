@@ -18,6 +18,7 @@ import {
   type Appearance,
   type BlendMode,
   type ShapeGeometry,
+  type Shadow,
   type Stroke,
   type TextAlign,
   type Typography,
@@ -163,6 +164,22 @@ const BLEND_LABELS: Record<BlendMode, string> = {
   luminosity: 'Luminosity',
 };
 
+/**
+ * The shadow a shape gets when you first switch one on.
+ *
+ * Visible immediately and not overpowering. A default of all zeroes would put
+ * a control on screen that appears to do nothing until three more are moved,
+ * which reads as the feature being broken.
+ */
+const DEFAULT_SHADOW: Shadow = {
+  color: '#000000',
+  blur: 12,
+  offsetX: 0,
+  offsetY: 4,
+  spread: 0,
+  opacity: 0.25,
+};
+
 /** The four safe-area edges, in the order a CSS inset is written. */
 const SAFE_EDGES = [
   { key: 'top', label: 'T' },
@@ -171,8 +188,20 @@ const SAFE_EDGES = [
   { key: 'left', label: 'L' },
 ] as const;
 
+/**
+ * Types that carry an `appearance` block.
+ *
+ * A list rather than `'appearance' in node`, which asks whether the key is
+ * *present* — and on a type where the field is optional it is absent until
+ * something writes it. Text is exactly that case, so the key check meant a
+ * text node could never be given its first shadow: the Appearance section
+ * would not render until the value it sets already existed.
+ */
+const APPEARANCE_TYPES = new Set(['shape', 'path', 'image', 'frame', 'text']);
+
 function appearanceOf(node: AnyNode): Appearance | null {
-  return 'appearance' in node ? (node.appearance ?? {}) : null;
+  if (!APPEARANCE_TYPES.has(node.type)) return null;
+  return (node as { appearance?: Appearance }).appearance ?? {};
 }
 
 export const PropertiesPanel: React.FC<PropertiesPanelProps> = ({ selectedId, overrideObjects }) => {
@@ -237,6 +266,18 @@ export const PropertiesPanel: React.FC<PropertiesPanelProps> = ({ selectedId, ov
    * numbers, and clearing the last edge removes the guide rather than leaving
    * a collapsed rectangle behind.
    */
+  /**
+   * Patch the shadow, keeping the rest of it.
+   *
+   * `updateNode` replaces the whole `appearance.shadow` value, so a patch that
+   * omitted `blur` would erase it — the same trap `setAppearance` and
+   * `setGeometry` document.
+   */
+  const setShadow = (patch: Partial<Shadow>) => {
+    const current = appearance?.shadow ?? DEFAULT_SHADOW;
+    setAppearance({ shadow: { ...current, ...patch } });
+  };
+
   const setSafeArea = (edge: 'top' | 'right' | 'bottom' | 'left', value: number) => {
     if (node.type !== 'frame') return;
     const current = node.safeArea ?? { top: 0, right: 0, bottom: 0, left: 0 };
@@ -516,6 +557,77 @@ export const PropertiesPanel: React.FC<PropertiesPanelProps> = ({ selectedId, ov
           <p style={{ margin: '8px 0 0', fontSize: 'var(--text-xs)', color: 'var(--text-tertiary)', lineHeight: 1.4 }}>
             A guide only. Nothing is clipped or moved, and it never appears in an export.
           </p>
+        </Accordion>
+      )}
+
+      {/* Shadow. `Appearance.shadow` was on the schema from the first commit,
+          read and written by the normalizer, declared as a capability by five
+          types — and rendered by nothing. There has never been a control for
+          it either, which is presumably how it stayed invisible for so long. */}
+      {capabilities.supportsShadow && appearance && (
+        <Accordion title="Shadow" defaultOpen={Boolean(appearance.shadow)}>
+          <Row label="Enabled">
+            <input
+              type="checkbox"
+              checked={Boolean(appearance.shadow)}
+              onChange={(e) =>
+                setAppearance({ shadow: e.target.checked ? { ...DEFAULT_SHADOW } : undefined })
+              }
+              aria-label="Drop shadow"
+            />
+          </Row>
+          {appearance.shadow && (
+            <>
+              <Row label="Color">
+                <ColorPickerPopover
+                  color={appearance.shadow.color}
+                  onChange={(color) => setShadow({ color })}
+                />
+              </Row>
+              <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '8px' }}>
+                <NumberStepper
+                  value={Math.round(appearance.shadow.offsetX)}
+                  onChange={(v) => setShadow({ offsetX: v })}
+                  label="X"
+                />
+                <NumberStepper
+                  value={Math.round(appearance.shadow.offsetY)}
+                  onChange={(v) => setShadow({ offsetY: v })}
+                  label="Y"
+                />
+              </div>
+              <Row label="Blur">
+                <NumberStepper
+                  value={Math.round(appearance.shadow.blur)}
+                  onChange={(v) => setShadow({ blur: v })}
+                  min={0}
+                  max={200}
+                />
+              </Row>
+              {/* Spread grows the shadow's silhouette by stroking the same
+                  path, which needs a shape a stroke can grow — not a pen path
+                  that is already stroked, nor glyphs a stroke would fatten. */}
+              {capabilities.supportsShadowSpread && (
+                <Row label="Spread">
+                  <NumberStepper
+                    value={Math.round(appearance.shadow.spread ?? 0)}
+                    onChange={(v) => setShadow({ spread: v })}
+                    min={0}
+                    max={100}
+                  />
+                </Row>
+              )}
+              <Row label="Opacity">
+                <NumberStepper
+                  value={Math.round((appearance.shadow.opacity ?? 1) * 100)}
+                  onChange={(v) => setShadow({ opacity: v / 100 })}
+                  min={0}
+                  max={100}
+                  step={10}
+                />
+              </Row>
+            </>
+          )}
         </Accordion>
       )}
 
