@@ -1,4 +1,5 @@
 import { objectRegistry } from './registry';
+import { DEFAULT_FRAME } from '../model/frames';
 
 /**
  * Per-type capability declarations.
@@ -79,6 +80,24 @@ objectRegistry.register({
     supportsComments: true,
   },
   defaultProperties: () => ({ width: 240, height: 64 }),
+});
+
+objectRegistry.register({
+  type: 'frame',
+  capabilities: {
+    // A frame's fill is its background, and the background of anything
+    // exported from it — so it was the one appearance property that mattered
+    // most and the only node type with no way to set it. `ObjectRenderer`
+    // reads `appearance.fill[0].color` and `appearance.cornerRadius`, so all
+    // three of these reach the renderer.
+    supportsFill: true,
+    supportsRadius: true,
+    supportsOpacity: true,
+    // Deliberately not `supportsStroke`: the frame draws its own soft shadow
+    // to lift it off the board and reads no stroke at all, so the control
+    // would sit there doing nothing.
+  },
+  defaultProperties: () => ({ ...DEFAULT_FRAME }),
 });
 
 objectRegistry.register({

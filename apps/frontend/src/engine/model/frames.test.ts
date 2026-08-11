@@ -9,6 +9,7 @@ import {
   frameForNode,
   framePreset,
   nextFrameName,
+  safeAreaBox,
 } from './frames';
 
 describe('presets', () => {
@@ -26,6 +27,58 @@ describe('presets', () => {
     expect(framePreset('phone')?.width).toBe(390);
     expect(framePreset('nope')).toBeUndefined();
     expect(framePreset(undefined)).toBeUndefined();
+  });
+
+  it('never declare a safe area that does not fit inside the frame', () => {
+    for (const p of FRAME_PRESETS) {
+      if (!p.safeArea) continue;
+      expect(safeAreaBox({ x: 0, y: 0, ...p })).not.toBeNull();
+    }
+  });
+});
+
+describe('safeAreaBox', () => {
+  const frame = { x: 100, y: 200, width: 1080, height: 1920 };
+
+  it('insets from each edge independently', () => {
+    expect(safeAreaBox({ ...frame, safeArea: { top: 250, right: 64, bottom: 320, left: 64 } })).toEqual({
+      x: 164,
+      y: 450,
+      width: 952,
+      height: 1350,
+    });
+  });
+
+  it('is null when there is nothing to draw', () => {
+    expect(safeAreaBox(frame)).toBeNull();
+    expect(safeAreaBox({ ...frame, safeArea: { top: 0, right: 0, bottom: 0, left: 0 } })).toBeNull();
+  });
+
+  it('clamps negative insets away rather than drawing outside the frame', () => {
+    // A guide outside the frame reads as bleed, which is a different feature
+    // with different export rules — and both are plain rectangles, so nobody
+    // looking at one could tell which they had.
+    expect(safeAreaBox({ ...frame, safeArea: { top: -50, right: 0, bottom: 0, left: 0 } })).toBeNull();
+    expect(safeAreaBox({ ...frame, safeArea: { top: -50, right: 10, bottom: 0, left: 0 } })).toEqual({
+      x: 100,
+      y: 200,
+      width: 1070,
+      height: 1920,
+    });
+  });
+
+  it('is null rather than inside-out when opposing insets cross', () => {
+    // 1000 + 1000 exceeds the 1920 height, so the naive arithmetic gives a
+    // negative height. An inside-out rectangle is a stranger thing to look at
+    // than no rectangle, and Konva will happily draw one.
+    expect(safeAreaBox({ ...frame, safeArea: { top: 1000, right: 0, bottom: 1000, left: 0 } })).toBeNull();
+    expect(safeAreaBox({ ...frame, safeArea: { top: 0, right: 600, bottom: 0, left: 600 } })).toBeNull();
+  });
+
+  it('is null when the insets exactly consume the frame', () => {
+    // Zero-area, not negative: still nothing worth drawing, and a
+    // zero-height dashed line reads as a stray stroke across the middle.
+    expect(safeAreaBox({ ...frame, safeArea: { top: 960, right: 0, bottom: 960, left: 0 } })).toBeNull();
   });
 });
 

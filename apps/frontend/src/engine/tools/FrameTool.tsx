@@ -97,6 +97,13 @@ export class FrameTool implements Tool {
       ...box,
       title,
       appearance: { fill: [{ type: 'solid', color: '#FFFFFF', opacity: 1 }] },
+      // Copied onto the node rather than looked up from the preset when
+      // drawing. A frame resized away from 1080x1920 is no longer a story, and
+      // a guide re-derived from a size match would either vanish on a
+      // one-pixel nudge or keep promising a safe area that no longer means
+      // anything. A frame sized by hand gets none, which is right: there is no
+      // interface known to be covering part of a rectangle you invented.
+      safeArea: framePreset(this.presetId)?.safeArea,
     });
 
     // Drawing a frame around existing objects means "these belong together" —

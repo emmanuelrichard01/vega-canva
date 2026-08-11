@@ -5,6 +5,7 @@ import useImage from 'use-image';
 import { updateNode } from '../../engine/document';
 import { useStore } from '../../hooks/useStore';
 import { cropMode } from '../../engine/interaction/cropMode';
+import { EXPORT_CHROME } from '../../engine/export/chrome';
 import {
   CROP_HANDLES,
   canCrop,
@@ -124,7 +125,9 @@ export const CropOverlay: React.FC = () => {
   ]);
 
   return (
-    <Group>
+    /* Named as chrome so PNG export, which captures the live stage, does not
+       bake the dimmed cut-away and the handles into the image. */
+    <Group name={EXPORT_CHROME}>
       {/* What is being cut away. Non-interactive: every gesture here belongs
           to the kept region or to a handle, and a stray hit on this would
           start a drag that appears to come from nowhere. */}

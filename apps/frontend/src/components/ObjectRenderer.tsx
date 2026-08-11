@@ -4,7 +4,9 @@ import Konva from 'konva';
 import { deleteNode, localAuthorId, toggleReaction, updateNode } from '../engine/document';
 import { consumePendingEdit } from '../engine/interaction/pendingEdit';
 import { cropMode } from '../engine/interaction/cropMode';
+import { EXPORT_CHROME } from '../engine/export/chrome';
 import { moveFrameWithChildren, reassignFrame } from '../engine/interaction/frameMembership';
+import { safeAreaBox } from '../engine/model/frames';
 import { tagFilter } from '../engine/model/tagFilter';
 import { matchesTagFilter } from '../engine/model/tags';
 import { useStore } from '../hooks/useStore';
@@ -434,6 +436,7 @@ export const ObjectRenderer = React.memo(
               stroke="#3B82F6"
               strokeWidth={1.5 / stageScale}
               listening={false}
+              name={EXPORT_CHROME}
             />
           )}
 
@@ -521,6 +524,12 @@ const NodeContent: React.FC<{ node: AnyNode; isEditing: boolean; stageScale?: nu
               stroke, and the extra offscreen pass it disables buys nothing. */}
           <Text
             text={node.title ?? 'Frame'}
+            /* The name is how you find the frame on the board, not part of
+               what the frame contains — so it does not appear in the export.
+               It sits above the frame's own box, outside the export bounds,
+               but a frame nested inside another frame would put its label
+               squarely inside the outer one's. */
+            name={EXPORT_CHROME}
             y={-18 / stageScale}
             fontSize={12 / stageScale}
             /* A fixed grey, not a token: Konva paints to a canvas and cannot
@@ -533,6 +542,38 @@ const NodeContent: React.FC<{ node: AnyNode; isEditing: boolean; stageScale?: nu
             perfectDrawEnabled={false}
             listening={false}
           />
+          {/* The safe area, for the sizes where part of the rectangle is
+              covered by something that is not yours: a story's reply bar, a
+              grid thumbnail's crop, the margin a desktop printer cannot reach.
+              A guide only — nothing clips or snaps to it, because a frame that
+              promised a safe area and then quietly moved things into it would
+              be worse than no guide at all.
+
+              Measured through `safeAreaBox` against an origin-anchored copy of
+              the frame, which yields the box in the frame's own local space
+              and keeps one implementation of the clamping. Chrome, so it never
+              lands in an export; hairline at every zoom, for the same reason
+              the selection ring is. */}
+          {(() => {
+            const safe = safeAreaBox({ x: 0, y: 0, width: node.width, height: node.height, safeArea: node.safeArea });
+            if (!safe) return null;
+            return (
+              <Rect
+                name={EXPORT_CHROME}
+                x={safe.x}
+                y={safe.y}
+                width={safe.width}
+                height={safe.height}
+                stroke="#38BDF8"
+                strokeWidth={1}
+                strokeScaleEnabled={false}
+                dash={[6, 5]}
+                opacity={0.55}
+                listening={false}
+                perfectDrawEnabled={false}
+              />
+            );
+          })()}
         </Group>
       );
   }

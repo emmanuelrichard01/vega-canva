@@ -7,6 +7,7 @@ import { nanoid } from 'nanoid';
 import { useStore } from '../hooks/useStore';
 import { FORCE_SPECS, isForceTool } from '../engine/physics/forces';
 import { editor } from '../engine/api/EditorAPI';
+import { EXPORT_CHROME } from '../engine/export/chrome';
 import { ObjectRenderer } from "./ObjectRenderer";
 import { PresenceRenderer } from "../engine/presence/PresenceRenderer";
 import { presenceManager } from "../engine/presence/PresenceManager";
@@ -937,7 +938,7 @@ export const Canvas: React.FC<CanvasProps> = ({ activeTool, selectedIds, setSele
               use. Non-interactive so it never intercepts the press that applies
               the force. */}
           {activeForce && (
-            <Group ref={forceRingRef} listening={false} visible={false}>
+            <Group ref={forceRingRef} listening={false} visible={false} name={EXPORT_CHROME}>
               <Circle
                 radius={activeForce.radius}
                 stroke={activeForce.colorToken}
@@ -965,7 +966,11 @@ export const Canvas: React.FC<CanvasProps> = ({ activeTool, selectedIds, setSele
               under a selection outline drawn afterwards. */}
           <CropOverlay />
 
-          {toolManager.renderOverlay(overlayState)}
+          {/* Tool previews — the marquee, the frame's size readout, the pen's
+              in-progress path. Wrapped rather than tagged per tool: a new tool
+              would otherwise have to remember, and forgetting means its
+              preview lands in someone's export. */}
+          <Group name={EXPORT_CHROME}>{toolManager.renderOverlay(overlayState)}</Group>
         </Layer>
       </Stage>
       <PresenceRenderer />

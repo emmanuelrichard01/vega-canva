@@ -1,5 +1,6 @@
 import type { Exporter, ExportOptions, ExportFormat } from './ExportTypes';
 import { computeContentBounds } from './bounds';
+import { hideExportChrome } from './chrome';
 
 /**
  * Browsers cap canvas dimensions (and total area). Exceeding the cap yields a
@@ -46,6 +47,10 @@ export class PNGExporter implements Exporter {
       height: stage.height(),
     };
 
+    // Selection handles, hover outlines, the crop overlay, the tool preview and
+    // the frames' name labels are all on the stage and would all be captured.
+    const restoreChrome = hideExportChrome(stage);
+
     let dataUrl: string;
     try {
       // Reframe the stage onto the content box. This block is synchronous, so
@@ -61,6 +66,7 @@ export class PNGExporter implements Exporter {
 
       dataUrl = stage.toDataURL({ pixelRatio: 1, mimeType: 'image/png' });
     } finally {
+      restoreChrome();
       stage.size({ width: previous.width, height: previous.height });
       stage.position({ x: previous.x, y: previous.y });
       stage.scale({ x: previous.scaleX, y: previous.scaleY });

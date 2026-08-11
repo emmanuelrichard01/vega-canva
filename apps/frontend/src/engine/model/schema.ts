@@ -363,6 +363,15 @@ export interface CommentNode extends BaseNode {
 export interface FrameNode extends BaseNode {
   type: 'frame';
   appearance: Appearance;
+  /**
+   * Insets from the four edges marking where content is guaranteed to survive.
+   *
+   * Seeded from the preset the frame was made with and editable afterwards.
+   * Purely a guide: it is drawn as interface, never exported, and nothing
+   * clips or snaps to it. A frame that promises a safe area and then quietly
+   * moved things into it would be worse than no guide at all.
+   */
+  safeArea?: { top: number; right: number; bottom: number; left: number };
   layout?: {
     direction: 'horizontal' | 'vertical';
     padding: number;

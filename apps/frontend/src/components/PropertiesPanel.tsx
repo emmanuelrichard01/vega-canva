@@ -135,6 +135,14 @@ function typographyOf(node: AnyNode): Typography | null {
   return null;
 }
 
+/** The four safe-area edges, in the order a CSS inset is written. */
+const SAFE_EDGES = [
+  { key: 'top', label: 'T' },
+  { key: 'right', label: 'R' },
+  { key: 'bottom', label: 'B' },
+  { key: 'left', label: 'L' },
+] as const;
+
 function appearanceOf(node: AnyNode): Appearance | null {
   return 'appearance' in node ? (node.appearance ?? {}) : null;
 }
@@ -191,6 +199,22 @@ export const PropertiesPanel: React.FC<PropertiesPanelProps> = ({ selectedId, ov
   const adjustments = readAdjustments(node.type === 'image' ? node.filters : undefined);
   const setAdjustment = (id: AdjustmentId, value: number) => {
     set({ filters: packAdjustments({ ...adjustments, [id]: value }) } as Partial<AnyNode>);
+  };
+
+  /**
+   * Patch one edge of a frame's safe area.
+   *
+   * Four zeroes are stored as no safe area at all, matching the normalizer:
+   * "has a guide" stays a question about one field rather than about four
+   * numbers, and clearing the last edge removes the guide rather than leaving
+   * a collapsed rectangle behind.
+   */
+  const setSafeArea = (edge: 'top' | 'right' | 'bottom' | 'left', value: number) => {
+    if (node.type !== 'frame') return;
+    const current = node.safeArea ?? { top: 0, right: 0, bottom: 0, left: 0 };
+    const next = { ...current, [edge]: Math.max(0, value) };
+    const empty = !next.top && !next.right && !next.bottom && !next.left;
+    set({ safeArea: empty ? undefined : next } as Partial<AnyNode>);
   };
 
   /**
@@ -393,6 +417,38 @@ export const PropertiesPanel: React.FC<PropertiesPanelProps> = ({ selectedId, ov
               step={5}
             />
           </Row>
+        </Accordion>
+      )}
+
+      {/* The safe area, for the frame sizes where part of the rectangle is
+          covered by something that is not yours. Seeded from the preset and
+          editable here, because the presets can only cover the cases that are
+          the same for everyone — a slide deck's own template, or a printer
+          with a wider margin than most, is a number only the person making it
+          knows. Four edges rather than one: a story's insets are not
+          symmetrical, and forcing them to be would waste 320 units of width to
+          protect against nothing. */}
+      {node.type === 'frame' && (
+        <Accordion title="Safe Area" defaultOpen={Boolean(node.safeArea)}>
+          {/* Two by two, not four across: a stepper is a label, a value and
+              two buttons, and four of them in a 230px panel leaves no room for
+              the number — which is the only part anyone reads. The X/Y row
+              above already settled on two per line. */}
+          <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '8px' }}>
+            {SAFE_EDGES.map(({ key, label }) => (
+              <NumberStepper
+                key={key}
+                value={Math.round(node.safeArea?.[key] ?? 0)}
+                onChange={(v) => setSafeArea(key, v)}
+                label={label}
+                min={0}
+                step={8}
+              />
+            ))}
+          </div>
+          <p style={{ margin: '8px 0 0', fontSize: 'var(--text-xs)', color: 'var(--text-tertiary)', lineHeight: 1.4 }}>
+            A guide only. Nothing is clipped or moved, and it never appears in an export.
+          </p>
         </Accordion>
       )}
 

@@ -12,6 +12,22 @@
  * whole of prototyping are all defined in terms of a bounded region.
  */
 
+/**
+ * Insets from a frame's four edges, in world units.
+ *
+ * Four numbers rather than one, because the case that most needs a safe area
+ * is the one that is not symmetrical: a 1080x1920 story has the app's own
+ * interface over roughly the top 250 and bottom 320 units, and nothing over
+ * the sides. A single inset would either let a caption be swallowed by the
+ * reply bar or waste 320 units of width to protect against nothing.
+ */
+export interface Inset {
+  top: number;
+  right: number;
+  bottom: number;
+  left: number;
+}
+
 export interface FramePreset {
   id: string;
   label: string;
@@ -19,6 +35,21 @@ export interface FramePreset {
   group: 'Screen' | 'Social' | 'Print';
   width: number;
   height: number;
+  /**
+   * Where this size is known to eat content, if anywhere.
+   *
+   * Seeded onto the frame at creation and editable afterwards, rather than
+   * looked up from the preset when drawing: a frame resized from 1080x1920 to
+   * something else is no longer a story, and guides derived from a size match
+   * would either vanish on a one-pixel nudge or keep claiming a safe area that
+   * no longer means anything.
+   */
+  safeArea?: Inset;
+}
+
+/** All four edges the same, for the cases that are symmetrical. */
+function evenInset(value: number): Inset {
+  return { top: value, right: value, bottom: value, left: value };
 }
 
 /**
@@ -37,17 +68,60 @@ export const FRAME_PRESETS: FramePreset[] = [
   { id: 'laptop', label: 'Laptop', group: 'Screen', width: 1280, height: 800 },
   { id: 'tablet', label: 'Tablet', group: 'Screen', width: 820, height: 1180 },
   { id: 'phone', label: 'Phone', group: 'Screen', width: 390, height: 844 },
-  { id: 'square', label: 'Square post', group: 'Social', width: 1080, height: 1080 },
-  { id: 'story', label: 'Story', group: 'Social', width: 1080, height: 1920 },
-  { id: 'slide', label: 'Slide', group: 'Social', width: 1920, height: 1080 },
-  { id: 'a4', label: 'A4', group: 'Print', width: 595, height: 842 },
-  { id: 'letter', label: 'US Letter', group: 'Print', width: 612, height: 792 },
+  // A square post is cropped to 4:5 or 1.91:1 depending on where it is shown,
+  // and the grid thumbnail crops it again — 64 units in from every edge is
+  // what survives all of that.
+  { id: 'square', label: 'Square post', group: 'Social', width: 1080, height: 1080, safeArea: evenInset(64) },
+  // The story's own interface: the profile row and close button along the top,
+  // the reply bar and share row along the bottom. The sides are clear.
+  { id: 'story', label: 'Story', group: 'Social', width: 1080, height: 1920, safeArea: { top: 250, right: 64, bottom: 320, left: 64 } },
+  { id: 'slide', label: 'Slide', group: 'Social', width: 1920, height: 1080, safeArea: evenInset(64) },
+  // A quarter-inch at 72dpi: the margin a desktop printer cannot reach, so
+  // anything outside it is not printed however the file is prepared.
+  { id: 'a4', label: 'A4', group: 'Print', width: 595, height: 842, safeArea: evenInset(18) },
+  { id: 'letter', label: 'US Letter', group: 'Print', width: 612, height: 792, safeArea: evenInset(18) },
 ];
 
 export const FRAME_PRESET_GROUPS: FramePreset['group'][] = ['Screen', 'Social', 'Print'];
 
 export function framePreset(id: string | undefined): FramePreset | undefined {
   return FRAME_PRESETS.find((p) => p.id === id);
+}
+
+/**
+ * The rectangle a frame's safe area occupies, in world units, or null.
+ *
+ * Null rather than the frame's own box when there is nothing to show, so the
+ * renderer has one thing to check and cannot draw a guide sitting exactly on
+ * the frame's edge — which reads as a border, not as a warning.
+ *
+ * Insets are clamped so opposing pairs can never cross: a safe area wider than
+ * the frame is a mistake in the numbers, and an inside-out rectangle drawn
+ * from it is a stranger thing to look at than a collapsed one. Negative insets
+ * are dropped for the same reason — a "safe" area larger than the frame is not
+ * a safe area, and bleed is a different feature with different export rules.
+ */
+export function safeAreaBox(frame: {
+  x: number;
+  y: number;
+  width: number;
+  height: number;
+  safeArea?: Inset;
+}): { x: number; y: number; width: number; height: number } | null {
+  const inset = frame.safeArea;
+  if (!inset) return null;
+
+  const top = Math.max(0, inset.top || 0);
+  const right = Math.max(0, inset.right || 0);
+  const bottom = Math.max(0, inset.bottom || 0);
+  const left = Math.max(0, inset.left || 0);
+  if (top === 0 && right === 0 && bottom === 0 && left === 0) return null;
+
+  const width = frame.width - left - right;
+  const height = frame.height - top - bottom;
+  if (width <= 0 || height <= 0) return null;
+
+  return { x: frame.x + left, y: frame.y + top, width, height };
 }
 
 /** Size of a frame drawn by a click rather than a drag, with no preset armed. */

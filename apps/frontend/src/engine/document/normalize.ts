@@ -7,6 +7,7 @@ import {
   type AnyNode,
   type Appearance,
   type Author,
+  type FrameNode,
   type LineCap,
   type NodeType,
   type Paint,
@@ -46,6 +47,31 @@ const str = (value: unknown, fallback: string): string =>
 
 const bool = (value: unknown, fallback: boolean): boolean =>
   typeof value === 'boolean' ? value : fallback;
+
+/**
+ * A frame's safe-area insets, or undefined for "no guide".
+ *
+ * Undefined rather than four zeroes, so a frame with no safe area stores
+ * nothing: the alternative writes a dead object onto every frame ever drawn
+ * and makes "has a guide" a question about four numbers rather than one field.
+ *
+ * Negative insets are clamped away. They would place the guide outside the
+ * frame, which reads as bleed — a different thing, with different export
+ * rules — and the guide is drawn as a plain rectangle either way, so the
+ * reader would have no way to tell which they were looking at.
+ */
+function normalizeSafeArea(raw: unknown): FrameNode['safeArea'] {
+  if (!raw || typeof raw !== 'object') return undefined;
+  const source = raw as Record<string, unknown>;
+  const inset = {
+    top: Math.max(0, num(source.top, 0)),
+    right: Math.max(0, num(source.right, 0)),
+    bottom: Math.max(0, num(source.bottom, 0)),
+    left: Math.max(0, num(source.left, 0)),
+  };
+  if (!inset.top && !inset.right && !inset.bottom && !inset.left) return undefined;
+  return inset;
+}
 
 /** Legacy shape names that no longer exist as distinct kinds. */
 const SHAPE_KIND_ALIASES: Record<string, ShapeKind> = {
@@ -495,6 +521,7 @@ export function normalizeNode(raw: any, id?: string): AnyNode {
         type: 'frame',
         appearance: normalizeAppearance(raw),
         layout: raw?.layout,
+        safeArea: normalizeSafeArea(raw?.safeArea),
       };
   }
 }

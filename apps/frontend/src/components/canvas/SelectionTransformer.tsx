@@ -2,6 +2,7 @@ import React, { useEffect, useRef } from 'react';
 import { Transformer } from 'react-konva';
 import Konva from 'konva';
 import { updateNode } from '../../engine/document';
+import { EXPORT_CHROME } from '../../engine/export/chrome';
 import { useStore } from '../../hooks/useStore';
 
 interface Props {
@@ -96,6 +97,9 @@ export const SelectionTransformer: React.FC<Props> = ({ selectedIds, stageRef })
   return (
     <Transformer
       ref={trRef}
+      // Interface, not document: PNG export captures the live stage, so
+      // without this the blue handles are baked into the image.
+      name={EXPORT_CHROME}
       onTransformStart={handleTransformStart}
       onTransformEnd={handleTransformEnd}
       boundBoxFunc={(oldBox, newBox) => (newBox.width < MIN_SIZE || newBox.height < MIN_SIZE ? oldBox : newBox)}
