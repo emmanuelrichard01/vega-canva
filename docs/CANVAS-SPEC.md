@@ -35,9 +35,9 @@ it.
 | Infinite canvas | **Shipped** | `CameraSystem` + `SpatialIndex` (rbush). Treated as a large finite bound (±1,000,000) to avoid float drift at extreme pan. |
 | Artboard / Frame / Page | **Shipped** | Frame tool (`F`) with a preset picker and drag-to-size. Frames own what is inside them — membership derived from the object's centre, recomputed on every drop *and at creation*, so something drawn inside a frame is born owned by it — clip their children, move and delete with their contents, and claim whatever they are drawn around. Named at creation, because they are the one type people refer to by name. Nested frames work, smallest containing frame wins. Their contents nest under them in the Layers panel, foldable. Their background is editable, which matters because it is also the export's background. |
 | Sections | **Absent** | Nothing groups frames on the canvas. |
-| Layout grids | **Partial** | `engine/interaction/gridSnap.ts` snaps drags to a grid, off by default, held on with a modifier. There is no column/row/square grid *overlay* and no per-frame grid definition. |
-| Rulers and guides | **Absent** | No ruler, no draggable guide, no guide storage. |
-| Smart guides | **Shipped** | Alignment against every edge and centre of every visible object, plus even spacing between the nearest neighbour on each side, with magenta guides spanning the matched objects. Tolerance is in *screen* pixels divided by the zoom, so the pull feels the same at 10% and 800%. Candidates are limited to the viewport — a correctness call before a performance one, since snapping to something off-screen draws its explanation off-screen too. Grid snap applies first as the coarser rule; the same modifier suppresses both. **Caveat: the guide lines have not been watched on screen** — the arithmetic and the adapter carry 32 tests, but the drawing has only been read. |
+| Layout grids | **Partial** | `engine/interaction/gridSnap.ts` snaps drags to a grid, off by default, held on with a modifier, and now runs *before* object snapping as the coarser rule. There is still no column/row/square grid **overlay** and no per-frame grid definition — the piece that makes a frame a layout rather than a rectangle. |
+| Rulers and guides | **Shipped** | Rulers along the top and left, drawn in the DOM — the stage is a raster surface with its own transform, and ruler numbers are small, dense and read at a glance, which is the one case where the browser's text rendering is the reason to prefer it. Tick spacing is chosen from the zoom and from round numbers only (1/2/5/10 per decade); a ruler labelled 0, 137, 274 is arithmetically correct and useless. Guides drag out of the rulers and are **document state** — a person placed them and expects collaborators to see them — stored in a `Y.Array` on a root name, committed on release rather than per frame. They also act as snap targets. |
+| Smart guides | **Shipped** | Alignment against every edge and centre of every visible object, every ruler guide, plus even spacing between the nearest neighbour on each side, with magenta guides spanning the matched objects. Tolerance is in *screen* pixels divided by the zoom, so the pull feels the same at 10% and 800%. Candidates are limited to the viewport — a correctness call before a performance one, since snapping to something off-screen draws its explanation off-screen too. Grid snap applies first as the coarser rule; the same modifier suppresses both. **Caveat: the guide lines have not been watched on screen** — the arithmetic and the adapter carry 32 tests, but the drawing has only been read. |
 | Safe zones / bleed | **Partial** | Safe zones ship: four per-frame insets, seeded from the preset (a story's 250/64/320/64, a print margin's 18) and editable in the panel. Drawn as chrome, so they never export, and nothing clips or snaps to them. **Bleed is deliberately not built.** It only means anything if the export is larger than the trim and the frame stops clipping at its own edge — which changes what `width`/`height` mean for a frame and what `frameExportBounds` returns. Drawn as a guide without those two changes it would be a dashed rectangle promising something the exporter does not honour. |
 
 ## 2. Selection and navigation
@@ -58,9 +58,9 @@ it.
 | --- | --- | --- |
 | Pen tool | **Shipped** | `BezierPenTool`. Anchors placed with a drag get a forward handle; the backward handle mirrors it. |
 | Pencil tool | **Shipped** | `PenTool` with `perfect-freehand`, simplified through `utils/pathSimplifier.ts`. Stores both the filled outline and the centreline the eraser splits on. |
-| Shape tools | **Partial** | Rect, ellipse, triangle, hexagon, star. Stars are now parametric — point count and depth are controls, clamped at the CRDT boundary. Still **no general N-gon** (the spec asks for pentagon/heptagon/octagon and up), **no line**, **no arrow**. |
+| Shape tools | **Shipped** | Rect, ellipse, polygon, star, line and arrow. `polygon` is one kind with a side count clamped 3..60, not a kind per count — triangle, pentagon, hexagon and octagon are dock *presets* over it, which is what makes the count editable afterwards instead of frozen into the shape's identity. Line and arrow are the first shapes with no interior: they run corner to corner of the node box, so `width`/`height` stay the only record of bounds, and an arrowhead is a flag rather than a second kind. |
 | Text tool | **Shipped** | `TextTool` + one shared `NodeEditor`. |
-| Eyedropper | **Absent** | No colour, style or text-style sampling anywhere. |
+| Eyedropper | **Partial** | Colour sampling from anywhere on screen, via the browser's own `EyeDropper`, offered beside the fill, each gradient stop, the stroke and the text colour — not as a dock tool, because an eyedropper answers a question a control has already asked rather than being a mode you enter. The button hides where the API is missing (Firefox, Safari), since a pipette that does nothing is worse than none. **Style and text-style sampling are not built**: those copy a whole appearance block, which is a different gesture with a different target. |
 | Place image / media | **Partial** | Raster images and audio upload to MinIO, referenced by URL. **SVG is not imported as vector** (it would land as a raster `<img>`), and video is not supported at all. |
 
 ## 4. Vector and path manipulation
@@ -206,10 +206,10 @@ Nothing in this section exists, and all of it depends on frames.
 
 Roughly, across the ~100 discrete items above:
 
-- **Shipped: ~47** — the canvas core, collaboration, frames, the whole paint model, and the parts of the transform/typography blocks that a whiteboard needs.
+- **Shipped: ~51** — the canvas core, collaboration, frames, the whole paint model, the precision tools, and the parts of the transform/typography blocks that a whiteboard needs.
 - **Partial: ~15**
 - **Dead: 1** — `FrameNode.layout`, the auto-layout declaration, which Phase 6 owns. `Appearance.shadow` was the second entry here until 2026-08-11.
-- **Absent: ~38** — almost the whole of vector manipulation, design systems and prototyping.
+- **Absent: ~34** — almost the whole of vector manipulation, design systems and prototyping.
 
 **Phase 0 is otherwise done** (2026-07-31). Stroke dash, star parameters,
 follow mode, image adjustments and image cropping each shipped with the control
@@ -304,11 +304,28 @@ is genuinely useful, but it needs an effects list in the panel and one draw
 pass per shadow, and that is a bigger change than making the field work at all.
 **Join and miter limit** move to Phase 4, with the cap control.
 
-**Phase 3 — Precision and selection.** Smart guides and snap-to-object, rulers
-and guides, layout grid overlays, deep select and real nested groups, the scale
-tool, eyedropper, and the missing primitives (N-gon, line, arrow). This is what
-makes the tool feel professional in the hand, and smart guides are the single
-most-missed item on the list.
+**Phase 3 — Precision and selection. Mostly done** (2026-08-11). Smart guides
+and snap-to-object, rulers and draggable guides, the eyedropper, and the
+missing primitives — N-gon with a real side count, line, arrow — have shipped.
+
+**Three items remain**, and two of them are blocked on the same thing:
+
+- **Deep select** and **real nested groups**. Groups are flat: members share a
+  synthetic `parentId`, there is no nesting, so there is nothing to select
+  *into*. This is a model change, not a feature, and it is the same model
+  change auto-layout needs — so it belongs with Phase 6 rather than here.
+- **The scale tool.** Distinct from the transformer, which resizes geometry:
+  a scale tool multiplies strokes, corner radii, shadows and type along with
+  the box. Now that all four of those exist and are real, this is finally
+  well-defined — it was not when the phase was written.
+- **Layout grid overlays**, which want a per-frame grid definition and belong
+  with the frame work rather than with selection.
+
+One caveat carried forward: **none of Phase 3 has been watched running.** The
+Chrome extension became unresponsive partway through and repeated attempts made
+it worse, so the snapping, the guides and the new primitives are covered by
+tests and by reading only. The guide *lines* and the ruler *ticks* are the two
+pieces a test cannot speak for.
 
 **Phase 4 — The vector engine.** Booleans, post-hoc anchor and handle editing,
 outline stroke, flatten, join/cap. Needs a path-geometry dependency chosen
