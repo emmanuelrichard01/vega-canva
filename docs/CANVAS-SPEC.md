@@ -103,25 +103,25 @@ it.
 | Item | Status | Notes |
 | --- | --- | --- |
 | Solid fill | **Shipped** | |
-| Linear gradient | **Absent** | `Appearance.fill` is already `Paint[]` with a `type: 'solid'` discriminant, so the model was designed to take these. |
-| Radial gradient | **Absent** | |
-| Angular / conic gradient | **Absent** | Konva has no native conic fill; needs a generated pattern. |
-| Diamond gradient | **Absent** | Same. |
+| Linear gradient | **Shipped** | Geometry is stored in **unit space** — a fraction of the node's own box — so a gradient survives a resize instead of stranding its last stop where the old edge was. Editable as an angle, because nobody types a pair of unit coordinates to tilt a fill by fifteen degrees. |
+| Radial gradient | **Shipped** | Circular even in a wide box: Konva's radial gradient takes radii, not an ellipse, and faking one by scaling the shape would scale its stroke and its text with it. |
+| Angular / conic gradient | **Shipped** | No native conic fill, so it is painted into an offscreen bitmap and used as a Konva pattern — `createConicGradient` where the browser has it, a fan of one-degree wedges where it does not. The bitmap is capped at 512px and stretched: these gradients are smooth by definition, and a full-resolution canvas for a 4000px shape is 64MB allocated on a drag. |
+| Diamond gradient | **Shipped** | Nested rhombi filled largest-first, so no seam shows at the corners where a stroked version would leave gaps. Same pattern pipeline as conic. |
 | Image / video fill | **Absent** | An image is its own node type; it cannot fill a vector shape. |
 | Stroke weight | **Shipped** | |
 | Stroke alignment | **Absent** | Konva strokes are always centred. Inside/outside needs an offset path or a clip, which is real work, not a flag. |
 | Dash pattern | **Shipped** | Solid / Dashed / Dotted, with the pattern derived from the stroke weight so it stays legible at any thickness. `Stroke.cap` was added and used in the same change, because a dotted line is `[0, gap]` and draws nothing at all under the default butt cap. A full pattern editor belongs with cap and join in Phase 4. |
 | Layer opacity | **Shipped** | |
-| Blend modes | **Absent** | Konva exposes `globalCompositeOperation`, which covers most of the list, so this is unusually cheap for its visual payoff. |
+| Blend modes | **Shipped** | All sixteen. The stored names are Canvas2D's own `globalCompositeOperation` values, so the renderer forwards the string with no lookup table between the two to fall out of step. Applied to the whole node group, so an object's text label blends with its fill rather than separately from it. |
 
 ## 8. Lighting and blur effects
 
 | Item | Status | Notes |
 | --- | --- | --- |
-| Drop shadow | **Partial** | `Shadow` has `color`, `blur`, `offsetX`, `offsetY`. **No spread.** |
-| Inner shadow | **Absent** | |
-| Layer blur | **Absent** | Konva filters need explicit caching to perform; wiring them naively will cost frames. |
-| Background blur | **Absent** | Sampling what is underneath on a Canvas2D scene graph is the hardest single item in this section. |
+| Drop shadow | **Shipped** | Colour, X/Y offset, blur, opacity and **spread** — on shapes, paths, images and text. This was **Dead** until 2026-08-11: on the schema since the first commit, read and written by the normalizer, declared by five types, rendered by nothing and offered by no control. Konva has no spread property, so spread is the same shape drawn once more underneath with a `2 * spread` stroke, which grows a silhouette by exactly `spread` whatever the path is. One shadow, not a list — several needs an effects list in the panel and one draw pass each. |
+| Inner shadow | **Absent** | Needs the node composited on its own bitmap so a `source-atop` pass clips to the shape rather than to everything already on the layer. The same requirement layer blur established; the two should be done together. |
+| Layer blur | **Shipped** | `useLayerFilters` owns the cache lifecycle, which is where every failure mode of this feature lives: never cache an unblurred node, pad the cache by three sigma so the blur is not clipped flat against the node's edge, follow the device pixel ratio so a blurred object is not softer than its neighbours for the wrong reason, and clear both cache and filter list on the way back to zero. |
+| Background blur | **Absent** | Sampling what is underneath on a Canvas2D scene graph is the hardest single item in this section. Blocked behind the same bitmap-compositing change as inner shadow. |
 
 ## 9. Typographic engine
 
@@ -206,10 +206,10 @@ Nothing in this section exists, and all of it depends on frames.
 
 Roughly, across the ~100 discrete items above:
 
-- **Shipped: ~37** — the canvas core, collaboration, frames, and the parts of the transform/typography blocks that a whiteboard needs.
-- **Partial: ~16**
-- **Dead: 1** — `FrameNode.layout`, the auto-layout declaration, which Phase 6 owns.
-- **Absent: ~47** — almost the whole of vector manipulation, design systems, prototyping, effects, and the paint model beyond flat colour.
+- **Shipped: ~44** — the canvas core, collaboration, frames, the paint model, and the parts of the transform/typography blocks that a whiteboard needs.
+- **Partial: ~15**
+- **Dead: 1** — `FrameNode.layout`, the auto-layout declaration, which Phase 6 owns. `Appearance.shadow` was the second entry here until 2026-08-11.
+- **Absent: ~41** — almost the whole of vector manipulation, design systems and prototyping.
 
 **Phase 0 is otherwise done** (2026-07-31). Stroke dash, star parameters,
 follow mode, image adjustments and image cropping each shipped with the control
@@ -273,11 +273,28 @@ Two things the browser found that reading had not:
   decided in `createNode`, from the box rather than from the input.
 - **Export was capturing the interface.** See §14.
 
-**Phase 2 — The paint model.** Gradients (linear, radial, then conic/diamond
-via generated patterns), blend modes, stroke alignment, dash and cap/join,
-shadow spread, inner shadow, layer blur. `fill` is already `Paint[]` with a
-discriminant, so the schema was built for this. Highest visual payoff per unit
-of work in the whole list; blend modes in particular are nearly free.
+**Phase 2 — The paint model. Mostly done** (2026-08-11). All five fill kinds,
+all sixteen blend modes, layer blur, and the drop shadow — which turned out to
+be **Dead**, not Partial: on the schema since the first commit, declared by
+five object types, rendered by nothing, and with no control anywhere. That is
+the second dead field this phase has surfaced by simply trying to use what the
+schema claimed was there.
+
+Three items remain, and they are not arbitrary leftovers — each one needs
+something the current renderer cannot do:
+
+- **Stroke alignment.** Konva strokes are always centred. Inside and outside
+  need an offset path or a clip, which is geometry work rather than a flag.
+- **Inner shadow** and **background blur.** Both need the node composited on
+  its own bitmap, so a `source-atop` pass clips to the shape rather than to
+  everything already on the layer. Layer blur established that the machinery
+  exists (`useLayerFilters`); these two should be built on it together rather
+  than half-done separately.
+- **Join and miter limit**, which belong with the cap control in Phase 4.
+
+One scope cut worth recording: **a single shadow, not a list.** Several at once
+is genuinely useful, but it needs an effects list in the panel and one draw
+pass per shadow, and that is a bigger change than making the field work at all.
 
 **Phase 3 — Precision and selection.** Smart guides and snap-to-object, rulers
 and guides, layout grid overlays, deep select and real nested groups, the scale
