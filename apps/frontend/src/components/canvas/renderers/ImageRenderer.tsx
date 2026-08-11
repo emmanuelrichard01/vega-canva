@@ -136,7 +136,11 @@ export const ImageRenderer: React.FC<Props> = React.memo(({ node }) => {
       <Rect
         width={node.width}
         height={node.height}
-        fill="var(--surface-secondary)"
+        // A fixed colour, not `var(--surface-secondary)`: Konva paints to a
+        // canvas and never resolves CSS custom properties, so that was an
+        // invalid colour and the placeholder came out unfilled. Translucent
+        // grey reads as an empty slot against both the light and dark board.
+        fill="rgba(148, 163, 184, 0.18)"
         stroke={status === 'failed' ? '#EF4444' : '#D1D5DB'}
         strokeWidth={1}
         dash={[6, 4]}
