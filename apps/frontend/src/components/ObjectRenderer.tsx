@@ -11,6 +11,7 @@ import { matchesTagFilter } from '../engine/model/tags';
 import { useStore } from '../hooks/useStore';
 import { cameraSystem } from '../engine/CameraSystem';
 import { gridSnap } from '../engine/interaction/gridSnap';
+import { clearSnapGuides, snapDraggedBox } from '../engine/interaction/objectSnap';
 import { presenceManager } from '../engine/presence/PresenceManager';
 import { useFlight } from '../engine/physics/flightState';
 import { hasText, type AnyNode, type TextBearingNode } from '../engine/model/schema';
@@ -222,6 +223,8 @@ export const ObjectRenderer = React.memo(
       (e: Konva.KonvaEventObject<DragEvent>) => {
         window.dispatchEvent(new CustomEvent('canvas-drag-end'));
         presenceManager.updateActivity(null);
+        // The guides explained a gesture that is now over.
+        clearSnapGuides();
 
         // The Konva group sits at the object's centre (see the offset in the
         // render below), so committing its position back to the document has
@@ -438,16 +441,33 @@ export const ObjectRenderer = React.memo(
           onMouseEnter={() => setIsHovered(true)}
           onMouseLeave={() => setIsHovered(false)}
           dragBoundFunc={(pos) => {
-            if (!gridSnap.shouldSnap()) return pos;
             // Snapping is done in world space on the node's *top-left* corner,
             // then mapped back. Snapping the raw screen position would give a
             // grid whose spacing changed with zoom, and snapping the centre
             // would leave odd-sized objects permanently off-grid.
             const world = cameraSystem.screenToWorld(pos.x, pos.y);
-            const snapped = gridSnap.snapPoint(world.x - cx, world.y - cy);
+            let topLeft = { x: world.x - cx, y: world.y - cy };
+
+            // The grid first, because it is the coarser rule: an object pulled
+            // onto the grid can still be nudged onto a neighbour's edge, but a
+            // grid applied afterwards would undo every object snap it landed
+            // between two grid lines.
+            if (gridSnap.shouldSnap()) {
+              topLeft = gridSnap.snapPoint(topLeft.x, topLeft.y);
+            }
+
+            // Then other objects. Always on, suppressed by the same modifier
+            // grid snap uses — an escape hatch you hold rather than a setting
+            // you go and find is what every tool in this category does.
+            topLeft = snapDraggedBox(
+              objId,
+              { ...topLeft, width: node.width * Math.abs(node.scaleX), height: node.height * Math.abs(node.scaleY) },
+              selectedIdsRef?.current
+            );
+
             return {
-              x: (snapped.x + cx) * cameraSystem.zoom + cameraSystem.x,
-              y: (snapped.y + cy) * cameraSystem.zoom + cameraSystem.y,
+              x: (topLeft.x + cx) * cameraSystem.zoom + cameraSystem.x,
+              y: (topLeft.y + cy) * cameraSystem.zoom + cameraSystem.y,
             };
           }}
         >

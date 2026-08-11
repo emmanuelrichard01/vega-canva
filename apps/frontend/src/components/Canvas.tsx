@@ -8,6 +8,7 @@ import { useStore } from '../hooks/useStore';
 import { FORCE_SPECS, isForceTool } from '../engine/physics/forces';
 import { editor } from '../engine/api/EditorAPI';
 import { EXPORT_CHROME } from '../engine/export/chrome';
+import { SmartGuides } from './canvas/SmartGuides';
 import { ObjectRenderer } from "./ObjectRenderer";
 import { PresenceRenderer } from "../engine/presence/PresenceRenderer";
 import { presenceManager } from "../engine/presence/PresenceManager";
@@ -965,6 +966,11 @@ export const Canvas: React.FC<CanvasProps> = ({ activeTool, selectedIds, setSele
           {/* Above the transformer's slot so its handles are never buried
               under a selection outline drawn afterwards. */}
           <CropOverlay />
+
+          {/* Alignment and spacing guides. Above everything, because they are
+              the explanation for a snap and are useless if an object can cover
+              them — which the object being dragged routinely would. */}
+          <SmartGuides stageScale={cameraSystem.zoom} />
 
           {/* Tool previews — the marquee, the frame's size readout, the pen's
               in-progress path. Wrapped rather than tagged per tool: a new tool
