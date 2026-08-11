@@ -2782,3 +2782,117 @@ textarea:focus-visible {
 .prop-select:hover {
   border-color: var(--border-strong);
 }
+
+/* ---------------------------------------------------------------------------
+   RULERS
+
+   DOM rather than Konva. The numbers on a ruler are small, dense and read at a
+   glance, which is the one case where the browser's text rendering is not
+   merely adequate but the whole reason to prefer it over a canvas rasteriser
+   with no hinting.
+   --------------------------------------------------------------------------- */
+
+.ruler {
+  position: absolute;
+  z-index: 5;
+  background: var(--surface-elevated);
+  color: var(--text-tertiary);
+  font-family: var(--font-mono);
+  font-size: var(--text-2xs);
+  font-variant-numeric: tabular-nums;
+  overflow: hidden;
+  /* A ruler is a surface you drag from, so the text must not select. */
+  user-select: none;
+}
+
+.ruler--h {
+  top: 0;
+  left: 22px;
+  right: 0;
+  height: 22px;
+  border-bottom: 1px solid var(--border-divider);
+  cursor: ns-resize;
+}
+
+.ruler--v {
+  top: 22px;
+  left: 0;
+  bottom: 0;
+  width: 22px;
+  border-right: 1px solid var(--border-divider);
+  cursor: ew-resize;
+}
+
+/* The square where the two meet. Filled rather than left transparent, so the
+   two rulers read as one frame around the canvas instead of two strips. */
+.ruler--corner {
+  top: 0;
+  left: 0;
+  width: 22px;
+  height: 22px;
+  border-right: 1px solid var(--border-divider);
+  border-bottom: 1px solid var(--border-divider);
+}
+
+.ruler__tick {
+  position: absolute;
+  pointer-events: none;
+}
+
+/* Minor ticks are short and unlabelled: they are what makes a ruler readable
+   *between* the numbers, which is most of what it is for. */
+.ruler--h .ruler__tick {
+  top: 0;
+  bottom: 0;
+  border-left: 1px solid var(--border-divider);
+  height: 5px;
+  align-self: flex-end;
+  top: 17px;
+}
+
+.ruler--h .ruler__tick.is-major {
+  top: 0;
+  height: 22px;
+}
+
+.ruler--v .ruler__tick {
+  left: 17px;
+  right: 0;
+  border-top: 1px solid var(--border-divider);
+  width: 5px;
+}
+
+.ruler--v .ruler__tick.is-major {
+  left: 0;
+  width: 22px;
+}
+
+.ruler__label {
+  position: absolute;
+  padding-left: 3px;
+  line-height: 1;
+  white-space: nowrap;
+}
+
+.ruler--h .ruler__label {
+  top: 3px;
+  left: 0;
+}
+
+/* Rotated so a tall column of numbers reads without turning your head, which
+   is what every ruler in every tool of this kind does. */
+.ruler--v .ruler__label {
+  top: 3px;
+  left: 2px;
+  transform-origin: left top;
+  transform: rotate(90deg);
+}
+
+/* The guide being pulled out. DOM, so it is visible over the ruler it is being
+   dragged from — a canvas preview would be clipped to the stage. */
+.ruler__preview {
+  position: absolute;
+  z-index: 6;
+  background: #22d3ee;
+  pointer-events: none;
+}

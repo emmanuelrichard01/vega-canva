@@ -9,6 +9,8 @@ import { FORCE_SPECS, isForceTool } from '../engine/physics/forces';
 import { editor } from '../engine/api/EditorAPI';
 import { EXPORT_CHROME } from '../engine/export/chrome';
 import { SmartGuides } from './canvas/SmartGuides';
+import { RulerGuides } from './canvas/RulerGuides';
+import { RULER_SIZE, Rulers } from './canvas/Rulers';
 import { SHAPE_KINDS } from './workspace/shapeIcons';
 import { ObjectRenderer } from "./ObjectRenderer";
 import { PresenceRenderer } from "../engine/presence/PresenceRenderer";
@@ -497,7 +499,9 @@ export const Canvas: React.FC<CanvasProps> = ({ activeTool, selectedIds, setSele
         stageRef.current.scale({ x: cameraSystem.zoom, y: cameraSystem.zoom });
       }
       if (containerRef.current) {
-        containerRef.current.style.backgroundPosition = `${cameraSystem.x}px ${cameraSystem.y}px`;
+        // Offset by the rulers for the same reason the stage is: the grid is
+        // world-space decoration and has to line up with what is drawn on it.
+        containerRef.current.style.backgroundPosition = `${cameraSystem.x + RULER_SIZE}px ${cameraSystem.y + RULER_SIZE}px`;
         containerRef.current.style.backgroundSize = `${20 * cameraSystem.zoom}px ${20 * cameraSystem.zoom}px`;
       }
 
@@ -901,10 +905,19 @@ export const Canvas: React.FC<CanvasProps> = ({ activeTool, selectedIds, setSele
           on this container itself, so if it bails out — touch, forced colors —
           the native `[data-cursor-mode]` cursors stay in force. */}
       <LocalCursor mode={cursorMode} containerRef={containerRef} />
+      {/* Outside the stage: the rulers are chrome pinned to the viewport, and
+          drawing them inside a transformed canvas would mean fighting that
+          transform on every pan. */}
+      <Rulers width={dimensions.width} height={dimensions.height} />
       <Stage
         ref={stageRef}
-        width={dimensions.width}
-        height={dimensions.height}
+        // Inset by the rulers, so screen coordinates inside the stage and the
+        // marks along the rulers describe the same world position. Without
+        // this the two disagree by 22px, which is the one failure that makes a
+        // ruler worse than no ruler.
+        style={{ position: 'absolute', top: RULER_SIZE, left: RULER_SIZE }}
+        width={Math.max(1, dimensions.width - RULER_SIZE)}
+        height={Math.max(1, dimensions.height - RULER_SIZE)}
         x={cameraSystem.x}
         y={cameraSystem.y}
         scaleX={cameraSystem.zoom}
@@ -965,6 +978,10 @@ export const Canvas: React.FC<CanvasProps> = ({ activeTool, selectedIds, setSele
           {/* Above the transformer's slot so its handles are never buried
               under a selection outline drawn afterwards. */}
           <CropOverlay />
+
+          {/* Guides a person placed. Below the snap guides, because a snap
+              guide explains what is happening right now and has to win. */}
+          <RulerGuides stageScale={cameraSystem.zoom} width={dimensions.width} height={dimensions.height} />
 
           {/* Alignment and spacing guides. Above everything, because they are
               the explanation for a snap and are useless if an object can cover

@@ -8,6 +8,7 @@
  */
 
 import { cameraSystem } from '../CameraSystem';
+import { readGuides } from '../document/guides';
 import { useStore } from '../../hooks/useStore';
 import { gridSnap } from './gridSnap';
 import { guideState } from './guideState';
@@ -120,6 +121,17 @@ export function snapDraggedBox(
 
   const excluded = new Set<string>([nodeId, ...(alsoMoving ?? [])]);
   const candidates = candidatesFor(excluded);
+  // A guide is the most deliberate alignment target on the board — somebody
+  // put it there on purpose — so it snaps like any other edge. Expressed as a
+  // zero-width box on its own axis, which is exactly what a guide is, rather
+  // than as a special case threaded through the arithmetic.
+  for (const guide of readGuides()) {
+    candidates.push(
+      guide.axis === 'x'
+        ? { x: guide.position, y: box.y, width: 0, height: box.height }
+        : { x: box.x, y: guide.position, width: box.width, height: 0 }
+    );
+  }
   const result = snapToObjects(box, candidates, SNAP_PX / (cameraSystem.zoom || 1));
 
   guideState.set(result.guides);
