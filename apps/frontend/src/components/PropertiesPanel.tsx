@@ -37,6 +37,7 @@ import {
   type StrokeStyleId,
 } from '../engine/model/strokeStyle';
 import { ColorPickerPopover } from './ui/ColorPickerPopover';
+import { EyedropperButton } from './ui/EyedropperButton';
 import { FillEditor } from './ui/FillEditor';
 import { NumberStepper } from './ui/NumberStepper';
 import { FontSelector } from './ui/FontSelector';
@@ -756,10 +757,16 @@ export const PropertiesPanel: React.FC<PropertiesPanelProps> = ({ selectedId, ov
       {capabilities.supportsStroke && appearance && (
         <Accordion title="Stroke">
           <Row label="Color">
-            <ColorPickerPopover
-              color={appearance.stroke?.color ?? 'transparent'}
-              onChange={(color) => setStroke({ color })}
-            />
+            <div style={{ display: 'flex', alignItems: 'center', gap: 4 }}>
+              <ColorPickerPopover
+                color={appearance.stroke?.color ?? 'transparent'}
+                onChange={(color) => setStroke({ color })}
+              />
+              <EyedropperButton
+                label="Pick a stroke colour from the screen"
+                onPick={(color) => setStroke({ color })}
+              />
+            </div>
           </Row>
           <Row label="Width">
             <NumberStepper
@@ -877,7 +884,13 @@ export const PropertiesPanel: React.FC<PropertiesPanelProps> = ({ selectedId, ov
             <NumberStepper value={typography.fontSize} onChange={(fontSize) => setTypography({ fontSize })} min={8} max={500} />
           </Row>
           <Row label="Color">
-            <ColorPickerPopover color={typography.color} onChange={(color) => setTypography({ color })} />
+            <div style={{ display: 'flex', alignItems: 'center', gap: 4 }}>
+              <ColorPickerPopover color={typography.color} onChange={(color) => setTypography({ color })} />
+              <EyedropperButton
+                label="Pick a text colour from the screen"
+                onPick={(color) => setTypography({ color })}
+              />
+            </div>
           </Row>
           <Row label="Style">
             <div style={{ display: 'flex', background: 'var(--surface-hover)', padding: '2px', borderRadius: '6px' }}>

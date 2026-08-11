@@ -1,5 +1,6 @@
 import React, { useEffect, useRef, useState } from 'react';
 import { Minus, Plus } from 'lucide-react';
+import { EyedropperButton } from './EyedropperButton';
 import {
   convertPaint,
   isGradient,
@@ -182,6 +183,7 @@ export const FillEditor: React.FC<Props> = ({ paint, onChange }) => {
                 onChange={(e) => onChange({ ...current, color: e.target.value })}
                 className="fill-editor__color"
               />
+              <EyedropperButton onPick={(color) => onChange({ ...current, color })} />
             </label>
           ) : (
             <>
@@ -229,6 +231,10 @@ export const FillEditor: React.FC<Props> = ({ paint, onChange }) => {
                   onChange={(e) => patchStop(selected, { color: e.target.value })}
                   className="fill-editor__color"
                   aria-label="Stop colour"
+                />
+                <EyedropperButton
+                  label="Pick this stop's colour from the screen"
+                  onPick={(color) => patchStop(selected, { color })}
                 />
                 <input
                   type="range"
