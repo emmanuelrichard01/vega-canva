@@ -18,7 +18,9 @@ import {
   type ShapeGeometry,
   type ShapeKind,
   type StickyTheme,
+  type Shadow,
   type Stroke,
+  type StrokeAlign,
   type TextAlign,
   type Typography,
 } from '../model/schema';
@@ -206,6 +208,28 @@ function toPaintArray(value: unknown, legacyColor: unknown): Paint[] | undefined
 }
 
 const LINE_CAPS = new Set<LineCap>(['butt', 'round', 'square']);
+const STROKE_ALIGNS = new Set<StrokeAlign>(['center', 'inside', 'outside']);
+
+/**
+ * A shadow, drop or inner. Both carry identical parameters and differ only in
+ * how they are drawn, so reading them twice would be two chances to clamp
+ * differently.
+ */
+function toShadow(raw: unknown): Shadow | undefined {
+  if (!raw || typeof raw !== 'object') return undefined;
+  const s = raw as Record<string, unknown>;
+  return {
+    color: str(s.color, 'rgba(0,0,0,0.2)'),
+    // A negative blur or spread is not a smaller shadow; a canvas reads the
+    // first as a very large positive one and the second inverts the stroke
+    // that draws it.
+    blur: Math.max(0, num(s.blur, 8)),
+    offsetX: num(s.offsetX, 0),
+    offsetY: num(s.offsetY, 2),
+    spread: Math.max(0, num(s.spread, 0)),
+    opacity: clamp(num(s.opacity, 1), 0, 1),
+  };
+}
 
 /**
  * A dash pattern, or nothing.
@@ -240,6 +264,9 @@ function toStroke(value: unknown, legacyColor: unknown, legacyWidth: unknown): S
       const dash = toDash(s.dash);
       if (dash) stroke.dash = dash;
       if (LINE_CAPS.has(s.cap)) stroke.cap = s.cap;
+      // `center` is stored as absent, so the case every existing stroke in
+      // every existing document is stays the one that costs nothing.
+      if (STROKE_ALIGNS.has(s.align) && s.align !== 'center') stroke.align = s.align;
       return stroke;
     }
   }
@@ -261,19 +288,11 @@ function normalizeAppearance(raw: any): Appearance {
   const stroke = toStroke(source.stroke ?? source.strokes?.[0], legacy.stroke, legacy.strokeWidth);
   if (stroke) appearance.stroke = stroke;
 
-  if (source.shadow && typeof source.shadow === 'object') {
-    appearance.shadow = {
-      color: str(source.shadow.color, 'rgba(0,0,0,0.2)'),
-      // A negative blur or spread is not a smaller shadow; Konva reads the
-      // first as a very large positive one and the second inverts the stroke
-      // that draws it.
-      blur: Math.max(0, num(source.shadow.blur, 8)),
-      offsetX: num(source.shadow.offsetX, 0),
-      offsetY: num(source.shadow.offsetY, 2),
-      spread: Math.max(0, num(source.shadow.spread, 0)),
-      opacity: clamp(num(source.shadow.opacity, 1), 0, 1),
-    };
-  }
+  const shadow = toShadow(source.shadow);
+  if (shadow) appearance.shadow = shadow;
+
+  const innerShadow = toShadow(source.innerShadow);
+  if (innerShadow) appearance.innerShadow = innerShadow;
 
   // cornerRadius lived on geometry for shapes and content for images.
   const radius = source.cornerRadius ?? raw?.geometry?.cornerRadius ?? legacy.cornerRadius;
@@ -291,6 +310,9 @@ function normalizeAppearance(raw: any): Appearance {
   // blur filter reads as a very large positive one.
   const blur = num(source.blur, 0);
   if (blur > 0) appearance.blur = blur;
+
+  const backdropBlur = num(source.backdropBlur, 0);
+  if (backdropBlur > 0) appearance.backdropBlur = backdropBlur;
 
   return appearance;
 }

@@ -23,6 +23,7 @@ objectRegistry.register({
     // it needs a shape whose silhouette a stroke can grow. See
     // `shadowSpreadProps`.
     supportsShadowSpread: true,
+    supportsEdgeEffects: true,
     // Shapes carry an optional centered text label (double-click to edit).
     supportsTypography: true,
   },

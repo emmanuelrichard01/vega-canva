@@ -103,6 +103,17 @@ export const BLEND_MODES: BlendMode[] = [
 
 export type LineCap = 'butt' | 'round' | 'square';
 
+/**
+ * Where a stroke sits relative to the path it follows.
+ *
+ * Absent is `center`, which is the only thing a canvas draws natively and what
+ * every stroke in every existing document already is. Inside and outside are
+ * drawn by clipping a double-weight stroke to one side — see `ShapeEffects` —
+ * so they need a path, which is why they are offered on shapes and not on a
+ * pencil blob whose "path" is already an outline.
+ */
+export type StrokeAlign = 'center' | 'inside' | 'outside';
+
 export type Stroke = {
   color: string;
   width: number;
@@ -124,6 +135,8 @@ export type Stroke = {
    * waiting for a separate control.
    */
   cap?: LineCap;
+  /** Where the line sits on the path. Absent is `center`. */
+  align?: StrokeAlign;
 };
 /**
  * A drop shadow.
@@ -178,6 +191,28 @@ export interface Appearance {
    * its own bitmap — see `useLayerFilters`, which owns that lifecycle.
    */
   blur?: number;
+  /**
+   * A shadow cast inward, as though the shape were a hole in the page.
+   *
+   * The same parameters as `shadow` and a completely different construction:
+   * a drop shadow is a property Konva has, an inner shadow is a clip and an
+   * inverse fill. Kept as its own field rather than a flag on `shadow`,
+   * because an object can want both — a card that is raised off the page and
+   * inset at its edges is an ordinary thing to draw.
+   */
+  innerShadow?: Shadow;
+  /**
+   * Gaussian blur of whatever is *behind* this object, in world units.
+   *
+   * Frosted glass. Distinct from `blur`, which diffuses the object itself:
+   * this leaves the object sharp and softens the board through it, so it is
+   * only visible paired with a fill that is not fully opaque.
+   *
+   * Cheaper than it sounds. Konva draws one layer in z-order, so at the moment
+   * a node paints, the layer's canvas already holds everything below it and
+   * nothing above — which is the definition of a backdrop. See `BackdropBlur`.
+   */
+  backdropBlur?: number;
 }
 
 export type TextAlign = 'left' | 'center' | 'right';

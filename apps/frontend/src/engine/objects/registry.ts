@@ -19,6 +19,15 @@ export interface ObjectCapabilities {
    * than the shadow.
    */
   supportsShadowSpread?: boolean;
+  /**
+   * Whether this type can take an inside/outside stroke and an inner shadow.
+   *
+   * One capability for both, because they are the same requirement: an
+   * outline the renderer can hand to `ctx.clip()`. A shape has one; a pencil
+   * blob's "path" is already the outline of its stroke, and text is a run of
+   * glyphs with no single path at all.
+   */
+  supportsEdgeEffects?: boolean;
   supportsReactions?: boolean;
   supportsComments?: boolean;
 }

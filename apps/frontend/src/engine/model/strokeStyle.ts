@@ -114,11 +114,15 @@ export function restyleForWidth(stroke: Stroke | undefined, width: number): Dash
  * Switching a stroke back to solid has to drop the keys, not blank them.
  */
 export function buildStroke(
-  base: Pick<Stroke, 'color' | 'width'>,
+  base: Pick<Stroke, 'color' | 'width' | 'align'>,
   geometry: DashGeometry
 ): Stroke {
   const stroke: Stroke = { color: base.color, width: base.width };
   if (geometry.dash && geometry.dash.length > 0) stroke.dash = geometry.dash;
   if (geometry.cap) stroke.cap = geometry.cap;
+  // `center` is the absent case, so switching back to it drops the key rather
+  // than storing the default — the same rule the dash keys follow, and for the
+  // same reason.
+  if (base.align && base.align !== 'center') stroke.align = base.align;
   return stroke;
 }

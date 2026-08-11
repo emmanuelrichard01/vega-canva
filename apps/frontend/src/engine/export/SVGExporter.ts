@@ -4,6 +4,7 @@ import { computeContentBounds } from './bounds';
 import { THEMES } from '../../components/canvas/renderers/StickyRenderer';
 import type { AnyNode, PathNode, ShapeNode, Typography } from '../model/schema';
 import { SvgPaintDefs } from './svgPaint';
+import { pointsAttribute, regularPolygonPoints, starPoints } from '../model/shapeOutline';
 
 /**
  * Embedding raw user text into an SVG without escaping is an XML-corruption
@@ -19,24 +20,13 @@ function escapeXml(s: string): string {
     .replace(/'/g, '&apos;');
 }
 
-function regularPolygonPoints(cx: number, cy: number, sides: number, rx: number, ry: number): string {
-  const pts: string[] = [];
-  for (let i = 0; i < sides; i++) {
-    const angle = (i * 2 * Math.PI) / sides - Math.PI / 2;
-    pts.push(`${cx + rx * Math.cos(angle)},${cy + ry * Math.sin(angle)}`);
-  }
-  return pts.join(' ');
-}
-
-function starPoints(cx: number, cy: number, numPoints: number, innerRatio: number, rx: number, ry: number): string {
-  const pts: string[] = [];
-  for (let i = 0; i < numPoints * 2; i++) {
-    const scale = i % 2 === 0 ? 1 : innerRatio;
-    const angle = (i * Math.PI) / numPoints - Math.PI / 2;
-    pts.push(`${cx + rx * scale * Math.cos(angle)},${cy + ry * scale * Math.sin(angle)}`);
-  }
-  return pts.join(' ');
-}
+/*
+ * The polygon and star trigonometry used to live here, duplicating the
+ * renderer's. It now lives in `model/shapeOutline`, which the effect layers
+ * read too — three descriptions of what shape a hexagon is would be two too
+ * many, and the first sign of a disagreement would be an exported star with a
+ * different number of points from the one on screen.
+ */
 
 function bezierPathData(node: PathNode, offsetX: number, offsetY: number): string {
   if (node.geometry.kind !== 'bezier') return '';
@@ -129,12 +119,12 @@ function shapeMarkup(node: ShapeNode, defs: SvgPaintDefs): string {
     case 'ellipse':
       return `<ellipse cx="${cx}" cy="${cy}" rx="${w / 2}" ry="${h / 2}" ${paint}${rot} />`;
     case 'hexagon':
-      return `<polygon points="${regularPolygonPoints(cx, cy, 6, w / 2, h / 2)}" ${paint}${rot} />`;
+      return `<polygon points="${pointsAttribute(regularPolygonPoints(cx, cy, 6, w / 2, h / 2))}" ${paint}${rot} />`;
     case 'star':
-      return `<polygon points="${starPoints(cx, cy, node.geometry.points ?? 5, node.geometry.innerRatio ?? 0.5, w / 2, h / 2)}" ${paint}${rot} />`;
+      return `<polygon points="${pointsAttribute(starPoints(cx, cy, node.geometry.points ?? 5, node.geometry.innerRatio ?? 0.5, w / 2, h / 2))}" ${paint}${rot} />`;
     case 'triangle':
     default:
-      return `<polygon points="${regularPolygonPoints(cx, cy, 3, w / 2, h / 2)}" ${paint}${rot} />`;
+      return `<polygon points="${pointsAttribute(regularPolygonPoints(cx, cy, 3, w / 2, h / 2))}" ${paint}${rot} />`;
   }
 }
 

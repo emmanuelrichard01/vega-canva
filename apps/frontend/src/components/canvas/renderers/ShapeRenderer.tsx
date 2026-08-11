@@ -3,6 +3,8 @@ import { Ellipse, Group, Rect, RegularPolygon, Star, Text } from 'react-konva';
 import type { ShapeNode } from '../../../engine/model/schema';
 import { konvaFontStyle, konvaTextDecoration, shadowProps, shadowSpreadProps, strokeColor, strokeDashProps, strokeWidth } from './shared';
 import { useFillProps } from './useFillProps';
+import { AlignedStroke, BackdropBlur, InnerShadow } from './ShapeEffects';
+import { shapePath2D } from './shapePath2D';
 
 interface Props {
   node: ShapeNode;
@@ -46,13 +48,33 @@ export const ShapeRenderer: React.FC<Props> = React.memo(({ node, showLabel }) =
   const spread = shadowSpreadProps(node.appearance);
   const shadow = spread ? {} : shadowProps(node.appearance);
 
+  // An inside or outside stroke is not something a Konva primitive can draw,
+  // so the primitive draws no stroke at all and `AlignedStroke` draws it
+  // clipped to one side. Centred strokes take the ordinary path and cost
+  // nothing extra, which is the case every existing document is in.
+  const align = node.appearance?.stroke?.align ?? 'center';
+  const offCentre = align !== 'center' && Boolean(stroke) && sw > 0;
+  const innerShadow = node.appearance?.innerShadow;
+  const backdropBlur = node.appearance?.backdropBlur ?? 0;
+  // Built once and shared by both effects: `ctx.clip(path)` and
+  // `ctx.fill(path, 'evenodd')` each take a path *object*, and building it
+  // twice is how a clip and a fill end up describing marginally different
+  // shapes. Only built when something needs it.
+  const path = React.useMemo(
+    () => (offCentre || innerShadow || backdropBlur > 0 ? shapePath2D(node) : null),
+    // The outline depends on the node's form and box, not on its paint.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    [offCentre, Boolean(innerShadow), backdropBlur > 0, node.geometry, w, h, node.appearance?.cornerRadius]
+  );
+  const primitiveStroke = offCentre ? undefined : stroke;
+
   let shape: React.ReactElement;
 
   if (node.geometry.kind === 'rect') {
-    shape = <Rect width={w} height={h} {...rectFill} {...shadow} stroke={stroke} strokeWidth={sw} {...dashProps} cornerRadius={Math.max(0, radius)} />;
+    shape = <Rect width={w} height={h} {...rectFill} {...shadow} stroke={primitiveStroke} strokeWidth={sw} {...dashProps} cornerRadius={Math.max(0, radius)} />;
   } else if (node.geometry.kind === 'ellipse') {
     // Independent radii, so a non-square ellipse stays elliptical.
-    shape = <Ellipse x={w / 2} y={h / 2} radiusX={w / 2} radiusY={h / 2} {...ellipseFill} {...shadow} stroke={stroke} strokeWidth={sw} {...dashProps} />;
+    shape = <Ellipse x={w / 2} y={h / 2} radiusX={w / 2} radiusY={h / 2} {...ellipseFill} {...shadow} stroke={primitiveStroke} strokeWidth={sw} {...dashProps} />;
   } else {
     // Build on the smaller dimension and stretch the node itself to fill the
     // w x h box. `strokeScaleEnabled={false}` keeps the outline an even weight
@@ -68,7 +90,7 @@ export const ShapeRenderer: React.FC<Props> = React.memo(({ node, showLabel }) =
       scaleY,
       ...polygonFill,
       ...shadow,
-      stroke,
+      stroke: primitiveStroke,
       strokeWidth: sw,
       strokeScaleEnabled: false,
       ...dashProps,
@@ -96,7 +118,31 @@ export const ShapeRenderer: React.FC<Props> = React.memo(({ node, showLabel }) =
           a second hand-written copy is a second place for the star's point
           count to be forgotten. */}
       {spread && React.cloneElement(shape, spread)}
+      {/* Beneath the fill, because frosted glass is the board seen *through*
+          the shape — drawn on top it would hide the fill instead of sitting
+          behind it. */}
+      {path && backdropBlur > 0 && (
+        <BackdropBlur path={path} width={w} height={h} radius={backdropBlur} />
+      )}
       {shape}
+      {/* Above the fill, because both effects describe what happens at the
+          shape's edge — an inside stroke sits on top of the paint it borders,
+          and an inner shadow is cast across it. */}
+      {path && offCentre && stroke && (
+        <AlignedStroke
+          path={path}
+          width={w}
+          height={h}
+          align={align as 'inside' | 'outside'}
+          color={stroke}
+          strokeWidth={sw}
+          dash={dashProps.dash}
+          cap={dashProps.lineCap as CanvasLineCap | undefined}
+        />
+      )}
+      {path && innerShadow && (
+        <InnerShadow path={path} width={w} height={h} shadow={innerShadow} />
+      )}
       {showLabel && node.text && node.typography && (
         <Text
           width={w}

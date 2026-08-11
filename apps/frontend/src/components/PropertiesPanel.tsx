@@ -20,6 +20,7 @@ import {
   type ShapeGeometry,
   type Shadow,
   type Stroke,
+  type StrokeAlign,
   type TextAlign,
   type Typography,
 } from '../engine/model/schema';
@@ -180,6 +181,55 @@ const DEFAULT_SHADOW: Shadow = {
   opacity: 0.25,
 };
 
+/**
+ * The inner shadow a shape gets when you first switch one on.
+ *
+ * Tighter and darker than the drop shadow's default: an inset shadow reads as
+ * depth only when it hugs the edge, and the same 12px blur that lifts a card
+ * off the page just fogs the inside of it.
+ */
+const DEFAULT_INNER_SHADOW: Shadow = {
+  color: '#000000',
+  blur: 8,
+  offsetX: 0,
+  offsetY: 2,
+  spread: 0,
+  opacity: 0.35,
+};
+
+/**
+ * A specimen of the alignment, not a symbol for it.
+ *
+ * The same call the stroke-style control makes: three lucide glyphs would
+ * approximate something 20px can simply show. The faint rectangle is the path
+ * and the solid band is where the stroke actually lands relative to it —
+ * which is the entire difference between the three options.
+ */
+const ALIGN_BAND: Record<'inside' | 'center' | 'outside', { x: number; y: number; w: number; h: number }> = {
+  inside: { x: 4, y: 3, w: 12, h: 6 },
+  center: { x: 3, y: 2, w: 14, h: 8 },
+  outside: { x: 2, y: 1, w: 16, h: 10 },
+};
+
+const StrokeAlignIcon: React.FC<{ align: 'inside' | 'center' | 'outside' }> = ({ align }) => {
+  const band = ALIGN_BAND[align];
+  return (
+    <svg width="20" height="12" viewBox="0 0 20 12" aria-hidden="true" focusable="false">
+      {/* The path itself, always in the same place. */}
+      <rect x="3" y="2" width="14" height="8" fill="none" stroke="currentColor" strokeOpacity="0.3" />
+      <rect
+        x={band.x}
+        y={band.y}
+        width={band.w}
+        height={band.h}
+        fill="none"
+        stroke="currentColor"
+        strokeWidth="2"
+      />
+    </svg>
+  );
+};
+
 /** The four safe-area edges, in the order a CSS inset is written. */
 const SAFE_EDGES = [
   { key: 'top', label: 'T' },
@@ -238,11 +288,12 @@ export const PropertiesPanel: React.FC<PropertiesPanelProps> = ({ selectedId, ov
    * "Dashed" actually chose. `buildStroke` omits the dash keys entirely for a
    * solid stroke rather than writing `undefined` into a nested value.
    */
-  const setStroke = (patch: Partial<Pick<Stroke, 'color' | 'width'>>) => {
+  const setStroke = (patch: Partial<Pick<Stroke, 'color' | 'width' | 'align'>>) => {
     const current = appearance?.stroke;
     const color = patch.color ?? current?.color ?? '#000000';
     const width = patch.width ?? current?.width ?? 2;
-    setAppearance({ stroke: buildStroke({ color, width }, restyleForWidth(current, width)) });
+    const align = patch.align ?? current?.align;
+    setAppearance({ stroke: buildStroke({ color, width, align }, restyleForWidth(current, width)) });
   };
 
   /**
@@ -278,6 +329,11 @@ export const PropertiesPanel: React.FC<PropertiesPanelProps> = ({ selectedId, ov
     setAppearance({ shadow: { ...current, ...patch } });
   };
 
+  const setInnerShadow = (patch: Partial<Shadow>) => {
+    const current = appearance?.innerShadow ?? DEFAULT_INNER_SHADOW;
+    setAppearance({ innerShadow: { ...current, ...patch } });
+  };
+
   const setSafeArea = (edge: 'top' | 'right' | 'bottom' | 'left', value: number) => {
     if (node.type !== 'frame') return;
     const current = node.safeArea ?? { top: 0, right: 0, bottom: 0, left: 0 };
@@ -304,7 +360,7 @@ export const PropertiesPanel: React.FC<PropertiesPanelProps> = ({ selectedId, ov
     // outline — a control that visibly changes nothing is worse than no
     // control, and a 0-width stroke is exactly that.
     const width = current?.width && current.width > 0 ? current.width : 2;
-    setAppearance({ stroke: buildStroke({ color, width }, dashFor(style, width)) });
+    setAppearance({ stroke: buildStroke({ color, width, align: current?.align }, dashFor(style, width)) });
   };
 
   // Resizing writes width/height only. There is no second copy of the size to
@@ -457,6 +513,22 @@ export const PropertiesPanel: React.FC<PropertiesPanelProps> = ({ selectedId, ov
               <NumberStepper
                 value={Math.round(appearance.blur ?? 0)}
                 onChange={(v) => setAppearance({ blur: v > 0 ? v : undefined })}
+                min={0}
+                max={100}
+                step={2}
+              />
+            </Row>
+          )}
+          {/* Frosted glass: the board blurred *behind* the shape rather than
+              the shape blurred itself. Only visible through a fill that is not
+              fully opaque, which is why it sits next to Opacity. Offered where
+              the renderer can clip to an outline, same as the other edge
+              effects. */}
+          {capabilities.supportsEdgeEffects && appearance && (
+            <Row label="Backdrop Blur">
+              <NumberStepper
+                value={Math.round(appearance.backdropBlur ?? 0)}
+                onChange={(v) => setAppearance({ backdropBlur: v > 0 ? v : undefined })}
                 min={0}
                 max={100}
                 step={2}
@@ -661,6 +733,90 @@ export const PropertiesPanel: React.FC<PropertiesPanelProps> = ({ selectedId, ov
               }))}
             />
           </Row>
+          {/* Where the line sits on the path. A canvas only draws centred, so
+              inside and outside are a double-weight stroke clipped to one
+              side — which needs an outline, and is why this is offered on
+              shapes and not on a pencil blob whose path is already the
+              outline of its own stroke. */}
+          {capabilities.supportsEdgeEffects && (
+            <Row label="Align">
+              <SegmentedControl
+                ariaLabel="Stroke alignment"
+                value={appearance.stroke?.align ?? 'center'}
+                onChange={(align) => setStroke({ align: align as StrokeAlign })}
+                segments={[
+                  { value: 'inside', label: 'Inside', icon: <StrokeAlignIcon align="inside" /> },
+                  { value: 'center', label: 'Center', icon: <StrokeAlignIcon align="center" /> },
+                  { value: 'outside', label: 'Outside', icon: <StrokeAlignIcon align="outside" /> },
+                ]}
+              />
+            </Row>
+          )}
+        </Accordion>
+      )}
+
+      {/* Inner shadow. Its own section rather than a flag on Shadow, because
+          an object can want both: a card raised off the page and inset at its
+          own edges is an ordinary thing to draw. */}
+      {capabilities.supportsEdgeEffects && appearance && (
+        <Accordion title="Inner Shadow" defaultOpen={Boolean(appearance.innerShadow)}>
+          <Row label="Enabled">
+            <input
+              type="checkbox"
+              checked={Boolean(appearance.innerShadow)}
+              onChange={(e) =>
+                setAppearance({ innerShadow: e.target.checked ? { ...DEFAULT_INNER_SHADOW } : undefined })
+              }
+              aria-label="Inner shadow"
+            />
+          </Row>
+          {appearance.innerShadow && (
+            <>
+              <Row label="Color">
+                <ColorPickerPopover
+                  color={appearance.innerShadow.color}
+                  onChange={(color) => setInnerShadow({ color })}
+                />
+              </Row>
+              <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '8px' }}>
+                <NumberStepper
+                  value={Math.round(appearance.innerShadow.offsetX)}
+                  onChange={(v) => setInnerShadow({ offsetX: v })}
+                  label="X"
+                />
+                <NumberStepper
+                  value={Math.round(appearance.innerShadow.offsetY)}
+                  onChange={(v) => setInnerShadow({ offsetY: v })}
+                  label="Y"
+                />
+              </div>
+              <Row label="Blur">
+                <NumberStepper
+                  value={Math.round(appearance.innerShadow.blur)}
+                  onChange={(v) => setInnerShadow({ blur: v })}
+                  min={0}
+                  max={200}
+                />
+              </Row>
+              <Row label="Spread">
+                <NumberStepper
+                  value={Math.round(appearance.innerShadow.spread ?? 0)}
+                  onChange={(v) => setInnerShadow({ spread: v })}
+                  min={0}
+                  max={100}
+                />
+              </Row>
+              <Row label="Opacity">
+                <NumberStepper
+                  value={Math.round((appearance.innerShadow.opacity ?? 1) * 100)}
+                  onChange={(v) => setInnerShadow({ opacity: v / 100 })}
+                  min={0}
+                  max={100}
+                  step={10}
+                />
+              </Row>
+            </>
+          )}
         </Accordion>
       )}
 
