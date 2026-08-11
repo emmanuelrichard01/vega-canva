@@ -2,6 +2,7 @@ import * as Y from 'yjs';
 import { nanoid } from 'nanoid';
 import { doc, identitiesMap, objectsMap, provider } from './doc';
 import { applyReactionToggle, seedReactions } from './reactions';
+import { frameForNode } from '../model/frames';
 
 /**
  * The write path for canvas objects.
@@ -52,6 +53,38 @@ export function nextZIndex(): number {
     if (typeof z === 'number' && Number.isFinite(z) && z > max) max = z;
   });
   return max + 1;
+}
+
+/**
+ * The frame a node created at this box should be born inside, if any.
+ *
+ * Membership is derived from geometry and recomputed whenever an object stops
+ * moving — but *creation* is a move that never happens, so a rectangle drawn
+ * inside a frame, a sticky dropped into one, a pasted copy, an imported image:
+ * all of them landed visibly inside a frame owning nothing, unclipped, and left
+ * behind the moment the frame was dragged. Nudging each one a pixel was the
+ * only way to make it join.
+ *
+ * Decided here rather than in the eight tools that create things, for the same
+ * reason z-index is: a rule that has to be remembered in eight places is a rule
+ * that will hold in seven. Reads `objectsMap` directly so the write path keeps
+ * no dependency on the store or on `frameMembership`, which imports this file.
+ */
+function frameToJoin(box: { id: string; x: number; y: number; width: number; height: number }): string | null {
+  const frames: Array<{ id: string; x: number; y: number; width: number; height: number; zIndex: number }> = [];
+  objectsMap.forEach((node, id) => {
+    if (node.get('type') !== 'frame') return;
+    frames.push({
+      id,
+      x: (node.get('x') as number) ?? 0,
+      y: (node.get('y') as number) ?? 0,
+      width: (node.get('width') as number) ?? 0,
+      height: (node.get('height') as number) ?? 0,
+      zIndex: (node.get('zIndex') as number) ?? 0,
+    });
+  });
+  if (frames.length === 0) return null;
+  return frameForNode(box, frames);
 }
 
 /** Lowest occupied stacking slot, for "send to back". */
@@ -153,6 +186,15 @@ export function createNode(input: NewNodeInput): string {
     // (duplicate/paste) whose stale z-index would otherwise be inherited.
     zIndex: nextZIndex(),
   };
+
+  // Derived from where the node actually is, not from `input` — a duplicate or
+  // a paste spreads the original's `frameId`, which is the wrong frame the
+  // moment the copy lands somewhere else. `?? undefined` because a null here
+  // would be written into the Y.Map as a literal null and defeat every
+  // `if (node.frameId)` downstream; undefined is dropped by the loop below.
+  node.frameId =
+    frameToJoin({ id, x: input.x, y: input.y, width: input.width, height: input.height }) ??
+    undefined;
 
   const ymap = new Y.Map<unknown>();
   doc.transact(() => {
