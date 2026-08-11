@@ -33,12 +33,12 @@ it.
 | Item | Status | Notes |
 | --- | --- | --- |
 | Infinite canvas | **Shipped** | `CameraSystem` + `SpatialIndex` (rbush). Treated as a large finite bound (±1,000,000) to avoid float drift at extreme pan. |
-| Artboard / Frame / Page | **Shipped** | Frame tool (`F`) with a preset picker and drag-to-size. Frames own what is inside them — membership derived from the object's centre, recomputed on every drop — clip their children, move and delete with their contents, and claim whatever they are drawn around. Named at creation, because they are the one type people refer to by name. Nested frames work, smallest containing frame wins. Not yet: safe zones, and a proper place in the Layers panel. |
+| Artboard / Frame / Page | **Shipped** | Frame tool (`F`) with a preset picker and drag-to-size. Frames own what is inside them — membership derived from the object's centre, recomputed on every drop *and at creation*, so something drawn inside a frame is born owned by it — clip their children, move and delete with their contents, and claim whatever they are drawn around. Named at creation, because they are the one type people refer to by name. Nested frames work, smallest containing frame wins. Their contents nest under them in the Layers panel, foldable. Their background is editable, which matters because it is also the export's background. |
 | Sections | **Absent** | Nothing groups frames on the canvas. |
 | Layout grids | **Partial** | `engine/interaction/gridSnap.ts` snaps drags to a grid, off by default, held on with a modifier. There is no column/row/square grid *overlay* and no per-frame grid definition. |
 | Rulers and guides | **Absent** | No ruler, no draggable guide, no guide storage. |
 | Smart guides | **Absent** | No alignment detection, no equal-spacing detection, no snap-to-object. This is the single most-felt omission in day-to-day use. |
-| Safe zones / bleed | **Absent** | Meaningless until frames exist. |
+| Safe zones / bleed | **Partial** | Safe zones ship: four per-frame insets, seeded from the preset (a story's 250/64/320/64, a print margin's 18) and editable in the panel. Drawn as chrome, so they never export, and nothing clips or snaps to them. **Bleed is deliberately not built.** It only means anything if the export is larger than the trim and the frame stops clipping at its own edge — which changes what `width`/`height` mean for a frame and what `frameExportBounds` returns. Drawn as a guide without those two changes it would be a dashed rectangle promising something the exporter does not honour. |
 
 ## 2. Selection and navigation
 
@@ -193,7 +193,7 @@ Nothing in this section exists, and all of it depends on frames.
 | Item | Status | Notes |
 | --- | --- | --- |
 | Export scale (1x/2x/3x) | **Shipped** | PNG only — SVG and JSON have no pixels to multiply. Each option shows the pixels it will produce when a frame is the target, and the filename carries the `@2x` suffix. |
-| PNG | **Shipped** | Reframes the stage onto the document bounds, captures, restores. Omits audio players, which are DOM overlays. |
+| PNG | **Shipped** | Reframes the stage onto the document bounds, captures, restores. Interface is hidden for the capture — the selection transformer, hover outline, crop overlay, force ring, tool preview, frame name labels and safe-area guides all carry an `export-chrome` name that `hideExportChrome` switches off and back on. Before that, exporting with anything selected baked the blue handles into the image. Omits audio players, which are DOM overlays. |
 | SVG | **Shipped** | Serializes CRDT state to real vector primitives rather than rasterizing, with user text escaped. |
 | JSON | **Shipped** | Canonical node data plus comment threads. |
 | PDF / EPS | **Absent** | |
@@ -207,7 +207,7 @@ Nothing in this section exists, and all of it depends on frames.
 Roughly, across the ~100 discrete items above:
 
 - **Shipped: ~37** — the canvas core, collaboration, frames, and the parts of the transform/typography blocks that a whiteboard needs.
-- **Partial: ~15**
+- **Partial: ~16**
 - **Dead: 1** — `FrameNode.layout`, the auto-layout declaration, which Phase 6 owns.
 - **Absent: ~47** — almost the whole of vector manipulation, design systems, prototyping, effects, and the paint model beyond flat colour.
 
@@ -245,26 +245,33 @@ Dash, star parameters, follow mode, image adjustments, image crop and the
 natural-size fields all now ship with the control that gives them a purpose.
 Frames and auto-layout are the remaining two, and Phase 1 is where they belong.
 
-**Phase 1 — Frames and artboards. Mostly done.** The tool, presets, ownership,
-clipping, move-and-delete-with-contents, capture-on-draw, and per-frame export
-at 1×/2×/3× have shipped. **Two pieces remain**, both deliberately left rather
-than rushed:
+**Phase 1 — Frames and artboards. Done** (2026-08-11), apart from bleed, which
+is scoped out above with its reason. The tool, presets, ownership, clipping,
+move-and-delete-with-contents, capture-on-draw, per-frame export at 1×/2×/3×,
+Layers nesting, editable background and safe zones have all shipped.
 
-- **Frames in the Layers panel.** They appear as ordinary rows today, so a
-  frame's contents are not shown as belonging to it. The panel already renders
-  `parentId` clusters for groups, and `frameId` is a *different* relationship —
-  it needs its own nesting rather than being folded into the group cluster.
-- **Safe zones and bleed.** Per-frame margin guides that never export.
+**Now watched running.** The earlier caveat — that none of this had been seen
+work, because the canvas culls through a `requestAnimationFrame` loop that does
+not fire in an automation tab — has been discharged. Confirmed by looking:
 
-One caveat recorded honestly: **none of Phase 1 has been watched running.** The
-canvas culls through a `requestAnimationFrame` loop that does not fire in an
-automation tab, so no Konva node is ever mounted there and the frame tool, the
-clipping and the crop overlay have all been verified by types, by tests over
-their geometry, and by reading — not by looking. The clip path in particular
-(inverting a child's absolute transform to map a frame's world rectangle into
-its local space) is the kind of thing that is either exactly right or visibly
-wrong, and it wants ten minutes with a real mouse before anything is built on
-top of it.
+- The clip path is exactly right. A 120×120 shape dragged over a frame's right
+  edge has its fill cut dead at the boundary while the transformer still
+  reports the full box. That was the piece most likely to be silently wrong.
+- The preset picker arms the tool; a click places the preset size, a drag sizes
+  by hand.
+- The Layers panel nests and folds correctly, icons on one line.
+- The safe-area guide draws as a hairline dashed inset at every zoom.
+- `hideExportChrome` removes the transformer and the frame label from the stage
+  and puts them back.
+
+Two things the browser found that reading had not:
+
+- **Nothing created inside a frame joined it.** Membership was recomputed when
+  an object stopped moving, and creation is a move that never happens — so a
+  shape drawn in a frame, a pasted copy or a dropped image sat visibly inside
+  it owning nothing, unclipped, and was left behind when the frame moved. Now
+  decided in `createNode`, from the box rather than from the input.
+- **Export was capturing the interface.** See §14.
 
 **Phase 2 — The paint model.** Gradients (linear, radial, then conic/diamond
 via generated patterns), blend modes, stroke alignment, dash and cap/join,
