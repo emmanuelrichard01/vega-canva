@@ -27,6 +27,17 @@ vi.mock('../../hooks/useStore', () => ({
   useStore: { getState: () => ({ objects }) },
 }));
 
+/**
+ * `guides` reaches the real Y.Doc, which reaches the provider and `window`.
+ * The adapter only needs to know *whether* there are guides, so the module is
+ * stubbed rather than the whole document stack being stood up in a unit test.
+ */
+let guides: Array<{ axis: 'x' | 'y'; position: number }> = [];
+
+vi.mock('../document/guides', () => ({
+  readGuides: () => guides,
+}));
+
 vi.mock('./gridSnap', () => ({
   gridSnap: {
     get isModifierHeld() {
@@ -53,6 +64,7 @@ beforeEach(() => {
   camera.viewport = { minX: -1000, minY: -1000, maxX: 3000, maxY: 3000 };
   modifierHeld = false;
   objects = {};
+  guides = [];
   clearSnapGuides();
 });
 
@@ -152,6 +164,21 @@ describe('snapDraggedBox', () => {
     objects = { b: node('b', 204, 0) };
     const second = snapDraggedBox('moving', { x: first.x, y: 500, width: 100, height: 100 });
     expect(second.x).toBe(204);
+  });
+
+  it('snaps to a ruler guide, which is the most deliberate target there is', () => {
+    // Somebody put it there on purpose, so it pulls like any other edge.
+    guides = [{ axis: 'x', position: 200 }];
+    expect(snapDraggedBox('moving', { x: 203, y: 0, width: 100, height: 100 }).x).toBe(200);
+  });
+
+  it('lets a horizontal guide correct only the vertical', () => {
+    // A `y` guide is a horizontal line: it says nothing about x, and a guide
+    // that nudged both axes would be a guide you could not aim with.
+    guides = [{ axis: 'y', position: 400 }];
+    const result = snapDraggedBox('moving', { x: 203, y: 403, width: 100, height: 100 });
+    expect(result.y).toBe(400);
+    expect(result.x).toBe(203);
   });
 
   it('clears the guides when nothing is in range', () => {
