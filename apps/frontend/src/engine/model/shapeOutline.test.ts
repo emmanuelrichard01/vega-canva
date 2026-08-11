@@ -105,7 +105,7 @@ describe('shapeOutline', () => {
   });
 
   it('measures polygons against the node box, centred', () => {
-    const outline = shapeOutline(shape({ geometry: { kind: 'hexagon' } }));
+    const outline = shapeOutline(shape({ geometry: { kind: 'polygon', points: 6 } }));
     expect(outline.kind).toBe('polygon');
     if (outline.kind !== 'polygon') return;
     expect(outline.points).toHaveLength(6);
@@ -113,13 +113,19 @@ describe('shapeOutline', () => {
     near(outline.points[0].y, 0);
   });
 
-  it('falls back to a triangle for an unknown kind rather than an empty path', () => {
-    // An empty outline clips everything away, so a shape kind this build has
-    // never heard of would vanish the moment it was given an inside stroke.
-    const outline = shapeOutline(shape({ geometry: { kind: 'octagon' } as never }));
+  it('falls back to three sides for a polygon with no count', () => {
+    // An empty outline clips everything away, so a polygon whose side count
+    // never reached the document would vanish the moment it got an inside
+    // stroke.
+    const outline = shapeOutline(shape({ geometry: { kind: 'polygon' } }));
     expect(outline.kind).toBe('polygon');
     if (outline.kind !== 'polygon') return;
     expect(outline.points).toHaveLength(3);
+  });
+
+  it('describes a line as an open run, corner to corner', () => {
+    const outline = shapeOutline(shape({ geometry: { kind: 'line' } }));
+    expect(outline).toEqual({ kind: 'open', points: [{ x: 0, y: 0 }, { x: 100, y: 60 }] });
   });
 
   it('reads the star parameters the panel writes', () => {

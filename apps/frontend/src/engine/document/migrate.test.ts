@@ -127,7 +127,9 @@ describe('migrateDoc', () => {
 
     const migrated = objects.get('old')!.toJSON() as Record<string, unknown>;
     expect(migrated.width).toBe(33);
-    expect((migrated.geometry as { kind: string }).kind).toBe('hexagon');
+    // `hexagon` stopped being a kind when polygons gained a side count; the
+    // migration is what keeps the shape the same across that change.
+    expect(migrated.geometry).toMatchObject({ kind: 'polygon', points: 6 });
   });
 });
 

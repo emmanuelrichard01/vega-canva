@@ -10,10 +10,13 @@ import { objectRegistry } from '../engine/objects';
 import {
   BLEND_MODES,
   DEFAULT_TYPOGRAPHY,
+  MAX_POLYGON_SIDES,
   MAX_STAR_POINTS,
   MAX_STAR_RATIO,
+  MIN_POLYGON_SIDES,
   MIN_STAR_POINTS,
   MIN_STAR_RATIO,
+  isOpenShape,
   type AnyNode,
   type Appearance,
   type BlendMode,
@@ -273,6 +276,13 @@ export const PropertiesPanel: React.FC<PropertiesPanelProps> = ({ selectedId, ov
   const typography = typographyOf(node);
   const appearance = appearanceOf(node);
 
+  /**
+   * A line or an arrow: no interior, so no fill, no corner radius, and none of
+   * the effects that clip to one. Read once here rather than repeated as
+   * `node.geometry.kind === 'line' || ...` at seven call sites.
+   */
+  const openShape = node.type === 'shape' && isOpenShape(node.geometry.kind);
+
   const set = (updates: Partial<AnyNode>) => updateNode(selectedId, updates as Record<string, unknown>);
   const setAppearance = (patch: Partial<Appearance>) =>
     set({ appearance: { ...(appearance ?? {}), ...patch } } as Partial<AnyNode>);
@@ -458,7 +468,7 @@ export const PropertiesPanel: React.FC<PropertiesPanelProps> = ({ selectedId, ov
 
       {(capabilities.supportsFill || capabilities.supportsOpacity || capabilities.supportsRadius) && (
         <Accordion title="Appearance">
-          {capabilities.supportsFill && appearance && (
+          {capabilities.supportsFill && appearance && !openShape && (
             <Row label="Fill">
               <FillEditor
                 paint={appearance.fill?.[0]}
@@ -466,7 +476,7 @@ export const PropertiesPanel: React.FC<PropertiesPanelProps> = ({ selectedId, ov
               />
             </Row>
           )}
-          {capabilities.supportsRadius && (node.type !== 'shape' || node.geometry.kind === 'rect') && (
+          {capabilities.supportsRadius && (node.type !== 'shape' || node.geometry.kind === 'rect') && !openShape && (
             <Row label="Corner Radius">
               <NumberStepper
                 value={appearance?.cornerRadius ?? 0}
@@ -524,7 +534,7 @@ export const PropertiesPanel: React.FC<PropertiesPanelProps> = ({ selectedId, ov
               fully opaque, which is why it sits next to Opacity. Offered where
               the renderer can clip to an outline, same as the other edge
               effects. */}
-          {capabilities.supportsEdgeEffects && appearance && (
+          {capabilities.supportsEdgeEffects && appearance && !openShape && (
             <Row label="Backdrop Blur">
               <NumberStepper
                 value={Math.round(appearance.backdropBlur ?? 0)}
@@ -679,7 +689,7 @@ export const PropertiesPanel: React.FC<PropertiesPanelProps> = ({ selectedId, ov
               {/* Spread grows the shadow's silhouette by stroking the same
                   path, which needs a shape a stroke can grow — not a pen path
                   that is already stroked, nor glyphs a stroke would fatten. */}
-              {capabilities.supportsShadowSpread && (
+              {capabilities.supportsShadowSpread && !openShape && (
                 <Row label="Spread">
                   <NumberStepper
                     value={Math.round(appearance.shadow.spread ?? 0)}
@@ -700,6 +710,46 @@ export const PropertiesPanel: React.FC<PropertiesPanelProps> = ({ selectedId, ov
               </Row>
             </>
           )}
+        </Accordion>
+      )}
+
+      {/* One number, one control. `triangle` and `hexagon` used to be separate
+          shape kinds, which is two hard-coded side counts where the
+          specification asks for any of them. */}
+      {node.type === 'shape' && node.geometry.kind === 'polygon' && (
+        <Accordion title="Polygon">
+          <Row label="Sides">
+            <NumberStepper
+              value={node.geometry.points ?? 3}
+              onChange={(points) => setGeometry({ points })}
+              min={MIN_POLYGON_SIDES}
+              max={MAX_POLYGON_SIDES}
+            />
+          </Row>
+        </Accordion>
+      )}
+
+      {/* A line and an arrow are the same shape with different ends, so the
+          heads are a property rather than a second kind — turning one on makes
+          a line an arrow without changing what the object is. */}
+      {node.type === 'shape' && openShape && (
+        <Accordion title="Ends">
+          <Row label="Start">
+            <input
+              type="checkbox"
+              checked={node.geometry.arrowStart ?? false}
+              onChange={(e) => setGeometry({ arrowStart: e.target.checked })}
+              aria-label="Arrowhead at the start"
+            />
+          </Row>
+          <Row label="End">
+            <input
+              type="checkbox"
+              checked={node.geometry.arrowEnd ?? false}
+              onChange={(e) => setGeometry({ arrowEnd: e.target.checked })}
+              aria-label="Arrowhead at the end"
+            />
+          </Row>
         </Accordion>
       )}
 
@@ -738,7 +788,7 @@ export const PropertiesPanel: React.FC<PropertiesPanelProps> = ({ selectedId, ov
               side — which needs an outline, and is why this is offered on
               shapes and not on a pencil blob whose path is already the
               outline of its own stroke. */}
-          {capabilities.supportsEdgeEffects && (
+          {capabilities.supportsEdgeEffects && !openShape && (
             <Row label="Align">
               <SegmentedControl
                 ariaLabel="Stroke alignment"
@@ -758,7 +808,7 @@ export const PropertiesPanel: React.FC<PropertiesPanelProps> = ({ selectedId, ov
       {/* Inner shadow. Its own section rather than a flag on Shadow, because
           an object can want both: a card raised off the page and inset at its
           own edges is an ordinary thing to draw. */}
-      {capabilities.supportsEdgeEffects && appearance && (
+      {capabilities.supportsEdgeEffects && appearance && !openShape && (
         <Accordion title="Inner Shadow" defaultOpen={Boolean(appearance.innerShadow)}>
           <Row label="Enabled">
             <input

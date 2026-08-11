@@ -5,6 +5,7 @@ import { THEMES } from '../../components/canvas/renderers/StickyRenderer';
 import type { AnyNode, PathNode, ShapeNode, Typography } from '../model/schema';
 import { SvgPaintDefs } from './svgPaint';
 import { pointsAttribute, regularPolygonPoints, starPoints } from '../model/shapeOutline';
+import { ARROW_HEAD_SCALE } from '../model/schema';
 
 /**
  * Embedding raw user text into an SVG without escaping is an XML-corruption
@@ -98,6 +99,46 @@ function dashAttrs(stroke: ShapeNode['appearance']['stroke']): string {
   return ` stroke-dasharray="${stroke.dash.join(' ')}"${cap}`;
 }
 
+/**
+ * A line or an arrow: an open run with optional heads.
+ *
+ * The heads are drawn as a `<polygon>` each rather than through SVG's
+ * `marker-end`. A marker is the idiomatic answer and the wrong one here:
+ * markers take the marker's own fill rather than the line's, need a `<defs>`
+ * entry per colour, and are dropped outright by several editors on import — so
+ * an arrow exported that way arrives as a plain line.
+ */
+function openShapeMarkup(node: ShapeNode): string {
+  const stroke = node.appearance.stroke?.color ?? '#1F2937';
+  const sw = node.appearance.stroke?.width ?? 2;
+  const rot = rotationTransform(node);
+  const x1 = node.x;
+  const y1 = node.y;
+  const x2 = node.x + node.width;
+  const y2 = node.y + node.height;
+
+  const parts = [
+    `<line x1="${x1}" y1="${y1}" x2="${x2}" y2="${y2}" stroke="${stroke}" stroke-width="${sw}" stroke-linecap="round"${dashAttrs(node.appearance.stroke)} />`,
+  ];
+
+  const head = Math.max(6, sw * ARROW_HEAD_SCALE);
+  const angle = Math.atan2(y2 - y1, x2 - x1);
+  const arrowHead = (tipX: number, tipY: number, facing: number) => {
+    const wing = (offset: number) => ({
+      x: tipX - head * Math.cos(facing + offset),
+      y: tipY - head * Math.sin(facing + offset),
+    });
+    const a = wing(Math.PI / 7);
+    const b = wing(-Math.PI / 7);
+    return `<polygon points="${tipX},${tipY} ${a.x},${a.y} ${b.x},${b.y}" fill="${stroke}" />`;
+  };
+
+  if (node.geometry.arrowEnd) parts.push(arrowHead(x2, y2, angle));
+  if (node.geometry.arrowStart) parts.push(arrowHead(x1, y1, angle + Math.PI));
+
+  return rot ? `<g${rot}>${parts.join('')}</g>` : parts.join('');
+}
+
 function shapeMarkup(node: ShapeNode, defs: SvgPaintDefs): string {
   const { x, y, width: w, height: h } = node;
   const cx = x + w / 2;
@@ -118,13 +159,14 @@ function shapeMarkup(node: ShapeNode, defs: SvgPaintDefs): string {
       return `<rect x="${x}" y="${y}" width="${w}" height="${h}" rx="${node.appearance.cornerRadius ?? 0}" ${paint}${rot} />`;
     case 'ellipse':
       return `<ellipse cx="${cx}" cy="${cy}" rx="${w / 2}" ry="${h / 2}" ${paint}${rot} />`;
-    case 'hexagon':
-      return `<polygon points="${pointsAttribute(regularPolygonPoints(cx, cy, 6, w / 2, h / 2))}" ${paint}${rot} />`;
     case 'star':
       return `<polygon points="${pointsAttribute(starPoints(cx, cy, node.geometry.points ?? 5, node.geometry.innerRatio ?? 0.5, w / 2, h / 2))}" ${paint}${rot} />`;
-    case 'triangle':
+    case 'line':
+    case 'arrow':
+      return openShapeMarkup(node);
+    case 'polygon':
     default:
-      return `<polygon points="${pointsAttribute(regularPolygonPoints(cx, cy, 3, w / 2, h / 2))}" ${paint}${rot} />`;
+      return `<polygon points="${pointsAttribute(regularPolygonPoints(cx, cy, node.geometry.points ?? 3, w / 2, h / 2))}" ${paint}${rot} />`;
   }
 }
 

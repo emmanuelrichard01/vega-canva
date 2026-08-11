@@ -1,8 +1,10 @@
 import {
   BLEND_MODES,
   DEFAULT_TYPOGRAPHY,
+  MAX_POLYGON_SIDES,
   MAX_STAR_POINTS,
   MAX_STAR_RATIO,
+  MIN_POLYGON_SIDES,
   MIN_STAR_POINTS,
   MIN_STAR_RATIO,
   type AnyNode,
@@ -78,17 +80,32 @@ function normalizeSafeArea(raw: unknown): FrameNode['safeArea'] {
 }
 
 /** Legacy shape names that no longer exist as distinct kinds. */
-const SHAPE_KIND_ALIASES: Record<string, ShapeKind> = {
-  rect: 'rect',
-  rectangle: 'rect',
-  square: 'rect',
-  circle: 'ellipse',
-  ellipse: 'ellipse',
-  oval: 'ellipse',
-  triangle: 'triangle',
-  polygon: 'triangle', // The old "polygon" tool always drew a 3-sided RegularPolygon.
-  hexagon: 'hexagon',
-  star: 'star',
+/**
+ * Legacy and preset names, and the side count each implies.
+ *
+ * `triangle` and `hexagon` stopped being kinds when `polygon` gained a side
+ * count — they are two hard-coded numbers where the specification asks for any
+ * of them. Both remain as *names*, here and in the tool dock, because they are
+ * what people reach for; they simply resolve to a polygon now. Every document
+ * ever written still opens, which is the whole job of this file.
+ */
+const SHAPE_KIND_ALIASES: Record<string, { kind: ShapeKind; sides?: number }> = {
+  rect: { kind: 'rect' },
+  rectangle: { kind: 'rect' },
+  square: { kind: 'rect' },
+  circle: { kind: 'ellipse' },
+  ellipse: { kind: 'ellipse' },
+  oval: { kind: 'ellipse' },
+  star: { kind: 'star' },
+  line: { kind: 'line' },
+  arrow: { kind: 'arrow' },
+  polygon: { kind: 'polygon' },
+  triangle: { kind: 'polygon', sides: 3 },
+  quadrilateral: { kind: 'polygon', sides: 4 },
+  pentagon: { kind: 'polygon', sides: 5 },
+  hexagon: { kind: 'polygon', sides: 6 },
+  heptagon: { kind: 'polygon', sides: 7 },
+  octagon: { kind: 'polygon', sides: 8 },
 };
 
 const STICKY_THEMES: StickyTheme[] = [
@@ -383,9 +400,10 @@ function normalizeText(raw: any): string {
 
 function normalizeShapeGeometry(raw: any): ShapeGeometry {
   const rawKind = str(raw?.geometry?.kind ?? raw?.content?.shapeType ?? raw?.shapeType, 'rect');
-  const kind = SHAPE_KIND_ALIASES[rawKind] ?? 'rect';
-  const geometry: ShapeGeometry = { kind };
-  if (kind === 'star') {
+  const alias = SHAPE_KIND_ALIASES[rawKind] ?? { kind: 'rect' as ShapeKind };
+  const geometry: ShapeGeometry = { kind: alias.kind };
+
+  if (alias.kind === 'star') {
     // Clamped at the boundary, like every other value that reaches a renderer.
     // Konva draws a "star" with two points as a pair of crossed spikes and one
     // with zero inner radius as a set of lines to the centre — both are
@@ -395,6 +413,23 @@ function normalizeShapeGeometry(raw: any): ShapeGeometry {
     geometry.points = Math.round(clamp(num(raw?.geometry?.points, 5), MIN_STAR_POINTS, MAX_STAR_POINTS));
     geometry.innerRatio = clamp(num(raw?.geometry?.innerRatio, 0.5), MIN_STAR_RATIO, MAX_STAR_RATIO);
   }
+
+  if (alias.kind === 'polygon') {
+    // The alias' own side count is the *fallback*, not an override: a document
+    // that says `triangle` and then stores six sides was edited after it was
+    // created, and the edit is the more recent statement of intent.
+    const stored = num(raw?.geometry?.points, alias.sides ?? 3);
+    geometry.points = Math.round(clamp(stored, MIN_POLYGON_SIDES, MAX_POLYGON_SIDES));
+  }
+
+  if (alias.kind === 'line' || alias.kind === 'arrow') {
+    // An `arrow` with no stored head is one this build created before it could
+    // say so; a `line` with no stored head is a plain line. The kind carries
+    // the default so neither has to be rewritten.
+    geometry.arrowStart = bool(raw?.geometry?.arrowStart, false);
+    geometry.arrowEnd = bool(raw?.geometry?.arrowEnd, alias.kind === 'arrow');
+  }
+
   return geometry;
 }
 

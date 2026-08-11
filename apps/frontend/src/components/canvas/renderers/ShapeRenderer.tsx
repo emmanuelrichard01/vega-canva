@@ -1,6 +1,6 @@
 import React from 'react';
-import { Ellipse, Group, Rect, RegularPolygon, Star, Text } from 'react-konva';
-import type { ShapeNode } from '../../../engine/model/schema';
+import { Arrow, Ellipse, Group, Line, Rect, RegularPolygon, Star, Text } from 'react-konva';
+import { ARROW_HEAD_SCALE, isOpenShape, type ShapeNode } from '../../../engine/model/schema';
 import { konvaFontStyle, konvaTextDecoration, shadowProps, shadowSpreadProps, strokeColor, strokeDashProps, strokeWidth } from './shared';
 import { useFillProps } from './useFillProps';
 import { AlignedStroke, BackdropBlur, InnerShadow } from './ShapeEffects';
@@ -52,10 +52,13 @@ export const ShapeRenderer: React.FC<Props> = React.memo(({ node, showLabel }) =
   // so the primitive draws no stroke at all and `AlignedStroke` draws it
   // clipped to one side. Centred strokes take the ordinary path and cost
   // nothing extra, which is the case every existing document is in.
+  // A line has no interior to clip to, so the two edge effects are simply not
+  // available on one — the same rule the panel gates them by.
+  const open = isOpenShape(node.geometry.kind);
   const align = node.appearance?.stroke?.align ?? 'center';
-  const offCentre = align !== 'center' && Boolean(stroke) && sw > 0;
-  const innerShadow = node.appearance?.innerShadow;
-  const backdropBlur = node.appearance?.backdropBlur ?? 0;
+  const offCentre = !open && align !== 'center' && Boolean(stroke) && sw > 0;
+  const innerShadow = open ? undefined : node.appearance?.innerShadow;
+  const backdropBlur = open ? 0 : (node.appearance?.backdropBlur ?? 0);
   // Built once and shared by both effects: `ctx.clip(path)` and
   // `ctx.fill(path, 'evenodd')` each take a path *object*, and building it
   // twice is how a clip and a fill end up describing marginally different
@@ -70,7 +73,41 @@ export const ShapeRenderer: React.FC<Props> = React.memo(({ node, showLabel }) =
 
   let shape: React.ReactElement;
 
-  if (node.geometry.kind === 'rect') {
+  if (open) {
+    // Corner to corner of the box. Konva's `Arrow` is a `Line` that also draws
+    // heads, so one branch covers both kinds — and a "line" with a head turned
+    // on in the panel becomes an arrow without changing what it is, which is
+    // how people actually use the two.
+    const points = [0, 0, w, h];
+    const headSize = Math.max(6, (sw || 2) * ARROW_HEAD_SCALE);
+    const common = {
+      points,
+      stroke: stroke ?? '#1F2937',
+      strokeWidth: sw || 2,
+      lineCap: 'round' as const,
+      lineJoin: 'round' as const,
+      ...dashProps,
+      ...shadow,
+      // The grab area for a hairline is otherwise the hairline itself.
+      hitStrokeWidth: Math.max(20, sw),
+    };
+    const start = node.geometry.arrowStart ?? false;
+    const end = node.geometry.arrowEnd ?? false;
+
+    shape = start || end ? (
+      <Arrow
+        {...common}
+        // Konva draws the head in the stroke colour only if `fill` says so.
+        fill={stroke ?? '#1F2937'}
+        pointerLength={headSize}
+        pointerWidth={headSize}
+        pointerAtBeginning={start}
+        pointerAtEnding={end}
+      />
+    ) : (
+      <Line {...common} />
+    );
+  } else if (node.geometry.kind === 'rect') {
     shape = <Rect width={w} height={h} {...rectFill} {...shadow} stroke={primitiveStroke} strokeWidth={sw} {...dashProps} cornerRadius={Math.max(0, radius)} />;
   } else if (node.geometry.kind === 'ellipse') {
     // Independent radii, so a non-square ellipse stays elliptical.
@@ -105,7 +142,9 @@ export const ShapeRenderer: React.FC<Props> = React.memo(({ node, showLabel }) =
           outerRadius={base / 2}
         />
       ) : (
-        <RegularPolygon {...common} sides={node.geometry.kind === 'hexagon' ? 6 : 3} radius={base / 2} />
+        // One primitive for every regular polygon. Triangle and hexagon used
+        // to be separate kinds with the side count written into this line.
+        <RegularPolygon {...common} sides={node.geometry.points ?? 3} radius={base / 2} />
       );
   }
 

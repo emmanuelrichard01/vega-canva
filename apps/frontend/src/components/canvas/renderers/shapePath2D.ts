@@ -32,7 +32,10 @@ export function shapePath2D(node: ShapeNode): Path2D {
   }
 
   outline.points.forEach((p, i) => (i === 0 ? path.moveTo(p.x, p.y) : path.lineTo(p.x, p.y)));
-  path.closePath();
+  // An open run is not closed: closing a line would draw it back on itself,
+  // and the effects that use this path clip to an *interior* a line has not
+  // got. They are gated off for open shapes for exactly that reason.
+  if (outline.kind !== 'open') path.closePath();
   return path;
 }
 

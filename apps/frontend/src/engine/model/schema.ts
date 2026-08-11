@@ -325,7 +325,27 @@ export interface BaseNode {
 // Geometry variants
 // ---------------------------------------------------------------------------
 
-export type ShapeKind = 'rect' | 'ellipse' | 'triangle' | 'hexagon' | 'star';
+/**
+ * The primitives a shape can be.
+ *
+ * `polygon` replaced the separate `triangle` and `hexagon` kinds, which were
+ * two hard-coded side counts where the specification asks for any of them —
+ * pentagon, heptagon, octagon and up. They survive as *tool presets*: the dock
+ * still offers a triangle and a hexagon, because those are the two people
+ * reach for, and both now create a polygon with `sides` set. Legacy documents
+ * are mapped by the normalizer, which already did exactly this for the older
+ * `rectangle`/`circle`/`oval` names.
+ *
+ * `line` and `arrow` are open shapes, and the only two here with no interior.
+ * They run corner to corner of the node's box, which keeps `width`/`height` the
+ * single source of bounds — the alternative, storing two endpoints, would be a
+ * second place a shape records its size.
+ */
+export type ShapeKind = 'rect' | 'ellipse' | 'polygon' | 'star' | 'line' | 'arrow';
+
+/** Shapes with no interior: no fill, no corner radius, no inside stroke. */
+export const OPEN_SHAPE_KINDS: ShapeKind[] = ['line', 'arrow'];
+export const isOpenShape = (kind: ShapeKind): boolean => OPEN_SHAPE_KINDS.includes(kind);
 
 /**
  * The bounds a star's parameters are clamped to at the CRDT boundary.
@@ -345,9 +365,31 @@ export const MAX_STAR_POINTS = 60;
 export const MIN_STAR_RATIO = 0.05;
 export const MAX_STAR_RATIO = 1;
 
+/**
+ * The bounds a polygon's side count is clamped to.
+ *
+ * Two sides is a degenerate line and one is a point; past sixty a polygon is
+ * indistinguishable from the ellipse primitive at any size this canvas draws,
+ * and the ellipse is cheaper and smoother. Same reasoning, and the same
+ * enforcement point, as the star's limits above.
+ */
+export const MIN_POLYGON_SIDES = 3;
+export const MAX_POLYGON_SIDES = 60;
+
+/** Arrowhead size as a multiple of the stroke weight. */
+export const ARROW_HEAD_SCALE = 4;
+
 export interface ShapeGeometry {
   kind: ShapeKind;
-  /** Star only. Clamped to `MIN_STAR_POINTS`..`MAX_STAR_POINTS`. */
+  /**
+   * How many points a star has, or how many sides a polygon has.
+   *
+   * One field, because it is one number with one control: a hexagon's six and
+   * a six-pointed star's six are the same quantity, and a second field named
+   * `sides` beside this one would be two names for it that could disagree.
+   * Clamped to `MIN_STAR_POINTS`..`MAX_STAR_POINTS` for a star and
+   * `MIN_POLYGON_SIDES`..`MAX_POLYGON_SIDES` for a polygon.
+   */
   points?: number;
   /**
    * Star only: inner radius as a fraction of the outer radius, clamped to
@@ -356,6 +398,10 @@ export interface ShapeGeometry {
    * end of the range rather than a broken state.
    */
   innerRatio?: number;
+  /** Line and arrow: a head at the start of the run. Absent is none. */
+  arrowStart?: boolean;
+  /** Line and arrow: a head at the end. An `arrow` is created with this set. */
+  arrowEnd?: boolean;
 }
 
 export interface BezierSegment {

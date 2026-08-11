@@ -1,8 +1,9 @@
-import { Rect, Ellipse, RegularPolygon, Star } from 'react-konva';
+import { Rect, Ellipse, Line, RegularPolygon, Star } from 'react-konva';
 import { nanoid } from 'nanoid';
 import { ThemeService } from '../ThemeService';
 import type { Tool, ToolContext } from './Tool';
-import type { ShapeKind } from '../model/schema';
+import type { ShapeGeometry } from '../model/schema';
+import { PRESET_GEOMETRY, type ShapePreset } from '../../components/workspace/shapeIcons';
 import * as React from 'react';
 
 /** Minimum drag before a shape is sized by the drag rather than dropped at a default size. */
@@ -18,11 +19,28 @@ export class ShapeTool implements Tool {
   private startY = 0;
   private currentX = 0;
   private currentY = 0;
-  private kind: ShapeKind;
+  private preset: ShapePreset;
 
-  constructor(kind: ShapeKind = 'rect') {
-    this.id = `shape-${kind}`;
-    this.kind = kind;
+  constructor(preset: ShapePreset = 'rect') {
+    this.id = `shape-${preset}`;
+    this.preset = preset;
+  }
+
+  /**
+   * The geometry this preset creates.
+   *
+   * The dock offers named side counts — triangle, pentagon, octagon — because
+   * nobody wants to draw a rectangle and then type "5". The document stores
+   * one `polygon` kind with a number, which is what makes the count editable
+   * afterwards rather than frozen into the shape's identity.
+   */
+  private geometry(): ShapeGeometry {
+    const preset = PRESET_GEOMETRY[this.preset] ?? PRESET_GEOMETRY.rect;
+    const geometry: ShapeGeometry = { kind: preset.kind };
+    if (preset.points !== undefined) geometry.points = preset.points;
+    if (preset.kind === 'star') geometry.innerRatio = 0.5;
+    if (preset.kind === 'arrow') geometry.arrowEnd = true;
+    return geometry;
   }
 
   onPointerDown(ctx: ToolContext, e: any) {
@@ -83,11 +101,11 @@ export class ShapeTool implements Tool {
       // describes the form alone.
       width,
       height,
-      geometry: { kind: this.kind },
+      geometry: this.geometry(),
       appearance: {
         fill: [{ type: 'solid', color: ThemeService.getDefaultShapeFill(), opacity: 1 }],
         stroke: { color: ThemeService.getDefaultStrokeColor(), width: 2 },
-        cornerRadius: this.kind === 'rect' ? 8 : 0,
+        cornerRadius: this.preset === 'rect' ? 8 : 0,
       },
     });
 
@@ -117,7 +135,7 @@ export class ShapeTool implements Tool {
       startY: this.startY,
       currentX: this.currentX,
       currentY: this.currentY,
-      kind: this.kind,
+      kind: this.preset,
     });
   }
 
@@ -128,7 +146,7 @@ export class ShapeTool implements Tool {
     const height = Math.abs(overlayState.currentY - overlayState.startY);
     const x = Math.min(overlayState.startX, overlayState.currentX);
     const y = Math.min(overlayState.startY, overlayState.currentY);
-    const kind: ShapeKind = overlayState.kind;
+    const kind: ShapePreset = overlayState.kind;
 
     const fill = 'rgba(59, 130, 246, 0.25)';
     const stroke = '#3B82F6';
@@ -159,8 +177,16 @@ export class ShapeTool implements Tool {
       );
     }
 
+    // A line preview is the run itself, not a filled box around it: the
+    // preview has to look like the thing that is about to be created.
+    if (kind === 'line' || kind === 'arrow') {
+      return (
+        <Line points={[x, y, x + width, y + height]} stroke={stroke} strokeWidth={2} lineCap="round" listening={false} />
+      );
+    }
+
     return (
-      <RegularPolygon {...center} sides={kind === 'hexagon' ? 6 : 3} radius={base / 2} scaleX={scaleX} scaleY={scaleY} fill={fill} stroke={stroke} strokeWidth={2} strokeScaleEnabled={false} listening={false} />
+      <RegularPolygon {...center} sides={PRESET_GEOMETRY[kind as ShapePreset]?.points ?? 3} radius={base / 2} scaleX={scaleX} scaleY={scaleY} fill={fill} stroke={stroke} strokeWidth={2} strokeScaleEnabled={false} listening={false} />
     );
   }
 

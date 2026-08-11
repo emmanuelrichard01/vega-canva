@@ -9,6 +9,7 @@ import { FORCE_SPECS, isForceTool } from '../engine/physics/forces';
 import { editor } from '../engine/api/EditorAPI';
 import { EXPORT_CHROME } from '../engine/export/chrome';
 import { SmartGuides } from './canvas/SmartGuides';
+import { SHAPE_KINDS } from './workspace/shapeIcons';
 import { ObjectRenderer } from "./ObjectRenderer";
 import { PresenceRenderer } from "../engine/presence/PresenceRenderer";
 import { presenceManager } from "../engine/presence/PresenceManager";
@@ -738,11 +739,9 @@ export const Canvas: React.FC<CanvasProps> = ({ activeTool, selectedIds, setSele
   const toolManager = useMemo(() => {
     const tm = new ToolManager({ editor, camera: cameraSystem, setOverlayState });
     tm.registerTool(new SelectTool());
-    tm.registerTool(new ShapeTool('rect'));
-    tm.registerTool(new ShapeTool('ellipse'));
-    tm.registerTool(new ShapeTool('triangle'));
-    tm.registerTool(new ShapeTool('hexagon'));
-    tm.registerTool(new ShapeTool('star'));
+    // Driven by the same list the dock renders from, so a preset added there
+    // is registered here rather than silently doing nothing when picked.
+    SHAPE_KINDS.forEach((preset) => tm.registerTool(new ShapeTool(preset)));
     tm.registerTool(new TextTool());
     tm.registerTool(new StickyTool());
     tm.registerTool(new AudioTool());

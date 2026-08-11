@@ -80,11 +80,37 @@ describe('normalizeNode — legacy shapes', () => {
       });
     });
 
-    it('leaves star fields off shapes that are not stars', () => {
-      // `points` is documented as star-only; carrying it on a hexagon would be
-      // a field nothing reads, which is the thing this pass exists to remove.
-      const hex = starOf({ kind: 'hexagon', points: 9, innerRatio: 0.2 });
-      expect(hex).toEqual({ kind: 'hexagon' });
+    it('keeps the count on a polygon and drops the ratio', () => {
+      // `points` is now shared: it is a star's point count and a polygon's
+      // side count, which is one quantity with one control. `innerRatio` is
+      // still star-only, and carrying it on a hexagon would be a field
+      // nothing reads — the thing this pass exists to remove.
+      expect(starOf({ kind: 'hexagon', points: 9, innerRatio: 0.2 })).toEqual({
+        kind: 'polygon',
+        points: 9,
+      });
+    });
+
+    it('clamps a polygon to a side count that can be drawn', () => {
+      // Two sides is a degenerate line and one is a point; past sixty a
+      // polygon is the ellipse primitive with more work.
+      expect(starOf({ kind: 'polygon', points: 1 })).toEqual({ kind: 'polygon', points: 3 });
+      expect(starOf({ kind: 'polygon', points: 999 })).toEqual({ kind: 'polygon', points: 60 });
+    });
+
+    it('takes the named preset as a fallback, not an override', () => {
+      // A document that says `triangle` and stores six sides was edited after
+      // it was created, and the edit is the more recent statement of intent.
+      expect(starOf({ kind: 'triangle' })).toEqual({ kind: 'polygon', points: 3 });
+      expect(starOf({ kind: 'triangle', points: 6 })).toEqual({ kind: 'polygon', points: 6 });
+      expect(starOf({ kind: 'octagon' })).toEqual({ kind: 'polygon', points: 8 });
+    });
+
+    it('gives an arrow a head and a line none', () => {
+      expect(starOf({ kind: 'arrow' })).toEqual({ kind: 'arrow', arrowStart: false, arrowEnd: true });
+      expect(starOf({ kind: 'line' })).toEqual({ kind: 'line', arrowStart: false, arrowEnd: false });
+      // A stored head outranks the kind's default, so a line given one keeps it.
+      expect(starOf({ kind: 'line', arrowEnd: true })).toMatchObject({ arrowEnd: true });
     });
   });
 
@@ -149,9 +175,12 @@ describe('normalizeNode — legacy shapes', () => {
     expect(node.appearance.cornerRadius).toBe(8);
   });
 
-  it('collapses the legacy "polygon" kind onto triangle', () => {
+  it('gives the legacy "polygon" kind three sides', () => {
+    // The old "polygon" tool always drew a 3-sided RegularPolygon, and the
+    // name now means a real polygon with a side count. A document written by
+    // that tool has to keep the shape it had.
     const node = normalizeNode({ id: 'a3', type: 'shape', content: { shapeType: 'polygon' } }) as ShapeNode;
-    expect(node.geometry.kind).toBe('triangle');
+    expect(node.geometry).toEqual({ kind: 'polygon', points: 3 });
   });
 
   it('treats the legacy "circle" kind as an ellipse', () => {

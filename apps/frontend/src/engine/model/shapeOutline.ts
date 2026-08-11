@@ -30,12 +30,6 @@
 
 import type { Point, ShapeNode } from './schema';
 
-/** Sides for each polygonal shape kind. Star is handled separately. */
-const POLYGON_SIDES: Record<string, number> = {
-  triangle: 3,
-  hexagon: 6,
-};
-
 export function regularPolygonPoints(
   cx: number,
   cy: number,
@@ -80,7 +74,9 @@ export function starPoints(
 export type ShapeOutline =
   | { kind: 'rect'; x: number; y: number; width: number; height: number; radius: number }
   | { kind: 'ellipse'; cx: number; cy: number; rx: number; ry: number }
-  | { kind: 'polygon'; points: Point[] };
+  | { kind: 'polygon'; points: Point[] }
+  /** An open run, corner to corner of the box. A line or an arrow. */
+  | { kind: 'open'; points: Point[] };
 
 /**
  * The outline of a shape node, in the node's own local coordinates.
@@ -114,9 +110,16 @@ export function shapeOutline(node: Pick<ShapeNode, 'geometry' | 'width' | 'heigh
     };
   }
 
+  if (node.geometry.kind === 'line' || node.geometry.kind === 'arrow') {
+    // Corner to corner. The other diagonal is reached by flipping the node,
+    // which `scaleX`/`scaleY` already express — so a line needs no direction
+    // of its own, and `width`/`height` stay the only record of its extent.
+    return { kind: 'open', points: [{ x: 0, y: 0 }, { x: w, y: h }] };
+  }
+
   return {
     kind: 'polygon',
-    points: regularPolygonPoints(cx, cy, POLYGON_SIDES[node.geometry.kind] ?? 3, w / 2, h / 2),
+    points: regularPolygonPoints(cx, cy, node.geometry.points ?? 3, w / 2, h / 2),
   };
 }
 
