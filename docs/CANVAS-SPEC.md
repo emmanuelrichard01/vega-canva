@@ -223,10 +223,14 @@ that showed `0:00 / 0:00` needed.
 The honest note on verification: the pure arithmetic behind all five is
 covered by tests, follow mode was driven end to end in the running app, and the
 image filters were measured pixel-by-pixel against real Konva in an isolated
-harness. What has **not** been watched is the crop overlay in the running app,
-because the canvas culls through a rAF loop that never fires in an automation
-tab, so no Konva image is ever mounted there. It wants ten minutes with a real
-mouse.
+harness.
+
+The crop overlay was the last piece never watched running, and it has now been
+(2026-08-11): eight handles on a real image, the thirds guides, the cut-away
+region shown at low opacity rather than hidden, a handle drag taking the node's
+width from 300 to 212, and Escape putting it back to 300 and clearing the crop
+outright — which is the behaviour undo cannot provide, because one drag is many
+writes.
 
 The shape of that is worth stating plainly: **this is an excellent real-time
 collaborative whiteboard and it is not yet a vector design tool.** The gap is
