@@ -12,7 +12,8 @@ time, where the work stopped, and what is next.
 >
 > **Three phases of work have shipped without ever being watched running.**
 > Phases 3, 4 and 5 — precision tools, the vector engine, the typographic
-> engine — are covered by 556 tests and by reading, and by nothing else. The
+> engine — are covered by tests and by reading, and by nothing else. The layer
+> search that followed them has not been watched either. The
 > Chrome extension went unresponsive partway through Phase 3 and repeated
 > attempts made it worse, so it was stopped rather than hammered.
 >
@@ -35,7 +36,7 @@ Verify in ~30 seconds:
 
 ```bash
 npx tsc --noEmit -p apps/frontend/tsconfig.app.json   # must be silent
-npx vitest run                                        # 556 tests, 28 files
+npx vitest run                                        # 569 tests, 30 files
 npx oxlint apps/frontend/src                          # 14 cosmetic warnings, exit 0
 npm run build -w apps/frontend                        # must succeed
 ```
@@ -50,7 +51,7 @@ history were vacuous for exactly that reason. Use `tsconfig.app.json`, or
 | --- | --- |
 | Branch | `rebuild/time-travel-and-physics`, nothing pushed, nothing merged |
 | Typecheck | clean |
-| Tests | **556** across 28 files |
+| Tests | **569** across 30 files |
 | Lint | exits 0; 14 `only-export-components` warnings, all cosmetic |
 | Build | clean, **1.33MB** JS (gzip 409KB) — still no code splitting |
 
@@ -201,9 +202,11 @@ document change with 500 objects, which was ~88% of the cost of moving one.
 
 **What the brief asks for that is missing:**
 
-- **Search and filter by name and by node type.** There is a tag filter and
-  nothing else. This is the highest-value single item in the panel and it is
-  self-contained — a pure predicate module plus a field at the top.
+- ~~Search and filter by name and by node type.~~ **Done** (`f615fa8`).
+  Subsequence matching with a two-pass ranker in
+  `engine/model/layerSearch.ts`, marked hits in the row, type chips for the
+  types the document actually contains, and a flat ranked list while filtering
+  rather than a filtered tree. Enter selects every match.
 - **Keyboard navigation of the panel itself.** ↑/↓ to move, ←/→ to fold and
   unfold, Enter to rename, Cmd+↑/↓ to reorder, Space for visibility. The brief
   explicitly asks for the power-user path and there is currently none.
@@ -237,10 +240,16 @@ Sticky, Physics and Metadata.
 - Constraints/pinning grid and Auto Layout are **Phase 6**; component link,
   variants and exposed properties are **Phase 7**. Do not start those here.
 
-**Suggested order**, cheapest-to-most-valuable first: layer search/filter →
-properties for a multi-selection (with Mixed) → panel keyboard navigation →
-global state when nothing is selected → independent corner radii → frame
-wrapping and drag-reparenting.
+**Suggested order from here**: properties for a multi-selection (with Mixed)
+→ panel keyboard navigation → global state when nothing is selected →
+independent corner radii → frame wrapping and drag-reparenting.
+
+The multi-selection one is the biggest single win left in either panel:
+`Room.tsx` passes `selectedId` (singular) to `PropertiesPanel`, so selecting
+three objects shows "Select an object". Doing it properly means threading the
+whole selection through and giving every field a mixed-value state — a control
+where two objects disagree reads *Mixed* and writes to all of them when
+edited.
 
 ### 5c. Still logged, from earlier phases
 
