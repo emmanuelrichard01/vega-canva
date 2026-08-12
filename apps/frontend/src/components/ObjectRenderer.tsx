@@ -4,6 +4,7 @@ import Konva from 'konva';
 import { deleteNode, localAuthorId, toggleReaction, updateNode } from '../engine/document';
 import { consumePendingEdit } from '../engine/interaction/pendingEdit';
 import { cropMode } from '../engine/interaction/cropMode';
+import { pathEdit } from '../engine/interaction/pathEdit';
 import { EXPORT_CHROME } from '../engine/export/chrome';
 import { moveFrameWithChildren, reassignFrame } from '../engine/interaction/frameMembership';
 import { tagFilter } from '../engine/model/tagFilter';
@@ -290,6 +291,12 @@ export const ObjectRenderer = React.memo(
           node: { x: node.x, y: node.y, width: node.width, height: node.height },
           crop: node.crop,
         });
+      }
+      // And the inside of a path is its anchors. A freehand blob has none —
+      // its "path" is the outline of a stroke, not a run of control points —
+      // so double-clicking one has nothing to open.
+      if (node.type === 'path' && node.geometry.kind === 'bezier') {
+        pathEdit.enter(objId);
       }
     }, [isSelected, node, objId, onSelect]);
 

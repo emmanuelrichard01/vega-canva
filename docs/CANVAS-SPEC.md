@@ -67,13 +67,14 @@ it.
 
 | Item | Status | Notes |
 | --- | --- | --- |
-| Anchor point | **Partial** | Anchors exist in `BezierGeometry.segments` and are placed at draw time. They **cannot be selected, moved or deleted after the path is committed**. |
-| Bezier handles | **Partial** | `cp1x/cp1y/cp2x/cp2y` are stored and `PathRenderer` draws from them, but there is no handle UI after creation. |
-| Join / cap styles | **Absent** | `Stroke` has `color`, `width`, `dash` — no `lineCap`, no `lineJoin`, no miter limit. |
-| Boolean operations | **Absent** | No union, subtract, intersect or exclude. Needs a real path-geometry library; this cannot be hand-rolled responsibly. |
+| Anchor point | **Shipped** | Double-click a path to open it. Anchors can be picked, dragged, inserted anywhere along the outline and deleted. Insertion splits the curve with de Casteljau, so it is exact — the outline is pixel-identical before and after, which is the entire point: an insert that nudged the shape would make adding a point a destructive act. Every edit ends in `reframePath`, because path geometry is stored relative to the node origin and an edit that changed the extent would otherwise leave the selection box standing off the shape. |
+| Bezier handles | **Shipped** | Handles on the picked anchor, dragging with the opposite one following — Alt breaks the pair. Corner/smooth/mirrored is **derived from where the handles are** rather than stored: two handles collinear with their anchor *are* smooth, and a flag claiming otherwise is a second source of truth that an import, an undo or another client can contradict. The editor works in an anchor-centric view (`toAnchors`/`fromAnchors`); the stored form stays segment-centric, which is what an SVG `d` string wants. A closed path can now round its final join, because `segments[0]`'s controls — previously declared, ignored and always undefined — are the closing curve's. |
+| Join / cap styles | **Shipped** | `cap` shipped with the dash pattern in Phase 0; `join` and `miterLimit` now join it. Both store the default as *absent* — `miter` and 10 are what every existing stroke already draws, and they are also SVG's and Canvas2D's defaults, so an untouched stroke costs no bytes in the document and emits no attributes in the file. The control appears only on an object with a corner: not on an ellipse, not on a fully rounded rectangle, not on a line. |
+| Boolean operations | **Shipped** | Union, subtract, intersect, exclude, on any mix of shapes and paths. `polygon-clipping` (Martinez) does the clipping; operands are flattened to polygons first at a quarter-unit tolerance. **Curves do not survive** — uniting two circles gives a few hundred straight segments that look identical and are obviously not curved once you open them in the editor. That is the deliberate trade: a curve-preserving boolean needs cubic-cubic intersection, an offset-curve fitter and a tolerance story for each, and the libraries that solve it want a canvas and a global scope. What is lost is editability, not fidelity. The topmost object leads, so `subtract` means something stable — selection order is whatever sequence the clicks happened in. |
+| Compound paths | **Shipped** | `CompoundGeometry`: several closed contours filled as one, with the even-odd rule. The thing that makes a boolean useful — subtracting a disc from the middle of a square gives a square *with a hole*, and a hole is a second contour that no single run of anchors describes; cutting a bar across a disc gives two disjoint pieces and needs the same thing for the opposite reason. Not yet editable anchor by anchor. |
 | Vector network | **Absent** | Paths are linear segment lists. Branching nodes would be a model change, not a feature. |
-| Flatten | **Absent** | |
-| Outline stroke | **Absent** | |
+| Flatten | **Shipped** | Any primitive to an editable path: rounded rectangles as four arcs between four straight edges, ellipses as the four-cubic kappa approximation, polygons and stars as straight runs, a line as an *open* path because closing it would invent an interior it never had. The point is not the conversion but what it unlocks — a rectangle has a width and a corner radius, and no amount of anchor editing applies to it. |
+| Outline stroke | **Shipped** | The stroke becomes a filled region. Built not by offsetting the path — an offset curve is not a curve of the same family, has to be refitted, and self-intersects on any concavity tighter than the stroke is wide — but by unioning a quad per segment, a join per corner and a cap per end. Every self-intersection is then something a union is *for*, and each part is simple enough to be obviously right. Miter, round and bevel joins all honour the limit, so an outlined stroke matches the stroke it replaced. An object with a fill keeps it and loses only its stroke; one without is replaced outright. |
 
 ## 5. Layout and structural logic
 
@@ -206,10 +207,10 @@ Nothing in this section exists, and all of it depends on frames.
 
 Roughly, across the ~100 discrete items above:
 
-- **Shipped: ~51** — the canvas core, collaboration, frames, the whole paint model, the precision tools, and the parts of the transform/typography blocks that a whiteboard needs.
-- **Partial: ~15**
+- **Shipped: ~58** — the canvas core, collaboration, frames, the whole paint model, the precision tools, the vector engine, and the parts of the transform/typography blocks that a whiteboard needs.
+- **Partial: ~13**
 - **Dead: 1** — `FrameNode.layout`, the auto-layout declaration, which Phase 6 owns. `Appearance.shadow` was the second entry here until 2026-08-11.
-- **Absent: ~34** — almost the whole of vector manipulation, design systems and prototyping.
+- **Absent: ~28** — design systems, prototyping, and the export pipeline. Vector manipulation left this list on 2026-08-12.
 
 **Phase 0 is otherwise done** (2026-07-31). Stroke dash, star parameters,
 follow mode, image adjustments and image cropping each shipped with the control
@@ -327,10 +328,30 @@ it worse, so the snapping, the guides and the new primitives are covered by
 tests and by reading only. The guide *lines* and the ruler *ticks* are the two
 pieces a test cannot speak for.
 
-**Phase 4 — The vector engine.** Booleans, post-hoc anchor and handle editing,
-outline stroke, flatten, join/cap. Needs a path-geometry dependency chosen
-deliberately. The deepest track here and the least shareable with anything
-else.
+**Phase 4 — The vector engine. Done** (2026-08-12). Booleans, post-hoc anchor
+and handle editing, outline stroke, flatten, and join/miter have all shipped,
+along with the compound-path model the booleans needed to have anywhere to put
+their results.
+
+Three things are worth carrying forward from it:
+
+- **Curves do not survive a boolean or an outline.** Both flatten first. The
+  result looks right and edits as straight segments. Reversing that decision
+  means a curve-intersection library, and the flattening happens at one call
+  site so it stays reversible.
+- **A compound path cannot be edited anchor by anchor.** The editor walks one
+  run of anchors, and a compound path is several. Offering handles that did
+  nothing would be worse than offering none, so it offers none.
+- **Booleans decline on a rotated or scaled operand.** The geometry would have
+  to go through the node's full transform first, which is correct and not
+  done — so the buttons disappear rather than quietly producing a result that
+  ignores the rotation.
+
+The same caveat as Phase 3 applies and is not discharged: **none of Phase 4
+has been watched running.** The arithmetic is covered — anchor editing,
+flattening, all four booleans, the stroke outline including the miter limit -
+but the anchors, handles and cursors on screen are what a test cannot speak
+for.
 
 **Phase 5 — The typographic engine.** Text case, strikethrough, paragraph
 spacing, the three-way box resizing, kerning, then OpenType — which probably
@@ -365,8 +386,11 @@ Cursor chat is small and independent — it can be slotted anywhere.
    different rendering path. That is a large, invasive change for a small
    feature set — worth confirming it is wanted before it drives an architecture
    decision.
-4. **Boolean operations** need a third-party path library. Pick deliberately;
-   this is the kind of dependency that becomes permanent.
+4. ~~**Boolean operations** need a third-party path library.~~ **Decided**
+   (2026-08-12): `polygon-clipping`, ~30KB, no canvas and no global scope, so
+   it runs in a test. It clips polygons rather than curves, which is the
+   trade-off recorded in the table above. A curve-preserving boolean remains
+   available later — the operands are flattened at one call site.
 
 ## The rules any of this work must respect
 

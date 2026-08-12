@@ -104,6 +104,28 @@ export const BLEND_MODES: BlendMode[] = [
 export type LineCap = 'butt' | 'round' | 'square';
 
 /**
+ * How two segments of a stroke meet.
+ *
+ * Absent is `miter`, which is what a canvas draws by default and therefore
+ * what every stroke in every existing document already is.
+ */
+export type LineJoin = 'miter' | 'round' | 'bevel';
+
+/**
+ * How far a miter may run past the corner before it is cut off, as a multiple
+ * of the stroke width.
+ *
+ * A miter grows without bound as the angle between two segments closes, so at
+ * a sharp enough corner it becomes a spike arbitrarily far from the shape.
+ * Every renderer therefore has a limit past which the join falls back to a
+ * bevel; ten is SVG's and Canvas2D's default, and the same number is used here
+ * so a document that never touches the control exports unchanged.
+ */
+export const DEFAULT_MITER_LIMIT = 10;
+export const MIN_MITER_LIMIT = 1;
+export const MAX_MITER_LIMIT = 60;
+
+/**
  * Where a stroke sits relative to the path it follows.
  *
  * Absent is `center`, which is the only thing a canvas draws natively and what
@@ -135,6 +157,16 @@ export type Stroke = {
    * waiting for a separate control.
    */
   cap?: LineCap;
+  /**
+   * How two segments meet at a corner. Absent is `miter`.
+   *
+   * Only visible on a shape with corners — which, now that the join can be
+   * set, is the reason it ships alongside the polygon side count rather than
+   * on its own.
+   */
+  join?: LineJoin;
+  /** Miter cutoff, as a multiple of the width. Absent is `DEFAULT_MITER_LIMIT`. */
+  miterLimit?: number;
   /** Where the line sits on the path. Absent is `center`. */
   align?: StrokeAlign;
 };
@@ -423,14 +455,42 @@ export interface FreehandGeometry {
   strokeSize: number;
 }
 
-/** Anchor-and-handle (Pen) paths. */
+/**
+ * Anchor-and-handle (Pen) paths.
+ *
+ * Each segment describes *the curve arriving at that anchor*: `cp1` is the
+ * control leaving the previous anchor, `cp2` the one arriving at this. On a
+ * closed path the curve arriving at anchor 0 is the run home from the last
+ * anchor, so `segments[0]`'s controls are the closing curve's — which is what
+ * lets a closed path round its final join instead of always cutting straight
+ * across it. See `engine/model/pathGeometry.ts`.
+ */
 export interface BezierGeometry {
   kind: 'bezier';
   segments: BezierSegment[];
   closed: boolean;
 }
 
-export type PathGeometry = FreehandGeometry | BezierGeometry;
+/**
+ * Several closed contours filled as one shape.
+ *
+ * What a boolean operation produces and the only thing that can hold its
+ * result: subtracting a disc from the middle of a square gives a square with a
+ * hole, and a hole is a second contour — there is no single run of anchors
+ * that describes it. Cutting a bar across a disc gives two disjoint pieces,
+ * which needs the same thing for the opposite reason.
+ *
+ * Filled `evenodd`, so a contour inside another is a hole regardless of which
+ * way round it was wound. The nonzero rule would give the same answer for a
+ * freshly computed result — the clipper winds holes the other way — and a
+ * different one the moment anybody reversed a contour by hand.
+ */
+export interface CompoundGeometry {
+  kind: 'compound';
+  subpaths: BezierGeometry[];
+}
+
+export type PathGeometry = FreehandGeometry | BezierGeometry | CompoundGeometry;
 
 // ---------------------------------------------------------------------------
 // Node variants

@@ -1,9 +1,12 @@
 import {
   BLEND_MODES,
+  DEFAULT_MITER_LIMIT,
   DEFAULT_TYPOGRAPHY,
+  MAX_MITER_LIMIT,
   MAX_POLYGON_SIDES,
   MAX_STAR_POINTS,
   MAX_STAR_RATIO,
+  MIN_MITER_LIMIT,
   MIN_POLYGON_SIDES,
   MIN_STAR_POINTS,
   MIN_STAR_RATIO,
@@ -12,7 +15,9 @@ import {
   type Author,
   type FrameNode,
   type GradientStop,
+  type BezierGeometry,
   type LineCap,
+  type LineJoin,
   type NodeType,
   type Paint,
   type PathGeometry,
@@ -225,6 +230,7 @@ function toPaintArray(value: unknown, legacyColor: unknown): Paint[] | undefined
 }
 
 const LINE_CAPS = new Set<LineCap>(['butt', 'round', 'square']);
+const LINE_JOINS = new Set<LineJoin>(['miter', 'round', 'bevel']);
 const STROKE_ALIGNS = new Set<StrokeAlign>(['center', 'inside', 'outside']);
 
 /**
@@ -281,6 +287,17 @@ function toStroke(value: unknown, legacyColor: unknown, legacyWidth: unknown): S
       const dash = toDash(s.dash);
       if (dash) stroke.dash = dash;
       if (LINE_CAPS.has(s.cap)) stroke.cap = s.cap;
+      // `miter` is stored as absent for the same reason `center` is: it is
+      // what every stroke already draws, so the default costs no bytes.
+      if (LINE_JOINS.has(s.join) && s.join !== 'miter') stroke.join = s.join;
+      // Clamped rather than dropped when out of range — a limit below 1 is
+      // geometrically meaningless (a miter is never shorter than a bevel) and
+      // an enormous one is a spike, but both are somebody's slider having
+      // travelled too far, not a corrupt document.
+      if (typeof s.miterLimit === 'number' && Number.isFinite(s.miterLimit)) {
+        const limit = clamp(s.miterLimit, MIN_MITER_LIMIT, MAX_MITER_LIMIT);
+        if (limit !== DEFAULT_MITER_LIMIT) stroke.miterLimit = limit;
+      }
       // `center` is stored as absent, so the case every existing stroke in
       // every existing document is stays the one that costs nothing.
       if (STROKE_ALIGNS.has(s.align) && s.align !== 'center') stroke.align = s.align;
@@ -433,24 +450,42 @@ function normalizeShapeGeometry(raw: any): ShapeGeometry {
   return geometry;
 }
 
+/** One run of anchors. Shared by the plain bezier path and each contour of a compound one. */
+function toBezier(rawSegments: unknown, closed: unknown): BezierGeometry | null {
+  if (!Array.isArray(rawSegments) || rawSegments.length === 0) return null;
+  return {
+    kind: 'bezier',
+    segments: rawSegments.map((s: any) => ({
+      x: num(s?.x, 0),
+      y: num(s?.y, 0),
+      cp1x: typeof s?.cp1x === 'number' ? s.cp1x : undefined,
+      cp1y: typeof s?.cp1y === 'number' ? s.cp1y : undefined,
+      cp2x: typeof s?.cp2x === 'number' ? s.cp2x : undefined,
+      cp2y: typeof s?.cp2y === 'number' ? s.cp2y : undefined,
+    })),
+    closed: bool(closed, false),
+  };
+}
+
 function normalizePathGeometry(raw: any): PathGeometry {
+  // A boolean result: several contours filled as one. Read before `segments`,
+  // because a compound path has none of its own.
+  const subpaths = raw?.geometry?.subpaths;
+  if (Array.isArray(subpaths)) {
+    const contours = subpaths
+      .map((s: any) => toBezier(s?.segments, s?.closed))
+      .filter((s): s is BezierGeometry => s !== null);
+    // A compound path with one contour is a plain path wearing a costume, and
+    // one with none is nothing at all. Collapsing here means the rest of the
+    // app never has to ask whether a `compound` is really compound.
+    if (contours.length > 1) return { kind: 'compound', subpaths: contours };
+    if (contours.length === 1) return contours[0];
+  }
+
   // Bezier paths stored `segments`/`closed` at the top level; freehand
   // strokes stored `content.svgPath`/`content.points`/`content.strokeSize`.
-  const segments = raw?.geometry?.segments ?? raw?.segments;
-  if (Array.isArray(segments) && segments.length > 0) {
-    return {
-      kind: 'bezier',
-      segments: segments.map((s: any) => ({
-        x: num(s?.x, 0),
-        y: num(s?.y, 0),
-        cp1x: typeof s?.cp1x === 'number' ? s.cp1x : undefined,
-        cp1y: typeof s?.cp1y === 'number' ? s.cp1y : undefined,
-        cp2x: typeof s?.cp2x === 'number' ? s.cp2x : undefined,
-        cp2y: typeof s?.cp2y === 'number' ? s.cp2y : undefined,
-      })),
-      closed: bool(raw?.geometry?.closed ?? raw?.closed, false),
-    };
-  }
+  const bezier = toBezier(raw?.geometry?.segments ?? raw?.segments, raw?.geometry?.closed ?? raw?.closed);
+  if (bezier) return bezier;
 
   const svgPath = str(raw?.geometry?.svgPath ?? raw?.content?.svgPath, '');
   const rawPoints = raw?.geometry?.points ?? raw?.content?.points;

@@ -10,6 +10,8 @@ import { editor } from '../engine/api/EditorAPI';
 import { EXPORT_CHROME } from '../engine/export/chrome';
 import { SmartGuides } from './canvas/SmartGuides';
 import { RulerGuides } from './canvas/RulerGuides';
+import { PathEditor, deletePickedAnchor } from './canvas/PathEditor';
+import { pathEdit } from '../engine/interaction/pathEdit';
 import { RULER_SIZE, Rulers } from './canvas/Rulers';
 import { SHAPE_KINDS } from './workspace/shapeIcons';
 import { ObjectRenderer } from "./ObjectRenderer";
@@ -104,6 +106,52 @@ export const Canvas: React.FC<CanvasProps> = ({ activeTool, selectedIds, setSele
     cropMode.getSnapshot
   );
   const croppingId = cropSnapshot?.nodeId ?? null;
+
+  // -- path edit mode -------------------------------------------------------
+
+  const pathSelection = useSyncExternalStore(
+    pathEdit.subscribe,
+    pathEdit.getSnapshot,
+    pathEdit.getSnapshot
+  );
+  const editingPathId = pathSelection?.nodeId ?? null;
+
+  /**
+   * Escape leaves the path; Delete removes the picked anchor.
+   *
+   * On capture, ahead of the selection handler below, for exactly the reason
+   * the crop's keys are: both listen to the same event, and Delete reaching
+   * the second one would remove the entire path when the user meant one point
+   * of it. Delete with no anchor picked falls through, which is how you still
+   * delete the path itself.
+   */
+  useEffect(() => {
+    if (!editingPathId) return;
+    const onKey = (e: KeyboardEvent) => {
+      const el = document.activeElement?.tagName;
+      if (el === 'INPUT' || el === 'TEXTAREA') return;
+      if (e.key === 'Escape') {
+        e.stopPropagation();
+        pathEdit.exit();
+      } else if ((e.key === 'Backspace' || e.key === 'Delete') && deletePickedAnchor()) {
+        e.stopPropagation();
+        e.preventDefault();
+      }
+    };
+    window.addEventListener('keydown', onKey, true);
+    return () => window.removeEventListener('keydown', onKey, true);
+  }, [editingPathId]);
+
+  // Picking a tool, or leaving the object, ends the edit — the same two exits
+  // the crop has, and for the same reason: the mode belongs to the object.
+  useEffect(() => {
+    pathEdit.exit();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [activeTool]);
+
+  useEffect(() => {
+    if (editingPathId && !selectedIds.includes(editingPathId)) pathEdit.exit();
+  }, [selectedIds, editingPathId]);
 
   /**
    * Put back exactly what the crop started from.
@@ -973,11 +1021,19 @@ export const Canvas: React.FC<CanvasProps> = ({ activeTool, selectedIds, setSele
           {/* Hidden while cropping: the crop overlay draws its own handles on
               the same rectangle, and two sets of handles on one object is a
               question with no right answer for whichever one you grab. */}
-          {!croppingId && <SelectionTransformer selectedIds={selectedIds} stageRef={stageRef} />}
+          {!croppingId && !editingPathId && (
+            <SelectionTransformer selectedIds={selectedIds} stageRef={stageRef} />
+          )}
 
           {/* Above the transformer's slot so its handles are never buried
               under a selection outline drawn afterwards. */}
           <CropOverlay />
+
+          {/* Anchors and handles. Hidden behind the same rule the crop
+              overlay hides the transformer with: a resize box drawn around a
+              path you are editing point by point is a second set of handles
+              answering a different question. */}
+          <PathEditor stageScale={cameraSystem.zoom} />
 
           {/* Guides a person placed. Below the snap guides, because a snap
               guide explains what is happening right now and has to win. */}

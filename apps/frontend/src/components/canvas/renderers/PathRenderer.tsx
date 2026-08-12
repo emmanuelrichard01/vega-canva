@@ -1,32 +1,12 @@
 import React from 'react';
 import { Path } from 'react-konva';
 import type { PathNode } from '../../../engine/model/schema';
+import { contourData } from '../../../engine/model/pathGeometry';
 import { shadowProps, strokeColor, strokeDashProps, strokeWidth } from './shared';
 import { useFillProps } from './useFillProps';
 
 interface Props {
   node: PathNode;
-}
-
-/** Build an SVG `d` string from stored bezier segments. */
-function segmentsToPathData(node: PathNode): string {
-  if (node.geometry.kind !== 'bezier') return '';
-  const { segments, closed } = node.geometry;
-  if (segments.length === 0) return '';
-
-  let d = `M ${segments[0].x} ${segments[0].y}`;
-  for (let i = 1; i < segments.length; i++) {
-    const s = segments[i];
-    // An anchor placed without dragging has no handles; degenerate the curve
-    // to the endpoints so it renders as a straight segment.
-    const c1x = s.cp1x ?? segments[i - 1].x;
-    const c1y = s.cp1y ?? segments[i - 1].y;
-    const c2x = s.cp2x ?? s.x;
-    const c2y = s.cp2y ?? s.y;
-    d += ` C ${c1x} ${c1y} ${c2x} ${c2y} ${s.x} ${s.y}`;
-  }
-  if (closed) d += ' Z';
-  return d;
 }
 
 export const PathRenderer: React.FC<Props> = React.memo(({ node }) => {
@@ -58,16 +38,24 @@ export const PathRenderer: React.FC<Props> = React.memo(({ node }) => {
 
   const stroke = strokeColor(node.appearance) ?? '#1F2937';
   const sw = strokeWidth(node.appearance) || 2;
+  const dash = strokeDashProps(node.appearance, 'round');
 
   return (
     <Path
-      data={segmentsToPathData(node)}
+      data={contourData(node.geometry)}
       {...pathFill}
       {...shadow}
       stroke={stroke}
       strokeWidth={sw}
-      {...strokeDashProps(node.appearance, 'round')}
-      lineJoin="round"
+      {...dash}
+      // Round unless the document says otherwise. A pen path used to be
+      // hard-wired round, which was a reasonable default and a dead end — the
+      // join is a control now, and a control the renderer overrides is worse
+      // than one that does not exist.
+      lineJoin={dash.lineJoin ?? 'round'}
+      // Several contours filled as one: the inner ones are holes, and only the
+      // even-odd rule says so regardless of which way they happen to wind.
+      fillRule={node.geometry.kind === 'compound' ? 'evenodd' : undefined}
       hitStrokeWidth={Math.max(20, sw)}
     />
   );

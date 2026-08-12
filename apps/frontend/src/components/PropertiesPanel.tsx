@@ -9,10 +9,13 @@ import { useStore } from '../hooks/useStore';
 import { objectRegistry } from '../engine/objects';
 import {
   BLEND_MODES,
+  DEFAULT_MITER_LIMIT,
   DEFAULT_TYPOGRAPHY,
+  MAX_MITER_LIMIT,
   MAX_POLYGON_SIDES,
   MAX_STAR_POINTS,
   MAX_STAR_RATIO,
+  MIN_MITER_LIMIT,
   MIN_POLYGON_SIDES,
   MIN_STAR_POINTS,
   MIN_STAR_RATIO,
@@ -20,6 +23,7 @@ import {
   type AnyNode,
   type Appearance,
   type BlendMode,
+  type LineJoin,
   type ShapeGeometry,
   type Shadow,
   type Stroke,
@@ -234,6 +238,30 @@ const StrokeAlignIcon: React.FC<{ align: 'inside' | 'center' | 'outside' }> = ({
   );
 };
 
+/**
+ * A specimen of the join, drawn at the corner it describes.
+ *
+ * The same call as the alignment icon: a mitred corner, a rounded one and a
+ * cut one are three shapes, and showing them is more direct than naming them.
+ * Drawn thick, because at a hairline all three corners look identical — which
+ * is also true on the canvas, and part of why the control needs a preview.
+ */
+const StrokeJoinIcon: React.FC<{ join: LineJoin }> = ({ join }) => (
+  <svg width="20" height="12" viewBox="0 0 20 12" aria-hidden="true" focusable="false">
+    <path
+      d="M 3 11 L 3 4 L 17 4"
+      fill="none"
+      stroke="currentColor"
+      strokeWidth="4"
+      strokeLinejoin={join}
+      strokeLinecap="butt"
+      // A sharp corner needs room to run past itself before the limit cuts it;
+      // the default of 10 is far more than a right angle uses.
+      strokeMiterlimit={10}
+    />
+  </svg>
+);
+
 /** The four safe-area edges, in the order a CSS inset is written. */
 const SAFE_EDGES = [
   { key: 'top', label: 'T' },
@@ -283,6 +311,22 @@ export const PropertiesPanel: React.FC<PropertiesPanelProps> = ({ selectedId, ov
    * `node.geometry.kind === 'line' || ...` at seven call sites.
    */
   const openShape = node.type === 'shape' && isOpenShape(node.geometry.kind);
+  /**
+   * Whether this object's outline has a corner for a join to apply to.
+   *
+   * An ellipse has none, a fully rounded rectangle has none left, and a line
+   * is two points with nothing in between them to meet at. Offering the
+   * control on those is offering a control that provably cannot change the
+   * pixels — the same failure as one the renderer ignores, arrived at from
+   * the other direction.
+   */
+  const hasCorners =
+    node.type === 'path'
+      ? node.geometry.kind !== 'freehand'
+      : node.type === 'shape' &&
+        (node.geometry.kind === 'polygon' ||
+          node.geometry.kind === 'star' ||
+          (node.geometry.kind === 'rect' && !(appearance?.cornerRadius && appearance.cornerRadius > 0)));
 
   const set = (updates: Partial<AnyNode>) => updateNode(selectedId, updates as Record<string, unknown>);
   const setAppearance = (patch: Partial<Appearance>) =>
@@ -299,12 +343,16 @@ export const PropertiesPanel: React.FC<PropertiesPanelProps> = ({ selectedId, ov
    * "Dashed" actually chose. `buildStroke` omits the dash keys entirely for a
    * solid stroke rather than writing `undefined` into a nested value.
    */
-  const setStroke = (patch: Partial<Pick<Stroke, 'color' | 'width' | 'align'>>) => {
+  const setStroke = (patch: Partial<Pick<Stroke, 'color' | 'width' | 'align' | 'join' | 'miterLimit'>>) => {
     const current = appearance?.stroke;
     const color = patch.color ?? current?.color ?? '#000000';
     const width = patch.width ?? current?.width ?? 2;
     const align = patch.align ?? current?.align;
-    setAppearance({ stroke: buildStroke({ color, width, align }, restyleForWidth(current, width)) });
+    const join = patch.join ?? current?.join;
+    const miterLimit = patch.miterLimit ?? current?.miterLimit;
+    setAppearance({
+      stroke: buildStroke({ color, width, align, join, miterLimit }, restyleForWidth(current, width)),
+    });
   };
 
   /**
@@ -806,6 +854,37 @@ export const PropertiesPanel: React.FC<PropertiesPanelProps> = ({ selectedId, ov
                   { value: 'center', label: 'Center', icon: <StrokeAlignIcon align="center" /> },
                   { value: 'outside', label: 'Outside', icon: <StrokeAlignIcon align="outside" /> },
                 ]}
+              />
+            </Row>
+          )}
+          {/* How two segments meet. Only a shape with corners has any, so it
+              is not offered on an ellipse — a control that provably cannot
+              change anything about the selected object is the same mistake as
+              one the renderer ignores. */}
+          {hasCorners && (
+            <Row label="Join">
+              <SegmentedControl
+                ariaLabel="Line join"
+                value={appearance.stroke?.join ?? 'miter'}
+                onChange={(join) => setStroke({ join: join as LineJoin })}
+                segments={[
+                  { value: 'miter', label: 'Miter', icon: <StrokeJoinIcon join="miter" /> },
+                  { value: 'round', label: 'Round', icon: <StrokeJoinIcon join="round" /> },
+                  { value: 'bevel', label: 'Bevel', icon: <StrokeJoinIcon join="bevel" /> },
+                ]}
+              />
+            </Row>
+          )}
+          {/* The cutoff, shown only while the join is a miter — it is the only
+              join that has one, and a slider that does nothing beside a
+              control that just disabled it reads as a bug. */}
+          {hasCorners && (appearance.stroke?.join ?? 'miter') === 'miter' && (
+            <Row label="Miter limit">
+              <NumberStepper
+                value={appearance.stroke?.miterLimit ?? DEFAULT_MITER_LIMIT}
+                onChange={(miterLimit) => setStroke({ miterLimit })}
+                min={MIN_MITER_LIMIT}
+                max={MAX_MITER_LIMIT}
               />
             </Row>
           )}

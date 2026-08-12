@@ -1,5 +1,5 @@
 import { paintColor } from '../../../engine/model/paint';
-import type { Appearance, LineCap, Typography } from '../../../engine/model/schema';
+import type { Appearance, LineCap, LineJoin, Typography } from '../../../engine/model/schema';
 
 /**
  * Compose Konva's single `fontStyle` string from the orthogonal weight and
@@ -62,11 +62,19 @@ export function strokeWidth(appearance: Appearance | undefined): number {
 export function strokeDashProps(
   appearance: Appearance | undefined,
   fallbackCap?: LineCap
-): { dash?: number[]; lineCap?: LineCap } {
+): { dash?: number[]; lineCap?: LineCap; lineJoin?: LineJoin; miterLimit?: number } {
   const stroke = appearance?.stroke;
   return {
     dash: stroke?.dash,
     lineCap: stroke?.cap ?? fallbackCap,
+    // The join travels here too, for the same reason the cap does: it is the
+    // other half of how a stroke terminates, and a renderer that spread the
+    // dash without it would draw the corner Konva defaults to rather than the
+    // one the document asked for.
+    lineJoin: stroke?.join,
+    // Konva reads `undefined` as its own default of 10, which is the same
+    // number `DEFAULT_MITER_LIMIT` is, so an untouched stroke needs no value.
+    miterLimit: stroke?.miterLimit,
   };
 }
 

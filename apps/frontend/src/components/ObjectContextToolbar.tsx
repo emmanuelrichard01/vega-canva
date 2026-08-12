@@ -3,8 +3,11 @@ import { objectsMap, updateNode, nextZIndex, lowestZIndex, toggleReaction, local
 import { useStore } from '../hooks/useStore';
 import { cameraSystem } from '../engine/CameraSystem';
 import { engineEvents } from '../engine/EventBus';
-import { Copy, Trash2, Type, Square, Bold, Italic, Underline, AlignLeft, AlignCenter, AlignRight, MessageSquarePlus, BringToFront, SendToBack, ImageIcon, StickyNote, Pin, SmilePlus, Mic, MessageSquare, PenLine, Layers, Group, Ungroup, Download, Crop } from 'lucide-react';
+import { Copy, Trash2, Type, Square, Bold, Italic, Underline, AlignLeft, AlignCenter, AlignRight, MessageSquarePlus, BringToFront, SendToBack, ImageIcon, StickyNote, Pin, SmilePlus, Mic, MessageSquare, PenLine, Layers, Group, Ungroup, Download, Crop, Scissors, Spline, SquaresExclude, SquaresIntersect, SquaresSubtract, SquaresUnite } from 'lucide-react';
 import { cropMode } from '../engine/interaction/cropMode';
+import { pathEdit } from '../engine/interaction/pathEdit';
+import { applyBoolean, canVectorize, flattenToPath, outlineStrokeOf } from '../engine/document/vectorOps';
+import { BOOLEAN_OPS, type BooleanOp } from '../engine/model/pathBoolean';
 import { deleteNodesWithFrames } from '../engine/interaction/frameMembership';
 import { editor } from '../engine/api/EditorAPI';
 import { nanoid } from 'nanoid';
@@ -21,6 +24,20 @@ import {
   type TextAlign,
   type Typography,
 } from '../engine/model/schema';
+
+/**
+ * The four boolean operations, as one row.
+ *
+ * Icon, label and shortcut for each, in the order every other tool in this
+ * category lists them — union first, because it is the one people reach for,
+ * and exclude last.
+ */
+const BOOLEAN_BUTTONS: Record<BooleanOp, { icon: React.ReactNode; label: string }> = {
+  union: { icon: <SquaresUnite size={16} />, label: 'Union' },
+  subtract: { icon: <SquaresSubtract size={16} />, label: 'Subtract front from back' },
+  intersect: { icon: <SquaresIntersect size={16} />, label: 'Intersect' },
+  exclude: { icon: <SquaresExclude size={16} />, label: 'Exclude overlap' },
+};
 
 /** Small pressed-state toggle used by the typography row. */
 const StyleToggle: React.FC<{ active: boolean; tooltip: string; onClick: () => void; children: React.ReactNode }> = ({ active, tooltip, onClick, children }) => (
@@ -116,6 +133,11 @@ export const ObjectContextToolbar: React.FC<Props> = ({ selectedId, selectedIds,
   // same reactive store the Properties panel uses keeps this toolbar's controls
   // live instead of stale.
   const liveNode = useStore(state => (activeId ? state.objects[activeId] : undefined));
+  // The whole map, for the bulk bar's eligibility check. Subscribed rather
+  // than read through `getState()` because the answer changes when a selected
+  // object is rotated or locked, and the boolean buttons have to appear and
+  // disappear with it.
+  const allObjects = useStore(state => state.objects);
 
   useEffect(() => {
     if (!activeId && !isBulk) {
@@ -294,6 +316,32 @@ export const ObjectContextToolbar: React.FC<Props> = ({ selectedId, selectedIds,
             <div style={{ display: 'flex', alignItems: 'center', gap: '6px', color: 'var(--text-secondary)', paddingRight: '10px', borderRight: '1px solid var(--border-divider)', fontSize: '12px', fontWeight: 600 }}>
               <Layers size={14} /> {bulkIds.length} selected
             </div>
+            {/* Booleans, offered only when every selected object has an
+                outline to combine. A row of buttons that silently did nothing
+                on a sticky note would be worse than one that is not there. */}
+            {bulkIds.every((id) => canVectorize(allObjects[id])) && (
+              <>
+                {BOOLEAN_OPS.map((op) => (
+                  <button
+                    key={op}
+                    className="btn-icon"
+                    data-tooltip={BOOLEAN_BUTTONS[op].label}
+                    aria-label={BOOLEAN_BUTTONS[op].label}
+                    style={{ padding: '6px' }}
+                    onClick={() => {
+                      const id = applyBoolean(op, bulkIds);
+                      // The operands are gone; selecting the result is the
+                      // only sensible place to leave the selection, and it is
+                      // also what makes a run of booleans chainable.
+                      if (id) editor.select(id);
+                    }}
+                  >
+                    {BOOLEAN_BUTTONS[op].icon}
+                  </button>
+                ))}
+                <div style={{ width: '1px', height: '20px', background: 'var(--border-divider)' }} />
+              </>
+            )}
             {isWholeGroup ? (
               <button className="btn-icon" data-tooltip="Ungroup (Cmd+Shift+G)" style={{ padding: '6px' }} onClick={() => editor.ungroupNodes(bulkIds)}><Ungroup size={16} /></button>
             ) : (
@@ -398,8 +446,9 @@ export const ObjectContextToolbar: React.FC<Props> = ({ selectedId, selectedIds,
               {/* A freehand (Pencil) stroke is a filled outline blob with no
                   separate stroke render path — showing stroke controls for it
                   would silently do nothing. Anchor/bezier paths from the Pen
-                  tool do render a real stroke, same as shapes. */}
-              {(node.type === 'shape' || node.geometry.kind === 'bezier') && (
+                  tool do render a real stroke, same as shapes — and so does a
+                  compound path, which is several of them. */}
+              {(node.type === 'shape' || node.geometry.kind !== 'freehand') && (
                 <>
                   <ColorPickerPopover
                     color={appearance.stroke?.color ?? 'transparent'}
@@ -620,6 +669,58 @@ export const ObjectContextToolbar: React.FC<Props> = ({ selectedId, selectedIds,
                   }
                 >
                   <Crop size={16} />
+                </button>
+              </>
+            )}
+            {node.type === 'shape' && canVectorize(node) && (
+              <>
+                <div style={{ width: '1px', height: '20px', margin: '0 2px', backgroundColor: 'var(--border-divider)' }} />
+                <button
+                  className="btn-icon"
+                  data-tooltip="Flatten to path — then double-click to edit its points"
+                  aria-label="Flatten to path"
+                  style={{ padding: '6px' }}
+                  onClick={() => {
+                    const id = flattenToPath(node.id);
+                    if (!id) return;
+                    editor.select(id);
+                    // Straight into the editor: flattening is never the goal,
+                    // it is the step before editing the points, and stopping
+                    // at a path that looks identical to the shape it replaced
+                    // makes the button look like it did nothing.
+                    pathEdit.enter(id);
+                  }}
+                >
+                  <Spline size={16} />
+                </button>
+              </>
+            )}
+            {(node.type === 'shape' || node.type === 'path') &&
+              Boolean((node as { appearance?: { stroke?: { width: number } } }).appearance?.stroke?.width) && (
+                <button
+                  className="btn-icon"
+                  data-tooltip="Outline stroke — turn the line into a filled shape"
+                  aria-label="Outline stroke"
+                  style={{ padding: '6px' }}
+                  onClick={() => {
+                    const id = outlineStrokeOf(node.id);
+                    if (id) editor.select(id);
+                  }}
+                >
+                  <Scissors size={16} />
+                </button>
+              )}
+            {node.type === 'path' && node.geometry.kind === 'bezier' && (
+              <>
+                <div style={{ width: '1px', height: '20px', margin: '0 2px', backgroundColor: 'var(--border-divider)' }} />
+                <button
+                  className="btn-icon"
+                  data-tooltip="Edit points (or double-click)"
+                  aria-label="Edit points"
+                  style={{ padding: '6px' }}
+                  onClick={() => pathEdit.enter(node.id)}
+                >
+                  <Spline size={16} />
                 </button>
               </>
             )}

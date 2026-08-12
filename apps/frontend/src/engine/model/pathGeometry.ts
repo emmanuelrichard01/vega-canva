@@ -1,0 +1,657 @@
+/**
+ * Bezier paths, as arithmetic.
+ *
+ * The stored form (`BezierGeometry.segments`) is the one an SVG `d` string
+ * wants: each entry is *the curve arriving at this anchor*, carrying the two
+ * control points of that curve. It renders in one pass with no bookkeeping,
+ * which is why it was chosen and why it stays.
+ *
+ * It is the wrong shape for an editor. Dragging the handle that leaves anchor
+ * 3 has to write `segments[4].cp1`, and dragging the one that arrives at it
+ * writes `segments[3].cp2` — two different indices for the two ends of what a
+ * person sees as one anchor's pair of handles. So this module also offers an
+ * **anchor-centric** view, `toAnchors`/`fromAnchors`, and everything the editor
+ * touches works in that.
+ *
+ * ## The closing curve
+ *
+ * A closed path has one more curve than an open one: the run from the last
+ * anchor back to the first. There was nowhere to put its handles, so it was
+ * always a straight line — you could close a path but not round the join.
+ *
+ * `segments[0].cp1`/`cp2` are that curve's controls. Segment 0 has no arriving
+ * curve on an open path, so those two fields were declared, ignored by every
+ * reader, and always undefined; on a closed path the curve arriving at anchor 0
+ * is exactly the closing one. The rule "segment *i* describes the curve
+ * arriving at anchor *i*" therefore holds for every index without an exception,
+ * and no field changed meaning.
+ */
+
+import type { BezierGeometry, BezierSegment, CompoundGeometry, Point } from './schema';
+
+/** Anything made of closed contours: one run of anchors, or several. */
+export type ContourGeometry = BezierGeometry | CompoundGeometry;
+
+/** The contours of either form, so callers stop writing the same ternary. */
+export function subpathsOf(geo: ContourGeometry): readonly BezierGeometry[] {
+  return geo.kind === 'compound' ? geo.subpaths : [geo];
+}
+
+/**
+ * One cubic, with both endpoints and both controls spelled out.
+ *
+ * Every routine below — flattening, splitting, bounds, hit-testing — wants the
+ * curve as four points rather than as "this segment plus the one before it".
+ * Deriving that once here is what keeps the `?? previous anchor` fallback for
+ * a handleless anchor from being repeated in five places, each free to get it
+ * subtly wrong.
+ */
+export interface Cubic {
+  x0: number;
+  y0: number;
+  c1x: number;
+  c1y: number;
+  c2x: number;
+  c2y: number;
+  x1: number;
+  y1: number;
+}
+
+/** An anchor and its two handles, in absolute node-local coordinates. */
+export interface Anchor {
+  x: number;
+  y: number;
+  /** Control point of the curve *arriving* here. Absent means a straight run in. */
+  inX?: number;
+  inY?: number;
+  /** Control point of the curve *leaving* here. Absent means a straight run out. */
+  outX?: number;
+  outY?: number;
+}
+
+/**
+ * How a pair of handles behave when one of them is dragged.
+ *
+ * Derived from the handles themselves rather than stored: two handles that are
+ * collinear with their anchor *are* smooth, and a field claiming otherwise
+ * would be a second source of truth that a path arriving from an import, an
+ * undo or another client could contradict.
+ */
+export type HandleMode = 'corner' | 'smooth' | 'mirrored';
+
+/** Below this, two positions are the same point. Well under a device pixel at any usable zoom. */
+const EPS = 1e-6;
+
+// ---------------------------------------------------------------------------
+// Conversions
+// ---------------------------------------------------------------------------
+
+/** The curves of a path, in drawing order. Empty for a path with fewer than two anchors. */
+export function toCubics(geo: BezierGeometry): Cubic[] {
+  const segs = geo.segments;
+  if (segs.length < 2) return [];
+
+  const cubics: Cubic[] = [];
+  const curve = (from: BezierSegment, to: BezierSegment): Cubic => ({
+    x0: from.x,
+    y0: from.y,
+    // An anchor placed without dragging has no handles. Collapsing the control
+    // onto its own endpoint degenerates the cubic into the straight line
+    // between them, which is exactly what such an anchor should draw.
+    c1x: to.cp1x ?? from.x,
+    c1y: to.cp1y ?? from.y,
+    c2x: to.cp2x ?? to.x,
+    c2y: to.cp2y ?? to.y,
+    x1: to.x,
+    y1: to.y,
+  });
+
+  for (let i = 1; i < segs.length; i++) cubics.push(curve(segs[i - 1], segs[i]));
+  if (geo.closed) cubics.push(curve(segs[segs.length - 1], segs[0]));
+  return cubics;
+}
+
+/** The anchor-centric view: every anchor with both of its own handles. */
+export function toAnchors(geo: BezierGeometry): Anchor[] {
+  const segs = geo.segments;
+  const n = segs.length;
+  return segs.map((s, i) => {
+    // The curve leaving anchor i is the one arriving at anchor i+1 — which for
+    // the last anchor of a closed path wraps to the closing curve at index 0.
+    const next = i + 1 < n ? segs[i + 1] : geo.closed ? segs[0] : undefined;
+    const anchor: Anchor = { x: s.x, y: s.y };
+    // Segment 0 of an *open* path has no arriving curve, so its cp2 is not a
+    // handle of anything and is dropped rather than shown.
+    if ((i > 0 || geo.closed) && s.cp2x !== undefined && s.cp2y !== undefined) {
+      anchor.inX = s.cp2x;
+      anchor.inY = s.cp2y;
+    }
+    if (next?.cp1x !== undefined && next?.cp1y !== undefined) {
+      anchor.outX = next.cp1x;
+      anchor.outY = next.cp1y;
+    }
+    return anchor;
+  });
+}
+
+/** Back to the stored form. The inverse of `toAnchors` for every path it can produce. */
+export function fromAnchors(anchors: readonly Anchor[], closed: boolean): BezierGeometry {
+  const n = anchors.length;
+  const segments: BezierSegment[] = anchors.map((a, i) => {
+    const seg: BezierSegment = { x: a.x, y: a.y };
+    // Whoever leaves the previous anchor owns this segment's cp1: index 0's
+    // predecessor is the last anchor, which only exists when the path closes.
+    const prev = i > 0 ? anchors[i - 1] : closed ? anchors[n - 1] : undefined;
+    if (prev?.outX !== undefined && prev?.outY !== undefined) {
+      seg.cp1x = prev.outX;
+      seg.cp1y = prev.outY;
+    }
+    if ((i > 0 || closed) && a.inX !== undefined && a.inY !== undefined) {
+      seg.cp2x = a.inX;
+      seg.cp2y = a.inY;
+    }
+    return seg;
+  });
+  return { kind: 'bezier', segments, closed };
+}
+
+/** An SVG `d` string for the stored path, in node-local coordinates. */
+export function pathData(geo: BezierGeometry): string {
+  const segs = geo.segments;
+  if (segs.length === 0) return '';
+  if (segs.length === 1) return `M ${segs[0].x} ${segs[0].y}`;
+
+  let d = `M ${segs[0].x} ${segs[0].y}`;
+  for (const c of toCubics(geo)) {
+    d += ` C ${c.c1x} ${c.c1y} ${c.c2x} ${c.c2y} ${c.x1} ${c.y1}`;
+  }
+  // `Z` after the closing cubic, not instead of it: the cubic has already
+  // drawn the run home, and Z now closes a gap of zero length — which is what
+  // makes the join take the line-join rather than two loose caps.
+  if (geo.closed) d += ' Z';
+  return d;
+}
+
+/** A polygon (or polyline) as an SVG `d` string. The form booleans and stroke outlines produce. */
+export function polygonData(rings: readonly (readonly Point[])[]): string {
+  return rings
+    .filter((r) => r.length > 1)
+    .map((r) => `M ${r.map((p) => `${p.x} ${p.y}`).join(' L ')} Z`)
+    .join(' ');
+}
+
+// ---------------------------------------------------------------------------
+// Sampling
+// ---------------------------------------------------------------------------
+
+/** The point at parameter `t` along a cubic. */
+export function cubicAt(c: Cubic, t: number): Point {
+  const u = 1 - t;
+  const a = u * u * u;
+  const b = 3 * u * u * t;
+  const d = 3 * u * t * t;
+  const e = t * t * t;
+  return {
+    x: a * c.x0 + b * c.c1x + d * c.c2x + e * c.x1,
+    y: a * c.y0 + b * c.c1y + d * c.c2y + e * c.y1,
+  };
+}
+
+/**
+ * How far a cubic's controls stray from the straight line between its ends.
+ *
+ * The standard flatness measure, kept squared so the subdivision loop never
+ * takes a square root. A curve whose controls sit on the chord is the chord.
+ */
+function flatnessSq(c: Cubic): number {
+  const dx = c.x1 - c.x0;
+  const dy = c.y1 - c.y0;
+  // Distance from each control to the *infinite* line through the endpoints,
+  // times the chord length — dividing by it once at the end is cheaper than
+  // twice inside, and the degenerate case is handled below.
+  const d1 = Math.abs((c.c1x - c.x1) * dy - (c.c1y - c.y1) * dx);
+  const d2 = Math.abs((c.c2x - c.x1) * dy - (c.c2y - c.y1) * dx);
+  const sum = d1 + d2;
+  const chordSq = dx * dx + dy * dy;
+  // A zero-length chord is a loop: the controls are the only thing with any
+  // extent, so measure against them directly instead of dividing by nothing.
+  if (chordSq < EPS) {
+    const ax = c.c1x - c.x0;
+    const ay = c.c1y - c.y0;
+    const bx = c.c2x - c.x0;
+    const by = c.c2y - c.y0;
+    return Math.max(ax * ax + ay * ay, bx * bx + by * by);
+  }
+  return (sum * sum) / chordSq;
+}
+
+/** Split a cubic at `t` into the two cubics that together draw the same curve. */
+export function splitCubic(c: Cubic, t: number): [Cubic, Cubic] {
+  // de Casteljau: every point below is an interpolation of two points above it,
+  // and the ones on the left and right edges of the triangle are the controls
+  // of the two halves. Exact — no curve fitting, so a split changes nothing on
+  // screen, which is the whole requirement for inserting an anchor.
+  const lerp = (ax: number, ay: number, bx: number, by: number): [number, number] => [
+    ax + (bx - ax) * t,
+    ay + (by - ay) * t,
+  ];
+  const [p01x, p01y] = lerp(c.x0, c.y0, c.c1x, c.c1y);
+  const [p12x, p12y] = lerp(c.c1x, c.c1y, c.c2x, c.c2y);
+  const [p23x, p23y] = lerp(c.c2x, c.c2y, c.x1, c.y1);
+  const [p012x, p012y] = lerp(p01x, p01y, p12x, p12y);
+  const [p123x, p123y] = lerp(p12x, p12y, p23x, p23y);
+  const [mx, my] = lerp(p012x, p012y, p123x, p123y);
+
+  return [
+    { x0: c.x0, y0: c.y0, c1x: p01x, c1y: p01y, c2x: p012x, c2y: p012y, x1: mx, y1: my },
+    { x0: mx, y0: my, c1x: p123x, c1y: p123y, c2x: p23x, c2y: p23y, x1: c.x1, y1: c.y1 },
+  ];
+}
+
+/**
+ * How close a polyline has to hug its curve, in node-local units.
+ *
+ * A quarter of a unit is a quarter of a screen pixel at 100% zoom and stays
+ * under one pixel out to 400%, which is as far as anyone inspects the result
+ * of a boolean. Tighter costs points in every downstream polygon for a
+ * difference nobody can see.
+ */
+export const FLATTEN_TOLERANCE = 0.25;
+
+/** Guard against a pathological curve subdividing forever. 2^16 segments is far past any real path. */
+const MAX_FLATTEN_DEPTH = 16;
+
+function flattenCubic(c: Cubic, toleranceSq: number, depth: number, out: Point[]): void {
+  if (depth >= MAX_FLATTEN_DEPTH || flatnessSq(c) <= toleranceSq) {
+    out.push({ x: c.x1, y: c.y1 });
+    return;
+  }
+  const [a, b] = splitCubic(c, 0.5);
+  flattenCubic(a, toleranceSq, depth + 1, out);
+  flattenCubic(b, toleranceSq, depth + 1, out);
+}
+
+/**
+ * The path as a point list, close enough that the difference is invisible.
+ *
+ * Adaptive rather than a fixed number of samples per curve: a curve that is
+ * nearly straight gets two points and a tight one gets as many as it needs.
+ * Sampling every curve at, say, 32 steps would be simultaneously wasteful on
+ * the first and visibly faceted on the second.
+ *
+ * The result is *not* closed by repeating the first point — a closed path is
+ * declared closed, and a duplicated final point is a degenerate edge that
+ * upsets every polygon algorithm that receives one.
+ */
+export function flattenPath(geo: BezierGeometry, tolerance = FLATTEN_TOLERANCE): Point[] {
+  const segs = geo.segments;
+  if (segs.length === 0) return [];
+  const points: Point[] = [{ x: segs[0].x, y: segs[0].y }];
+  const toleranceSq = tolerance * tolerance;
+  for (const c of toCubics(geo)) flattenCubic(c, toleranceSq, 0, points);
+  // The closing curve ends exactly where the path started; keeping that point
+  // would make the first and last entries identical.
+  if (geo.closed) points.pop();
+  return points;
+}
+
+/**
+ * The path's bounding box in node-local coordinates.
+ *
+ * From the flattened points rather than from the control polygon. The control
+ * hull is a bound, but a loose one — a curve pulled hard in one direction can
+ * report a box half again too big, which would show up as a selection
+ * rectangle standing off the shape.
+ */
+export function pathBounds(geo: BezierGeometry): { x: number; y: number; width: number; height: number } {
+  const points = flattenPath(geo);
+  if (points.length === 0) return { x: 0, y: 0, width: 0, height: 0 };
+  let minX = Infinity;
+  let minY = Infinity;
+  let maxX = -Infinity;
+  let maxY = -Infinity;
+  for (const p of points) {
+    if (p.x < minX) minX = p.x;
+    if (p.y < minY) minY = p.y;
+    if (p.x > maxX) maxX = p.x;
+    if (p.y > maxY) maxY = p.y;
+  }
+  return { x: minX, y: minY, width: maxX - minX, height: maxY - minY };
+}
+
+// ---------------------------------------------------------------------------
+// Editing
+// ---------------------------------------------------------------------------
+
+/** Which curve of the path, and where along it. What a click on the path resolves to. */
+export interface PathHit {
+  /** Index into `toCubics(geo)`. For a closed path the last entry is the closing curve. */
+  curve: number;
+  /** Parameter along that curve. */
+  t: number;
+  /** Distance from the queried point, in node-local units. */
+  distance: number;
+  point: Point;
+}
+
+/** Samples per curve when locating a click. 24 puts the coarse guess within a few units on any real curve. */
+const HIT_SAMPLES = 24;
+
+/**
+ * The closest point on the path to `p`.
+ *
+ * A coarse sweep followed by a local refinement, rather than solving the
+ * quintic that the exact answer requires. The refinement converges to well
+ * inside a pixel, and the only consumers are "insert an anchor here" and "did
+ * this click land on the outline" — both of which are judged by eye.
+ */
+export function nearestPointOnPath(geo: BezierGeometry, p: Point): PathHit | null {
+  const cubics = toCubics(geo);
+  if (cubics.length === 0) return null;
+
+  let best: PathHit | null = null;
+  const consider = (curve: number, t: number, c: Cubic) => {
+    const point = cubicAt(c, t);
+    const dx = point.x - p.x;
+    const dy = point.y - p.y;
+    const distance = Math.hypot(dx, dy);
+    if (!best || distance < best.distance) best = { curve, t, distance, point };
+  };
+
+  for (let i = 0; i < cubics.length; i++) {
+    for (let s = 0; s <= HIT_SAMPLES; s++) consider(i, s / HIT_SAMPLES, cubics[i]);
+  }
+  if (!best) return null;
+
+  // Binary refinement around the winner. Ten halvings take the bracket from
+  // one sample step to a thousandth of it, which is far below the precision a
+  // pointer can express.
+  let span = 1 / HIT_SAMPLES;
+  for (let i = 0; i < 10; i++) {
+    span /= 2;
+    const current: PathHit = best;
+    const c = cubics[current.curve];
+    consider(current.curve, Math.max(0, current.t - span), c);
+    consider(current.curve, Math.min(1, current.t + span), c);
+  }
+  return best;
+}
+
+/**
+ * Add an anchor partway along a curve, without moving the path.
+ *
+ * The split is exact, so the outline is pixel-identical before and after —
+ * which is the entire point. An "insert" that nudged the shape would make
+ * adding a handle a destructive act, and people insert anchors precisely
+ * because they do not want to redraw what is already right.
+ */
+export function insertAnchor(geo: BezierGeometry, hit: Pick<PathHit, 'curve' | 't'>): BezierGeometry {
+  const cubics = toCubics(geo);
+  const c = cubics[hit.curve];
+  if (!c) return geo;
+
+  const [left, right] = splitCubic(c, Math.min(1, Math.max(0, hit.t)));
+  const anchors = toAnchors(geo);
+  // Curve *i* runs from anchor *i* to anchor *i+1*, wrapping to 0 for the
+  // closing curve — so the new anchor lands immediately after anchor `curve`.
+  const from = hit.curve;
+  const to = (hit.curve + 1) % anchors.length;
+
+  const next = anchors.map((a) => ({ ...a }));
+  // Splitting changes the neighbours' inner handles too: the halves have
+  // shorter controls than the whole did.
+  next[from].outX = left.c1x;
+  next[from].outY = left.c1y;
+  next[to].inX = right.c2x;
+  next[to].inY = right.c2y;
+
+  const inserted: Anchor = {
+    x: left.x1,
+    y: left.y1,
+    inX: left.c2x,
+    inY: left.c2y,
+    outX: right.c1x,
+    outY: right.c1y,
+  };
+  next.splice(from + 1, 0, inserted);
+  return fromAnchors(next, geo.closed);
+}
+
+/**
+ * Drop an anchor, keeping the rest of the path where it is.
+ *
+ * The neighbours' handles are left alone, so the two curves that met at the
+ * removed anchor become one that leaves and arrives the same way. The shape
+ * changes — it has to, a curve was removed — but it changes only between those
+ * two neighbours rather than being refitted end to end.
+ *
+ * Returns `null` when there would be nothing left worth drawing, which is the
+ * caller's cue to delete the node rather than leave a path of one point.
+ */
+export function removeAnchor(geo: BezierGeometry, index: number): BezierGeometry | null {
+  const anchors = toAnchors(geo);
+  if (index < 0 || index >= anchors.length) return geo;
+  if (anchors.length <= 2) return null;
+  const next = anchors.filter((_, i) => i !== index);
+  return fromAnchors(next, geo.closed);
+}
+
+function handleMode(a: Anchor): HandleMode {
+  if (a.inX === undefined || a.outX === undefined) return 'corner';
+  const inDx = a.x - (a.inX ?? a.x);
+  const inDy = a.y - (a.inY ?? a.y);
+  const outDx = (a.outX ?? a.x) - a.x;
+  const outDy = (a.outY ?? a.y) - a.y;
+  const inLen = Math.hypot(inDx, inDy);
+  const outLen = Math.hypot(outDx, outDy);
+  if (inLen < EPS || outLen < EPS) return 'corner';
+  // Collinear and pointing the same way. The cross product alone would also
+  // accept handles folded back on top of each other, which is a cusp, not a
+  // smooth join — hence the dot-product check as well.
+  const cross = inDx * outDy - inDy * outDx;
+  const dot = inDx * outDx + inDy * outDy;
+  if (Math.abs(cross) > EPS * inLen * outLen || dot <= 0) return 'corner';
+  return Math.abs(inLen - outLen) < EPS * Math.max(inLen, outLen) ? 'mirrored' : 'smooth';
+}
+
+/** The mode of the anchor at `index`, as derived from where its handles actually are. */
+export function anchorMode(geo: BezierGeometry, index: number): HandleMode {
+  const anchors = toAnchors(geo);
+  const a = anchors[index];
+  return a ? handleMode(a) : 'corner';
+}
+
+/**
+ * Move one handle, and whatever else that implies.
+ *
+ * The opposite handle follows unless the anchor is a corner: a smooth anchor
+ * keeps its direction and its own length, a mirrored one keeps both. `break`
+ * forces the pair apart, which is how a corner is made — the alternative,
+ * a stored flag, would let the flag and the geometry disagree.
+ */
+export function moveHandle(
+  geo: BezierGeometry,
+  index: number,
+  which: 'in' | 'out',
+  to: Point,
+  opts: { break?: boolean } = {}
+): BezierGeometry {
+  const anchors = toAnchors(geo).map((a) => ({ ...a }));
+  const a = anchors[index];
+  if (!a) return geo;
+
+  const mode = opts.break ? 'corner' : handleMode(a);
+  if (which === 'in') {
+    a.inX = to.x;
+    a.inY = to.y;
+  } else {
+    a.outX = to.x;
+    a.outY = to.y;
+  }
+
+  if (mode !== 'corner') {
+    const dx = to.x - a.x;
+    const dy = to.y - a.y;
+    const len = Math.hypot(dx, dy);
+    if (len > EPS) {
+      const other = which === 'in' ? { x: a.outX, y: a.outY } : { x: a.inX, y: a.inY };
+      const otherLen =
+        mode === 'mirrored' || other.x === undefined || other.y === undefined
+          ? len
+          : Math.hypot(other.x - a.x, other.y - a.y);
+      // Opposite direction, own length: that is what "smooth" means, and it is
+      // why dragging one handle of a smooth anchor rotates the other without
+      // stretching it.
+      const ox = a.x - (dx / len) * otherLen;
+      const oy = a.y - (dy / len) * otherLen;
+      if (which === 'in') {
+        a.outX = ox;
+        a.outY = oy;
+      } else {
+        a.inX = ox;
+        a.inY = oy;
+      }
+    }
+  }
+  return fromAnchors(anchors, geo.closed);
+}
+
+/**
+ * Move an anchor, carrying its handles with it.
+ *
+ * Handles are stored absolutely, so an anchor that moved without them would
+ * leave them behind and turn a smooth curve inside out. They travel by the
+ * same delta, which keeps the curve's shape and moves where it sits.
+ */
+export function moveAnchor(geo: BezierGeometry, index: number, to: Point): BezierGeometry {
+  const anchors = toAnchors(geo).map((a) => ({ ...a }));
+  const a = anchors[index];
+  if (!a) return geo;
+  const dx = to.x - a.x;
+  const dy = to.y - a.y;
+  a.x = to.x;
+  a.y = to.y;
+  if (a.inX !== undefined && a.inY !== undefined) {
+    a.inX += dx;
+    a.inY += dy;
+  }
+  if (a.outX !== undefined && a.outY !== undefined) {
+    a.outX += dx;
+    a.outY += dy;
+  }
+  return fromAnchors(anchors, geo.closed);
+}
+
+/**
+ * Straighten an anchor into a corner, or round it into a smooth one.
+ *
+ * The smooth direction is taken from the line between the two neighbours,
+ * which is the standard construction and the one that produces a curve
+ * continuing the path's existing sweep rather than an arbitrary bulge.
+ */
+export function setAnchorMode(geo: BezierGeometry, index: number, mode: 'corner' | 'smooth'): BezierGeometry {
+  const anchors = toAnchors(geo).map((a) => ({ ...a }));
+  const a = anchors[index];
+  if (!a) return geo;
+
+  if (mode === 'corner') {
+    delete a.inX;
+    delete a.inY;
+    delete a.outX;
+    delete a.outY;
+    return fromAnchors(anchors, geo.closed);
+  }
+
+  const n = anchors.length;
+  const prev = index > 0 ? anchors[index - 1] : geo.closed ? anchors[n - 1] : undefined;
+  const next = index + 1 < n ? anchors[index + 1] : geo.closed ? anchors[0] : undefined;
+  // An endpoint of an open path has one neighbour; aim at it and let the other
+  // handle fall on the opposite side.
+  const ref1 = prev ?? next;
+  const ref2 = next ?? prev;
+  if (!ref1 || !ref2) return geo;
+
+  const dx = ref2.x - ref1.x;
+  const dy = ref2.y - ref1.y;
+  const len = Math.hypot(dx, dy);
+  if (len < EPS) return geo;
+  // A third of the way to each neighbour: the length that makes a run of
+  // smoothed anchors approximate a circle closely, and the same figure every
+  // other editor uses for this gesture.
+  const inLen = Math.hypot(a.x - ref1.x, a.y - ref1.y) / 3;
+  const outLen = Math.hypot(ref2.x - a.x, ref2.y - a.y) / 3;
+  a.inX = a.x - (dx / len) * inLen;
+  a.inY = a.y - (dy / len) * inLen;
+  a.outX = a.x + (dx / len) * outLen;
+  a.outY = a.y + (dy / len) * outLen;
+  return fromAnchors(anchors, geo.closed);
+}
+
+/**
+ * Shift every anchor and handle by a delta.
+ *
+ * Paths store their geometry relative to the node origin, so an edit that
+ * changes the bounding box has to move the node and move the geometry the
+ * other way to keep it where it was drawn. `reframe` is the second half of
+ * that pair.
+ */
+export function translatePath<T extends ContourGeometry>(geo: T, dx: number, dy: number): T {
+  if (dx === 0 && dy === 0) return geo;
+  if (geo.kind === 'compound') {
+    return { ...geo, subpaths: geo.subpaths.map((s) => translatePath(s, dx, dy)) };
+  }
+  return {
+    ...geo,
+    segments: geo.segments.map((s) => ({
+      x: s.x + dx,
+      y: s.y + dy,
+      ...(s.cp1x !== undefined ? { cp1x: s.cp1x + dx, cp1y: (s.cp1y ?? 0) + dy } : null),
+      ...(s.cp2x !== undefined ? { cp2x: s.cp2x + dx, cp2y: (s.cp2y ?? 0) + dy } : null),
+    })),
+  };
+}
+
+/** The box around every contour. `pathBounds` for a shape that may have more than one. */
+export function contourBounds(geo: ContourGeometry): { x: number; y: number; width: number; height: number } {
+  const boxes = subpathsOf(geo)
+    .map(pathBounds)
+    .filter((b) => b.width > 0 || b.height > 0);
+  if (boxes.length === 0) return pathBounds(subpathsOf(geo)[0] ?? { kind: 'bezier', segments: [], closed: false });
+  const minX = Math.min(...boxes.map((b) => b.x));
+  const minY = Math.min(...boxes.map((b) => b.y));
+  const maxX = Math.max(...boxes.map((b) => b.x + b.width));
+  const maxY = Math.max(...boxes.map((b) => b.y + b.height));
+  return { x: minX, y: minY, width: maxX - minX, height: maxY - minY };
+}
+
+/** `pathData` for either form. Several contours become several `M…Z` runs in one string. */
+export function contourData(geo: ContourGeometry): string {
+  return subpathsOf(geo).map(pathData).filter(Boolean).join(' ');
+}
+
+/**
+ * Re-origin a path so its geometry starts at 0,0, reporting where the node
+ * has to move to compensate.
+ *
+ * Editing an anchor changes the path's extent, and a node whose `width`/
+ * `height` no longer describe its contents has a selection box and a hit area
+ * that are both wrong. Every edit therefore ends here.
+ */
+export function reframePath<T extends ContourGeometry>(geo: T): {
+  geometry: T;
+  dx: number;
+  dy: number;
+  width: number;
+  height: number;
+} {
+  const b = contourBounds(geo);
+  return {
+    geometry: translatePath(geo, -b.x, -b.y),
+    dx: b.x,
+    dy: b.y,
+    // A straight horizontal path has zero height and would otherwise be a node
+    // with no area to click, so both are floored at one unit.
+    width: Math.max(1, b.width),
+    height: Math.max(1, b.height),
+  };
+}

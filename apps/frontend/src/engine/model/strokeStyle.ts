@@ -1,4 +1,4 @@
-import type { Stroke } from './schema';
+import { DEFAULT_MITER_LIMIT, type Stroke } from './schema';
 
 /**
  * Stroke styles: the dash patterns a user can actually pick.
@@ -114,7 +114,7 @@ export function restyleForWidth(stroke: Stroke | undefined, width: number): Dash
  * Switching a stroke back to solid has to drop the keys, not blank them.
  */
 export function buildStroke(
-  base: Pick<Stroke, 'color' | 'width' | 'align'>,
+  base: Pick<Stroke, 'color' | 'width' | 'align' | 'join' | 'miterLimit'>,
   geometry: DashGeometry
 ): Stroke {
   const stroke: Stroke = { color: base.color, width: base.width };
@@ -124,5 +124,14 @@ export function buildStroke(
   // than storing the default — the same rule the dash keys follow, and for the
   // same reason.
   if (base.align && base.align !== 'center') stroke.align = base.align;
+  // And `miter` is the absent case for the join, with the same reasoning: it
+  // is what every stroke already draws.
+  if (base.join && base.join !== 'miter') stroke.join = base.join;
+  // The limit is only meaningful while the join is a miter, so it is dropped
+  // along with it — storing a cutoff for a join that has been switched to
+  // round leaves a number that does nothing and reappears if you switch back.
+  if ((!base.join || base.join === 'miter') && base.miterLimit !== undefined && base.miterLimit !== DEFAULT_MITER_LIMIT) {
+    stroke.miterLimit = base.miterLimit;
+  }
   return stroke;
 }

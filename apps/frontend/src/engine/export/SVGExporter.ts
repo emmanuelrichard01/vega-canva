@@ -5,6 +5,7 @@ import { THEMES } from '../../components/canvas/renderers/StickyRenderer';
 import type { AnyNode, PathNode, ShapeNode, Typography } from '../model/schema';
 import { SvgPaintDefs } from './svgPaint';
 import { pointsAttribute, regularPolygonPoints, starPoints } from '../model/shapeOutline';
+import { contourData, translatePath } from '../model/pathGeometry';
 import { ARROW_HEAD_SCALE } from '../model/schema';
 
 /**
@@ -30,21 +31,12 @@ function escapeXml(s: string): string {
  */
 
 function bezierPathData(node: PathNode, offsetX: number, offsetY: number): string {
-  if (node.geometry.kind !== 'bezier') return '';
-  const { segments, closed } = node.geometry;
-  if (!segments.length) return '';
-
-  let d = `M ${segments[0].x + offsetX} ${segments[0].y + offsetY}`;
-  for (let i = 1; i < segments.length; i++) {
-    const s = segments[i];
-    const c1x = (s.cp1x ?? segments[i - 1].x) + offsetX;
-    const c1y = (s.cp1y ?? segments[i - 1].y) + offsetY;
-    const c2x = (s.cp2x ?? s.x) + offsetX;
-    const c2y = (s.cp2y ?? s.y) + offsetY;
-    d += ` C ${c1x} ${c1y} ${c2x} ${c2y} ${s.x + offsetX} ${s.y + offsetY}`;
-  }
-  if (closed) d += ' Z';
-  return d;
+  if (node.geometry.kind === 'freehand') return '';
+  // The same description the canvas draws from, moved into world coordinates.
+  // The exporter used to carry its own copy of the segment-to-`d` walk, which
+  // is exactly how the closing curve of a closed path came to be drawn one way
+  // on screen and another in the file.
+  return contourData(translatePath(node.geometry, offsetX, offsetY));
 }
 
 /** SVG text attributes for a typography block. */
@@ -97,6 +89,19 @@ function dashAttrs(stroke: ShapeNode['appearance']['stroke']): string {
   if (!stroke?.dash || stroke.dash.length === 0) return '';
   const cap = stroke.cap ? ` stroke-linecap="${stroke.cap}"` : '';
   return ` stroke-dasharray="${stroke.dash.join(' ')}"${cap}`;
+}
+
+/**
+ * `stroke-linejoin` and `stroke-miterlimit`, or an empty string.
+ *
+ * Both are stored only when they differ from the default, and SVG's defaults
+ * are the same two values — `miter` and 10 — so an untouched stroke emits
+ * nothing and the file stays as small as the document is.
+ */
+function joinAttrs(stroke: ShapeNode['appearance']['stroke']): string {
+  const join = stroke?.join ? ` stroke-linejoin="${stroke.join}"` : '';
+  const limit = stroke?.miterLimit !== undefined ? ` stroke-miterlimit="${stroke.miterLimit}"` : '';
+  return `${join}${limit}`;
 }
 
 /**
@@ -218,13 +223,18 @@ export class SVGExporter implements Exporter {
             ? defs.fill(node.appearance.fill[0], paintBox, 'none')
             : undefined;
 
-          if (node.geometry.kind === 'bezier') {
+          if (node.geometry.kind !== 'freehand') {
             const dash = dashAttrs(node.appearance.stroke);
             // The round cap is this renderer's default for pen paths, so it is
             // only emitted when the dash pattern has not already supplied one.
             const cap = node.appearance.stroke?.cap ? '' : ' stroke-linecap="round"';
+            const join = node.appearance.stroke?.join ? joinAttrs(node.appearance.stroke) : ' stroke-linejoin="round"';
+            // Several contours in one `d` need the even-odd rule to read the
+            // inner ones as holes — SVG's default is nonzero, which would fill
+            // the hole in and lose the entire result of a subtraction.
+            const rule = node.geometry.kind === 'compound' ? ' fill-rule="evenodd"' : '';
             parts.push(
-              `<path d="${bezierPathData(node, node.x, node.y)}" fill="${fill && fill !== 'transparent' ? fill : 'none'}" stroke="${stroke ?? 'none'}" stroke-width="${sw}"${dash}${cap} stroke-linejoin="round" />`
+              `<path d="${bezierPathData(node, node.x, node.y)}" fill="${fill && fill !== 'transparent' ? fill : 'none'}"${rule} stroke="${stroke ?? 'none'}" stroke-width="${sw}"${dash}${cap}${join} />`
             );
           } else if (node.geometry.svgPath) {
             // Freehand strokes store their outline relative to the node origin.
