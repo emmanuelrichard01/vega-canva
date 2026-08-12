@@ -3,13 +3,34 @@ import { updateNode, provider } from '../engine/document';
 import { deleteNodesWithFrames } from '../engine/interaction/frameMembership';
 import { useStore } from '../hooks/useStore';
 import { editor } from '../engine/api/EditorAPI';
-import { Type, Square, Image as ImageIcon, StickyNote, Mic, LayoutTemplate, MessageSquare, PenTool, Lock, Unlock, Copy, Trash2, Eye, EyeOff, Layers, FolderOpen, Ungroup, Frame as FrameIcon, ChevronRight, ChevronDown } from 'lucide-react';
+import { Type, Square, Image as ImageIcon, StickyNote, Mic, LayoutTemplate, MessageSquare, PenTool, Lock, Unlock, Copy, Trash2, Eye, EyeOff, Layers, FolderOpen, Ungroup, Frame as FrameIcon, ChevronRight, ChevronDown, Search, X } from 'lucide-react';
 import { nanoid } from 'nanoid';
-import { type AnyNode } from '../engine/model/schema';
+import { type AnyNode, type NodeType } from '../engine/model/schema';
 import { nodeLabel } from '../engine/model/nodeLabel';
 import { tagFilter } from '../engine/model/tagFilter';
 import { tagCounts } from '../engine/model/tags';
+import {
+  highlightRuns,
+  isFiltering,
+  matchNode,
+  type LayerMatch,
+  type LayerTypeFilter,
+} from '../engine/model/layerSearch';
 import { useVirtualRows } from '../hooks/useVirtualRows';
+
+/** Node types, in the order their chips are offered. Frames first, because that is where people look. */
+const TYPE_ORDER: NodeType[] = ['frame', 'text', 'shape', 'path', 'image', 'sticky', 'audio', 'comment'];
+
+const TYPE_LABEL: Partial<Record<NodeType, string>> = {
+  frame: 'Frames',
+  text: 'Text',
+  shape: 'Shapes',
+  path: 'Paths',
+  image: 'Images',
+  sticky: 'Notes',
+  audio: 'Audio',
+  comment: 'Comments',
+};
 
 /** Row pitch, in px. Uniform by design so the list can be windowed. */
 const ROW_HEIGHT = 36;
@@ -45,6 +66,12 @@ export const LayersPanel: React.FC<LayersPanelProps> = ({ selectedIds, overrideO
   useEffect(() => {
     tagFilter.prune(allTags.map((t) => t.tag));
   }, [allTags]);
+  // The search field, and the type it is narrowed to. Both are a way of
+  // looking rather than a fact about the board, so neither goes near the CRDT
+  // — the same rule the frame-collapse set follows.
+  const [query, setQuery] = useState('');
+  const [typeFilter, setTypeFilter] = useState<LayerTypeFilter>('all');
+  const searchRef = useRef<HTMLInputElement>(null);
   const [hoveredId, setHoveredId] = useState<string | null>(null);
   const [draggedId, setDraggedId] = useState<string | null>(null);
   const [dragOverId, setDragOverId] = useState<string | null>(null);
@@ -203,7 +230,37 @@ export const LayersPanel: React.FC<LayersPanelProps> = ({ selectedIds, overrideO
    */
   const FRAME_INDENT = 16;
 
+  /**
+   * Search results, keyed by id, or null when nothing is being filtered.
+   *
+   * Null rather than an empty map, so the tree below can tell "no filter" from
+   * "a filter that matched nothing" — the first shows the document and the
+   * second has to show an empty state, and they are not the same screen.
+   */
+  const matches = React.useMemo(() => {
+    if (!isFiltering(query, typeFilter)) return null;
+    const found = new Map<string, LayerMatch>();
+    for (const obj of sortedObjects) {
+      const match = matchNode(obj as AnyNode, query, typeFilter);
+      if (match) found.set(obj.id, match);
+    }
+    return found;
+  }, [sortedObjects, query, typeFilter]);
+
   const flatRows: FlatRow[] = React.useMemo(() => {
+    // While filtering, the tree is set aside for a flat ranked list.
+    //
+    // Filtering a hierarchy raises a question with no good answer — whether to
+    // show the unmatched parent of a matched child, and at what indent — and
+    // every answer produces a list where the rows you asked for are not the
+    // rows you can see. A ranked flat list has one job and does it: best match
+    // first, nothing else present.
+    if (matches) {
+      return sortedObjects
+        .filter((obj: any) => matches.has(obj.id))
+        .sort((a: any, b: any) => (matches.get(b.id)!.score) - (matches.get(a.id)!.score))
+        .map((obj: any) => ({ kind: 'object' as const, obj, indent: 0 }));
+    }
     // Children keyed by owning frame. A `frameId` pointing at something that is
     // no longer a frame — deleted, or merged away by a concurrent edit — is
     // treated as no owner at all, so the object stays visible at the top level
@@ -256,7 +313,7 @@ export const LayersPanel: React.FC<LayersPanelProps> = ({ selectedIds, overrideO
 
     emit(roots, 0);
     return rows;
-  }, [sortedObjects, objects, collapsedFrames]);
+  }, [sortedObjects, objects, collapsedFrames, matches]);
 
   /**
    * The object rows in the order they are *shown*.
@@ -331,6 +388,13 @@ export const LayersPanel: React.FC<LayersPanelProps> = ({ selectedIds, overrideO
     editor.ungroupNodes(memberIds);
   };
 
+  /** The node types this document actually contains, in a stable order. */
+  const presentTypes = React.useMemo(() => {
+    const seen = new Set<NodeType>();
+    for (const obj of sortedObjects) seen.add((obj as AnyNode).type);
+    return TYPE_ORDER.filter((t) => seen.has(t));
+  }, [sortedObjects]);
+
   const { containerRef, window: vwindow } = useVirtualRows(flatRows.length, ROW_HEIGHT);
   const visibleRows = flatRows.slice(vwindow.start, vwindow.end);
 
@@ -400,7 +464,25 @@ export const LayersPanel: React.FC<LayersPanelProps> = ({ selectedIds, overrideO
             style={{ flex: 1, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis', textDecoration: obj.locked ? 'line-through' : 'none', color: isSelected ? 'var(--amber-950)' : 'inherit' }}
             data-tooltip="Double click to rename"
           >
-            {getName(obj)}
+            {/* The matched characters are marked, which is what makes a
+                subsequence match legible: `sbm` finding "Submit Button" reads
+                as a bug until you can see which letters it matched. */}
+            {highlightRuns(getName(obj), matches?.get(obj.id)?.positions ?? []).map((run, i) =>
+              run.hit ? (
+                <mark
+                  key={i}
+                  style={{
+                    background: 'transparent',
+                    color: isSelected ? 'var(--amber-950)' : 'var(--amber-600)',
+                    fontWeight: 700,
+                  }}
+                >
+                  {run.text}
+                </mark>
+              ) : (
+                <React.Fragment key={i}>{run.text}</React.Fragment>
+              )
+            )}
           </span>
         )}
 
@@ -473,6 +555,78 @@ export const LayersPanel: React.FC<LayersPanelProps> = ({ selectedIds, overrideO
         )}
       </div>
 
+      {/* Search.
+          Subsequence matching, so `sbm` finds "Submit Button" — the behaviour
+          every command palette has and the one people arrive expecting. The
+          type chips beside it answer the other half of the question the brief
+          asks: "show me only the text layers". */}
+      <div className="layer-search">
+        <Search size={13} className="layer-search__icon" aria-hidden />
+        <input
+          ref={searchRef}
+          type="search"
+          className="layer-search__input"
+          placeholder="Search layers"
+          value={query}
+          onChange={(e) => setQuery(e.target.value)}
+          onKeyDown={(e) => {
+            // Escape clears before it blurs: the first press should undo the
+            // filter, which is what you want when you cannot find the thing
+            // you were looking for.
+            if (e.key === 'Escape') {
+              if (query) {
+                e.stopPropagation();
+                setQuery('');
+              } else {
+                e.currentTarget.blur();
+              }
+            }
+            // Enter selects everything the search found, which turns a search
+            // into a selection in one keystroke.
+            if (e.key === 'Enter' && matches && matches.size > 0 && setSelectedIds) {
+              e.preventDefault();
+              setSelectedIds(Array.from(matches.keys()));
+            }
+            // The canvas listens for plain keys as tool shortcuts. Without
+            // this, typing "r" into the box also picks the rectangle tool.
+            e.stopPropagation();
+          }}
+          aria-label="Search layers by name"
+        />
+        {isFiltering(query, typeFilter) && (
+          <button
+            type="button"
+            className="layer-search__clear"
+            onClick={() => {
+              setQuery('');
+              setTypeFilter('all');
+            }}
+            aria-label="Clear search and type filter"
+          >
+            <X size={12} />
+          </button>
+        )}
+      </div>
+
+      {/* Only the types actually present. A chip for a node type nobody has
+          used is a filter guaranteed to return nothing. */}
+      {presentTypes.length > 1 && (
+        <div className="layer-type-filter">
+          {(['all', ...presentTypes] as LayerTypeFilter[]).map((t) => (
+            <button
+              key={t}
+              type="button"
+              className="layer-type-chip"
+              data-active={typeFilter === t || undefined}
+              aria-pressed={typeFilter === t}
+              onClick={() => setTypeFilter(t)}
+            >
+              {t === 'all' ? 'All' : TYPE_LABEL[t] ?? t}
+            </button>
+          ))}
+        </div>
+      )}
+
       {/* Tag filter.
           Tags were on the schema for the project's whole life with nothing to
           act on them, which made them decoration. This is the thing that makes
@@ -513,6 +667,14 @@ export const LayersPanel: React.FC<LayersPanelProps> = ({ selectedIds, overrideO
         {sortedObjects.length === 0 ? (
           <div style={{ color: 'var(--text-secondary)', textAlign: 'center', marginTop: '40px', fontSize: '13px' }}>
             Canvas is empty
+          </div>
+        ) : flatRows.length === 0 ? (
+          /* A filter that matched nothing is a different screen from an empty
+             canvas, and saying so is the difference between "there is nothing
+             here" and "there is nothing here *that matches*" — only one of
+             which tells you to clear the filter. */
+          <div className="layer-search-empty">
+            No layers match{query.trim() ? ` “${query.trim()}”` : ' this filter'}.
           </div>
         ) : (
           // The outer element carries the full scroll height so the scrollbar

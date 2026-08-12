@@ -755,6 +755,118 @@ textarea:focus-visible {
   color: var(--text-tertiary);
 }
 
+/* ---------------------------------------------------------------------------
+   LAYER SEARCH
+   Sits directly under the panel header, above the tag chips. Deliberately the
+   same chip language as the tag filter below it: they are two filters on one
+   list, and giving them different shapes would suggest they do different
+   kinds of thing.
+   --------------------------------------------------------------------------- */
+
+.layer-search {
+  flex: 0 0 auto;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  margin: var(--space-2) var(--space-3) 0;
+  padding: 0 8px;
+  height: 30px;
+  border: 1px solid var(--border-divider);
+  border-radius: var(--radius-md);
+  background: var(--surface-hover);
+  transition: border-color var(--motion-hover), background var(--motion-hover);
+}
+
+.layer-search:focus-within {
+  border-color: var(--border-focus);
+  background: var(--surface-primary);
+}
+
+.layer-search__icon {
+  flex: 0 0 auto;
+  color: var(--text-tertiary);
+}
+
+.layer-search__input {
+  flex: 1;
+  min-width: 0;
+  border: none;
+  background: transparent;
+  outline: none;
+  color: var(--text-primary);
+  font-family: var(--font-sans);
+  font-size: var(--text-xs);
+}
+
+.layer-search__input::placeholder {
+  color: var(--text-tertiary);
+}
+
+/* Safari draws its own clear button on `type=search`, which would sit beside
+   ours and clear only the text, not the type filter. */
+.layer-search__input::-webkit-search-cancel-button {
+  display: none;
+}
+
+.layer-search__clear {
+  flex: 0 0 auto;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 18px;
+  height: 18px;
+  padding: 0;
+  border: none;
+  border-radius: var(--radius-pill);
+  background: transparent;
+  color: var(--text-tertiary);
+  cursor: pointer;
+}
+
+.layer-search__clear:hover {
+  background: var(--surface-elevated);
+  color: var(--text-primary);
+}
+
+.layer-type-filter {
+  flex: 0 0 auto;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px;
+  padding: var(--space-2) var(--space-3);
+}
+
+.layer-type-chip {
+  padding: 3px 8px;
+  border: 1px solid var(--border-divider);
+  border-radius: var(--radius-pill);
+  background: transparent;
+  color: var(--text-secondary);
+  font-family: var(--font-sans);
+  font-size: var(--text-2xs);
+  font-weight: var(--weight-semibold);
+  cursor: pointer;
+  transition: background var(--motion-hover), color var(--motion-hover);
+}
+
+.layer-type-chip:hover {
+  background: var(--surface-hover);
+  color: var(--text-primary);
+}
+
+.layer-type-chip[data-active] {
+  background: var(--text-primary);
+  border-color: var(--text-primary);
+  color: var(--surface-primary);
+}
+
+.layer-search-empty {
+  padding: var(--space-6) var(--space-4);
+  text-align: center;
+  color: var(--text-tertiary);
+  font-size: var(--text-xs);
+}
+
 .tag-filter {
   flex: 0 0 auto;
   padding: var(--space-2) var(--space-3);
