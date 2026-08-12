@@ -146,16 +146,24 @@ export const NodeEditor: React.FC<Props> = ({ node, onCommit, onCancel }) => {
           setValue(e.target.value);
           // Bare text boxes grow with their content; containers (sticky,
           // shape, comment) wrap inside fixed bounds.
-          if (node.type === 'text') {
+          // Which dimensions follow the text is the box's own setting. A
+          // fixed box grows in neither, and an auto-height box grows only
+          // downward — measuring both regardless is how a wrapped paragraph
+          // used to widen itself out of the layout it was wrapped for.
+          if (node.type === 'text' && node.resize !== 'fixed') {
             const el = e.target;
             el.style.height = 'auto';
             el.style.height = `${el.scrollHeight}px`;
             sizeRef.current = {
-              width: Math.max(40, el.scrollWidth / zoom),
+              width:
+                node.resize === 'width' ? Math.max(40, el.scrollWidth / zoom) : sizeRef.current.width,
               height: Math.max(20, el.scrollHeight / zoom),
             };
           }
         }}
+        // An auto-width box must not wrap while it is being typed into
+        // either, or the caret sits on a line the canvas will not draw.
+        wrap={node.type === 'text' && node.resize === 'width' ? 'off' : 'soft'}
         onBlur={handleBlur}
         onKeyDown={(e) => {
           if (e.key === 'Escape') {
@@ -189,7 +197,11 @@ export const NodeEditor: React.FC<Props> = ({ node, onCommit, onCancel }) => {
           padding: 0,
           margin: 0,
           boxSizing: 'border-box',
-          overflow: 'hidden',
+          // A fixed box truncates on the canvas, so the editor scrolls rather
+          // than growing — the one mode where what you type can be longer than
+          // what is shown.
+          overflow: node.type === 'text' && node.resize === 'fixed' ? 'auto' : 'hidden',
+          whiteSpace: node.type === 'text' && node.resize === 'width' ? 'pre' : 'pre-wrap',
           pointerEvents: 'auto',
           textAlign: node.type === 'shape' ? 'center' : typography.align,
           // A `<textarea>` cannot centre its content vertically, so the note's

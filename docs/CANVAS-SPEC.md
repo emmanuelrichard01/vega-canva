@@ -132,13 +132,21 @@ it.
 | Font size | **Shipped** | |
 | Line height | **Shipped** | |
 | Letter spacing | **Shipped** | |
-| Kerning | **Absent** | Pair-level adjustment; needs font metrics access. |
-| Paragraph spacing | **Absent** | |
+| Kerning | **Absent** | Pair-level adjustment; needs font metrics access. Blocked on the same thing as OpenType features and paragraph spacing — see the note below the table. |
+| Paragraph spacing | **Absent** | Blocked on the editor, not on the renderer. Konva can draw paragraphs as separate `Text` nodes with a measured gap between them; a `<textarea>` cannot show that gap at all, so shipping it means text that visibly reflows the moment you stop typing — the exact defect the sticky editor's top-padding fix exists to prevent. It wants the same thing kerning and OpenType want. |
 | Text alignment | **Shipped** | Horizontal and vertical. |
-| Text case | **Absent** | |
-| Text decoration | **Partial** | Underline only. **No strikethrough.** |
+| Text case | **Shipped** | Upper, lower and title, applied at render and **never to the stored string** — a control that rewrote the text would be destructive, since switching to upper case and back returns `HELLO` rather than `Hello`, and the editor would stop showing what was written. The DOM overlay gets the same effect from `text-transform`, which works on a `<textarea>`, so the words do not change shape the instant you stop typing. Title case follows CSS's `capitalize` rule rather than English title case: the browser gives the editor the former, the canvas has to match it, and a rule with a word list is wrong in every language that is not English. The SVG exporter bakes the case in, because `text-transform` in SVG is applied inconsistently and dropped by several converters. |
+| Text decoration | **Shipped** | Underline and strikethrough, as two flags rather than one enum — Canvas2D, CSS and SVG all take a space-separated list and draw a run with both at once, so a single-valued field would have made them exclusive for no reason but its own shape. |
 | OpenType features | **Absent** | Ligatures, fractions, tabular numbers, stylistic alternates. Canvas2D exposes `fontVariantCaps` and little else — this likely needs a different text rendering path. |
-| Text box resizing | **Partial** | `autoHeight` exists as a boolean. The spec's three-way Auto Width / Auto Height / Fixed is not exposed, and fixed-size overflow behaviour is undefined. |
+
+**The three items left in this section are one decision, not three.** Kerning
+needs font metrics, OpenType needs a shaping engine, and paragraph spacing
+needs an editor that can show what the renderer draws. All three are asking to
+move text off Konva's `Text` and off the `<textarea>` overlay onto a real text
+layout path. That is a large, invasive change and it should be made once, on
+purpose, rather than three times by accident — so all three stay Absent with
+the same reason recorded against them.
+| Text box resizing | **Shipped** | The three-way control, as `TextResize`. Auto width gets no `width` at all and `wrap: none`, so the box is as wide as its longest line; auto height wraps and grows downward; fixed imposes both and truncates with an ellipsis rather than spilling glyphs outside the selection rectangle, where nothing can click them and no export accounts for them. The editor honours the same setting — an auto-height box no longer widens itself out of the layout it was wrapped for. This replaced `autoHeight`, which was the **tenth dead field**: declared, written by the normalizer and the text tool, and read by nothing. It could only express two of the three states, which is part of why nothing ever consumed it. `SCHEMA_VERSION` went to 3 so the migration actually removes it rather than the normalizer merely ignoring it. |
 
 ## 10. Design systems and component architecture
 
@@ -207,8 +215,8 @@ Nothing in this section exists, and all of it depends on frames.
 
 Roughly, across the ~100 discrete items above:
 
-- **Shipped: ~58** — the canvas core, collaboration, frames, the whole paint model, the precision tools, the vector engine, and the parts of the transform/typography blocks that a whiteboard needs.
-- **Partial: ~13**
+- **Shipped: ~61** — the canvas core, collaboration, frames, the whole paint model, the precision tools, the vector engine, and the parts of the transform/typography blocks that a whiteboard needs.
+- **Partial: ~10**
 - **Dead: 1** — `FrameNode.layout`, the auto-layout declaration, which Phase 6 owns. `Appearance.shadow` was the second entry here until 2026-08-11.
 - **Absent: ~28** — design systems, prototyping, and the export pipeline. Vector manipulation left this list on 2026-08-12.
 
@@ -353,9 +361,14 @@ flattening, all four booleans, the stroke outline including the miter limit -
 but the anchors, handles and cursors on screen are what a test cannot speak
 for.
 
-**Phase 5 — The typographic engine.** Text case, strikethrough, paragraph
-spacing, the three-way box resizing, kerning, then OpenType — which probably
-forces a decision about the text rendering path.
+**Phase 5 — The typographic engine. Mostly done** (2026-08-12). Text case,
+strikethrough and the three-way box resizing have shipped. Vertical alignment
+became real for text nodes on the way: it needs an imposed height to align
+within, which no text node had until `fixed` existed.
+
+**Paragraph spacing, kerning and OpenType remain, and they are one decision
+rather than three** — each is asking to move text off Konva's `Text` and off
+the `<textarea>` overlay. Worth making once and deliberately.
 
 **Phase 6 — Auto-layout and constraints.** Requires Phase 1 and real nesting
 from Phase 3.

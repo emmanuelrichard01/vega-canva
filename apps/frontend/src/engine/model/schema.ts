@@ -39,8 +39,17 @@ export type NodeType =
   | 'frame'
   | 'comment';
 
-/** Current schema revision, stamped into document metadata by the migration. */
-export const SCHEMA_VERSION = 2;
+/**
+ * Current schema revision, stamped into document metadata by the migration.
+ *
+ * Bumped to 3 on 2026-08-12 so `TextNode.autoHeight` is actually removed from
+ * documents rather than merely ignored. The normalizer maps it to `resize` on
+ * every read, so nothing breaks without the bump — but the migration is what
+ * deletes the key, and it only runs when the stored version is behind. Leaving
+ * a superseded field lying in the CRDT is how the next reader comes to believe
+ * it means something.
+ */
+export const SCHEMA_VERSION = 3;
 
 // ---------------------------------------------------------------------------
 // Shared value types
@@ -260,17 +269,50 @@ export type VerticalAlign = 'top' | 'middle' | 'bottom';
  * `fontWeight: 700` while the renderer forwarded only `fontStyle`. Composing
  * Konva's string is the renderer's job, done in exactly one place.
  */
+/**
+ * A case shown rather than typed.
+ *
+ * A presentation transform, never applied to the stored string. Rewriting the
+ * text would make the control destructive — switching to upper case and back
+ * would return `HELLO` rather than `Hello` — and would leave the editor
+ * showing something other than what the author wrote.
+ */
+export type TextCase = 'none' | 'upper' | 'lower' | 'title';
+
+/**
+ * How a text box takes its size from its contents.
+ *
+ * - `width` grows sideways and never wraps: the box is as wide as the longest
+ *   line, which is what a label wants.
+ * - `height` wraps at a width you set and grows downward.
+ * - `fixed` is both, and lets the text overflow.
+ *
+ * This replaces `TextNode.autoHeight`, which was declared, written by the
+ * normalizer and the text tool, and **read by nothing** — the tenth dead field
+ * this work has turned up. It could only express two of these three, which is
+ * part of why nothing ever consumed it.
+ */
+export type TextResize = 'width' | 'height' | 'fixed';
+
 export interface Typography {
   fontFamily: string;
   fontSize: number;
   fontWeight: number;
   italic: boolean;
   underline: boolean;
+  /**
+   * Separate from `underline` rather than one `decoration` field, because
+   * Canvas2D and SVG both let a run carry both at once and a single-valued
+   * field would silently make them exclusive.
+   */
+  strikethrough: boolean;
   align: TextAlign;
   verticalAlign: VerticalAlign;
   lineHeight: number;
   letterSpacing: number;
   color: string;
+  /** Absent is `none`, which is every existing document. */
+  textCase?: TextCase;
 }
 
 export const DEFAULT_TYPOGRAPHY: Typography = {
@@ -279,6 +321,7 @@ export const DEFAULT_TYPOGRAPHY: Typography = {
   fontWeight: 400,
   italic: false,
   underline: false,
+  strikethrough: false,
   align: 'left',
   verticalAlign: 'top',
   lineHeight: 1.4,
@@ -500,8 +543,8 @@ export interface TextNode extends BaseNode {
   type: 'text';
   text: string;
   typography: Typography;
-  /** Height tracks the content rather than being set explicitly. */
-  autoHeight: boolean;
+  /** Which of the box's dimensions follow the text. See `TextResize`. */
+  resize: TextResize;
   /**
    * Paint that is not the glyph colour: shadow, blend mode, layer blur.
    *

@@ -1,4 +1,5 @@
 import { paintColor } from '../../../engine/model/paint';
+import { CSS_TEXT_TRANSFORM } from '../../../engine/model/textCase';
 import type { Appearance, LineCap, LineJoin, Typography } from '../../../engine/model/schema';
 
 /**
@@ -19,8 +20,19 @@ export function konvaFontStyle(typography: Typography | undefined): string {
   return parts.length ? parts.join(' ') : 'normal';
 }
 
+/**
+ * Konva's `textDecoration` string.
+ *
+ * Space-separated, and it takes both at once — which is why `underline` and
+ * `strikethrough` are two booleans on the model rather than one enum. A single
+ * field would have made them mutually exclusive for no reason but its own
+ * shape.
+ */
 export function konvaTextDecoration(typography: Typography | undefined): string {
-  return typography?.underline ? 'underline' : '';
+  const parts: string[] = [];
+  if (typography?.underline) parts.push('underline');
+  if (typography?.strikethrough) parts.push('line-through');
+  return parts.join(' ');
 }
 
 /**
@@ -152,10 +164,18 @@ export function domTextStyle(typography: Typography): React.CSSProperties {
     fontSize: `${typography.fontSize}px`,
     fontWeight: typography.fontWeight,
     fontStyle: typography.italic ? 'italic' : 'normal',
-    textDecoration: typography.underline ? 'underline' : 'none',
+    // Both, when both are set. The CSS shorthand takes a space-separated list
+    // exactly as Konva's does, so the two stay in step by construction.
+    textDecoration:
+      [typography.underline && 'underline', typography.strikethrough && 'line-through']
+        .filter(Boolean)
+        .join(' ') || 'none',
     textAlign: typography.align,
     lineHeight: typography.lineHeight,
     letterSpacing: `${typography.letterSpacing}px`,
     color: typography.color,
+    // The editor shows the transformed case, so the words do not change shape
+    // the instant you stop typing. The stored string is untouched either way.
+    textTransform: CSS_TEXT_TRANSFORM[typography.textCase ?? 'none'] as React.CSSProperties['textTransform'],
   };
 }

@@ -23,7 +23,7 @@ export class TextTool implements Tool {
       width: 240,
       height: 40,
       text: '',
-      autoHeight: true,
+      resize: 'height',
       typography: {
         ...DEFAULT_TYPOGRAPHY,
         color: ThemeService.getDefaultTextColor(),

@@ -3,7 +3,7 @@ import { objectsMap, updateNode, nextZIndex, lowestZIndex, toggleReaction, local
 import { useStore } from '../hooks/useStore';
 import { cameraSystem } from '../engine/CameraSystem';
 import { engineEvents } from '../engine/EventBus';
-import { Copy, Trash2, Type, Square, Bold, Italic, Underline, AlignLeft, AlignCenter, AlignRight, MessageSquarePlus, BringToFront, SendToBack, ImageIcon, StickyNote, Pin, SmilePlus, Mic, MessageSquare, PenLine, Layers, Group, Ungroup, Download, Crop, Scissors, Spline, SquaresExclude, SquaresIntersect, SquaresSubtract, SquaresUnite } from 'lucide-react';
+import { Copy, Trash2, Type, Square, Bold, Italic, Underline, AlignLeft, AlignCenter, AlignRight, Strikethrough, MessageSquarePlus, BringToFront, SendToBack, ImageIcon, StickyNote, Pin, SmilePlus, Mic, MessageSquare, PenLine, Layers, Group, Ungroup, Download, Crop, Scissors, Spline, SquaresExclude, SquaresIntersect, SquaresSubtract, SquaresUnite } from 'lucide-react';
 import { cropMode } from '../engine/interaction/cropMode';
 import { pathEdit } from '../engine/interaction/pathEdit';
 import { applyBoolean, canVectorize, flattenToPath, outlineStrokeOf } from '../engine/document/vectorOps';
@@ -489,6 +489,7 @@ export const ObjectContextToolbar: React.FC<Props> = ({ selectedId, selectedIds,
                 <StyleToggle active={typography.fontWeight >= 600} tooltip="Bold" onClick={() => setTypography({ fontWeight: typography.fontWeight >= 600 ? 400 : 700 })}><Bold size={14} /></StyleToggle>
                 <StyleToggle active={typography.italic} tooltip="Italic" onClick={() => setTypography({ italic: !typography.italic })}><Italic size={14} /></StyleToggle>
                 <StyleToggle active={typography.underline} tooltip="Underline" onClick={() => setTypography({ underline: !typography.underline })}><Underline size={14} /></StyleToggle>
+                <StyleToggle active={typography.strikethrough} tooltip="Strikethrough" onClick={() => setTypography({ strikethrough: !typography.strikethrough })}><Strikethrough size={14} /></StyleToggle>
               </div>
               <SegmentedControl
                 value={typography.align}

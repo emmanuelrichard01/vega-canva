@@ -19,6 +19,8 @@ import {
   type LineCap,
   type LineJoin,
   type NodeType,
+  type TextCase,
+  type TextResize,
   type Paint,
   type PathGeometry,
   type Point,
@@ -231,6 +233,8 @@ function toPaintArray(value: unknown, legacyColor: unknown): Paint[] | undefined
 
 const LINE_CAPS = new Set<LineCap>(['butt', 'round', 'square']);
 const LINE_JOINS = new Set<LineJoin>(['miter', 'round', 'bevel']);
+const TEXT_RESIZES = new Set<TextResize>(['width', 'height', 'fixed']);
+const TEXT_CASES = new Set<TextCase>(['none', 'upper', 'lower', 'title']);
 const STROKE_ALIGNS = new Set<StrokeAlign>(['center', 'inside', 'outside']);
 
 /**
@@ -374,7 +378,8 @@ function normalizeTypography(raw: any, overrides: Partial<Typography> = {}): Typ
           ? 700
           : overrides.fontWeight ?? DEFAULT_TYPOGRAPHY.fontWeight,
     italic: bool(t.italic, legacyStyle.includes('italic')),
-    underline: bool(t.underline, str(c.textDecoration, '') === 'underline'),
+    underline: bool(t.underline, str(c.textDecoration, '').includes('underline')),
+    strikethrough: bool(t.strikethrough, str(c.textDecoration, '').includes('line-through')),
     align: normalizeAlign(
       t.align ?? c.textAlign ?? c.align,
       overrides.align ?? DEFAULT_TYPOGRAPHY.align
@@ -384,6 +389,7 @@ function normalizeTypography(raw: any, overrides: Partial<Typography> = {}): Typ
         ? t.verticalAlign
         : overrides.verticalAlign ?? DEFAULT_TYPOGRAPHY.verticalAlign,
     lineHeight: num(t.lineHeight ?? c.lineHeight, overrides.lineHeight ?? DEFAULT_TYPOGRAPHY.lineHeight),
+    ...(TEXT_CASES.has(t.textCase) && t.textCase !== 'none' ? { textCase: t.textCase } : null),
     letterSpacing: num(
       t.letterSpacing ?? c.letterSpacing,
       overrides.letterSpacing ?? DEFAULT_TYPOGRAPHY.letterSpacing
@@ -626,7 +632,14 @@ export function normalizeNode(raw: any, id?: string): AnyNode {
         type: 'text',
         text: normalizeText(raw),
         typography: normalizeTypography(raw),
-        autoHeight: bool(raw?.autoHeight, true),
+        // `autoHeight` was the old two-state version of this and was read by
+        // nothing. `true` was the default it was always written with, and it
+        // means the same thing as `height`.
+        resize: TEXT_RESIZES.has(raw?.resize)
+          ? raw.resize
+          : bool(raw?.autoHeight, true)
+            ? 'height'
+            : 'fixed',
         appearance: normalizeAppearance(raw),
       };
 
@@ -733,6 +746,9 @@ export function isCanonical(raw: any): boolean {
     raw.segments === undefined &&
     raw.closed === undefined &&
     raw.appearance?.theme === undefined &&
+    // `autoHeight` is the two-state ancestor of `resize`. A text node still
+    // carrying it has not been through the mapping that reads it.
+    raw.autoHeight === undefined &&
     typeof raw.width === 'number' &&
     typeof raw.height === 'number' &&
     typeof raw.hidden === 'boolean' &&

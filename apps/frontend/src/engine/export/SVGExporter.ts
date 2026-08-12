@@ -6,6 +6,7 @@ import type { AnyNode, PathNode, ShapeNode, Typography } from '../model/schema';
 import { SvgPaintDefs } from './svgPaint';
 import { pointsAttribute, regularPolygonPoints, starPoints } from '../model/shapeOutline';
 import { contourData, translatePath } from '../model/pathGeometry';
+import { applyTextCase } from '../model/textCase';
 import { ARROW_HEAD_SCALE } from '../model/schema';
 
 /**
@@ -47,7 +48,9 @@ function textAttrs(t: Typography): string {
     `font-size="${t.fontSize}"`,
     `font-weight="${t.fontWeight}"`,
     `font-style="${t.italic ? 'italic' : 'normal'}"`,
-    t.underline ? 'text-decoration="underline"' : '',
+    // Both at once when both are set — SVG takes a space-separated list, the
+    // same as Canvas2D, which is why the model keeps them as two flags.
+    textDecoration(t) ? `text-decoration="${textDecoration(t)}"` : '',
     `fill="${t.color}"`,
     `text-anchor="${anchor}"`,
     t.letterSpacing ? `letter-spacing="${t.letterSpacing}"` : '',
@@ -56,12 +59,27 @@ function textAttrs(t: Typography): string {
     .join(' ');
 }
 
+/** `underline`, `line-through`, both, or nothing. */
+function textDecoration(t: Typography): string {
+  return [t.underline && 'underline', t.strikethrough && 'line-through'].filter(Boolean).join(' ');
+}
+
 function anchorX(node: AnyNode, t: Typography): number {
   if (t.align === 'center') return node.x + node.width / 2;
   if (t.align === 'right') return node.x + node.width;
   return node.x;
 }
 
+/**
+ * One `<tspan>` per line, with the case transform already applied.
+ *
+ * Applied here rather than emitted as a `text-transform` style: SVG's
+ * `text-transform` is a CSS property that renderers apply inconsistently and
+ * that several converters drop, so a file exported with it would show the
+ * author's typing rather than what the canvas drew. Baking the case in is the
+ * one place the transform touches a string that leaves the app — the document
+ * still holds what was typed.
+ */
 function multilineTspans(text: string, x: number, fontSize: number, lineHeight: number): string {
   return text
     .split('\n')
@@ -157,7 +175,7 @@ function shapeMarkup(node: ShapeNode, defs: SvgPaintDefs): string {
   const stroke = node.appearance.stroke?.color ?? 'none';
   const sw = node.appearance.stroke?.width ?? 0;
   const rot = rotationTransform(node);
-  const paint = `fill="${fill}" stroke="${stroke}" stroke-width="${sw}"${dashAttrs(node.appearance.stroke)}`;
+  const paint = `fill="${fill}" stroke="${stroke}" stroke-width="${sw}"${dashAttrs(node.appearance.stroke)}${joinAttrs(node.appearance.stroke)}`;
 
   switch (node.geometry.kind) {
     case 'rect':
@@ -201,7 +219,7 @@ export class SVGExporter implements Exporter {
             const t = node.typography;
             const tx = node.x + node.width / 2;
             parts.push(
-              `<text y="${node.y + node.height / 2}" ${textAttrs({ ...t, align: 'center' })} dominant-baseline="middle">${multilineTspans(node.text, tx, t.fontSize, t.lineHeight)}</text>`
+              `<text y="${node.y + node.height / 2}" ${textAttrs({ ...t, align: 'center' })} dominant-baseline="middle">${multilineTspans(applyTextCase(node.text, t.textCase), tx, t.fontSize, t.lineHeight)}</text>`
             );
           }
           break;
@@ -210,7 +228,7 @@ export class SVGExporter implements Exporter {
         case 'text': {
           const t = node.typography;
           parts.push(
-            `<text y="${node.y}" ${textAttrs(t)}${rotationTransform(node)}>${multilineTspans(node.text, anchorX(node, t), t.fontSize, t.lineHeight)}</text>`
+            `<text y="${node.y}" ${textAttrs(t)}${rotationTransform(node)}>${multilineTspans(applyTextCase(node.text, t.textCase), anchorX(node, t), t.fontSize, t.lineHeight)}</text>`
           );
           break;
         }

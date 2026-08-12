@@ -1,8 +1,9 @@
 import React, { useState } from 'react';
 import {
-  AlignCenter, AlignLeft, AlignRight, Bold, BringToFront, ChevronDown, ChevronRight,
+  AlignCenter, AlignLeft, AlignRight, Bold, BringToFront, CaseSensitive, ChevronDown, ChevronRight,
   FlipHorizontal, FlipVertical, ImageIcon, Italic, LayoutTemplate, Lock, MessageSquare,
-  Mic, PenLine, SendToBack, Sliders, Square, StickyNote, Type, Underline, Unlock,
+  Mic, MoveHorizontal, MoveVertical, PenLine, SendToBack, Sliders, Square, StickyNote,
+  Strikethrough, Type, Underline, Unlock,
 } from 'lucide-react';
 import { lowestZIndex, nextZIndex, provider, updateNode } from '../engine/document';
 import { useStore } from '../hooks/useStore';
@@ -24,6 +25,8 @@ import {
   type Appearance,
   type BlendMode,
   type LineJoin,
+  type TextCase,
+  type TextResize,
   type ShapeGeometry,
   type Shadow,
   type Stroke,
@@ -978,7 +981,28 @@ export const PropertiesPanel: React.FC<PropertiesPanelProps> = ({ selectedId, ov
               <ToggleButton active={isBold} onClick={() => setTypography({ fontWeight: isBold ? 400 : 700 })} label="Bold"><Bold size={14} /></ToggleButton>
               <ToggleButton active={typography.italic} onClick={() => setTypography({ italic: !typography.italic })} label="Italic"><Italic size={14} /></ToggleButton>
               <ToggleButton active={typography.underline} onClick={() => setTypography({ underline: !typography.underline })} label="Underline"><Underline size={14} /></ToggleButton>
+              {/* Its own flag rather than sharing one with the underline:
+                  Canvas2D and SVG both draw a run with both at once, and a
+                  single-valued field would make them exclusive for no reason
+                  but its own shape. */}
+              <ToggleButton active={typography.strikethrough} onClick={() => setTypography({ strikethrough: !typography.strikethrough })} label="Strikethrough"><Strikethrough size={14} /></ToggleButton>
             </div>
+          </Row>
+          {/* A case shown, not typed. The stored string is never rewritten, so
+              switching to upper case and back returns what was written rather
+              than a shouted version of it. */}
+          <Row label="Case">
+            <SegmentedControl
+              ariaLabel="Text case"
+              value={typography.textCase ?? 'none'}
+              onChange={(v) => setTypography({ textCase: v === 'none' ? undefined : (v as TextCase) })}
+              segments={[
+                { value: 'none', label: 'As typed', icon: <span style={{ fontSize: 11, fontWeight: 600 }}>Ag</span> },
+                { value: 'upper', label: 'Upper case', icon: <span style={{ fontSize: 11, fontWeight: 600 }}>AG</span> },
+                { value: 'lower', label: 'Lower case', icon: <span style={{ fontSize: 11, fontWeight: 600 }}>ag</span> },
+                { value: 'title', label: 'Title Case', icon: <CaseSensitive size={14} /> },
+              ]}
+            />
           </Row>
           <Row label="Alignment">
             <SegmentedControl
@@ -997,6 +1021,24 @@ export const PropertiesPanel: React.FC<PropertiesPanelProps> = ({ selectedId, ov
           <Row label="Spacing">
             <NumberStepper value={typography.letterSpacing} onChange={(letterSpacing) => setTypography({ letterSpacing })} min={-10} max={50} step={1} />
           </Row>
+          {/* Which of the box's dimensions follow the words. Replaces
+              `autoHeight`, which was written by the normalizer and the text
+              tool and read by nothing — and could only express two of these
+              three, which is part of why nothing ever consumed it. */}
+          {node.type === 'text' && (
+            <Row label="Resize">
+              <SegmentedControl
+                ariaLabel="Text box resizing"
+                value={node.resize}
+                onChange={(v) => set({ resize: v as TextResize } as Partial<AnyNode>)}
+                segments={[
+                  { value: 'width', label: 'Auto width — the box is as wide as the longest line', icon: <MoveHorizontal size={14} /> },
+                  { value: 'height', label: 'Auto height — wraps at this width and grows down', icon: <MoveVertical size={14} /> },
+                  { value: 'fixed', label: 'Fixed — overflow is truncated', icon: <Square size={14} /> },
+                ]}
+              />
+            </Row>
+          )}
         </Accordion>
       )}
 
