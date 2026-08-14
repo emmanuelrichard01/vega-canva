@@ -4,6 +4,17 @@ export interface Segment {
   value: string;
   icon?: React.ReactNode;
   label?: string;
+  /**
+   * What this option *does*, shown on hover.
+   *
+   * These controls are mostly 20px specimen icons — a mitred corner, a butt
+   * cap, an orthogonal route. The specimen shows you the shape, which is the
+   * right way round for recognising one you already know, and says nothing at
+   * all about when you would want it. The label alone does not close that gap
+   * either: "Right angles" and "Curved" are both obvious as *shapes* and
+   * neither tells you that one keeps a flowchart readable when arrows cross.
+   */
+  hint?: string;
 }
 
 interface Props {
@@ -18,6 +29,24 @@ interface Props {
    * of what.
    */
   ariaLabel?: string;
+  /**
+   * The selected objects disagree, so no segment is the answer.
+   *
+   * Rendered as nothing raised rather than as an extra "Mixed" segment: a
+   * fourth segment would be a state you could *choose*, and "make these
+   * disagree" is not an instruction anyone can carry out. Clicking any real
+   * segment still resolves the whole selection to it.
+   */
+  mixed?: boolean;
+  /**
+   * Why this choice is unavailable right now.
+   *
+   * Shown as a tooltip and dims the group. Preferred over withholding the
+   * control: a segmented choice that vanishes when it does not apply is
+   * indistinguishable from one that is broken, and the reason it went is
+   * exactly the thing worth saying.
+   */
+  disabledReason?: string;
 }
 
 /**
@@ -34,12 +63,18 @@ interface Props {
  * elevation step, no second colour, which is the same language the rest of the
  * app's chrome uses for "this one".
  */
-export const SegmentedControl: React.FC<Props> = ({ segments, value, onChange, ariaLabel }) => {
+export const SegmentedControl: React.FC<Props> = ({ segments, value, onChange, ariaLabel, mixed = false, disabledReason }) => {
+  const disabled = Boolean(disabledReason);
   return (
     <div
       role="radiogroup"
       aria-label={ariaLabel}
+      aria-disabled={disabled || undefined}
+      data-tooltip={disabledReason}
+      data-tooltip-pos="left"
       style={{
+        opacity: disabled ? 0.4 : 1,
+        pointerEvents: disabled ? 'none' : undefined,
         display: 'flex',
         alignItems: 'center',
         background: 'var(--surface-hover)',
@@ -48,7 +83,7 @@ export const SegmentedControl: React.FC<Props> = ({ segments, value, onChange, a
       }}
     >
       {segments.map((seg) => {
-        const isActive = value === seg.value;
+        const isActive = !mixed && value === seg.value;
         const name = seg.label ?? seg.value;
         return (
           <button
@@ -56,7 +91,11 @@ export const SegmentedControl: React.FC<Props> = ({ segments, value, onChange, a
             type="button"
             role="radio"
             aria-checked={isActive}
-            aria-label={name}
+            aria-label={seg.hint ? `${name} — ${seg.hint}` : name}
+            // Not on the group's own wrapper: that carries `disabledReason`,
+            // and one element cannot show two different tooltips.
+            data-tooltip={disabled ? undefined : seg.hint}
+            disabled={disabled}
             onClick={() => onChange(seg.value)}
             className="btn-icon"
             style={{

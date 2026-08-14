@@ -1,10 +1,11 @@
-import React, { useState, useRef } from 'react';
+import React, { useEffect, useState, useRef } from 'react';
 import { useRoomState } from '../../hooks/useSync';
 import { CollaborationLayer } from './CollaborationLayer';
-import { Moon, Sun, Undo2, Redo2, Share2, Download, EyeOff, History, PanelLeft, MessageSquare } from 'lucide-react';
+import { Moon, Sun, Undo2, Redo2, Share2, Download, EyeOff, History, PanelLeft, MessageSquare, MoreHorizontal } from 'lucide-react';
 import { editor } from '../../engine/api/EditorAPI';
 import { useStore } from '../../hooks/useStore';
 import { Switch } from '../ui/Switch';
+import { Logo } from '../ui/Logo';
 
 interface Props {
   localTitle: string;
@@ -24,8 +25,9 @@ interface Props {
 }
 
 export const WorkspaceShell: React.FC<Props> = ({ localTitle, setLocalTitle, onTitleSave, isDarkTheme, setIsDarkTheme, onShareClick, onExportClick, onHideUi, onToggleTimeline, onToggleComments, commentUnread, onTogglePanels }) => {
-  const { status, synced, awarenessUsers } = useRoomState();
+  const { status, synced } = useRoomState();
   const [isEditingTitle, setIsEditingTitle] = useState(false);
+  const [menuOpen, setMenuOpen] = useState(false);
   // What the title was when editing started, so Escape can revert to it
   // instead of just leaving the input stuck in edit mode with no way to
   // back out other than blurring (which commits, not cancels).
@@ -35,8 +37,6 @@ export const WorkspaceShell: React.FC<Props> = ({ localTitle, setLocalTitle, onT
   const snapToGrid = useStore(state => state.snapToGrid);
   const setSnapToGrid = useStore(state => state.setSnapToGrid);
   
-  const usersCount = Array.from(awarenessUsers.entries()).filter(([_, u]) => u.user).length;
-
   const getSyncStatus = () => {
     if (status !== 'connected') return { text: 'Offline', color: '#EF4444' };
     if (!synced) return { text: 'Syncing...', color: '#F59E0B' };
@@ -45,10 +45,48 @@ export const WorkspaceShell: React.FC<Props> = ({ localTitle, setLocalTitle, onT
 
   const syncStatus = getSyncStatus();
 
+  // The overflow menu. Closes on Escape and on a press outside — a menu that
+  // only closes by re-pressing its own button is one people leave open.
+  /**
+   * Whether the bar is currently standing back.
+   *
+   * Driven by the same `canvas-drag-start` / `canvas-drag-end` events the
+   * floating rail already listens to, so "you are manipulating something" has
+   * one definition in the app rather than two that can disagree. Nothing is
+   * hidden or moved — only contrast changes — so a control remains clickable
+   * throughout, which is the whole difference between this and hiding the bar.
+   */
+  const [receded, setReceded] = useState(false);
+  useEffect(() => {
+    const down = () => setReceded(true);
+    const up = () => setReceded(false);
+    window.addEventListener('canvas-drag-start', down);
+    window.addEventListener('canvas-drag-end', up);
+    return () => {
+      window.removeEventListener('canvas-drag-start', down);
+      window.removeEventListener('canvas-drag-end', up);
+    };
+  }, []);
+
+  const menuRef = useRef<HTMLDivElement>(null);
+  useEffect(() => {
+    if (!menuOpen) return;
+    const onDown = (e: MouseEvent) => {
+      if (menuRef.current && !menuRef.current.contains(e.target as Node)) setMenuOpen(false);
+    };
+    const onKey = (e: KeyboardEvent) => { if (e.key === 'Escape') setMenuOpen(false); };
+    document.addEventListener('mousedown', onDown);
+    document.addEventListener('keydown', onKey);
+    return () => {
+      document.removeEventListener('mousedown', onDown);
+      document.removeEventListener('keydown', onKey);
+    };
+  }, [menuOpen]);
+
   return (
-    <div className="workspace-header panel-surface">
-      {/* Left: Navigation & Room Name */}
-      <div className="hdr-group" style={{ gap: 16, flex: '0 1 auto' }}>
+    <div className="workspace-header panel-surface" style={{ opacity: receded ? 0.6 : 1 }}>
+      {/* ------------------------------------------------- the document */}
+      <div className="hdr-zone hdr-zone--start">
         {onTogglePanels && (
           <button
             className="btn-icon panel-toggle"
@@ -61,119 +99,116 @@ export const WorkspaceShell: React.FC<Props> = ({ localTitle, setLocalTitle, onT
             <PanelLeft size={18} />
           </button>
         )}
-        <div style={{ width: 28, height: 28, display: 'flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0 }}>
-          <img src="/favicon.svg" alt="Vega Canva Logo" style={{ width: '100%', height: '100%', objectFit: 'contain' }} />
-        </div>
+        {/* The real mark. This was `/favicon.svg` — a 762KB file, shipped on
+            every page load to draw a 26px glyph. */}
+        <Logo size={24} />
 
-        <div className="hdr-group" style={{ fontSize: 14, fontWeight: 500, color: 'var(--text-secondary)' }}>
-          <span className="hdr-breadcrumb" style={{ whiteSpace: 'nowrap' }}>
-            Workspace <span style={{ margin: '0 12px' }}>/</span>
+        {isEditingTitle ? (
+          <input
+            autoFocus
+            value={localTitle}
+            maxLength={60}
+            onChange={(e) => setLocalTitle(e.target.value)}
+            onBlur={() => { setIsEditingTitle(false); onTitleSave(localTitle); }}
+            onKeyDown={(e) => {
+              if (e.key === 'Enter') {
+                setIsEditingTitle(false);
+                onTitleSave(localTitle);
+              } else if (e.key === 'Escape') {
+                e.preventDefault();
+                setLocalTitle(titleBeforeEditRef.current);
+                setIsEditingTitle(false);
+              }
+            }}
+            style={{ fontWeight: 600, fontSize: 13, border: '1px solid var(--border-focus)', borderRadius: 4, padding: '2px 6px', outline: 'none', background: 'transparent', color: 'var(--text-primary)', width: 200 }}
+          />
+        ) : (
+          <span
+            className="hover-surface hdr-title"
+            style={{ fontWeight: 600, color: 'var(--text-primary)', cursor: 'pointer', padding: '4px 8px', borderRadius: 6, fontSize: 14, maxWidth: 240, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}
+            onClick={() => { titleBeforeEditRef.current = localTitle; setIsEditingTitle(true); }}
+            data-tooltip="Click to rename"
+            data-tooltip-pos="bottom"
+          >
+            {localTitle}
           </span>
+        )}
 
-          {isEditingTitle ? (
-            <input
-              autoFocus
-              value={localTitle}
-              maxLength={60}
-              onChange={(e) => setLocalTitle(e.target.value)}
-              onBlur={() => { setIsEditingTitle(false); onTitleSave(localTitle); }}
-              onKeyDown={(e) => {
-                if (e.key === 'Enter') {
-                  setIsEditingTitle(false);
-                  onTitleSave(localTitle);
-                } else if (e.key === 'Escape') {
-                  e.preventDefault();
-                  setLocalTitle(titleBeforeEditRef.current);
-                  setIsEditingTitle(false);
-                }
-              }}
-              style={{ fontWeight: 600, fontSize: 13, border: '1px solid var(--border-focus)', borderRadius: 4, padding: '2px 6px', outline: 'none', background: 'transparent', color: 'var(--text-primary)', width: 200 }}
-            />
-          ) : (
-            <span
-              className="hover-surface hdr-title"
-              style={{ fontWeight: 600, color: 'var(--text-primary)', cursor: 'pointer', padding: '4px 8px', borderRadius: 6, fontSize: 14, maxWidth: 240, display: 'inline-block' }}
-              onClick={() => { titleBeforeEditRef.current = localTitle; setIsEditingTitle(true); }}
-              data-tooltip="Click to rename"
-              data-tooltip-pos="bottom"
-            >
-              {localTitle}
-            </span>
-          )}
+        {/* Sync state is a property of this document, so it sits with its
+            name. It is a dot with a tooltip rather than a dot plus a word:
+            "Saved" is the state 99% of the time, and a label that is almost
+            always the same word is a label nobody reads. */}
+        <span
+          style={{ display: 'flex', alignItems: 'center', flexShrink: 0, paddingLeft: 2 }}
+          data-tooltip={syncStatus.text}
+          data-tooltip-pos="bottom"
+          aria-label={syncStatus.text}
+          role="status"
+        >
+          <span style={{ width: 7, height: 7, borderRadius: '50%', background: syncStatus.color }} />
+        </span>
+      </div>
+
+      {/* --------------------------------------------------- the canvas */}
+      {/* Throw and Snap are settings *for the surface*, not actions on the
+          document — they used to sit in the right-hand run between "Redo" and
+          a collaborator count, where nothing distinguished a mode you leave on
+          from a button you press once. Grouping them in the middle, in one
+          recessed container, is what stops "Snap" reading as a sibling of
+          "Share". */}
+      <div className="hdr-zone hdr-zone--center">
+        <div className="hdr-modes">
+          <Switch
+            checked={physicsEnabled}
+            onChange={setPhysicsEnabled}
+            label="Throw"
+            tooltip={physicsEnabled ? 'Flick an object and it keeps moving. Turn off to place objects exactly where you drop them.' : 'Objects stop exactly where you drop them. Turn on to throw them with a flick.'}
+          />
+          <span style={{ width: 1, height: 18, background: 'var(--border-divider)' }} />
+          <Switch
+            checked={snapToGrid}
+            onChange={setSnapToGrid}
+            label="Snap"
+            tooltip={snapToGrid ? 'Snapping to the grid — hold Ctrl while dragging for free placement' : 'Free placement — hold Ctrl while dragging to snap to the grid'}
+          />
         </div>
       </div>
 
-      {/* Right: Collaboration & Utilities */}
-      <div className="hdr-group" style={{ gap: 16, flex: '0 1 auto', justifyContent: 'flex-end' }}>
-        {/* Sync Status */}
-        <div
-          style={{ display: 'flex', alignItems: 'center', gap: 8, fontSize: 13, fontWeight: 500, color: 'var(--text-secondary)', flexShrink: 0 }}
-          data-tooltip={syncStatus.text}
-          data-tooltip-pos="bottom"
-        >
-          <div style={{ width: 8, height: 8, borderRadius: '50%', background: syncStatus.color, flexShrink: 0 }} />
-          <span className="hdr-sync-text" style={{ whiteSpace: 'nowrap' }}>{syncStatus.text}</span>
-        </div>
-
-        <div className="hdr-divider" style={{ width: 1, height: 24, background: 'var(--border-divider)' }} />
-
-        {/* Undo / Redo */}
-        <div className="hdr-history" style={{ display: 'flex', gap: 4 }}>
-          <button className="btn-icon" style={{ padding: '6px 8px' }} onClick={() => editor.undo()} data-tooltip="Undo (Ctrl+Z)" data-tooltip-pos="bottom">
-            <Undo2 size={18} />
+      {/* --------------------------------------- the room, and what leaves it */}
+      <div className="hdr-zone hdr-zone--end">
+        {/* Working controls, always present. */}
+        <div style={{ display: 'flex', gap: 2 }}>
+          <button className="btn-icon" style={{ padding: '6px 8px' }} onClick={() => editor.undo()} data-tooltip="Undo (Ctrl+Z)" data-tooltip-pos="bottom" aria-label="Undo">
+            <Undo2 size={17} />
           </button>
-          <button className="btn-icon" style={{ padding: '6px 8px' }} onClick={() => editor.redo()} data-tooltip="Redo (Ctrl+Shift+Z)" data-tooltip-pos="bottom">
-            <Redo2 size={18} />
+          <button className="btn-icon" style={{ padding: '6px 8px' }} onClick={() => editor.redo()} data-tooltip="Redo (Ctrl+Shift+Z)" data-tooltip-pos="bottom" aria-label="Redo">
+            <Redo2 size={17} />
+          </button>
+          <button
+            className="btn-icon"
+            style={{ padding: '6px 8px', color: 'var(--history-accent)' }}
+            onClick={onToggleTimeline}
+            data-tooltip="History — replay everything that happened in this room"
+            data-tooltip-pos="bottom"
+            aria-label="History — replay this session"
+          >
+            <History size={17} />
           </button>
         </div>
 
-        <div className="hdr-divider" style={{ width: 1, height: 24, background: 'var(--border-divider)' }} />
-
-        {/* Throw on flick. Narrowed from a general "Physics" switch, which also
-            silently disabled the force tools — so one control governed both the
-            meaning of every drag and the availability of a whole tool group.
-            The force tools are self-enabling now; this only decides whether
-            letting go of a fast drag launches the object or just drops it. */}
-        <Switch
-          checked={physicsEnabled}
-          onChange={setPhysicsEnabled}
-          label="Throw"
-          tooltip={physicsEnabled ? "Flick an object and it keeps moving. Turn off to place objects exactly where you drop them." : "Objects stop exactly where you drop them. Turn on to throw them with a flick."}
-        />
-
-        {/* Grid snapping. Previously hardcoded on with no control at all. */}
-        <Switch
-          checked={snapToGrid}
-          onChange={setSnapToGrid}
-          label="Snap"
-          tooltip={snapToGrid ? 'Snapping to the grid — hold Ctrl while dragging for free placement' : 'Free placement — hold Ctrl while dragging to snap to the grid'}
-        />
-
-        <div className="hdr-divider" style={{ width: 1, height: 24, background: 'var(--border-divider)' }} />
-
-        {/* Collaborators Count */}
-        <div className="hdr-collab-count" style={{ fontSize: 13, fontWeight: 500, color: 'var(--text-secondary)', whiteSpace: 'nowrap' }}>
-          {usersCount} {usersCount === 1 ? 'Collaborator' : 'Collaborators'}
-        </div>
-
-        {/* Presence Avatars */}
+        {/* The people, and the one signal that needs them. The collaborator
+            *count* is gone: the avatars already are the count, and rendering
+            "3 Collaborators" beside three faces states in words what the
+            screen has already said. */}
         <CollaborationLayer />
 
-        <div className="hdr-divider" style={{ width: 1, height: 24, background: 'var(--border-divider)' }} />
-
-        {/* Comments. The count is the whole point of putting this in the
-            header: on an infinite canvas a comment you have not scrolled to
-            does not exist, so the only place a "something needs you" signal
-            can live is chrome that is always on screen. */}
         <button
           className="btn-icon"
-          style={{ padding: '8px 10px', position: 'relative', flexShrink: 0 }}
+          style={{ padding: '7px 9px', position: 'relative', flexShrink: 0 }}
           onClick={onToggleComments}
           data-tooltip={commentUnread > 0 ? `${commentUnread} unread` : 'Comments'}
           data-tooltip-pos="bottom"
-          aria-label={
-            commentUnread > 0 ? `Comments, ${commentUnread} unread` : 'Comments'
-          }
+          aria-label={commentUnread > 0 ? `Comments, ${commentUnread} unread` : 'Comments'}
         >
           <MessageSquare size={17} />
           {commentUnread > 0 && (
@@ -183,55 +218,48 @@ export const WorkspaceShell: React.FC<Props> = ({ localTitle, setLocalTitle, onT
           )}
         </button>
 
-        <div className="hdr-divider" style={{ width: 1, height: 24, background: 'var(--border-divider)' }} />
+        <span className="hdr-divider" style={{ width: 1, height: 22, background: 'var(--border-divider)' }} />
 
-        {/* Time Travel.
-            This read "Play" behind a play triangle, which any first-time user
-            takes for presentation mode — it is the one control in the header
-            whose label described none of what it does. It opens the session
-            replay, so it says so, and borrows that feature's own icon and
-            accent so the button and the bar it opens are recognisably the
-            same thing. */}
         <button
-          className="btn-icon"
-          style={{ padding: '8px 10px', fontSize: 14, fontWeight: 600, display: 'flex', alignItems: 'center', gap: 6, color: 'var(--history-accent)', flexShrink: 0 }}
-          onClick={onToggleTimeline}
-          data-tooltip="Replay everything that happened in this room"
-          data-tooltip-pos="bottom"
-          aria-label="History — replay this session"
-        >
-          <History size={16} /> <span className="hdr-play-text">History</span>
-        </button>
-
-        <div className="hdr-divider" style={{ width: 1, height: 24, background: 'var(--border-divider)' }} />
-
-        {/* Action Buttons */}
-        <button
-          style={{ padding: '8px 14px', fontSize: 14, fontWeight: 600, display: 'flex', alignItems: 'center', gap: 8, cursor: 'pointer', background: 'var(--text-primary)', color: 'var(--surface-primary)', border: '1px solid var(--border-focus)', borderRadius: 6, transition: 'all 0.1s', boxShadow: 'var(--shadow-sm)', flexShrink: 0 }}
+          style={{ padding: '7px 14px', fontSize: 13, fontWeight: 600, display: 'flex', alignItems: 'center', gap: 7, cursor: 'pointer', background: 'var(--text-primary)', color: 'var(--surface-primary)', border: 'none', borderRadius: 7, boxShadow: 'var(--shadow-sm)', flexShrink: 0 }}
           className="hover-fade"
           onClick={onShareClick}
           aria-label="Share workspace"
         >
-          <Share2 size={16} /> <span className="hdr-share-text">Share</span>
+          <Share2 size={15} /> <span className="hdr-share-text">Share</span>
         </button>
 
-        <button 
-          className="btn-icon" 
-          style={{ padding: '8px 10px', fontSize: 14, fontWeight: 500, display: 'flex', alignItems: 'center', gap: 6 }}
-          onClick={onExportClick}
-          data-tooltip="Export Canvas"
-          data-tooltip-pos="bottom"
-        >
-          <Download size={18} />
-        </button>
-
-        {/* Utilities */}
-        <button className="btn-icon" style={{ padding: '8px 10px' }} onClick={onHideUi} data-tooltip="Hide UI (\)" data-tooltip-pos="bottom">
-          <EyeOff size={18} />
-        </button>
-        <button className="btn-icon" style={{ padding: '8px 10px' }} onClick={() => setIsDarkTheme(!isDarkTheme)} data-tooltip="Toggle Theme" data-tooltip-pos="bottom">
-          {isDarkTheme ? <Sun size={18} /> : <Moon size={18} />}
-        </button>
+        {/* Everything that is real but reached for once a session. Export, the
+            theme and focus mode were three separate always-on buttons at the
+            far end of the header, each competing with Share for the same
+            corner of the eye. */}
+        <div style={{ position: 'relative' }} ref={menuRef}>
+          <button
+            className="btn-icon"
+            style={{ padding: '7px 9px' }}
+            onClick={() => setMenuOpen((v) => !v)}
+            data-tooltip="More"
+            data-tooltip-pos="bottom"
+            aria-label="More actions"
+            aria-haspopup="menu"
+            aria-expanded={menuOpen}
+          >
+            <MoreHorizontal size={18} />
+          </button>
+          {menuOpen && (
+            <div className="ctx-popover" role="menu" style={{ top: 'calc(100% + 8px)', right: 0, minWidth: 210 }}>
+              <button className="ctx-menu-item" role="menuitem" onClick={() => { setMenuOpen(false); onExportClick?.(); }}>
+                <Download size={15} /> Export canvas
+              </button>
+              <button className="ctx-menu-item" role="menuitem" onClick={() => { setMenuOpen(false); onHideUi(); }}>
+                <EyeOff size={15} /> Focus mode <span className="ctx-menu-item__key">\</span>
+              </button>
+              <button className="ctx-menu-item" role="menuitem" onClick={() => setIsDarkTheme(!isDarkTheme)}>
+                {isDarkTheme ? <Sun size={15} /> : <Moon size={15} />} {isDarkTheme ? 'Light theme' : 'Dark theme'}
+              </button>
+            </div>
+          )}
+        </div>
       </div>
     </div>
   );

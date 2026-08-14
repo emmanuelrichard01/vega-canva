@@ -1,12 +1,15 @@
 import React, { useEffect, useMemo, useRef, useState, useSyncExternalStore } from 'react';
-import { updateNode, provider } from '../engine/document';
+import { updateNode, applyNodePatches, provider } from '../engine/document';
 import { deleteNodesWithFrames } from '../engine/interaction/frameMembership';
 import { useStore } from '../hooks/useStore';
 import { editor } from '../engine/api/EditorAPI';
-import { Type, Square, Image as ImageIcon, StickyNote, Mic, LayoutTemplate, MessageSquare, PenTool, Lock, Unlock, Copy, Trash2, Eye, EyeOff, Layers, FolderOpen, Ungroup, Frame as FrameIcon, ChevronRight, ChevronDown, Search, X } from 'lucide-react';
+import { Type, Square, Image as ImageIcon, StickyNote, Mic, LayoutTemplate, MessageSquare, PenTool, Lock, Unlock, Copy, Trash2, Eye, EyeOff, Layers, FolderOpen, Ungroup, Frame as FrameIcon, ChevronRight, ChevronDown, Search, X, PanelLeftClose, Spline } from 'lucide-react';
 import { nanoid } from 'nanoid';
 import { type AnyNode, type NodeType } from '../engine/model/schema';
 import { nodeLabel } from '../engine/model/nodeLabel';
+import { paintColor } from '../engine/model/paint';
+import { readableOn } from '../engine/model/color';
+import { THEMES } from './canvas/renderers/StickyRenderer';
 import { tagFilter } from '../engine/model/tagFilter';
 import { tagCounts } from '../engine/model/tags';
 import {
@@ -41,10 +44,11 @@ interface LayersPanelProps {
   overrideObjects?: Record<string, any> | null;
   setSelectedId: (id: string | null) => void;
   setSelectedIds?: React.Dispatch<React.SetStateAction<string[]>>;
+  /** Collapse this panel to its rail, handing the width back to the canvas. */
+  onCollapse?: () => void;
 }
 
-export const LayersPanel: React.FC<LayersPanelProps> = ({ selectedIds, overrideObjects, setSelectedId, setSelectedIds }) => {
-  const selectedId = selectedIds.length === 1 ? selectedIds[0] : null;
+export const LayersPanel: React.FC<LayersPanelProps> = ({ selectedIds, overrideObjects, setSelectedId, setSelectedIds, onCollapse }) => {
   // Was its own independent Yjs subscription (useCanvasObjects), parallel to
   // and redundant with the store every other panel reads from — same data,
   // maintained twice. Nothing kept the two in sync on purpose; they only ever
@@ -52,6 +56,7 @@ export const LayersPanel: React.FC<LayersPanelProps> = ({ selectedIds, overrideO
   // shared store here removes the duplicate subscription and guarantees this
   // panel can't momentarily disagree with Properties/Canvas/the toolbar.
   const liveObjects = useStore(state => state.objects);
+  const darkTheme = useStore(state => state.darkTheme);
   const objects = overrideObjects || liveObjects;
 
   const activeTags = useSyncExternalStore(
@@ -72,7 +77,6 @@ export const LayersPanel: React.FC<LayersPanelProps> = ({ selectedIds, overrideO
   const [query, setQuery] = useState('');
   const [typeFilter, setTypeFilter] = useState<LayerTypeFilter>('all');
   const searchRef = useRef<HTMLInputElement>(null);
-  const [hoveredId, setHoveredId] = useState<string | null>(null);
   const [draggedId, setDraggedId] = useState<string | null>(null);
   const [dragOverId, setDragOverId] = useState<string | null>(null);
   const [editingTitleId, setEditingTitleId] = useState<string | null>(null);
@@ -109,12 +113,38 @@ export const LayersPanel: React.FC<LayersPanelProps> = ({ selectedIds, overrideO
     }
   });
 
-  const getIcon = (type: string, isSelected: boolean = false) => {
-    // Selected rows sit on an amber-500 fill; the row label already switches
-    // to amber-950 for contrast there (see renderRow) but this ternary always
-    // returned the same value regardless of isSelected, so the icon silently
-    // stayed on --text-primary and could end up low-contrast on the fill.
-    const c = isSelected ? 'var(--amber-950)' : 'var(--text-primary)';
+  /**
+   * The colour that stands for an object in the list.
+   *
+   * Its own fill wherever it has one, so a panel of default-named objects —
+   * six rows all reading "Shape" — is scannable by the thing that actually
+   * distinguishes them on the board. Falls back to a neutral for the types
+   * that have no colour of their own rather than inventing one.
+   */
+  const layerTint = (node: any): string => {
+    const raw = (() => {
+      if (node.type === 'sticky') return THEMES[node.theme as keyof typeof THEMES]?.bg ?? '#FDE047';
+      const paint = node.appearance;
+      const fill = paint?.fill?.[0];
+      if (fill) return paintColor(fill, '');
+      if (paint?.stroke?.color) return paint.stroke.color;
+      if (node.type === 'text') return node.typography?.color ?? '';
+      return '';
+    })();
+    // No colour of its own: inherit the row's, rather than inventing one.
+    if (!raw || !raw.startsWith('#')) return 'var(--text-secondary)';
+    // A near-black object on a dark panel produced an icon that was correct
+    // and invisible. Lifted until it clears a minimum contrast, in HSV so the
+    // hue survives — a dark blue stays blue instead of becoming grey.
+    return readableOn(raw, darkTheme);
+  };
+
+  const getIcon = (type: string) => {
+    // `currentColor`, so the glyph takes the tint its wrapper carries — which
+    // is the object's own fill. This used to take a colour argument chosen
+    // from whether the row was selected, back when selection was a solid
+    // amber slab that the icon had to stay legible against.
+    const c = 'currentColor';
     switch (type) {
       case 'text': return <Type size={14} color={c} />;
       case 'shape': return <Square size={14} color={c} />;
@@ -125,6 +155,7 @@ export const LayersPanel: React.FC<LayersPanelProps> = ({ selectedIds, overrideO
       case 'artboard': return <LayoutTemplate size={14} color={c} />;
       case 'frame': return <FrameIcon size={14} color={c} />;
       case 'comment': return <MessageSquare size={14} color={c} />;
+      case 'connector': return <Spline size={14} color={c} />;
       default: return <Square size={14} color={c} />;
     }
   };
@@ -164,19 +195,6 @@ export const LayersPanel: React.FC<LayersPanelProps> = ({ selectedIds, overrideO
     setDraggedId(null);
   };
 
-  const handleDuplicate = (id: string) => {
-    const obj = objects[id];
-    if (!obj) return;
-    const newId = nanoid();
-    editor.createNode({
-      ...obj,
-      id: newId,
-      x: obj.x + 40,
-      y: obj.y + 40
-    });
-    setSelectedId(newId);
-  };
-
   const toggleLock = (id: string) => {
     const obj = objects[id];
     if (!obj) return;
@@ -187,11 +205,6 @@ export const LayersPanel: React.FC<LayersPanelProps> = ({ selectedIds, overrideO
     const obj = objects[id];
     if (!obj) return;
     updateNode(id, { hidden: !obj.hidden });
-  };
-
-  const handleDelete = (id: string) => {
-    deleteNodesWithFrames([id]);
-    if (selectedId === id) setSelectedId(null);
   };
 
   const handleBulkDelete = () => {
@@ -398,44 +411,190 @@ export const LayersPanel: React.FC<LayersPanelProps> = ({ selectedIds, overrideO
   const { containerRef, window: vwindow } = useVirtualRows(flatRows.length, ROW_HEIGHT);
   const visibleRows = flatRows.slice(vwindow.start, vwindow.end);
 
+  /**
+   * Driving the panel from the keyboard.
+   *
+   * The brief asks for the power-user path explicitly, and there was none: the
+   * panel handled exactly three keys, all of them inside the rename field and
+   * the search box. Everything below is therefore new, and it is deliberately
+   * the shape people already know from a file tree — ↑/↓ to move, ←/→ to fold,
+   * Enter to rename, Space to hide, Cmd+↑/↓ to restack.
+   *
+   * The cursor is the last row touched, which is what `lastClickedRef` already
+   * tracked for shift-ranging. Reusing it rather than adding a second notion of
+   * "current row" keeps the mouse and the keyboard on one anchor — two would
+   * drift apart the moment you clicked one row and arrowed from another.
+   */
+  const cursorId = lastClickedRef.current ?? selectedIds[selectedIds.length - 1] ?? null;
+
+  /**
+   * Bring a row into view after the keyboard moves to it.
+   *
+   * The list is virtualized, so a row the cursor moves to may not be in the
+   * DOM at all — there is nothing to call `scrollIntoView` on. Scrolling the
+   * container by the row's index is the only thing that works for a row that
+   * does not yet exist, and it works for one that does.
+   */
+  const revealRow = (id: string) => {
+    const index = flatRows.findIndex((r) => r.kind !== 'group' && (r as { obj: AnyNode }).obj.id === id);
+    const el = containerRef.current;
+    if (index < 0 || !el) return;
+    const top = index * ROW_HEIGHT;
+    const bottom = top + ROW_HEIGHT;
+    if (top < el.scrollTop) el.scrollTop = top;
+    else if (bottom > el.scrollTop + el.clientHeight) el.scrollTop = bottom - el.clientHeight;
+  };
+
+  const moveCursor = (delta: number, extend: boolean) => {
+    const ids = visibleObjectIds;
+    if (ids.length === 0) return;
+    const from = cursorId ? ids.indexOf(cursorId) : -1;
+    // From nowhere, ↓ starts at the top and ↑ starts at the bottom, so the
+    // first press always lands somewhere visible rather than doing nothing.
+    const next = from === -1 ? (delta > 0 ? 0 : ids.length - 1) : Math.min(ids.length - 1, Math.max(0, from + delta));
+    const id = ids[next];
+
+    if (extend && setSelectedIds) {
+      // Extending keeps the anchor where it was, matching the shift-click
+      // behaviour above and every file tree people already use.
+      const anchor = lastClickedRef.current ?? id;
+      const a = ids.indexOf(anchor);
+      const [start, end] = a < next ? [a, next] : [next, a];
+      setSelectedIds(ids.slice(start, end + 1));
+    } else {
+      if (setSelectedIds) setSelectedIds([id]);
+      else setSelectedId(id);
+      lastClickedRef.current = id;
+    }
+    revealRow(id);
+  };
+
+  /** Restack the selection one place, without collapsing it into one slot. */
+  const restack = (direction: 'up' | 'down') => {
+    const chosen = selectedIds.length > 0 ? selectedIds : cursorId ? [cursorId] : [];
+    if (chosen.length === 0) return;
+    const step = direction === 'up' ? 1 : -1;
+    applyNodePatches(
+      chosen.map((id) => {
+        const node = objects[id];
+        return node ? { id, changes: { zIndex: node.zIndex + step } } : { id, changes: {} };
+      })
+    );
+  };
+
+  const handleTreeKeyDown = (e: React.KeyboardEvent) => {
+    // While a row is being renamed the keyboard belongs to that input — ↑ and
+    // ↓ move the caret, and Escape cancels the rename rather than the
+    // selection.
+    if (editingTitleId) return;
+    // A key that reached here from the search box or a row's own control is
+    // that control's to handle.
+    const target = e.target as HTMLElement;
+    if (target.tagName === 'INPUT' || target.tagName === 'TEXTAREA') return;
+
+    const mod = e.metaKey || e.ctrlKey;
+
+    switch (e.key) {
+      case 'ArrowDown':
+        e.preventDefault();
+        if (mod) restack('up');
+        else moveCursor(1, e.shiftKey);
+        return;
+      case 'ArrowUp':
+        e.preventDefault();
+        if (mod) restack('down');
+        else moveCursor(-1, e.shiftKey);
+        return;
+      case 'ArrowRight':
+        // Fold and unfold act on frames only; on anything else the key is
+        // free to do nothing rather than being swallowed.
+        if (cursorId && collapsedFrames.has(cursorId)) {
+          e.preventDefault();
+          toggleFrameCollapsed(cursorId);
+        }
+        return;
+      case 'ArrowLeft':
+        if (cursorId && objects[cursorId]?.type === 'frame' && !collapsedFrames.has(cursorId)) {
+          e.preventDefault();
+          toggleFrameCollapsed(cursorId);
+        }
+        return;
+      case 'Enter':
+        if (cursorId) {
+          e.preventDefault();
+          setEditingTitleId(cursorId);
+        }
+        return;
+      case ' ':
+      case 'Spacebar':
+        if (cursorId) {
+          e.preventDefault();
+          toggleVisibility(cursorId);
+        }
+        return;
+      case 'Delete':
+      case 'Backspace':
+        if (selectedIds.length > 0) {
+          e.preventDefault();
+          handleBulkDelete();
+        }
+        return;
+      case 'a':
+      case 'A':
+        if (mod && setSelectedIds) {
+          e.preventDefault();
+          setSelectedIds(visibleObjectIds);
+        }
+        return;
+      case 'Escape':
+        e.preventDefault();
+        setSelectedIds?.([]);
+        lastClickedRef.current = null;
+        return;
+      default:
+    }
+  };
+
   const renderRow = (obj: any, indent: number, disclosure?: React.ReactNode) => {
     const activeEditor = activeEditorsMap.get(obj.id);
     const isEditingThisTitle = editingTitleId === obj.id;
     const isSelected = selectedIds.includes(obj.id);
-    const isHovered = hoveredId === obj.id;
 
     return (
       <div
         key={obj.id}
+        // What `aria-activedescendant` on the tree points at, so a screen
+        // reader follows the keyboard cursor to a row that is never itself
+        // focused.
+        id={`layer-row-${obj.id}`}
         draggable
         onDragStart={(e) => handleDragStart(e, obj.id)}
         onDragOver={(e) => handleDragOver(e, obj.id)}
         onDragLeave={() => setDragOverId(null)}
         onDrop={(e) => handleDrop(e, obj.id)}
         onClick={(e) => handleRowClick(e, obj.id)}
-        onMouseEnter={() => setHoveredId(obj.id)}
-        onMouseLeave={() => setHoveredId(null)}
+        className={`layer-row${isSelected ? ' is-selected' : ''}`}
         style={{
-          display: 'flex', alignItems: 'center', gap: '8px', padding: '0 12px',
-          paddingLeft: `${12 + indent}px`,
+          padding: '0 8px 0 ' + (12 + indent) + 'px',
           // Fixed height is what makes virtualization possible — see the
           // flattening above and useVirtualRows.
           height: ROW_HEIGHT - ROW_GAP,
           marginBottom: ROW_GAP,
-          boxSizing: 'border-box',
-          background: isSelected ? 'var(--amber-500)' : (isHovered ? 'var(--surface-hover)' : 'transparent'),
-          color: isSelected ? 'var(--amber-950)' : (obj.locked ? 'var(--text-secondary)' : 'var(--text-primary)'),
-          borderRadius: '8px', cursor: 'pointer', fontSize: '12px', fontWeight: isSelected ? 600 : 500,
-          transition: 'background 0.2s',
-          borderTop: dragOverId === obj.id ? '2px solid var(--amber-500)' : '2px solid transparent',
-          opacity: obj.hidden ? 0.4 : (draggedId === obj.id ? 0.5 : 1)
+          color: obj.locked ? 'var(--text-secondary)' : 'var(--text-primary)',
+          borderTop: dragOverId === obj.id ? '2px solid var(--brand-orange)' : '2px solid transparent',
+          opacity: obj.hidden ? 0.45 : (draggedId === obj.id ? 0.5 : 1),
         }}
       >
         {/* Every row reserves the twisty slot, whether or not it has one, so a
             frame's icon sits on the same vertical line as its siblings' rather
             than shunted right by the width of a chevron. */}
-        {disclosure ?? <span style={{ width: 14, flexShrink: 0 }} aria-hidden />}
-        {getIcon(obj.type, isSelected)}
+        {disclosure ?? <span aria-hidden />}
+        <span
+          className="layer-row__icon"
+          style={{ color: layerTint(obj), background: `color-mix(in srgb, ${layerTint(obj)} 16%, transparent)` }}
+        >
+          {getIcon(obj.type)}
+        </span>
 
         {isEditingThisTitle ? (
           <input
@@ -461,7 +620,8 @@ export const LayersPanel: React.FC<LayersPanelProps> = ({ selectedIds, overrideO
               setEditingTitleId(obj.id);
               setTitleInput(getName(obj));
             }}
-            style={{ flex: 1, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis', textDecoration: obj.locked ? 'line-through' : 'none', color: isSelected ? 'var(--amber-950)' : 'inherit' }}
+            className="layer-row__name"
+            style={{ whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis', textDecoration: obj.locked ? 'line-through' : 'none' }}
             data-tooltip="Double click to rename"
           >
             {/* The matched characters are marked, which is what makes a
@@ -473,7 +633,7 @@ export const LayersPanel: React.FC<LayersPanelProps> = ({ selectedIds, overrideO
                   key={i}
                   style={{
                     background: 'transparent',
-                    color: isSelected ? 'var(--amber-950)' : 'var(--amber-600)',
+                    color: 'var(--brand-orange)',
                     fontWeight: 700,
                   }}
                 >
@@ -501,34 +661,31 @@ export const LayersPanel: React.FC<LayersPanelProps> = ({ selectedIds, overrideO
         )}
 
         {!isEditingThisTitle && (
-          <div style={{ display: 'flex', gap: '6px', opacity: (isSelected || isHovered) ? 1 : 0, transition: 'opacity 0.2s' }}>
+          /* Two toggles, not four buttons.
+             Visibility and lock are *state* — they belong on the row because
+             the row is where you read that state. Duplicate and delete are
+             commands that show nothing, are already on the floating toolbar,
+             the bulk header and the keyboard (Cmd+D, Del), and cost every row
+             two slots for the privilege of putting a destructive action one
+             stray click from the name you were aiming at. */
+          <div className="layer-row__actions" data-sticky={obj.hidden || obj.locked}>
             <button
+              className="layer-row__btn"
               onClick={(e) => { e.stopPropagation(); toggleVisibility(obj.id); }}
-              style={{ background: 'transparent', border: 'none', color: 'inherit', cursor: 'pointer', padding: '2px', display: 'flex' }}
-              data-tooltip={obj.hidden ? "Show layer" : "Hide layer"}
+              data-tooltip={obj.hidden ? 'Show' : 'Hide'}
+              aria-label={obj.hidden ? `Show ${getName(obj)}` : `Hide ${getName(obj)}`}
+              aria-pressed={obj.hidden}
             >
               {obj.hidden ? <EyeOff size={14} /> : <Eye size={14} />}
             </button>
             <button
+              className="layer-row__btn"
               onClick={(e) => { e.stopPropagation(); toggleLock(obj.id); }}
-              style={{ background: 'transparent', border: 'none', color: 'inherit', cursor: 'pointer', padding: '2px', display: 'flex' }}
-              data-tooltip={obj.locked ? "Unlock layer" : "Lock layer"}
+              data-tooltip={obj.locked ? 'Unlock' : 'Lock'}
+              aria-label={obj.locked ? `Unlock ${getName(obj)}` : `Lock ${getName(obj)}`}
+              aria-pressed={obj.locked}
             >
               {obj.locked ? <Lock size={14} /> : <Unlock size={14} />}
-            </button>
-            <button
-              onClick={(e) => { e.stopPropagation(); handleDuplicate(obj.id); }}
-              style={{ background: 'transparent', border: 'none', color: 'inherit', cursor: 'pointer', padding: '2px', display: 'flex' }}
-              data-tooltip="Duplicate layer"
-            >
-              <Copy size={14} />
-            </button>
-            <button
-              onClick={(e) => { e.stopPropagation(); handleDelete(obj.id); }}
-              style={{ background: 'transparent', border: 'none', color: Array.from((awarenessStates || new Map()).values()).some((u: any) => Array.isArray(u.selection) && u.selection.includes(obj.id)) ? (isSelected ? 'var(--amber-950)' : 'var(--text-secondary)') : '#EF4444', cursor: 'pointer', padding: '2px', display: 'flex' }}
-              data-tooltip="Delete layer"
-            >
-              <Trash2 size={14} />
             </button>
           </div>
         )}
@@ -542,6 +699,17 @@ export const LayersPanel: React.FC<LayersPanelProps> = ({ selectedIds, overrideO
       <div style={{ display: 'flex', alignItems: 'center', gap: '8px', padding: '16px', borderBottom: '1px solid var(--border-divider)', background: 'var(--surface-elevated)', position: 'sticky', top: 0, zIndex: 10 }}>
         <Layers size={16} color="var(--text-secondary)" />
         <span style={{ color: 'var(--text-primary)', fontWeight: 600, fontSize: '13px', flex: 1 }}>Layers</span>
+        {onCollapse && selectedIds.length <= 1 && (
+          <button
+            className="btn-icon"
+            style={{ padding: '4px' }}
+            onClick={onCollapse}
+            data-tooltip="Collapse panel"
+            aria-label="Collapse the layers panel"
+          >
+            <PanelLeftClose size={15} />
+          </button>
+        )}
         {selectedIds.length > 1 && (
           <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
             <span style={{ fontSize: '11px', color: 'var(--text-secondary)', fontWeight: 600 }}>{selectedIds.length} selected</span>
@@ -661,7 +829,13 @@ export const LayersPanel: React.FC<LayersPanelProps> = ({ selectedIds, overrideO
         ref={containerRef}
         role="tree"
         aria-label="Layers"
-        style={{ padding: '8px', overflowY: 'auto', overflowX: 'hidden', flex: 1 }}
+        // Focusable, so the arrow keys have somewhere to arrive. Without this
+        // the tree could be clicked but never driven: keyboard focus skipped
+        // straight from the search box to the first row's eye toggle.
+        tabIndex={0}
+        aria-activedescendant={cursorId ? `layer-row-${cursorId}` : undefined}
+        onKeyDown={handleTreeKeyDown}
+        style={{ padding: '8px', overflowY: 'auto', overflowX: 'hidden', flex: 1, outline: 'none' }}
         className="custom-scrollbar"
       >
         {sortedObjects.length === 0 ? (
@@ -713,7 +887,6 @@ export const LayersPanel: React.FC<LayersPanelProps> = ({ selectedIds, overrideO
 
                 const memberIds = item.members.map((m) => m.id);
                 const groupSelected = memberIds.length > 0 && memberIds.every((id) => selectedIds.includes(id));
-                const groupHovered = hoveredId === `group:${item.groupId}`;
 
                 return (
                   <div
@@ -721,26 +894,20 @@ export const LayersPanel: React.FC<LayersPanelProps> = ({ selectedIds, overrideO
                     role="treeitem"
                     aria-selected={groupSelected}
                     onClick={(e) => handleGroupClick(e, memberIds)}
-                    onMouseEnter={() => setHoveredId(`group:${item.groupId}`)}
-                    onMouseLeave={() => setHoveredId(null)}
+                    className={`layer-row${groupSelected ? ' is-selected' : ''}`}
                     style={{
-                      display: 'flex', alignItems: 'center', gap: '8px', padding: '0 12px',
-                      paddingLeft: `${12 + item.indent}px`,
+                      padding: '0 8px 0 ' + (12 + item.indent) + 'px',
                       height: ROW_HEIGHT - ROW_GAP,
                       marginBottom: ROW_GAP,
-                      boxSizing: 'border-box',
-                      background: groupSelected ? 'var(--amber-500)' : (groupHovered ? 'var(--surface-hover)' : 'transparent'),
-                      color: groupSelected ? 'var(--amber-950)' : 'var(--text-primary)',
-                      borderRadius: '8px', cursor: 'pointer', fontSize: '12px', fontWeight: 600,
-                      transition: 'background 0.2s',
+                      fontWeight: 'var(--weight-semibold)',
                     }}
                   >
-                    <span style={{ width: 14, flexShrink: 0 }} aria-hidden />
-                    <FolderOpen size={14} />
-                    <span style={{ flex: 1 }}>Group ({item.members.length})</span>
+                    <span aria-hidden />
+                    <span className="layer-row__icon"><FolderOpen size={14} /></span>
+                    <span className="layer-row__name">Group ({item.members.length})</span>
                     <button
                       onClick={(e) => { e.stopPropagation(); handleUngroup(memberIds); }}
-                      style={{ background: 'transparent', border: 'none', color: 'inherit', cursor: 'pointer', padding: '2px', display: 'flex', opacity: (groupSelected || groupHovered) ? 1 : 0, transition: 'opacity 0.2s' }}
+                      className="layer-row__btn"
                       data-tooltip="Ungroup (Cmd+Shift+G)"
                       aria-label="Ungroup"
                     >

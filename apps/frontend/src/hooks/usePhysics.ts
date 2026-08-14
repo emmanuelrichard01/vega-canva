@@ -93,7 +93,20 @@ const commitSettled = (settled: SimTransform[]) => {
   });
 };
 
-export function usePhysics(objects: Record<string, any>, stageRef: React.RefObject<Konva.Stage | null>) {
+export function usePhysics(
+  objects: Record<string, any>,
+  stageRef: React.RefObject<Konva.Stage | null>,
+  /**
+   * Live selection, read imperatively.
+   *
+   * Selection is React state up in `Room`, not store state, and this is
+   * consulted once per frame while a force is held — so it arrives as the
+   * stable ref `Canvas` already keeps for the same reason on drags, rather
+   * than as a value that would re-create the callback on every selection
+   * change.
+   */
+  selectedIdsRef?: React.RefObject<string[]>
+) {
   const simRef = useRef<PhysicsSimulation | null>(null);
   if (!simRef.current) simRef.current = new PhysicsSimulation();
 
@@ -229,16 +242,51 @@ export function usePhysics(objects: Record<string, any>, stageRef: React.RefObje
     (x: number, y: number, mode: ForceId, extra?: { dx?: number; dy?: number }) => {
       const sim = simRef.current;
       if (!sim) return;
+      const state = useStore.getState();
+      const selected = selectedIdsRef?.current ?? [];
       const woken = sim.applyForce(x, y, mode, {
-        scale: useStore.getState().forceScale,
+        scale: state.forceScale,
+        radiusScale: state.forceRadiusScale,
+        falloff: state.forceFalloff,
+        // Read fresh each frame rather than captured, so toggling the switch
+        // mid-press takes effect on the next frame instead of the next press.
+        only: state.forceSelectionOnly && selected.length > 0 ? new Set(selected) : undefined,
         skip: remoteOwnedIds(),
         dx: extra?.dx,
         dy: extra?.dy,
       });
       claimOwnershipAll(woken);
     },
-    []
+    [selectedIdsRef]
   );
+
+  /**
+   * Stop everything where it is.
+   *
+   * The counterpart to Restore, and a different thing: Restore puts the board
+   * back the way it was before you started, which throws away the arrangement
+   * you just made. Calm keeps the arrangement and only takes the motion out of
+   * it — which is what you want when a shockwave has landed things well but
+   * they are still drifting past where you wanted them.
+   *
+   * Committed through the same path a natural settle uses, so it is one
+   * transaction, one undo step, and one broadcast.
+   */
+  const calmAll = useCallback(() => {
+    const sim = simRef.current;
+    if (!sim) return;
+    const frozen = sim.freezeAll();
+    if (frozen.length === 0) return;
+    commitSettled(frozen);
+    releaseOwnershipAll(frozen.map((f) => f.id));
+    konvaNodes.current.clear();
+    // Peers are still drawing the flight path from the last broadcast; a null
+    // per object is what retires it and hands them back to the document.
+    const retire: Record<string, unknown> = {};
+    frozen.forEach(({ id }) => { retire[id] = null; });
+    const current = provider.awareness?.getLocalState()?.throws || {};
+    provider.awareness?.setLocalStateField('throws', { ...current, ...retire });
+  }, []);
 
   applyForceRef.current = applyGlobalForce;
 
@@ -280,5 +328,5 @@ export function usePhysics(objects: Record<string, any>, stageRef: React.RefObje
   // physics is frame-driven and largely invisible to the DOM.
   (window as unknown as Record<string, unknown>).__physics = simRef.current;
 
-  return { handleThrow, applyGlobalForce, beginHeldForce, moveHeldForce, endHeldForce };
+  return { handleThrow, applyGlobalForce, beginHeldForce, moveHeldForce, endHeldForce, calmAll };
 }

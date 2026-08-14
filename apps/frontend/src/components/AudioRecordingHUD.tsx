@@ -1,14 +1,17 @@
 import React from 'react';
-import { Check, Trash2 } from 'lucide-react';
+import { Check, MicOff, Pause, Play, Trash2 } from 'lucide-react';
 import { formatClock } from '../engine/model/audioPlayback';
 
 interface Props {
   elapsedMs: number;
-  level: number;
   levels: number[];
   remainingMs?: number;
+  paused?: boolean;
+  /** True once a sustained run of near-silence says nothing is being heard. */
+  silent?: boolean;
   onStop: () => void;
   onCancel?: () => void;
+  onTogglePause?: () => void;
 }
 
 /** Hairlines in the meter. Their width is fixed in CSS; these divide it. */
@@ -27,8 +30,23 @@ const WARN_AT_MS = 30_000;
  * 2. **For how long.** The elapsed time, tabular so it does not jitter.
  * 3. **It is hearing you.** The live meter — the difference between "recording"
  *    and "recording *something*", and the reason a muted-microphone take gets
- *    caught in the first second instead of after the meeting.
- * 4. **How to end it**, two ways: keep it, or throw it away.
+ *    caught in the first seconds instead of after the meeting.
+ * 4. **How to change your mind**, three ways: hold, keep, or throw away.
+ *
+ * ## Pause is not a nicety
+ *
+ * Without it a voice note is a single unbroken take, so an interruption — a
+ * door, a question, losing the thread — leaves you either talking through it or
+ * discarding a good recording to start again. It is the one transport control
+ * every recorder has, and it was the one this did not.
+ *
+ * ## Saying when nothing is being heard
+ *
+ * A muted microphone produces a perfectly valid recording of silence, and the
+ * only cheap moment to discover that is while you are still talking. The meter
+ * has always shown it to anyone watching; this says it in words for anyone who
+ * is not. It waits for a sustained run rather than a quiet moment, because a
+ * warning that fires during a pause for breath is one you learn to ignore.
  *
  * ## Rules this follows
  *
@@ -41,9 +59,6 @@ const WARN_AT_MS = 30_000;
  * - **The meter has a fixed footprint.** Chrome that changes width as the
  *   signal moves drags the eye off the canvas, and a status readout has no
  *   business being wider than the tool dock.
- * - **No decorative effects.** A mask fade on the meter's leading edge read as
- *   the trace being clipped rather than flowing — a subtle effect that misfires
- *   looks like a rendering bug, which is worse than not having it.
  * - **Nothing here is destructive by accident.** Done keeps the take, Discard
  *   throws it away and says so, and Escape does the same.
  */
@@ -51,8 +66,11 @@ export const AudioRecordingHUD: React.FC<Props> = ({
   elapsedMs,
   levels,
   remainingMs,
+  paused,
+  silent,
   onStop,
   onCancel,
+  onTogglePause,
 }) => {
   /**
    * Padded to a fixed count, newest on the right.
@@ -67,7 +85,7 @@ export const AudioRecordingHUD: React.FC<Props> = ({
 
   return (
     <div className="rec-hud">
-      <div className="rec-hud-panel panel-surface">
+      <div className={`rec-hud-panel panel-surface ${paused ? 'is-paused' : ''}`}>
         <span className="rec-hud-status">
           <span className="rec-hud-dot" aria-hidden="true" />
           <span className="rec-hud-elapsed">{formatClock(elapsedMs)}</span>
@@ -79,24 +97,53 @@ export const AudioRecordingHUD: React.FC<Props> = ({
               key={i}
               className="rec-hud-tick"
               style={{
-                // A 0.1 floor (2px of the meter's 20px) keeps a continuous
-                // thread through the quiet parts, so silence reads as a quiet
-                // line rather than the meter breaking into islands.
+                // A 0.1 floor keeps a continuous thread through the quiet
+                // parts, so silence reads as a quiet line rather than the
+                // meter breaking into islands.
                 //
                 // Expressed as a scale rather than a height: the tick is
                 // already full height, and animating height here re-laid out
                 // the whole meter row on every audio frame for the duration of
                 // the recording.
-                transform: `scaleY(${Math.max(0.1, Math.min(v * 2.2, 1))})`,
-                opacity: 0.32 + Math.min(v * 2, 1) * 0.68,
+                //
+                // No multiplier on `v` any more. The old meter needed one
+                // because it was averaging frequency bins, which reads far
+                // lower than the signal actually is; a proper RMS level uses
+                // its full range on its own.
+                transform: `scaleY(${Math.max(0.1, Math.min(v, 1))})`,
+                opacity: 0.32 + Math.min(v, 1) * 0.68,
               }}
             />
           ))}
         </div>
 
-        {nearLimit && <span className="rec-hud-warn">{formatClock(remainingMs!)} left</span>}
+        {/* Only one of these ever shows. They compete for the same slot and the
+            same attention, and "you have 20 seconds left" matters more than
+            "we cannot hear you" once the cap is that close. */}
+        {nearLimit ? (
+          <span className="rec-hud-warn">{formatClock(remainingMs!)} left</span>
+        ) : paused ? (
+          <span className="rec-hud-note">Paused</span>
+        ) : silent ? (
+          <span className="rec-hud-warn rec-hud-warn--quiet">
+            <MicOff size={12} aria-hidden="true" />
+            No sound
+          </span>
+        ) : null}
 
         <span className="rec-hud-rule" aria-hidden="true" />
+
+        {onTogglePause && (
+          <button
+            type="button"
+            className="rec-hud-pause"
+            onClick={onTogglePause}
+            data-tooltip={paused ? 'Resume (Space)' : 'Pause (Space)'}
+            aria-label={paused ? 'Resume recording' : 'Pause recording'}
+          >
+            {paused ? <Play size={14} /> : <Pause size={14} />}
+          </button>
+        )}
 
         {onCancel && (
           <button
@@ -116,13 +163,14 @@ export const AudioRecordingHUD: React.FC<Props> = ({
         </button>
       </div>
 
-      {/* Announced separately so a screen reader gets the time without the
+      {/* Announced separately so a screen reader gets the state without the
           meter, which is decoration to anyone not looking at it. */}
       <span className="sr-only" role="status" aria-live="polite">
-        Recording, {formatClock(elapsedMs)}
+        {paused ? 'Recording paused' : 'Recording'}, {formatClock(elapsedMs)}
+        {silent && !paused ? ', no sound is being picked up' : ''}
       </span>
 
-      <span className="rec-hud-hint">Esc to discard</span>
+      <span className="rec-hud-hint">Space to pause · Esc to discard</span>
     </div>
   );
 };

@@ -45,7 +45,8 @@ const DRAWING_TOOLS = new Set([
 const isDrawingTool = (toolId: string) => DRAWING_TOOLS.has(toolId) || toolId.startsWith('frame-');
 import { cursorModeForTool, LocalCursor } from '../engine/cursor';
 import { GestureOverlay } from "./GestureOverlay";
-import { ToolManager, SelectTool, ShapeTool, TextTool, StickyTool, AudioTool, PenTool, BezierPenTool, HandTool, EraserTool, CommentTool, FrameTool } from '../engine/tools';
+import { ToolManager, SelectTool, ShapeTool, TextTool, StickyTool, AudioTool, PenTool, BezierPenTool, HandTool, EraserTool, CommentTool, FrameTool, ConnectorTool } from '../engine/tools';
+import { canSelectWith } from '../engine/tools/shortcuts';
 import { CommentsOverlay } from "./CommentsOverlay";
 import { AudioRecordingHUD } from "./AudioRecordingHUD";
 import { useComments } from "../hooks/useComments";
@@ -57,6 +58,7 @@ import { DEFAULT_TYPOGRAPHY } from '../engine/model/schema';
 import { SelectionTransformer } from './canvas/SelectionTransformer';
 import { CropOverlay } from './canvas/CropOverlay';
 import { cropMode } from '../engine/interaction/cropMode';
+import { textEditing } from '../engine/interaction/textEditing';
 import { FRAME_PRESETS } from '../engine/model/frames';
 import { deleteNodesWithFrames } from '../engine/interaction/frameMembership';
 
@@ -108,6 +110,13 @@ export const Canvas: React.FC<CanvasProps> = ({ activeTool, selectedIds, setSele
   const croppingId = cropSnapshot?.nodeId ?? null;
 
   // -- path edit mode -------------------------------------------------------
+
+  /** The node currently holding a text caret, if any. */
+  const editingTextId = useSyncExternalStore(
+    textEditing.subscribe,
+    textEditing.getSnapshot,
+    textEditing.getSnapshot
+  );
 
   const pathSelection = useSyncExternalStore(
     pathEdit.subscribe,
@@ -395,7 +404,14 @@ export const Canvas: React.FC<CanvasProps> = ({ activeTool, selectedIds, setSele
 
   const { visibleIds } = useVisibleSet();
   const objects = useStore(state => state.objects);
-  const { handleThrow, applyGlobalForce, beginHeldForce, moveHeldForce, endHeldForce } = usePhysics(objects, stageRef);
+  const { handleThrow, applyGlobalForce, beginHeldForce, moveHeldForce, endHeldForce, calmAll } = usePhysics(objects, stageRef, selectedIdsRef);
+
+  // The Forces panel renders up in Room, two levels above the physics loop.
+  useEffect(() => {
+    const onCalm = () => calmAll();
+    window.addEventListener('physics-calm', onCalm);
+    return () => window.removeEventListener('physics-calm', onCalm);
+  }, [calmAll]);
 
   /**
    * Cursor position while a force tool is held, in world space.
@@ -407,6 +423,8 @@ export const Canvas: React.FC<CanvasProps> = ({ activeTool, selectedIds, setSele
   const forceCursorRef = useRef<{ x: number; y: number } | null>(null);
   const forceRingRef = useRef<Konva.Group>(null);
   const activeForce = isForceTool(activeTool) ? FORCE_SPECS[activeTool] : null;
+  // Subscribed, so dragging the Area slider resizes the ring as you drag it.
+  const forceRadiusScale = useStore((state) => state.forceRadiusScale);
 
   // Entering a force tool snapshots the layout so the whole session can be put
   // back, and leaving it drops the ring.
@@ -480,7 +498,9 @@ export const Canvas: React.FC<CanvasProps> = ({ activeTool, selectedIds, setSele
   } = useComments();
 
   const handleObjectSelect = useCallback((id: string, e?: any) => {
-    if (activeTool !== 'select') return;
+    // Same predicate the hover outline uses, so the two cannot disagree about
+    // whether this object is clickable right now.
+    if (!canSelectWith(activeTool)) return;
     const isShift = !!e?.evt?.shiftKey;
 
     // Clicking any member of a group selects the whole group, matching
@@ -795,6 +815,7 @@ export const Canvas: React.FC<CanvasProps> = ({ activeTool, selectedIds, setSele
     // is registered here rather than silently doing nothing when picked.
     SHAPE_KINDS.forEach((preset) => tm.registerTool(new ShapeTool(preset)));
     tm.registerTool(new TextTool());
+    tm.registerTool(new ConnectorTool());
     tm.registerTool(new StickyTool());
     tm.registerTool(new AudioTool());
     tm.registerTool(new PenTool());
@@ -822,13 +843,30 @@ export const Canvas: React.FC<CanvasProps> = ({ activeTool, selectedIds, setSele
   // ToolManager.handleKeyDown existed but nothing ever called it — tools
   // implementing onKeyDown (e.g. Escape/Enter to finish a bezier path) never
   // actually received keyboard events.
+  //
+  // `handleKeyUp` was the same story one layer deeper and outlasted the fix:
+  // `Tool.onKeyUp` is declared on the interface and dispatched by the manager,
+  // and nothing has ever called the manager. So a tool could learn that a
+  // modifier went *down* and never that it came back up — which is exactly
+  // what a "hold Shift to constrain" gesture needs in order to stop
+  // constraining.
   useEffect(() => {
+    const isTyping = () =>
+      document.activeElement?.tagName === 'INPUT' || document.activeElement?.tagName === 'TEXTAREA';
     const handleToolKeyDown = (e: KeyboardEvent) => {
-      if (document.activeElement?.tagName === 'INPUT' || document.activeElement?.tagName === 'TEXTAREA') return;
+      if (isTyping()) return;
       toolManager.handleKeyDown(e);
     };
+    const handleToolKeyUp = (e: KeyboardEvent) => {
+      if (isTyping()) return;
+      toolManager.handleKeyUp(e);
+    };
     window.addEventListener('keydown', handleToolKeyDown);
-    return () => window.removeEventListener('keydown', handleToolKeyDown);
+    window.addEventListener('keyup', handleToolKeyUp);
+    return () => {
+      window.removeEventListener('keydown', handleToolKeyDown);
+      window.removeEventListener('keyup', handleToolKeyUp);
+    };
   }, [toolManager]);
 
   const handleStageClick = (e: any) => {
@@ -988,6 +1026,7 @@ export const Canvas: React.FC<CanvasProps> = ({ activeTool, selectedIds, setSele
                 objId={id}
                 isSelected={selectedIds.includes(id)}
                 onSelect={handleObjectSelect}
+                selectable={canSelectWith(activeTool)}
                 onThrow={handleThrow}
                 stageScale={cameraSystem.zoom}
                 selectedIdsRef={selectedIdsRef}
@@ -1000,14 +1039,22 @@ export const Canvas: React.FC<CanvasProps> = ({ activeTool, selectedIds, setSele
               the force. */}
           {activeForce && (
             <Group ref={forceRingRef} listening={false} visible={false} name={EXPORT_CHROME}>
+              {/* Scaled by the Area control. Without this the ring would keep
+                  drawing the force's built-in radius while the simulation used
+                  the adjusted one — a sight worse than no ring at all, because
+                  it would be confidently wrong about where the force reaches. */}
               <Circle
-                radius={activeForce.radius}
+                radius={activeForce.radius * forceRadiusScale}
                 stroke={activeForce.colorToken}
                 strokeWidth={2}
                 dash={[10, 8]}
                 opacity={0.7}
               />
-              <Circle radius={activeForce.radius} fill={activeForce.colorToken} opacity={0.06} />
+              <Circle
+                radius={activeForce.radius * forceRadiusScale}
+                fill={activeForce.colorToken}
+                opacity={0.06}
+              />
               {/* A solid centre mark, so the point the force originates from is
                   unmistakable even when the ring runs off-screen. */}
               <Circle radius={5} fill={activeForce.colorToken} />
@@ -1021,7 +1068,13 @@ export const Canvas: React.FC<CanvasProps> = ({ activeTool, selectedIds, setSele
           {/* Hidden while cropping: the crop overlay draws its own handles on
               the same rectangle, and two sets of handles on one object is a
               question with no right answer for whichever one you grab. */}
-          {!croppingId && !editingPathId && (
+          {/* Text editing joins the same guard. A text node is *selected*
+              while you type into it, so the handles attached themselves to its
+              box and sat over the words — and on a fresh node that box is the
+              provisional seed size, which is why they appeared as a crumpled
+              cluster rather than a frame. You cannot resize and type at the
+              same time; they come back the moment the caret leaves. */}
+          {!croppingId && !editingPathId && !editingTextId && (
             <SelectionTransformer selectedIds={selectedIds} stageRef={stageRef} />
           )}
 
@@ -1056,10 +1109,12 @@ export const Canvas: React.FC<CanvasProps> = ({ activeTool, selectedIds, setSele
       {overlayState?.type === 'audio-recording' && (
         <AudioRecordingHUD
           elapsedMs={overlayState.elapsedMs || 0}
-          level={overlayState.level || 0}
           levels={overlayState.levels || []}
           remainingMs={overlayState.remainingMs}
+          paused={overlayState.paused}
+          silent={overlayState.silent}
           onCancel={overlayState.onCancel}
+          onTogglePause={overlayState.onTogglePause}
           onStop={() => toolManager.handlePointerDown({ target: { getStage: () => stageRef.current } })}
         />
       )}

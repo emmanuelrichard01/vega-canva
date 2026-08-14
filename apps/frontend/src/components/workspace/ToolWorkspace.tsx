@@ -1,32 +1,234 @@
-import React, { useEffect, useState } from 'react';
-import { MousePointer2, Hand, Pen, PenTool as PenToolIcon, Type, Square, StickyNote, MessageSquare, ImageIcon, Mic, Sparkles, Magnet, Radiation, Waves, Zap, ArrowDownToLine, Frame } from 'lucide-react';
+import React, { useCallback, useEffect, useRef, useState } from 'react';
+import { MousePointer2, Hand, Pen, PenTool as PenToolIcon, Type, Square, StickyNote, MessageSquare, ImageIcon, Mic, Sparkles, Magnet, Radiation, Waves, Zap, ArrowDownToLine, Frame, Eraser, Tornado } from 'lucide-react';
+import { Spline } from 'lucide-react';
 import { FORCE_IDS, FORCE_SPECS, isForceTool, type ForceId } from '../../engine/physics/forces';
 import { FRAME_PRESETS, FRAME_PRESET_GROUPS } from '../../engine/model/frames';
 import { ShapeIcon, SHAPE_KINDS, SHAPE_LABELS, shapeToolId, shapeKindFromToolId } from './shapeIcons';
+import { shortcutFor } from '../../engine/tools/shortcuts';
+import { useStore } from '../../hooks/useStore';
+
+/**
+ * The tool dock.
+ *
+ * ## What was wrong with the previous one
+ *
+ * Twelve buttons, each written out by hand with its own `style={{padding}}`,
+ * its own hand-typed `data-tooltip` naming a shortcut that nothing guaranteed
+ * was bound, and — behind four of them — four flyouts that shared no structure
+ * at all. Shapes were a bare row of icons, frames were a titled list, forces
+ * were labelled rows, and the pen was a row plus a slider. Four designs for one
+ * idea is three too many: nothing you learn from opening one helps with the
+ * next, and every new one is a new small thing to figure out.
+ *
+ * ## What this is instead
+ *
+ * One `DockButton`, one `Flyout`, one `FlyoutItem`. Everything on the dock is
+ * built from those three, so every button behaves the same way, every flyout
+ * opens the same way, and every item in one shows its name beside its icon with
+ * its shortcut on the right. The grouping — navigate, draw, create, place,
+ * act — is the same reading it always had; it is the execution that is now
+ * consistent.
+ *
+ * ## The keyboard
+ *
+ * `role="toolbar"` promises arrow-key navigation, and the dock did not deliver
+ * it: twelve buttons meant twelve tab stops between the canvas and anything
+ * after it. It is one stop now, with the arrows moving along it, which is both
+ * the ARIA pattern and what anyone who has used a toolbar expects.
+ */
+
+/** One button's worth of dock, so all of them are identical by construction. */
+const DockButton = React.forwardRef<
+  HTMLButtonElement,
+  {
+    icon: React.ReactNode;
+    /** The short name under the icon on touch, and the accessible name. */
+    label: string;
+    /** What the tooltip says beyond the name — the "why", not the "what". */
+    description?: string;
+    toolId?: string;
+    active: boolean;
+    onClick: () => void;
+    hasMenu?: boolean;
+    menuOpen?: boolean;
+    tabIndex: number;
+    children?: React.ReactNode;
+  }
+>(({ icon, label, description, toolId, active, onClick, hasMenu, menuOpen, tabIndex, children }, ref) => {
+  const key = toolId ? shortcutFor(toolId) : undefined;
+  // Rendered from the shortcut map rather than typed into the string, so the
+  // hint and the binding are the same fact.
+  const tooltip = [label, key ? `(${key})` : null, description ? `— ${description}` : null]
+    .filter(Boolean)
+    .join(' ');
+
+  return (
+    <div className={hasMenu ? 'dock-slot dock-slot--menu' : 'dock-slot'}>
+      <button
+        ref={ref}
+        type="button"
+        className={`btn-icon dock-btn ${hasMenu ? 'dock-more' : ''} ${active ? 'active' : ''}`}
+        aria-pressed={active}
+        aria-haspopup={hasMenu ? 'menu' : undefined}
+        aria-expanded={hasMenu ? menuOpen : undefined}
+        onClick={onClick}
+        // Suppressed while the menu is open: a tooltip and the flyout it
+        // belongs to occupy the same space above the button, and the tooltip
+        // wins the paint.
+        data-tooltip={menuOpen ? undefined : tooltip}
+        aria-label={tooltip}
+        data-label={label}
+        tabIndex={tabIndex}
+      >
+        {icon}
+        {hasMenu && <span className="dock-more__dot" aria-hidden="true" />}
+      </button>
+      {children}
+    </div>
+  );
+});
+DockButton.displayName = 'DockButton';
+
+/**
+ * The shell every flyout shares.
+ *
+ * Positioned above its button and given a title, because a menu that appears
+ * with no heading makes you infer what you are choosing from the options
+ * themselves. The gap below it is padding rather than margin so the pointer can
+ * travel from button to menu without crossing dead space and closing it.
+ */
+const Flyout: React.FC<{ title: string; children: React.ReactNode; wide?: boolean }> = ({
+  title,
+  children,
+  wide,
+}) => (
+  <div role="menu" className="dock-flyout" aria-label={title}>
+    <div className={`panel-surface dock-flyout__panel ${wide ? 'dock-flyout__panel--wide' : ''}`}>
+      <div className="dock-flyout__title" role="presentation">{title}</div>
+      {children}
+    </div>
+  </div>
+);
+
+/**
+ * One choice inside a flyout: what it is, what it is called, how to reach it.
+ *
+ * The shortcut badge is the point. These are the tools most worth learning a
+ * key for — they are the ones buried a click deep — and the old menus were the
+ * one place in the app that knew which key and did not say.
+ */
+const FlyoutItem: React.FC<{
+  icon: React.ReactNode;
+  label: string;
+  toolId?: string;
+  active: boolean;
+  onClick: () => void;
+  description?: string;
+  /** Right-hand text when there is no shortcut — a frame's dimensions. */
+  detail?: string;
+}> = ({ icon, label, toolId, active, onClick, description, detail }) => {
+  const key = toolId ? shortcutFor(toolId) : undefined;
+  return (
+    <button
+      type="button"
+      role="menuitemradio"
+      aria-checked={active}
+      className={`btn-icon dock-item ${active ? 'active' : ''}`}
+      onClick={onClick}
+      aria-label={description ? `${label} — ${description}` : label}
+    >
+      <span className="dock-item__icon" aria-hidden="true">{icon}</span>
+      <span className="dock-item__label">{label}</span>
+      {key && <kbd className="dock-item__key">{key}</kbd>}
+      {!key && detail && <span className="dock-item__detail">{detail}</span>}
+    </button>
+  );
+};
+
+/**
+ * A nib size, shown as the thing it produces.
+ *
+ * Neither the pencil nor the eraser had any way to change size — the pencil's
+ * was a constant in the class and the eraser's was a literal `15` written in
+ * two places. Both are the first thing anyone reaches for after picking up the
+ * tool, and neither existed.
+ *
+ * The dot is the control's own preview: a number alone tells you nothing about
+ * what a "6" draws, and this is a property whose whole meaning is visual.
+ */
+const NibSize: React.FC<{
+  label: string;
+  value: number;
+  min: number;
+  max: number;
+  onChange: (v: number) => void;
+}> = ({ label, value, min, max, onChange }) => (
+  <div className="dock-nib">
+    <div className="dock-nib__head">
+      <span className="dock-nib__label">{label}</span>
+      <span className="dock-nib__value">{Math.round(value)}</span>
+    </div>
+    <div className="dock-nib__row">
+      <span className="dock-nib__preview" aria-hidden="true">
+        <span
+          style={{
+            // Clamped so the preview stays inside its slot at any size.
+            width: Math.min(20, Math.max(2, value)),
+            height: Math.min(20, Math.max(2, value)),
+          }}
+        />
+      </span>
+      <input
+        type="range"
+        min={min}
+        max={max}
+        value={value}
+        aria-label={label}
+        onChange={(e) => onChange(Number(e.target.value))}
+        onPointerDown={(e) => e.stopPropagation()}
+      />
+    </div>
+  </div>
+);
 
 interface Props {
   activeToolId: string;
 }
+
+/** Left-to-right order of the dock, and so the order the arrow keys walk it. */
+const SEAT = {
+  select: 0, hand: 1,
+  draw: 2, eraser: 3,
+  text: 4, shape: 5, frame: 6, connector: 7, sticky: 8, comment: 9,
+  image: 10, audio: 11,
+  forces: 12,
+} as const;
 
 const FORCE_ICONS: Record<ForceId, React.ReactNode> = {
   magnet: <Magnet size={16} />,
   repel: <Radiation size={16} />,
   gravity: <ArrowDownToLine size={16} />,
   wind: <Waves size={16} />,
+  swirl: <Tornado size={16} />,
   shockwave: <Zap size={16} />,
 };
 
 export const ToolWorkspace: React.FC<Props> = ({ activeToolId }) => {
+  const penSize = useStore((s) => s.penSize);
+  const setPenSize = useStore((s) => s.setPenSize);
+  const eraserSize = useStore((s) => s.eraserSize);
+  const setEraserSize = useStore((s) => s.setEraserSize);
+
   /**
-   * The dock's three grouped tools (pen, shape, forces) share one menu model.
+   * The dock's grouped tools share one menu model.
    *
    * Each opens on hover *or* on click, and only a click keeps it open. Hover
    * alone is a trap: the menu is invisible until you happen to pass over the
    * icon, and on a touch device there is no hover at all — the variants behind
-   * these three buttons simply could not be reached. One piece of state rather
-   * than a pair per menu also guarantees only one can ever be open.
+   * these buttons simply could not be reached. One piece of state rather than
+   * a pair per menu also guarantees only one can ever be open.
    */
-  type DockMenu = 'pen' | 'shape' | 'forces' | 'frame';
+  type DockMenu = 'pen' | 'shape' | 'forces' | 'frame' | 'eraser';
   const [pinnedMenu, setPinnedMenu] = useState<DockMenu | null>(null);
   const [hoveredMenu, setHoveredMenu] = useState<DockMenu | null>(null);
   const openMenu = pinnedMenu ?? hoveredMenu;
@@ -53,232 +255,294 @@ export const ToolWorkspace: React.FC<Props> = ({ activeToolId }) => {
     };
   }, [pinnedMenu]);
 
-  // Canvas.tsx owns the real ToolManager instance and reacts to this event —
-  // there used to be a second, entirely unused ToolRegistry here that this
-  // called into first, but nothing ever registered tools on it.
+  /**
+   * Roving tabindex across the dock.
+   *
+   * A toolbar is one tab stop with arrows moving inside it. Without this the
+   * dock was twelve stops, so tabbing off the canvas meant twelve presses
+   * before reaching anything beyond it — and `role="toolbar"` was promising
+   * behaviour that was not there.
+   */
+  const buttonsRef = useRef<Array<HTMLButtonElement | null>>([]);
+  const [focusIndex, setFocusIndex] = useState(0);
+  const registerButton = useCallback(
+    (index: number) => (el: HTMLButtonElement | null) => {
+      buttonsRef.current[index] = el;
+    },
+    []
+  );
+
+  const onToolbarKeyDown = (e: React.KeyboardEvent) => {
+    const keys = ['ArrowRight', 'ArrowLeft', 'Home', 'End'];
+    if (!keys.includes(e.key)) return;
+    const live = buttonsRef.current.filter(Boolean) as HTMLButtonElement[];
+    if (live.length === 0) return;
+    e.preventDefault();
+
+    const current = live.findIndex((b) => b === document.activeElement);
+    const from = current === -1 ? focusIndex : current;
+    const next =
+      e.key === 'Home' ? 0
+      : e.key === 'End' ? live.length - 1
+      : e.key === 'ArrowRight' ? (from + 1) % live.length
+      : (from - 1 + live.length) % live.length;
+
+    setFocusIndex(next);
+    live[next]?.focus();
+  };
+
+  // Canvas.tsx owns the real ToolManager instance and reacts to this event.
   const setTool = (id: string) => {
     window.dispatchEvent(new CustomEvent('legacy_tool_change', { detail: id }));
   };
-
-  /** One look for every item inside a dock flyout: icon plus its name. */
-  const menuItemStyle: React.CSSProperties = {
-    padding: '6px 8px', display: 'flex', alignItems: 'center', gap: 6,
-    fontSize: 12, fontWeight: 500, whiteSpace: 'nowrap',
+  const pick = (id: string) => {
+    setTool(id);
+    setPinnedMenu(null);
   };
 
   const isShape = activeToolId.startsWith('shape');
   const armedShape = shapeKindFromToolId(activeToolId);
   const isFrame = activeToolId === 'frame' || activeToolId.startsWith('frame-');
+  const isPen = ['pen', 'bezier-pen'].includes(activeToolId);
 
+  /**
+   * Where each button sits along the arrow-key run.
+   *
+   * Written out rather than counted up during render, so the order the arrows
+   * walk is a thing you can read and check against the layout instead of an
+   * emergent property of which JSX happens to come first.
+   */
+  const seatProps = (index: number) => ({
+    ref: registerButton(index),
+    tabIndex: focusIndex === index ? 0 : -1,
+  });
 
-
-  // Default Creation Dock
   return (
     <div
       className="tool-dock panel-surface"
       role="toolbar"
       aria-label="Canvas tools"
       aria-orientation="horizontal"
-      /* Layout lives entirely in `.tool-dock`. These were duplicated inline,
-         which meant two sources of truth for the same box — and the inline
-         z-index of 10 quietly overrode the stylesheet's 100. */
+      onKeyDown={onToolbarKeyDown}
     >
-      <button className={`btn-icon ${activeToolId === 'select' ? 'active' : ''}`} aria-pressed={activeToolId === 'select'} onClick={() => setTool('select')} data-tooltip="Select (V)" aria-label="Select (V)" data-label="Select" style={{ padding: '6px' }}>
-        <MousePointer2 size={18} />
-      </button>
-      <button className={`btn-icon ${activeToolId === 'hand' ? 'active' : ''}`} aria-pressed={activeToolId === 'hand'} onClick={() => setTool('hand')} data-tooltip="Hand (H)" aria-label="Hand (H)" data-label="Hand" style={{ padding: '6px' }}>
-        <Hand size={18} />
-      </button>
-      <div className="dock-divider" />
-      <div style={{ position: 'relative' }} {...hoverProps('pen')}>
-        <button
-          className={`btn-icon ${['pen', 'bezier-pen'].includes(activeToolId) ? 'active' : ''}`}
-          aria-pressed={['pen', 'bezier-pen'].includes(activeToolId)}
-          aria-haspopup="menu"
-          aria-expanded={openMenu === 'pen'}
-          onClick={() => toggleMenu('pen')}
-          data-tooltip={openMenu === 'pen' ? undefined : 'Drawing tools'}
-          aria-label="Drawing tools" data-label="Draw"
-          style={{ padding: '6px' }}
-        >
-          {activeToolId === 'bezier-pen' ? <PenToolIcon size={18} /> : <Pen size={18} />}
-        </button>
-        {openMenu === 'pen' && (
-          <div role="menu" style={{ position: 'absolute', bottom: '100%', left: '50%', transform: 'translateX(-50%)', paddingBottom: 6, zIndex: 20 }}>
-            <div className="panel-surface" style={{ display: 'flex', gap: 2, padding: 4 }}>
-              <button role="menuitemradio" className={`btn-icon ${activeToolId === 'pen' ? 'active' : ''}`} aria-checked={activeToolId === 'pen'} onClick={() => { setTool('pen'); setPinnedMenu(null); }} data-tooltip="Freehand drawing" aria-label="Pencil (N) — freehand drawing" style={menuItemStyle}><Pen size={16} /><span>Pencil</span></button>
-              <button role="menuitemradio" className={`btn-icon ${activeToolId === 'bezier-pen' ? 'active' : ''}`} aria-checked={activeToolId === 'bezier-pen'} onClick={() => { setTool('bezier-pen'); setPinnedMenu(null); }} data-tooltip="Anchor points and curves" aria-label="Pen (P) — anchor points and curves" style={menuItemStyle}><PenToolIcon size={16} /><span>Pen</span></button>
-            </div>
-          </div>
-        )}
-      </div>
-      <button className={`btn-icon ${activeToolId === 'eraser' ? 'active' : ''}`} aria-pressed={activeToolId === 'eraser'} onClick={() => setTool('eraser')} data-tooltip="Eraser (E)" aria-label="Eraser (E)" data-label="Eraser" style={{ padding: '6px' }}>
-        <svg xmlns="http://www.w3.org/2000/svg" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="m7 21-4.3-4.3c-1-1-1-2.5 0-3.4l9.6-9.6c1-1 2.5-1 3.4 0l5.6 5.6c1 1 1 2.5 0 3.4L13 21"/><path d="M22 21H7"/><path d="m5 11 9 9"/></svg>
-      </button>
-      <button className={`btn-icon ${activeToolId === 'text' ? 'active' : ''}`} aria-pressed={activeToolId === 'text'} onClick={() => setTool('text')} data-tooltip="Text (T)" aria-label="Text (T)" data-label="Text" style={{ padding: '6px' }}>
-        <Type size={18} />
-      </button>
-      
-      <div style={{ position: 'relative' }} {...hoverProps('shape')}>
-        <button
-          className={`btn-icon ${isShape ? 'active' : ''}`}
-          aria-pressed={isShape}
-          aria-haspopup="menu"
-          aria-expanded={openMenu === 'shape'}
-          onClick={() => toggleMenu('shape')}
-          data-tooltip={openMenu === 'shape' ? undefined : 'Shapes (R)'}
-          aria-label="Shapes" data-label="Shape"
-          style={{ padding: '6px' }}
-        >
-          {armedShape ? <ShapeIcon kind={armedShape} size={18} /> : <Square size={18} />}
-        </button>
-        {openMenu === 'shape' && (
-          <div role="menu" style={{ position: 'absolute', bottom: '100%', left: '50%', transform: 'translateX(-50%)', paddingBottom: 6, zIndex: 20 }}>
-            <div className="panel-surface" style={{ display: 'flex', gap: 2, padding: 4 }}>
-              {SHAPE_KINDS.map(kind => {
-                const id = shapeToolId(kind);
-                return (
-                  <button
-                    key={kind}
-                    className={`btn-icon ${activeToolId === id ? 'active' : ''}`}
-                    aria-checked={activeToolId === id}
-                    role="menuitemradio"
-                    onClick={() => { setTool(id); setPinnedMenu(null); }}
-                    data-tooltip={SHAPE_LABELS[kind]}
-                    aria-label={SHAPE_LABELS[kind]}
-                    style={{ padding: '6px' }}
-                  >
-                    <ShapeIcon kind={kind} size={16} />
-                  </button>
-                );
-              })}
-            </div>
-          </div>
-        )}
+      {/* Navigate. Two tools that move you rather than change the board, so
+          they lead and are separated from everything that creates. */}
+      <div className="dock-group">
+        <DockButton
+          {...seatProps(SEAT.select)}
+          icon={<MousePointer2 size={18} />} label="Select" toolId="select"
+          active={activeToolId === 'select'} onClick={() => setTool('select')}
+        />
+        <DockButton
+          {...seatProps(SEAT.hand)}
+          icon={<Hand size={18} />} label="Hand" toolId="hand"
+          description="pan the board"
+          active={activeToolId === 'hand'} onClick={() => setTool('hand')}
+        />
       </div>
 
-      {/* Frames. The flyout is a size picker rather than a tool switcher: every
-          entry draws a frame, and the one you pick decides what a *click*
-          produces. Dragging always sizes it by hand, whichever is armed. */}
-      <div style={{ position: 'relative' }} {...hoverProps('frame')}>
-        <button
-          className={`btn-icon ${isFrame ? 'active' : ''}`}
-          aria-pressed={isFrame}
-          aria-haspopup="menu"
-          aria-expanded={openMenu === 'frame'}
-          onClick={() => toggleMenu('frame')}
-          data-tooltip={openMenu === 'frame' ? undefined : 'Frame (F) — a bounded region with a size'}
-          aria-label="Frame" data-label="Frame"
-          style={{ padding: '6px' }}
-        >
-          <Frame size={18} />
-        </button>
-        {openMenu === 'frame' && (
-          <div role="menu" style={{ position: 'absolute', bottom: '100%', left: '50%', transform: 'translateX(-50%)', paddingBottom: 6, zIndex: 20 }}>
-            <div className="panel-surface frame-menu">
-              <button
-                role="menuitemradio"
-                className={`btn-icon frame-menu__item ${activeToolId === 'frame' ? 'active' : ''}`}
-                aria-checked={activeToolId === 'frame'}
-                onClick={() => { setTool('frame'); setPinnedMenu(null); }}
-                aria-label="Custom frame — drag to size"
-              >
-                <span className="frame-menu__label">Custom</span>
-                <span className="frame-menu__size">drag</span>
-              </button>
-              {FRAME_PRESET_GROUPS.map((group) => (
-                <React.Fragment key={group}>
-                  <div className="frame-menu__group" role="presentation">{group}</div>
-                  {FRAME_PRESETS.filter((p) => p.group === group).map((preset) => {
-                    const id = `frame-${preset.id}`;
-                    return (
-                      <button
-                        key={preset.id}
-                        role="menuitemradio"
-                        className={`btn-icon frame-menu__item ${activeToolId === id ? 'active' : ''}`}
-                        aria-checked={activeToolId === id}
-                        onClick={() => { setTool(id); setPinnedMenu(null); }}
-                        aria-label={`${preset.label}, ${preset.width} by ${preset.height}`}
-                      >
-                        <span className="frame-menu__label">{preset.label}</span>
-                        <span className="frame-menu__size">{preset.width} × {preset.height}</span>
-                      </button>
-                    );
-                  })}
-                </React.Fragment>
-              ))}
-            </div>
-          </div>
-        )}
+      {/* Draw. Freehand and bezier live behind one button because they are the
+          same act with different precision; the eraser belongs with them. */}
+      <div className="dock-group">
+        <div {...hoverProps('pen')} className="dock-slot-wrap">
+            <DockButton
+              {...seatProps(SEAT.draw)}
+              icon={activeToolId === 'bezier-pen' ? <PenToolIcon size={18} /> : <Pen size={18} />}
+              label="Draw" active={isPen} hasMenu menuOpen={openMenu === 'pen'}
+              onClick={() => toggleMenu('pen')}
+            >
+              {openMenu === 'pen' && (
+                <Flyout title="Draw">
+                  <FlyoutItem
+                    icon={<Pen size={16} />} label="Pencil" toolId="pen"
+                    description="freehand" active={activeToolId === 'pen'}
+                    onClick={() => pick('pen')}
+                  />
+                  <FlyoutItem
+                    icon={<PenToolIcon size={16} />} label="Pen" toolId="bezier-pen"
+                    description="anchor points and curves" active={activeToolId === 'bezier-pen'}
+                    onClick={() => pick('bezier-pen')}
+                  />
+                  <NibSize label="Brush size" value={penSize} min={1} max={60} onChange={setPenSize} />
+                </Flyout>
+              )}
+            </DockButton>
+        </div>
+
+        <div {...hoverProps('eraser')} className="dock-slot-wrap">
+            <DockButton
+              {...seatProps(SEAT.eraser)}
+              icon={<Eraser size={18} />} label="Eraser" toolId="eraser"
+              description="[ and ] resize it"
+              active={activeToolId === 'eraser'} hasMenu menuOpen={openMenu === 'eraser'}
+              onClick={() => { setTool('eraser'); toggleMenu('eraser'); }}
+            >
+              {openMenu === 'eraser' && (
+                <Flyout title="Eraser">
+                  <NibSize label="Eraser size" value={eraserSize} min={4} max={200} onChange={setEraserSize} />
+                </Flyout>
+              )}
+            </DockButton>
+        </div>
       </div>
 
-      <button className={`btn-icon ${activeToolId === 'sticky' ? 'active' : ''}`} aria-pressed={activeToolId === 'sticky'} onClick={() => setTool('sticky')} data-tooltip="Sticky Note (S)" aria-label="Sticky Note (S)" data-label="Sticky" style={{ padding: '6px' }}>
-        <StickyNote size={18} />
-      </button>
-      <button className={`btn-icon ${activeToolId === 'comment' ? 'active' : ''}`} aria-pressed={activeToolId === 'comment'} onClick={() => setTool('comment')} data-tooltip="Comment (C)" aria-label="Comment (C)" data-label="Comment" style={{ padding: '6px' }}>
-        <MessageSquare size={18} />
-      </button>
-      
+      {/* Create. The old dock put seven buttons in one undifferentiated run
+          here, which is the density problem in one line: a row that long is
+          scanned rather than read, so nothing in it is found quickly. */}
+      <div className="dock-group">
+        <DockButton
+          {...seatProps(SEAT.text)}
+          icon={<Type size={18} />} label="Text" toolId="text"
+          active={activeToolId === 'text'} onClick={() => setTool('text')}
+        />
 
-      <div className="dock-divider" />
-      <button className={`btn-icon ${activeToolId === 'image' ? 'active' : ''}`} aria-pressed={activeToolId === 'image'} onClick={() => setTool('image')} data-tooltip="Image" aria-label="Image" data-label="Image" style={{ padding: '6px' }}>
-        <ImageIcon size={18} />
-      </button>
-      <button className={`btn-icon ${activeToolId === 'audio' ? 'active' : ''}`} aria-pressed={activeToolId === 'audio'} onClick={() => setTool('audio')} data-tooltip="Voice Note" aria-label="Voice Note" data-label="Voice" style={{ padding: '6px' }}>
-        <Mic size={18} />
-      </button>
-      <div className="dock-divider" />
-      {/* Forces. No longer gated on a switch elsewhere in the UI: this used to
-          sit dimmed at 40% opacity with a tooltip telling you to go and turn
-          Physics on in the header first. A disabled control whose enabling
-          condition lives in another corner of the screen is a dead end —
-          reaching for a force tool is itself the decision to use force. */}
-      <div
-        style={{ position: 'relative' }}
-        {...hoverProps('forces')}
-      >
-        <button
-          className={`btn-icon ${isForceTool(activeToolId) ? 'active' : ''}`}
-          aria-pressed={isForceTool(activeToolId)}
-          aria-haspopup="menu"
-          aria-expanded={openMenu === 'forces'}
-          // Click opens the menu rather than silently selecting Pull. The five
-          // forces used to be reachable *only* by hovering — undiscoverable
-          // with a mouse and completely unreachable on a touch device, where
-          // you could press the icon but never see what was behind it.
-          onClick={() => toggleMenu('forces')}
-          onKeyDown={(e) => {
-            if (e.key === 'Escape') setPinnedMenu(null);
-          }}
-          data-tooltip={openMenu === 'forces' ? undefined : 'Forces — push, pull and drop objects'}
-          aria-label="Forces" data-label="Forces"
-          style={{ padding: '6px' }}
-        >
-          <Sparkles size={18} />
-        </button>
-        {openMenu === 'forces' && (
-          <div role="menu" style={{ position: 'absolute', bottom: '100%', left: '50%', transform: 'translateX(-50%)', paddingBottom: 4, zIndex: 20 }}>
-            <div className="panel-surface" style={{ display: 'flex', gap: 2, padding: 4 }}>
-              {FORCE_IDS.map(id => (
-                <button
-                  key={id}
-                  role="menuitemradio"
-                  className={`btn-icon ${activeToolId === id ? 'active' : ''}`}
-                  aria-checked={activeToolId === id}
-                  // Naming each force next to its icon, because five abstract
-                  // glyphs in a row tell you nothing about which one pulls.
-                  onClick={() => { setTool(id); setPinnedMenu(null); }}
-                  data-tooltip={FORCE_SPECS[id].hint}
-                  aria-label={`${FORCE_SPECS[id].label} — ${FORCE_SPECS[id].hint}`}
-                  style={menuItemStyle}
-                >
-                  {FORCE_ICONS[id]}
-                  <span>{FORCE_SPECS[id].label}</span>
-                </button>
-              ))}
-            </div>
-          </div>
-        )}
+        <div {...hoverProps('shape')} className="dock-slot-wrap">
+            <DockButton
+              {...seatProps(SEAT.shape)}
+              icon={armedShape ? <ShapeIcon kind={armedShape} size={18} /> : <Square size={18} />}
+              label="Shape" toolId="shape" active={isShape}
+              hasMenu menuOpen={openMenu === 'shape'} onClick={() => toggleMenu('shape')}
+            >
+              {openMenu === 'shape' && (
+                <Flyout title="Shapes">
+                  <div className="dock-flyout__grid">
+                    {SHAPE_KINDS.map(kind => {
+                      const id = shapeToolId(kind);
+                      return (
+                        <button
+                          key={kind}
+                          type="button"
+                          role="menuitemradio"
+                          aria-checked={activeToolId === id}
+                          className={`btn-icon dock-tile ${activeToolId === id ? 'active' : ''}`}
+                          onClick={() => pick(id)}
+                          data-tooltip={SHAPE_LABELS[kind]}
+                          aria-label={SHAPE_LABELS[kind]}
+                        >
+                          <ShapeIcon kind={kind} size={17} />
+                        </button>
+                      );
+                    })}
+                  </div>
+                </Flyout>
+              )}
+            </DockButton>
+        </div>
+
+        {/* Frames. The flyout is a size picker rather than a tool switcher:
+            every entry draws a frame, and the one you pick decides what a
+            *click* produces. Dragging always sizes it by hand. */}
+        <div {...hoverProps('frame')} className="dock-slot-wrap">
+            <DockButton
+              {...seatProps(SEAT.frame)}
+              icon={<Frame size={18} />} label="Frame" toolId="frame"
+              description="a bounded region with a size"
+              active={isFrame} hasMenu menuOpen={openMenu === 'frame'}
+              onClick={() => toggleMenu('frame')}
+            >
+              {openMenu === 'frame' && (
+                <Flyout title="Frame size" wide>
+                  <div className="dock-flyout__scroll">
+                    <FlyoutItem
+                      icon={<Frame size={15} />} label="Custom" detail="drag"
+                      active={activeToolId === 'frame'} onClick={() => pick('frame')}
+                      description="drag to size"
+                    />
+                    {FRAME_PRESET_GROUPS.map((group) => (
+                      <React.Fragment key={group}>
+                        <div className="dock-flyout__group" role="presentation">{group}</div>
+                        {FRAME_PRESETS.filter((p) => p.group === group).map((preset) => (
+                          <FlyoutItem
+                            key={preset.id}
+                            icon={<Frame size={15} />}
+                            label={preset.label}
+                            detail={`${preset.width} × ${preset.height}`}
+                            active={activeToolId === `frame-${preset.id}`}
+                            onClick={() => pick(`frame-${preset.id}`)}
+                            description={`${preset.width} by ${preset.height}`}
+                          />
+                        ))}
+                      </React.Fragment>
+                    ))}
+                  </div>
+                </Flyout>
+              )}
+            </DockButton>
+        </div>
+
+        {/* Connector. Sits with the creation tools rather than with the shapes,
+            because what it makes is a *relationship* — it needs two objects to
+            already exist and adds nothing on its own. */}
+        <DockButton
+          {...seatProps(SEAT.connector)}
+          icon={<Spline size={18} />} label="Connect" toolId="connector"
+          description="join two objects"
+          active={activeToolId === 'connector'} onClick={() => setTool('connector')}
+        />
+        <DockButton
+          {...seatProps(SEAT.sticky)}
+          icon={<StickyNote size={18} />} label="Sticky" toolId="sticky"
+          active={activeToolId === 'sticky'} onClick={() => setTool('sticky')}
+        />
+        <DockButton
+          {...seatProps(SEAT.comment)}
+          icon={<MessageSquare size={18} />} label="Comment" toolId="comment"
+          active={activeToolId === 'comment'} onClick={() => setTool('comment')}
+        />
+      </div>
+
+      {/* Place. Media that comes from outside the canvas rather than being
+          drawn on it. */}
+      <div className="dock-group">
+        <DockButton
+          {...seatProps(SEAT.image)}
+          icon={<ImageIcon size={18} />} label="Image" toolId="image"
+          active={activeToolId === 'image'} onClick={() => setTool('image')}
+        />
+        <DockButton
+          {...seatProps(SEAT.audio)}
+          icon={<Mic size={18} />} label="Voice" toolId="audio"
+          description="record a spoken note"
+          active={activeToolId === 'audio'} onClick={() => setTool('audio')}
+        />
+      </div>
+
+      {/* Force. Its own group: it acts on what is already there rather than
+          adding anything, which is a different kind of verb from every other
+          button on the dock. */}
+      <div className="dock-group">
+        <div {...hoverProps('forces')} className="dock-slot-wrap">
+            <DockButton
+              {...seatProps(SEAT.forces)}
+              icon={<Sparkles size={18} />} label="Forces"
+              description="push, pull and drop objects"
+              active={isForceTool(activeToolId)} hasMenu menuOpen={openMenu === 'forces'}
+              // Click opens the menu rather than silently selecting Pull. The
+              // five forces used to be reachable *only* by hovering —
+              // undiscoverable with a mouse and completely unreachable on a
+              // touch device, where you could press the icon but never see
+              // what was behind it.
+              onClick={() => toggleMenu('forces')}
+            >
+              {openMenu === 'forces' && (
+                <Flyout title="Forces">
+                  {FORCE_IDS.map(id => (
+                    <FlyoutItem
+                      key={id}
+                      icon={FORCE_ICONS[id]}
+                      label={FORCE_SPECS[id].label}
+                      // Naming each force next to its icon, because five
+                      // abstract glyphs in a row tell you nothing about which
+                      // one pulls.
+                      description={FORCE_SPECS[id].hint}
+                      active={activeToolId === id}
+                      onClick={() => pick(id)}
+                    />
+                  ))}
+                </Flyout>
+              )}
+            </DockButton>
+        </div>
       </div>
     </div>
   );

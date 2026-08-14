@@ -1,5 +1,6 @@
 import { nanoid } from 'nanoid';
 import type { Tool, ToolContext } from './Tool';
+import { gridSnap } from '../interaction/gridSnap';
 import * as React from 'react';
 import { Path, Circle, Line } from 'react-konva';
 import { ThemeService } from '../ThemeService';
@@ -89,7 +90,9 @@ export class BezierPenTool implements Tool {
   }
 
   onPointerDown(ctx: ToolContext, e: any) {
-    const pos = this.getPointerPos(ctx, e);
+    const raw = this.getPointerPos(ctx, e);
+    if (!raw) return;
+    const pos = this.constrain(ctx, raw, Boolean(e.evt?.shiftKey));
     this.isMouseDown = true;
 
     if (!this.isActive) {
@@ -109,7 +112,11 @@ export class BezierPenTool implements Tool {
   }
 
   onPointerMove(ctx: ToolContext, e: any) {
-    const pos = this.getPointerPos(ctx, e);
+    const raw = this.getPointerPos(ctx, e);
+    if (!raw) return;
+    // The preview has to show the constrained point, or the line you are
+    // aiming with is not the line you will get.
+    const pos = this.constrain(ctx, raw, Boolean(e.evt?.shiftKey) && !this.isMouseDown);
     this.previewPos = pos;
 
     if (this.isActive && this.isMouseDown && e.evt?.buttons === 1) {
@@ -138,6 +145,18 @@ export class BezierPenTool implements Tool {
       e.preventDefault();
       this.reset();
       ctx.setOverlayState?.(null);
+    } else if (e.key === 'Backspace' || e.key === 'Delete') {
+      // Undo the last anchor rather than the whole path. Misplacing one point
+      // in a ten-point outline used to mean Escape and start again, which is
+      // the difference between a tool you draw with and one you fight.
+      e.preventDefault();
+      this.anchors.pop();
+      if (this.anchors.length === 0) {
+        this.reset();
+        ctx.setOverlayState?.(null);
+      } else {
+        this.updateOverlay(ctx);
+      }
     }
   }
 
@@ -249,11 +268,45 @@ export class BezierPenTool implements Tool {
   }
 
   private getPointerPos(ctx: ToolContext, e: any) {
-    const stage = e.target.getStage();
-    const pos = stage.getPointerPosition();
+    // Guarded, like every other tool here. `getPointerPosition()` returns null
+    // whenever the pointer is not over the stage — which happens routinely on
+    // the event that leaves it — and this dereferenced `.x` straight into a
+    // TypeError.
+    const stage = e.target?.getStage?.();
+    const pos = stage?.getPointerPosition?.();
+    if (!pos) return null;
     return {
       x: (pos.x - ctx.camera.x) / ctx.camera.zoom,
       y: (pos.y - ctx.camera.y) / ctx.camera.zoom
     };
+  }
+
+  /**
+   * Where the next anchor actually lands.
+   *
+   * Shift locks the segment to 45 degrees from the previous anchor, which is
+   * how every pen tool draws a clean horizontal, vertical or diagonal run —
+   * and the reason people can lay out a flowchart outline by hand at all. Grid
+   * snapping applies afterwards, matching the shape and text tools.
+   */
+  private constrain(ctx: ToolContext, pos: { x: number; y: number }, shift: boolean) {
+    let { x, y } = pos;
+    const last = this.anchors[this.anchors.length - 1];
+
+    if (shift && last) {
+      const dx = x - last.x;
+      const dy = y - last.y;
+      const angle = Math.round(Math.atan2(dy, dx) / (Math.PI / 4)) * (Math.PI / 4);
+      const distance = Math.hypot(dx, dy);
+      x = last.x + Math.cos(angle) * distance;
+      y = last.y + Math.sin(angle) * distance;
+    }
+
+    if (gridSnap.shouldSnap()) {
+      const snapped = gridSnap.snapPoint(x, y);
+      x = snapped.x;
+      y = snapped.y;
+    }
+    return { x, y };
   }
 }

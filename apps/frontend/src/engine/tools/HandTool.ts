@@ -49,16 +49,41 @@ export class HandTool implements Tool {
   onPointerUp(ctx: ToolContext, _e: any) {
     this.isDragging = false;
 
+    /**
+     * Momentum, decayed by elapsed time rather than by frame.
+     *
+     * This applied a flat `velocity *= 0.92` once per frame and advanced the
+     * camera by an assumed 16ms — so the decay was tied to the refresh rate,
+     * not to time. On a 144Hz display the same flick received 2.4× as many
+     * multiplications per second and died in roughly a third of the distance;
+     * on a throttled tab it sailed. Two people flicking identically got
+     * different results for no reason either could see.
+     *
+     * `RETAINED_PER_SECOND` is the fraction of speed surviving one second, so
+     * `pow(retained, seconds)` gives the same curve at any frame rate. The
+     * value matches what 0.92-per-frame felt like at 60Hz, so the tuning that
+     * was already there is preserved.
+     */
+    const RETAINED_PER_SECOND = 0.0063;
+    const STOP_BELOW = 0.05;
+    let lastFrame = performance.now();
+
     const applyMomentum = () => {
       if (this.isDragging) return;
 
-      const friction = 0.92;
-      this.velocity.x *= friction;
-      this.velocity.y *= friction;
+      const now = performance.now();
+      // Clamped: a backgrounded tab returns with a gap of seconds, and an
+      // unclamped step would teleport the camera on the frame it resumes.
+      const dt = Math.min(0.05, Math.max(0.001, (now - lastFrame) / 1000));
+      lastFrame = now;
 
-      if (Math.abs(this.velocity.x) > 0.05 || Math.abs(this.velocity.y) > 0.05) {
-        // Assume dt of 16ms for animation frame
-        ctx.camera.panBy(this.velocity.x * 16, this.velocity.y * 16);
+      const decay = Math.pow(RETAINED_PER_SECOND, dt);
+      this.velocity.x *= decay;
+      this.velocity.y *= decay;
+
+      if (Math.abs(this.velocity.x) > STOP_BELOW || Math.abs(this.velocity.y) > STOP_BELOW) {
+        // Velocity is in px per ms, so the step is velocity × elapsed ms.
+        ctx.camera.panBy(this.velocity.x * dt * 1000, this.velocity.y * dt * 1000);
         this.animationFrameId = requestAnimationFrame(applyMomentum);
       } else {
         this.animationFrameId = null;

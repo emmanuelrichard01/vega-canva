@@ -28,7 +28,7 @@ export class CanvasEngine {
     engineEvents.on('CameraChanged', this.requestSpatialQuery);
     engineEvents.on('ObjectMoved', this.requestSpatialQuery);
     engineEvents.on('ObjectAdded', this.onObjectAdded);
-    engineEvents.on('ObjectRemoved', this.requestSpatialQuery);
+    engineEvents.on('ObjectRemoved', this.onObjectRemoved);
   }
 
   private needsSpatialQuery = true;
@@ -36,11 +36,43 @@ export class CanvasEngine {
     this.needsSpatialQuery = true;
   };
 
-  // When an object is added, immediately make it visible without waiting for the full spatial
-  // query cycle. This prevents the one-frame flicker where an object exists but isn't shown.
+  /**
+   * Objects added but not yet seen coming back from the spatial query.
+   *
+   * The optimistic add below was already here, to avoid the one-frame flicker
+   * where an object exists but is not drawn. It did not survive: the very next
+   * spatial query builds a **fresh** set from the index and assigns it over the
+   * top, so unless the index happened to have the node within that one frame,
+   * the object was dropped straight back out of the visible set.
+   *
+   * On a board of one or two objects nothing showed, because `Canvas` has a
+   * guard that renders everything when culling loses more than half the
+   * document. Past three or four objects that guard stops firing, and a newly
+   * created object could simply never appear — while the document, the layers
+   * panel and the activity feed all agreed it existed.
+   *
+   * Holding the id until the query itself returns it closes the window
+   * properly, rather than widening the guard and hoping.
+   */
+  private pendingIds = new Set<string>();
+
+  /**
+   * A node deleted before it was ever indexed would otherwise stay pinned
+   * visible for the life of the session, because the query can never report an
+   * id that no longer exists.
+   */
+  private onObjectRemoved = (node: any) => {
+    this.needsSpatialQuery = true;
+    if (node?.id) {
+      this.pendingIds.delete(node.id);
+      this.visibleSet.delete(node.id);
+    }
+  };
+
   private onObjectAdded = (node: any) => {
     this.needsSpatialQuery = true;
     if (node?.id) {
+      this.pendingIds.add(node.id);
       this.visibleSet.add(node.id);
       engineEvents.emit('VisibleSetUpdated', Array.from(this.visibleSet));
     }
@@ -122,6 +154,20 @@ export class CanvasEngine {
       }
       
       const newVisibleSet = new Set<string>(visibleNodes.map((n: any) => n.id));
+
+      /**
+       * Carry anything still waiting to be indexed.
+       *
+       * An id leaves `pendingIds` the moment the query reports it — at which
+       * point the index is authoritative for it and normal culling applies, so
+       * a new object placed off-screen is not pinned visible forever.
+       */
+      if (this.pendingIds.size > 0) {
+        for (const id of this.pendingIds) {
+          if (newVisibleSet.has(id)) this.pendingIds.delete(id);
+          else newVisibleSet.add(id);
+        }
+      }
       
       // Fast Set equality check
       let hasChanged = false;

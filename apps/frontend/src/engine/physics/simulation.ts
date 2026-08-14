@@ -1,6 +1,6 @@
 import Matter from 'matter-js';
 import { resolveMaterial } from '../../utils/behaviorSystem';
-import { FORCE_SPECS, type ForceId } from './forces';
+import { FORCE_SPECS, falloffAt, type FalloffId, type ForceId } from './forces';
 
 /**
  * The physics simulation, with nothing else attached to it.
@@ -320,17 +320,37 @@ export class PhysicsSimulation {
     x: number,
     y: number,
     mode: ForceId,
-    options: { scale?: number; skip?: Set<string>; dx?: number; dy?: number } = {}
+    options: {
+      scale?: number;
+      skip?: Set<string>;
+      dx?: number;
+      dy?: number;
+      /** Multiplier on the force's own radius — the "effect area" control. */
+      radiusScale?: number;
+      /** How strength fades from centre to edge. */
+      falloff?: FalloffId;
+      /**
+       * When set, only these objects are affected.
+       *
+       * What makes force usable on a board that already has work on it: without
+       * it, every force is all-or-nothing over everything within reach, so
+       * there is no way to tidy one cluster without disturbing its neighbours.
+       */
+      only?: Set<string>;
+    } = {}
   ): string[] {
     const spec = FORCE_SPECS[mode];
     if (!spec) return [];
     const scale = options.scale ?? 1;
     const skip = options.skip;
-    const radius = spec.radius;
+    const only = options.only;
+    const curve = options.falloff ?? 'linear';
+    const radius = spec.radius * (options.radiusScale ?? 1);
     const woken: string[] = [];
 
     this.bodies.forEach((body, id) => {
       if (skip?.has(id)) return;
+      if (only && !only.has(id)) return;
 
       const dx = body.position.x - x;
       const dy = body.position.y - y;
@@ -341,9 +361,20 @@ export class PhysicsSimulation {
       // Never scale by a non-finite mass; that is what produced NaN positions.
       const mass = finite(body.mass) ? body.mass : (body.plugin?.massProps?.mass ?? 1);
 
+      /**
+       * Directional fields fade with distance too.
+       *
+       * Wind and Drop used to apply their full strength anywhere inside the
+       * radius, whatever the falloff, so both had a hard rim you could feel:
+       * an object just inside the ring got the full push and one a pixel
+       * outside got none. They are fields like the others and behave like them.
+       */
+      const fade = falloffAt(curve, dist, radius);
+      if (fade <= 0) return;
+
       if (mode === 'wind') {
         if (this.activate(id, body)) woken.push(id);
-        const force = spec.strength * scale * mass;
+        const force = fade * spec.strength * scale * mass;
         Matter.Body.applyForce(body, body.position, {
           x: (options.dx ?? 0) * force,
           y: (options.dy ?? 0) * force,
@@ -353,7 +384,10 @@ export class PhysicsSimulation {
 
       if (mode === 'gravity') {
         if (this.activate(id, body)) woken.push(id);
-        Matter.Body.applyForce(body, body.position, { x: 0, y: spec.strength * scale * mass });
+        Matter.Body.applyForce(body, body.position, {
+          x: 0,
+          y: fade * spec.strength * scale * mass,
+        });
         return;
       }
 
@@ -362,8 +396,23 @@ export class PhysicsSimulation {
       if (dist <= 10) return;
 
       if (this.activate(id, body)) woken.push(id);
-      const falloff = (radius - dist) / radius;
-      const force = falloff * spec.strength * scale * mass;
+      const force = fade * spec.strength * scale * mass;
+
+      if (mode === 'swirl') {
+        /**
+         * The radial direction turned through 90°: `(-dy, dx)` normalised.
+         *
+         * Purely tangential, with no inward component at all, so objects orbit
+         * rather than spiral in. Matter's own drag is what eventually settles
+         * them; adding a pull here as well would make Swirl a slower Pull.
+         */
+        Matter.Body.applyForce(body, body.position, {
+          x: (-dy / dist) * force,
+          y: (dx / dist) * force,
+        });
+        return;
+      }
+
       const sign = mode === 'magnet' ? -1 : 1;
       Matter.Body.applyForce(body, body.position, {
         x: sign * (dx / dist) * force,

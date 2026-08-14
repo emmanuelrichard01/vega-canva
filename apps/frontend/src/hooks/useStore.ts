@@ -1,8 +1,17 @@
 import { create } from 'zustand';
 import { normalizeNode, objectsMap, observeNodes, provider, scheduleMigration, updateNode } from '../engine/document';
-import type { AnyNode } from '../engine/model/schema';
+import { STICKY_THEMES, type AnyNode, type StickyTheme } from '../engine/model/schema';
 import { sceneGraph } from '../engine/SceneGraph';
-import { DEFAULT_FORCE_SCALE, MAX_FORCE_SCALE, MIN_FORCE_SCALE } from '../engine/physics/forces';
+import {
+  DEFAULT_FORCE_RADIUS_SCALE,
+  DEFAULT_FORCE_SCALE,
+  FALLOFF_IDS,
+  MAX_FORCE_RADIUS_SCALE,
+  MAX_FORCE_SCALE,
+  MIN_FORCE_RADIUS_SCALE,
+  MIN_FORCE_SCALE,
+  type FalloffId,
+} from '../engine/physics/forces';
 
 interface StoreState {
   /** Latest snapshot of every node, keyed by id. */
@@ -48,9 +57,52 @@ interface StoreState {
   physicsEnabled: boolean;
   setPhysicsEnabled: (val: boolean) => void;
 
+  /**
+   * Nib sizes for the two tools that draw with one.
+   *
+   * In the store rather than as statics on the tool classes, for two reasons:
+   * a static cannot re-render the control that shows it, and these are working
+   * preferences that should survive a reload the way the theme and the grid
+   * setting do.
+   */
+  penSize: number;
+  setPenSize: (val: number) => void;
+  eraserSize: number;
+  setEraserSize: (val: number) => void;
+
   /** User-facing strength multiplier applied to every force tool. */
   forceScale: number;
   setForceScale: (val: number) => void;
+
+  /**
+   * The colour a new sticky note gets.
+   *
+   * Remembered rather than cycled. The tool used to walk a fixed list on every
+   * placement, so three notes dropped in a row came out three different
+   * colours — which makes a deliberate colour code impossible and is the
+   * opposite of what the Tab-chain already does, where a chained note inherits
+   * the colour of the one it came from precisely so a train of thought looks
+   * like one.
+   */
+  stickyTheme: StickyTheme;
+  setStickyTheme: (theme: StickyTheme) => void;
+
+  /** Multiplier on each force's own radius — the size of the effect area. */
+  forceRadiusScale: number;
+  setForceRadiusScale: (val: number) => void;
+
+  /** How a force's strength fades from the centre of its field to the edge. */
+  forceFalloff: FalloffId;
+  setForceFalloff: (val: FalloffId) => void;
+
+  /**
+   * Restrict force to the current selection.
+   *
+   * Off by default, because force over everything is what the tool obviously
+   * does and a mode that silently limits it would look broken.
+   */
+  forceSelectionOnly: boolean;
+  setForceSelectionOnly: (val: boolean) => void;
 
   /**
    * Whether a force tool is armed. Lives here rather than being threaded down
@@ -172,17 +224,72 @@ export const useStore = create<StoreState>((set) => ({
   },
   zenMode: false,
   setZenMode: (val) => set({ zenMode: val }),
-  physicsEnabled: loadBoolPref('vega_physics_enabled', true),
+  // Off unless asked for. Throw changes what releasing a drag *means* —
+  // the object keeps going instead of staying where you put it — and that is
+  // a surprise to discover mid-gesture on a board you are trying to arrange.
+  physicsEnabled: loadBoolPref('vega_physics_enabled', false),
   setPhysicsEnabled: (val) => {
     window.localStorage.setItem('vega_physics_enabled', String(val));
     set({ physicsEnabled: val });
   },
+  penSize: loadNumberPref('vega_pen_size', 6, 1, 60),
+  setPenSize: (val) => {
+    const clamped = Math.min(60, Math.max(1, val));
+    window.localStorage.setItem('vega_pen_size', String(clamped));
+    set({ penSize: clamped });
+  },
+  eraserSize: loadNumberPref('vega_eraser_size', 15, 4, 200),
+  setEraserSize: (val) => {
+    const clamped = Math.min(200, Math.max(4, val));
+    window.localStorage.setItem('vega_eraser_size', String(clamped));
+    set({ eraserSize: clamped });
+  },
+
   forceScale: loadNumberPref('vega_force_scale', DEFAULT_FORCE_SCALE, MIN_FORCE_SCALE, MAX_FORCE_SCALE),
   setForceScale: (val) => {
     const clamped = Math.min(MAX_FORCE_SCALE, Math.max(MIN_FORCE_SCALE, val));
     window.localStorage.setItem('vega_force_scale', String(clamped));
     set({ forceScale: clamped });
   },
+  stickyTheme: ((): StickyTheme => {
+    const stored = window.localStorage.getItem('vega_sticky_theme');
+    // Validated rather than cast: `localStorage` is user-writable, and an
+    // unknown theme would reach the renderer's lookup table and fall through
+    // to a default on every paint instead of failing where it can be seen.
+    return STICKY_THEMES.includes(stored as StickyTheme) ? (stored as StickyTheme) : 'yellow';
+  })(),
+  setStickyTheme: (theme) => {
+    window.localStorage.setItem('vega_sticky_theme', theme);
+    set({ stickyTheme: theme });
+  },
+
+  forceRadiusScale: loadNumberPref(
+    'vega_force_radius_scale',
+    DEFAULT_FORCE_RADIUS_SCALE,
+    MIN_FORCE_RADIUS_SCALE,
+    MAX_FORCE_RADIUS_SCALE
+  ),
+  setForceRadiusScale: (val) => {
+    const clamped = Math.min(MAX_FORCE_RADIUS_SCALE, Math.max(MIN_FORCE_RADIUS_SCALE, val));
+    window.localStorage.setItem('vega_force_radius_scale', String(clamped));
+    set({ forceRadiusScale: clamped });
+  },
+
+  forceFalloff: ((): FalloffId => {
+    const stored = window.localStorage.getItem('vega_force_falloff');
+    // Validated rather than cast: `localStorage` is user-writable and a bad
+    // value here would reach `falloffAt`, which would silently fall through to
+    // its default on every frame instead of failing where it could be seen.
+    return FALLOFF_IDS.includes(stored as FalloffId) ? (stored as FalloffId) : 'smooth';
+  })(),
+  setForceFalloff: (val) => {
+    window.localStorage.setItem('vega_force_falloff', val);
+    set({ forceFalloff: val });
+  },
+
+  forceSelectionOnly: false,
+  setForceSelectionOnly: (val) => set({ forceSelectionOnly: val }),
+
   forceToolActive: false,
   setForceToolActive: (val) => set({ forceToolActive: val }),
   layoutSnapshot: null,

@@ -511,3 +511,76 @@ export function materialiseAt(
   }
   return { doc, appliedThrough: target };
 }
+
+/**
+ * One column of the replay bar's activity strip.
+ *
+ * `weight` is 0..1 against the busiest column, so the strip can be drawn
+ * without the caller knowing anything about the rest of the session.
+ */
+export interface ActivityBucket {
+  /** Moments that fell in this slice of wall-clock time. */
+  count: number;
+  /** Height to draw, relative to the busiest bucket. */
+  weight: number;
+  /** Colour of whoever authored most of it, or null for an empty slice. */
+  color: string | null;
+}
+
+/**
+ * Divide the session into equal slices of **wall-clock time** and count the
+ * moments in each.
+ *
+ * ## Why this exists
+ *
+ * The replay bar drew one dot per moment, positioned at `i / (count - 1)` —
+ * evenly spaced *by index*. Its own comment claimed the ticks showed "where the
+ * session was busy instead of spacing steps evenly", which is exactly what
+ * index spacing cannot show: fifty edits in one frantic minute and fifty spread
+ * over an afternoon produce an identical row of evenly spaced dots.
+ *
+ * Time is the axis that answers the question, so the strip uses time and the
+ * scrub track keeps index spacing — which is the right axis for *navigating*,
+ * since it makes every moment equally reachable no matter when it happened.
+ * Two axes, each doing the thing it is good at, rather than one doing neither.
+ *
+ * A session with no elapsed time — everything in the same millisecond, or a
+ * single moment — spreads evenly rather than piling into bucket zero, because
+ * a strip with one full bar at the far left reads as a rendering fault.
+ */
+export function activityBuckets(moments: Moment[], count: number): ActivityBucket[] {
+  const empty = (): ActivityBucket[] =>
+    new Array(Math.max(0, count)).fill(null).map(() => ({ count: 0, weight: 0, color: null }));
+
+  if (count <= 0 || moments.length === 0) return empty();
+
+  const first = moments[0].at;
+  const last = moments[moments.length - 1].at;
+  const span = last - first;
+
+  const buckets = empty();
+  /** Author tallies per bucket, so each column can name its majority. */
+  const tallies: Array<Map<string, number>> = buckets.map(() => new Map());
+
+  moments.forEach((moment, i) => {
+    const fraction = span > 0 ? (moment.at - first) / span : i / Math.max(1, moments.length - 1);
+    // The final moment lands exactly on 1 and would index one past the end.
+    const slot = Math.min(count - 1, Math.max(0, Math.floor(fraction * count)));
+    buckets[slot].count += 1;
+    const tally = tallies[slot];
+    tally.set(moment.authorColor, (tally.get(moment.authorColor) ?? 0) + 1);
+  });
+
+  const busiest = Math.max(...buckets.map((b) => b.count));
+  buckets.forEach((bucket, i) => {
+    bucket.weight = busiest > 0 ? bucket.count / busiest : 0;
+    let best: string | null = null;
+    let bestN = 0;
+    tallies[i].forEach((n, color) => {
+      if (n > bestN) { bestN = n; best = color; }
+    });
+    bucket.color = best;
+  });
+
+  return buckets;
+}

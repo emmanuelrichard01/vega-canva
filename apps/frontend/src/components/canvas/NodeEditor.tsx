@@ -2,6 +2,7 @@ import React, { useEffect, useState } from 'react';
 import { Html } from 'react-konva-utils';
 import { cameraSystem } from '../../engine/CameraSystem';
 import { engineEvents } from '../../engine/EventBus';
+import { textEditing } from '../../engine/interaction/textEditing';
 import { DEFAULT_TYPOGRAPHY, type TextBearingNode } from '../../engine/model/schema';
 import { domTextStyle } from './renderers/shared';
 import { STICKY_PADDING, THEMES } from './renderers/StickyRenderer';
@@ -31,12 +32,80 @@ interface Props {
  * how sticky editing ended up writing to a different field than the sticky
  * renderer read.
  */
+/**
+ * How long after opening a blur is treated as part of the creating gesture.
+ *
+ * Comfortably longer than the press-to-release of a normal click, and far
+ * shorter than any deliberate "I have decided not to write anything".
+ */
+const FOCUS_GRACE_MS = 600;
+
+/** Enough for the gesture's own blur, not enough to trap the caret. */
+const MAX_FOCUS_RECOVERIES = 2;
+
 export const NodeEditor: React.FC<Props> = ({ node, onCommit, onCancel }) => {
   const [value, setValue] = useState(node.text ?? '');
   const [, forceReposition] = useState(0);
   const cancelledRef = React.useRef(false);
   const chainRef = React.useRef(false);
+  const textareaRef = React.useRef<HTMLTextAreaElement>(null);
+
+  /**
+   * When this editor opened, and how many spurious blurs it has shrugged off.
+   *
+   * ## The bug this exists for
+   *
+   * Placing a sticky created the note on **pointerdown**, and the note is
+   * discarded again if its editor closes while still empty — which is right,
+   * because an empty note is a coloured square pretending to be content.
+   *
+   * But a real click is not instantaneous. Roughly a tenth of a second passes
+   * between pressing and releasing, and that is long enough for React to mount
+   * this editor and `autoFocus` to take the caret. The **pointerup** then lands
+   * on the canvas underneath, focus leaves the textarea, `onBlur` fires, the
+   * value is still empty — and the note the user just placed is deleted before
+   * they could type a character. The activity feed had already announced it,
+   * so the board reported adding a note that was not there.
+   *
+   * It is timing-dependent, which is why it looked intermittent and why
+   * synthetic events never reproduced it: dispatching pointerdown and pointerup
+   * in the same tick beats the editor to the mount, so no blur ever happens.
+   *
+   * A blur inside this window, with nothing typed, is the tail of the gesture
+   * that created the note rather than a decision to abandon it. The caret is
+   * taken back instead of the note being thrown away.
+   */
+  const openedAtRef = React.useRef(Date.now());
+  const recoveredRef = React.useRef(0);
   const sizeRef = React.useRef({ width: node.width, height: node.height });
+  /**
+   * The box's size *while it is being typed into*.
+   *
+   * The overlay's own box was `node.width * zoom` — the committed width, which
+   * does not change until you stop editing. So an auto-width box, whose entire
+   * definition is "grows with the text", did not grow: it measured itself into
+   * a ref, kept that to itself, and let the words run out of a container that
+   * stayed exactly as wide as it started. An auto-height box had the same
+   * problem downward.
+   *
+   * State rather than the ref because this has to re-render the thing it
+   * describes; the ref stays, because the commit reads it and must not depend
+   * on a render having happened.
+   */
+  const [liveSize, setLiveSize] = React.useState({ width: node.width, height: node.height });
+
+  // A different node in the same editor starts from its own size.
+  React.useEffect(() => {
+    sizeRef.current = { width: node.width, height: node.height };
+    setLiveSize({ width: node.width, height: node.height });
+  }, [node.id, node.width, node.height]);
+
+  // Announced so the rest of the canvas can react — the transform handles in
+  // particular, which must not sit on top of the words being typed.
+  useEffect(() => {
+    textEditing.begin(node.id);
+    return () => textEditing.end(node.id);
+  }, [node.id]);
 
   // Nothing else forces a re-render while the camera moves, so without this
   // the overlay would stay put while the canvas panned beneath it.
@@ -47,8 +116,33 @@ export const NodeEditor: React.FC<Props> = ({ node, onCommit, onCancel }) => {
   }, []);
 
   const zoom = cameraSystem.zoom;
-  const screenX = node.x * zoom + cameraSystem.x;
-  const screenY = node.y * zoom + cameraSystem.y;
+
+  /**
+   * Where the stage sits on the page.
+   *
+   * The overlay is `position: fixed`, so its coordinates are **viewport**
+   * coordinates — but `cameraSystem.x/y` are **stage** coordinates, and the
+   * stage does not start at the top-left of the window: the header is above it
+   * and the ruler is to its left, putting its origin at roughly (22, 74).
+   *
+   * Those two frames were being used interchangeably, so the editor appeared
+   * up and to the left of the object it belonged to — the caret floating on
+   * bare canvas instead of sitting inside the note. Anything that moves the
+   * stage's origin (collapsing a panel, hiding the rulers, resizing the
+   * window) changed the size of the error, which is why it looked erratic.
+   *
+   * Read on every render rather than cached: this component already
+   * re-renders on `CameraChanged`, and the value is one `getBoundingClientRect`
+   * on a single element, only while something is actually being typed into.
+   */
+  const stageOrigin = (() => {
+    const el = document.querySelector('.konvajs-content');
+    const rect = el?.getBoundingClientRect();
+    return { left: rect?.left ?? 0, top: rect?.top ?? 0 };
+  })();
+
+  const screenX = stageOrigin.left + node.x * zoom + cameraSystem.x;
+  const screenY = stageOrigin.top + node.y * zoom + cameraSystem.y;
 
   const isSticky = node.type === 'sticky';
   const padding = isSticky ? STICKY_PADDING * zoom : 0;
@@ -105,6 +199,26 @@ export const NodeEditor: React.FC<Props> = ({ node, onCommit, onCancel }) => {
       onCancel();
       return;
     }
+
+    /**
+     * Take the caret back rather than commit an empty note out of existence.
+     *
+     * Bounded twice over — a short window, and a retry cap — so this can never
+     * become an editor that refuses to close. Past either bound a blur means
+     * what it has always meant.
+     */
+    if (
+      !value.trim() &&
+      recoveredRef.current < MAX_FOCUS_RECOVERIES &&
+      Date.now() - openedAtRef.current < FOCUS_GRACE_MS
+    ) {
+      recoveredRef.current += 1;
+      // Deferred to the next frame: focusing from inside the blur handler is
+      // re-entrant and browsers may discard it while the old focus is still
+      // being torn down.
+      requestAnimationFrame(() => textareaRef.current?.focus());
+      return;
+    }
     onCommit(value, node.type === 'text' ? sizeRef.current : undefined);
 
     // After the commit, so the note this chains from has its text saved before
@@ -127,8 +241,8 @@ export const NodeEditor: React.FC<Props> = ({ node, onCommit, onCancel }) => {
           position: 'fixed',
           left: `${screenX}px`,
           top: `${screenY}px`,
-          width: `${node.width * zoom}px`,
-          height: `${node.height * zoom}px`,
+          width: `${liveSize.width * zoom}px`,
+          height: `${liveSize.height * zoom}px`,
           padding: `${padding}px`,
           boxSizing: 'border-box',
           pointerEvents: 'none',
@@ -137,11 +251,21 @@ export const NodeEditor: React.FC<Props> = ({ node, onCommit, onCancel }) => {
       }}
     >
       <textarea
+        ref={textareaRef}
         autoFocus
         value={value}
         data-gramm="false"
         spellCheck={false}
-        placeholder={node.type === 'text' ? 'Type something…' : undefined}
+        /**
+         * Short, because the box it sits in is provisional.
+         *
+         * "Type something…" needs about 200px at the default size — and the
+         * placeholder scales with the node's own font size, so at 48pt it
+         * wants closer to 600. No seed width can fit that, which is why the
+         * hint was always clipped mid-word. The caret is already visible and
+         * already says the box is ready; the word only has to confirm it.
+         */
+        placeholder={node.type === 'text' ? 'Type…' : undefined}
         onChange={(e) => {
           setValue(e.target.value);
           // Bare text boxes grow with their content; containers (sticky,
@@ -154,11 +278,15 @@ export const NodeEditor: React.FC<Props> = ({ node, onCommit, onCancel }) => {
             const el = e.target;
             el.style.height = 'auto';
             el.style.height = `${el.scrollHeight}px`;
-            sizeRef.current = {
+            const next = {
               width:
                 node.resize === 'width' ? Math.max(40, el.scrollWidth / zoom) : sizeRef.current.width,
               height: Math.max(20, el.scrollHeight / zoom),
             };
+            sizeRef.current = next;
+            // Grow the overlay with the words, so what you are typing into is
+            // the box you are actually making.
+            setLiveSize(next);
           }
         }}
         // An auto-width box must not wrap while it is being typed into

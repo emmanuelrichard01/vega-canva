@@ -21,6 +21,7 @@
  */
 
 import { useStore } from '../../hooks/useStore';
+import { connectorPoints } from '../model/connector';
 import { cameraSystem } from '../CameraSystem';
 import { smoothingFactor } from '../cursor/remoteCursor';
 import { collaboratorStore } from './collaboratorStore';
@@ -287,6 +288,8 @@ export class RadarEngine {
       if (paint?.color && paint.color !== 'transparent') return paint.color;
     }
     if (node.type === 'text') return node.typography?.color || this.theme.object;
+    // A connector has no fill — its ink is its stroke.
+    if (node.type === 'connector') return node.appearance?.stroke?.color || this.theme.object;
     return this.theme.object;
   }
 
@@ -301,6 +304,41 @@ export class RadarEngine {
     ctx.globalAlpha = 0.55;
     for (const node of Object.values(objects)) {
       if (node.hidden) continue;
+
+      /**
+       * A connector is a line, and its box is the bounding box of its route.
+       *
+       * Painting every node as a filled rectangle turned each connector into a
+       * solid block spanning the diagonal between the two objects it joined —
+       * the box is *correct*, it is what culling and marquee selection read,
+       * but it was never the shape.
+       */
+      if (node.type === 'connector') {
+        const route = connectorPoints(node.from, node.to, node.routing, (id) => {
+          const other = objects[id];
+          if (!other) return null;
+          return {
+            x: other.x,
+            y: other.y,
+            width: other.width * Math.abs(other.scaleX || 1),
+            height: other.height * Math.abs(other.scaleY || 1),
+          };
+        });
+        if (route.length >= 4) {
+          ctx.strokeStyle = this.fillFor(node);
+          ctx.lineWidth = 1;
+          ctx.lineJoin = 'round';
+          ctx.lineCap = 'round';
+          ctx.beginPath();
+          for (let i = 0; i < route.length; i += 2) {
+            const p = project(this.view, route[i], route[i + 1]);
+            if (i === 0) ctx.moveTo(p.x, p.y);
+            else ctx.lineTo(p.x, p.y);
+          }
+          ctx.stroke();
+        }
+        continue;
+      }
 
       const width = Math.max(2, node.width * Math.abs(node.scaleX || 1) * scale);
       const height = Math.max(2, node.height * Math.abs(node.scaleY || 1) * scale);

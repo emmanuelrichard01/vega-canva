@@ -19,16 +19,19 @@ export const CanvasEmptyState: React.FC<{ visible: boolean }> = ({ visible }) =>
 
   if (!visible || objectCount > 0) return null;
 
-  const hints: Array<{ icon: React.ReactNode; label: string; keys: string }> = [
-    { icon: <StickyNote size={15} />, label: 'Sticky note', keys: 'S' },
-    { icon: <Type size={15} />, label: 'Text', keys: 'T' },
-    { icon: <MessageSquare size={15} />, label: 'Comment', keys: 'C' },
+  const hints: Array<{ icon: React.ReactNode; label: string; keys: string; tool: string }> = [
+    { icon: <StickyNote size={15} />, label: 'Sticky note', keys: 'S', tool: 'sticky' },
+    { icon: <Type size={15} />, label: 'Text', keys: 'T', tool: 'text' },
+    { icon: <MessageSquare size={15} />, label: 'Comment', keys: 'C', tool: 'comment' },
   ];
 
   return (
     <div
-      // Purely informational: it must never sit between the user and the canvas.
-      aria-hidden="true"
+      // The prose is decoration and must never sit between the user and the
+      // canvas — but the three chips below are real controls, so they opt
+      // pointer events back on individually. They were pill-shaped, elevated
+      // and captioned with a shortcut key, which is the visual grammar of a
+      // button; being inert made them a lie about what they were.
       style={{
         position: 'absolute',
         inset: 0,
@@ -66,17 +69,28 @@ export const CanvasEmptyState: React.FC<{ visible: boolean }> = ({ visible }) =>
 
       <div style={{ display: 'flex', gap: 'var(--space-2)', flexWrap: 'wrap', justifyContent: 'center' }}>
         {hints.map((hint) => (
-          <span
+          <button
             key={hint.label}
+            type="button"
+            // Arms the tool through the same event the dock dispatches, so
+            // there is one way in and no second tool-selection path to drift.
+            onClick={() => window.dispatchEvent(new CustomEvent('legacy_tool_change', { detail: hint.tool }))}
+            aria-label={`${hint.label} tool, shortcut ${hint.keys}`}
+            className="hover-surface"
             style={{
               display: 'inline-flex', alignItems: 'center', gap: 'var(--space-2)',
               padding: 'var(--space-2) var(--space-3)',
               borderRadius: 'var(--radius-pill)',
               background: 'var(--surface-elevated)',
-              border: '1px solid var(--border-divider)',
-              boxShadow: 'var(--shadow-sm)',
+              // Elevation declared once. It carried a border *and* a shadow,
+              // which is two depth systems on one 28px chip.
+              border: 'none',
+              boxShadow: 'var(--shadow-float)',
               fontSize: 'var(--text-sm)',
+              fontFamily: 'var(--font-sans)',
               color: 'var(--text-secondary)',
+              cursor: 'pointer',
+              pointerEvents: 'auto',
             }}
           >
             <span style={{ color: 'var(--text-tertiary)', display: 'flex' }}>{hint.icon}</span>
@@ -90,7 +104,7 @@ export const CanvasEmptyState: React.FC<{ visible: boolean }> = ({ visible }) =>
             >
               {hint.keys}
             </kbd>
-          </span>
+          </button>
         ))}
       </div>
 

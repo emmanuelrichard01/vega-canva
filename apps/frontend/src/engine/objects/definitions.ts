@@ -110,6 +110,20 @@ objectRegistry.register({
 });
 
 objectRegistry.register({
+  type: 'connector',
+  capabilities: {
+    // A line, so: a stroke and an opacity, and nothing that needs an interior.
+    // No fill (there is none to fill), no corner radius, no edge effects —
+    // those all clip to an outline a connector does not have. Declaring any of
+    // them would put a control in the panel that the renderer ignores.
+    supportsStroke: true,
+    supportsOpacity: true,
+    supportsShadow: true,
+  },
+  defaultProperties: () => ({ width: 1, height: 1 }),
+});
+
+objectRegistry.register({
   type: 'comment',
   capabilities: {
     supportsComments: true,

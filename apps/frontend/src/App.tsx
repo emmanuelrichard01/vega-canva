@@ -3,6 +3,7 @@ import { AuthProvider } from './hooks/AuthContext';
 import Room from './Room';
 import { Home } from './Home';
 import { PerformanceOverlay } from './components/PerformanceOverlay';
+import { TooltipLayer } from './components/ui/TooltipLayer';
 import { useStore } from './hooks/useStore';
 
 function App() {
@@ -29,6 +30,10 @@ function App() {
     <AuthProvider>
       {path.startsWith('/room/') ? <Room /> : <Home />}
       <PerformanceOverlay />
+      {/* At the app root, outside every panel — which is the whole point.
+          A tooltip rendered inside a scrolling panel is clipped by it, and no
+          z-index can lift it out. See `TooltipLayer`. */}
+      <TooltipLayer />
     </AuthProvider>
   );
 }

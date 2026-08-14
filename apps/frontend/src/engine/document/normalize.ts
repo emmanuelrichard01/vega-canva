@@ -10,6 +10,8 @@ import {
   MIN_POLYGON_SIDES,
   MIN_STAR_POINTS,
   MIN_STAR_RATIO,
+  NODE_TYPES,
+  STICKY_THEMES,
   type AnyNode,
   type Appearance,
   type Author,
@@ -26,13 +28,14 @@ import {
   type Point,
   type ShapeGeometry,
   type ShapeKind,
-  type StickyTheme,
+
   type Shadow,
   type Stroke,
   type StrokeAlign,
   type TextAlign,
   type Typography,
 } from '../model/schema';
+import { END_CAP_KINDS, type EndCapKind } from '../model/connectorEnds';
 import { packAdjustments, readAdjustments } from '../model/imageAdjustments';
 
 /**
@@ -114,17 +117,6 @@ const SHAPE_KIND_ALIASES: Record<string, { kind: ShapeKind; sides?: number }> = 
   heptagon: { kind: 'polygon', sides: 7 },
   octagon: { kind: 'polygon', sides: 8 },
 };
-
-const STICKY_THEMES: StickyTheme[] = [
-  'yellow',
-  'mint',
-  'sky',
-  'pink',
-  'lavender',
-  'peach',
-  'white',
-  'dark',
-];
 
 /** A unit-space point, defaulted, for gradient geometry. */
 function toUnitPoint(value: unknown, fallback: Point): Point {
@@ -515,8 +507,7 @@ function normalizeType(raw: any): NodeType {
   const t = str(raw?.type, 'shape');
   // `artboard` was a pre-v2 alias for a frame.
   if (t === 'artboard') return 'frame';
-  const known: NodeType[] = ['text', 'shape', 'sticky', 'image', 'audio', 'path', 'frame', 'comment'];
-  return (known as string[]).includes(t) ? (t as NodeType) : 'shape';
+  return (NODE_TYPES as readonly string[]).includes(t) ? (t as NodeType) : 'shape';
 }
 
 /**
@@ -663,7 +654,7 @@ export function normalizeNode(raw: any, id?: string): AnyNode {
         ...base,
         type: 'sticky',
         text: normalizeText(raw),
-        theme: STICKY_THEMES.includes(theme) ? theme : 'yellow',
+        theme: (STICKY_THEMES as readonly string[]).includes(theme) ? theme : 'yellow',
         fontSize: num(raw?.fontSize ?? raw?.content?.fontSize, 16),
         author: normalizeAuthor(raw),
         reactions: normalizeReactions(raw?.reactions ?? raw?.metadata?.reactions),
@@ -719,6 +710,32 @@ export function normalizeNode(raw: any, id?: string): AnyNode {
         resolved: bool(raw?.resolved, false),
       };
 
+    case 'connector':
+      return {
+        ...base,
+        type: 'connector',
+        // Both ends are normalised to *something* rather than left possibly
+        // undefined: every reader downstream treats an end as present, and a
+        // connector with half an end is a crash waiting for the first
+        // malformed document.
+        from: normalizeConnectorEnd(raw?.from),
+        to: normalizeConnectorEnd(raw?.to),
+        routing:
+          raw?.routing === 'straight' || raw?.routing === 'curved' ? raw.routing : 'orthogonal',
+        appearance: normalizeAppearance(raw),
+        /**
+         * End styles, with the old booleans as their fallback.
+         *
+         * A document written before end styles existed says `arrowEnd: true`
+         * and nothing else; mapping that to `'arrow'` here means every older
+         * connector keeps exactly the head it had, and no reader downstream
+         * needs to know the booleans ever existed.
+         */
+        endStart: endCap(raw?.endStart, bool(raw?.arrowStart, false)),
+        endEnd: endCap(raw?.endEnd, bool(raw?.arrowEnd, true)),
+        label: typeof raw?.label === 'string' ? raw.label : undefined,
+      };
+
     case 'frame':
     default:
       return {
@@ -729,6 +746,31 @@ export function normalizeNode(raw: any, id?: string): AnyNode {
         safeArea: normalizeSafeArea(raw?.safeArea),
       };
   }
+}
+
+/**
+ * One end of a connector.
+ *
+ * `nodeId` absent means loose; `x`/`y` are kept regardless, because they are
+ * what a *detached* end falls back to when the object it pointed at is gone.
+ * Storing both is the difference between a deleted box leaving its arrows
+ * where they were and leaving them collapsed on the origin.
+ */
+/** A stored end style, or the arrow/none the old boolean implied. */
+function endCap(raw: any, legacyOn: boolean): EndCapKind {
+  return (END_CAP_KINDS as string[]).includes(raw) ? (raw as EndCapKind) : legacyOn ? 'arrow' : 'none';
+}
+
+function normalizeConnectorEnd(raw: any): { nodeId?: string; port?: any; x?: number; y?: number } {
+  const end: { nodeId?: string; port?: any; x?: number; y?: number } = {};
+  if (typeof raw?.nodeId === 'string' && raw.nodeId) end.nodeId = raw.nodeId;
+  const port = raw?.port;
+  if (port === 'top' || port === 'right' || port === 'bottom' || port === 'left' || port === 'auto') {
+    end.port = port;
+  }
+  if (Number.isFinite(raw?.x)) end.x = raw.x;
+  if (Number.isFinite(raw?.y)) end.y = raw.y;
+  return end;
 }
 
 /**

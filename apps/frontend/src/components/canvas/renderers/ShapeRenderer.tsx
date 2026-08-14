@@ -84,8 +84,21 @@ export const ShapeRenderer: React.FC<Props> = React.memo(({ node, showLabel }) =
       points,
       stroke: stroke ?? '#1F2937',
       strokeWidth: sw || 2,
-      lineCap: 'round' as const,
-      lineJoin: 'round' as const,
+      /**
+       * No cap or join defaults here.
+       *
+       * These two lines used to sit above the spread and set `'round'` — but
+       * `dashProps` always carries both keys, so an unset stroke spread
+       * `undefined` straight over them and the line drew with butt caps and a
+       * mitred join regardless. They had never once taken effect.
+       *
+       * Removing them rather than moving them below the spread is deliberate:
+       * `PathRenderer` already settled that an absent cap means `butt` and an
+       * absent join means `miter`, the way Canvas2D and SVG define them, and a
+       * renderer that quietly disagreed was how flattening a rectangle used to
+       * round its corners. Now the Cap and Join controls say what a stroke
+       * does, and absent means absent everywhere.
+       */
       ...dashProps,
       ...shadow,
       // The grab area for a hairline is otherwise the hairline itself.
@@ -177,6 +190,8 @@ export const ShapeRenderer: React.FC<Props> = React.memo(({ node, showLabel }) =
           strokeWidth={sw}
           dash={dashProps.dash}
           cap={dashProps.lineCap as CanvasLineCap | undefined}
+          join={dashProps.lineJoin as CanvasLineJoin | undefined}
+          miterLimit={dashProps.miterLimit}
         />
       )}
       {path && innerShadow && (

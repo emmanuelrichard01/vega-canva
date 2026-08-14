@@ -1,12 +1,14 @@
 import React, { useEffect, useRef, useState } from 'react';
 import { Minus, Plus } from 'lucide-react';
 import { EyedropperButton } from './EyedropperButton';
+import { ColorPickerPopover } from './ColorPickerPopover';
+import { isInsidePortalSurface } from './portalSurface';
 import {
   convertPaint,
   isGradient,
   linearAngle,
   paintToCss,
-  sortedStops,
+  withAlpha,
   withLinearAngle,
   type GradientStop,
   type Paint,
@@ -16,6 +18,16 @@ import {
 interface Props {
   paint: Paint | undefined;
   onChange: (paint: Paint) => void;
+  /**
+   * The selected objects have different fills.
+   *
+   * Needed because `paint: undefined` cannot express it: undefined already
+   * means "no fill set", and both fall through to the indigo default below —
+   * so three objects filled red, blue and orange showed a single purple
+   * swatch, which is a colour none of them has and which the next click would
+   * have made true.
+   */
+  mixed?: boolean;
 }
 
 /**
@@ -38,6 +50,17 @@ const TYPES: Array<{ id: PaintType; label: string; swatch: string }> = [
 const MAX_STOPS = 8;
 
 /**
+ * What a swatch shows when the selection disagrees.
+ *
+ * Three bands rather than a blend: a blend is itself a colour, and would read
+ * as one of the fills rather than as the absence of a single answer.
+ */
+const MIXED_SWATCH = 'linear-gradient(135deg, #EF4444 0 33%, #3B82F6 33% 66%, #F59E0B 66% 100%)';
+
+/** Behind every gradient preview, so transparency reads as transparency. */
+const BAR_CHECKER = 'repeating-conic-gradient(#c8c8c8 0% 25%, #ffffff 0% 50%) 50% / 8px 8px';
+
+/**
  * Editing a fill.
  *
  * Replaces a bare colour swatch, which was the whole fill interface and the
@@ -49,7 +72,7 @@ const MAX_STOPS = 8;
  * information — you cannot see that two stops are too close together by
  * reading `0.42` and `0.48`.
  */
-export const FillEditor: React.FC<Props> = ({ paint, onChange }) => {
+export const FillEditor: React.FC<Props> = ({ paint, onChange, mixed = false }) => {
   const [open, setOpen] = useState(false);
   const [activeStop, setActiveStop] = useState(0);
   const containerRef = useRef<HTMLDivElement>(null);
@@ -59,6 +82,9 @@ export const FillEditor: React.FC<Props> = ({ paint, onChange }) => {
   useEffect(() => {
     if (!open) return;
     const onDown = (e: MouseEvent) => {
+      // A portalled child — the colour picker — is not inside this container in
+      // the DOM, but it is emphatically inside this control.
+      if (isInsidePortalSurface(e.target)) return;
       if (containerRef.current && !containerRef.current.contains(e.target as Node)) setOpen(false);
     };
     document.addEventListener('mousedown', onDown);
@@ -66,7 +92,22 @@ export const FillEditor: React.FC<Props> = ({ paint, onChange }) => {
   }, [open]);
 
   const current: Paint = paint ?? { type: 'solid', color: '#4F46E5' };
-  const stops = isGradient(current) ? sortedStops(current) : [];
+  /**
+   * The stops **in stored order**, not sorted.
+   *
+   * This used to be `sortedStops(current)`, and that one word is the whole
+   * "gradients feel buggy" complaint. Selection and dragging are tracked by
+   * index into this array; sorting it means an index stops referring to the
+   * same stop the moment two stops cross. Drag the left stop past the middle
+   * one and the sort reorders the array under the gesture, so from the next
+   * frame you are dragging *the other* stop — the one that just inherited
+   * index 0 — and the one you grabbed appears to snap away.
+   *
+   * Order only matters for the CSS gradient, which is sorted where it is
+   * generated. The stored array is normalised once, on release, when no index
+   * is live.
+   */
+  const stops = isGradient(current) ? current.stops : [];
   const selected = Math.min(activeStop, Math.max(0, stops.length - 1));
 
   const setStops = (next: GradientStop[]) => {
@@ -98,10 +139,13 @@ export const FillEditor: React.FC<Props> = ({ paint, onChange }) => {
       }
     }
     const before = stops.filter((s) => s.offset <= bestAt).pop() ?? stops[0];
-    const next = [...stops, { offset: bestAt, color: before?.color ?? '#6366F1', opacity: before?.opacity }];
-    next.sort((a, b) => a.offset - b.offset);
+    const added = { offset: bestAt, color: before?.color ?? '#6366F1', opacity: before?.opacity };
+    const next = [...stops, added].sort((a, b) => a.offset - b.offset);
     setStops(next);
-    setActiveStop(next.findIndex((s) => s.offset === bestAt));
+    // Located by identity, not by comparing offsets: two stops can legitimately
+    // share one, and float equality against a midpoint that was just computed
+    // is fragile even when they do not.
+    setActiveStop(next.indexOf(added));
   };
 
   /** Two is the minimum a gradient can be; below that it is a solid colour. */
@@ -117,6 +161,18 @@ export const FillEditor: React.FC<Props> = ({ paint, onChange }) => {
     return Math.min(1, Math.max(0, (clientX - rect.left) / rect.width));
   };
 
+  /**
+   * The live paint, readable from a listener that is only bound once.
+   *
+   * `current` is rebuilt on every render (`paint ?? {...}`), so depending on it
+   * would re-register both window listeners every render — the same churn the
+   * missing dependency array used to cause, arrived at from the opposite
+   * direction. A ref updated during render gives the handlers today's values
+   * without making them a reason to rebind.
+   */
+  const latest = useRef({ current, onChange });
+  latest.current = { current, onChange };
+
   // Dragging is tracked on the window, not the handle: the pointer routinely
   // leaves a 12px dot during a drag, and a handler on the dot would drop the
   // gesture the moment it did.
@@ -124,10 +180,29 @@ export const FillEditor: React.FC<Props> = ({ paint, onChange }) => {
     const onMove = (e: MouseEvent) => {
       const index = draggingRef.current;
       if (index === null) return;
-      patchStop(index, { offset: offsetFromEvent(e.clientX) });
+      const { current: paintNow, onChange: commit } = latest.current;
+      if (!isGradient(paintNow)) return;
+      const offset = offsetFromEvent(e.clientX);
+      commit({
+        ...paintNow,
+        stops: paintNow.stops.map((s, i) => (i === index ? { ...s, offset } : s)),
+      });
     };
     const onUp = () => {
+      const index = draggingRef.current;
       draggingRef.current = null;
+      if (index === null) return;
+      const { current: paintNow, onChange: commit } = latest.current;
+      if (!isGradient(paintNow)) return;
+
+      // Normalise once the gesture is over, when no index is live, and carry
+      // the selection to wherever the stop it referred to has landed.
+      const held = paintNow.stops[index];
+      if (!held) return;
+      const ordered = [...paintNow.stops].sort((a, b) => a.offset - b.offset);
+      const movedTo = ordered.indexOf(held);
+      commit({ ...paintNow, stops: ordered });
+      if (movedTo >= 0) setActiveStop(movedTo);
     };
     window.addEventListener('mousemove', onMove);
     window.addEventListener('mouseup', onUp);
@@ -135,7 +210,7 @@ export const FillEditor: React.FC<Props> = ({ paint, onChange }) => {
       window.removeEventListener('mousemove', onMove);
       window.removeEventListener('mouseup', onUp);
     };
-  });
+  }, []);
 
   const css = paintToCss(current);
 
@@ -146,13 +221,13 @@ export const FillEditor: React.FC<Props> = ({ paint, onChange }) => {
         onClick={() => setOpen((v) => !v)}
         aria-haspopup="dialog"
         aria-expanded={open}
-        aria-label="Edit fill"
+        aria-label={mixed ? 'Edit fill — the selection has several' : 'Edit fill'}
         className="fill-swatch"
       >
         {/* The paint sits on a chequerboard the button itself draws. A
             semi-transparent fill shown over a flat panel is indistinguishable
             from an opaque paler one. */}
-        <span style={{ background: css }} />
+        <span style={{ background: mixed ? MIXED_SWATCH : css }} />
       </button>
 
       {open && (
@@ -175,16 +250,20 @@ export const FillEditor: React.FC<Props> = ({ paint, onChange }) => {
           </div>
 
           {current.type === 'solid' ? (
-            <label className="fill-editor__row">
+            <div className="fill-editor__row">
               <span className="fill-editor__label">Colour</span>
-              <input
-                type="color"
-                value={current.color || '#4F46E5'}
-                onChange={(e) => onChange({ ...current, color: e.target.value })}
-                className="fill-editor__color"
+              {/* The real picker, not the OS one. `input type=color` opens a
+                  native dialog that ignores the app's theme, cannot show the
+                  board's own colours, has no alpha that maps to `opacity`, and
+                  on Windows is a modal that steals the pointer. */}
+              <ColorPickerPopover
+                color={current.color || '#4F46E5'}
+                onChange={(color) => onChange({ ...current, color })}
+                opacity={current.opacity ?? 1}
+                onOpacityChange={(o) => onChange({ ...current, opacity: o >= 1 ? undefined : o })}
               />
               <EyedropperButton onPick={(color) => onChange({ ...current, color })} />
-            </label>
+            </div>
           ) : (
             <>
               {/* The bar shows the gradient along its own axis, not as it will
@@ -195,10 +274,21 @@ export const FillEditor: React.FC<Props> = ({ paint, onChange }) => {
                 <div
                   ref={barRef}
                   className="fill-editor__bar"
+                  /* Sorted here and only here: CSS clamps a stop that comes
+                     after a later one, so the bar must be ordered even while
+                     the array behind it is not.
+
+                     `withAlpha` because the preview was blind to per-stop
+                     opacity — a stop at 20% drew fully opaque in the editor and
+                     translucent on the canvas, so the one control whose entire
+                     job is showing you the gradient was the one thing not
+                     showing it. The chequerboard is what separates a
+                     transparent stop from a merely pale one. */
                   style={{
-                    backgroundImage: `linear-gradient(90deg, ${stops
-                      .map((s) => `${s.color} ${s.offset * 100}%`)
-                      .join(', ')})`,
+                    backgroundImage: `linear-gradient(90deg, ${[...stops]
+                      .sort((a, b) => a.offset - b.offset)
+                      .map((s) => `${withAlpha(s.color, s.opacity)} ${s.offset * 100}%`)
+                      .join(', ')}), ${BAR_CHECKER}`,
                   }}
                   onMouseDown={(e) => {
                     // A click on the bar itself moves the selected stop there,
@@ -214,36 +304,56 @@ export const FillEditor: React.FC<Props> = ({ paint, onChange }) => {
                     type="button"
                     aria-label={`Stop ${i + 1} at ${Math.round(stop.offset * 100)}%`}
                     className={`fill-editor__stop ${i === selected ? 'is-active' : ''}`}
-                    style={{ left: `${stop.offset * 100}%`, background: stop.color }}
+                    style={{
+                      left: `${stop.offset * 100}%`,
+                      background: `linear-gradient(${withAlpha(stop.color, stop.opacity)}, ${withAlpha(stop.color, stop.opacity)}), ${BAR_CHECKER}`,
+                    }}
                     onMouseDown={(e) => {
                       e.stopPropagation();
                       setActiveStop(i);
                       draggingRef.current = i;
+                    }}
+                    // Arrow keys nudge, which is the only way to place a stop
+                    // exactly: a 12px dot on a 180px bar cannot be aimed to the
+                    // percent, and gradients are routinely built on round
+                    // numbers.
+                    onKeyDown={(e) => {
+                      const step = e.shiftKey ? 0.1 : 0.01;
+                      if (e.key === 'ArrowLeft') {
+                        e.preventDefault();
+                        patchStop(i, { offset: Math.max(0, stop.offset - step) });
+                      } else if (e.key === 'ArrowRight') {
+                        e.preventDefault();
+                        patchStop(i, { offset: Math.min(1, stop.offset + step) });
+                      } else if ((e.key === 'Backspace' || e.key === 'Delete') && stops.length > 2) {
+                        e.preventDefault();
+                        removeStop(i);
+                      }
                     }}
                   />
                 ))}
               </div>
 
               <div className="fill-editor__row">
-                <input
-                  type="color"
-                  value={stops[selected]?.color ?? '#6366F1'}
-                  onChange={(e) => patchStop(selected, { color: e.target.value })}
-                  className="fill-editor__color"
-                  aria-label="Stop colour"
+                {/* The same picker the solid fill uses, so a stop's colour is
+                    chosen exactly like any other colour in the app — the
+                    board's own swatches, recents, and an alpha slider that
+                    writes the stop's `opacity`. This was a bare
+                    `input type=color`: the OS dialog, no alpha at all, and a
+                    separate unlabelled range slider beside it carrying the
+                    opacity the picker could not express. */}
+                <ColorPickerPopover
+                  color={stops[selected]?.color ?? '#6366F1'}
+                  onChange={(color) => patchStop(selected, { color })}
+                  opacity={stops[selected]?.opacity ?? 1}
+                  onOpacityChange={(o) => patchStop(selected, { opacity: o >= 1 ? undefined : o })}
                 />
+                <span className="fill-editor__value">
+                  {Math.round((stops[selected]?.offset ?? 0) * 100)}%
+                </span>
                 <EyedropperButton
                   label="Pick this stop's colour from the screen"
                   onPick={(color) => patchStop(selected, { color })}
-                />
-                <input
-                  type="range"
-                  min={0}
-                  max={100}
-                  value={Math.round((stops[selected]?.opacity ?? 1) * 100)}
-                  onChange={(e) => patchStop(selected, { opacity: Number(e.target.value) / 100 })}
-                  className="fill-editor__alpha"
-                  aria-label="Stop opacity"
                 />
                 <button
                   type="button"

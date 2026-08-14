@@ -1,10 +1,19 @@
-import React, { useState } from 'react';
-import { motion } from 'framer-motion';
-import { X, Image as ImageIcon, FileJson, Download, CheckCircle2, Loader2, PenTool } from 'lucide-react';
-import { ExportService } from '../../engine/export';
+import React, { useEffect, useRef, useState } from 'react';
+import {
+  X, Download, CheckCircle2, Loader2, Copy, Layers, UploadCloud, AlertTriangle,
+} from 'lucide-react';
+import {
+  ExportService,
+  EXPORT_FORMAT_IDS,
+  FORMAT_SPECS,
+  exportFilename,
+  type ExportBackground,
+  type ExportFormat,
+} from '../../engine/export';
+import { parseDocumentExport, describeImport } from '../../engine/export/DocumentImport';
+import { restoreDocument } from '../../engine/export/restoreDocument';
 import { useFocusTrap } from '../../hooks/useFocusTrap';
 import { useStore } from '../../hooks/useStore';
-import type { ExportFormat } from '../../engine/export/ExportTypes';
 
 interface Props {
   onClose: () => void;
@@ -13,240 +22,393 @@ interface Props {
 
 /** Sentinel for "not a frame". An empty string would collide with a real id. */
 const WHOLE_DOCUMENT = '__document__';
+/** Sentinel for "each frame, as its own file". */
+const EVERY_FRAME = '__frames__';
+
+const SCALES = [1, 2, 3, 4];
+
+const BACKGROUNDS: Array<{ id: ExportBackground; label: string }> = [
+  { id: 'transparent', label: 'None' },
+  { id: 'paper', label: 'White' },
+  { id: 'ink', label: 'Dark' },
+];
+
+/** Bytes as something a person reads without counting digits. */
+function formatBytes(bytes: number): string {
+  if (bytes < 1024) return `${bytes} B`;
+  if (bytes < 1024 * 1024) return `${Math.round(bytes / 1024)} KB`;
+  return `${(bytes / (1024 * 1024)).toFixed(1)} MB`;
+}
 
 /**
- * Density multipliers.
+ * Export, and the restore that makes it a backup.
  *
- * PNG only: SVG and JSON have no pixels to multiply, and offering a scale that
- * silently does nothing for two of the three formats is worse than not
- * offering it.
+ * ## What changed
+ *
+ * Three formats became six, the settings became format-aware rather than a
+ * hardcoded `format === 'png'` at each control, and two things were added that
+ * the dialog had been implying without providing:
+ *
+ *  - **A preview.** Export was previously an act of faith: you picked options,
+ *    pressed the button, and found out what you got by opening the file. The
+ *    preview is rendered through the same path the export uses, so what you see
+ *    is the export, not an approximation of it.
+ *  - **Restore.** The JSON option described itself as "best for backups", and
+ *    nothing in the app could read one back. A backup you cannot restore is not
+ *    a backup, and the gap was invisible because exporting looked like it
+ *    worked.
+ *
+ * Copy-to-clipboard is here for the same reason: the commonest thing anyone
+ * does with an exported image is paste it somewhere, and every one of those
+ * journeys used to detour through the downloads folder.
  */
-const SCALES = [1, 2, 3];
-
 export const ExportModal: React.FC<Props> = ({ onClose, title }) => {
   const [format, setFormat] = useState<ExportFormat>('png');
   const [isExporting, setIsExporting] = useState(false);
-  const [success, setSuccess] = useState(false);
-  const [hoveredFormat, setHoveredFormat] = useState<ExportFormat | null>(null);
-  const [cancelHovered, setCancelHovered] = useState(false);
+  const [status, setStatus] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [target, setTarget] = useState<string>(WHOLE_DOCUMENT);
   const [scale, setScale] = useState(2);
-  // Escape to dismiss, Tab confined to the dialog, focus restored on close.
-  const dialogRef = useFocusTrap(true, onClose);
+  const [quality, setQuality] = useState(0.92);
+  const [background, setBackground] = useState<ExportBackground>('transparent');
+  const [preview, setPreview] = useState<{ url: string; bytes: number } | null>(null);
+  const [previewing, setPreviewing] = useState(false);
+  /** A validated file waiting for the user to say replace or add. */
+  const [pendingRestore, setPendingRestore] = useState<{ summary: string } | null>(null);
 
-  // Frames are export targets, so they have to be offered as such. Sorted by
-  // name rather than by z-index: this is a list you find a name in.
-  const frames = useStore((s) => s.objects);
+  const fileInputRef = useRef<HTMLInputElement>(null);
+  const dialogRef = useFocusTrap(true, onClose);
+  const spec = FORMAT_SPECS[format];
+
+  const objects = useStore((s) => s.objects);
   const frameList = React.useMemo(
     () =>
-      Object.values(frames)
+      Object.values(objects)
         .filter((n) => n.type === 'frame')
         .map((f) => ({ id: f.id, label: f.title ?? 'Frame', width: f.width, height: f.height }))
+        // Sorted by name rather than by z-index: this is a list you find a name in.
         .sort((a, b) => a.label.localeCompare(b.label, undefined, { numeric: true })),
-    [frames]
+    [objects]
   );
   const activeFrame = frameList.find((f) => f.id === target);
+  const isBatch = target === EVERY_FRAME;
+
+  const baseOptions = () => ({
+    scale,
+    quality,
+    background,
+    frameId: activeFrame ? target : undefined,
+    stage: (window as any)._konva_stage,
+  });
+
+  /**
+   * Render a preview whenever the settings change.
+   *
+   * Debounced, because dragging the quality slider would otherwise re-render
+   * the whole document on every pixel of travel. Cancelled on unmount and
+   * superseded on each change, so a slow export cannot land after a newer one
+   * and show a stale image.
+   */
+  useEffect(() => {
+    if (!spec.raster || isBatch) {
+      setPreview(null);
+      return;
+    }
+    let cancelled = false;
+    setPreviewing(true);
+    const timer = window.setTimeout(async () => {
+      try {
+        const blob = await ExportService.render(format, { ...baseOptions(), scale: 1 });
+        if (cancelled) return;
+        setPreview((old) => {
+          if (old) URL.revokeObjectURL(old.url);
+          return { url: URL.createObjectURL(blob), bytes: blob.size };
+        });
+      } catch {
+        // A preview that cannot be produced is not an error worth interrupting
+        // for — the export button will report it properly if it is real.
+        if (!cancelled) setPreview(null);
+      } finally {
+        if (!cancelled) setPreviewing(false);
+      }
+    }, 220);
+    return () => {
+      cancelled = true;
+      window.clearTimeout(timer);
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [format, target, quality, background, spec.raster, isBatch]);
+
+  // The object URL outlives React's own cleanup unless it is revoked by hand.
+  useEffect(() => () => { if (preview) URL.revokeObjectURL(preview.url); }, [preview]);
+
+  /**
+   * The preview is rendered at 1×; the file is not.
+   *
+   * A lossy encoder's output does not scale linearly with pixel count, but it
+   * is close enough over this range that the estimate is useful — and it is
+   * labelled as an estimate rather than presented as the answer.
+   */
+  const estimatedBytes = preview ? preview.bytes * (spec.raster ? scale * scale : 1) : null;
 
   const handleExport = async () => {
     setIsExporting(true);
-    setSuccess(false);
+    setStatus(null);
     setError(null);
-
     try {
-      // A frame's name is what the file should be called — "checkout-flow.png"
-      // rather than the room's title repeated for every frame in it.
-      const base = (activeFrame?.label ?? title).replace(/\s+/g, '-').toLowerCase();
-      await ExportService.export(format, {
-        filename: `${base}${activeFrame ? '' : '-export'}${format === 'png' && scale !== 1 ? `@${scale}x` : ''}.${format}`,
-        // `scale` is the option the exporters actually read — `pixelRatio` was not a
-        // valid ExportOptions key, so this request was silently dropped.
-        scale,
-        frameId: activeFrame ? target : undefined,
-        // PNGExporter throws without this — it was never being passed here at
-        // all, so every PNG export from this modal failed unconditionally.
-        stage: (window as any)._konva_stage,
-      });
-      
-      setSuccess(true);
-      setTimeout(onClose, 1200); // Auto close on success
+      if (isBatch) {
+        // Saved one at a time rather than zipped: a ZIP would mean shipping a
+        // compression library to bundle files the browser is perfectly willing
+        // to save individually.
+        for (const frame of frameList) {
+          const blob = await ExportService.render(format, { ...baseOptions(), frameId: frame.id });
+          ExportService.save(blob, exportFilename(frame.label, format, scale));
+        }
+        setStatus(`Saved ${frameList.length} files`);
+      } else {
+        const base = activeFrame?.label ?? title;
+        await ExportService.export(format, {
+          ...baseOptions(),
+          filename: exportFilename(base, format, scale),
+        });
+        setStatus('Saved');
+      }
+      setTimeout(onClose, 1000);
     } catch (e) {
       // A blocking `alert()` here stole focus out of the dialog, could not be
-      // styled or read in context, and told the user nothing about what went
-      // wrong. Surfacing the reason inline keeps the dialog usable and lets
-      // them simply pick another format.
-      console.error(e);
+      // read in context, and told the user nothing about what went wrong.
       setError(e instanceof Error ? e.message : 'Export failed. Please try again.');
     } finally {
       setIsExporting(false);
     }
   };
 
-  const formats: { id: ExportFormat, name: string, desc: string, icon: any }[] = [
-    { id: 'png', name: 'PNG Image', desc: 'High-resolution raster image (2x). Best for sharing.', icon: ImageIcon },
-    { id: 'svg', name: 'SVG Vector', desc: 'Scalable vector graphics. Best for editing in Illustrator.', icon: PenTool },
-    { id: 'json', name: 'JSON Data', desc: 'Raw document structure. Best for backups and version control.', icon: FileJson },
-  ];
+  const handleCopy = async () => {
+    setError(null);
+    try {
+      await ExportService.copyToClipboard(baseOptions());
+      setStatus('Copied to clipboard');
+    } catch (e) {
+      setError(e instanceof Error ? e.message : 'Could not copy to the clipboard.');
+    }
+  };
+
+  const handleFile = async (file: File) => {
+    setError(null);
+    const result = parseDocumentExport(await file.text());
+    if (!result.ok) {
+      setError(result.error);
+      return;
+    }
+    // Held rather than applied. Replacing the board is irreversible from the
+    // user's side, so it is described first and confirmed second.
+    setPendingRestore({ summary: describeImport(result.document) });
+    pendingDocRef.current = result;
+  };
+
+  const pendingDocRef = useRef<ReturnType<typeof parseDocumentExport> | null>(null);
+
+  const confirmRestore = (mode: 'replace' | 'merge') => {
+    const result = pendingDocRef.current;
+    if (!result || !result.ok) return;
+    const summary = restoreDocument(result.document, mode);
+    setPendingRestore(null);
+    pendingDocRef.current = null;
+    setStatus(
+      mode === 'replace'
+        ? `Restored ${summary.added} objects`
+        : `Added ${summary.added} objects`
+    );
+    setTimeout(onClose, 900);
+  };
 
   return (
-    <div style={{ position: 'fixed', inset: 0, zIndex: 9999999, display: 'flex', alignItems: 'center', justifyContent: 'center', padding: 16, background: 'rgba(0,0,0,0.4)', backdropFilter: 'blur(8px)' }}>
-      <motion.div
-        ref={dialogRef}
-        role="dialog"
-        aria-modal="true"
-        aria-labelledby="export-modal-title"
-        initial={{ opacity: 0, scale: 0.95, y: 10 }}
-        animate={{ opacity: 1, scale: 1, y: 0 }}
-        exit={{ opacity: 0, scale: 0.95, y: 10 }}
-        transition={{ type: 'spring', stiffness: 400, damping: 30 }}
-        className="panel-surface"
-        style={{ width: 440, borderRadius: 'var(--radius-2xl)', boxShadow: 'var(--shadow-overlay)', position: 'relative', overflow: 'hidden' }}
-      >
-        {/* Header */}
-        <div style={{ padding: '24px 24px 16px', borderBottom: '1px solid var(--border-divider)' }}>
-          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 4 }}>
-            <h2 id="export-modal-title" style={{ margin: 0, fontSize: 18, fontWeight: 600, color: 'var(--text-primary)', letterSpacing: '-0.01em' }}>Export Canvas</h2>
-            <button onClick={onClose} className="btn-icon" style={{ padding: 4 }} aria-label="Close">
-              <X size={20} />
-            </button>
+    <div className="export-scrim">
+      <div ref={dialogRef} role="dialog" aria-modal="true" aria-labelledby="export-title" className="export panel-surface">
+        <header className="export__head">
+          <div>
+            <h2 id="export-title" className="export__title">Export</h2>
+            <p className="export__subtitle">
+              A copy you can share — or a backup you can restore.
+            </p>
           </div>
-          <p style={{ margin: 0, fontSize: 13, color: 'var(--text-secondary)' }}>Download a high-fidelity copy of your work.</p>
-        </div>
+          <button type="button" className="btn-icon" onClick={onClose} aria-label="Close">
+            <X size={18} />
+          </button>
+        </header>
 
-        {/* Content — a radio group, so arrow keys move between formats and a
-            screen reader announces the selected one. */}
-        <div style={{ padding: 24, display: 'flex', flexDirection: 'column', gap: 12 }} role="radiogroup" aria-label="Export format">
-          {formats.map((f) => (
-            <button
-              key={f.id}
-              role="radio"
-              aria-checked={format === f.id}
-              onClick={() => setFormat(f.id)}
-              onMouseEnter={() => setHoveredFormat(f.id)}
-              onMouseLeave={() => setHoveredFormat(null)}
-              style={{
-                display: 'flex', alignItems: 'flex-start', gap: 16, padding: 16,
-                background: (format === f.id || hoveredFormat === f.id) ? 'var(--surface-hover)' : 'transparent',
-                border: `1.5px solid ${(format === f.id || hoveredFormat === f.id) ? 'var(--amber-500)' : 'var(--border-divider)'}`,
-                borderRadius: 12, cursor: 'pointer', textAlign: 'left',
-                transition: 'all 0.15s ease'
-              }}
-            >
-              <div style={{ 
-                width: 40, height: 40, borderRadius: 10, 
-                background: format === f.id ? 'var(--amber-500)' : 'var(--surface-elevated)', 
-                color: format === f.id ? '#fff' : 'var(--text-secondary)',
-                display: 'flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0
-              }}>
-                <f.icon size={20} />
+        <div className="export__body">
+          {/* Left: what you will get. Rendered through the export path itself,
+              so the preview is the export rather than a likeness of it. */}
+          <div className="export__preview">
+            {spec.raster && !isBatch ? (
+              <>
+                <div className={`export__canvas export__canvas--${background === 'ink' ? 'ink' : background === 'paper' ? 'paper' : 'checker'}`}>
+                  {preview
+                    ? <img src={preview.url} alt="Export preview" />
+                    : <span className="export__preview-empty">{previewing ? 'Rendering…' : 'No preview'}</span>}
+                  {previewing && <span className="export__preview-busy"><Loader2 size={14} /></span>}
+                </div>
+                <div className="export__meta">
+                  <span>{activeFrame
+                    ? `${Math.round(activeFrame.width * scale)} × ${Math.round(activeFrame.height * scale)}`
+                    : 'Fits content'}</span>
+                  {estimatedBytes !== null && <span>~{formatBytes(estimatedBytes)}</span>}
+                </div>
+              </>
+            ) : (
+              <div className="export__canvas export__canvas--flat">
+                <span className="export__preview-empty">
+                  {isBatch
+                    ? `${frameList.length} files, one per frame`
+                    : `${spec.label} has no image preview`}
+                </span>
               </div>
-              <div style={{ flex: 1 }}>
-                <div style={{ fontSize: 14, fontWeight: 600, color: 'var(--text-primary)', marginBottom: 2 }}>{f.name}</div>
-                <div style={{ fontSize: 12, color: 'var(--text-tertiary)', lineHeight: 1.4 }}>{f.desc}</div>
-              </div>
-              <div style={{ 
-                width: 20, height: 20, borderRadius: '50%', border: `2px solid ${format === f.id ? 'var(--amber-500)' : 'var(--border-divider)'}`,
-                display: 'flex', alignItems: 'center', justifyContent: 'center'
-              }}>
-                {format === f.id && <div style={{ width: 10, height: 10, borderRadius: '50%', background: 'var(--amber-500)' }} />}
-              </div>
-            </button>
-          ))}
-        </div>
+            )}
+          </div>
 
-        {/* What to export, and how densely. Both live below the format list
-            because they modify it rather than compete with it — and the scale
-            row appears only for PNG, since SVG and JSON have no pixels to
-            multiply and a control that silently does nothing for two of three
-            formats is worse than no control. */}
-        <div className="export-options">
-          {frameList.length > 0 && (
-            <label className="export-options__row">
-              <span className="export-options__label">Export</span>
-              <select
-                className="export-options__select"
-                value={target}
-                onChange={(e) => setTarget(e.target.value)}
-              >
-                <option value={WHOLE_DOCUMENT}>Whole canvas</option>
-                {frameList.map((f) => (
-                  <option key={f.id} value={f.id}>
-                    {f.label} — {Math.round(f.width)} × {Math.round(f.height)}
-                  </option>
-                ))}
-              </select>
-            </label>
-          )}
-
-          {format === 'png' && (
-            <div className="export-options__row">
-              <span className="export-options__label">Size</span>
-              <div role="radiogroup" aria-label="Export scale" className="export-options__scales">
-                {SCALES.map((s) => (
+          {/* Right: the settings, and only the ones this format actually has. */}
+          <div className="export__controls">
+            <div className="export__field">
+              <span className="export__label">Format</span>
+              <div className="export__formats" role="radiogroup" aria-label="Export format">
+                {EXPORT_FORMAT_IDS.map((id) => (
                   <button
-                    key={s}
+                    key={id}
                     type="button"
                     role="radio"
-                    aria-checked={scale === s}
-                    className={`export-options__scale ${scale === s ? 'is-active' : ''}`}
-                    onClick={() => setScale(s)}
+                    aria-checked={format === id}
+                    className={`export__format ${format === id ? 'is-active' : ''}`}
+                    onClick={() => setFormat(id)}
+                    data-tooltip={FORMAT_SPECS[id].blurb}
                   >
-                    {s}×
-                    <span className="export-options__px">
-                      {activeFrame
-                        ? `${Math.round(activeFrame.width * s)} × ${Math.round(activeFrame.height * s)}`
-                        : 'auto'}
-                    </span>
+                    {FORMAT_SPECS[id].label}
                   </button>
                 ))}
               </div>
+              <p className="export__hint">{spec.blurb}</p>
             </div>
-          )}
+
+            {frameList.length > 0 && (
+              <label className="export__field">
+                <span className="export__label">Region</span>
+                <select className="export__select" value={target} onChange={(e) => setTarget(e.target.value)}>
+                  <option value={WHOLE_DOCUMENT}>Whole canvas</option>
+                  <option value={EVERY_FRAME}>Every frame — {frameList.length} files</option>
+                  {frameList.map((f) => (
+                    <option key={f.id} value={f.id}>
+                      {f.label} — {Math.round(f.width)} × {Math.round(f.height)}
+                    </option>
+                  ))}
+                </select>
+              </label>
+            )}
+
+            {spec.raster && (
+              <div className="export__field">
+                <span className="export__label">Size</span>
+                <div className="export__segmented" role="radiogroup" aria-label="Export scale">
+                  {SCALES.map((s) => (
+                    <button
+                      key={s} type="button" role="radio" aria-checked={scale === s}
+                      className={`export__segment ${scale === s ? 'is-active' : ''}`}
+                      onClick={() => setScale(s)}
+                    >
+                      {s}×
+                    </button>
+                  ))}
+                </div>
+              </div>
+            )}
+
+            {/* Shown for every format that can express one — and for JPEG and
+                PDF, which cannot, "None" is honestly labelled as unavailable
+                rather than silently producing a black backing. */}
+            {spec.raster && (
+              <div className="export__field">
+                <span className="export__label">Background</span>
+                <div className="export__segmented" role="radiogroup" aria-label="Background">
+                  {BACKGROUNDS.map((b) => {
+                    const impossible = b.id === 'transparent' && !spec.alpha;
+                    return (
+                      <button
+                        key={String(b.id)} type="button" role="radio"
+                        aria-checked={background === b.id && !impossible}
+                        disabled={impossible}
+                        className={`export__segment ${background === b.id && !impossible ? 'is-active' : ''}`}
+                        onClick={() => setBackground(b.id)}
+                        data-tooltip={impossible ? `${spec.label} has no transparency` : undefined}
+                      >
+                        {b.label}
+                      </button>
+                    );
+                  })}
+                </div>
+              </div>
+            )}
+
+            {spec.lossy && (
+              <label className="export__field">
+                <span className="export__label">
+                  Quality <span className="export__value">{Math.round(quality * 100)}%</span>
+                </span>
+                <input
+                  type="range" min={0.3} max={1} step={0.01} value={quality}
+                  onChange={(e) => setQuality(Number(e.target.value))}
+                  aria-label="Quality"
+                />
+              </label>
+            )}
+          </div>
         </div>
 
-        {error && (
-          <div
-            role="alert"
-            style={{
-              margin: '0 24px 16px', padding: '10px 12px', borderRadius: 'var(--radius-lg)',
-              background: 'color-mix(in srgb, var(--status-danger) 12%, transparent)',
-              border: '1px solid color-mix(in srgb, var(--status-danger) 40%, transparent)',
-              color: 'var(--text-primary)', fontSize: 'var(--text-sm)', lineHeight: 1.4,
-            }}
-          >
-            {error}
+        {/* The advisory. Shown once there is enough on the board to be worth
+            losing, and phrased as what to do rather than as a warning. */}
+        {Object.keys(objects).length > 4 && format !== 'json' && (
+          <p className="export__advice">
+            <AlertTriangle size={13} />
+            Keeping a copy? Export as <button type="button" className="export__link" onClick={() => setFormat('json')}>JSON</button> — it is the only format that can be restored back into a board.
+          </p>
+        )}
+
+        {error && <div role="alert" className="export__error">{error}</div>}
+        {status && !error && <div className="export__status"><CheckCircle2 size={14} /> {status}</div>}
+
+        {pendingRestore && (
+          <div className="export__restore" role="group" aria-label="Restore options">
+            <p className="export__restore-text">
+              <strong>{pendingRestore.summary}</strong> — replace everything on this board, or add it alongside?
+            </p>
+            <div className="export__restore-actions">
+              <button type="button" className="export__ghost" onClick={() => { setPendingRestore(null); pendingDocRef.current = null; }}>Cancel</button>
+              <button type="button" className="export__ghost" onClick={() => confirmRestore('merge')}>Add alongside</button>
+              <button type="button" className="export__danger" onClick={() => confirmRestore('replace')}>Replace board</button>
+            </div>
           </div>
         )}
 
-        {/* Footer */}
-        <div style={{ padding: '16px 24px', background: 'var(--surface-elevated)', borderTop: '1px solid var(--border-divider)', display: 'flex', justifyContent: 'flex-end', gap: 12 }}>
-          <button
-            onClick={onClose}
-            onMouseEnter={() => setCancelHovered(true)}
-            onMouseLeave={() => setCancelHovered(false)}
-            style={{ padding: '8px 16px', borderRadius: 8, fontSize: 14, fontWeight: 500, color: 'var(--text-secondary)', background: cancelHovered ? 'var(--surface-hover)' : 'transparent', border: 'none', cursor: 'pointer', transition: 'background 0.15s ease' }}
-          >
-            Cancel
+        <footer className="export__foot">
+          <input
+            ref={fileInputRef} type="file" accept="application/json,.json" hidden
+            onChange={(e) => { const f = e.target.files?.[0]; if (f) handleFile(f); e.target.value = ''; }}
+          />
+          <button type="button" className="export__ghost" onClick={() => fileInputRef.current?.click()}>
+            <UploadCloud size={15} /> Restore…
           </button>
-          <button 
-            onClick={handleExport}
-            disabled={isExporting || success}
-            style={{ 
-              padding: '8px 20px', borderRadius: 8, fontSize: 14, fontWeight: 600, 
-              color: '#fff', background: success ? '#10B981' : 'var(--amber-500)', 
-              border: 'none', cursor: isExporting ? 'default' : 'pointer',
-              display: 'flex', alignItems: 'center', gap: 8,
-              transition: 'background 0.2s',
-              opacity: isExporting ? 0.8 : 1
-            }}
-          >
-            {isExporting ? <Loader2 size={16} className="animate-spin" /> : 
-             success ? <CheckCircle2 size={16} /> : 
-             <Download size={16} />}
-            {isExporting ? 'Exporting...' : success ? 'Done' : 'Export'}
+
+          <span className="export__spacer" />
+
+          {spec.raster && !isBatch && ExportService.canCopy && (
+            <button type="button" className="export__ghost" onClick={handleCopy}>
+              <Copy size={15} /> Copy
+            </button>
+          )}
+          <button type="button" className="export__primary" onClick={handleExport} disabled={isExporting}>
+            {isExporting ? <Loader2 size={16} className="export__spin" /> : isBatch ? <Layers size={16} /> : <Download size={16} />}
+            {isExporting ? 'Exporting…' : isBatch ? `Export ${frameList.length} files` : `Export ${spec.label}`}
           </button>
-        </div>
-      </motion.div>
+        </footer>
+      </div>
     </div>
   );
 };

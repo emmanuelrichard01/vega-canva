@@ -44,6 +44,17 @@ interface StrokeProps extends Props {
   strokeWidth: number;
   dash?: number[];
   cap?: CanvasLineCap;
+  /**
+   * The corner treatment, which this path used to ignore.
+   *
+   * `ctx.lineJoin` was hardcoded to `'round'` here, so the Join control in the
+   * Properties panel silently did nothing the moment stroke alignment was set
+   * to inside or outside — a control that works in one state of a *neighbouring*
+   * control and not in another, with nothing on screen to say so. The miter
+   * limit never reached this path at all.
+   */
+  join?: CanvasLineJoin;
+  miterLimit?: number;
 }
 
 /**
@@ -65,6 +76,8 @@ export const AlignedStroke: React.FC<StrokeProps> = ({
   strokeWidth,
   dash,
   cap,
+  join,
+  miterLimit,
 }) => (
   <Shape
     listening={false}
@@ -81,7 +94,11 @@ export const AlignedStroke: React.FC<StrokeProps> = ({
       }
       ctx.lineWidth = strokeWidth * 2;
       ctx.strokeStyle = color;
-      ctx.lineJoin = 'round';
+      // Canvas2D's own default is `miter`, which is also the document's absent
+      // case — so an unset join needs no branch and draws what the schema says
+      // it should.
+      ctx.lineJoin = join ?? 'miter';
+      if (miterLimit !== undefined) ctx.miterLimit = miterLimit;
       if (cap) ctx.lineCap = cap;
       if (dash && dash.length) ctx.setLineDash(dash);
       ctx.stroke(path);

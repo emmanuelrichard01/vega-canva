@@ -99,6 +99,36 @@ export function deleteNodesWithFrames(ids: string[]): void {
   }
 
   doc.transact(() => {
+    // Connectors bound to anything being removed are *detached*, not deleted.
+    //
+    // A connector stores which objects it joins rather than where its ends
+    // are, so deleting a box would otherwise leave its arrows pointing at
+    // nothing — they would collapse onto the origin, or vanish with it if we
+    // cascaded. Neither is what someone deleting one box out of a diagram
+    // meant. Freezing the end at the point it currently occupies keeps the
+    // drawing intact and leaves the arrow somewhere you can see, grab and
+    // re-attach.
+    for (const node of Object.values(objects)) {
+      if (node.type !== 'connector') continue;
+      const patch: Record<string, unknown> = {};
+
+      for (const side of ['from', 'to'] as const) {
+        const end = node[side];
+        if (!end?.nodeId || !doomed.has(end.nodeId)) continue;
+        const target = objects[end.nodeId];
+        if (!target) continue;
+        // The centre of what it was attached to: the port it was using is a
+        // property of a box that is about to stop existing, so the honest
+        // fallback is the middle of where that box was.
+        patch[side] = {
+          x: target.x + target.width / 2,
+          y: target.y + target.height / 2,
+        };
+      }
+
+      if (Object.keys(patch).length > 0) updateNode(node.id, patch);
+    }
+
     for (const id of doomed) deleteNode(id);
   });
 }

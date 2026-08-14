@@ -10,17 +10,28 @@ time, where the work stopped, and what is next.
 
 > ## Read this first
 >
-> **Three phases of work have shipped without ever being watched running.**
-> Phases 3, 4 and 5 — precision tools, the vector engine, the typographic
-> engine — are covered by tests and by reading, and by nothing else. The layer
-> search that followed them has not been watched either. The
-> Chrome extension went unresponsive partway through Phase 3 and repeated
-> attempts made it worse, so it was stopped rather than hammered.
+> **A large session of feature and bug work has landed on this branch and is
+> now committed.** Most of it *was* watched running — the Chrome extension
+> cooperated for long stretches this time — and every claim below that says
+> "verified" was measured in a browser, not inferred.
 >
-> That is the single largest piece of outstanding risk on this branch. §3 has
-> the recipe for what *can* be observed in a hidden tab and what genuinely
-> cannot. If you can get a real browser in front of this, do that before
-> writing anything new. What to look for is listed in §5.
+> Two things are explicitly **not** verified, and they are the first places to
+> look if something is off:
+>
+> 1. **The audio recorder has never met a real microphone.** Bitrate, mime
+>    type and the save control are correct by construction and by typecheck;
+>    nothing has recorded a sound.
+> 2. **"Empty text/sticky is discarded on abandon" was not watched.** The
+>    guard that stops a *just-created* note being destroyed by its own opening
+>    click was verified; the path where you genuinely walk away from an empty
+>    one holds by construction (past a 600ms window it falls through to the old
+>    behaviour) but was never observed. Place a note, wait a second, click away
+>    — it should vanish.
+>
+> One long-running report was never reproduced and may still be live: **"the
+> sticky note does not appear at all, but a toast says one was added."** The
+> most likely cause was found and fixed (see §5c), but on the reporter's
+> machine it was intermittent and on this one it never occurred.
 
 ---
 
@@ -36,7 +47,7 @@ Verify in ~30 seconds:
 
 ```bash
 npx tsc --noEmit -p apps/frontend/tsconfig.app.json   # must be silent
-npx vitest run                                        # 569 tests, 30 files
+npx vitest run                                        # 643 tests, 34 files
 npx oxlint apps/frontend/src                          # 14 cosmetic warnings, exit 0
 npm run build -w apps/frontend                        # must succeed
 ```
@@ -51,9 +62,9 @@ history were vacuous for exactly that reason. Use `tsconfig.app.json`, or
 | --- | --- |
 | Branch | `rebuild/time-travel-and-physics`, nothing pushed, nothing merged |
 | Typecheck | clean |
-| Tests | **569** across 30 files |
+| Tests | **643** across 34 files |
 | Lint | exits 0; 14 `only-export-components` warnings, all cosmetic |
-| Build | clean, **1.33MB** JS (gzip 409KB) — still no code splitting |
+| Build | clean, ~1.4MB JS (gzip ~430KB) — still no code splitting |
 
 **Read the failing-suite line, not the test count.** Vitest reports a suite
 that failed to *load* separately from tests that failed, so a file that throws
@@ -80,6 +91,7 @@ Recent commits, newest first:
 
 | | |
 | --- | --- |
+| *(this commit)* | connectors, export + restore, tooltips, templates — see §5c |
 | `2702a9a` | Phase 5 — text case, strikethrough, three-way text box resizing |
 | `ed1db3d` | Phase 4 — anchor/handle editing, booleans, flatten, outline stroke, join/miter |
 | `410e96d` | Phase 3 recorded, and what it left blocked on the group model |
@@ -88,10 +100,17 @@ Recent commits, newest first:
 
 ## 3. The one thing that will waste your time if you don't know it
 
-**You very likely cannot observe the running app.** The Chrome extension
-renders its tab offscreen: `document.visibilityState` is permanently
-`"hidden"`, so **`requestAnimationFrame` never fires**, and synthetic pointer
-events do not reach the Konva stage.
+**Observing the running app is unreliable, but not impossible.** It worked for
+most of the last session. When it fails it fails in these ways, and each has
+cost real time here.
+
+Historically the extension rendered its tab offscreen, so `rAF` never fired and
+synthetic pointer events never reached the stage. That was *not* the experience
+last session — clicks, drags and physics all ran. Assume it may work, verify
+that it is actually ticking, and fall back to the techniques below when it is
+not. The renderer also freezes outright on long scripts: keep injected snippets
+small, and expect `Runtime.evaluate` timeouts on anything that loops over the
+whole document.
 
 Consequences, all of which have cost real time here:
 
@@ -162,11 +181,88 @@ no stroke alignment, no inner shadow, no shadow spread and no conic or diamond
 gradient — all four are drawn by hand in `ShapeEffects.tsx` and
 `paintPattern.ts`.
 
+## 4b. What the last session changed
+
+Grouped by area. Everything here is committed; the reasoning is in the code
+comments, which are the real record.
+
+**Connectors.** `normalizeType`'s allow-list never got `connector`, so *every*
+connector was silently rewritten into a shape — no error, just the wrong node.
+The union is now derived from a `NODE_TYPES` const so the list cannot drift
+again. Curved routing drew a straight line (two points plus Konva `tension`,
+which needs three or more); it is a sampled cubic Bézier leaving each port
+along its normal. Connector ends went from one boolean per end to six kinds
+(none/arrow/triangle/circle/diamond/bar), with the run trimmed back under each
+marker. Derived bounds now sync on a trailing delay, so a connector no longer
+vanishes when its stale box leaves the viewport.
+
+**Export.** Three formats became six (PNG/JPEG/WebP/SVG/PDF/JSON) with a live
+preview, size estimate, per-format settings derived from a `FORMAT_SPECS`
+table, batch export of every frame, and copy-to-clipboard. **The PDF writer is
+hand-rolled** — five objects and an xref table, ~80 lines, no dependency —
+because jsPDF/pdf-lib cost 300–400KB for one page holding one image.
+
+**Restore.** The JSON export called itself "best for backups" and nothing could
+read one back. There is now a validating parser, a single-transaction restorer,
+and a "rebuild a board from a backup" path on the rooms page. That last one
+matters: the in-room restore is unreachable for someone who cleared their
+browser, which is exactly who needs it.
+
+**Templates.** Thirteen editable boards in five categories, built from typed
+`NewNodeInput` rather than shipped as JSON so a schema rename fails the build
+instead of producing broken rooms. Includes deliberate scale showcases —
+Bloom (500), Wave field (1000), Spectrum (360), Domino wall (200). Thumbnails
+are computed from the same `build()` that makes the board and drawn through the
+same `WorkspaceCover` the board cards use, so a card cannot drift from what it
+produces. `build(limit)` exists because generating 1600 nodes to draw four
+48-item thumbnails froze the page.
+
+**Tooltips.** Were `position: absolute` pseudo-elements, so both scrolling side
+panels clipped them. **z-index cannot fix that** — it orders within a stacking
+context and has nothing to do with `overflow`. There is now one `position:
+fixed` node at the app root reading the same `data-tooltip` attributes, so no
+call site changed.
+
+**Transformer.** Eight vertices with corners and edge-midpoints shaped
+differently (a corner scales both axes, an edge one), rotation-aware cursors in
+a tested pure module, and a centre mark shown only while dragging.
+
+**Other fixes worth knowing:** hover and click now share one `canSelectWith()`
+predicate, so the hover outline can no longer promise a click the tool will
+refuse; `NodeEditor` was positioning a `position: fixed` overlay from *stage*
+coordinates, putting every text caret 22px left and 74px above its object; text
+bounds never tracked auto-width content, so selection boxes were a fraction of
+the words; images loaded with `crossOrigin='anonymous'` and failed outright
+when the host sent no CORS header (now falls back); uploads were fixed 300×300
+regardless of aspect.
+
 ## 5. Next up
 
-### 5a. Watch Phases 3–5 (do this first if a browser is available)
+### 5a. The walkthrough project (this is what the user asked for next)
 
-Nothing below is more valuable than this. Concretely:
+Agreed scope, in order:
+
+1. ~~**Demo rooms**~~ — done, 13 templates in 5 categories.
+2. **Per-tool guided walkthroughs.** The agreed design: an arrow anchored to a
+   real object that **advances by doing the thing**, not by a Next button. A
+   wizard becomes the thing people dismiss, and it would contradict what makes
+   the templates work — you learn connectors by dragging a box. The templates
+   now give these somewhere to happen; launch a walkthrough *against* a
+   matching template rather than an empty canvas.
+3. **Visual refinement** of existing surfaces.
+4. **New surfaces** — onboarding, empty states, marketing-grade first run.
+5. **A product page.**
+
+Also outstanding and explicitly deferred by the user: **Supabase** for auth and
+storage. They chose it over own-auth/PocketBase/Clerk. It is a multi-file change
+across the server, a new schema with RLS, and moving voice notes out of the CRDT
+into object storage — worth its own session. Note that voice notes are still
+base64 inside the Yjs document; the bitrate fix cut that ~5× but did not solve
+it.
+
+### 5b. Watch Phases 3–5 (still partly unverified)
+
+Concretely:
 
 - **The 22px stage inset.** `Canvas.tsx` insets the Konva stage by
   `RULER_SIZE` so screen coordinates and ruler marks describe the same world
@@ -186,7 +282,32 @@ Nothing below is more valuable than this. Concretely:
 - Text: case switching without the stored text changing, strikethrough, and
   the three resize modes (auto-width must not wrap, fixed must ellipsize).
 
-### 5b. The two panels — this is the next build phase
+### 5c. The sticky bug that was never reproduced
+
+Reported repeatedly: placing a sticky shows the "added a sticky note" toast but
+**nothing appears on the canvas or in the layers panel**. Never once reproduced
+on this machine across five attempts.
+
+Two real defects were found and fixed while hunting it, either of which could
+have been it:
+
+- `CanvasEngine` optimistically added a new node to the visible set, and the
+  next spatial query built a fresh set and assigned it over the top — dropping
+  the node again unless the index had caught it within one frame. `Canvas` only
+  rescues that when culling loses >50% of the board, so it was invisible on a
+  tiny board and fatal on a real one. Now held in `pendingIds` until the query
+  itself reports the id.
+- An empty sticky is discarded when its editor closes. The note is created on
+  **pointerdown**, and a real click takes ~100ms — long enough for the editor to
+  mount and autofocus, so **pointerup** blurred it and destroyed the note. This
+  is timing-dependent, which is why synthetic events (which fire down and up in
+  one tick) never reproduced it.
+
+If it recurs, the next thing to check is `useStore.getState().isReplaying` —
+stuck `true`, the store ignores *all* live document traffic, which produces
+exactly this signature and has nothing to do with stickies.
+
+### 5d. The two panels — a build phase
 
 The user's brief for this is long and specific; the short version is that both
 panels exist, both are functional, and both are thin against what the brief

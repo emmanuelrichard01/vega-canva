@@ -1,23 +1,10 @@
 import { nanoid } from 'nanoid';
 import type { Tool, ToolContext } from './Tool';
-import type { StickyTheme } from '../model/schema';
 import { localAuthor } from '../document';
+import { useStore } from '../../hooks/useStore';
 import { requestEditOnMount } from '../interaction/pendingEdit';
 
-const THEME_CYCLE: StickyTheme[] = [
-  'yellow',
-  'mint',
-  'sky',
-  'pink',
-  'lavender',
-  'peach',
-  'white',
-  'dark',
-];
-
 const STICKY_SIZE = 200;
-
-let themeIndex = 0;
 
 export class StickyTool implements Tool {
   id = 'sticky';
@@ -31,8 +18,15 @@ export class StickyTool implements Tool {
     const { x, y } = ctx.camera.screenToWorld(pos.x, pos.y);
     if (!Number.isFinite(x) || !Number.isFinite(y)) return;
 
-    const theme = THEME_CYCLE[themeIndex % THEME_CYCLE.length];
-    themeIndex++;
+    /**
+     * The colour you last worked in, not the next one along a list.
+     *
+     * This used to walk a fixed cycle on every placement, so dropping three
+     * notes in a row gave three different colours and a deliberate colour code
+     * was impossible to lay down. It also contradicted the Tab-chain, which
+     * inherits its colour precisely so a train of thought looks like one.
+     */
+    const theme = useStore.getState().stickyTheme;
 
     const id = nanoid();
 
@@ -60,6 +54,24 @@ export class StickyTool implements Tool {
       tags: [],
       pinned: false,
     });
+
+    /**
+     * Back to Select once the note is down.
+     *
+     * Every other creation tool already does this — text, shape and frame all
+     * hand the canvas back the moment they have made their object. Sticky was
+     * the one that stayed armed, so finishing a note and clicking the canvas
+     * placed *another* note instead of selecting, and there was no way out of
+     * the tool except finding the dock again.
+     *
+     * The note's editor is opened by the `requestEditOnMount` latch rather
+     * than by the tool, so changing tool here does not interrupt typing — the
+     * caret is already in the note that was just placed.
+     *
+     * Tab-chaining is unaffected for the same reason: it is driven from inside
+     * the editor, not from the armed tool.
+     */
+    window.dispatchEvent(new CustomEvent('legacy_tool_change', { detail: 'select' }));
   }
 
   onPointerMove() {}

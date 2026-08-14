@@ -27,7 +27,40 @@ const KONVA_FILTER: Record<AdjustmentId, typeof Konva.Filters.Blur> = {
 };
 
 export const ImageRenderer: React.FC<Props> = React.memo(({ node }) => {
-  const [image, status] = useImage(node.src, 'anonymous');
+  /**
+   * Load with CORS, and fall back to loading without it.
+   *
+   * ## Why `anonymous` is asked for first
+   *
+   * Reading pixels back off a canvas that has drawn a cross-origin image
+   * throws — the canvas is "tainted". This renderer does exactly that, twice:
+   * the adjustment filters need `getImageData`, and every raster export calls
+   * `toCanvas`. Requesting the image anonymously, with the server's consent,
+   * is what keeps both working.
+   *
+   * ## Why it cannot be the only attempt
+   *
+   * `crossOrigin = 'anonymous'` is not a hint. If the response carries no
+   * `Access-Control-Allow-Origin` header the load **fails outright** — no
+   * image, just the grey placeholder. And uploads here are served by MinIO on
+   * its own port, while the `cors()` middleware covers only the Express app on
+   * a different one, so nothing in this project makes the object store send
+   * that header. Every uploaded image would sit as a placeholder forever, with
+   * nothing on screen explaining why.
+   *
+   * So: try anonymously, and if that fails try again plainly. A picture that
+   * displays but cannot be exported is a far better outcome than a grey box,
+   * and it is recoverable — the export path can say so, where a missing image
+   * says nothing at all.
+   */
+  const [corsImage, corsStatus] = useImage(node.src, 'anonymous');
+  const needsPlainRetry = corsStatus === 'failed';
+  // Skipped entirely unless the first attempt failed: passing a src here
+  // unconditionally would fetch every image twice.
+  const [plainImage, plainStatus] = useImage(needsPlainRetry ? node.src : '', undefined);
+
+  const image = corsStatus === 'loaded' ? corsImage : plainImage;
+  const status = corsStatus === 'loaded' ? corsStatus : needsPlainRetry ? plainStatus : corsStatus;
   const shapeRef = useRef<Konva.Image>(null);
 
   /**

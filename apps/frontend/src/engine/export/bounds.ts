@@ -45,7 +45,13 @@ export function frameExportBounds(frame: {
   };
 }
 
-export function computeContentBounds(objects?: Record<string, AnyNode>, ids?: string[]): ExportBounds {
+export function computeContentBounds(
+  objects?: Record<string, AnyNode>,
+  ids?: string[],
+  /** Overrides `EXPORT_PADDING`. Zero is a legitimate value, hence `??`. */
+  padding?: number
+): ExportBounds {
+  const pad = padding ?? EXPORT_PADDING;
   const all = objects ?? useStore.getState().objects;
   const list = ids ? ids.map((id) => all[id]).filter(Boolean) : Object.values(all);
 
@@ -70,9 +76,9 @@ export function computeContentBounds(objects?: Record<string, AnyNode>, ids?: st
   if (minX === Infinity) return { x: 0, y: 0, width: 800, height: 600 };
 
   return {
-    x: minX - EXPORT_PADDING,
-    y: minY - EXPORT_PADDING,
-    width: Math.max(1, maxX - minX + EXPORT_PADDING * 2),
-    height: Math.max(1, maxY - minY + EXPORT_PADDING * 2),
+    x: minX - pad,
+    y: minY - pad,
+    width: Math.max(1, maxX - minX + pad * 2),
+    height: Math.max(1, maxY - minY + pad * 2),
   };
 }

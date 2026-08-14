@@ -5,12 +5,19 @@ import { AuthModal } from './components/AuthModal';
 import { ShareModal } from './components/ShareModal';
 import { WorkspaceShell } from './components/workspace/WorkspaceShell';
 import { ToolWorkspace } from './components/workspace/ToolWorkspace';
+import { TOOL_FOR_KEY } from './engine/tools/shortcuts';
+import { takePendingRestore, takePendingTemplate } from './engine/export/pendingRestore';
+import { templateById } from './engine/templates/templates';
+import { parseDocumentExport } from './engine/export/DocumentImport';
+import { restoreDocument } from './engine/export/restoreDocument';
 import { Minimap } from './components/Minimap';
+import { PanelRail } from './components/workspace/PanelRail';
+import { Eye, Radar } from 'lucide-react';
 import { ObjectContextToolbar } from './components/ObjectContextToolbar';
 import { PropertiesPanel } from './components/PropertiesPanel';
 import { LayersPanel } from './components/LayersPanel';
 import { useAuth } from './hooks/AuthContext';
-import { provider, metadataMap, undoManager, updateNode, localAuthor, localAuthorId, publishLocalIdentity } from './engine/document';
+import { doc, provider, metadataMap, undoManager, updateNode, localAuthor, localAuthorId, publishLocalIdentity } from './engine/document';
 import { useRoomState } from './hooks/useSync';
 import { initSyncBridge, useStore } from './hooks/useStore';
 import { editor } from './engine/api/EditorAPI';
@@ -25,22 +32,216 @@ import { mediaUploadUrl } from './utils/endpoints';
 import { CommandPalette } from './components/CommandPalette';
 import { processOfflineMediaQueue, queueOfflineMedia } from './utils/offlineMediaQueue';
 import { calculateLayout, animateToLayout, type LayoutMode } from './utils/spatialLayout';
-import { Mic, TriangleAlert } from 'lucide-react';
+import { Mic, TriangleAlert, X } from 'lucide-react';
 import { RemoteCursors } from './engine/cursor';
 import { ExportModal } from './components/ui/ExportModal';
 import { cameraSystem } from './engine/CameraSystem';
 import { useBreakpoint } from './hooks/useBreakpoint';
 import { CanvasEmptyState } from './components/CanvasEmptyState';
+import { FirstRunGuide } from './components/FirstRunGuide';
+import { WelcomeSequence } from './components/WelcomeSequence';
+import { DockCoach } from './components/DockCoach';
+import { buildPreview, savePreview } from './engine/model/boardPreview';
+import { previewColorOf, previewPointsOf } from './engine/model/previewPaint';
 import { useComments } from './hooks/useComments';
 import { CommentInbox } from './components/comments/CommentInbox';
 import { readMarks } from './engine/comments/readMarks';
 import { anchorPoint, unreadCount } from './engine/comments/threads';
+
+/**
+ * Whether this page load has already taken the pending backup.
+ *
+ * Module scope rather than a ref, because StrictMode remounts the component and
+ * a ref would be recreated with it. A page load can only ever receive one
+ * backup, so the flag's lifetime is the page's.
+ */
+let restoreConsumed = false;
+
+/**
+ * Frame a freshly opened board so all of it is visible at once.
+ *
+ * ## Why a template must not open at 100%
+ *
+ * Several of these boards are deliberately large — five hundred shapes on a
+ * spiral, a thousand on a wave. Landing at 1:1 shows you a corner of one and
+ * no indication that the rest exists, which is the opposite of the first
+ * impression a showcase is for.
+ *
+ * ## Why fit-to-content rather than a fixed zoom
+ *
+ * A fixed 50% would still crop the wave field and would shrink a six-note
+ * retro to something unreadable. Fitting means every board arrives at the size
+ * that shows all of it, whatever it happens to be.
+ *
+ * ## Why the panels are subtracted
+ *
+ * The Layers panel and the Properties panel float **over** the canvas, so the
+ * stage is the full window width while the part you can actually see is nearly
+ * six hundred pixels narrower. Fitting to the stage puts the left and right
+ * edges of the board underneath the panels — visible to the renderer, hidden
+ * from the person. The usable middle is what the content is fitted into.
+ */
+function fitBoardToView(nodes: Array<{ x: number; y: number; width: number; height: number }>): void {
+  if (nodes.length === 0) return;
+
+  let minX = Infinity, minY = Infinity, maxX = -Infinity, maxY = -Infinity;
+  nodes.forEach((n) => {
+    minX = Math.min(minX, n.x);
+    minY = Math.min(minY, n.y);
+    maxX = Math.max(maxX, n.x + n.width);
+    maxY = Math.max(maxY, n.y + n.height);
+  });
+  if (!Number.isFinite(minX)) return;
+
+  const boardW = Math.max(1, maxX - minX);
+  const boardH = Math.max(1, maxY - minY);
+  const usableW = Math.max(320, cameraSystem.width - PANEL_INSET * 2);
+  const usableH = Math.max(240, cameraSystem.height - VERTICAL_INSET);
+
+  const zoom = Math.min(
+    (usableW / boardW) * FIT_MARGIN,
+    (usableH / boardH) * FIT_MARGIN,
+    // Never magnify: a board smaller than the window should sit at its own
+    // size rather than being blown up to fill the screen.
+    1
+  );
+
+  /**
+   * Centred in the *usable* band, not the stage.
+   *
+   * The tool dock sits over the bottom of the canvas and nothing sits over the
+   * top, so the space you can actually see is not centred on the stage — it is
+   * about half the dock's height higher. Centring on the stage put the bottom
+   * of every fitted board underneath the dock.
+   */
+  const verticalShift = DOCK_OBSTRUCTION / 2 / Math.max(0.02, zoom);
+
+  window.dispatchEvent(
+    new CustomEvent('navigateViewport', {
+      detail: {
+        x: minX + boardW / 2,
+        y: minY + boardH / 2 - verticalShift,
+        zoom: Math.max(0.02, zoom),
+      },
+    })
+  );
+}
+
+/** Roughly a side panel, so a fitted board is not tucked under one. */
+const PANEL_INSET = 300;
+/** Header, ruler and the tool dock along the bottom. */
+const VERTICAL_INSET = 190;
+/** How much of the bottom the dock covers, in screen pixels. */
+const DOCK_OBSTRUCTION = 96;
+/** A little air around the content, so nothing touches an edge. */
+const FIT_MARGIN = 0.92;
+
+/** The longest edge a freshly placed image is fitted to, in world units. */
+const IMAGE_PLACE_MAX = 420;
+
+/** How far each additional file in one drop is offset, so none is hidden. */
+const MULTI_PLACE_STEP = 28;
+
+/**
+ * The pixel dimensions of an image file, or null if it cannot be read.
+ *
+ * Resolves rather than rejects on failure: a picture the browser cannot decode
+ * should still be placed — at the fallback size, where it shows as a broken
+ * image the user can delete — rather than making the whole drop do nothing.
+ */
+function measureImage(url: string): Promise<{ width: number; height: number } | null> {
+  return new Promise((resolve) => {
+    const img = new Image();
+    img.onload = () => resolve({ width: img.naturalWidth, height: img.naturalHeight });
+    img.onerror = () => resolve(null);
+    img.src = url;
+  });
+}
 
 export default function Room() {
   const { user } = useAuth();
   
   useEffect(() => {
     initSyncBridge();
+  }, []);
+
+  /** Result of a restore-on-open, shown once and dismissible. */
+  const [restoreNotice, setRestoreNotice] = useState<{ ok: boolean; message: string } | null>(null);
+  /** True while a file is being dragged over the window. */
+  const [dropActive, setDropActive] = useState(false);
+
+  /**
+   * Pour in a backup, if this room was opened to receive one.
+   *
+   * The rooms page validates the file, stashes it, then navigates here — see
+   * `pendingRestore` for why the handoff goes through `sessionStorage` rather
+   * than through props or a store. The re-parse is deliberate: this validates
+   * with the same code that accepted the file rather than trusting a shape
+   * that has been through serialisation.
+   *
+   * ## Why the guard is a module flag and not the stash itself
+   *
+   * The first version read-and-cleared the stash, then scheduled the restore
+   * behind a `setTimeout` and returned a cleanup that cleared that timer. Under
+   * StrictMode — which this app runs in — React mounts, unmounts and remounts
+   * every effect in development. So: the first pass took the backup out of
+   * storage and armed the timer, the cleanup disarmed it, and the remount found
+   * an empty stash and did nothing. The file was consumed and destroyed without
+   * ever being applied, and the failure was silent.
+   *
+   * Two changes, and both are needed. A module-level flag makes consumption
+   * idempotent no matter how many times the effect runs, and nothing cancels
+   * the pending work — the restore is not a subscription to tear down, it is a
+   * one-shot the user has already asked for.
+   */
+  useEffect(() => {
+    if (restoreConsumed) return;
+    restoreConsumed = true;
+
+    /**
+     * A template, if this room was opened from one.
+     *
+     * Shares the consumed-once guard with the restore below for the same
+     * StrictMode reason: the effect runs, unmounts and runs again in
+     * development, and seeding twice would give a board with two of everything.
+     */
+    const templateId = takePendingTemplate();
+    if (templateId) {
+      const template = templateById(templateId);
+      if (template) {
+        window.setTimeout(() => {
+          const nodes = template.build();
+          // One transaction, so a template is one undo step — someone who
+          // opens one and decides against it presses Cmd+Z once, not forty
+          // times. It is also one broadcast rather than forty.
+          doc.transact(() => {
+            nodes.forEach((node) => editor.createNode(node));
+          });
+          fitBoardToView(nodes);
+          setRestoreNotice({ ok: true, message: `${template.name} — click anything to edit it.` });
+        }, 400);
+      }
+      return;
+    }
+
+    const text = takePendingRestore();
+    if (!text) return;
+
+    // Deferred a beat so `y-indexeddb` and the provider have attached. A brand
+    // new room is empty either way, but writing before local persistence is
+    // listening means writing into a document it is about to replace.
+    window.setTimeout(() => {
+      const result = parseDocumentExport(text);
+      if (!result.ok) {
+        setRestoreNotice({ ok: false, message: result.error });
+        return;
+      }
+      const summary = restoreDocument(result.document, 'replace');
+      setRestoreNotice({
+        ok: true,
+        message: `Restored ${summary.added} object${summary.added === 1 ? '' : 's'} from your backup.`,
+      });
+    }, 400);
   }, []);
   const [activeTool, setActiveTool] = useState('select');
   const [selectedIds, setSelectedIds] = useState<string[]>([]);
@@ -60,6 +261,17 @@ export default function Room() {
     const [localTitle, setLocalTitle] = useState("Untitled Workspace");
   const [showExportMenu, setShowExportMenu] = useState(false);
   const [showShareModal, setShowShareModal] = useState(false);
+  /**
+   * Whether the share sheet has been opened at all this session.
+   *
+   * The guide asks "have you discovered sharing?", which `showShareModal`
+   * cannot answer — it goes false again the moment the sheet closes, so the
+   * step would tick and immediately untick.
+   */
+  const [hasShared, setHasShared] = useState(false);
+  useEffect(() => {
+    if (showShareModal) setHasShared(true);
+  }, [showShareModal]);
     const [showTimeTravel, setShowTimeTravel] = useState(false);
   const [timeTravelSnapshot, setTimeTravelSnapshot] = useState<Record<string, any> | null>(null);
   const [showCommandPalette, setShowCommandPalette] = useState(false);
@@ -85,6 +297,50 @@ export default function Room() {
   const applyReplaySnapshot = useStore((s) => s.applyReplaySnapshot);
   const [isUiVisible, setIsUiVisible] = useState(true);
 
+  /**
+   * Whether the tool dock is showing while the rest of the chrome is hidden.
+   *
+   * Entry is immediate: reaching for the bottom edge is already the decision.
+   * Exit waits, because leaving the dock is more often overshoot than intent —
+   * hiding on the first `mouseleave` makes it flicker along the bottom of the
+   * screen the whole time you are working near it, which is the failure mode
+   * that makes reveal-on-hover feel broken everywhere it feels broken.
+   */
+  /**
+   * Whether the frame-or-canvas question has been answered.
+   *
+   * Held here because two surfaces share one anchor above the dock, and only
+   * one of them may occupy it at a time — the coach asks first, the first-run
+   * guide takes over once it has settled.
+   */
+  const [dockAnswered, setDockAnswered] = useState(
+    () => localStorage.getItem('vega_dock_coach_v1') === 'answered'
+  );
+
+  const [dockRevealed, setDockRevealed] = useState(false);
+  const dockHideTimer = useRef<number | null>(null);
+
+  const revealDock = () => {
+    if (dockHideTimer.current !== null) {
+      window.clearTimeout(dockHideTimer.current);
+      dockHideTimer.current = null;
+    }
+    setDockRevealed(true);
+  };
+  const scheduleDockHide = () => {
+    if (dockHideTimer.current !== null) window.clearTimeout(dockHideTimer.current);
+    dockHideTimer.current = window.setTimeout(() => setDockRevealed(false), 450);
+  };
+
+  // Leaving focus mode must not strand the dock in its revealed state, and the
+  // pending timer must not fire into an unmounted tree.
+  useEffect(() => {
+    if (isUiVisible) setDockRevealed(false);
+    return () => {
+      if (dockHideTimer.current !== null) window.clearTimeout(dockHideTimer.current);
+    };
+  }, [isUiVisible]);
+
   // Below the compact breakpoint the side panels stop being docked columns —
   // two 260px panels plus the dock leave a canvas narrower than either of
   // them — and become overlays that open on demand. Above it they are always
@@ -92,6 +348,42 @@ export default function Room() {
   const { isCompact } = useBreakpoint();
   const [panelsOpen, setPanelsOpen] = useState(false);
   const panelsVisible = !isCompact || panelsOpen;
+
+  /**
+   * Whether each side panel is expanded, and whether the radar is showing.
+   *
+   * Persisted per origin, because this is a working preference rather than a
+   * property of the board — the same call the tag filter and the comment read
+   * marks make. A collaborator's screen must not change because you collapsed
+   * your own inspector.
+   *
+   * They start expanded so nothing has moved for anyone who liked the old
+   * layout; the point is that the space can now be *taken back*, not that it
+   * is taken away by default.
+   */
+  const [leftExpanded, setLeftExpanded] = useState(
+    () => localStorage.getItem('vega_panel_left') !== 'collapsed'
+  );
+  const [rightExpanded, setRightExpanded] = useState(
+    () => localStorage.getItem('vega_panel_right') !== 'collapsed'
+  );
+  // Shown by default. It was briefly opt-in to reclaim its footprint, but the
+  // radar is how you answer "where is everything, and where is everyone" on a
+  // surface with no edges — a question you have continuously, not one you
+  // think to go looking for. Collapsing it stays one click away and persists.
+  const [radarOpen, setRadarOpen] = useState(
+    () => localStorage.getItem('vega_radar') !== 'collapsed'
+  );
+  useEffect(() => {
+    localStorage.setItem('vega_panel_left', leftExpanded ? 'expanded' : 'collapsed');
+  }, [leftExpanded]);
+  useEffect(() => {
+    localStorage.setItem('vega_panel_right', rightExpanded ? 'expanded' : 'collapsed');
+  }, [rightExpanded]);
+  useEffect(() => {
+    localStorage.setItem('vega_radar', radarOpen ? 'expanded' : 'collapsed');
+  }, [radarOpen]);
+
 
   // Escape closes the overlay panels, matching every other dismissible
   // surface in the app.
@@ -138,6 +430,36 @@ export default function Room() {
 
   const fileInputRef = useRef<HTMLInputElement>(null);
   const { roomId, status, metadata } = useRoomState();
+
+  /**
+   * Keep a small picture of this board for the dashboard.
+   *
+   * Written from here because this is where the objects already are — the
+   * rooms page has no connection to any document, which is exactly why its
+   * covers used to be a hash of the room id. Debounced hard: a preview is only
+   * ever looked at on another screen, so it costs nothing to be a few seconds
+   * stale and it must not run on every keystroke of a drag.
+   *
+   * Colour is resolved here rather than in the pure module, because a sticky's
+   * colour lives in `THEMES`, which belongs to its renderer.
+   */
+  const previewObjects = useStore((s) => s.objects);
+  useEffect(() => {
+    if (!roomId) return;
+    const t = window.setTimeout(() => {
+      const nodes = Object.values(previewObjects);
+      savePreview(
+        roomId,
+        buildPreview(
+          nodes,
+          previewColorOf,
+          (node) => previewPointsOf(node, previewObjects)
+        )
+      );
+    }, 2000);
+    return () => window.clearTimeout(t);
+  }, [previewObjects, roomId]);
+
 
   // Read state is per person and per room, so it has to be pointed at the room
   // before anything asks what is unread.
@@ -258,17 +580,19 @@ export default function Room() {
       // OS-level menu accelerators on Windows and Linux.
       if (e.ctrlKey || e.metaKey || e.altKey) return;
 
-      switch (e.key.toLowerCase()) {
-        case 'v': selectTool('select'); break;
-        case 'h': selectTool('hand'); break; // Advertised by the dock tooltip but never bound
-        case 't': selectTool('text'); break;
-        case 'r': selectTool('shape'); break;
-        case 'f': selectTool('frame'); break;
-        case 's': selectTool('sticky'); break;
-        case 'c': selectTool('comment'); break; // Advertised by the dock tooltip but never bound
-        case 'p': selectTool('bezier-pen'); break; // Pen (anchor points), matching Illustrator
-        case 'n': selectTool('pen'); break; // Pencil (freehand), matching Illustrator
-        case 'e': selectTool('eraser'); break;
+      const key = e.key.toLowerCase();
+
+      // Resolved through the same map the dock renders its badges from, so a
+      // hint and its binding cannot drift apart. This used to be a switch of
+      // twelve hand-written cases sitting opposite twelve hand-written
+      // tooltips, and two of those tooltips advertised keys nothing bound.
+      const tool = TOOL_FOR_KEY[key];
+      if (tool) {
+        selectTool(tool);
+        return;
+      }
+
+      switch (key) {
         case '\\': setIsUiVisible(prev => !prev); break;
         case '0':
           // Reset camera to origin
@@ -344,19 +668,48 @@ export default function Room() {
     }
   }, [status]);
 
-  const handleMediaUpload = async (e: React.ChangeEvent<HTMLInputElement>) => {
-    const file = e.target.files?.[0];
-    if (!file) return;
-
+  /**
+   * Place one file on the board.
+   *
+   * Split out from the file-input handler so the same path serves every way a
+   * file can arrive — the picker, a paste, a drag from the desktop. Those were
+   * three journeys the app only offered one of, and duplicating the upload,
+   * the offline queue and the aspect measurement for each is how they drift
+   * into behaving differently.
+   */
+  const placeFile = async (file: File, at?: { x: number; y: number }, index = 0) => {
     const localUrl = URL.createObjectURL(file);
     const type = file.type.startsWith('image/') ? 'image' : 'audio';
+
+    /**
+     * An image is placed at the shape it actually is.
+     *
+     * Every upload was created 300×300 regardless of the picture, so a 16:9
+     * photo was squashed into a square — Konva stretches a bitmap to whatever
+     * box it is given. `naturalWidth`/`naturalHeight` were backfilled by the
+     * renderer once the file loaded, but nothing ever used them to correct the
+     * box, so the distortion was permanent unless you resized it by hand.
+     *
+     * Measured from the local blob before the node exists, so it is born
+     * correct rather than being created wrong and reflowed a moment later —
+     * which every collaborator would have seen as a jump.
+     */
+    const measured = type === 'image' ? await measureImage(localUrl) : null;
     // window.innerWidth/innerHeight are screen pixels, not canvas world
     // coordinates — using them directly placed every uploaded file at a fixed
     // world position regardless of where you'd actually panned/zoomed to, so
     // it would silently land off-screen for any view other than the default.
-    const viewCenter = cameraSystem.screenToWorld(window.innerWidth / 2, window.innerHeight / 2);
-    const width = type === 'image' ? 300 : 240;
-    const height = type === 'image' ? 300 : 64;
+    const viewCenter = at ?? cameraSystem.screenToWorld(window.innerWidth / 2, window.innerHeight / 2);
+    let width = type === 'image' ? 300 : 240;
+    let height = type === 'image' ? 300 : 64;
+    if (measured) {
+      // Fitted inside a sensible placement box rather than pasted at full
+      // size: a 4000px photo dropped at its own dimensions covers the board
+      // and lands mostly outside the viewport.
+      const fit = Math.min(IMAGE_PLACE_MAX / measured.width, IMAGE_PLACE_MAX / measured.height, 1);
+      width = Math.max(1, Math.round(measured.width * fit));
+      height = Math.max(1, Math.round(measured.height * fit));
+    }
 
     // A single canonical `src`. The asset URL used to be written to both
     // `assetId` and `content.url`, and the post-upload patch only replaced one
@@ -366,11 +719,18 @@ export default function Room() {
     const objId = editor.createNode({
       id: nanoid(),
       type,
-      x: viewCenter.x - width / 2,
-      y: viewCenter.y - height / 2,
+      /**
+       * Fanned out by index, so dropping six files gives six visible objects
+       * rather than one visible object and five hidden exactly beneath it.
+       */
+      x: viewCenter.x - width / 2 + index * MULTI_PLACE_STEP,
+      y: viewCenter.y - height / 2 + index * MULTI_PLACE_STEP,
       width,
       height,
       src: localUrl,
+      // Recorded at creation, so the crop tool and the aspect-lock have real
+      // numbers from the first frame rather than waiting for a render.
+      ...(measured ? { naturalWidth: measured.width, naturalHeight: measured.height } : {}),
       ...(type === 'audio'
         ? { durationMs: 0, waveform: [], author: localAuthor() }
         : { appearance: {} }),
@@ -399,11 +759,106 @@ export default function Room() {
         fileType: file.type,
         mediaType: type as 'image' | 'audio',
       });
-    } finally {
-      setActiveTool('select');
-      if (fileInputRef.current) fileInputRef.current.value = '';
     }
   };
+
+  /**
+   * Place several files, sequentially.
+   *
+   * Sequential rather than `Promise.all`: each one uploads, and firing a dozen
+   * multipart requests at once is how a slow connection turns a drop into a
+   * stall. They appear on the board immediately regardless — the node is
+   * created from a local blob URL before its upload starts.
+   */
+  const placeFiles = async (files: File[], at?: { x: number; y: number }) => {
+    const usable = files.filter((f) => f.type.startsWith('image/') || f.type.startsWith('audio/'));
+    if (usable.length === 0) return;
+    for (let i = 0; i < usable.length; i += 1) {
+      await placeFile(usable[i], at, i);
+    }
+    setActiveTool('select');
+  };
+
+  const handleMediaUpload = async (e: React.ChangeEvent<HTMLInputElement>) => {
+    const files = Array.from(e.target.files ?? []);
+    // Cleared before the await: the picker must be able to offer the same file
+    // again immediately, and `value` is what makes a repeat selection fire.
+    if (fileInputRef.current) fileInputRef.current.value = '';
+    await placeFiles(files);
+  };
+
+  /**
+   * Paste an image from the clipboard, and drop one from the desktop.
+   *
+   * Two journeys the app simply did not have: the only way to get a picture
+   * onto the board was the dock button and a file dialog. Screenshotting
+   * something and pressing Cmd+V is how most images actually reach a
+   * whiteboard, and dragging a file onto the window is the other.
+   *
+   * Both are declined while a text field has focus — pasting into a note must
+   * paste text, not drop a picture beside it.
+   */
+  useEffect(() => {
+    const inTextField = () => {
+      const el = document.activeElement;
+      return el instanceof HTMLInputElement || el instanceof HTMLTextAreaElement || (el as HTMLElement)?.isContentEditable;
+    };
+
+    const onPaste = (e: ClipboardEvent) => {
+      if (inTextField()) return;
+      const files = Array.from(e.clipboardData?.items ?? [])
+        .filter((item) => item.kind === 'file')
+        .map((item) => item.getAsFile())
+        .filter((f): f is File => Boolean(f));
+      if (files.length === 0) return;
+      e.preventDefault();
+      // Pasted content has no position of its own, so it lands in the middle
+      // of what you are looking at — which is where you were looking when you
+      // decided to paste.
+      void placeFiles(files);
+    };
+
+    const onDragOver = (e: DragEvent) => {
+      if (!e.dataTransfer?.types?.includes('Files')) return;
+      // Without this the browser navigates away to the dropped file, which
+      // loses the board.
+      e.preventDefault();
+      e.dataTransfer.dropEffect = 'copy';
+      setDropActive(true);
+    };
+
+    const onDragLeave = (e: DragEvent) => {
+      // Only when the pointer has actually left the window; dragging across a
+      // child element fires `dragleave` constantly and would flicker the hint.
+      if (e.relatedTarget === null) setDropActive(false);
+    };
+
+    const onDrop = (e: DragEvent) => {
+      const files = Array.from(e.dataTransfer?.files ?? []);
+      setDropActive(false);
+      if (files.length === 0) return;
+      e.preventDefault();
+      // Dropped where the pointer released, so a file lands where it was aimed
+      // rather than in the middle of the view.
+      const stage = document.querySelector('.konvajs-content')?.getBoundingClientRect();
+      const at = stage
+        ? cameraSystem.screenToWorld(e.clientX - stage.left, e.clientY - stage.top)
+        : undefined;
+      void placeFiles(files, at);
+    };
+
+    window.addEventListener('paste', onPaste);
+    window.addEventListener('dragover', onDragOver);
+    window.addEventListener('dragleave', onDragLeave);
+    window.addEventListener('drop', onDrop);
+    return () => {
+      window.removeEventListener('paste', onPaste);
+      window.removeEventListener('dragover', onDragOver);
+      window.removeEventListener('dragleave', onDragLeave);
+      window.removeEventListener('drop', onDrop);
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [roomId]);
 
   const selectTool = (tool: string) => {
     setActiveTool(tool);
@@ -533,11 +988,58 @@ export default function Room() {
         role="application"
         aria-label="Infinite canvas. Use the tool dock to add objects, or press Ctrl+K for commands."
         tabIndex={-1}
-        style={{ position: 'absolute', top: 0, left: 0, right: 0, bottom: 0, zIndex: 0 }}
+        /* Starts below the header, and this is the fix for a bug that hid a
+           whole feature: the rulers live at the top-left of this box, but the
+           header is opaque, 56px tall and z-index 100 against their z-index 5 —
+           so `elementFromPoint` over the horizontal ruler returned the header,
+           and the ruler had never once been visible to anyone.
+
+           Running the canvas *under* an opaque header bought nothing: those
+           pixels could not be seen. Starting the viewport below it costs
+           nothing, makes the rulers visible where every tool in this category
+           puts them, and leaves the coordinate maths alone — Konva reports
+           pointer positions relative to the stage, so everything that reads
+           `getPointerPosition()` is unaffected. */
+        style={{
+          position: 'absolute',
+          // Below the header normally; the whole screen in focus mode, where
+          // there is no header to sit below. Reserving its height anyway left
+          // a 56px dead band above the ruler — the one mode whose entire
+          // purpose is giving the board the screen was the one still paying
+          // for chrome that had gone.
+          top: isUiVisible ? 'var(--header-h)' : 0,
+          // Height, not `bottom`. `.canvas-area` carries an explicit
+          // `height: 100%`, and an absolutely positioned box with both a
+          // height and a bottom is over-constrained — the height wins and the
+          // bottom is ignored. Offsetting the top therefore pushed the whole
+          // box 56px past the viewport, taking the radar (anchored 24px from
+          // *its* bottom) off the bottom of the screen with it.
+          height: isUiVisible ? 'calc(100% - var(--header-h))' : '100%',
+          left: 0, right: 0, zIndex: 0,
+        }}
       >
         
-        {/* Spatial Intelligence & Radar */}
-        {isUiVisible && <Minimap />}
+        {/* The radar: visible when needed, not permanently parked.
+            It was a 260×214 block that never went away — about 55,000px² of
+            always-on chrome for a surface you glance at every few minutes.
+            Collapsed it is a single pill in exactly the same corner, so the
+            place you look for it never moves. */}
+        {isUiVisible && (radarOpen ? (
+          <Minimap onCollapse={() => setRadarOpen(false)} />
+        ) : (
+          <button
+            type="button"
+            className="radar-summon"
+            style={{ position: 'absolute', left: 16, bottom: 24, zIndex: 90 }}
+            onClick={() => setRadarOpen(true)}
+            aria-label="Show the radar"
+            data-tooltip="Radar — the whole board, and everyone on it"
+            data-tooltip-pos="right"
+          >
+            <Radar size={15} />
+            Radar
+          </button>
+        ))}
         
         {/* Which way everyone is, when they are off the edge of your screen.
             Takes no props: it reads the camera singleton directly, which is
@@ -569,7 +1071,18 @@ export default function Room() {
             the moment anything exists. */}
         <CanvasEmptyState visible={isUiVisible && !timeTravelSnapshot} />
         
-        <input type="file" ref={fileInputRef} style={{ display: 'none' }} onChange={handleMediaUpload} />
+        {/* `multiple`, because selecting eight photos and getting one is not
+            a limitation anyone expects from a file picker. */}
+        <input type="file" multiple ref={fileInputRef} style={{ display: 'none' }} onChange={handleMediaUpload} />
+
+        {/* Says the window will accept what is being dragged. Without it a
+            drag over the board looks exactly like a drag over anything else
+            that will refuse it. */}
+        {dropActive && (
+          <div className="drop-veil" aria-hidden="true">
+            <span className="drop-veil__label">Drop to place</span>
+          </div>
+        )}
         
         {/* `isPlayMode` and `overrideObjects` used to be passed here and were
             read by nothing inside Canvas. Time Travel drives the canvas through
@@ -603,7 +1116,31 @@ export default function Room() {
             /* Leaving the tool is enough — Canvas clears the layout snapshot
                for every exit path, including picking another tool. */
             onExit={() => setActiveTool('select')}
+            /* The simulation lives inside Canvas, which owns the physics loop.
+               Announced rather than threaded down through Room as a prop, the
+               same way tool changes are — the alternative is lifting the whole
+               physics hook up two levels to serve one button. */
+            onCalm={() => window.dispatchEvent(new CustomEvent('physics-calm'))}
+            selectedCount={selectedIds.length}
           />
+        )}
+
+        {/* Says what happened when a room was opened to receive a backup.
+            Dismissible rather than timed: it is the confirmation that the
+            recovery worked, and it should not vanish while you are still
+            checking the board against what you remember. */}
+        {restoreNotice && (
+          <div className={`restore-notice ${restoreNotice.ok ? 'is-ok' : 'is-error'}`} role="status">
+            <span>{restoreNotice.message}</span>
+            <button
+              type="button"
+              onClick={() => setRestoreNotice(null)}
+              aria-label="Dismiss"
+              className="restore-notice__close"
+            >
+              <X size={14} />
+            </button>
+          </div>
         )}
 
         {showCommandPalette && (
@@ -667,31 +1204,112 @@ export default function Room() {
 
       {/* CONTEXT INSPECTOR (Right Sidebar) */}
       {isUiVisible && (
-        <div className="context-inspector panel-surface" data-open={panelsVisible}>
-          <PropertiesPanel selectedId={selectedId} overrideObjects={timeTravelSnapshot} />
+        <div
+          className={rightExpanded ? 'context-inspector panel-surface' : 'context-inspector'}
+          data-open={panelsVisible}
+          data-collapsed={!rightExpanded}
+        >
+          {rightExpanded ? (
+            <PropertiesPanel
+              selectedIds={selectedIds}
+              overrideObjects={timeTravelSnapshot}
+              onCollapse={() => setRightExpanded(false)}
+            />
+          ) : (
+            <PanelRail
+              side="right"
+              label="Design"
+              count={selectedIds.length}
+              onExpand={() => setRightExpanded(true)}
+            />
+          )}
         </div>
       )}
 
       {/* HIERARCHY PANEL (Left Sidebar) */}
       {isUiVisible && (
-        <div className="hierarchy-panel panel-surface" data-open={panelsVisible}>
-          <LayersPanel selectedIds={selectedIds} setSelectedId={setSelectedId} setSelectedIds={setSelectedIds} overrideObjects={timeTravelSnapshot} />
+        <div
+          className={leftExpanded ? 'hierarchy-panel panel-surface' : 'hierarchy-panel'}
+          data-open={panelsVisible}
+          data-collapsed={!leftExpanded}
+          data-radar-collapsed={!radarOpen}
+        >
+          {leftExpanded ? (
+            <LayersPanel
+              selectedIds={selectedIds}
+              setSelectedId={setSelectedId}
+              setSelectedIds={setSelectedIds}
+              overrideObjects={timeTravelSnapshot}
+              onCollapse={() => setLeftExpanded(false)}
+            />
+          ) : (
+            <PanelRail
+              side="left"
+              label="Layers"
+              count={Object.keys(commentObjects).length}
+              onExpand={() => setLeftExpanded(true)}
+            />
+          )}
         </div>
       )}
 
-      {/* Zen Mode Escape Hint */}
+      {/* Once ever: what this is for. Everything that can be discovered by
+          using the product is taught in place instead — see `FirstRunGuide`
+          and `CanvasEmptyState`. */}
+      <WelcomeSequence />
+
+      {/* What the screen cannot say for itself: that other people can be here,
+          and that the chrome will get out of the way. Everything else a first
+          run needs is already said in place by the empty state. */}
+      {/* The fork the dock cannot present for itself: an endless surface, or a
+          frame at a real size. Asked once, both answers recorded the same.
+          Shown before the first-run guide so the two never stack. */}
+      {isUiVisible && <DockCoach visible={isUiVisible} onSettled={() => setDockAnswered(true)} />}
+
+      {isUiVisible && dockAnswered && (
+        <FirstRunGuide
+          hasShared={hasShared}
+          hasReclaimedSpace={!leftExpanded || !rightExpanded}
+        />
+      )}
+
+      {/* FOCUS MODE.
+          It used to be a light switch: every surface dropped at once, leaving
+          a "Show UI" button and a permanent hint pill sitting on the artwork.
+          That is an off switch, not a focus mode — changing tool meant turning
+          the whole interface back on.
+
+          Now the board is the whole screen and the tools come back when you
+          reach for them. The grabber at the bottom edge is what stops that
+          being a secret: an invisible hot zone is not an affordance, it is
+          folklore. */}
       {!isUiVisible && (
         <>
-          <button 
-            onClick={() => setIsUiVisible(true)}
-            className="panel-surface hover-surface"
-            style={{ position: 'absolute', top: 16, right: 16, zIndex: 1000, display: 'flex', alignItems: 'center', gap: 8, padding: '8px 16px', borderRadius: 8, fontWeight: 600, fontSize: 13, border: '1px solid var(--border-divider)', boxShadow: 'var(--shadow-md)', cursor: 'pointer', color: 'var(--text-primary)' }}
+          <div
+            className="focus-edge"
+            onMouseEnter={revealDock}
+            aria-hidden="true"
+          />
+          <div className="focus-grabber" aria-hidden="true" />
+
+          <div
+            className={`focus-dock${dockRevealed ? ' is-revealed' : ''}`}
+            onMouseEnter={revealDock}
+            onMouseLeave={scheduleDockHide}
           >
-            Show UI <span style={{ opacity: 0.5, marginLeft: 4 }}>\</span>
-          </button>
-          <div style={{ position: 'absolute', bottom: 24, left: '50%', transform: 'translateX(-50%)', background: 'var(--surface-elevated)', padding: '8px 16px', borderRadius: 20, color: 'var(--text-secondary)', fontSize: 12, fontWeight: 500, border: '1px solid var(--border-divider)', boxShadow: 'var(--shadow-float)', pointerEvents: 'none', zIndex: 1000 }}>
-            Press \ to show UI
+            <ToolWorkspace activeToolId={activeTool} />
           </div>
+
+          <button
+            type="button"
+            className="focus-exit"
+            onClick={() => setIsUiVisible(true)}
+            aria-label="Leave focus mode"
+          >
+            <Eye size={14} />
+            Focus
+            <span style={{ opacity: 0.55 }}>\</span>
+          </button>
         </>
       )}
     </div>

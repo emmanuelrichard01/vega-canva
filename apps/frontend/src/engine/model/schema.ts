@@ -29,15 +29,33 @@
  * which runs at the CRDT boundary, so no consumer ever sees a legacy field.
  */
 
-export type NodeType =
-  | 'text'
-  | 'shape'
-  | 'sticky'
-  | 'image'
-  | 'audio'
-  | 'path'
-  | 'frame'
-  | 'comment';
+/**
+ * Every node type, as a value rather than only a type.
+ *
+ * The read boundary has to decide at *runtime* whether a `type` string off the
+ * wire is one it knows, and a hand-kept second copy of this list is a silent
+ * failure waiting to happen: `connector` was added to the union and missed in
+ * the boundary's copy, so every connector was quietly rewritten into a shape —
+ * no error, no missing node, just the wrong one. Deriving the union from the
+ * array means there is one list, and adding to it is the only edit.
+ */
+export const NODE_TYPES = [
+  'text',
+  'shape',
+  'sticky',
+  'image',
+  'audio',
+  'path',
+  'frame',
+  'comment',
+  'connector',
+] as const;
+
+export type NodeType = (typeof NODE_TYPES)[number];
+
+/** Re-exported so a node's own type is readable without a second import. */
+export type { EndCapKind } from './connectorEnds';
+import type { EndCapKind } from './connectorEnds';
 
 /**
  * Current schema revision, stamped into document metadata by the migration.
@@ -64,6 +82,11 @@ export const SCHEMA_VERSION = 3;
  */
 export type { GradientStop, Paint, PaintType } from './paint';
 import type { Paint } from './paint';
+
+/** Connector geometry lives in `model/connector`, re-exported here so the
+ *  schema still reads as one description of the document. */
+export type { ConnectorEnd, Port, Routing } from './connector';
+import type { ConnectorEnd, Routing } from './connector';
 
 /**
  * How a layer's pixels combine with what is already beneath them.
@@ -567,15 +590,26 @@ export interface ShapeNode extends BaseNode {
   typography?: Typography;
 }
 
-export type StickyTheme =
-  | 'yellow'
-  | 'mint'
-  | 'sky'
-  | 'pink'
-  | 'lavender'
-  | 'peach'
-  | 'white'
-  | 'dark';
+/**
+ * The sticky palette, as a value as well as a type.
+ *
+ * Same reasoning as `NODE_TYPES`: the read boundary has to decide at runtime
+ * whether a stored theme is one it knows, and it was keeping a private copy of
+ * this list to do it. Two hand-maintained lists of the same thing is how the
+ * connector type came to be silently rewritten into a shape.
+ */
+export const STICKY_THEMES = [
+  'yellow',
+  'mint',
+  'sky',
+  'pink',
+  'lavender',
+  'peach',
+  'white',
+  'dark',
+] as const;
+
+export type StickyTheme = (typeof STICKY_THEMES)[number];
 
 export interface StickyNode extends BaseNode {
   type: 'sticky';
@@ -671,6 +705,42 @@ export interface FrameNode extends BaseNode {
   };
 }
 
+/**
+ * A line that joins two objects.
+ *
+ * The one node type whose geometry is **derived rather than stored**. `from`
+ * and `to` hold node ids and a side; the points are recomputed on every read
+ * from wherever those objects currently are. That is what makes a flowchart
+ * survive being rearranged — the arrow never knew a coordinate to forget.
+ *
+ * `width`/`height` on the base node are still the only source of bounds, and
+ * are kept in step by the renderer, because culling, the radar and marquee
+ * selection all read them and a stale box is an arrow that vanishes at the
+ * edge of the viewport.
+ */
+export interface ConnectorNode extends BaseNode {
+  type: 'connector';
+  from: ConnectorEnd;
+  to: ConnectorEnd;
+  routing: Routing;
+  appearance?: Appearance;
+  /**
+   * What sits at each end — see `EndCapKind`.
+   *
+   * The pair of booleans below is the ancestor of these, and is kept only so
+   * documents authored before end styles existed still read correctly. The
+   * normalizer maps them across; nothing writes them any more.
+   */
+  endStart?: EndCapKind;
+  endEnd?: EndCapKind;
+  /** @deprecated Superseded by `endStart`/`endEnd`. Read at the boundary only. */
+  arrowStart?: boolean;
+  /** @deprecated Superseded by `endStart`/`endEnd`. Read at the boundary only. */
+  arrowEnd?: boolean;
+  /** A word or two riding the middle of the run — "yes", "no", "retry". */
+  label?: string;
+}
+
 export type AnyNode =
   | TextNode
   | ShapeNode
@@ -679,7 +749,8 @@ export type AnyNode =
   | AudioNode
   | PathNode
   | CommentNode
-  | FrameNode;
+  | FrameNode
+  | ConnectorNode;
 
 // ---------------------------------------------------------------------------
 // Narrowing helpers

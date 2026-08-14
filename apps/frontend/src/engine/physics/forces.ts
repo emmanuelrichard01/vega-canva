@@ -31,7 +31,7 @@
  * `gravity` below is the wanted *feeling* made safe — a directional pull you
  * aim and hold, which stops the moment you let go.
  */
-export type ForceId = 'magnet' | 'repel' | 'wind' | 'shockwave' | 'gravity';
+export type ForceId = 'magnet' | 'repel' | 'wind' | 'shockwave' | 'gravity' | 'swirl';
 
 export interface ForceSpec {
   id: ForceId;
@@ -98,9 +98,29 @@ export const FORCE_SPECS: Record<ForceId, ForceSpec> = {
     continuous: true,
     colorToken: 'var(--force-drop)',
   },
+  /**
+   * Tangential rather than radial: every object is pushed at a right angle to
+   * the line joining it to the cursor, so the field turns instead of gathering
+   * or scattering.
+   *
+   * Worth having because the other five all move things *along* that line —
+   * toward, away, down, or downwind — and none of them can rearrange a cluster
+   * without also dispersing it. Swirl is the one that reorders without
+   * displacing, which is the useful thing to do to a group of notes you want
+   * shuffled but kept together.
+   */
+  swirl: {
+    id: 'swirl',
+    label: 'Swirl',
+    hint: 'Hold to turn objects around the cursor',
+    radius: 550,
+    strength: 0.0009,
+    continuous: true,
+    colorToken: 'var(--force-swirl)',
+  },
 };
 
-export const FORCE_IDS: ForceId[] = ['magnet', 'repel', 'gravity', 'wind', 'shockwave'];
+export const FORCE_IDS: ForceId[] = ['magnet', 'repel', 'gravity', 'wind', 'swirl', 'shockwave'];
 
 export const isForceTool = (toolId: string): toolId is ForceId =>
   (FORCE_IDS as string[]).includes(toolId);
@@ -114,3 +134,83 @@ export const isForceTool = (toolId: string): toolId is ForceId =>
 export const MIN_FORCE_SCALE = 0.25;
 export const MAX_FORCE_SCALE = 2;
 export const DEFAULT_FORCE_SCALE = 1;
+
+/**
+ * The effect area, as a multiplier on each force's own radius.
+ *
+ * A multiplier rather than an absolute number of pixels, so the five forces
+ * keep the different characters they were tuned with — wind reaches furthest,
+ * swirl is the tightest — while still all responding to one control. Setting an
+ * absolute radius would flatten them into the same tool with different maths.
+ *
+ * The range is wide because this is the control that changes what the tool is
+ * *for*: at 0.35 a shockwave is a nudge that separates two overlapping notes,
+ * and at 3 it clears a whole board.
+ */
+export const MIN_FORCE_RADIUS_SCALE = 0.35;
+export const MAX_FORCE_RADIUS_SCALE = 3;
+export const DEFAULT_FORCE_RADIUS_SCALE = 1;
+
+/**
+ * How the force fades from the centre of the field to its edge.
+ *
+ * This was hardwired to `(radius - dist) / radius` — a straight line — and it
+ * is the single biggest lever on how a force *feels*, so it belongs to the
+ * user rather than to the source.
+ */
+export type FalloffId = 'smooth' | 'linear' | 'constant';
+
+export interface FalloffSpec {
+  id: FalloffId;
+  label: string;
+  hint: string;
+}
+
+export const FALLOFF_SPECS: Record<FalloffId, FalloffSpec> = {
+  smooth: {
+    id: 'smooth',
+    label: 'Smooth',
+    hint: 'Strong in the middle, easing to nothing at the edge — no visible boundary',
+  },
+  linear: {
+    id: 'linear',
+    label: 'Linear',
+    hint: 'Falls off evenly with distance',
+  },
+  constant: {
+    id: 'constant',
+    label: 'Even',
+    hint: 'Full strength everywhere inside the field, nothing outside it',
+  },
+};
+
+export const FALLOFF_IDS: FalloffId[] = ['smooth', 'linear', 'constant'];
+
+/**
+ * The strength multiplier at `dist` from the centre of a field of `radius`.
+ *
+ * Returns 0 outside the field for every curve, so the caller needs no separate
+ * range check to stay consistent with the ring being drawn.
+ *
+ * `smooth` is smoothstep, which reaches zero with zero *slope*. That is what
+ * removes the edge you can feel on the linear curve, where an object just
+ * inside the ring still gets a small kick and one just outside gets nothing —
+ * a discontinuity that reads as the field having a hard rim.
+ *
+ * `constant` keeps the rim on purpose. It is the right curve for pushing a
+ * whole cluster as a unit, because every object in it gets the same shove and
+ * the group keeps its shape instead of stretching.
+ */
+export function falloffAt(id: FalloffId, dist: number, radius: number): number {
+  if (!(radius > 0) || dist >= radius) return 0;
+  const t = 1 - dist / radius;
+  switch (id) {
+    case 'constant':
+      return 1;
+    case 'linear':
+      return t;
+    case 'smooth':
+    default:
+      return t * t * (3 - 2 * t);
+  }
+}

@@ -4,6 +4,7 @@ import { nanoid } from 'nanoid';
 import { getStroke } from 'perfect-freehand';
 import type { Tool, ToolContext } from './Tool';
 import { objectsMap, deleteNode } from '../document';
+import { useStore } from '../../hooks/useStore';
 
 function svgPathFromStroke(stroke: number[][]) {
   if (!stroke.length) return '';
@@ -60,24 +61,58 @@ export class EraserTool implements Tool {
   id = 'eraser';
   cursor = 'none';
 
+  /**
+   * The eraser's radius in world units, shared across strokes like the
+   * pencil's colour and size. `[` and `]` resize it, which is the convention
+   * every raster editor has taught. It was a hardcoded 15 with no way to
+   * change it, so erasing a hairline and erasing a wall of stickies were the
+   * same gesture at the same scale.
+   */
+  private static get size(): number {
+    return useStore.getState().eraserSize;
+  }
+
   private isErasing = false;
   private currentX = 0;
   private currentY = 0;
+  /** Where the previous sample landed, so the gap between them is swept. */
+  private lastX: number | null = null;
+  private lastY: number | null = null;
 
   onPointerDown(ctx: ToolContext, e: any) {
     if (!this.updatePos(ctx, e)) return;
     this.isErasing = true;
+    this.lastX = this.currentX;
+    this.lastY = this.currentY;
     this.eraseAtPointer(ctx);
   }
 
   onPointerMove(ctx: ToolContext, e: any) {
     if (!this.updatePos(ctx, e)) return;
     if (!this.isErasing) return;
-    this.eraseAtPointer(ctx);
+    this.eraseSweep(ctx);
   }
 
   onPointerUp() {
     this.isErasing = false;
+    this.lastX = null;
+    this.lastY = null;
+  }
+
+  onKeyDown(ctx: ToolContext, e: KeyboardEvent) {
+    // `[` and `]` resize, as in every raster editor.
+    if (e.key === '[' || e.key === ']') {
+      const step = Math.max(2, EraserTool.size * 0.25);
+      useStore.getState().setEraserSize(EraserTool.size + (e.key === ']' ? step : -step));
+      // Repaint the ring at its new size without waiting for a mouse move.
+      ctx.setOverlayState?.({
+        type: 'eraser',
+        x: this.currentX,
+        y: this.currentY,
+        zoom: ctx.camera.zoom,
+        size: EraserTool.size,
+      });
+    }
   }
 
   onDeactivate(ctx: ToolContext) {
@@ -98,14 +133,52 @@ export class EraserTool implements Tool {
     this.currentX = (pos.x - ctx.camera.x) / ctx.camera.zoom;
     this.currentY = (pos.y - ctx.camera.y) / ctx.camera.zoom;
 
-    ctx.setOverlayState?.({ type: 'eraser', x: this.currentX, y: this.currentY, zoom: ctx.camera.zoom });
+    ctx.setOverlayState?.({
+      type: 'eraser',
+      x: this.currentX,
+      y: this.currentY,
+      zoom: ctx.camera.zoom,
+      size: EraserTool.size,
+    });
     return true;
   }
 
-  private eraseAtPointer(ctx: ToolContext) {
-    const eraserRadius = 15 / ctx.camera.zoom;
-    const cx = this.currentX, cy = this.currentY;
+  /**
+   * Erase along the whole path travelled since the last sample, not just at
+   * the point it ended on.
+   *
+   * Pointer events arrive at whatever rate the device and the frame budget
+   * allow, and a quick swipe can jump a hundred world units between two of
+   * them. Testing only the endpoints meant anything lying *between* two
+   * samples survived — so erasing fast left a dotted trail of untouched
+   * objects, and the fix people reach for is to go over it again slowly,
+   * which is the tool telling you to work around it.
+   */
+  private eraseSweep(ctx: ToolContext) {
+    const radius = EraserTool.size / ctx.camera.zoom;
+    const fromX = this.lastX ?? this.currentX;
+    const fromY = this.lastY ?? this.currentY;
+    const dx = this.currentX - fromX;
+    const dy = this.currentY - fromY;
+    const distance = Math.hypot(dx, dy);
 
+    // Half the radius per step, so consecutive discs overlap and the swept
+    // area has no holes in it.
+    const steps = Math.max(1, Math.ceil(distance / Math.max(1, radius * 0.5)));
+    for (let i = 1; i <= steps; i += 1) {
+      const t = i / steps;
+      this.eraseAt(ctx, fromX + dx * t, fromY + dy * t, radius);
+    }
+
+    this.lastX = this.currentX;
+    this.lastY = this.currentY;
+  }
+
+  private eraseAtPointer(ctx: ToolContext) {
+    this.eraseAt(ctx, this.currentX, this.currentY, EraserTool.size / ctx.camera.zoom);
+  }
+
+  private eraseAt(ctx: ToolContext, cx: number, cy: number, eraserRadius: number) {
     Array.from(objectsMap.entries()).forEach(([id, objMap]) => {
       const obj = objMap.toJSON() as any;
       if (obj.locked || obj.hidden) return;
@@ -271,7 +344,11 @@ export class EraserTool implements Tool {
 
   renderOverlay(ctx: ToolContext, overlayState: any) {
     if (overlayState?.type === 'eraser') {
-      const radius = 15 / overlayState.zoom;
+      // The ring is the promise the eraser makes about what it will remove,
+      // so it has to be the same number the erase uses — it was a second
+      // hardcoded 15, which would have silently started lying the moment the
+      // size became adjustable.
+      const radius = (overlayState.size ?? EraserTool.size) / overlayState.zoom;
       return (
         <Circle
           x={overlayState.x}

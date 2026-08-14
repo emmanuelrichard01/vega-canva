@@ -38,7 +38,25 @@ export const STROKE_STYLE_LABELS: Record<StrokeStyleId, string> = {
 /** The dash-dependent half of a stroke. Absent keys mean "remove this". */
 export interface DashGeometry {
   dash?: number[];
-  cap?: Stroke['cap'];
+}
+
+/**
+ * Whether a dash array is the "dotted" kind — zero-length segments.
+ *
+ * This is the one place the fact lives, and the renderer is what acts on it:
+ * a dot has no extent of its own, so it is drawn entirely by the round cap at
+ * each end of nothing, and with a butt cap the same array draws *nothing at
+ * all*.
+ *
+ * That used to be enforced by writing `cap: 'round'` into the document
+ * alongside the pattern, which quietly destroyed the authored cap: set a
+ * square cap, pick Dotted, go back to Solid, and the stroke was now round with
+ * no record that it had ever been anything else. A dot needing a round cap is
+ * a fact about drawing, not a decision the user made, so it belongs at the
+ * point of drawing and the document keeps saying what the user actually chose.
+ */
+export function isDottedPattern(dash: number[] | undefined): boolean {
+  return Boolean(dash && dash.length > 0 && dash[0] === 0);
 }
 
 /**
@@ -53,11 +71,10 @@ const patternWeight = (width: number): number =>
 /**
  * Dash geometry for a style at a given stroke weight.
  *
- * Dotted is `[0, gap]` with a round cap, which is how both Canvas2D and SVG
- * spell "dot": a zero-length dash has no extent of its own, so what gets drawn
- * is the round cap at each end of nothing. With a butt cap the same array
- * draws nothing whatsoever, which is why the cap travels with the pattern
- * rather than being left to a separate control.
+ * Dotted is `[0, gap]`, which is how both Canvas2D and SVG spell "dot". The
+ * round cap that gives each zero-length segment its extent is applied when the
+ * stroke is drawn — see `isDottedPattern` — rather than written here, so
+ * picking a dash style never overwrites the cap the user chose.
  */
 export function dashFor(style: StrokeStyleId, width: number): DashGeometry {
   const w = patternWeight(width);
@@ -67,7 +84,7 @@ export function dashFor(style: StrokeStyleId, width: number): DashGeometry {
       // reads as a ladder, and anything sparser stops reading as one line.
       return { dash: [w * 3, w * 2] };
     case 'dotted':
-      return { dash: [0, w * 2], cap: 'round' };
+      return { dash: [0, w * 2] };
     case 'solid':
     default:
       return {};
@@ -104,6 +121,45 @@ export function restyleForWidth(stroke: Stroke | undefined, width: number): Dash
 }
 
 /**
+ * Whether a cap can do anything to this node's outline.
+ *
+ * Two ways to have an end, and missing the second is what made the Cap control
+ * look broken on the object people reach for first:
+ *
+ *  - **An open outline** — a line, an arrow, an unclosed bezier, a connector.
+ *    It stops somewhere, and a cap is drawn where a stroke stops.
+ *  - **A dash pattern, on any outline at all.** A dash breaks even a closed
+ *    contour into segments, and every segment has two ends of its own.
+ *    Rounding the dashes on a rectangle is probably the commonest reason to
+ *    want this setting, and the control was disabled there — with the stated
+ *    reason "this outline is closed", which was both unhelpful and wrong.
+ *
+ * A *solid closed* outline is the only case with genuinely nowhere to put a
+ * cap. Freehand is there too when solid: its `svgPath` is already the outline
+ * of its own stroke rather than a line to be stroked, so its ends were shaped
+ * when it was drawn.
+ *
+ * Pure and tested rather than inline in the panel, because "which control is
+ * greyed out" is invisible to types and to every other test — this was wrong
+ * in a shipped build and nothing failed.
+ */
+export function capApplies(node: {
+  type: string;
+  geometry?: unknown;
+  /** `null` as well as `undefined`: that is what the panel's reader returns. */
+  appearance?: { stroke?: Stroke } | null;
+}): boolean {
+  // Checked first: it holds whatever the geometry underneath happens to be.
+  if ((node.appearance?.stroke?.dash?.length ?? 0) > 0) return true;
+  if (node.type === 'connector') return true;
+
+  const geometry = node.geometry as { kind?: string; closed?: boolean } | undefined;
+  if (node.type === 'shape') return geometry?.kind === 'line' || geometry?.kind === 'arrow';
+  if (node.type === 'path') return geometry?.kind === 'bezier' && !geometry.closed;
+  return false;
+}
+
+/**
  * Build a complete `Stroke` for storage.
  *
  * Undefined keys are *omitted* rather than written. `updateNode` treats a
@@ -114,12 +170,16 @@ export function restyleForWidth(stroke: Stroke | undefined, width: number): Dash
  * Switching a stroke back to solid has to drop the keys, not blank them.
  */
 export function buildStroke(
-  base: Pick<Stroke, 'color' | 'width' | 'align' | 'join' | 'miterLimit'>,
+  base: Pick<Stroke, 'color' | 'width' | 'align' | 'join' | 'miterLimit' | 'cap'>,
   geometry: DashGeometry
 ): Stroke {
   const stroke: Stroke = { color: base.color, width: base.width };
   if (geometry.dash && geometry.dash.length > 0) stroke.dash = geometry.dash;
-  if (geometry.cap) stroke.cap = geometry.cap;
+  // `butt` is the absent case, exactly as `center` is for align and `miter` is
+  // for join: it is what Canvas2D and SVG draw with no cap set, so storing it
+  // would be storing the default. The cap a dotted pattern needs is applied at
+  // draw time and deliberately not written here — see `isDottedPattern`.
+  if (base.cap && base.cap !== 'butt') stroke.cap = base.cap;
   // `center` is the absent case, so switching back to it drops the key rather
   // than storing the default — the same rule the dash keys follow, and for the
   // same reason.

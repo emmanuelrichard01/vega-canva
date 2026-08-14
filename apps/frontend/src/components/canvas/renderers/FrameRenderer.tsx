@@ -28,14 +28,34 @@ export const FrameRenderer: React.FC<Props> = React.memo(({ node, stageScale }) 
 
   return (
     <Group>
+      {/* A frame is paper on a desk, and paper has an edge as well as a
+          shadow.
+
+          Shadow alone was enough in dark mode, where a white frame sits on a
+          near-black board and separates itself. In light mode the default fill
+          is `#FFFFFF` and the canvas is `#F9FAFB` — about one percent apart —
+          so the only thing distinguishing a frame from the board behind it was
+          a shadow at five percent opacity. It was, in practice, invisible.
+
+          The hairline is a neutral at low alpha rather than a theme token,
+          because it has to sit on the *frame's own fill*, which the user
+          chooses and which may be anything at all. A mid grey at 20% darkens a
+          white edge and lightens a black one, so it reads either way without
+          knowing the theme. Drawn with `strokeScaleEnabled={false}` so it
+          stays one screen pixel and never becomes a thick band at high zoom. */}
       <Rect
         width={node.width}
         height={node.height}
         {...fill}
         cornerRadius={node.appearance.cornerRadius ?? 0}
+        stroke="rgba(115,115,115,0.2)"
+        strokeWidth={1}
+        strokeScaleEnabled={false}
         shadowColor="black"
-        shadowBlur={20}
-        shadowOpacity={0.05}
+        shadowBlur={22}
+        // Doubled: at 0.05 the lift was theoretical. It still reads as a soft
+        // ground shadow rather than as a drawn outline.
+        shadowOpacity={0.1}
         shadowOffsetY={10}
       />
 

@@ -232,6 +232,63 @@ export function updateNode(id: string, updates: Record<string, unknown>): void {
 }
 
 /**
+ * Apply the same updates to several nodes at once.
+ *
+ * One transaction, not one per node, and the difference is not merely
+ * efficiency. A Yjs transaction is the unit that observers, the undo stack and
+ * the Time Travel timeline all see: setting a fill across four objects in four
+ * transactions is four document changes, so it re-renders four times, lands in
+ * history as four entries, and takes four presses of undo to put back — none
+ * of which matches the single action the person took.
+ *
+ * Missing ids are skipped rather than throwing. The selection is held in React
+ * state and the document is edited by other people, so a node can legitimately
+ * disappear between the render that offered the control and the click on it.
+ */
+export function updateNodes(ids: readonly string[], updates: Record<string, unknown>): void {
+  if (ids.length === 0) return;
+  const now = Date.now();
+  doc.transact(() => {
+    ids.forEach((id) => {
+      const ymap = objectsMap.get(id);
+      if (!ymap) return;
+      Object.entries(updates).forEach(([key, value]) => {
+        if (value === undefined) ymap.delete(key);
+        else ymap.set(key, value);
+      });
+      ymap.set('updatedAt', now);
+    });
+  });
+}
+
+/**
+ * Apply a different set of updates to each of several nodes, in one
+ * transaction.
+ *
+ * What `updateNodes` is for a shared value, this is for a derived one: moving
+ * a multi-selection gives every node its own new coordinate, and those writes
+ * are still one action. See `engine/model/selection.ts`, which computes the
+ * patches.
+ */
+export function applyNodePatches(
+  patches: ReadonlyArray<{ id: string; changes: Record<string, unknown> }>
+): void {
+  if (patches.length === 0) return;
+  const now = Date.now();
+  doc.transact(() => {
+    patches.forEach(({ id, changes }) => {
+      const ymap = objectsMap.get(id);
+      if (!ymap) return;
+      Object.entries(changes).forEach(([key, value]) => {
+        if (value === undefined) ymap.delete(key);
+        else ymap.set(key, value);
+      });
+      ymap.set('updatedAt', now);
+    });
+  });
+}
+
+/**
  * Add or remove your reaction to a node.
  *
  * The one node field stored as a **nested Y type** rather than a plain value,

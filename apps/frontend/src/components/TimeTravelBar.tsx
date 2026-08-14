@@ -1,8 +1,9 @@
-import React, { useCallback, useEffect, useRef, useState } from 'react';
+import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import * as Y from 'yjs';
-import { Play, Pause, SkipBack, X, Gauge, History, Loader2, ChevronLeft, ChevronRight, AlertTriangle } from 'lucide-react';
+import { Play, Pause, SkipBack, SkipForward, X, History, Loader2, ChevronLeft, ChevronRight, AlertTriangle } from 'lucide-react';
 import { roomHistoryUrl } from '../utils/endpoints';
 import {
+  activityBuckets,
   buildTimeline,
   materialiseAt,
   type Moment,
@@ -18,29 +19,53 @@ interface TimeTravelBarProps {
 
 const SPEEDS = [1, 2, 4, 8];
 
+/** Columns in the activity strip. Enough to show rhythm, few enough to read. */
+const ACTIVITY_COLUMNS = 64;
+
 /**
  * Time Travel — replays the room's authoring history as a sequence of moments.
  *
- * ## What changed, and why
+ * ## What the redesign fixed
  *
- * The previous version scrubbed the raw update log and labelled the playhead
- * "Change 5 of 8". That number counted Yjs transactions, which is a storage
- * detail: one drag produces dozens, one rename produces one. So the scrubber's
- * steps were uneven, nothing attributed a change to a person, and there was no
- * way to seek to a moment you remembered. `engine/history/sessionTimeline`
- * now derives described, attributed moments from that same stream — replay
- * fidelity is untouched, but the unit is something a person authored.
+ * The previous bar looked busy and behaved worse, for three reasons that were
+ * all invisible in the source until you tried to use it:
  *
- * Two other things were wrong beneath the surface:
+ *  1. **The moment ticks could not be clicked.** They were absolutely
+ *     positioned `<button>`s, and a transparent `<input type="range">` was laid
+ *     over the whole track at `z-index: 2` to do the scrubbing. The input ate
+ *     every press, so the buttons' tooltips never appeared and clicking a
+ *     specific moment quietly did whatever the slider decided instead. Two
+ *     interactive layers over the same pixels, one of them a decoy.
+ *  2. **The ticks claimed to show something they did not.** They sat at
+ *     `i / (count - 1)` — evenly spaced *by index* — under a comment saying
+ *     they showed "where the session was busy instead of spacing steps
+ *     evenly". Index spacing is precisely what cannot show that: a frantic
+ *     minute and a slow afternoon draw the same row of dots.
+ *  3. **On a long session they piled into a smear.** One 9px dot per moment
+ *     with no lower bound on spacing, so a few hundred moments overlapped into
+ *     a grey band — the "messy" part.
  *
- *  - **Replay never reached the canvas.** The snapshot went only to the Layers
- *    and Properties panels as `overrideObjects`; `isReplaying` existed, and the
- *    live observer already deferred to it, but nothing ever set it. Scrubbing
- *    moved two side panels while the canvas kept drawing the live document.
- *    The store's `applyReplaySnapshot` owns that transition now.
- *  - **Rewinding rebuilt the document from index 0**, so scrubbing backwards got
- *    slower the further into a session you were. The timeline carries periodic
- *    keyframes and `materialiseAt` seeks from the nearest one.
+ * ## The shape it takes now
+ *
+ * Two axes, each used for the thing it is good at:
+ *
+ *  - The **activity strip** is wall-clock time. It answers "when was this
+ *     session busy, and who was working", which is the question the old
+ *     comment was reaching for, and it stays legible at any number of moments
+ *     because it is a fixed number of columns rather than one mark per edit.
+ *  - The **scrub track** is index. Every moment is equally reachable however
+ *     long the pause before it was, which is what you want when navigating
+ *     rather than surveying.
+ *
+ * One interactive element per row, so nothing is layered over anything else.
+ *
+ * ## Why play/pause is K and not Space
+ *
+ * Space is held to pan the canvas, and that binding lives in `Canvas` on the
+ * same `window`. Both fired: pressing Space during replay toggled playback
+ * *and* armed the hand tool. Panning around the board to look at the replayed
+ * state is a thing you genuinely want here, so Space stays with the canvas and
+ * transport takes `K` — which is what every video editor uses anyway.
  */
 export const TimeTravelBar: React.FC<TimeTravelBarProps> = ({ roomId, onClose, onApplySnapshot }) => {
   const [updates, setUpdates] = useState<RawUpdate[]>([]);
@@ -101,7 +126,14 @@ export const TimeTravelBar: React.FC<TimeTravelBarProps> = ({ roomId, onClose, o
     };
   }, [roomId]);
 
-  const moments = timeline?.moments ?? [];
+  /**
+   * Stable across renders while the timeline itself is unchanged.
+   *
+   * `timeline?.moments ?? []` built a fresh array every render, so anything
+   * downstream keyed on it — the activity buckets in particular — recomputed on
+   * every keystroke and every playback tick, memo or no memo.
+   */
+  const moments = useMemo(() => timeline?.moments ?? [], [timeline]);
   const current: Moment | undefined = moments[momentIndex];
 
   const emit = useCallback((doc: Y.Doc) => {
@@ -142,14 +174,19 @@ export const TimeTravelBar: React.FC<TimeTravelBarProps> = ({ roomId, onClose, o
     return () => clearInterval(playbackTimerRef.current);
   }, [isPlaying, speed, moments.length]);
 
-  // Keyboard scrubbing. Arrow keys step a moment at a time, Space toggles
-  // playback, Home/End jump to the ends — the shortcuts anyone who has used a
-  // video scrubber will try first.
+  /**
+   * Keyboard transport.
+   *
+   * Arrows step, Home/End jump to the ends, `K` toggles playback. Space is
+   * deliberately absent — see the note on the component.
+   */
   useEffect(() => {
     if (moments.length === 0) return;
     const onKey = (e: KeyboardEvent) => {
       const el = document.activeElement?.tagName;
       if (el === 'INPUT' || el === 'TEXTAREA') return;
+      if (e.metaKey || e.ctrlKey || e.altKey) return;
+
       if (e.key === 'ArrowLeft') {
         e.preventDefault();
         setIsPlaying(false);
@@ -158,7 +195,7 @@ export const TimeTravelBar: React.FC<TimeTravelBarProps> = ({ roomId, onClose, o
         e.preventDefault();
         setIsPlaying(false);
         setMomentIndex(i => Math.min(moments.length - 1, i + 1));
-      } else if (e.key === ' ') {
+      } else if (e.key.toLowerCase() === 'k') {
         e.preventDefault();
         setIsPlaying(p => !p);
       } else if (e.key === 'Home') {
@@ -175,26 +212,12 @@ export const TimeTravelBar: React.FC<TimeTravelBarProps> = ({ roomId, onClose, o
     return () => window.removeEventListener('keydown', onKey);
   }, [moments.length]);
 
-  const shellStyle: React.CSSProperties = {
-    position: 'absolute',
-    bottom: 96,
-    left: '50%',
-    transform: 'translateX(-50%)',
-    zIndex: 1000,
-    color: 'var(--text-primary)',
-    fontFamily: 'var(--font-sans)',
-    boxShadow: 'var(--shadow-float)',
-    borderRadius: 'var(--radius-xl)',
-    animation: 'popIn 200ms var(--ease-settle)',
-  };
+  const buckets = useMemo(() => activityBuckets(moments, ACTIVITY_COLUMNS), [moments]);
 
   if (loading) {
     return (
-      <div
-        className="panel-surface"
-        style={{ ...shellStyle, display: 'flex', alignItems: 'center', gap: 'var(--space-3)', padding: 'var(--space-3) var(--space-5)', fontSize: 'var(--text-base)', fontWeight: 'var(--weight-medium)' as any }}
-      >
-        <Loader2 size={16} style={{ animation: 'spin 1s linear infinite' }} />
+      <div className="timetravel timetravel--message panel-surface">
+        <Loader2 size={16} className="timetravel__spinner" />
         Reading this room’s history…
       </div>
     );
@@ -202,21 +225,14 @@ export const TimeTravelBar: React.FC<TimeTravelBarProps> = ({ roomId, onClose, o
 
   if (error || moments.length === 0) {
     return (
-      <div
-        className="panel-surface"
-        style={{ ...shellStyle, display: 'flex', alignItems: 'center', gap: 'var(--space-3)', padding: 'var(--space-3) var(--space-5)', fontSize: 'var(--text-base)', maxWidth: 520 }}
-      >
-        <History size={16} style={{ color: 'var(--text-tertiary)', flexShrink: 0 }} />
-        <span style={{ color: 'var(--text-secondary)' }}>
+      <div className="timetravel timetravel--message panel-surface">
+        <History size={16} className="timetravel__muted-icon" />
+        <span className="timetravel__muted">
           {error
             ? `Time Travel can’t reach the history log — ${error}`
             : 'Nothing to replay yet. Once people start building here, their edits appear on this timeline.'}
         </span>
-        <button
-          onClick={onClose}
-          aria-label="Close Time Travel"
-          style={{ background: 'transparent', border: 'none', color: 'var(--text-tertiary)', cursor: 'pointer', display: 'flex', marginLeft: 'auto' }}
-        >
+        <button type="button" className="timetravel__icon-btn" onClick={onClose} aria-label="Close Time Travel">
           <X size={16} />
         </button>
       </div>
@@ -236,218 +252,191 @@ export const TimeTravelBar: React.FC<TimeTravelBarProps> = ({ roomId, onClose, o
   // partial, and a trimmed room that had since fallen below it read as complete.
   const isTrimmed = trimmedCount > 0;
 
-  const iconButton = (extra?: React.CSSProperties): React.CSSProperties => ({
-    background: 'transparent',
-    border: 'none',
-    color: 'var(--text-secondary)',
-    cursor: 'pointer',
-    display: 'flex',
-    alignItems: 'center',
-    padding: 'var(--space-1)',
-    borderRadius: 'var(--radius-sm)',
-    flexShrink: 0,
-    transition: 'var(--motion-hover)',
-    ...extra,
-  });
+  /**
+   * Where the playhead sits on the *time* axis, so the strip can mark it.
+   *
+   * Separate from `progressPct`, which is the index axis. Conflating the two is
+   * what the old bar did, and it is why nothing on it could show elapsed time.
+   */
+  const first = moments[0].at;
+  const last = moments[moments.length - 1].at;
+  const span = last - first;
+  const timePct = current && span > 0 ? ((current.at - first) / span) * 100 : progressPct;
+
+  const elapsed = span > 0 ? Math.round(span / 60000) : 0;
 
   return (
-    <div
-      className="panel-surface"
-      style={{ ...shellStyle, width: 680, padding: 'var(--space-4) var(--space-5) var(--space-3)', display: 'flex', flexDirection: 'column', gap: 'var(--space-3)' }}
-      role="group"
-      aria-label="Time Travel session replay"
-    >
+    <div className="timetravel panel-surface" role="group" aria-label="Time Travel session replay">
       {/* Row 1: what you are looking at. The description leads, because it is
           the thing a person is actually navigating by. */}
-      <div style={{ display: 'flex', alignItems: 'center', gap: 'var(--space-3)', minWidth: 0 }}>
-        <span
-          style={{
-            display: 'inline-flex', alignItems: 'center', gap: 'var(--space-2)',
-            fontSize: 'var(--text-2xs)', fontWeight: 'var(--weight-semibold)' as any,
-            letterSpacing: '0.06em', textTransform: 'uppercase',
-            color: 'var(--history-accent)', flexShrink: 0,
-          }}
-        >
+      <div className="timetravel__head">
+        <span className="timetravel__eyebrow">
           <History size={13} /> History
         </span>
 
         {current && (
           <span
-            aria-hidden
+            className="timetravel__author-dot"
+            style={{ background: current.authorColor }}
             title={current.authorName}
-            style={{
-              width: 8, height: 8, borderRadius: 'var(--radius-pill)',
-              background: current.authorColor, flexShrink: 0,
-              boxShadow: '0 0 0 2px var(--surface-primary)',
-            }}
+            aria-hidden
           />
         )}
-        <span
-          style={{
-            fontSize: 'var(--text-md)', fontWeight: 'var(--weight-semibold)' as any,
-            whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis', minWidth: 0,
-          }}
-        >
-          {current?.label ?? 'Start of session'}
-        </span>
+        <span className="timetravel__label">{current?.label ?? 'Start of session'}</span>
         {current && current.updateCount > 1 && (
-          <span style={{ fontSize: 'var(--text-xs)', color: 'var(--text-tertiary)', flexShrink: 0 }}>
-            {current.updateCount} edits
-          </span>
+          <span className="timetravel__sub">{current.updateCount} edits</span>
         )}
 
-        <span style={{ marginLeft: 'auto', display: 'flex', alignItems: 'center', gap: 'var(--space-3)', flexShrink: 0 }}>
-          <span style={{ fontSize: 'var(--text-xs)', color: 'var(--text-secondary)', fontVariantNumeric: 'tabular-nums' }}>
-            {timeLabel}
-          </span>
-          <button onClick={onClose} aria-label="Exit Time Travel" title="Exit Time Travel" style={iconButton({ color: 'var(--text-tertiary)' })}>
-            <X size={16} />
-          </button>
-        </span>
+        <span className="timetravel__time">{timeLabel}</span>
+        <button type="button" className="timetravel__icon-btn" onClick={onClose} aria-label="Exit Time Travel" data-tooltip="Exit Time Travel">
+          <X size={16} />
+        </button>
       </div>
 
-      {/* Row 2: the track. Ticks are authored moments, so the timeline shows
-          where the session was busy instead of spacing steps evenly. */}
-      <div style={{ position: 'relative', height: 22, display: 'flex', alignItems: 'center' }}>
-        <div style={{ position: 'absolute', left: 0, right: 0, height: 4, borderRadius: 'var(--radius-pill)', background: 'var(--history-track)' }} />
-        <div style={{ position: 'absolute', left: 0, width: `${progressPct}%`, height: 4, borderRadius: 'var(--radius-pill)', background: 'var(--history-elapsed)', transition: 'width 90ms linear' }} />
+      {/* Row 2: the session at a glance, on the wall-clock axis. Purely a
+          readout — every interactive thing lives on the track below, so there
+          are never two controls stacked over the same pixels. */}
+      {span > 0 && (
+        <div
+          className="timetravel__activity"
+          aria-hidden="true"
+          title={`${moments.length} moments over ${elapsed || '<1'} minute${elapsed === 1 ? '' : 's'}`}
+        >
+          {buckets.map((bucket, i) => (
+            <span
+              key={i}
+              className="timetravel__bar"
+              style={{
+                // A visible floor for empty slices, so the strip reads as one
+                // continuous session with quiet stretches rather than breaking
+                // into islands that look like missing data.
+                //
+                // Scaled rather than sized: the bar is full height in CSS and
+                // this squashes it from the baseline, so sixty-four columns
+                // settling into place is one composited frame instead of
+                // sixty-four layouts inside a flex row.
+                transform: `scaleY(${bucket.count === 0 ? 0.08 : 0.2 + bucket.weight * 0.8})`,
+                background: bucket.color ?? 'var(--history-track)',
+                opacity: bucket.count === 0 ? 1 : 0.4 + bucket.weight * 0.6,
+              }}
+            />
+          ))}
+          <span className="timetravel__activity-playhead" style={{ left: `${timePct}%` }} />
+        </div>
+      )}
 
-        {moments.map((moment, i) => (
-          <button
+      {/* Row 3: the track. One control — the range input *is* the scrubber,
+          rather than a transparent decoy laid over buttons that could never be
+          reached. The marks behind it are decoration and say so. */}
+      <div className="timetravel__track">
+        <div className="timetravel__rail" />
+        {/* Full width in CSS, scaled from the left — see the note on the rule. */}
+        <div className="timetravel__elapsed" style={{ transform: `scaleX(${progressPct / 100})` }} />
+
+        {/* Drawn only while they can be told apart. Past that the activity
+            strip above is carrying this information properly, and one mark per
+            moment is the smear the redesign exists to remove. */}
+        {moments.length <= 60 && moments.map((moment, i) => (
+          <span
             key={`${moment.index}-${i}`}
-            onClick={() => { setIsPlaying(false); setMomentIndex(i); }}
-            title={`${moment.label} · ${new Date(moment.at).toLocaleTimeString()}`}
-            aria-label={moment.label}
+            className="timetravel__tick"
             style={{
-              position: 'absolute',
               left: `${moments.length > 1 ? (i / (moments.length - 1)) * 100 : 0}%`,
-              transform: 'translateX(-50%)',
-              width: 9, height: 9, padding: 0,
-              borderRadius: 'var(--radius-pill)',
-              border: 'none',
-              cursor: 'pointer',
-              // Author colour, so a session with several people reads as lanes
-              // of activity rather than an anonymous row of dots.
               background: i <= momentIndex ? moment.authorColor : 'var(--history-tick)',
               opacity: i === momentIndex ? 1 : 0.55,
-              transition: 'var(--motion-hover)',
             }}
           />
         ))}
 
-        <div
-          aria-hidden
-          style={{
-            position: 'absolute', left: `${progressPct}%`, transform: 'translateX(-50%)',
-            width: 3, height: 18, borderRadius: 'var(--radius-pill)',
-            background: 'var(--history-playhead)', transition: 'left 90ms linear',
-            pointerEvents: 'none',
-          }}
-        />
-
         <input
           type="range"
+          className="timetravel__range"
           min={0}
           max={moments.length - 1}
           value={momentIndex}
           aria-label="Scrub through session history"
+          aria-valuetext={current ? `${current.label}, ${timeLabel}` : undefined}
           onChange={e => { setIsPlaying(false); setMomentIndex(Number(e.target.value)); }}
-          style={{ width: '100%', opacity: 0, cursor: 'pointer', position: 'relative', zIndex: 2, height: 22, margin: 0 }}
         />
       </div>
 
-      {/* Row 3: transport + context. */}
-      <div style={{ display: 'flex', alignItems: 'center', gap: 'var(--space-2)' }}>
+      {/* Row 4: transport + context. */}
+      <div className="timetravel__foot">
         <button
+          type="button" className="timetravel__icon-btn"
           onClick={() => { setMomentIndex(0); setIsPlaying(false); }}
-          disabled={atStart}
-          title="Back to the first moment"
-          aria-label="Back to the first moment"
-          style={iconButton({ opacity: atStart ? 0.4 : 1, cursor: atStart ? 'default' : 'pointer' })}
+          disabled={atStart} data-tooltip="First moment (Home)" aria-label="First moment"
         >
           <SkipBack size={15} />
         </button>
         <button
+          type="button" className="timetravel__icon-btn"
           onClick={() => { setIsPlaying(false); setMomentIndex(i => Math.max(0, i - 1)); }}
-          disabled={atStart}
-          title="Previous moment (←)"
-          aria-label="Previous moment"
-          style={iconButton({ opacity: atStart ? 0.4 : 1, cursor: atStart ? 'default' : 'pointer' })}
+          disabled={atStart} data-tooltip="Previous moment (←)" aria-label="Previous moment"
         >
           <ChevronLeft size={17} />
         </button>
 
         <button
+          type="button"
+          className="timetravel__play"
           onClick={() => {
             // Replaying from the end has nowhere to go; rewind first so the
             // button always does what it says.
             if (atEnd) setMomentIndex(0);
             setIsPlaying(p => !p);
           }}
-          title={isPlaying ? 'Pause (Space)' : 'Play session (Space)'}
+          data-tooltip={isPlaying ? 'Pause (K)' : 'Play session (K)'}
           aria-label={isPlaying ? 'Pause replay' : 'Play replay'}
-          style={{
-            width: 34, height: 34, borderRadius: 'var(--radius-pill)',
-            background: 'var(--text-primary)', color: 'var(--surface-primary)',
-            border: 'none', display: 'flex', alignItems: 'center', justifyContent: 'center',
-            cursor: 'pointer', flexShrink: 0, transition: 'var(--motion-hover)',
-          }}
         >
-          {isPlaying ? <Pause size={15} fill="currentColor" /> : <Play size={15} fill="currentColor" style={{ marginLeft: 2 }} />}
+          {isPlaying ? <Pause size={15} fill="currentColor" /> : <Play size={15} fill="currentColor" className="timetravel__play-glyph" />}
         </button>
 
         <button
+          type="button" className="timetravel__icon-btn"
           onClick={() => { setIsPlaying(false); setMomentIndex(i => Math.min(moments.length - 1, i + 1)); }}
-          disabled={atEnd}
-          title="Next moment (→)"
-          aria-label="Next moment"
-          style={iconButton({ opacity: atEnd ? 0.4 : 1, cursor: atEnd ? 'default' : 'pointer' })}
+          disabled={atEnd} data-tooltip="Next moment (→)" aria-label="Next moment"
         >
           <ChevronRight size={17} />
         </button>
+        <button
+          type="button" className="timetravel__icon-btn"
+          onClick={() => { setIsPlaying(false); setMomentIndex(moments.length - 1); }}
+          disabled={atEnd} data-tooltip="Latest moment (End)" aria-label="Latest moment"
+        >
+          <SkipForward size={15} />
+        </button>
 
-        <span style={{ fontSize: 'var(--text-xs)', color: 'var(--text-tertiary)', fontVariantNumeric: 'tabular-nums', marginLeft: 'var(--space-2)' }}>
-          Moment {momentIndex + 1} of {moments.length}
+        <span className="timetravel__count">
+          {momentIndex + 1} <span className="timetravel__count-of">of</span> {moments.length}
         </span>
 
         {timeline && timeline.authors.length > 1 && (
-          <span style={{ display: 'flex', alignItems: 'center', gap: 'var(--space-1)', marginLeft: 'var(--space-3)' }}>
+          <span className="timetravel__authors" title={timeline.authors.map(a => a.name).join(', ')}>
             {timeline.authors.slice(0, 5).map(author => (
-              <span
-                key={author.id}
-                title={author.name}
-                style={{ width: 7, height: 7, borderRadius: 'var(--radius-pill)', background: author.color }}
-              />
+              <span key={author.id} className="timetravel__author-chip" style={{ background: author.color }} />
             ))}
-            <span style={{ fontSize: 'var(--text-xs)', color: 'var(--text-tertiary)', marginLeft: 'var(--space-1)' }}>
-              {timeline.authors.length} people
-            </span>
+            <span className="timetravel__sub">{timeline.authors.length} people</span>
           </span>
         )}
 
         {isTrimmed && (
           <span
+            className="timetravel__trimmed"
             title={`Retention has discarded the ${trimmedCount.toLocaleString()} oldest changes in this room, so the replay starts partway through the session.`}
-            style={{ display: 'flex', alignItems: 'center', gap: 'var(--space-1)', marginLeft: 'var(--space-3)', fontSize: 'var(--text-xs)', color: 'var(--text-tertiary)' }}
           >
             <AlertTriangle size={12} /> Starts partway
           </span>
         )}
 
         <button
+          type="button"
+          className="timetravel__speed"
           onClick={() => setSpeed(s => SPEEDS[(SPEEDS.indexOf(s) + 1) % SPEEDS.length])}
-          title="Playback speed"
+          data-tooltip="Playback speed"
           aria-label={`Playback speed ${speed}×`}
-          style={{
-            marginLeft: 'auto',
-            background: 'var(--surface-hover)', border: 'none', color: 'var(--text-primary)',
-            borderRadius: 'var(--radius-md)', padding: '5px 9px',
-            fontSize: 'var(--text-sm)', fontWeight: 'var(--weight-semibold)' as any,
-            cursor: 'pointer', display: 'flex', alignItems: 'center', gap: 'var(--space-1)',
-            flexShrink: 0, fontVariantNumeric: 'tabular-nums', transition: 'var(--motion-hover)',
-          }}
         >
-          <Gauge size={13} /> {speed}×
+          {speed}×
         </button>
       </div>
     </div>

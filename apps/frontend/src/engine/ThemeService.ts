@@ -1,3 +1,27 @@
+/**
+ * The surface colour for a small plate drawn *on the canvas* — a connector's
+ * label, a port ring, anything that has to stay readable over whatever is
+ * behind it.
+ *
+ * Taken as a parameter rather than read from the DOM so callers that already
+ * subscribe to the theme reactively can pass what they have, and so this stays
+ * a pure function. `ThemeService.getCanvasPlateFill()` is the DOM-reading
+ * wrapper for callers that cannot use a hook.
+ *
+ * ## Why this exists at all
+ *
+ * Konva paints into a canvas, and a canvas fill is parsed by the 2D context,
+ * not by CSS — it has no element to resolve a custom property against. A
+ * `var(--surface-elevated)` handed to a Konva `fill` is simply an unparseable
+ * colour string, and the spec says an unparseable fill leaves the previous
+ * value in place, which in practice means the default: opaque black. So it
+ * fails *silently and plausibly*, as a black plate rather than an error. Every
+ * colour that reaches the canvas has to be a literal.
+ */
+export function canvasPlateFill(dark: boolean): string {
+  return dark ? '#27272A' : '#FFFFFF';
+}
+
 export class ThemeService {
   /**
    * Returns true if the app is currently in Dark Mode.
@@ -35,5 +59,10 @@ export class ThemeService {
    */
   static getDefaultStrokeColor(): string {
     return this.isDarkMode() ? '#A1A1AA' : '#3B82F6'; // zinc-400 / blue-500
+  }
+
+  /** See `canvasPlateFill`. */
+  static getCanvasPlateFill(): string {
+    return canvasPlateFill(this.isDarkMode());
   }
 }

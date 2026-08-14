@@ -23,6 +23,7 @@ import { PathRenderer } from './canvas/renderers/PathRenderer';
 import { ShapeRenderer } from './canvas/renderers/ShapeRenderer';
 import { StickyRenderer } from './canvas/renderers/StickyRenderer';
 import { FrameRenderer } from './canvas/renderers/FrameRenderer';
+import { ConnectorRenderer } from './canvas/renderers/ConnectorRenderer';
 import { useLayerFilters } from './canvas/renderers/useLayerFilters';
 import { TextRenderer } from './canvas/renderers/TextRenderer';
 
@@ -30,6 +31,13 @@ interface ObjectRendererProps {
   objId: string;
   isSelected: boolean;
   onSelect: (id: string, e?: Konva.KonvaEventObject<MouseEvent>) => void;
+  /**
+   * Whether the active tool can select this object.
+   *
+   * Gates the hover outline as well as being the reason the click will land.
+   * Without it the outline appeared under every tool and quietly lied.
+   */
+  selectable?: boolean;
   onThrow?: (id: string, x: number, y: number, vx: number, vy: number) => void;
   stageScale?: number;
   /**
@@ -62,7 +70,7 @@ interface SiblingDragState {
  * single shared transformer lives in Canvas and is pointed at the selection.
  */
 export const ObjectRenderer = React.memo(
-  ({ objId, isSelected, onSelect, onThrow, stageScale = 1, selectedIdsRef }: ObjectRendererProps) => {
+  ({ objId, isSelected, onSelect, onThrow, stageScale = 1, selectedIdsRef, selectable = true }: ObjectRendererProps) => {
     const node = useStore((state) => state.objects[objId]);
     /**
      * The frame that owns this object, if any.
@@ -445,7 +453,7 @@ export const ObjectRenderer = React.memo(
           onDragStart={handleDragStart}
           onDragMove={handleDragMove}
           onDragEnd={handleDragEnd}
-          onMouseEnter={() => setIsHovered(true)}
+          onMouseEnter={() => setIsHovered(selectable)}
           onMouseLeave={() => setIsHovered(false)}
           dragBoundFunc={(pos) => {
             // Snapping is done in world space on the node's *top-left* corner,
@@ -480,7 +488,7 @@ export const ObjectRenderer = React.memo(
         >
           <NodeContent node={node} isEditing={isEditing} stageScale={stageScale} />
 
-          {isHovered && !isSelected && (
+          {isHovered && selectable && !isSelected && (
             // Sized from the node's real bounds. This used to read
             // `content.width`, which is undefined for shapes, text and
             // stickies — so the hover affordance was an 8x8px stub.
@@ -560,5 +568,7 @@ const NodeContent: React.FC<{ node: AnyNode; isEditing: boolean; stageScale?: nu
       );
     case 'frame':
       return <FrameRenderer node={node} stageScale={stageScale} />;
+    case 'connector':
+      return <ConnectorRenderer node={node} />;
   }
 };

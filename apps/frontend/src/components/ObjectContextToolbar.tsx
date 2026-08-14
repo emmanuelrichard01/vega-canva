@@ -1,37 +1,164 @@
-import React, { useEffect, useState, useRef, useSyncExternalStore } from 'react';
-import { objectsMap, updateNode, nextZIndex, lowestZIndex, toggleReaction, localAuthorId } from '../engine/document';
+import React, { useEffect, useRef, useState, useSyncExternalStore } from 'react';
+import { motion, AnimatePresence } from 'framer-motion';
+import {
+  AlignCenter, AlignHorizontalJustifyCenter, AlignHorizontalJustifyEnd, AlignHorizontalJustifyStart,
+  AlignHorizontalSpaceAround, AlignLeft, AlignRight, AlignVerticalJustifyCenter, AlignVerticalJustifyEnd,
+  AlignVerticalJustifyStart, AlignVerticalSpaceAround, Bold, BringToFront, Circle, Copy, Crop, Download,
+  Droplet, FlipHorizontal, FlipVertical, Group, ImageIcon, Italic, Layers, Lock, Menu, MessageSquare,
+  MessageSquarePlus, Mic, Minus, MoveRight, PenLine, Pin, Scissors, SendToBack, SmilePlus, Spline,
+  SquaresExclude, SquaresIntersect, SquaresSubtract, SquaresUnite, Square, Star, StickyNote,
+  Strikethrough, Trash2, Triangle, Type, Underline, Ungroup, Unlock,
+} from 'lucide-react';
+
+import {
+  applyNodePatches, localAuthorId, lowestZIndex, nextZIndex, toggleReaction, updateNodes,
+} from '../engine/document';
 import { useStore } from '../hooks/useStore';
 import { cameraSystem } from '../engine/CameraSystem';
 import { engineEvents } from '../engine/EventBus';
-import { Copy, Trash2, Type, Square, Bold, Italic, Underline, AlignLeft, AlignCenter, AlignRight, Strikethrough, MessageSquarePlus, BringToFront, SendToBack, ImageIcon, StickyNote, Pin, SmilePlus, Mic, MessageSquare, PenLine, Layers, Group, Ungroup, Download, Crop, Scissors, Spline, SquaresExclude, SquaresIntersect, SquaresSubtract, SquaresUnite } from 'lucide-react';
 import { cropMode } from '../engine/interaction/cropMode';
-import { pathEdit } from '../engine/interaction/pathEdit';
 import { applyBoolean, canVectorize, flattenToPath, outlineStrokeOf } from '../engine/document/vectorOps';
 import { BOOLEAN_OPS, type BooleanOp } from '../engine/model/pathBoolean';
 import { deleteNodesWithFrames } from '../engine/interaction/frameMembership';
 import { editor } from '../engine/api/EditorAPI';
 import { nanoid } from 'nanoid';
 import { ColorPickerPopover } from './ui/ColorPickerPopover';
+import { isInsidePortalSurface } from './ui/portalSurface';
 import { FillEditor } from './ui/FillEditor';
-import { NumberStepper } from './ui/NumberStepper';
 import { SegmentedControl } from './ui/SegmentedControl';
 import { FontSelector } from './ui/FontSelector';
-import { THEMES, nearestTheme } from './canvas/renderers/StickyRenderer';
-import { motion, AnimatePresence } from 'framer-motion';
+import { THEMES } from './canvas/renderers/StickyRenderer';
+import { STICKY_THEMES, type StickyTheme } from '../engine/model/schema';
 import {
-  DEFAULT_TYPOGRAPHY,
-  type Appearance,
-  type TextAlign,
-  type Typography,
+  DEFAULT_TYPOGRAPHY, MAX_POLYGON_SIDES, MIN_POLYGON_SIDES, isOpenShape,
+  type AnyNode, type Appearance, type ShapeKind, type TextAlign, type Typography,
 } from '../engine/model/schema';
+import { alignSelection, distributeSelection, type AlignEdge } from '../engine/model/align';
+import { sharedValue } from '../engine/model/selection';
 
 /**
- * The four boolean operations, as one row.
+ * The floating quick-actions rail.
  *
- * Icon, label and shortcut for each, in the order every other tool in this
- * category lists them — union first, because it is the one people reach for,
- * and exclude last.
+ * ## What changed and why
+ *
+ * The version this replaces was a two-row panel: a tools row stacked over a
+ * "global actions" row. Three things were wrong with that, and all three are
+ * structural rather than cosmetic.
+ *
+ * 1. **Its height changed with the selection**, because the top row's contents
+ *    did. Moving between a shape and a sticky made the toolbar resize and jump
+ *    over the artwork it is supposed to sit quietly above.
+ * 2. **It was a panel, not a rail.** Once a surface has two rows and its own
+ *    internal labels — "FILL", "OPACITY" — it has stopped being a heads-up
+ *    control and become a second properties panel parked on the canvas, which
+ *    is the one thing this surface exists to let you avoid.
+ * 3. **It declared elevation twice**, hand-rolling `0 8px 32px …, 0 0 0 1px …`
+ *    beside the committed `--shadow-float`, which already carries an offset, a
+ *    blur and a hairline ring tuned per theme.
+ *
+ * The rebuild is one 40px row whatever is selected. Anything that does not fit
+ * hangs off a single button in a popover. Density is the point.
+ *
+ * ## The two states
+ *
+ * One object selected gives the per-type rail. Several give the **union rail**:
+ * everything type-specific drops away and what remains is structure (group,
+ * booleans), arrangement (align, distribute), and the properties every visual
+ * object has. A control that cannot apply to all of the selection is not shown
+ * at all rather than silently acting on part of it.
  */
+
+// Matches .hierarchy-panel / .context-inspector in index.css:
+// `--shell-inset` (28px, set by the vertical ruler's width) + `--panel-w` (260).
+const SIDEBAR_WIDTH = 288;
+const BOTTOM_DOCK_HEIGHT = 76;
+const EDGE_MARGIN = 16;
+/** Clearance between the rail and the selection box it describes. */
+const STANDOFF = 14;
+const RAIL_HEIGHT = 40;
+
+/** Small, deliberately-limited reaction set — a full emoji picker is noise here. */
+const REACTION_SET = ['👍', '❤️', '🎯', '🔥', '❓'];
+
+/**
+ * The eight papers, offered as themselves.
+ *
+ * ## Why not the colour picker
+ *
+ * A sticky's colour is a **closed set of named themes** — the palette is
+ * designed as eight paper-and-ink pairs, each ink a deep version of its own
+ * paper so the note reads as one material. The toolbar was handing that to a
+ * full RGB picker and then running `nearestTheme` over whatever came back.
+ *
+ * So the control offered sixteen million colours and honoured eight, silently
+ * snapping every choice to something the user did not pick. It is the same sin
+ * as a field the renderer ignores, arrived at from the other side: a control
+ * that appears to do more than it does. It was also slow — a spectrum, a
+ * gradient area and a hex field, to make a one-of-eight decision.
+ *
+ * Showing the eight directly is both more honest and fewer clicks: one press
+ * to open, one to choose, and the options *are* the answer.
+ */
+const StickyPalette: React.FC<{
+  theme: StickyTheme;
+  onPick: (theme: StickyTheme) => void;
+}> = ({ theme, onPick }) => (
+  <RailPopover
+    label="Note colour"
+    align="start"
+    trigger={
+      <span
+        className="ctx-sticky-swatch"
+        style={{ background: THEMES[theme]?.bg, borderColor: THEMES[theme]?.edge }}
+      />
+    }
+  >
+    <span className="ctx-popover__label">Note colour</span>
+    <div className="ctx-sticky-grid">
+      {STICKY_THEMES.map((id) => {
+        const paper = THEMES[id];
+        return (
+          <button
+            key={id}
+            type="button"
+            className="ctx-sticky-chip"
+            aria-pressed={id === theme}
+            aria-label={id}
+            data-tooltip={id[0].toUpperCase() + id.slice(1)}
+            onClick={() => onPick(id)}
+            style={{ background: paper.bg, borderColor: paper.edge, color: paper.text }}
+          >
+            {/* The letter is the note's own ink on its own paper, so each chip
+                previews the pairing rather than just the background — which is
+                the half of the choice that decides whether text reads. */}
+            Aa
+          </button>
+        );
+      })}
+    </div>
+  </RailPopover>
+);
+
+/**
+ * Types whose `appearance.fill` the renderer actually reads.
+ *
+ * Mirrors the registry's `supportsFill`. A sticky's colour is a named theme and
+ * a voice note has no fill at all, so offering the control across a selection
+ * containing either would be a control that half-applies.
+ */
+const FILLABLE_TYPES = new Set(['shape', 'path', 'image', 'frame']);
+
+const TYPE_LABEL: Record<string, { icon: React.ReactNode; name: string }> = {
+  shape: { icon: <Square size={15} />, name: 'Shape' },
+  text: { icon: <Type size={15} />, name: 'Text' },
+  image: { icon: <ImageIcon size={15} />, name: 'Image' },
+  sticky: { icon: <StickyNote size={15} />, name: 'Note' },
+  audio: { icon: <Mic size={15} />, name: 'Voice' },
+  comment: { icon: <MessageSquare size={15} />, name: 'Comment' },
+  path: { icon: <PenLine size={15} />, name: 'Path' },
+  frame: { icon: <Layers size={15} />, name: 'Frame' },
+};
+
 const BOOLEAN_BUTTONS: Record<BooleanOp, { icon: React.ReactNode; label: string }> = {
   union: { icon: <SquaresUnite size={16} />, label: 'Union' },
   subtract: { icon: <SquaresSubtract size={16} />, label: 'Subtract front from back' },
@@ -39,125 +166,314 @@ const BOOLEAN_BUTTONS: Record<BooleanOp, { icon: React.ReactNode; label: string 
   exclude: { icon: <SquaresExclude size={16} />, label: 'Exclude overlap' },
 };
 
-/** Small pressed-state toggle used by the typography row. */
-const StyleToggle: React.FC<{ active: boolean; tooltip: string; onClick: () => void; children: React.ReactNode }> = ({ active, tooltip, onClick, children }) => (
-  <button
-    className="btn-icon"
-    data-tooltip={tooltip}
-    aria-label={tooltip}
-    aria-pressed={active}
-    onClick={onClick}
+const ALIGN_BUTTONS: Array<{ edge: AlignEdge; label: string; icon: React.ReactNode }> = [
+  { edge: 'left', label: 'Align left', icon: <AlignHorizontalJustifyStart size={16} /> },
+  { edge: 'centerX', label: 'Align horizontal centres', icon: <AlignHorizontalJustifyCenter size={16} /> },
+  { edge: 'right', label: 'Align right', icon: <AlignHorizontalJustifyEnd size={16} /> },
+  { edge: 'top', label: 'Align top', icon: <AlignVerticalJustifyStart size={16} /> },
+  { edge: 'middleY', label: 'Align vertical centres', icon: <AlignVerticalJustifyCenter size={16} /> },
+  { edge: 'bottom', label: 'Align bottom', icon: <AlignVerticalJustifyEnd size={16} /> },
+];
+
+/**
+ * The shapes a shape can become, drawn rather than named.
+ *
+ * `points` travels with the choice because a polygon and a star are the same
+ * `kind` field plus a count — switching to "triangle" is `polygon` at 3, and
+ * leaving the previous shape's count in place would turn a hexagon into a
+ * three-sided "triangle" that still said six.
+ */
+const SHAPE_CHOICES: Array<{ kind: ShapeKind; points?: number; label: string; icon: React.ReactNode }> = [
+  { kind: 'rect', label: 'Rectangle', icon: <Square size={16} /> },
+  { kind: 'ellipse', label: 'Ellipse', icon: <Circle size={16} /> },
+  { kind: 'polygon', points: 3, label: 'Triangle', icon: <Triangle size={16} /> },
+  { kind: 'polygon', points: 6, label: 'Hexagon', icon: <Spline size={16} /> },
+  { kind: 'star', points: 5, label: 'Star', icon: <Star size={16} /> },
+  { kind: 'line', label: 'Line', icon: <Minus size={16} /> },
+  { kind: 'arrow', label: 'Arrow', icon: <MoveRight size={16} /> },
+];
+
+/**
+ * The rail's shell.
+ *
+ * **Defined at module scope, and that is load-bearing.** It used to be declared
+ * inside `ObjectContextToolbar`'s body, which creates a brand-new component
+ * *type* on every render — so React could not match it against the previous
+ * tree and unmounted and remounted the entire rail each time anything changed.
+ * The visible symptom was the toolbar disappearing the moment you tried to use
+ * it: opening the stroke or opacity popover re-rendered the parent, the remount
+ * destroyed that popover's `open` state, and `AnimatePresence` replayed the
+ * entrance on what looked like a new element. It also meant a fresh mount on
+ * every frame the position changed.
+ *
+ * Three layers, because three different things want to write a transform and
+ * none of them may share one:
+ *   anchor   — where the selection is, written from the frame loop
+ *   centring — static, so the rail hangs off that point correctly
+ *   motion   — the entrance, owned entirely by framer-motion
+ *
+ * Centring is its own element rather than a margin on the rail: a percentage
+ * margin resolves against the parent's width, and the parent here shrink-wraps
+ * its child, which makes `-50%` circular.
+ */
+const Rail = React.forwardRef<
+  HTMLDivElement,
+  {
+    id: string;
+    placement: 'top' | 'bottom';
+    anchorRef: React.RefObject<HTMLDivElement | null>;
+    children: React.ReactNode;
+  }
+>(({ id, placement, anchorRef, children }, railRef) => (
+  <div
+    ref={anchorRef}
+    // The anchor only ever translates, and only from the frame loop. It is
+    // `pointer-events: none` so the empty space either side of the rail never
+    // swallows a click meant for the canvas.
     style={{
-      padding: '4px', borderRadius: '4px',
-      background: active ? 'var(--surface-primary)' : 'transparent',
-      color: active ? 'var(--text-primary)' : 'var(--text-secondary)',
-      boxShadow: active ? 'var(--shadow-sm)' : 'none',
+      position: 'absolute', left: 0, top: 0, zIndex: 200,
+      pointerEvents: 'none', willChange: 'transform',
     }}
+  >
+    <div
+      style={{
+        position: 'absolute',
+        transform: `translate(-50%, ${placement === 'top' ? '-100%' : '0%'})`,
+        width: 'max-content',
+      }}
+    >
+      <motion.div
+        key={id}
+        ref={railRef}
+        className="ctx-toolbar"
+        initial={{ opacity: 0, y: placement === 'top' ? 6 : -6 }}
+        animate={{ opacity: 0.94, y: 0 }}
+        exit={{ opacity: 0, y: placement === 'top' ? 4 : -4 }}
+        transition={{ duration: 0.2, ease: [0.16, 1, 0.3, 1] }}
+        style={{ position: 'relative', pointerEvents: 'auto' }}
+      >
+        {children}
+      </motion.div>
+    </div>
+  </div>
+));
+Rail.displayName = 'Rail';
+
+/** An icon button on the rail. */
+const RailButton: React.FC<{
+  label: string;
+  onClick: () => void;
+  children: React.ReactNode;
+  pressed?: boolean;
+  disabled?: boolean;
+  danger?: boolean;
+  hint?: string;
+}> = ({ label, onClick, children, pressed, disabled, danger, hint }) => (
+  <button
+    type="button"
+    className={`ctx-btn${danger ? ' ctx-btn--danger' : ''}`}
+    data-tooltip={hint ?? label}
+    aria-label={label}
+    aria-pressed={pressed}
+    disabled={disabled}
+    onClick={onClick}
   >
     {children}
   </button>
+);
+
+const Divider = () => <span className="ctx-divider" aria-hidden="true" />;
+
+/**
+ * A button on the rail with a panel hanging off it.
+ *
+ * Closes on Escape and on a click outside — both, because either alone strands
+ * it: Escape only helps if you know it is open, and outside-click only helps if
+ * you can reach past it. Escape is captured so it closes the popover instead of
+ * clearing the canvas selection underneath.
+ */
+const RailPopover: React.FC<{
+  label: string;
+  trigger: React.ReactNode;
+  children: React.ReactNode;
+  placement?: 'top' | 'bottom';
+  align?: 'start' | 'center' | 'end';
+}> = ({ label, trigger, children, placement = 'bottom', align = 'center' }) => {
+  const [open, setOpen] = useState(false);
+  const ref = useRef<HTMLDivElement>(null);
+
+  useEffect(() => {
+    if (!open) return;
+    const onDown = (e: MouseEvent) => {
+      // The stroke and fill popovers each host a portalled colour picker.
+      if (isInsidePortalSurface(e.target)) return;
+      if (ref.current && !ref.current.contains(e.target as Node)) setOpen(false);
+    };
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key === 'Escape') { e.stopPropagation(); setOpen(false); }
+    };
+    document.addEventListener('mousedown', onDown);
+    document.addEventListener('keydown', onKey, true);
+    return () => {
+      document.removeEventListener('mousedown', onDown);
+      document.removeEventListener('keydown', onKey, true);
+    };
+  }, [open]);
+
+  return (
+    <div style={{ position: 'relative', display: 'flex' }} ref={ref}>
+      <button
+        type="button"
+        className="ctx-btn"
+        data-tooltip={label}
+        aria-label={label}
+        aria-haspopup="dialog"
+        aria-expanded={open}
+        onClick={() => setOpen((v) => !v)}
+      >
+        {trigger}
+      </button>
+      {open && (
+        <div
+          className="ctx-popover"
+          role="dialog"
+          aria-label={label}
+          style={{
+            [placement === 'bottom' ? 'top' : 'bottom']: 'calc(100% + 8px)',
+            ...(align === 'center'
+              ? { left: '50%', transform: 'translateX(-50%)' }
+              : align === 'end'
+                ? { right: 0 }
+                : { left: 0 }),
+          } as React.CSSProperties}
+        >
+          {children}
+        </div>
+      )}
+    </div>
+  );
+};
+
+/**
+ * A labelled slider for a value the rail shows but does not have room to edit.
+ *
+ * A real `range` rather than a drawn track: it is keyboard-operable, it honours
+ * the OS pointer size, and `accent-color` already themes it. Reimplementing it
+ * would cost all three to gain nothing.
+ */
+const PopoverSlider: React.FC<{
+  label: string; value: number; min: number; max: number; step?: number; suffix?: string;
+  onChange: (value: number) => void;
+}> = ({ label, value, min, max, step = 1, suffix = '', onChange }) => (
+  <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
+    <div className="ctx-popover__row">
+      <span className="ctx-popover__label">{label}</span>
+      <span className="ctx-value">{Math.round(value)}{suffix}</span>
+    </div>
+    <input
+      type="range"
+      aria-label={label}
+      min={min} max={max} step={step} value={value}
+      onChange={(e) => onChange(Number(e.target.value))}
+      style={{ width: '100%', cursor: 'pointer', accentColor: 'var(--text-primary)' }}
+    />
+  </div>
 );
 
 interface Props {
   selectedId: string | null;
   selectedIds?: string[];
   onDeselect: () => void;
-  /** Whether the Layers/Properties sidebars and bottom tool dock are currently on screen — when the UI is hidden (\), the toolbar can use the full viewport width. */
+  /** Whether the side panels and bottom dock are on screen. */
   sidebarsVisible?: boolean;
 }
 
-// Matches .hierarchy-panel / .context-inspector in index.css: 16px inset + 260px wide.
-const SIDEBAR_WIDTH = 276;
-const BOTTOM_DOCK_HEIGHT = 76; // ToolWorkspace's floating dock + its bottom margin
-const EDGE_MARGIN = 16;
-
-/** Small, deliberately-limited reaction set — a full emoji picker is noise here. */
-const REACTION_SET = ['👍', '❤️', '🎯', '🔥', '❓'];
-
-const TYPE_ICON: Record<string, React.ReactNode> = {
-  shape: <Square size={16} />,
-  text: <Type size={16} />,
-  image: <ImageIcon size={16} />,
-  sticky: <StickyNote size={16} />,
-  audio: <Mic size={16} />,
-  comment: <MessageSquare size={16} />,
-  path: <PenLine size={16} />,
-};
-
 export const ObjectContextToolbar: React.FC<Props> = ({ selectedId, selectedIds, onDeselect, sidebarsVisible = true }) => {
-  const [position, setPosition] = useState({ x: -9999, y: -9999 });
+  /**
+   * The rail's position is written to the DOM, never to React state.
+   *
+   * Two things were making this jitter while an object moved.
+   *
+   * 1. **A `setState` per frame.** The rAF loop called `setPosition` on every
+   *    frame the rounded coordinate changed — which, during a drag, is every
+   *    frame — re-rendering a component tree containing the fill editor and
+   *    four popovers at 60fps. This codebase already has the rule for exactly
+   *    this: positions go straight to the DOM inside the frame loop, because
+   *    re-rendering a tree at pointer rate costs more than the thing it moves.
+   * 2. **Two owners of one `transform`.** The rail is a `motion.div` animating
+   *    `y` on entry, which framer-motion applies *as a transform* — while the
+   *    style prop set `transform: translate(-50%, -100%)` for centring. One
+   *    property, two writers, so the centring was being clobbered by the
+   *    animation and snapped back when it finished.
+   *
+   * Splitting them fixes both: an outer anchor that only ever moves, written
+   * imperatively, and an inner animated element that owns its own transform.
+   */
+  const anchorRef = useRef<HTMLDivElement>(null);
+  /**
+   * The rail itself, so the clamp can account for how wide it actually is.
+   *
+   * The bounds below were applied to the rail's *centre*, but the rail is
+   * centred on that point — so a 370px rail whose centre was clamped to the
+   * sidebar's edge still reached 185px past it, and sat on top of the layers
+   * panel. Measured rather than estimated because the width changes with the
+   * selection: a union rail carrying four booleans and eight alignment buttons
+   * is more than twice the width of a sticky's.
+   */
+  const railRef = useRef<HTMLDivElement>(null);
   const [placement, setPlacement] = useState<'top' | 'bottom'>('top');
   const [isVisible, setIsVisible] = useState(false);
   const [showReactions, setShowReactions] = useState(false);
   const myAuthorId = localAuthorId();
-  // Above the early returns below, because it is a hook. The toolbar needs it
-  // so the Crop button can read as pressed and offer the way out, rather than
-  // being a one-way door into a mode.
   const cropping = useSyncExternalStore(cropMode.subscribe, cropMode.getSnapshot, cropMode.getSnapshot);
   const isDraggingRef = useRef(false);
   const reactionsRef = useRef<HTMLDivElement>(null);
-  // Mirrors state, read inside the RAF loop so it can skip setState (and the
-  // re-render that comes with it) on frames where nothing actually moved —
-  // the loop itself has to keep running unconditionally (it's the only thing
-  // that tracks the toolbar smoothly during a live drag), but 60 renders/sec
-  // of an idle, unchanged toolbar was pure waste.
+  // Mirrors state, read inside the rAF loop so it can skip setState on frames
+  // where nothing moved. The loop has to run unconditionally — it is the only
+  // thing tracking the rail during a live drag — but 60 renders a second of an
+  // unchanged toolbar was pure waste.
   const lastRef = useRef({ x: -9999, y: -9999, placement: 'top' as 'top' | 'bottom', visible: false });
 
-  // Multiple objects selected -> a reduced bulk-actions toolbar instead of the
-  // full per-type editor below (mixed types have no coherent shared style panel).
   const isBulk = (selectedIds?.length || 0) > 1;
   const bulkIds = selectedIds || [];
   const activeId = isBulk ? null : selectedId;
 
-  // Stable-identity mirror of the selection, read imperatively by the RAF loop
-  // in the positioning effect below. That effect used to depend on
-  // `bulkIds.join(',')` — a string rebuilt every render specifically to avoid
-  // re-subscribing when the parent handed down a new array with identical
-  // contents. It worked, but it hid `bulkIds` from the dependency checker and
-  // made the whole listener set tear down and rebuild whenever the selection
-  // changed. The loop recomputes bounds every frame anyway, so reading the
-  // current selection from a ref is both cheaper and statically honest.
-  // Keyed on the `selectedIds` prop, not on `bulkIds`: the latter is
-  // `selectedIds || []`, so it is a brand-new array on any render where the
-  // prop is absent, which would make this effect run every render.
+  // Stable-identity mirror of the selection, read imperatively by the rAF loop.
   const bulkIdsRef = useRef(bulkIds);
-  useEffect(() => {
-    bulkIdsRef.current = selectedIds || [];
-  }, [selectedIds]);
+  useEffect(() => { bulkIdsRef.current = selectedIds || []; }, [selectedIds]);
 
-  // The single-select panel below used to read `objectsMap.get(activeId).toJSON()`
-  // directly on every render — which only happens when this component's own state
-  // changes (position/visibility), not when the Yjs doc does. So any edit made
-  // elsewhere (Properties panel, another client) sat invisible here until something
-  // unrelated (e.g. dragging the object) forced a re-render. Subscribing to the
-  // same reactive store the Properties panel uses keeps this toolbar's controls
-  // live instead of stale.
-  const liveNode = useStore(state => (activeId ? state.objects[activeId] : undefined));
-  // The whole map, for the bulk bar's eligibility check. Subscribed rather
-  // than read through `getState()` because the answer changes when a selected
-  // object is rotated or locked, and the boolean buttons have to appear and
-  // disappear with it.
-  const allObjects = useStore(state => state.objects);
+  const liveNode = useStore((state) => (activeId ? state.objects[activeId] : undefined));
+  const allObjects = useStore((state) => state.objects);
 
   useEffect(() => {
-    if (!activeId && !isBulk) {
-      setIsVisible(false);
-      return;
-    }
+    if (!activeId && !isBulk) { setIsVisible(false); return; }
+
+    /**
+     * Forget where the rail was, every time the selection changes shape.
+     *
+     * The loop only writes the transform when the rounded coordinate differs
+     * from the last one it wrote. That is the right optimisation and it had a
+     * hole: switching between the single rail and the union rail swaps one
+     * element tree for another, so the anchor node is destroyed and rebuilt
+     * *without* a transform — while `lastRef` still holds the coordinate it
+     * had written to the old node. The comparison then says "no change", the
+     * write is skipped, and the new rail sits untransformed at the canvas
+     * origin, translated up out of sight by its own centring.
+     *
+     * That is the toolbar "not always appearing" and "behaving strangely":
+     * it was there, at 0,0, off screen. Resetting the bookkeeping whenever the
+     * tree can change guarantees the first frame after a mount always writes.
+     */
+    lastRef.current = { x: -9999, y: -9999, placement: lastRef.current.placement, visible: false };
 
     const updatePosition = () => {
       if (isDraggingRef.current) {
-        if (lastRef.current.visible) {
-          lastRef.current.visible = false;
-          setIsVisible(false);
-        }
+        if (lastRef.current.visible) { lastRef.current.visible = false; setIsVisible(false); }
         return;
       }
 
       let minX = Infinity, minY = Infinity, maxX = -Infinity, maxY = -Infinity;
       const ids = isBulk ? bulkIdsRef.current : (activeId ? [activeId] : []);
-      // Bounds come from the canonical store rather than raw Y.Maps, so a
-      // legacy node reports the same size here as it renders at.
       const store = useStore.getState().objects;
       for (const id of ids) {
         const node = store[id];
@@ -168,573 +484,543 @@ export const ObjectContextToolbar: React.FC<Props> = ({ selectedId, selectedIds,
         maxY = Math.max(maxY, node.y + node.height);
       }
       if (minX === Infinity) {
-        if (lastRef.current.visible) {
-          lastRef.current.visible = false;
-          setIsVisible(false);
-        }
+        if (lastRef.current.visible) { lastRef.current.visible = false; setIsVisible(false); }
         return;
       }
 
-      const screenX = (minX * cameraSystem.zoom) + cameraSystem.x;
-      const screenY = (minY * cameraSystem.zoom) + cameraSystem.y;
+      const screenX = minX * cameraSystem.zoom + cameraSystem.x;
+      const screenY = minY * cameraSystem.zoom + cameraSystem.y;
       const screenW = (maxX - minX) * cameraSystem.zoom;
       const screenH = (maxY - minY) * cameraSystem.zoom;
 
-      let y = screenY - 20;
+      // Above by preference, below when there is no room above. The rail must
+      // never cover the thing it edits, which is why it flips rather than
+      // simply clamping into the object's own box.
+      let y = screenY - STANDOFF;
       let currentPlacement: 'top' | 'bottom' = 'top';
-      if (y < 80) {
-        y = screenY + screenH + 20;
+      if (y - RAIL_HEIGHT < EDGE_MARGIN + 48) {
+        y = screenY + screenH + STANDOFF;
         currentPlacement = 'bottom';
       }
-      // A 'bottom' placement can land the toolbar under the floating tool
-      // dock when the selection sits near the bottom of the viewport — clamp
-      // it back up rather than letting the two overlap.
-      const dockLimit = window.innerHeight - (sidebarsVisible ? BOTTOM_DOCK_HEIGHT : EDGE_MARGIN);
-      if (currentPlacement === 'bottom' && y > dockLimit) {
-        y = dockLimit;
-      }
+      const dockLimit = window.innerHeight - (sidebarsVisible ? BOTTOM_DOCK_HEIGHT : EDGE_MARGIN) - RAIL_HEIGHT;
+      if (currentPlacement === 'bottom' && y > dockLimit) y = dockLimit;
 
-      const leftBound = (sidebarsVisible ? SIDEBAR_WIDTH : EDGE_MARGIN) + 4;
-      const rightBound = window.innerWidth - (sidebarsVisible ? SIDEBAR_WIDTH : EDGE_MARGIN) - 4;
-      const x = Math.max(leftBound, Math.min(Math.max(leftBound, rightBound), screenX + (screenW / 2)));
+      // Half the rail, so the clamp keeps its *edges* inside the free canvas
+      // rather than its midpoint.
+      const half = (railRef.current?.offsetWidth ?? 0) / 2;
+      const leftBound = (sidebarsVisible ? SIDEBAR_WIDTH : EDGE_MARGIN) + 4 + half;
+      const rightBound = window.innerWidth - (sidebarsVisible ? SIDEBAR_WIDTH : EDGE_MARGIN) - 4 - half;
+      // When the free width is narrower than the rail there is no position that
+      // satisfies both edges; centring it in what space there is beats pinning
+      // it to one side and letting it run off the other.
+      const x = rightBound < leftBound
+        ? (leftBound + rightBound) / 2
+        : Math.max(leftBound, Math.min(rightBound, screenX + screenW / 2));
 
       const rx = Math.round(x), ry = Math.round(y);
       const last = lastRef.current;
-      if (last.x !== rx || last.y !== ry || last.placement !== currentPlacement || !last.visible) {
-        lastRef.current = { x: rx, y: ry, placement: currentPlacement, visible: true };
-        setPosition({ x: rx, y: ry });
+
+      // Position: straight to the DOM, every frame, no React involved.
+      //
+      // The guard is on the *node*, not just the coordinate. On the first pass
+      // the rail has not rendered yet, so there is nothing to write to — and
+      // recording the coordinate anyway would mark it as done, so the next
+      // frame would see no change and skip the write forever. The toolbar then
+      // sat untransformed at the canvas origin, translated up out of view by
+      // its own centring, and never appeared at all.
+      if (anchorRef.current && (last.x !== rx || last.y !== ry)) {
+        lastRef.current.x = rx;
+        lastRef.current.y = ry;
+        anchorRef.current.style.transform = `translate3d(${rx}px, ${ry}px, 0)`;
+      }
+
+      // Placement and visibility do go through state, because they change a
+      // handful of times per session rather than sixty times a second, and
+      // both decide what is *rendered* rather than merely where it sits.
+      if (last.placement !== currentPlacement) {
+        lastRef.current.placement = currentPlacement;
         setPlacement(currentPlacement);
+      }
+      if (!last.visible) {
+        lastRef.current.visible = true;
         setIsVisible(true);
       }
     };
 
-    const handleCamera = () => updatePosition();
-    const handleObjects = () => updatePosition();
     const handleDragStart = () => { isDraggingRef.current = true; lastRef.current.visible = false; setIsVisible(false); };
     const handleDragEnd = () => { isDraggingRef.current = false; updatePosition(); };
 
-    engineEvents.on('CameraChanged', handleCamera);
-    engineEvents.on('ObjectMoved', handleObjects);
-    engineEvents.on('ObjectModified', handleObjects);
+    engineEvents.on('CameraChanged', updatePosition);
+    engineEvents.on('ObjectMoved', updatePosition);
+    engineEvents.on('ObjectModified', updatePosition);
     window.addEventListener('canvas-drag-start', handleDragStart);
     window.addEventListener('canvas-drag-end', handleDragEnd);
-
     updatePosition();
 
-    let frame: number;
-    const loop = () => {
+    let frame = requestAnimationFrame(function loop() {
       updatePosition();
       frame = requestAnimationFrame(loop);
-    };
-    frame = requestAnimationFrame(loop);
+    });
 
     return () => {
-      engineEvents.off('CameraChanged', handleCamera);
-      engineEvents.off('ObjectMoved', handleObjects);
-      engineEvents.off('ObjectModified', handleObjects);
+      engineEvents.off('CameraChanged', updatePosition);
+      engineEvents.off('ObjectMoved', updatePosition);
+      engineEvents.off('ObjectModified', updatePosition);
       window.removeEventListener('canvas-drag-start', handleDragStart);
       window.removeEventListener('canvas-drag-end', handleDragEnd);
       cancelAnimationFrame(frame);
     };
   }, [activeId, isBulk, sidebarsVisible]);
 
-  // The reactions popover previously only closed when you picked an emoji or
-  // hit its own clear button — clicking anywhere else on the canvas (or just
-  // deselecting) left it floating open indefinitely.
   useEffect(() => {
     if (!showReactions) return;
-    const handleClickOutside = (event: MouseEvent) => {
-      if (reactionsRef.current && !reactionsRef.current.contains(event.target as Node)) {
-        setShowReactions(false);
-      }
+    const onDown = (e: MouseEvent) => {
+      if (reactionsRef.current && !reactionsRef.current.contains(e.target as Node)) setShowReactions(false);
     };
-    document.addEventListener('mousedown', handleClickOutside);
-    return () => document.removeEventListener('mousedown', handleClickOutside);
+    document.addEventListener('mousedown', onDown);
+    return () => document.removeEventListener('mousedown', onDown);
   }, [showReactions]);
 
-  // Deselecting (Escape, clicking empty canvas, switching objects) should
-  // always close any popover this toolbar has open, not leave it stranded.
-  useEffect(() => {
-    setShowReactions(false);
-  }, [activeId, isBulk]);
+  useEffect(() => { setShowReactions(false); }, [activeId, isBulk]);
 
   if ((!activeId && !isBulk) || !isVisible) return null;
 
+  // ---------------------------------------------------------------- union rail
   if (isBulk) {
-    const handleBulkDuplicate = () => {
-      bulkIds.forEach(id => {
-        const ymap = objectsMap.get(id);
-        if (!ymap) return;
-        const node = ymap.toJSON() as any;
-        editor.createNode({ ...node, id: nanoid(), x: node.x + 20, y: node.y + 20 });
-      });
-    };
-    const handleBulkDelete = () => {
-      deleteNodesWithFrames(bulkIds);
-      onDeselect();
-    };
-    const handleBulkZ = (dir: 'front' | 'back') => {
-      // See Canvas.tsx: reading `.zIndex` as a plain property off a Y.Map
-      // always yields undefined, so this used to compute 0 for both bounds.
+    const bulkNodes = bulkIds.map((id) => allObjects[id]).filter(Boolean) as AnyNode[];
+
+    const restack = (dir: 'front' | 'back') => {
       const base = dir === 'front' ? nextZIndex() : lowestZIndex() - bulkIds.length;
-      bulkIds.forEach((id, i) => updateNode(id, { zIndex: base + i }));
+      const ordered = [...bulkNodes].sort((a, b) => a.zIndex - b.zIndex);
+      applyNodePatches(ordered.map((n, i) => ({ id: n.id, changes: { zIndex: base + i } })));
     };
 
-    // The selection already *is* one whole group when every member shares
-    // the same parentId and no other object outside the selection belongs
-    // to it — that's when Ungroup makes sense instead of Group.
-    const firstParent = (objectsMap.get(bulkIds[0])?.toJSON() as any)?.parentId;
-    const isWholeGroup = !!firstParent && bulkIds.every(id => (objectsMap.get(id)?.toJSON() as any)?.parentId === firstParent)
-      && Array.from(objectsMap.values()).every((o: any) => o.parentId !== firstParent || bulkIds.includes(o.id));
+    const duplicate = () => {
+      bulkNodes.forEach((node) => {
+        editor.createNode({ ...(node as unknown as Record<string, unknown>), id: nanoid(), x: node.x + 20, y: node.y + 20 } as never);
+      });
+    };
+
+    // The selection already *is* one whole group when every member shares a
+    // parentId and nothing outside the selection belongs to it.
+    const firstParent = bulkNodes[0]?.parentId;
+    const isWholeGroup = Boolean(firstParent)
+      && bulkNodes.every((n) => n.parentId === firstParent)
+      && Object.values(allObjects).every((o) => o.parentId !== firstParent || bulkIds.includes(o.id));
+
+    const canBoolean = bulkNodes.length > 1 && bulkNodes.every((n) => canVectorize(n));
+    const canDistribute = bulkNodes.length >= 3;
+    const locked = sharedValue(bulkNodes, (n) => Boolean(n.locked));
+    const allFillable = bulkNodes.length > 0 && bulkNodes.every((n) => FILLABLE_TYPES.has(n.type));
+    const opacity = sharedValue(bulkNodes, (n) => n.opacity);
 
     return (
       <AnimatePresence>
-        {isVisible && (
-          <motion.div
-            key="bulk"
-            initial={{ opacity: 0, y: 10, scale: 0.95 }}
-            animate={{ opacity: 1, y: 0, scale: 1 }}
-            exit={{ opacity: 0, y: 10, scale: 0.95 }}
-            transition={{ type: 'spring', damping: 25, stiffness: 400 }}
-            style={{
-              position: 'absolute',
-              left: position.x,
-              top: position.y,
-              transform: `translate(-50%, ${placement === 'top' ? '-100%' : '0%'})`,
-              display: 'flex',
-              alignItems: 'center',
-              gap: '8px',
-              padding: '8px 12px',
-              zIndex: 200,
-              pointerEvents: 'auto',
-              borderRadius: '12px',
-              backdropFilter: 'blur(20px)',
-              background: 'var(--surface-primary)',
-              boxShadow: '0 8px 32px rgba(0,0,0,0.12), 0 0 0 1px var(--border-divider)',
-            }}
-          >
-            <div style={{ display: 'flex', alignItems: 'center', gap: '6px', color: 'var(--text-secondary)', paddingRight: '10px', borderRight: '1px solid var(--border-divider)', fontSize: '12px', fontWeight: 600 }}>
-              <Layers size={14} /> {bulkIds.length} selected
-            </div>
-            {/* Booleans, offered only when every selected object has an
-                outline to combine. A row of buttons that silently did nothing
-                on a sticky note would be worse than one that is not there. */}
-            {bulkIds.every((id) => canVectorize(allObjects[id])) && (
-              <>
-                {BOOLEAN_OPS.map((op) => (
-                  <button
-                    key={op}
-                    className="btn-icon"
-                    data-tooltip={BOOLEAN_BUTTONS[op].label}
-                    aria-label={BOOLEAN_BUTTONS[op].label}
-                    style={{ padding: '6px' }}
-                    onClick={() => {
-                      const id = applyBoolean(op, bulkIds);
-                      // The operands are gone; selecting the result is the
-                      // only sensible place to leave the selection, and it is
-                      // also what makes a run of booleans chainable.
-                      if (id) editor.select(id);
-                    }}
-                  >
-                    {BOOLEAN_BUTTONS[op].icon}
-                  </button>
-                ))}
-                <div style={{ width: '1px', height: '20px', background: 'var(--border-divider)' }} />
-              </>
-            )}
+        <Rail id="union" placement={placement} anchorRef={anchorRef} ref={railRef}>
+          <span className="ctx-kind"><Layers size={15} />{bulkNodes.length}</span>
+          <Divider />
+
+          {/* Zone A — structure. */}
+          <div className="ctx-group">
             {isWholeGroup ? (
-              <button className="btn-icon" data-tooltip="Ungroup (Cmd+Shift+G)" style={{ padding: '6px' }} onClick={() => editor.ungroupNodes(bulkIds)}><Ungroup size={16} /></button>
+              <RailButton label="Ungroup" hint="Ungroup (Cmd+Shift+G)" onClick={() => editor.ungroupNodes(bulkIds)}><Ungroup size={16} /></RailButton>
             ) : (
-              <button className="btn-icon" data-tooltip="Group (Cmd+G)" style={{ padding: '6px' }} onClick={() => editor.groupNodes(bulkIds)}><Group size={16} /></button>
+              <RailButton label="Group" hint="Group (Cmd+G)" onClick={() => editor.groupNodes(bulkIds)}><Group size={16} /></RailButton>
             )}
-            <div style={{ width: '1px', height: '20px', background: 'var(--border-divider)' }} />
-            <button className="btn-icon" data-tooltip="Bring to Front (Cmd+Shift+])" style={{ padding: '6px' }} onClick={() => handleBulkZ('front')}><BringToFront size={16} /></button>
-            <button className="btn-icon" data-tooltip="Send to Back (Cmd+Shift+[)" style={{ padding: '6px' }} onClick={() => handleBulkZ('back')}><SendToBack size={16} /></button>
-            <button className="btn-icon" data-tooltip="Duplicate (Cmd+D)" style={{ padding: '6px' }} onClick={handleBulkDuplicate}><Copy size={16} /></button>
-            <button className="btn-icon" data-tooltip="Delete (Del)" style={{ padding: '6px', color: '#ef4444' }} onClick={handleBulkDelete}><Trash2 size={16} /></button>
-          </motion.div>
-        )}
+            {canBoolean && BOOLEAN_OPS.map((op) => (
+              <RailButton
+                key={op}
+                label={BOOLEAN_BUTTONS[op].label}
+                onClick={() => { const id = applyBoolean(op, bulkIds); if (id) editor.select(id); }}
+              >
+                {BOOLEAN_BUTTONS[op].icon}
+              </RailButton>
+            ))}
+          </div>
+          <Divider />
+
+          {/* Zone B — arrangement. The reason a multi-selection usually exists,
+              and something this app had no way to do at all until now. */}
+          <div className="ctx-group">
+            {ALIGN_BUTTONS.map(({ edge, label, icon }) => (
+              <RailButton key={edge} label={label} onClick={() => applyNodePatches(alignSelection(bulkNodes, edge))}>
+                {icon}
+              </RailButton>
+            ))}
+            <RailButton
+              label="Distribute horizontally"
+              hint={canDistribute ? 'Even horizontal gaps' : 'Needs three or more objects'}
+              disabled={!canDistribute}
+              onClick={() => applyNodePatches(distributeSelection(bulkNodes, 'horizontal'))}
+            ><AlignHorizontalSpaceAround size={16} /></RailButton>
+            <RailButton
+              label="Distribute vertically"
+              hint={canDistribute ? 'Even vertical gaps' : 'Needs three or more objects'}
+              disabled={!canDistribute}
+              onClick={() => applyNodePatches(distributeSelection(bulkNodes, 'vertical'))}
+            ><AlignVerticalSpaceAround size={16} /></RailButton>
+          </div>
+          <Divider />
+
+          {/* Zone C — what every one of them has. */}
+          <div className="ctx-group">
+            {allFillable && (
+              <FillEditor
+                paint={(bulkNodes[0] as { appearance?: Appearance }).appearance?.fill?.[0]}
+                mixed={sharedValue(bulkNodes, (n) => (n as { appearance?: Appearance }).appearance?.fill?.[0]).mixed}
+                onChange={(fill) =>
+                  applyNodePatches(bulkNodes.map((n) => ({
+                    id: n.id,
+                    // Merged per node: a shared fill must not overwrite three
+                    // objects' strokes and shadows with the first one's paint.
+                    changes: { appearance: { ...((n as { appearance?: Appearance }).appearance ?? {}), fill: [fill] } },
+                  })))
+                }
+              />
+            )}
+            {/* Icon plus value, not a bare number: a lone "–" for a mixed
+                opacity is unreadable, and the glyph is what makes the control
+                findable at a glance whatever the value says. */}
+            <RailPopover
+              label="Opacity"
+              trigger={<><Droplet size={16} />{!opacity.mixed && <span className="ctx-value">{Math.round((opacity.value ?? 1) * 100)}</span>}</>}
+            >
+              <PopoverSlider
+                label="Opacity" suffix="%"
+                value={Math.round((opacity.value ?? 1) * 100)} min={0} max={100}
+                onChange={(v) => updateNodes(bulkIds, { opacity: v / 100 })}
+              />
+            </RailPopover>
+            <RailButton
+              label={locked.mixed || !locked.value ? 'Lock all' : 'Unlock all'}
+              pressed={!locked.mixed && locked.value}
+              // A mixed lock resolves to locked: the safe direction, and it
+              // leaves one unambiguous press to undo.
+              onClick={() => updateNodes(bulkIds, { locked: locked.mixed ? true : !locked.value })}
+            >
+              {!locked.mixed && locked.value ? <Lock size={16} /> : <Unlock size={16} />}
+            </RailButton>
+          </div>
+          <Divider />
+
+          {/* Zone D — bulk management. */}
+          <div className="ctx-group">
+            <RailButton label="Bring to front" onClick={() => restack('front')}><BringToFront size={16} /></RailButton>
+            <RailButton label="Send to back" onClick={() => restack('back')}><SendToBack size={16} /></RailButton>
+            <RailButton label="Duplicate" hint="Duplicate (Cmd+D)" onClick={duplicate}><Copy size={16} /></RailButton>
+            <RailButton label="Delete" hint="Delete (Del)" danger onClick={() => { deleteNodesWithFrames(bulkIds); onDeselect(); }}>
+              <Trash2 size={16} />
+            </RailButton>
+          </div>
+        </Rail>
       </AnimatePresence>
     );
   }
 
+  // --------------------------------------------------------------- single rail
   if (!liveNode) return null;
   const node = liveNode;
   const isCropping = cropping?.nodeId === node.id;
+  const kind = TYPE_LABEL[node.type] ?? { icon: <Square size={15} />, name: node.type };
 
-  const handleDuplicate = () => {
-    const clone = { ...node, id: nanoid(), x: node.x + 20, y: node.y + 20 };
-    editor.createNode(clone);
-  };
+  const updateProp = (updates: Record<string, unknown>) => editor.updateNode(node.id, updates);
 
-  const handleDelete = () => {
-    deleteNodesWithFrames([activeId!]);
-    onDeselect();
-  };
-
-  const handleAddComment = () => {
-    engineEvents.emit('CommentDraftRequested', { x: node.x + node.width, y: node.y, objectId: activeId });
-  };
-
-  const updateProp = (updates: any) => {
-    editor.updateNode(activeId!, updates);
-  };
-
-  // Only text and shapes carry their own typography; stickies use a fixed
-  // handwriting face and everything else has none.
   const typography: Typography | null =
     node.type === 'text' ? node.typography
-    : node.type === 'shape' ? (node.typography ?? DEFAULT_TYPOGRAPHY)
-    : null;
-
+      : node.type === 'shape' ? (node.typography ?? DEFAULT_TYPOGRAPHY)
+        : null;
   const setTypography = (patch: Partial<Typography>) =>
     updateProp({ typography: { ...(typography ?? DEFAULT_TYPOGRAPHY), ...patch } });
 
   const appearance: Appearance = ('appearance' in node ? node.appearance : undefined) ?? {};
-  const setAppearance = (patch: Partial<Appearance>) =>
-    updateProp({ appearance: { ...appearance, ...patch } });
+  const setAppearance = (patch: Partial<Appearance>) => updateProp({ appearance: { ...appearance, ...patch } });
 
-  const bringToFront = () => updateProp({ zIndex: nextZIndex() });
-  const sendToBack = () => updateProp({ zIndex: lowestZIndex() - 1 });
+  const openShape = node.type === 'shape' && isOpenShape(node.geometry.kind);
+  const strokeWidth = appearance.stroke?.width ?? 0;
+
+  /**
+   * Whether there is any type here to style.
+   *
+   * A shape *can* carry a centred label, so the schema gives every shape a
+   * `typography` block — but most shapes have no text in them, and offering a
+   * family picker, a size and four style toggles for an empty string made the
+   * rail wider than the object it floats over, for controls that provably
+   * change nothing on screen. A text node always qualifies; a shape qualifies
+   * once it actually has words.
+   */
+  const showTypography =
+    node.type === 'text' || (node.type === 'shape' && Boolean(node.text && node.text.length > 0));
 
   return (
     <AnimatePresence>
-      {isVisible && (
-        <motion.div
-          key={activeId}
-          initial={{ opacity: 0, y: 10, scale: 0.95 }}
-          animate={{ opacity: 1, y: 0, scale: 1 }}
-          exit={{ opacity: 0, y: 10, scale: 0.95 }}
-          transition={{ type: 'spring', damping: 25, stiffness: 400 }}
-          style={{
-            position: 'absolute',
-            left: position.x,
-            top: position.y,
-            transform: `translate(-50%, ${placement === 'top' ? '-100%' : '0%'})`,
-            display: 'flex',
-            flexDirection: 'column',
-            alignItems: 'stretch',
-            padding: '8px 12px',
-            gap: '8px',
-            zIndex: 200,
-            pointerEvents: 'auto',
-            borderRadius: '12px',
-            backdropFilter: 'blur(20px)',
-            background: 'var(--surface-primary)',
-            boxShadow: '0 8px 32px rgba(0,0,0,0.12), 0 0 0 1px var(--border-divider)',
-          }}
-        >
-          {/* Row 1: Tools */}
-          <div style={{ display: 'flex', alignItems: 'center', gap: '12px', paddingBottom: '8px', borderBottom: '1px solid var(--border-divider)' }}>
-            {/* Icon Indicator */}
-            <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', color: 'var(--text-tertiary)', paddingRight: '12px', borderRight: '1px solid var(--border-divider)' }}>
-            {TYPE_ICON[node.type] || null}
-          </div>
+      <Rail id={node.id} placement={placement} anchorRef={anchorRef} ref={railRef}>
+        <span className="ctx-kind">{kind.icon}{kind.name}</span>
+        <Divider />
 
-          {/* Dynamic tools based on node type */}
-          {(node.type === 'shape' || node.type === 'path') && (
-            <div style={{ display: 'flex', alignItems: 'center', gap: '12px' }}>
+        {/* ---------------------------------------------------- shapes & paths */}
+        {(node.type === 'shape' || node.type === 'path') && (
+          <>
+            <div className="ctx-group">
+              {node.type === 'shape' && (
+                <RailPopover label="Change shape" trigger={<Square size={16} />} align="start">
+                  <span className="ctx-popover__label">Shape</span>
+                  <div className="ctx-shape-grid">
+                    {SHAPE_CHOICES.map((choice) => {
+                      const active = node.geometry.kind === choice.kind
+                        && (choice.points === undefined || node.geometry.points === choice.points);
+                      return (
+                        <button
+                          key={`${choice.kind}-${choice.points ?? 0}`}
+                          type="button"
+                          className="ctx-shape-btn"
+                          aria-pressed={active}
+                          aria-label={choice.label}
+                          data-tooltip={choice.label}
+                          // Size, paint and position all survive: only `kind`
+                          // and its side count change, which is the whole
+                          // point of a swapper rather than a delete-and-redraw.
+                          onClick={() => updateProp({
+                            geometry: {
+                              ...node.geometry,
+                              kind: choice.kind,
+                              ...(choice.points !== undefined
+                                ? { points: Math.max(MIN_POLYGON_SIDES, Math.min(MAX_POLYGON_SIDES, choice.points)) }
+                                : {}),
+                            },
+                          })}
+                        >
+                          {choice.icon}
+                        </button>
+                      );
+                    })}
+                  </div>
+                </RailPopover>
+              )}
               {/* The same editor the Properties panel uses, not a colour-only
-                  shortcut. A fill control on the floating toolbar that can
-                  only make flat colours would quietly discard a gradient the
-                  moment anyone reached for the nearest swatch. */}
-              <span style={{ fontSize: '10px', textTransform: 'uppercase', fontWeight: 'bold', color: 'var(--text-secondary)' }}>Fill</span>
-              <FillEditor
-                paint={appearance.fill?.[0]}
-                onChange={(fill) => setAppearance({ fill: [fill] })}
-              />
-              {/* A freehand (Pencil) stroke is a filled outline blob with no
-                  separate stroke render path — showing stroke controls for it
-                  would silently do nothing. Anchor/bezier paths from the Pen
-                  tool do render a real stroke, same as shapes — and so does a
-                  compound path, which is several of them. */}
+                  shortcut — a fill control that could only make flat colours
+                  would discard a gradient the moment anyone reached for it. */}
+              {!openShape && <FillEditor paint={appearance.fill?.[0]} onChange={(fill) => setAppearance({ fill: [fill] })} />}
+              {/* A freehand blob is a filled outline with no separate stroke
+                  render path, so stroke controls on one would do nothing. */}
               {(node.type === 'shape' || node.geometry.kind !== 'freehand') && (
-                <>
-                  <ColorPickerPopover
-                    color={appearance.stroke?.color ?? 'transparent'}
-                    onChange={(color) => setAppearance({ stroke: { width: appearance.stroke?.width ?? 2, ...appearance.stroke, color } })}
-                    label="Stroke"
-                  />
-                  <NumberStepper
-                    value={appearance.stroke?.width ?? 2}
+                <RailPopover
+                  label="Stroke"
+                  trigger={<><Minus size={16} /><span className="ctx-value">{strokeWidth}</span></>}
+                >
+                  <div className="ctx-popover__row">
+                    <span className="ctx-popover__label">Colour</span>
+                    <ColorPickerPopover
+                      color={appearance.stroke?.color ?? '#000000'}
+                      onChange={(color) => setAppearance({ stroke: { width: strokeWidth || 2, ...appearance.stroke, color } })}
+                    />
+                  </div>
+                  <PopoverSlider
+                    label="Weight" value={strokeWidth} min={0} max={40}
                     onChange={(width) => setAppearance({ stroke: { color: appearance.stroke?.color ?? '#000000', ...appearance.stroke, width } })}
-                    min={0} max={100} label="W"
                   />
-                </>
+                </RailPopover>
               )}
               {node.type === 'shape' && node.geometry.kind === 'rect' && (
-                <NumberStepper
-                  value={appearance.cornerRadius ?? 0}
-                  onChange={(cornerRadius) => setAppearance({ cornerRadius })}
-                  min={0} max={200} label="R"
-                />
+                <RailPopover label="Corner radius" trigger={<><Spline size={16} /><span className="ctx-value">{appearance.cornerRadius ?? 0}</span></>}>
+                  <PopoverSlider
+                    label="Corner radius" value={appearance.cornerRadius ?? 0} min={0} max={200}
+                    onChange={(cornerRadius) => setAppearance({ cornerRadius })}
+                  />
+                </RailPopover>
               )}
             </div>
-          )}
+            <Divider />
+          </>
+        )}
 
-          {typography && (
-            <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
-              <FontSelector
-                value={typography.fontFamily}
-                onChange={(fontFamily) => setTypography({ fontFamily })}
-              />
-              <NumberStepper
-                value={typography.fontSize}
-                onChange={(fontSize) => setTypography({ fontSize })}
-                min={8} max={500}
-              />
-              {/* One canonical typography block, so these controls, the
-                  Properties panel and Cmd+B/I/U all write the same fields. */}
-              <div style={{ display: 'flex', alignItems: 'center', background: 'var(--surface-hover)', padding: '2px', borderRadius: '6px' }}>
-                <StyleToggle active={typography.fontWeight >= 600} tooltip="Bold" onClick={() => setTypography({ fontWeight: typography.fontWeight >= 600 ? 400 : 700 })}><Bold size={14} /></StyleToggle>
-                <StyleToggle active={typography.italic} tooltip="Italic" onClick={() => setTypography({ italic: !typography.italic })}><Italic size={14} /></StyleToggle>
-                <StyleToggle active={typography.underline} tooltip="Underline" onClick={() => setTypography({ underline: !typography.underline })}><Underline size={14} /></StyleToggle>
-                <StyleToggle active={typography.strikethrough} tooltip="Strikethrough" onClick={() => setTypography({ strikethrough: !typography.strikethrough })}><Strikethrough size={14} /></StyleToggle>
-              </div>
-              <SegmentedControl
-                value={typography.align}
-                onChange={(align) => setTypography({ align: align as TextAlign })}
-                segments={[
-                  { value: 'left', icon: <AlignLeft size={14} /> },
-                  { value: 'center', icon: <AlignCenter size={14} /> },
-                  { value: 'right', icon: <AlignRight size={14} /> },
-                ]}
-              />
-              <ColorPickerPopover
-                color={typography.color}
-                onChange={(color) => setTypography({ color })}
-              />
+        {/* ------------------------------------------------------------- text */}
+        {showTypography && typography && (
+          <>
+            <div className="ctx-group">
+              {/* In a popover, not inline: the family picker is a 120px
+                  dropdown, and inline it made the rail wider than the object
+                  it was floating over. */}
+              <RailPopover label="Font" trigger={<Type size={16} />} align="start">
+                <span className="ctx-popover__label">Font</span>
+                <FontSelector value={typography.fontFamily} onChange={(fontFamily) => setTypography({ fontFamily })} />
+              </RailPopover>
+              <RailButton label="Smaller" onClick={() => setTypography({ fontSize: Math.max(8, typography.fontSize - 2) })}><Minus size={14} /></RailButton>
+              <span className="ctx-value">{typography.fontSize}</span>
+              <RailButton label="Larger" onClick={() => setTypography({ fontSize: Math.min(500, typography.fontSize + 2) })}>
+                <span style={{ fontSize: 15, lineHeight: 1 }}>+</span>
+              </RailButton>
+              <RailButton label="Bold" pressed={typography.fontWeight >= 600} onClick={() => setTypography({ fontWeight: typography.fontWeight >= 600 ? 400 : 700 })}><Bold size={15} /></RailButton>
+              <RailButton label="Italic" pressed={typography.italic} onClick={() => setTypography({ italic: !typography.italic })}><Italic size={15} /></RailButton>
+              <RailButton label="Underline" pressed={typography.underline} onClick={() => setTypography({ underline: !typography.underline })}><Underline size={15} /></RailButton>
+              <RailButton label="Strikethrough" pressed={typography.strikethrough} onClick={() => setTypography({ strikethrough: !typography.strikethrough })}><Strikethrough size={15} /></RailButton>
+              <RailPopover label="Alignment" trigger={<AlignLeft size={16} />}>
+                <span className="ctx-popover__label">Alignment</span>
+                <SegmentedControl
+                  ariaLabel="Text alignment"
+                  value={typography.align}
+                  onChange={(align) => setTypography({ align: align as TextAlign })}
+                  segments={[
+                    { value: 'left', label: 'Left', icon: <AlignLeft size={14} /> },
+                    { value: 'center', label: 'Centre', icon: <AlignCenter size={14} /> },
+                    { value: 'right', label: 'Right', icon: <AlignRight size={14} /> },
+                  ]}
+                />
+              </RailPopover>
+              <ColorPickerPopover color={typography.color} onChange={(color) => setTypography({ color })} />
             </div>
-          )}
+            <Divider />
+          </>
+        )}
 
-          {/* Voice notes had *no* quick actions at all — every other type has
-              them, and this one is the hardest to get anything out of, because
-              PNG export omits the player and SVG draws a placeholder. Saving
-              the file is the action that was actually missing. */}
-          {node.type === 'audio' && node.src && (
-            <div style={{ display: 'flex', alignItems: 'center', gap: '4px' }}>
+        {/* ------------------------------------------------------------ image */}
+        {node.type === 'image' && (
+          <>
+            <div className="ctx-group">
+              {/* Cropping is also on double-click, which is the convention —
+                  but a gesture with no visible affordance is a feature most
+                  people never discover. */}
+              <RailButton
+                label={isCropping ? 'Done cropping' : 'Crop image'}
+                hint={isCropping ? 'Done cropping (Enter)' : 'Crop image'}
+                pressed={isCropping}
+                onClick={() => isCropping
+                  ? cropMode.commit()
+                  : cropMode.enter({
+                    nodeId: node.id,
+                    node: { x: node.x, y: node.y, width: node.width, height: node.height },
+                    crop: node.crop,
+                  })}
+              ><Crop size={16} /></RailButton>
+            </div>
+            <Divider />
+          </>
+        )}
+
+        {/* ------------------------------------------------------------ audio */}
+        {node.type === 'audio' && node.src && (
+          <>
+            <div className="ctx-group">
               <a
-                className="btn-icon"
+                className="ctx-btn"
                 href={node.src}
                 download={`voice-note-${node.author.name.replace(/\s+/g, '-').toLowerCase()}.webm`}
                 data-tooltip="Download recording"
                 aria-label="Download recording"
-                style={{ padding: '4px', display: 'flex', color: 'var(--text-secondary)' }}
-              >
-                <Download size={14} />
-              </a>
+              ><Download size={16} /></a>
             </div>
-          )}
+            <Divider />
+          </>
+        )}
 
-          {node.type === 'sticky' && (
-            <div style={{ display: 'flex', alignItems: 'center', gap: '12px' }}>
-              <ColorPickerPopover
-                color={THEMES[node.theme]?.bg ?? '#FDE047'}
-                onChange={(color) => updateProp({ theme: nearestTheme(color) })}
-                label="Bg"
-              />
-              <NumberStepper
-                value={node.fontSize ?? 16}
-                onChange={(fontSize) => updateProp({ fontSize })}
-                min={8} max={72} label="Size"
-              />
-              <div style={{ width: '1px', height: '16px', backgroundColor: 'var(--border-divider)' }} />
-              <button 
-                className="btn-icon"
-                data-tooltip={node.pinned ? "Unpin" : "Pin"}
-                style={{
-                  padding: '4px', borderRadius: '4px',
-                  background: node.pinned ? 'var(--surface-primary)' : 'transparent',
-                  color: node.pinned ? 'var(--text-primary)' : 'var(--text-secondary)',
-                  boxShadow: node.pinned ? 'var(--shadow-sm)' : 'none'
+        {/* ----------------------------------------------------------- sticky */}
+        {node.type === 'sticky' && (
+          <>
+            <div className="ctx-group">
+              <StickyPalette
+                theme={node.theme}
+                onPick={(theme) => {
+                  updateProp({ theme });
+                  // Recolouring a note also sets what the next one will be,
+                  // the way picking a colour does in any drawing tool.
+                  useStore.getState().setStickyTheme(theme);
                 }}
-                onClick={() => updateProp({ pinned: !node.pinned })}
-              >
-                <Pin size={14} fill={node.pinned ? 'currentColor' : 'none'} />
-              </button>
-
-              {/* Reaction picker.
-                  StickyRenderer already renders a reactions row, but nothing ever wrote
-                  reaction data — so the feature was permanently invisible. This is the
-                  missing write path. */}
-              <div style={{ position: 'relative' }} ref={reactionsRef}>
-                <button
-                  className="btn-icon"
-                  data-tooltip="React"
-                  style={{ padding: '4px', borderRadius: '4px', color: 'var(--text-secondary)' }}
-                  onClick={() => setShowReactions(v => !v)}
-                >
-                  <SmilePlus size={14} />
+              />
+              {/* The "Size" stepper that used to sit here wrote `fontSize`,
+                  which nothing has read since the type became fitted to the
+                  note — a control that provably could not change a pixel. See
+                  `engine/model/stickyText.ts`. */}
+              <RailButton label={node.pinned ? 'Unpin' : 'Pin'} pressed={node.pinned} onClick={() => updateProp({ pinned: !node.pinned })}>
+                <Pin size={16} fill={node.pinned ? 'currentColor' : 'none'} />
+              </RailButton>
+              <div style={{ position: 'relative', display: 'flex' }} ref={reactionsRef}>
+                <button type="button" className="ctx-btn" data-tooltip="React" aria-label="React" aria-expanded={showReactions} onClick={() => setShowReactions((v) => !v)}>
+                  <SmilePlus size={16} />
                 </button>
                 {showReactions && (
-                  <div
-                    className="panel-surface"
-                    style={{
-                      position: 'absolute',
-                      bottom: '100%',
-                      left: '50%',
-                      transform: 'translateX(-50%)',
-                      marginBottom: 6,
-                      display: 'flex',
-                      gap: 2,
-                      padding: 4,
-                      borderRadius: 8,
-                      zIndex: 30,
-                      animation: 'popIn 160ms var(--ease-settle)',
-                    }}
-                  >
-                    {REACTION_SET.map(emoji => {
+                  <div className="ctx-popover" style={{ top: 'calc(100% + 8px)', left: '50%', transform: 'translateX(-50%)', flexDirection: 'row', gap: 2, minWidth: 0, padding: 4 }}>
+                    {REACTION_SET.map((emoji) => {
                       const mine = (node.reactions[emoji] ?? []).includes(myAuthorId);
                       return (
                         <button
                           key={emoji}
-                          // A toggle, not a counter. This used to write
+                          type="button"
+                          // A toggle, not a counter: this used to write
                           // `count + 1`, so one person could react five times
                           // and nobody could take a reaction back.
-                          onClick={() => {
-                            toggleReaction(node.id, emoji, myAuthorId);
-                            setShowReactions(false);
-                          }}
+                          onClick={() => { toggleReaction(node.id, emoji, myAuthorId); setShowReactions(false); }}
                           aria-pressed={mine}
                           title={mine ? `Remove ${emoji}` : `React ${emoji}`}
                           style={{
                             background: mine ? 'var(--surface-active)' : 'transparent',
-                            border: 'none',
-                            cursor: 'pointer',
-                            fontSize: 16,
-                            lineHeight: 1,
-                            padding: '4px 6px',
-                            borderRadius: 6,
-                            transition: 'var(--motion-hover)',
+                            border: 'none', cursor: 'pointer', fontSize: 16, lineHeight: 1,
+                            padding: '4px 6px', borderRadius: 6,
                           }}
-                          onMouseEnter={e => (e.currentTarget.style.background = 'var(--surface-hover)')}
-                          onMouseLeave={e =>
-                            (e.currentTarget.style.background = mine
-                              ? 'var(--surface-active)'
-                              : 'transparent')
-                          }
-                        >
-                          {emoji}
-                        </button>
+                        >{emoji}</button>
                       );
                     })}
-                    {/* "Clear reactions" used to live here. It deleted
-                        *everyone's* reactions, which is not a thing any
-                        participant should be able to do to the others — and it
-                        only existed because there was no way to take your own
-                        back. Picking your own emoji again removes it. */}
                   </div>
                 )}
               </div>
             </div>
-          )}
+            <Divider />
+          </>
+        )}
 
-          </div>
+        {/* --------------------------------------------------- always present */}
+        <div className="ctx-group">
+          <RailPopover label="Opacity" trigger={<><Droplet size={16} /><span className="ctx-value">{Math.round((node.opacity ?? 1) * 100)}</span></>}>
+            <PopoverSlider
+              label="Opacity" suffix="%"
+              value={Math.round((node.opacity ?? 1) * 100)} min={0} max={100}
+              onChange={(v) => updateProp({ opacity: v / 100 })}
+            />
+          </RailPopover>
+          <RailButton
+            label="Comment"
+            onClick={() => engineEvents.emit('CommentDraftRequested', { x: node.x + node.width, y: node.y, objectId: node.id })}
+          ><MessageSquarePlus size={16} /></RailButton>
+          <RailButton
+            label="Duplicate" hint="Duplicate (Cmd+D)"
+            onClick={() => editor.createNode({ ...(node as unknown as Record<string, unknown>), id: nanoid(), x: node.x + 20, y: node.y + 20 } as never)}
+          ><Copy size={16} /></RailButton>
 
-          {/* Row 2: Global Actions */}
-          <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
-            {/* Opacity Control */}
-            <div style={{ display: 'flex', alignItems: 'center', gap: '4px', background: 'var(--surface-hover)', padding: '4px 8px', borderRadius: '6px' }} title="Transparency">
-              <span style={{ fontSize: '10px', fontWeight: 'bold', color: 'var(--text-secondary)' }}>OPACITY</span>
-              <input 
-                type="range" 
-                min="0" max="100" 
-                value={Math.round((node.opacity ?? 1) * 100)} 
-                onChange={(e) => updateProp({ opacity: Number(e.target.value) / 100 })}
-                style={{ width: '60px', cursor: 'pointer', accentColor: 'var(--text-primary)' }}
-              />
-              <span style={{ fontSize: '10px', color: 'var(--text-primary)', width: '24px', textAlign: 'right', fontFamily: 'monospace' }}>
-                {Math.round((node.opacity ?? 1) * 100)}%
-              </span>
-            </div>
-            {/* Cropping is also on double-click, which is the convention — but
-                a gesture with no visible affordance is a feature most people
-                never find out exists. */}
-            {node.type === 'image' && (
-              <>
-                <div style={{ width: '1px', height: '20px', margin: '0 2px', backgroundColor: 'var(--border-divider)' }} />
-                <button
-                  className={`btn-icon ${isCropping ? 'active' : ''}`}
-                  aria-pressed={isCropping}
-                  data-tooltip={isCropping ? 'Done cropping (Enter)' : 'Crop image'}
-                  aria-label={isCropping ? 'Done cropping' : 'Crop image'}
-                  style={{ padding: '6px' }}
-                  onClick={() =>
-                    isCropping
-                      ? cropMode.commit()
-                      : cropMode.enter({
-                          nodeId: node.id,
-                          node: { x: node.x, y: node.y, width: node.width, height: node.height },
-                          crop: node.crop,
-                        })
-                  }
-                >
-                  <Crop size={16} />
-                </button>
-              </>
-            )}
+          {/* Everything that is real but rarely reached for. An overflow menu
+              rather than eight more buttons: the rail is glanceable only while
+              it stays scannable, and a row nobody can parse is not faster than
+              the panel it exists to replace. */}
+          <RailPopover label="More actions" trigger={<Menu size={16} />} align="end">
+            <button className="ctx-menu-item" onClick={() => updateProp({ scaleX: -node.scaleX })}>
+              <FlipHorizontal size={15} /> Flip horizontal
+            </button>
+            <button className="ctx-menu-item" onClick={() => updateProp({ scaleY: -node.scaleY })}>
+              <FlipVertical size={15} /> Flip vertical
+            </button>
+            <button className="ctx-menu-item" onClick={() => updateProp({ zIndex: nextZIndex() })}>
+              <BringToFront size={15} /> Bring to front <span className="ctx-menu-item__key">⌘⇧]</span>
+            </button>
+            <button className="ctx-menu-item" onClick={() => updateProp({ zIndex: lowestZIndex() - 1 })}>
+              <SendToBack size={15} /> Send to back <span className="ctx-menu-item__key">⌘⇧[</span>
+            </button>
+            <button className="ctx-menu-item" onClick={() => updateProp({ locked: !node.locked })}>
+              {node.locked ? <Unlock size={15} /> : <Lock size={15} />} {node.locked ? 'Unlock' : 'Lock'}
+              <span className="ctx-menu-item__key">⌘⇧L</span>
+            </button>
             {node.type === 'shape' && canVectorize(node) && (
-              <>
-                <div style={{ width: '1px', height: '20px', margin: '0 2px', backgroundColor: 'var(--border-divider)' }} />
-                <button
-                  className="btn-icon"
-                  data-tooltip="Flatten to path — then double-click to edit its points"
-                  aria-label="Flatten to path"
-                  style={{ padding: '6px' }}
-                  onClick={() => {
-                    const id = flattenToPath(node.id);
-                    if (!id) return;
-                    editor.select(id);
-                    // Straight into the editor: flattening is never the goal,
-                    // it is the step before editing the points, and stopping
-                    // at a path that looks identical to the shape it replaced
-                    // makes the button look like it did nothing.
-                    pathEdit.enter(id);
-                  }}
-                >
-                  <Spline size={16} />
-                </button>
-              </>
+              <button className="ctx-menu-item" onClick={() => { const id = flattenToPath(node.id); if (id) editor.select(id); }}>
+                <Spline size={15} /> Flatten to path
+              </button>
             )}
-            {(node.type === 'shape' || node.type === 'path') &&
-              Boolean((node as { appearance?: { stroke?: { width: number } } }).appearance?.stroke?.width) && (
-                <button
-                  className="btn-icon"
-                  data-tooltip="Outline stroke — turn the line into a filled shape"
-                  aria-label="Outline stroke"
-                  style={{ padding: '6px' }}
-                  onClick={() => {
-                    const id = outlineStrokeOf(node.id);
-                    if (id) editor.select(id);
-                  }}
-                >
-                  <Scissors size={16} />
-                </button>
-              )}
-            {node.type === 'path' && node.geometry.kind === 'bezier' && (
-              <>
-                <div style={{ width: '1px', height: '20px', margin: '0 2px', backgroundColor: 'var(--border-divider)' }} />
-                <button
-                  className="btn-icon"
-                  data-tooltip="Edit points (or double-click)"
-                  aria-label="Edit points"
-                  style={{ padding: '6px' }}
-                  onClick={() => pathEdit.enter(node.id)}
-                >
-                  <Spline size={16} />
-                </button>
-              </>
+            {canVectorize(node) && strokeWidth > 0 && (
+              <button className="ctx-menu-item" onClick={() => { const id = outlineStrokeOf(node.id); if (id) editor.select(id); }}>
+                <Scissors size={15} /> Outline stroke
+              </button>
             )}
-            <div style={{ width: '1px', height: '20px', margin: '0 2px', backgroundColor: 'var(--border-divider)' }} />
-            <button className="btn-icon" data-tooltip="Comment on this object" style={{ padding: '6px' }} onClick={handleAddComment}><MessageSquarePlus size={16} /></button>
-            <div style={{ width: '1px', height: '20px', margin: '0 2px', backgroundColor: 'var(--border-divider)' }} />
-            <button className="btn-icon" data-tooltip="Bring to Front (Cmd+Shift+])" style={{ padding: '6px' }} onClick={bringToFront}><BringToFront size={16} /></button>
-            <button className="btn-icon" data-tooltip="Send to Back (Cmd+Shift+[)" style={{ padding: '6px' }} onClick={sendToBack}><SendToBack size={16} /></button>
-            <button className="btn-icon" data-tooltip="Duplicate (Cmd+D)" style={{ padding: '6px' }} onClick={handleDuplicate}><Copy size={16} /></button>
-            <button className="btn-icon" data-tooltip="Delete (Del)" style={{ padding: '6px', color: '#ef4444' }} onClick={handleDelete}><Trash2 size={16} /></button>
-          </div>
-        </motion.div>
-      )}
+            <button className="ctx-menu-item ctx-menu-item--danger" onClick={() => { deleteNodesWithFrames([node.id]); onDeselect(); }}>
+              <Trash2 size={15} /> Delete <span className="ctx-menu-item__key">Del</span>
+            </button>
+          </RailPopover>
+        </div>
+      </Rail>
     </AnimatePresence>
   );
 };

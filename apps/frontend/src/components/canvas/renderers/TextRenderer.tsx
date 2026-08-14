@@ -1,6 +1,8 @@
 import React from 'react';
 import { Text } from 'react-konva';
+import type Konva from 'konva';
 import type { TextNode } from '../../../engine/model/schema';
+import { updateNode } from '../../../engine/document';
 import { applyTextCase } from '../../../engine/model/textCase';
 import { konvaFontStyle, konvaTextDecoration, shadowProps } from './shared';
 
@@ -11,6 +13,68 @@ interface Props {
 }
 
 export const TextRenderer: React.FC<Props> = React.memo(({ node, visible }) => {
+  const textRef = React.useRef<Konva.Text>(null);
+
+  /**
+   * Keep the stored box in step with the text that is actually drawn.
+   *
+   * ## Why this is needed
+   *
+   * `width`/`height` on the node are the document's **only** source of bounds:
+   * selection, the transform handles, marquee hit-testing, viewport culling,
+   * the radar and every exporter read them and nothing else. But an auto-width
+   * text node is deliberately given *no* width — Konva sizes it to its longest
+   * line — so nothing was writing those numbers back.
+   *
+   * The result was bounds that described a box the text had long outgrown. A
+   * node seeded at 40×24 and holding "WWWWWWWWWW" drew 242×34 and still
+   * reported 40×24, so the selection rectangle was a fraction of the words,
+   * the handles sat inside the glyphs, and a marquee that visibly crossed the
+   * text did not catch it.
+   *
+   * The editor commits a size when you finish typing, but from the
+   * **textarea's** `scrollWidth` — DOM font metrics — while the canvas draws
+   * with Konva's. Two measurement engines for one box, agreeing only by luck.
+   * Measuring the node that actually draws removes the second engine.
+   *
+   * ## Why it is deferred and guarded
+   *
+   * Same reasoning as the connector's derived bounds: this is a CRDT write, so
+   * it waits for the size to settle rather than firing per keystroke, and it
+   * only writes on a real difference — otherwise every client watching the
+   * board would write the same numbers back at each other forever.
+   */
+  const measuredKey = `${node.text}|${node.resize}|${node.typography.fontSize}|${node.typography.fontFamily}|${node.typography.letterSpacing}|${node.width}`;
+  React.useEffect(() => {
+    // `fixed` authors both dimensions by hand; there is nothing to derive.
+    if (!visible || node.resize === 'fixed') return;
+
+    /**
+     * An empty box has nothing to measure, and must not be measured.
+     *
+     * Konva reports a width of roughly zero for a `Text` with no text, so
+     * syncing here collapsed a brand-new node to a hairline — taking the
+     * editor overlay with it, since the overlay is sized from the node. The
+     * result was a caret in a one-pixel box with its placeholder clipped away.
+     *
+     * The seed size is deliberately provisional and is what should stand until
+     * there is content to derive a real size from.
+     */
+    if (!node.text) return;
+    const el = textRef.current;
+    if (!el) return;
+
+    const width = node.resize === 'width' ? el.width() : node.width;
+    const height = el.height();
+    if (Math.abs(width - node.width) < 0.5 && Math.abs(height - node.height) < 0.5) return;
+
+    const timer = window.setTimeout(() => {
+      updateNode(node.id, { width, height });
+    }, 160);
+    return () => window.clearTimeout(timer);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [node.id, node.resize, node.width, node.height, measuredKey, visible]);
+
   if (!visible) return null;
 
   /**
@@ -47,6 +111,7 @@ export const TextRenderer: React.FC<Props> = React.memo(({ node, visible }) => {
     // letterforms rather than the shadow, so `supportsShadowSpread` is false
     // for text.
     <Text
+      ref={textRef}
       // Transformed here and never in the document: the stored string stays
       // what the author typed, so switching to upper case and back is lossless
       // and the editor keeps showing the real text.

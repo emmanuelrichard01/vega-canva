@@ -1,6 +1,6 @@
 {
-  "name": "MyWebSite",
-  "short_name": "MySite",
+  "name": "Vega Studio",
+  "short_name": "Vega",
   "icons": [
     {
       "src": "/web-app-manifest-192x192.png",

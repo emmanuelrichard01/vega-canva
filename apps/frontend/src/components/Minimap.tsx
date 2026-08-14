@@ -1,7 +1,10 @@
-import React, { useCallback, useEffect, useRef, useState } from 'react';
-import { Radar as RadarIcon, Minus, Plus, Maximize2, ChevronDown } from 'lucide-react';
+import React, { useCallback, useEffect, useRef, useState, useSyncExternalStore } from 'react';
+import { Radar as RadarIcon, Minus, Plus, Maximize2, ChevronDown, Eye, EyeOff } from 'lucide-react';
 import { RadarEngine } from '../engine/presence/RadarEngine';
 import { useCollaborators } from '../engine/presence/useCollaborators';
+import { ACTIVITY_LABEL } from '../engine/presence/collaborators';
+import { followMode } from '../engine/presence/followMode';
+import { viewportCenter } from '../engine/presence/PresenceTypes';
 import { useStore } from '../hooks/useStore';
 import { cameraSystem } from '../engine/CameraSystem';
 import { engineEvents } from '../engine/EventBus';
@@ -25,7 +28,21 @@ import { engineEvents } from '../engine/EventBus';
 
 const COLLAPSED_KEY = 'vega_radar_collapsed';
 
-export const Minimap: React.FC = () => {
+/**
+ * Ownership of the collapsed state moved up to `Room`.
+ *
+ * The radar was a permanent 260x214 block — always-on chrome for a surface you
+ * glance at every few minutes — and the left panel had to reserve its height
+ * whether or not it was showing. Room now decides, because the panel above it
+ * has to lay out against the answer; when `onCollapse` is supplied this
+ * component never renders its own collapsed state, so there is exactly one
+ * source of truth rather than two that can disagree.
+ */
+interface MinimapProps {
+  onCollapse?: () => void;
+}
+
+export const Minimap: React.FC<MinimapProps> = ({ onCollapse }) => {
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const engineRef = useRef<RadarEngine | null>(null);
 
@@ -39,6 +56,9 @@ export const Minimap: React.FC = () => {
 
   const collaborators = useCollaborators();
   const darkTheme = useStore((s) => s.darkTheme);
+  // Counted, not the map itself: subscribing to `objects` would re-render the
+  // radar shell on every drag frame, and the canvas paints from its own loop.
+  const objectCount = useStore((s) => Object.keys(s.objects).length);
 
   // The zoom readout is the one thing here that has to re-render, and it does
   // so at camera rate — so it is rounded to a whole percent first, which turns
@@ -99,9 +119,69 @@ export const Minimap: React.FC = () => {
     navigate(centre.x, centre.y, 1);
   };
 
+  /**
+   * Pan and zoom from the keyboard.
+   *
+   * A step is a fraction of the viewport rather than a fixed number of world
+   * units, so one press moves the same *visible* distance whatever the zoom —
+   * at 10% a 100px step would not appear to move at all, and at 400% it would
+   * fly off the board.
+   */
+  const onRadarKeyDown = useCallback((e: React.KeyboardEvent<HTMLCanvasElement>) => {
+    const STEP = 0.25;
+    const centre = cameraSystem.screenToWorld(cameraSystem.width / 2, cameraSystem.height / 2);
+    const dx = (cameraSystem.width / cameraSystem.zoom) * STEP;
+    const dy = (cameraSystem.height / cameraSystem.zoom) * STEP;
+
+    switch (e.key) {
+      case 'ArrowLeft': navigate(centre.x - dx, centre.y); break;
+      case 'ArrowRight': navigate(centre.x + dx, centre.y); break;
+      case 'ArrowUp': navigate(centre.x, centre.y - dy); break;
+      case 'ArrowDown': navigate(centre.x, centre.y + dy); break;
+      case '+': case '=': zoomBy(1.25); break;
+      case '-': case '_': zoomBy(1 / 1.25); break;
+      case '0': navigate(centre.x, centre.y, 1); break;
+      // The same two the buttons offer, so the keyboard is not a lesser path.
+      case 'Home': case 'f': case 'F': engineRef.current?.fitToContent(); break;
+      default: return;
+    }
+    // Only once a key was actually handled — otherwise Tab and Escape would be
+    // swallowed and the canvas would become a focus trap.
+    e.preventDefault();
+  }, [navigate]);
+
+  /**
+   * What the radar is, in words.
+   *
+   * The picture conveys "where is everything, and who else is here", which is
+   * unavailable to anyone not looking at it. Rebuilt from the live counts so
+   * it stays true rather than describing the room as it was on mount.
+   */
+  const radarLabel = [
+    'Board overview.',
+    `${objectCount} ${objectCount === 1 ? 'object' : 'objects'}.`,
+    collaborators.length > 0
+      ? `${collaborators.length} other ${collaborators.length === 1 ? 'person' : 'people'} here.`
+      : 'No one else here.',
+    'Arrow keys pan, plus and minus zoom, F fits everything.',
+  ].join(' ');
+
+  /**
+   * Who, if anyone, this client is currently following.
+   *
+   * Subscribed rather than read once: the follow can end without this panel
+   * doing anything — the person leaves, or the camera is moved by hand — and a
+   * button stuck on "Following" after that is worse than no button.
+   */
+  const followingId = useSyncExternalStore(
+    followMode.subscribe,
+    followMode.getSnapshot,
+    followMode.getSnapshot
+  );
+
   const faces = collaborators.slice(0, 3);
 
-  if (collapsed) {
+  if (collapsed && !onCollapse) {
     return (
       <div className="radar-dock">
         <button
@@ -184,7 +264,7 @@ export const Minimap: React.FC = () => {
               type="button"
               className="btn-icon"
               style={{ padding: 5 }}
-              onClick={() => setCollapsed(true)}
+              onClick={() => (onCollapse ? onCollapse() : setCollapsed(true))}
               aria-label="Collapse Radar"
             >
               <ChevronDown size={14} />
@@ -192,7 +272,83 @@ export const Minimap: React.FC = () => {
           </span>
         </div>
 
-        <canvas ref={canvasRef} className="radar-canvas" aria-hidden="true" />
+        {/* The board's spatial navigator, and until now the one control in the
+            app that could not be operated without a pointer: it was a bare
+            `aria-hidden` canvas with pointer listeners, so panning the board
+            from the keyboard was simply not possible.
+
+            `role="application"` is deliberate and is the right role here — it
+            tells a screen reader to pass arrow keys through to the widget
+            instead of using them to move its own reading cursor, which is
+            exactly what a pan control needs. The label says what the keys do,
+            because nothing about a canvas can. */}
+        <canvas
+          ref={canvasRef}
+          className="radar-canvas"
+          role="application"
+          tabIndex={0}
+          aria-label={radarLabel}
+          onKeyDown={onRadarKeyDown}
+        />
+
+        {/* Who is here, and the two things you want to do about it.
+
+            The expanded panel used to show a bare count — "3" — beside the
+            title, while the collapsed one showed faces. So opening the radar
+            told you *less* about who was in the room than leaving it shut, and
+            following someone meant going back to the header avatars, which are
+            nowhere near the picture showing you where everyone is.
+
+            Two verbs per person, because they are genuinely different: **jump**
+            takes you to them once and leaves you free, **follow** keeps your
+            camera tied to theirs until you stop. Conflating them is why a
+            single click on a radar dot was never enough. */}
+        {collaborators.length > 0 && (
+          <div className="radar-people" role="list" aria-label="People in this workspace">
+            {collaborators.map((person) => {
+              const isFollowed = followingId === person.clientId;
+              const where = person.cursor ?? (person.viewport ? viewportCenter(person.viewport) : null);
+              return (
+                <div className="radar-person" role="listitem" key={person.clientId}>
+                  <button
+                    type="button"
+                    className="radar-person__jump"
+                    disabled={!where}
+                    onClick={() => where && navigate(where.x, where.y)}
+                    data-tooltip={where ? `Jump to ${person.name}` : `${person.name} is not on the board`}
+                    aria-label={where ? `Jump to ${person.name}` : `${person.name}, position unknown`}
+                  >
+                    <span
+                      className="radar-person__face"
+                      style={{ background: person.color }}
+                      data-away={person.away || undefined}
+                    >
+                      {person.initials}
+                    </span>
+                    <span className="radar-person__name">{person.name}</span>
+                    {/* What they are doing, when they are doing something.
+                        Absent rather than "idle": a row of "idle" labels is
+                        noise that makes the one real signal harder to see. */}
+                    {person.activity && ACTIVITY_LABEL[person.activity] && (
+                      <span className="radar-person__doing">{ACTIVITY_LABEL[person.activity]}</span>
+                    )}
+                  </button>
+
+                  <button
+                    type="button"
+                    className={`radar-person__follow ${isFollowed ? 'is-on' : ''}`}
+                    aria-pressed={isFollowed}
+                    onClick={() => followMode.toggle(person.clientId)}
+                    data-tooltip={isFollowed ? `Stop following ${person.name}` : `Follow ${person.name}`}
+                    aria-label={isFollowed ? `Stop following ${person.name}` : `Follow ${person.name}`}
+                  >
+                    {isFollowed ? <Eye size={13} /> : <EyeOff size={13} />}
+                  </button>
+                </div>
+              );
+            })}
+          </div>
+        )}
 
         <div className="radar-foot">
           <button

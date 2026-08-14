@@ -1,6 +1,7 @@
 import { paintColor } from '../../../engine/model/paint';
 import { CSS_TEXT_TRANSFORM } from '../../../engine/model/textCase';
 import type { Appearance, LineCap, LineJoin, Typography } from '../../../engine/model/schema';
+import { isDottedPattern } from '../../../engine/model/strokeStyle';
 
 /**
  * Compose Konva's single `fontStyle` string from the orthogonal weight and
@@ -78,7 +79,12 @@ export function strokeDashProps(
   const stroke = appearance?.stroke;
   return {
     dash: stroke?.dash,
-    lineCap: stroke?.cap ?? fallbackCap,
+    // A dotted pattern is zero-length segments, which only become visible dots
+    // because of the round cap at each end — with any other cap the line draws
+    // as nothing at all. That is a fact about drawing rather than a stored
+    // preference, so it is applied here and the document keeps the cap the
+    // user actually chose.
+    lineCap: isDottedPattern(stroke?.dash) ? 'round' : (stroke?.cap ?? fallbackCap),
     // The join travels here too, for the same reason the cap does: it is the
     // other half of how a stroke terminates, and a renderer that spread the
     // dash without it would draw the corner Konva defaults to rather than the

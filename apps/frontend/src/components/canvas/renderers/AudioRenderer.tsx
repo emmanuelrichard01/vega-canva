@@ -1,7 +1,7 @@
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { Rect } from 'react-konva';
 import { Html } from 'react-konva-utils';
-import { Pause, Play, TriangleAlert } from 'lucide-react';
+import { Download, Pause, Play, TriangleAlert } from 'lucide-react';
 import type { AudioNode } from '../../../engine/model/schema';
 import { updateNode } from '../../../engine/document';
 import {
@@ -225,6 +225,27 @@ export const AudioRenderer: React.FC<Props> = React.memo(({ node }) => {
     });
   }, [failed]);
 
+  /**
+   * Save the recording to disk.
+   *
+   * The extension is read from the data URL's own media type rather than
+   * assumed: this app records WebM on Chrome and MP4 on Safari, and a file
+   * named `.webm` that holds MP4 bytes is one the operating system will refuse
+   * to open.
+   */
+  const saveNote = useCallback(() => {
+    if (!node.src) return;
+    const declared = node.src.slice(5, node.src.indexOf(';'));
+    const ext = declared.includes('mp4') ? 'm4a' : declared.includes('ogg') ? 'ogg' : 'webm';
+    const stamp = new Date(node.createdAt ?? Date.now()).toISOString().slice(0, 16).replace(/[:T]/g, '-');
+    const link = document.createElement('a');
+    link.href = node.src;
+    link.download = `voice-note-${stamp}.${ext}`;
+    document.body.appendChild(link);
+    link.click();
+    document.body.removeChild(link);
+  }, [node.src, node.createdAt]);
+
   const seekTo = useCallback(
     (fraction: number) => {
       const el = audioRef.current;
@@ -389,6 +410,20 @@ export const AudioRenderer: React.FC<Props> = React.memo(({ node }) => {
               </div>
             )}
           </div>
+
+          {/* A recording otherwise only exists inside the document: there is
+              no way to keep it, send it on, or hold on to it if the board goes
+              away. The bytes are already here as a data URL, so saving one is
+              a link and a click rather than a round trip to a server. */}
+          <button
+            type="button"
+            className="vn-save"
+            onClick={saveNote}
+            aria-label="Save this voice note"
+            data-tooltip="Save audio"
+          >
+            <Download size={13} />
+          </button>
 
           <button
             type="button"

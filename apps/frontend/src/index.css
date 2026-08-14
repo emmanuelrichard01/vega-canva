@@ -93,6 +93,10 @@
   --status-syncing: var(--amber-500);
   --status-offline: var(--red-500);
   --status-danger: var(--red-500);
+  /* Something is wrong but nothing is lost and you can still act — distinct
+     from `danger`, which is for the irreversible. Amber-700 rather than -500
+     because this is used as *text*, and 500 does not carry on white. */
+  --status-warning: var(--amber-700);
 
   /* ---------- SEMANTIC: history / Time Travel ----------
      Replay is a distinct *mode*, not just another panel, so it gets its own
@@ -116,6 +120,9 @@
   --force-drop: #8B5CF6;
   --force-wind: #14B8A6;
   --force-shock: var(--amber-500);
+  /* Pink, because it is the only force that turns rather than displaces and it
+     has to be told apart from Pull's blue at a glance on the ring. */
+  --force-swirl: #EC4899;
 
   /* ---------- ELEVATION ---------- */
   --shadow-sm: 0 1px 2px rgba(0, 0, 0, 0.05);
@@ -267,6 +274,8 @@
   --text-tertiary: var(--zinc-400);
   --text-disabled: var(--zinc-500);
   --text-accent: var(--amber-300);
+  /* Same inversion the accent takes: amber-700 is unreadable on zinc-900. */
+  --status-warning: var(--amber-300);
 
   /* History roles, brightened for a dark surface: --amber-600 is too muddy to
      read as "elapsed" against zinc-900, and the light-mode track/tick greys
@@ -285,6 +294,7 @@
   --force-drop: #A78BFA;
   --force-wind: #2DD4BF;
   --force-shock: var(--amber-300);
+  --force-swirl: #F472B6;
 
   /* Shadows read as almost nothing on a dark surface unless deepened, and
      only --shadow-float was previously adjusted. */
@@ -583,6 +593,14 @@ textarea:focus-visible {
   letter-spacing: 0;
   text-transform: none;
   font-variant-numeric: tabular-nums;
+}
+
+/* The radar is focusable now, so it needs to say so. Inset rather than an
+   outer ring because it sits flush inside the panel and an outside ring would
+   be clipped by the panel's own rounding. */
+.radar-canvas:focus-visible {
+  outline: none;
+  box-shadow: inset 0 0 0 2px var(--border-focus, var(--brand-orange));
 }
 
 .radar-canvas {
@@ -1060,11 +1078,36 @@ textarea:focus-visible {
 }
 
 .rec-hud-warn {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
   font-size: var(--text-2xs);
   font-weight: var(--weight-bold);
   color: var(--status-danger);
   font-variant-numeric: tabular-nums;
   flex: 0 0 auto;
+}
+
+/* "No sound" is a caution, not a failure — the take is still running and still
+   recoverable by unmuting. Danger red is reserved for the countdown, which is
+   the one thing here you cannot undo. */
+.rec-hud-warn--quiet { color: var(--status-warning); }
+
+/* Paused is a state, not a problem: stated plainly and quietly, because the
+   panel's stilled dot and the halted clock have already said it. */
+.rec-hud-note {
+  font-size: var(--text-2xs);
+  font-weight: var(--weight-semibold);
+  color: var(--text-tertiary);
+  flex: 0 0 auto;
+}
+
+/* The recording dot stops pulsing while paused. A blinking "recording" light
+   over a stopped clock is the panel contradicting itself, and the dot is the
+   thing people actually read for "is this running". */
+.rec-hud-panel.is-paused .rec-hud-dot {
+  animation: none;
+  opacity: 0.4;
 }
 
 /* Splits the panel into what is happening and what you can do about it. */
@@ -1075,7 +1118,8 @@ textarea:focus-visible {
   flex: 0 0 auto;
 }
 
-.rec-hud-discard {
+.rec-hud-discard,
+.rec-hud-pause {
   display: grid;
   place-items: center;
   width: 30px;
@@ -1092,6 +1136,13 @@ textarea:focus-visible {
 .rec-hud-discard:hover {
   background: var(--surface-hover);
   color: var(--status-danger);
+}
+
+/* Pause is reversible and gets no colour of its own — it darkens to the
+   ordinary ink the way any neutral control does. Only Discard earns red. */
+.rec-hud-pause:hover {
+  background: var(--surface-hover);
+  color: var(--text-primary);
 }
 
 /* The app's primary-action language — ink fill, surface glyph — the same one
@@ -1352,6 +1403,29 @@ textarea:focus-visible {
 }
 
 .vn-speed:hover {
+  background: var(--surface-hover);
+  color: var(--text-primary);
+}
+
+/* Same quiet weight as the speed control beside it — both are secondary to
+   the play button, and a save icon that competes with it would make every
+   note look like it wanted downloading. */
+.vn-save {
+  pointer-events: auto;
+  flex: 0 0 auto;
+  display: grid;
+  place-items: center;
+  width: 24px;
+  height: 24px;
+  border: none;
+  border-radius: var(--radius-md);
+  background: transparent;
+  color: var(--text-tertiary);
+  cursor: pointer;
+  transition: background var(--motion-hover), color var(--motion-hover);
+}
+
+.vn-save:hover {
   background: var(--surface-hover);
   color: var(--text-primary);
 }
@@ -2060,90 +2134,54 @@ textarea:focus-visible {
    only appears on hover is unreachable by touch and its trigger must not be
    the sole label for a control. */
 @media (hover: none) {
-  [data-tooltip]::after,
-  [data-tooltip]::before { display: none; }
+  /* Was two `[data-tooltip]` pseudo-elements; the tooltip is one root-level
+     node now, but the rule holds for the same reason — a hover-only
+     explanation is unreachable by touch, so it must never be a control's only
+     label. The dock's `data-label` is what those buttons show instead. */
+  .tip { display: none; }
 }
 
 /* =========================================
    CUSTOM TOOLTIP
    ========================================= */
-[data-tooltip] {
-  position: relative;
-}
+/* The pseudo-element tooltips that used to live here are gone.
 
-[data-tooltip]::after {
-  content: attr(data-tooltip);
-  position: absolute;
-  bottom: calc(100% + 10px);
-  left: 50%;
-  transform: translateX(-50%) translateY(4px);
+   They were `position: absolute` on the control itself, which means any
+   scrolling ancestor clips them — and both side panels scroll, so every
+   tooltip in Layers and Properties was cut off at the panel edge. `z-index`
+   does not help: it orders things inside a stacking context and has nothing to
+   do with `overflow` clipping, so raising it just produces a clipped tooltip
+   that is on top of things.
+
+   `components/ui/TooltipLayer` renders one `position: fixed` node at the
+   document root instead, reading the same `data-tooltip` attributes. Fixed
+   boxes resolve against the viewport, which no ancestor can clip into. */
+
+.tip {
+  position: fixed;
+  z-index: 10000;
+  padding: 5px 9px;
+  max-width: 260px;
+  border: 1px solid var(--border-divider);
+  border-radius: var(--radius-sm);
   background: var(--surface-elevated);
   color: var(--text-primary);
-  border: 1px solid var(--border-divider);
-  padding: 4px 8px;
+  font-family: var(--font-sans);
   font-size: 11px;
-  font-weight: 600;
-  white-space: nowrap;
-  border-radius: 4px;
-  opacity: 0;
+  font-weight: var(--weight-semibold);
+  line-height: 1.4;
+  box-shadow: var(--shadow-md);
+  /* Never a hit target: a tip that appears under the pointer would trigger its
+     own `pointerout` and flicker. */
   pointer-events: none;
-  transition: opacity 0.1s ease-out, transform 0.1s ease-out;
-  box-shadow: var(--shadow-sm);
-  z-index: 9999;
+  animation: tipIn 90ms var(--ease-settle);
 }
 
-/* Small caret pointing back at the trigger — matches the pattern used by
-   Figma/Linear-style tooltips instead of a floating unattached box. */
-[data-tooltip]::before {
-  content: '';
-  position: absolute;
-  bottom: calc(100% + 6px);
-  left: 50%;
-  transform: translateX(-50%) translateY(4px) rotate(45deg);
-  width: 6px;
-  height: 6px;
-  background: var(--surface-elevated);
-  border-right: 1px solid var(--border-divider);
-  border-bottom: 1px solid var(--border-divider);
-  opacity: 0;
-  pointer-events: none;
-  transition: opacity 0.1s ease-out, transform 0.1s ease-out;
-  z-index: 9999;
-}
-
-/* Hovering shows the tooltip after a short delay (avoids a flash of every
-   tooltip you merely pass the cursor over) but hides it immediately. */
-[data-tooltip]:hover::after,
-[data-tooltip]:hover::before {
-  opacity: 1;
-  transform: translateX(-50%) translateY(0);
-  transition-delay: 0.4s;
-}
-[data-tooltip]:hover::before {
-  transform: translateX(-50%) translateY(0) rotate(45deg);
-}
-
-/* For triggers that live at the very top of the viewport (the top bar) —
-   the default "show above" placement renders off-screen there. */
-[data-tooltip-pos="bottom"]::after {
-  bottom: auto;
-  top: calc(100% + 10px);
-  transform: translateX(-50%) translateY(-4px);
-}
-[data-tooltip-pos="bottom"]::before {
-  bottom: auto;
-  top: calc(100% + 6px);
-  transform: translateX(-50%) translateY(-4px) rotate(45deg);
-  border-right: none;
-  border-bottom: none;
-  border-left: 1px solid var(--border-divider);
-  border-top: 1px solid var(--border-divider);
-}
-[data-tooltip-pos="bottom"]:hover::after {
-  transform: translateX(-50%) translateY(0);
-}
-[data-tooltip-pos="bottom"]:hover::before {
-  transform: translateX(-50%) translateY(0) rotate(45deg);
+/* Wraps rather than running off the screen. The old one was `nowrap`, which
+   was fine for "Select" and wrong for the sentence a disabled control needs. */
+@keyframes tipIn {
+  from { opacity: 0; }
+  to { opacity: 1; }
 }
 
 /* =========================================
@@ -2565,55 +2603,70 @@ textarea:focus-visible {
 }
 
 /* ---------------------------------------------------------------------------
-   FRAME PICKER
+   DOCK FLYOUTS
 
-   Unlike the pen and shape flyouts, this one is a *list*: its entries differ
-   by a pair of numbers, not by a silhouette, and nine icons that all look like
-   a rectangle would tell you nothing. So it reads as names with their sizes,
-   grouped by what they are for.
+   One structure for all five. They used to be four unrelated designs — shapes
+   were a bare row of icons, frames a titled list, forces labelled rows, the pen
+   a row plus a slider — so nothing learned from opening one carried to the
+   next.
+
+   Now every flyout is a titled panel of rows: icon, name, and the key that
+   reaches it without the menu. The only deliberate exception is the shape grid,
+   which stays a grid because a shape is chosen by its silhouette and a column
+   of words reading "Rectangle, Ellipse, Triangle" is slower than the shapes.
    --------------------------------------------------------------------------- */
 
-.frame-menu {
+/* The button and anything hanging off it. `position: relative` lives here
+   rather than inline so the flyout has something to anchor to. */
+.dock-slot { position: relative; }
+.dock-slot-wrap { display: flex; }
+
+/* Above its button, centred on it. The gap is padding rather than margin so
+   the pointer can travel from button to menu without crossing dead space and
+   closing it on the way. */
+.dock-flyout {
+  position: absolute;
+  bottom: 100%;
+  left: 50%;
+  transform: translateX(-50%);
+  padding-bottom: 6px;
+  z-index: 20;
+}
+
+.dock-flyout__panel {
   display: flex;
   flex-direction: column;
   gap: 1px;
   padding: var(--space-2);
-  min-width: 190px;
-  /* The dock sits at the bottom of the screen and this opens upward, so a long
-     list has to be allowed to scroll rather than run off the top edge. */
-  max-height: 60vh;
+  min-width: 172px;
+}
+
+.dock-flyout__panel--wide { min-width: 200px; }
+
+/* The frame list is the one flyout long enough to need a limit. Eleven rows
+   and three headings read fine at a glance, so the cap is a floor under a
+   genuinely tiny viewport rather than a normal working limit — the scrollbar
+   only appears when the alternative is presets that cannot be reached. */
+.dock-flyout__scroll {
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
+  max-height: calc(100vh - 190px);
   overflow-y: auto;
 }
 
-.frame-menu__item {
-  display: flex;
-  align-items: baseline;
-  justify-content: space-between;
-  gap: var(--space-4);
-  width: 100%;
-  padding: 5px var(--space-2);
-  border-radius: var(--radius-sm);
-  text-align: left;
-}
-
-.frame-menu__label {
-  font-size: var(--text-base);
-  font-weight: var(--weight-medium);
-  color: var(--text-primary);
-  white-space: nowrap;
-}
-
-/* A measurement, so it is tabular and quiet — you scan the names and read the
-   numbers only once you are close. */
-.frame-menu__size {
-  font-family: var(--font-mono);
-  font-size: var(--text-xs);
-  font-variant-numeric: tabular-nums;
+/* Every flyout says what it is. A menu that appears with no heading makes you
+   infer what you are choosing from by reading the options. */
+.dock-flyout__title {
+  padding: var(--space-1) var(--space-2) var(--space-2);
+  font-size: var(--text-2xs);
+  font-weight: var(--weight-semibold);
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
   color: var(--text-tertiary);
-  white-space: nowrap;
 }
 
-.frame-menu__group {
+.dock-flyout__group {
   padding: var(--space-3) var(--space-2) var(--space-1);
   font-size: var(--text-2xs);
   font-weight: var(--weight-semibold);
@@ -2622,90 +2675,142 @@ textarea:focus-visible {
   color: var(--text-tertiary);
 }
 
-/* No space above the first group — the heading is already the top of the list. */
-.frame-menu__group:first-child {
-  padding-top: var(--space-1);
+.dock-flyout__group:first-child { padding-top: var(--space-1); }
+
+/* Shapes are chosen by silhouette rather than by name, so they are the one
+   flyout that stays a grid — a column of eight rows reading "Rectangle",
+   "Ellipse", "Triangle" is slower to scan than the shapes themselves. */
+.dock-flyout__grid {
+  display: grid;
+  grid-template-columns: repeat(4, 1fr);
+  gap: 2px;
 }
 
-/* ---------------------------------------------------------------------------
-   EXPORT OPTIONS
+.tool-dock .dock-tile {
+  width: 34px;
+  height: 34px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  border-radius: var(--radius-sm);
+}
 
-   What to export and how densely. Below the format list because these modify
-   the choice above rather than compete with it.
-   --------------------------------------------------------------------------- */
+/* One row inside a flyout: what it is, what it is called, how to reach it. */
+.tool-dock .dock-item {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  width: 100%;
+  padding: 5px var(--space-2);
+  border-radius: var(--radius-sm);
+  text-align: left;
+  font-size: var(--text-base);
+  font-weight: var(--weight-medium);
+}
 
-.export-options {
+.dock-item__icon {
+  display: flex;
+  flex-shrink: 0;
+  /* Quieter than the label. The icon is a landmark for the eye returning to a
+     row it has already read, not the thing being read. */
+  opacity: 0.75;
+}
+
+.dock-item__label {
+  /* Inherited, so the row decides. A fixed `--text-primary` here is what made
+     a selected frame preset unreadable the moment the row gained a fill. */
+  color: inherit;
+  white-space: nowrap;
+  margin-right: auto;
+}
+
+/* The key that gets you here without the menu. Sized down and derived from the
+   row's own colour, so it reads as an aside on any background. */
+.dock-item__key {
+  flex-shrink: 0;
+  min-width: 17px;
+  padding: 1px 4px;
+  border-radius: 3px;
+  background: color-mix(in srgb, currentColor 10%, transparent);
+  color: color-mix(in srgb, currentColor 62%, transparent);
+  font-family: var(--font-mono);
+  font-size: var(--text-2xs);
+  line-height: 1.4;
+  text-align: center;
+}
+
+/* A measurement, so it is tabular and quiet — you scan the names and read the
+   numbers only once you are close. */
+.dock-item__detail {
+  flex-shrink: 0;
+  font-family: var(--font-mono);
+  font-size: var(--text-xs);
+  font-variant-numeric: tabular-nums;
+  color: color-mix(in srgb, currentColor 60%, transparent);
+  white-space: nowrap;
+}
+
+/* ------------------------------------------------------------------ nib size */
+
+.dock-nib {
   display: flex;
   flex-direction: column;
-  gap: var(--space-3);
-  padding: 0 var(--space-6) var(--space-5);
+  gap: 6px;
+  padding: var(--space-2);
+  /* Its own compartment. A slider sitting flush against a list of choices reads
+     as another choice; the rule says it is a setting for the ones above. */
+  margin-top: var(--space-1);
+  border-top: 1px solid var(--border-divider);
 }
 
-.export-options__row {
+.dock-nib__head {
   display: flex;
   align-items: center;
   justify-content: space-between;
   gap: var(--space-3);
 }
 
-.export-options__label {
-  flex: 0 0 auto;
-  font-size: var(--text-base);
-  color: var(--text-secondary);
-}
-
-.export-options__select {
-  flex: 1 1 auto;
-  min-width: 0;
-  padding: 6px var(--space-2);
-  border: 1px solid var(--border-divider);
-  border-radius: var(--radius-md);
-  background: var(--surface-primary);
-  color: var(--text-primary);
-  font-family: inherit;
-  font-size: var(--text-base);
-  cursor: pointer;
-}
-
-.export-options__scales {
-  display: flex;
-  gap: var(--space-1);
-}
-
-/* Each option shows the pixels it will produce, so picking a density is a
-   decision about an outcome rather than about a multiplier. */
-.export-options__scale {
-  display: flex;
-  flex-direction: column;
-  align-items: center;
-  gap: 1px;
-  padding: 4px var(--space-3);
-  border: 1px solid var(--border-divider);
-  border-radius: var(--radius-md);
-  background: var(--surface-primary);
-  color: var(--text-secondary);
-  font-family: inherit;
-  font-size: var(--text-base);
-  font-weight: var(--weight-medium);
-  cursor: pointer;
-  transition: border-color var(--motion-hover), color var(--motion-hover);
-}
-
-.export-options__scale:hover {
-  border-color: var(--border-strong);
-  color: var(--text-primary);
-}
-
-.export-options__scale.is-active {
-  border-color: var(--border-focus);
-  color: var(--text-primary);
-}
-
-.export-options__px {
-  font-family: var(--font-mono);
+.dock-nib__label {
   font-size: var(--text-2xs);
-  font-variant-numeric: tabular-nums;
+  font-weight: var(--weight-semibold);
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
   color: var(--text-tertiary);
+}
+
+.dock-nib__value {
+  font-family: var(--font-mono);
+  font-size: var(--text-xs);
+  font-variant-numeric: tabular-nums;
+  color: var(--text-secondary);
+}
+
+.dock-nib__row {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+}
+
+.dock-nib__row input[type='range'] {
+  flex: 1;
+  accent-color: var(--text-primary);
+  cursor: pointer;
+}
+
+/* The control previews itself: a number alone tells you nothing about what a
+   "6" draws, and this is a property whose whole meaning is visual. */
+.dock-nib__preview {
+  width: 22px;
+  height: 22px;
+  flex-shrink: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.dock-nib__preview > span {
+  border-radius: 50%;
+  background: var(--text-primary);
 }
 
 /* ---------------------------------------------------------------------------
@@ -3008,3 +3113,3518 @@ textarea:focus-visible {
   background: #22d3ee;
   pointer-events: none;
 }
+
+/* Where the pointer is, on each ruler.
+   A ruler without one reports where the world is but never where you are, so
+   reading a position off it means sighting along the screen by eye. Drawn in
+   the primary text colour rather than an accent: it tracks the pointer
+   continuously, and a saturated hairline moving under the cursor all session
+   is noise. */
+.ruler__cursor {
+  position: absolute;
+  background: var(--text-primary);
+  opacity: 0.55;
+  pointer-events: none;
+  /* Moved by `transform` alone so the browser never relayouts the ruler's
+     tick list on a mouse move. */
+  will-change: transform;
+}
+
+.ruler__cursor--h {
+  top: 0;
+  bottom: 0;
+  left: 0;
+  width: 1px;
+}
+
+.ruler__cursor--v {
+  left: 0;
+  right: 0;
+  top: 0;
+  height: 1px;
+}
+
+/* ===========================================================================
+   THE CONTEXTUAL TOOLBAR
+   ---------------------------------------------------------------------------
+   One rail, not a stack. The version this replaces was two rows — a tools row
+   over a "global actions" row — which meant the toolbar was a small panel
+   parked on the artwork, and its height changed with the object type, so it
+   jumped as you moved between a shape and a sticky.
+
+   The rail is a fixed 40px high whatever is selected. Everything that does not
+   fit one row goes into a popover hung off a single button, because the thing
+   this surface is *for* is being glanceable and out of the way. Density is the
+   feature; a second row is the failure.
+
+   Elevation is declared once, by `--shadow-float`, which already carries the
+   offset, the blur and the hairline ring in both themes. The old toolbar
+   hand-rolled `0 8px 32px …, 0 0 0 1px …` beside it — two elevation systems on
+   one surface, disagreeing in dark mode.
+   =========================================================================== */
+
+.ctx-toolbar {
+  position: absolute;
+  display: flex;
+  align-items: center;
+  gap: 2px;
+  height: 40px;
+  padding: 0 6px;
+  border-radius: var(--radius-xl);
+  background: var(--surface-elevated);
+  box-shadow: var(--shadow-float);
+  z-index: 200;
+  pointer-events: auto;
+  /* Resting low, solid on approach. The brief asks for this directly: the
+     toolbar sits on top of the work being adjusted, so at rest it must not
+     compete with it — but a control you are reaching for must be unambiguous,
+     so contact takes it fully opaque rather than part-way. */
+  opacity: 0.94;
+  transition: opacity var(--motion-hover);
+}
+
+.ctx-toolbar:hover,
+.ctx-toolbar:focus-within {
+  opacity: 1;
+}
+
+/* A group is a run of related controls. The gap inside a group is tighter than
+   the gap between groups, which is what lets the eye parse the rail without a
+   divider between every single button. */
+.ctx-group {
+  display: flex;
+  align-items: center;
+  gap: 2px;
+}
+
+.ctx-divider {
+  width: 1px;
+  height: 18px;
+  margin: 0 4px;
+  background: var(--border-divider);
+  flex-shrink: 0;
+}
+
+/* The rail's own button. Not `.btn-icon`: that is 8px-padded for panels, which
+   at 16px icons makes a 32px control — too tall for a 40px rail with any
+   breathing room left. */
+.ctx-btn {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 4px;
+  height: 28px;
+  min-width: 28px;
+  padding: 0 5px;
+  border: none;
+  border-radius: var(--radius-lg);
+  background: transparent;
+  color: var(--text-secondary);
+  cursor: pointer;
+  font-family: var(--font-sans);
+  font-size: var(--text-xs);
+  font-weight: var(--weight-medium);
+  transition: background-color var(--motion-hover), color var(--motion-hover);
+}
+
+.ctx-btn:hover:not(:disabled) {
+  background: var(--surface-hover);
+  color: var(--text-primary);
+}
+
+.ctx-btn[aria-pressed='true'],
+.ctx-btn.is-active {
+  background: var(--surface-active);
+  color: var(--text-primary);
+}
+
+.ctx-btn:disabled {
+  opacity: 0.35;
+  cursor: default;
+}
+
+.ctx-btn--danger:hover:not(:disabled) {
+  background: color-mix(in srgb, var(--danger, #ef4444) 14%, transparent);
+  color: var(--danger, #ef4444);
+}
+
+/* The type glyph that opens the rail. Tertiary because it is a label, not a
+   control — it says what you have, and everything to its right acts on it. */
+.ctx-kind {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 0 6px 0 4px;
+  color: var(--text-tertiary);
+  font-size: var(--text-xs);
+  font-weight: var(--weight-semibold);
+  letter-spacing: 0.01em;
+  white-space: nowrap;
+}
+
+/* A value the rail shows inline — a stroke weight, a radius, an opacity. Reads
+   as data, so it is tabular and it does not shift width as the digits change. */
+.ctx-value {
+  font-family: var(--font-mono, ui-monospace, monospace);
+  font-variant-numeric: tabular-nums;
+  font-size: var(--text-xs);
+  color: var(--text-primary);
+  min-width: 2.25ch;
+  text-align: right;
+}
+
+/* Popovers hung off the rail. They inherit the rail's elevation language so a
+   nested surface never re-declares one of its own. */
+.ctx-popover {
+  position: absolute;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  padding: 10px;
+  min-width: 180px;
+  border-radius: var(--radius-xl);
+  background: var(--surface-elevated);
+  box-shadow: var(--shadow-float);
+  z-index: 220;
+  animation: ctxPopIn 140ms var(--ease-settle);
+}
+
+.ctx-popover__label {
+  font-size: var(--text-2xs);
+  font-weight: var(--weight-semibold);
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: var(--text-tertiary);
+}
+
+/* ---------------------------------------------------------- sticky palette */
+
+/* The trigger is the note's own paper, so the button shows the current answer
+   rather than a generic colour-wheel icon. */
+.ctx-sticky-swatch {
+  width: 17px;
+  height: 17px;
+  border-radius: 5px;
+  border: 1px solid;
+  display: block;
+}
+
+.ctx-sticky-grid {
+  display: grid;
+  grid-template-columns: repeat(4, 1fr);
+  gap: 5px;
+}
+
+/* Each chip previews the *pairing* — the theme's ink on the theme's paper —
+   because which ink a paper carries is half the choice and the half that
+   decides whether a note can be read. */
+.ctx-sticky-chip {
+  width: 34px;
+  height: 30px;
+  display: grid;
+  place-items: center;
+  border: 1px solid;
+  border-radius: var(--radius-md);
+  font-family: var(--font-sans);
+  font-size: 12px;
+  font-weight: 650;
+  cursor: pointer;
+  transition: transform var(--motion-hover), box-shadow var(--motion-hover);
+}
+
+.ctx-sticky-chip:hover { transform: translateY(-1px); }
+
+/* The selected paper is ringed in the app's ink rather than tinted, so the
+   mark reads the same on the dark paper as on the pale ones — a tint would
+   disappear into whichever theme it happened to resemble. */
+.ctx-sticky-chip[aria-pressed='true'] {
+  box-shadow: 0 0 0 2px var(--surface-primary), 0 0 0 4px var(--text-primary);
+}
+
+.ctx-popover__row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+}
+
+/* The overflow menu is a list, so its items are full-width rows with the label
+   leading — not the rail's centred icon buttons. */
+.ctx-menu-item {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  width: 100%;
+  padding: 7px 8px;
+  border: none;
+  border-radius: var(--radius-md);
+  background: transparent;
+  color: var(--text-secondary);
+  font-family: var(--font-sans);
+  font-size: var(--text-sm);
+  text-align: left;
+  cursor: pointer;
+  transition: background-color var(--motion-hover), color var(--motion-hover);
+}
+
+.ctx-menu-item:hover {
+  background: var(--surface-hover);
+  color: var(--text-primary);
+}
+
+.ctx-menu-item--danger:hover {
+  background: color-mix(in srgb, var(--danger, #ef4444) 14%, transparent);
+  color: var(--danger, #ef4444);
+}
+
+.ctx-menu-item__key {
+  margin-left: auto;
+  font-family: var(--font-mono, ui-monospace, monospace);
+  font-size: var(--text-2xs);
+  color: var(--text-tertiary);
+}
+
+/* The shape swapper's grid — geometry shown, never named. A 3-across grid of
+   drawn shapes is read at a glance; a dropdown listing "Ellipse, Polygon,
+   Star" has to be parsed. */
+.ctx-shape-grid {
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+  gap: 4px;
+}
+
+.ctx-shape-btn {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  height: 34px;
+  border: none;
+  border-radius: var(--radius-md);
+  background: var(--surface-hover);
+  color: var(--text-secondary);
+  cursor: pointer;
+  transition: background-color var(--motion-hover), color var(--motion-hover);
+}
+
+.ctx-shape-btn:hover {
+  background: var(--surface-active);
+  color: var(--text-primary);
+}
+
+.ctx-shape-btn[aria-pressed='true'] {
+  background: var(--surface-active);
+  color: var(--accent-primary, var(--text-primary));
+  outline: 1px solid var(--border-strong);
+  outline-offset: -1px;
+}
+
+@keyframes ctxPopIn {
+  from { opacity: 0; transform: translateY(-3px); }
+  to   { opacity: 1; transform: translateY(0); }
+}
+
+/* The rail is chrome over live work: at broadcast rate it must never be the
+   thing that costs a frame. Under reduced motion it simply appears. */
+@media (prefers-reduced-motion: reduce) {
+  .ctx-popover { animation: none; }
+}
+
+/* ===========================================================================
+   THE ADAPTIVE SHELL
+   ---------------------------------------------------------------------------
+   The problem this solves, measured rather than felt: on a 1440x900 laptop the
+   old shell spent 552px of width on two fixed 260px panels, 56px on the
+   header, ~76px on the dock, and a permanent 260x214 block on the radar. The
+   canvas got about **53% of the screen**, and none of that chrome could yield —
+   every panel was `position: absolute` at a fixed width, present at all times
+   above the compact breakpoint.
+
+   The fix is not smaller chrome. It is chrome that knows when it is not being
+   used. Each panel collapses to a 52px rail that still says what it is and how
+   much is in it; the radar becomes something you summon; and focus mode stops
+   being a light switch. Expanded, nothing is lost — the panels are exactly as
+   wide as they were.
+   =========================================================================== */
+
+:root {
+  /* A collapsed panel is not hidden: it is a rail wide enough for a 36px
+     control with breathing room, which keeps the canvas edge honest and gives
+     the expand affordance somewhere permanent to live. */
+  --rail-w: 52px;
+}
+
+.hierarchy-panel[data-collapsed='true'],
+.context-inspector[data-collapsed='true'] {
+  width: var(--rail-w);
+}
+
+
+
+/* A collapsed radar is a button rather than a block, so the left panel stops
+   reserving 214px of height for it. */
+.hierarchy-panel[data-radar-collapsed='true'] {
+  bottom: 88px;
+}
+
+/* The rail itself. Vertical, quiet, and legible about what it is holding — a
+   collapse control that leaves nothing behind is indistinguishable from a
+   feature that was removed. */
+.panel-rail {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 4px;
+  height: 100%;
+  padding: 8px 0;
+  background: var(--surface-elevated);
+  box-shadow: var(--shadow-float);
+  border-radius: var(--radius-2xl);
+}
+
+.panel-rail__btn {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 36px;
+  height: 36px;
+  border: none;
+  border-radius: var(--radius-lg);
+  background: transparent;
+  color: var(--text-secondary);
+  cursor: pointer;
+  transition: background-color var(--motion-hover), color var(--motion-hover);
+}
+
+.panel-rail__btn:hover {
+  background: var(--surface-hover);
+  color: var(--text-primary);
+}
+
+/* How much is in the collapsed panel, so the rail reports state rather than
+   merely offering to open. */
+.panel-rail__count {
+  font-size: var(--text-2xs);
+  font-variant-numeric: tabular-nums;
+  color: var(--text-tertiary);
+  font-weight: var(--weight-semibold);
+}
+
+.panel-rail__spacer { flex: 1; }
+
+/* Vertical label down the rail. The one place in this app where rotated type
+   earns its keep: a 52px rail has no horizontal room for a word, and an
+   unlabelled rail is a mystery column. */
+.panel-rail__label {
+  writing-mode: vertical-rl;
+  text-orientation: mixed;
+  font-size: var(--text-2xs);
+  font-weight: var(--weight-semibold);
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+  color: var(--text-tertiary);
+  user-select: none;
+}
+
+/* --------------------------------------------------------------- the radar */
+
+/* Collapsed, the radar is one control pinned exactly where the radar was, so
+   the place you look for it never changes. Visible when needed, not
+   permanently parked. */
+.radar-summon {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 8px 12px;
+  border: none;
+  border-radius: var(--radius-pill);
+  background: var(--surface-elevated);
+  box-shadow: var(--shadow-float);
+  color: var(--text-secondary);
+  font-family: var(--font-sans);
+  font-size: var(--text-xs);
+  font-weight: var(--weight-semibold);
+  cursor: pointer;
+  transition: color var(--motion-hover);
+}
+
+.radar-summon:hover { color: var(--text-primary); }
+
+/* Someone is working off-screen. The radar is the surface that answers that
+   question, so it says so from its collapsed state rather than making you open
+   it to discover there was something to see. */
+.radar-summon[data-alert='true'] { color: var(--text-primary); }
+
+.radar-summon__dot {
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  background: var(--accent-primary, #3b82f6);
+  flex-shrink: 0;
+}
+
+/* ------------------------------------------------------------ the tool dock */
+
+/* Grouping, which the dock had almost none of: eleven equal-weight buttons in
+   four loose clusters, the middle one holding seven of them. Nothing said
+   which buttons hid a flyout, and the active tool was a background tint no
+   stronger than a hover.
+
+   The rhythm is the fix — 2px inside a group, 10px between groups — so the eye
+   parses the clusters without a divider between every button. */
+.tool-dock { gap: 10px; }
+
+.dock-group {
+  display: flex;
+  align-items: center;
+  gap: 2px;
+}
+
+/* Was `style={{ padding: '6px' }}` repeated on all twelve buttons. One number
+   in one place, so the dock cannot end up with two button sizes in it. */
+.tool-dock .dock-btn { padding: 6px; }
+
+/* The active tool carries real weight. A tint that matches hover means the
+   dock cannot answer "what am I holding?" without moving the mouse away.
+   
+   Scoped away from flyout rows. Those are `.btn-icon` inside `.tool-dock` too,
+   so they were inheriting the inverted fill — and their label and size spans
+   set fixed colours rather than inheriting, which left the selected frame
+   preset as dark text on a dark ground. A filled pill is the right shape for a
+   32px icon button and the wrong one for a full-width menu row. */
+.tool-dock .btn-icon.active:not([role='menuitemradio']),
+.tool-dock .btn-icon.active:not([role='menuitemradio']):hover {
+  background: var(--text-primary);
+  color: var(--surface-primary);
+}
+
+/* A selected row in a flyout: a tint and an accent, so the text on it keeps
+   the contrast it was designed for. */
+.tool-dock [role='menuitemradio'].active,
+.tool-dock [role='menuitemradio'].active:hover {
+  background: color-mix(in srgb, var(--brand-orange) 16%, transparent);
+  box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--brand-orange) 40%, transparent);
+  color: var(--text-primary);
+}
+
+/* A corner mark on any button with more behind it. Three of the dock's tools
+   held whole flyouts — shapes, frames, forces — with nothing on the button to
+   say so, which is how a shape picker goes unfound.
+
+   Deliberately a real child element and **not** `::after`. Tooltips have since
+   moved to a root-level node, so the pseudo-element is no longer spoken for —
+   but a dot that is a real element can be positioned against the button's own
+   padding and read by `.dock-btn.active` for its brighter state, neither of
+   which a pseudo-element shared with something else could do. */
+.dock-more { position: relative; }
+
+.dock-more__dot {
+  position: absolute;
+  right: 4px;
+  bottom: 4px;
+  width: 3px;
+  height: 3px;
+  border-radius: 50%;
+  background: currentColor;
+  opacity: 0.5;
+  pointer-events: none;
+}
+
+.tool-dock .btn-icon.active .dock-more__dot { opacity: 0.9; }
+
+/* -------------------------------------------------------------- focus mode */
+
+/* Focus mode was a light switch: backslash dropped every surface at once and
+   left a "Show UI" button plus a hint pill sitting on the board. That is not a
+   focus mode, it is an off switch, which is why it was never worth using.
+
+   Here the chrome leaves but stays *reachable*: each edge keeps a hair-thin hot
+   zone, and pointing at it brings that surface back for as long as you are
+   there. You get the whole screen without losing the ability to change tool. */
+/* Focus mode.
+   Everything that describes or organises the work goes; the tools come back
+   when you reach for them. Two things make an edge reveal work rather than
+   merely exist:
+
+   **It has to be findable.** An invisible hot zone is a secret. A hairline
+   grabber sits at the bottom edge — the smallest mark that still reads as
+   "something lives here" — and it is the thing that turns the gesture from
+   folklore into an affordance.
+
+   **It has to be forgiving.** Revealing on contact and hiding the instant the
+   pointer leaves makes the dock flicker along the bottom of the screen while
+   you work near it. Entry is immediate because you have already committed by
+   reaching; exit waits, because leaving is often just overshoot. */
+.focus-edge {
+  position: absolute;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  height: 24px;
+  z-index: 150;
+}
+
+/* The affordance. Faint enough to ignore while drawing, present enough that
+   the dock is never a thing you have to be told about. */
+.focus-grabber {
+  position: absolute;
+  bottom: 7px;
+  left: 50%;
+  transform: translateX(-50%);
+  width: 44px;
+  height: 4px;
+  border-radius: var(--radius-pill);
+  background: var(--text-primary);
+  opacity: 0.18;
+  z-index: 151;
+  pointer-events: none;
+  transition: opacity var(--motion-hover);
+}
+
+.focus-edge:hover ~ .focus-grabber { opacity: 0.4; }
+
+/* The dock itself, parked below the edge and sliding back on demand. It is
+   translated rather than unmounted so the tools keep their state and the
+   return is one composited transform rather than a remount. */
+.focus-dock {
+  position: absolute;
+  inset: 0;
+  z-index: 160;
+  pointer-events: none;
+  transform: translateY(96px);
+  opacity: 0;
+  transition: transform 260ms var(--ease-settle), opacity 180ms var(--ease-settle);
+}
+
+.focus-dock.is-revealed {
+  transform: translateY(0);
+  opacity: 1;
+}
+
+.focus-dock.is-revealed .tool-dock { pointer-events: auto; }
+
+.focus-dock .tool-dock { pointer-events: none; }
+
+@media (prefers-reduced-motion: reduce) {
+  .focus-dock { transition: opacity 120ms linear; transform: none; }
+}
+
+/* The only permanent mark focus mode leaves. A pill in the corner, not a
+   button in the middle of the work, and it stays faint until pointed at. */
+.focus-exit {
+  position: absolute;
+  top: 16px;
+  right: 16px;
+  z-index: 1000;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 7px 12px;
+  border: none;
+  border-radius: var(--radius-pill);
+  background: var(--surface-elevated);
+  box-shadow: var(--shadow-float);
+  color: var(--text-secondary);
+  font-family: var(--font-sans);
+  font-size: var(--text-xs);
+  font-weight: var(--weight-semibold);
+  cursor: pointer;
+  opacity: 0.32;
+  transition: opacity var(--motion-hover), color var(--motion-hover);
+}
+
+.focus-exit:hover { opacity: 1; color: var(--text-primary); }
+
+@media (prefers-reduced-motion: reduce) {
+  .focus-reveal, .focus-reveal--top { animation: none; }
+}
+
+/* ------------------------------------------------------------ header zones */
+
+/* Three zones, grouped by what each control acts on: the document on the left,
+   the canvas in the middle, the room and its output on the right. The old
+   header put eleven groups on the right behind six dividers — sync state,
+   undo/redo, Throw, Snap, a collaborator count, avatars, comments, History,
+   Share, Export, Hide UI and Theme — so nothing could be found by reasoning
+   about what it did. */
+.workspace-header {
+  display: grid;
+  grid-template-columns: 1fr auto 1fr;
+  align-items: center;
+  gap: 12px;
+}
+
+.hdr-zone {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
+}
+
+.hdr-zone--start { justify-content: flex-start; }
+.hdr-zone--center { justify-content: center; }
+.hdr-zone--end { justify-content: flex-end; }
+
+/* Canvas modes live in the middle, in one recessed group, because they are
+   settings *for the surface* rather than actions on the document. Giving them
+   a shared container is what stops "Snap" reading as a sibling of "Share". */
+.hdr-modes {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  padding: 3px 6px;
+  border-radius: var(--radius-pill);
+  background: var(--surface-hover);
+}
+
+@media (max-width: 1180px) {
+  /* The centre zone goes first: canvas modes have keyboard equivalents and a
+     home in the overflow menu, where the document's identity and the room's
+     people do not. */
+  .hdr-zone--center { display: none; }
+}
+
+/* ===========================================================================
+   THE ROOMS PAGE
+   ---------------------------------------------------------------------------
+   The surface before the canvas, and the one held to the same bar as it.
+
+   What it replaces: a 900px column with the page title, a view toggle, a join
+   form and a "New file" button all crowded onto one line; workspace cards
+   built as `div onClick`, so the primary action on the page could not be
+   reached by keyboard, focused, middle-clicked or opened in a new tab; hover
+   states written imperatively into inline styles on three properties at once;
+   elevation declared twice on every card; and no way to remove a workspace
+   from a list read out of `localStorage` that never verifies the room still
+   exists.
+   =========================================================================== */
+
+.rooms {
+  /* Scrolls itself, because the page cannot.
+     `body` is `overflow: hidden; height: 100vh` — correct for the canvas,
+     which must never let a stray wheel event scroll the document out from
+     under an infinite surface. But it also meant this page was clipped at the
+     fold: every board past the first row or two existed, was laid out, and
+     could not be reached by any means. Scoping the scroll to the page that
+     needs one leaves the canvas' lock exactly as it was. */
+  height: 100%;
+  overflow-y: auto;
+  overflow-x: hidden;
+  background: var(--surface-primary);
+  color: var(--text-primary);
+  font-family: var(--font-sans);
+}
+
+.rooms__bar {
+  position: sticky;
+  top: 0;
+  z-index: 100;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--space-4);
+  height: 60px;
+  padding: 0 var(--space-6);
+  background: var(--surface-elevated);
+  border-bottom: 1px solid var(--border-divider);
+}
+
+.rooms__brand {
+  display: flex;
+  align-items: center;
+  gap: var(--space-3);
+  font-size: var(--text-md);
+  font-weight: var(--weight-bold);
+  letter-spacing: -0.02em;
+}
+
+/* `.rooms__mark` lived here — a rounded chip containing the letter V, which
+   was one of three hand-drawn stand-ins for a logo the project already owned.
+   All three are now `<Logo>`. */
+
+.rooms__me {
+  display: flex;
+  align-items: center;
+  gap: var(--space-3);
+}
+
+.rooms__avatar {
+  width: 30px;
+  height: 30px;
+  border-radius: var(--radius-pill);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 12px;
+  font-weight: var(--weight-semibold);
+  color: #fff;
+  flex-shrink: 0;
+}
+
+.rooms__main {
+  /* Was 900px, which forced a three-column grid into two on most laptops and
+     left the page looking half-used. */
+  max-width: 1180px;
+  margin: 0 auto;
+  padding: var(--space-8) var(--space-6) 96px;
+}
+
+/* The masthead: what this page is, and the two ways to act on it. The join
+   form and the view toggle moved out of this line — they are ways of *finding*
+   a workspace, so they sit with the list rather than with the page title. */
+.rooms__masthead {
+  display: flex;
+  align-items: flex-end;
+  justify-content: space-between;
+  gap: var(--space-6);
+  flex-wrap: wrap;
+  margin-bottom: var(--space-6);
+}
+
+.rooms__title {
+  font-size: 30px;
+  font-weight: 650;
+  letter-spacing: -0.035em;
+  margin: 0 0 6px;
+  line-height: 1.1;
+}
+
+.rooms__subtitle {
+  margin: 0;
+  font-size: var(--text-md);
+  color: var(--text-secondary);
+}
+
+.rooms__primary {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-2);
+  padding: 10px 16px;
+  border: none;
+  border-radius: var(--radius-lg);
+  background: var(--text-primary);
+  color: var(--surface-primary);
+  font-family: var(--font-sans);
+  font-size: var(--text-md);
+  font-weight: var(--weight-semibold);
+  cursor: pointer;
+  box-shadow: var(--shadow-sm);
+  transition: opacity var(--motion-hover);
+}
+
+.rooms__primary:hover { opacity: 0.88; }
+
+/* The filter row. One line, and it only appears once there is something to
+   filter — a search box over an empty list is a control that cannot work. */
+.rooms__tools {
+  display: flex;
+  align-items: center;
+  gap: var(--space-3);
+  flex-wrap: wrap;
+  padding-bottom: var(--space-4);
+  margin-bottom: var(--space-5);
+  border-bottom: 1px solid var(--border-divider);
+}
+
+.rooms__search {
+  position: relative;
+  display: flex;
+  align-items: center;
+  flex: 1 1 220px;
+  max-width: 320px;
+}
+
+.rooms__search svg {
+  position: absolute;
+  left: 10px;
+  color: var(--text-tertiary);
+  pointer-events: none;
+}
+
+.rooms__search input,
+.rooms__join input {
+  width: 100%;
+  padding: 8px 12px 8px 32px;
+  border-radius: var(--radius-lg);
+  border: 1px solid var(--border-divider);
+  background: var(--surface-primary);
+  color: var(--text-primary);
+  font-family: var(--font-sans);
+  font-size: var(--text-sm);
+  outline: none;
+  transition: border-color var(--motion-hover);
+}
+
+.rooms__join input { padding-left: 12px; padding-right: 56px; }
+
+.rooms__search input:focus,
+.rooms__join input:focus { border-color: var(--border-focus); }
+
+.rooms__join {
+  position: relative;
+  display: flex;
+  flex: 0 1 260px;
+}
+
+.rooms__join button {
+  position: absolute;
+  right: 4px;
+  top: 4px;
+  bottom: 4px;
+  padding: 0 10px;
+  border: none;
+  border-radius: var(--radius-md);
+  background: var(--surface-active);
+  color: var(--text-primary);
+  font-family: var(--font-sans);
+  font-size: var(--text-xs);
+  font-weight: var(--weight-semibold);
+  cursor: pointer;
+}
+
+.rooms__join button:disabled {
+  background: transparent;
+  color: var(--text-tertiary);
+  cursor: default;
+}
+
+.rooms__views {
+  display: flex;
+  align-items: center;
+  gap: 2px;
+  margin-left: auto;
+  padding: 2px;
+  border-radius: var(--radius-lg);
+  background: var(--surface-hover);
+}
+
+.rooms__view {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 30px;
+  height: 28px;
+  border: none;
+  border-radius: var(--radius-md);
+  background: transparent;
+  color: var(--text-tertiary);
+  cursor: pointer;
+  transition: background-color var(--motion-hover), color var(--motion-hover);
+}
+
+.rooms__view[aria-pressed='true'] {
+  background: var(--surface-primary);
+  color: var(--text-primary);
+  box-shadow: var(--shadow-sm);
+}
+
+/* --------------------------------------------------------------- the cards */
+
+.rooms__grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(248px, 1fr));
+  gap: var(--space-5);
+}
+
+.rooms__list {
+  display: flex;
+  flex-direction: column;
+}
+
+/* A real anchor, not a div with a click handler. That one change is what makes
+   a workspace focusable, keyboard-openable, middle-clickable into a new tab,
+   and reachable by the app's single global focus ring — none of which the
+   primary action on this page could do. */
+.room-card {
+  position: relative;
+  display: flex;
+  flex-direction: column;
+  border-radius: var(--radius-xl);
+  overflow: hidden;
+  background: var(--surface-primary);
+  /* Elevation once. Every card carried a border *and* a shadow, then animated
+     the border colour, the shadow and a transform together on hover. */
+  box-shadow: var(--shadow-float);
+  text-decoration: none;
+  color: inherit;
+  transition: transform 180ms var(--ease-settle);
+}
+
+.room-card:hover { transform: translateY(-2px); }
+
+.room-card__body {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--space-2);
+  padding: var(--space-4);
+}
+
+.room-card__name {
+  font-size: var(--text-md);
+  font-weight: var(--weight-semibold);
+  margin: 0 0 2px;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.room-card__meta {
+  font-size: var(--text-xs);
+  color: var(--text-tertiary);
+  margin: 0;
+}
+
+/* Remove sits inside the card but is its own control, so it must not inherit
+   the anchor's activation. Revealed on hover and on keyboard focus — hover
+   alone would make it unreachable without a mouse. */
+.room-card__remove {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 28px;
+  height: 28px;
+  flex-shrink: 0;
+  border: none;
+  border-radius: var(--radius-md);
+  background: transparent;
+  color: var(--text-tertiary);
+  cursor: pointer;
+  opacity: 0;
+  transition: opacity var(--motion-hover), background-color var(--motion-hover), color var(--motion-hover);
+}
+
+.room-card:hover .room-card__remove,
+.room-card__remove:focus-visible { opacity: 1; }
+
+.room-card__remove:hover {
+  background: color-mix(in srgb, var(--danger, #ef4444) 14%, transparent);
+  color: var(--danger, #ef4444);
+}
+
+/* The list variant. A row rather than a card, but the same anchor. */
+.room-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--space-4);
+  padding: 12px var(--space-3);
+  border-bottom: 1px solid var(--border-divider);
+  text-decoration: none;
+  color: inherit;
+  border-radius: var(--radius-md);
+  transition: background-color var(--motion-hover);
+}
+
+.room-row:hover { background: var(--surface-hover); }
+
+.room-row__lead {
+  display: flex;
+  align-items: center;
+  gap: var(--space-4);
+  min-width: 0;
+}
+
+.room-row__icon {
+  width: 36px;
+  height: 36px;
+  border-radius: var(--radius-md);
+  background: var(--surface-hover);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  color: var(--text-secondary);
+  flex-shrink: 0;
+}
+
+.room-row__remove {
+  opacity: 0;
+  border: none;
+  background: transparent;
+  color: var(--text-tertiary);
+  cursor: pointer;
+  border-radius: var(--radius-md);
+  padding: 6px;
+  display: flex;
+  transition: opacity var(--motion-hover), color var(--motion-hover);
+}
+
+.room-row:hover .room-row__remove,
+.room-row__remove:focus-visible { opacity: 1; }
+
+.room-row__remove:hover { color: var(--danger, #ef4444); }
+
+/* -------------------------------------------------------------- empty state */
+
+.rooms__empty {
+  text-align: center;
+  max-width: 460px;
+  margin: 0 auto;
+  padding: 72px var(--space-6);
+}
+
+.rooms__empty-mark {
+  width: 56px;
+  height: 56px;
+  border-radius: var(--radius-2xl);
+  background: var(--surface-hover);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  color: var(--text-tertiary);
+  margin: 0 auto var(--space-5);
+}
+
+.rooms__empty h2 {
+  font-size: var(--text-xl);
+  font-weight: var(--weight-semibold);
+  letter-spacing: -0.02em;
+  margin: 0 0 var(--space-2);
+}
+
+.rooms__empty p {
+  color: var(--text-secondary);
+  font-size: var(--text-md);
+  line-height: 1.6;
+  margin: 0 0 var(--space-6);
+}
+
+.rooms__empty-actions {
+  display: flex;
+  gap: var(--space-3);
+  justify-content: center;
+  flex-wrap: wrap;
+}
+
+.rooms__ghost {
+  padding: 10px 16px;
+  border-radius: var(--radius-lg);
+  border: 1px solid var(--border-divider);
+  background: transparent;
+  color: var(--text-primary);
+  font-family: var(--font-sans);
+  font-size: var(--text-md);
+  font-weight: var(--weight-medium);
+  cursor: pointer;
+  transition: background-color var(--motion-hover);
+}
+
+.rooms__ghost:hover { background: var(--surface-hover); }
+
+@media (prefers-reduced-motion: reduce) {
+  .room-card, .room-card:hover { transition: none; transform: none; }
+}
+
+/* ===========================================================================
+   SHELL ALIGNMENT, AND THE HEADER THAT KNOWS WHEN IT IS NEEDED
+   =========================================================================== */
+
+/* ---------------------------------------------------------- one gutter ---
+   Three surfaces were floating at three different insets: the layers panel at
+   28px (pushed out to clear the vertical ruler), the radar at 16px, and the
+   inspector at 16px from the right. Nothing lined up with anything, which is
+   the kind of thing you see before you can name it.
+
+   One value now, and it is set by the ruler: the left column has to clear
+   22px of ruler, so 28 is the floor, and the right side matches it rather
+   than sitting 12px closer to its own edge for no reason. */
+:root {
+  --shell-inset: 28px;
+  /* Must match `RULER_SIZE` in `components/canvas/Rulers.tsx`, which owns the
+     number — the rulers are drawn from it and the stage is inset by it. */
+  --ruler-size: 22px;
+}
+
+.hierarchy-panel { left: var(--shell-inset); }
+.context-inspector { right: var(--shell-inset); }
+.radar-dock { left: var(--shell-inset); }
+
+/* Panels clear the rulers.
+   They sat at `header + 8`, which put them straight over the horizontal ruler
+   — so the top of the scale, including the origin, was covered by a panel on
+   both sides. A ruler you cannot see along its whole length is worse than no
+   ruler, because you trust the part that is showing.
+
+   The left column also clears the vertical ruler via `--shell-inset`, which is
+   why that value is 28 and not the 16 everything else uses. */
+.hierarchy-panel,
+.context-inspector {
+  top: calc(var(--header-h) + var(--ruler-size) + 8px);
+}
+
+/* The radar shares the panel's width as well as its edge, so the left column
+   reads as one column rather than two cards that happen to be stacked. */
+.radar-panel { width: var(--panel-w); }
+
+/* The radar's own title was `--text-tertiary` uppercase at 10px on an elevated
+   surface — under 3:1 in dark mode, and it is the label that says what the
+   whole surface is. Secondary clears AA at this size and still reads as a
+   caption rather than as content. */
+.radar-title { color: var(--text-secondary); }
+
+/* ------------------------------------------------------- the header ---
+   An earlier version of this shrank to 44px when idle and grew to 64px on
+   hover. It was the wrong trade and it is gone.
+
+   Hover-to-reveal suits transient information — a notification that has
+   something to say and then stops. It does not suit a toolbar. Undo, history
+   and the canvas modes are things you reach for repeatedly and without
+   thinking, and putting them behind a deliberate gesture costs both
+   discoverability and a movement every single time, to buy twenty pixels of
+   height that were never the problem. The clutter was solved by grouping the
+   bar into three zones by what each control acts on; the height was never what
+   made it feel wrong.
+
+   What is worth keeping from the idea is that chrome should be quieter while
+   you work. So the bar **recedes rather than hides**: it drops in contrast
+   while you are actually dragging something on the canvas, and comes back the
+   instant you let go. Nothing moves, nothing is hidden, and a click lands
+   immediately because the target never went anywhere.
+
+   That also removes both layout animations this section used to carry — a
+   transitioned `height` on the bar and a transitioned `max-width` on a group
+   inside it, which reflowed the whole row every frame and slid its neighbours
+   sideways. Opacity is a compositor property; it animates without touching
+   layout at all. */
+:root {
+  --header-h: 52px;
+}
+
+.workspace-header {
+  height: var(--header-h);
+  padding: 0 var(--space-5);
+  z-index: 120;
+  /* Opacity only. No layout property is animated here. */
+  transition: opacity 180ms var(--ease-settle);
+}
+
+/* The receded opacity itself is set inline by `WorkspaceShell`, not here.
+   Two reasons, and the second is the real one:
+
+   - There is no `:hover` restore to fight with. A drag means your pointer is
+     on the canvas by definition, so hovering the bar *during* one cannot
+     happen — the rule would only ever have been dead weight in the cascade.
+   - It is a single value derived from a single piece of React state, and
+     keeping it beside that state means the two cannot disagree. An attribute
+     selector adds a second place for the answer to live and a cascade to lose
+     in, for no gain.
+
+   The floor is 0.6 rather than something fainter: this must read as "standing
+   back", not as "disabled" — the sync dot and the unread badge stay legible,
+   because those are the two things you might genuinely need mid-drag. */
+
+@media (prefers-reduced-motion: reduce) {
+  .workspace-header { transition-duration: 1ms; }
+}
+
+
+/* ===========================================================================
+   BRAND
+   ---------------------------------------------------------------------------
+   Sampled from `public/VEGA LOGO LIGHT/LOGOMARK.png` rather than guessed, so
+   the accent in the interface is the same orange as the artwork instead of
+   "about the same". It is close to the existing amber-500 (#F59E0B) and
+   deliberately not merged with it: amber is a *palette* value the UI uses for
+   selection, and the brand orange is an *identity* value. Collapsing the two
+   means a future palette tweak silently repaints the logo's accent.
+   =========================================================================== */
+:root {
+  --brand-orange: #F3A024;
+  --brand-ink: #161616;
+  /* The off-white the mark sits on in its dark-surface variant. Not the same
+     as `--surface-elevated`: this one belongs to the artwork and must not
+     drift when the theme's greys are retuned. */
+  --brand-paper: #F7F7F7;
+}
+
+/* ===========================================================================
+   FIRST-RUN GUIDE
+   ---------------------------------------------------------------------------
+   Sits above the tool dock, centred. Every other anchor on this screen is
+   taken — the left column holds the layers panel and the radar, the right the
+   inspector, the bottom centre the dock itself — and this is the one place
+   that is free at every panel state, while still being where the eye already
+   goes when you are deciding what to do next.
+   =========================================================================== */
+
+.guide {
+  position: absolute;
+  bottom: 96px;
+  left: 50%;
+  transform: translateX(-50%);
+  width: min(340px, calc(100vw - 2 * var(--shell-inset)));
+  z-index: 140;
+  padding: 12px 14px;
+  border-radius: var(--radius-xl);
+  background: var(--surface-elevated);
+  box-shadow: var(--shadow-float);
+  animation: guideIn 260ms var(--ease-settle);
+}
+
+.guide__head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--space-2);
+  margin-bottom: 10px;
+}
+
+.guide__eyebrow {
+  font-size: var(--text-2xs);
+  font-weight: var(--weight-semibold);
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: var(--text-tertiary);
+}
+
+.guide__close {
+  display: flex;
+  border: none;
+  background: transparent;
+  color: var(--text-tertiary);
+  cursor: pointer;
+  padding: 2px;
+  border-radius: var(--radius-sm);
+  transition: color var(--motion-hover);
+}
+
+.guide__close:hover { color: var(--text-primary); }
+
+.guide__list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+.guide__step {
+  display: flex;
+  align-items: flex-start;
+  gap: 10px;
+}
+
+.guide__icon {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 24px;
+  height: 24px;
+  flex-shrink: 0;
+  border-radius: var(--radius-md);
+  background: var(--surface-hover);
+  color: var(--text-secondary);
+}
+
+/* A done step keeps its place and loses its weight, so the list reads as
+   progress rather than as items disappearing. */
+.guide__step.is-done .guide__icon {
+  background: color-mix(in srgb, var(--brand-orange) 18%, transparent);
+  color: var(--brand-orange);
+}
+
+.guide__step.is-done .guide__title {
+  color: var(--text-tertiary);
+  text-decoration: line-through;
+}
+
+.guide__title {
+  display: block;
+  font-size: var(--text-sm);
+  font-weight: var(--weight-semibold);
+  color: var(--text-primary);
+}
+
+.guide__body {
+  display: block;
+  margin-top: 2px;
+  font-size: var(--text-xs);
+  color: var(--text-secondary);
+  line-height: 1.5;
+}
+
+@keyframes guideIn {
+  from { opacity: 0; transform: translate(-50%, 8px); }
+  to   { opacity: 1; transform: translate(-50%, 0); }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .guide { animation: none; }
+}
+
+/* --------------------------------------------------------- board covers --- */
+
+.cover {
+  position: relative;
+  width: 100%;
+  height: 140px;
+  background: var(--surface-secondary);
+  /* The board's own dot grid, so a cover reads as a small piece of canvas
+     rather than as an image of one. */
+  background-image: radial-gradient(circle, var(--canvas-dot) 1px, transparent 1px);
+  background-size: 14px 14px;
+  overflow: hidden;
+}
+
+.cover__art {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  /* Inset so objects at the board's extreme edge are not flush against the
+     card's, which reads as clipped rather than as framed. */
+  padding: 10px;
+  box-sizing: border-box;
+}
+
+.cover--empty {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 10px;
+}
+
+.cover__seed {
+  width: 34px;
+  height: 34px;
+  border-radius: var(--radius-lg);
+}
+
+.cover__hint {
+  font-size: var(--text-2xs);
+  color: var(--text-tertiary);
+}
+
+/* ------------------------------------------------------ properties rows --- */
+
+/* A fixed label column, so every control in the panel starts at the same x.
+   These rows were `justify-content: space-between`, which puts each control
+   wherever its own label happens to end — "Fill", "Radius" and "Backdrop"
+   landed in three different places and nothing lined up with anything below
+   it. That is read as clutter long before it can be named. */
+.prop-row {
+  display: grid;
+  grid-template-columns: 76px minmax(0, 1fr);
+  align-items: center;
+  gap: 8px;
+  min-height: 28px;
+}
+
+.prop-row__label {
+  font-size: var(--text-xs);
+  color: var(--text-secondary);
+  /* Truncates rather than wrapping: a label that goes to two lines drags its
+     control off the row's centre line and breaks the column's rhythm. */
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+/* A label carrying an explanation says so, quietly, instead of relying on
+   people discovering that some labels have tooltips and others do not. */
+.prop-row__label[data-tooltip] {
+  text-decoration: underline dotted var(--border-strong);
+  text-underline-offset: 3px;
+  cursor: help;
+}
+
+.prop-row__control {
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 6px;
+  min-width: 0;
+}
+
+/* ------------------------------------------------- vertical ruler labels --- */
+
+/* There was no rule for these at all. `.ruler__label` set `position: absolute`
+   and `white-space: nowrap`, and only `.ruler--h .ruler__label` ever gave it a
+   position — so on the vertical ruler every number sat at its tick's origin
+   and ran horizontally out of a 22px-wide column, where `.ruler { overflow:
+   hidden }` cut it off. The scale had no numbers on it.
+
+   Rotated to read bottom-to-top alongside its tick, which is the convention in
+   every tool that has a vertical ruler, and the only way four digits fit in
+   22px. */
+.ruler--v .ruler__label {
+  left: 2px;
+  top: 0;
+  padding-left: 0;
+  padding-bottom: 3px;
+  transform-origin: left top;
+  transform: rotate(-90deg) translateX(-100%);
+}
+
+/* ------------------------------------------------------------ scrollbars --- */
+
+/* `.custom-scrollbar` was applied in four places and styled nothing — there
+   were no scrollbar rules in this file, so every panel showed the OS default:
+   a wide, high-contrast bar with stepper arrows, sitting inside chrome that is
+   otherwise hairlines and 6px radii.
+
+   A scrollbar is a *readout* of position that occasionally becomes a control.
+   At rest it should be barely there; under the pointer it should be
+   unmistakable. */
+* {
+  scrollbar-width: thin;
+  scrollbar-color: var(--scrollbar-thumb) transparent;
+}
+
+:root {
+  --scrollbar-thumb: rgba(0, 0, 0, 0.18);
+  --scrollbar-thumb-hover: rgba(0, 0, 0, 0.34);
+}
+
+:root[data-theme='dark'],
+html.dark-theme,
+.dark-theme {
+  --scrollbar-thumb: rgba(255, 255, 255, 0.16);
+  --scrollbar-thumb-hover: rgba(255, 255, 255, 0.32);
+}
+
+::-webkit-scrollbar {
+  width: 10px;
+  height: 10px;
+}
+
+/* Transparent, so the bar does not draw a channel across a surface that has no
+   other vertical lines on it. */
+::-webkit-scrollbar-track {
+  background: transparent;
+}
+
+::-webkit-scrollbar-thumb {
+  background-color: var(--scrollbar-thumb);
+  border-radius: var(--radius-pill);
+  /* A transparent border with `background-clip: padding-box` is what makes the
+     thumb read as a floating 6px pill rather than a 10px bar wedged against
+     the edge. */
+  border: 2px solid transparent;
+  background-clip: padding-box;
+  transition: background-color var(--motion-hover);
+}
+
+::-webkit-scrollbar-thumb:hover {
+  background-color: var(--scrollbar-thumb-hover);
+}
+
+/* The corner where two bars meet is a plate of UA grey by default. */
+::-webkit-scrollbar-corner {
+  background: transparent;
+}
+
+/* Stepper arrows belong to no design system shipped this decade. */
+::-webkit-scrollbar-button {
+  display: none;
+}
+
+/* ============================================================================
+   LAYER ROWS
+   ----------------------------------------------------------------------------
+   Given the same treatment as the properties rows, and for the same reason:
+   the row was a flex line whose parts moved about depending on the length of
+   the name, so nothing in the column lined up and the trailing controls sat at
+   a different x on every row.
+
+   A grid fixes the columns — twisty, icon, name, controls — so the icons form
+   one line, the names another, and the controls a third, whatever any row
+   happens to contain.
+   ========================================================================== */
+
+.layer-row {
+  display: grid;
+  grid-template-columns: 14px 18px minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 8px;
+  box-sizing: border-box;
+  border-radius: var(--radius-lg);
+  cursor: pointer;
+  font-size: var(--text-xs);
+  font-weight: var(--weight-medium);
+  transition: background-color var(--motion-hover);
+}
+
+.layer-row:hover { background: var(--surface-hover); }
+
+/* Selection was a solid `--amber-500` slab with near-black text on it. It is
+   unmistakable, and that is the whole problem: half a dozen selected rows turn
+   the panel into a block of colour that outshouts the board it describes, and
+   now that the brand carries an orange of its own, a second saturated orange
+   in the chrome reads as a mistake.
+
+   A tint plus a hairline says the same thing at a fraction of the volume, and
+   scales to a selection of thirty rows without the panel becoming the loudest
+   thing on screen. */
+.layer-row.is-selected,
+.layer-row.is-selected:hover {
+  background: color-mix(in srgb, var(--brand-orange) 15%, transparent);
+  box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--brand-orange) 45%, transparent);
+  color: var(--text-primary);
+  font-weight: var(--weight-semibold);
+}
+
+.layer-row__name {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+/* The type icon carries the object's own colour.
+   Every default-named object renders as the word "Shape", so a panel of them
+   is a wall of identical rows — the name column cannot distinguish them and
+   the icon only says which *kind* they are. Tinting the glyph with the fill
+   makes six shapes six different rows at a glance, using information the row
+   already had and was throwing away. */
+.layer-row__icon {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 18px;
+  height: 18px;
+  flex-shrink: 0;
+  border-radius: var(--radius-sm);
+}
+
+.layer-row__actions {
+  display: flex;
+  align-items: center;
+  gap: 2px;
+  opacity: 0;
+  transition: opacity var(--motion-hover);
+}
+
+.layer-row:hover .layer-row__actions,
+.layer-row.is-selected .layer-row__actions,
+.layer-row__actions:focus-within { opacity: 1; }
+
+/* Kept visible when the state is *not* the default, because an object that is
+   hidden or locked must say so without being hovered — that is the whole point
+   of the toggle, and a row that looks identical either way is a row you have
+   to poke to understand. */
+.layer-row__actions[data-sticky='true'] { opacity: 1; }
+
+.layer-row__btn {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 22px;
+  height: 22px;
+  border: none;
+  border-radius: var(--radius-sm);
+  background: transparent;
+  color: inherit;
+  opacity: 0.75;
+  cursor: pointer;
+  transition: opacity var(--motion-hover), background-color var(--motion-hover);
+}
+
+.layer-row__btn:hover {
+  opacity: 1;
+  background: var(--surface-active);
+}
+
+/* ===========================================================================
+   WELCOME SEQUENCE
+   ---------------------------------------------------------------------------
+   Once ever, three beats, skippable from the first frame. The motion is one
+   authored moment rather than an effect on every element: the card settles in,
+   and each beat's contents rise in a short stagger so the eye is led from the
+   picture to the claim to the detail — which is the order they should be read
+   in, and the only reason the stagger exists.
+
+   Everything animated here is `transform` and `opacity`, so none of it can
+   cause layout work while the canvas behind is mounting.
+   =========================================================================== */
+
+.welcome {
+  position: fixed;
+  inset: 0;
+  z-index: 9000;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: var(--space-4);
+  /* A scrim rather than a solid: the board is visible behind it, so the first
+     thing you learn is that there is already a canvas waiting. */
+  background: color-mix(in srgb, var(--surface-canvas) 82%, transparent);
+  backdrop-filter: blur(6px);
+  animation: welcomeIn 320ms var(--ease-settle);
+}
+
+.welcome.is-leaving {
+  opacity: 0;
+  transition: opacity 300ms var(--ease-settle);
+}
+
+.welcome__card {
+  width: min(100%, 460px);
+  padding: 22px;
+  border-radius: var(--radius-2xl);
+  background: var(--surface-elevated);
+  box-shadow: var(--shadow-float);
+  animation: welcomeCard 420ms var(--ease-settle);
+}
+
+.welcome__head {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  margin-bottom: 18px;
+}
+
+.welcome__brand {
+  font-size: var(--text-md);
+  font-weight: var(--weight-bold);
+  letter-spacing: -0.02em;
+  color: var(--text-primary);
+}
+
+.welcome__skip {
+  margin-left: auto;
+  border: none;
+  background: transparent;
+  color: var(--text-tertiary);
+  font-family: var(--font-sans);
+  font-size: var(--text-sm);
+  cursor: pointer;
+  padding: 4px 6px;
+  border-radius: var(--radius-md);
+  transition: color var(--motion-hover);
+}
+
+.welcome__skip:hover { color: var(--text-primary); }
+
+.welcome__art {
+  height: 132px;
+  border-radius: var(--radius-xl);
+  background: var(--surface-hover);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  overflow: hidden;
+  margin-bottom: 18px;
+}
+
+.welcome__svg { width: 100%; height: 100%; }
+
+/* The two cursors drift on a long, offset loop, so the drawing reads as two
+   people working rather than as an animation playing. */
+.welcome__cursor--a { animation: wsDriftA 5.2s var(--ease-settle) infinite alternate; }
+.welcome__cursor--b { animation: wsDriftB 6.1s var(--ease-settle) infinite alternate; }
+
+@keyframes wsDriftA {
+  from { transform: translate(58px, 62px); }
+  to   { transform: translate(96px, 40px); }
+}
+@keyframes wsDriftB {
+  from { transform: translate(150px, 40px); }
+  to   { transform: translate(120px, 74px); }
+}
+
+/* The stagger: picture, then claim, then detail. */
+.welcome__eyebrow,
+.welcome__title,
+.welcome__body,
+.welcome__art { animation: welcomeRise 420ms var(--ease-settle) both; }
+
+.welcome__art { animation-delay: 0ms; }
+.welcome__eyebrow { animation-delay: 60ms; }
+.welcome__title { animation-delay: 110ms; }
+.welcome__body { animation-delay: 160ms; }
+
+.welcome__eyebrow {
+  margin: 0 0 6px;
+  font-size: var(--text-2xs);
+  font-weight: var(--weight-semibold);
+  letter-spacing: 0.1em;
+  text-transform: uppercase;
+  color: var(--brand-orange);
+}
+
+.welcome__title {
+  margin: 0 0 8px;
+  font-size: 24px;
+  font-weight: 650;
+  letter-spacing: -0.03em;
+  line-height: 1.15;
+  color: var(--text-primary);
+}
+
+.welcome__body {
+  margin: 0;
+  font-size: var(--text-md);
+  line-height: 1.6;
+  color: var(--text-secondary);
+  /* Held near the comfortable measure so the third beat does not become a
+     paragraph nobody finishes. */
+  max-width: 42ch;
+}
+
+.welcome__foot {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--space-4);
+  margin-top: 22px;
+}
+
+.welcome__dots { display: flex; align-items: center; gap: 6px; }
+
+/**
+ * A step indicator that lengthens, without animating a layout property.
+ *
+ * This transitioned `width` from 7px to 20px, which is layout work on every
+ * frame of the tween — and it made the two neighbouring dots shuffle sideways
+ * as it grew, because the row is a flex line that has to re-solve.
+ *
+ * The button is now a **fixed 24px target** and the visible pill is an inner
+ * element that scales. `transform` never touches layout, so nothing moves but
+ * the mark itself. The fixed size also fixes a real accessibility problem the
+ * width animation was hiding: a 7px control is far below any usable pointer
+ * target, and these are the only way back to a previous beat.
+ */
+.welcome__dot {
+  width: 24px;
+  height: 24px;
+  padding: 0;
+  border: none;
+  background: transparent;
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.welcome__dot::after {
+  content: '';
+  width: 20px;
+  height: 4px;
+  border-radius: var(--radius-pill);
+  background: var(--surface-active);
+  /* Squashed to a dot at rest, full pill when active. The radius is clamped by
+     the 4px height, so the scaled-down caps stay round enough to read as a dot
+     at this size. */
+  transform: scaleX(0.2);
+  transition: transform var(--motion-expand), background-color var(--motion-hover);
+}
+
+/* The active step lengthens rather than only changing colour, so progress is
+   legible without relying on hue — and stays legible under `forced-colors`. */
+.welcome__dot.is-active::after {
+  transform: scaleX(1);
+  background: var(--brand-orange);
+}
+
+.welcome__next {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  padding: 10px 16px;
+  border: none;
+  border-radius: var(--radius-lg);
+  background: var(--text-primary);
+  color: var(--surface-primary);
+  font-family: var(--font-sans);
+  font-size: var(--text-md);
+  font-weight: var(--weight-semibold);
+  cursor: pointer;
+  transition: opacity var(--motion-hover);
+}
+
+.welcome__next:hover { opacity: 0.88; }
+
+@keyframes welcomeIn {
+  from { opacity: 0; }
+  to   { opacity: 1; }
+}
+
+@keyframes welcomeCard {
+  from { opacity: 0; transform: translateY(14px) scale(0.985); }
+  to   { opacity: 1; transform: translateY(0) scale(1); }
+}
+
+@keyframes welcomeRise {
+  from { opacity: 0; transform: translateY(8px); }
+  to   { opacity: 1; transform: translateY(0); }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .welcome,
+  .welcome__card,
+  .welcome__art,
+  .welcome__eyebrow,
+  .welcome__title,
+  .welcome__body { animation: none; }
+  .welcome__cursor--a,
+  .welcome__cursor--b { animation: none; }
+}
+
+/* ===========================================================================
+   DOCK COACH
+   ---------------------------------------------------------------------------
+   Sits just above the tool dock and points at it with a small tail, because a
+   card that talks about the dock while floating unattached in the middle of
+   the board is a card about nothing in particular.
+
+   It shares the first-run guide's anchor deliberately: only one of the two is
+   ever on screen at a time (the guide waits for a share, this waits for the
+   first object and then settles for good), and two coaching surfaces stacked
+   above the dock would be exactly the clutter both exist to avoid.
+   =========================================================================== */
+
+.dock-coach {
+  position: absolute;
+  bottom: 96px;
+  left: 50%;
+  transform: translateX(-50%);
+  width: min(380px, calc(100vw - 2 * var(--shell-inset)));
+  z-index: 141;
+  display: flex;
+  gap: 12px;
+  padding: 14px 16px;
+  border-radius: var(--radius-xl);
+  background: var(--surface-elevated);
+  box-shadow: var(--shadow-float);
+  animation: coachIn 280ms var(--ease-settle);
+}
+
+/* The tail. One small triangle is the whole difference between "a message" and
+   "a message about that thing down there". */
+.dock-coach::after {
+  content: '';
+  position: absolute;
+  bottom: -6px;
+  left: 50%;
+  width: 12px;
+  height: 12px;
+  transform: translateX(-50%) rotate(45deg);
+  background: var(--surface-elevated);
+  border-radius: 2px;
+}
+
+.dock-coach__icon {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 30px;
+  height: 30px;
+  flex-shrink: 0;
+  border-radius: var(--radius-lg);
+  background: color-mix(in srgb, var(--brand-orange) 16%, transparent);
+  color: var(--brand-orange);
+}
+
+.dock-coach__body { min-width: 0; }
+
+.dock-coach__title {
+  margin: 0 0 4px;
+  font-size: var(--text-sm);
+  font-weight: var(--weight-semibold);
+  color: var(--text-primary);
+}
+
+.dock-coach__text {
+  margin: 0 0 12px;
+  font-size: var(--text-xs);
+  line-height: 1.55;
+  color: var(--text-secondary);
+}
+
+.dock-coach__actions { display: flex; gap: 8px; }
+
+.dock-coach__primary,
+.dock-coach__ghost {
+  padding: 7px 12px;
+  border-radius: var(--radius-md);
+  font-family: var(--font-sans);
+  font-size: var(--text-xs);
+  font-weight: var(--weight-semibold);
+  cursor: pointer;
+  border: none;
+  transition: opacity var(--motion-hover), background-color var(--motion-hover);
+}
+
+.dock-coach__primary {
+  background: var(--text-primary);
+  color: var(--surface-primary);
+}
+
+.dock-coach__primary:hover { opacity: 0.88; }
+
+/* "Keep the canvas" is a real answer, so it is a real button — not a link in
+   the corner that reads as giving up on the question. */
+.dock-coach__ghost {
+  background: var(--surface-hover);
+  color: var(--text-primary);
+}
+
+.dock-coach__ghost:hover { background: var(--surface-active); }
+
+.dock-coach__close {
+  position: absolute;
+  top: 8px;
+  right: 8px;
+  display: flex;
+  padding: 3px;
+  border: none;
+  border-radius: var(--radius-sm);
+  background: transparent;
+  color: var(--text-tertiary);
+  cursor: pointer;
+  transition: color var(--motion-hover);
+}
+
+.dock-coach__close:hover { color: var(--text-primary); }
+
+@keyframes coachIn {
+  from { opacity: 0; transform: translate(-50%, 10px); }
+  to   { opacity: 1; transform: translate(-50%, 0); }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .dock-coach { animation: none; }
+}
+
+/* A plain text field inside a properties row. The panel had no such thing —
+   every control until now was a stepper, a swatch or a segmented choice. */
+.prop-input {
+  width: 100%;
+  min-width: 0;
+  padding: 5px 8px;
+  border-radius: var(--radius-md);
+  border: 1px solid var(--border-divider);
+  background: var(--surface-hover);
+  color: var(--text-primary);
+  font-family: var(--font-sans);
+  font-size: var(--text-xs);
+  outline: none;
+  transition: border-color var(--motion-hover);
+}
+
+.prop-input:focus { border-color: var(--border-focus); }
+
+/* ---------------------------------------------------------------------------
+   FORCES PANEL
+
+   The whole mode in one place: what force is selected, how hard it pushes, how
+   far it reaches, how it fades, what it is allowed to touch — and, the part
+   that makes any of it safe to try, two different ways to undo it.
+
+   `--force-accent` is set inline from the active force's own token, so the
+   sliders and the selected chip take the colour of the ring on the canvas and
+   the panel reads as belonging to the thing it is aiming.
+   --------------------------------------------------------------------------- */
+
+.forces {
+  position: absolute;
+  bottom: 96px;
+  left: 50%;
+  transform: translateX(-50%);
+  z-index: 1000;
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-3);
+  width: 620px;
+  max-width: calc(100vw - 2 * var(--gutter));
+  padding: var(--space-4) var(--space-5);
+  border-radius: var(--radius-xl);
+  box-shadow: var(--shadow-float);
+  color: var(--text-primary);
+  font-family: var(--font-sans);
+  animation: popIn 200ms var(--ease-settle);
+}
+
+.forces__head {
+  display: flex;
+  align-items: center;
+  gap: var(--space-3);
+}
+
+.forces__eyebrow {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-1);
+  flex-shrink: 0;
+  font-size: var(--text-2xs);
+  font-weight: var(--weight-semibold);
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  color: var(--force-accent);
+}
+
+/* The instruction for the force you are holding, so there is never a mystery
+   about what pressing will do. */
+.forces__hint {
+  min-width: 0;
+  flex: 1;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: var(--text-sm);
+  color: var(--text-secondary);
+}
+
+.forces__done {
+  display: flex;
+  align-items: center;
+  gap: var(--space-1);
+  flex-shrink: 0;
+  padding: 6px 12px;
+  border: none;
+  border-radius: var(--radius-md);
+  background: var(--text-primary);
+  color: var(--surface-primary);
+  font-family: inherit;
+  font-size: var(--text-sm);
+  font-weight: var(--weight-semibold);
+  cursor: pointer;
+  transition: opacity var(--motion-hover);
+}
+
+.forces__done:hover { opacity: 0.85; }
+
+/* ------------------------------------------------------------ force picker */
+
+.forces__picker {
+  display: grid;
+  /* Even columns, so the six forces read as one set of equals rather than a
+     row whose widths encode nothing. */
+  grid-template-columns: repeat(6, 1fr);
+  gap: 2px;
+  padding: 3px;
+  border-radius: var(--radius-lg);
+  background: var(--surface-secondary);
+}
+
+.forces__force {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: var(--space-1);
+  padding: 6px 4px;
+  border: none;
+  border-radius: var(--radius-md);
+  background: transparent;
+  color: var(--text-secondary);
+  font-family: inherit;
+  font-size: var(--text-sm);
+  font-weight: var(--weight-medium);
+  white-space: nowrap;
+  cursor: pointer;
+  transition: background var(--motion-hover), color var(--motion-hover);
+}
+
+.forces__force:hover { color: var(--text-primary); }
+
+.forces__force.is-active {
+  background: var(--surface-primary);
+  color: var(--text-primary);
+  font-weight: var(--weight-semibold);
+  box-shadow: var(--shadow-sm);
+}
+
+/* The selected force is marked in its own colour as well as by the raised
+   chip, so which force you are holding survives a glance. */
+.forces__force.is-active svg { color: var(--force-accent); }
+
+/* ------------------------------------------------------------------- dials */
+
+.forces__dials {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: var(--space-4);
+}
+
+.forces__dial {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  min-width: 0;
+}
+
+.forces__dial-label {
+  flex-shrink: 0;
+  font-size: var(--text-xs);
+  color: var(--text-tertiary);
+}
+
+.forces__dial input[type='range'] {
+  flex: 1;
+  min-width: 40px;
+  cursor: pointer;
+}
+
+/* Tabular and fixed-width, so the number does not shuffle the slider beside it
+   as it counts. */
+.forces__dial-value {
+  flex-shrink: 0;
+  width: 46px;
+  text-align: right;
+  font-size: var(--text-xs);
+  font-variant-numeric: tabular-nums;
+  color: var(--text-secondary);
+}
+
+/* --------------------------------------------------------- falloff + scope */
+
+.forces__row {
+  display: flex;
+  align-items: center;
+  gap: var(--space-3);
+}
+
+.forces__row-label {
+  flex-shrink: 0;
+  font-size: var(--text-xs);
+  color: var(--text-tertiary);
+}
+
+.forces__segmented {
+  display: flex;
+  gap: 2px;
+  padding: 2px;
+  border-radius: var(--radius-md);
+  background: var(--surface-secondary);
+}
+
+.forces__segment {
+  display: flex;
+  align-items: center;
+  gap: 5px;
+  padding: 4px 9px;
+  border: none;
+  border-radius: var(--radius-sm);
+  background: transparent;
+  color: var(--text-secondary);
+  font-family: inherit;
+  font-size: var(--text-xs);
+  font-weight: var(--weight-medium);
+  cursor: pointer;
+  transition: background var(--motion-hover), color var(--motion-hover);
+}
+
+.forces__segment:hover { color: var(--text-primary); }
+
+.forces__segment.is-active {
+  background: var(--surface-primary);
+  color: var(--text-primary);
+  box-shadow: var(--shadow-sm);
+}
+
+/* Scoping to the selection is a mode, so it latches visibly rather than
+   behaving like a button you press. */
+.forces__scope {
+  display: flex;
+  align-items: center;
+  gap: 5px;
+  margin-left: auto;
+  flex-shrink: 0;
+  padding: 5px 10px;
+  border: 1px solid var(--border-divider);
+  border-radius: var(--radius-md);
+  background: transparent;
+  color: var(--text-secondary);
+  font-family: inherit;
+  font-size: var(--text-xs);
+  font-weight: var(--weight-medium);
+  cursor: pointer;
+  transition: var(--motion-hover);
+}
+
+.forces__scope:hover:not(:disabled) { color: var(--text-primary); }
+
+.forces__scope.is-active {
+  border-color: transparent;
+  background: color-mix(in srgb, var(--force-accent) 16%, transparent);
+  box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--force-accent) 40%, transparent);
+  color: var(--text-primary);
+}
+
+/* ------------------------------------------------------------------ footer */
+
+.forces__footer {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  min-height: 24px;
+}
+
+.forces__status {
+  margin-right: auto;
+  font-size: var(--text-xs);
+  color: var(--text-tertiary);
+}
+
+.forces__action {
+  display: flex;
+  align-items: center;
+  gap: var(--space-1);
+  flex-shrink: 0;
+  padding: 4px 10px;
+  border: none;
+  border-radius: var(--radius-md);
+  background: var(--surface-hover);
+  color: var(--text-primary);
+  font-family: inherit;
+  font-size: var(--text-xs);
+  font-weight: var(--weight-medium);
+  cursor: pointer;
+  transition: var(--motion-hover);
+}
+
+.forces__action:hover:not(:disabled) { background: var(--surface-secondary); }
+
+/* Disabled rather than hidden: Restore with nothing to restore still says that
+   the safety net exists, which is the reassurance the panel is there to give. */
+.forces__scope:disabled,
+.forces__action:disabled {
+  opacity: 0.45;
+  cursor: default;
+}
+
+/* Two columns of controls do not fit a phone. Stacking keeps every control at
+   a full-width, thumb-sized target instead of squeezing six force chips and
+   two sliders into one line. */
+@media (max-width: 680px) {
+  .forces__dials { grid-template-columns: 1fr; }
+  .forces__picker { grid-template-columns: repeat(3, 1fr); }
+  .forces__row { flex-wrap: wrap; }
+  .forces__scope { margin-left: 0; }
+}
+
+/* ---------------------------------------------------------------------------
+   TIME TRAVEL
+
+   Four rows, each with exactly one job and — the part the old bar got wrong —
+   at most one interactive element. Its ticks were buttons buried under a
+   transparent range input that ate every press, so they had tooltips nobody
+   ever saw and clicks that went somewhere else entirely.
+
+   The activity strip is wall-clock time; the track is index. Two axes, each
+   used for what it is good at: the strip answers "when was this busy", the
+   track makes every moment equally reachable.
+   --------------------------------------------------------------------------- */
+
+.timetravel {
+  position: absolute;
+  bottom: 96px;
+  left: 50%;
+  transform: translateX(-50%);
+  z-index: 1000;
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-3);
+  width: 680px;
+  max-width: calc(100vw - 2 * var(--gutter));
+  padding: var(--space-4) var(--space-5);
+  border-radius: var(--radius-xl);
+  box-shadow: var(--shadow-float);
+  color: var(--text-primary);
+  font-family: var(--font-sans);
+  animation: popIn 200ms var(--ease-settle);
+}
+
+/* Loading and empty states: same shell, one line, no controls to lay out. */
+.timetravel--message {
+  flex-direction: row;
+  align-items: center;
+  gap: var(--space-3);
+  width: auto;
+  max-width: 520px;
+  padding: var(--space-3) var(--space-5);
+  font-size: var(--text-base);
+}
+
+.timetravel__spinner { animation: spin 1s linear infinite; flex-shrink: 0; }
+.timetravel__muted-icon { color: var(--text-tertiary); flex-shrink: 0; }
+.timetravel__muted { color: var(--text-secondary); }
+
+/* --------------------------------------------------------------------- head */
+
+.timetravel__head {
+  display: flex;
+  align-items: center;
+  gap: var(--space-3);
+  min-width: 0;
+}
+
+.timetravel__eyebrow {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-2);
+  flex-shrink: 0;
+  font-size: var(--text-2xs);
+  font-weight: var(--weight-semibold);
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  color: var(--history-accent);
+}
+
+.timetravel__author-dot {
+  width: 8px;
+  height: 8px;
+  flex-shrink: 0;
+  border-radius: var(--radius-pill);
+  box-shadow: 0 0 0 2px var(--surface-primary);
+}
+
+/* What this moment was. The one thing you navigate by, so it gets the room. */
+.timetravel__label {
+  min-width: 0;
+  flex: 1;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: var(--text-md);
+  font-weight: var(--weight-semibold);
+}
+
+.timetravel__sub {
+  flex-shrink: 0;
+  font-size: var(--text-xs);
+  color: var(--text-tertiary);
+}
+
+.timetravel__time {
+  flex-shrink: 0;
+  font-size: var(--text-xs);
+  font-variant-numeric: tabular-nums;
+  color: var(--text-secondary);
+}
+
+/* ----------------------------------------------------------- activity strip */
+
+/* A readout, not a control: pointer-events none, so it can never compete with
+   the track below for a press. That competition is the bug this whole redesign
+   came from. */
+.timetravel__activity {
+  position: relative;
+  display: flex;
+  align-items: flex-end;
+  gap: 1px;
+  height: 26px;
+  pointer-events: none;
+}
+
+.timetravel__bar {
+  flex: 1;
+  min-width: 0;
+  /* Full height, scaled down. Sixty-four flex children each animating their
+     own `height` is sixty-four layouts per frame inside one flex row — the
+     same mistake the recording meter used to make, fixed the same way. The
+     `transform-origin` was already here and was doing nothing, because it has
+     no effect on `height` at all. */
+  height: 100%;
+  border-radius: 1px;
+  transform-origin: bottom;
+  transition: transform 120ms var(--ease-settle), opacity 120ms linear;
+}
+
+/* Where the playhead falls on the time axis — a different place from where it
+   falls on the index axis, and that difference is the point of showing both. */
+.timetravel__activity-playhead {
+  position: absolute;
+  top: -2px;
+  bottom: -2px;
+  width: 2px;
+  border-radius: var(--radius-pill);
+  background: var(--history-playhead);
+  transform: translateX(-50%);
+  transition: left 90ms linear;
+}
+
+/* --------------------------------------------------------------- scrub track */
+
+.timetravel__track {
+  position: relative;
+  height: 22px;
+  display: flex;
+  align-items: center;
+}
+
+.timetravel__rail,
+.timetravel__elapsed {
+  position: absolute;
+  left: 0;
+  height: 4px;
+  border-radius: var(--radius-pill);
+  pointer-events: none;
+}
+
+.timetravel__rail { right: 0; background: var(--history-track); }
+
+/* Laid out full-width once and scaled, rather than having its `width` animated
+   on every scrub frame. A progress fill is the textbook case for scaleX. */
+.timetravel__elapsed {
+  right: 0;
+  background: var(--history-elapsed);
+  transform-origin: left;
+  transition: transform 90ms linear;
+}
+
+/* Decoration, and it says so. These used to be buttons. */
+.timetravel__tick {
+  position: absolute;
+  width: 7px;
+  height: 7px;
+  border-radius: var(--radius-pill);
+  transform: translateX(-50%);
+  pointer-events: none;
+  transition: opacity var(--motion-hover);
+}
+
+/* The one interactive element on the row. Transparent rather than hidden, so
+   the native thumb keeps its focus and keyboard behaviour while the rail, the
+   fill and the ticks below supply the appearance. */
+.timetravel__range {
+  position: relative;
+  z-index: 1;
+  width: 100%;
+  height: 22px;
+  margin: 0;
+  background: transparent;
+  cursor: pointer;
+  -webkit-appearance: none;
+  appearance: none;
+}
+
+.timetravel__range:focus-visible { outline: none; }
+
+.timetravel__range::-webkit-slider-thumb {
+  -webkit-appearance: none;
+  appearance: none;
+  width: 4px;
+  height: 18px;
+  border: none;
+  border-radius: var(--radius-pill);
+  background: var(--history-playhead);
+  cursor: grab;
+}
+
+.timetravel__range::-moz-range-thumb {
+  width: 4px;
+  height: 18px;
+  border: none;
+  border-radius: var(--radius-pill);
+  background: var(--history-playhead);
+  cursor: grab;
+}
+
+/* The focus ring goes on the thumb, since the input itself is invisible. */
+.timetravel__range:focus-visible::-webkit-slider-thumb {
+  box-shadow: 0 0 0 3px color-mix(in srgb, var(--history-accent) 45%, transparent);
+}
+.timetravel__range:focus-visible::-moz-range-thumb {
+  box-shadow: 0 0 0 3px color-mix(in srgb, var(--history-accent) 45%, transparent);
+}
+
+/* --------------------------------------------------------------------- foot */
+
+.timetravel__foot {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+}
+
+.timetravel__icon-btn {
+  display: flex;
+  align-items: center;
+  flex-shrink: 0;
+  padding: var(--space-1);
+  border: none;
+  border-radius: var(--radius-sm);
+  background: transparent;
+  color: var(--text-secondary);
+  cursor: pointer;
+  transition: background var(--motion-hover), color var(--motion-hover);
+}
+
+.timetravel__icon-btn:hover:not(:disabled) {
+  background: var(--surface-hover);
+  color: var(--text-primary);
+}
+
+.timetravel__icon-btn:disabled { opacity: 0.35; cursor: default; }
+
+/* The primary-action language used across the app — ink fill, surface glyph. */
+.timetravel__play {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 34px;
+  height: 34px;
+  flex-shrink: 0;
+  border: none;
+  border-radius: var(--radius-pill);
+  background: var(--text-primary);
+  color: var(--surface-primary);
+  cursor: pointer;
+  transition: opacity var(--motion-hover);
+}
+
+.timetravel__play:hover { opacity: 0.85; }
+/* A play triangle is visually left-heavy; the nudge centres what the eye sees
+   rather than what the bounding box says. */
+.timetravel__play-glyph { margin-left: 2px; }
+
+.timetravel__count {
+  margin-left: var(--space-2);
+  flex-shrink: 0;
+  font-size: var(--text-xs);
+  font-variant-numeric: tabular-nums;
+  color: var(--text-secondary);
+}
+
+.timetravel__count-of { color: var(--text-tertiary); }
+
+.timetravel__authors {
+  display: flex;
+  align-items: center;
+  gap: var(--space-1);
+  margin-left: var(--space-3);
+  flex-shrink: 0;
+}
+
+.timetravel__author-chip {
+  width: 7px;
+  height: 7px;
+  border-radius: var(--radius-pill);
+}
+
+.timetravel__trimmed {
+  display: flex;
+  align-items: center;
+  gap: var(--space-1);
+  margin-left: var(--space-3);
+  flex-shrink: 0;
+  font-size: var(--text-xs);
+  color: var(--text-tertiary);
+}
+
+.timetravel__speed {
+  margin-left: auto;
+  flex-shrink: 0;
+  min-width: 38px;
+  padding: 5px 9px;
+  border: none;
+  border-radius: var(--radius-md);
+  background: var(--surface-hover);
+  color: var(--text-primary);
+  font-family: var(--font-mono);
+  font-size: var(--text-sm);
+  font-weight: var(--weight-semibold);
+  font-variant-numeric: tabular-nums;
+  cursor: pointer;
+  transition: background var(--motion-hover);
+}
+
+.timetravel__speed:hover { background: var(--surface-secondary); }
+
+
+/* ---------------------------------------------------------------------------
+   EXPORT
+
+   Two columns: what you will get on the left, the settings that decide it on
+   the right. The preview is rendered through the export path itself, so it is
+   the export rather than a likeness of it — which is what turns this dialog
+   from a form you submit into a thing you adjust.
+   --------------------------------------------------------------------------- */
+
+.export-scrim {
+  position: fixed;
+  inset: 0;
+  z-index: 9999999;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: var(--space-4);
+  background: rgba(0, 0, 0, 0.4);
+  backdrop-filter: blur(8px);
+  -webkit-backdrop-filter: blur(8px);
+}
+
+.export {
+  width: 760px;
+  max-width: 100%;
+  max-height: calc(100vh - 2 * var(--space-4));
+  /* Vertical only. A grid child that refuses to shrink pushes the dialog wider
+     than its own box, and `overflow-y: auto` alone lets that become a
+     horizontal scrollbar on a modal — which is never the right answer, because
+     the content that ran off is the settings you came here to use. The
+     `minmax(0, …)` tracks below are the actual fix; this makes the failure
+     impossible rather than merely unlikely. */
+  overflow-y: auto;
+  overflow-x: hidden;
+  border-radius: var(--radius-2xl);
+  box-shadow: var(--shadow-overlay);
+  animation: popIn 200ms var(--ease-settle);
+}
+
+.export__head {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: var(--space-4);
+  padding: var(--space-5) var(--space-5) var(--space-4);
+  border-bottom: 1px solid var(--border-divider);
+}
+
+.export__title {
+  margin: 0 0 2px;
+  font-size: var(--text-xl);
+  font-weight: var(--weight-semibold);
+  letter-spacing: -0.01em;
+  color: var(--text-primary);
+}
+
+.export__subtitle {
+  margin: 0;
+  font-size: var(--text-sm);
+  color: var(--text-secondary);
+}
+
+.export__body {
+  display: grid;
+  /* `minmax(0, …)` rather than bare tracks: a grid item's default
+     `min-width: auto` refuses to shrink below its content, so a long filename
+     in the region dropdown would widen the whole column and overflow the
+     dialog instead of ellipsising inside it. */
+  grid-template-columns: minmax(0, 300px) minmax(0, 1fr);
+  gap: var(--space-5);
+  padding: var(--space-5);
+}
+
+/* ------------------------------------------------------------------ preview */
+
+.export__canvas {
+  position: relative;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  aspect-ratio: 4 / 3;
+  border: 1px solid var(--border-divider);
+  border-radius: var(--radius-lg);
+  overflow: hidden;
+}
+
+.export__canvas img {
+  max-width: 100%;
+  max-height: 100%;
+  object-fit: contain;
+}
+
+/* The chequerboard is the standard way of saying "this part is not painted",
+   and it is the only honest preview of a transparent export — a white plate
+   behind it would look identical to a white background. */
+.export__canvas--checker {
+  background-color: var(--surface-secondary);
+  background-image:
+    linear-gradient(45deg, var(--border-divider) 25%, transparent 25%),
+    linear-gradient(-45deg, var(--border-divider) 25%, transparent 25%),
+    linear-gradient(45deg, transparent 75%, var(--border-divider) 75%),
+    linear-gradient(-45deg, transparent 75%, var(--border-divider) 75%);
+  background-size: 14px 14px;
+  background-position: 0 0, 0 7px, 7px -7px, -7px 0;
+}
+
+.export__canvas--paper { background: #FFFFFF; }
+.export__canvas--ink { background: #161616; }
+.export__canvas--flat { background: var(--surface-secondary); }
+
+.export__preview-empty {
+  padding: var(--space-4);
+  text-align: center;
+  font-size: var(--text-sm);
+  color: var(--text-tertiary);
+}
+
+.export__preview-busy {
+  position: absolute;
+  top: var(--space-2);
+  right: var(--space-2);
+  display: flex;
+  color: var(--text-tertiary);
+  animation: spin 1s linear infinite;
+}
+
+.export__meta {
+  display: flex;
+  justify-content: space-between;
+  gap: var(--space-3);
+  margin-top: var(--space-2);
+  font-size: var(--text-xs);
+  font-variant-numeric: tabular-nums;
+  color: var(--text-tertiary);
+}
+
+/* ----------------------------------------------------------------- controls */
+
+.export__controls {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-4);
+  min-width: 0;
+}
+
+.export__field {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+  min-width: 0;
+}
+
+.export__label {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: var(--space-2);
+  font-size: var(--text-2xs);
+  font-weight: var(--weight-semibold);
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: var(--text-tertiary);
+}
+
+.export__value {
+  font-family: var(--font-mono);
+  font-size: var(--text-xs);
+  letter-spacing: 0;
+  text-transform: none;
+  font-variant-numeric: tabular-nums;
+  color: var(--text-secondary);
+}
+
+/* Six formats in a wrapping row rather than a column of description cards.
+   The blurb below says what the selected one is for, so each chip only has to
+   carry its name — and the whole set stays visible at once. */
+.export__formats {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px;
+}
+
+.export__format {
+  padding: 6px 12px;
+  border: 1px solid var(--border-divider);
+  border-radius: var(--radius-md);
+  background: transparent;
+  color: var(--text-secondary);
+  font-family: inherit;
+  font-size: var(--text-sm);
+  font-weight: var(--weight-medium);
+  cursor: pointer;
+  transition: var(--motion-hover);
+}
+
+.export__format:hover { color: var(--text-primary); }
+
+.export__format.is-active {
+  border-color: transparent;
+  background: var(--text-primary);
+  color: var(--surface-primary);
+  font-weight: var(--weight-semibold);
+}
+
+.export__hint {
+  margin: 0;
+  font-size: var(--text-xs);
+  line-height: 1.45;
+  color: var(--text-tertiary);
+  /* Two lines' worth, reserved. The blurbs differ in length and the panel
+     below them would otherwise jump every time the format changed. */
+  min-height: 2.3em;
+}
+
+.export__select {
+  width: 100%;
+  /* Without this a long frame name sets the select's intrinsic width and
+     drags the grid column open behind it. */
+  min-width: 0;
+  text-overflow: ellipsis;
+  padding: 7px 10px;
+  border: 1px solid var(--border-divider);
+  border-radius: var(--radius-md);
+  background: var(--surface-primary);
+  color: var(--text-primary);
+  font-family: inherit;
+  font-size: var(--text-sm);
+  cursor: pointer;
+}
+
+.export__segmented {
+  display: flex;
+  gap: 2px;
+  padding: 2px;
+  border-radius: var(--radius-md);
+  background: var(--surface-secondary);
+}
+
+.export__segment {
+  flex: 1;
+  padding: 5px 8px;
+  border: none;
+  border-radius: var(--radius-sm);
+  background: transparent;
+  color: var(--text-secondary);
+  font-family: inherit;
+  font-size: var(--text-sm);
+  font-weight: var(--weight-medium);
+  font-variant-numeric: tabular-nums;
+  cursor: pointer;
+  transition: var(--motion-hover);
+}
+
+.export__segment:hover:not(:disabled) { color: var(--text-primary); }
+
+.export__segment.is-active {
+  background: var(--surface-primary);
+  color: var(--text-primary);
+  box-shadow: var(--shadow-sm);
+}
+
+/* Disabled rather than hidden: a JPEG genuinely cannot be transparent, and
+   saying so teaches the format. Removing the option would just look arbitrary. */
+.export__segment:disabled { opacity: 0.4; cursor: not-allowed; }
+
+.export__field input[type='range'] {
+  width: 100%;
+  accent-color: var(--text-primary);
+  cursor: pointer;
+}
+
+/* -------------------------------------------------- advice, status, restore */
+
+.export__advice {
+  display: flex;
+  align-items: flex-start;
+  gap: var(--space-2);
+  margin: 0 var(--space-5) var(--space-4);
+  padding: 10px 12px;
+  border-radius: var(--radius-lg);
+  background: color-mix(in srgb, var(--status-warning) 10%, transparent);
+  color: var(--text-secondary);
+  font-size: var(--text-xs);
+  line-height: 1.5;
+}
+
+.export__advice svg { flex-shrink: 0; margin-top: 1px; color: var(--status-warning); }
+
+.export__link {
+  padding: 0;
+  border: none;
+  background: none;
+  color: var(--text-primary);
+  font: inherit;
+  font-weight: var(--weight-semibold);
+  text-decoration: underline;
+  cursor: pointer;
+}
+
+.export__error,
+.export__status {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  margin: 0 var(--space-5) var(--space-4);
+  padding: 10px 12px;
+  border-radius: var(--radius-lg);
+  font-size: var(--text-sm);
+  line-height: 1.4;
+}
+
+.export__error {
+  background: color-mix(in srgb, var(--status-danger) 12%, transparent);
+  border: 1px solid color-mix(in srgb, var(--status-danger) 40%, transparent);
+  color: var(--text-primary);
+}
+
+.export__status {
+  background: color-mix(in srgb, var(--status-online) 12%, transparent);
+  color: var(--text-primary);
+}
+
+/* Restoring replaces the board, so it is described first and confirmed second
+   rather than happening the instant a file is chosen. */
+.export__restore {
+  margin: 0 var(--space-5) var(--space-4);
+  padding: var(--space-3) var(--space-4);
+  border: 1px solid var(--border-divider);
+  border-radius: var(--radius-lg);
+  background: var(--surface-secondary);
+}
+
+.export__restore-text {
+  margin: 0 0 var(--space-3);
+  font-size: var(--text-sm);
+  line-height: 1.5;
+  color: var(--text-secondary);
+}
+
+.export__restore-actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: var(--space-2);
+}
+
+/* ------------------------------------------------------------------- footer */
+
+.export__foot {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  padding: var(--space-4) var(--space-5);
+  border-top: 1px solid var(--border-divider);
+  background: var(--surface-elevated);
+}
+
+.export__spacer { flex: 1; }
+
+.export__ghost,
+.export__primary,
+.export__danger {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-2);
+  padding: 8px 16px;
+  border-radius: var(--radius-md);
+  border: none;
+  font-family: inherit;
+  font-size: var(--text-sm);
+  font-weight: var(--weight-medium);
+  cursor: pointer;
+  transition: var(--motion-hover);
+}
+
+.export__ghost {
+  background: transparent;
+  color: var(--text-secondary);
+}
+
+.export__ghost:hover { background: var(--surface-hover); color: var(--text-primary); }
+
+.export__primary {
+  background: var(--text-primary);
+  color: var(--surface-primary);
+  font-weight: var(--weight-semibold);
+}
+
+.export__primary:hover:not(:disabled) { opacity: 0.85; }
+.export__primary:disabled { opacity: 0.6; cursor: default; }
+
+/* The only irreversible button in the dialog, and the only red one. */
+.export__danger {
+  background: var(--status-danger);
+  color: #FFFFFF;
+  font-weight: var(--weight-semibold);
+}
+
+.export__danger:hover { opacity: 0.88; }
+
+.export__spin { animation: spin 1s linear infinite; }
+
+/* One column on a narrow screen: the preview keeps its place at the top, where
+   it still answers "what will I get" before you touch anything. */
+@media (max-width: 720px) {
+  .export__body { grid-template-columns: 1fr; }
+}
+
+/* ---------------------------------------------------------------------------
+   RESTORE
+
+   Two surfaces for one idea. The rooms page offers "rebuild a board from a
+   backup", which is the path that matters to someone who cleared their browser
+   or arrived on a new machine — they land there with no boards at all, so the
+   in-room Restore is unreachable exactly when it is needed. The room then
+   confirms what it received.
+   --------------------------------------------------------------------------- */
+
+.rooms__masthead-actions {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  flex-shrink: 0;
+}
+
+/* Quieter than New board. Restoring is the rarer act and the page should not
+   present two equally loud front doors. */
+.rooms__secondary {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-2);
+  padding: 9px 16px;
+  border: 1px solid var(--border-divider);
+  border-radius: var(--radius-lg);
+  background: transparent;
+  color: var(--text-secondary);
+  font-family: inherit;
+  font-size: var(--text-base);
+  font-weight: var(--weight-medium);
+  cursor: pointer;
+  transition: var(--motion-hover);
+}
+
+.rooms__secondary:hover {
+  background: var(--surface-hover);
+  color: var(--text-primary);
+}
+
+.rooms__restore-error {
+  margin: 0 0 var(--space-4);
+  padding: 10px 14px;
+  border: 1px solid color-mix(in srgb, var(--status-danger) 40%, transparent);
+  border-radius: var(--radius-lg);
+  background: color-mix(in srgb, var(--status-danger) 12%, transparent);
+  color: var(--text-primary);
+  font-size: var(--text-sm);
+  line-height: 1.5;
+}
+
+/* The confirmation, once a restored room has opened. Sits under the header
+   rather than over the canvas: it is a receipt, not an alert, and the first
+   thing anyone does on arriving is look at their board. */
+.restore-notice {
+  position: absolute;
+  top: calc(var(--header-h) + var(--space-3));
+  left: 50%;
+  transform: translateX(-50%);
+  z-index: 1200;
+  display: flex;
+  align-items: center;
+  gap: var(--space-3);
+  max-width: min(560px, calc(100vw - 2 * var(--gutter)));
+  padding: 10px 10px 10px 16px;
+  border-radius: var(--radius-pill);
+  background: var(--surface-elevated);
+  box-shadow: var(--shadow-float);
+  color: var(--text-primary);
+  font-size: var(--text-sm);
+  animation: popIn 220ms var(--ease-settle);
+}
+
+.restore-notice.is-ok {
+  box-shadow: var(--shadow-float), inset 0 0 0 1px color-mix(in srgb, var(--status-online) 45%, transparent);
+}
+
+.restore-notice.is-error {
+  box-shadow: var(--shadow-float), inset 0 0 0 1px color-mix(in srgb, var(--status-danger) 45%, transparent);
+}
+
+.restore-notice__close {
+  display: grid;
+  place-items: center;
+  width: 26px;
+  height: 26px;
+  flex-shrink: 0;
+  border: none;
+  border-radius: 50%;
+  background: transparent;
+  color: var(--text-tertiary);
+  cursor: pointer;
+  transition: var(--motion-hover);
+}
+
+.restore-notice__close:hover {
+  background: var(--surface-hover);
+  color: var(--text-primary);
+}
+
+/* The masthead stacks on a phone; two side-by-side actions would each end up
+   too narrow to read. */
+@media (max-width: 560px) {
+  .rooms__masthead-actions { width: 100%; }
+  .rooms__masthead-actions button { flex: 1; justify-content: center; }
+}
+
+/* ---------------------------------------------------------------------------
+   RADAR — PEOPLE
+
+   The expanded panel used to show a bare count beside the title while the
+   collapsed one showed faces, so opening the radar told you less about who was
+   in the room than leaving it shut. Following someone also lived in the header
+   avatars, nowhere near the picture showing you where everyone is.
+
+   Two verbs per person, and they are genuinely different: jump takes you there
+   once and leaves you free, follow ties your camera to theirs until you stop.
+   --------------------------------------------------------------------------- */
+
+.radar-people {
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
+  padding: var(--space-2) var(--space-2) 0;
+  /* A room can be large. Four rows is enough to read at a glance; past that
+     it scrolls rather than pushing the zoom controls off the panel. */
+  max-height: 132px;
+  overflow-y: auto;
+  border-top: 1px solid var(--border-divider);
+}
+
+.radar-person {
+  display: flex;
+  align-items: center;
+  gap: 2px;
+}
+
+/* The row itself is the jump target — the whole thing, not a small icon,
+   because "go to where they are" is the common action. */
+.radar-person__jump {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  padding: 4px 6px;
+  border: none;
+  border-radius: var(--radius-md);
+  background: transparent;
+  color: var(--text-secondary);
+  font-family: inherit;
+  font-size: var(--text-xs);
+  text-align: left;
+  cursor: pointer;
+  transition: background var(--motion-hover), color var(--motion-hover);
+}
+
+.radar-person__jump:hover:not(:disabled) {
+  background: var(--surface-hover);
+  color: var(--text-primary);
+}
+
+/* Disabled when we have neither a cursor nor a viewport for them — there is
+   nowhere to jump to. Saying so beats a button that does nothing. */
+.radar-person__jump:disabled { opacity: 0.5; cursor: default; }
+
+.radar-person__face {
+  flex: 0 0 auto;
+  display: grid;
+  place-items: center;
+  width: 20px;
+  height: 20px;
+  border-radius: 50%;
+  /* White on the identity colour, which is how the same person is drawn in the
+     header, the cursors and the comment rows. */
+  color: #FFFFFF;
+  font-size: 9px;
+  font-weight: var(--weight-bold);
+  letter-spacing: 0.02em;
+}
+
+/* Away is drawn as absence of vigour rather than a badge: a second marker per
+   row would compete with the activity label, which carries real information. */
+.radar-person__face[data-away] { opacity: 0.45; }
+
+.radar-person__name {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+/* What they are doing, when they are doing something. Quiet, because it
+   changes often and must not pull the eye off the board. */
+.radar-person__doing {
+  flex: 0 0 auto;
+  font-size: var(--text-2xs);
+  font-weight: var(--weight-semibold);
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  color: var(--text-tertiary);
+}
+
+.radar-person__follow {
+  flex: 0 0 auto;
+  display: grid;
+  place-items: center;
+  width: 26px;
+  height: 26px;
+  border: none;
+  border-radius: var(--radius-md);
+  background: transparent;
+  color: var(--text-tertiary);
+  cursor: pointer;
+  transition: var(--motion-hover);
+}
+
+.radar-person__follow:hover {
+  background: var(--surface-hover);
+  color: var(--text-primary);
+}
+
+/* Following is a mode you are *in*, so it latches visibly rather than looking
+   like a button that was pressed a moment ago. */
+.radar-person__follow.is-on {
+  background: color-mix(in srgb, var(--brand-orange) 18%, transparent);
+  color: var(--text-primary);
+}
+
+/* ---------------------------------------------------------------------------
+   DROP TARGET
+
+   Shown while a file is dragged over the window. Without it, dragging a photo
+   onto the board looks exactly like dragging it onto something that will
+   refuse — and the browser's own answer to an unhandled drop is to navigate
+   away to the file, which loses the board.
+   --------------------------------------------------------------------------- */
+
+.drop-veil {
+  position: absolute;
+  inset: 0;
+  z-index: 2000;
+  display: grid;
+  place-items: center;
+  /* Never a hit target: the drop has to reach the window listener, and an
+     overlay that swallowed it would make the feature it announces impossible. */
+  pointer-events: none;
+  background: color-mix(in srgb, var(--brand-orange) 8%, transparent);
+  box-shadow: inset 0 0 0 2px var(--brand-orange);
+  animation: fadeIn 120ms var(--ease-settle);
+}
+
+.drop-veil__label {
+  padding: 10px 18px;
+  border-radius: var(--radius-pill);
+  background: var(--surface-elevated);
+  box-shadow: var(--shadow-float);
+  color: var(--text-primary);
+  font-family: var(--font-sans);
+  font-size: var(--text-md);
+  font-weight: var(--weight-semibold);
+}
+
+/* ---------------------------------------------------------------------------
+   TEMPLATES
+
+   Shown only on an empty dashboard. An empty canvas is the hardest screen in
+   the product — it asks you to know what the tool is for before you have used
+   it — and a board that opens with work on it answers that by being pokeable.
+
+   Once someone has boards of their own, their work is what they came for and
+   this gets out of the way entirely.
+   --------------------------------------------------------------------------- */
+
+
+
+/* A titled section rather than a bare label. The gallery is a real part of
+   the page — for a new person it is the *only* part with anything in it — so
+   it gets the same heading treatment the page's own masthead has, one step
+   down in scale. */
+.templates__head {
+  margin-bottom: var(--space-4);
+}
+
+.templates__title {
+  margin: 0 0 var(--space-2);
+  /* Matches the page masthead in weight and tracking. This is the first thing
+     on the page now, and a section label sized like a caption would read as
+     something to scroll past. */
+  font-size: var(--text-2xl, 28px);
+  font-weight: var(--weight-semibold);
+  letter-spacing: -0.02em;
+  color: var(--text-primary);
+}
+
+.templates__lede {
+  margin: 0;
+  max-width: 62ch;
+  font-size: var(--text-sm);
+  line-height: 1.55;
+  color: var(--text-secondary);
+}
+
+/* Leads the page, so it gets air beneath it rather than a rule above it —
+   the boards below are the second section now, not this one. */
+.templates {
+  margin-bottom: var(--space-7);
+  padding-bottom: var(--space-6);
+  border-bottom: 1px solid var(--border-divider);
+}
+
+.templates__grid {
+  display: grid;
+  /* Fills the row at whatever width is available rather than snapping to
+     breakpoints — four across on a desktop, two on a tablet, one on a phone,
+     with no media query deciding for it. */
+  grid-template-columns: repeat(auto-fill, minmax(230px, 1fr));
+  gap: var(--space-3);
+}
+
+.template-card {
+  display: flex;
+  flex-direction: column;
+  align-items: stretch;
+  gap: var(--space-2);
+  /* No padding at the top: the artwork runs to the card's own edge, the way a
+     cover does on the board cards beside it. */
+  padding: 0 0 var(--space-4);
+  overflow: hidden;
+  border: 1px solid var(--border-divider);
+  border-radius: var(--radius-xl);
+  background: var(--surface-elevated);
+  text-align: left;
+  cursor: pointer;
+  transition: transform var(--motion-hover), border-color var(--motion-hover),
+    box-shadow var(--motion-hover);
+}
+
+/* Lifts on the same exponential settle every other elevated surface uses, so
+   a card rising reads as the same material as a panel opening. */
+.template-card:hover {
+  transform: translateY(-2px);
+  border-color: color-mix(in srgb, var(--brand-orange) 45%, transparent);
+  box-shadow: var(--shadow-md);
+}
+
+.template-card:focus-visible {
+  outline: none;
+  border-color: transparent;
+  box-shadow: 0 0 0 2px var(--surface-primary), 0 0 0 4px var(--brand-orange);
+}
+
+/* The board, at the top of the card. Fixed aspect so a row of cards has one
+   baseline for its text rather than four different ones. */
+.template-card__art {
+  display: block;
+  aspect-ratio: 16 / 10;
+  overflow: hidden;
+  border-bottom: 1px solid var(--border-divider);
+  background: var(--surface-secondary);
+}
+
+.template-card__art .cover { width: 100%; height: 100%; }
+
+.template-card__name {
+  padding: var(--space-3) var(--space-4) 0;
+  font-size: var(--text-lg);
+  font-weight: var(--weight-semibold);
+  letter-spacing: -0.01em;
+  color: var(--text-primary);
+}
+
+/* What the board is *for*, not what it contains — a list of contents is
+   something you can see for yourself the moment it opens. */
+.template-card__blurb {
+  flex: 1;
+  padding: 0 var(--space-4);
+  font-size: var(--text-sm);
+  line-height: 1.5;
+  color: var(--text-secondary);
+}
+
+.template-card__teaches {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px;
+  padding: 0 var(--space-4);
+}
+
+/* The features you will meet, stated plainly. These are the reason a template
+   exists rather than a blank board, so they are worth naming. */
+/* The count is the claim the showcase boards make, so it is inked rather than
+   grey — and it comes first, before the feature chips. */
+.template-card__chip--count {
+  background: var(--text-primary);
+  color: var(--surface-primary);
+  font-variant-numeric: tabular-nums;
+}
+
+.template-card__chip {
+  padding: 2px 8px;
+  border-radius: var(--radius-pill);
+  background: var(--surface-secondary);
+  color: var(--text-tertiary);
+  font-size: var(--text-2xs);
+  font-weight: var(--weight-medium);
+  white-space: nowrap;
+}
+
+/* ---------------------------------------------------------------------------
+   TEMPLATE CATEGORIES
+
+   A filter, not navigation. Switching is instant and keeps the page you are on
+   — a tab that navigated would throw away the scroll position and anything
+   typed into the search box above it.
+   --------------------------------------------------------------------------- */
+
+.templates__tabs {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--space-2);
+  margin-bottom: var(--space-4);
+}
+
+.templates__tab {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-2);
+  padding: 7px 14px;
+  border: 1px solid var(--border-divider);
+  border-radius: var(--radius-pill);
+  background: transparent;
+  color: var(--text-secondary);
+  font-family: inherit;
+  font-size: var(--text-sm);
+  font-weight: var(--weight-medium);
+  cursor: pointer;
+  transition: var(--motion-hover);
+}
+
+.templates__tab:hover {
+  background: var(--surface-hover);
+  color: var(--text-primary);
+}
+
+/* The selected tab is inked rather than tinted. A row of pills where the
+   active one is merely a shade darker is a row where you have to hunt for
+   which one is on. */
+.templates__tab.is-on {
+  border-color: transparent;
+  background: var(--text-primary);
+  color: var(--surface-primary);
+  font-weight: var(--weight-semibold);
+}
+
+/* How many boards are behind each tab, so an empty-looking category is never
+   a surprise after the click. */
+.templates__tab-count {
+  font-variant-numeric: tabular-nums;
+  font-size: var(--text-2xs);
+  opacity: 0.6;
+}
+
+/* The gallery collapses, so someone who knows their way around is not scrolling
+   past it every visit. The heading is the control — a separate chevron button
+   beside a non-clickable title is a smaller target for the same job. */
+.templates__toggle {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  padding: 0;
+  border: none;
+  background: none;
+  cursor: pointer;
+  color: inherit;
+  text-align: left;
+}
+
+.templates__chevron {
+  flex-shrink: 0;
+  color: var(--text-tertiary);
+  transition: transform var(--motion-expand);
+}
+
+.templates__toggle[aria-expanded='false'] .templates__chevron {
+  transform: rotate(-90deg);
+}
+
+.templates__toggle:hover .templates__title { color: var(--text-secondary); }
+
+/* No title in the top row any more — it belongs to the boards section now — so
+   the actions sit alone against the right edge. */
+.rooms__masthead--bare { justify-content: flex-end; }
+
+/* The boards heading, one step down from the gallery it follows. */
+.rooms__section-head { margin-bottom: var(--space-4); }

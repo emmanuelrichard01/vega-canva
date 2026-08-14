@@ -16,5 +16,8 @@ export function nodeLabel(node: AnyNode): string {
     if (firstLine) return firstLine;
   }
   if (node.type === 'sticky') return 'Idea Card';
+  // A connector's label is the word riding its middle — "yes", "no", "retry".
+  // On a flowchart that is the only thing telling one arrow from the next.
+  if (node.type === 'connector' && node.label) return node.label.slice(0, 24);
   return `${node.type.charAt(0).toUpperCase()}${node.type.slice(1)}`;
 }
