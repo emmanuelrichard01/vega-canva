@@ -98,6 +98,25 @@ export interface PreviewItem {
    * draw one.
    */
   k?: 1;
+  /**
+   * A shape that is neither a rectangle nor an ellipse.
+   *
+   * Everything the renderer did not recognise fell through to a filled rect,
+   * so a star drew as a block, a triangle drew as a block, and a hexagon drew
+   * as a block. On a board holding one star that is the entire picture: a
+   * solid rectangle of the star's colour, which is not a thumbnail of
+   * anything.
+   *
+   * The side count and the star's waist are carried rather than the vertices.
+   * A star has ten points and a polygon can have many more; storing the two
+   * numbers that generate them is a fraction of the size, and the arithmetic
+   * is a line of trigonometry the renderer can do.
+   */
+  s?: 'polygon' | 'star' | 'line';
+  /** Sides for a polygon, points for a star. */
+  p?: number;
+  /** Star only: waist as a fraction of the outer radius. */
+  ir?: number;
 }
 
 export interface BoardPreview {
@@ -206,7 +225,21 @@ export function buildPreview(
       h: round(h / boardH),
       c: colorOf(n),
     };
-    if (n.type === 'shape' && n.geometry.kind === 'ellipse') item.o = 1;
+    if (n.type === 'shape') {
+      const geo = n.geometry;
+      if (geo.kind === 'ellipse') item.o = 1;
+      else if (geo.kind === 'polygon') { item.s = 'polygon'; item.p = geo.points ?? 3; }
+      else if (geo.kind === 'star') {
+        item.s = 'star';
+        item.p = geo.points ?? 5;
+        item.ir = geo.innerRatio ?? 0.5;
+      } else if (geo.kind === 'line' || geo.kind === 'arrow') {
+        // Open shapes have no interior. Drawn as a filled box they became the
+        // one thing they can never be: solid.
+        item.s = 'line';
+        item.c = n.appearance?.stroke?.color ?? item.c;
+      }
+    }
     if (n.type === 'frame') item.k = 1;
     if (n.type === 'text') {
       item.t = 1;
@@ -254,10 +287,23 @@ const KEY_PREFIX = 'vega_preview_';
  * allowed to be lossy. Losing it costs a placeholder cover until the next
  * visit. Same call the tag filter and the comment read marks make.
  */
+export const EMPTY_PREVIEW: BoardPreview = { ratio: 1, items: [], total: 0 };
+
 export function savePreview(roomId: string, preview: BoardPreview | null): void {
   try {
-    if (!preview) localStorage.removeItem(KEY_PREFIX + roomId);
-    else localStorage.setItem(KEY_PREFIX + roomId, JSON.stringify(preview));
+    /**
+     * An empty board is recorded, not forgotten.
+     *
+     * `buildPreview` returns null when there is nothing visible to draw, and
+     * this used to answer by deleting the key — which collapsed two different
+     * facts into one absence. A missing record means *this device has never
+     * opened that board*; an empty one means *it has, and there is nothing on
+     * it*. With only the absence to go on, every empty board you had made
+     * yourself was captioned "Not opened on this device", which is simply
+     * untrue and is exactly the kind of confident wrong answer a placeholder
+     * must never give.
+     */
+    localStorage.setItem(KEY_PREFIX + roomId, JSON.stringify(preview ?? EMPTY_PREVIEW));
   } catch {
     /* A full or unavailable store must never take the room down with it. */
   }

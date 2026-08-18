@@ -17,19 +17,6 @@ interface Props {
   preview?: BoardPreview | null;
 }
 
-/** Deterministic seed, for the boards we have never opened on this device. */
-const cyrb53 = (str: string, seed = 0) => {
-  let h1 = 0xdeadbeef ^ seed, h2 = 0x41c6ce57 ^ seed;
-  for (let i = 0, ch; i < str.length; i++) {
-    ch = str.charCodeAt(i);
-    h1 = Math.imul(h1 ^ ch, 2654435761);
-    h2 = Math.imul(h2 ^ ch, 1597334677);
-  }
-  h1 = Math.imul(h1 ^ (h1 >>> 16), 2246822507) ^ Math.imul(h2 ^ (h2 >>> 13), 3266489909);
-  h2 = Math.imul(h2 ^ (h2 >>> 16), 2246822507) ^ Math.imul(h1 ^ (h1 >>> 13), 3266489909);
-  return 4294967296 * (2097151 & h2) + (h1 >>> 0);
-};
-
 /**
  * The picture on a board's card.
  *
@@ -58,7 +45,22 @@ export const WorkspaceCover: React.FC<Props> = ({ workspaceId, name, preview: su
      */
     const VIEW_W = 100;
     const VIEW_H = 62;
-    const scale = Math.min(VIEW_W / preview.ratio, VIEW_H) / VIEW_H;
+    /**
+     * The board is drawn inside a margin, not bled to the edges.
+     *
+     * Fitted edge to edge, a board whose content is one large object becomes a
+     * solid rectangle of that object's colour filling the whole card — which
+     * is arithmetically the correct fit and tells you nothing. Nothing about
+     * it reads as a canvas: no ground, no sense of scale, no indication that
+     * the colour is an object sitting *on* something.
+     *
+     * Holding the drawing to 84% and letting the dot field show around it
+     * gives every cover the same frame of reference, so a board with one
+     * shape and a board with three hundred are recognisably the same kind of
+     * picture.
+     */
+    const PAD = 0.84;
+    const scale = (Math.min(VIEW_W / preview.ratio, VIEW_H) / VIEW_H) * PAD;
     const drawW = VIEW_H * preview.ratio * scale;
     const drawH = VIEW_H * scale;
     const offX = (VIEW_W - drawW) / 2;
@@ -158,6 +160,50 @@ export const WorkspaceCover: React.FC<Props> = ({ workspaceId, name, preview: su
             if (item.o) {
               return <ellipse key={i} cx={x + w / 2} cy={y + h / 2} rx={w / 2} ry={h / 2} fill={item.c} />;
             }
+
+            /**
+             * Stars, polygons and lines — everything that is not a box.
+             *
+             * These all fell through to the filled rectangle below, so a board
+             * holding a single star had a thumbnail that was a solid block of
+             * the star's colour. The vertices are generated here from the two
+             * numbers the summary carries, rather than stored: a star is ten
+             * points and a polygon can be many more.
+             *
+             * Both start at twelve o'clock, which is where the shape tool
+             * draws them, so the picture matches the board rather than being
+             * the same shape at some other rotation.
+             */
+            if (item.s === 'line') {
+              // No interior to fill: a stroke across the box it occupies.
+              return (
+                <line
+                  key={i}
+                  x1={x} y1={y + h / 2} x2={x + w} y2={y + h / 2}
+                  stroke={item.c}
+                  strokeWidth={Math.max(0.5, Math.min(1.4, h))}
+                  strokeLinecap="round"
+                />
+              );
+            }
+
+            if (item.s === 'polygon' || item.s === 'star') {
+              const cx = x + w / 2;
+              const cy = y + h / 2;
+              const rx = w / 2;
+              const ry = h / 2;
+              const count = Math.max(3, Math.round(item.p ?? 3));
+              const inner = item.s === 'star' ? Math.min(0.95, Math.max(0.05, item.ir ?? 0.5)) : 1;
+              const steps = item.s === 'star' ? count * 2 : count;
+              const pts: string[] = [];
+              for (let k = 0; k < steps; k += 1) {
+                // -90° so the first vertex points up, as the tool draws it.
+                const angle = (k / steps) * Math.PI * 2 - Math.PI / 2;
+                const r = item.s === 'star' && k % 2 === 1 ? inner : 1;
+                pts.push(`${cx + Math.cos(angle) * rx * r},${cy + Math.sin(angle) * ry * r}`);
+              }
+              return <polygon key={i} points={pts.join(' ')} fill={item.c} />;
+            }
             return (
               <rect
                 key={i}
@@ -172,20 +218,27 @@ export const WorkspaceCover: React.FC<Props> = ({ workspaceId, name, preview: su
     );
   }
 
-  // Never opened here: a quiet mark rather than a picture of a board we have
-  // not got. Deliberately calmer than the drawing above, so a real preview
-  // always outranks a placeholder at a glance.
-  const hash = cyrb53(workspaceId);
-  const hue = hash % 360;
+  /**
+   * Nothing to draw — and *which* nothing matters.
+   *
+   * A stored record with no items means the board has been opened and is
+   * empty. No record at all means this device has never opened it. They were
+   * one state, captioned "Not opened on this device", which was wrong for
+   * every empty board anyone had made themselves.
+   *
+   * The hue-hashed square that used to sit here is gone with it. It was a
+   * random colour standing in for information — the same objection this
+   * component's own header makes about the three abstract glyphs it
+   * replaced — and two boards with nothing on them should look alike, because
+   * they are alike.
+   */
+  const seen = preview !== null;
 
   return (
-    <div className="cover cover--empty">
-      <span
-        className="cover__seed"
-        style={{ background: `hsl(${hue} 45% 55% / 0.28)` }}
-        aria-hidden="true"
-      />
-      <span className="cover__hint">Not opened on this device</span>
+    <div className="cover cover--empty" role="img" aria-label={seen ? `${name} — empty board` : `${name} — not opened on this device`}>
+      <span className="cover__hint">
+        {seen ? 'Nothing on it yet' : 'Not opened on this device'}
+      </span>
     </div>
   );
 };

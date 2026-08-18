@@ -350,79 +350,135 @@ export const TEMPLATES: Template[] = [
     id: 'org',
     category: 'diagrams',
     name: 'Org chart',
-    blurb: 'Three tiers and every name under them, wired throughout — 137 live connectors.',
+    blurb: 'A small company, four disciplines deep, wired throughout with 68 live connectors.',
     teaches: ['Connectors at scale', 'Layout'],
     objectCount: 137,
     build: (limit) => {
       /**
-       * Deep rather than wide.
+       * Deep rather than wide, and staffed rather than numbered.
        *
-       * The last tier used to be thirty-two boxes on one row, which made the
-       * board 6000px across and barely 1000 tall — a 6:1 letterbox that
-       * shrank to a smear in any frame with a normal aspect, including its
-       * own card. Real org charts do not solve this by getting wider either:
-       * they stack the leaves vertically under the team that owns them, which
-       * is what the fourth tier does here.
+       * Two things were wrong with it. The last tier was thirty-two boxes on
+       * one row, which made the board 6000px across and barely 1000 tall — a
+       * 6:1 letterbox that shrank to a smear in any frame with a normal
+       * aspect, its own card included. Real org charts do not solve that by
+       * getting wider: they stack the people vertically under the team that
+       * owns them, which is what the bottom tier does here and why it costs no
+       * width at all.
+       *
+       * The other was that every box read "Team 2.1" and every person "3.4".
+       * A chart of placeholders demonstrates the *shape* of an org chart and
+       * nothing about reading one — you cannot tell at a glance which branch
+       * is engineering, so the colour coding and the depth carry no meaning
+       * and there is nothing to recognise. It is a small company now, with
+       * disciplines you can tell apart.
        */
-      const nodes: NewNodeInput[] = [
-        label(-160, -190, 'Org chart', 44),
-        label(-160, -136, 'Drag any box. Every arrow below it re-solves.', 17),
-      ];
-      const tiers = limit && limit < 120 ? [1, 4, 8] : [1, 4, 8];
-      const rows: NewNodeInput[][] = [];
+      type Person = string;
+      interface Team { name: string; people: Person[] }
+      interface Fn { name: string; tint: string; teams: Team[] }
 
-      tiers.forEach((count, tier) => {
-        const row: NewNodeInput[] = [];
-        const width = tier === 0 ? 220 : 150;
-        const gap = tier === 0 ? 0 : 40;
-        const totalWidth = count * width + (count - 1) * gap;
-        for (let i = 0; i < count; i += 1) {
-          row.push(
-            box(
-              -totalWidth / 2 + i * (width + gap),
-              tier * 260,
-              width,
-              tier === 0 ? 90 : 70,
-              tier === 0 ? 'Everyone' : `Team ${tier}.${i + 1}`,
-              ['#DBEAFE', '#DCFCE7', '#FEF3C7', '#FBD2E1'][tier]
-            )
-          );
-        }
-        rows.push(row);
-        nodes.push(...row);
+      const ORG: Fn[] = [
+        {
+          name: 'Engineering', tint: '#DBEAFE',
+          teams: [
+            { name: 'Platform', people: ['Ada', 'Ravi', 'Mei', 'Tom', 'Iris', 'Kojo', 'Lena'] },
+            { name: 'Client', people: ['Sam', 'Priya', 'Noor', 'Eli', 'Dana', 'Hugo', 'Maya'] },
+          ],
+        },
+        {
+          name: 'Design', tint: '#FBD2E1',
+          teams: [
+            { name: 'Product design', people: ['Jo', 'Amara', 'Finn', 'Zara', 'Otto', 'Lila', 'Bo'] },
+            { name: 'Brand', people: ['Rey', 'Ines', 'Kai', 'Nia', 'Pip', 'Sol', 'Vik'] },
+          ],
+        },
+        {
+          name: 'Product', tint: '#DCFCE7',
+          teams: [
+            { name: 'Growth', people: ['Ana', 'Theo', 'Suri', 'Cleo', 'Marc', 'Yuki', 'Rosa'] },
+            { name: 'Core', people: ['Ivo', 'Nell', 'Omar', 'Tess', 'Gus', 'Sena', 'Ada B.'] },
+          ],
+        },
+        {
+          name: 'Operations', tint: '#FEF3C7',
+          teams: [
+            { name: 'People', people: ['Rune', 'Asha', 'Milo', 'Wren', 'Jonas', 'Efe', 'Tara'] },
+            { name: 'Finance', people: ['Cass', 'Deniz', 'Rui', 'Alba', 'Nils', 'Sena B.', 'Ove'] },
+          ],
+        },
+      ];
+
+      const TEAM_W = 190;
+      const TEAM_GAP = 46;
+      const TIER_H = 250;
+      const PERSON_H = 44;
+      const PERSON_GAP = 10;
+
+      const teams = ORG.flatMap((fn) => fn.teams.map((team) => ({ ...team, fn })));
+      const boardW = teams.length * TEAM_W + (teams.length - 1) * TEAM_GAP;
+      const teamX = (i: number) => -boardW / 2 + i * (TEAM_W + TEAM_GAP);
+
+      /**
+       * Boxes and lines are collected separately so the lines can go to the
+       * back.
+       *
+       * Creation order is z-order, and building the tree naturally interleaves
+       * them — box, its link, box, its link — so every connector ended up
+       * drawn *over* the boxes created before it. On a chart this dense that
+       * reads as wires lying across the labels. Returning all the connectors
+       * first puts the whole harness behind the whole tree, which is where a
+       * reader expects it and how every org chart is drawn.
+       */
+      const boxes: NewNodeInput[] = [];
+      const links: NewNodeInput[] = [];
+      const labels: NewNodeInput[] = [
+        label(-boardW / 2, -TIER_H - 190, 'Who does what', 44),
+        label(-boardW / 2, -TIER_H - 136, 'Drag any box. Every line beneath it re-solves as it moves.', 17),
+      ];
+
+      // ---- the root ------------------------------------------------------
+      const root = box(-130, -TIER_H * 2, 260, 96, 'Chief Executive', '#E0E7FF', {
+        typography: { fontSize: 20, fontWeight: 700, color: '#1F2937', align: 'center', verticalAlign: 'middle' },
+      });
+      boxes.push(root);
+
+      // ---- the functions -------------------------------------------------
+      // Centred over the pair of teams each one owns, so a branch is a shape
+      // you can follow rather than a line you have to trace.
+      const fnNodes = ORG.map((fn, f) => {
+        const left = teamX(f * 2);
+        const right = teamX(f * 2 + 1) + TEAM_W;
+        const node = box(
+          (left + right) / 2 - 110, -TIER_H, 220, 78, fn.name, fn.tint,
+          { typography: { fontSize: 18, fontWeight: 700, color: '#1F2937', align: 'center', verticalAlign: 'middle' } }
+        );
+        boxes.push(node);
+        links.push(link(root.id as string, node.id as string, { endEnd: 'none' }));
+        return node;
       });
 
-      // Each tier fans out from its parent, so the connectors have real work to
-      // do — a hundred arrows all re-routing the instant a box is dragged.
-      for (let tier = 1; tier < rows.length; tier += 1) {
-        rows[tier].forEach((child, i) => {
-          const parent = rows[tier - 1][Math.floor(i / (rows[tier].length / rows[tier - 1].length))];
-          nodes.push(link(parent.id as string, child.id as string, { endEnd: 'none' }));
+      // ---- the teams, and the people under each --------------------------
+      const withPeople = !limit || limit >= 120;
+      teams.forEach((team, t) => {
+        const x = teamX(t);
+        const teamNode = box(x, 0, TEAM_W, 70, team.name, team.fn.tint, {
+          typography: { fontSize: 16, fontWeight: 600, color: '#1F2937', align: 'center', verticalAlign: 'middle' },
         });
-      }
-      // The people, stacked under the team that owns them rather than spread
-      // along a fourth row. Seven each under eight teams is fifty-six more
-      // boxes and not one pixel of extra width — which is the whole reason
-      // real org charts are drawn this way.
-      if (!limit || limit >= 120) {
-        const leaves = rows[rows.length - 1];
-        leaves.forEach((team, t) => {
-          for (let k = 0; k < 7; k += 1) {
-            const person = box(
-              (team.x as number) + 10,
-              (team.y as number) + 110 + k * 54,
-              130,
-              42,
-              `${t + 1}.${k + 1}`,
-              '#F1F5F9'
-            );
-            nodes.push(person);
-            nodes.push(link(team.id as string, person.id as string, { endEnd: 'none' }));
-          }
-        });
-      }
+        boxes.push(teamNode);
+        links.push(link(fnNodes[Math.floor(t / 2)].id as string, teamNode.id as string, { endEnd: 'none' }));
 
-      return nodes;
+        if (!withPeople) return;
+        team.people.forEach((person, k) => {
+          const personNode = box(
+            x + 20, 118 + k * (PERSON_H + PERSON_GAP), TEAM_W - 40, PERSON_H, person, '#F8FAFC',
+            { typography: { fontSize: 15, fontWeight: 500, color: '#334155', align: 'center', verticalAlign: 'middle' } }
+          );
+          boxes.push(personNode);
+          links.push(link(teamNode.id as string, personNode.id as string, { endEnd: 'none' }));
+        });
+      });
+
+      // Wires first, then the tree, then the titles on top.
+      return [...links, ...boxes, ...labels];
     },
   },
   {

@@ -1040,6 +1040,31 @@ export default function Room() {
     }
   }, [activeTool]);
 
+  /**
+   * A word at the moment the room empties.
+   *
+   * Focus mode is now reachable from the View menu, which fixes half the
+   * problem — but the half that stranded people was never getting *in*, it
+   * was that every panel vanishing looks like something went wrong, and
+   * nothing on screen says the backslash key brings them back. The exit
+   * control sits at a third opacity in a corner, deliberately quiet, which is
+   * right for chrome and useless as a first explanation.
+   *
+   * So it is said once, when it is true, and then it leaves — the same shape
+   * as the template greeting. Not shown for the physics room, where the
+   * Forces bar is already on screen carrying its own Done.
+   */
+  const [focusHint, setFocusHint] = useState(false);
+  const [focusHintLeaving, setFocusHintLeaving] = useState(false);
+  useEffect(() => {
+    if (isUiVisible || isForceTool(activeTool)) { setFocusHint(false); return; }
+    setFocusHint(true);
+    setFocusHintLeaving(false);
+    const fade = window.setTimeout(() => setFocusHintLeaving(true), 3600);
+    const drop = window.setTimeout(() => setFocusHint(false), 4020);
+    return () => { window.clearTimeout(fade); window.clearTimeout(drop); };
+  }, [isUiVisible, activeTool]);
+
   /** Drives the immersive treatment in CSS. See `[data-zen]` in `index.css`. */
   const zenPhysics = isForceTool(activeTool) && !isUiVisible;
   useEffect(() => {
@@ -1447,6 +1472,12 @@ export default function Room() {
           which is precisely where the Forces bar now sits. Two panels fighting
           for the same thirty pixels, one of which appears on hover, is a way
           to make the instrument feel unreliable. */}
+      {focusHint && (
+        <div className={`focus-hint${focusHintLeaving ? ' is-leaving' : ''}`} role="status">
+          Panels hidden. Press <kbd>\</kbd> to bring them back.
+        </div>
+      )}
+
       {!isUiVisible && !zenPhysics && (
         <>
           <div

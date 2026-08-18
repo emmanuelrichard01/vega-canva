@@ -1,4 +1,4 @@
-import { historyArray, localAuthor, provider } from '../document';
+import { historyArray, localAuthor } from '../document';
 import { nanoid } from 'nanoid';
 
 export interface CanvasCommand {
@@ -87,9 +87,18 @@ class HistoryServiceClass {
     historyArray.delete(0, historyArray.length);
   }
 
-  /** Client id of the local peer, used to filter own events out of the feed. */
+  /**
+   * Who *we* are, in the same terms the events are stamped with.
+   *
+   * This returned the Yjs awareness `clientID` while every command is written
+   * with `userId: author.id` — the identity from the auth store. Two entirely
+   * different identifier spaces, so the activity feed's "is this me?" test
+   * could never match and it narrated every one of your own actions back at
+   * you. The feed's own comment says that is noise rather than presence; it
+   * was right, and it was doing it anyway.
+   */
   get localClientId(): string {
-    return provider.awareness?.clientID?.toString() ?? 'local';
+    return localAuthor().id;
   }
 }
 

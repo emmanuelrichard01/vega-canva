@@ -757,8 +757,14 @@ export const ObjectContextToolbar: React.FC<Props> = ({ selectedId, selectedIds,
         <span className="ctx-kind">{kind.icon}{kind.name}</span>
         <Divider />
 
-        {/* ---------------------------------------------------- shapes & paths */}
-        {(node.type === 'shape' || node.type === 'path') && (
+        {/* ------------------------------------- shapes, paths and connectors */}
+        {/* A connector is a stroke, and the registry has always said so —
+            `supportsStroke` is on its capabilities and the properties panel
+            offers its colour. This toolbar simply never asked: it gated the
+            whole group on shape-or-path, so selecting a connector gave you a
+            floating toolbar with no way to recolour the one thing a connector
+            is made of. Fill stays out, because there is no interior. */}
+        {(node.type === 'shape' || node.type === 'path' || node.type === 'connector') && (
           <>
             <div className="ctx-group">
               {node.type === 'shape' && (
@@ -799,10 +805,12 @@ export const ObjectContextToolbar: React.FC<Props> = ({ selectedId, selectedIds,
               {/* The same editor the Properties panel uses, not a colour-only
                   shortcut — a fill control that could only make flat colours
                   would discard a gradient the moment anyone reached for it. */}
-              {!openShape && <FillEditor paint={appearance.fill?.[0]} onChange={(fill) => setAppearance({ fill: [fill] })} />}
+              {!openShape && node.type !== 'connector' && (
+                <FillEditor paint={appearance.fill?.[0]} onChange={(fill) => setAppearance({ fill: [fill] })} />
+              )}
               {/* A freehand blob is a filled outline with no separate stroke
                   render path, so stroke controls on one would do nothing. */}
-              {(node.type === 'shape' || node.geometry.kind !== 'freehand') && (
+              {(node.type === 'shape' || node.type === 'connector' || node.geometry.kind !== 'freehand') && (
                 <RailPopover
                   label="Stroke"
                   trigger={<><Minus size={16} /><span className="ctx-value">{strokeWidth}</span></>}

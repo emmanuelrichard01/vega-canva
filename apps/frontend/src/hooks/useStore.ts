@@ -110,6 +110,26 @@ interface StoreState {
   setForceSelectionOnly: (val: boolean) => void;
 
   /**
+   * Whether the rulers are drawn, and whether the dot grid is.
+   *
+   * Two flags rather than one "chrome" flag, because they answer different
+   * questions: the rulers are for *measuring* and the grid is for *aligning*,
+   * and plenty of work wants one without the other — a diagram wants the grid
+   * and never the ruler, a print layout wants the ruler and finds the dots
+   * noise.
+   *
+   * The ruler flag is structural, not cosmetic: the stage is inset by
+   * `RULER_SIZE` so that screen coordinates and ruler marks describe the same
+   * world position, and the panels clear it by the same amount. Turning them
+   * off has to move all three or it leaves a dead margin down two edges.
+   */
+  showRulers: boolean;
+  setShowRulers: (val: boolean) => void;
+
+  showGrid: boolean;
+  setShowGrid: (val: boolean) => void;
+
+  /**
    * Place a field and let it run, rather than holding the cursor on it.
    *
    * Off by default: press-and-hold is what a force tool obviously does, and a
@@ -326,6 +346,18 @@ export const useStore = create<StoreState>((set) => ({
   setLastForce: (id) => {
     window.localStorage.setItem('vega_last_force', id);
     set({ lastForce: id });
+  },
+
+  showRulers: loadBoolPref('vega_show_rulers', true),
+  setShowRulers: (val) => {
+    window.localStorage.setItem('vega_show_rulers', String(val));
+    set({ showRulers: val });
+  },
+
+  showGrid: loadBoolPref('vega_show_grid', true),
+  setShowGrid: (val) => {
+    window.localStorage.setItem('vega_show_grid', String(val));
+    set({ showGrid: val });
   },
 
   forceLatch: window.localStorage.getItem('vega_force_latch') === '1',

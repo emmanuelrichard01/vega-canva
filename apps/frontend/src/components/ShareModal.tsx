@@ -1,90 +1,123 @@
 import React, { useState } from 'react';
-import { Check, Copy, Link as LinkIcon, X, Users } from 'lucide-react';
+import { AlertCircle, Check, Copy, Link as LinkIcon, X } from 'lucide-react';
 import { useFocusTrap } from '../hooks/useFocusTrap';
 
 interface ShareModalProps {
   onClose: () => void;
 }
 
+/**
+ * The invitation, which on this product is the entire permission model.
+ *
+ * ## What it was
+ *
+ * A title, a sentence, and a link in a box — every rule of it written inline,
+ * which is why the copy button had no hover state and why its "copied" style
+ * painted `--amber-500` with white text. That is a raw palette primitive
+ * rather than the accent role, and white on it measures 2.13:1: the button
+ * became unreadable at the exact moment it was confirming success.
+ *
+ * ## What it says now
+ *
+ * The same three things, said accurately. The link is rebuilt from the room
+ * id rather than echoed from `location.href`, which carried whatever query or
+ * hash happened to be in the address bar into an invitation meant to last.
+ * The board is called a board, which is what the rest of the product calls
+ * it. And the consequence of sending it is stated plainly rather than
+ * softened: there are no accounts and no roles here, so a link is not an
+ * invitation to *view* — it is full access, permanently, to anyone who ends
+ * up holding it.
+ *
+ * A copy that fails now says so. It used to log to the console and leave the
+ * button reading "Copy", which is indistinguishable from not having pressed
+ * it — and on an insecure origin or with the permission denied, that is the
+ * common case rather than the rare one.
+ */
 export const ShareModal: React.FC<ShareModalProps> = ({ onClose }) => {
-  const [copied, setCopied] = useState(false);
-  const link = window.location.href;
-  // Handles Escape, keeps Tab inside the dialog, and restores focus on close.
+  const [state, setState] = useState<'idle' | 'copied' | 'failed'>('idle');
   const dialogRef = useFocusTrap(true, onClose);
 
-  const handleCopy = () => {
-    // Was fire-and-forget — a denied clipboard permission or an insecure
-    // context still showed "Copied!" even though nothing was actually
-    // copied, with no indication anything went wrong.
+  /**
+   * Built, not echoed.
+   *
+   * `window.location.href` carries the current query string and hash — a
+   * pending template, a deep link to a comment, anything the app put there —
+   * into a URL someone will paste into a chat and other people will open
+   * months later.
+   */
+  const roomId = window.location.pathname.split('/room/')[1]?.split(/[/?#]/)[0] ?? '';
+  const link = `${window.location.origin}/room/${roomId}`;
+
+  const copy = () => {
     navigator.clipboard.writeText(link).then(
       () => {
-        setCopied(true);
-        setTimeout(() => setCopied(false), 2000);
+        setState('copied');
+        window.setTimeout(() => setState('idle'), 2200);
       },
-      (err) => console.warn('Failed to copy share link', err)
+      () => setState('failed')
     );
   };
 
   return (
-    <div style={{
-      position: 'fixed', top: 0, left: 0, width: '100vw', height: '100vh',
-      backgroundColor: 'rgba(0,0,0,0.6)', display: 'flex', alignItems: 'center',
-      justifyContent: 'center', zIndex: 9999, backdropFilter: 'blur(8px)', WebkitBackdropFilter: 'blur(8px)'
-    }} onClick={onClose}>
+    <div className="share" onClick={onClose}>
       <div
         ref={dialogRef}
         role="dialog"
         aria-modal="true"
-        aria-labelledby="share-modal-title"
-        aria-describedby="share-modal-desc"
-        className="panel-surface"
-        style={{
-          padding: '24px', width: '380px',
-          display: 'flex', flexDirection: 'column', gap: '20px',
-          animation: 'fadeIn 0.15s ease-out', transform: 'translateY(0)',
-          boxShadow: 'var(--shadow-overlay)',
-          borderRadius: 'var(--radius-xl)',
-        }}
-        onClick={e => e.stopPropagation()}
+        aria-labelledby="share-title"
+        aria-describedby="share-desc"
+        className="share__panel panel-surface"
+        onClick={(e) => e.stopPropagation()}
       >
-        <div style={{ display: 'flex', alignItems: 'flex-start', justifyContent: 'space-between' }}>
+        <div className="share__head">
           <div>
-            <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 4 }}>
-              <Users size={18} color="var(--text-primary)" />
-              <h2 id="share-modal-title" style={{ fontSize: 16, fontWeight: 600, color: 'var(--text-primary)', margin: 0, letterSpacing: '-0.01em' }}>Share Workspace</h2>
-            </div>
-            <p id="share-modal-desc" style={{ color: 'var(--text-secondary)', margin: 0, fontSize: 13, lineHeight: 1.4 }}>Anyone with this link can view and edit the canvas.</p>
+            <h2 id="share-title" className="share__title">Invite people to this board</h2>
+            <p id="share-desc" className="share__lede">
+              Whoever opens this link is in — no account, nothing to accept.
+            </p>
           </div>
-          <button onClick={onClose} aria-label="Close" style={{ background: 'transparent', border: 'none', cursor: 'pointer', color: 'var(--text-tertiary)', display: 'flex', padding: 4, borderRadius: 4 }} className="hover-surface">
+          <button className="share__close" onClick={onClose} aria-label="Close">
             <X size={16} />
           </button>
         </div>
 
-        <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
-          <label style={{ fontSize: 12, fontWeight: 600, color: 'var(--text-primary)', textTransform: 'uppercase', letterSpacing: '0.02em' }}>Invite Link</label>
-          <div style={{ display: 'flex', alignItems: 'center', gap: 8, background: 'var(--surface-secondary)', border: '1px solid var(--border-divider)', borderRadius: 6, padding: '4px 4px 4px 12px' }}>
-            <LinkIcon size={14} color="var(--text-tertiary)" />
-            <input 
-              type="text" 
-              readOnly 
-              value={link} 
-              style={{ flex: 1, border: 'none', background: 'transparent', outline: 'none', color: 'var(--text-primary)', fontSize: 13 }}
-              onClick={e => e.currentTarget.select()}
-            />
-            <button 
-              onClick={handleCopy}
-              style={{ 
-                display: 'flex', alignItems: 'center', gap: 6, padding: '6px 12px', fontWeight: 500, fontSize: 13,
-                borderRadius: 4, background: copied ? 'var(--amber-500)' : 'var(--surface-primary)', color: copied ? 'white' : 'var(--text-primary)', 
-                cursor: 'pointer', transition: 'all 0.1s', boxShadow: copied ? 'none' : 'var(--shadow-sm)',
-                border: copied ? '1px solid transparent' : '1px solid var(--border-divider)'
-              }}
-            >
-              {copied ? <Check size={14} /> : <Copy size={14} />}
-              {copied ? 'Copied' : 'Copy'}
-            </button>
-          </div>
+        <div className="share__field">
+          <LinkIcon size={15} aria-hidden="true" />
+          <input
+            type="text"
+            readOnly
+            value={link}
+            aria-label="Link to this board"
+            // Selecting on focus as well as on click, so the keyboard path
+            // reaches the same state the pointer one does.
+            onFocus={(e) => e.currentTarget.select()}
+            onClick={(e) => e.currentTarget.select()}
+          />
+          <button
+            className={`share__copy${state === 'copied' ? ' is-copied' : ''}`}
+            onClick={copy}
+            aria-live="polite"
+          >
+            {state === 'copied' ? <Check size={14} /> : <Copy size={14} />}
+            {state === 'copied' ? 'Copied' : 'Copy'}
+          </button>
         </div>
+
+        {state === 'failed' && (
+          <p className="share__failed" role="alert">
+            <AlertCircle size={14} aria-hidden="true" />
+            The browser would not let us copy it. Select the link above and
+            copy it yourself.
+          </p>
+        )}
+
+        {/* The thing a share sheet usually implies and this product cannot
+            provide. Said here rather than discovered later. */}
+        <p className="share__caveat">
+          There are no permissions on this board. Anyone holding the link can
+          edit it, rename it, and delete what is on it — so send it the way you
+          would send a key, not a newsletter.
+        </p>
       </div>
     </div>
   );

@@ -1,7 +1,7 @@
 import React, { useEffect, useState, useRef } from 'react';
 import { useRoomState } from '../../hooks/useSync';
 import { CollaborationLayer } from './CollaborationLayer';
-import { Moon, Sun, Undo2, Redo2, Share2, Download, EyeOff, History, PanelLeft, MessageSquare, MoreHorizontal } from 'lucide-react';
+import { Moon, Sun, Undo2, Redo2, Share2, Download, EyeOff, History, PanelLeft, MessageSquare, MoreHorizontal, SlidersHorizontal } from 'lucide-react';
 import { editor } from '../../engine/api/EditorAPI';
 import { useStore } from '../../hooks/useStore';
 import { Switch } from '../ui/Switch';
@@ -36,6 +36,10 @@ export const WorkspaceShell: React.FC<Props> = ({ localTitle, setLocalTitle, onT
   const setPhysicsEnabled = useStore(state => state.setPhysicsEnabled);
   const snapToGrid = useStore(state => state.snapToGrid);
   const setSnapToGrid = useStore(state => state.setSnapToGrid);
+  const showRulers = useStore(state => state.showRulers);
+  const setShowRulers = useStore(state => state.setShowRulers);
+  const showGrid = useStore(state => state.showGrid);
+  const setShowGrid = useStore(state => state.setShowGrid);
   
   const getSyncStatus = () => {
     if (status !== 'connected') return { text: 'Offline', color: '#EF4444' };
@@ -69,19 +73,36 @@ export const WorkspaceShell: React.FC<Props> = ({ localTitle, setLocalTitle, onT
   }, []);
 
   const menuRef = useRef<HTMLDivElement>(null);
+  const viewRef = useRef<HTMLDivElement>(null);
+  const [viewOpen, setViewOpen] = useState(false);
+
+  /**
+   * Dismissal, written once for both menus.
+   *
+   * There are two popovers in this bar now, and a second copy of "close on
+   * Escape and on a press outside" is a second chance to get one of them
+   * wrong — usually by forgetting that the *other* menu opening should close
+   * this one.
+   */
   useEffect(() => {
-    if (!menuOpen) return;
+    if (!menuOpen && !viewOpen) return;
     const onDown = (e: MouseEvent) => {
-      if (menuRef.current && !menuRef.current.contains(e.target as Node)) setMenuOpen(false);
+      const t = e.target as Node;
+      if (menuRef.current && !menuRef.current.contains(t)) setMenuOpen(false);
+      if (viewRef.current && !viewRef.current.contains(t)) setViewOpen(false);
     };
-    const onKey = (e: KeyboardEvent) => { if (e.key === 'Escape') setMenuOpen(false); };
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key !== 'Escape') return;
+      setMenuOpen(false);
+      setViewOpen(false);
+    };
     document.addEventListener('mousedown', onDown);
     document.addEventListener('keydown', onKey);
     return () => {
       document.removeEventListener('mousedown', onDown);
       document.removeEventListener('keydown', onKey);
     };
-  }, [menuOpen]);
+  }, [menuOpen, viewOpen]);
 
   return (
     <div className="workspace-header panel-surface" style={{ opacity: receded ? 0.6 : 1 }}>
@@ -149,30 +170,14 @@ export const WorkspaceShell: React.FC<Props> = ({ localTitle, setLocalTitle, onT
         </span>
       </div>
 
-      {/* --------------------------------------------------- the canvas */}
-      {/* Throw and Snap are settings *for the surface*, not actions on the
-          document — they used to sit in the right-hand run between "Redo" and
-          a collaborator count, where nothing distinguished a mode you leave on
-          from a button you press once. Grouping them in the middle, in one
-          recessed container, is what stops "Snap" reading as a sibling of
-          "Share". */}
-      <div className="hdr-zone hdr-zone--center">
-        <div className="hdr-modes">
-          <Switch
-            checked={physicsEnabled}
-            onChange={setPhysicsEnabled}
-            label="Throw"
-            tooltip={physicsEnabled ? 'Flick an object and it keeps moving. Turn off to place objects exactly where you drop them.' : 'Objects stop exactly where you drop them. Turn on to throw them with a flick.'}
-          />
-          <span style={{ width: 1, height: 18, background: 'var(--border-divider)' }} />
-          <Switch
-            checked={snapToGrid}
-            onChange={setSnapToGrid}
-            label="Snap"
-            tooltip={snapToGrid ? 'Snapping to the grid — hold Ctrl while dragging for free placement' : 'Free placement — hold Ctrl while dragging to snap to the grid'}
-          />
-        </div>
-      </div>
+      {/* The centre is deliberately empty.
+
+          It held the Throw and Snap switches, which was already an
+          improvement on having them loose in the right-hand run — but it
+          spent the most valuable strip in the application on two settings
+          most people choose once and never revisit, permanently lit. They are
+          in the View menu now, where you would go looking for "how does the
+          surface behave", and the board gets the space back. */}
 
       {/* --------------------------------------- the room, and what leaves it */}
       <div className="hdr-zone hdr-zone--end">
@@ -194,6 +199,82 @@ export const WorkspaceShell: React.FC<Props> = ({ localTitle, setLocalTitle, onT
           >
             <History size={17} />
           </button>
+        </div>
+
+        {/* How the surface behaves.
+
+            One control instead of two permanently-lit switches. Snap and
+            Throw are set once and rarely revisited, so they do not earn
+            standing space — but they are also not "once a session" the way
+            the theme is, and burying them in the overflow menu beside Export
+            would have been the opposite mistake.
+
+            Focus mode lives here too, and this is the point of the menu. It
+            was reachable by pressing backslash or by finding it in an
+            overflow menu behind an unlabelled "…" — which is to say it was
+            folklore. It is a *view* state, so it belongs with the other
+            answers to "how am I looking at this board". */}
+        <div style={{ position: 'relative' }} ref={viewRef}>
+          <button
+            className={`btn-icon${viewOpen ? ' is-on' : ''}`}
+            style={{ padding: '7px 9px' }}
+            onClick={() => { setViewOpen((v) => !v); setMenuOpen(false); }}
+            data-tooltip="View — snapping, throwing and focus mode"
+            data-tooltip-pos="bottom"
+            aria-label="View settings"
+            aria-haspopup="menu"
+            aria-expanded={viewOpen}
+          >
+            <SlidersHorizontal size={17} />
+          </button>
+          {viewOpen && (
+            <div className="ctx-popover" role="menu" style={{ top: 'calc(100% + 8px)', right: 0, minWidth: 248 }}>
+              <div className="hdr-view-row">
+                <Switch
+                  block
+                  checked={snapToGrid}
+                  onChange={setSnapToGrid}
+                  label="Snap to grid"
+                  tooltip={snapToGrid ? 'Snapping to the grid — hold Ctrl while dragging for free placement' : 'Free placement — hold Ctrl while dragging to snap to the grid'}
+                />
+              </div>
+              <div className="hdr-view-row">
+                <Switch
+                  block
+                  checked={physicsEnabled}
+                  onChange={setPhysicsEnabled}
+                  label="Throw on flick"
+                  tooltip={physicsEnabled ? 'Flick an object and it keeps moving. Turn off to place objects exactly where you drop them.' : 'Objects stop exactly where you drop them. Turn on to throw them with a flick.'}
+                />
+              </div>
+              <div className="ctx-popover__rule" role="separator" />
+              {/* What the board is drawn *on*. Separate from Snap and Throw
+                  above, which are about how it behaves when you touch it. */}
+              <div className="hdr-view-row">
+                <Switch
+                  block
+                  checked={showRulers}
+                  onChange={setShowRulers}
+                  label="Rulers"
+                  tooltip={showRulers ? 'Hide the rulers and give their 22px back to the board' : 'Show rulers along the top and left edges'}
+                />
+              </div>
+              <div className="hdr-view-row">
+                <Switch
+                  block
+                  checked={showGrid}
+                  onChange={setShowGrid}
+                  label="Dot grid"
+                  tooltip={showGrid ? 'Hide the dot field' : 'Show the dot field the board is drawn on'}
+                />
+              </div>
+              <div className="ctx-popover__rule" role="separator" />
+              <button className="ctx-menu-item" role="menuitem" onClick={() => { setViewOpen(false); onHideUi(); }}>
+                <EyeOff size={15} /> Focus mode
+                <span className="ctx-menu-item__key">\</span>
+              </button>
+            </div>
+          )}
         </div>
 
         {/* The people, and the one signal that needs them. The collaborator
@@ -220,6 +301,18 @@ export const WorkspaceShell: React.FC<Props> = ({ localTitle, setLocalTitle, onT
 
         <span className="hdr-divider" style={{ width: 1, height: 22, background: 'var(--border-divider)' }} />
 
+        {/* Export, out of the drawer.
+
+            It sat in the overflow menu under a comment calling it something
+            "reached for once a session" — which was true when it wrote three
+            formats. It writes six now, with a live preview, per-frame batch
+            export and copy-to-clipboard, and getting work *out* of a design
+            tool is not a footnote. Quieter than Share, because sharing a link
+            is still the more common way work leaves this room. */}
+        <button className="hdr-export" onClick={() => onExportClick?.()} aria-label="Export">
+          <Download size={15} /> <span className="hdr-share-text">Export</span>
+        </button>
+
         <button
           style={{ padding: '7px 14px', fontSize: 13, fontWeight: 600, display: 'flex', alignItems: 'center', gap: 7, cursor: 'pointer', background: 'var(--text-primary)', color: 'var(--surface-primary)', border: 'none', borderRadius: 7, boxShadow: 'var(--shadow-sm)', flexShrink: 0 }}
           className="hover-fade"
@@ -229,10 +322,14 @@ export const WorkspaceShell: React.FC<Props> = ({ localTitle, setLocalTitle, onT
           <Share2 size={15} /> <span className="hdr-share-text">Share</span>
         </button>
 
-        {/* Everything that is real but reached for once a session. Export, the
-            theme and focus mode were three separate always-on buttons at the
-            far end of the header, each competing with Share for the same
-            corner of the eye. */}
+        {/* What is left is genuinely once a session.
+
+            This held Export and Focus mode as well, on the reasoning that
+            three always-on buttons all competed with Share for one corner of
+            the eye. That was right about the crowding and wrong about the
+            remedy: Export is a primary outcome and Focus is a view state, so
+            both now sit where they are looked for. The theme really is a
+            once-a-session choice, and stays. */}
         <div style={{ position: 'relative' }} ref={menuRef}>
           <button
             className="btn-icon"
@@ -248,12 +345,6 @@ export const WorkspaceShell: React.FC<Props> = ({ localTitle, setLocalTitle, onT
           </button>
           {menuOpen && (
             <div className="ctx-popover" role="menu" style={{ top: 'calc(100% + 8px)', right: 0, minWidth: 210 }}>
-              <button className="ctx-menu-item" role="menuitem" onClick={() => { setMenuOpen(false); onExportClick?.(); }}>
-                <Download size={15} /> Export canvas
-              </button>
-              <button className="ctx-menu-item" role="menuitem" onClick={() => { setMenuOpen(false); onHideUi(); }}>
-                <EyeOff size={15} /> Focus mode <span className="ctx-menu-item__key">\</span>
-              </button>
               <button className="ctx-menu-item" role="menuitem" onClick={() => setIsDarkTheme(!isDarkTheme)}>
                 {isDarkTheme ? <Sun size={15} /> : <Moon size={15} />} {isDarkTheme ? 'Light theme' : 'Dark theme'}
               </button>

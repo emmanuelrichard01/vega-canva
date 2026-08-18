@@ -100,3 +100,33 @@ describe('tickLabel', () => {
     expect(tickLabel(0.25, 0.05)).toBe('0.25');
   });
 });
+
+describe('the canvas dot field', () => {
+  /**
+   * The grid asks `tickStep` for its spacing rather than scaling a fixed
+   * world size by the zoom, and this is why.
+   *
+   * Scaled, the dots land four pixels apart at 0.2 while still being three
+   * pixels across, so the field closes into a flat grey wash — and eighty
+   * apart at 4, where it stops reading as a grid. Re-stepping keeps the
+   * on-screen pitch inside a band the eye reads as the same texture at every
+   * zoom, while each dot still sits on a round world coordinate.
+   */
+  const DOT_GAP_PX = 20;
+
+  it('holds a readable pitch across the whole zoom range', () => {
+    for (const zoom of [0.05, 0.1, 0.2, 0.25, 0.5, 1, 2, 4, 8]) {
+      const pitch = tickStep(zoom, DOT_GAP_PX) * zoom;
+      expect(pitch).toBeGreaterThanOrEqual(DOT_GAP_PX);
+      expect(pitch).toBeLessThanOrEqual(DOT_GAP_PX * 2.5);
+    }
+  });
+
+  it('spaces the dots on the same round numbers the ruler marks', () => {
+    // 100 world units at quarter zoom, not 80 or 125 — so a dot falls on the
+    // ruler's own divisions instead of drifting between them.
+    expect(tickStep(0.25, DOT_GAP_PX)).toBe(100);
+    expect(tickStep(1, DOT_GAP_PX)).toBe(20);
+    expect(tickStep(2, DOT_GAP_PX)).toBe(10);
+  });
+});

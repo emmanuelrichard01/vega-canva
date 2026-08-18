@@ -336,7 +336,10 @@ export const CommentsOverlay: React.FC<CommentsOverlayProps> = ({
 
         // The thread's identity color comes from whoever started it, so you can tell
         // at a glance whose comment a pin belongs to without opening it.
-        const threadColor = comment.messages?.[0]?.authorColor || 'var(--amber-500)';
+        // Falls back to the accent when an author left no presence colour —
+        // the role rather than the palette value behind it, so a theme
+        // change cannot leave this one thread a different orange.
+        const threadColor = comment.messages?.[0]?.authorColor || 'var(--text-accent)';
         const threadAuthor = comment.messages?.[0]?.authorName || 'Unknown';
 
         return (
@@ -370,7 +373,7 @@ export const CommentsOverlay: React.FC<CommentsOverlayProps> = ({
                 // across a board.
                 boxShadow: unread
                   ? `0 0 0 3px var(--surface-primary), 0 0 0 5px ${
-                      forMe ? 'var(--amber-500)' : threadColor
+                      forMe ? 'var(--text-accent)' : threadColor
                     }, var(--shadow-md)`
                   : isExpanded
                     ? 'var(--shadow-float)'
@@ -397,7 +400,7 @@ export const CommentsOverlay: React.FC<CommentsOverlayProps> = ({
                     width: 10,
                     height: 10,
                     borderRadius: '50%',
-                    background: forMe ? 'var(--amber-500)' : threadColor,
+                    background: forMe ? 'var(--text-accent)' : threadColor,
                     border: '2px solid var(--surface-elevated)',
                   }}
                 />
@@ -474,9 +477,12 @@ export const CommentsOverlay: React.FC<CommentsOverlayProps> = ({
                           setActiveCommentId(null);
                         }}
                         style={{
-                          background: 'var(--amber-500)',
+                          // The accent pair. This was `--amber-500` with white
+                          // on it, which is 2.15:1 — unreadable, and a raw
+                          // palette primitive where a role belongs.
+                          background: 'var(--accent)',
                           border: 'none',
-                          color: 'white',
+                          color: 'var(--accent-on)',
                           borderRadius: 6,
                           padding: '4px 8px',
                           fontSize: 11,
@@ -494,7 +500,7 @@ export const CommentsOverlay: React.FC<CommentsOverlayProps> = ({
                       <button
                         onClick={() => onResolveComment(comment.id)}
                         style={{
-                          color: 'var(--amber-500)',
+                          color: 'var(--text-accent)',
                           fontSize: 11,
                           fontWeight: 600,
                           padding: '4px 8px',

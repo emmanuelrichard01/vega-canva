@@ -20,20 +20,8 @@ import {
   type LayerTypeFilter,
 } from '../engine/model/layerSearch';
 import { useVirtualRows } from '../hooks/useVirtualRows';
-
-/** Node types, in the order their chips are offered. Frames first, because that is where people look. */
-const TYPE_ORDER: NodeType[] = ['frame', 'text', 'shape', 'path', 'image', 'sticky', 'audio', 'comment'];
-
-const TYPE_LABEL: Partial<Record<NodeType, string>> = {
-  frame: 'Frames',
-  text: 'Text',
-  shape: 'Shapes',
-  path: 'Paths',
-  image: 'Images',
-  sticky: 'Notes',
-  audio: 'Audio',
-  comment: 'Comments',
-};
+// Shared, and typed so a new node type cannot go chip-less again.
+import { TYPE_LABEL, TYPE_ORDER } from '../engine/model/nodeLabel';
 
 /** Row pitch, in px. Uniform by design so the list can be windowed. */
 const ROW_HEIGHT = 36;

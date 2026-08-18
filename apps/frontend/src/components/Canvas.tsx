@@ -13,6 +13,7 @@ import { RulerGuides } from './canvas/RulerGuides';
 import { PathEditor, deletePickedAnchor } from './canvas/PathEditor';
 import { pathEdit } from '../engine/interaction/pathEdit';
 import { RULER_SIZE, Rulers } from './canvas/Rulers';
+import { tickStep } from '../engine/interaction/rulerTicks';
 import { SHAPE_KINDS } from './workspace/shapeIcons';
 import { ObjectRenderer } from "./ObjectRenderer";
 import { PresenceRenderer } from "../engine/presence/PresenceRenderer";
@@ -76,6 +77,28 @@ export const navigateToViewport = (x: number, y: number, zoom: number) => {
 export const Canvas: React.FC<CanvasProps> = ({ activeTool, selectedIds, setSelectedIds }) => {
   const stageRef = useRef<Konva.Stage>(null);
   const containerRef = useRef<HTMLDivElement>(null);
+  /**
+   * How far apart the dots should sit on screen, whatever the zoom.
+   *
+   * Twenty is what the field looked like at 1:1 before it scaled, and it is
+   * comfortably more than the 3px a dot occupies — close enough to read as a
+   * grid, far enough not to merge into a tone.
+   */
+  const DOT_GAP_PX = 20;
+
+  const showRulers = useStore((s) => s.showRulers);
+  const showGrid = useStore((s) => s.showGrid);
+  /** One number for the stage, the grid and the panels. See the Stage below. */
+  const rulerInset = showRulers ? RULER_SIZE : 0;
+
+  // The panels clear the rulers through `--ruler-size`, so the flag has to
+  // reach CSS as well as the stage. One variable, one truth about how tall a
+  // ruler is.
+  useEffect(() => {
+    document.body.dataset.rulers = showRulers ? 'on' : 'off';
+    return () => { delete document.body.dataset.rulers; };
+  }, [showRulers]);
+
   const [dimensions, setDimensions] = useState({ width: 800, height: 600 });
 
   // There used to be a derived `selectedId` and a `setSelectedId` helper here,
@@ -617,8 +640,29 @@ export const Canvas: React.FC<CanvasProps> = ({ activeTool, selectedIds, setSele
       if (containerRef.current) {
         // Offset by the rulers for the same reason the stage is: the grid is
         // world-space decoration and has to line up with what is drawn on it.
-        containerRef.current.style.backgroundPosition = `${cameraSystem.x + RULER_SIZE}px ${cameraSystem.y + RULER_SIZE}px`;
-        containerRef.current.style.backgroundSize = `${20 * cameraSystem.zoom}px ${20 * cameraSystem.zoom}px`;
+        const inset = useStore.getState().showRulers ? RULER_SIZE : 0;
+        /**
+         * The dot spacing re-steps with zoom instead of scaling with it.
+         *
+         * A fixed 20 world units multiplied by the zoom is right at 1:1 and
+         * falls apart either side of it: at 0.2 the dots land four pixels
+         * apart while still being three pixels across, so the field closes up
+         * into a flat grey wash, and at 4 they are eighty pixels apart and
+         * stop reading as a grid at all.
+         *
+         * `tickStep` is the same function the rulers use to choose their
+         * divisions, asked for the smallest round world step that keeps its
+         * marks at least `DOT_GAP_PX` apart on screen. The result is a field
+         * that looks identical at every zoom — always about twenty pixels
+         * between dots — while each dot still sits on a real world coordinate,
+         * on the round numbers the ruler is marking. That is the part a
+         * screen-fixed grid could never do, and the reason not to simply pin
+         * it back to 24px and call it consistent.
+         */
+        const step = tickStep(cameraSystem.zoom, DOT_GAP_PX);
+        const pitch = step * cameraSystem.zoom;
+        containerRef.current.style.backgroundPosition = `${cameraSystem.x + inset}px ${cameraSystem.y + inset}px`;
+        containerRef.current.style.backgroundSize = `${pitch}px ${pitch}px`;
       }
 
       // The force field ring rides the same imperative path as the camera. It
@@ -1097,6 +1141,9 @@ export const Canvas: React.FC<CanvasProps> = ({ activeTool, selectedIds, setSele
       // the old touch special-case is gone.
       data-cursor-mode={cursorMode}
       data-arriving={arriving ? 'true' : undefined}
+      // The dot field is a CSS background on this element, so switching it off
+      // is one attribute rather than a second painting path.
+      data-grid={showGrid ? 'on' : 'off'}
       style={{ touchAction: 'none' }}
       ref={containerRef}
       onMouseMove={handleMouseMove}
@@ -1113,16 +1160,23 @@ export const Canvas: React.FC<CanvasProps> = ({ activeTool, selectedIds, setSele
       {/* Outside the stage: the rulers are chrome pinned to the viewport, and
           drawing them inside a transformed canvas would mean fighting that
           transform on every pan. */}
-      <Rulers width={dimensions.width} height={dimensions.height} />
+      {showRulers && <Rulers width={dimensions.width} height={dimensions.height} />}
       <Stage
         ref={stageRef}
-        // Inset by the rulers, so screen coordinates inside the stage and the
-        // marks along the rulers describe the same world position. Without
-        // this the two disagree by 22px, which is the one failure that makes a
-        // ruler worse than no ruler.
-        style={{ position: 'absolute', top: RULER_SIZE, left: RULER_SIZE }}
-        width={Math.max(1, dimensions.width - RULER_SIZE)}
-        height={Math.max(1, dimensions.height - RULER_SIZE)}
+        /**
+         * Inset by the rulers, so screen coordinates inside the stage and the
+         * marks along the rulers describe the same world position. Without it
+         * the two disagree by 22px, which is the one failure that makes a
+         * ruler worse than no ruler.
+         *
+         * Which is exactly why hiding them cannot just stop drawing them: the
+         * inset is structural, and leaving it would strand a dead 22px margin
+         * down two edges of a board someone hid the rulers to see more of.
+         * One number, read by the stage, the grid and the panels alike.
+         */
+        style={{ position: 'absolute', top: rulerInset, left: rulerInset }}
+        width={Math.max(1, dimensions.width - rulerInset)}
+        height={Math.max(1, dimensions.height - rulerInset)}
         x={cameraSystem.x}
         y={cameraSystem.y}
         scaleX={cameraSystem.zoom}
