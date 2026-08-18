@@ -12,6 +12,8 @@ export type EngineEventType =
   | 'PhysicsTick'
   | 'RenderTick'
   | 'ActiveToolChanged'
+  /** A latched force field was placed, ticked down, or expired. */
+  | 'ForceLatchChanged'
   | 'CommentDraftRequested';
 
 export class EventBus {

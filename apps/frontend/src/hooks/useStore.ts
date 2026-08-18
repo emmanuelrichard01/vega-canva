@@ -11,6 +11,11 @@ import {
   MIN_FORCE_RADIUS_SCALE,
   MIN_FORCE_SCALE,
   type FalloffId,
+  FORCE_IDS,
+  LATCH_SECONDS,
+  DEFAULT_LATCH_SECONDS,
+  type LatchSeconds,
+  type ForceId,
 } from '../engine/physics/forces';
 
 interface StoreState {
@@ -103,6 +108,30 @@ interface StoreState {
    */
   forceSelectionOnly: boolean;
   setForceSelectionOnly: (val: boolean) => void;
+
+  /**
+   * Place a field and let it run, rather than holding the cursor on it.
+   *
+   * Off by default: press-and-hold is what a force tool obviously does, and a
+   * mode that changed what a press means without being asked for would read
+   * as the tool being broken.
+   */
+  forceLatch: boolean;
+  setForceLatch: (val: boolean) => void;
+
+  /** How long a latched field runs before it stops on its own. */
+  forceLatchSeconds: LatchSeconds;
+  setForceLatchSeconds: (val: LatchSeconds) => void;
+
+  /**
+   * The force you last used, so the dock can arm the mode in one press.
+   *
+   * The dock used to open a menu of six forces that the Forces bar then
+   * offered again the moment you picked one — the same six names, twice, a
+   * hundred pixels apart.
+   */
+  lastForce: ForceId;
+  setLastForce: (id: ForceId) => void;
 
   /**
    * Whether a force tool is armed. Lives here rather than being threaded down
@@ -289,6 +318,35 @@ export const useStore = create<StoreState>((set) => ({
 
   forceSelectionOnly: false,
   setForceSelectionOnly: (val) => set({ forceSelectionOnly: val }),
+
+  lastForce: ((): ForceId => {
+    const stored = window.localStorage.getItem('vega_last_force');
+    return FORCE_IDS.includes(stored as ForceId) ? (stored as ForceId) : 'magnet';
+  })(),
+  setLastForce: (id) => {
+    window.localStorage.setItem('vega_last_force', id);
+    set({ lastForce: id });
+  },
+
+  forceLatch: window.localStorage.getItem('vega_force_latch') === '1',
+  setForceLatch: (val) => {
+    window.localStorage.setItem('vega_force_latch', val ? '1' : '0');
+    set({ forceLatch: val });
+  },
+
+  forceLatchSeconds: ((): LatchSeconds => {
+    const stored = Number(window.localStorage.getItem('vega_force_latch_seconds'));
+    // Validated against the offered set rather than clamped: `localStorage` is
+    // user-writable, and an arbitrary number here would drive a field for a
+    // duration no control can express or cancel.
+    return (LATCH_SECONDS as readonly number[]).includes(stored)
+      ? (stored as LatchSeconds)
+      : DEFAULT_LATCH_SECONDS;
+  })(),
+  setForceLatchSeconds: (val) => {
+    window.localStorage.setItem('vega_force_latch_seconds', String(val));
+    set({ forceLatchSeconds: val });
+  },
 
   forceToolActive: false,
   setForceToolActive: (val) => set({ forceToolActive: val }),

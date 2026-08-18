@@ -5,6 +5,7 @@ import { doc, updateNode, provider } from '../engine/document';
 import { PhysicsSimulation, type SimTransform } from '../engine/physics/simulation';
 import { type ForceId } from '../engine/physics/forces';
 import { useStore } from './useStore';
+import { engineEvents } from '../engine/EventBus';
 
 /**
  * Adapter between the canvas and the physics simulation.
@@ -119,8 +120,8 @@ export function usePhysics(
    * pressing and holding — what the tool's own hint tells you to do — did
    * nothing unless the mouse was moving.
    */
-  const heldForce = useRef<{ mode: ForceId; x: number; y: number; dx: number; dy: number } | null>(null);
-  const applyForceRef = useRef<(x: number, y: number, mode: ForceId, extra?: { dx?: number; dy?: number }) => void>(() => {});
+  const heldForce = useRef<{ mode: ForceId; x: number; y: number; dx: number; dy: number; gesture: number } | null>(null);
+  const applyForceRef = useRef<(x: number, y: number, mode: ForceId, extra?: { dx?: number; dy?: number; gesture?: number }) => void>(() => {});
 
   useEffect(() => {
     const sim = simRef.current!;
@@ -137,9 +138,34 @@ export function usePhysics(
       const delta = now - lastTime;
       lastTime = now;
 
+      /**
+       * The latched field runs first, and a held press supersedes it.
+       *
+       * Grabbing the tool again while a field is running is an unambiguous
+       * "I want to steer this myself", and having both apply at once would
+       * double the force at the cursor for reasons nobody could see.
+       */
+      const live = latched.current;
+      if (live && !heldForce.current) {
+        applyForceRef.current(live.x, live.y, live.mode, { gesture: live.gesture });
+        live.remainingMs -= delta;
+        if (live.remainingMs <= 0) {
+          latched.current = null;
+          engineEvents.emit('ForceLatchChanged', null);
+        } else {
+          engineEvents.emit('ForceLatchChanged', {
+            x: live.x, y: live.y, mode: live.mode, remainingMs: live.remainingMs,
+          });
+        }
+      }
+
       const held = heldForce.current;
       if (held) {
-        applyForceRef.current(held.x, held.y, held.mode, { dx: held.dx, dy: held.dy });
+        applyForceRef.current(held.x, held.y, held.mode, {
+          dx: held.dx,
+          dy: held.dy,
+          gesture: held.gesture,
+        });
         // Wind reads cursor *movement*; once applied that delta is spent, so
         // holding still in a wind field does nothing.
         held.dx = 0;
@@ -239,7 +265,7 @@ export function usePhysics(
   }, [version, objects]);
 
   const applyGlobalForce = useCallback(
-    (x: number, y: number, mode: ForceId, extra?: { dx?: number; dy?: number }) => {
+    (x: number, y: number, mode: ForceId, extra?: { dx?: number; dy?: number; gesture?: number }) => {
       const sim = simRef.current;
       if (!sim) return;
       const state = useStore.getState();
@@ -254,6 +280,9 @@ export function usePhysics(
         skip: remoteOwnedIds(),
         dx: extra?.dx,
         dy: extra?.dy,
+        // Absent for a one-shot like Shockwave, which is right: every click is
+        // a new gesture and may re-wake whatever the last one settled.
+        gesture: extra?.gesture,
       });
       claimOwnershipAll(woken);
     },
@@ -275,6 +304,19 @@ export function usePhysics(
   const calmAll = useCallback(() => {
     const sim = simRef.current;
     if (!sim) return;
+
+    /**
+     * A running field has to stop first.
+     *
+     * Freeze parks every moving body, and a latched field then re-applied on
+     * the very next frame and set them all going again — so on the one board
+     * where you would most want to stop everything, the button did nothing
+     * you could see. `calmAll` predates latching, which is how it came to
+     * miss it.
+     */
+    latched.current = null;
+    engineEvents.emit('ForceLatchChanged', null);
+
     const frozen = sim.freezeAll();
     if (frozen.length === 0) return;
     commitSettled(frozen);
@@ -307,8 +349,35 @@ export function usePhysics(
     if (sim.launch(id, x, y, vx, vy)) claimOwnershipAll([id]);
   }, []);
 
+  /**
+   * One id per press, so the simulation can tell "still holding" from
+   * "pressed again".
+   *
+   * Without it a held force re-wakes anything that came to rest under it, on
+   * every frame — which was five document writes a second per object for a
+   * pile that had already stopped moving. See `settledInGesture` in the
+   * simulation.
+   */
+  const gestureSeq = useRef(0);
+
+  /**
+   * A field that keeps running after the pointer has gone.
+   *
+   * `remainingMs` is counted down by the frame loop rather than by a timer, so
+   * it advances with the simulation: a stalled or backgrounded tab does not
+   * silently burn the field's life while nothing is being stepped.
+   *
+   * It carries one gesture id for its whole life, exactly like a held press —
+   * so a body that comes to rest under a latched field stays at rest instead
+   * of being re-woken sixty times a second.
+   */
+  const latched = useRef<
+    { mode: ForceId; x: number; y: number; remainingMs: number; gesture: number } | null
+  >(null);
+
   const beginHeldForce = useCallback((mode: ForceId, x: number, y: number) => {
-    heldForce.current = { mode, x, y, dx: 0, dy: 0 };
+    gestureSeq.current += 1;
+    heldForce.current = { mode, x, y, dx: 0, dy: 0, gesture: gestureSeq.current };
   }, []);
 
   const moveHeldForce = useCallback((x: number, y: number, dx = 0, dy = 0) => {
@@ -324,9 +393,38 @@ export function usePhysics(
     heldForce.current = null;
   }, []);
 
+  /**
+   * Drop a field at a point and let it run.
+   *
+   * Latching the same tool again moves the field rather than stacking a second
+   * one: two invisible fields with separate countdowns is a state nobody can
+   * reason about, and there is no way to tell which one Escape would cancel.
+   */
+  const latchField = useCallback((mode: ForceId, x: number, y: number, seconds: number) => {
+    gestureSeq.current += 1;
+    latched.current = {
+      mode, x, y,
+      remainingMs: seconds * 1000,
+      gesture: gestureSeq.current,
+    };
+    engineEvents.emit('ForceLatchChanged', { x, y, mode, remainingMs: seconds * 1000 });
+  }, []);
+
+  const releaseLatch = useCallback(() => {
+    if (!latched.current) return false;
+    latched.current = null;
+    engineEvents.emit('ForceLatchChanged', null);
+    return true;
+  }, []);
+
   // Debug hatch, in the spirit of `window.objectsMap` in the document layer:
   // physics is frame-driven and largely invisible to the DOM.
   (window as unknown as Record<string, unknown>).__physics = simRef.current;
 
-  return { handleThrow, applyGlobalForce, beginHeldForce, moveHeldForce, endHeldForce, calmAll };
+  return {
+    handleThrow, applyGlobalForce,
+    beginHeldForce, moveHeldForce, endHeldForce,
+    latchField, releaseLatch,
+    calmAll,
+  };
 }

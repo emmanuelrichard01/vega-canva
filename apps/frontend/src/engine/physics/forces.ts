@@ -39,6 +39,14 @@ export interface ForceSpec {
   label: string;
   /** One line explaining what pressing will do. */
   hint: string;
+  /**
+   * The verb phrase, for the status line: "Hold to *pull objects in*".
+   *
+   * Written rather than derived from `label`, because the labels are nouns as
+   * often as verbs — "Hold to wind" and "Hold to shockwave" are not English,
+   * and Shockwave is not held at all.
+   */
+  short: string;
   /** World-space radius of effect. */
   radius: number;
   /** Base force coefficient, before the user's strength multiplier. */
@@ -55,6 +63,7 @@ export interface ForceSpec {
 export const FORCE_SPECS: Record<ForceId, ForceSpec> = {
   magnet: {
     id: 'magnet',
+    short: 'pull objects in',
     label: 'Pull',
     hint: 'Hold to draw objects toward the cursor',
     radius: 600,
@@ -64,6 +73,7 @@ export const FORCE_SPECS: Record<ForceId, ForceSpec> = {
   },
   repel: {
     id: 'repel',
+    short: 'push objects away',
     label: 'Push',
     hint: 'Hold to push objects away from the cursor',
     radius: 600,
@@ -73,6 +83,7 @@ export const FORCE_SPECS: Record<ForceId, ForceSpec> = {
   },
   wind: {
     id: 'wind',
+    short: 'blow objects along',
     label: 'Wind',
     hint: 'Drag to blow objects in the direction you move',
     radius: 1000,
@@ -82,6 +93,7 @@ export const FORCE_SPECS: Record<ForceId, ForceSpec> = {
   },
   shockwave: {
     id: 'shockwave',
+    short: 'burst objects outward',
     label: 'Shockwave',
     hint: 'Click to burst everything away from that point',
     radius: 800,
@@ -91,6 +103,7 @@ export const FORCE_SPECS: Record<ForceId, ForceSpec> = {
   },
   gravity: {
     id: 'gravity',
+    short: 'pull objects downward',
     label: 'Drop',
     hint: 'Hold to pull objects downward, like tipping the table',
     radius: 700,
@@ -111,6 +124,7 @@ export const FORCE_SPECS: Record<ForceId, ForceSpec> = {
    */
   swirl: {
     id: 'swirl',
+    short: 'turn objects around',
     label: 'Swirl',
     hint: 'Hold to turn objects around the cursor',
     radius: 550,
@@ -166,25 +180,66 @@ export interface FalloffSpec {
   hint: string;
 }
 
+/**
+ * Named for the **edge**, not for the curve.
+ *
+ * These were Smooth / Linear / Even, which are the names of the three
+ * functions rather than of anything you can see. "Linear" and "Even" in
+ * particular were close to synonyms in plain English while meaning opposite
+ * things here — one falls off with distance and the other does not fall off
+ * at all — so the row could not be read, only tried.
+ *
+ * What actually differs between them, and what you notice, is how abruptly
+ * the field stops at the ring. So that is what they are called.
+ */
 export const FALLOFF_SPECS: Record<FalloffId, FalloffSpec> = {
   smooth: {
     id: 'smooth',
-    label: 'Smooth',
-    hint: 'Strong in the middle, easing to nothing at the edge — no visible boundary',
+    label: 'Soft',
+    hint: 'Strongest at the centre and fading to nothing — you never feel where the field ends',
   },
   linear: {
     id: 'linear',
-    label: 'Linear',
-    hint: 'Falls off evenly with distance',
+    label: 'Even',
+    hint: 'Weakens steadily with distance from the centre',
   },
   constant: {
     id: 'constant',
-    label: 'Even',
-    hint: 'Full strength everywhere inside the field, nothing outside it',
+    label: 'Hard',
+    hint: 'Full strength right up to the ring, then nothing — moves a whole cluster without stretching it',
   },
 };
 
 export const FALLOFF_IDS: FalloffId[] = ['smooth', 'linear', 'constant'];
+
+/**
+ * Latching: a field that keeps running after you let go.
+ *
+ * ## Why this is not world gravity
+ *
+ * The argument at the top of this file still holds — a permanent downward
+ * field on an infinite canvas has nowhere to fall to, never settles, and
+ * writes to the document forever. A latch is that feeling made safe in the
+ * same way `gravity` was: it is **placed, bounded and cancellable**. It runs
+ * at one point, for a fixed number of seconds, and stops.
+ *
+ * ## Why it is needed at all
+ *
+ * Every continuous force is aimed with the cursor, so anything taller or
+ * wider than one field radius has to be *chased* — you cannot watch what you
+ * are doing, because your hand is the thing doing it. A domino wall or a peg
+ * field is exactly that shape. Latching is what makes "set it going and watch"
+ * possible, which is the whole appeal of having physics on a board.
+ *
+ * Shockwave is excluded: it is a single impulse, so a latch would just be
+ * repeat-fire, which is a different tool and not an obviously good one.
+ */
+export const LATCH_SECONDS = [3, 6, 10] as const;
+export type LatchSeconds = (typeof LATCH_SECONDS)[number];
+export const DEFAULT_LATCH_SECONDS: LatchSeconds = 6;
+
+/** Whether a force can be latched at all. */
+export const canLatch = (id: ForceId): boolean => FORCE_SPECS[id].continuous;
 
 /**
  * The strength multiplier at `dist` from the centre of a field of `radius`.

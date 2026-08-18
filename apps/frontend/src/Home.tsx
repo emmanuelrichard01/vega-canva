@@ -1,10 +1,15 @@
 import React, { useEffect, useMemo, useRef, useState } from 'react';
 import { useAuth } from './hooks/AuthContext';
 import { nanoid } from 'nanoid';
-import { ChevronDown, LayoutGrid, LayoutList, LayoutTemplate, LogOut, Plus, Search, UploadCloud, X } from 'lucide-react';
+import {
+  ArrowRight, Compass, Layers, Link2, LogOut, Plus, Search, Sparkles, UploadCloud, X,
+} from 'lucide-react';
 import { parseDocumentExport } from './engine/export/DocumentImport';
 import { stashPendingRestore, stashPendingTemplate } from './engine/export/pendingRestore';
-import { CATEGORIES, TEMPLATES, templatePreview, type TemplateCategory } from './engine/templates/templates';
+import {
+  CATEGORIES, TEMPLATES, templatePreview,
+  type Template, type TemplateCategory,
+} from './engine/templates/templates';
 import { WorkspaceCover } from './components/WorkspaceCover';
 import { AuthModal } from './components/AuthModal';
 import { Logo } from './components/ui/Logo';
@@ -16,44 +21,83 @@ interface RecentWorkspace {
 }
 
 const STORAGE_KEY = 'recentWorkspaces';
+const VIEW_KEY = 'vega_home_view';
+
+/** Which half of the library the stage is showing. */
+type View = 'boards' | 'templates';
 
 /**
- * The rooms page — everything before the canvas.
+ * Where to land, read straight from storage rather than from state.
  *
- * ## What this rebuild fixes
+ * `recentRooms` arrives in an effect, one render too late to choose an
+ * initial view with — and a first-time visitor would see the empty boards
+ * view flash before being moved to the gallery.
+ */
+function initialView(): View {
+  const remembered = localStorage.getItem(VIEW_KEY);
+  if (remembered === 'boards' || remembered === 'templates') return remembered;
+  try {
+    const saved = JSON.parse(localStorage.getItem(STORAGE_KEY) || '[]');
+    return Array.isArray(saved) && saved.length > 0 ? 'boards' : 'templates';
+  } catch {
+    return 'templates';
+  }
+}
+
+/**
+ * The library — everything before the canvas.
  *
- * The page worked and read as an afterthought, which is the one thing
- * `PRODUCT.md` says it may not be: the surfaces outside the canvas are held to
- * the same bar as the canvas.
+ * ## The shape, and why it is this one
  *
- * Four of the problems were structural rather than visual:
+ * A rail and a stage. Navigation lives in the rail, so what is left in the
+ * column is only content — which is what makes a section boundary obvious
+ * instead of a judgement call. The previous version stacked a masthead, a
+ * collapsible gallery, category pills, a featured strip, a grid, a second
+ * heading, a search field, a join form and a layout toggle down one column,
+ * and the result had no shape at all.
  *
- * 1. **The primary action was not a link.** Every workspace was a `div` with an
- *    `onClick`, so the main thing you come to this page to do could not be
- *    tabbed to, could not show a focus ring, and could not be middle-clicked or
- *    opened in a new tab. They are anchors now, which restores all four for
- *    free and costs nothing.
- * 2. **Nothing could be removed.** The list is read from `localStorage` and
- *    never verified against the server, so a room that no longer exists sat
- *    there permanently as a card that leads nowhere. The action is worded
- *    *Remove from this list*, not *Delete*, because removing the local
- *    reference is honestly all it does — there is no server-side deletion, and
- *    a button promising one would be lying.
- * 3. **Finding a workspace had no affordance beyond reading.** A search field
- *    appears once there is a list to search.
- * 4. **The masthead held five unrelated things** — title, view toggle, join
- *    form and create button on one line. Ways of *finding* a workspace now sit
- *    with the list; the title keeps the create action, which is the only thing
- *    on the page that makes a new one.
+ * ## Two views, and which one you land on
+ *
+ * The stage shows **one view at a time** — your boards, or the gallery. They
+ * are not two sections of one scroll: stacking them means every visit begins
+ * by scrolling past whichever one you did not come for, and it puts two
+ * headings, two grids and two empty states in a single column where a section
+ * boundary becomes a judgement call.
+ *
+ * You land on **your boards**, because anyone who has been here before came
+ * back for something they made. The exception is a first visit, where the
+ * boards view is an empty state and the gallery is the only thing with
+ * anything in it — so that lands on the gallery instead. One condition, not a
+ * mode, and the choice is remembered after that.
+ *
+ * The boards view ends with an invitation into the gallery. A tab someone
+ * never presses is a tab that may as well not exist, and "there are thirteen
+ * boards here already full" is worth saying once where it will be read.
+ *
+ * ## Two fixes here that were not cosmetic
+ *
+ * 1. **Seven hooks ran after an early return.** `if (!user) return <AuthModal/>`
+ *    sat above `useState` for the category and four memos, so signing in
+ *    changed the hook count between renders — a rules-of-hooks violation that
+ *    blanked the page on the transition. Every hook is now above every return.
+ * 2. **There were two search fields**, in unrelated places, neither beside
+ *    what it filtered. There is one now, and it filters both sections.
  */
 export const Home: React.FC = () => {
   const { user, logout } = useAuth();
-  const [joinLink, setJoinLink] = useState('');
+
+  // ------------------------------------------------------------------ state
+  // Every hook lives above every early return. See the note above.
+  const [view, setView] = useState<View>(initialView);
+  const [category, setCategory] = useState<TemplateCategory | null>(null);
   const [query, setQuery] = useState('');
+  const [joinLink, setJoinLink] = useState('');
+  const [joinOpen, setJoinOpen] = useState(false);
   const [recentRooms, setRecentRooms] = useState<RecentWorkspace[]>([]);
-  const [viewMode, setViewMode] = useState<'list' | 'grid'>(
-    () => (localStorage.getItem('vega_rooms_view') === 'list' ? 'list' : 'grid')
-  );
+  const [restoreError, setRestoreError] = useState<string | null>(null);
+  const [scrolled, setScrolled] = useState(false);
+  const restoreInputRef = useRef<HTMLInputElement>(null);
+  const stageRef = useRef<HTMLElement>(null);
 
   useEffect(() => {
     try {
@@ -62,15 +106,80 @@ export const Home: React.FC = () => {
     } catch { /* corrupt localStorage entry — not worth surfacing */ }
   }, []);
 
+  useEffect(() => { localStorage.setItem(VIEW_KEY, view); }, [view]);
+
+  // Switching views starts a new screen, so it starts at the top of one.
+  useEffect(() => { stageRef.current?.scrollTo({ top: 0 }); }, [view]);
+
+  /**
+   * The bar earns its edge only once there is something underneath it.
+   *
+   * A permanent rule under a header is a line drawn whether or not it
+   * separates anything. This one appears when the stage has scrolled, so at
+   * rest the bar and the page read as one surface.
+   */
   useEffect(() => {
-    localStorage.setItem('vega_rooms_view', viewMode);
-  }, [viewMode]);
+    const el = stageRef.current;
+    if (!el) return;
+    const onScroll = () => setScrolled(el.scrollTop > 4);
+    el.addEventListener('scroll', onScroll, { passive: true });
+    return () => el.removeEventListener('scroll', onScroll);
+  }, []);
 
-  const restoreInputRef = useRef<HTMLInputElement>(null);
-  const [restoreError, setRestoreError] = useState<string | null>(null);
+  /**
+   * Thumbnails, built once.
+   *
+   * `build()` allocates ids and lays out up to a hundred and fifty nodes, so
+   * doing this per render — which is per keystroke in the search field — is
+   * real work for a picture that never changes.
+   */
+  const templatePreviews = useMemo(() => {
+    const out: Record<string, ReturnType<typeof templatePreview>> = {};
+    TEMPLATES.forEach((t) => { out[t.id] = templatePreview(t); });
+    return out;
+  }, []);
 
-  const handleCreate = () => {
-    window.location.href = `/room/${nanoid(10)}`;
+  const matchedTemplates = useMemo(() => {
+    const q = query.trim().toLowerCase();
+    let list = category ? TEMPLATES.filter((t) => t.category === category) : TEMPLATES;
+    if (q) {
+      // Name, blurb and what it teaches. Searching the name alone means
+      // "physics" finds nothing, which is the obvious thing to type.
+      list = list.filter((t) =>
+        `${t.name} ${t.blurb} ${t.teaches.join(' ')}`.toLowerCase().includes(q)
+      );
+    }
+    return list;
+  }, [category, query]);
+
+  /**
+   * The showcase boards lead the gallery, but only when nothing is narrowing
+   * it. Someone who picked a category or typed a query has said exactly what
+   * they want; three unrelated boards above their answer is the page
+   * overriding them.
+   */
+  const showFeatured = !category && !query.trim();
+  const featured = useMemo(
+    () => (showFeatured ? matchedTemplates.filter((t) => t.featured) : []),
+    [showFeatured, matchedTemplates]
+  );
+  const rest = useMemo(
+    () => (showFeatured ? matchedTemplates.filter((t) => !t.featured) : matchedTemplates),
+    [showFeatured, matchedTemplates]
+  );
+
+  const matchedRooms = useMemo(() => {
+    const q = query.trim().toLowerCase();
+    const sorted = [...recentRooms].sort((a, b) => b.lastAccessed - a.lastAccessed);
+    return q ? sorted.filter((r) => r.name.toLowerCase().includes(q)) : sorted;
+  }, [recentRooms, query]);
+
+  // ---------------------------------------------------------------- actions
+  const openBoard = () => { window.location.href = `/room/${nanoid(10)}`; };
+
+  const openTemplate = (template: Template) => {
+    stashPendingTemplate(template.id);
+    openBoard();
   };
 
   /**
@@ -78,9 +187,9 @@ export const Home: React.FC = () => {
    *
    * Deliberately not the same operation as the Restore inside the export
    * dialog, which replaces the board you are standing in. That one is
-   * unreachable in the case this exists for: someone who cleared their browser,
-   * or who is on a new machine, arrives here with no boards at all — so the
-   * in-room restore has no room to be in.
+   * unreachable in the case this exists for: someone who cleared their browser
+   * arrives here with no boards at all, so the in-room restore has no room to
+   * be in.
    *
    * Validated before navigating. Sending someone to a fresh empty room and
    * *then* discovering the file was unreadable leaves them somewhere new with
@@ -90,37 +199,26 @@ export const Home: React.FC = () => {
     setRestoreError(null);
     const text = await file.text();
     const result = parseDocumentExport(text);
-    if (!result.ok) {
-      setRestoreError(result.error);
-      return;
-    }
+    if (!result.ok) { setRestoreError(result.error); return; }
     stashPendingRestore(text);
-    window.location.href = `/room/${nanoid(10)}`;
+    openBoard();
   };
 
   const handleJoin = (e: React.FormEvent) => {
     e.preventDefault();
-    // Trim before extracting, not after: a pasted link with trailing whitespace
-    // or a newline — routine when copying out of chat or email — used to carry
-    // that into the room id and land on a different, brand-new empty room.
+    // Trimmed before extracting, not after: a pasted link with trailing
+    // whitespace — routine when copying out of chat — used to carry that into
+    // the room id and land on a different, brand-new empty room.
     const trimmed = joinLink.trim();
     if (!trimmed) return;
-
     let roomId = trimmed;
     if (trimmed.includes('/room/')) roomId = trimmed.split('/room/')[1] || '';
     roomId = roomId.split(/[/?#]/)[0].trim();
     if (!roomId) return;
-
     window.location.href = `/room/${roomId}`;
   };
 
-  /**
-   * Forget a workspace.
-   *
-   * Local only, and said so in the label. `preventDefault` because this button
-   * lives inside the card's anchor — without it, removing a workspace would
-   * also navigate into the one you just removed.
-   */
+  /** Local only, and the label says so — there is no server-side deletion. */
   const removeRoom = (e: React.MouseEvent, id: string) => {
     e.preventDefault();
     e.stopPropagation();
@@ -140,192 +238,287 @@ export const Home: React.FC = () => {
     return d.toLocaleDateString();
   };
 
-  const visible = useMemo(() => {
-    const q = query.trim().toLowerCase();
-    const sorted = [...recentRooms].sort((a, b) => b.lastAccessed - a.lastAccessed);
-    return q ? sorted.filter((r) => r.name.toLowerCase().includes(q)) : sorted;
-  }, [recentRooms, query]);
-
   // The same honest onboarding screen everywhere, rather than a second
   // "enter your name" screen that slowly drifts from the first.
   if (!user) return <AuthModal />;
 
   const hasRooms = recentRooms.length > 0;
+  const categoryLabel = CATEGORIES.find((c) => c.id === category)?.label;
 
-  /**
-   * Templates, as an element rather than inline, because it appears in two
-   * places and must be the same thing in both.
-   *
-   * It leads the page, the way the start screen of Photoshop or Illustrator
-   * leads with what you can *make* rather than with what you made last week.
-   * A gallery below the fold is a gallery nobody scrolls to, and on this
-   * product the templates are the clearest statement of what the canvas is
-   * capable of — several of them exist precisely to be a claim you can check
-   * by opening them.
-   */
-  /**
-   * Thumbnails for the gallery, built once.
-   *
-   * `build()` allocates ids and lays out up to thirty nodes, so doing it per
-   * render — which is per keystroke in the search box — would be wasteful for
-   * a picture that never changes.
-   */
-  const [category, setCategory] = useState<TemplateCategory | null>(null);
-  /**
-   * Whether the gallery is open, remembered.
-   *
-   * It leads the page, which is right for a first visit and wrong on the
-   * hundredth — someone who knows what they are doing wants their own boards
-   * without scrolling past a gallery every time. Collapsing is that answer,
-   * and it has to persist or it is not one.
-   */
-  const [templatesOpen, setTemplatesOpen] = useState(
-    () => localStorage.getItem('vega_templates_collapsed') !== '1'
+  const goTemplates = (c: TemplateCategory | null) => {
+    setView('templates');
+    setCategory(c);
+  };
+
+  // ----------------------------------------------------------------- pieces
+  const templateCard = (template: Template) => (
+    <button key={template.id} type="button" className="tcard" onClick={() => openTemplate(template)}>
+      {/* Drawn through the same component the board cards use, from the same
+          builder that makes the board — so a card's picture is the board it
+          opens, not an illustration that will drift from it. */}
+      <span className="tcard__art">
+        <WorkspaceCover
+          workspaceId={template.id}
+          name={template.name}
+          preview={templatePreviews[template.id]}
+        />
+      </span>
+      <span className="tcard__body">
+        <span className="tcard__name">{template.name}</span>
+        <span className="tcard__blurb">{template.blurb}</span>
+        <span className="tcard__meta">
+          {template.objectCount && (
+            <span className="tcard__count">{template.objectCount.toLocaleString()} objects</span>
+          )}
+          {/* Capped rather than wrapped. A fourth chip spills onto a second
+              line for some cards and not others, which gives a row ragged
+              feet — and it was never why anyone picked a template. */}
+          {template.teaches.slice(0, template.objectCount ? 2 : 3).map((what) => (
+            <span key={what} className="tcard__chip">{what}</span>
+          ))}
+        </span>
+      </span>
+    </button>
   );
-  useEffect(() => {
-    localStorage.setItem('vega_templates_collapsed', templatesOpen ? '0' : '1');
-  }, [templatesOpen]);
-  const visibleTemplates = useMemo(
-    () => (category ? TEMPLATES.filter((t) => t.category === category) : TEMPLATES),
-    [category]
+
+  const templatesBody = (
+    <>
+      {matchedTemplates.length === 0 ? (
+        <div className="stage__empty">
+          <Sparkles size={22} aria-hidden="true" />
+          <h3>No templates match “{query.trim()}”</h3>
+          <p>Try a different word, or clear the search to see all {TEMPLATES.length}.</p>
+          <button type="button" className="stage__ghost" onClick={() => setQuery('')}>
+            Clear search
+          </button>
+        </div>
+      ) : (
+        <>
+          {featured.length > 0 && (
+            <>
+              {/* Named rather than labelled "Featured", which is a marketing
+                  word. These three are here for one reason and it is
+                  checkable by opening them. */}
+              {/* Says the actual claim rather than gesturing at it. "Built to be
+                  opened at scale" is the kind of phrase that sounds like it
+                  means something — scale of what, and opened by whom? The
+                  number is the point, so the heading is the number. */}
+              <h3 className="stage__subhead">Boards with hundreds of objects on them</h3>
+              <div className="tgrid tgrid--featured">{featured.map(templateCard)}</div>
+              <h3 className="stage__subhead stage__subhead--spaced">Boards to start real work in</h3>
+            </>
+          )}
+          <div className="tgrid">{rest.map(templateCard)}</div>
+        </>
+      )}
+    </>
   );
 
-  const templatePreviews = useMemo(() => {
-    const out: Record<string, ReturnType<typeof templatePreview>> = {};
-    TEMPLATES.forEach((t) => { out[t.id] = templatePreview(t); });
-    return out;
-  }, []);
+  const boardsBody = !hasRooms ? (
+    <div className="stage__empty">
+      <Layers size={22} aria-hidden="true" />
+      <h3>Nothing here yet</h3>
+      <p>
+        Boards you open show up here. Start from a template, make a blank one,
+        or open a link someone sent you.
+      </p>
+    </div>
+  ) : matchedRooms.length === 0 ? (
+    // A filter matching nothing is a different screen from having no boards,
+    // and saying so is the difference between "there is nothing here" and
+    // "nothing here *matches*".
+    <div className="stage__empty">
+      <Search size={22} aria-hidden="true" />
+      <h3>No boards match “{query.trim()}”</h3>
+      <p>Try a different name, or clear the search.</p>
+      <button type="button" className="stage__ghost" onClick={() => setQuery('')}>
+        Clear search
+      </button>
+    </div>
+  ) : (
+    <div className="tgrid">
+      {matchedRooms.map((room) => (
+        <a key={room.id} className="bcard" href={`/room/${room.id}`}>
+          <span className="bcard__art">
+            <WorkspaceCover workspaceId={room.id} name={room.name} />
+          </span>
+          <span className="bcard__body">
+            <span className="bcard__name">{room.name}</span>
+            <span className="bcard__meta">Opened {formatDate(room.lastAccessed)}</span>
+          </span>
+          <button
+            className="bcard__remove"
+            onClick={(e) => removeRoom(e, room.id)}
+            aria-label={`Remove ${room.name} from this list`}
+            data-tooltip="Remove from this list"
+          >
+            <X size={15} />
+          </button>
+        </a>
+      ))}
+    </div>
+  );
 
-  const templateGallery = (
-    <section className="templates" aria-labelledby="templates-heading">
-              <div className="templates__head">
-        <button
-          type="button"
-          className="templates__toggle"
-          aria-expanded={templatesOpen}
-          aria-controls="templates-body"
-          onClick={() => setTemplatesOpen((open) => !open)}
-        >
-          <ChevronDown size={18} className="templates__chevron" aria-hidden="true" />
-          <h2 id="templates-heading" className="templates__title">Explore Vega Studio templates</h2>
-        </button>
-        <p className="templates__lede">
-          Editable boards covering diagrams, layouts and canvases built at scale.
-          Open one and change anything in it.
+  const boardsSection = (
+    <section className="stage__section" aria-labelledby="boards-heading">
+      <div className="stage__head">
+        <h2 id="boards-heading" className="stage__title">Your boards</h2>
+        <p className="stage__lede">
+          {hasRooms
+            ? 'Boards you have opened on this device. The list lives in this browser — it is not an account.'
+            : 'Boards you open on this device collect here.'}
         </p>
       </div>
+      {boardsBody}
+    </section>
+  );
 
-      {/* Categories, as a filter rather than navigation. Switching keeps the
-          page you are on — a tab that navigated would discard the scroll
-          position and anything typed into the search below. */}
-      <div id="templates-body" className="templates__body" hidden={!templatesOpen}>
-        <div className="templates__tabs" role="tablist" aria-label="Template categories">
-          <button
-            type="button" role="tab" aria-selected={category === null}
-            className={`templates__tab ${category === null ? 'is-on' : ''}`}
-            onClick={() => setCategory(null)}
-          >
-            All<span className="templates__tab-count">{TEMPLATES.length}</span>
-          </button>
-          {CATEGORIES.map((c) => {
-            const count = TEMPLATES.filter((t) => t.category === c.id).length;
-            if (count === 0) return null;
-            return (
-              <button
-                key={c.id} type="button" role="tab" aria-selected={category === c.id}
-                className={`templates__tab ${category === c.id ? 'is-on' : ''}`}
-                onClick={() => setCategory(c.id)}
-              >
-                {c.label}<span className="templates__tab-count">{count}</span>
-              </button>
-            );
-          })}
-        </div>
-
-        <div className="templates__grid">
-          {visibleTemplates.map((template) => (
-                  <button
-                    key={template.id}
-                    type="button"
-                    className="template-card"
-                    onClick={() => {
-                      stashPendingTemplate(template.id);
-                      window.location.href = `/room/${nanoid(10)}`;
-                    }}
-                  >
-                    {/* The board itself, drawn through the same component the
-                      workspace cards use — so a template's picture is the
-                      board it produces, not an illustration that will drift
-                      from it. */}
-                  <span className="template-card__art">
-                    <WorkspaceCover
-                      workspaceId={template.id}
-                      name={template.name}
-                      preview={templatePreviews[template.id]}
-                    />
-                  </span>
-                  <span className="template-card__name">{template.name}</span>
-                    <span className="template-card__blurb">{template.blurb}</span>
-                    {/* The object count leads the chips when there is one: it is
-                      the claim the board exists to make, and it is checkable. */}
-                  <span className="template-card__teaches">
-                    {template.objectCount && (
-                      <span className="template-card__chip template-card__chip--count">
-                        {template.objectCount.toLocaleString()} objects
-                      </span>
-                    )}
-                      {template.teaches.map((what) => (
-                        <span key={what} className="template-card__chip">{what}</span>
-                      ))}
-                    </span>
-                  </button>
-          ))}
-        </div>
+  const templatesSection = (
+    <section className="stage__section" aria-labelledby="templates-heading">
+      <div className="stage__head">
+        <h2 id="templates-heading" className="stage__title">
+          {category ? categoryLabel : 'Templates'}
+        </h2>
+        <p className="stage__lede">
+          {category
+            ? `${matchedTemplates.length} board${matchedTemplates.length === 1 ? '' : 's'} here. Each opens as an ordinary board you can change.`
+            : 'Real boards, already full — open one and change anything in it. Several are here to be checked rather than admired: a thousand objects is a claim, and you can count them.'}
+        </p>
       </div>
+      {templatesBody}
     </section>
   );
 
   return (
-    <div className="rooms">
-      <header className="rooms__bar">
-        <span className="rooms__brand">
+    <div className="home">
+      {/* ------------------------------------------------------------ app bar */}
+      <header className={`home__bar${scrolled ? ' is-scrolled' : ''}`}>
+        <a className="home__brand" href="/" aria-label="Vega Studio home">
           <Logo size={26} />
-          Vega Studio
-        </span>
+          <span>Vega Studio</span>
+        </a>
 
-        <div className="rooms__me">
-          <div style={{ textAlign: 'right', lineHeight: 1.25 }}>
-            <div style={{ fontSize: 13, fontWeight: 600 }}>{user.name}</div>
-            <div style={{ fontSize: 11, color: 'var(--text-tertiary)' }}>
-              {user.isGuest ? 'Guest session' : 'Signed in on this device'}
-            </div>
-          </div>
-          <span
-            className="rooms__avatar"
-            style={{ background: user.color }}
-            aria-hidden="true"
-          >
+        {/* One field, filtering both sections. This page used to carry two
+            inputs in unrelated places, neither beside what it acted on. */}
+        <label className="home__search">
+          <Search size={16} aria-hidden="true" />
+          <input
+            type="search"
+            value={query}
+            onChange={(e) => setQuery(e.target.value)}
+            placeholder="Search boards and templates"
+            aria-label="Search boards and templates"
+          />
+        </label>
+
+        <div className="home__me">
+          <span className="home__me-text">
+            <span className="home__me-name">{user.name}</span>
+            <span className="home__me-sub">{user.isGuest ? 'Guest session' : 'On this device'}</span>
+          </span>
+          <span className="home__avatar" style={{ background: user.color }} aria-hidden="true">
             {user.name.charAt(0).toUpperCase()}
           </span>
           <button
             onClick={logout}
-            className="btn-icon"
+            className="home__signout"
+            aria-label={user.isGuest ? 'End guest session' : 'Sign out'}
             data-tooltip={user.isGuest ? 'End guest session' : 'Sign out'}
             data-tooltip-pos="bottom"
-            aria-label={user.isGuest ? 'End guest session' : 'Sign out'}
-            style={{ padding: 7 }}
           >
             <LogOut size={16} />
           </button>
         </div>
       </header>
 
-      <main className="rooms__main">
-        {/* The page-level actions only. "Your boards" is the heading for the
-            recents list, and it now sits with it — a page whose title names
-            one of its two sections is a page that mislabels itself. */}
-        <div className="rooms__masthead rooms__masthead--bare">
-          <div className="rooms__masthead-actions">
+      <div className="home__body">
+        {/* --------------------------------------------------------------- rail */}
+        <nav className="rail" aria-label="Library">
+          {/* The one front door on the page, and the only accent-filled
+              control. It sits above the navigation because making something
+              new does not depend on where you are. */}
+          <button type="button" className="rail__new" onClick={openBoard}>
+            <Plus size={17} aria-hidden="true" /> New board
+          </button>
+
+          <div className="rail__group">
+            <button
+              type="button"
+              className={`rail__item${view === 'boards' ? ' is-on' : ''}`}
+              aria-current={view === 'boards' ? 'page' : undefined}
+              onClick={() => setView('boards')}
+            >
+              <Layers size={16} aria-hidden="true" />
+              <span className="rail__label">Your boards</span>
+              <span className="rail__count">{recentRooms.length}</span>
+            </button>
+          </div>
+
+          {/* Its own group. These are the two top-level destinations and they
+              were separated by a single pixel, so "Your boards" read as the
+              first of six sibling rows rather than as the peer of Templates —
+              and the categories underneath looked like they belonged to both. */}
+          <div className="rail__group">
+            <button
+              type="button"
+              className={`rail__item${view === 'templates' && !category ? ' is-on' : ''}`}
+              aria-current={view === 'templates' && !category ? 'page' : undefined}
+              onClick={() => goTemplates(null)}
+            >
+              <Compass size={16} aria-hidden="true" />
+              <span className="rail__label">Templates</span>
+              <span className="rail__count">{TEMPLATES.length}</span>
+            </button>
+
+            {/* Categories sit under the section they filter, indented, so they
+                read as part of it rather than as a second navigation. */}
+            {CATEGORIES.map((c) => {
+              const count = TEMPLATES.filter((t) => t.category === c.id).length;
+              if (count === 0) return null;
+              return (
+                <button
+                  key={c.id}
+                  type="button"
+                  className={`rail__item rail__item--sub${view === 'templates' && category === c.id ? ' is-on' : ''}`}
+                  aria-current={view === 'templates' && category === c.id ? 'true' : undefined}
+                  onClick={() => goTemplates(c.id)}
+                >
+                  <span className="rail__label">{c.label}</span>
+                  <span className="rail__count">{count}</span>
+                </button>
+              );
+            })}
+          </div>
+
+          {/* The rare actions, at the bottom, quiet. Joining by link and
+              restoring a backup are both real and both uncommon; they used to
+              sit mid-column at the same weight as the gallery. */}
+          <div className="rail__foot">
+            <button
+              type="button"
+              className="rail__quiet"
+              aria-expanded={joinOpen}
+              onClick={() => setJoinOpen((o) => !o)}
+            >
+              <Link2 size={15} aria-hidden="true" /> Open a link
+            </button>
+
+            {joinOpen && (
+              // Inline rather than a dialog: pasting a link needs neither
+              // interruption nor protected focus.
+              <form className="rail__join" onSubmit={handleJoin}>
+                <input
+                  type="text"
+                  value={joinLink}
+                  onChange={(e) => setJoinLink(e.target.value)}
+                  placeholder="Paste a board link"
+                  aria-label="Paste a board link to join"
+                  autoFocus
+                />
+                <button type="submit" disabled={!joinLink.trim()}>Open</button>
+              </form>
+            )}
+
             <input
               ref={restoreInputRef}
               type="file"
@@ -338,172 +531,47 @@ export const Home: React.FC = () => {
                 e.target.value = '';
               }}
             />
-            <button
-              className="rooms__secondary"
-              onClick={() => restoreInputRef.current?.click()}
-              data-tooltip="Rebuild a board from a JSON backup"
-            >
-              <UploadCloud size={16} /> Restore backup
-            </button>
-            <button className="rooms__primary" onClick={handleCreate}>
-              <Plus size={17} /> New board
+            <button type="button" className="rail__quiet" onClick={() => restoreInputRef.current?.click()}>
+              <UploadCloud size={15} aria-hidden="true" /> Restore a backup
             </button>
           </div>
-        </div>
+        </nav>
 
-        {templateGallery}
+        {/* -------------------------------------------------------------- stage */}
+        <main className="stage" ref={stageRef}>
+          {restoreError && <div className="stage__error" role="alert">{restoreError}</div>}
 
-        {restoreError && (
-          <div className="rooms__restore-error" role="alert">
-            {restoreError}
-          </div>
-        )}
+          {view === 'boards' ? (
+            <>
+              {boardsSection}
 
-        {hasRooms && (
-          <div className="rooms__tools">
-            <label className="rooms__search">
-              <Search size={15} />
-              <input
-                type="search"
-                value={query}
-                onChange={(e) => setQuery(e.target.value)}
-                placeholder="Search boards"
-                aria-label="Search boards"
-              />
-            </label>
+              {/* The way into the other tab.
 
-            <form className="rooms__join" onSubmit={handleJoin}>
-              <input
-                type="text"
-                value={joinLink}
-                onChange={(e) => setJoinLink(e.target.value)}
-                placeholder="Paste a board link"
-                aria-label="Paste a board link to join"
-              />
-              <button type="submit" disabled={!joinLink.trim()}>Join</button>
-            </form>
+                  A tab nobody presses may as well not exist, and "thirteen
+                  boards that arrive already full" is worth saying once, where
+                  it will actually be read — at the end of the view someone is
+                  already looking at.
 
-            <div className="rooms__views" role="group" aria-label="Layout">
-              <button
-                className="rooms__view"
-                aria-pressed={viewMode === 'grid'}
-                aria-label="Grid"
-                onClick={() => setViewMode('grid')}
-              >
-                <LayoutGrid size={15} />
-              </button>
-              <button
-                className="rooms__view"
-                aria-pressed={viewMode === 'list'}
-                aria-label="List"
-                onClick={() => setViewMode('list')}
-              >
-                <LayoutList size={15} />
-              </button>
-            </div>
-          </div>
-        )}
-
-        <div className="rooms__section-head">
-          <h2 className="rooms__title">Your boards</h2>
-          <p className="rooms__subtitle">
-            {hasRooms
-              ? 'Boards you have opened on this device.'
-              : 'Nothing here yet. Start from a template above, or open a link someone sent you.'}
-          </p>
-        </div>
-
-        {!hasRooms ? (
-          <div className="rooms__empty">
-            <div className="rooms__empty-mark" aria-hidden="true">
-              <LayoutTemplate size={24} />
-            </div>
-            <h2>An infinite canvas, shared</h2>
-            <p>
-              Sticky notes, drawings, images and voice notes on one unbounded
-              surface, with everyone on it at the same time. There is no signup —
-              whoever you send the link to is in.
-            </p>
-            <div className="rooms__empty-actions">
-              <button className="rooms__primary" onClick={handleCreate}>
-                <Plus size={17} /> New board
-              </button>
-            </div>
-            {/* The join form lives here in the empty state rather than being
-                focused by a `querySelector` reaching into the toolbar above —
-                which is what the old "Join with a link" button did, and which
-                broke the moment that input stopped rendering. */}
-            <form className="rooms__join" onSubmit={handleJoin} style={{ margin: 'var(--space-5) auto 0', maxWidth: 320 }}>
-              <input
-                type="text"
-                value={joinLink}
-                onChange={(e) => setJoinLink(e.target.value)}
-                placeholder="Or paste a board link"
-                aria-label="Paste a board link to join"
-              />
-              <button type="submit" disabled={!joinLink.trim()}>Join</button>
-            </form>
-          </div>
-        ) : visible.length === 0 ? (
-          // A filter matching nothing is a different screen from having no
-          // boards, and saying so is the difference between "there is nothing
-          // here" and "there is nothing here *that matches*".
-          <div className="rooms__empty">
-            <h2>No boards match “{query.trim()}”</h2>
-            <p>Try a different name, or clear the search.</p>
-            <div className="rooms__empty-actions">
-              <button className="rooms__ghost" onClick={() => setQuery('')}>Clear search</button>
-            </div>
-          </div>
-        ) : viewMode === 'grid' ? (
-          <div className="rooms__grid">
-            {visible.map((room) => (
-              <a key={room.id} className="room-card" href={`/room/${room.id}`}>
-                <WorkspaceCover workspaceId={room.id} name={room.name} />
-                <div className="room-card__body">
-                  <div style={{ minWidth: 0 }}>
-                    <h3 className="room-card__name">{room.name}</h3>
-                    <p className="room-card__meta">Opened {formatDate(room.lastAccessed)}</p>
-                  </div>
-                  <button
-                    className="room-card__remove"
-                    onClick={(e) => removeRoom(e, room.id)}
-                    aria-label={`Remove ${room.name} from this list`}
-                    data-tooltip="Remove from this list"
-                  >
-                    <X size={15} />
-                  </button>
-                </div>
-              </a>
-            ))}
-          </div>
-        ) : (
-          <div className="rooms__list">
-            {visible.map((room) => (
-              <a key={room.id} className="room-row" href={`/room/${room.id}`}>
-                <span className="room-row__lead">
-                  <span className="room-row__icon" aria-hidden="true">
-                    <LayoutTemplate size={17} />
-                  </span>
-                  <span style={{ minWidth: 0 }}>
-                    <h3 className="room-card__name">{room.name}</h3>
-                    <p className="room-card__meta">Opened {formatDate(room.lastAccessed)}</p>
+                  It states what the templates *are* rather than asking
+                  whether you need help: "not sure what to make?" makes an
+                  offer out of an assumed problem and reads as sales copy on a
+                  tool. It also never says "below", because it is not below —
+                  it is a different view, and the arrow carries the rest. */}
+              <button type="button" className="seam" onClick={() => goTemplates(null)}>
+                <span className="seam__text">
+                  <span className="seam__title">Every template is a real board</span>
+                  <span className="seam__sub">
+                    Open one and change anything in it.
                   </span>
                 </span>
-                <button
-                  className="room-row__remove"
-                  onClick={(e) => removeRoom(e, room.id)}
-                  aria-label={`Remove ${room.name} from this list`}
-                  data-tooltip="Remove from this list"
-                >
-                  <X size={15} />
-                </button>
-              </a>
-            ))}
-          </div>
-        )}
-
-      </main>
+                <span className="seam__go" aria-hidden="true"><ArrowRight size={16} /></span>
+              </button>
+            </>
+          ) : (
+            templatesSection
+          )}
+        </main>
+      </div>
     </div>
   );
 };

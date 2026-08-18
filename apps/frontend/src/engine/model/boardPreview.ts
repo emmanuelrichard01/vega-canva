@@ -57,6 +57,47 @@ export interface PreviewItem {
    * crowded out the actual content they were drawn on top of.
    */
   l?: number[];
+  /**
+   * Text, drawn as text rather than as a filled box.
+   *
+   * A text node's fill is its *ink* colour, and its box is the area the words
+   * occupy — so painting it the way every other node is painted produced a
+   * solid near-black slab the size of the paragraph. Every template that
+   * labelled itself got one across the top of its card, and it read as a
+   * rendering failure rather than as a heading, because that is what a filled
+   * black rectangle looks like.
+   *
+   * Real glyphs are not an option at cover size: the biggest heading on these
+   * boards lands at roughly two pixels tall. The renderer draws ruled lines
+   * instead — the same convention a wireframe uses — which reads as "there are
+   * words here" at a glance and is honest about not being legible.
+   */
+  t?: 1;
+  /**
+   * Type size, normalised like everything else, so the ruled lines are spaced
+   * the way the real text is.
+   *
+   * Without it a 36px title and a 14px paragraph in boxes of the same height
+   * draw the identical stack of rules, and the board's typographic hierarchy —
+   * often the clearest thing about its composition at thumbnail size —
+   * disappears.
+   */
+  fs?: number;
+  /**
+   * A frame — paper, not a filled shape.
+   *
+   * A frame's default fill is white and its edge is a hairline, which is what
+   * `FrameRenderer` draws. The preview had no idea, so it fell through to the
+   * generic `#94A3B8` and painted every frame as a solid slate block. On the
+   * boards built *out* of frames — the social kit, the sprint lanes, the
+   * impact matrix — that meant the card was mostly grey slabs with the actual
+   * content buried under them, which is not what the board looks like at all.
+   *
+   * Flagged rather than just recoloured, because white paper on a near-white
+   * card needs the hairline to be visible at all, and only the renderer can
+   * draw one.
+   */
+  k?: 1;
 }
 
 export interface BoardPreview {
@@ -79,6 +120,29 @@ export interface BoardPreview {
 const MAX_ITEMS = 48;
 
 /**
+ * A richer cap, for previews that are computed rather than stored.
+ *
+ * The 48 above is a *storage* budget — stored previews ride in `localStorage`
+ * beside the room list, and there is one per board. A template's picture is
+ * computed fresh from its builder and never stored, so it pays none of that
+ * and should not inherit the limit.
+ *
+ * It matters more than a count usually would, because items are kept
+ * **largest-first**, and on a generated board size often carries the pattern.
+ * Wave field sizes each tile by the height of the wave under it, so keeping
+ * the biggest half kept the crests and discarded the troughs — the card
+ * showed a grid with holes punched through it, which read as a rendering
+ * fault rather than as a surface. The bias is invisible on a board of mixed
+ * furniture and destroys any board whose subject *is* the variation.
+ *
+ * Sized above `PREVIEW_NODE_LIMIT` rather than near it, deliberately. The two
+ * numbers meeting is what produced the holes: the builder made 135 tiles and
+ * the cap kept 130, so five troughs went missing and the grid looked punched
+ * through. Headroom means the cap only ever bites on a board nobody trimmed.
+ */
+export const MAX_ITEMS_RICH = 170;
+
+/**
  * How much of the cover an object deserves.
  *
  * Area, except for a connector — whose bounding box is mostly the empty space
@@ -96,7 +160,9 @@ export function buildPreview(
   nodes: readonly AnyNode[],
   colorOf: (node: AnyNode) => string,
   /** Route points in world space, for nodes that are lines rather than boxes. */
-  pointsOf?: (node: AnyNode) => number[] | null
+  pointsOf?: (node: AnyNode) => number[] | null,
+  /** Defaults to the storage budget; see `MAX_ITEMS_RICH`. */
+  maxItems: number = MAX_ITEMS
 ): BoardPreview | null {
   const visible = nodes.filter((n) => !n.hidden && n.type !== 'comment');
   if (visible.length === 0) return null;
@@ -124,7 +190,7 @@ export function buildPreview(
      * single arrow across the board outrank every object it connected.
      */
     .sort((a, b) => previewWeight(b) - previewWeight(a))
-    .slice(0, MAX_ITEMS)
+    .slice(0, maxItems)
     // Back into stacking order, so the drawing layers the way the board does.
     .sort((a, b) => a.zIndex - b.zIndex);
 
@@ -141,6 +207,12 @@ export function buildPreview(
       c: colorOf(n),
     };
     if (n.type === 'shape' && n.geometry.kind === 'ellipse') item.o = 1;
+    if (n.type === 'frame') item.k = 1;
+    if (n.type === 'text') {
+      item.t = 1;
+      const size = (n as { typography?: { fontSize?: number } }).typography?.fontSize;
+      if (size && size > 0) item.fs = round(size / boardH);
+    }
 
     /**
      * A connector draws its route, not its box.

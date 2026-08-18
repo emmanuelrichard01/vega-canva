@@ -69,6 +69,215 @@ describe('PhysicsSimulation - bodies', () => {
     expect(Number.isFinite(body.inertia)).toBe(true);
   });
 
+  it('does not freeze a body while something moving is still landing on it', () => {
+    /**
+     * The Pachinko case, and the bug that stopped every cascade.
+     *
+     * A body that has come to rest on a locked obstacle is momentarily below
+     * the speed threshold, so it banks settle frames — and freezes — while
+     * the objects above it are still falling onto it. It is then immediately
+     * re-woken by the next impact. The symptom is a body settling *more than
+     * once* in one run: a stutter on screen, and a transform committed to the
+     * document every time.
+     *
+     * It takes a sustained field to reproduce, because without one nothing
+     * ever piles up: bodies drift apart and stop independently, and never
+     * rest on each other at all.
+     */
+    const { sim } = simWith([
+      node('floor', { x: -400, y: 600, width: 900, height: 60, locked: true }),
+      node('a', { x: 0, y: 300 }),
+      node('b', { x: 10, y: 120 }),
+      node('c', { x: 20, y: -60 }),
+    ]);
+
+    const settleCount = new Map<string, number>();
+    for (let i = 0; i < 900; i++) {
+      // A held Drop over the column — what a latched field will do for you.
+      // One press, held — so it carries one gesture id for its whole life.
+      sim.applyForce(60, 300, 'gravity', { radiusScale: 3, scale: 2, gesture: 1 });
+      for (const t of sim.advance(FIXED_DT).settled) {
+        settleCount.set(t.id, (settleCount.get(t.id) ?? 0) + 1);
+      }
+    }
+
+    // The locked floor never moved.
+    expect(sim.getBody('floor')!.isStatic).toBe(true);
+
+    /**
+     * A few settles per body is correct: one when it lands, and one more each
+     * time something falls onto it afterwards, because an impact deliberately
+     * overrides "already rested this press".
+     *
+     * What is not correct is the freeze/re-wake loop the held field used to
+     * drive on its own. Fifteen seconds of held Drop measured eighty-three
+     * settles per body before this — roughly five document writes per second,
+     * per object, for a pile that was not moving.
+     */
+    const worst = Math.max(...settleCount.values());
+    expect(worst).toBeLessThanOrEqual(6);
+  });
+
+  it('does not time out a body while a field is still being driven', () => {
+    /**
+     * The timeout counted five seconds from *waking*, so a held or latched
+     * field longer than that froze everything under it while it was still
+     * being pushed — the simulation overruling the person driving it.
+     */
+    const { sim } = simWith([node('a')]);
+
+    /**
+     * Wind, re-aimed at the body every step, so it keeps travelling and never
+     * settles on *speed* — which isolates the timeout as the only thing that
+     * could retire it. A magnet would not do: the body reaches the attractor
+     * and legitimately comes to rest there.
+     */
+    const push = () => {
+      const p = sim.getBody('a')!.position;
+      sim.applyForce(p.x, p.y, 'wind', { dx: 1, dy: 0 });
+    };
+
+    push();
+    expect(sim.activeCount).toBe(1);
+
+    /**
+     * Counting *settles*, not `activeCount`.
+     *
+     * `activeCount` cannot see this bug: the body freezes on the timeout and
+     * the very next push wakes it straight back up, so the count reads 1
+     * either way. What the timeout actually caused was a freeze/re-wake cycle
+     * every five seconds — a visible stutter, and a committed transform to
+     * the document on each one, which is write churn for an object that never
+     * stopped being pushed.
+     */
+    let settles = 0;
+    for (let i = 0; i < 500; i++) {
+      push();
+      settles += sim.advance(FIXED_DT).settled.length;
+    }
+    expect(settles).toBe(0);
+    expect(sim.activeCount).toBe(1);
+
+    // Stop driving it, and it is allowed to retire as before.
+    runToRest(sim, 2000);
+    expect(sim.activeCount).toBe(0);
+  });
+
+  it('builds a circle body for a round shape, and a box for an oblong one', () => {
+    /**
+     * The simulation read no geometry at all, so every body was a rectangle —
+     * which is invisible on a scatter and fatal on anything meant to roll. A
+     * square ball landing on a square peg balances on its flat top, which is
+     * exactly why the Pachinko board jammed.
+     */
+    const { sim } = simWith([
+      node('ball', { type: 'shape', width: 40, height: 40, geometry: { kind: 'ellipse' } }),
+      node('petal', { type: 'shape', x: 300, width: 20, height: 60, geometry: { kind: 'ellipse' } }),
+      node('box', { type: 'shape', x: 600, width: 40, height: 40, geometry: { kind: 'rect' } }),
+    ]);
+
+    expect(sim.getBody('ball')!.plugin.round).toBe(true);
+    // Matter approximates a circle with a polygon; a rectangle is always 4.
+    expect(sim.getBody('ball')!.vertices.length).toBeGreaterThan(4);
+
+    // Too elongated to be a circle of any single radius.
+    expect(sim.getBody('petal')!.plugin.round).toBe(false);
+    expect(sim.getBody('box')!.plugin.round).toBe(false);
+  });
+
+  it('rebuilds a body when its shape changes', () => {
+    const { sim, map } = simWith([
+      node('a', { type: 'shape', width: 40, height: 40, geometry: { kind: 'rect' } }),
+    ]);
+    const before = sim.getBody('a')!;
+    expect(before.plugin.round).toBe(false);
+
+    map.a = { ...map.a, geometry: { kind: 'ellipse' } };
+    sim.sync(map, ['a'], []);
+
+    expect(sim.getBody('a')).not.toBe(before);
+    expect(sim.getBody('a')!.plugin.round).toBe(true);
+  });
+
+  it('lets a scoped object travel straight through an unscoped one', () => {
+    /**
+     * "Just my selection" promises you can tidy a cluster without disturbing
+     * its neighbours. Filtering only the *force* does the opposite: the
+     * neighbours are asleep, an asleep body is an immovable wall, so the
+     * selection ends up pinned against them. Measured before the fix — a
+     * shockwave that carried the object 450 units unscoped moved it 4 when
+     * scoped, because its neighbour was in the way.
+     */
+    const { sim } = simWith([
+      node('mine', { x: 0, y: 0 }),
+      node('theirs', { x: 125, y: 0 }),
+    ]);
+
+    const theirsStart = sim.getBody('theirs')!.position.x;
+    sim.applyForce(-300, 0, 'shockwave', { scale: 1.5, only: new Set(['mine']) });
+    for (let i = 0; i < 300; i++) sim.advance(FIXED_DT);
+
+    // It got well past the neighbour instead of being blocked by it.
+    expect(sim.getBody('mine')!.position.x).toBeGreaterThan(300);
+    // And the neighbour is exactly where it was.
+    expect(Math.round(sim.getBody('theirs')!.position.x)).toBe(Math.round(theirsStart));
+    expect(sim.getBody('theirs')!.isStatic).toBe(true);
+  });
+
+  it('puts collisions back when the scope is dropped', () => {
+    const { sim } = simWith([node('a'), node('b', { x: 125 })]);
+    sim.applyForce(-300, 0, 'shockwave', { scale: 1.5, only: new Set(['a']) });
+    // An unscoped press afterwards must restore an ordinary world.
+    sim.applyForce(-300, 0, 'shockwave', { scale: 0.5 });
+    expect(sim.getBody('a')!.collisionFilter.mask).toBe(0xFFFFFFFF);
+    expect(sim.getBody('b')!.collisionFilter.mask).toBe(0xFFFFFFFF);
+    expect(sim.getBody('b')!.collisionFilter.category).toBe(0x0001);
+  });
+
+  it('never sets a locked object in motion, however hard it is hit', () => {
+    // The simulation did not read `locked` at all, so the one control whose
+    // whole promise is "do not move this" was ignored by the only system that
+    // moves things.
+    const { sim } = simWith([node('a', { x: 60, y: 0, locked: true })]);
+
+    sim.applyForce(0, 0, 'shockwave');
+
+    const body = sim.getBody('a')!;
+    expect(body.isStatic).toBe(true);
+    expect(sim.activeCount).toBe(0);
+  });
+
+  it('still collides against a locked object', () => {
+    // The difference between locking a body and removing it: a peg has to
+    // stay in the world to be bounced off.
+    const { sim } = simWith([
+      node('peg', { x: 220, y: 0, locked: true }),
+      node('ball', { x: 0, y: 0 }),
+    ]);
+
+    sim.applyForce(-200, 0, 'shockwave');
+    expect(sim.getBody('ball')!.isStatic).toBe(false);
+
+    // The peg is present in the world, so Matter can resolve against it.
+    expect(sim.getBody('peg')).toBeDefined();
+    expect(sim.getBody('peg')!.isStatic).toBe(true);
+  });
+
+  it('picks up a lock applied after the body was built', () => {
+    // Lockedness is re-read on every sync rather than baked in at creation,
+    // so it must not need a rebuild to take effect.
+    const { sim, map } = simWith([node('a', { x: 60, y: 0 })]);
+    const before = sim.getBody('a')!;
+
+    map.a = { ...map.a, locked: true };
+    sim.sync(map, ['a'], []);
+
+    // Same body — locking is not a shape or mass change.
+    expect(sim.getBody('a')).toBe(before);
+    sim.applyForce(0, 0, 'shockwave');
+    expect(sim.getBody('a')!.isStatic).toBe(true);
+  });
+
   it('rebuilds a body when its material changes', () => {
     const { sim, map } = simWith([node('a')]);
     const before = sim.getBody('a')!;

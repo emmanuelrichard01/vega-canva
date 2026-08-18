@@ -5,7 +5,7 @@ import Konva from "konva";
 import { provider, updateNode, nextZIndex, lowestZIndex } from '../engine/document';
 import { nanoid } from 'nanoid';
 import { useStore } from '../hooks/useStore';
-import { FORCE_SPECS, isForceTool } from '../engine/physics/forces';
+import { FORCE_SPECS, canLatch, isForceTool } from '../engine/physics/forces';
 import { editor } from '../engine/api/EditorAPI';
 import { EXPORT_CHROME } from '../engine/export/chrome';
 import { SmartGuides } from './canvas/SmartGuides';
@@ -336,13 +336,32 @@ export const Canvas: React.FC<CanvasProps> = ({ activeTool, selectedIds, setSele
 
   useEffect(() => {
     const handleNavigate = (e: any) => {
-      const { x, y, zoom } = e.detail;
+      const { x, y, zoom, immediate } = e.detail;
       const startX = cameraSystem.x;
       const startY = cameraSystem.y;
       const startZoom = cameraSystem.zoom;
 
       const targetX = (window.innerWidth / 2) - (x * zoom);
       const targetY = (window.innerHeight / 2) - (y * zoom);
+
+      /**
+       * Framing something that is not on screen yet is not a journey.
+       *
+       * Every other caller here is navigating *from* somewhere *to* somewhere
+       * — a comment, a collaborator, a search hit — and the six-hundred
+       * millisecond glide is what makes that legible. A board being opened
+       * from a template is the opposite case: there is nothing on the canvas
+       * yet, so the glide is a camera sweeping across an empty surface, and
+       * the content lands mid-flight. Framing first and instantly means the
+       * board is already composed at the moment it appears.
+       */
+      if (immediate) {
+        cameraSystem.x = targetX;
+        cameraSystem.y = targetY;
+        cameraSystem.zoom = zoom;
+        engineEvents.emit('CameraChanged', cameraSystem);
+        return;
+      }
 
       const duration = 600;
       const start = performance.now();
@@ -364,6 +383,30 @@ export const Canvas: React.FC<CanvasProps> = ({ activeTool, selectedIds, setSele
     };
     window.addEventListener('navigateViewport', handleNavigate);
     return () => window.removeEventListener('navigateViewport', handleNavigate);
+  }, []);
+
+  /**
+   * A board that arrives all at once should still arrive *gently*.
+   *
+   * Forty objects committed in one transaction paint in a single frame, which
+   * is correct and fast and reads as a glitch — the canvas is empty, and then
+   * without transition it is not. The flag drives one short fade-and-settle
+   * on the stage, so a template resolves into place instead of being stamped
+   * onto the screen.
+   *
+   * It is CSS rather than a tween on the camera on purpose: the camera has
+   * already been put exactly where it belongs by the time this runs, and
+   * moving it again to make an entrance would undo the framing that the whole
+   * arrival exists to get right.
+   */
+  const [arriving, setArriving] = useState(false);
+  useEffect(() => {
+    const onArrive = () => {
+      setArriving(true);
+      window.setTimeout(() => setArriving(false), 900);
+    };
+    window.addEventListener('boardArriving', onArrive);
+    return () => window.removeEventListener('boardArriving', onArrive);
   }, []);
 
   useEffect(() => {
@@ -404,7 +447,12 @@ export const Canvas: React.FC<CanvasProps> = ({ activeTool, selectedIds, setSele
 
   const { visibleIds } = useVisibleSet();
   const objects = useStore(state => state.objects);
-  const { handleThrow, applyGlobalForce, beginHeldForce, moveHeldForce, endHeldForce, calmAll } = usePhysics(objects, stageRef, selectedIdsRef);
+  const {
+    handleThrow, applyGlobalForce,
+    beginHeldForce, moveHeldForce, endHeldForce,
+    latchField, releaseLatch,
+    calmAll,
+  } = usePhysics(objects, stageRef, selectedIdsRef);
 
   // The Forces panel renders up in Room, two levels above the physics loop.
   useEffect(() => {
@@ -579,10 +627,35 @@ export const Canvas: React.FC<CanvasProps> = ({ activeTool, selectedIds, setSele
       // the one moment the frame budget is already spoken for.
       const ring = forceRingRef.current;
       if (ring) {
-        const cursor = forceCursorRef.current;
+        /**
+         * A latched field outranks the cursor.
+         *
+         * The ring is the only thing that says where a force is being applied.
+         * While one is running it belongs to the *field*, not to the pointer —
+         * leaving it under the cursor would draw the ring somewhere the force
+         * is not, which is worse than not drawing it at all.
+         */
+        const live = latchRef.current;
+        const cursor = live ?? forceCursorRef.current;
         if (cursor) {
           ring.position(cursor);
           ring.visible(true);
+          /**
+           * Latched rings pulse, and fade as the field runs out.
+           *
+           * A ring that sits perfectly still is indistinguishable from the
+           * one that tracks the cursor, so nothing on screen would say the
+           * field is live or how much of it is left. Opacity carries the
+           * countdown; the pulse says it is running rather than parked.
+           */
+          if (live) {
+            const pulse = 1 + 0.03 * Math.sin(performance.now() / 260);
+            ring.scale({ x: pulse, y: pulse });
+            ring.opacity(0.45 + 0.55 * Math.min(1, live.remainingMs / 1200));
+          } else {
+            ring.scale({ x: 1, y: 1 });
+            ring.opacity(1);
+          }
           // Keep the outline a constant thickness on screen at any zoom.
           const invZoom = 1 / (cameraSystem.zoom || 1);
           ring.getChildren().forEach((child) => {
@@ -599,6 +672,39 @@ export const Canvas: React.FC<CanvasProps> = ({ activeTool, selectedIds, setSele
     engineEvents.on('RenderTick', handleRenderTick);
     return () => engineEvents.off('RenderTick', handleRenderTick);
   }, []);
+
+  /**
+   * The live latched field, mirrored for the ring to draw.
+   *
+   * A ref rather than state: the countdown ticks every frame, and putting it
+   * in state would re-render the whole canvas sixty times a second for a
+   * number nothing but one ring reads — the same reason the ring's position
+   * is written imperatively.
+   */
+  const latchRef = useRef<{ x: number; y: number; remainingMs: number } | null>(null);
+  useEffect(() => {
+    const onLatch = (v: { x: number; y: number; remainingMs: number } | null) => {
+      latchRef.current = v;
+    };
+    engineEvents.on('ForceLatchChanged', onLatch);
+    return () => engineEvents.off('ForceLatchChanged', onLatch);
+  }, []);
+
+  /**
+   * Escape stops a running field.
+   *
+   * Registered in the capture phase and only while something is actually
+   * latched, so it cannot swallow an Escape meant for a dialog, an editor or
+   * the selection when no field is running.
+   */
+  useEffect(() => {
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key !== 'Escape') return;
+      if (releaseLatch()) e.stopPropagation();
+    };
+    window.addEventListener('keydown', onKey, true);
+    return () => window.removeEventListener('keydown', onKey, true);
+  }, [releaseLatch]);
 
   const [isSpacePressed, setIsSpacePressed] = useState(false);
 
@@ -897,9 +1003,21 @@ export const Canvas: React.FC<CanvasProps> = ({ activeTool, selectedIds, setSele
       if (pointerPosition) {
         const x = (pointerPosition.x - cameraSystem.x) / cameraSystem.zoom;
         const y = (pointerPosition.y - cameraSystem.y) / cameraSystem.zoom;
+        const { forceLatch, forceLatchSeconds } = useStore.getState();
         if (activeTool === 'shockwave') {
-          // An impulse, not a hold — one burst per press.
+          // An impulse, not a hold — one burst per press. Latching a single
+          // impulse would just be repeat-fire, which is a different tool.
           applyGlobalForce(x, y, 'shockwave');
+        } else if (forceLatch && canLatch(activeTool)) {
+          /**
+           * Latched: place the field and let go.
+           *
+           * Pressing again while one is running cancels rather than moving it,
+           * so the same gesture that started it also stops it — otherwise the
+           * only way out is Escape, and a field you cannot stop where you
+           * started it is a trap.
+           */
+          if (!releaseLatch()) latchField(activeTool, x, y, forceLatchSeconds);
         } else {
           beginHeldForce(activeTool, x, y);
         }
@@ -978,6 +1096,7 @@ export const Canvas: React.FC<CanvasProps> = ({ activeTool, selectedIds, setSele
       // no cursor to style, so the rule is simply ignored there — which is why
       // the old touch special-case is gone.
       data-cursor-mode={cursorMode}
+      data-arriving={arriving ? 'true' : undefined}
       style={{ touchAction: 'none' }}
       ref={containerRef}
       onMouseMove={handleMouseMove}

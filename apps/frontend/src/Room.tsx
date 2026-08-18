@@ -81,7 +81,27 @@ let restoreConsumed = false;
  * edges of the board underneath the panels — visible to the renderer, hidden
  * from the person. The usable middle is what the content is fitted into.
  */
-function fitBoardToView(nodes: Array<{ x: number; y: number; width: number; height: number }>): void {
+function fitBoardToView(
+  nodes: Array<{ x: number; y: number; width: number; height: number }>,
+  /**
+   * Frame without the glide.
+   *
+   * Used when the board is not on screen yet: gliding across an empty canvas
+   * and letting the content land mid-flight is what made a template arrive as
+   * a lurch. See the note in `Canvas`'s navigate handler.
+   */
+  immediate = false,
+  /**
+   * Whether the side panels and the dock are actually on screen.
+   *
+   * The insets below are subtracted unconditionally, which is right while the
+   * chrome is up and wrong the moment it is not: in focus mode — and now
+   * whenever a force is armed — there are no panels, so reserving six hundred
+   * pixels for them fits the board into a band twice as narrow as the one it
+   * has, and centres it in a space that does not exist.
+   */
+  chromeVisible = true
+): void {
   if (nodes.length === 0) return;
 
   let minX = Infinity, minY = Infinity, maxX = -Infinity, maxY = -Infinity;
@@ -95,8 +115,8 @@ function fitBoardToView(nodes: Array<{ x: number; y: number; width: number; heig
 
   const boardW = Math.max(1, maxX - minX);
   const boardH = Math.max(1, maxY - minY);
-  const usableW = Math.max(320, cameraSystem.width - PANEL_INSET * 2);
-  const usableH = Math.max(240, cameraSystem.height - VERTICAL_INSET);
+  const usableW = Math.max(320, cameraSystem.width - (chromeVisible ? PANEL_INSET * 2 : 0));
+  const usableH = Math.max(240, cameraSystem.height - (chromeVisible ? VERTICAL_INSET : 0));
 
   const zoom = Math.min(
     (usableW / boardW) * FIT_MARGIN,
@@ -114,7 +134,7 @@ function fitBoardToView(nodes: Array<{ x: number; y: number; width: number; heig
    * about half the dock's height higher. Centring on the stage put the bottom
    * of every fitted board underneath the dock.
    */
-  const verticalShift = DOCK_OBSTRUCTION / 2 / Math.max(0.02, zoom);
+  const verticalShift = chromeVisible ? DOCK_OBSTRUCTION / 2 / Math.max(0.02, zoom) : 0;
 
   window.dispatchEvent(
     new CustomEvent('navigateViewport', {
@@ -122,6 +142,7 @@ function fitBoardToView(nodes: Array<{ x: number; y: number; width: number; heig
         x: minX + boardW / 2,
         y: minY + boardH / 2 - verticalShift,
         zoom: Math.max(0.02, zoom),
+        immediate,
       },
     })
   );
@@ -166,7 +187,24 @@ export default function Room() {
   }, []);
 
   /** Result of a restore-on-open, shown once and dismissible. */
-  const [restoreNotice, setRestoreNotice] = useState<{ ok: boolean; message: string } | null>(null);
+  /**
+   * `transient` separates a greeting from a confirmation.
+   *
+   * The notice used to be dismiss-only for every case, on the reasoning that
+   * a restore confirmation must not vanish while you are still checking the
+   * board against what you remember. That is right — for a *restore*. A
+   * template notice is a greeting: it names the board you just opened and
+   * tells you it is editable, and it has nothing to confirm. Leaving it
+   * pinned over the canvas makes the first thing you see on a new board a
+   * piece of chrome you have to close.
+   *
+   * So greetings fade and confirmations stay. Errors always stay, because an
+   * error you did not finish reading is an error you did not read.
+   */
+  const [restoreNotice, setRestoreNotice] = useState<
+    { ok: boolean; message: string; transient?: boolean } | null
+  >(null);
+  const [noticeLeaving, setNoticeLeaving] = useState(false);
   /** True while a file is being dragged over the window. */
   const [dropActive, setDropActive] = useState(false);
 
@@ -211,14 +249,36 @@ export default function Room() {
       if (template) {
         window.setTimeout(() => {
           const nodes = template.build();
+
+          /**
+           * Frame, then fill, then settle — in that order.
+           *
+           * It used to fill, then frame: forty objects were committed at
+           * whatever the camera happened to be showing, and the camera then
+           * glided six hundred milliseconds to where they actually were. So
+           * the first thing anyone saw of a template was a burst of shapes in
+           * the wrong place, sliding. Framing the *empty* board first costs
+           * nothing — there is nothing on screen to move — and means the
+           * content appears already composed, centred, and clear of the
+           * panels and the dock.
+           */
+          fitBoardToView(nodes, true, uiVisibleRef.current);
+
           // One transaction, so a template is one undo step — someone who
           // opens one and decides against it presses Cmd+Z once, not forty
           // times. It is also one broadcast rather than forty.
           doc.transact(() => {
             nodes.forEach((node) => editor.createNode(node));
           });
-          fitBoardToView(nodes);
-          setRestoreNotice({ ok: true, message: `${template.name} — click anything to edit it.` });
+
+          // And one short fade, so the board resolves into place rather than
+          // being stamped onto the screen in a single frame.
+          window.dispatchEvent(new CustomEvent('boardArriving'));
+          setRestoreNotice({
+            ok: true,
+            transient: true,
+            message: `${template.name} — click anything to edit it.`,
+          });
         }, 400);
       }
       return;
@@ -243,6 +303,27 @@ export default function Room() {
       });
     }, 400);
   }, []);
+  /**
+   * A greeting shows its welcome, then leaves.
+   *
+   * Two stages rather than one: the leaving class runs the exit animation,
+   * and the node is removed only once it has finished. Unmounting straight
+   * away would make it disappear rather than fade, which on a board that has
+   * just filled with objects reads as a glitch.
+   *
+   * Six seconds — long enough to read a board's name twice at a glance, short
+   * enough that it is gone before anyone reaches for the close button.
+   */
+  useEffect(() => {
+    if (!restoreNotice?.transient) return;
+    const fade = window.setTimeout(() => setNoticeLeaving(true), 6000);
+    const drop = window.setTimeout(() => {
+      setRestoreNotice(null);
+      setNoticeLeaving(false);
+    }, 6000 + 420);
+    return () => { window.clearTimeout(fade); window.clearTimeout(drop); };
+  }, [restoreNotice]);
+
   const [activeTool, setActiveTool] = useState('select');
   const [selectedIds, setSelectedIds] = useState<string[]>([]);
   // Convenience accessors for the many panels that only ever make sense for a
@@ -296,6 +377,13 @@ export default function Room() {
   const setIsDarkTheme = useStore((s) => s.setDarkTheme);
   const applyReplaySnapshot = useStore((s) => s.applyReplaySnapshot);
   const [isUiVisible, setIsUiVisible] = useState(true);
+  /**
+   * Read by the template effect, which runs once on mount and must not list
+   * `isUiVisible` as a dependency — doing so would re-seed the board every
+   * time the chrome was toggled.
+   */
+  const uiVisibleRef = useRef(isUiVisible);
+  uiVisibleRef.current = isUiVisible;
 
   /**
    * Whether the tool dock is showing while the rest of the chrome is hidden.
@@ -897,6 +985,68 @@ export default function Room() {
     return () => window.removeEventListener('keydown', onKey);
   }, [activeTool]);
 
+  /**
+   * Arming a force clears the room.
+   *
+   * ## Why this mode gets its own screen
+   *
+   * Force is the one thing in the dock that is not a *tool*. Every other one
+   * places something precisely, which is the job the Layers panel, the
+   * inspector and the rulers exist to serve. Here you are not editing at all —
+   * you are arranging by feel and watching what happens. So the whole
+   * supporting cast is furniture for a job you have stopped doing, and it is
+   * literally covering the thing you are trying to see: a field reaches 600 to
+   * 1000 world units and the two panels take about six hundred pixels of
+   * width between them.
+   *
+   * ## Why it reuses focus mode rather than inventing a second one
+   *
+   * `isUiVisible` already hides exactly this chrome, on the `\` key, with the
+   * transitions already written. A parallel "physics view" would be a second
+   * thing to keep in step with the first, and they would drift.
+   *
+   * ## Why it does not fight you
+   *
+   * Taking someone's panels away because they picked a tool is a strong move,
+   * so it is only ever done *once* per arming. Press `\` to bring the chrome
+   * back and it stays back — the flag below stops this effect reasserting
+   * itself, because an interface that undoes your correction is worse than one
+   * that never helped.
+   */
+  // Remembered so the dock can arm the mode in one press next time.
+  useEffect(() => {
+    if (isForceTool(activeTool)) useStore.getState().setLastForce(activeTool as ForceId);
+  }, [activeTool]);
+
+  const zenClaimed = useRef(false);
+  const uiBeforeForce = useRef(true);
+  useEffect(() => {
+    if (isForceTool(activeTool)) {
+      if (zenClaimed.current) return;
+      zenClaimed.current = true;
+      // Read through the ref, not the value: this effect must fire on the
+      // tool changing and on nothing else. Depending on `isUiVisible` would
+      // re-run it every time the chrome was toggled — which is precisely the
+      // moment it must not reassert itself.
+      uiBeforeForce.current = uiVisibleRef.current;
+      setIsUiVisible(false);
+      return;
+    }
+    // Leaving the mode puts the room back the way it was found — including
+    // leaving it hidden for someone who was already in focus mode.
+    if (zenClaimed.current) {
+      zenClaimed.current = false;
+      setIsUiVisible(uiBeforeForce.current);
+    }
+  }, [activeTool]);
+
+  /** Drives the immersive treatment in CSS. See `[data-zen]` in `index.css`. */
+  const zenPhysics = isForceTool(activeTool) && !isUiVisible;
+  useEffect(() => {
+    document.body.dataset.zen = zenPhysics ? 'physics' : '';
+    return () => { document.body.dataset.zen = ''; };
+  }, [zenPhysics]);
+
 
   const handleOrganize = (mode: LayoutMode) => {
     const currentObjects = useStore.getState().objects;
@@ -1125,12 +1275,19 @@ export default function Room() {
           />
         )}
 
-        {/* Says what happened when a room was opened to receive a backup.
-            Dismissible rather than timed: it is the confirmation that the
-            recovery worked, and it should not vanish while you are still
-            checking the board against what you remember. */}
+        {/* Says what happened when a room was opened to receive a backup, or
+            names the template it was opened from.
+
+            A restore confirmation is dismissible rather than timed: it is the
+            evidence the recovery worked, and it must not vanish while you are
+            still checking the board against what you remember. A template
+            greeting has nothing to confirm, so it fades on its own — see the
+            effect above. */}
         {restoreNotice && (
-          <div className={`restore-notice ${restoreNotice.ok ? 'is-ok' : 'is-error'}`} role="status">
+          <div
+            className={`restore-notice ${restoreNotice.ok ? 'is-ok' : 'is-error'}${noticeLeaving ? ' is-leaving' : ''}`}
+            role="status"
+          >
             <span>{restoreNotice.message}</span>
             <button
               type="button"
@@ -1283,7 +1440,14 @@ export default function Room() {
           reach for them. The grabber at the bottom edge is what stops that
           being a secret: an invisible hot zone is not an affordance, it is
           folklore. */}
-      {!isUiVisible && (
+      {/* Not in the physics room.
+
+          The dock's whole job there would be to leave the mode, which Done
+          and Escape already do — and it reveals itself from the bottom edge,
+          which is precisely where the Forces bar now sits. Two panels fighting
+          for the same thirty pixels, one of which appears on hover, is a way
+          to make the instrument feel unreliable. */}
+      {!isUiVisible && !zenPhysics && (
         <>
           <div
             className="focus-edge"

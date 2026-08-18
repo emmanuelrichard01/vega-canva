@@ -25,6 +25,13 @@ import { FORCE_SPECS, falloffAt, type FalloffId, type ForceId } from './forces';
  * the Yjs document, or awareness.
  */
 
+/**
+ * Collision categories, for the "just my selection" scope. See `applyScope`.
+ */
+const CAT_DEFAULT = 0x0001;
+const CAT_OUT_OF_SCOPE = 0x0002;
+const CAT_ALL = 0xFFFFFFFF;
+
 const VELOCITY_EPSILON = 0.1;
 const SETTLE_FRAMES = 10;
 const TIMEOUT_MS = 5000;
@@ -67,6 +74,25 @@ export interface SimNode {
   scaleX?: number;
   scaleY?: number;
   material?: string;
+  /**
+   * What shape it is, so round things can collide as round things.
+   *
+   * The simulation read no geometry at all and built every body as a
+   * rectangle, so a circle on the board was a square in the physics. That is
+   * invisible on a loose scatter and fatal on anything that is supposed to
+   * *roll*: a square ball dropped onto a square peg lands flat on its top and
+   * balances there, which is why the Pachinko board jammed instead of
+   * cascading.
+   */
+  geometry?: { kind?: string };
+  /**
+   * Immovable. Still collided against, never set in motion.
+   *
+   * The simulation used not to know about this at all, so the product's one
+   * "do not move this" control was invisible to the only system that moves
+   * things.
+   */
+  locked?: boolean;
 }
 
 /**
@@ -180,6 +206,38 @@ export class PhysicsSimulation {
    * changing a body's mass in the middle of collision resolution is asking for
    * trouble.
    */
+  /**
+   * When a force was last applied, on the simulation's own clock.
+   *
+   * The settle timeout counts from this rather than from when a body woke, so
+   * a field that is still being driven cannot be overruled by the clock.
+   */
+  private lastForceAt = -Infinity;
+
+  /**
+   * Which press we are in, and who has already come to rest during it.
+   *
+   * A held force re-applies every frame, and `activate` happily wakes any
+   * static body inside the ring — including one that just settled *under that
+   * same force*. So holding Drop over a pile that had come to rest woke it,
+   * settled it, woke it again, about five times a second, committing a
+   * transform to the document each time. Measured at eighty-three settles per
+   * body over fifteen seconds of held force; it is three now, and those three
+   * are real impacts.
+   *
+   * Scoping rest to the gesture is also the behaviour a person expects, since
+   * holding a force against something already pinned visibly does nothing.
+   */
+  private gestureSeq = 0;
+  private currentGesture = 0;
+  private settledInGesture = new Map<string, number>();
+
+  /**
+   * Whether the world is currently split into "in scope" and "everything
+   * else", so the split can be undone exactly once when it stops.
+   */
+  private scoped = false;
+
   private handleCollision = (event: { pairs: { bodyA: Matter.Body; bodyB: Matter.Body }[] }) => {
     event.pairs.forEach(({ bodyA, bodyB }) => {
       // Exactly one side moving: the other is the one that needs waking. Two
@@ -239,6 +297,17 @@ export class PhysicsSimulation {
       const cx = node.x + w / 2;
       const cy = node.y + h / 2;
       const material = resolveMaterial(node);
+      /**
+       * Round only when it is actually round.
+       *
+       * Matter's circle takes a single radius, so an elongated ellipse cannot
+       * be one — squashing it to an average would collide as a shape that is
+       * on the board nowhere. Anything meaningfully off-square keeps the
+       * rectangle it had, which is still the better approximation of a long
+       * thin petal than a circle would be.
+       */
+      const isRound =
+        node.geometry?.kind === 'ellipse' && Math.abs(w - h) <= Math.max(w, h) * 0.2;
 
       let body = this.bodies.get(id);
 
@@ -250,7 +319,10 @@ export class PhysicsSimulation {
         const sizeChanged =
           Math.abs((body.plugin?.width ?? 0) - w) > 0.5 || Math.abs((body.plugin?.height ?? 0) - h) > 0.5;
         const materialChanged = body.plugin?.materialId !== material.id;
-        if (sizeChanged || materialChanged) {
+        // Shape is baked in at creation exactly like size and material, so
+        // switching a rectangle to an ellipse has to rebuild too.
+        const shapeChanged = (body.plugin?.round ?? false) !== isRound;
+        if (sizeChanged || materialChanged || shapeChanged) {
           this.remove(id);
           body = undefined;
         }
@@ -261,13 +333,16 @@ export class PhysicsSimulation {
         // Built dynamic so Matter computes real mass and inertia from the
         // geometry, then parked static. Creating it static skips that entirely
         // and leaves the body at infinite mass for its whole life.
-        body = Matter.Bodies.rectangle(cx, cy, w, h, {
+        const shapeOptions = {
           angle,
           frictionAir: material.frictionAir,
           restitution: material.restitution,
           density: material.density,
           label: node.type,
-        });
+        };
+        body = isRound
+          ? Matter.Bodies.circle(cx, cy, (w + h) / 4, shapeOptions)
+          : Matter.Bodies.rectangle(cx, cy, w, h, shapeOptions);
         const massProps: MassProps = {
           mass: body.mass,
           inverseMass: body.inverseMass,
@@ -276,11 +351,25 @@ export class PhysicsSimulation {
           density: body.density,
         };
         Matter.Body.setStatic(body, true);
-        body.plugin = { width: w, height: h, type: node.type, id, massProps, materialId: material.id };
+        body.plugin = {
+          width: w, height: h, type: node.type, id, massProps,
+          materialId: material.id,
+          locked: node.locked === true,
+          round: isRound,
+        };
         Matter.Composite.add(this.engine.world, body);
         this.bodies.set(id, body);
         continue;
       }
+
+      /**
+       * Lockedness is re-read every pass, not baked in at creation.
+       *
+       * Unlike size and material it does not change the body's shape or mass,
+       * so it must not force a rebuild — but it does have to be current, or
+       * locking something mid-cascade would not take effect until reload.
+       */
+      if (body.plugin) body.plugin.locked = node.locked === true;
 
       // A resting body tracks the document; a moving one owns its own position.
       if (body.isStatic && finite(cx) && finite(cy)) {
@@ -296,10 +385,30 @@ export class PhysicsSimulation {
     Matter.Composite.remove(this.engine.world, body);
     this.bodies.delete(id);
     this.active.delete(id);
+    this.settledInGesture.delete(id);
   }
 
   private activate(id: string, body: Matter.Body): boolean {
     if (!body.isStatic) return false;
+
+    /**
+     * A locked object is immovable, including by force.
+     *
+     * `isStatic` was carrying two unrelated meanings — "asleep, wake me when
+     * something hits me" and nothing else — so there was no way to say
+     * "immovable". The simulation never read `locked` at all, which meant the
+     * one control in the product whose entire promise is *do not move this*
+     * was ignored by the only system that moves things: a shockwave scattered
+     * locked objects exactly like free ones.
+     *
+     * Locked bodies stay in the world and are still collided *against*, which
+     * is the difference between this and removing them. That is what makes a
+     * fixed obstacle possible — a peg, a wall, a backboard — and it is what
+     * the Pachinko board needs to be a Pachinko board rather than a pile of
+     * loose circles.
+     */
+    if (body.plugin?.locked === true) return false;
+
     wakeBody(body);
     this.active.set(id, {
       framesSettled: 0,
@@ -337,10 +446,19 @@ export class PhysicsSimulation {
        * there is no way to tidy one cluster without disturbing its neighbours.
        */
       only?: Set<string>;
+      /**
+       * Identity of the press this belongs to.
+       *
+       * Held forces pass a stable id for the whole press. Omitting it gets a
+       * fresh one, which is right for a one-shot like Shockwave: every click
+       * is a new gesture and may always re-wake what the last one settled.
+       */
+      gesture?: number;
     } = {}
   ): string[] {
     const spec = FORCE_SPECS[mode];
     if (!spec) return [];
+    this.currentGesture = options.gesture ?? ++this.gestureSeq;
     const scale = options.scale ?? 1;
     const skip = options.skip;
     const only = options.only;
@@ -348,9 +466,32 @@ export class PhysicsSimulation {
     const radius = spec.radius * (options.radiusScale ?? 1);
     const woken: string[] = [];
 
+    // Holds the settle timeout off for as long as a field is being driven.
+    this.lastForceAt = this.clock;
+
+    /**
+     * Scope is a *collision* boundary, not just a force filter.
+     *
+     * Skipping the force for unselected bodies is not enough to deliver what
+     * "just my selection" promises. Those bodies are asleep, and an asleep
+     * body is a static one — an immovable wall. So scoping did not isolate a
+     * cluster, it imprisoned it: a selected note pinned against an unselected
+     * neighbour simply could not move, and on a dense board the force did
+     * nothing at all. Measured: unscoped, a shockwave carried the object 450
+     * units; scoped, it travelled four.
+     *
+     * Putting the two sets in non-colliding categories gives the behaviour
+     * the label describes — the selection can be gathered, thrown or tidied
+     * straight through its neighbours, and the neighbours neither move nor
+     * get in the way.
+     */
+    this.applyScope(only);
+
     this.bodies.forEach((body, id) => {
       if (skip?.has(id)) return;
       if (only && !only.has(id)) return;
+      // Already came to rest during this same press: leave it alone.
+      if (this.settledInGesture.get(id) === this.currentGesture) return;
 
       const dx = body.position.x - x;
       const dy = body.position.y - y;
@@ -424,6 +565,38 @@ export class PhysicsSimulation {
   }
 
   /**
+   * Split the world into "in scope" and "everything else", or put it back.
+   *
+   * Matter collides A and B only when `(A.category & B.mask)` and
+   * `(B.category & A.mask)` are both non-zero, so giving the two sets
+   * categories that are missing from each other's masks makes them pass
+   * through one another while each still collides internally.
+   */
+  private applyScope(only?: Set<string>): void {
+    if (!only) {
+      if (!this.scoped) return;
+      this.bodies.forEach((body) => {
+        body.collisionFilter.category = CAT_DEFAULT;
+        body.collisionFilter.mask = CAT_ALL;
+      });
+      this.scoped = false;
+      return;
+    }
+
+    this.bodies.forEach((body, id) => {
+      if (only.has(id)) {
+        body.collisionFilter.category = CAT_DEFAULT;
+        // Sees other scoped bodies, and nothing outside the scope.
+        body.collisionFilter.mask = CAT_DEFAULT;
+      } else {
+        body.collisionFilter.category = CAT_OUT_OF_SCOPE;
+        body.collisionFilter.mask = CAT_ALL;
+      }
+    });
+    this.scoped = true;
+  }
+
+  /**
    * Launch an object from a release point. Returns false if it has no body.
    *
    * `x`/`y` are the body *centre*, which is what a drag reports, and the
@@ -451,8 +624,14 @@ export class PhysicsSimulation {
     return true;
   }
 
-  /** Stop simulating everything, leaving bodies wherever they are. */
+  /**
+   * Stop simulating everything, leaving bodies wherever they are.
+   *
+   * Also drops the scope split, so a Freeze while "just my selection" is on
+   * does not leave half the board unable to collide with the other half.
+   */
   freezeAll(): SimTransform[] {
+    this.applyScope(undefined);
     const frozen: SimTransform[] = [];
     this.active.forEach((entry, id) => {
       const body = this.bodies.get(id);
@@ -507,7 +686,12 @@ export class PhysicsSimulation {
       if (this.pendingWake.size > 0) {
         this.pendingWake.forEach((id) => {
           const body = this.bodies.get(id);
-          if (body && this.activate(id, body)) woken.push(id);
+          if (!body) return;
+          // Being struck always overrides "already rested this press" — the
+          // rule is about a force failing to move something, not about a body
+          // becoming permanently immovable for the rest of the gesture.
+          this.settledInGesture.delete(id);
+          if (this.activate(id, body)) woken.push(id);
         });
         this.pendingWake.clear();
       }
@@ -542,13 +726,26 @@ export class PhysicsSimulation {
       }
 
       const speed = Matter.Body.getSpeed(body);
+
       if (finite(speed) && speed < VELOCITY_EPSILON) entry.framesSettled++;
       else entry.framesSettled = 0;
 
-      const timedOut = this.clock - entry.startedAt > TIMEOUT_MS;
+      /**
+       * The timeout counts from the last time a force was applied, not from
+       * when the body first woke.
+       *
+       * Five seconds from waking meant a held or latched field could not run
+       * for longer than five seconds before everything under it froze solid
+       * while still being pushed — the simulation overruling the person
+       * driving it. Counting from the last push suspends the clock for as
+       * long as a field is live and resumes it the moment the field stops.
+       */
+      const since = Math.max(entry.startedAt, this.lastForceAt);
+      const timedOut = this.clock - since > TIMEOUT_MS;
       if (entry.framesSettled >= SETTLE_FRAMES || timedOut) {
         finished.push(id);
         Matter.Body.setStatic(body, true);
+        this.settledInGesture.set(id, this.currentGesture);
         const transform = this.toTransform(id, body, entry);
         if (transform) out.push(transform);
       }

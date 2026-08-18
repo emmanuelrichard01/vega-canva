@@ -97,6 +97,64 @@ export const WorkspaceCover: React.FC<Props> = ({ workspaceId, name, preview: su
                 />
               );
             }
+            /**
+             * Words, ruled.
+             *
+             * A text node's colour is its ink and its box is the area the
+             * words cover, so the ordinary filled-rect path drew a solid slab
+             * of near-black across the top of every template that titled
+             * itself. It read as a broken image, which is the one thing a
+             * thumbnail must never do.
+             *
+             * Glyphs are not available at this size — a 36px heading lands
+             * around two pixels tall — so the lines are ruled instead, spaced
+             * off the node's real type size so a title and a paragraph still
+             * look different. The last line is short, because that is what
+             * makes a stack of bars read as prose rather than as a barcode,
+             * and the whole thing is drawn at partial opacity so text never
+             * outweighs the actual objects on the board.
+             */
+            if (item.t) {
+              const lineH = item.fs ? Math.max(0.9, item.fs * drawH * 1.35) : Math.max(0.9, h);
+              const rules = Math.max(1, Math.min(6, Math.round(h / lineH)));
+              const weight = Math.max(0.55, lineH * 0.42);
+              return (
+                <g key={i} fill={item.c} opacity={0.55}>
+                  {Array.from({ length: rules }).map((_, k) => (
+                    <rect
+                      key={k}
+                      x={x}
+                      y={y + k * lineH + (lineH - weight) / 2}
+                      // The closing line runs short, the way a paragraph ends.
+                      width={Math.max(0.8, k === rules - 1 && rules > 1 ? w * 0.62 : w)}
+                      height={weight}
+                      rx={weight / 2}
+                    />
+                  ))}
+                </g>
+              );
+            }
+            /**
+             * A frame is paper: a fill and a hairline.
+             *
+             * Without the stroke a white frame on a near-white card is
+             * invisible, and the boards made *of* frames — lanes, quadrants,
+             * artboards — would lose the structure that is the whole point of
+             * them. The stroke matches the one `FrameRenderer` draws, at the
+             * same neutral and alpha, so the card and the board agree.
+             */
+            if (item.k) {
+              return (
+                <rect
+                  key={i}
+                  x={x} y={y} width={w} height={h}
+                  rx={item.r ? item.r * Math.min(w, h) : 0}
+                  fill={item.c}
+                  stroke="rgba(115,115,115,0.28)"
+                  strokeWidth={0.4}
+                />
+              );
+            }
             if (item.o) {
               return <ellipse key={i} cx={x + w / 2} cy={y + h / 2} rx={w / 2} ry={h / 2} fill={item.c} />;
             }

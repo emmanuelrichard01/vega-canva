@@ -30,7 +30,6 @@ import { Logo } from './ui/Logo';
 const STORAGE_KEY = 'vega_welcome_v1';
 
 interface Beat {
-  eyebrow: string;
   title: string;
   body: string;
   /** The idea, drawn. Text alone would make this a slideshow of claims. */
@@ -45,7 +44,6 @@ interface Beat {
  */
 const BEATS: Beat[] = [
   {
-    eyebrow: 'The surface',
     title: 'A canvas with no edges',
     body: 'No page, no artboard to fill, no zoom that runs out. Put something anywhere and keep going in any direction.',
     art: (
@@ -67,23 +65,22 @@ const BEATS: Beat[] = [
             ))
           )}
         </mask>
-        <rect x="46" y="34" width="52" height="34" rx="6" fill="var(--brand-orange)" />
+        <rect x="46" y="34" width="52" height="34" rx="6" fill="var(--accent)" />
         <rect x="112" y="52" width="62" height="26" rx="6" fill="var(--text-primary)" opacity="0.28" />
       </svg>
     ),
   },
   {
-    eyebrow: 'The people',
     title: 'Everyone, at the same time',
     body: 'Send the link and they are in — no account, nothing to accept. You will see their cursor move as they think.',
     art: (
       <svg viewBox="0 0 220 120" aria-hidden="true" className="welcome__svg">
         <rect x="30" y="30" width="70" height="46" rx="8" fill="var(--text-primary)" opacity="0.16" />
-        <rect x="120" y="48" width="70" height="40" rx="8" fill="var(--brand-orange)" opacity="0.9" />
+        <rect x="120" y="48" width="70" height="40" rx="8" fill="var(--accent)" opacity="0.9" />
         {/* Two cursors, two colours, both mid-gesture — presence is the claim,
             so the drawing shows two hands rather than one. */}
         <g className="welcome__cursor welcome__cursor--a">
-          <path d="M0 0 L0 15 L4 11 L7 17 L10 15 L7 9 L12 9 Z" fill="var(--brand-orange)" />
+          <path d="M0 0 L0 15 L4 11 L7 17 L10 15 L7 9 L12 9 Z" fill="var(--accent)" />
         </g>
         <g className="welcome__cursor welcome__cursor--b">
           <path d="M0 0 L0 15 L4 11 L7 17 L10 15 L7 9 L12 9 Z" fill="#3B82F6" />
@@ -92,14 +89,13 @@ const BEATS: Beat[] = [
     ),
   },
   {
-    eyebrow: 'The work',
     title: 'It keeps working offline',
     body: 'Edits made without a connection merge when you come back rather than being rejected. Export real vectors whenever you want them.',
     art: (
       <svg viewBox="0 0 220 120" aria-hidden="true" className="welcome__svg">
         <rect x="34" y="26" width="152" height="68" rx="10" fill="none" stroke="var(--text-primary)" strokeOpacity="0.22" strokeWidth="2" />
-        <path d="M62 74 L96 44 L124 66 L158 38" fill="none" stroke="var(--brand-orange)" strokeWidth="4" strokeLinecap="round" strokeLinejoin="round" />
-        <circle cx="158" cy="38" r="6" fill="var(--brand-orange)" />
+        <path d="M62 74 L96 44 L124 66 L158 38" fill="none" stroke="var(--accent)" strokeWidth="4" strokeLinecap="round" strokeLinejoin="round" />
+        <circle cx="158" cy="38" r="6" fill="var(--accent)" />
       </svg>
     ),
   },
@@ -153,7 +149,6 @@ export const WelcomeSequence: React.FC = () => {
             entrance rather than cross-fading text inside a static box. */}
         <div className="welcome__stage" key={beat}>
           <div className="welcome__art">{current.art}</div>
-          <p className="welcome__eyebrow">{current.eyebrow}</p>
           <h2 className="welcome__title">{current.title}</h2>
           <p className="welcome__body">{current.body}</p>
         </div>

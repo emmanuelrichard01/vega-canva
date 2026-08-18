@@ -1,7 +1,7 @@
 import React, { useCallback, useEffect, useRef, useState } from 'react';
-import { MousePointer2, Hand, Pen, PenTool as PenToolIcon, Type, Square, StickyNote, MessageSquare, ImageIcon, Mic, Sparkles, Magnet, Radiation, Waves, Zap, ArrowDownToLine, Frame, Eraser, Tornado } from 'lucide-react';
+import { MousePointer2, Hand, Pen, PenTool as PenToolIcon, Type, Square, StickyNote, MessageSquare, ImageIcon, Mic, Sparkles, Frame, Eraser } from 'lucide-react';
 import { Spline } from 'lucide-react';
-import { FORCE_IDS, FORCE_SPECS, isForceTool, type ForceId } from '../../engine/physics/forces';
+import { isForceTool } from '../../engine/physics/forces';
 import { FRAME_PRESETS, FRAME_PRESET_GROUPS } from '../../engine/model/frames';
 import { ShapeIcon, SHAPE_KINDS, SHAPE_LABELS, shapeToolId, shapeKindFromToolId } from './shapeIcons';
 import { shortcutFor } from '../../engine/tools/shortcuts';
@@ -204,18 +204,11 @@ const SEAT = {
   forces: 12,
 } as const;
 
-const FORCE_ICONS: Record<ForceId, React.ReactNode> = {
-  magnet: <Magnet size={16} />,
-  repel: <Radiation size={16} />,
-  gravity: <ArrowDownToLine size={16} />,
-  wind: <Waves size={16} />,
-  swirl: <Tornado size={16} />,
-  shockwave: <Zap size={16} />,
-};
 
 export const ToolWorkspace: React.FC<Props> = ({ activeToolId }) => {
   const penSize = useStore((s) => s.penSize);
   const setPenSize = useStore((s) => s.setPenSize);
+  const lastForce = useStore((s) => s.lastForce);
   const eraserSize = useStore((s) => s.eraserSize);
   const setEraserSize = useStore((s) => s.setEraserSize);
 
@@ -228,7 +221,7 @@ export const ToolWorkspace: React.FC<Props> = ({ activeToolId }) => {
    * these buttons simply could not be reached. One piece of state rather than
    * a pair per menu also guarantees only one can ever be open.
    */
-  type DockMenu = 'pen' | 'shape' | 'forces' | 'frame' | 'eraser';
+  type DockMenu = 'pen' | 'shape' | 'frame' | 'eraser';
   const [pinnedMenu, setPinnedMenu] = useState<DockMenu | null>(null);
   const [hoveredMenu, setHoveredMenu] = useState<DockMenu | null>(null);
   const openMenu = pinnedMenu ?? hoveredMenu;
@@ -511,37 +504,26 @@ export const ToolWorkspace: React.FC<Props> = ({ activeToolId }) => {
           adding anything, which is a different kind of verb from every other
           button on the dock. */}
       <div className="dock-group">
-        <div {...hoverProps('forces')} className="dock-slot-wrap">
+        <div className="dock-slot-wrap">
+            {/* One press, straight into the mode.
+
+                This used to open a flyout of six forces — and the Forces bar
+                then offered the same six, by the same names, a hundred pixels
+                away, the instant you picked one. The menu existed because the
+                forces were once reachable only by hovering, which was
+                undiscoverable with a mouse and impossible on a touch device.
+                The bar solved that properly: it is unmissable, it names every
+                force, and it is where you already are while using them.
+
+                So the dock arms the mode with whatever you used last, and the
+                choosing happens in the one place that owns it. */}
             <DockButton
               {...seatProps(SEAT.forces)}
               icon={<Sparkles size={18} />} label="Forces"
               description="push, pull and drop objects"
-              active={isForceTool(activeToolId)} hasMenu menuOpen={openMenu === 'forces'}
-              // Click opens the menu rather than silently selecting Pull. The
-              // five forces used to be reachable *only* by hovering —
-              // undiscoverable with a mouse and completely unreachable on a
-              // touch device, where you could press the icon but never see
-              // what was behind it.
-              onClick={() => toggleMenu('forces')}
-            >
-              {openMenu === 'forces' && (
-                <Flyout title="Forces">
-                  {FORCE_IDS.map(id => (
-                    <FlyoutItem
-                      key={id}
-                      icon={FORCE_ICONS[id]}
-                      label={FORCE_SPECS[id].label}
-                      // Naming each force next to its icon, because five
-                      // abstract glyphs in a row tell you nothing about which
-                      // one pulls.
-                      description={FORCE_SPECS[id].hint}
-                      active={activeToolId === id}
-                      onClick={() => pick(id)}
-                    />
-                  ))}
-                </Flyout>
-              )}
-            </DockButton>
+              active={isForceTool(activeToolId)}
+              onClick={() => pick(lastForce)}
+            />
         </div>
       </div>
     </div>

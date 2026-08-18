@@ -22,6 +22,19 @@ import { THEMES } from '../../components/canvas/renderers/StickyRenderer';
 export function previewColorOf(node: AnyNode): string {
   if (node.type === 'sticky') return THEMES[node.theme]?.bg ?? '#FDE047';
 
+  /**
+   * A frame with no fill of its own is white paper.
+   *
+   * `FrameRenderer` passes `'#FFFFFF'` as its fallback; this fell through to
+   * the generic slate below, so a frame drew as a mid-grey block on the card
+   * and as white paper on the board. Same fallback in both places now — the
+   * disagreement is the bug, not either value.
+   */
+  if (node.type === 'frame') {
+    const paint = (node as { appearance?: { fill?: unknown[] } }).appearance?.fill?.[0];
+    return paint ? paintColor(paint as never, '#FFFFFF') : '#FFFFFF';
+  }
+
   const paint = (node as { appearance?: { fill?: unknown[]; stroke?: { color?: string } } }).appearance;
   const fill = paint?.fill?.[0];
   if (fill) return paintColor(fill as never, '#94A3B8');

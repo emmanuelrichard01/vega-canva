@@ -43,24 +43,8 @@ export const AuthModal: React.FC = () => {
   };
 
   return (
-    <div
-      style={{
-        position: 'fixed', inset: 0,
-        background: 'var(--surface-canvas)',
-        display: 'flex', alignItems: 'center', justifyContent: 'center',
-        zIndex: 9999,
-        fontFamily: 'var(--font-sans)',
-        padding: 'var(--space-4)',
-      }}
-    >
-      <div
-        className="panel-surface"
-        style={{
-          padding: '40px', width: 'min(100%, 400px)',
-          animation: 'fadeIn 400ms var(--ease-settle)',
-          display: 'flex', flexDirection: 'column', gap: 'var(--space-6)',
-        }}
-      >
+    <div className="auth">
+      <div className="auth__card panel-surface">
         {/* The full lockup, not the mark plus text.
             This is the one surface in the product that is a brand moment
             rather than chrome: there is nothing else on screen competing for
@@ -71,50 +55,45 @@ export const AuthModal: React.FC = () => {
         <Logo piece="full" size={104} alt="Vega Studio" />
 
         <div>
-          <h1 style={{ fontSize: 26, fontWeight: 650, color: 'var(--text-primary)', margin: '0 0 8px', letterSpacing: '-0.03em', lineHeight: 1.15 }}>
-            What should people call you?
-          </h1>
+          <h1 className="auth__title">What should people call you?</h1>
           {/* The honest version of what used to be "start collaborating with
               your team in real-time" — which describes every product in this
               category and tells a first-time visitor nothing. This says what
               the name is *for*, which is the only reason the field exists. */}
-          <p style={{ color: 'var(--text-secondary)', fontSize: 14, margin: 0, lineHeight: 1.6 }}>
+          <p className="auth__lede">
             Your name and colour are how everyone else sees you on the board.
             There are no accounts and no password — a room link is the whole
             invitation.
           </p>
         </div>
 
-        <form onSubmit={handleSubmit} style={{ display: 'flex', flexDirection: 'column', gap: 'var(--space-4)' }}>
+        <form onSubmit={handleSubmit} className="auth__form">
+          {/* No inline `outline: none` and no `onFocus` handler writing a
+              border colour by hand. An inline declaration outranks every
+              selector in the stylesheet, so the one the element carried made
+              the app's global focus ring unreachable on this field — the
+              first field on the first screen, invisible to a keyboard. */}
           <input
             type="text"
+            className="auth__field"
             placeholder="Your name"
             aria-label="Your display name"
             value={name}
             onChange={(e) => setName(e.target.value)}
             maxLength={40}
             autoFocus
-            style={{
-              padding: '12px 14px', borderRadius: 'var(--radius-lg)',
-              border: '1px solid var(--border-divider)',
-              background: 'var(--surface-primary)', color: 'var(--text-primary)',
-              outline: 'none', fontSize: 15, fontFamily: 'inherit',
-              transition: 'border-color var(--motion-hover)',
-            }}
-            onFocus={(e) => (e.target.style.borderColor = 'var(--border-focus)')}
-            onBlur={(e) => (e.target.style.borderColor = 'var(--border-divider)')}
           />
 
-          <label style={{ display: 'flex', alignItems: 'flex-start', gap: 10, cursor: 'pointer', userSelect: 'none' }}>
+          <label className="auth__remember">
             <input
               type="checkbox"
+              className="auth__check"
               checked={remember}
               onChange={(e) => setRemember(e.target.checked)}
-              style={{ marginTop: 2, accentColor: 'var(--text-primary)', cursor: 'pointer' }}
             />
-            <span style={{ fontSize: 13, color: 'var(--text-secondary)', lineHeight: 1.5 }}>
+            <span className="auth__remember-label">
               Remember me on this device
-              <span style={{ display: 'block', color: 'var(--text-tertiary)', fontSize: 12 }}>
+              <span className="auth__remember-hint">
                 {remember
                   ? 'You will come back as the same person on this browser.'
                   : 'This session ends when the tab closes.'}
@@ -122,20 +101,7 @@ export const AuthModal: React.FC = () => {
             </span>
           </label>
 
-          <button
-            type="submit"
-            disabled={!ready}
-            style={{
-              padding: '12px', border: 'none',
-              background: ready ? 'var(--text-primary)' : 'var(--surface-secondary)',
-              color: ready ? 'var(--surface-primary)' : 'var(--text-tertiary)',
-              borderRadius: 'var(--radius-lg)', fontWeight: 600, fontSize: 14,
-              fontFamily: 'inherit',
-              cursor: ready ? 'pointer' : 'not-allowed',
-              display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 8,
-              transition: 'background-color var(--motion-hover), color var(--motion-hover)',
-            }}
-          >
+          <button type="submit" className="auth__submit" disabled={!ready}>
             Continue <ArrowRight size={17} />
           </button>
         </form>
