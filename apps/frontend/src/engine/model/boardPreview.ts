@@ -117,6 +117,28 @@ export interface PreviewItem {
   p?: number;
   /** Star only: waist as a fraction of the outer radius. */
   ir?: number;
+  /**
+   * Rotation in degrees, when there is any.
+   *
+   * The summary carried a box and a colour and nothing about which way the
+   * object was facing, so every rotated thing on every board drew
+   * axis-aligned. On a scatter of squares that is invisible; on the boards
+   * whose whole subject *is* orientation it is the picture: Spectrum's three
+   * hundred and sixty wedges each turned to face out of a circle, Bloom's
+   * petals, Spirograph's bars lying along a tangent, Wave field's tiles
+   * tipped by the height of the wave under them. All of them drew as if
+   * someone had straightened every one.
+   */
+  rot?: number;
+  /**
+   * Outline only: a stroke with nothing inside it.
+   *
+   * `previewColorOf` falls back to the stroke colour when a shape has no
+   * fill, and the renderer then filled the box with it — so an outlined
+   * rectangle became a solid one, which is the same mistake as drawing a star
+   * as a block. The flag says to stroke the silhouette rather than fill it.
+   */
+  no?: 1;
 }
 
 export interface BoardPreview {
@@ -125,7 +147,28 @@ export interface BoardPreview {
   items: PreviewItem[];
   /** How many objects the board actually holds, including any not drawn. */
   total: number;
+  /** Which shape of summary this is. See `PREVIEW_VERSION`. */
+  v?: number;
 }
+
+/**
+ * The summary's own version.
+ *
+ * Previews are cached in `localStorage` and only rewritten when the board is
+ * next opened, so a card can go on drawing a summary written by an older
+ * build indefinitely. That is fine while the format only gains *optional*
+ * detail — until the missing detail is the difference between a star and a
+ * block. A board drawn before shapes were carried keeps its old record, and
+ * the card keeps drawing a rectangle, and nothing about the fix reaches it.
+ *
+ * Bumping this retires every stored summary at once. The cost is a placeholder
+ * on cards whose boards have not been opened since; the alternative is a
+ * confidently wrong picture, which is worse than an honest absence.
+ *
+ * Bump it whenever a *renderer* starts relying on a field older records do
+ * not have.
+ */
+export const PREVIEW_VERSION = 2;
 
 /**
  * The most objects worth keeping.
@@ -240,6 +283,20 @@ export function buildPreview(
         item.c = n.appearance?.stroke?.color ?? item.c;
       }
     }
+    // Only when it is actually turned: a `rotate(0 …)` on every object is
+    // bytes in `localStorage` and an attribute on every node for nothing.
+    const angle = n.rotation || 0;
+    if (Math.abs(angle) > 0.01) item.rot = round(angle);
+
+    /**
+     * A shape with a stroke and no fill is an outline.
+     *
+     * Frames are excluded: their fill is genuinely white paper and they carry
+     * their own hairline in the renderer.
+     */
+    const paint = (n as { appearance?: { fill?: unknown[]; stroke?: { color?: string } } }).appearance;
+    if (n.type !== 'frame' && !paint?.fill?.length && paint?.stroke?.color) item.no = 1;
+
     if (n.type === 'frame') item.k = 1;
     if (n.type === 'text') {
       item.t = 1;
@@ -303,7 +360,8 @@ export function savePreview(roomId: string, preview: BoardPreview | null): void 
      * untrue and is exactly the kind of confident wrong answer a placeholder
      * must never give.
      */
-    localStorage.setItem(KEY_PREFIX + roomId, JSON.stringify(preview ?? EMPTY_PREVIEW));
+    const record = { ...(preview ?? EMPTY_PREVIEW), v: PREVIEW_VERSION };
+    localStorage.setItem(KEY_PREFIX + roomId, JSON.stringify(record));
   } catch {
     /* A full or unavailable store must never take the room down with it. */
   }
@@ -314,7 +372,12 @@ export function loadPreview(roomId: string): BoardPreview | null {
     const raw = localStorage.getItem(KEY_PREFIX + roomId);
     if (!raw) return null;
     const parsed = JSON.parse(raw) as BoardPreview;
-    return Array.isArray(parsed?.items) ? parsed : null;
+    if (!Array.isArray(parsed?.items)) return null;
+    // An older summary is not drawn. It would be drawn *wrongly* — the fields
+    // the renderer now needs are simply absent, and absent reads as "plain
+    // rectangle" rather than as "unknown".
+    if (parsed.v !== PREVIEW_VERSION) return null;
+    return parsed;
   } catch {
     return null;
   }
@@ -327,3 +390,41 @@ export function loadPreview(roomId: string): BoardPreview | null {
  * of its injected dependencies in one import instead of reassembling them.
  */
 export type PreviewPoints = (node: AnyNode) => number[] | null;
+
+/**
+ * The vertices of a preview item that is a polygon or a star.
+ *
+ * Lives here rather than inside the cover component for the reason every
+ * other piece of arithmetic in this project does: a shape that draws wrongly
+ * is a bug you can only find by looking at a thumbnail, and looking at a
+ * thumbnail is exactly what nobody does before shipping. As a pure function
+ * it can simply be asserted.
+ *
+ * Both start at twelve o'clock, which is where the shape tool draws them, so
+ * the silhouette matches the board rather than being the same shape at some
+ * other rotation.
+ */
+export function previewPolygonPoints(
+  item: Pick<PreviewItem, 's' | 'p' | 'ir'>,
+  x: number,
+  y: number,
+  w: number,
+  h: number
+): Array<[number, number]> {
+  const cx = x + w / 2;
+  const cy = y + h / 2;
+  const rx = w / 2;
+  const ry = h / 2;
+  const count = Math.max(3, Math.round(item.p ?? 3));
+  const isStar = item.s === 'star';
+  const inner = isStar ? Math.min(0.95, Math.max(0.05, item.ir ?? 0.5)) : 1;
+  const steps = isStar ? count * 2 : count;
+
+  const out: Array<[number, number]> = [];
+  for (let k = 0; k < steps; k += 1) {
+    const angle = (k / steps) * Math.PI * 2 - Math.PI / 2;
+    const r = isStar && k % 2 === 1 ? inner : 1;
+    out.push([cx + Math.cos(angle) * rx * r, cy + Math.sin(angle) * ry * r]);
+  }
+  return out;
+}

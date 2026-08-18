@@ -124,7 +124,16 @@ export class ConnectorTool implements Tool {
       // Round caps written explicitly rather than defaulted in the renderer:
       // a connector reads better with them, and stating it in the document is
       // what lets the Cap control show and change it.
-      appearance: { stroke: { color: ThemeService.getDefaultStrokeColor(), width: 2, cap: 'round' } },
+      // The tool's own colour when one has been chosen, and the theme's
+      // default otherwise — so a board's connectors are not all grey
+      // unless that is what was asked for.
+      appearance: {
+        stroke: {
+          color: useStore.getState().connectorColor || ThemeService.getDefaultStrokeColor(),
+          width: 2,
+          cap: 'round',
+        },
+      },
     });
 
     ctx.editor.select(id);

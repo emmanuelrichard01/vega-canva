@@ -1,5 +1,5 @@
 import React, { useMemo } from 'react';
-import { loadPreview, type BoardPreview } from '../engine/model/boardPreview';
+import { loadPreview, previewPolygonPoints, type BoardPreview } from '../engine/model/boardPreview';
 
 interface Props {
   workspaceId: string;
@@ -80,6 +80,30 @@ export const WorkspaceCover: React.FC<Props> = ({ workspaceId, name, preview: su
             const y = offY + item.y * drawH;
             const w = Math.max(0.6, item.w * drawW);
             const h = Math.max(0.6, item.h * drawH);
+
+            /**
+             * Turned the way the object is turned.
+             *
+             * Applied around the object's own centre, which is where Konva
+             * rotates it, so the silhouette matches the board rather than
+             * swinging about a corner. Omitted entirely when there is no
+             * rotation — an identity transform on every node is a transform
+             * the browser still has to consider.
+             */
+            const spin = item.rot
+              ? { transform: `rotate(${item.rot} ${x + w / 2} ${y + h / 2})` }
+              : undefined;
+
+            /**
+             * An outline is stroked, not filled.
+             *
+             * A shape with a stroke and no fill resolved to its stroke colour
+             * and was then filled with it, so an outlined rectangle drew as a
+             * solid one — the same mistake as a star drawing as a block.
+             */
+            const paint = item.no
+              ? { fill: 'none', stroke: item.c, strokeWidth: 0.8 }
+              : { fill: item.c };
             // A route, not a box. Stroked at a hairline that stays visible at
             // cover size without pretending to be a real stroke weight.
             if (item.l && item.l.length >= 4) {
@@ -121,7 +145,7 @@ export const WorkspaceCover: React.FC<Props> = ({ workspaceId, name, preview: su
               const rules = Math.max(1, Math.min(6, Math.round(h / lineH)));
               const weight = Math.max(0.55, lineH * 0.42);
               return (
-                <g key={i} fill={item.c} opacity={0.55}>
+                <g key={i} fill={item.c} opacity={0.55} {...spin}>
                   {Array.from({ length: rules }).map((_, k) => (
                     <rect
                       key={k}
@@ -154,11 +178,12 @@ export const WorkspaceCover: React.FC<Props> = ({ workspaceId, name, preview: su
                   fill={item.c}
                   stroke="rgba(115,115,115,0.28)"
                   strokeWidth={0.4}
+                  {...spin}
                 />
               );
             }
             if (item.o) {
-              return <ellipse key={i} cx={x + w / 2} cy={y + h / 2} rx={w / 2} ry={h / 2} fill={item.c} />;
+              return <ellipse key={i} cx={x + w / 2} cy={y + h / 2} rx={w / 2} ry={h / 2} {...paint} {...spin} />;
             }
 
             /**
@@ -180,6 +205,7 @@ export const WorkspaceCover: React.FC<Props> = ({ workspaceId, name, preview: su
                 <line
                   key={i}
                   x1={x} y1={y + h / 2} x2={x + w} y2={y + h / 2}
+                  {...spin}
                   stroke={item.c}
                   strokeWidth={Math.max(0.5, Math.min(1.4, h))}
                   strokeLinecap="round"
@@ -188,28 +214,21 @@ export const WorkspaceCover: React.FC<Props> = ({ workspaceId, name, preview: su
             }
 
             if (item.s === 'polygon' || item.s === 'star') {
-              const cx = x + w / 2;
-              const cy = y + h / 2;
-              const rx = w / 2;
-              const ry = h / 2;
-              const count = Math.max(3, Math.round(item.p ?? 3));
-              const inner = item.s === 'star' ? Math.min(0.95, Math.max(0.05, item.ir ?? 0.5)) : 1;
-              const steps = item.s === 'star' ? count * 2 : count;
-              const pts: string[] = [];
-              for (let k = 0; k < steps; k += 1) {
-                // -90° so the first vertex points up, as the tool draws it.
-                const angle = (k / steps) * Math.PI * 2 - Math.PI / 2;
-                const r = item.s === 'star' && k % 2 === 1 ? inner : 1;
-                pts.push(`${cx + Math.cos(angle) * rx * r},${cy + Math.sin(angle) * ry * r}`);
-              }
-              return <polygon key={i} points={pts.join(' ')} fill={item.c} />;
+              // The maths lives in the pure module so it can be asserted; a
+              // shape that draws wrongly is otherwise findable only by
+              // looking at a thumbnail, which nobody does before shipping.
+              const pts = previewPolygonPoints(item, x, y, w, h)
+                .map(([px, py]) => `${px},${py}`)
+                .join(' ');
+              return <polygon key={i} points={pts} {...paint} {...spin} />;
             }
             return (
               <rect
                 key={i}
                 x={x} y={y} width={w} height={h}
                 rx={item.r ? item.r * Math.min(w, h) : 0}
-                fill={item.c}
+                {...paint}
+                {...spin}
               />
             );
           })}

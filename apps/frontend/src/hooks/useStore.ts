@@ -123,6 +123,17 @@ interface StoreState {
    * world position, and the panels clear it by the same amount. Turning them
    * off has to move all three or it leaves a dead margin down two edges.
    */
+  /**
+   * What the connector tool draws with, before anything is selected.
+   *
+   * Every other creating tool carries its own defaults — the pen its size,
+   * the sticky its theme, the shape its kind — and the connector carried
+   * none, so every connector on every board arrived in the same grey and the
+   * only way to change one was to draw it and then go and find it again.
+   */
+  connectorColor: string;
+  setConnectorColor: (val: string) => void;
+
   showRulers: boolean;
   setShowRulers: (val: boolean) => void;
 
@@ -346,6 +357,12 @@ export const useStore = create<StoreState>((set) => ({
   setLastForce: (id) => {
     window.localStorage.setItem('vega_last_force', id);
     set({ lastForce: id });
+  },
+
+  connectorColor: window.localStorage.getItem('vega_connector_color') || '',
+  setConnectorColor: (val) => {
+    window.localStorage.setItem('vega_connector_color', val);
+    set({ connectorColor: val });
   },
 
   showRulers: loadBoolPref('vega_show_rulers', true),

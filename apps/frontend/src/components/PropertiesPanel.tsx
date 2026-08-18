@@ -668,6 +668,26 @@ export const PropertiesPanel: React.FC<PropertiesPanelProps> = ({ selectedIds, o
   const setGeometry = (patch: Partial<ShapeGeometry>) =>
     patchEach((n) => (n.type === 'shape' ? { geometry: { ...n.geometry, ...patch } } : null));
 
+  /**
+   * Recolour a fill-less object, and remember it if it was a connector.
+   *
+   * Colour on a drawing tool is normally chosen *before* you draw — you do not
+   * pick the pen up and then go back and repaint every line. There is no
+   * pre-flight swatch on the connector tool, so the next best thing is that it
+   * keeps the last colour you actually chose: recolour one arrow and the ones
+   * you draw after it come out the same, instead of reverting to the theme
+   * default every single time.
+   *
+   * Only for a uniform connector selection: recolouring a mixed bag of lines
+   * and arrows says nothing about what the connector tool should do next.
+   */
+  const setConnectorLikeColor = (color: string) => {
+    setStroke({ color });
+    if (nodes.length > 0 && nodes.every((n) => n.type === 'connector')) {
+      useStore.getState().setConnectorColor(color);
+    }
+  };
+
   const setStrokeStyle = (style: StrokeStyleId) =>
     patchEach((n) => {
       const paint = appearanceOf(n);
@@ -988,6 +1008,35 @@ export const PropertiesPanel: React.FC<PropertiesPanelProps> = ({ selectedIds, o
                 onNudge={(d) => nudgeEach('opacity', d / 100, 0, 1)}
                 min={0} max={100} step={10}
               />
+            </Row>
+          )}
+          {/**
+            * The colour of an object that has no fill.
+            *
+            * A connector is a line and nothing else: its stroke colour is not
+            * one of its properties, it is the whole of its appearance. Left
+            * only in the Stroke accordion it sat beside weight, dash and caps
+            * — correct filing, and invisible, because nobody opens a section
+            * called Stroke to answer "what colour is this arrow". The same is
+            * true of any object the registry gives a stroke and no fill.
+            *
+            * So it appears here, where the fill swatch sits for everything
+            * that has one, and the Stroke accordion drops its own Color row
+            * in this case rather than offering the identical control twice.
+            */}
+          {!capabilities.supportsFill && capabilities.supportsStroke && appearance && (
+            <Row label="Color">
+              <div style={{ display: 'flex', alignItems: 'center', gap: 4 }}>
+                <ColorPickerPopover
+                  color={appearance.stroke?.color ?? 'transparent'}
+                  mixed={sharedPaint((a) => a.stroke?.color ?? 'transparent').mixed}
+                  onChange={(color) => setConnectorLikeColor(color)}
+                />
+                <EyedropperButton
+                  label="Pick a colour from the screen"
+                  onPick={(color) => setConnectorLikeColor(color)}
+                />
+              </div>
             </Row>
           )}
           {/* Blend mode and layer blur sit with the rest of the paint because
@@ -1316,19 +1365,23 @@ export const PropertiesPanel: React.FC<PropertiesPanelProps> = ({ selectedIds, o
 
       {capabilities.supportsStroke && appearance && (
         <Accordion title="Stroke" defaultOpen={Boolean(appearance.stroke?.width)}>
-          <Row label="Color">
-            <div style={{ display: 'flex', alignItems: 'center', gap: 4 }}>
-              <ColorPickerPopover
-                color={appearance.stroke?.color ?? 'transparent'}
-                mixed={sharedPaint((a) => a.stroke?.color ?? 'transparent').mixed}
-                onChange={(color) => setStroke({ color })}
-              />
-              <EyedropperButton
-                label="Pick a stroke colour from the screen"
-                onPick={(color) => setStroke({ color })}
-              />
-            </div>
-          </Row>
+          {/* Offered up in Appearance instead when the object has no fill, so
+              a connector shows one colour control rather than two. */}
+          {capabilities.supportsFill && (
+            <Row label="Color">
+              <div style={{ display: 'flex', alignItems: 'center', gap: 4 }}>
+                <ColorPickerPopover
+                  color={appearance.stroke?.color ?? 'transparent'}
+                  mixed={sharedPaint((a) => a.stroke?.color ?? 'transparent').mixed}
+                  onChange={(color) => setStroke({ color })}
+                />
+                <EyedropperButton
+                  label="Pick a stroke colour from the screen"
+                  onPick={(color) => setStroke({ color })}
+                />
+              </div>
+            </Row>
+          )}
           <Row label="Weight" hint="Thickness of the outline, in pixels. Zero removes it.">
             {(() => {
               const strokeWidth = sharedPaint((a) => a.stroke?.width ?? 0);
