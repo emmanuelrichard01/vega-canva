@@ -9,6 +9,7 @@ import {
 } from 'lucide-react';
 import { applyNodePatches, lowestZIndex, nextZIndex, provider, updateNodes } from '../engine/document';
 import { useStore } from '../hooks/useStore';
+import { APPEARANCE_TYPES } from '../engine/objects/appearanceTypes';
 import { objectRegistry } from '../engine/objects';
 import {
   canResizeAsBox,
@@ -370,16 +371,6 @@ const SAFE_EDGES = [
   { key: 'left', label: 'L' },
 ] as const;
 
-/**
- * Types that carry an `appearance` block.
- *
- * A list rather than `'appearance' in node`, which asks whether the key is
- * *present* — and on a type where the field is optional it is absent until
- * something writes it. Text is exactly that case, so the key check meant a
- * text node could never be given its first shadow: the Appearance section
- * would not render until the value it sets already existed.
- */
-const APPEARANCE_TYPES = new Set(['shape', 'path', 'image', 'frame', 'text']);
 
 function appearanceOf(node: AnyNode): Appearance | null {
   if (!APPEARANCE_TYPES.has(node.type)) return null;
@@ -494,6 +485,14 @@ export const PropertiesPanel: React.FC<PropertiesPanelProps> = ({ selectedIds, o
    * `node.geometry.kind === 'line' || ...` at seven call sites.
    */
   const openShape = nodes.some((n) => n.type === 'shape' && isOpenShape(n.geometry.kind));
+  /**
+   * Whether a connector is in the selection.
+   *
+   * Connectors reached the paint sections for the first time when they were
+   * added to `APPEARANCE_TYPES`, which is right for colour and wrong for a
+   * couple of controls that assume an object with an interior.
+   */
+  const hasConnector = nodes.some((n) => n.type === 'connector');
   /**
    * Whether this object's outline has a corner for a join to apply to.
    *
@@ -1039,13 +1038,18 @@ export const PropertiesPanel: React.FC<PropertiesPanelProps> = ({ selectedIds, o
               </div>
             </Row>
           )}
-          {/* Blend mode and layer blur sit with the rest of the paint because
-              that is what they are: how the object looks against what is
-              behind it. Offered wherever `appearance` exists, because
-              `ObjectRenderer` applies both to the whole node group and not to
-              one shape inside it — so they work on an image and a path exactly
-              as they work on a rectangle. */}
-          {appearance && (
+          {/* Blend mode sits with the rest of the paint because that is what it
+              is: how the object looks against what is behind it. Offered
+              wherever `appearance` exists, because `ObjectRenderer` applies it
+              to the whole node group and not to one shape inside it — so it
+              works on an image and a path exactly as it works on a rectangle.
+
+              Not on connectors. A connector's whole job is to stay legible
+              across whatever it crosses, and every mode here works against
+              that: multiply darkens it into the shapes it runs over, screen
+              washes it out. It appeared there only as a side effect of
+              connectors finally being given an appearance block at all. */}
+          {appearance && !hasConnector && (
             <Row label="Blend" hint="How this object\u2019s pixels combine with whatever is beneath it.">
               {/* A `<select>` has no third state, so a mixed selection shows an
                   extra option that is present only while it applies and

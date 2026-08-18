@@ -1,6 +1,7 @@
 # Handoff
 
-Written so the next session can start cold. Read this, then `docs/CANVAS-SPEC.md`.
+Written so the next session can start cold. Read this, then `DESIGN.md` if you
+are touching anything visual, then `docs/CANVAS-SPEC.md`.
 
 **This supersedes every previous handoff.** The presence/physics archaeology
 that used to fill this file has been folded into the commit messages and the
@@ -10,28 +11,34 @@ time, where the work stopped, and what is next.
 
 > ## Read this first
 >
-> **A large session of feature and bug work has landed on this branch and is
-> now committed.** Most of it *was* watched running — the Chrome extension
-> cooperated for long stretches this time — and every claim below that says
-> "verified" was measured in a browser, not inferred.
+> **The last session was a long design and product pass, and almost none of it
+> was watched running.** The Chrome extension was unstable throughout and the
+> user's standing instruction became "minimise testing and calling claude in
+> chrome, focus on building faster". Take that seriously — it is the working
+> agreement, not an excuse — but know what it costs: the claims below are
+> backed by typecheck, tests and reading the code, and a handful were backed by
+> a browser before it fell over.
 >
-> Two things are explicitly **not** verified, and they are the first places to
-> look if something is off:
+> **Two bugs in that session were found by the user, not by the work**, and
+> both are the same shape: something correct in the source that never reached
+> the screen, because a *second* gate elsewhere was quietly switched off.
 >
-> 1. **The audio recorder has never met a real microphone.** Bitrate, mime
->    type and the save control are correct by construction and by typecheck;
->    nothing has recorded a sound.
-> 2. **"Empty text/sticky is discarded on abandon" was not watched.** The
->    guard that stops a *just-created* note being destroyed by its own opening
->    click was verified; the path where you genuinely walk away from an empty
->    one holds by construction (past a 600ms window it falls through to the old
->    behaviour) but was never observed. Place a note, wait a second, click away
->    — it should vanish.
+> 1. **A star drew as a block in board thumbnails, twice.** The first fix was
+>    real and the report came back unchanged, because previews are cached in
+>    `localStorage` and only rewritten when a board is opened. A correct
+>    renderer was faithfully drawing a stale summary. Records carry
+>    `PREVIEW_VERSION` now (`engine/model/boardPreview.ts`) and a mismatch
+>    reads as no record. **If you change the preview shape, bump it.**
+> 2. **Connectors had no colour control in the properties panel.** The registry
+>    declared `supportsStroke`, the panel rendered a Stroke section, and
+>    `APPEARANCE_TYPES` — a hand-maintained list *inside the panel* — omitted
+>    `connector`, so `appearanceOf` returned null and every paint section was
+>    gated off. See invariant 7; there is now a test that holds that list
+>    against the registry, and it found the bug's shape the moment it existed.
 >
-> One long-running report was never reproduced and may still be live: **"the
-> sticky note does not appear at all, but a toast says one was added."** The
-> most likely cause was found and fixed (see §5c), but on the reporter's
-> machine it was intermittent and on this one it never occurred.
+> The lesson both times: **when a control "exists" but nobody can see it, look
+> for the second gate**, and prefer one source of truth with a test over two
+> lists that agree today.
 
 ---
 
@@ -47,7 +54,7 @@ Verify in ~30 seconds:
 
 ```bash
 npx tsc --noEmit -p apps/frontend/tsconfig.app.json   # must be silent
-npx vitest run                                        # 643 tests, 34 files
+npx vitest run --root apps/frontend                   # 667 tests, 37 files
 npx oxlint apps/frontend/src                          # 14 cosmetic warnings, exit 0
 npm run build -w apps/frontend                        # must succeed
 ```
@@ -62,9 +69,9 @@ history were vacuous for exactly that reason. Use `tsconfig.app.json`, or
 | --- | --- |
 | Branch | `rebuild/time-travel-and-physics`, nothing pushed, nothing merged |
 | Typecheck | clean |
-| Tests | **643** across 34 files |
+| Tests | **667** across 37 files |
 | Lint | exits 0; 14 `only-export-components` warnings, all cosmetic |
-| Build | clean, ~1.4MB JS (gzip ~430KB) — still no code splitting |
+| Build | clean, 1.44MB JS (gzip 452KB) + 111KB CSS (gzip 18KB) — still no code splitting |
 
 **Read the failing-suite line, not the test count.** Vitest reports a suite
 that failed to *load* separately from tests that failed, so a file that throws
@@ -91,12 +98,14 @@ Recent commits, newest first:
 
 | | |
 | --- | --- |
-| *(this commit)* | connectors, export + restore, tooltips, templates — see §5c |
+| `54697cd` | preview versioning, star/polygon geometry, connector colour in Appearance |
+| `0b83d28` | the colour picker and gradient editor off inline styles |
+| `e0fee09` | ruler/grid toggles, the dot field, focus mode, export, share sheet |
+| `ccf0594` | board covers that survive being opened |
+| `16b7858` | the canvas empty state |
+| `f615fa8` | layer search |
 | `2702a9a` | Phase 5 — text case, strikethrough, three-way text box resizing |
-| `ed1db3d` | Phase 4 — anchor/handle editing, booleans, flatten, outline stroke, join/miter |
-| `410e96d` | Phase 3 recorded, and what it left blocked on the group model |
-| `f0c359c` | the snap tests were not loading; the count was lying |
-| `a4b3905` | rulers, and guides you can pull out of them |
+| `ed1db3d` | Phase 4 — anchor/handle editing, booleans, flatten, outline stroke |
 
 ## 3. The one thing that will waste your time if you don't know it
 
@@ -132,10 +141,25 @@ What works instead:
   transitions at their start value, so `getComputedStyle(...).opacity` reads 0
   while the inline style correctly says 1.
 
-**Because of all this, prefer writing a failing test to trying to watch the
-bug.** Every piece of arithmetic in this codebase lives in a pure module for
-that reason — `smartGuides`, `pathGeometry`, `pathBoolean`, `strokeOutline`,
-`imageCrop`, `rulerTicks`, `stickyText` all run in Node with no canvas.
+**The user has since asked to minimise browser checking outright** — "let's
+move faster, minimise testing and calling claude in chrome, let's focus on
+building faster" — and the extension has been reliably unreliable since. Treat
+that as the working agreement.
+
+**So prefer writing a failing test to trying to watch the bug.** Every piece of
+arithmetic in this codebase lives in a pure module for that reason —
+`smartGuides`, `pathGeometry`, `pathBoolean`, `strokeOutline`, `imageCrop`,
+`rulerTicks`, `stickyText`, `layerSearch`, `boardPreview` all run in Node with
+no canvas. When you find arithmetic inside a component, that is the bug: move
+it out and assert it. `previewPolygonPoints` was extracted for exactly this
+reason after a star drew as a block twice.
+
+**And check your test is not vacuous.** Revert the fix and confirm the test
+fails. Two physics tests here passed with the fix removed; they were measuring
+`activeCount` when the defect was in settle *churn*. The habit has caught real
+things — `appearanceTypes.test.ts` was checked this way and, on a first draft
+with too broad an invariant, flagged `sticky` and `audio` as bugs when neither
+was one.
 
 **But static rendering can be checked, and you should when the work is
 visual.** Nothing static needs rAF. Import the real modules into the running
@@ -172,6 +196,18 @@ Each was learned from a real defect here and is documented at its source.
    board. `cropMode`, `pathEdit`, `guideState` and `tagFilter` are the pattern.
 6. **Never declare a capability the renderer ignores**, and **ship a feature
    with the thing that gives it a purpose.**
+7. **One source of truth, or a test that holds the copies together.** The
+   properties panel gates each paint section on *two* things: the capability
+   the registry declares, and a hand-maintained type list. The list forgot
+   `connector`, so connectors had no colour control while the code that draws
+   one sat right there looking correct. The list now lives in
+   `engine/objects/appearanceTypes.ts` with `appearanceTypes.test.ts` holding
+   it against the registry. Any time you find yourself writing a second list
+   of types, write the test with it.
+8. **A cache of derived data needs a version.** Board covers are summarised
+   into `localStorage` and only rewritten when a board is opened, so a fix to
+   the *renderer* cannot reach a board nobody has opened since. Bump
+   `PREVIEW_VERSION` whenever `PreviewItem` changes meaning.
 
 Konva specifics that have each cost a bug: `fillPriority` must be set on every
 branch (Konva leaves stale fill props in place, and React does not unset props
@@ -181,83 +217,128 @@ no stroke alignment, no inner shadow, no shadow spread and no conic or diamond
 gradient — all four are drawn by hand in `ShapeEffects.tsx` and
 `paintPattern.ts`.
 
-## 4b. What the last session changed
+## 4b. What the recent sessions changed
 
 Grouped by area. Everything here is committed; the reasoning is in the code
-comments, which are the real record.
+comments and the commit messages, which are the real record. Two sessions are
+folded together here because the second one was mostly design work on what the
+first one built.
 
-**Connectors.** `normalizeType`'s allow-list never got `connector`, so *every*
-connector was silently rewritten into a shape — no error, just the wrong node.
-The union is now derived from a `NODE_TYPES` const so the list cannot drift
-again. Curved routing drew a straight line (two points plus Konva `tension`,
-which needs three or more); it is a sampled cubic Bézier leaving each port
-along its normal. Connector ends went from one boolean per end to six kinds
-(none/arrow/triangle/circle/diamond/bar), with the run trimmed back under each
-marker. Derived bounds now sync on a trailing delay, so a connector no longer
-vanishes when its stale box leaves the viewport.
+**A design system, written down.** `DESIGN.md` is new and is the reference:
+two layers of tokens (PRIMITIVES are raw values, SEMANTIC are roles), and
+components reference roles only. The bug it exists to stop had already happened
+five times — a raw palette primitive (`--amber-500`) used where the accent role
+belongs, giving white-on-orange at ~2.15:1 in the badge, the share sheet, the
+comments overlay and the switch. Two traps documented there and worth
+repeating: **a CSS custom property resolves where it is declared**, so aliasing
+a theme-dependent value on `:root` freezes the light value in dark mode
+(`--focus-ring-color` did exactly this); and **`popIn` animates `transform`**,
+which clobbers the `translateX(-50%)` that centres a popover, so four surfaces
+appeared half their width to the right and snapped into place. Centre with the
+independent `translate` property, which composes instead of losing.
 
-**Export.** Three formats became six (PNG/JPEG/WebP/SVG/PDF/JSON) with a live
-preview, size estimate, per-format settings derived from a `FORMAT_SPECS`
-table, batch export of every frame, and copy-to-clipboard. **The PDF writer is
-hand-rolled** — five objects and an xref table, ~80 lines, no dependency —
-because jsPDF/pdf-lib cost 300–400KB for one page holding one image.
+**The rooms page** (`Home.tsx`) was rebuilt from scratch twice — the first
+attempt was patched and the user's verdict was that it was still "super
+confusing", which was correct. It is a rail plus a stage now, with Your boards
+and Vega Studio templates as separate views rather than one merged scroll.
 
-**Restore.** The JSON export called itself "best for backups" and nothing could
-read one back. There is now a validating parser, a single-transaction restorer,
-and a "rebuild a board from a backup" path on the rooms page. That last one
-matters: the in-room restore is unreachable for someone who cleared their
-browser, which is exactly who needs it.
+**Templates: 26, in five categories** (`art`, `design`, `diagrams`, `physics`,
+`thinking`), up from 13. Built from typed `NewNodeInput` rather than JSON so a
+schema rename fails the build instead of producing broken rooms. Includes
+deliberate scale showcases at 100/500/1000 objects. Thumbnails come from the
+same `build()` that makes the board, drawn through the same `WorkspaceCover`
+the board cards use, so a card cannot drift from what it produces —
+`build(limit)` exists because generating 1600 nodes to draw four thumbnails
+froze the page.
 
-**Templates.** Thirteen editable boards in five categories, built from typed
-`NewNodeInput` rather than shipped as JSON so a schema rename fails the build
-instead of producing broken rooms. Includes deliberate scale showcases —
-Bloom (500), Wave field (1000), Spectrum (360), Domino wall (200). Thumbnails
-are computed from the same `build()` that makes the board and drawn through the
-same `WorkspaceCover` the board cards use, so a card cannot drift from what it
-produces. `build(limit)` exists because generating 1600 nodes to draw four
-48-item thumbnails froze the page.
+**Physics became a mode rather than a toggle.** `engine/physics/` holds
+`simulation.ts` (Matter.js), `forces.ts` and `flightState.ts`. What is worth
+knowing before touching it:
 
-**Tooltips.** Were `position: absolute` pseudo-elements, so both scrolling side
-panels clipped them. **z-index cannot fix that** — it orders within a stacking
-context and has nothing to do with `overflow`. There is now one `position:
-fixed` node at the app root reading the same `data-tooltip` attributes, so no
-call site changed.
+- **Matter's `isStatic` is overloaded** as both "pinned" and "asleep" here.
+  `SimNode.locked` is the separate, real "the user pinned this" flag, and
+  `activate()` refuses to wake a locked body. That is what makes Pachinko pegs
+  possible, and it is a control a user has.
+- **"Just my selection" is scoping, not imprisonment.** The first attempt
+  removed everything else from the world, so a 450-object board became a
+  4-object one and objects fell through where their neighbours used to be. It
+  uses Matter **collision categories and masks** now: out-of-scope bodies still
+  exist and still collide, they just do not receive the force.
+- **Freeze had to learn about the latch.** A latched field re-applied itself
+  on the next tick, so freezing did nothing that lasted; `calmAll` clears the
+  latch first.
+- An "inert contact" rule was written, measured to change nothing, and
+  **deleted** rather than shipped as dead code. Do the same.
 
-**Transformer.** Eight vertices with corners and edge-midpoints shaped
-differently (a corner scales both axes, an edge one), rotation-aware cursors in
-a tested pure module, and a centre mark shown only while dragging.
+**The canvas chrome.** Rulers and the dot grid are toggles in a View menu that
+also carries Snap, Throw and Focus mode. The ruler switch is *structural*: the
+stage is inset by `RULER_SIZE` so screen coordinates and ruler marks describe
+the same world position, so hiding the rulers has to move the stage, the grid
+offset, the panel clearance and both insets, or it strands a dead margin down
+two edges. One flag drives all five.
 
-**Other fixes worth knowing:** hover and click now share one `canSelectWith()`
-predicate, so the hover outline can no longer promise a click the tool will
-refuse; `NodeEditor` was positioning a `position: fixed` overlay from *stage*
-coordinates, putting every text caret 22px left and 74px above its object; text
-bounds never tracked auto-width content, so selection boxes were a fraction of
-the words; images loaded with `crossOrigin='anonymous'` and failed outright
-when the host sent no CORS header (now falls back); uploads were fixed 300×300
-regardless of aspect.
+**The dot field was never a grid.** It was declared on `.canvas-area` at a
+fixed `0 0` while the camera loop wrote `backgroundPosition` to
+`.canvas-container` — a different element with no background image — so it was
+screen-fixed wallpaper that objects slid over and snapping did not describe.
+Moving it exposed why it had lived on the parent: `.canvas-container` carries
+`w-full h-full relative`, **Tailwind classes in a project with no Tailwind**,
+so it was zero pixels tall. It asks `tickStep` for its pitch now — the same
+function the rulers use — and holds 20–40px across a 160x zoom range.
+
+**Board covers** draw the actual board from a `localStorage` summary: real
+positions, sizes, silhouettes and colours, including text as ruled lines,
+frames as paper with a hairline, rotation, outline-only shapes, and stars and
+polygons generated from a side count and an inner ratio. The vertex maths is
+`previewPolygonPoints` in `engine/model/boardPreview.ts`, pure and tested,
+because the alternative is arithmetic inside JSX that can only be checked by
+looking at a thumbnail — which is how a star drew as a block for two rounds.
+
+**Sharing** rebuilds its link from the room id rather than echoing
+`location.href`, which was carrying whatever query or hash was in the address
+bar into an invitation meant to outlive the session. It also states plainly
+that a link is full access, permanently — there are no roles here and the sheet
+should not imply there are.
+
+**Smaller, all user-reported:** the activity feed compared `author.id` against
+`provider.awareness.clientID` — two different identifier spaces — so "is this
+me?" was never true and it narrated your own actions back at you; an empty
+board's preview key was *deleted* rather than written, collapsing "never opened
+here" and "opened, and empty" into one absence so every empty board read "Not
+opened on this device"; `[hidden]` lost to an author `display` rule and left a
+tuning row on screen.
 
 ## 5. Next up
 
-### 5a. The walkthrough project (this is what the user asked for next)
+### 5a. The walkthrough project (this is still what the user asked for)
 
-Agreed scope, in order:
+Agreed scope, in order. Two of five are done:
 
-1. ~~**Demo rooms**~~ — done, 13 templates in 5 categories.
-2. **Per-tool guided walkthroughs.** The agreed design: an arrow anchored to a
+1. ~~**Demo rooms**~~ — done. **26 templates in 5 categories**, including
+   deliberate scale showcases at 100/500/1000 objects.
+2. **Per-tool guided walkthroughs.** *Not started, and this is the next
+   substantial piece of the brief.* The agreed design: an arrow anchored to a
    real object that **advances by doing the thing**, not by a Next button. A
    wizard becomes the thing people dismiss, and it would contradict what makes
    the templates work — you learn connectors by dragging a box. The templates
    now give these somewhere to happen; launch a walkthrough *against* a
-   matching template rather than an empty canvas.
-3. **Visual refinement** of existing surfaces.
-4. **New surfaces** — onboarding, empty states, marketing-grade first run.
-5. **A product page.**
+   matching template rather than an empty canvas. The user chose "scripted
+   real mutations" over a recorded video when asked.
+3. ~~**Visual refinement** of existing surfaces~~ — largely done; see §4b.
+4. **New surfaces** — the canvas empty state and the rooms page are done. A
+   **first-run onboarding** and a **marketing-grade first run** are not.
+5. **A product page.** Not started.
+
+**Session creation is the loose thread.** The share *sheet* was rebuilt, but
+the flow that gets you a named board and shares it the first time was not
+touched. The user asked for "session creation and sharing, end to end" and only
+the second half landed. Start there if you want a short, well-defined piece.
 
 Also outstanding and explicitly deferred by the user: **Supabase** for auth and
 storage. They chose it over own-auth/PocketBase/Clerk. It is a multi-file change
 across the server, a new schema with RLS, and moving voice notes out of the CRDT
 into object storage — worth its own session. Note that voice notes are still
-base64 inside the Yjs document; the bitrate fix cut that ~5× but did not solve
+base64 inside the Yjs document; the bitrate fix cut that ~5x but did not solve
 it.
 
 ### 5b. Watch Phases 3–5 (still partly unverified)
@@ -313,7 +394,7 @@ The user's brief for this is long and specific; the short version is that both
 panels exist, both are functional, and both are thin against what the brief
 asks for. What follows is an audit, not a wish list.
 
-**`components/LayersPanel.tsx` (596 lines) already does:** a virtualized
+**`components/LayersPanel.tsx` (913 lines) already does:** a virtualized
 uniform-row tree (frames and group clusters, indented), inline rename, drag
 reorder, per-row visibility and lock toggles, Shift-range and Cmd-toggle
 multi-select, per-frame collapse held outside the CRDT, tag filtering, type
@@ -336,23 +417,24 @@ document change with 500 objects, which was ~88% of the cost of moving one.
 - Section, Component, Instance and Mask node types. These are **blocked**:
   sections and masks are their own features, components are Phase 7.
 
-**`components/PropertiesPanel.tsx` (1148 lines) already does:** Transform
+**`components/PropertiesPanel.tsx` (1895 lines) already does:** Transform
 (X/Y/W/H with aspect lock, rotation, flip), Appearance (fill with all five
 paint types, opacity, corner radius, blend), Stroke (colour, weight, dash
-preset, alignment, join, miter limit), Shadow, Inner Shadow, Layer Blur,
-Backdrop Blur, Typography (family, size, weight, italic, underline,
-strikethrough, case, alignment, line height, tracking, box resizing), plus
-per-type blocks for Star, Polygon, line Ends, frame Safe Area, image Adjust,
-Sticky, Physics and Metadata.
+preset, alignment, join, miter limit), Shadow, Inner Shadow, Blur (layer and
+backdrop, together with the shadows — they are all effects), Typography
+(family, size, weight, italic, underline, strikethrough, case, alignment, line
+height, tracking, box resizing), plus per-type blocks for Star, Polygon, line
+Ends, frame Safe Area, image Adjust, Sticky, Physics and Metadata — **and
+multi-selection with a real mixed-value state throughout**, which is the
+largest item this section used to list as missing.
 
 **What the brief asks for that is missing:**
 
-- **It shows nothing for a multi-selection.** `Room.tsx` passes `selectedId`
-  (singular), so selecting three objects gives you "Select an object". This is
-  the most conspicuous gap in the panel and almost certainly part of what
-  "weak and poorly implemented" refers to. Doing it properly means a mixed-value
-  state — a field where two objects disagree shows *Mixed* and writes to all of
-  them when edited.
+- ~~**It shows nothing for a multi-selection.**~~ **Done.** `Room.tsx` threads
+  `selectedIds` through, capabilities are the *intersection* across the
+  selection rather than the union, and a field where two objects disagree
+  reads *Mixed* and writes to all of them when edited. `sharedPaint` /
+  `shared` are the helpers; there are ~49 mixed-state call sites.
 - **It shows nothing when nothing is selected.** The brief wants global canvas
   state there: background colour, measurement units, ruler/grid visibility
   toggles, and the document's styles.
@@ -361,18 +443,19 @@ Sticky, Physics and Metadata.
 - Constraints/pinning grid and Auto Layout are **Phase 6**; component link,
   variants and exposed properties are **Phase 7**. Do not start those here.
 
-**Suggested order from here**: properties for a multi-selection (with Mixed)
-→ panel keyboard navigation → global state when nothing is selected →
-independent corner radii → frame wrapping and drag-reparenting.
+**Suggested order from here**: panel keyboard navigation → global canvas
+state when nothing is selected → independent corner radii → frame wrapping and
+drag-reparenting.
 
-The multi-selection one is the biggest single win left in either panel:
-`Room.tsx` passes `selectedId` (singular) to `PropertiesPanel`, so selecting
-three objects shows "Select an object". Doing it properly means threading the
-whole selection through and giving every field a mixed-value state — a control
-where two objects disagree reads *Mixed* and writes to all of them when
-edited.
+Two things newly visible on connectors, now that they finally reach the paint
+sections at all: **Blend is deliberately hidden for them** — a connector's job
+is to stay legible across whatever it crosses, and multiply darkens it into the
+shapes it runs over — while **Blur is still offered and probably should not
+be**. Backdrop blur on a hairline is close to meaningless. That was noticed and
+left alone rather than changed past what was asked for; it is a two-line fix
+next to the `hasConnector` gate if you agree.
 
-### 5c. Still logged, from earlier phases
+### 5e. Still logged, from earlier phases
 
 - **Real nested groups + deep select.** Groups are flat: members share a
   synthetic `parentId` and there is nothing to select *into*. This is a model
@@ -398,7 +481,7 @@ edited.
 - **Two real browsers with two real mice** — still the one check automation
   cannot stand in for.
 
-### 5d. Not started from the brief
+### 5f. Not started from the brief
 
 Excalidraw-style ideas, mermaid diagrams, wireframe-to-code, and the laser
 pointer. The laser pointer is small and independent (it is ephemeral presence
@@ -451,3 +534,18 @@ The precision tools:
 | `engine/interaction/objectSnap.ts` | the adapter: candidates, zoom tolerance, re-entrancy guard |
 | `engine/interaction/rulerTicks.ts` | tick steps and labels. Pure, tested. |
 | `engine/document/guides.ts` | ruler guides, as document state on a root `Y.Array` |
+
+Physics, templates and the product shell (newest):
+
+| File | What it owns |
+| --- | --- |
+| `engine/physics/simulation.ts` | the Matter world: bodies, scoping by collision category, `locked` vs asleep, gesture bookkeeping |
+| `engine/physics/forces.ts` | the force catalogue, latch durations, falloff curves, the wording shown in the panel |
+| `engine/physics/flightState.ts` | what is mid-throw, kept out of the document |
+| `hooks/usePhysics.ts` | the React side: arming a force, latching, `calmAll` |
+| `engine/templates/templates.ts` | 26 templates as typed `NewNodeInput`, with `build(limit)` for thumbnails |
+| `engine/model/boardPreview.ts` | the board summary in `localStorage`, `PREVIEW_VERSION`, `previewPolygonPoints`. Pure, tested. |
+| `components/WorkspaceCover.tsx` | that summary drawn as SVG — the only thumbnail renderer, shared by boards and templates |
+| `engine/objects/appearanceTypes.ts` | which types carry an `appearance` block, held against the registry by a test |
+| `Home.tsx` | the rooms page: rail, stage, boards and templates as separate views |
+| `DESIGN.md` | the token layers and the named rules. Read before touching `index.css`. |

@@ -204,10 +204,32 @@ Nothing in this section exists, and all of it depends on frames.
 | Export scale (1x/2x/3x) | **Shipped** | PNG only — SVG and JSON have no pixels to multiply. Each option shows the pixels it will produce when a frame is the target, and the filename carries the `@2x` suffix. |
 | PNG | **Shipped** | Reframes the stage onto the document bounds, captures, restores. Interface is hidden for the capture — the selection transformer, hover outline, crop overlay, force ring, tool preview, frame name labels and safe-area guides all carry an `export-chrome` name that `hideExportChrome` switches off and back on. Before that, exporting with anything selected baked the blue handles into the image. Omits audio players, which are DOM overlays. |
 | SVG | **Shipped** | Serializes CRDT state to real vector primitives rather than rasterizing, with user text escaped. |
-| JSON | **Shipped** | Canonical node data plus comment threads. |
-| PDF / EPS | **Absent** | |
+| JSON | **Shipped** | Canonical node data plus comment threads — and it can be **read back**. It called itself "best for backups" while nothing could restore one, which is the kind of claim this document exists to catch. There is a validating parser, a single-transaction restorer, and a "rebuild a board from a backup" path on the rooms page; that last one matters, because the in-room restore is unreachable for someone who cleared their browser, which is exactly who needs it. |
+| WebP / JPEG | **Shipped** | Six formats total, with a live preview, a size estimate and per-format settings derived from one `FORMAT_SPECS` table, plus batch export of every frame and copy-to-clipboard. |
+| PDF | **Shipped** | `engine/export/PDFExporter.ts` — hand-rolled, five objects and an xref table in ~80 lines, no dependency, because jsPDF and pdf-lib each cost 300-400KB for one page holding one image. |
+| EPS | **Absent** | |
 | CSS / SVG code / Swift / Android XML | **Absent** | |
 | Export selection vs. document | **Partial** | A **frame** can be exported on its own, at its own declared size, resolved once in the service so all three formats agree on what is in it. Exporting an arbitrary *selection* is still not offered, though `ExportOptions.selectedOnly` supports it. |
+
+---
+
+## 15. The product around the canvas
+
+Outside the original brief, which is an audit of a *design tool*. These are
+shipped surfaces that a reader of this document would otherwise assume absent.
+
+| Item | Status | Notes |
+| --- | --- | --- |
+| Templates / demo rooms | **Shipped** | 26 editable boards in five categories (`art`, `design`, `diagrams`, `physics`, `thinking`), built from typed `NewNodeInput` so a schema rename fails the build rather than producing broken rooms. Deliberate scale showcases at 100, 500 and 1000 objects. `build(limit)` exists because generating 1600 nodes to draw four thumbnails froze the page. |
+| Board thumbnails | **Shipped** | The actual board, summarised into `localStorage` as you work and drawn as SVG: real positions, sizes, silhouettes, colours, rotation, text as ruled lines, frames as paper. Templates draw through the *same* component from the same `build()`, so a card cannot drift from the board it produces. Cached, therefore **versioned** — see `PREVIEW_VERSION`. |
+| Physics | **Shipped** | A mode, not a toggle. Matter.js under `engine/physics/`, six forces with three latch durations and three falloff curves, selection scoping by collision category, and pinned bodies (`SimNode.locked`, distinct from Matter's `isStatic`, which this codebase also uses to mean "asleep"). |
+| Rulers / grid visibility | **Shipped** | Toggles in the View menu. The ruler one is structural rather than cosmetic: the stage is inset by `RULER_SIZE` so screen coordinates and ruler marks agree, so hiding rulers moves the stage, the grid offset, the panel clearance and both insets from one flag. |
+| Dot field | **Shipped** | A real world-space grid on `.canvas-container`, stepped by `tickStep` — the same function the rulers use — so the pitch holds between 20 and 40px across a 160x zoom range on round numbers. It was previously screen-fixed wallpaper that objects slid over and snapping did not describe. |
+| Focus / zen mode | **Shipped** | Hides every panel, announced once at the moment they disappear because a mode reachable only by pressing backslash is folklore. |
+| Sharing | **Partial** | The sheet is real: the link is rebuilt from the room id rather than echoed from `location.href`, a failed copy says so, and it states plainly that a link is full access permanently. **There are no permissions** — no roles, no view-only, no revocation. The sheet says this rather than implying otherwise. Session *creation* — a board made, named and shared for the first time — has not been built. |
+| Guided walkthroughs | **Absent** | Agreed design: an arrow anchored to a real object that advances by *doing the thing*, launched against a matching template rather than an empty canvas. The templates exist to give these somewhere to happen. |
+| Onboarding / product page | **Absent** | The canvas empty state and the rooms page are done; first-run and marketing surfaces are not. |
+| Design system | **Shipped** | `DESIGN.md` — two token layers, PRIMITIVES and SEMANTIC, with components referencing roles only. It exists because the same contrast bug (a raw palette primitive where the accent role belongs, giving ~2.15:1) shipped in five separate places. |
 
 ---
 
@@ -218,7 +240,11 @@ Roughly, across the ~100 discrete items above:
 - **Shipped: ~61** — the canvas core, collaboration, frames, the whole paint model, the precision tools, the vector engine, and the parts of the transform/typography blocks that a whiteboard needs.
 - **Partial: ~10**
 - **Dead: 1** — `FrameNode.layout`, the auto-layout declaration, which Phase 6 owns. `Appearance.shadow` was the second entry here until 2026-08-11.
-- **Absent: ~28** — design systems, prototyping, and the export pipeline. Vector manipulation left this list on 2026-08-12.
+- **Absent: ~26** — design systems and prototyping. Vector manipulation left this list on 2026-08-12; **the export pipeline left it on 2026-08-18** — six formats with a live preview, a hand-rolled PDF writer, batch export of every frame, and a JSON export that can now actually be read back.
+
+Section 15 is counted separately: it audits the product *around* the canvas
+(templates, physics, thumbnails, sharing, the design system), which the
+original brief does not cover and which is where the last two sessions went.
 
 **Phase 0 is otherwise done** (2026-07-31). Stroke dash, star parameters,
 follow mode, image adjustments and image cropping each shipped with the control
