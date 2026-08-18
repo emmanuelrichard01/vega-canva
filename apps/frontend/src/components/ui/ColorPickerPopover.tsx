@@ -242,10 +242,8 @@ export const ColorPickerPopover: React.FC<Props> = ({
         aria-expanded={isOpen}
         aria-label={mixed ? 'Mixed colours — open the colour picker' : `Colour ${displayColor}`}
         onClick={() => setIsOpen((v) => !v)}
+        className={`cp-trigger${isOpen ? ' is-open' : ''}`}
         style={{
-          width: '24px', height: '24px', borderRadius: '50%',
-          border: '1px solid var(--border-divider)', boxShadow: 'var(--shadow-sm)',
-          cursor: 'pointer', overflow: 'hidden', position: 'relative', padding: 0,
           background: swatchBackground,
           backgroundBlendMode: !mixed && alpha < 1 ? 'normal' : undefined,
         }}
@@ -260,13 +258,8 @@ export const ColorPickerPopover: React.FC<Props> = ({
           // closes on an outside click. Without it the fill editor above this
           // dismissed itself the moment you touched a swatch.
           {...{ [PORTAL_SURFACE_ATTR]: 'color-picker' }}
-          style={{
-            position: 'fixed', top: position.top, left: position.left, width: 248,
-            padding: 12, background: 'var(--surface-elevated, var(--surface-primary))',
-            border: '1px solid var(--border-divider)', borderRadius: 'var(--radius-lg, 12px)',
-            boxShadow: 'var(--shadow-float, 0 12px 32px rgba(0,0,0,0.28))', zIndex: 4000,
-            display: 'flex', flexDirection: 'column', gap: 10,
-          }}
+          className="cp-popover"
+          style={{ top: position.top, left: position.left }}
         >
           {/* Saturation against value, at the current hue. The handle takes a
               ring in whichever of black or white will show against the colour
@@ -327,17 +320,10 @@ export const ColorPickerPopover: React.FC<Props> = ({
                 if (e.key === 'Enter') { e.preventDefault(); commitHex(); }
                 if (e.key === 'Escape') { setHexDraft(displayColor.toUpperCase()); }
               }}
-              style={{
-                flex: 1, minWidth: 0, background: 'var(--surface-hover)',
-                border: '1px solid var(--border-divider)', borderRadius: 6,
-                padding: '5px 8px', fontSize: 12, fontFamily: 'var(--font-mono, monospace)',
-                color: 'var(--text-primary)', outline: 'none', textTransform: 'uppercase',
-              }}
+              className="cp-hex"
             />
             {onOpacityChange && (
-              <span style={{ fontSize: 12, fontFamily: 'var(--font-mono, monospace)', color: 'var(--text-secondary)', width: 34, textAlign: 'right' }}>
-                {Math.round(alpha * 100)}%
-              </span>
+              <span className="cp-alpha">{Math.round(alpha * 100)}%</span>
             )}
             <EyedropperButton onPick={(picked) => commit(picked)} />
           </div>
@@ -406,11 +392,9 @@ const Swatches: React.FC<{
   current: string;
   onPick: (color: string) => void;
 }> = ({ label, colors, current, onPick }) => (
-  <div style={{ display: 'flex', flexDirection: 'column', gap: 5 }}>
-    <span style={{ fontSize: 10, fontWeight: 700, letterSpacing: '0.08em', color: 'var(--text-tertiary, var(--text-secondary))', textTransform: 'uppercase' }}>
-      {label}
-    </span>
-    <div style={{ display: 'flex', flexWrap: 'wrap', gap: 5 }}>
+  <div className="cp-group">
+    <span className="cp-group__label">{label}</span>
+    <div className="cp-swatches">
       {colors.map((c) => {
         const active = c.toUpperCase() === current.toUpperCase();
         return (
@@ -421,14 +405,11 @@ const Swatches: React.FC<{
             aria-pressed={active}
             data-tooltip={c.toUpperCase()}
             onClick={() => onPick(c)}
-            style={{
-              width: 20, height: 20, borderRadius: 5, background: c, cursor: 'pointer', padding: 0,
-              // A hairline in the divider colour, so white stays visible on a
-              // light surface and black stays visible on a dark one.
-              border: '1px solid var(--border-divider)',
-              outline: active ? '2px solid var(--border-focus, #3B82F6)' : 'none',
-              outlineOffset: 1,
-            }}
+            // The selected ring is the accent, not a hardcoded blue: it used
+            // to fall back to `#3B82F6`, which is neither the focus ring nor
+            // anything else in the system.
+            className={`cp-swatch${active ? ' is-active' : ''}`}
+            style={{ background: c }}
           />
         );
       })}

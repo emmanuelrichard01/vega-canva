@@ -3381,14 +3381,44 @@ textarea:focus-visible {
   border: 2px solid var(--surface-primary);
   box-shadow: 0 0 0 1px var(--border-strong);
   cursor: grab;
+  transition: transform var(--motion-hover), box-shadow var(--motion-hover);
 }
 
+/* A thirteen-pixel dot that has to be dragged to the percent should say so
+   before it is grabbed. It had `:active` and nothing else, so the only
+   feedback arrived after you had already committed to the drag. */
+.fill-editor__stop:hover {
+  transform: scale(1.2);
+  box-shadow: 0 0 0 1px var(--border-strong), var(--shadow-sm);
+}
+
+/* The accent, matching the picker's selected swatch. This was
+   `--border-focus`, which is near-black on light and near-white on dark — a
+   perfectly visible ring that means "focused" everywhere else in the app and
+   was being used here to mean "selected". */
 .fill-editor__stop.is-active {
-  box-shadow: 0 0 0 2px var(--border-focus);
+  box-shadow: 0 0 0 2px var(--text-accent);
+}
+
+.fill-editor__stop.is-active:hover {
+  box-shadow: 0 0 0 2px var(--text-accent), var(--shadow-sm);
 }
 
 .fill-editor__stop:active {
   cursor: grabbing;
+  transform: scale(1.1);
+}
+
+/* The bar is a click target for placing the selected stop, so it earns a
+   hover too — otherwise the one gesture that saves aiming at a 13px dot is
+   invisible. */
+.fill-editor__bar:hover { border-color: var(--border-strong); }
+
+@media (prefers-reduced-motion: reduce) {
+  .fill-editor__stop, .fill-editor__stop:hover, .fill-editor__stop:active {
+    transition: none;
+    transform: none;
+  }
 }
 
 /* A select in the Properties panel. Matches the export dialog's, which was
@@ -7699,4 +7729,110 @@ body[data-zen='physics'] .forces-handle { bottom: 32px; }
   font-size: var(--text-base);
   line-height: 1.55;
   color: var(--text-tertiary);
+}
+
+/* ---------------------------------------------------------------------------
+   COLOUR PICKER
+
+   The picker's logic was always the careful part — hex committed on blur
+   rather than per keystroke, arrow keys on the tracks, a handle ring that
+   picks black or white by what is under it. What it did not have was any
+   response to a pointer, because every rule lived in a style object and an
+   inline declaration has nowhere to put `:hover`. A twenty-pixel colour chip
+   that does not move when you point at it reads as a printed sample rather
+   than a control.
+   --------------------------------------------------------------------------- */
+
+.cp-trigger {
+  position: relative;
+  width: 24px;
+  height: 24px;
+  padding: 0;
+  overflow: hidden;
+  border: 1px solid var(--border-divider);
+  border-radius: 50%;
+  box-shadow: var(--shadow-sm);
+  cursor: pointer;
+  transition: transform var(--motion-hover), box-shadow var(--motion-hover);
+}
+
+.cp-trigger:hover { transform: scale(1.08); box-shadow: var(--shadow-md); }
+.cp-trigger.is-open { box-shadow: 0 0 0 2px var(--surface-primary), 0 0 0 4px var(--text-accent); }
+
+.cp-popover {
+  position: fixed;
+  z-index: 4000;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  width: 248px;
+  padding: 12px;
+  border: 1px solid var(--border-divider);
+  border-radius: var(--radius-xl);
+  background: var(--surface-elevated);
+  box-shadow: var(--shadow-float);
+  animation: popIn 140ms var(--ease-settle);
+}
+
+.cp-hex {
+  flex: 1;
+  min-width: 0;
+  padding: 6px 8px;
+  border: 1px solid var(--border-divider);
+  border-radius: var(--radius-md);
+  background: var(--surface-hover);
+  color: var(--text-primary);
+  font-family: var(--font-mono);
+  font-size: var(--text-sm);
+  text-transform: uppercase;
+  transition: border-color var(--motion-hover), background-color var(--motion-hover);
+}
+
+.cp-hex:hover { border-color: var(--border-strong); }
+.cp-hex:focus { background: var(--surface-primary); }
+
+.cp-alpha {
+  width: 34px;
+  text-align: right;
+  font-family: var(--font-mono);
+  font-size: var(--text-sm);
+  color: var(--text-secondary);
+  font-variant-numeric: tabular-nums;
+}
+
+.cp-group { display: flex; flex-direction: column; gap: 5px; }
+
+/* Sentence case at the panel's own label size, rather than 10px uppercase at
+   0.08em — the picker is a dense surface and three shouted labels in it were
+   competing with the colours, which are the content. */
+.cp-group__label {
+  font-size: var(--text-2xs);
+  font-weight: var(--weight-semibold);
+  color: var(--text-tertiary);
+}
+
+.cp-swatches { display: flex; flex-wrap: wrap; gap: 5px; }
+
+.cp-swatch {
+  width: 20px;
+  height: 20px;
+  padding: 0;
+  border-radius: 5px;
+  /* A hairline in the divider colour, so white stays visible on a light
+     surface and black stays visible on a dark one. */
+  border: 1px solid var(--border-divider);
+  cursor: pointer;
+  transition: transform var(--motion-hover), box-shadow var(--motion-hover);
+}
+
+.cp-swatch:hover { transform: scale(1.14); box-shadow: var(--shadow-sm); }
+
+/* The accent, not a hardcoded blue. */
+.cp-swatch.is-active {
+  box-shadow: 0 0 0 2px var(--surface-elevated), 0 0 0 4px var(--text-accent);
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .cp-trigger, .cp-swatch { transition: none; }
+  .cp-trigger:hover, .cp-swatch:hover { transform: none; }
 }
