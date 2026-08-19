@@ -732,6 +732,34 @@ export interface ShapeGeometry {
    */
   endAlign?: EndAlign;
   /**
+   * A line's two endpoints, relative to the node origin.
+   *
+   * ## Why a line stopped being its box
+   *
+   * It used to be: a line ran corner to corner of `width`/`height`, with the
+   * sign of `scaleX`/`scaleY` choosing the diagonal. That is exact for a
+   * *straight* line and wrong the moment the run has a profile, because a wave
+   * deviates across the diagonal — so the box stayed a flat sliver while the
+   * drawing occupied real height. Measured on a live board: a wavy arrow
+   * stored 380x0 and drew 380x49.
+   *
+   * That box is not decorative. Marquee selection, culling, the radar and
+   * export framing all read it, so a profiled line could be missed by a
+   * marquee drawn around it, and culled while its crests were still on screen.
+   *
+   * So `width`/`height` become what they are everywhere else in this model —
+   * **the extent of what is drawn**, including the profile and the markers —
+   * and the endpoints move here, where the profile and the caps already live.
+   * Both are still stored once and derived nowhere twice; what changed is
+   * which of the two is the derived one.
+   *
+   * Absent means the legacy form, and `lineEndpoints` still reads the box for
+   * it — a document written before this opens unchanged, which is this file's
+   * whole job.
+   */
+  a?: Point;
+  b?: Point;
+  /**
    * Star only: inner radius as a fraction of the outer radius, clamped to
    * `MIN_STAR_RATIO`..`MAX_STAR_RATIO`. At 1 the points vanish and the shape
    * becomes a regular polygon of twice the point count, which is a legitimate

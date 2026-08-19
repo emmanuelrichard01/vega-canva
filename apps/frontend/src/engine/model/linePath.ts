@@ -171,12 +171,29 @@ export function linePoints(
     });
   }
 
-  // Coil: a loop that also travels, which is what a phone cord does. The
-  // across-component is a full circle per period while the along-component
-  // advances — so each turn closes on itself without the line ever going
-  // backwards far enough to double over.
-  // A coil turns through a full circle per repeat, so it needs more samples
-  // per unit of run than a wave that only rises and falls once.
+  /**
+   * Coil: a loop that also travels, which is what a phone cord does. The
+   * across-component turns through a full circle per period while the
+   * along-component advances, so each turn closes on itself without the line
+   * ever going backwards far enough to double over.
+   *
+   * ## Straight leads at both ends
+   *
+   * A coil is the one profile whose ends are *inside* a turn: the run arrives
+   * at its last point still curving hard, so a marker there is tangent to a
+   * loop and reads as flung off the side rather than as terminating the line.
+   * Easing the loop to nothing only made it a smaller loop — the direction was
+   * still rotating.
+   *
+   * A real drawn spring does not do this either. It leaves its anchor straight,
+   * coils, and comes back to straight before it arrives — which is what gives a
+   * head somewhere flat to sit. So the first and last stretch are a plain run
+   * along the axis, and the coiling happens between them.
+   */
+  const LEAD = 0.09;
+  const coilFrom = length * LEAD;
+  const coilTo = length * (1 - LEAD);
+  const coilSpan = coilTo - coilFrom;
   const steps = count * Math.round(stepsFor(period) * 1.5);
   /**
    * A coil's loop is sized against its *period*, not against the shared wave
@@ -193,19 +210,17 @@ export function linePoints(
    * and consecutive turns still clear each other along the run.
    */
   const loop = period * 0.62;
-  return Array.from({ length: steps + 1 }, (_, i) => {
+  const coiled = Array.from({ length: steps + 1 }, (_, i) => {
     const t = i / steps;
     const turn = t * count * Math.PI * 2;
-    // A coil *does* need its ends eased, unlike a wave: `1 - cos` starts and
-    // ends at zero but its loop carries the run backwards on the way, so
-    // without this the first and last turns push out past the endpoints the
-    // heads are drawn at.
-    const edge = Math.min(1, Math.min(t, 1 - t) * count * 3);
     return at(
-      t * length - Math.sin(turn) * loop * 0.55 * edge,
-      (1 - Math.cos(turn)) * loop * 0.5 * edge
+      coilFrom + t * coilSpan - Math.sin(turn) * loop * 0.55,
+      (1 - Math.cos(turn)) * loop * 0.5
     );
   });
+  // The leads are two points each rather than sampled: they are straight, and
+  // a straight run needs no samples to be straight.
+  return [at(0, 0), ...coiled, at(length, 0)];
 }
 
 /**

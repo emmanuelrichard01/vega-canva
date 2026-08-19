@@ -1,6 +1,6 @@
 import React from 'react';
 import { Circle, Ellipse, Group, Label, Line, Path, Rect, RegularPolygon, Star, Tag, Text } from 'react-konva';
-import { ARROW_HEAD_SCALE, DEFAULT_INK, isOpenShape, type ShapeNode } from '../../../engine/model/schema';
+import { DEFAULT_INK, isOpenShape, type ShapeNode } from '../../../engine/model/schema';
 import { konvaFontStyle, konvaTextDecoration, shadowProps, shadowSpreadProps, strokeColor, strokeDashProps, strokeWidth } from './shared';
 import { useFillProps } from './useFillProps';
 import { AlignedStroke, BackdropBlur, InnerShadow } from './ShapeEffects';
@@ -11,7 +11,6 @@ import { terminateRun } from '../../../engine/model/connectorEnds';
 import { pathData } from '../../../engine/model/pathGeometry';
 import { roughShape } from '../../../engine/model/roughShape';
 import { roughEllipse, roughPolyline, seedFrom } from '../../../engine/model/rough';
-import { endCapShape } from '../../../engine/model/connectorEnds';
 import { ThemeService } from '../../../engine/ThemeService';
 import { readableOnSurface } from '../../../engine/model/color';
 
@@ -213,6 +212,94 @@ export const ShapeRenderer: React.FC<Props> = React.memo(({ node, showLabel }) =
       ) : null
     ) : null;
 
+  /**
+   * The run and its two markers, computed once for **both** branches.
+   *
+   * This lived inside the crisp branch, and the sketch branch had a second
+   * copy of the cap placement that had never been updated: it took the box
+   * corners as the endpoints and `atan2(h, w)` as the facing, so a sketched
+   * wavy arrow put its head at the corner of the bounding box, pointing along
+   * the diagonal, while the line it belonged to arrived somewhere else
+   * entirely at some other angle.
+   *
+   * That is the same defect the exporter had, for the same reason — a third
+   * place doing the arithmetic itself — and it is why this is hoisted rather
+   * than fixed in place. One computation, two renderings of it.
+   */
+/**
+   * The run, as the profile draws it.
+   *
+   * Straight gives back exactly `[0, 0, w, h]`, so the ordinary line is
+   * unchanged and everything below — the caps, the trim, the sketcher —
+   * carries on working on a two-point list without knowing profiles exist.
+   */
+  const profile = linePoints(
+    { x: 0, y: 0 },
+    { x: w, y: h },
+    node.geometry.lineProfile,
+    node.geometry.lineWaves
+  );
+  const points = profile.flatMap((p) => [p.x, p.y]);
+  const common = {
+    points,
+    stroke: stroke ?? DEFAULT_INK,
+    strokeWidth: sw || 2,
+    /**
+     * No cap or join defaults here.
+     *
+     * These two lines used to sit above the spread and set `'round'` — but
+     * `dashProps` always carries both keys, so an unset stroke spread
+     * `undefined` straight over them and the line drew with butt caps and a
+     * mitred join regardless. They had never once taken effect.
+     *
+     * Removing them rather than moving them below the spread is deliberate:
+     * `PathRenderer` already settled that an absent cap means `butt` and an
+     * absent join means `miter`, the way Canvas2D and SVG define them, and a
+     * renderer that quietly disagreed was how flattening a rectangle used to
+     * round its corners. Now the Cap and Join controls say what a stroke
+     * does, and absent means absent everywhere.
+     */
+    ...dashProps,
+    ...shadow,
+    // The grab area for a hairline is otherwise the hairline itself.
+    hitStrokeWidth: Math.max(20, sw),
+  };
+  /**
+   * Six end styles, drawn the way a connector draws them.
+   *
+   * This was Konva's `Arrow` with two booleans, which can only ever produce
+   * one shape of head — while a connector, made of the same two ends, offered
+   * arrow, triangle, circle, diamond and bar. The style you could reach
+   * depended on which tool had happened to make the run, and the properties
+   * panel carried two different controls for the same question: a pair of raw
+   * checkboxes on one, a proper picker on the other.
+   *
+   * `endCapShape` is that picker's geometry, and it is shared rather than
+   * reimplemented — so a triangle on a line and a triangle on a connector are
+   * the same triangle, at the same size, inset by the same amount.
+   */
+  const startKind = node.geometry.endStart ?? 'none';
+  const endKind = node.geometry.endEnd ?? 'none';
+  /**
+   * The ends, placed by the alignment the line asks for.
+   *
+   * `terminateRun` owns both modes and the terminal tangent they share, so
+   * the canvas, the SVG exporter and the toolbar specimen cannot disagree
+   * about where a head sits or which way it faces — which they already did
+   * once, when the exporter oriented its heads along the box diagonal.
+   */
+  const {
+    run,
+    start: startCap,
+    end: endCap,
+  } = terminateRun(points, {
+    start: startKind,
+    end: endKind,
+    strokeWidth: sw || 2,
+    scale: node.geometry.endScale,
+    align: node.geometry.endAlign ?? defaultEndAlign(node.geometry.lineProfile),
+  });
+
   if (sketch) {
     // The nib is the stroke weight, floored — a hairline sketch reads as a
     // rendering artefact rather than as a drawing, and the style's whole point
@@ -231,16 +318,15 @@ export const ShapeRenderer: React.FC<Props> = React.memo(({ node, showLabel }) =
      */
     const sketchCaps: string[] = [];
     if (open) {
-      const a = { x: 0, y: 0 };
-      const b = { x: w, y: h };
-      const along = Math.atan2(b.y - a.y, b.x - a.x);
-      const size = (Math.max(6, nib * ARROW_HEAD_SCALE) / 2) * (node.geometry.endScale ?? 1);
       const seed = seedFrom(node.id);
+      // The very same two markers the crisp branch draws — position, facing,
+      // size and alignment — only rendered by hand. Seeded off the node's seed
+      // plus the end, so the two ends of one line wander differently while
+      // both stay stable across renders.
       ([
-        [node.geometry.endStart ?? 'none', a, along + Math.PI, seed ^ 0x11] as const,
-        [node.geometry.endEnd ?? 'none', b, along, seed ^ 0x22] as const,
-      ]).forEach(([kind, tip, angle, capSeed]) => {
-        const cap = endCapShape(kind, tip, angle, size);
+        [startCap, seed ^ 0x11] as const,
+        [endCap, seed ^ 0x22] as const,
+      ]).forEach(([cap, capSeed]) => {
         if (!cap) return;
         if (cap.circle) {
           sketchCaps.push(
@@ -355,80 +441,6 @@ export const ShapeRenderer: React.FC<Props> = React.memo(({ node, showLabel }) =
     // heads, so one branch covers both kinds — and a "line" with a head turned
     // on in the panel becomes an arrow without changing what it is, which is
     // how people actually use the two.
-    /**
-     * The run, as the profile draws it.
-     *
-     * Straight gives back exactly `[0, 0, w, h]`, so the ordinary line is
-     * unchanged and everything below — the caps, the trim, the sketcher —
-     * carries on working on a two-point list without knowing profiles exist.
-     */
-    const profile = linePoints(
-      { x: 0, y: 0 },
-      { x: w, y: h },
-      node.geometry.lineProfile,
-      node.geometry.lineWaves
-    );
-    const points = profile.flatMap((p) => [p.x, p.y]);
-    const common = {
-      points,
-      stroke: stroke ?? DEFAULT_INK,
-      strokeWidth: sw || 2,
-      /**
-       * No cap or join defaults here.
-       *
-       * These two lines used to sit above the spread and set `'round'` — but
-       * `dashProps` always carries both keys, so an unset stroke spread
-       * `undefined` straight over them and the line drew with butt caps and a
-       * mitred join regardless. They had never once taken effect.
-       *
-       * Removing them rather than moving them below the spread is deliberate:
-       * `PathRenderer` already settled that an absent cap means `butt` and an
-       * absent join means `miter`, the way Canvas2D and SVG define them, and a
-       * renderer that quietly disagreed was how flattening a rectangle used to
-       * round its corners. Now the Cap and Join controls say what a stroke
-       * does, and absent means absent everywhere.
-       */
-      ...dashProps,
-      ...shadow,
-      // The grab area for a hairline is otherwise the hairline itself.
-      hitStrokeWidth: Math.max(20, sw),
-    };
-    /**
-     * Six end styles, drawn the way a connector draws them.
-     *
-     * This was Konva's `Arrow` with two booleans, which can only ever produce
-     * one shape of head — while a connector, made of the same two ends, offered
-     * arrow, triangle, circle, diamond and bar. The style you could reach
-     * depended on which tool had happened to make the run, and the properties
-     * panel carried two different controls for the same question: a pair of raw
-     * checkboxes on one, a proper picker on the other.
-     *
-     * `endCapShape` is that picker's geometry, and it is shared rather than
-     * reimplemented — so a triangle on a line and a triangle on a connector are
-     * the same triangle, at the same size, inset by the same amount.
-     */
-    const startKind = node.geometry.endStart ?? 'none';
-    const endKind = node.geometry.endEnd ?? 'none';
-    /**
-     * The ends, placed by the alignment the line asks for.
-     *
-     * `terminateRun` owns both modes and the terminal tangent they share, so
-     * the canvas, the SVG exporter and the toolbar specimen cannot disagree
-     * about where a head sits or which way it faces — which they already did
-     * once, when the exporter oriented its heads along the box diagonal.
-     */
-    const {
-      run,
-      start: startCap,
-      end: endCap,
-    } = terminateRun(points, {
-      start: startKind,
-      end: endKind,
-      strokeWidth: sw || 2,
-      scale: node.geometry.endScale,
-      align: node.geometry.endAlign ?? defaultEndAlign(node.geometry.lineProfile),
-    });
-
     const marker = (cap: typeof startCap, key: string) => {
       if (!cap) return null;
       const ink = stroke ?? DEFAULT_INK;
