@@ -1,4 +1,5 @@
 import { nanoid } from 'nanoid';
+import { useStore } from '../../hooks/useStore';
 import type { Tool, ToolContext } from './Tool';
 import { gridSnap } from '../interaction/gridSnap';
 import * as React from 'react';
@@ -205,7 +206,8 @@ export class BezierPenTool implements Tool {
       geometry: { kind: 'bezier', segments, closed },
       appearance: {
         fill: closed ? [{ type: 'solid', color: 'transparent', opacity: 1 }] : undefined,
-        stroke: { color: ThemeService.getDefaultStrokeColor(), width: 2 },
+        // The pen's own weight, not a fixed 2 — see `penStrokeWidth`.
+        stroke: { color: ThemeService.getDefaultStrokeColor(), width: useStore.getState().penStrokeWidth },
       },
     });
 

@@ -8434,3 +8434,12 @@ body[data-zen='physics'] .forces-handle { bottom: 32px; }
   text-transform: uppercase;
   color: var(--text-tertiary);
 }
+
+/* Separates the tools a seat holds from the settings of the armed one. Without
+   it the two read as one list, and which settings apply to which tool is left
+   to be worked out. */
+.flyout-rule {
+  height: 1px;
+  margin: 6px 8px 2px;
+  background: var(--border-divider);
+}

@@ -136,6 +136,8 @@ interface StoreState {
   /** `smooth` is perfect-freehand's tapered ribbon; the rest are sketch levels. */
   pencilNib: PencilNib;
   setPencilNib: (val: PencilNib) => void;
+  penStrokeWidth: number;
+  setPenStrokeWidth: (val: number) => void;
   setConnectorColor: (val: string) => void;
 
   showRulers: boolean;
@@ -386,6 +388,20 @@ export const useStore = create<StoreState>((set) => ({
   setPencilNib: (val) => {
     window.localStorage.setItem('vega_pencil_nib', val);
     set({ pencilNib: val });
+  },
+
+  /**
+   * The weight the Pen draws its paths at.
+   *
+   * The pen hardcoded 2 and had no setting of its own, which is why its half of
+   * the Draw flyout had nothing in it — the brush size and the nib below it
+   * both belong to the pencil, and showing them under an armed pen offered
+   * controls that would not touch the next thing drawn.
+   */
+  penStrokeWidth: Number(window.localStorage.getItem('vega_pen_stroke')) || 2,
+  setPenStrokeWidth: (val) => {
+    window.localStorage.setItem('vega_pen_stroke', String(val));
+    set({ penStrokeWidth: val });
   },
 
   showRulers: loadBoolPref('vega_show_rulers', true),

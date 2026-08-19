@@ -242,6 +242,8 @@ export const ToolWorkspace: React.FC<Props> = ({ activeToolId, onOpenDiagram, on
   const setPenSize = useStore((s) => s.setPenSize);
   const pencilNib = useStore((s) => s.pencilNib);
   const setPencilNib = useStore((s) => s.setPencilNib);
+  const penStrokeWidth = useStore((s) => s.penStrokeWidth);
+  const setPenStrokeWidth = useStore((s) => s.setPenStrokeWidth);
   const lastForce = useStore((s) => s.lastForce);
   const eraserSize = useStore((s) => s.eraserSize);
   const setEraserSize = useStore((s) => s.setEraserSize);
@@ -415,28 +417,52 @@ export const ToolWorkspace: React.FC<Props> = ({ activeToolId, onOpenDiagram, on
                     description="anchor points and curves" active={activeToolId === 'bezier-pen'}
                     onClick={() => pick('bezier-pen')}
                   />
-                  <NibSize label="Brush size" value={penSize} min={1} max={60} onChange={setPenSize} />
-                  {/* Which nib is in the pencil.
-                      A tool setting rather than an object one, because a
-                      stroke is finished the moment the pen lifts — deciding
-                      afterwards means drawing a line, selecting it and
-                      changing it, every time. Asked once, here, next to the
-                      brush size, which is the other thing about the pencil you
-                      set before drawing rather than after. */}
-                  <div className="flyout-field">
-                    <span className="flyout-field__label">Stroke</span>
-                    <SegmentedControl
-                      ariaLabel="Pencil nib"
-                      value={pencilNib}
-                      onChange={(v) => setPencilNib(v as PencilNib)}
-                      segments={[
-                        { value: 'smooth', label: 'Smooth', hint: 'One continuous, tapered line', icon: <Minus size={14} /> },
-                        { value: 'light', label: 'Drawn', hint: 'Gone over once, by hand', icon: <SketchLevelIcon level="light" /> },
-                        { value: 'medium', label: 'Sketched', hint: 'Gone over twice', icon: <SketchLevelIcon level="medium" /> },
-                        { value: 'heavy', label: 'Scribbled', hint: 'Twice, and past every turn', icon: <SketchLevelIcon level="heavy" /> },
-                      ]}
+                  {/*
+                    The options below belong to whichever tool is armed.
+
+                    They were all shown at once, which meant arming the Pen
+                    offered a brush size and a pencil nib — two controls that
+                    would not touch the next thing it drew. A flyout listing
+                    two tools and then one undifferentiated pile of settings
+                    makes you work out which of them apply, and the answer is
+                    not written anywhere.
+
+                    The two tool entries stay above, because that list is what
+                    the seat is: hovering it should say what is in it. What
+                    changes is everything under the rule.
+                  */}
+                  <div className="flyout-rule" role="presentation" />
+                  {activeToolId === 'bezier-pen' ? (
+                    <NibSize
+                      label="Stroke weight"
+                      value={penStrokeWidth}
+                      min={1}
+                      max={40}
+                      onChange={setPenStrokeWidth}
                     />
-                  </div>
+                  ) : (
+                    <>
+                      <NibSize label="Brush size" value={penSize} min={1} max={60} onChange={setPenSize} />
+                      {/* Which nib is in the pencil. A tool setting rather than
+                          an object one, because a stroke is finished the moment
+                          the pen lifts — deciding afterwards means drawing a
+                          line, selecting it and changing it, every time. */}
+                      <div className="flyout-field">
+                        <span className="flyout-field__label">Stroke</span>
+                        <SegmentedControl
+                          ariaLabel="Pencil nib"
+                          value={pencilNib}
+                          onChange={(v) => setPencilNib(v as PencilNib)}
+                          segments={[
+                            { value: 'smooth', label: 'Smooth', hint: 'One continuous, tapered line', icon: <Minus size={14} /> },
+                            { value: 'light', label: 'Drawn', hint: 'Gone over once, by hand', icon: <SketchLevelIcon level="light" /> },
+                            { value: 'medium', label: 'Sketched', hint: 'Gone over twice', icon: <SketchLevelIcon level="medium" /> },
+                            { value: 'heavy', label: 'Scribbled', hint: 'Twice, and past every turn', icon: <SketchLevelIcon level="heavy" /> },
+                          ]}
+                        />
+                      </div>
+                    </>
+                  )}
                 </Flyout>
               )}
             </DockButton>
