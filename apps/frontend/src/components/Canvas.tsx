@@ -60,6 +60,7 @@ import { DEFAULT_TYPOGRAPHY } from '../engine/model/schema';
 import { SelectionTransformer } from './canvas/SelectionTransformer';
 import { LineEditor } from './canvas/LineEditor';
 import { ConnectorEditor } from './canvas/ConnectorEditor';
+import { CornerRadiusHandle } from './canvas/CornerRadiusHandle';
 import { isLineLike } from '../engine/model/lineEnds';
 import type { ConnectorNode, ShapeNode } from '../engine/model/schema';
 import { CropOverlay } from './canvas/CropOverlay';
@@ -1372,6 +1373,13 @@ export const Canvas: React.FC<CanvasProps> = ({ activeTool, selectedIds, setSele
             // transformer stands down for it under the same rule.
             if (only.type === 'connector') {
               return <ConnectorEditor node={only as ConnectorNode} stageScale={cameraSystem.zoom} />;
+            }
+            // The corner knob rides *alongside* the transformer rather than
+            // replacing it: rounding a corner is not an alternative to resizing
+            // the way editing a line's ends is, it is a second thing you do to
+            // the same box. Rect only — it is the one kind that has corners.
+            if (only.type === 'shape' && only.geometry?.kind === 'rect' && !only.locked) {
+              return <CornerRadiusHandle node={only as ShapeNode} stageScale={cameraSystem.zoom} />;
             }
             return null;
           })()}

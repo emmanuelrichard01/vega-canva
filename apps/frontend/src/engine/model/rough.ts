@@ -313,6 +313,108 @@ export function roughEllipse(
   return laps.join(' ');
 }
 
+/**
+ * A closed curve of any shape, drawn as a wandering loop.
+ *
+ * ## Why a curve cannot go through `roughPolyline`
+ *
+ * That function treats every vertex as a corner and overshoots past it, which
+ * is exactly right for a rectangle or a hexagon where the corners are real. A
+ * curve arrives here already flattened into a hundred-odd tiny segments, none
+ * of which is a corner — so it overshot a hundred times, and a heart came out
+ * bristling. Same reason `roughEllipse` exists rather than sketching a
+ * hundred-sided polygon.
+ *
+ * This is `roughEllipse` generalised: sample the outline evenly *by arc
+ * length*, jitter the samples, run past the start, and spline through them.
+ * Evenly by arc length rather than by index is what keeps the wobble the same
+ * size everywhere — a flattener puts its points close together on tight
+ * curvature and far apart on straights, so sampling by index would make the
+ * lobes of a heart shake and its long sides lie still.
+ */
+export function roughLoop(
+  outline: readonly Point[],
+  options: { seed: number; level?: SketchLevel }
+): string {
+  if (outline.length < 3) return '';
+  const prof = profileFor(options.level);
+  const rand = rng(options.seed);
+
+  // Cumulative arc length around the closed loop, so a position can be asked
+  // for as a distance rather than as an index.
+  const n = outline.length;
+  const cum: number[] = [0];
+  for (let i = 1; i <= n; i += 1) {
+    const a = outline[i - 1];
+    const b = outline[i % n];
+    cum.push(cum[i - 1] + Math.hypot(b.x - a.x, b.y - a.y));
+  }
+  const total = cum[n];
+  if (total === 0) return '';
+
+  const at = (distance: number): Point => {
+    let d = distance % total;
+    if (d < 0) d += total;
+    // Linear scan is fine: this runs once per sample per pass, a few dozen
+    // times, and a binary search here would be more code than it saves.
+    let i = 1;
+    while (i <= n && cum[i] < d) i += 1;
+    const a = outline[(i - 1) % n];
+    const b = outline[i % n];
+    const span = cum[i] - cum[i - 1];
+    const t = span === 0 ? 0 : (d - cum[i - 1]) / span;
+    return { x: a.x + (b.x - a.x) * t, y: a.y + (b.y - a.y) * t };
+  };
+
+  // The centroid, so each pass can breathe in and out around the shape the way
+  // `roughEllipse` varies its radii.
+  let cx = 0;
+  let cy = 0;
+  for (const p of outline) {
+    cx += p.x;
+    cy += p.y;
+  }
+  cx /= n;
+  cy /= n;
+
+  /**
+   * How many samples the loop is drawn from.
+   *
+   * `prof.steps` is a *per-edge* count in the polyline sketcher, so it is far
+   * too few for a whole outline. Scaling with the shape's size keeps the
+   * wobble at a consistent physical wavelength — a large heart gets more
+   * samples rather than the same number stretched into long, mechanical bows.
+   */
+  const samples = Math.max(18, Math.min(72, Math.round(total / 22)));
+  const step = total / samples;
+
+  const laps: string[] = [];
+  for (let pass = 0; pass < prof.passes; pass += 1) {
+    // A whole-shape swell, from the centroid, so the second pass is a slightly
+    // different heart rather than the same one traced twice.
+    const swell = 1 + jitter(0.012, rand);
+    const from = rand() * total;
+    const overlap = step * (0.25 + prof.overshoot * 0.4) * (0.7 + rand() * 0.6);
+
+    const pts: Point[] = [];
+    const place = (distance: number, pull: number) => {
+      const p = at(distance);
+      const sx = cx + (p.x - cx) * swell * pull;
+      const sy = cy + (p.y - cy) * swell * pull;
+      pts.push({ x: sx + jitter(prof.offset, rand), y: sy + jitter(prof.offset, rand) });
+    };
+
+    for (let i = 0; i < samples; i += 1) place(from + i * step, 1);
+    // Past its own beginning, then pulled very slightly inward, so the
+    // crossing reads as a hand closing a loop rather than as a bulge.
+    place(from + total + overlap * 0.5, 1);
+    place(from + overlap, 0.98);
+
+    laps.push(splineOpen(pts));
+  }
+  return laps.join(' ');
+}
+
 /** The spline above, left open — an ellipse's lap must not snap shut. */
 function splineOpen(points: readonly Point[]): string {
   const n = points.length;
