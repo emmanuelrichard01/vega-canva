@@ -6,6 +6,7 @@ import { SketchLevelIcon } from '../panel/sketchIcons';
 import type { PencilNib } from '../../engine/model/rough';
 import { LINE_PROFILES, LINE_PROFILE_LABELS, type LineProfile } from '../../engine/model/linePath';
 import { LineProfileIcon } from '../panel/lineProfileIcons';
+import { LineSpecimen } from '../panel/lineSpecimen';
 import { isForceTool } from '../../engine/physics/forces';
 import { FRAME_PRESETS, FRAME_PRESET_GROUPS } from '../../engine/model/frames';
 import { ShapeIcon, LINE_KINDS, SHAPE_KINDS, SHAPE_LABELS, shapeToolId, shapeKindFromToolId, type ShapePreset } from './shapeIcons';
@@ -591,8 +592,19 @@ export const ToolWorkspace: React.FC<Props> = ({ activeToolId, onOpenDiagram, on
         <div {...hoverProps('line')} className="dock-slot-wrap">
           <DockButton
             {...seatProps(SEAT.line)}
-            icon={<ShapeIcon kind={armedLine ?? lastLine} size={18} />}
-            label={SHAPE_LABELS[armedLine ?? lastLine]}
+            /* The line it will draw — profile *and* head — not a generic
+               dash. The seat already changed glyph for line versus arrow, and
+               the profile is the same kind of fact about the same gesture; a
+               seat that showed a straight dash and then drew a coil would be
+               lying about what pressing it does. Generated from `linePoints`
+               and `endCapShape`, so it cannot drift from the result. */
+            icon={
+              <LineSpecimen
+                profile={lineProfile}
+                endEnd={(armedLine ?? lastLine) === 'arrow' ? 'arrow' : 'none'}
+              />
+            }
+            label={`${LINE_PROFILE_LABELS[lineProfile]} ${SHAPE_LABELS[armedLine ?? lastLine].toLowerCase()}`}
             description="click to start, click again to finish"
             active={isLine}
             hasMenu
@@ -615,7 +627,10 @@ export const ToolWorkspace: React.FC<Props> = ({ activeToolId, onOpenDiagram, on
                         data-tooltip={SHAPE_LABELS[kind]}
                         aria-label={SHAPE_LABELS[kind]}
                       >
-                        <ShapeIcon kind={kind} size={17} />
+                        {/* Each tile shows itself under the armed profile, so
+                            the two choices differ by the one thing they are
+                            choosing between — a head or no head. */}
+                        <LineSpecimen profile={lineProfile} endEnd={kind === 'arrow' ? 'arrow' : 'none'} />
                       </button>
                     );
                   })}

@@ -40,6 +40,8 @@ import {
 } from '../engine/model/schema';
 import { FillStyleIcon, SketchLevelIcon } from './panel/sketchIcons';
 import { EndCapIcon, RouteIcon } from './panel/connectorIcons';
+import { StrokeWeightIcon } from './panel/strokeWeightIcon';
+import { LineSpecimen } from './panel/lineSpecimen';
 import { END_CAP_KINDS, END_CAP_LABELS, MAX_END_SCALE, MIN_END_SCALE, type EndCapKind } from '../engine/model/connectorEnds';
 import type { Routing } from '../engine/model/connector';
 import { alignSelection, distributeSelection, type AlignEdge } from '../engine/model/align';
@@ -862,10 +864,22 @@ export const ObjectContextToolbar: React.FC<Props> = ({ selectedId, selectedIds,
                 <RailPopover
                   label="Change shape"
                   trigger={
-                    SHAPE_CHOICES.find(
-                      (c) => c.kind === node.geometry.kind
-                        && (c.points === undefined || node.geometry.points === c.points)
-                    )?.icon ?? <Square size={16} />
+                    // A line shows itself — profile and both ends — rather
+                    // than a generic dash. On a line object this button sat
+                    // next to Stroke and Sketch, and all three were the same
+                    // straight mark.
+                    isOpenShape(node.geometry.kind) ? (
+                      <LineSpecimen
+                        profile={node.geometry.lineProfile}
+                        endStart={node.geometry.endStart}
+                        endEnd={node.geometry.endEnd}
+                      />
+                    ) : (
+                      SHAPE_CHOICES.find(
+                        (c) => c.kind === node.geometry.kind
+                          && (c.points === undefined || node.geometry.points === c.points)
+                      )?.icon ?? <Square size={16} />
+                    )
                   }
                   align="start"
                 >
@@ -913,7 +927,11 @@ export const ObjectContextToolbar: React.FC<Props> = ({ selectedId, selectedIds,
               {(node.type === 'shape' || node.type === 'connector' || node.geometry.kind !== 'freehand') && (
                 <RailPopover
                   label="Stroke"
-                  trigger={<><Minus size={16} /><span className="ctx-value">{strokeWidth}</span></>}
+                  // The weight it currently holds, drawn. A dash here was the
+                  // same mark as Sketch's off state and, on a line object, as
+                  // the shape swapper's glyph — three identical buttons in a
+                  // row. See `StrokeWeightIcon`.
+                  trigger={<><StrokeWeightIcon width={strokeWidth} /><span className="ctx-value">{strokeWidth}</span></>}
                 >
                   <div className="ctx-popover__row">
                     <span className="ctx-popover__label">Colour</span>

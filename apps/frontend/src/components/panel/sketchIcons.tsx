@@ -32,60 +32,70 @@ const PAD = 3;
 const ring = rectRing(BOX - PAD * 2, BOX - PAD * 2);
 
 /**
- * The run every sketch specimen is drawn from: one horizontal stroke.
+ * A sketch level, as a pair of short scribbled marks.
  *
- * ## Why a stroke and not a box
- *
- * It was a box, and with sketch off that box is a crisp rounded rectangle —
- * which is pixel-for-pixel the "Change shape" button sitting next to it on the
- * rail. Two adjacent controls wearing the same glyph is worse than an unclear
- * glyph: it does not merely fail to communicate, it actively suggests the two
- * buttons do the same thing, and the only way to find out is to press one.
- *
- * A stroke is also the better metaphor. Sketch is a statement about *how a
- * line is drawn*, not about what shape it encloses — it applies to connectors
- * and open paths that have no box at all — so a single run that goes from
- * ruled to visibly hand-drawn says exactly what the control does and cannot
- * collide with any shape icon.
+ * `off` is the one specimen not generated: two ruled strokes are exactly what
+ * the setting produces, and running them through the sketcher at zero would be
+ * a more elaborate way of drawing the same two lines.
  */
-const run: Array<{ x: number; y: number }> = [
-  { x: 0, y: (BOX - PAD * 2) / 2 },
-  { x: BOX - PAD * 2, y: (BOX - PAD * 2) / 2 },
-];
+export const SketchLevelIcon: React.FC<{ level: SketchLevel | 'off' }> = ({ level }) => {
+  const span = BOX - PAD * 2;
+  /**
+   * Two short strokes, stacked and slightly tilted.
+   *
+   * ## Why not one line
+   *
+   * It was one, and at `off` that is a plain straight dash — the same mark the
+   * stroke control wears and, on a line object, the same mark the shape
+   * swapper wears. Three identical buttons in a row, which does not merely
+   * fail to say what each does: it says they do the same thing.
+   *
+   * A *pair* of short marks is not a line at all. It reads as scribble — the
+   * gesture of shading something in by hand — and it cannot be mistaken for a
+   * stroke weight or for a shape however straight the strokes are.
+   *
+   * ## Why tilted, and why two rather than three
+   *
+   * Horizontal and evenly stacked, three of them are a hamburger menu. The
+   * tilt and the count take that reading away while keeping the marks big
+   * enough to show a wobble at 20px, which is the whole job: `off` is two
+   * ruled strokes, and each level bends them further.
+   */
+  const strokes: Array<Array<{ x: number; y: number }>> = [
+    [{ x: 0.5, y: span * 0.68 }, { x: span - 0.5, y: span * 0.3 }],
+    [{ x: 0.5, y: span * 0.95 }, { x: span - 0.5, y: span * 0.57 }],
+  ];
 
-/**
- * A sketch level, as a small drawn stroke.
- *
- * `off` is the one specimen not generated: a straight line is exactly what the
- * setting produces, and running it through the sketcher at zero would be a
- * more elaborate way of drawing the same line.
- */
-export const SketchLevelIcon: React.FC<{ level: SketchLevel | 'off' }> = ({ level }) => (
-  <svg width={BOX} height={BOX} viewBox={`0 0 ${BOX} ${BOX}`} aria-hidden="true" focusable="false">
-    <g transform={`translate(${PAD} ${PAD})`}>
-      {level === 'off' ? (
-        <line
-          x1="0"
-          y1={(BOX - PAD * 2) / 2}
-          x2={BOX - PAD * 2}
-          y2={(BOX - PAD * 2) / 2}
-          stroke="currentColor"
-          strokeWidth="1.4"
-          strokeLinecap="round"
-        />
-      ) : (
-        <path
-          d={roughPolyline(run, { seed: SPECIMEN_SEED, level, closed: false })}
-          fill="none"
-          stroke="currentColor"
-          strokeWidth="1.3"
-          strokeLinecap="round"
-          vectorEffect="non-scaling-stroke"
-        />
-      )}
-    </g>
-  </svg>
-);
+  return (
+    <svg width={BOX} height={BOX} viewBox={`0 0 ${BOX} ${BOX}`} aria-hidden="true" focusable="false">
+      <g transform={`translate(${PAD} ${PAD - 1})`}>
+        {strokes.map((stroke, i) =>
+          level === 'off' ? (
+            <line
+              key={i}
+              x1={stroke[0].x} y1={stroke[0].y}
+              x2={stroke[1].x} y2={stroke[1].y}
+              stroke="currentColor" strokeWidth="1.5" strokeLinecap="round"
+            />
+          ) : (
+            <path
+              key={i}
+              // A different seed per stroke, or the two wobble identically and
+              // read as one mark drawn twice by a machine rather than by a
+              // hand — which is the distinction the whole control is about.
+              d={roughPolyline(stroke, { seed: SPECIMEN_SEED + i * 97, level, closed: false })}
+              fill="none"
+              stroke="currentColor"
+              strokeWidth="1.4"
+              strokeLinecap="round"
+              vectorEffect="non-scaling-stroke"
+            />
+          )
+        )}
+      </g>
+    </svg>
+  );
+};
 
 /**
  * A fill style, as a box with that shading inside it.
