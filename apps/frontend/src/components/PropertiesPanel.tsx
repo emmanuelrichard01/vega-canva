@@ -1748,7 +1748,9 @@ export const PropertiesPanel: React.FC<PropertiesPanelProps> = ({ selectedIds, o
         </Accordion>
       )}
 
-      {capabilities.supportsTypography && typography && (
+      {/* Not for a line: its label is a fixed tag, so every control in here
+          would be a control that changes nothing. See `ShapeRenderer`. */}
+      {capabilities.supportsTypography && typography && !openShape && (
         <Accordion title="Typography">
           <FontSelector value={typography.fontFamily} onChange={(fontFamily) => setTypography({ fontFamily })} />
           <Row label="Size">
@@ -1984,7 +1986,7 @@ export const PropertiesPanel: React.FC<PropertiesPanelProps> = ({ selectedIds, o
           three above them. Presets are also how people actually reach for
           this: nobody wants to specify a radius and a padding, they want the
           look they have already seen somewhere. */}
-      {capabilities.supportsTypography && typography && (
+      {capabilities.supportsTypography && typography && !openShape && (
         <Accordion
           title="Text effects"
           badge={activeTextEffects(typography)}

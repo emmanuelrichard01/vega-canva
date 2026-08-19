@@ -9,6 +9,7 @@ import { SvgPaintDefs } from './svgPaint';
 import { pointsAttribute, regularPolygonPoints, starPoints } from '../model/shapeOutline';
 import { shapeToPath } from '../model/shapeToPath';
 import { linePoints } from '../model/linePath';
+import { connectorCaps, endCapShape, trimPolyline } from '../model/connectorEnds';
 import { pathData } from '../model/pathGeometry';
 import { contourData, translatePath } from '../model/pathGeometry';
 import { applyTextCase } from '../model/textCase';
@@ -17,7 +18,7 @@ import { layoutText } from '../text/layout';
 import { measurerFor } from '../text/measure';
 import { highlightPath } from '../text/highlight';
 import { roughShape } from '../model/roughShape';
-import { ARROW_HEAD_SCALE, DEFAULT_INK } from '../model/schema';
+import { DEFAULT_INK } from '../model/schema';
 
 /**
  * Embedding raw user text into an SVG without escaping is an XML-corruption
@@ -299,26 +300,69 @@ function openShapeMarkup(node: ShapeNode): string {
     node.geometry.lineProfile,
     node.geometry.lineWaves
   );
+  /**
+   * The heads, and the run pulled back under them.
+   *
+   * All three of the classic marker faults were here at once, and each has the
+   * same cure — ask the geometry rather than assume it:
+   *
+   * 1. **Wrong angle.** The facing came from `atan2(y2 - y1, x2 - x1)`: the
+   *    *box diagonal*. On a wave, a zigzag or a coil the run arrives at a
+   *    completely different angle, so every exported profiled arrow had a head
+   *    pointing flat while its line came in at a slope. This is what SVG's
+   *    `orient="auto"` does for you and what has to be done by hand when the
+   *    marker is a polygon you emit yourself.
+   * 2. **Bad overlap.** Nothing shortened the run, so the stroke ran through
+   *    the middle of the head and out past its tip. `trimPolyline` takes the
+   *    marker's own depth off each end, which is the equivalent of stopping
+   *    the path short.
+   * 3. **Wrong anchor.** The head was always a plain triangle from a local
+   *    helper, while the document may say circle, diamond, bar or none —
+   *    the exporter read the *deprecated* `arrowStart`/`arrowEnd` booleans and
+   *    never saw `endStart`/`endEnd` at all. `endCapShape` is the canvas's own
+   *    geometry, including where each marker sits relative to the endpoint.
+   */
+  const caps = connectorCaps(
+    run.flatMap((p) => [p.x, p.y]),
+    {
+      start: node.geometry.endStart ?? (node.geometry.arrowStart ? 'arrow' : 'none'),
+      end: node.geometry.endEnd ?? (node.geometry.arrowEnd ? 'arrow' : 'none'),
+      strokeWidth: sw,
+      scale: node.geometry.endScale,
+    }
+  );
+
+  const trimmed = trimPolyline(
+    trimPolyline(run.flatMap((p) => [p.x, p.y]), caps.start?.inset ?? 0, true),
+    caps.end?.inset ?? 0,
+    false
+  );
+  const drawn: Array<{ x: number; y: number }> = [];
+  for (let i = 0; i + 1 < trimmed.length; i += 2) drawn.push({ x: trimmed[i], y: trimmed[i + 1] });
+
   const parts = [
-    run.length === 2
-      ? `<line x1="${x1}" y1="${y1}" x2="${x2}" y2="${y2}" stroke="${stroke}" stroke-width="${sw}" stroke-linecap="round"${dashAttrs(node.appearance.stroke)} />`
-      : `<polyline points="${run.map((p) => `${p.x.toFixed(2)},${p.y.toFixed(2)}`).join(' ')}" fill="none" stroke="${stroke}" stroke-width="${sw}" stroke-linecap="round" stroke-linejoin="round"${dashAttrs(node.appearance.stroke)} />`,
+    drawn.length === 2
+      ? `<line x1="${drawn[0].x.toFixed(2)}" y1="${drawn[0].y.toFixed(2)}" x2="${drawn[1].x.toFixed(2)}" y2="${drawn[1].y.toFixed(2)}" stroke="${stroke}" stroke-width="${sw}" stroke-linecap="round"${dashAttrs(node.appearance.stroke)} />`
+      : `<polyline points="${drawn.map((p) => `${p.x.toFixed(2)},${p.y.toFixed(2)}`).join(' ')}" fill="none" stroke="${stroke}" stroke-width="${sw}" stroke-linecap="round" stroke-linejoin="round"${dashAttrs(node.appearance.stroke)} />`,
   ];
 
-  const head = Math.max(6, sw * ARROW_HEAD_SCALE);
-  const angle = Math.atan2(y2 - y1, x2 - x1);
-  const arrowHead = (tipX: number, tipY: number, facing: number) => {
-    const wing = (offset: number) => ({
-      x: tipX - head * Math.cos(facing + offset),
-      y: tipY - head * Math.sin(facing + offset),
-    });
-    const a = wing(Math.PI / 7);
-    const b = wing(-Math.PI / 7);
-    return `<polygon points="${tipX},${tipY} ${a.x},${a.y} ${b.x},${b.y}" fill="${stroke}" />`;
+  const markerMarkup = (cap: ReturnType<typeof endCapShape>): string => {
+    if (!cap) return '';
+    if (cap.circle) {
+      return `<circle cx="${cap.circle.x.toFixed(2)}" cy="${cap.circle.y.toFixed(2)}" r="${cap.circle.radius.toFixed(2)}" fill="${cap.filled ? stroke : 'none'}" stroke="${stroke}" stroke-width="${sw}" />`;
+    }
+    const pts = cap.points ?? [];
+    const pairs: string[] = [];
+    for (let i = 0; i + 1 < pts.length; i += 2) pairs.push(`${pts[i].toFixed(2)},${pts[i + 1].toFixed(2)}`);
+    // Open markers — the bar — are a polyline, not a polygon: closing a
+    // two-point run draws it back over itself and fills nothing.
+    return cap.filled
+      ? `<polygon points="${pairs.join(' ')}" fill="${stroke}" stroke="${stroke}" stroke-width="${sw}" stroke-linejoin="round" />`
+      : `<polyline points="${pairs.join(' ')}" fill="none" stroke="${stroke}" stroke-width="${sw}" stroke-linecap="round" />`;
   };
 
-  if (node.geometry.arrowEnd) parts.push(arrowHead(x2, y2, angle));
-  if (node.geometry.arrowStart) parts.push(arrowHead(x1, y1, angle + Math.PI));
+  parts.push(markerMarkup(caps.start));
+  parts.push(markerMarkup(caps.end));
 
   return rot ? `<g${rot}>${parts.join('')}</g>` : parts.join('');
 }

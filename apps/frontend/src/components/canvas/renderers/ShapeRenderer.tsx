@@ -127,7 +127,7 @@ export const ShapeRenderer: React.FC<Props> = React.memo(({ node, showLabel }) =
    */
   const plateFill = ThemeService.getCanvasPlateFill();
   const label =
-    showLabel && node.text && node.typography ? (
+    showLabel && node.text ? (
       open ? (
         /**
          * A label on a line sits on a plate the colour of the board, so it cuts
@@ -157,20 +157,39 @@ export const ShapeRenderer: React.FC<Props> = React.memo(({ node, showLabel }) =
           offsetY={0}
         >
           <Tag fill={plateFill} cornerRadius={3} />
+          {/*
+            A tag, not a text block.
+
+            This used to take its size, family, weight and colour from the
+            node's full typography — the same machinery a paragraph uses. A
+            line's label is not a paragraph. It is one or two words riding a
+            hairline to say what the edge *means*: yes, no, retry, 40ms. Giving
+            it a font picker, a weight, an alignment, a line height, a list
+            style and a colour ramp offers a dozen decisions for a thing with
+            one right answer, and every one of them is a way to make the label
+            outweigh the line it belongs to.
+
+            So it is fixed: small, semibold, upper case, on a plate. Upper case
+            because at this size it is what reads as a *label* rather than as
+            stray prose, and because it makes a two-letter tag hold its own
+            against the run crossing behind it.
+
+            The ink still tracks the line's own colour so the tag belongs to
+            it, and is still lifted by `readableOn` — the plate solves the line
+            crossing the words and does nothing about the words themselves, so
+            a pale stroke's label would otherwise be invisible on a light
+            board. Hue is kept; only lightness moves.
+          */}
           <Text
-            text={node.text}
-            padding={2}
-            // A step down from the shape default. A line's label is a word or
-            // two riding a hairline, and at the body size it outweighed the
-            // run it belongs to — the label became the object and the line
-            // became its underline.
-            fontSize={Math.max(9, Math.round(node.typography.fontSize * 0.8))}
-            fontFamily={node.typography.fontFamily}
-            fontStyle={konvaFontStyle(node.typography)}
-            fill={readableOn(node.typography.color, ThemeService.isDarkMode(), 3.2)}
+            text={node.text.toUpperCase()}
+            padding={3}
+            fontSize={11}
+            fontStyle="600"
+            letterSpacing={0.4}
+            fill={readableOn(stroke ?? DEFAULT_INK, ThemeService.isDarkMode(), 3.2)}
           />
         </Label>
-      ) : (
+      ) : node.typography ? (
         <Text
           width={w}
           height={h}
@@ -186,7 +205,7 @@ export const ShapeRenderer: React.FC<Props> = React.memo(({ node, showLabel }) =
           letterSpacing={node.typography.letterSpacing}
           listening={false}
         />
-      )
+      ) : null
     ) : null;
 
   if (sketch) {

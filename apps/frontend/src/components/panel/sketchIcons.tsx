@@ -39,91 +39,85 @@ const ring = rectRing(BOX - PAD * 2, BOX - PAD * 2);
  * a more elaborate way of drawing the same two lines.
  */
 /**
- * The third mark heavy gets, crossing the other two.
+ * The stroke every sketch specimen is drawn from: a shallow open arc.
  *
- * Amplitude alone separates light from medium well enough once the specimen is
- * drawn large, but heavy is the *most* scribbled and had nowhere further to go
- * — three levels of wobble on two marks compresses at the top. A crossing
- * stroke is a difference in kind rather than degree, and it is honest about
- * what heavy is: the level that goes past every corner and back over itself.
+ * ## Why an arc, and why one of them
+ *
+ * The previous version used two straight marks, and it failed for a reason
+ * worth writing down: at `light` and `medium` the sketcher's deviation on a
+ * short straight run is small enough that both looked like *parallel lines*,
+ * and `heavy` only looked different because a third crossing stroke had been
+ * bolted on to force a difference. Three icons that differ by an added
+ * decoration rather than by the thing they measure is not a set — it is one
+ * icon and two exceptions.
+ *
+ * A curve fixes it because deviation is *visible against a curve* in a way it
+ * is not against a straight line: the eye has a smooth reference to compare
+ * against, so a wobble reads as a wobble instead of as a slightly crooked
+ * line. And an arc cannot be confused with anything else on the rail — not the
+ * stroke-weight bar, which is a solid rectangle, and not the shape swapper,
+ * which now wears the object's own silhouette.
+ *
+ * The levels then differ by the two things that actually define them, both
+ * emerging from the sketcher rather than being drawn on top:
+ *
+ *  - **Wander**, which grows with the level.
+ *  - **Passes**, which is why `medium` and `heavy` show a doubled line — the
+ *    profiles genuinely draw twice, and a hand going over a line twice never
+ *    lands in the same place. That doubling *is* the difference between light
+ *    and medium, and it is legible at 20px.
  */
-function crossStroke(span: number, scale: number): Array<{ x: number; y: number }> {
-  return [
-    { x: 1.5 * scale, y: span * 0.34 * scale },
-    { x: (span - 1.5) * scale, y: span * 0.9 * scale },
-  ];
+const ARC_STEPS = 10;
+
+function arc(span: number, scale: number): Array<{ x: number; y: number }> {
+  return Array.from({ length: ARC_STEPS + 1 }, (_, i) => {
+    const t = i / ARC_STEPS;
+    return {
+      x: (0.5 + t * (span - 1)) * scale,
+      // A shallow rise and fall — deep enough to read as a curve at 20px,
+      // shallow enough that the wobble is what changes between levels rather
+      // than the arc swamping it.
+      y: (span * 0.78 - Math.sin(t * Math.PI) * span * 0.42) * scale,
+    };
+  });
 }
 
 export const SketchLevelIcon: React.FC<{ level: SketchLevel | 'off' }> = ({ level }) => {
   const span = BOX - PAD * 2;
   /**
-   * Two short strokes, stacked and slightly tilted.
-   *
-   * ## Why not one line
-   *
-   * It was one, and at `off` that is a plain straight dash — the same mark the
-   * stroke control wears and, on a line object, the same mark the shape
-   * swapper wears. Three identical buttons in a row, which does not merely
-   * fail to say what each does: it says they do the same thing.
-   *
-   * A *pair* of short marks is not a line at all. It reads as scribble — the
-   * gesture of shading something in by hand — and it cannot be mistaken for a
-   * stroke weight or for a shape however straight the strokes are.
-   *
-   * ## Why tilted, and why two rather than three
-   *
-   * Horizontal and evenly stacked, three of them are a hamburger menu. The
-   * tilt and the count take that reading away while keeping the marks big
-   * enough to show a wobble at 20px, which is the whole job: `off` is two
-   * ruled strokes, and each level bends them further.
-   */
-  /**
-   * Drawn large and scaled down, so the levels are actually distinguishable.
+   * Drawn large and scaled down, so the levels are distinguishable at all.
    *
    * The sketcher's wobble is in **absolute units** — it has to be, because a
-   * hand's deviation does not scale with the thing it is drawing. On a 14-unit
-   * stroke that puts light, medium and heavy within about a pixel of each
-   * other, which is why the three specimens looked nearly identical: they were
-   * nearly identical.
+   * hand's deviation does not scale with the thing it is drawing. On a
+   * 14-unit mark that puts light, medium and heavy within about a pixel of
+   * each other. Generating at four times the size and scaling the result down
+   * multiplies the deviation relative to the mark, which is what makes "one
+   * confident pass" and "twice, past every corner" different pictures.
    *
-   * Generating at four times the size and scaling the result down multiplies
-   * the deviation by four relative to the mark, which is what makes the
-   * difference between "one confident pass" and "twice, past every corner"
-   * visible at 20px. A specimen is allowed to exaggerate — that is what optical
-   * sizing is — as long as the *ordering* it shows is the real one, and it is:
-   * the same profiles, the same seeds, just further from the ruler.
+   * A specimen is allowed to exaggerate — that is what optical sizing is — so
+   * long as the *ordering* it shows is the real one, and it is: the same
+   * profiles, the same seeds, just further from the ruler.
    */
   const S = 4;
-  const strokes: Array<Array<{ x: number; y: number }>> = [
-    [{ x: 0.5 * S, y: span * 0.68 * S }, { x: (span - 0.5) * S, y: span * 0.3 * S }],
-    [{ x: 0.5 * S, y: span * 0.95 * S }, { x: (span - 0.5) * S, y: span * 0.57 * S }],
-  ];
+  const stroke = arc(span, S);
+  const d = stroke
+    .map((p, i) => `${i === 0 ? 'M' : 'L'} ${p.x.toFixed(2)} ${p.y.toFixed(2)}`)
+    .join(' ');
 
   return (
     <svg width={BOX} height={BOX} viewBox={`0 0 ${BOX} ${BOX}`} aria-hidden="true" focusable="false">
       <g transform={`translate(${PAD} ${PAD - 1}) scale(${1 / S})`}>
-        {(level === 'heavy' ? [...strokes, crossStroke(span, S)] : strokes).map((stroke, i) =>
-          level === 'off' ? (
-            <line
-              key={i}
-              x1={stroke[0].x} y1={stroke[0].y}
-              x2={stroke[1].x} y2={stroke[1].y}
-              stroke="currentColor" strokeWidth={1.5 * S} strokeLinecap="round"
-            />
-          ) : (
-            <path
-              key={i}
-              // A different seed per stroke, or the two wobble identically and
-              // read as one mark drawn twice by a machine rather than by a
-              // hand — which is the distinction the whole control is about.
-              d={roughPolyline(stroke, { seed: SPECIMEN_SEED + i * 97, level, closed: false })}
-              fill="none"
-              stroke="currentColor"
-              strokeWidth={1.4 * S}
-              strokeLinecap="round"
-            />
-          )
-        )}
+        <path
+          // `off` is the one specimen not generated: a clean arc is exactly
+          // what the setting produces, and running it through the sketcher at
+          // zero would be a more elaborate way of drawing the same curve.
+          d={level === 'off' ? d : roughPolyline(stroke, { seed: SPECIMEN_SEED, level, closed: false })}
+          fill="none"
+          stroke="currentColor"
+          strokeWidth={1.5 * S}
+          strokeLinecap="round"
+          strokeLinejoin="round"
+        />
       </g>
     </svg>
   );

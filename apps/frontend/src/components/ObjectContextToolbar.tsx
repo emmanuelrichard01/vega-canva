@@ -850,8 +850,19 @@ export const ObjectContextToolbar: React.FC<Props> = ({ selectedId, selectedIds,
    * change nothing on screen. A text node always qualifies; a shape qualifies
    * once it actually has words.
    */
+  /**
+   * Not for a line's label, which is a *tag* rather than a text block.
+   *
+   * A line's label is one or two words riding a hairline to say what the edge
+   * means — yes, no, retry, 40ms. Its size, weight, case and colour are fixed
+   * by the renderer, so offering a font picker, a weight, an alignment and a
+   * colour ramp for it is a dozen controls that change nothing, which is worse
+   * than none: every one of them looks like it works.
+   */
   const showTypography =
-    node.type === 'text' || (node.type === 'shape' && Boolean(node.text && node.text.length > 0));
+    node.type === 'text'
+    || (node.type === 'shape' && !isOpenShape(node.geometry.kind)
+        && Boolean(node.text && node.text.length > 0));
 
   return (
     <AnimatePresence>
