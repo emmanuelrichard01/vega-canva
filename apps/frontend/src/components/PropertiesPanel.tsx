@@ -573,12 +573,25 @@ export const PropertiesPanel: React.FC<PropertiesPanelProps> = ({ selectedIds, o
    * thing anyone wants to sketch in one go — requiring one type meant the
    * control vanished for exactly the selection it was most useful on.
    *
-   * Shapes and connectors are the set whose renderers honour it. Paths are
-   * excluded on purpose: a freehand stroke is already a hand-drawn mark, so
-   * offering to sketch one is a promise with nothing behind it.
+   * Freehand paths are included now. They were excluded on the argument that a
+   * pencil stroke is already a hand-drawn mark — true of the *gesture* and not
+   * of the *line*, which perfect-freehand renders as a smooth tapered ribbon.
+   * Sketching one redraws it from its centreline as a run the sketcher has
+   * been over twice, which is a genuinely different way to draw rather than a
+   * filter over the first: a continuous line, or a drawn one.
+   *
+   * Pen and boolean paths stay out. Their renderer strokes a curve and has no
+   * centreline to go over, so the control would promise something with nothing
+   * behind it.
    */
   const sketchable =
-    nodes.length > 0 && nodes.every((n) => n.type === 'shape' || n.type === 'connector');
+    nodes.length > 0 &&
+    nodes.every(
+      (n) =>
+        n.type === 'shape' ||
+        n.type === 'connector' ||
+        (n.type === 'path' && n.geometry.kind === 'freehand')
+    );
 
   /** Every selected object has an interior — the precondition for shading it. */
   const allClosed =

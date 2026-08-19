@@ -942,7 +942,12 @@ export const ObjectContextToolbar: React.FC<Props> = ({ selectedId, selectedIds,
                   never a decision — it was this gate saying `shape`. A hand
                   is the case sketch is most for, and half of a hand-drawn
                   diagram is the lines. */}
-              {(node.type === 'shape' || node.type === 'connector') && (
+              {/* Freehand paths too: sketching one redraws it from its
+                  centreline as a line gone over twice, which is a second way
+                  to draw rather than a filter over the first. Pen and boolean
+                  paths have no centreline and stay out. */}
+              {(node.type === 'shape' || node.type === 'connector'
+                || (node.type === 'path' && node.geometry.kind === 'freehand')) && (
                 <RailPopover
                   label="Sketch"
                   trigger={<SketchLevelIcon level={appearance.sketch ?? 'off'} />}

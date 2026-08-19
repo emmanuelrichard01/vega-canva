@@ -334,31 +334,38 @@ export function roughEllipse(
  */
 export function roughLoop(
   outline: readonly Point[],
-  options: { seed: number; level?: SketchLevel }
+  options: { seed: number; level?: SketchLevel; closed?: boolean }
 ): string {
-  if (outline.length < 3) return '';
+  const closed = options.closed !== false;
+  if (outline.length < (closed ? 3 : 2)) return '';
   const prof = profileFor(options.level);
   const rand = rng(options.seed);
 
   // Cumulative arc length around the closed loop, so a position can be asked
   // for as a distance rather than as an index.
   const n = outline.length;
+  // A closed run has one more segment than it has points — the one that gets
+  // back to the start. An open one does not, and walking off the end of it is
+  // how a hand-drawn line would acquire a stroke back to where it began.
+  const spans = closed ? n : n - 1;
   const cum: number[] = [0];
-  for (let i = 1; i <= n; i += 1) {
+  for (let i = 1; i <= spans; i += 1) {
     const a = outline[i - 1];
     const b = outline[i % n];
     cum.push(cum[i - 1] + Math.hypot(b.x - a.x, b.y - a.y));
   }
-  const total = cum[n];
+  const total = cum[spans];
   if (total === 0) return '';
 
   const at = (distance: number): Point => {
-    let d = distance % total;
+    // Clamped on an open run, wrapped on a closed one: running past the end of
+    // a line has to stop at the end, not reappear at its beginning.
+    let d = closed ? distance % total : Math.max(0, Math.min(total, distance));
     if (d < 0) d += total;
     // Linear scan is fine: this runs once per sample per pass, a few dozen
     // times, and a binary search here would be more code than it saves.
     let i = 1;
-    while (i <= n && cum[i] < d) i += 1;
+    while (i <= spans && cum[i] < d) i += 1;
     const a = outline[(i - 1) % n];
     const b = outline[i % n];
     const span = cum[i] - cum[i - 1];
@@ -376,6 +383,9 @@ export function roughLoop(
   }
   cx /= n;
   cy /= n;
+  // An open run has no interior to breathe in and out of, so the swell is
+  // suppressed rather than pulling the line toward an arbitrary centroid.
+  const swellable = closed;
 
   /**
    * How many samples the loop is drawn from.
@@ -432,8 +442,10 @@ export function roughLoop(
   for (let pass = 0; pass < prof.passes; pass += 1) {
     // A whole-shape swell, from the centroid, so the second pass is a slightly
     // different heart rather than the same one traced twice.
-    const swell = 1 + jitter(0.008, rand);
-    const from = rand() * total;
+    const swell = swellable ? 1 + jitter(0.008, rand) : 1;
+    // A lap of a closed shape can start anywhere; an open run starts at its
+    // start, because that is where the pen was put down.
+    const from = closed ? rand() * total : 0;
     const overlap = step * (0.25 + prof.overshoot * 0.4) * (0.7 + rand() * 0.6);
 
     const pts: Point[] = [];
@@ -451,10 +463,16 @@ export function roughLoop(
     };
 
     for (let i = 0; i < samples; i += 1) place(from + i * step, 1);
-    // Past its own beginning, then pulled very slightly inward, so the
-    // crossing reads as a hand closing a loop rather than as a bulge.
-    place(from + total + overlap * 0.5, 1);
-    place(from + overlap, 0.98);
+    if (closed) {
+      // Past its own beginning, then pulled very slightly inward, so the
+      // crossing reads as a hand closing a loop rather than as a bulge.
+      place(from + total + overlap * 0.5, 1);
+      place(from + overlap, 0.98);
+    } else {
+      // An open run ends *on* its end. Overshooting a connector would push its
+      // line out past the arrowhead it is supposed to stop under.
+      place(total, 1);
+    }
 
     laps.push(splineOpen(pts));
   }

@@ -1,6 +1,6 @@
 import React from 'react';
 import { Circle, Group, Label, Line, Path, Tag, Text } from 'react-konva';
-import { roughPolyline, seedFrom } from '../../../engine/model/rough';
+import { roughLoop, roughPolyline, seedFrom } from '../../../engine/model/rough';
 import { useShallow } from 'zustand/react/shallow';
 import { DEFAULT_CONNECTOR_INK, type ConnectorNode } from '../../../engine/model/schema';
 import { connectorBounds, connectorPoints, type Box } from '../../../engine/model/connector';
@@ -214,7 +214,7 @@ export const ConnectorRenderer: React.FC<Props> = React.memo(({ node }) => {
    */
   // Sized against the run, so End size at its maximum on two adjacent boxes
   // shortens the marker instead of drawing one longer than the connector.
-  const { start: startCap, end: endCap } = connectorCaps(points, {
+  const { start: startCap, end: endCap, size: capSize } = connectorCaps(points, {
     start: node.endStart ?? 'none',
     end: node.endEnd ?? 'none',
     strokeWidth: width,
@@ -241,9 +241,48 @@ export const ConnectorRenderer: React.FC<Props> = React.memo(({ node }) => {
     false
   );
 
+  /**
+   * The size below which a marker is left crisp even in sketch mode.
+   *
+   * The previous rule was "never sketch a marker", and the reasoning holds at
+   * small sizes: an arrowhead is a *symbol* — it has to read as "which way" at
+   * a glance — and roughening a six-pixel triangle turns it into a smudge that
+   * no longer points anywhere. But it does not hold at twenty, where a crisp
+   * head on a hand-drawn line is the one ruled thing in the picture and looks
+   * like a mistake.
+   *
+   * So the rule is a threshold rather than a prohibition: big enough to
+   * survive being drawn by hand, and it is drawn by hand.
+   */
+  const SKETCHABLE_CAP = 13;
+  const sketchLevel = node.appearance?.sketch;
+  const sketchCaps = Boolean(sketchLevel) && capSize >= SKETCHABLE_CAP;
+
   const marker = (cap: typeof startCap, key: string) => {
     if (!cap) return null;
     if (cap.circle) {
+      // A circle marker is sketched as a closed loop through the drift
+      // sampler, the same way an ellipse is — a ring of bowed chords is what
+      // made circles come out spiky everywhere else in this codebase.
+      if (sketchCaps) {
+        const { x, y, radius } = cap.circle;
+        const ring = Array.from({ length: 16 }, (_, i) => {
+          const a = (i / 16) * Math.PI * 2;
+          return { x: x + Math.cos(a) * radius, y: y + Math.sin(a) * radius };
+        });
+        return (
+          <Path
+            key={key}
+            data={roughLoop(ring, { seed: seedFrom(node.id + key), level: sketchLevel })}
+            stroke={stroke}
+            strokeWidth={width}
+            fill={cap.filled ? stroke : undefined}
+            fillEnabled={cap.filled}
+            lineCap="round"
+            lineJoin="round"
+          />
+        );
+      }
       return (
         <Circle
           key={key}
@@ -253,6 +292,29 @@ export const ConnectorRenderer: React.FC<Props> = React.memo(({ node }) => {
           fill={cap.filled ? stroke : undefined}
           stroke={stroke}
           strokeWidth={width}
+        />
+      );
+    }
+    if (sketchCaps && cap.points) {
+      // A head is a short run of real corners, so it goes through the polyline
+      // sketcher and keeps its overshoot — that is what makes a drawn
+      // arrowhead read as two confident strokes rather than a wobble.
+      // Filled heads keep their fill: the sketched outline is the shape, and
+      // an unfilled triangle on a flowchart means something different.
+      return (
+        <Path
+          key={key}
+          data={roughPolyline(pairsOf(cap.points), {
+            seed: seedFrom(node.id + key),
+            level: sketchLevel,
+            closed: cap.filled,
+          })}
+          stroke={stroke}
+          strokeWidth={width}
+          fill={cap.filled ? stroke : undefined}
+          fillEnabled={cap.filled}
+          lineCap="round"
+          lineJoin="round"
         />
       );
     }
@@ -284,11 +346,31 @@ export const ConnectorRenderer: React.FC<Props> = React.memo(({ node }) => {
    * six-pixel triangle turns it into a smudge that no longer points anywhere.
    * The same reasoning keeps the label's plate crisp.
    */
+  /**
+   * Which sketcher the run goes through, decided by the routing.
+   *
+   * An orthogonal or straight route is three or four points with *real*
+   * corners at its elbows, and the polyline sketcher's overshoot past each
+   * one is exactly what makes a hand-drawn flowchart read as drawn — a
+   * right angle that stops dead is a ruled right angle.
+   *
+   * A curved route is not that at all: it is twenty-five sampled points and
+   * none of them is a corner, so overshooting every one of them produced the
+   * same bristling mess a heart did before `roughLoop` existed. It takes the
+   * drift sampler instead, as an open run.
+   */
   const sketched = node.appearance?.sketch
-    ? roughPolyline(
-        pairsOf(trimmed),
-        { seed: seedFrom(node.id), closed: false, level: node.appearance.sketch }
-      )
+    ? node.routing === 'curved'
+      ? roughLoop(pairsOf(trimmed), {
+          seed: seedFrom(node.id),
+          level: node.appearance.sketch,
+          closed: false,
+        })
+      : roughPolyline(pairsOf(trimmed), {
+          seed: seedFrom(node.id),
+          closed: false,
+          level: node.appearance.sketch,
+        })
     : '';
 
   return (

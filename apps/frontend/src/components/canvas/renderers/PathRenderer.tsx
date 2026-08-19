@@ -3,6 +3,7 @@ import { Path } from 'react-konva';
 import type { PathNode } from '../../../engine/model/schema';
 import { DEFAULT_INK } from '../../../engine/model/schema';
 import { contourData } from '../../../engine/model/pathGeometry';
+import { roughLoop, seedFrom } from '../../../engine/model/rough';
 import { shadowProps, strokeColor, strokeDashProps, strokeWidth } from './shared';
 import { useFillProps } from './useFillProps';
 
@@ -27,6 +28,46 @@ export const PathRenderer: React.FC<Props> = React.memo(({ node }) => {
     // Dashing this shape would chop up the *outline* of the stroke rather than
     // the stroke itself, which looks like a rendering fault, not a dashed
     // pencil line. Deliberately not forwarded.
+    /**
+     * Sketch mode for the pencil.
+     *
+     * A pencil stroke is stored twice: the filled outline that perfect-freehand
+     * produced, and the **centreline** that produced it. The outline is what
+     * gives an ordinary stroke its pressure taper, and roughening it would
+     * wobble the *edges* of the stroke rather than the stroke — a fat line with
+     * a frayed border, which is not what a hand-drawn line looks like.
+     *
+     * So a sketched pencil stroke is drawn from the centreline instead, as a
+     * run through the same sketcher every shape uses: two passes at heavier
+     * levels, each wandering slightly wide and coming back. That is a drawn
+     * line — a hand goes over a line twice and never lands on the same place —
+     * and it is why this is a genuine second way to draw rather than a filter
+     * over the first.
+     *
+     * The taper is given up in exchange, which is the honest trade: a hand
+     * drawing over its own line does not taper either.
+     */
+    if (node.appearance?.sketch && node.geometry.points.length > 1) {
+      return (
+        <Path
+          data={roughLoop(node.geometry.points, {
+            seed: seedFrom(node.id),
+            level: node.appearance.sketch,
+            closed: false,
+          })}
+          stroke={strokeColor(node.appearance) ?? DEFAULT_INK}
+          // The stored stroke size is the *width of the outline*, so a sketched
+          // run at that weight would be far heavier than the stroke it
+          // replaces. Two thirds lands it about where the pencil looked.
+          strokeWidth={Math.max(1, node.geometry.strokeSize * 0.66)}
+          lineCap="round"
+          lineJoin="round"
+          {...shadow}
+          hitStrokeWidth={Math.max(20, node.geometry.strokeSize)}
+        />
+      );
+    }
+
     return (
       <Path
         data={node.geometry.svgPath}
