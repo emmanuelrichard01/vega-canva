@@ -80,6 +80,7 @@ import { THEMES, nearestTheme } from './canvas/renderers/StickyRenderer';
 import { getColorForUser } from '../engine/presence/ColorPalette';
 import type { FillStyle, SketchLevel } from '../engine/model/rough';
 import { FillStyleIcon, SketchLevelIcon } from './panel/sketchIcons';
+import { EndCapIcon } from './panel/connectorIcons';
 import {
   DEFAULT_TEXT_GLOW,
   DEFAULT_TEXT_HIGHLIGHT,
@@ -90,7 +91,7 @@ import {
 } from './panel/textEffectPresets';
 import { MATERIALS, MATERIAL_IDS, resolveMaterial } from '../utils/behaviorSystem';
 import { TagEditor } from './ui/TagEditor';
-import { END_CAP_KINDS, END_CAP_LABELS, MAX_END_SCALE, MIN_END_SCALE, endCapShape, type EndCapKind } from '../engine/model/connectorEnds';
+import { END_CAP_KINDS, END_CAP_LABELS, MAX_END_SCALE, MIN_END_SCALE, type EndCapKind } from '../engine/model/connectorEnds';
 
 /**
  * Types that are simulated at all. Comments and frames are anchors — offering
@@ -381,41 +382,6 @@ const StrokeAlignIcon: React.FC<{ align: 'inside' | 'center' | 'outside' }> = ({
         stroke="currentColor"
         strokeWidth="2"
       />
-    </svg>
-  );
-};
-
-/**
- * A specimen of the connector end, drawn from the same geometry the canvas
- * uses — so the swatch cannot drift from what the line actually gets.
- */
-const polygonPoints = (flat: number[]): string => {
-  const pairs: string[] = [];
-  for (let i = 0; i < flat.length; i += 2) pairs.push(`${flat[i]},${flat[i + 1]}`);
-  return pairs.join(' ');
-};
-
-const EndCapIcon: React.FC<{ kind: EndCapKind; flip?: boolean }> = ({ kind, flip }) => {
-  const tip = { x: flip ? 4 : 16, y: 6 };
-  const shape = endCapShape(kind, tip, flip ? Math.PI : 0, 7);
-  return (
-    <svg width="20" height="12" viewBox="0 0 20 12" aria-hidden="true" focusable="false">
-      <line
-        x1={flip ? 6 : 3} y1="6" x2={flip ? 17 : 14} y2="6"
-        stroke="currentColor" strokeWidth="1.5" strokeLinecap="round"
-      />
-      {shape?.circle && (
-        <circle cx={shape.circle.x} cy={shape.circle.y} r={shape.circle.radius} fill="currentColor" />
-      )}
-      {shape?.points && (
-        <polygon
-          points={polygonPoints(shape.points)}
-          fill={shape.filled ? 'currentColor' : 'none'}
-          stroke="currentColor"
-          strokeWidth="1.5"
-          strokeLinejoin="round"
-        />
-      )}
     </svg>
   );
 };

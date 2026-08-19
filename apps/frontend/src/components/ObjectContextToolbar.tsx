@@ -35,6 +35,9 @@ import {
   type TextAlign, type Typography,
 } from '../engine/model/schema';
 import { FillStyleIcon, SketchLevelIcon } from './panel/sketchIcons';
+import { EndCapIcon, RouteIcon } from './panel/connectorIcons';
+import { END_CAP_KINDS, END_CAP_LABELS, MAX_END_SCALE, MIN_END_SCALE, type EndCapKind } from '../engine/model/connectorEnds';
+import type { Routing } from '../engine/model/connector';
 import { alignSelection, distributeSelection, type AlignEdge } from '../engine/model/align';
 import { sharedValue } from '../engine/model/selection';
 
@@ -916,7 +919,13 @@ export const ObjectContextToolbar: React.FC<Props> = ({ selectedId, selectedIds,
                   the same popover rather than beside it — it is meaningless
                   without a sketch level, so it should not occupy rail width
                   when there is none. */}
-              {node.type === 'shape' && (
+              {/* Connectors included. `ConnectorRenderer` has always drawn its
+                  run through the same `roughPolyline` the shapes use, so a
+                  sketched flowchart with crisp arrows between its boxes was
+                  never a decision — it was this gate saying `shape`. A hand
+                  is the case sketch is most for, and half of a hand-drawn
+                  diagram is the lines. */}
+              {(node.type === 'shape' || node.type === 'connector') && (
                 <RailPopover
                   label="Sketch"
                   trigger={<SketchLevelIcon level={appearance.sketch ?? 'off'} />}
@@ -940,7 +949,8 @@ export const ObjectContextToolbar: React.FC<Props> = ({ selectedId, selectedIds,
                       </button>
                     ))}
                   </div>
-                  {appearance.sketch && !openShape && (
+                  {/* Shading fills an interior, and a connector has none. */}
+                  {appearance.sketch && !openShape && node.type !== 'connector' && (
                     <>
                       <span className="ctx-popover__label">Shading</span>
                       <div className="ctx-shape-grid">
@@ -972,6 +982,114 @@ export const ObjectContextToolbar: React.FC<Props> = ({ selectedId, selectedIds,
                   />
                 </RailPopover>
               )}
+            </div>
+            <Divider />
+          </>
+        )}
+
+        {/* -------------------------------------------------------- connector */}
+        {/* Route and ends, on the rail rather than only in the inspector.
+            Both are *drawing* decisions in the sense sketch is: you change
+            them while laying a diagram out, repeatedly, and on the object you
+            are looking at. Walking to the panel each time is the difference
+            between a flowchart that says three different things with three
+            different arrows and one where every line looks the same because
+            varying them cost too much.
+
+            Two popovers rather than six buttons. The rail floats over the
+            board and its width is taken from the object it belongs to, so
+            every control that earns a permanent slot costs the ones that
+            already have one; a trigger showing the current value, opening onto
+            the full vocabulary, is the pattern the stroke and sketch controls
+            already set. */}
+        {node.type === 'connector' && (
+          <>
+            <div className="ctx-group">
+              <RailPopover
+                label="Route"
+                trigger={<RouteIcon routing={node.routing} />}
+                align="start"
+              >
+                <span className="ctx-popover__label">Route</span>
+                <SegmentedControl
+                  ariaLabel="Routing"
+                  value={node.routing}
+                  onChange={(routing) => updateProp({ routing: routing as Routing })}
+                  segments={[
+                    { value: 'straight', label: 'Straight', hint: 'A direct line', icon: <RouteIcon routing="straight" /> },
+                    { value: 'orthogonal', label: 'Right angles', hint: 'Elbows, the way a flowchart reads', icon: <RouteIcon routing="orthogonal" /> },
+                    { value: 'curved', label: 'Curved', hint: 'A smooth arc', icon: <RouteIcon routing="curved" /> },
+                  ]}
+                />
+              </RailPopover>
+              {/* The trigger shows both ends in the order they are drawn, so
+                  the rail answers "which way does this point" without being
+                  opened — which is the question you actually have when you
+                  have just selected an arrow. */}
+              <RailPopover
+                label="Ends"
+                trigger={
+                  <span style={{ display: 'inline-flex', alignItems: 'center', gap: 1 }}>
+                    <EndCapIcon kind={node.endStart ?? 'none'} flip />
+                    <EndCapIcon kind={node.endEnd ?? 'none'} />
+                  </span>
+                }
+                align="start"
+              >
+                {/* Two controls, because "what is at the start" and "what is
+                    at the end" are separate decisions — one combined control
+                    would have to enumerate thirty-six pairs. */}
+                <span className="ctx-popover__label">Start</span>
+                <SegmentedControl
+                  ariaLabel="Start cap"
+                  value={node.endStart ?? 'none'}
+                  onChange={(v) => updateProp({ endStart: v as EndCapKind })}
+                  segments={END_CAP_KINDS.map((k) => ({
+                    value: k, label: END_CAP_LABELS[k], hint: END_CAP_LABELS[k],
+                    icon: <EndCapIcon kind={k} flip />,
+                  }))}
+                />
+                <span className="ctx-popover__label">End</span>
+                <SegmentedControl
+                  ariaLabel="End cap"
+                  value={node.endEnd ?? 'none'}
+                  onChange={(v) => updateProp({ endEnd: v as EndCapKind })}
+                  segments={END_CAP_KINDS.map((k) => ({
+                    value: k, label: END_CAP_LABELS[k], hint: END_CAP_LABELS[k],
+                    icon: <EndCapIcon kind={k} />,
+                  }))}
+                />
+                {/* One size for both. An arrow with a big head and a small
+                    tail reads as a mistake, and two sliders would double the
+                    popover for a case nobody asks for. */}
+                <PopoverSlider
+                  label="Size"
+                  value={Math.round((node.endScale ?? 1) * 100)}
+                  min={MIN_END_SCALE * 100}
+                  max={MAX_END_SCALE * 100}
+                  step={25}
+                  suffix="%"
+                  onChange={(v) => updateProp({ endScale: v === 100 ? undefined : v / 100 })}
+                />
+              </RailPopover>
+              {/* A word riding the middle of the run — yes, no, retry. It is
+                  the fastest thing to want on a freshly drawn arrow and the
+                  slowest to reach, being the last row of the last section of
+                  the inspector. */}
+              <RailPopover label="Label" trigger={<Type size={16} />} align="start">
+                <span className="ctx-popover__label">Label</span>
+                {/* The panel's own text field, not a second one. A
+                    near-duplicate here would be two answers to what an input
+                    looks like, and the cheaper to keep correct is the one that
+                    already exists. */}
+                <input
+                  className="prop-input"
+                  value={node.label ?? ''}
+                  placeholder="yes, no, retry"
+                  onChange={(e) => updateProp({ label: e.target.value || undefined })}
+                  aria-label="Connector label"
+                />
+              </RailPopover>
             </div>
             <Divider />
           </>
