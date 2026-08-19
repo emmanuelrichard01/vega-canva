@@ -28,36 +28,57 @@ const SPECIMEN_SEED = 20260819;
 const BOX = 20;
 const PAD = 3;
 
-/** The rectangle every specimen is drawn from, inset so strokes cannot clip. */
+/** The rectangle the shading specimens are drawn from. */
 const ring = rectRing(BOX - PAD * 2, BOX - PAD * 2);
 
 /**
- * A sketch level, as a small drawn box.
+ * The run every sketch specimen is drawn from: one horizontal stroke.
  *
- * `off` is the one specimen not generated: a crisp rectangle is exactly what
- * the setting produces, and running it through the sketcher at zero would be a
- * more elaborate way of drawing the same four straight lines.
+ * ## Why a stroke and not a box
+ *
+ * It was a box, and with sketch off that box is a crisp rounded rectangle —
+ * which is pixel-for-pixel the "Change shape" button sitting next to it on the
+ * rail. Two adjacent controls wearing the same glyph is worse than an unclear
+ * glyph: it does not merely fail to communicate, it actively suggests the two
+ * buttons do the same thing, and the only way to find out is to press one.
+ *
+ * A stroke is also the better metaphor. Sketch is a statement about *how a
+ * line is drawn*, not about what shape it encloses — it applies to connectors
+ * and open paths that have no box at all — so a single run that goes from
+ * ruled to visibly hand-drawn says exactly what the control does and cannot
+ * collide with any shape icon.
+ */
+const run: Array<{ x: number; y: number }> = [
+  { x: 0, y: (BOX - PAD * 2) / 2 },
+  { x: BOX - PAD * 2, y: (BOX - PAD * 2) / 2 },
+];
+
+/**
+ * A sketch level, as a small drawn stroke.
+ *
+ * `off` is the one specimen not generated: a straight line is exactly what the
+ * setting produces, and running it through the sketcher at zero would be a
+ * more elaborate way of drawing the same line.
  */
 export const SketchLevelIcon: React.FC<{ level: SketchLevel | 'off' }> = ({ level }) => (
   <svg width={BOX} height={BOX} viewBox={`0 0 ${BOX} ${BOX}`} aria-hidden="true" focusable="false">
     <g transform={`translate(${PAD} ${PAD})`}>
       {level === 'off' ? (
-        <rect
-          x="0.75"
-          y="0.75"
-          width={BOX - PAD * 2 - 1.5}
-          height={BOX - PAD * 2 - 1.5}
-          fill="none"
+        <line
+          x1="0"
+          y1={(BOX - PAD * 2) / 2}
+          x2={BOX - PAD * 2}
+          y2={(BOX - PAD * 2) / 2}
           stroke="currentColor"
-          strokeWidth="1.25"
-          rx="1.5"
+          strokeWidth="1.4"
+          strokeLinecap="round"
         />
       ) : (
         <path
-          d={roughPolyline(ring, { seed: SPECIMEN_SEED, level })}
+          d={roughPolyline(run, { seed: SPECIMEN_SEED, level, closed: false })}
           fill="none"
           stroke="currentColor"
-          strokeWidth="1.1"
+          strokeWidth="1.3"
           strokeLinecap="round"
           vectorEffect="non-scaling-stroke"
         />

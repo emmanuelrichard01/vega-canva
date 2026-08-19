@@ -466,6 +466,40 @@ export const ObjectRenderer = React.memo(
            * still just selects. Going straight into edit on a single click
            * would make text impossible to drag.
            */
+          /**
+           * Selection happens on **press**, not on click.
+           *
+           * ## Why the click was losing them
+           *
+           * Konva fires `click` on mouseup only if no drag happened in
+           * between, and its drag threshold is three pixels. A real hand
+           * crosses three pixels on the way to letting go — more on a
+           * trackpad — so pressing an object, twitching, and releasing moved
+           * it slightly and selected *nothing*. Intermittent by nature, which
+           * is why it reads as "sometimes clicking doesn't work", and why the
+           * reliable workaround people find is to marquee over the object
+           * instead: the marquee is not a click and never gets swallowed.
+           *
+           * Pressing is also simply what a selection tool does. Figma,
+           * Illustrator and Sketch all select on mousedown, because the press
+           * is what begins the drag and the thing you are about to drag has
+           * to be selected before it moves — otherwise the first frame of
+           * every drag operates on the wrong selection.
+           *
+           * ## Why an already-selected object is left alone
+           *
+           * Pressing one member of a multi-selection to drag the whole group
+           * must not collapse the selection to that one object. So a press on
+           * something already selected changes nothing and lets the drag
+           * proceed; only a press on something *outside* the selection
+           * replaces it. Shift is always passed through, because adding and
+           * removing is exactly what shift is for.
+           */
+          onMouseDown={(e) => {
+            if (!selectable) return;
+            if (isSelected && !e.evt?.shiftKey) return;
+            onSelect(objId, e);
+          }}
           onClick={(e) => {
             if (isSelected && node && node.type === 'text' && !isEditing) {
               const stage = e.target.getStage();
@@ -477,7 +511,10 @@ export const ObjectRenderer = React.memo(
               setIsEditing(true);
               return;
             }
-            onSelect(objId, e);
+            // Selection already happened on the press above. Re-running it
+            // here would undo a shift-click the moment the button came back
+            // up: the press removes the object from the selection and the
+            // click adds it straight back.
           }}
           onTap={(e) => onSelect(objId, e as unknown as Konva.KonvaEventObject<MouseEvent>)}
           onDblClick={handleDblClick}

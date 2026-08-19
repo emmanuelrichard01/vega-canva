@@ -846,8 +846,21 @@ export const ObjectContextToolbar: React.FC<Props> = ({ selectedId, selectedIds,
         {(node.type === 'shape' || node.type === 'path' || node.type === 'connector') && (
           <>
             <div className="ctx-group">
+              {/* The trigger shows the shape it currently *is*, not a generic
+                  square. The button then says what it will change, and two
+                  neighbouring controls cannot end up wearing the same glyph —
+                  which is how this one and Sketch collided. */}
               {node.type === 'shape' && (
-                <RailPopover label="Change shape" trigger={<Square size={16} />} align="start">
+                <RailPopover
+                  label="Change shape"
+                  trigger={
+                    SHAPE_CHOICES.find(
+                      (c) => c.kind === node.geometry.kind
+                        && (c.points === undefined || node.geometry.points === c.points)
+                    )?.icon ?? <Square size={16} />
+                  }
+                  align="start"
+                >
                   <span className="ctx-popover__label">Shape</span>
                   <div className="ctx-shape-grid">
                     {SHAPE_CHOICES.map((choice) => {
