@@ -8152,9 +8152,13 @@ body[data-zen='physics'] .forces-handle { bottom: 32px; }
   overflow-y: auto;
 }
 
-/* Two columns of sections, so the whole reference is visible without
-   scrolling on a normal window — a shortcut list you have to scroll is one
-   people close and guess instead. */
+/* Two columns of sections, so as much of the reference as possible is visible
+   at once — a shortcut list you have to scroll is one people close and guess
+   instead. It no longer all fits: documenting the keys that were already bound
+   and undocumented roughly doubled the list, and three columns at this width
+   would break a description onto two lines, which costs more than the scroll
+   does. The search field is the real answer for anyone arriving with a
+   specific question. */
 .help-modal__cols {
   columns: 2;
   column-gap: var(--space-5);

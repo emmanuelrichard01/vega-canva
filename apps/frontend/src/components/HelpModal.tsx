@@ -2,32 +2,7 @@ import React, { useMemo, useState } from 'react';
 import { X, Search } from 'lucide-react';
 import { useFocusTrap } from '../hooks/useFocusTrap';
 import { TOOL_SHORTCUTS } from '../engine/tools/shortcuts';
-
-/**
- * What every tool is called, in the order the dock shows them.
- *
- * The *keys* are not written here — they come from `TOOL_SHORTCUTS`, which is
- * what `Room` actually binds and what the dock badges render. A help screen
- * that hard-codes its own copy of the shortcuts is the worst version of this
- * document: it is the one place a person goes when they are already unsure,
- * and it is the place least likely to be updated when a binding changes.
- * Anything advertised here is bound, by construction.
- */
-const TOOL_NAMES: Record<string, string> = {
-  select: 'Select and move',
-  hand: 'Pan the board',
-  pen: 'Pencil — freehand',
-  'bezier-pen': 'Pen — anchors and curves',
-  eraser: 'Eraser',
-  text: 'Text',
-  shape: 'Shape',
-  frame: 'Frame',
-  connector: 'Connector',
-  sticky: 'Sticky note',
-  comment: 'Comment',
-  image: 'Place an image',
-  audio: 'Record a voice note',
-};
+import { TOOL_NAMES } from '../engine/tools/toolNames';
 
 interface Shortcut {
   keys: string;
@@ -63,10 +38,16 @@ function buildSections(): Section[] {
       blurb: 'The board has no edges — you cannot run out of room in any direction.',
       rows: [
         { keys: 'Scroll', what: 'Pan up, down and sideways' },
-        { keys: `${MOD} + Scroll`, what: 'Zoom in and out at the pointer' },
+        // Zoom is bound to ctrl+wheel, which is also how every browser reports
+        // a trackpad pinch — so this is one binding, not two, and writing
+        // `Cmd` here on a Mac would advertise a key nothing listens for.
+        { keys: 'Pinch', what: 'Zoom in and out at the pointer' },
+        { keys: 'Ctrl + Scroll', what: 'Zoom with a mouse wheel' },
         { keys: 'Space + Drag', what: 'Pan without leaving the current tool' },
-        { keys: `${MOD} + 0`, what: 'Zoom back to 100%' },
+        { keys: '0', what: 'Back to the origin at 100%' },
         { keys: `${MOD} + K`, what: 'Command palette — everything else' },
+        { keys: '?', what: 'This screen' },
+        { keys: '\\', what: 'Hide the panels and work on the board alone' },
       ],
     },
     {
@@ -78,6 +59,8 @@ function buildSections(): Section[] {
         { keys: `${MOD} + A`, what: 'Select everything' },
         { keys: 'Esc', what: 'Deselect, or leave the current mode' },
         { keys: 'Double-click', what: 'Edit — text, a label, a path, or crop an image' },
+        { keys: 'Enter', what: 'Edit the selected text, note or comment' },
+        { keys: 'Right-click', what: 'Everything for the selection, including select all of a type' },
       ],
     },
     {
@@ -85,12 +68,23 @@ function buildSections(): Section[] {
       rows: [
         { keys: `${MOD} + Z`, what: 'Undo' },
         { keys: `${MOD} + Shift + Z`, what: 'Redo' },
-        { keys: `${MOD} + D`, what: 'Duplicate' },
+        { keys: `${MOD} + D`, what: 'Duplicate, offset slightly' },
         { keys: `${MOD} + G`, what: 'Group' },
         { keys: `${MOD} + Shift + G`, what: 'Ungroup' },
-        { keys: 'Delete', what: 'Delete the selection' },
-        { keys: 'Arrows', what: 'Nudge by one unit' },
+        { keys: 'Delete', what: 'Delete the selection — a frame takes its contents' },
+        { keys: 'Arrows', what: 'Nudge by one' },
         { keys: 'Shift + Arrows', what: 'Nudge by ten' },
+        { keys: `${MOD} + Shift + ]`, what: 'Bring to front' },
+        { keys: `${MOD} + Shift + [`, what: 'Send to back' },
+      ],
+    },
+    {
+      title: 'Type',
+      blurb: 'On text, a shape’s label, or a sticky note.',
+      rows: [
+        { keys: `${MOD} + B`, what: 'Bold' },
+        { keys: `${MOD} + I`, what: 'Italic' },
+        { keys: `${MOD} + U`, what: 'Underline' },
       ],
     },
     {
@@ -98,10 +92,31 @@ function buildSections(): Section[] {
       blurb: 'Click into the tree first — the arrow keys drive it from there.',
       rows: [
         { keys: '↑ / ↓', what: 'Move the cursor; Shift extends the selection' },
-        { keys: '← / →', what: 'Fold and unfold a frame' },
+        { keys: '← / →', what: 'Fold and unfold a frame or group' },
+        { keys: `${MOD} + ↑ / ↓`, what: 'Restack' },
         { keys: 'Enter', what: 'Rename' },
         { keys: 'Space', what: 'Show or hide' },
-        { keys: `${MOD} + ↑ / ↓`, what: 'Restack' },
+        { keys: `${MOD} + A`, what: 'Select every row on show' },
+        { keys: 'Delete', what: 'Delete the selected rows' },
+      ],
+    },
+    {
+      title: 'The minimap',
+      blurb: 'Focus the radar — then it flies the camera without touching the board.',
+      rows: [
+        { keys: 'Arrows', what: 'Pan by a quarter of a screen' },
+        { keys: '+ / −', what: 'Zoom in and out' },
+        { keys: '0', what: 'Back to 100%' },
+        { keys: 'F', what: 'Fit everything on screen' },
+      ],
+    },
+    {
+      title: 'Replaying a session',
+      blurb: 'While the replay bar is open. The board is read-only until you close it.',
+      rows: [
+        { keys: '← / →', what: 'Step one moment' },
+        { keys: 'K', what: 'Play or pause' },
+        { keys: 'Home / End', what: 'Jump to the first or last moment' },
       ],
     },
     {
@@ -142,6 +157,16 @@ const TIPS: Array<{ title: string; body: string }> = [
     title: 'Sketch is per object',
     body:
       'Any shape or connector can be drawn by hand, at three levels. The result is stable: it never re-randomises, so it looks the same for everyone and in exports.',
+  },
+  {
+    title: 'The board can be played',
+    body:
+      'Play mode hands everything on the canvas to a physics engine — objects fall, collide and settle. Pin anything you want to stay put, and stopping puts the board back exactly as it was.',
+  },
+  {
+    title: 'The room remembers how it was built',
+    body:
+      'Replay scrubs through the room’s authoring history, moment by moment, with each edit attributed. It is a view, not an undo — the live document is untouched while you watch.',
   },
   {
     title: 'Nothing here is an account',

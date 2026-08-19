@@ -932,6 +932,23 @@ export default function Room() {
       // a second Delete/Backspace listener here double-fired deleteNode()
       // for the same id on every press.
 
+      if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === 'a') {
+        // Select-all lived only on the right-click menu while the help screen
+        // advertised the key, so the one place a person looks when they are
+        // already unsure taught them a keystroke that did nothing. Read
+        // through getState() rather than closing over `diagramObjects`, which
+        // changes on every edit and would re-register this listener.
+        //
+        // The Layers tree binds the same key on itself, scoped to the rows it
+        // is actually showing. Its handler runs first on the way up and marks
+        // the event handled, so this one stands aside rather than immediately
+        // widening that selection back out to the whole board.
+        if (e.defaultPrevented) return;
+        e.preventDefault();
+        setSelectedIds(Object.keys(useStore.getState().objects));
+        return;
+      }
+
       if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === 'k') {
         e.preventDefault();
         setShowCommandPalette(prev => !prev);
@@ -970,6 +987,10 @@ export default function Room() {
       }
 
       switch (key) {
+        // The command palette has always listed `?` beside "Keyboard
+        // shortcuts & help" without anything binding it. A help key that does
+        // not open help is the least forgivable version of a stale hint.
+        case '?': setShowHelp(true); break;
         case '\\': setIsUiVisible(prev => !prev); break;
         case '0':
           // Reset camera to origin

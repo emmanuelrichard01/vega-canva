@@ -2,7 +2,7 @@ import { usePhysics } from '../hooks/usePhysics';
 import React, { useRef, useState, useEffect, useCallback, useMemo, useSyncExternalStore } from "react";
 import { Stage, Layer, Circle, Group } from "react-konva";
 import Konva from "konva";
-import { provider, updateNode, nextZIndex, lowestZIndex } from '../engine/document';
+import { provider, updateNode, applyNodePatches, nextZIndex, lowestZIndex } from '../engine/document';
 import { nanoid } from 'nanoid';
 import { useStore } from '../hooks/useStore';
 import { FORCE_SPECS, canLatch, isForceTool } from '../engine/physics/forces';
@@ -48,6 +48,7 @@ import { cursorModeForTool, LocalCursor } from '../engine/cursor';
 import { GestureOverlay } from "./GestureOverlay";
 import { ToolManager, SelectTool, ShapeTool, TextTool, StickyTool, AudioTool, PenTool, BezierPenTool, HandTool, EraserTool, CommentTool, FrameTool, ConnectorTool } from '../engine/tools';
 import { canSelectWith } from '../engine/tools/shortcuts';
+import { nudgeDelta } from '../engine/tools/nudge';
 import { CommentsOverlay } from "./CommentsOverlay";
 import { AudioRecordingHUD } from "./AudioRecordingHUD";
 import { useComments } from "../hooks/useComments";
@@ -316,6 +317,38 @@ export const Canvas: React.FC<CanvasProps> = ({ activeTool, selectedIds, setSele
       if ((e.metaKey || e.ctrlKey) && e.key.toLowerCase() === 'g') {
         e.preventDefault();
         editor.groupNodes(selectedIds);
+        return;
+      }
+
+      /**
+       * Nudge with the arrow keys.
+       *
+       * Three other components bind arrows — the Layers tree moves its cursor,
+       * the minimap pans, the replay bar steps through history — and all three
+       * are React handlers on a focused element, so their events bubble up to
+       * this window listener too. Nudging is what the *board* means by an
+       * arrow, so it only applies when the board is what has focus.
+       *
+       * Locked objects are skipped rather than the whole press being refused:
+       * a selection that happens to include a pinned background should still
+       * move everything else.
+       */
+      const delta = nudgeDelta(e.key, e.shiftKey);
+      if (delta) {
+        const focus = document.activeElement;
+        const ownsArrows =
+          !focus || focus === document.body || containerRef.current?.contains(focus);
+        if (!ownsArrows) return;
+        const objects = useStore.getState().objects;
+        const patches = selectedIds
+          .map((id) => objects[id])
+          .filter((o): o is NonNullable<typeof o> => Boolean(o) && !(o as any).locked)
+          .map((o) => ({ id: o.id, changes: { x: o.x + delta.dx, y: o.y + delta.dy } }));
+        if (patches.length === 0) return;
+        e.preventDefault();
+        // One transaction, so a nudge is one press to undo however many
+        // objects moved.
+        applyNodePatches(patches);
         return;
       }
 
