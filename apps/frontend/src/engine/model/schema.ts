@@ -599,7 +599,32 @@ export interface BaseNode {
  * single source of bounds — the alternative, storing two endpoints, would be a
  * second place a shape records its size.
  */
-export type ShapeKind = 'rect' | 'ellipse' | 'polygon' | 'star' | 'line' | 'arrow';
+/**
+ * Every shape kind, as values rather than only as a type.
+ *
+ * The type is derived from this list rather than written beside it, because a
+ * type cannot be iterated and the things that need to *check* a kind at
+ * runtime were therefore maintaining their own copies. One of them —
+ * `SHAPE_KIND_ALIASES` in the normalizer — falls back to `rect` for anything
+ * it does not recognise, so adding `heart` to the type gave every heart a
+ * silent rewrite into a rectangle at the CRDT boundary: the tool worked, the
+ * document was written, and a rectangle came back. Nothing failed.
+ *
+ * With the values here, a test can hold the copies against this list, which is
+ * invariant 7 in the handoff and the third time this exact shape of bug has
+ * been paid for.
+ */
+export const SHAPE_KIND_VALUES = [
+  'rect',
+  'ellipse',
+  'polygon',
+  'star',
+  'heart',
+  'line',
+  'arrow',
+] as const;
+
+export type ShapeKind = (typeof SHAPE_KIND_VALUES)[number];
 
 /** Shapes with no interior: no fill, no corner radius, no inside stroke. */
 export const OPEN_SHAPE_KINDS: ShapeKind[] = ['line', 'arrow'];

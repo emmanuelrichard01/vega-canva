@@ -7,6 +7,8 @@ import { connectorPoints, type Box } from '../model/connector';
 import { roughPolyline, seedFrom } from '../model/rough';
 import { SvgPaintDefs } from './svgPaint';
 import { pointsAttribute, regularPolygonPoints, starPoints } from '../model/shapeOutline';
+import { shapeToPath } from '../model/shapeToPath';
+import { pathData } from '../model/pathGeometry';
 import { contourData, translatePath } from '../model/pathGeometry';
 import { applyTextCase } from '../model/textCase';
 import { contrastInk } from '../model/color';
@@ -356,6 +358,12 @@ function shapeMarkup(node: ShapeNode, defs: SvgPaintDefs): string {
       return `<rect x="${x}" y="${y}" width="${w}" height="${h}" rx="${node.appearance.cornerRadius ?? 0}" ${paint}${rot} />`;
     case 'ellipse':
       return `<ellipse cx="${cx}" cy="${cy}" rx="${w / 2}" ry="${h / 2}" ${paint}${rot} />`;
+    case 'heart':
+      // Through `shapeToPath`, which is what the canvas draws from, so an
+      // exported heart cannot be a second, hand-written approximation of the
+      // one on screen — the failure this file's own header describes.
+      return `<path d="${pathData(shapeToPath(node))}" ${paint}${rot} />`;
+
     case 'star':
       return `<polygon points="${pointsAttribute(starPoints(cx, cy, node.geometry.points ?? 5, node.geometry.innerRatio ?? 0.5, w / 2, h / 2))}" ${paint}${rot} />`;
     case 'line':

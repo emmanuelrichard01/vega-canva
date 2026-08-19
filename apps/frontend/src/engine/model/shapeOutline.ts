@@ -28,7 +28,8 @@
  * every consumer from having to know about the intermediate square.
  */
 
-import type { Point, ShapeNode } from './schema';
+import type { BezierGeometry, Point, ShapeNode } from './schema';
+import { fromAnchors, type Anchor } from './pathGeometry';
 
 export function regularPolygonPoints(
   cx: number,
@@ -75,8 +76,58 @@ export type ShapeOutline =
   | { kind: 'rect'; x: number; y: number; width: number; height: number; radius: number }
   | { kind: 'ellipse'; cx: number; cy: number; rx: number; ry: number }
   | { kind: 'polygon'; points: Point[] }
+  /**
+   * A curved outline that is neither a rectangle nor an ellipse.
+   *
+   * The heart is the first, and the reason this exists rather than a dense
+   * polygon: a shape sampled into line segments is smooth at the size you
+   * chose the sample count for and faceted at every other, and a canvas whose
+   * whole premise is infinite zoom has no such size. Every consumer already
+   * had to branch on `rect` and `ellipse` for exactly this reason; one more
+   * branch buys real curves for every curved shape added after this.
+   */
+  | { kind: 'bezier'; geometry: BezierGeometry }
   /** An open run, corner to corner of the box. A line or an arrow. */
   | { kind: 'open'; points: Point[] };
+
+/**
+ * A heart, as six cubic segments in a unit box.
+ *
+ * Written as ratios so it stretches with the node the way every other shape
+ * here does — a heart drawn in a wide box should be a wide heart, not a square
+ * one floating in the middle.
+ *
+ * The two lobes are deliberately *not* mirror images produced by reflecting
+ * three segments: the cusp between them needs its own two handles to meet
+ * cleanly, and a reflection has to special-case that anyway. Six segments
+ * written out is shorter than the code that would avoid writing them.
+ */
+const HEART_UNIT: ReadonlyArray<{ p: Point; in: Point; out: Point }> = [
+  // The tip, where both sides meet.
+  { p: { x: 0.5, y: 0.94 }, in: { x: 0.5, y: 0.94 }, out: { x: 0.5, y: 0.94 } },
+  // Down the left side to the widest point.
+  { p: { x: 0.04, y: 0.34 }, in: { x: 0.04, y: 0.63 }, out: { x: 0.04, y: 0.14 } },
+  // Over the top of the left lobe.
+  { p: { x: 0.27, y: 0.05 }, in: { x: 0.13, y: 0.05 }, out: { x: 0.41, y: 0.05 } },
+  // The cusp between the lobes.
+  { p: { x: 0.5, y: 0.24 }, in: { x: 0.46, y: 0.13 }, out: { x: 0.54, y: 0.13 } },
+  // Over the top of the right lobe.
+  { p: { x: 0.73, y: 0.05 }, in: { x: 0.59, y: 0.05 }, out: { x: 0.87, y: 0.05 } },
+  // Down the right side and back to the tip.
+  { p: { x: 0.96, y: 0.34 }, in: { x: 0.96, y: 0.14 }, out: { x: 0.96, y: 0.63 } },
+];
+
+/** The heart scaled into a `w` by `h` box, as anchors. */
+export function heartAnchors(w: number, h: number): Anchor[] {
+  return HEART_UNIT.map((a) => ({
+    x: a.p.x * w,
+    y: a.p.y * h,
+    inX: a.in.x * w,
+    inY: a.in.y * h,
+    outX: a.out.x * w,
+    outY: a.out.y * h,
+  }));
+}
 
 /**
  * The outline of a shape node, in the node's own local coordinates.
@@ -101,6 +152,10 @@ export function shapeOutline(node: Pick<ShapeNode, 'geometry' | 'width' | 'heigh
 
   if (node.geometry.kind === 'ellipse') {
     return { kind: 'ellipse', cx, cy, rx: w / 2, ry: h / 2 };
+  }
+
+  if (node.geometry.kind === 'heart') {
+    return { kind: 'bezier', geometry: fromAnchors(heartAnchors(w, h), true) };
   }
 
   if (node.geometry.kind === 'star') {

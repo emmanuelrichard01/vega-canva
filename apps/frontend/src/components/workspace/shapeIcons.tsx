@@ -15,6 +15,8 @@ import React from 'react';
  * and take their size from the caller, so they behave like any other icon.
  */
 
+import { heartAnchors } from '../../engine/model/shapeOutline';
+import { fromAnchors, pathData } from '../../engine/model/pathGeometry';
 import type { ShapeKind } from '../../engine/model/schema';
 
 /**
@@ -33,6 +35,7 @@ export type ShapePreset =
   | 'hexagon'
   | 'octagon'
   | 'star'
+  | 'heart'
   | 'line'
   | 'arrow';
 
@@ -45,6 +48,7 @@ export const PRESET_GEOMETRY: Record<ShapePreset, { kind: ShapeKind; points?: nu
   hexagon: { kind: 'polygon', points: 6 },
   octagon: { kind: 'polygon', points: 8 },
   star: { kind: 'star', points: 5 },
+  heart: { kind: 'heart' },
   line: { kind: 'line' },
   arrow: { kind: 'arrow' },
 };
@@ -56,6 +60,26 @@ interface ShapeIconProps {
 
 /** One stroke weight across the whole set, so no shape reads heavier than its neighbours. */
 const STROKE = 2;
+
+/**
+ * The heart glyph, from the same anchors the canvas draws.
+ *
+ * Inset by the stroke weight so the outline sits inside the 24-unit box the
+ * rest of the set uses, rather than being clipped at the tip.
+ */
+const heartGlyph = pathData(
+  fromAnchors(
+    heartAnchors(24 - STROKE * 2, 24 - STROKE * 2).map((a) => ({
+      x: a.x + STROKE,
+      y: a.y + STROKE,
+      inX: (a.inX ?? a.x) + STROKE,
+      inY: (a.inY ?? a.y) + STROKE,
+      outX: (a.outX ?? a.x) + STROKE,
+      outY: (a.outY ?? a.y) + STROKE,
+    })),
+    true
+  )
+);
 
 /** The regular polygon glyphs, generated so the set cannot drift by hand. */
 function polygonGlyph(sides: number): React.ReactNode {
@@ -76,6 +100,10 @@ const PATHS: Record<ShapePreset, React.ReactNode> = {
   star: (
     <polygon points="12 2 15.09 8.26 22 9.27 17 14.14 18.18 21.02 12 17.77 5.82 21.02 7 14.14 2 9.27 8.91 8.26 12 2" />
   ),
+  // Generated from the shape's own curve rather than drawn by hand, the way
+  // the polygon glyphs are. A hand-authored heart here would be a second
+  // heart, and the one people compare against the canvas.
+  heart: <path d={heartGlyph} />,
   line: <path d="M4 20 L20 4" />,
   arrow: <path d="M4 20 L20 4 M20 4 L13 5 M20 4 L19 11" />,
 };
@@ -100,6 +128,7 @@ export const SHAPE_KINDS: ShapePreset[] = [
   'hexagon',
   'octagon',
   'star',
+  'heart',
 ];
 
 /** The two open runs, which share a seat and switch between each other. */
@@ -113,6 +142,7 @@ export const SHAPE_LABELS: Record<ShapePreset, string> = {
   hexagon: 'Hexagon',
   octagon: 'Octagon',
   star: 'Star',
+  heart: 'Heart',
   line: 'Line',
   arrow: 'Arrow',
 };

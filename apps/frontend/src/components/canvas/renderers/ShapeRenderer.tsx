@@ -5,6 +5,8 @@ import { konvaFontStyle, konvaTextDecoration, shadowProps, shadowSpreadProps, st
 import { useFillProps } from './useFillProps';
 import { AlignedStroke, BackdropBlur, InnerShadow } from './ShapeEffects';
 import { shapePath2D } from './shapePath2D';
+import { shapeToPath } from '../../../engine/model/shapeToPath';
+import { pathData } from '../../../engine/model/pathGeometry';
 import { roughShape } from '../../../engine/model/roughShape';
 import { roughEllipse, roughPolyline, seedFrom } from '../../../engine/model/rough';
 import { endCapShape } from '../../../engine/model/connectorEnds';
@@ -430,6 +432,21 @@ export const ShapeRenderer: React.FC<Props> = React.memo(({ node, showLabel }) =
     );
   } else if (node.geometry.kind === 'rect') {
     shape = <Rect width={w} height={h} {...rectFill} {...shadow} stroke={primitiveStroke} strokeWidth={sw} {...dashProps} cornerRadius={Math.max(0, radius)} />;
+  } else if (node.geometry.kind === 'heart') {
+    // Drawn as a real path rather than as a dense polygon, so it stays smooth
+    // at any zoom — the reason `shapeOutline` grew a `bezier` kind. The data
+    // comes from the same `shapeToPath` the effects and the exporter read, so
+    // the three cannot draw three different hearts.
+    shape = (
+      <Path
+        data={pathData(shapeToPath(node))}
+        {...polygonFill}
+        {...shadow}
+        stroke={primitiveStroke}
+        strokeWidth={sw}
+        {...dashProps}
+      />
+    );
   } else if (node.geometry.kind === 'ellipse') {
     // Independent radii, so a non-square ellipse stays elliptical.
     shape = <Ellipse x={w / 2} y={h / 2} radiusX={w / 2} radiusY={h / 2} {...ellipseFill} {...shadow} stroke={primitiveStroke} strokeWidth={sw} {...dashProps} />;

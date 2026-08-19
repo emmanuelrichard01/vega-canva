@@ -16,6 +16,7 @@
 
 import { ellipseRing, rectRing, roughEllipse, roughPolyline, roughSilhouette, seedFrom, shapeFill } from './rough';
 import { shapeOutline } from './shapeOutline';
+import { flattenPath } from './pathGeometry';
 import type { Point, ShapeNode } from './schema';
 
 export interface RoughShape {
@@ -83,6 +84,15 @@ export function roughShape(
 
     case 'polygon':
       ring = outline.points;
+      sketched = roughPolyline(ring, { seed, level });
+      break;
+
+    case 'bezier':
+      // Flattened first, because the sketcher works on runs of points — it is
+      // what puts the wobble in. The tolerance is the same one the vector
+      // engine flattens with, so a hand-drawn heart wanders around exactly the
+      // curve a crisp one draws.
+      ring = flattenPath(outline.geometry);
       sketched = roughPolyline(ring, { seed, level });
       break;
 

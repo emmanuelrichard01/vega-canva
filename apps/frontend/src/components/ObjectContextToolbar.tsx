@@ -4,7 +4,7 @@ import {
   AlignCenter, AlignHorizontalJustifyCenter, AlignHorizontalJustifyEnd, AlignHorizontalJustifyStart,
   AlignHorizontalSpaceAround, AlignLeft, AlignRight, AlignVerticalJustifyCenter, AlignVerticalJustifyEnd,
   AlignVerticalJustifyStart, AlignVerticalSpaceAround, Bold, BringToFront, Circle, Copy, Crop, Download,
-  Droplet, FlipHorizontal, FlipVertical, Group, ImageIcon, Italic, Layers, Lock, Menu, MessageSquare,
+  Droplet, FlipHorizontal, FlipVertical, Group, Heart, ImageIcon, Italic, Layers, Lock, Menu, MessageSquare,
   MessageSquarePlus, Mic, Minus, MoveRight, PenLine, Pin, Scissors, SendToBack, SmilePlus, Spline,
   SquaresExclude, SquaresIntersect, SquaresSubtract, SquaresUnite, Square, Star, StickyNote,
   Strikethrough, Trash2, Triangle, Type, Underline, Ungroup, Unlock,
@@ -194,6 +194,7 @@ const SHAPE_CHOICES: Array<{ kind: ShapeKind; points?: number; label: string; ic
   { kind: 'polygon', points: 3, label: 'Triangle', icon: <Triangle size={16} /> },
   { kind: 'polygon', points: 6, label: 'Hexagon', icon: <Spline size={16} /> },
   { kind: 'star', points: 5, label: 'Star', icon: <Star size={16} /> },
+  { kind: 'heart', label: 'Heart', icon: <Heart size={16} /> },
   { kind: 'line', label: 'Line', icon: <Minus size={16} /> },
   { kind: 'arrow', label: 'Arrow', icon: <MoveRight size={16} /> },
 ];

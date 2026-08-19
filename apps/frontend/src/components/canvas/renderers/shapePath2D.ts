@@ -1,4 +1,5 @@
 import { shapeOutline } from '../../../engine/model/shapeOutline';
+import { pathData } from '../../../engine/model/pathGeometry';
 import type { ShapeNode } from '../../../engine/model/schema';
 
 /**
@@ -29,6 +30,13 @@ export function shapePath2D(node: ShapeNode): Path2D {
   if (outline.kind === 'ellipse') {
     path.ellipse(outline.cx, outline.cy, outline.rx, outline.ry, 0, 0, Math.PI * 2);
     return path;
+  }
+
+  if (outline.kind === 'bezier') {
+    // Built from the path data rather than by walking segments here, so the
+    // curve the effects clip against is character-for-character the curve the
+    // renderer draws.
+    return new Path2D(pathData(outline.geometry));
   }
 
   outline.points.forEach((p, i) => (i === 0 ? path.moveTo(p.x, p.y) : path.lineTo(p.x, p.y)));

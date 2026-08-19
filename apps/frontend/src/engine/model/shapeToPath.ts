@@ -104,6 +104,9 @@ export function shapeToPath(
       return ellipsePath(outline.cx, outline.cy, outline.rx, outline.ry);
     case 'polygon':
       return polygonPath(outline.points, true);
+    case 'bezier':
+      // Already the thing this function exists to produce.
+      return outline.geometry;
     case 'open':
       // A line has no interior, so it converts to an open path — closing it
       // would invent an area the shape never had, and give a fill somewhere to

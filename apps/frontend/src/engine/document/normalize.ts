@@ -115,7 +115,7 @@ function normalizeSafeArea(raw: unknown): FrameNode['safeArea'] {
  * what people reach for; they simply resolve to a polygon now. Every document
  * ever written still opens, which is the whole job of this file.
  */
-const SHAPE_KIND_ALIASES: Record<string, { kind: ShapeKind; sides?: number }> = {
+export const SHAPE_KIND_ALIASES: Record<string, { kind: ShapeKind; sides?: number }> = {
   rect: { kind: 'rect' },
   rectangle: { kind: 'rect' },
   square: { kind: 'rect' },
@@ -123,6 +123,7 @@ const SHAPE_KIND_ALIASES: Record<string, { kind: ShapeKind; sides?: number }> = 
   ellipse: { kind: 'ellipse' },
   oval: { kind: 'ellipse' },
   star: { kind: 'star' },
+  heart: { kind: 'heart' },
   line: { kind: 'line' },
   arrow: { kind: 'arrow' },
   polygon: { kind: 'polygon' },
