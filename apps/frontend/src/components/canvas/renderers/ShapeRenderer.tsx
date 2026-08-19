@@ -6,6 +6,8 @@ import { useFillProps } from './useFillProps';
 import { AlignedStroke, BackdropBlur, InnerShadow } from './ShapeEffects';
 import { shapePath2D } from './shapePath2D';
 import { shapeToPath } from '../../../engine/model/shapeToPath';
+import { linePoints } from '../../../engine/model/linePath';
+import { trimPolyline } from '../../../engine/model/connectorEnds';
 import { pathData } from '../../../engine/model/pathGeometry';
 import { roughShape } from '../../../engine/model/roughShape';
 import { roughEllipse, roughPolyline, seedFrom } from '../../../engine/model/rough';
@@ -329,7 +331,20 @@ export const ShapeRenderer: React.FC<Props> = React.memo(({ node, showLabel }) =
     // heads, so one branch covers both kinds — and a "line" with a head turned
     // on in the panel becomes an arrow without changing what it is, which is
     // how people actually use the two.
-    const points = [0, 0, w, h];
+    /**
+     * The run, as the profile draws it.
+     *
+     * Straight gives back exactly `[0, 0, w, h]`, so the ordinary line is
+     * unchanged and everything below — the caps, the trim, the sketcher —
+     * carries on working on a two-point list without knowing profiles exist.
+     */
+    const profile = linePoints(
+      { x: 0, y: 0 },
+      { x: w, y: h },
+      node.geometry.lineProfile,
+      node.geometry.lineWaves
+    );
+    const points = profile.flatMap((p) => [p.x, p.y]);
     const headSize = Math.max(6, (sw || 2) * ARROW_HEAD_SCALE) * (node.geometry.endScale ?? 1);
     const common = {
       points,
@@ -371,25 +386,34 @@ export const ShapeRenderer: React.FC<Props> = React.memo(({ node, showLabel }) =
      */
     const startKind = node.geometry.endStart ?? 'none';
     const endKind = node.geometry.endEnd ?? 'none';
-    const a = { x: points[0], y: points[1] };
-    const b = { x: points[2], y: points[3] };
-    const along = Math.atan2(b.y - a.y, b.x - a.x);
-    const startCap = endCapShape(startKind, a, along + Math.PI, headSize / 2);
+    /**
+     * The ends, and the direction the run is actually travelling at each.
+     *
+     * From the first and last *segments*, not from the two corners of the box.
+     * On a straight line they are the same thing; on a wavy or coiled one they
+     * are not, and taking the box diagonal would point an arrowhead along the
+     * overall run while the line arrives at it from a different angle — the
+     * head would sit visibly crooked on its own line.
+     */
+    const a = profile[0];
+    const b = profile[profile.length - 1];
+    const outAt = profile[Math.min(1, profile.length - 1)];
+    const inAt = profile[Math.max(0, profile.length - 2)];
+    const startAngle = Math.atan2(a.y - outAt.y, a.x - outAt.x);
+    const along = Math.atan2(b.y - inAt.y, b.x - inAt.x);
+    const startCap = endCapShape(startKind, a, startAngle, headSize / 2);
     const endCap = endCapShape(endKind, b, along, headSize / 2);
 
     // Pull the run back under each marker, so a solid head does not have the
-    // line poking through its tip — the same trim `ConnectorRenderer` makes.
-    const run = [...points];
-    if (startCap?.inset) {
-      const len = Math.hypot(b.x - a.x, b.y - a.y) || 1;
-      run[0] += ((b.x - a.x) / len) * startCap.inset;
-      run[1] += ((b.y - a.y) / len) * startCap.inset;
-    }
-    if (endCap?.inset) {
-      const len = Math.hypot(b.x - a.x, b.y - a.y) || 1;
-      run[2] -= ((b.x - a.x) / len) * endCap.inset;
-      run[3] -= ((b.y - a.y) / len) * endCap.inset;
-    }
+    // line poking through its tip — the same trim `ConnectorRenderer` makes,
+    // and through the same function, so a wavy line's trim walks back across
+    // its samples instead of only shortening one of them.
+    const trimmedRun = trimPolyline(
+      trimPolyline(points, startCap?.inset ?? 0, true),
+      endCap?.inset ?? 0,
+      false
+    );
+    const run = trimmedRun;
 
     const marker = (cap: typeof startCap, key: string) => {
       if (!cap) return null;
@@ -423,9 +447,22 @@ export const ShapeRenderer: React.FC<Props> = React.memo(({ node, showLabel }) =
       );
     };
 
+    /**
+     * Round joins on a *sampled* profile.
+     *
+     * A wave is drawn as a run of short straight segments, and a mitred join
+     * between two of them spikes wherever the direction changes quickly —
+     * visible as a burr on every crest. A zigzag is exempt: its corners are
+     * the shape, and rounding them is rounding the thing itself. The document
+     * still decides for a straight line, which is where the cap and join
+     * controls apply and where absent has always meant butt and mitre.
+     */
+    const sampled = (node.geometry.lineProfile ?? 'straight') !== 'straight'
+      && node.geometry.lineProfile !== 'zigzag';
+
     shape = (
       <Group>
-        <Line {...common} points={run} />
+        <Line {...common} points={run} {...(sampled ? { lineJoin: 'round' as const, lineCap: 'round' as const } : null)} />
         {marker(startCap, 'start')}
         {marker(endCap, 'end')}
       </Group>

@@ -85,6 +85,8 @@ import type { FillStyle, SketchLevel } from '../engine/model/rough';
 import { FillStyleIcon, SketchLevelIcon } from './panel/sketchIcons';
 import { EndCapIcon } from './panel/connectorIcons';
 import { CYCLE_PRESETS } from '../engine/text/colorCycle';
+import { LINE_PROFILES, LINE_PROFILE_LABELS, MAX_WAVES, MIN_WAVES, type LineProfile } from '../engine/model/linePath';
+import { LineProfileIcon } from './panel/lineProfileIcons';
 import {
   DEFAULT_TEXT_GLOW,
   DEFAULT_TEXT_HIGHLIGHT,
@@ -2197,6 +2199,45 @@ export const PropertiesPanel: React.FC<PropertiesPanelProps> = ({ selectedIds, o
       {/* A line and an arrow are the same shape with different ends, so the
           heads are a property rather than a second kind — turning one on makes
           a line an arrow without changing what the object is. */}
+      {/* What the run does between its two ends. A *profile*, not a kind — a
+          wavy line is still a line, and still takes any pair of ends, any
+          weight and any sketch level, because none of those know it exists. */}
+      {uniformKind && node.type === 'shape' && openShape && (
+        <Accordion title="Line">
+          <Row stack label="Style" hint="The shape the run makes on its way across. Every style takes the same ends, weight and dash.">
+            <SegmentedControl
+              ariaLabel="Line style"
+              mixed={shared((n) => (n.type === 'shape' ? n.geometry.lineProfile ?? 'straight' : null)).mixed}
+              value={node.geometry.lineProfile ?? 'straight'}
+              onChange={(v) => setGeometry({ lineProfile: v === 'straight' ? undefined : (v as LineProfile) })}
+              segments={LINE_PROFILES.map((profile) => ({
+                value: profile,
+                label: LINE_PROFILE_LABELS[profile],
+                hint: LINE_PROFILE_LABELS[profile],
+                icon: <LineProfileIcon profile={profile} />,
+              }))}
+            />
+          </Row>
+          {(node.geometry.lineProfile ?? 'straight') !== 'straight'
+            && node.geometry.lineProfile !== 'curved' && (
+            <Row label="Repeats" hint="How many times the shape repeats along the run. More makes them tighter, not smaller.">
+              {(() => {
+                const waves = shared((n) => (n.type === 'shape' ? n.geometry.lineWaves ?? 6 : null));
+                return (
+                  <NumberStepper
+                    value={waves.value ?? 6}
+                    mixed={waves.mixed}
+                    onChange={(v) => setGeometry({ lineWaves: v })}
+                    min={MIN_WAVES}
+                    max={MAX_WAVES}
+                  />
+                );
+              })()}
+            </Row>
+          )}
+        </Accordion>
+      )}
+
       {uniformKind && node.type === 'shape' && openShape && (
         <Accordion title="Ends">
           {/* The same six styles a connector offers, through the same control

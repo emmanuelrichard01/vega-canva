@@ -81,6 +81,8 @@ export const SCHEMA_VERSION = 3;
  * still reads as one description of the document.
  */
 export type { GradientStop, Paint, PaintType } from './paint';
+export type { LineProfile } from './linePath';
+import type { LineProfile } from './linePath';
 export type { ColorCycle, CycleUnit } from '../text/colorCycle';
 import type { ColorCycle } from '../text/colorCycle';
 import type { Paint } from './paint';
@@ -706,6 +708,15 @@ export interface ShapeGeometry {
    * `MIN_POLYGON_SIDES`..`MAX_POLYGON_SIDES` for a polygon.
    */
   points?: number;
+  /**
+   * Line and arrow only: the shape the run makes on its way across.
+   *
+   * A *profile*, not a kind — see `linePath.ts`. Absent is straight, which is
+   * every line ever drawn before this existed.
+   */
+  lineProfile?: LineProfile;
+  /** How many repeats the profile makes across the run. Absent is six. */
+  lineWaves?: number;
   /**
    * Star only: inner radius as a fraction of the outer radius, clamped to
    * `MIN_STAR_RATIO`..`MAX_STAR_RATIO`. At 1 the points vanish and the shape

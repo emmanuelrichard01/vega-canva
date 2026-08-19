@@ -3,6 +3,7 @@ import { normalizeNode, objectsMap, observeNodes, provider, scheduleMigration, u
 import { STICKY_THEMES, type AnyNode, type StickyTheme } from '../engine/model/schema';
 import { sceneGraph } from '../engine/SceneGraph';
 import type { PencilNib } from '../engine/model/rough';
+import type { LineProfile } from '../engine/model/linePath';
 import {
   DEFAULT_FORCE_RADIUS_SCALE,
   DEFAULT_FORCE_SCALE,
@@ -138,6 +139,8 @@ interface StoreState {
   setPencilNib: (val: PencilNib) => void;
   penStrokeWidth: number;
   setPenStrokeWidth: (val: number) => void;
+  lineProfile: LineProfile;
+  setLineProfile: (val: LineProfile) => void;
   setConnectorColor: (val: string) => void;
 
   showRulers: boolean;
@@ -398,6 +401,20 @@ export const useStore = create<StoreState>((set) => ({
    * both belong to the pencil, and showing them under an armed pen offered
    * controls that would not touch the next thing drawn.
    */
+  /**
+   * The profile the Line seat draws with.
+   *
+   * The same argument as the pencil's nib: a line is finished the moment you
+   * finish drawing it, so a profile chosen only afterwards means drawing a
+   * line, selecting it, and changing it — every time. The dock is where you
+   * say what kind of line you are about to draw, next to whether it has a head.
+   */
+  lineProfile: (window.localStorage.getItem('vega_line_profile') as LineProfile) || 'straight',
+  setLineProfile: (val) => {
+    window.localStorage.setItem('vega_line_profile', val);
+    set({ lineProfile: val });
+  },
+
   penStrokeWidth: Number(window.localStorage.getItem('vega_pen_stroke')) || 2,
   setPenStrokeWidth: (val) => {
     window.localStorage.setItem('vega_pen_stroke', String(val));

@@ -8,6 +8,7 @@ import { roughPolyline, seedFrom } from '../model/rough';
 import { SvgPaintDefs } from './svgPaint';
 import { pointsAttribute, regularPolygonPoints, starPoints } from '../model/shapeOutline';
 import { shapeToPath } from '../model/shapeToPath';
+import { linePoints } from '../model/linePath';
 import { pathData } from '../model/pathGeometry';
 import { contourData, translatePath } from '../model/pathGeometry';
 import { applyTextCase } from '../model/textCase';
@@ -285,8 +286,23 @@ function openShapeMarkup(node: ShapeNode): string {
   const x2 = node.x + node.width;
   const y2 = node.y + node.height;
 
+  /**
+   * Through `linePoints`, so an exported wavy line is the wavy line on screen.
+   *
+   * A straight profile gives back its two endpoints, so the common case is
+   * still a `<line>` — the smaller, more readable markup, and what every
+   * previously exported document contains.
+   */
+  const run = linePoints(
+    { x: x1, y: y1 },
+    { x: x2, y: y2 },
+    node.geometry.lineProfile,
+    node.geometry.lineWaves
+  );
   const parts = [
-    `<line x1="${x1}" y1="${y1}" x2="${x2}" y2="${y2}" stroke="${stroke}" stroke-width="${sw}" stroke-linecap="round"${dashAttrs(node.appearance.stroke)} />`,
+    run.length === 2
+      ? `<line x1="${x1}" y1="${y1}" x2="${x2}" y2="${y2}" stroke="${stroke}" stroke-width="${sw}" stroke-linecap="round"${dashAttrs(node.appearance.stroke)} />`
+      : `<polyline points="${run.map((p) => `${p.x.toFixed(2)},${p.y.toFixed(2)}`).join(' ')}" fill="none" stroke="${stroke}" stroke-width="${sw}" stroke-linecap="round" stroke-linejoin="round"${dashAttrs(node.appearance.stroke)} />`,
   ];
 
   const head = Math.max(6, sw * ARROW_HEAD_SCALE);

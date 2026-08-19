@@ -31,6 +31,7 @@
 import type { BezierGeometry, Point, ShapeNode } from './schema';
 import { fromAnchors, type Anchor } from './pathGeometry';
 import { roundPathCorners } from './roundCorners';
+import { linePoints } from './linePath';
 
 export function regularPolygonPoints(
   cx: number,
@@ -172,7 +173,18 @@ export function shapeOutline(node: Pick<ShapeNode, 'geometry' | 'width' | 'heigh
     // Corner to corner. The other diagonal is reached by flipping the node,
     // which `scaleX`/`scaleY` already express — so a line needs no direction
     // of its own, and `width`/`height` stay the only record of its extent.
-    return { kind: 'open', points: [{ x: 0, y: 0 }, { x: w, y: h }] };
+    //
+    // The *profile* decides what happens between those two corners. Straight
+    // returns exactly the two points, so nothing already on a board moves.
+    return {
+      kind: 'open',
+      points: linePoints(
+        { x: 0, y: 0 },
+        { x: w, y: h },
+        node.geometry.lineProfile,
+        node.geometry.lineWaves
+      ),
+    };
   }
 
   const points = regularPolygonPoints(cx, cy, node.geometry.points ?? 3, w / 2, h / 2);

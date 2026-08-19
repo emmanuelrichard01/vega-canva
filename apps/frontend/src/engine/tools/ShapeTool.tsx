@@ -1,5 +1,6 @@
 import { Rect, Ellipse, Line, RegularPolygon, Star, Group, Label, Tag, Text } from 'react-konva';
 import { nanoid } from 'nanoid';
+import { useStore } from '../../hooks/useStore';
 import { ThemeService } from '../ThemeService';
 import type { Tool, ToolContext } from './Tool';
 import type { ShapeGeometry } from '../model/schema';
@@ -147,6 +148,12 @@ export class ShapeTool implements Tool {
     // the old one across for documents that already hold it, but nothing new
     // should be written in a form marked deprecated.
     if (preset.kind === 'arrow') geometry.endEnd = 'arrow';
+    // The profile armed on the dock, written onto the node — a line is
+    // finished when the gesture is, so this cannot be a decision made after.
+    if (preset.kind === 'line' || preset.kind === 'arrow') {
+      const profile = useStore.getState().lineProfile;
+      if (profile !== 'straight') geometry.lineProfile = profile;
+    }
     return geometry;
   }
 

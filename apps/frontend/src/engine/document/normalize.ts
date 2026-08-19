@@ -1,5 +1,6 @@
 import { LIST_STYLES } from '../model/schema';
 import { CYCLE_UNITS } from '../text/colorCycle';
+import { LINE_PROFILES, MAX_WAVES, MIN_WAVES } from '../model/linePath';
 import {
   BLEND_MODES,
   DEFAULT_MITER_LIMIT,
@@ -523,6 +524,19 @@ function normalizeShapeGeometry(raw: any): ShapeGeometry {
   const rawKind = str(raw?.geometry?.kind ?? raw?.content?.shapeType ?? raw?.shapeType, 'rect');
   const alias = SHAPE_KIND_ALIASES[rawKind] ?? { kind: 'rect' as ShapeKind };
   const geometry: ShapeGeometry = { kind: alias.kind };
+
+  if (alias.kind === 'line' || alias.kind === 'arrow') {
+    // Absent is straight, which is every line written before profiles existed.
+    // An unrecognised profile is dropped rather than defaulted to something
+    // decorative: a document should not acquire a zigzag it never had.
+    const profile = raw?.geometry?.lineProfile;
+    if ((LINE_PROFILES as readonly string[]).includes(profile) && profile !== 'straight') {
+      geometry.lineProfile = profile;
+    }
+    if (Number.isFinite(raw?.geometry?.lineWaves)) {
+      geometry.lineWaves = Math.max(MIN_WAVES, Math.min(MAX_WAVES, Math.round(raw.geometry.lineWaves)));
+    }
+  }
 
   if (alias.kind === 'star') {
     // Clamped at the boundary, like every other value that reaches a renderer.

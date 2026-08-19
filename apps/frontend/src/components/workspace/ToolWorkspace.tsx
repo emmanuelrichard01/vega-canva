@@ -4,6 +4,8 @@ import { Minus, Spline } from 'lucide-react';
 import { SegmentedControl } from '../ui/SegmentedControl';
 import { SketchLevelIcon } from '../panel/sketchIcons';
 import type { PencilNib } from '../../engine/model/rough';
+import { LINE_PROFILES, LINE_PROFILE_LABELS, type LineProfile } from '../../engine/model/linePath';
+import { LineProfileIcon } from '../panel/lineProfileIcons';
 import { isForceTool } from '../../engine/physics/forces';
 import { FRAME_PRESETS, FRAME_PRESET_GROUPS } from '../../engine/model/frames';
 import { ShapeIcon, LINE_KINDS, SHAPE_KINDS, SHAPE_LABELS, shapeToolId, shapeKindFromToolId, type ShapePreset } from './shapeIcons';
@@ -244,6 +246,8 @@ export const ToolWorkspace: React.FC<Props> = ({ activeToolId, onOpenDiagram, on
   const setPencilNib = useStore((s) => s.setPencilNib);
   const penStrokeWidth = useStore((s) => s.penStrokeWidth);
   const setPenStrokeWidth = useStore((s) => s.setPenStrokeWidth);
+  const lineProfile = useStore((s) => s.lineProfile);
+  const setLineProfile = useStore((s) => s.setLineProfile);
   const lastForce = useStore((s) => s.lastForce);
   const eraserSize = useStore((s) => s.eraserSize);
   const setEraserSize = useStore((s) => s.setEraserSize);
@@ -431,8 +435,16 @@ export const ToolWorkspace: React.FC<Props> = ({ activeToolId, onOpenDiagram, on
                     the seat is: hovering it should say what is in it. What
                     changes is everything under the rule.
                   */}
-                  <div className="flyout-rule" role="presentation" />
-                  {activeToolId === 'bezier-pen' ? (
+                  {/* Nothing at all until one of them is armed.
+                      The seat holds two tools, and with neither picked there is
+                      no answer to "whose settings are these" — showing the
+                      pencil's by default made the flyout claim a tool was
+                      selected when none was, and the brush size sat there
+                      looking like it applied to whatever you did next. An
+                      empty list of two tools is the honest first state: pick
+                      one, then it tells you about it. */}
+                  {isPen && <div className="flyout-rule" role="presentation" />}
+                  {!isPen ? null : activeToolId === 'bezier-pen' ? (
                     <NibSize
                       label="Stroke weight"
                       value={penStrokeWidth}
@@ -607,6 +619,26 @@ export const ToolWorkspace: React.FC<Props> = ({ activeToolId, onOpenDiagram, on
                       </button>
                     );
                   })}
+                </div>
+                {/* What the run does between its two ends.
+                    Here rather than only in the inspector for the same reason
+                    the nib is: you decide what kind of line you are drawing
+                    before you draw it, and the two questions — does it have a
+                    head, and what shape does it make — belong side by side. */}
+                <div className="flyout-rule" role="presentation" />
+                <div className="flyout-field">
+                  <span className="flyout-field__label">Style</span>
+                  <SegmentedControl
+                    ariaLabel="Line style"
+                    value={lineProfile}
+                    onChange={(v) => setLineProfile(v as LineProfile)}
+                    segments={LINE_PROFILES.map((profile) => ({
+                      value: profile,
+                      label: LINE_PROFILE_LABELS[profile],
+                      hint: LINE_PROFILE_LABELS[profile],
+                      icon: <LineProfileIcon profile={profile} />,
+                    }))}
+                  />
                 </div>
               </Flyout>
             )}
