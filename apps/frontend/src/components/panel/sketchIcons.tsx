@@ -39,75 +39,87 @@ const ring = rectRing(BOX - PAD * 2, BOX - PAD * 2);
  * a more elaborate way of drawing the same two lines.
  */
 /**
- * The stroke every sketch specimen is drawn from: a swooshing S.
+ * The stroke every sketch specimen is drawn from: a compressed vertical
+ * squiggle.
  *
- * ## Why a swoosh rather than a line or an arc
+ * ## Why vertical, and why tight
  *
- * Two earlier attempts failed for the same underlying reason. Straight marks
- * made `light` and `medium` look identical, because the sketcher's deviation
- * on a short *straight* run is a fraction of a pixel. A single shallow arc was
- * better — a curve gives the eye a smooth reference to judge the wobble
- * against — but one bend still left the three levels close.
+ * A horizontal mark in a square icon reads as a *line* — which is what the
+ * stroke-weight control next to it is. Turned upright it stops competing with
+ * anything else on the rail, and it fills the glyph box in both directions
+ * instead of leaving air above and below.
  *
- * A swoosh has two bends and a change of direction, which is three chances for
- * the deviation to show rather than one, and it is also simply what the mark a
- * person makes when they scribble looks like. The gesture and the specimen are
- * the same shape.
+ * Compressed, because a squiggle is defined by its *frequency* as much as its
+ * amplitude: two lazy bends read as a curve, and it takes three tight ones
+ * before the eye calls it a scribble. That is the mark a person actually makes
+ * when they hatch something in.
  *
- * ## The three things that separate the levels
+ * ## Why the levels look genuinely different
  *
- * All of them come out of the profiles rather than being drawn on top, which
- * is the difference between a set of icons and one icon with decorations:
+ * The sketcher's wobble is in **absolute units**, so on a small mark every
+ * level lands within a pixel of every other — which is why the first two
+ * attempts at this icon failed. Each level is therefore generated at its *own*
+ * scale and shrunk to fit: heavy is drawn seven times life size and reduced,
+ * so its deviation is seven times larger relative to the mark, while light is
+ * barely magnified at all.
  *
- *  - **Wander** — how far the line strays, which is `offset` and grows.
- *  - **Density** — `medium` and `heavy` draw *two passes*, so the mark doubles
- *    and the strokes cross. A hand going over a line twice never lands in the
- *    same place, and that doubling is the most legible difference of the three
- *    at 20px.
- *  - **Weight** — each level is drawn a little heavier, so the set also reads
- *    as a progression from a light touch to a hard scribble at a glance,
- *    before any of the detail is resolved.
+ * That is exaggeration, and it is legitimate for the same reason a typeface
+ * has optical sizes: the *ordering* is the real one — same profiles, same
+ * seeds, same passes — and the specimen's job at 20px is to make the ordering
+ * legible, not to be a scale model.
+ *
+ * Three things then separate them, and none is drawn on top:
+ *
+ *  - **Wander**, magnified per level as above.
+ *  - **Density** — medium and heavy draw two passes, so the mark doubles and
+ *    the strokes cross. A hand going over a line twice never lands twice in
+ *    the same place.
+ *  - **Weight** — each level a little heavier, so the set reads as a
+ *    progression from a light touch to a hard scribble before any of the
+ *    detail resolves.
  */
-const SWOOSH_STEPS = 14;
+const SQUIGGLE_STEPS = 20;
 
-function swoosh(span: number, scale: number): Array<{ x: number; y: number }> {
-  return Array.from({ length: SWOOSH_STEPS + 1 }, (_, i) => {
-    const t = i / SWOOSH_STEPS;
+/** Bends per specimen. Three is where a curve stops reading as a curve. */
+const SQUIGGLE_BENDS = 3;
+
+function squiggle(span: number, scale: number): Array<{ x: number; y: number }> {
+  return Array.from({ length: SQUIGGLE_STEPS + 1 }, (_, i) => {
+    const t = i / SQUIGGLE_STEPS;
     return {
-      x: (0.6 + t * (span - 1.2)) * scale,
-      // One full sine period: down, up, down. Two bends and a reversal, drawn
-      // shallow enough that the wobble is the thing that changes between
-      // levels rather than the curve swamping it.
-      y: (span * 0.5 - Math.sin(t * Math.PI * 2) * span * 0.3) * scale,
+      // Across the glyph, narrow — the swing is what makes it a squiggle, and
+      // a wide one at this size is just a wave.
+      x: (span * 0.5 + Math.sin(t * Math.PI * SQUIGGLE_BENDS) * span * 0.26) * scale,
+      // Down it, end to end.
+      y: (0.6 + t * (span - 1.2)) * scale,
     };
   });
 }
 
+/**
+ * How far each level is magnified before being shrunk into the glyph.
+ *
+ * The whole reason the levels are distinguishable at all — see above.
+ */
+const LEVEL_SCALE: Record<SketchLevel | 'off', number> = {
+  off: 3,
+  light: 3.4,
+  medium: 5.2,
+  heavy: 7.4,
+};
+
 /** How heavy each level draws, so the set reads as a progression at a glance. */
 const LEVEL_WEIGHT: Record<SketchLevel | 'off', number> = {
-  off: 1.3,
-  light: 1.4,
+  off: 1.25,
+  light: 1.35,
   medium: 1.6,
-  heavy: 1.9,
+  heavy: 2,
 };
 
 export const SketchLevelIcon: React.FC<{ level: SketchLevel | 'off' }> = ({ level }) => {
   const span = BOX - PAD * 2;
-  /**
-   * Drawn large and scaled down, so the levels are distinguishable at all.
-   *
-   * The sketcher's wobble is in **absolute units** — it has to be, because a
-   * hand's deviation does not scale with the thing it is drawing. On a
-   * 14-unit mark that puts light, medium and heavy within about a pixel of
-   * each other. Generating at four times the size and scaling down multiplies
-   * the deviation relative to the mark.
-   *
-   * A specimen is allowed to exaggerate — that is what optical sizing is — so
-   * long as the *ordering* it shows is the real one, and it is: the same
-   * profiles, the same seeds, just further from the ruler.
-   */
-  const S = 4;
-  const stroke = swoosh(span, S);
+  const S = LEVEL_SCALE[level];
+  const stroke = squiggle(span, S);
   const d = stroke
     .map((p, i) => `${i === 0 ? 'M' : 'L'} ${p.x.toFixed(2)} ${p.y.toFixed(2)}`)
     .join(' ');
@@ -116,9 +128,10 @@ export const SketchLevelIcon: React.FC<{ level: SketchLevel | 'off' }> = ({ leve
     <svg width={BOX} height={BOX} viewBox={`0 0 ${BOX} ${BOX}`} aria-hidden="true" focusable="false">
       <g transform={`translate(${PAD} ${PAD - 1}) scale(${1 / S})`}>
         <path
-          // `off` is the one specimen not generated: a clean swoosh is exactly
-          // what the setting produces, and running it through the sketcher at
-          // zero would be a more elaborate way of drawing the same curve.
+          // `off` is the one specimen not generated: a clean squiggle is
+          // exactly what the setting produces, and running it through the
+          // sketcher at zero would be a more elaborate way of drawing the same
+          // curve.
           d={level === 'off' ? d : roughPolyline(stroke, { seed: SPECIMEN_SEED, level, closed: false })}
           fill="none"
           stroke="currentColor"

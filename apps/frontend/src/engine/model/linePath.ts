@@ -201,8 +201,21 @@ export function linePoints(
     const x = Math.max(0, Math.min(1, t));
     return x * x * (3 - 2 * x);
   };
-  /** How much of each end is spent unwinding. */
-  const UNWIND = 0.16;
+  /**
+   * How much of each end is spent unwinding, and why it is not one number.
+   *
+   * The unwind exists so a head is never tangent to a tight loop. At eight
+   * turns that is a real risk and it needs room. At one, two or three it is
+   * not: those turns are large and slow, and flattening a sixth of each end
+   * straightened the very stretch the eye reads as the line's flow — the curve
+   * swept upward into the head while the head pointed flat along the axis, and
+   * the two looked like different objects stuck together.
+   *
+   * A short unwind at low counts keeps the terminal tangent *on* the curve, so
+   * the head continues the sweep it is attached to. The full one comes back as
+   * the turns tighten and start to need it.
+   */
+  const UNWIND = count <= 3 ? 0.06 : 0.16;
 
   /**
    * The loop's radius, capped against the *whole run* as well as the period.
@@ -213,7 +226,18 @@ export function linePoints(
    * usable, which is the point of having a count at all — one big loop, three
    * medium ones and eight tight ones are all things people ask a coil for.
    */
-  const loop = Math.min(period * 0.62, length * 0.18);
+  /**
+   * Bigger when there are few loops, so one loop is a *loop*.
+   *
+   * A flat cap made a single loop a small hook on a long shallow curve — the
+   * run was mostly travel and barely any winding, which reads as a line that
+   * happens to cross itself rather than as a deliberate loop. Few turns means
+   * each one can afford to be generous, and many turns means each must be
+   * tight or they collide, so the allowance falls as the count rises rather
+   * than being one number for both cases.
+   */
+  const share = count <= 2 ? 0.34 : count <= 4 ? 0.26 : 0.2;
+  const loop = Math.min(period * 0.62, length * share);
   const steps = Math.max(48, (count + 1) * Math.round(stepsFor(period) * 1.5));
 
   /**
