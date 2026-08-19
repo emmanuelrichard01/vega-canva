@@ -1,12 +1,13 @@
 import * as React from 'react';
-import { Circle, Group, Line, Rect } from 'react-konva';
+import { Circle, Group, Line } from 'react-konva';
 import { nanoid } from 'nanoid';
 import type { Tool, ToolContext } from './Tool';
 import { useStore } from '../../hooks/useStore';
 import { ThemeService } from '../ThemeService';
 import { connectorPoints, type ConnectorEnd } from '../model/connector';
 import {
-  anchorPointOn, bindCandidates, boxLookup, boxOfNode, isConnectable, attachLookup, portPointsFor,
+  anchorPointOn, attachLookup, bindCandidates, bodyOutlinePoints, boxLookup, isConnectable,
+  portPointsFor,
 } from '../model/connectorTargets';
 import { endPoint } from '../model/connectorTargets';
 import { bindingAt } from '../model/connectorBinding';
@@ -313,8 +314,10 @@ export class ConnectorTool implements Tool {
       target.anchor && targetNode ? anchorPointOn(targetNode, target.anchor) : null;
 
     /** The object about to be bound as a whole, so `auto` is not silent either. */
-    const bodyBox =
-      target.nodeId && target.port === 'auto' && targetNode ? boxOfNode(targetNode) : null;
+    const bodyOutline =
+      target.nodeId && target.port === 'auto' && targetNode
+        ? bodyOutlinePoints(targetNode)
+        : null;
 
     ctx.setOverlayState?.({
       type: 'connector',
@@ -324,7 +327,7 @@ export class ConnectorTool implements Tool {
       // Which port is armed, so the overlay can light exactly one.
       armed: target.nodeId && target.port ? `${target.nodeId}:${target.port}` : null,
       spot,
-      bodyBox,
+      bodyOutline,
       preview,
       // Whether releasing here would make a connector. Drives the preview's
       // treatment, so "this cannot land" is answered while you are still
@@ -343,13 +346,15 @@ export class ConnectorTool implements Tool {
         {/* The whole object lights up when the binding is `auto`, because that
             is what `auto` means — this object, side to be decided — and a
             highlight that named a side would be describing a choice that has
-            not been made and will change when things move. */}
-        {overlayState.bodyBox && (
-          <Rect
-            x={overlayState.bodyBox.x}
-            y={overlayState.bodyBox.y}
-            width={overlayState.bodyBox.width}
-            height={overlayState.bodyBox.height}
+            not been made and will change when things move.
+
+            Its own silhouette, not its box. A rectangle drawn around a
+            triangle to say "this triangle" would have been the last thing on
+            screen still describing the bounding box. */}
+        {overlayState.bodyOutline && (
+          <Line
+            points={overlayState.bodyOutline}
+            closed
             stroke="#3B82F6"
             strokeWidth={1.5 / zoom}
             dash={[4 / zoom, 3 / zoom]}

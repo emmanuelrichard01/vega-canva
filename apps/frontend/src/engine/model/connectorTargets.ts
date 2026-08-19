@@ -216,3 +216,19 @@ export function portPointsFor(node: AnyNode): Array<{ side: Exclude<Port, 'auto'
 export function anchorPointOn(node: AnyNode, anchor: Anchor): Point {
   return attachPoint(node, anchorPoint(boxOfNode(node), anchor));
 }
+
+/**
+ * The silhouette to light up when a whole object is the target, flat.
+ *
+ * `auto` means *this object*, and saying so with a rectangle drawn around a
+ * triangle is the same mistake the ports had — the highlight would be the last
+ * thing on screen still describing the bounding box. Falls back to the box's
+ * own four corners, which is exactly right for the nodes whose box is their
+ * shape.
+ */
+export function bodyOutlinePoints(node: AnyNode): number[] {
+  const outline = outlineFor(node);
+  if (outline && outline.length >= 3) return outline.flatMap((p) => [p.x, p.y]);
+  const b = boxOfNode(node);
+  return [b.x, b.y, b.x + b.width, b.y, b.x + b.width, b.y + b.height, b.x, b.y + b.height];
+}

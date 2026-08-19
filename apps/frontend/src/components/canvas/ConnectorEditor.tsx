@@ -1,5 +1,5 @@
 import React, { useMemo, useState } from 'react';
-import { Circle, Group, Line, Rect } from 'react-konva';
+import { Circle, Group, Line } from 'react-konva';
 import type Konva from 'konva';
 import { updateNode } from '../../engine/document';
 import { EXPORT_CHROME } from '../../engine/export/chrome';
@@ -12,10 +12,10 @@ import { bindingAt } from '../../engine/model/connectorBinding';
 import {
   bindCandidates,
   boxLookup,
-  boxOfNode,
   isConnectable,
   attachLookup,
   anchorPointOn,
+  bodyOutlinePoints,
   portPointsFor,
 } from '../../engine/model/connectorTargets';
 import type { ConnectorNode } from '../../engine/model/schema';
@@ -177,7 +177,8 @@ export const ConnectorEditor: React.FC<Props> = ({ node, stageScale }) => {
   const liveEnd = live?.end;
   const liveNode = liveEnd?.nodeId ? objects[liveEnd.nodeId] : undefined;
   const spot = liveEnd?.anchor && liveNode ? anchorPointOn(liveNode, liveEnd.anchor) : null;
-  const bodyBox = liveEnd?.port === 'auto' && liveNode ? boxOfNode(liveNode) : null;
+  // Its own silhouette, not its box — see the same note in `ConnectorTool`.
+  const bodyOutline = liveEnd?.port === 'auto' && liveNode ? bodyOutlinePoints(liveNode) : null;
 
   return (
     <Group name={EXPORT_CHROME}>
@@ -199,12 +200,10 @@ export const ConnectorEditor: React.FC<Props> = ({ node, stageScale }) => {
             );
           })
         )}
-        {bodyBox && (
-          <Rect
-            x={bodyBox.x}
-            y={bodyBox.y}
-            width={bodyBox.width}
-            height={bodyBox.height}
+        {bodyOutline && (
+          <Line
+            points={bodyOutline}
+            closed
             stroke={ACCENT}
             strokeWidth={1.5 / stageScale}
             dash={[4 / stageScale, 3 / stageScale]}
