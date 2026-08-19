@@ -385,23 +385,69 @@ export function roughLoop(
    * wobble at a consistent physical wavelength — a large heart gets more
    * samples rather than the same number stretched into long, mechanical bows.
    */
-  const samples = Math.max(18, Math.min(72, Math.round(total / 22)));
+  /**
+   * Sample density and wobble amplitude are independent, and conflating them
+   * is what made the first version of this both squiggly *and* a poor heart.
+   *
+   * Density decides how faithfully the lap follows the true outline: too few
+   * samples and the spline cuts across the cusp between the lobes and rounds
+   * off the tip, so the shape stops being a heart before it starts looking
+   * hand-drawn. Amplitude decides how far the pen wanders, and is `prof.offset`
+   * alone. Sampling generously and letting the drift below do the smoothing
+   * gives a line that is both faithful and calm — which is what a confident
+   * hand-drawn heart is.
+   */
+  const samples = Math.max(20, Math.min(80, Math.round(total / 22)));
   const step = total / samples;
+
+  /**
+   * A drifting offset rather than an independent one per sample.
+   *
+   * Jittering each sample on its own is white noise: every point pulls a fresh
+   * random number, so the line changes direction at every control point and the
+   * result is a *shaky* line — which is what a heart came out as. A hand does
+   * not shake; it drifts. Its errors are slow and correlated, so the stroke
+   * wanders wide of the true curve for a while and then comes back.
+   *
+   * One pole of low-pass filtering gives exactly that: each offset is mostly
+   * the previous one with a little new noise mixed in. The wobble keeps its
+   * amplitude and loses its frequency, which is the whole difference between
+   * "drawn by hand" and "drawn by someone nervous".
+   */
+  /**
+   * How far the pen wanders before it comes back, in world units.
+   *
+   * The retention is derived from it rather than being a fixed number, so the
+   * wobble keeps the same physical wavelength however densely the outline is
+   * sampled. A constant retention would tie the wavelength to the sample
+   * count, and raising the density to make the shape faithful — which is
+   * exactly what the note above does — would silently make the line shakier.
+   */
+  const WANDER = 58;
+  const retention = Math.exp(-step / WANDER);
+  const drift = (previous: number, amount: number): number =>
+    previous * retention + jitter(amount, rand) * (1 - retention) * 2.4;
 
   const laps: string[] = [];
   for (let pass = 0; pass < prof.passes; pass += 1) {
     // A whole-shape swell, from the centroid, so the second pass is a slightly
     // different heart rather than the same one traced twice.
-    const swell = 1 + jitter(0.012, rand);
+    const swell = 1 + jitter(0.008, rand);
     const from = rand() * total;
     const overlap = step * (0.25 + prof.overshoot * 0.4) * (0.7 + rand() * 0.6);
 
     const pts: Point[] = [];
+    // Seeded from the same noise the drift is made of, so a lap does not
+    // always begin exactly on the true curve.
+    let ox = jitter(prof.offset, rand);
+    let oy = jitter(prof.offset, rand);
     const place = (distance: number, pull: number) => {
       const p = at(distance);
       const sx = cx + (p.x - cx) * swell * pull;
       const sy = cy + (p.y - cy) * swell * pull;
-      pts.push({ x: sx + jitter(prof.offset, rand), y: sy + jitter(prof.offset, rand) });
+      ox = drift(ox, prof.offset);
+      oy = drift(oy, prof.offset);
+      pts.push({ x: sx + ox, y: sy + oy });
     };
 
     for (let i = 0; i < samples; i += 1) place(from + i * step, 1);

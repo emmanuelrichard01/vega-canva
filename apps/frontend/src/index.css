@@ -4,6 +4,19 @@
    whole stylesheet before it even discovered the font request. Two round trips
    to a third party on the critical path, in front of every first paint. */
 @import '@fontsource-variable/inter';
+/* Every face the font picker offers, actually loaded.
+   The picker listed Roboto, Space Grotesk and Outfit and nothing ever fetched
+   them, so choosing one silently fell back to whatever the OS had — the
+   picker was reporting a typeface the canvas was not drawing. Caveat and
+   Architects Daughter are the handwriting faces; a hand-drawn *font* is the
+   honest way to get handwritten text, because running glyph outlines through
+   the sketcher would have to re-roughen every character on every keystroke
+   and would still be a worse impression of a hand than a hand made. */
+@import '@fontsource-variable/roboto';
+@import '@fontsource-variable/space-grotesk';
+@import '@fontsource-variable/outfit';
+@import '@fontsource/caveat';
+@import '@fontsource/architects-daughter';
 
 /* =========================================================================
    DESIGN TOKENS

@@ -321,10 +321,32 @@ export const ObjectRenderer = React.memo(
       [objId, onThrow]
     );
 
-    const handleDblClick = useCallback(() => {
+    const handleDblClick = useCallback((e?: Konva.KonvaEventObject<MouseEvent | TouchEvent>) => {
       if (!node) return;
       if (!isSelected) onSelect(objId);
       if (hasText(node)) {
+        /**
+         * The caret lands where you clicked.
+         *
+         * The editor is focused programmatically and never sees the click that
+         * opened it, so without this the caret goes to the start and editing a
+         * sentence means opening the editor and then clicking again where you
+         * were already aiming.
+         *
+         * This used to run on a *single* click of an already-selected text
+         * object, which made the first click select and the second edit — but
+         * it also meant a text object could not be clicked twice without
+         * entering the editor, so selecting one and reaching for the toolbar
+         * was a race. Editing now needs a deliberate double-click, and a
+         * single click does what it does for every other object: selects it
+         * and shows the rail.
+         */
+        const stage = e?.target?.getStage?.();
+        const pointer = stage?.getPointerPosition?.();
+        if (pointer && node.type === 'text') {
+          const world = cameraSystem.screenToWorld(pointer.x, pointer.y);
+          requestCaretOnMount(objId, caretOffsetFor(node, { x: world.x - node.x, y: world.y - node.y }));
+        }
         setIsEditing(true);
         return;
       }
@@ -454,20 +476,6 @@ export const ObjectRenderer = React.memo(
           // both questions.
           draggable={selectable && !flight && !node.locked && !forceToolActive && !filteredOut}
           /**
-           * A click on an *already selected* text object opens the editor with
-           * the caret where you clicked.
-           *
-           * Which is what every text tool does and what this one did not: the
-           * editor is focused programmatically and never sees the click that
-           * opened it, so the caret landed at the start and editing a sentence
-           * meant clicking once to get in and again to get where you were
-           * aiming the first time.
-           *
-           * Gated on the object already being selected, so the first click
-           * still just selects. Going straight into edit on a single click
-           * would make text impossible to drag.
-           */
-          /**
            * Selection happens on **press**, not on click.
            *
            * ## Why the click was losing them
@@ -500,22 +508,6 @@ export const ObjectRenderer = React.memo(
             if (!selectable) return;
             if (isSelected && !e.evt?.shiftKey) return;
             onSelect(objId, e);
-          }}
-          onClick={(e) => {
-            if (isSelected && node && node.type === 'text' && !isEditing) {
-              const stage = e.target.getStage();
-              const pointer = stage?.getPointerPosition();
-              if (pointer) {
-                const world = cameraSystem.screenToWorld(pointer.x, pointer.y);
-                requestCaretOnMount(objId, caretOffsetFor(node, { x: world.x - node.x, y: world.y - node.y }));
-              }
-              setIsEditing(true);
-              return;
-            }
-            // Selection already happened on the press above. Re-running it
-            // here would undo a shift-click the moment the button came back
-            // up: the press removes the object from the selection and the
-            // click adds it straight back.
           }}
           onTap={(e) => onSelect(objId, e as unknown as Konva.KonvaEventObject<MouseEvent>)}
           onDblClick={handleDblClick}

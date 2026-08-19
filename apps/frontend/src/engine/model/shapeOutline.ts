@@ -30,6 +30,7 @@
 
 import type { BezierGeometry, Point, ShapeNode } from './schema';
 import { fromAnchors, type Anchor } from './pathGeometry';
+import { roundPathCorners } from './roundCorners';
 
 export function regularPolygonPoints(
   cx: number,
@@ -154,15 +155,17 @@ export function shapeOutline(node: Pick<ShapeNode, 'geometry' | 'width' | 'heigh
     return { kind: 'ellipse', cx, cy, rx: w / 2, ry: h / 2 };
   }
 
+  const radius = Math.max(0, node.appearance?.cornerRadius ?? 0);
+
   if (node.geometry.kind === 'heart') {
-    return { kind: 'bezier', geometry: fromAnchors(heartAnchors(w, h), true) };
+    return { kind: 'bezier', geometry: rounded(fromAnchors(heartAnchors(w, h), true), radius) };
   }
 
   if (node.geometry.kind === 'star') {
-    return {
-      kind: 'polygon',
-      points: starPoints(cx, cy, node.geometry.points ?? 5, node.geometry.innerRatio ?? 0.5, w / 2, h / 2),
-    };
+    const points = starPoints(cx, cy, node.geometry.points ?? 5, node.geometry.innerRatio ?? 0.5, w / 2, h / 2);
+    return radius > 0
+      ? { kind: 'bezier', geometry: rounded(polygonGeometry(points), radius) }
+      : { kind: 'polygon', points };
   }
 
   if (node.geometry.kind === 'line' || node.geometry.kind === 'arrow') {
@@ -172,10 +175,27 @@ export function shapeOutline(node: Pick<ShapeNode, 'geometry' | 'width' | 'heigh
     return { kind: 'open', points: [{ x: 0, y: 0 }, { x: w, y: h }] };
   }
 
-  return {
-    kind: 'polygon',
-    points: regularPolygonPoints(cx, cy, node.geometry.points ?? 3, w / 2, h / 2),
-  };
+  const points = regularPolygonPoints(cx, cy, node.geometry.points ?? 3, w / 2, h / 2);
+  return radius > 0
+    ? { kind: 'bezier', geometry: rounded(polygonGeometry(points), radius) }
+    : { kind: 'polygon', points };
+}
+
+/** A straight-sided closed path, as the bezier form the rounder works on. */
+function polygonGeometry(points: Point[]): BezierGeometry {
+  return { kind: 'bezier', closed: true, segments: points.map((p) => ({ x: p.x, y: p.y })) };
+}
+
+/**
+ * Corner rounding, applied only where it would do something.
+ *
+ * Returning the geometry untouched at zero keeps the common case free of the
+ * whole cubic walk — and keeps a shape with no radius on the exact same points
+ * it has always had, so nothing shifts by a rounding error the first time this
+ * function is introduced.
+ */
+function rounded(geo: BezierGeometry, radius: number): BezierGeometry {
+  return radius > 0 ? roundPathCorners(geo, radius) : geo;
 }
 
 /** `x,y x,y ...`, the form an SVG `<polygon points>` attribute wants. */

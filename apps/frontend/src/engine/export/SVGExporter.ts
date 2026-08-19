@@ -359,18 +359,27 @@ function shapeMarkup(node: ShapeNode, defs: SvgPaintDefs): string {
       return `<rect x="${x}" y="${y}" width="${w}" height="${h}" rx="${node.appearance.cornerRadius ?? 0}" ${paint}${rot} />`;
     case 'ellipse':
       return `<ellipse cx="${cx}" cy="${cy}" rx="${w / 2}" ry="${h / 2}" ${paint}${rot} />`;
+    case 'polygon':
+    case 'star':
+      // A rounded one is a real path now, so it exports as one. Falls through
+      // to the point-list branches below when there is no radius, which keeps
+      // an ordinary hexagon a `<polygon>` in the output.
+      if ((node.appearance?.cornerRadius ?? 0) > 0) {
+        return `<path d="${pathData(shapeToPath(node))}" ${paint}${rot} />`;
+      }
+      return node.geometry.kind === 'star'
+        ? `<polygon points="${pointsAttribute(starPoints(cx, cy, node.geometry.points ?? 5, node.geometry.innerRatio ?? 0.5, w / 2, h / 2))}" ${paint}${rot} />`
+        : `<polygon points="${pointsAttribute(regularPolygonPoints(cx, cy, node.geometry.points ?? 3, w / 2, h / 2))}" ${paint}${rot} />`;
+
     case 'heart':
       // Through `shapeToPath`, which is what the canvas draws from, so an
       // exported heart cannot be a second, hand-written approximation of the
       // one on screen — the failure this file's own header describes.
       return `<path d="${pathData(shapeToPath(node))}" ${paint}${rot} />`;
 
-    case 'star':
-      return `<polygon points="${pointsAttribute(starPoints(cx, cy, node.geometry.points ?? 5, node.geometry.innerRatio ?? 0.5, w / 2, h / 2))}" ${paint}${rot} />`;
     case 'line':
     case 'arrow':
       return openShapeMarkup(node);
-    case 'polygon':
     default:
       return `<polygon points="${pointsAttribute(regularPolygonPoints(cx, cy, node.geometry.points ?? 3, w / 2, h / 2))}" ${paint}${rot} />`;
   }

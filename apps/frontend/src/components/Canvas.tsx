@@ -56,7 +56,7 @@ import { engineEvents } from '../engine/EventBus';
 import { canvasEngine } from '../engine/CanvasEngine';
 import { cameraSystem } from '../engine/CameraSystem';
 import { useVisibleSet } from '../engine/useVisibleSet';
-import { DEFAULT_TYPOGRAPHY } from '../engine/model/schema';
+import { DEFAULT_TYPOGRAPHY, isOpenShape } from '../engine/model/schema';
 import { SelectionTransformer } from './canvas/SelectionTransformer';
 import { LineEditor } from './canvas/LineEditor';
 import { ConnectorEditor } from './canvas/ConnectorEditor';
@@ -1378,7 +1378,11 @@ export const Canvas: React.FC<CanvasProps> = ({ activeTool, selectedIds, setSele
             // replacing it: rounding a corner is not an alternative to resizing
             // the way editing a line's ends is, it is a second thing you do to
             // the same box. Rect only — it is the one kind that has corners.
-            if (only.type === 'shape' && only.geometry?.kind === 'rect' && !only.locked) {
+            // Any closed shape: the knob finds the shape's own corners rather
+            // than assuming a rectangle's, and shows nothing when there are
+            // none — see `cornersOf`. Open runs are excluded because a line
+            // has no corner to round.
+            if (only.type === 'shape' && !isOpenShape(only.geometry?.kind) && !only.locked) {
               return <CornerRadiusHandle node={only as ShapeNode} stageScale={cameraSystem.zoom} />;
             }
             return null;

@@ -1172,7 +1172,11 @@ export const PropertiesPanel: React.FC<PropertiesPanelProps> = ({ selectedIds, o
               radius even though the renderer had always drawn one. A control
               that exists and cannot be reached is the same defect as one that
               was never built. */}
-          {capabilities.supportsRadius && (!uniformType || node.type !== 'shape' || node.geometry.kind === 'rect') && !openShape && (
+          {/* No longer rectangles only. Corner rounding is real geometry now —
+              `roundCorners` fillets any sharp junction — so a triangle, a
+              hexagon, a star and a heart all answer this control. Open runs
+              still do not: a line has no corner. */}
+          {capabilities.supportsRadius && !openShape && (
             <Row label="Radius" hint="Rounds every corner by the same amount.">
               {(() => {
                 const radius = sharedPaint((a) => a.cornerRadius ?? 0);

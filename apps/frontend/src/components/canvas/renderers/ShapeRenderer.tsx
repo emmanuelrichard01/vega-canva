@@ -432,7 +432,14 @@ export const ShapeRenderer: React.FC<Props> = React.memo(({ node, showLabel }) =
     );
   } else if (node.geometry.kind === 'rect') {
     shape = <Rect width={w} height={h} {...rectFill} {...shadow} stroke={primitiveStroke} strokeWidth={sw} {...dashProps} cornerRadius={Math.max(0, radius)} />;
-  } else if (node.geometry.kind === 'heart') {
+  } else if (
+    node.geometry.kind === 'heart' ||
+    // A rounded polygon or star is no longer a Konva primitive: its corners
+    // have been filleted into real curves, so it is drawn from the path the
+    // outline describes. Konva's own `cornerRadius` exists on `Rect` alone,
+    // which is why every other shape's radius did nothing before.
+    ((node.geometry.kind === 'polygon' || node.geometry.kind === 'star') && radius > 0)
+  ) {
     // Drawn as a real path rather than as a dense polygon, so it stays smooth
     // at any zoom — the reason `shapeOutline` grew a `bezier` kind. The data
     // comes from the same `shapeToPath` the effects and the exporter read, so

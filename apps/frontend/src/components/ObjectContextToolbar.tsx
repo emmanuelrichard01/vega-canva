@@ -27,6 +27,9 @@ import { isInsidePortalSurface } from './ui/portalSurface';
 import { FillEditor } from './ui/FillEditor';
 import { SegmentedControl } from './ui/SegmentedControl';
 import { FontSelector } from './ui/FontSelector';
+
+/** The hand-drawn faces, so the toggle knows which state it is in. */
+const HANDWRITTEN = ['Caveat', 'Architects Daughter'];
 import { THEMES } from './canvas/renderers/StickyRenderer';
 import { STICKY_THEMES, type StickyTheme } from '../engine/model/schema';
 import {
@@ -1124,6 +1127,24 @@ export const ObjectContextToolbar: React.FC<Props> = ({ selectedId, selectedIds,
               <span className="ctx-value">{typography.fontSize}</span>
               <RailButton label="Larger" onClick={() => setTypography({ fontSize: Math.min(500, typography.fontSize + 2) })}>
                 <span style={{ fontSize: 15, lineHeight: 1 }}>+</span>
+              </RailButton>
+              {/* The text equivalent of Sketch, and the reason it is a font
+                  rather than a filter: a hand-drawn typeface was drawn by
+                  hand. Roughening glyph outlines would re-roughen every
+                  character on every keystroke, could not be exported as text,
+                  and would still be an algorithm's impression of a pen.
+
+                  A toggle rather than a third entry in the font list, because
+                  it is a *mode* people flip while laying out a board — the
+                  list is still there for choosing which hand. */}
+              <RailButton
+                label={HANDWRITTEN.includes(typography.fontFamily) ? 'Back to typed' : 'Handwritten'}
+                pressed={HANDWRITTEN.includes(typography.fontFamily)}
+                onClick={() => setTypography({
+                  fontFamily: HANDWRITTEN.includes(typography.fontFamily) ? 'Inter' : 'Caveat',
+                })}
+              >
+                <PenLine size={15} />
               </RailButton>
               <RailButton label="Bold" pressed={typography.fontWeight >= 600} onClick={() => setTypography({ fontWeight: typography.fontWeight >= 600 ? 400 : 700 })}><Bold size={15} /></RailButton>
               <RailButton label="Italic" pressed={typography.italic} onClick={() => setTypography({ italic: !typography.italic })}><Italic size={15} /></RailButton>
