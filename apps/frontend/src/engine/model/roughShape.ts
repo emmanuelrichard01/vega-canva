@@ -121,7 +121,23 @@ export function roughShape(
       // hachured — shading the inside of something with no inside is exactly
       // what a shared code path gets wrong if it does not ask.
       ring = outline.points;
-      sketched = roughPolyline(ring, { seed, closed: false, level });
+      /**
+       * Which sketcher, decided by whether the run has real corners.
+       *
+       * A straight line is two points and a zigzag is a handful, all of them
+       * genuine turns, and the polyline sketcher's overshoot past each is what
+       * makes them read as drawn rather than ruled.
+       *
+       * A wavy, coiled or curved run is a hundred sampled points and *none* of
+       * them is a corner — so overshooting each one produced the same
+       * bristling mess a heart did before `roughLoop` existed. It takes the
+       * drift sampler instead, which wanders wide of the curve and comes back
+       * the way a hand does. Same decision `ConnectorRenderer` makes for a
+       * curved route, and the same threshold: corners or samples.
+       */
+      sketched = ring.length > 8
+        ? roughLoop(ring, { seed, level, closed: false })
+        : roughPolyline(ring, { seed, closed: false, level });
       return { outline: sketched, fill: '', silhouette: '' };
   }
 

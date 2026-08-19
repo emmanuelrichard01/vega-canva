@@ -104,6 +104,9 @@ export const TOOL_GLYPHS: Record<CursorMode, React.ReactNode | null> = {
   // one activity that never touches the document. A hand at this size was also
   // illegible, but that is not why it is gone.
   pan: null,
+  // Likewise: the closed hand is about this person's own pointer, and a remote
+  // cursor showing "they are mid-drag" says nothing about the document either.
+  grab: null,
   // A single confident mark, not a pencil: a drawing implement dissolves at
   // this size. It has to be a *curve* — the first version was near enough to
   // straight that a diagonal bar inside a disc read as a prohibition sign.
@@ -237,26 +240,74 @@ const centred = { offsetX: -SIZE / 2, offsetY: -SIZE / 2 };
 /** The arrow's tip, in the scaled path's own coordinates. */
 const tip = { offsetX: -2, offsetY: -1 };
 
+/**
+ * The hand, open and closed.
+ *
+ * Drawn as one closed silhouette each rather than as separate finger strokes.
+ * The stroke-based version turned to mush below about 20px, because four
+ * outlined fingers two pixels apart stop being four of anything.
+ *
+ * They deliberately share their palm, wrist and thumb: the only thing that
+ * changes between them is how far the fingers extend, so switching reads as a
+ * hand closing on the board rather than as one picture being replaced by
+ * another.
+ */
+const OPEN_HAND =
+  'M8 13.5V8a2 2 0 0 1 4 0v4.2V6a2 2 0 0 1 4 0v6.2V7.6a2 2 0 0 1 4 0V17a8 8 0 0 1-8 8h-1a6 6 0 0 1-4.6-2.2l-3.9-4.7a2 2 0 0 1 2.9-2.7z';
+
+const CLOSED_HAND =
+  'M8 14.6v-1.5a2 2 0 0 1 4 0v-1.2a2 2 0 0 1 4 0v.6a2 2 0 0 1 4 0V17a8 8 0 0 1-8 8h-1a6 6 0 0 1-4.6-2.2l-3.9-4.7a2 2 0 0 1 2.9-2.7z';
+
 export const CURSOR_ART: Record<CursorMode, CursorArtSpec> = {
   pointer: { ...tip, render: () => <Svg><Arrow /></Svg> },
 
+  /**
+   * The open hand: ready to drag, nothing happening yet.
+   *
+   * Fingers raised well clear of the knuckle line so the silhouette has four
+   * visible gaps at the top — that is the whole difference between this and the
+   * closed hand below, and it has to survive at 24px. The knuckle creases are
+   * what keep it reading as a hand rather than as a mitten once the gaps close
+   * up on a low-DPI screen.
+   */
   pan: {
     ...centred,
-    render: () => {
-      // Drawn as one closed silhouette rather than as separate finger strokes.
-      // The stroke-based version turned to mush below about 20px, because four
-      // outlined fingers two pixels apart stop being four of anything.
-      const hand =
-        'M8 13.5V8a2 2 0 0 1 4 0v4.2V6a2 2 0 0 1 4 0v6.2V7.6a2 2 0 0 1 4 0V17a8 8 0 0 1-8 8h-1a6 6 0 0 1-4.6-2.2l-3.9-4.7a2 2 0 0 1 2.9-2.7z';
-      return (
-        <Svg>
-          <path d={hand} fill={PAPER} stroke={PAPER} strokeWidth={4.4} strokeLinejoin="round" />
-          <path d={hand} fill={PAPER} stroke={INK} strokeWidth={1.7} strokeLinejoin="round" />
-          {/* Knuckle lines, so the silhouette still reads as a hand. */}
-          <path d="M12 13.4V9.2M16 13.4V8.4" stroke={INK} strokeWidth={1.3} opacity={0.55} />
-        </Svg>
-      );
-    },
+    render: () => (
+      <Svg>
+        <path d={OPEN_HAND} fill={PAPER} stroke={PAPER} strokeWidth={4.4} strokeLinejoin="round" />
+        <path d={OPEN_HAND} fill={PAPER} stroke={INK} strokeWidth={1.7} strokeLinejoin="round" />
+        <path d="M12 13.4V9.2M16 13.4V8.4" stroke={INK} strokeWidth={1.3} opacity={0.55} />
+      </Svg>
+    ),
+  },
+
+  /**
+   * The closed hand: the board is being dragged right now.
+   *
+   * The same silhouette with the fingers folded down and the whole shape a
+   * little shorter, so the change between the two reads as *one hand closing*
+   * rather than as two unrelated glyphs swapping. Two drawings that share no
+   * outline flicker; two that share most of one look like a grip.
+   *
+   * The creases move up onto the folded knuckles, which is the other half of
+   * making the fold legible — without them the closed hand is a rounded blob
+   * at cursor size.
+   */
+  grab: {
+    ...centred,
+    render: () => (
+      <Svg>
+        <path d={CLOSED_HAND} fill={PAPER} stroke={PAPER} strokeWidth={4.4} strokeLinejoin="round" />
+        <path d={CLOSED_HAND} fill={PAPER} stroke={INK} strokeWidth={1.7} strokeLinejoin="round" />
+        <path
+          d="M10.5 15.2v-2.1M14 14.9v-2.4M17.5 15.1v-2.1"
+          stroke={INK}
+          strokeWidth={1.3}
+          strokeLinecap="round"
+          opacity={0.55}
+        />
+      </Svg>
+    ),
   },
 
   draw: { ...centred, render: () => <Svg><Cross /></Svg> },

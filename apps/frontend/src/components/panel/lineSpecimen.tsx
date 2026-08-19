@@ -47,10 +47,32 @@ export const LineSpecimen: React.FC<{
    * sits visibly crooked on the line it is supposed to terminate — which is
    * exactly the "weird and broken" arrow specimens.
    */
-  const outAt = pts[Math.min(1, pts.length - 1)];
-  const inAt = pts[Math.max(0, pts.length - 2)];
-  const startAngle = Math.atan2(a.y - outAt.y, a.x - outAt.x);
-  const endAngle = Math.atan2(b.y - inAt.y, b.x - inAt.x);
+  /**
+   * Measured over the last fifth of the run, not the last segment.
+   *
+   * On a full-size line the last segment is the right answer: the run really
+   * does arrive rising, and a head tilted to match is correct. In a 22px glyph
+   * it is not, because the specimen crams two whole repeats into eighteen
+   * units — proportionally a far steeper wave than any real one — so the final
+   * segment leaves at 34 degrees on a wave and 54 on a zigzag, and an
+   * arrowhead cocked over at 54 degrees inside a 16px box reads as broken
+   * rather than as accurate.
+   *
+   * A baseline over a fifth of the run is what the eye actually reads as "the
+   * direction this line is going". The canvas keeps the exact tangent, because
+   * at real sizes the exact tangent is what looks right — the two differ for
+   * the same reason a typeface has optical sizes.
+   */
+  const back = (from: number, toward: number) => {
+    const i = Math.max(0, Math.min(pts.length - 1, Math.round(toward)));
+    const j = Math.max(0, Math.min(pts.length - 1, Math.round(from)));
+    return { from: pts[j], to: pts[i] };
+  };
+  const span = Math.max(1, Math.round(pts.length * 0.2));
+  const startLeg = back(0, span);
+  const endLeg = back(pts.length - 1, pts.length - 1 - span);
+  const startAngle = Math.atan2(startLeg.from.y - startLeg.to.y, startLeg.from.x - startLeg.to.x);
+  const endAngle = Math.atan2(endLeg.from.y - endLeg.to.y, endLeg.from.x - endLeg.to.x);
 
   // Small enough that a head never swallows the profile it sits on the end of.
   const capSize = 4.5;

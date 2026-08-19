@@ -25,8 +25,19 @@
 export type CursorMode =
   /** Selecting, moving, and the default for anything unrecognised. */
   | 'pointer'
-  /** Hand tool, or Space held down over any tool. */
+  /** Hand tool, or Space held down over any tool: an open hand, ready. */
   | 'pan'
+  /**
+   * The same hand, closed, while the board is actually being dragged.
+   *
+   * A separate mode rather than a flag on `pan`, because it is the *only*
+   * cursor in the vocabulary that answers "is something happening right now"
+   * rather than "what would happen if I pressed". Panning is the one gesture
+   * with no visible result of its own until the board moves, so the hand
+   * closing is the entire acknowledgement that the press landed — without it
+   * a pan that has not started yet and one that has look identical.
+   */
+  | 'grab'
   /** Pen, shapes, and anything else drawn by dragging out a region. */
   | 'draw'
   /** Text entry. */
@@ -67,6 +78,8 @@ const BY_TOOL: Record<string, CursorMode> = {
 export interface CursorModeInput {
   /** Space pans regardless of the active tool, so it outranks every tool. */
   spacePressed?: boolean;
+  /** The board is being dragged right now, by the hand tool or by Space. */
+  panning?: boolean;
 }
 
 /**
@@ -79,8 +92,11 @@ export interface CursorModeInput {
  */
 export function cursorModeForTool(
   toolId: string | undefined,
-  { spacePressed = false }: CursorModeInput = {}
+  { spacePressed = false, panning = false }: CursorModeInput = {}
 ): CursorMode {
+  // Checked before everything, including the tool: while the board is being
+  // dragged it does not matter what is armed, the hand has the pointer.
+  if (panning) return 'grab';
   if (spacePressed) return 'pan';
   if (!toolId) return 'pointer';
   if (FORCE_TOOLS.has(toolId)) return 'aim';

@@ -55,7 +55,7 @@ export const MAX_WAVES = 40;
  * turning up a "waves" dial expects to see. Scaling amplitude by run length
  * instead makes a short wavy line a flat wavy line and a long one a wild one.
  */
-const AMPLITUDE_RATIO = 0.34;
+const AMPLITUDE_RATIO = 0.24;
 
 /**
  * How finely a curved profile is sampled, as world units per segment.
@@ -151,13 +151,23 @@ export function linePoints(
 
   if (profile === 'wavy') {
     const steps = count * stepsFor(period);
+    /**
+     * No fade at the ends.
+     *
+     * A sine over a whole number of periods already *starts and finishes on
+     * the line* — both ends are zero crossings — so a fade buys nothing and
+     * costs the thing it was meant to protect: it flattened the last stretch,
+     * so the run went straight for a moment and then began to wave, and the
+     * head looked stuck on rather than grown out of the line.
+     *
+     * The head takes the true tangent instead, which at a zero crossing is the
+     * steepest part of the wave. That is what a wavy arrow looks like when it
+     * is drawn properly — the amplitude is what keeps the angle reasonable,
+     * which is why it came down rather than the ends being bent flat.
+     */
     return Array.from({ length: steps + 1 }, (_, i) => {
       const along = (i / steps) * length;
-      // Faded at both ends over a quarter period, so the line meets its own
-      // endpoints instead of stopping mid-crest — which is what makes an
-      // arrowhead sit crooked on a wavy line.
-      const edge = Math.min(1, Math.min(along, length - along) / (period * 0.25));
-      return at(along, Math.sin((along / period) * Math.PI * 2) * amplitude * edge);
+      return at(along, Math.sin((along / period) * Math.PI * 2) * amplitude);
     });
   }
 
@@ -172,7 +182,11 @@ export function linePoints(
   return Array.from({ length: steps + 1 }, (_, i) => {
     const t = i / steps;
     const turn = t * count * Math.PI * 2;
-    const edge = Math.min(1, Math.min(t, 1 - t) * count * 2);
+    // A coil *does* need its ends eased, unlike a wave: `1 - cos` starts and
+    // ends at zero but its loop carries the run backwards on the way, so
+    // without this the first and last turns push out past the endpoints the
+    // heads are drawn at.
+    const edge = Math.min(1, Math.min(t, 1 - t) * count * 3);
     return at(
       t * length - Math.sin(turn) * loop * 0.55 * edge,
       (1 - Math.cos(turn)) * loop * 0.5 * edge
