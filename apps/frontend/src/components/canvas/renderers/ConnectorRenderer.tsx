@@ -4,7 +4,7 @@ import { roughPolyline, seedFrom } from '../../../engine/model/rough';
 import { useShallow } from 'zustand/react/shallow';
 import { DEFAULT_CONNECTOR_INK, type ConnectorNode } from '../../../engine/model/schema';
 import { connectorBounds, connectorPoints, type Box } from '../../../engine/model/connector';
-import { endAngle, endCapShape, endCapSize } from '../../../engine/model/connectorEnds';
+import { capExtentPoints, connectorCaps, trimPolyline } from '../../../engine/model/connectorEnds';
 import { updateNode } from '../../../engine/document';
 import { useStore } from '../../../hooks/useStore';
 import { canvasPlateFill } from '../../../engine/ThemeService';
@@ -95,9 +95,43 @@ export const ConnectorRenderer: React.FC<Props> = React.memo(({ node }) => {
    * the board would write the same numbers back on every update, each write
    * waking the others.
    */
+  /**
+   * The two things the stored box depends on, as values a dependency array can
+   * be checked against statically.
+   *
+   * `world.join(',')` was already here doing this job for the route. The
+   * markers needed the same treatment once the box started accounting for
+   * them, and an expression like `node.appearance?.stroke?.width` inline in
+   * the array is exactly what the lint rule is warning about: it cannot verify
+   * a dependency it cannot name.
+   */
+  const routeKey = world.join(',');
+  const capKey = [
+    node.endStart ?? 'none',
+    node.endEnd ?? 'none',
+    node.endScale ?? 1,
+    strokeWidth(node.appearance) || 2,
+  ].join(':');
+
   React.useEffect(() => {
     if (world.length < 4) return;
-    const box = connectorBounds(world);
+    // The markers are part of what the connector occupies. An arrowhead
+    // extends *sideways* out of the route, and a horizontal connector's route
+    // is a one-unit-tall box — so a box computed from the route alone had the
+    // arrow culled while its head was still on screen, and a marquee drawn
+    // over that head selected nothing. Raising End size is what made it
+    // obvious; it was wrong at every size.
+    const caps = connectorCaps(world, {
+      start: node.endStart ?? 'none',
+      end: node.endEnd ?? 'none',
+      strokeWidth: strokeWidth(node.appearance) || 2,
+      scale: node.endScale,
+    });
+    const box = connectorBounds([
+      ...world,
+      ...capExtentPoints(caps.start),
+      ...capExtentPoints(caps.end),
+    ]);
     const drifted =
       Math.abs(box.x - node.x) > 0.5 ||
       Math.abs(box.y - node.y) > 0.5 ||
@@ -110,7 +144,7 @@ export const ConnectorRenderer: React.FC<Props> = React.memo(({ node }) => {
     }, 180);
     return () => window.clearTimeout(timer);
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [node.id, node.x, node.y, node.width, node.height, world.join(',')]);
+  }, [node.id, node.x, node.y, node.width, node.height, routeKey, capKey]);
 
   if (world.length < 4) return null;
 
@@ -163,39 +197,34 @@ export const ConnectorRenderer: React.FC<Props> = React.memo(({ node }) => {
    * described once, in a pure module, rather than living inside a renderer
    * where nothing else can see where a marker actually reaches.
    */
-  const size = endCapSize(width, node.endScale ?? 1);
-  const startCap = endCapShape(node.endStart ?? 'none', { x: points[0], y: points[1] }, endAngle(points, true), size);
-  const endCap = endCapShape(
-    node.endEnd ?? 'none',
-    { x: points[points.length - 2], y: points[points.length - 1] },
-    endAngle(points, false),
-    size
-  );
+  // Sized against the run, so End size at its maximum on two adjacent boxes
+  // shortens the marker instead of drawing one longer than the connector.
+  const { start: startCap, end: endCap } = connectorCaps(points, {
+    start: node.endStart ?? 'none',
+    end: node.endEnd ?? 'none',
+    strokeWidth: width,
+    scale: node.endScale,
+  });
 
   /**
    * Pull each end of the run back under its own marker.
    *
    * A solid triangle or diamond drawn on top of the line it terminates blurs
-   * into one blob at small sizes — the line pokes through the tip and the
-   * shape stops reading. Trimming the run by the marker's own depth is what
-   * every diagramming tool does, and it costs one interpolation per end.
+   * into one blob — the line pokes through the tip and the shape stops
+   * reading. Trimming by the marker's own depth is what every diagramming tool
+   * does.
+   *
+   * This was one interpolation against the *last segment*, which is not an
+   * edge case but the normal case: a curved route's final segment is a couple
+   * of units, so a curved connector was never trimmed at all, and an
+   * orthogonal one stopped being trimmed as soon as the marker outgrew its
+   * last leg. `trimPolyline` walks back across segments instead. See its note.
    */
-  const trimmed = [...points];
-  const pullBack = (atStart: boolean, inset: number) => {
-    if (inset <= 0) return;
-    const i = atStart ? 0 : trimmed.length - 2;
-    const j = atStart ? 2 : trimmed.length - 4;
-    const dx = trimmed[i] - trimmed[j];
-    const dy = trimmed[i + 1] - trimmed[j + 1];
-    const len = Math.hypot(dx, dy);
-    // A degenerate segment has no direction to pull along, and dividing by it
-    // is how a connector ends up drawn at NaN.
-    if (len <= inset || len === 0) return;
-    trimmed[i] -= (dx / len) * inset;
-    trimmed[i + 1] -= (dy / len) * inset;
-  };
-  pullBack(true, startCap?.inset ?? 0);
-  pullBack(false, endCap?.inset ?? 0);
+  const trimmed = trimPolyline(
+    trimPolyline(points, startCap?.inset ?? 0, true),
+    endCap?.inset ?? 0,
+    false
+  );
 
   const marker = (cap: typeof startCap, key: string) => {
     if (!cap) return null;
