@@ -1,6 +1,7 @@
 import React from 'react';
 import { Path } from 'react-konva';
 import type { PathNode } from '../../../engine/model/schema';
+import { DEFAULT_INK } from '../../../engine/model/schema';
 import { contourData } from '../../../engine/model/pathGeometry';
 import { shadowProps, strokeColor, strokeDashProps, strokeWidth } from './shared';
 import { useFillProps } from './useFillProps';
@@ -13,7 +14,7 @@ export const PathRenderer: React.FC<Props> = React.memo(({ node }) => {
   // Before the branch, because it is a hook: a freehand stroke and a bezier
   // path take the same fill, and a conditional hook is not a thing React
   // permits even when the condition never changes for a given node.
-  const pathFill = useFillProps(node.appearance, { x: 0, y: 0, width: node.width, height: node.height }, '#1F2937');
+  const pathFill = useFillProps(node.appearance, { x: 0, y: 0, width: node.width, height: node.height }, DEFAULT_INK);
   // No spread here: the grown-silhouette trick strokes the path, and a
   // freehand blob is already a filled outline while a pen path is already
   // stroked — in both cases a second stroke changes the shape rather than the
@@ -36,7 +37,7 @@ export const PathRenderer: React.FC<Props> = React.memo(({ node }) => {
     );
   }
 
-  const stroke = strokeColor(node.appearance) ?? '#1F2937';
+  const stroke = strokeColor(node.appearance) ?? DEFAULT_INK;
   const sw = strokeWidth(node.appearance) || 2;
   /**
    * The document decides the cap and the join, and nothing here overrides it.

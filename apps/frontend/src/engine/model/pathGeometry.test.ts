@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import type { BezierGeometry } from './schema';
+import type { BezierGeometry, CompoundGeometry, FreehandGeometry } from './schema';
 import {
   anchorMode,
   cubicAt,
@@ -17,6 +17,8 @@ import {
   splitCubic,
   toAnchors,
   toCubics,
+  pathNaturalSize,
+  fitPathToBox,
   type Anchor,
 } from './pathGeometry';
 
@@ -404,5 +406,134 @@ describe('fromAnchors', () => {
   it('drops them when the path is open, where there is no closing curve to own them', () => {
     const geo = fromAnchors([{ x: 0, y: 0, inX: -30, inY: 0 }, { x: 100, y: 0 }], false);
     expect(geo.segments[0]).toEqual({ x: 0, y: 0 });
+  });
+});
+
+describe('pathNaturalSize', () => {
+  it('measures a bezier path from its own contour, not from any stored box', () => {
+    const geo: BezierGeometry = {
+      kind: 'bezier',
+      segments: [{ x: 0, y: 0 }, { x: 60, y: 0 }, { x: 60, y: 20 }],
+      closed: true,
+    };
+    expect(pathNaturalSize(geo)).toEqual({ width: 60, height: 20 });
+  });
+
+  it('measures a freehand stroke from the outline that is actually drawn', () => {
+    // Not from the centreline grown by the nib. That version agreed on a fresh
+    // stroke and drifted on every resize after it, because the outline and the
+    // nib do not scale by the same factor under a non-uniform stretch.
+    const geo: FreehandGeometry = {
+      kind: 'freehand',
+      svgPath: 'M 0 0 Q 10 10 20 20 Z',
+      points: [{ x: 4, y: 4 }, { x: 24, y: 14 }],
+      strokeSize: 4,
+    };
+    expect(pathNaturalSize(geo)).toEqual({ width: 20, height: 20 });
+  });
+
+  it('spans every contour of a compound path', () => {
+    const geo: CompoundGeometry = {
+      kind: 'compound',
+      subpaths: [
+        { kind: 'bezier', segments: [{ x: 0, y: 0 }, { x: 10, y: 10 }], closed: true },
+        { kind: 'bezier', segments: [{ x: 40, y: 0 }, { x: 50, y: 30 }], closed: true },
+      ],
+    };
+    expect(pathNaturalSize(geo)).toEqual({ width: 50, height: 30 });
+  });
+});
+
+describe('fitPathToBox', () => {
+  const square = (): BezierGeometry => ({
+    kind: 'bezier',
+    segments: [{ x: 0, y: 0 }, { x: 100, y: 0 }, { x: 100, y: 100 }, { x: 0, y: 100 }],
+    closed: true,
+  });
+
+  it('stretches the outline to the box, which is the bug that made resize do nothing', () => {
+    const fitted = fitPathToBox(square(), 300, 50);
+    expect(fitted).not.toBeNull();
+    expect(pathNaturalSize(fitted!)).toEqual({ width: 300, height: 50 });
+  });
+
+  it('returns null when the geometry already fits, so a plain move rewrites nothing', () => {
+    expect(fitPathToBox(square(), 100, 100)).toBeNull();
+  });
+
+  it('is idempotent — fitting twice to the same box is fitting once', () => {
+    const once = fitPathToBox(square(), 250, 40)!;
+    expect(fitPathToBox(once, 250, 40)).toBeNull();
+  });
+
+  it('repairs a path an earlier resize left behind, rather than compounding it', () => {
+    // The old behaviour wrote a new box and left the geometry alone. Such a
+    // node arrives here with a 100x100 outline claiming to be 300x50; fitting
+    // it to its own stored box is what puts the two back in agreement.
+    const stale = square();
+    expect(pathNaturalSize(fitPathToBox(stale, 300, 50)!)).toEqual({ width: 300, height: 50 });
+  });
+
+  it('carries the control points, so a curve stretches instead of going straight', () => {
+    const curve: BezierGeometry = {
+      kind: 'bezier',
+      segments: [
+        { x: 0, y: 0 },
+        { x: 100, y: 0, cp1x: 20, cp1y: 40, cp2x: 80, cp2y: 40 },
+      ],
+      closed: false,
+    };
+    // The natural box is the curve's real extent, not its control polygon:
+    // this cubic peaks at y = 30, three quarters of the way to its handles.
+    // So the handles scale by the same ratio the outline does — 2x across,
+    // 200/30 down — rather than being left where they were, which is what
+    // would flatten the curve as the path stretched.
+    const fitted = fitPathToBox(curve, 200, 200)!;
+    expect(fitted.segments[1].cp1x).toBeCloseTo(20 * 2, 9);
+    expect(fitted.segments[1].cp1y).toBeCloseTo(40 * (200 / 30), 9);
+    expect(pathNaturalSize(fitted)).toEqual({ width: 200, height: 200 });
+  });
+
+  it('scales a freehand outline and its centreline by the same factors', () => {
+    const geo: FreehandGeometry = {
+      kind: 'freehand',
+      svgPath: 'M 0 0 Q 10 20 20 40 Z',
+      points: [{ x: 2, y: 2 }, { x: 22, y: 12 }],
+      strokeSize: 2,
+    };
+    // Outline bounds are 20 x 40, so fitting to 40 x 40 doubles x and leaves y.
+    const fitted = fitPathToBox(geo, 40, 40)!;
+    expect(fitted.svgPath).toBe('M 0 0 Q 20 20 40 40 Z');
+    expect(fitted.points[1].x).toBeCloseTo(44, 9);
+    expect(fitted.points[1].y).toBeCloseTo(12, 9);
+  });
+
+  it('does not creep when a freehand stroke is stretched unevenly, twice', () => {
+    // The regression this measurement change exists to prevent. The nib scales
+    // by the smaller factor while the outline scales by both, so measuring the
+    // centreline-plus-nib made the second fit find a discrepancy the first fit
+    // had itself created — a stroke that grew every time it was dragged.
+    const geo: FreehandGeometry = {
+      kind: 'freehand',
+      svgPath: 'M 0 0 Q 10 20 20 40 Z',
+      points: [{ x: 2, y: 2 }, { x: 22, y: 12 }],
+      strokeSize: 2,
+    };
+    const once = fitPathToBox(geo, 90, 20)!;
+    expect(pathNaturalSize(once)).toEqual({ width: 90, height: 20 });
+    // Fitting to the box it already occupies must be a no-op, whatever the
+    // aspect change was that got it there.
+    expect(fitPathToBox(once, 90, 20)).toBeNull();
+  });
+
+  it('leaves a path carrying arcs alone rather than scaling an arc flag', () => {
+    const geo: FreehandGeometry = {
+      kind: 'freehand',
+      svgPath: 'M 0 0 A 10 10 0 0 1 20 0 Z',
+      points: [{ x: 0, y: 0 }, { x: 20, y: 0 }],
+      strokeSize: 1,
+    };
+    const fitted = fitPathToBox(geo, 100, 10)!;
+    expect(fitted.svgPath).toBe('M 0 0 A 10 10 0 0 1 20 0 Z');
   });
 });

@@ -46,6 +46,7 @@ it.
 | --- | --- | --- |
 | Bounding box | **Shipped** | One shared `<Transformer>` (`SelectionTransformer`) re-pointed at the selection, not one per object. Minimum-size clamp via `boundBoxFunc`. |
 | Move / pointer tool | **Shipped** | `SelectTool`. |
+| Line and arrow editing | **Shipped** | Drawn **click–move–click**, not by dragging: a line is often long, and holding a button across a board is an imprecise gesture a trackpad makes worse. Edited at its **endpoints** rather than by a bounding box — a box offers eight handles, none of which means "move this end", and its ten-unit floor made the horizontal and vertical line the two the tool could not draw. Shift constrains to 15° in both the drawing and the editing gesture, through one shared function. Six end styles shared with connectors, sized by `endScale` (50–400%), sketched by the same generator as the shaft. Labels ride the midpoint on a plate, counter-rotated so they never read upside down, with the ink contrast-checked against the plate. |
 | Scale tool | **Absent** | The transformer resizes geometry; nothing scales strokes, corner radii, shadows or type with the object. This is a distinct tool in the spec and it does not exist. |
 | Deep select / direct selection | **Absent** | Groups are flat — members share a synthetic `parentId`, there is no nesting and no enter-group editing, so there is nothing to select *into*. |
 | Marquee selection | **Shipped** | `SelectTool` draws the rect; `Canvas` resolves it to ids. |
@@ -57,9 +58,9 @@ it.
 | Item | Status | Notes |
 | --- | --- | --- |
 | Pen tool | **Shipped** | `BezierPenTool`. Anchors placed with a drag get a forward handle; the backward handle mirrors it. |
-| Pencil tool | **Shipped** | `PenTool` with `perfect-freehand`, simplified through `utils/pathSimplifier.ts`. Stores both the filled outline and the centreline the eraser splits on. |
+| Pencil tool | **Shipped** | `PenTool` with `perfect-freehand`, which does the thinning and smoothing itself from `[x, y, pressure]` — the tool feeds it real pen pressure where the device reports it, and drops `thinning` to a near-constant width where it does not, so a mouse does not draw a line that pretends to have been pressed. Stores both the filled outline and the centreline the eraser splits on. This entry used to claim the points were "simplified through `utils/pathSimplifier.ts`": that module had no importers at all — a Douglas–Peucker pass nothing ever called — and was deleted rather than wired in, because `perfect-freehand`'s own smoothing is what actually shapes the stroke. |
 | Shape tools | **Shipped** | Rect, ellipse, polygon, star, line and arrow. `polygon` is one kind with a side count clamped 3..60, not a kind per count — triangle, pentagon, hexagon and octagon are dock *presets* over it, which is what makes the count editable afterwards instead of frozen into the shape's identity. Line and arrow are the first shapes with no interior: they run corner to corner of the node box, so `width`/`height` stay the only record of bounds, and an arrowhead is a flag rather than a second kind. |
-| Text tool | **Shipped** | `TextTool` + one shared `NodeEditor`. |
+| Text tool | **Shipped** | `TextTool` + one shared `NodeEditor`, over a real layout engine (`engine/text/layout.ts`) rather than a single `Konva.Text`. Clicking an already-selected text object opens the editor **with the caret where you clicked** — resolved by binary search over measured prefixes, since the textarea never receives the click that created it. A **Text block** seat drops placeholder prose at 20/30/40/50/100 words: readable English rather than lorem ipsum, because the questions a placeholder has to answer (is this type size right, is this measure comfortable, does the box hold what I meant) cannot be answered against text nobody can read. |
 | Eyedropper | **Partial** | Colour sampling from anywhere on screen, via the browser's own `EyeDropper`, offered beside the fill, each gradient stop, the stroke and the text colour — not as a dock tool, because an eyedropper answers a question a control has already asked rather than being a mode you enter. The button hides where the API is missing (Firefox, Safari), since a pipette that does nothing is worse than none. **Style and text-style sampling are not built**: those copy a whole appearance block, which is a different gesture with a different target. |
 | Place image / media | **Partial** | Raster images and audio upload to MinIO, referenced by URL. **SVG is not imported as vector** (it would land as a raster `<img>`), and video is not supported at all. |
 
@@ -81,7 +82,7 @@ it.
 | Item | Status | Notes |
 | --- | --- | --- |
 | Layers panel | **Shipped** | Virtualized (`useVirtualRows`) — a DOM row per object is the most expensive consumer of document change at scale. Carries the tag filter. |
-| Grouping | **Partial** | Flat only: a shared synthetic `parentId`, no nesting, no enter-group editing, no group bounds as a first-class object. |
+| Grouping | **Partial** | Foldable in the Layers panel, and right-clicking one member targets the whole group — which is what makes "copy this as Mermaid" answerable, since grouping is the only signal a person can give that a set of objects is one diagram. Still flat otherwise: a shared synthetic `parentId`, no nesting, no enter-group editing, no group bounds as a first-class object. |
 | Lock / unlock | **Shipped** | |
 | Visibility / hide | **Shipped** | `hidden` on the base node; renderer and Layers panel both gate on it, and there is deliberately no second `visible` field. |
 | Auto layout / flexbox | **Dead** | `FrameNode.layout` declares `direction`, `padding` and `gap` in the schema. Nothing reads it, and no frame can be created in the first place. |
@@ -93,10 +94,11 @@ it.
 | Item | Status | Notes |
 | --- | --- | --- |
 | X / Y | **Shipped** | |
-| W / H | **Shipped** | `width`/`height` on the base node are the only source of bounds — a load-bearing rule, see `schema.ts`. |
+| W / H | **Shipped** | `width`/`height` on the base node are the only source of bounds — a load-bearing rule, see `schema.ts`. **Resizing a path was broken until 2026-08-18** and is worth recording, because it is the failure mode that rule invites: every other type *derives* what it draws from the box, but a path's shape is its `geometry`, drawn verbatim in node-local coordinates. Writing a new box and stopping left the outline at its old size while the layers panel, the radar, marquee selection and snapping all reported the new one — user-reported as "it looks stretched on the minimap but the same on the canvas". `fitPathToBox` now scales the geometry at commit. It *measures* the geometry rather than applying the drag's scale factor, so it is idempotent and repairs paths an earlier resize already left behind. Baked into the stored form rather than applied as a Konva scale because `PathEditor` draws its anchors at raw geometry coordinates and reads no scale — a renderer-side stretch would put the outline in one place and its handles in another. |
 | Aspect ratio lock | **Shipped** | Lock toggle between the W and H steppers. |
 | Rotation | **Shipped** | 15° steps in the panel; free from the transformer. Objects rotate about their centre. |
 | Flip | **Shipped** | Horizontal and vertical, via `scaleX`/`scaleY` negation. |
+| Skew / shear | **Shipped** | `skewX`/`skewY` on the base node, in **degrees**, about the centre — Illustrator's Shear Tool as a precise pair of numbers rather than a drag, since the transformer already owns the free-form gestures. Degrees rather than Konva's matrix coefficient, so a renderer's private convention cannot silently re-interpret every stored document; the `tan()` happens in one place. Kept off `geometry`, which makes it non-destructive and is what lets it apply to text and images and not just to vectors. The load-bearing part is `SceneGraph.getNodeBounds`, which now transforms the four corners rather than using the rotation-only closed form — a sheared rectangle is a parallelogram with no such form, and these bounds are what culling, marquee selection and export framing all read. |
 | Corner radius | **Partial** | Rect and image only. No per-corner control, no squircle smoothing. |
 
 ## 7. Surface styling
@@ -114,6 +116,7 @@ it.
 | Dash pattern | **Shipped** | Solid / Dashed / Dotted, with the pattern derived from the stroke weight so it stays legible at any thickness. `Stroke.cap` was added and used in the same change, because a dotted line is `[0, gap]` and draws nothing at all under the default butt cap. A full pattern editor belongs with cap and join in Phase 4. |
 | Layer opacity | **Shipped** | |
 | Blend modes | **Shipped** | All sixteen. The stored names are Canvas2D's own `globalCompositeOperation` values, so the renderer forwards the string with no lookup table between the two to fall out of step. Applied to the whole node group, so an object's text label blends with its fill rather than separately from it. |
+| Hand-drawn / sketch | **Shipped** | `Appearance.sketch`, **per object** rather than a board mode — a diagram that is mostly neat with two things circled by hand is the case it is for, and a document switch cannot say that. Three named hands, `light`/`medium`/`heavy`, which differ in *how the pen behaves* rather than in one amplitude: one confident pass, two passes, or two passes crossing well past every corner. A single roughness number was tried first and removed — scaling displacement is the one axis that cannot give three usable looks, because turning it up makes a shape read as broken rather than drawn. **Corners and curves are different constructions.** A shape with real corners is drawn edge by edge, each a bowed cubic that overshoots its vertex; a curve is one continuous spline through scattered samples, closing past where it began so the ends cross. Drawing a circle the first way — sixteen short chords each overshooting a corner that is not there — is what made it come out a broken spiky ring, and is the bug this construction exists to avoid. The interior takes one of three shadings — `solid`, `hachure` or `crosshatch` — offered only where a sketch level is set, because pen strokes inside a machine-ruled outline is a mixed metaphor. A solid fill paints the true silhouette rather than the sketch, since the drawn strokes are disjoint by design and filling them leaves bites out of the shape. Cross-hatch is two passes, and the second is deliberately not the first rotated: a different seed and a wider gap keep the two grids off each other, which is what separates a hand shading twice from a regular lattice that reads as a texture fill. Hachure runs at 41°, not 45°, because a shading angle that matches a rectangle's own diagonal reads as part of the shape instead of as marks laid over it. The scanline sorts its crossings and takes them in pairs, which is what makes a star work and not only a convex shape. **Seeded from the node id**, so the sketch is stable across renders, reloads, collaborators and exports — regenerating from fresh randomness makes the outline crawl on every re-render, which here is every selection, drag and presence update. `geometry` is untouched, so turning it off returns the exact rectangle. |
 
 ## 8. Lighting and blur effects
 
@@ -133,7 +136,7 @@ it.
 | Line height | **Shipped** | |
 | Letter spacing | **Shipped** | |
 | Kerning | **Absent** | Pair-level adjustment; needs font metrics access. Blocked on the same thing as OpenType features and paragraph spacing — see the note below the table. |
-| Paragraph spacing | **Absent** | Blocked on the editor, not on the renderer. Konva can draw paragraphs as separate `Text` nodes with a measured gap between them; a `<textarea>` cannot show that gap at all, so shipping it means text that visibly reflows the moment you stop typing — the exact defect the sticky editor's top-padding fix exists to prevent. It wants the same thing kerning and OpenType want. |
+| Paragraph spacing | **Shipped** | `Typography.paragraphSpacing`, in world units, added between paragraphs only. This is what the text engine was built for: leading is a multiplier applied *within* a block of prose, and raising it to separate two paragraphs opens up every line inside them as well, so the two genuinely are separate fields. **The caveat this entry used to carry is now the known limitation:** a `<textarea>` cannot show a per-paragraph gap, so the spacing appears on commit rather than while typing. That is a real seam, and it is a smaller one than the feature not existing — the words do not reflow, only the gaps between blocks open up. |
 | Text alignment | **Shipped** | Horizontal and vertical. |
 | Text case | **Shipped** | Upper, lower and title, applied at render and **never to the stored string** — a control that rewrote the text would be destructive, since switching to upper case and back returns `HELLO` rather than `Hello`, and the editor would stop showing what was written. The DOM overlay gets the same effect from `text-transform`, which works on a `<textarea>`, so the words do not change shape the instant you stop typing. Title case follows CSS's `capitalize` rule rather than English title case: the browser gives the editor the former, the canvas has to match it, and a rule with a word list is wrong in every language that is not English. The SVG exporter bakes the case in, because `text-transform` in SVG is applied inconsistently and dropped by several converters. |
 | Text decoration | **Shipped** | Underline and strikethrough, as two flags rather than one enum — Canvas2D, CSS and SVG all take a space-separated list and draw a run with both at once, so a single-valued field would have made them exclusive for no reason but its own shape. |
@@ -203,7 +206,8 @@ Nothing in this section exists, and all of it depends on frames.
 | --- | --- | --- |
 | Export scale (1x/2x/3x) | **Shipped** | PNG only — SVG and JSON have no pixels to multiply. Each option shows the pixels it will produce when a frame is the target, and the filename carries the `@2x` suffix. |
 | PNG | **Shipped** | Reframes the stage onto the document bounds, captures, restores. Interface is hidden for the capture — the selection transformer, hover outline, crop overlay, force ring, tool preview, frame name labels and safe-area guides all carry an `export-chrome` name that `hideExportChrome` switches off and back on. Before that, exporting with anything selected baked the blue handles into the image. Omits audio players, which are DOM overlays. |
-| SVG | **Shipped** | Serializes CRDT state to real vector primitives rather than rasterizing, with user text escaped. |
+| SVG | **Shipped** | Serializes CRDT state to real vector primitives rather than rasterizing, with user text escaped. **Connectors were missing from the switch entirely until 2026-08-19** — every other type had a case and `connector` fell through, so a flowchart exported as boxes with no arrows between them: the diagram's whole meaning removed, silently. PNG never showed it because that path captures the stage rather than walking the document, which is exactly how a gap like this survives. The route is recomputed through the same `connectorPoints` the renderer uses, because a connector's geometry is derived and there is nothing stored to serialize. End caps are deliberately omitted rather than approximated: they are built in the renderer's local frame with a per-cap inset that trims the run beneath them, and half-reproducing that would put an arrowhead slightly wrong on every line — a line without its head is honestly incomplete, a head in the wrong place looks like a bug. **Text now goes through the same `layoutText` the canvas uses**, which fixed a bug that predated every text effect: the exporter split the stored string on `
+`, but a wrapped text node's line breaks are chosen by the *renderer* and the document holds none of them — so every wrapped text node exported as one long line. Highlight, outline and glow all export too (the outline via SVG's own `paint-order="stroke"`, the glow via `feDropShadow`), as does a sketched shape, which is only possible because `roughShape` is seeded and shared with the renderer: the strokes in the file are *the same strokes*, not another draw from the same distribution. |
 | JSON | **Shipped** | Canonical node data plus comment threads — and it can be **read back**. It called itself "best for backups" while nothing could restore one, which is the kind of claim this document exists to catch. There is a validating parser, a single-transaction restorer, and a "rebuild a board from a backup" path on the rooms page; that last one matters, because the in-room restore is unreachable for someone who cleared their browser, which is exactly who needs it. |
 | WebP / JPEG | **Shipped** | Six formats total, with a live preview, a size estimate and per-format settings derived from one `FORMAT_SPECS` table, plus batch export of every frame and copy-to-clipboard. |
 | PDF | **Shipped** | `engine/export/PDFExporter.ts` — hand-rolled, five objects and an xref table in ~80 lines, no dependency, because jsPDF and pdf-lib each cost 300-400KB for one page holding one image. |
@@ -212,6 +216,14 @@ Nothing in this section exists, and all of it depends on frames.
 | Export selection vs. document | **Partial** | A **frame** can be exported on its own, at its own declared size, resolved once in the service so all three formats agree on what is in it. Exporting an arbitrary *selection* is still not offered, though `ExportOptions.selectedOnly` supports it. |
 
 ---
+
+## 14b. Diagrams as code
+
+| Item | Status | Notes |
+| --- | --- | --- |
+| Mermaid → objects | **Shipped** | Flowcharts (`flowchart` / `graph`) parsed into real shapes and connectors, never an SVG — a diagram you cannot drag a box out of is a screenshot with extra steps, and that is also why the `mermaid` package is not a dependency: it is over a megabyte and renders the one thing this must not produce. All eight bracket shapes, both edge-label syntaxes, dotted/thick/headless links, and `style`/`classDef`/`class` directives (direct beats class). Layout is layered Sugiyama — longest-path ranking with cycles broken by DFS first, because a retry loop is an ordinary thing for a flowchart to contain and ranking on its back edge pushes the decision below its own branches. |
+| Objects → Mermaid | **Shipped** | Any selection, not only generated diagrams — a flowchart drawn box by box is where getting code out is worth the most. Offered from the right-click menu on a **group**, since grouping is the only signal a person can give that a set of objects is one diagram. Keys are re-derived rather than trusted, so a duplicated box cannot share an identifier. Where the selection also holds notes or images, the menu **says how many objects will be left out** rather than dropping them silently: Mermaid describes boxes and arrows, and no amount of trying changes that. |
+| Other diagram types | **Absent** | Sequence, class, state and Gantt each have their own layout model and their own primitives — a lifeline is not a shape with a connector. Declined **by name** in the parse result rather than approximated, so the failure says which kind it was. |
 
 ## 15. The product around the canvas
 
@@ -392,9 +404,31 @@ strikethrough and the three-way box resizing have shipped. Vertical alignment
 became real for text nodes on the way: it needs an imposed height to align
 within, which no text node had until `fixed` existed.
 
-**Paragraph spacing, kerning and OpenType remain, and they are one decision
-rather than three** — each is asking to move text off Konva's `Text` and off
-the `<textarea>` overlay. Worth making once and deliberately.
+**The decision this phase kept deferring has been made** (2026-08-18). The three
+remaining items were recorded as "one decision rather than three" because each
+was asking for the same thing: text off a single `Konva.Text` that draws the
+whole string in one call and reports one box.
+
+`engine/text/layout.ts` is that decision. Text is laid out first — wrapping,
+tracking, leading, alignment, ellipsis — and drawn one line at a time, so the
+per-line boxes exist for anything that needs them. It takes an injected
+measurer, which keeps every rule in it runnable without a canvas; the Konva
+probe that supplies real advances lives in `engine/text/measure.ts` alongside
+the font-epoch invalidation, because a layout measured before a webfont arrives
+wrapped against a fallback face and is wrong.
+
+What that unlocked, and what it did not:
+
+- **Paragraph spacing — shipped.** See §9.
+- **The block effects — shipped**, and they were the immediate payoff: the
+  rounded per-line highlight, an outline and a glow are all consumers of the
+  same line boxes. See §7's text rows and `engine/text/highlight.ts`.
+- **SVG export got correct for wrapped text**, which it had never been. See §14.
+- **Kerning and OpenType are still Absent, and are now genuinely two items
+  rather than part of a bundle.** Neither is blocked on architecture any more —
+  the layout path exists and is where they would go. They are blocked on font
+  data: kerning needs pair metrics and OpenType needs a shaping engine, and
+  Canvas2D exposes neither. That is a dependency decision, not a design one.
 
 **Phase 6 — Auto-layout and constraints.** Requires Phase 1 and real nesting
 from Phase 3.

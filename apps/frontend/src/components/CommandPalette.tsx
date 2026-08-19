@@ -2,13 +2,25 @@ import React, { useEffect, useMemo, useRef, useState } from 'react';
 import {
   Clock, Download, Hand, Layers as LayersIcon, MessageSquare, Mic, MousePointer2,
   PenLine, Play, Search, Share2, Sparkles, Square, StickyNote, Type,
+  Code2, HelpCircle,
 } from 'lucide-react';
 import { motion } from 'framer-motion';
 import { provider } from '../engine/document';
+/**
+ * The shared label, not a private copy.
+ *
+ * This file carried its own `objectLabel`, which was `nodeLabel` as it stood
+ * before shapes learned to name themselves by kind. So the Layers panel called
+ * a box "Rectangle" while the palette called the same box "Shape" — two names
+ * for one object, in two surfaces a foot apart. `nodeLabel`'s own header says
+ * it was extracted so exactly that could not happen; the palette was a third
+ * surface that never got the memo.
+ */
+import { nodeLabel } from '../engine/model/nodeLabel';
 import { viewportCenter } from '../engine/presence/PresenceTypes';
 import { useStore } from '../hooks/useStore';
 import { useFocusTrap } from '../hooks/useFocusTrap';
-import { hasText, type AnyNode } from '../engine/model/schema';
+import type { AnyNode } from '../engine/model/schema';
 
 interface CommandPaletteProps {
   onClose: () => void;
@@ -70,14 +82,6 @@ function fuzzyScore(haystack: string, needle: string): number | null {
   return score - h.length * 0.05;
 }
 
-function objectLabel(node: AnyNode): string {
-  if (node.title) return node.title;
-  if (hasText(node)) {
-    const first = (node.text ?? '').trim().split('\n')[0];
-    if (first) return first.slice(0, 60);
-  }
-  return `${node.type.charAt(0).toUpperCase()}${node.type.slice(1)}`;
-}
 
 /**
  * The command surface.
@@ -114,6 +118,8 @@ export const CommandPalette: React.FC<CommandPaletteProps> = ({ onClose, onSelec
       { id: 'select', label: 'Select tool', group: 'Tools', icon: <MousePointer2 size={16} />, shortcut: 'V', perform: run('select') },
       { id: 'hand', label: 'Hand tool', group: 'Tools', icon: <Hand size={16} />, shortcut: 'H', perform: run('hand') },
       { id: 'tidy', label: 'Tidy up canvas', detail: 'Cluster objects by colour', group: 'Tools', icon: <Sparkles size={16} />, perform: run('tidy') },
+      { id: 'diagram', label: 'Diagram from code', detail: 'Write a flowchart in Mermaid — or read a selected one back out', group: 'Tools', icon: <Code2 size={16} />, perform: run('diagram') },
+      { id: 'help', label: 'Keyboard shortcuts & help', group: 'Tools', icon: <HelpCircle size={16} />, shortcut: '?', perform: run('help') },
       { id: 'zoom-fit', label: 'Zoom to fit', detail: 'Frame everything on the canvas', group: 'View', icon: <LayersIcon size={16} />, perform: run('zoom-fit') },
       { id: 'reset-view', label: 'Reset view to origin', group: 'View', icon: <LayersIcon size={16} />, shortcut: '0', perform: run('reset-view') },
 
@@ -163,13 +169,13 @@ export const CommandPalette: React.FC<CommandPaletteProps> = ({ onClose, onSelec
 
     // Canvas objects, searched by their own text content.
     const objectHits = Object.values(objects)
-      .map((node) => ({ node, score: fuzzyScore(objectLabel(node), query) }))
+      .map((node) => ({ node, score: fuzzyScore(nodeLabel(node), query) }))
       .filter((entry): entry is { node: AnyNode; score: number } => entry.score !== null)
       .sort((a, b) => b.score - a.score)
       .slice(0, 8)
       .map(({ node }) => ({
         id: `object-${node.id}`,
-        label: objectLabel(node),
+        label: nodeLabel(node),
         detail: node.createdByName ? `${node.type} · ${node.createdByName}` : node.type,
         group: 'On this canvas',
         icon: TYPE_ICONS[node.type] ?? <Square size={16} />,

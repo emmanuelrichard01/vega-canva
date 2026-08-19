@@ -134,9 +134,18 @@ export const TooltipLayer: React.FC = () => {
     // A tip that would sit above the top of the window flips below its
     // control, which is the same thing every menu does when it runs out of room.
     const flip = tip.side === 'top' && rect.top < EDGE;
-    if (dx !== 0 || flip) {
-      el.style.transform = `${transformFor(flip ? 'bottom' : tip.side)} translateX(${dx}px)`;
-    }
+    /**
+     * Written unconditionally, including when there is nothing to correct.
+     *
+     * This used to run only when a nudge was needed, which leaves the previous
+     * tip's correction in place: React writes `style.transform` from the prop,
+     * and when two tips in a row resolve to the same base string it sees no
+     * change and skips the write — so the imperative `translateX` from the last
+     * one survived onto a tip that did not need it. The result was a tooltip
+     * near the panel's edge sitting somewhere it had never been positioned,
+     * usually half off screen.
+     */
+    el.style.transform = `${transformFor(flip ? 'bottom' : tip.side)} translateX(${dx}px)`;
   }, [tip]);
 
   if (!tip) return null;

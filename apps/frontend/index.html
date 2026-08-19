@@ -2,14 +2,20 @@
 <html lang="en">
   <head>
     <meta charset="UTF-8" />
-    <!-- 2.2KB, generated from the logomark. This was `/favicon.svg`,
-         which is 762KB — a print-scale asset shipped to draw 16 pixels. -->
+    <!-- 2.2KB, generated from the logomark. This replaced a 762KB
+         `/favicon.svg` — a print-scale asset shipped to draw 16 pixels. -->
     <link rel="icon" type="image/png" sizes="64x64" href="/brand/favicon-64.png" />
     <link rel="apple-touch-icon" href="/apple-touch-icon.png" />
     <link rel="manifest" href="/site.webmanifest" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     <title>Vega Studio</title>
-    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;600&family=Caveat:wght@400;600&display=swap" rel="stylesheet">
+    <!-- Caveat only. Inter is self-hosted through `@fontsource-variable/inter`
+         (imported at the top of `index.css`), and asking the CDN for it as
+         well fetched the same family twice — a render-blocking third-party
+         request for bytes already in the bundle, at two static weights where
+         the self-hosted face carries the whole variable axis. -->
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+    <link href="https://fonts.googleapis.com/css2?family=Caveat:wght@400;600&display=swap" rel="stylesheet">
   </head>
   <body>
     <div id="root"></div>

@@ -1,7 +1,7 @@
 import React, { useEffect, useState, useRef } from 'react';
 import { useRoomState } from '../../hooks/useSync';
 import { CollaborationLayer } from './CollaborationLayer';
-import { Moon, Sun, Undo2, Redo2, Share2, Download, EyeOff, History, PanelLeft, MessageSquare, MoreHorizontal, SlidersHorizontal } from 'lucide-react';
+import { Moon, Sun, Undo2, Redo2, Share2, Download, EyeOff, History, PanelLeft, MessageSquare, MoreHorizontal, SlidersHorizontal, HelpCircle } from 'lucide-react';
 import { editor } from '../../engine/api/EditorAPI';
 import { useStore } from '../../hooks/useStore';
 import { Switch } from '../ui/Switch';
@@ -15,6 +15,7 @@ interface Props {
   setIsDarkTheme: (dark: boolean) => void;
   onShareClick: () => void;
   onExportClick?: () => void;
+  onHelpClick?: () => void;
   onHideUi: () => void;
   onToggleTimeline: () => void;
   onToggleComments: () => void;
@@ -24,7 +25,7 @@ interface Props {
   onTogglePanels?: () => void;
 }
 
-export const WorkspaceShell: React.FC<Props> = ({ localTitle, setLocalTitle, onTitleSave, isDarkTheme, setIsDarkTheme, onShareClick, onExportClick, onHideUi, onToggleTimeline, onToggleComments, commentUnread, onTogglePanels }) => {
+export const WorkspaceShell: React.FC<Props> = ({ localTitle, setLocalTitle, onTitleSave, isDarkTheme, setIsDarkTheme, onShareClick, onExportClick, onHelpClick, onHideUi, onToggleTimeline, onToggleComments, commentUnread, onTogglePanels }) => {
   const { status, synced } = useRoomState();
   const [isEditingTitle, setIsEditingTitle] = useState(false);
   const [menuOpen, setMenuOpen] = useState(false);
@@ -297,6 +298,28 @@ export const WorkspaceShell: React.FC<Props> = ({ localTitle, setLocalTitle, onT
               {commentUnread > 9 ? '9+' : commentUnread}
             </span>
           )}
+        </button>
+
+        {/* Help, beside the other global actions rather than floating over the
+            board.
+
+            The two obvious homes were both wrong. Bottom-right is the
+            convention, and it is where the Properties panel lives. Bottom-left
+            already holds the Radar, and the one corner reserved for persistent
+            canvas chrome should not gain a second meaning. The header is where
+            everything that is about the *session* rather than the drawing
+            already sits — Export, Share, history — and help belongs with those.
+
+            Kept as an icon with no label: it is the one control here nobody
+            needs to read to recognise. */}
+        <button
+          className="hdr-export"
+          onClick={() => onHelpClick?.()}
+          aria-label="Keyboard shortcuts and help"
+          data-tooltip="Shortcuts & help"
+          data-tooltip-pos="bottom"
+        >
+          <HelpCircle size={15} />
         </button>
 
         <span className="hdr-divider" style={{ width: 1, height: 22, background: 'var(--border-divider)' }} />

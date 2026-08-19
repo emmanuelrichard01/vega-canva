@@ -4,6 +4,7 @@ import type { AnyNode } from '../model/schema';
 import { nanoid } from 'nanoid';
 import { provider, type NewNodeInput } from '../document';
 import { cameraSystem } from '../CameraSystem';
+import { engineEvents } from '../EventBus';
 
 export class EditorAPI {
   // --- Document Mutations --- //
@@ -101,9 +102,14 @@ export class EditorAPI {
     cameraSystem.y = -allBounds.minY + 50;
     cameraSystem.zoom = Math.min(window.innerWidth / (w + 100), window.innerHeight / (h + 100));
     
-    import('../EventBus').then(({ engineEvents }) => {
-      engineEvents.emit('CameraChanged', cameraSystem);
-    });
+    // Static import, and emitted synchronously with the camera write above.
+    // This was a dynamic `import()`, which bought no code splitting — six
+    // other modules import EventBus statically, so the chunk is already in
+    // the graph and the bundler said so — and cost correctness: the camera
+    // moved now while `CameraChanged` fired a microtask later, so anything
+    // reading the camera in that gap saw the new position with no notice
+    // that it had changed.
+    engineEvents.emit('CameraChanged', cameraSystem);
   }
 
   // --- Utilities --- //

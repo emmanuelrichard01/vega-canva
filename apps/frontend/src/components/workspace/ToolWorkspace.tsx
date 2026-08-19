@@ -1,10 +1,11 @@
 import React, { useCallback, useEffect, useRef, useState } from 'react';
-import { MousePointer2, Hand, Pen, PenTool as PenToolIcon, Type, Square, StickyNote, MessageSquare, ImageIcon, Mic, Sparkles, Frame, Eraser } from 'lucide-react';
+import { MousePointer2, Hand, Pen, PenTool as PenToolIcon, Type, Square, StickyNote, MessageSquare, ImageIcon, Mic, Sparkles, Frame, Eraser, Workflow, MoreVertical, TextQuote } from 'lucide-react';
 import { Spline } from 'lucide-react';
 import { isForceTool } from '../../engine/physics/forces';
 import { FRAME_PRESETS, FRAME_PRESET_GROUPS } from '../../engine/model/frames';
-import { ShapeIcon, SHAPE_KINDS, SHAPE_LABELS, shapeToolId, shapeKindFromToolId } from './shapeIcons';
+import { ShapeIcon, LINE_KINDS, SHAPE_KINDS, SHAPE_LABELS, shapeToolId, shapeKindFromToolId, type ShapePreset } from './shapeIcons';
 import { shortcutFor } from '../../engine/tools/shortcuts';
+import { DEMO_LENGTHS } from '../../engine/text/demoText';
 import { useStore } from '../../hooks/useStore';
 
 /**
@@ -193,19 +194,47 @@ const NibSize: React.FC<{
 
 interface Props {
   activeToolId: string;
+  /** Open the Mermaid editor. Not a tool — it makes objects and hands back. */
+  onOpenDiagram?: () => void;
+  /** Drop a placeholder paragraph of roughly this many words. */
+  onAddTextBlock?: (words: number) => void;
 }
 
 /** Left-to-right order of the dock, and so the order the arrow keys walk it. */
 const SEAT = {
   select: 0, hand: 1,
   draw: 2, eraser: 3,
-  text: 4, shape: 5, frame: 6, connector: 7, sticky: 8, comment: 9,
-  image: 10, audio: 11,
-  forces: 12,
+  text: 4, block: 5, shape: 6, line: 7, frame: 8, connector: 9, sticky: 10,
+  image: 11, audio: 12, forces: 13,
+  more: 14,
 } as const;
 
 
-export const ToolWorkspace: React.FC<Props> = ({ activeToolId }) => {
+export const ToolWorkspace: React.FC<Props> = ({ activeToolId, onOpenDiagram, onAddTextBlock }) => {
+  /** What the drawer holds, as data — the menu and the seat's icon read it. */
+  const EXTRA_TOOLS: Array<{
+    id: string;
+    icon: React.ReactNode;
+    label: string;
+    description: string;
+    isActive: (tool: string) => boolean;
+    run: () => void;
+  }> = [
+    {
+      id: 'comment', icon: <MessageSquare size={16} />, label: 'Comment',
+      description: 'pin a note to a point or an object',
+      isActive: (t) => t === 'comment', run: () => setTool('comment'),
+    },
+    {
+      id: 'diagram', icon: <Workflow size={16} />, label: 'Diagram from code',
+      description: 'write a flowchart in Mermaid',
+      // Never "active": it opens a dialog and hands control straight back.
+      isActive: () => false, run: () => onOpenDiagram?.(),
+    },
+  ];
+  const activeExtra = EXTRA_TOOLS.find((entry) => entry.isActive(activeToolId));
+
+
   const penSize = useStore((s) => s.penSize);
   const setPenSize = useStore((s) => s.setPenSize);
   const lastForce = useStore((s) => s.lastForce);
@@ -221,7 +250,7 @@ export const ToolWorkspace: React.FC<Props> = ({ activeToolId }) => {
    * these buttons simply could not be reached. One piece of state rather than
    * a pair per menu also guarantees only one can ever be open.
    */
-  type DockMenu = 'pen' | 'shape' | 'frame' | 'eraser';
+  type DockMenu = 'pen' | 'shape' | 'line' | 'frame' | 'eraser' | 'block' | 'more';
   const [pinnedMenu, setPinnedMenu] = useState<DockMenu | null>(null);
   const [hoveredMenu, setHoveredMenu] = useState<DockMenu | null>(null);
   const openMenu = pinnedMenu ?? hoveredMenu;
@@ -293,8 +322,33 @@ export const ToolWorkspace: React.FC<Props> = ({ activeToolId }) => {
     setPinnedMenu(null);
   };
 
-  const isShape = activeToolId.startsWith('shape');
   const armedShape = shapeKindFromToolId(activeToolId);
+  /**
+   * Which of the two the seat wears when neither is armed.
+   *
+   * Local state rather than the store: it is a memory of a *gesture*, not a
+   * fact about the board, so it should not sync to anyone else or survive into
+   * a document. The same reasoning `lastForce` follows, one level down.
+   */
+  const [lastLine, setLastLine] = useState<ShapePreset>('arrow');
+  /**
+   * The two seats both hold `shape-*` tool ids, so neither can claim the whole
+   * prefix — the Shape seat lit up while a line was armed until this split the
+   * two apart by *which* preset is in hand.
+   */
+  const armedLine = armedShape && LINE_KINDS.includes(armedShape) ? armedShape : null;
+  /**
+   * The preset the *Shape* seat wears — never a line.
+   *
+   * `armedShape` resolves every preset now, including the two that moved to
+   * their own seat, so using it directly made the Shape button change its glyph
+   * to a line whenever the line tool was armed. The highlight was fixed and the
+   * icon was not, which is arguably the more confusing half: the seat looked
+   * like it held something it did not.
+   */
+  const armedBoxShape = armedShape && !armedLine ? armedShape : null;
+  const isShape = activeToolId.startsWith('shape') && !armedLine;
+  const isLine = Boolean(armedLine);
   const isFrame = activeToolId === 'frame' || activeToolId.startsWith('frame-');
   const isPen = ['pen', 'bezier-pen'].includes(activeToolId);
 
@@ -328,7 +382,7 @@ export const ToolWorkspace: React.FC<Props> = ({ activeToolId }) => {
         />
         <DockButton
           {...seatProps(SEAT.hand)}
-          icon={<Hand size={18} />} label="Hand" toolId="hand"
+          icon={<Hand size={17} />} label="Hand" toolId="hand"
           description="pan the board"
           active={activeToolId === 'hand'} onClick={() => setTool('hand')}
         />
@@ -365,7 +419,7 @@ export const ToolWorkspace: React.FC<Props> = ({ activeToolId }) => {
         <div {...hoverProps('eraser')} className="dock-slot-wrap">
             <DockButton
               {...seatProps(SEAT.eraser)}
-              icon={<Eraser size={18} />} label="Eraser" toolId="eraser"
+              icon={<Eraser size={17} />} label="Eraser" toolId="eraser"
               description="[ and ] resize it"
               active={activeToolId === 'eraser'} hasMenu menuOpen={openMenu === 'eraser'}
               onClick={() => { setTool('eraser'); toggleMenu('eraser'); }}
@@ -385,14 +439,51 @@ export const ToolWorkspace: React.FC<Props> = ({ activeToolId }) => {
       <div className="dock-group">
         <DockButton
           {...seatProps(SEAT.text)}
-          icon={<Type size={18} />} label="Text" toolId="text"
+          icon={<Type size={17} />} label="Text" toolId="text"
           active={activeToolId === 'text'} onClick={() => setTool('text')}
         />
+
+        {/* A block of placeholder prose, at a length you pick.
+
+            Separate from the Text tool rather than a mode of it, because it is
+            a different action: Text arms a tool and waits for a click, this
+            drops a finished object. Folding them together would mean one seat
+            that sometimes arms and sometimes creates, which is the kind of
+            button people stop trusting.
+
+            The copy is readable English rather than lorem ipsum — see
+            `engine/text/demoText.ts` for why that matters here. */}
+        <div {...hoverProps('block')} className="dock-slot-wrap">
+          <DockButton
+            {...seatProps(SEAT.block)}
+            icon={<TextQuote size={17} />} label="Text block"
+            description="drop a paragraph of placeholder copy"
+            active={false}
+            hasMenu
+            menuOpen={openMenu === 'block'}
+            onClick={() => toggleMenu('block')}
+          >
+            {openMenu === 'block' && (
+              <Flyout title="Text block" wide>
+                {DEMO_LENGTHS.map((words) => (
+                  <FlyoutItem
+                    key={words}
+                    icon={<TextQuote size={15} />}
+                    label={`${words} words`}
+                    detail={words <= 30 ? 'caption' : words <= 50 ? 'paragraph' : 'body copy'}
+                    active={false}
+                    onClick={() => { setPinnedMenu(null); onAddTextBlock?.(words); }}
+                  />
+                ))}
+              </Flyout>
+            )}
+          </DockButton>
+        </div>
 
         <div {...hoverProps('shape')} className="dock-slot-wrap">
             <DockButton
               {...seatProps(SEAT.shape)}
-              icon={armedShape ? <ShapeIcon kind={armedShape} size={18} /> : <Square size={18} />}
+              icon={armedBoxShape ? <ShapeIcon kind={armedBoxShape} size={18} /> : <Square size={18} />}
               label="Shape" toolId="shape" active={isShape}
               hasMenu menuOpen={openMenu === 'shape'} onClick={() => toggleMenu('shape')}
             >
@@ -422,13 +513,61 @@ export const ToolWorkspace: React.FC<Props> = ({ activeToolId }) => {
             </DockButton>
         </div>
 
+        {/* Line and arrow, paired the way the pencil and the pen are.
+
+            They were entries in the Shape flyout, in a grid of rectangles and
+            polygons, which implied a similarity the tools do not have: every
+            other entry there is drawn by dragging a box, while these are drawn
+            click–move–click, have two ends rather than four corners, and are
+            edited by their endpoints. Same node type in the document, different
+            gesture in the hand — and the dock describes gestures.
+
+            The seat wears whichever of the two was used last, so switching
+            between them costs one click rather than a trip through a menu. */}
+        <div {...hoverProps('line')} className="dock-slot-wrap">
+          <DockButton
+            {...seatProps(SEAT.line)}
+            icon={<ShapeIcon kind={armedLine ?? lastLine} size={18} />}
+            label={SHAPE_LABELS[armedLine ?? lastLine]}
+            description="click to start, click again to finish"
+            active={isLine}
+            hasMenu
+            menuOpen={openMenu === 'line'}
+            onClick={() => toggleMenu('line')}
+          >
+            {openMenu === 'line' && (
+              <Flyout title="Line">
+                <div className="dock-flyout__grid">
+                  {LINE_KINDS.map((kind) => {
+                    const id = shapeToolId(kind);
+                    return (
+                      <button
+                        key={kind}
+                        type="button"
+                        role="menuitemradio"
+                        aria-checked={activeToolId === id}
+                        className={`btn-icon dock-tile ${activeToolId === id ? 'active' : ''}`}
+                        onClick={() => { setLastLine(kind); pick(id); }}
+                        data-tooltip={SHAPE_LABELS[kind]}
+                        aria-label={SHAPE_LABELS[kind]}
+                      >
+                        <ShapeIcon kind={kind} size={17} />
+                      </button>
+                    );
+                  })}
+                </div>
+              </Flyout>
+            )}
+          </DockButton>
+        </div>
+
         {/* Frames. The flyout is a size picker rather than a tool switcher:
             every entry draws a frame, and the one you pick decides what a
             *click* produces. Dragging always sizes it by hand. */}
         <div {...hoverProps('frame')} className="dock-slot-wrap">
             <DockButton
               {...seatProps(SEAT.frame)}
-              icon={<Frame size={18} />} label="Frame" toolId="frame"
+              icon={<Frame size={17} />} label="Frame" toolId="frame"
               description="a bounded region with a size"
               active={isFrame} hasMenu menuOpen={openMenu === 'frame'}
               onClick={() => toggleMenu('frame')}
@@ -468,64 +607,93 @@ export const ToolWorkspace: React.FC<Props> = ({ activeToolId }) => {
             already exist and adds nothing on its own. */}
         <DockButton
           {...seatProps(SEAT.connector)}
-          icon={<Spline size={18} />} label="Connect" toolId="connector"
+          icon={<Spline size={17} />} label="Connect" toolId="connector"
           description="join two objects"
           active={activeToolId === 'connector'} onClick={() => setTool('connector')}
         />
         <DockButton
           {...seatProps(SEAT.sticky)}
-          icon={<StickyNote size={18} />} label="Sticky" toolId="sticky"
+          icon={<StickyNote size={17} />} label="Sticky" toolId="sticky"
           active={activeToolId === 'sticky'} onClick={() => setTool('sticky')}
-        />
-        <DockButton
-          {...seatProps(SEAT.comment)}
-          icon={<MessageSquare size={18} />} label="Comment" toolId="comment"
-          active={activeToolId === 'comment'} onClick={() => setTool('comment')}
         />
       </div>
 
-      {/* Place. Media that comes from outside the canvas rather than being
-          drawn on it. */}
+      {/* Place, and the diagram editor.
+
+          These briefly lived behind an overflow seat. That was the wrong trade:
+          collapsing them bought a shorter dock and cost the thing a dock is
+          for, which is seeing what you can reach. The crowding it was meant to
+          fix turned out to be the *spacing* between groups, not the number of
+          buttons — so the spacing was tuned instead and everything came back
+          into view. */}
       <div className="dock-group">
         <DockButton
           {...seatProps(SEAT.image)}
-          icon={<ImageIcon size={18} />} label="Image" toolId="image"
+          icon={<ImageIcon size={17} />} label="Image" toolId="image"
           active={activeToolId === 'image'} onClick={() => setTool('image')}
         />
         <DockButton
           {...seatProps(SEAT.audio)}
-          icon={<Mic size={18} />} label="Voice" toolId="audio"
+          icon={<Mic size={17} />} label="Voice" toolId="audio"
           description="record a spoken note"
           active={activeToolId === 'audio'} onClick={() => setTool('audio')}
         />
+        {/* Force sits with these rather than alone. It had its own group on the
+            grounds that it acts on what is already there instead of adding
+            anything — true, and too fine a distinction to spend a divider on:
+            placing media and applying a force are both "do something to the
+            board" rather than "draw on it", which is the split the eye is
+            actually reading. */}
+        <DockButton
+          {...seatProps(SEAT.forces)}
+          icon={<Sparkles size={17} />} label="Forces"
+          description="push, pull and drop objects"
+          active={isForceTool(activeToolId)}
+          onClick={() => pick(lastForce)}
+        />
       </div>
 
-      {/* Force. Its own group: it acts on what is already there rather than
-          adding anything, which is a different kind of verb from every other
-          button on the dock. */}
+      {/* The two that earn a drawer.
+
+          Only two, and that is the whole lesson from the first attempt: five
+          was too many and the dock came out looking sparse. Comment annotates
+          rather than draws, and the diagram editor opens a dialog — neither is
+          a thing anyone holds while working, and neither is missed from the
+          main run.
+
+          The seat is not a generic menu button: when comment is armed it wears
+          the comment glyph, so the dock still answers "what am I holding?"
+          without being opened. Same rule the Shape and Line seats follow. */}
       <div className="dock-group">
-        <div className="dock-slot-wrap">
-            {/* One press, straight into the mode.
-
-                This used to open a flyout of six forces — and the Forces bar
-                then offered the same six, by the same names, a hundred pixels
-                away, the instant you picked one. The menu existed because the
-                forces were once reachable only by hovering, which was
-                undiscoverable with a mouse and impossible on a touch device.
-                The bar solved that properly: it is unmissable, it names every
-                force, and it is where you already are while using them.
-
-                So the dock arms the mode with whatever you used last, and the
-                choosing happens in the one place that owns it. */}
-            <DockButton
-              {...seatProps(SEAT.forces)}
-              icon={<Sparkles size={18} />} label="Forces"
-              description="push, pull and drop objects"
-              active={isForceTool(activeToolId)}
-              onClick={() => pick(lastForce)}
-            />
+        <div {...hoverProps('more')} className="dock-slot-wrap">
+          <DockButton
+            {...seatProps(SEAT.more)}
+            icon={activeExtra ? activeExtra.icon : <MoreVertical size={18} />}
+            label={activeExtra ? activeExtra.label : 'More'}
+            description={activeExtra ? activeExtra.description : 'comments and diagrams'}
+            active={Boolean(activeExtra)}
+            hasMenu
+            menuOpen={openMenu === 'more'}
+            onClick={() => toggleMenu('more')}
+          >
+            {openMenu === 'more' && (
+              <Flyout title="More" wide>
+                {EXTRA_TOOLS.map((entry) => (
+                  <FlyoutItem
+                    key={entry.id}
+                    icon={entry.icon}
+                    label={entry.label}
+                    description={entry.description}
+                    active={entry.isActive(activeToolId)}
+                    onClick={() => { setPinnedMenu(null); entry.run(); }}
+                  />
+                ))}
+              </Flyout>
+            )}
+          </DockButton>
         </div>
       </div>
+
     </div>
   );
 };

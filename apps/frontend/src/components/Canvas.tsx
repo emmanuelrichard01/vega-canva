@@ -14,7 +14,7 @@ import { PathEditor, deletePickedAnchor } from './canvas/PathEditor';
 import { pathEdit } from '../engine/interaction/pathEdit';
 import { RULER_SIZE, Rulers } from './canvas/Rulers';
 import { tickStep } from '../engine/interaction/rulerTicks';
-import { SHAPE_KINDS } from './workspace/shapeIcons';
+import { ALL_SHAPE_PRESETS } from './workspace/shapeIcons';
 import { ObjectRenderer } from "./ObjectRenderer";
 import { PresenceRenderer } from "../engine/presence/PresenceRenderer";
 import { presenceManager } from "../engine/presence/PresenceManager";
@@ -57,6 +57,9 @@ import { cameraSystem } from '../engine/CameraSystem';
 import { useVisibleSet } from '../engine/useVisibleSet';
 import { DEFAULT_TYPOGRAPHY } from '../engine/model/schema';
 import { SelectionTransformer } from './canvas/SelectionTransformer';
+import { LineEditor } from './canvas/LineEditor';
+import { isLineLike } from '../engine/model/lineEnds';
+import type { ShapeNode } from '../engine/model/schema';
 import { CropOverlay } from './canvas/CropOverlay';
 import { cropMode } from '../engine/interaction/cropMode';
 import { textEditing } from '../engine/interaction/textEditing';
@@ -67,6 +70,8 @@ interface CanvasProps {
   activeTool: string;
   selectedIds: string[];
   setSelectedIds: React.Dispatch<React.SetStateAction<string[]>>;
+  /** Right-click on the board. Resolved here, shown by `Room`. */
+  onRequestContextMenu?: (target: { x: number; y: number; ids: string[] }) => void;
 }
 
 export const navigateToViewport = (x: number, y: number, zoom: number) => {
@@ -74,7 +79,7 @@ export const navigateToViewport = (x: number, y: number, zoom: number) => {
 };
 
 
-export const Canvas: React.FC<CanvasProps> = ({ activeTool, selectedIds, setSelectedIds }) => {
+export const Canvas: React.FC<CanvasProps> = ({ activeTool, selectedIds, setSelectedIds, onRequestContextMenu }) => {
   const stageRef = useRef<Konva.Stage>(null);
   const containerRef = useRef<HTMLDivElement>(null);
   /**
@@ -961,9 +966,17 @@ export const Canvas: React.FC<CanvasProps> = ({ activeTool, selectedIds, setSele
   const toolManager = useMemo(() => {
     const tm = new ToolManager({ editor, camera: cameraSystem, setOverlayState });
     tm.registerTool(new SelectTool());
-    // Driven by the same list the dock renders from, so a preset added there
-    // is registered here rather than silently doing nothing when picked.
-    SHAPE_KINDS.forEach((preset) => tm.registerTool(new ShapeTool(preset)));
+    /**
+     * Every preset, across both dock seats.
+     *
+     * This read `SHAPE_KINDS`, which was the whole list until line and arrow
+     * moved to a seat of their own — at which point those two stopped being
+     * registered and picking either armed a tool id that did not exist. The
+     * dock lit up, the cursor changed, and clicking the board did nothing at
+     * all. `ALL_SHAPE_PRESETS` is the union, and is what the resolver reads too,
+     * so a preset cannot be offered by a seat and missing from the manager.
+     */
+    ALL_SHAPE_PRESETS.forEach((preset) => tm.registerTool(new ShapeTool(preset)));
     tm.registerTool(new TextTool());
     tm.registerTool(new ConnectorTool());
     tm.registerTool(new StickyTool());
@@ -1188,6 +1201,67 @@ export const Canvas: React.FC<CanvasProps> = ({ activeTool, selectedIds, setSele
         onMouseUp={handleMouseUp}
         onTouchEnd={handleMouseUp}
         onMouseLeave={handleMouseLeave}
+        /**
+         * Right-click opens the board's own menu.
+         *
+         * `preventDefault` on the native event, or Chrome shows its own menu on
+         * top of ours — and the browser's has nothing on it that applies to a
+         * canvas. Which object was under the pointer is resolved here rather
+         * than in the menu: the stage already knows, and asking again from
+         * screen coordinates would be a second hit test that could disagree
+         * with the one that drew the selection.
+         */
+        onContextMenu={(e) => {
+          e.evt.preventDefault();
+          /**
+           * Walk up until an ancestor carries a node id.
+           *
+           * A click lands on whatever leaf is under it — a `Path`, a `Text`, one
+           * stroke of a sketch — and only the object's outermost `Group` carries
+           * the id. Checking the target and one parent covered the simple
+           * renderers and missed anything nested deeper, which is every sketched
+           * shape and every labelled line: right-clicking one gave the
+           * empty-board menu while plainly being on top of an object.
+           */
+          let cursor: { id?: () => string; getParent?: () => unknown } | null = e.target;
+          let underPointer: string | null = null;
+          for (let depth = 0; cursor && depth < 8; depth++) {
+            const id = cursor.id?.();
+            if (id && objects[id]) {
+              underPointer = id;
+              break;
+            }
+            cursor = (cursor.getParent?.() ?? null) as typeof cursor;
+          }
+          // Right-clicking something outside the current selection selects it
+          // first, which is what every editor does — acting on a hidden
+          // selection is how a menu deletes the wrong thing.
+          /**
+           * Right-clicking one member of a group targets the whole group.
+           *
+           * The left-click path already does this; the menu did not, so a
+           * grouped flowchart right-clicked on one of its boxes offered actions
+           * for that box alone. Grouping is the clearest signal a person can
+           * give that a set of objects is one thing — it is the answer to "how
+           * does the canvas know this is a diagram" — so the menu has to read
+           * it the same way selection does.
+           */
+          const grouped = (id: string): string[] => {
+            const node = objects[id];
+            if (!node?.parentId) return [id];
+            return Object.values(objects)
+              .filter((o) => o.parentId === node.parentId)
+              .map((o) => o.id);
+          };
+
+          const ids = underPointer
+            ? selectedIds.includes(underPointer)
+              ? selectedIds
+              : grouped(underPointer)
+            : [];
+          if (underPointer && !selectedIds.includes(underPointer)) setSelectedIds?.(ids);
+          onRequestContextMenu?.({ x: e.evt.clientX, y: e.evt.clientY, ids });
+        }}
         draggable={false} // Disable Konva dragging. We will pan manually, or let Spacebar trigger pan in mouse events.
       >
         <Layer>
@@ -1250,6 +1324,16 @@ export const Canvas: React.FC<CanvasProps> = ({ activeTool, selectedIds, setSele
           {!croppingId && !editingPathId && !editingTextId && (
             <SelectionTransformer selectedIds={selectedIds} stageRef={stageRef} />
           )}
+
+          {/* A line is edited at its two ends. The transformer stands down for
+              a solo line — see its own note — so exactly one set of handles is
+              ever on screen. */}
+          {!croppingId && !editingPathId && !editingTextId && selectedIds.length === 1 && (() => {
+            const only = objects[selectedIds[0]];
+            return only && isLineLike(only) ? (
+              <LineEditor node={only as ShapeNode} stageScale={cameraSystem.zoom} />
+            ) : null;
+          })()}
 
           {/* Above the transformer's slot so its handles are never buried
               under a selection outline drawn afterwards. */}

@@ -97,17 +97,35 @@ One canonical shape per node type, governed by two rules:
 2. **`geometry` is form; `appearance` is paint.** Nothing lives in both.
 
 ```ts
-BaseNode   x, y, width, height, rotation, scaleX, scaleY, opacity,
-           zIndex, parentId?, locked, hidden, title?,
-           createdBy, createdByName?, createdByColor?, createdAt, updatedAt
+BaseNode      x, y, width, height, rotation, scaleX, scaleY, opacity,
+              zIndex, parentId?, frameId?, locked, hidden, material?, title?,
+              createdBy, createdByName?, createdByColor?, createdAt, updatedAt
 
-TextNode   text, typography, autoHeight
-ShapeNode  geometry{kind}, appearance{fill,stroke,shadow,cornerRadius}, text?, typography?
-StickyNode text, theme, fontSize, author, reactions, tags, pinned
-PathNode   geometry{kind:'freehand'|'bezier', …}, appearance
-ImageNode  src, appearance, crop?, filters?
-AudioNode  src, durationMs, waveform, author, transcript?
+TextNode      text, typography, resize, appearance?
+ShapeNode     geometry{kind, points?, innerRatio?, endStart?, endEnd?, endScale?},
+              appearance, text?, typography?
+StickyNode    text, theme, fontSize, author, reactions, tags, pinned
+PathNode      geometry{kind:'freehand'|'bezier'|'compound', …}, appearance
+ImageNode     src, naturalWidth?, naturalHeight?, appearance, crop?, filters?
+AudioNode     src, durationMs, waveform, author, transcript?
+FrameNode     appearance, safeArea?, layout?
+ConnectorNode from, to, routing, appearance?, endStart?, endEnd?, endScale?, label?
+CommentNode   text, author, resolved
 ```
+
+`parentId` and `frameId` answer different questions and are deliberately not
+the same field: `parentId` is a synthetic id shared by the members of a group
+and belonging to no node, while `frameId` names a real frame node. An object
+can be in a group *and* in a frame.
+
+`TextNode.resize` is `'width' | 'height' | 'fixed'`. It replaced `autoHeight`,
+which could only express two of those three states and was read by nothing;
+`SCHEMA_VERSION` is 3 so the migration deletes the old key rather than leaving
+the normalizer to ignore it.
+
+`ConnectorNode` is the one type whose geometry is **derived rather than
+stored** — `from`/`to` hold node ids and a side, and the points are recomputed
+on every read from wherever those objects now are.
 
 `typography` keeps `fontWeight` and `italic`/`underline` as separate orthogonal
 fields. Konva wants them combined into a single `fontStyle` string; that
@@ -183,6 +201,34 @@ the full reasoning.
 
 Every object has a **material** — Feather, Paper, Rubber, Wood or Stone — chosen
 in the Properties panel, deciding how far it carries and how hard it bounces.
+
+### Diagrams as code — `engine/diagram/`
+
+Mermaid flowcharts in and out. The text is parsed into the canvas's own
+vocabulary — shapes and connectors — rather than handed to the `mermaid`
+package, which renders an SVG. That matters: an SVG is one opaque picture on a
+canvas whose entire point is that everything on it is editable, and it is also
+why the dependency is not worth over a megabyte.
+
+| Module | Responsibility |
+| --- | --- |
+| `mermaid.ts` | The parser and the emitter. Bracket shapes, both edge-label syntaxes, `style`/`classDef` directives. Pure. |
+| `layout.ts` | Layered (Sugiyama) placement — cycles broken first, then longest-path ranking, then barycentre ordering. Pure. |
+| `build.ts` | Graph to canvas nodes, and any selection back to source. |
+
+Connectors store the **ids** of what they join and recompute their route on
+every read, so a generated diagram survives being rearranged by hand — drag a
+box and the arrows follow, because they were never told where it was.
+
+### Text — `engine/text/`
+
+Text is laid out before it is drawn, rather than handed whole to one
+`Konva.Text`. `layout.ts` produces positioned line boxes — wrapping, tracking,
+leading, paragraph spacing, alignment, ellipsis — from an injected measurer, so
+every rule in it runs under test without a canvas. The line boxes are what made
+four separate features possible at once: paragraph spacing, the per-line
+highlight ribbon, honest vertical alignment, and putting the caret where you
+clicked.
 
 ### Export — `engine/export/`
 
@@ -554,6 +600,8 @@ apps/
         export/      exporter registry
         presence/    awareness state: one writer, one reader, one frame loop
                      + the radar's projection and painter
+        diagram/     Mermaid in and out — parser, layered layout, builder
+        text/        layout, measurement, the highlight ribbon, demo copy
         physics/     the simulation, force specs, shared in-flight state
         history/     session timeline for Time Travel
         interaction/ grid snapping
@@ -563,7 +611,7 @@ apps/
         workspace/   header, tool dock, presence avatars
         ui/          primitives (Switch, NumberStepper, colour picker, …)
       hooks/         store, sync binding, breakpoints, focus trap, virtualization
-      utils/         layout, offline media queue, path simplifier
+      utils/         spatial layout, offline media queue, endpoints, materials
   server/
     src/             Express + Hocuspocus, S3 uploads, snapshots, retention
 docs/                architecture notes, data model, PRD, build plan

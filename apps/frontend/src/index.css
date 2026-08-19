@@ -2007,7 +2007,7 @@ textarea:focus-visible {
   display: flex;
   align-items: center;
   gap: 4px;
-  padding: 6px 8px;
+  padding: 5px 7px;
   border-radius: var(--radius-lg);
   z-index: 100;
   /* The dock must never clip its own children.
@@ -2381,7 +2381,11 @@ textarea:focus-visible {
   position: fixed;
   z-index: 10000;
   padding: 5px 9px;
-  max-width: 260px;
+  /* Never wider than the window it has to fit inside. A fixed 260px tip
+     anchored beside a control in the right-hand panel had nowhere to go: it
+     wrapped, then ran past the edge, and the clamp could only slide a box that
+     was already too wide for the space. */
+  max-width: min(260px, calc(100vw - 32px));
   border: 1px solid var(--border-divider);
   border-radius: var(--radius-sm);
   background: var(--surface-elevated);
@@ -4011,17 +4015,37 @@ textarea:focus-visible {
 
    The rhythm is the fix — 2px inside a group, 10px between groups — so the eye
    parses the clusters without a divider between every button. */
-.tool-dock { gap: 10px; }
+/* The gap *between* groups, and it is deliberately much larger than the gap
+   within one. That ratio is the only thing doing the grouping — the dividers
+   are a second, quieter signal — and at 10px against 2px it was far too weak
+   to read as separation at a glance: the dock looked like one long row with
+   faint lines in it rather than four runs of related tools. */
+.tool-dock { gap: 8px; }
 
 .dock-group {
   display: flex;
   align-items: center;
-  gap: 2px;
+  /* Enough that two buttons are distinct objects, tight enough that they
+     still read as one group. */
+  gap: 4px;
 }
 
 /* Was `style={{ padding: '6px' }}` repeated on all twelve buttons. One number
    in one place, so the dock cannot end up with two button sizes in it. */
-.tool-dock .dock-btn { padding: 6px; }
+.tool-dock .dock-btn { padding: 7px; }
+
+/* The overflow seat is a peer of the tools, not a menu affordance bolted on
+   the end, so it gets no special treatment beyond a hairline that says the
+   run has finished. A chevron or a plus here would claim it does something
+   different from the buttons beside it, and it does not — it arms a tool. */
+.dock-group + .dock-group::before {
+  content: '';
+  align-self: center;
+  width: 1px;
+  height: 20px;
+  margin-right: 8px;
+  background: var(--border-divider);
+}
 
 /* The active tool carries real weight. A tint that matches hover means the
    dock cannot answer "what am I holding?" without moving the mouse away.
@@ -5413,9 +5437,15 @@ body[data-rulers='off'] {
    it. That is read as clutter long before it can be named. */
 .prop-row {
   display: grid;
-  grid-template-columns: 76px minmax(0, 1fr);
+  /* 88px, not 76px. The narrower column truncated the labels this panel
+     actually uses — Alignment, Paragraph, Backdrop, Highlight — so the column
+     was a row of ellipses that each hid the one word that identified the
+     control. 88px clears the longest label in the panel at 11px without
+     taking width from the controls, which are the part that has to stay
+     usable at the panel's narrowest. */
+  grid-template-columns: 88px minmax(0, 1fr);
   align-items: center;
-  gap: 8px;
+  gap: 10px;
   min-height: 28px;
 }
 
@@ -5423,7 +5453,9 @@ body[data-rulers='off'] {
   font-size: var(--text-xs);
   color: var(--text-secondary);
   /* Truncates rather than wrapping: a label that goes to two lines drags its
-     control off the row's centre line and breaks the column's rhythm. */
+     control off the row's centre line and breaks the column's rhythm. The
+     column above is sized so this never actually fires for a shipped label —
+     it is a backstop for translation, not a layout strategy. */
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
@@ -5443,6 +5475,99 @@ body[data-rulers='off'] {
   justify-content: flex-end;
   gap: 6px;
   min-width: 0;
+}
+
+/* ------------------------------------------------- properties sections --- */
+
+/* Sentence case, not uppercase-with-tracking.
+   The headers were 11px bold, uppercase, at 0.1em tracking — which breaks
+   DESIGN.md's rule that tracking is never applied below 16px, and it is not an
+   arbitrary rule: opening up an 11px uppercase run is what makes a dense
+   inspector read as shouty and cramped at the same time. Sentence case at 600
+   is quieter, is what Figma and the Apple inspectors both settled on, and
+   needs no tracking to be legible. */
+.prop-section__title {
+  font-size: var(--text-xs);
+  font-weight: 600;
+  color: var(--text-secondary);
+  letter-spacing: normal;
+}
+
+/* The disclosure header is a button, so it must show focus. It previously
+   relied on the global ring, which the panel's own `overflow` clipped at the
+   section's edge — the offset two-ring treatment needs room the row does not
+   have. An inset ring is drawn inside the header and cannot be clipped. */
+.prop-section__header:focus-visible {
+  outline: 2px solid var(--focus-ring-color);
+  outline-offset: -2px;
+  border-radius: var(--radius-sm);
+}
+
+/* A control whose input has its own `outline: none` shows focus on the wrapper
+   instead. `NumberStepper` sets it inline to stop the browser ring cutting
+   across a stepper's own border, which is reasonable — but nothing replaced
+   it, so the single most-used control in the inspector had no focus state at
+   all. DESIGN.md names this exact failure. */
+.stepper:focus-within {
+  outline: 2px solid var(--focus-ring-color);
+  outline-offset: 1px;
+  border-radius: var(--radius-md);
+}
+
+/* ------------------------------------------------ properties sub-groups --- */
+
+/* An effect and the controls that belong to it.
+
+   The section this exists for was a flat list: a toggle row, then that
+   effect's five detail rows, then the next toggle, all at one indentation. The
+   hairline and the inset are what turn "these belong to that" from something
+   you infer from order into something you can see. */
+.prop-subgroup__body {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  margin: 8px 0 2px 10px;
+  padding-left: 12px;
+  border-left: 1px solid var(--border-divider);
+}
+
+/* ---------------------------------------------------- properties presets --- */
+
+/* The looks, one click each. Wraps rather than scrolls: a horizontal scroller
+   in a 240px panel hides options behind a gesture nobody performs, and there
+   are few enough of these that two rows is the worst case. */
+.prop-presets {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  margin-bottom: 2px;
+}
+
+.prop-preset {
+  font-size: var(--text-2xs);
+  font-weight: 600;
+  color: var(--text-secondary);
+  background: var(--surface-hover);
+  border: 1px solid transparent;
+  border-radius: var(--radius-pill);
+  padding: 4px 10px;
+  cursor: pointer;
+  transition: background var(--motion-hover), color var(--motion-hover),
+    border-color var(--motion-hover);
+}
+
+.prop-preset:hover {
+  color: var(--text-primary);
+  border-color: var(--border-strong);
+}
+
+/* The selected preset takes an *inked* ground, not the accent. It is a filter
+   over looks, not the screen's primary action, and DESIGN.md's One Front Door
+   rule keeps the accent for that. */
+.prop-preset[data-active] {
+  background: var(--text-primary);
+  color: var(--surface-primary);
+  border-color: var(--text-primary);
 }
 
 /* ------------------------------------------------- vertical ruler labels --- */
@@ -7835,4 +7960,419 @@ body[data-zen='physics'] .forces-handle { bottom: 32px; }
 @media (prefers-reduced-motion: reduce) {
   .cp-trigger, .cp-swatch { transition: none; }
   .cp-trigger:hover, .cp-swatch:hover { transform: none; }
+}
+
+/* ================================================== diagram & help modals === */
+
+/* Both sit on `.export-scrim`, which already owns the backdrop and the
+   centring. Reusing it rather than adding a second scrim means one blur, one
+   z-index and one place to change how a modal feels. */
+
+.mermaid-modal,
+.help-modal {
+  display: flex;
+  flex-direction: column;
+  width: min(1040px, 100%);
+  max-height: min(760px, 92vh);
+  overflow: hidden;
+  border-radius: var(--radius-xl);
+  background: var(--surface-primary);
+  box-shadow: var(--shadow-overlay);
+}
+
+.mermaid-modal__head,
+.help-modal__head {
+  display: flex;
+  align-items: center;
+  gap: var(--space-3);
+  padding: var(--space-4) var(--space-5);
+  border-bottom: 1px solid var(--border-divider);
+}
+
+.mermaid-modal__head h2,
+.help-modal__head h2 {
+  flex: 1;
+  margin: 0;
+  font-size: var(--text-lg);
+  font-weight: 600;
+  color: var(--text-primary);
+}
+
+/* --------------------------------------------------------------- mermaid --- */
+
+.mermaid-modal__body {
+  display: grid;
+  /* Code and picture at equal weight. The editor is the thing being worked and
+     the preview is the thing being checked, and neither is secondary — a
+     narrow preview would make it useless for exactly the diagrams that need
+     checking most. */
+  grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
+  gap: var(--space-4);
+  padding: var(--space-4) var(--space-5);
+  min-height: 0;
+  flex: 1;
+}
+
+.mermaid-modal__editor,
+.mermaid-modal__preview {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+  min-height: 0;
+}
+
+.mermaid-modal__label {
+  font-size: var(--text-xs);
+  font-weight: 600;
+  color: var(--text-secondary);
+}
+
+.mermaid-modal__code {
+  flex: 1;
+  min-height: 220px;
+  resize: none;
+  padding: var(--space-3);
+  border: 1px solid var(--border-divider);
+  border-radius: var(--radius-lg);
+  background: var(--surface-secondary);
+  color: var(--text-primary);
+  font-family: var(--font-mono, monospace);
+  font-size: var(--text-sm);
+  line-height: 1.6;
+  tab-size: 4;
+}
+
+.mermaid-modal__code:focus-visible {
+  outline: 2px solid var(--focus-ring-color);
+  outline-offset: 1px;
+  border-color: transparent;
+}
+
+.mermaid-modal__stage {
+  flex: 1;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  min-height: 220px;
+  padding: var(--space-3);
+  border: 1px solid var(--border-divider);
+  border-radius: var(--radius-lg);
+  background: var(--surface-secondary);
+  overflow: hidden;
+}
+
+.mermaid-modal__stage svg {
+  width: 100%;
+  height: 100%;
+  max-height: 100%;
+}
+
+.mermaid-preview__node {
+  fill: var(--surface-primary);
+  stroke: var(--text-primary);
+  stroke-width: 1.5;
+}
+
+.mermaid-preview__edge {
+  stroke: var(--text-tertiary);
+  fill: none;
+}
+
+.mermaid-preview__text {
+  fill: var(--text-primary);
+  font-family: var(--font-sans);
+  font-size: 13px;
+}
+
+.mermaid-modal__empty {
+  margin: 0;
+  max-width: 34ch;
+  text-align: center;
+  font-size: var(--text-base);
+  color: var(--text-secondary);
+}
+
+.mermaid-modal__foot {
+  display: flex;
+  align-items: center;
+  gap: var(--space-3);
+  padding: var(--space-4) var(--space-5);
+  border-top: 1px solid var(--border-divider);
+  background: var(--surface-elevated);
+}
+
+.mermaid-modal__status {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  flex: 1;
+  min-width: 0;
+  font-size: var(--text-xs);
+  color: var(--text-secondary);
+}
+
+/* The failure state is the one thing in this footer anyone needs to read at a
+   glance, so it takes the status colour rather than sitting at the same weight
+   as a count of boxes. */
+.mermaid-modal__status.is-error { color: var(--text-danger, #B42318); }
+
+.mermaid-modal__actions {
+  display: flex;
+  gap: var(--space-2);
+}
+
+/* ------------------------------------------------------------------ help --- */
+
+.help-modal__search {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 5px 10px;
+  border: 1px solid var(--border-divider);
+  border-radius: var(--radius-pill);
+  color: var(--text-tertiary);
+}
+
+.help-modal__search:focus-within { border-color: var(--border-strong); }
+
+.help-modal__search input {
+  width: 180px;
+  border: none;
+  background: transparent;
+  color: var(--text-primary);
+  font-size: var(--text-xs);
+  outline: none;
+}
+
+.help-modal__body {
+  display: grid;
+  grid-template-columns: minmax(0, 2fr) minmax(0, 1fr);
+  gap: var(--space-5);
+  padding: var(--space-5);
+  overflow-y: auto;
+}
+
+/* Two columns of sections, so the whole reference is visible without
+   scrolling on a normal window — a shortcut list you have to scroll is one
+   people close and guess instead. */
+.help-modal__cols {
+  columns: 2;
+  column-gap: var(--space-5);
+}
+
+.help-section {
+  break-inside: avoid;
+  margin-bottom: var(--space-5);
+}
+
+.help-section h3 {
+  margin: 0 0 4px;
+  font-size: var(--text-xs);
+  font-weight: 600;
+  color: var(--text-secondary);
+}
+
+.help-section__blurb {
+  margin: 0 0 8px;
+  font-size: var(--text-xs);
+  line-height: 1.5;
+  color: var(--text-tertiary);
+}
+
+.help-section dl { margin: 0; }
+
+.help-row {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr);
+  align-items: baseline;
+  gap: var(--space-3);
+  padding: 3px 0;
+}
+
+.help-row dt {
+  display: flex;
+  align-items: center;
+  gap: 3px;
+  white-space: nowrap;
+}
+
+.help-row dd {
+  margin: 0;
+  font-size: var(--text-xs);
+  color: var(--text-primary);
+}
+
+.help-row kbd {
+  padding: 2px 6px;
+  border: 1px solid var(--border-divider);
+  border-bottom-width: 2px;
+  border-radius: var(--radius-sm);
+  background: var(--surface-secondary);
+  color: var(--text-secondary);
+  font-family: var(--font-mono, monospace);
+  font-size: var(--text-2xs);
+  line-height: 1.4;
+}
+
+.help-plus {
+  font-size: var(--text-2xs);
+  color: var(--text-tertiary);
+}
+
+.help-tips {
+  border-left: 1px solid var(--border-divider);
+  padding-left: var(--space-5);
+}
+
+.help-tips h3 {
+  margin: 0 0 var(--space-3);
+  font-size: var(--text-xs);
+  font-weight: 600;
+  color: var(--text-secondary);
+}
+
+.help-tip { margin-bottom: var(--space-4); }
+
+.help-tip strong {
+  display: block;
+  margin-bottom: 2px;
+  font-size: var(--text-xs);
+  color: var(--text-primary);
+}
+
+.help-tip p {
+  margin: 0;
+  font-size: var(--text-xs);
+  line-height: 1.55;
+  color: var(--text-secondary);
+}
+
+.help-modal__empty {
+  font-size: var(--text-base);
+  color: var(--text-secondary);
+}
+
+/* One column once the tips would be a sliver, and once two columns of keys
+   would each be too narrow to hold a description on one line. */
+@media (max-width: 900px) {
+  .help-modal__body { grid-template-columns: minmax(0, 1fr); }
+  .help-modal__cols { columns: 1; }
+  .help-tips { border-left: none; padding-left: 0; }
+  .mermaid-modal__body { grid-template-columns: minmax(0, 1fr); }
+}
+
+/* ================================================== canvas context menu === */
+
+.ctxmenu {
+  position: fixed;
+  z-index: 9998;
+  min-width: 208px;
+  padding: var(--space-2);
+  border: 1px solid var(--border-divider);
+  border-radius: var(--radius-lg);
+  background: var(--surface-elevated);
+  box-shadow: var(--shadow-lg);
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
+}
+
+.ctxmenu__item {
+  display: flex;
+  align-items: center;
+  gap: var(--space-3);
+  width: 100%;
+  padding: 6px 8px;
+  border: none;
+  border-radius: var(--radius-md);
+  background: transparent;
+  color: var(--text-primary);
+  font-size: var(--text-xs);
+  text-align: left;
+  cursor: pointer;
+}
+
+.ctxmenu__item:hover:not(:disabled) { background: var(--surface-hover); }
+
+.ctxmenu__item:disabled {
+  opacity: 0.4;
+  cursor: default;
+}
+
+/* Destructive only on hover. Red at rest makes Delete the loudest thing in a
+   menu of eight neutral rows, which is the opposite of the weighting — it is
+   the item people least often want. */
+.ctxmenu__item.is-danger:hover:not(:disabled) {
+  background: var(--danger-quiet, rgba(239, 68, 68, 0.1));
+  color: var(--text-danger, #B42318);
+}
+
+.ctxmenu__icon {
+  display: flex;
+  flex-shrink: 0;
+  color: var(--text-tertiary);
+}
+
+.ctxmenu__item:hover .ctxmenu__icon { color: inherit; }
+
+.ctxmenu__label { flex: 1; min-width: 0; }
+
+.ctxmenu__key {
+  flex-shrink: 0;
+  color: var(--text-tertiary);
+  font-family: var(--font-mono, monospace);
+  font-size: var(--text-2xs);
+}
+
+.ctxmenu__rule {
+  height: 1px;
+  margin: var(--space-2) 4px;
+  background: var(--border-divider);
+}
+
+.ctxmenu__heading {
+  padding: 2px 8px 4px;
+  color: var(--text-secondary);
+  font-size: var(--text-2xs);
+  font-weight: 600;
+}
+
+/* A row of specimens rather than seven more text rows. The difference between
+   these is entirely visual, so showing the shapes is both shorter and a more
+   direct answer than naming them. */
+.ctxmenu__swatches {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 2px;
+  padding: 0 4px 2px;
+}
+
+.ctxmenu__swatch {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 28px;
+  height: 28px;
+  border: 1px solid transparent;
+  border-radius: var(--radius-md);
+  background: transparent;
+  color: var(--text-secondary);
+  cursor: pointer;
+}
+
+.ctxmenu__swatch:hover {
+  background: var(--surface-hover);
+  border-color: var(--border-strong);
+  color: var(--text-primary);
+}
+
+/* A limitation stated where the action is, rather than discovered afterwards.
+   Sized and coloured as a footnote so it explains without competing with the
+   items it belongs to. */
+.ctxmenu__note {
+  margin: 2px 8px 4px;
+  max-width: 210px;
+  font-size: var(--text-2xs);
+  line-height: 1.45;
+  color: var(--text-tertiary);
 }

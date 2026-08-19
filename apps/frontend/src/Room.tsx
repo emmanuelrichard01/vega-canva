@@ -17,7 +17,7 @@ import { ObjectContextToolbar } from './components/ObjectContextToolbar';
 import { PropertiesPanel } from './components/PropertiesPanel';
 import { LayersPanel } from './components/LayersPanel';
 import { useAuth } from './hooks/AuthContext';
-import { doc, provider, metadataMap, undoManager, updateNode, localAuthor, localAuthorId, publishLocalIdentity } from './engine/document';
+import { doc, provider, metadataMap, undoManager, updateNode, deleteNode, applyNodePatches, nextZIndex, lowestZIndex, localAuthor, localAuthorId, publishLocalIdentity } from './engine/document';
 import { useRoomState } from './hooks/useSync';
 import { initSyncBridge, useStore } from './hooks/useStore';
 import { editor } from './engine/api/EditorAPI';
@@ -35,6 +35,14 @@ import { calculateLayout, animateToLayout, type LayoutMode } from './utils/spati
 import { Mic, TriangleAlert, X } from 'lucide-react';
 import { RemoteCursors } from './engine/cursor';
 import { ExportModal } from './components/ui/ExportModal';
+import { MermaidModal } from './components/MermaidModal';
+import { HelpModal } from './components/HelpModal';
+import { CanvasContextMenu, type ContextTarget } from './components/CanvasContextMenu';
+import { parseMermaid } from './engine/diagram/mermaid';
+import { buildDiagram, canEmitDiagram, diagramIdOf, diagramToMermaid } from './engine/diagram/build';
+import { demoBox, demoText } from './engine/text/demoText';
+import { deleteNodesWithFrames } from './engine/interaction/frameMembership';
+import { DEFAULT_TYPOGRAPHY, type AnyNode } from './engine/model/schema';
 import { cameraSystem } from './engine/CameraSystem';
 import { useBreakpoint } from './hooks/useBreakpoint';
 import { CanvasEmptyState } from './components/CanvasEmptyState';
@@ -341,6 +349,287 @@ export default function Room() {
   // shipped feature.
     const [localTitle, setLocalTitle] = useState("Untitled Workspace");
   const [showExportMenu, setShowExportMenu] = useState(false);
+  const [showHelp, setShowHelp] = useState(false);
+  const [diagramOpen, setDiagramOpen] = useState(false);
+  /**
+   * The source the diagram editor opens with.
+   *
+   * Held here rather than derived inside the modal, because *what* it opens
+   * with depends on the selection at the moment it is opened — a flowchart you
+   * have selected becomes its own source, and everything else starts from the
+   * example. Deciding that inside the modal would mean reading the selection
+   * on every render of a dialog whose whole job is to be stable while you type.
+   */
+  const [diagramSource, setDiagramSource] = useState<string | undefined>(undefined);
+  const [diagramReplacing, setDiagramReplacing] = useState<string | null>(null);
+  /**
+   * The exact objects an apply should clear, when there is no diagram id.
+   *
+   * A generated diagram is found by its shared id, but a flowchart drawn by
+   * hand has none — and "edit this as code" on one has to replace *those*
+   * objects, not add a second diagram beside them. Holding the ids covers both
+   * cases without inventing an id for objects the user never asked to tag.
+   */
+  const [diagramReplaceIds, setDiagramReplaceIds] = useState<string[]>([]);
+  const [contextTarget, setContextTarget] = useState<ContextTarget | null>(null);
+
+  /**
+   * Objects copied for an in-app paste.
+   *
+   * Held in a ref rather than state: nothing renders from it, and putting it in
+   * state would re-render the whole room on a copy — which is the one moment
+   * the user is expecting nothing to happen at all.
+   */
+  const clipboardRef = useRef<AnyNode[]>([]);
+
+  /**
+   * What the right-click menu can do.
+   *
+   * Built here rather than inside the menu because every one of these already
+   * exists somewhere in this room — the menu is a second *route* to them, not a
+   * second implementation, and a menu that re-implemented copy would be a copy
+   * that could drift from the keyboard's.
+   */
+  const contextActions = {
+    copy: () => {
+      clipboardRef.current = selectedIds.map((id) => diagramObjects[id]).filter(Boolean);
+    },
+    paste: () => {
+      const at = contextTarget
+        ? cameraSystem.screenToWorld(contextTarget.x, contextTarget.y)
+        : cameraSystem.screenToWorld(window.innerWidth / 2, window.innerHeight / 2);
+      const source = clipboardRef.current;
+      if (source.length === 0) return;
+      // Pasted relative to the click, keeping the group's own arrangement —
+      // stacking them all on the pointer would destroy the thing that made
+      // them worth copying together.
+      const minX = Math.min(...source.map((n) => n.x));
+      const minY = Math.min(...source.map((n) => n.y));
+      const made: string[] = [];
+      doc.transact(() => {
+        source.forEach((node) => {
+          const id = nanoid();
+          made.push(id);
+          editor.createNode({
+            ...(node as unknown as Record<string, unknown>),
+            id,
+            x: at.x + (node.x - minX),
+            y: at.y + (node.y - minY),
+          } as never);
+        });
+      });
+      setSelectedIds(made);
+    },
+    duplicate: () => {
+      const made: string[] = [];
+      doc.transact(() => {
+        selectedIds.forEach((id) => {
+          const node = diagramObjects[id];
+          if (!node) return;
+          const clone = nanoid();
+          made.push(clone);
+          editor.createNode({
+            ...(node as unknown as Record<string, unknown>),
+            id: clone,
+            x: node.x + 20,
+            y: node.y + 20,
+          } as never);
+        });
+      });
+      if (made.length) setSelectedIds(made);
+    },
+    remove: () => {
+      deleteNodesWithFrames(selectedIds);
+      setSelectedIds([]);
+    },
+    bringToFront: () => {
+      const top = nextZIndex();
+      applyNodePatches(selectedIds.map((id, i) => ({ id, changes: { zIndex: top + i } })));
+    },
+    sendToBack: () => {
+      const bottom = lowestZIndex();
+      applyNodePatches(selectedIds.map((id, i) => ({ id, changes: { zIndex: bottom - selectedIds.length + i } })));
+    },
+    selectAll: () => setSelectedIds(Object.keys(diagramObjects)),
+    selectAllOfType: () => {
+      const type = diagramObjects[selectedIds[0]]?.type;
+      if (!type) return;
+      setSelectedIds(Object.values(diagramObjects).filter((n) => n.type === type).map((n) => n.id));
+    },
+    copyPng: () => {
+      void ExportService.copyToClipboard(
+        selectedIds.length ? { selectedOnly: true, selectedIds } : {}
+      );
+    },
+    copySvg: async () => {
+      const blob = await ExportService.render(
+        'svg',
+        selectedIds.length ? { selectedOnly: true, selectedIds } : {}
+      );
+      // SVG is text, so it goes on the clipboard as text — an `image/svg+xml`
+      // clipboard item is refused by most targets, and what people want to do
+      // with it is paste it into an editor anyway.
+      await navigator.clipboard.writeText(await blob.text());
+    },
+    /**
+     * The selection as Mermaid, on the clipboard.
+     *
+     * Reads whatever is selected rather than only what this feature generated —
+     * a flowchart drawn box by box is exactly the case where getting code out
+     * is worth the most, and it is the case a "regenerate from source" check
+     * would have excluded.
+     */
+    copyMermaid: () => {
+      const selected = selectedIds.map((id) => diagramObjects[id]).filter(Boolean);
+      if (!canEmitDiagram(selected)) return;
+      void navigator.clipboard.writeText(diagramToMermaid(selected));
+    },
+    /**
+     * The same source, in the editor instead of the clipboard.
+     *
+     * Applying replaces the objects it came from rather than adding a second
+     * copy beside them, which is what makes this "edit" — the diagram id is
+     * seeded from the selection so `applyDiagram` knows what to clear.
+     */
+    editMermaid: () => {
+      const selected = selectedIds.map((id) => diagramObjects[id]).filter(Boolean);
+      if (!canEmitDiagram(selected)) return;
+      setDiagramSource(diagramToMermaid(selected));
+      setDiagramReplacing(diagramIdOf(selected.find((n) => diagramIdOf(n)) ?? selected[0]) ?? null);
+      setDiagramReplaceIds(selected.map((n) => n.id));
+      setDiagramOpen(true);
+    },
+    swapShape: (kind: string, points?: number) => {
+      applyNodePatches(
+        selectedIds
+          .map((id) => diagramObjects[id])
+          .filter((n): n is AnyNode => Boolean(n) && n.type === 'shape')
+          .map((n) => ({
+            id: n.id,
+            // Size, paint, position and rotation all survive: only the form
+            // changes, which is what makes this a swap and not a redraw.
+            changes: {
+              geometry: {
+                ...(n as unknown as { geometry: Record<string, unknown> }).geometry,
+                kind,
+                ...(points !== undefined ? { points } : {}),
+              },
+            },
+          }))
+      );
+    },
+  };
+  /** The live document, for the diagram round trip. Same source every other consumer here reads. */
+  const diagramObjects = useStore((s) => s.objects);
+
+  /**
+   * Open the diagram editor, seeded from the selection where there is one.
+   *
+   * A selected flowchart opens as its own source and updating replaces it; an
+   * empty selection opens the example and adding creates a new one. The same
+   * button therefore covers "write me a diagram" and "let me edit this
+   * diagram", which are the same intention arriving from two directions.
+   */
+  /**
+   * Drop a paragraph of placeholder copy, sized to itself.
+   *
+   * `resize: 'height'` rather than `fixed`: the box gets the measure that reads
+   * well for that many words and then grows to whatever the text needs, so the
+   * block is never clipped and never has slack under it. Selected on arrival,
+   * because the next thing anyone does with a placeholder is move it or replace
+   * its words.
+   */
+  const addTextBlock = (words: number) => {
+    const box = demoBox(words);
+    const centre = cameraSystem.screenToWorld(window.innerWidth / 2, window.innerHeight / 2);
+    const id = editor.createNode({
+      id: nanoid(),
+      type: 'text',
+      x: Math.round(centre.x - box.width / 2),
+      y: Math.round(centre.y - box.height / 2),
+      width: box.width,
+      height: box.height,
+      text: demoText(words),
+      resize: 'height',
+      typography: { ...DEFAULT_TYPOGRAPHY, fontSize: 16, lineHeight: 1.5 },
+    });
+    setSelectedIds([id]);
+  };
+
+  const openDiagram = () => {
+    const selected = selectedIds.map((id) => diagramObjects[id]).filter(Boolean);
+    const existing = selected.find((n) => diagramIdOf(n));
+    if (existing && canEmitDiagram(selected)) {
+      // Everything sharing this diagram's id, not just what happens to be
+      // selected — you can click one box of a diagram and still edit the whole
+      // thing, which is what anyone would expect that click to mean.
+      const id = diagramIdOf(existing)!;
+      const whole = Object.values(diagramObjects).filter(
+        (n) => diagramIdOf(n) === id
+      );
+      setDiagramSource(diagramToMermaid(whole));
+      setDiagramReplacing(id);
+    } else if (canEmitDiagram(selected)) {
+      // A flowchart drawn by hand has no diagram id, and reading it out as code
+      // is most of the value here — so it seeds the editor without claiming
+      // ownership of the objects it came from.
+      setDiagramSource(diagramToMermaid(selected));
+      setDiagramReplacing(null);
+    } else {
+      setDiagramSource(undefined);
+      setDiagramReplacing(null);
+    }
+    setDiagramReplaceIds(existing || canEmitDiagram(selected) ? selected.map((n) => n.id) : []);
+    setDiagramOpen(true);
+  };
+
+  /**
+   * Turn the editor's source into objects.
+   *
+   * A replace deletes the previous generation first, in the same transaction
+   * as the new one. Two transactions would put an empty board into history
+   * between them, so undo would land on the gap rather than on the diagram —
+   * and every collaborator would watch the diagram vanish and reappear.
+   */
+  const applyDiagram = (source: string) => {
+    const { graph } = parseMermaid(source);
+    if (!graph) return;
+    const origin = cameraSystem.screenToWorld(window.innerWidth / 2, window.innerHeight / 2);
+    const built = buildDiagram(
+      graph,
+      { x: Math.round(origin.x - 200), y: Math.round(origin.y - 140) },
+      diagramReplacing ?? undefined
+    );
+
+    /**
+     * What this apply replaces.
+     *
+     * A generated diagram is cleared by its shared id, which catches every part
+     * of it whether or not it was selected. An explicitly-listed set — from
+     * "Edit as Mermaid" on a hand-drawn flowchart — is cleared as given. The
+     * union rather than one or the other, so editing a generated diagram that
+     * has since had a box added by hand removes both.
+     */
+    const stale = Array.from(
+      new Set([
+        ...(diagramReplacing
+          ? Object.values(diagramObjects)
+              .filter((n) => diagramIdOf(n) === diagramReplacing)
+              .map((n) => n.id)
+          : []),
+        ...diagramReplaceIds,
+      ])
+    );
+
+    doc.transact(() => {
+      stale.forEach((id) => deleteNode(id));
+      built.nodes.forEach((node) => editor.createNode(node));
+    });
+    setSelectedIds(built.nodes.map((n) => String(n.id)));
+    setDiagramReplacing(built.diagramId);
+    // The new generation carries an id, so the explicit list has done its job.
+    setDiagramReplaceIds([]);
+  };
   const [showShareModal, setShowShareModal] = useState(false);
   /**
    * Whether the share sheet has been opened at all this session.
@@ -735,6 +1024,8 @@ export default function Room() {
         break;
 
       case 'tidy': handleOrganize('smart'); break;
+      case 'diagram': openDiagram(); break;
+      case 'help': setShowHelp(true); break;
       case 'zoom-fit': editor.zoomToFit(); break;
       case 'reset-view':
         window.dispatchEvent(new CustomEvent('navigateViewport', { detail: { x: 0, y: 0, zoom: 1 } }));
@@ -823,6 +1114,26 @@ export default function Room() {
         ? { durationMs: 0, waveform: [], author: localAuthor() }
         : { appearance: {} }),
     });
+
+    /**
+     * Select what was just placed.
+     *
+     * Every other tool selects the thing it creates — a new sticky opens ready
+     * to type in, a drawn shape comes back with handles on it. Media was the
+     * one path that created a node and then selected nothing, so an image
+     * arrived on the board inert: no transform handles, no context toolbar,
+     * and nothing in the inspector to round its corners with. It *was*
+     * clickable; it simply did not look like it had landed.
+     *
+     * The first file *replaces* the selection and the rest accumulate onto it,
+     * so dropping six files leaves those six selected — and not also whatever
+     * happened to be selected before the drop. Accumulating matters because
+     * these uploads are async and do not finish in order, so assigning would
+     * leave only whichever landed last.
+     */
+    setSelectedIds((current) =>
+      index === 0 ? [objId] : current.includes(objId) ? current : [...current, objId]
+    );
 
     try {
       const formData = new FormData();
@@ -1085,6 +1396,21 @@ export default function Room() {
     <div className={`app-container ${isDarkTheme ? 'dark-theme' : 'light-theme'}`} style={{ width: '100%', height: '100vh', display: 'flex', flexDirection: 'column', position: 'relative', overflow: 'hidden', background: 'var(--surface-primary)' }}>
       {showShareModal && <ShareModal onClose={() => setShowShareModal(false)} />}
       {showExportMenu && <ExportModal onClose={() => setShowExportMenu(false)} title={localTitle} />}
+      <CanvasContextMenu
+        target={contextTarget}
+        onClose={() => setContextTarget(null)}
+        objects={diagramObjects}
+        actions={contextActions}
+        canPaste={clipboardRef.current.length > 0}
+      />
+      <HelpModal open={showHelp} onClose={() => setShowHelp(false)} />
+      <MermaidModal
+        open={diagramOpen}
+        onClose={() => setDiagramOpen(false)}
+        initialSource={diagramSource}
+        replacing={Boolean(diagramReplacing)}
+        onApply={applyDiagram}
+      />
       
       {/* AUDIO RECORDER HINT — hides once AudioTool's real HUD takes over (isRecording). */}
       {activeTool === 'audio' && !isRecording && (
@@ -1146,6 +1472,7 @@ export default function Room() {
           setIsDarkTheme={setIsDarkTheme}
           onShareClick={() => setShowShareModal(true)}
           onExportClick={() => setShowExportMenu(true)}
+          onHelpClick={() => setShowHelp(true)}
           onHideUi={() => setIsUiVisible(false)}
           onToggleTimeline={() => setShowTimeTravel(v => !v)}
           onToggleComments={() => setShowInbox(v => !v)}
@@ -1267,6 +1594,7 @@ export default function Room() {
           activeTool={activeTool}
           selectedIds={selectedIds}
           setSelectedIds={setSelectedIds}
+          onRequestContextMenu={setContextTarget}
         />
         
         {showTimeTravel && (
@@ -1343,7 +1671,7 @@ export default function Room() {
 
       {/* TOOL WORKSPACE (Dynamic Dock) */}
       {isUiVisible && (
-        <ToolWorkspace activeToolId={activeTool} />
+        <ToolWorkspace activeToolId={activeTool} onOpenDiagram={openDiagram} onAddTextBlock={addTextBlock} />
       )}
 
       {/* Scrim — only while the panels float above the canvas, so tapping the
@@ -1492,7 +1820,7 @@ export default function Room() {
             onMouseEnter={revealDock}
             onMouseLeave={scheduleDockHide}
           >
-            <ToolWorkspace activeToolId={activeTool} />
+            <ToolWorkspace activeToolId={activeTool} onOpenDiagram={openDiagram} onAddTextBlock={addTextBlock} />
           </div>
 
           <button

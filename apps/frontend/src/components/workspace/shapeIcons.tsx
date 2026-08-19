@@ -80,6 +80,18 @@ const PATHS: Record<ShapePreset, React.ReactNode> = {
   arrow: <path d="M4 20 L20 4 M20 4 L13 5 M20 4 L19 11" />,
 };
 
+/**
+ * The shapes the Shape seat offers.
+ *
+ * `line` and `arrow` are **not** here, and that is the point: they are still
+ * `shape` nodes in the document — the model is right — but they are not the
+ * same *gesture*. Every entry below is drawn by dragging a box; a line is drawn
+ * click-move-click, has two ends rather than four corners, and is edited by its
+ * endpoints instead of a bounding box. Sitting them in a grid of rectangles
+ * implied a similarity the tools do not have.
+ *
+ * They have their own dock seat now, paired the way the pencil and the pen are.
+ */
 export const SHAPE_KINDS: ShapePreset[] = [
   'rect',
   'ellipse',
@@ -88,9 +100,10 @@ export const SHAPE_KINDS: ShapePreset[] = [
   'hexagon',
   'octagon',
   'star',
-  'line',
-  'arrow',
 ];
+
+/** The two open runs, which share a seat and switch between each other. */
+export const LINE_KINDS: ShapePreset[] = ['line', 'arrow'];
 
 export const SHAPE_LABELS: Record<ShapePreset, string> = {
   rect: 'Rectangle',
@@ -107,10 +120,20 @@ export const SHAPE_LABELS: Record<ShapePreset, string> = {
 /** `shape-rect` etc. — the ids the ToolManager already registers. */
 export const shapeToolId = (preset: ShapePreset) => `shape-${preset}`;
 
+/**
+ * Every preset, across both dock seats.
+ *
+ * `SHAPE_KINDS` is what the Shape *seat* offers, which stopped being the same
+ * thing as "presets that exist" when line and arrow moved to their own seat.
+ * Resolving a tool id against the seat's list meant `shape-line` resolved to
+ * null — so nothing knew a line was armed, and the Shape seat lit up instead.
+ */
+export const ALL_SHAPE_PRESETS: ShapePreset[] = [...SHAPE_KINDS, ...LINE_KINDS];
+
 /** The armed preset for a tool id, or null when the active tool is not a shape. */
 export function shapeKindFromToolId(toolId: string): ShapePreset | null {
   const kind = toolId.startsWith('shape-') ? toolId.slice('shape-'.length) : null;
-  return kind && (SHAPE_KINDS as string[]).includes(kind) ? (kind as ShapePreset) : null;
+  return kind && (ALL_SHAPE_PRESETS as string[]).includes(kind) ? (kind as ShapePreset) : null;
 }
 
 export const ShapeIcon: React.FC<ShapeIconProps> = ({ kind, size = 18 }) => (

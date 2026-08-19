@@ -57,10 +57,24 @@ export interface EndCapShape {
 }
 
 /** The size of a marker for a given stroke weight. */
-export function endCapSize(strokeWidth: number): number {
-  // Proportional, with a floor: a marker that scales all the way down with a
-  // hairline stroke stops being identifiable as a shape at all.
-  return Math.max(8, strokeWidth * 3.2);
+/** The range the end-size control offers, as a multiple of the derived size. */
+export const MIN_END_SCALE = 0.5;
+export const MAX_END_SCALE = 4;
+
+/**
+ * How big a marker is, from the stroke it terminates and the user's own scale.
+ *
+ * Proportional by default, with a floor: a marker that scales all the way down
+ * with a hairline stroke stops being identifiable as a shape at all.
+ *
+ * `scale` is the part a person controls. Deriving the size from stroke weight
+ * alone is right most of the time and wrong in the two cases people care about
+ * — a diagram whose arrows need to read at a glance across a wall, and a thick
+ * decorative line whose head swamps it. A multiplier keeps the proportional
+ * default and lets those two be fixed without touching the stroke.
+ */
+export function endCapSize(strokeWidth: number, scale = 1): number {
+  return Math.max(8, strokeWidth * 3.2) * scale;
 }
 
 /**

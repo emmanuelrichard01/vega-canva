@@ -19,7 +19,80 @@ export function nodeLabel(node: AnyNode): string {
   // A connector's label is the word riding its middle — "yes", "no", "retry".
   // On a flowchart that is the only thing telling one arrow from the next.
   if (node.type === 'connector' && node.label) return node.label.slice(0, 24);
+  const specific = specificName(node);
+  if (specific) return specific;
   return `${node.type.charAt(0).toUpperCase()}${node.type.slice(1)}`;
+}
+
+/**
+ * The name a shape or a path earns from what it actually is.
+ *
+ * Falling through to the bare type word gave every rectangle, ellipse, star,
+ * line and arrow the same name: **Shape**. A board of a dozen of them is a
+ * dozen identical rows, and the Layers panel — whose entire job is telling one
+ * object from another — could not. The icon says which kind it is, but only if
+ * you already know the icons, and it says nothing at a glance down a list.
+ *
+ * Naming by kind is what every editor does, and it costs nothing: the
+ * information was already on the node and was being thrown away.
+ *
+ * Polygons name their common side counts. A hexagon is a hexagon to everyone;
+ * a nine-sided polygon is a polygon to everyone, and inventing "nonagon" for a
+ * layer list helps nobody.
+ */
+const POLYGON_NAMES: Record<number, string> = {
+  3: 'Triangle',
+  5: 'Pentagon',
+  6: 'Hexagon',
+  7: 'Heptagon',
+  8: 'Octagon',
+};
+
+function specificName(node: AnyNode): string | null {
+  /**
+   * Total, like everything at this layer.
+   *
+   * `geometry` is guaranteed by the normalizer, but this is also called on
+   * nodes that have not been through it — a partially written object mid-sync,
+   * a fixture, a node from an import that has not landed yet. Reading `.kind`
+   * off nothing threw, and the thing that threw was the *Layers panel*, which
+   * is the surface someone would be looking at to work out what was wrong.
+   */
+  const geometry = (node as { geometry?: { kind?: string; points?: number; closed?: boolean } }).geometry;
+  if (!geometry?.kind) return null;
+
+  if (node.type === 'shape') {
+    switch (geometry.kind) {
+      case 'rect':
+        // A rounded rectangle is still a rectangle; the radius is paint, not
+        // identity, and a name that changed when you rounded a corner would
+        // make the list move under the reader.
+        return 'Rectangle';
+      case 'ellipse':
+        return 'Ellipse';
+      case 'star':
+        return 'Star';
+      case 'line':
+        return 'Line';
+      case 'arrow':
+        return 'Arrow';
+      case 'polygon':
+        return POLYGON_NAMES[geometry.points ?? 3] ?? 'Polygon';
+    }
+  }
+  if (node.type === 'path') {
+    switch (geometry.kind) {
+      // What the user *did*, not what it is stored as. Nobody thinks of a
+      // pencil stroke as a freehand geometry.
+      case 'freehand':
+        return 'Drawing';
+      case 'compound':
+        return 'Compound path';
+      case 'bezier':
+        return geometry.closed ? 'Shape path' : 'Path';
+    }
+  }
+  return null;
 }
 
 /**

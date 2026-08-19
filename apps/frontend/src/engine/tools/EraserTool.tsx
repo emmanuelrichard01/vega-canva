@@ -3,7 +3,7 @@ import { Circle } from 'react-konva';
 import { nanoid } from 'nanoid';
 import { getStroke } from 'perfect-freehand';
 import type { Tool, ToolContext } from './Tool';
-import { objectsMap, deleteNode } from '../document';
+import { doc, deleteNode } from '../document';
 import { useStore } from '../../hooks/useStore';
 
 function svgPathFromStroke(stroke: number[][]) {
@@ -156,6 +156,11 @@ export class EraserTool implements Tool {
    */
   private eraseSweep(ctx: ToolContext) {
     const radius = EraserTool.size / ctx.camera.zoom;
+    // One transaction for the whole sweep. Each `deleteNode` used to be its
+    // own, so a single swipe across a dozen objects landed as a dozen document
+    // changes — twelve undo presses to put back one gesture, twelve entries in
+    // the activity feed, and twelve updates broadcast to the room.
+    this.pending = new Set();
     const fromX = this.lastX ?? this.currentX;
     const fromY = this.lastY ?? this.currentY;
     const dx = this.currentX - fromX;
@@ -165,23 +170,61 @@ export class EraserTool implements Tool {
     // Half the radius per step, so consecutive discs overlap and the swept
     // area has no holes in it.
     const steps = Math.max(1, Math.ceil(distance / Math.max(1, radius * 0.5)));
-    for (let i = 1; i <= steps; i += 1) {
-      const t = i / steps;
-      this.eraseAt(ctx, fromX + dx * t, fromY + dy * t, radius);
-    }
+    /**
+     * The whole sweep in one transaction — splits included.
+     *
+     * Erasing across a pen stroke *rewrites* it rather than deleting it, so a
+     * gesture can produce a mix of deletions and geometry edits. Batching only
+     * the deletions would still leave every split as its own document change,
+     * which is the same undo problem one level down.
+     */
+    doc.transact(() => {
+      for (let i = 1; i <= steps; i += 1) {
+        const t = i / steps;
+        this.eraseAt(ctx, fromX + dx * t, fromY + dy * t, radius);
+      }
+      this.pending.forEach((id) => deleteNode(id));
+      this.pending = new Set();
+    });
 
     this.lastX = this.currentX;
     this.lastY = this.currentY;
   }
 
   private eraseAtPointer(ctx: ToolContext) {
-    this.eraseAt(ctx, this.currentX, this.currentY, EraserTool.size / ctx.camera.zoom);
+    this.pending = new Set();
+    doc.transact(() => {
+      this.eraseAt(ctx, this.currentX, this.currentY, EraserTool.size / ctx.camera.zoom);
+      this.pending.forEach((id) => deleteNode(id));
+      this.pending = new Set();
+    });
   }
 
+  /**
+   * Ids gathered during one sweep, deleted together.
+   *
+   * A `Set`, because the sweep steps overlap by design — consecutive discs
+   * share area so the swept region has no holes — and the same object is
+   * therefore found several times in one gesture.
+   */
+  private pending: Set<string> = new Set();
+
   private eraseAt(ctx: ToolContext, cx: number, cy: number, eraserRadius: number) {
-    Array.from(objectsMap.entries()).forEach(([id, objMap]) => {
-      const obj = objMap.toJSON() as any;
+    /**
+     * Read from the store, not from the CRDT.
+     *
+     * This walked `objectsMap.entries()` and called `toJSON()` on every object
+     * — for every *step* of the sweep. A fast swipe is twenty or more steps, so
+     * on a five-hundred-object board one pointer move deserialized ten thousand
+     * nodes. The store already holds every node normalized and cached; reading
+     * it is a property access.
+     */
+    const objects = useStore.getState().objects;
+    Object.entries(objects).forEach(([id, node]) => {
+      const obj = node as any;
       if (obj.locked || obj.hidden) return;
+      // Already condemned by an earlier step of this same sweep.
+      if (this.pending.has(id)) return;
 
       if (obj.type === 'path') {
         if (this.erasePath(ctx, id, obj, cx, cy, eraserRadius)) return;
@@ -191,7 +234,7 @@ export class EraserTool implements Tool {
       }
 
       if (this.hitsObject(obj, cx, cy, eraserRadius)) {
-        deleteNode(id);
+        this.pending.add(id);
       }
     });
   }

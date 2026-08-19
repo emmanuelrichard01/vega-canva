@@ -11,34 +11,41 @@ time, where the work stopped, and what is next.
 
 > ## Read this first
 >
-> **The last session was a long design and product pass, and almost none of it
-> was watched running.** The Chrome extension was unstable throughout and the
-> user's standing instruction became "minimise testing and calling claude in
-> chrome, focus on building faster". Take that seriously — it is the working
-> agreement, not an excuse — but know what it costs: the claims below are
-> backed by typecheck, tests and reading the code, and a handful were backed by
-> a browser before it fell over.
+> **The last session was a long feature pass, driven by the user reporting bugs
+> faster than they could be verified.** The standing instruction is "minimise
+> testing and calling claude in chrome, focus on building faster". Take it
+> seriously — it is the working agreement — but know what it cost here: the
+> user found **six** defects the work did not, and every one was the same
+> shape.
 >
-> **Two bugs in that session were found by the user, not by the work**, and
-> both are the same shape: something correct in the source that never reached
-> the screen, because a *second* gate elsewhere was quietly switched off.
+> **All six were a second list that had fallen out of step with the first.**
 >
-> 1. **A star drew as a block in board thumbnails, twice.** The first fix was
->    real and the report came back unchanged, because previews are cached in
->    `localStorage` and only rewritten when a board is opened. A correct
->    renderer was faithfully drawing a stale summary. Records carry
->    `PREVIEW_VERSION` now (`engine/model/boardPreview.ts`) and a mismatch
->    reads as no record. **If you change the preview shape, bump it.**
-> 2. **Connectors had no colour control in the properties panel.** The registry
->    declared `supportsStroke`, the panel rendered a Stroke section, and
->    `APPEARANCE_TYPES` — a hand-maintained list *inside the panel* — omitted
->    `connector`, so `appearanceOf` returned null and every paint section was
->    gated off. See invariant 7; there is now a test that holds that list
->    against the registry, and it found the bug's shape the moment it existed.
+> 1. Line and arrow moved to their own dock seat, and `SHAPE_KINDS` — the list
+>    `Canvas` registers tools from — lost them. The tools stopped being
+>    *registered at all*: the dock lit up, the cursor changed, clicking did
+>    nothing. The comment above that loop warns about exactly this.
+> 2. The same split left `shapeKindFromToolId` resolving against the seat's
+>    list, so `shape-line` resolved to null and the **Shape** seat claimed it.
+> 3. Fixing that made the resolver answer for *every* preset, so the Shape seat
+>    then wore a **line icon** whenever the line tool was armed.
+> 4. The line preview and the line commit each drew the box's diagonal rather
+>    than the run, so a line drawn up-and-left rendered as the opposite
+>    diagonal — "always stuck at an angle".
+> 5. The sketch branch of `ShapeRenderer` returns before the crisp branch's cap
+>    code, so a **sketched arrow silently lost its head**. It had also grown its
+>    own copy of the label, so a sketched line's label sat in empty space.
+> 6. `CommandPalette` carried a private `objectLabel` — `nodeLabel` as it stood
+>    before shapes learned to name themselves — so the Layers panel said
+>    "Rectangle" and the palette said "Shape" for the same object.
 >
-> The lesson both times: **when a control "exists" but nobody can see it, look
-> for the second gate**, and prefer one source of truth with a test over two
-> lists that agree today.
+> The lesson, and it is invariant 7 again: **when you split a list, grep for
+> every reader of it before you finish.** Each of these was one call site that
+> still pointed at the old half.
+>
+> **What the browser did catch that tests did not**: the Mermaid layout put a
+> retry loop's decision diamond *below* both of its branches, because ranking
+> included the back edge. The cycle test only asserted termination. Cycles are
+> broken by DFS first now, with the failing diagram pinned as a test.
 
 ---
 
@@ -54,8 +61,8 @@ Verify in ~30 seconds:
 
 ```bash
 npx tsc --noEmit -p apps/frontend/tsconfig.app.json   # must be silent
-npx vitest run --root apps/frontend                   # 667 tests, 37 files
-npx oxlint apps/frontend/src                          # 14 cosmetic warnings, exit 0
+npx vitest run --root apps/frontend                   # 729 tests, 41 files
+npx oxlint apps/frontend/src                          # 16 cosmetic warnings, exit 0
 npm run build -w apps/frontend                        # must succeed
 ```
 
@@ -69,9 +76,9 @@ history were vacuous for exactly that reason. Use `tsconfig.app.json`, or
 | --- | --- |
 | Branch | `rebuild/time-travel-and-physics`, nothing pushed, nothing merged |
 | Typecheck | clean |
-| Tests | **667** across 37 files |
-| Lint | exits 0; 14 `only-export-components` warnings, all cosmetic |
-| Build | clean, 1.44MB JS (gzip 452KB) + 111KB CSS (gzip 18KB) — still no code splitting |
+| Tests | **729** across 41 files |
+| Lint | exits 0; 16 `only-export-components` warnings, all cosmetic |
+| Build | clean, 1.51MB JS (gzip 474KB) + 119KB CSS (gzip 19KB) — still no code splitting |
 
 **Read the failing-suite line, not the test count.** Vitest reports a suite
 that failed to *load* separately from tests that failed, so a file that throws
@@ -98,6 +105,7 @@ Recent commits, newest first:
 
 | | |
 | --- | --- |
+| *(uncommitted)* | diagrams as code, the line/arrow rework, the right-click menu, help, text layout |
 | `54697cd` | preview versioning, star/polygon geometry, connector colour in Appearance |
 | `0b83d28` | the colour picker and gradient editor off inline styles |
 | `e0fee09` | ruler/grid toggles, the dot field, focus mode, export, share sheet |
@@ -217,6 +225,39 @@ no stroke alignment, no inner shadow, no shadow spread and no conic or diamond
 gradient — all four are drawn by hand in `ShapeEffects.tsx` and
 `paintPattern.ts`.
 
+## 4a. What this session added
+
+All committed together. The reasoning lives in the code; this is the map.
+
+**Diagrams as code.** `engine/diagram/` — a Mermaid flowchart parser, a layered
+layout, and a builder that produces real shapes and connectors. No `mermaid`
+dependency: it is over a megabyte and renders an SVG, which is the one thing
+this must not produce on a canvas whose point is that everything is editable.
+Reads back out too, from any selection, including one drawn by hand. 26 tests.
+
+**The line and arrow rework.** Drawn click–move–click, edited at their
+endpoints (`engine/model/lineEnds.ts`), Shift constraining to 15° through one
+function shared by both gestures. Six end styles unified with connectors, an
+`endScale` control, sketched caps, and midpoint labels that stay upright and
+contrast-check their own ink.
+
+**A real text layout engine.** `engine/text/layout.ts` replaced one
+`Konva.Text` per node. It is what made paragraph spacing, the per-line
+highlight ribbon, honest vertical alignment and caret-on-click possible — all
+four were blocked on the same missing thing, which was *where each line is*.
+
+**The right-click menu**, the **Help modal**, the **Text block** tool, foldable
+and hideable groups in the Layers panel, and a properties panel reordered into
+canonical blocks.
+
+**Two performance fixes worth knowing.** The eraser called `toJSON()` on every
+object for every *step* of its sweep — ten thousand deserializations per
+pointer move on a 500-object board — and deleted each object in its own
+transaction, so one swipe cost a dozen undos. It now reads the normalized store
+and transacts the whole sweep. The pencil now thins its stored centreline with
+Douglas–Peucker at commit; the drawn outline is untouched, and that is where
+nearly all the points were.
+
 ## 4b. What the recent sessions changed
 
 Grouped by area. Everything here is committed; the reasoning is in the code
@@ -310,36 +351,25 @@ tuning row on screen.
 
 ## 5. Next up
 
-### 5a. The walkthrough project (this is still what the user asked for)
+### 5a. Verify what was built fast
 
-Agreed scope, in order. Two of five are done:
+**This session traded verification for speed, on the user's instruction, and
+the bill came due six times** — see the preamble. Nothing below is known
+broken; all of it is unwatched.
 
-1. ~~**Demo rooms**~~ — done. **26 templates in 5 categories**, including
-   deliberate scale showcases at 100/500/1000 objects.
-2. **Per-tool guided walkthroughs.** *Not started, and this is the next
-   substantial piece of the brief.* The agreed design: an arrow anchored to a
-   real object that **advances by doing the thing**, not by a Next button. A
-   wizard becomes the thing people dismiss, and it would contradict what makes
-   the templates work — you learn connectors by dragging a box. The templates
-   now give these somewhere to happen; launch a walkthrough *against* a
-   matching template rather than an empty canvas. The user chose "scripted
-   real mutations" over a recorded video when asked.
-3. ~~**Visual refinement** of existing surfaces~~ — largely done; see §4b.
-4. **New surfaces** — the canvas empty state and the rooms page are done. A
-   **first-run onboarding** and a **marketing-grade first run** are not.
-5. **A product page.** Not started.
+- **The right-click menu targeting an object.** Only the empty-board variant
+  has been seen. The object variant needs Konva's hit graph, which an
+  automation tab does not populate.
+- **The Mermaid apply path.** Parse, layout and build carry 26 tests; the
+  `Room` wiring — transaction, replace-in-place, selection — has never run.
+- **Sketched caps, midpoint labels, the context menu, dock spacing** were
+  confirmed by reading the scene graph rather than by looking. The label
+  contrast fix *was* seen working (white ink on a white plate lifted to
+  `#828282`).
+- **Two real browsers with two real mice** — still the check automation cannot
+  stand in for.
 
-**Session creation is the loose thread.** The share *sheet* was rebuilt, but
-the flow that gets you a named board and shares it the first time was not
-touched. The user asked for "session creation and sharing, end to end" and only
-the second half landed. Start there if you want a short, well-defined piece.
-
-Also outstanding and explicitly deferred by the user: **Supabase** for auth and
-storage. They chose it over own-auth/PocketBase/Clerk. It is a multi-file change
-across the server, a new schema with RLS, and moving voice notes out of the CRDT
-into object storage — worth its own session. Note that voice notes are still
-base64 inside the Yjs document; the bitrate fix cut that ~5x but did not solve
-it.
+### 5a-ii. The walkthrough project (still what the user originally asked for)
 
 ### 5b. Watch Phases 3–5 (still partly unverified)
 
@@ -409,9 +439,16 @@ document change with 500 objects, which was ~88% of the cost of moving one.
   `engine/model/layerSearch.ts`, marked hits in the row, type chips for the
   types the document actually contains, and a flat ranked list while filtering
   rather than a filtered tree. Enter selects every match.
-- **Keyboard navigation of the panel itself.** ↑/↓ to move, ←/→ to fold and
-  unfold, Enter to rename, Cmd+↑/↓ to reorder, Space for visibility. The brief
-  explicitly asks for the power-user path and there is currently none.
+- ~~**Keyboard navigation of the panel itself.**~~ **Done** (`16b7858`).
+  `handleTreeKeyDown`: ↑/↓ move the cursor (Shift extends), ←/→ fold and unfold
+  a frame, Enter renames, Space toggles visibility, Cmd+↑/↓ restacks, Cmd+A
+  selects every visible row, Delete removes the selection, Escape clears it.
+  The container is `role="tree"`, `tabIndex={0}`, with `aria-activedescendant`
+  pointing at the cursor row — the tree previously could be clicked but never
+  driven, because focus skipped from the search box straight to the first row's
+  eye toggle. **This entry stayed listed as missing for two commits after it
+  shipped**, including one that edited this file; see the note under
+  §"Suggested order" below.
 - **Frame wrapping** — turn a selection into a frame.
 - **Reparenting by drag**, not just reordering.
 - Section, Component, Instance and Mask node types. These are **blocked**:
@@ -443,9 +480,15 @@ largest item this section used to list as missing.
 - Constraints/pinning grid and Auto Layout are **Phase 6**; component link,
   variants and exposed properties are **Phase 7**. Do not start those here.
 
-**Suggested order from here**: panel keyboard navigation → global canvas
-state when nothing is selected → independent corner radii → frame wrapping and
-drag-reparenting.
+**Suggested order from here**: global canvas state when nothing is selected →
+independent corner radii → frame wrapping and drag-reparenting.
+
+> This list used to lead with panel keyboard navigation, which had already
+> shipped in `16b7858` — **the same commit that edited this file**. A whole
+> session could have been spent rebuilding it. The failure is the one invariant
+> 7 describes, in prose rather than in code: two records of the same fact, and
+> the one that is easy to forget is the one written in English. When you finish
+> something listed here, strike it in the commit that finishes it, not later.
 
 Two things newly visible on connectors, now that they finally reach the paint
 sections at all: **Blend is deliberately hidden for them** — a connector's job

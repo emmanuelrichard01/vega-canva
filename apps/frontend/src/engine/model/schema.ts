@@ -133,6 +133,10 @@ export const BLEND_MODES: BlendMode[] = [
   'luminosity',
 ];
 
+/** How hand-drawn a sketched shape is. Defined with the generator that reads it. */
+export type { SketchLevel, FillStyle } from './rough';
+import type { SketchLevel, FillStyle } from './rough';
+
 export type LineCap = 'butt' | 'round' | 'square';
 
 /**
@@ -277,6 +281,38 @@ export interface Appearance {
    * nothing above — which is the definition of a backdrop. See `BackdropBlur`.
    */
   backdropBlur?: number;
+  /**
+   * Whether this object is drawn by hand. Absent is a crisp, ruled shape.
+   *
+   * Per object rather than a board-wide mode: a diagram that is *mostly* neat
+   * with two things circled by hand is the case this is for, and a document
+   * switch cannot express it. It lives on `appearance` because it is a fact
+   * about how the shape is painted, not about what shape it is — `geometry`
+   * stays the true outline, and turning it off returns the exact rectangle
+   * rather than an approximation of one.
+   *
+   * **Three hands, not three amplitudes.** An earlier version was a single
+   * number and it did not work, because scaling the displacement is the one
+   * axis that cannot produce three usable looks — turn it up and the shape
+   * reads as broken rather than drawn. The levels differ in *how the pen
+   * behaves*: `light` is one confident pass, `medium` goes round twice (the
+   * look people recognise), `heavy` goes round twice and crosses well past
+   * every corner. See `PROFILES` in `engine/model/rough.ts` for what each one
+   * varies and why.
+   *
+   * The sketch is seeded from the node id, so it is stable across renders,
+   * reloads, collaborators and exports.
+   */
+  sketch?: SketchLevel;
+  /**
+   * How a sketched shape's interior is shaded. Absent is `solid`.
+   *
+   * Only meaningful alongside `sketch`: hachure is pen shading, and shading a
+   * crisp machine-drawn rectangle with hand strokes is a mixed metaphor. The
+   * panel therefore offers it only when a sketch level is set, which is also
+   * why it lives here beside it rather than in the fill block.
+   */
+  fillStyle?: FillStyle;
 }
 
 export type TextAlign = 'left' | 'center' | 'right';
@@ -336,7 +372,115 @@ export interface Typography {
   color: string;
   /** Absent is `none`, which is every existing document. */
   textCase?: TextCase;
+  /**
+   * Extra space between paragraphs only, in world units. Absent is none.
+   *
+   * Distinct from `lineHeight`, which is leading *within* a block of prose.
+   * Raising the multiplier to separate two paragraphs opens up every line
+   * inside them as well, which is why this is its own field rather than a
+   * value someone is expected to fake.
+   */
+  paragraphSpacing?: number;
+  /** The rounded ribbon painted behind the words. Absent is none. */
+  highlight?: TextHighlight;
+  /** A stroke around the letterforms. Absent is none. */
+  outline?: TextOutline;
+  /** A soft halo behind the letterforms. Absent is none. */
+  glow?: TextGlow;
 }
+
+/**
+ * The rounded background that breaks and clones around each wrapped line.
+ *
+ * The social-media treatment: every line gets its own rounded rectangle sized
+ * to that line's measured advance, so the shape describes the words rather
+ * than the box they happen to sit in. A single rectangle behind the whole
+ * paragraph is a different, much blunter effect — it leaves a ragged line
+ * floating in dead colour, which is exactly what this does not do.
+ *
+ * Needs per-line boxes, which is why it could not exist before
+ * `engine/text/layout.ts`.
+ */
+export interface TextHighlight {
+  color: string;
+  /** Corner radius of each line's plate, in world units. */
+  radius: number;
+  /** Horizontal breathing room either side of the line's glyphs. */
+  paddingX: number;
+  /** Vertical padding, which also decides how far consecutive plates overlap. */
+  paddingY: number;
+  /**
+   * Whether consecutive lines are welded into one ribbon with tucked corners,
+   * or left as separate plates.
+   *
+   * `ribbon` is the treatment people recognise: where a long line is followed
+   * by a short one, the corner between them curls *inward* rather than
+   * stopping flat, so the block reads as one continuous shape that happens to
+   * be ragged. `plates` keeps them visibly separate, which suits a caption set
+   * in short even lines.
+   */
+  join: 'ribbon' | 'plates';
+  /**
+   * Let the text colour be chosen from the highlight rather than authored.
+   *
+   * A highlight is picked for how it looks against the board; the words then
+   * have to stay legible against *it*, which is a different question and one
+   * people reliably get wrong. When set, the renderer picks ink or paper by
+   * contrast against `color`. See `readableInkOn`.
+   */
+  autoContrast?: boolean;
+}
+
+export interface TextOutline {
+  color: string;
+  /** Stroke weight on the letterforms, in world units. */
+  width: number;
+}
+
+export interface TextGlow {
+  color: string;
+  /** Blur radius of the halo, in world units. */
+  blur: number;
+}
+
+/**
+ * The default ink for anything drawn on the board with no colour of its own.
+ *
+ * A **document** value, deliberately not a `--token` from `index.css`. Those
+ * describe the application's chrome and resolve per viewer's theme; this is
+ * content, and content cannot resolve differently per viewer — two people
+ * looking at one board would see two different drawings. It is the same
+ * reasoning that keeps the cursor art on fixed colours: ink sits over the
+ * work, not over an app surface.
+ *
+ * Named because it was written out longhand at eight fallback sites across
+ * three renderers, the pen tool and the SVG exporter — the "second list that
+ * agrees today" shape that invariant 7 exists to catch. Authored content in
+ * `templates.ts` keeps its own literals: those are a designer's choices, not
+ * this default.
+ */
+export const DEFAULT_INK = '#1F2937';
+
+/**
+ * The ink a newly switched-on shadow is cast in.
+ *
+ * Black, and a **document** value for the same reason as `DEFAULT_INK`: a
+ * shadow is content on the user's board, not chrome, and it cannot resolve per
+ * viewer's theme or two collaborators would see two different drawings. The
+ * darkness is modulated by `Shadow.opacity` rather than baked into the colour,
+ * so the control that adjusts it has something to adjust.
+ */
+export const DEFAULT_SHADOW_COLOR = '#000000';
+
+/**
+ * The ink a connector draws in when it has no stroke colour of its own.
+ *
+ * A step lighter than `DEFAULT_INK`, and deliberately: on a flowchart the boxes
+ * are the content and the arrows are the grammar joining them. Drawing both in
+ * the same weight of black makes the connections compete with the things they
+ * connect, which is why every diagramming tool greys its default edge.
+ */
+export const DEFAULT_CONNECTOR_INK = '#64748B';
 
 export const DEFAULT_TYPOGRAPHY: Typography = {
   fontFamily: 'Inter',
@@ -349,7 +493,7 @@ export const DEFAULT_TYPOGRAPHY: Typography = {
   verticalAlign: 'top',
   lineHeight: 1.4,
   letterSpacing: 0,
-  color: '#1F2937',
+  color: DEFAULT_INK,
 };
 
 /** Denormalised creator identity, so authorship survives the author leaving. */
@@ -377,6 +521,22 @@ export interface BaseNode {
   rotation: number;
   scaleX: number;
   scaleY: number;
+  /**
+   * Shear, in **degrees**, about the node's centre. Absent is none.
+   *
+   * Degrees rather than Konva's matrix coefficient, for the same reason
+   * `rotation` is: it is what the control shows and what Illustrator's Shear
+   * Tool asks for, and a coefficient is a renderer's private convention that
+   * would silently re-interpret every document if Konva ever changed it. The
+   * `tan()` that turns one into the other happens in the renderer, once.
+   *
+   * Kept off `scaleX`/`scaleY` and out of `geometry` deliberately: shear is a
+   * property of how the node is *placed*, like rotation, not of what shape it
+   * is. Baking it into geometry would make it destructive and would stop it
+   * applying to text and images at all.
+   */
+  skewX?: number;
+  skewY?: number;
   opacity: number;
 
   zIndex: number;
@@ -496,7 +656,23 @@ export interface ShapeGeometry {
    * end of the range rather than a broken state.
    */
   innerRatio?: number;
-  /** Line and arrow: a head at the start of the run. Absent is none. */
+  /**
+   * What sits at each end of a line or arrow — see `EndCapKind`.
+   *
+   * The same six shapes a connector offers, and deliberately the same field
+   * names. A line and a connector are both a run with two ends; giving one of
+   * them six styles and the other a pair of booleans meant the arrow you could
+   * draw depended on which tool happened to have made it, and the properties
+   * panel had to grow two different controls saying the same thing.
+   */
+  endStart?: import('./connectorEnds').EndCapKind;
+  endEnd?: import('./connectorEnds').EndCapKind;
+  /**
+   * How big both ends are, as a multiple of the size derived from the stroke.
+   * Absent is 1 — the proportional default every existing line already draws.
+   */
+  endScale?: number;
+  /** @deprecated Superseded by `endStart`/`endEnd`. Read at the boundary only. */
   arrowStart?: boolean;
   /** Line and arrow: a head at the end. An `arrow` is created with this set. */
   arrowEnd?: boolean;
@@ -733,6 +909,8 @@ export interface ConnectorNode extends BaseNode {
    */
   endStart?: EndCapKind;
   endEnd?: EndCapKind;
+  /** How big both ends are, as a multiple of the stroke-derived size. Absent is 1. */
+  endScale?: number;
   /** @deprecated Superseded by `endStart`/`endEnd`. Read at the boundary only. */
   arrowStart?: boolean;
   /** @deprecated Superseded by `endStart`/`endEnd`. Read at the boundary only. */

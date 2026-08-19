@@ -2,6 +2,7 @@ import React, { useEffect, useState } from 'react';
 import { Html } from 'react-konva-utils';
 import { cameraSystem } from '../../engine/CameraSystem';
 import { engineEvents } from '../../engine/EventBus';
+import { consumePendingCaret } from '../../engine/interaction/pendingEdit';
 import { textEditing } from '../../engine/interaction/textEditing';
 import { DEFAULT_TYPOGRAPHY, type TextBearingNode } from '../../engine/model/schema';
 import { domTextStyle } from './renderers/shared';
@@ -107,6 +108,30 @@ export const NodeEditor: React.FC<Props> = ({ node, onCommit, onCancel }) => {
     return () => textEditing.end(node.id);
   }, [node.id]);
 
+  /**
+   * Take the caret to where the click was, if one asked for it.
+   *
+   * The click that opens this editor lands on the *canvas*, never on the
+   * textarea — the textarea does not exist yet — so the browser has no idea
+   * where in the sentence you were aiming. `ObjectRenderer` works that out from
+   * the layout and leaves the offset in a latch; this collects it.
+   *
+   * Deferred a frame for the same reason the focus recovery below is: setting
+   * a selection range on an element that is still being focused is discarded
+   * by every browser, silently.
+   */
+  useEffect(() => {
+    const caret = consumePendingCaret(node.id);
+    if (caret === null) return;
+    requestAnimationFrame(() => {
+      const el = textareaRef.current;
+      if (!el) return;
+      el.focus();
+      const at = Math.max(0, Math.min(caret, el.value.length));
+      el.setSelectionRange(at, at);
+    });
+  }, [node.id]);
+
   // Nothing else forces a re-render while the camera moves, so without this
   // the overlay would stay put while the canvas panned beneath it.
   useEffect(() => {
@@ -141,8 +166,41 @@ export const NodeEditor: React.FC<Props> = ({ node, onCommit, onCancel }) => {
     return { left: rect?.left ?? 0, top: rect?.top ?? 0 };
   })();
 
-  const screenX = stageOrigin.left + node.x * zoom + cameraSystem.x;
-  const screenY = stageOrigin.top + node.y * zoom + cameraSystem.y;
+  /**
+   * A line's label is edited where it is drawn — at the middle of the run.
+   *
+   * Every other type fills its own box, and for a rectangle that is exactly
+   * right. A line's box is the *diagonal* it spans, so placing the editor at
+   * its top-left corner put the caret in empty canvas a long way from the
+   * label: you typed up in the corner and the words jumped to the middle of
+   * the line the moment you finished. The commit was correct and the editing
+   * was somewhere else.
+   *
+   * The midpoint is the centre of the box whichever diagonal the line takes,
+   * so this needs no knowledge of the flip. The overlay is sized to the words
+   * rather than to the node, matching the plate the renderer draws.
+   */
+  const isOpenRun =
+    node.type === 'shape' &&
+    (node.geometry.kind === 'line' || node.geometry.kind === 'arrow');
+
+  const runBox = isOpenRun
+    ? {
+        // Wide enough for a short label and no wider — a line's label is a
+        // word or two ("yes", "retry"), and a full-width box would put the
+        // caret nowhere near the text it is editing.
+        width: Math.max(80, Math.min(240, (value.length || 4) * 9 + 24)),
+        // The plate is the type plus its padding, matching the renderer's.
+        height: Math.max(24, ((node.typography?.fontSize ?? DEFAULT_TYPOGRAPHY.fontSize) + 10)),
+      }
+    : null;
+
+  const screenX = runBox
+    ? stageOrigin.left + (node.x + node.width / 2) * zoom + cameraSystem.x - (runBox.width * zoom) / 2
+    : stageOrigin.left + node.x * zoom + cameraSystem.x;
+  const screenY = runBox
+    ? stageOrigin.top + (node.y + node.height / 2) * zoom + cameraSystem.y - (runBox.height * zoom) / 2
+    : stageOrigin.top + node.y * zoom + cameraSystem.y;
 
   const isSticky = node.type === 'sticky';
   const padding = isSticky ? STICKY_PADDING * zoom : 0;
@@ -241,8 +299,8 @@ export const NodeEditor: React.FC<Props> = ({ node, onCommit, onCancel }) => {
           position: 'fixed',
           left: `${screenX}px`,
           top: `${screenY}px`,
-          width: `${liveSize.width * zoom}px`,
-          height: `${liveSize.height * zoom}px`,
+          width: `${(runBox?.width ?? liveSize.width) * zoom}px`,
+          height: `${(runBox?.height ?? liveSize.height) * zoom}px`,
           padding: `${padding}px`,
           boxSizing: 'border-box',
           pointerEvents: 'none',
@@ -332,6 +390,16 @@ export const NodeEditor: React.FC<Props> = ({ node, onCommit, onCancel }) => {
           whiteSpace: node.type === 'text' && node.resize === 'width' ? 'pre' : 'pre-wrap',
           pointerEvents: 'auto',
           textAlign: node.type === 'shape' ? 'center' : typography.align,
+          // A line's label sits on a plate the colour of the board, so the
+          // editor wears the same ground — otherwise the words are being typed
+          // over the stroke they are meant to interrupt.
+          ...(runBox
+            ? {
+                background: 'var(--surface-primary)',
+                borderRadius: `${3 * zoom}px`,
+                textAlign: 'center' as const,
+              }
+            : null),
           // A `<textarea>` cannot centre its content vertically, so the note's
           // padding is nudged instead: the gap above the first line is however
           // much of the box the text does not use. Without this the words sit

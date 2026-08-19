@@ -27,7 +27,13 @@
  * and no field changed meaning.
  */
 
-import type { BezierGeometry, BezierSegment, CompoundGeometry, Point } from './schema';
+import type {
+  BezierGeometry,
+  BezierSegment,
+  CompoundGeometry,
+  PathGeometry,
+  Point,
+} from './schema';
 
 /** Anything made of closed contours: one run of anchors, or several. */
 export type ContourGeometry = BezierGeometry | CompoundGeometry;
@@ -654,4 +660,149 @@ export function reframePath<T extends ContourGeometry>(geo: T): {
     width: Math.max(1, b.width),
     height: Math.max(1, b.height),
   };
+}
+
+// ---------------------------------------------------------------------------
+// Resizing
+// ---------------------------------------------------------------------------
+
+/**
+ * The extent the geometry actually occupies, for any of the three path forms.
+ *
+ * This is the number a resize has to divide by, and it is *not* the same thing
+ * as `node.width`/`node.height`. Every path is born re-origined — `PenTool`
+ * normalizes a freehand stroke to its own bounds, and every vector edit ends in
+ * `reframePath` — so the two agree at creation and after every edit. Dragging a
+ * transformer handle is the one gesture that moved the node's box **without
+ * touching the geometry**, which is what left a resized path drawing at exactly
+ * its old size while the layers panel and the radar reported the new one.
+ *
+ * Measuring the geometry rather than trusting a stored scale factor is what
+ * makes `scalePathGeometry` self-healing: a path already stretched by the old
+ * behaviour is corrected the first time it is resized again, instead of
+ * inheriting the discrepancy forever.
+ */
+export function pathNaturalSize(geo: PathGeometry): { width: number; height: number } {
+  if (geo.kind === 'freehand') {
+    /**
+     * Measured from the `svgPath` — the outline that is actually drawn.
+     *
+     * This first derived the size from the *centreline* grown by the nib,
+     * mirroring how `PenTool` framed the node. That agreed on a fresh stroke
+     * and drifted on every resize after it, because the two halves of the sum
+     * do not scale together: `scalePathGeometry` scales the outline by
+     * `(sx, sy)` and the nib by `min(|sx|, |sy|)`, so after a non-uniform
+     * stretch the measurement no longer described the shape it was measuring.
+     * `fitPathToBox` would then find a discrepancy it had itself created and
+     * scale again on the next drag — a stroke that crept every time it was
+     * touched.
+     *
+     * Measuring the outline removes the whole class: the numbers below are the
+     * numbers `scaleSvgPath` multiplies, so the measurement scales exactly
+     * with the thing it measures and fitting is idempotent by construction.
+     */
+    const nums = geo.svgPath.match(/-?\d*\.?\d+(?:e[-+]?\d+)?/gi);
+    if (!nums || nums.length < 4) return { width: 1, height: 1 };
+    let minX = Infinity, minY = Infinity, maxX = -Infinity, maxY = -Infinity;
+    for (let i = 0; i + 1 < nums.length; i += 2) {
+      const x = parseFloat(nums[i]);
+      const y = parseFloat(nums[i + 1]);
+      if (x < minX) minX = x;
+      if (x > maxX) maxX = x;
+      if (y < minY) minY = y;
+      if (y > maxY) maxY = y;
+    }
+    return {
+      width: Math.max(1, maxX - minX),
+      height: Math.max(1, maxY - minY),
+    };
+  }
+  const b = contourBounds(geo);
+  return { width: Math.max(1, b.width), height: Math.max(1, b.height) };
+}
+
+/**
+ * Path commands whose numbers are not a plain run of absolute x,y pairs.
+ *
+ * `H`/`V` carry a single ordinate, and `A` carries radii and three flags that
+ * must not be multiplied by anything. Nothing this app authors emits them —
+ * the pencil writes `M`/`Q`/`Z` and the pen writes `M`/`C`/`Z` — but an
+ * imported document could, and silently scaling a flag would corrupt the arc
+ * rather than resize it. Such a path is left alone instead.
+ */
+const UNSCALABLE_COMMANDS = /[HhVvAa]/;
+
+/** Multiply every absolute coordinate pair in an SVG `d` string. */
+function scaleSvgPath(d: string, sx: number, sy: number): string {
+  if (UNSCALABLE_COMMANDS.test(d)) return d;
+  let axis = 0;
+  return d.replace(/-?\d*\.?\d+(?:e[-+]?\d+)?/gi, (n) => {
+    const scaled = parseFloat(n) * (axis === 0 ? sx : sy);
+    axis ^= 1;
+    // Trimmed to a tenth of a unit. These strings are regenerated on every
+    // resize and a full float per ordinate triples the size of a scribble in
+    // the document for precision no renderer can draw.
+    return String(Math.round(scaled * 10) / 10);
+  });
+}
+
+/**
+ * Scale a path's own geometry about its origin.
+ *
+ * Baked into the stored form rather than applied as a Konva `scaleX`/`scaleY`
+ * on the way out, and the editor is the reason. `PathEditor` mounts its anchors
+ * in world space at `node.x`/`node.y` and draws them at raw geometry
+ * coordinates — it reads no scale at all — so a renderer-side stretch would put
+ * the outline in one place and its own handles in another. Baking keeps one
+ * set of numbers that the renderer, the editor, the hit test, the eraser's
+ * centreline and the gradient's unit box all agree on, which is the same
+ * invariant `reframePath` exists to hold.
+ */
+export function scalePathGeometry<T extends PathGeometry>(geo: T, sx: number, sy: number): T {
+  if (!Number.isFinite(sx) || !Number.isFinite(sy) || (sx === 1 && sy === 1)) return geo;
+  if (geo.kind === 'freehand') {
+    return {
+      ...geo,
+      svgPath: scaleSvgPath(geo.svgPath, sx, sy),
+      points: geo.points.map((p) => ({ x: p.x * sx, y: p.y * sy })),
+      // The nib follows the smaller axis. A stroke stretched wide should not
+      // also read as drawn with a fatter pen, and the two axes disagree about
+      // what "the" new weight is, so the conservative one wins.
+      strokeSize: Math.max(1, geo.strokeSize * Math.min(Math.abs(sx), Math.abs(sy))),
+    };
+  }
+  if (geo.kind === 'compound') {
+    return { ...geo, subpaths: geo.subpaths.map((s) => scalePathGeometry(s, sx, sy)) };
+  }
+  return {
+    ...geo,
+    segments: geo.segments.map((s) => ({
+      x: s.x * sx,
+      y: s.y * sy,
+      ...(s.cp1x !== undefined ? { cp1x: s.cp1x * sx, cp1y: (s.cp1y ?? 0) * sy } : null),
+      ...(s.cp2x !== undefined ? { cp2x: s.cp2x * sx, cp2y: (s.cp2y ?? 0) * sy } : null),
+    })),
+  };
+}
+
+/**
+ * Fit a path's geometry to a box, whatever state it is currently in.
+ *
+ * The entry point a resize should call: it measures rather than accumulating,
+ * so it is idempotent and repairs a path that a previous resize left behind.
+ * Returns `null` when the geometry already fits, so a caller can skip the write
+ * entirely — a drag that only moved a node must not rewrite its whole outline.
+ */
+export function fitPathToBox<T extends PathGeometry>(
+  geo: T,
+  width: number,
+  height: number
+): T | null {
+  const natural = pathNaturalSize(geo);
+  const sx = width / natural.width;
+  const sy = height / natural.height;
+  // A twentieth of a percent. Below that the rewrite costs document bytes and
+  // an undo entry to move nothing anybody can see.
+  if (Math.abs(sx - 1) < 0.0005 && Math.abs(sy - 1) < 0.0005) return null;
+  return scalePathGeometry(geo, sx, sy);
 }

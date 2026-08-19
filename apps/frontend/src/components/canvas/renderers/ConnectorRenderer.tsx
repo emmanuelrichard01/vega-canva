@@ -1,7 +1,8 @@
 import React from 'react';
-import { Circle, Group, Label, Line, Tag, Text } from 'react-konva';
+import { Circle, Group, Label, Line, Path, Tag, Text } from 'react-konva';
+import { roughPolyline, seedFrom } from '../../../engine/model/rough';
 import { useShallow } from 'zustand/react/shallow';
-import type { ConnectorNode } from '../../../engine/model/schema';
+import { DEFAULT_CONNECTOR_INK, type ConnectorNode } from '../../../engine/model/schema';
 import { connectorBounds, connectorPoints, type Box } from '../../../engine/model/connector';
 import { endAngle, endCapShape, endCapSize } from '../../../engine/model/connectorEnds';
 import { updateNode } from '../../../engine/document';
@@ -38,6 +39,13 @@ interface Props {
  * anything at all moved — on a flowchart, that is every arrow on every frame
  * of every drag.
  */
+/** Konva's flat `[x, y, x, y, ...]` as the point list the sketcher takes. */
+function pairsOf(flat: readonly number[]): { x: number; y: number }[] {
+  const out: { x: number; y: number }[] = [];
+  for (let i = 0; i + 1 < flat.length; i += 2) out.push({ x: flat[i], y: flat[i + 1] });
+  return out;
+}
+
 export const ConnectorRenderer: React.FC<Props> = React.memo(({ node }) => {
   const fromId = node.from.nodeId;
   const toId = node.to.nodeId;
@@ -112,7 +120,7 @@ export const ConnectorRenderer: React.FC<Props> = React.memo(({ node }) => {
     points.push(world[i] - node.x, world[i + 1] - node.y);
   }
 
-  const stroke = strokeColor(node.appearance) ?? '#64748B';
+  const stroke = strokeColor(node.appearance) ?? DEFAULT_CONNECTOR_INK;
   const width = strokeWidth(node.appearance) || 2;
   const dash = strokeDashProps(node.appearance);
 
@@ -155,7 +163,7 @@ export const ConnectorRenderer: React.FC<Props> = React.memo(({ node }) => {
    * described once, in a pure module, rather than living inside a renderer
    * where nothing else can see where a marker actually reaches.
    */
-  const size = endCapSize(width);
+  const size = endCapSize(width, node.endScale ?? 1);
   const startCap = endCapShape(node.endStart ?? 'none', { x: points[0], y: points[1] }, endAngle(points, true), size);
   const endCap = endCapShape(
     node.endEnd ?? 'none',
@@ -218,9 +226,43 @@ export const ConnectorRenderer: React.FC<Props> = React.memo(({ node }) => {
     );
   };
 
+  /**
+   * The run, drawn by hand when the connector asks for it.
+   *
+   * A flowchart is the case this feature is most for — boxes sketched by hand
+   * joined by arrows that are visibly not — so a connector that could not be
+   * sketched left every diagram half-drafted. It goes through the same
+   * `roughPolyline` the shapes use, as an **open** run: a connector has no
+   * interior, so it is never closed and never hachured.
+   *
+   * The markers stay crisp on purpose. An arrowhead is a symbol rather than a
+   * drawn stroke — it has to read as *which way* at any size — and sketching a
+   * six-pixel triangle turns it into a smudge that no longer points anywhere.
+   * The same reasoning keeps the label's plate crisp.
+   */
+  const sketched = node.appearance?.sketch
+    ? roughPolyline(
+        pairsOf(trimmed),
+        { seed: seedFrom(node.id), closed: false, level: node.appearance.sketch }
+      )
+    : '';
+
   return (
     <Group>
-      <Line {...common} points={trimmed} />
+      {sketched ? (
+        <Path
+          data={sketched}
+          stroke={common.stroke}
+          strokeWidth={common.strokeWidth}
+          lineCap="round"
+          lineJoin="round"
+          dash={common.dash}
+          hitStrokeWidth={Math.max(20, width * 3)}
+          perfectDrawEnabled={false}
+        />
+      ) : (
+        <Line {...common} points={trimmed} />
+      )}
       {marker(startCap, 'start')}
       {marker(endCap, 'end')}
 

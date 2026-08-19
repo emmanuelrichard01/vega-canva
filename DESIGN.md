@@ -219,11 +219,30 @@ hierarchy costs no extra network request.
 - **Title** (600, 16px, 1.3): card names, panel headers, dialog titles.
 - **Body** (400, 13px, 1.55): the default. Prose is held to roughly 46–62ch; a
   one-sentence lede allowed to fill 1180px reads as a banner, not a subtitle.
-- **Label** (500, 11px): chips, badges, meta rows, counts.
+- **Label** (500, 11px): chips, badges, meta rows, counts. Section headers in
+  the inspector are this role at 600 — **sentence case, not uppercase**. See
+  the rule below.
+- **Data** (400, 12px, mono): values inside a control — the number in a
+  stepper, a coordinate, a duration. Always `tabular-nums`.
+- **Micro** (600, 10px): the axis letter on a stepper, a unit suffix, an id
+  chip. The smallest role, and the only one allowed below Label. It exists for
+  text that is *attached to* a control and never read on its own; anything a
+  person has to read as a sentence is Label or larger.
 
-Tracking tightens as size grows and is never applied below 16px. Numerals that
-change in place — counts, coordinates, timers — always take
-`font-variant-numeric: tabular-nums` so they do not jiggle.
+Two of these — Data and Micro — went undocumented for a long time while
+`--text-sm` and `--text-2xs` were used dozens of times in the code. That gap is
+what made every literal `12px` and `10px` in a component look like drift when
+it was the system working as intended. **The scale in `index.css` is the
+authority; this list describes it.** If a step is used, it is documented here,
+and a size that is on neither is the actual defect.
+
+Tracking tightens as size grows and is **never applied below 16px**. That rule
+is why inspector section headers are sentence case: an 11px uppercase run needs
+tracking to be legible at all, so an uppercase micro-header cannot obey the
+rule and be readable at the same time. Sentence case needs no tracking, reads
+quieter in a dense panel, and is what both Figma and the Apple inspectors
+settled on. Numerals that change in place — counts, coordinates, timers —
+always take `font-variant-numeric: tabular-nums` so they do not jiggle.
 
 ### Named Rules
 

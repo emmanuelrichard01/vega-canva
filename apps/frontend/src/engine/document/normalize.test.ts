@@ -107,10 +107,17 @@ describe('normalizeNode — legacy shapes', () => {
     });
 
     it('gives an arrow a head and a line none', () => {
-      expect(starOf({ kind: 'arrow' })).toEqual({ kind: 'arrow', arrowStart: false, arrowEnd: true });
-      expect(starOf({ kind: 'line' })).toEqual({ kind: 'line', arrowStart: false, arrowEnd: false });
+      // Ends are `EndCapKind` now, the same vocabulary a connector uses — a
+      // line and a connector are both a run with two ends, and which tool drew
+      // it should not decide which heads are available.
+      expect(starOf({ kind: 'arrow' })).toEqual({ kind: 'arrow', endStart: 'none', endEnd: 'arrow' });
+      expect(starOf({ kind: 'line' })).toEqual({ kind: 'line', endStart: 'none', endEnd: 'none' });
       // A stored head outranks the kind's default, so a line given one keeps it.
-      expect(starOf({ kind: 'line', arrowEnd: true })).toMatchObject({ arrowEnd: true });
+      expect(starOf({ kind: 'line', arrowEnd: true })).toMatchObject({ endEnd: 'arrow' });
+      // And the legacy booleans still map across, so old boards are unchanged.
+      expect(starOf({ kind: 'line', arrowStart: true })).toMatchObject({ endStart: 'arrow' });
+      // A richer stored style wins over the boolean it supersedes.
+      expect(starOf({ kind: 'line', endEnd: 'diamond' })).toMatchObject({ endEnd: 'diamond' });
     });
   });
 

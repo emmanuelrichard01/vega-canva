@@ -36,9 +36,27 @@ export class SceneGraph {
     if (isNew) {
       engineEvents.emit('ObjectAdded', data);
     } else {
-      // Very naive check for bounds movement.
-      // In a real robust system, we would compare the transform explicitly.
-      const moved = oldNode?.x !== data.x || oldNode?.y !== data.y || oldNode?.scaleX !== data.scaleX || oldNode?.scaleY !== data.scaleY;
+      /**
+       * Every field `getNodeBounds` reads, compared explicitly.
+       *
+       * This used to check position and scale only, which left the spatial
+       * index stale for the two gestures most likely to change an object's
+       * extent: rotating it and resizing it. A node rotated 45° kept the
+       * bounds of its unrotated box in the index, so culling and marquee
+       * selection both worked from a rectangle the object had grown out of.
+       * Skew joins the list for the same reason — the note above asked for
+       * exactly this and it is cheaper than the bug.
+       */
+      const moved =
+        oldNode?.x !== data.x ||
+        oldNode?.y !== data.y ||
+        oldNode?.width !== data.width ||
+        oldNode?.height !== data.height ||
+        oldNode?.rotation !== data.rotation ||
+        oldNode?.scaleX !== data.scaleX ||
+        oldNode?.scaleY !== data.scaleY ||
+        oldNode?.skewX !== data.skewX ||
+        oldNode?.skewY !== data.skewY;
       
       if (moved) {
         engineEvents.emit('ObjectMoved', data);
@@ -103,25 +121,55 @@ export class SceneGraph {
     const h = (Number.isFinite(node.height) ? node.height : 100) * Math.abs(node.scaleY || 1);
 
     const rotation = node.rotation || 0;
-    if (!rotation) {
+    const skewX = node.skewX || 0;
+    const skewY = node.skewY || 0;
+
+    if (!rotation && !skewX && !skewY) {
       return { minX: x, minY: y, maxX: x + w, maxY: y + h };
     }
 
-    // Objects rotate about their centre (see ObjectRenderer's offset).
-    const rad = (rotation * Math.PI) / 180;
-    const cos = Math.abs(Math.cos(rad));
-    const sin = Math.abs(Math.sin(rad));
-    const rw = w * cos + h * sin;
-    const rh = w * sin + h * cos;
+    // Objects rotate and shear about their centre (see ObjectRenderer's offset).
     const cx = x + w / 2;
     const cy = y + h / 2;
 
-    return {
-      minX: cx - rw / 2,
-      minY: cy - rh / 2,
-      maxX: cx + rw / 2,
-      maxY: cy + rh / 2,
-    };
+    /**
+     * The four corners through the node's own transform.
+     *
+     * The rotation-only case had a closed form — `w·cos + h·sin` — and shear
+     * has no equivalent, because a sheared rectangle is a parallelogram whose
+     * extent depends on both angles at once. Transforming the corners and
+     * taking their extremes is exact for any composition of the three, and it
+     * is four points rather than a special case per combination.
+     *
+     * Getting this wrong is not cosmetic: these bounds are what the spatial
+     * index culls by, what a marquee tests against and what an export frames
+     * to, so an under-reported box is an object that vanishes at the edge of
+     * the viewport and is missing from the file.
+     */
+    const kx = Math.tan((skewX * Math.PI) / 180);
+    const ky = Math.tan((skewY * Math.PI) / 180);
+    const rad = (rotation * Math.PI) / 180;
+    const cos = Math.cos(rad);
+    const sin = Math.sin(rad);
+
+    const hw = w / 2;
+    const hh = h / 2;
+    let minX = Infinity, minY = Infinity, maxX = -Infinity, maxY = -Infinity;
+
+    for (const [ox, oy] of [[-hw, -hh], [hw, -hh], [hw, hh], [-hw, hh]] as const) {
+      // Shear first, then rotate — the order Konva composes them in, so the
+      // box describes what is actually drawn rather than a plausible variant.
+      const sx = ox + kx * oy;
+      const sy = oy + ky * ox;
+      const px = cx + sx * cos - sy * sin;
+      const py = cy + sx * sin + sy * cos;
+      if (px < minX) minX = px;
+      if (px > maxX) maxX = px;
+      if (py < minY) minY = py;
+      if (py > maxY) maxY = py;
+    }
+
+    return { minX, minY, maxX, maxY };
   }
 }
 

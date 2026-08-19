@@ -137,12 +137,33 @@ export const NumberStepper: React.FC<Props> = ({
       style={{ display: 'flex', alignItems: 'center', gap: '4px', opacity: disabled ? 0.45 : 1 }}
       data-tooltip={disabledReason}
     >
-      {label && <span style={{ fontSize: '10px', textTransform: 'uppercase', fontWeight: 'bold', color: 'var(--text-secondary)', marginRight: '4px' }}>{label}</span>}
-      <div style={{
-        display: 'flex', alignItems: 'center', background: 'var(--surface-hover)',
-        borderRadius: '6px', overflow: 'hidden', border: '1px solid transparent',
-        transition: 'border-color 0.2s'
-      }}>
+      {/* The axis letter — X, Y, W, H, R. Tabular so a two-character label
+          does not shift the field beside it, and on the type scale rather than
+          a literal 10px bold, which was heavier than the value it labels. */}
+      {label && (
+        <span
+          style={{
+            fontSize: 'var(--text-2xs)',
+            fontWeight: 600,
+            color: 'var(--text-tertiary)',
+            marginRight: '4px',
+            fontVariantNumeric: 'tabular-nums',
+          }}
+        >
+          {label}
+        </span>
+      )}
+      {/* `stepper` carries the focus ring for the input inside it, which sets
+          `outline: none` so the browser's own ring does not cut across this
+          border. See `.stepper:focus-within`. */}
+      <div
+        className="stepper"
+        style={{
+          display: 'flex', alignItems: 'center', background: 'var(--surface-hover)',
+          borderRadius: 'var(--radius-md)', overflow: 'hidden', border: '1px solid transparent',
+          transition: 'border-color 0.2s'
+        }}
+      >
         <button
           onClick={() => handleStep(-1)}
           disabled={atMin}
@@ -173,7 +194,7 @@ export const NumberStepper: React.FC<Props> = ({
             // overflows, because nothing about it looks wrong.
             flexShrink: 0,
             background: 'transparent', border: 'none', outline: 'none',
-            textAlign: 'center', fontSize: '12px', fontFamily: 'var(--font-mono, monospace)',
+            textAlign: 'center', fontSize: 'var(--text-sm)', fontFamily: 'var(--font-mono, monospace)',
             fontVariantNumeric: 'tabular-nums',
             color: 'var(--text-primary)',
             fontStyle: mixed && localValue === '' ? 'italic' : 'normal',
@@ -183,7 +204,7 @@ export const NumberStepper: React.FC<Props> = ({
           <span
             aria-hidden="true"
             style={{
-              fontSize: '10px', color: 'var(--text-tertiary)', paddingRight: 4,
+              fontSize: 'var(--text-2xs)', color: 'var(--text-tertiary)', paddingRight: 4,
               fontFamily: 'var(--font-mono, monospace)', pointerEvents: 'none', flexShrink: 0,
             }}
           >

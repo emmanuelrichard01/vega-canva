@@ -2,12 +2,19 @@ import type { Exporter, ExportOptions, ExportFormat } from './ExportTypes';
 import { useStore } from '../../hooks/useStore';
 import { computeContentBounds } from './bounds';
 import { THEMES } from '../../components/canvas/renderers/StickyRenderer';
-import type { AnyNode, PathNode, ShapeNode, Typography } from '../model/schema';
+import type { AnyNode, ConnectorNode, PathNode, ShapeNode, TextNode, Typography } from '../model/schema';
+import { connectorPoints, type Box } from '../model/connector';
+import { roughPolyline, seedFrom } from '../model/rough';
 import { SvgPaintDefs } from './svgPaint';
 import { pointsAttribute, regularPolygonPoints, starPoints } from '../model/shapeOutline';
 import { contourData, translatePath } from '../model/pathGeometry';
 import { applyTextCase } from '../model/textCase';
-import { ARROW_HEAD_SCALE } from '../model/schema';
+import { contrastInk } from '../model/color';
+import { layoutText } from '../text/layout';
+import { measurerFor } from '../text/measure';
+import { highlightPath } from '../text/highlight';
+import { roughShape } from '../model/roughShape';
+import { ARROW_HEAD_SCALE, DEFAULT_INK } from '../model/schema';
 
 /**
  * Embedding raw user text into an SVG without escaping is an XML-corruption
@@ -64,12 +71,6 @@ function textDecoration(t: Typography): string {
   return [t.underline && 'underline', t.strikethrough && 'line-through'].filter(Boolean).join(' ');
 }
 
-function anchorX(node: AnyNode, t: Typography): number {
-  if (t.align === 'center') return node.x + node.width / 2;
-  if (t.align === 'right') return node.x + node.width;
-  return node.x;
-}
-
 /**
  * One `<tspan>` per line, with the case transform already applied.
  *
@@ -87,12 +88,153 @@ function multilineTspans(text: string, x: number, fontSize: number, lineHeight: 
     .join('');
 }
 
+/**
+ * A text node as SVG, laid out the way the canvas lays it out.
+ *
+ * ## Why this does not just split on newlines
+ *
+ * It used to, and that was wrong before any of the effects existed: a wrapped
+ * text node has line breaks the *renderer* chose, and the document holds none
+ * of them. Splitting the stored string on `\n` therefore exported one long
+ * line where the canvas drew four, so every wrapped text node came out of SVG
+ * a different shape from the one on screen. Going through `layoutText` means
+ * the exporter and the canvas ask the same function the same question.
+ *
+ * It also carries the three block effects, which is the point of doing it now:
+ * a highlight, an outline and a glow are all things the canvas draws and a
+ * file that claims to be the board has to contain.
+ */
+function textMarkup(node: TextNode): string {
+  const t = node.typography;
+  const layout = layoutText({
+    text: applyTextCase(node.text, t.textCase),
+    wrap: node.resize === 'width' ? 'none' : 'word',
+    width: node.width,
+    height: node.resize === 'fixed' ? node.height : undefined,
+    fontSize: t.fontSize,
+    lineHeight: t.lineHeight,
+    letterSpacing: t.letterSpacing,
+    paragraphSpacing: t.paragraphSpacing,
+    align: t.align,
+    verticalAlign: t.verticalAlign,
+    ellipsis: node.resize === 'fixed',
+    measure: measurerFor(t),
+  });
+
+  const parts: string[] = [];
+  const ink = t.highlight?.autoContrast ? contrastInk(t.highlight.color) : t.color;
+
+  if (t.highlight && layout.lines.length > 0) {
+    // The ribbon is generated in node-local coordinates, so it moves with the
+    // node by a translate rather than by regenerating every number.
+    const d = highlightPath(layout.lines, t.highlight);
+    if (d) {
+      parts.push(
+        `<path d="${d}" fill="${t.highlight.color}" transform="translate(${node.x} ${node.y})" />`
+      );
+    }
+  }
+
+  // `feDropShadow` with no offset is a halo, and it is one element rather than
+  // the blur/flood/merge chain the same effect needs spelled out by hand.
+  let filterRef = '';
+  if (t.glow) {
+    const id = `glow-${node.id}`;
+    parts.push(
+      `<defs><filter id="${id}" x="-50%" y="-50%" width="200%" height="200%">` +
+        `<feDropShadow dx="0" dy="0" stdDeviation="${t.glow.blur / 2}" flood-color="${t.glow.color}" flood-opacity="1" />` +
+        `</filter></defs>`
+    );
+    filterRef = ` filter="url(#${id})"`;
+  }
+
+  // Alignment is already resolved into each line's x, so the anchor is always
+  // `start` here — re-applying it would shift every line a second time.
+  const attrs = textAttrs({ ...t, align: 'left', color: ink });
+  // `paint-order="stroke"` is SVG's own answer to the problem the canvas
+  // solves with two draws: it puts the stroke under the fill, so the whole
+  // weight lands outside the letterforms instead of eating into them.
+  const outline = t.outline
+    ? ` stroke="${t.outline.color}" stroke-width="${t.outline.width * 2}" paint-order="stroke" stroke-linejoin="round"`
+    : '';
+
+  const lines = layout.lines
+    .map(
+      (line) =>
+        `<text x="${node.x + line.x}" y="${node.y + line.y + line.baseline}" ${attrs}${outline}>${escapeXml(line.text)}</text>`
+    )
+    .join('');
+
+  parts.push(`<g${filterRef}${rotationTransform(node)}>${lines}</g>`);
+  return parts.join('');
+}
+
+/**
+ * Rotation and shear, both about the node's centre, matching the canvas.
+ *
+ * SVG has `skewX`/`skewY` primitives but they shear about the *origin*, so
+ * they are wrapped in a translate to the centre and back — the same thing the
+ * renderer achieves with `offsetX`/`offsetY`. Order matters and follows Konva:
+ * rotate outermost, then shear, so a node that is both reads the same in the
+ * file as on the board.
+ */
+
+/**
+ * A connector as SVG.
+ *
+ * **This case did not exist.** The exporter's switch handled every other type
+ * and simply fell through for `connector`, so every arrow in a flowchart was
+ * silently dropped from the file — the boxes exported, the lines joining them
+ * did not, and the result was a diagram with its meaning removed. PNG never
+ * showed it because that path captures the stage rather than walking the
+ * document.
+ *
+ * The route is recomputed here from the same `connectorPoints` the renderer
+ * uses, rather than read off the node: a connector's geometry is *derived*, so
+ * there is nothing stored to serialize. Passing the same `boxOf` means the
+ * arrow in the file takes the same path as the arrow on the board.
+ */
+function connectorMarkup(node: ConnectorNode, objects: Record<string, AnyNode>): string {
+  const boxOf = (id: string): Box | null => {
+    const n = objects[id];
+    return n ? { x: n.x, y: n.y, width: n.width, height: n.height } : null;
+  };
+  const world = connectorPoints(node.from, node.to, node.routing, boxOf);
+  if (world.length < 4) return '';
+
+  const stroke = node.appearance?.stroke?.color ?? '#64748B';
+  const width = node.appearance?.stroke?.width ?? 2;
+  const dash = dashAttrs(node.appearance?.stroke);
+  const pts: { x: number; y: number }[] = [];
+  for (let i = 0; i + 1 < world.length; i += 2) pts.push({ x: world[i], y: world[i + 1] });
+
+  // Sketched connectors export as the sketch, seeded identically to the canvas
+  // so the strokes in the file are the same strokes. The geometry is generated
+  // in node-local space by the renderer, so it is generated in world space here
+  // and needs no transform.
+  const d = node.appearance?.sketch
+    ? roughPolyline(pts, { seed: seedFrom(node.id), closed: false, level: node.appearance.sketch })
+    : `M ${pts.map((p) => `${p.x} ${p.y}`).join(' L ')}`;
+
+  // End caps are deliberately omitted rather than approximated. `endCapShape`
+  // builds them in the renderer's local frame with a per-cap inset that trims
+  // the run underneath them, and reproducing half of that here would export
+  // arrowheads that sit slightly wrong on every line. A line without its head
+  // is honestly incomplete; a head in the wrong place looks like a bug.
+  return `<path d="${d}" fill="none" stroke="${stroke}" stroke-width="${width}"${dash} stroke-linecap="round" stroke-linejoin="round" />`;
+}
+
 function rotationTransform(node: AnyNode): string {
-  if (!node.rotation) return '';
-  // Objects rotate about their centre, matching the canvas.
+  const { rotation, skewX, skewY } = node;
+  if (!rotation && !skewX && !skewY) return '';
   const cx = node.x + node.width / 2;
   const cy = node.y + node.height / 2;
-  return ` transform="rotate(${node.rotation} ${cx} ${cy})"`;
+  const ops = [`translate(${cx} ${cy})`];
+  if (rotation) ops.push(`rotate(${rotation})`);
+  if (skewX) ops.push(`skewX(${skewX})`);
+  if (skewY) ops.push(`skewY(${skewY})`);
+  ops.push(`translate(${-cx} ${-cy})`);
+  return ` transform="${ops.join(' ')}"`;
 }
 
 /**
@@ -132,7 +274,7 @@ function joinAttrs(stroke: ShapeNode['appearance']['stroke']): string {
  * an arrow exported that way arrives as a plain line.
  */
 function openShapeMarkup(node: ShapeNode): string {
-  const stroke = node.appearance.stroke?.color ?? '#1F2937';
+  const stroke = node.appearance.stroke?.color ?? DEFAULT_INK;
   const sw = node.appearance.stroke?.width ?? 2;
   const rot = rotationTransform(node);
   const x1 = node.x;
@@ -175,6 +317,38 @@ function shapeMarkup(node: ShapeNode, defs: SvgPaintDefs): string {
   const stroke = node.appearance.stroke?.color ?? 'none';
   const sw = node.appearance.stroke?.width ?? 0;
   const rot = rotationTransform(node);
+
+  /**
+   * A sketched shape exports as the sketch, not as the shape it was made from.
+   *
+   * The generator is seeded from the node id, so the strokes in the file are
+   * the strokes on the screen — the same ones, not another draw from the same
+   * distribution. That is the entire reason `roughShape` is shared between
+   * this and the renderer rather than each having its own.
+   */
+  if (node.appearance.sketch) {
+    const fillPaint = node.appearance.fill?.[0];
+    const solidFill = fillPaint && fillPaint.type === 'solid' ? fillPaint.color : undefined;
+    const sketch = roughShape(node, Boolean(solidFill));
+    const nib = Math.max(1.2, sw || 2);
+    // Generated in node-local coordinates, so it is placed by a translate
+    // rather than by regenerating every number in world space.
+    const place = ` transform="translate(${x} ${y})"`;
+    const parts = [`<g${rot}>`];
+    if (sketch.silhouette && solidFill) {
+      parts.push(`<path d="${sketch.silhouette}" fill="${solidFill}"${place} />`);
+    }
+    if (sketch.fill && solidFill) {
+      parts.push(
+        `<path d="${sketch.fill}" fill="none" stroke="${solidFill}" stroke-width="${Math.max(0.8, nib * 0.7)}" stroke-linecap="round"${place} />`
+      );
+    }
+    parts.push(
+      `<path d="${sketch.outline}" fill="none" stroke="${stroke === 'none' ? DEFAULT_INK : stroke}" stroke-width="${nib}" stroke-linecap="round" stroke-linejoin="round"${place} />`
+    );
+    parts.push('</g>');
+    return parts.join('');
+  }
   const paint = `fill="${fill}" stroke="${stroke}" stroke-width="${sw}"${dashAttrs(node.appearance.stroke)}${joinAttrs(node.appearance.stroke)}`;
 
   switch (node.geometry.kind) {
@@ -226,10 +400,7 @@ export class SVGExporter implements Exporter {
         }
 
         case 'text': {
-          const t = node.typography;
-          parts.push(
-            `<text y="${node.y}" ${textAttrs(t)}${rotationTransform(node)}>${multilineTspans(applyTextCase(node.text, t.textCase), anchorX(node, t), t.fontSize, t.lineHeight)}</text>`
-          );
+          parts.push(textMarkup(node));
           break;
         }
 
@@ -257,7 +428,7 @@ export class SVGExporter implements Exporter {
           } else if (node.geometry.svgPath) {
             // Freehand strokes store their outline relative to the node origin.
             parts.push(
-              `<path d="${node.geometry.svgPath}" fill="${fill ?? '#1F2937'}" transform="translate(${node.x}, ${node.y})" />`
+              `<path d="${node.geometry.svgPath}" fill="${fill ?? DEFAULT_INK}" transform="translate(${node.x}, ${node.y})" />`
             );
           }
           break;
@@ -306,6 +477,11 @@ export class SVGExporter implements Exporter {
         // Comments are collaboration annotations, not document content —
         // deliberately excluded, matching how Figma and Illustrator exclude
         // comment pins from exports.
+        case 'connector': {
+          parts.push(connectorMarkup(node, state.objects));
+          break;
+        }
+
         case 'comment':
           break;
       }

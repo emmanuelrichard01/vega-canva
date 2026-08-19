@@ -146,21 +146,68 @@ per-room ACLs, and a scheduled job to compact/prune update logs.
 
 ---
 
-## Considered, Deliberately Deferred
+## Considered, Deliberately Deferred — and what has since been reversed
 
-During our architectural review phase, several "best practice" enterprise architectures were evaluated. Given the context of a 24-hour hackathon, we deliberately deferred the following to maximize product impact and minimize technical risk:
+This section records the hackathon-era architectural review. **Three of its five
+decisions have since been reversed**, and it is kept rather than deleted because
+the reasoning for deferring them was sound *at the time* and the reason each was
+later reversed is the useful part.
 
-1. **Command Pattern (Undo/Redo / AI Mutators):** 
-   While wrapping all mutations in a standard `Command` interface is the correct long-term architecture for mature products (enabling deterministic replay and trivial AI integrations), retrofitting it mid-hackathon is a high-risk trap. We chose to leverage `Y.UndoManager` out-of-the-box instead, satisfying the core scoring criteria instantly without touching the rest of the application's mutation pathways.
+The rule this section exists to demonstrate: a deferral is a decision about a
+deadline, not a permanent verdict, and it has to be revisited in writing when
+the deadline passes. A deferral list nobody re-reads becomes a description of a
+codebase that no longer exists.
 
-2. **Object Registry System:**
-   A central registry for instantiating and rendering object types makes a codebase highly extensible for third-party plugins. However, our brief explicitly capped the required object types to exactly 5. Abstracting this now provides zero end-user value for the demo. We favored a straightforward `switch` statement renderer over factory abstractions.
+1. **Command Pattern (Undo/Redo / AI Mutators)** — **reversed. Built.**
+   The original call was to lean on `Y.UndoManager` out of the box rather than
+   retrofit a `Command` interface mid-hackathon. That was right for the
+   deadline, and the retrofit happened afterwards:
+   `engine/services/CommandManager.ts` now holds `CreateNodeCommand`,
+   `UpdateNodeCommand` and `DeleteNodeCommand` behind `engine/api/EditorAPI.ts`.
 
-3. **Camera Abstraction Class:**
-   Bundling viewport coordinates (`x, y, zoom`) into a discrete `Camera` singleton cleans up minimap math. However, the existing inline React state handles it sufficiently well. Refactoring working math in the final hours does not improve the final presentation.
+   Note what the layer does and does not own. Commands describe *intent* — they
+   are what the activity feed and Time Travel narrate — and every one delegates
+   to `engine/document/mutations.ts`, which remains the single write path.
+   Undo/redo is still `Y.UndoManager`, deliberately: it tracks the document
+   itself, so it also covers mutations that never went through a command, such
+   as drag commits and physics settles. An earlier draft had each command
+   hand-rolling its own `Y.Map` assembly and `objectsMap.set`, which is how
+   z-index, `updatedAt` and authorship stamping fell out of step between the
+   command layer and the tools that bypassed it.
 
-4. **Spatial Audio / Voice Chat:**
-   While "audio" is in scope, implementing live spatial voice communication requires WebRTC peer connections or an SFU (plus distance-based gain nodes). The actual hackathon requirement is simply "audio recordings as canvas objects," which is vastly cheaper to implement using standard HTML5 `<audio>` tags synced via Yjs. We avoided the scope creep of live comms.
+2. **Object Registry System** — **reversed. Built.**
+   The original call — five object types, so a `switch` beats a factory — was
+   sound while there were five. There are now nine, and the registry earns its
+   place for a reason the hackathon framing did not anticipate: it is not about
+   third-party extensibility, it is about **capabilities**.
+   `engine/objects/registry.ts` and `definitions.ts` declare per-type flags
+   (`supportsFill`, `supportsStroke`, `supportsEdgeEffects`, …) that drive which
+   sections the Properties panel offers, under the standing rule that a
+   capability may only be declared true if a control for it actually reaches the
+   renderer. A `switch` cannot express that, and the alternative — a
+   hand-maintained list beside the panel — is exactly the bug that left
+   connectors with no colour control while the code to draw one sat right there.
 
-5. **Live LLM Canvas Assistant:**
-   Wiring up a freeform LLM to manipulate the CRDT document live during the demo was evaluated. However, this introduces high latency, external API failure surface, and a severe risk of non-deterministic hallucinations corrupting the collaborative document state. Instead, we implemented deterministic "canned commands" (e.g., the ✨ Auto-Arrange grid function) which deliver the same "magic wow" factor to judges with 0% risk of failure.
+3. **Camera Abstraction Class** — **reversed. Built.**
+   `engine/CameraSystem.ts` is a singleton with tests. It was not the minimap
+   maths that forced it, as predicted, but performance: the camera is applied
+   **outside React**, with a rAF loop writing stage position and scale
+   imperatively so panning and zooming do not re-render the tree. Inline React
+   state cannot do that by construction.
+
+4. **Spatial Audio / Voice Chat** — **still deferred, and still right.**
+   Live spatial voice needs WebRTC peer connections or an SFU plus
+   distance-based gain nodes. The requirement is "audio recordings as canvas
+   objects", which HTML5 audio synced through Yjs satisfies. No WebRTC has
+   entered the codebase.
+
+   One caveat that is *not* covered by this decision: voice notes are still
+   base64 inside the Yjs document rather than in object storage, which
+   contradicts bottleneck #4 above. That is outstanding work, not a deferral.
+
+5. **Live LLM Canvas Assistant** — **still deferred.**
+   A freeform LLM mutating the CRDT live carries latency, an external failure
+   surface and a real risk of non-deterministic corruption of shared document
+   state. The deterministic substitute shipped: **"Tidy up canvas"** in the
+   command palette, over `utils/spatialLayout.ts`, which offers `smart`,
+   `radial`, `tree` and `grid` modes and animates objects into place.

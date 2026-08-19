@@ -3,7 +3,7 @@ import { updateNode, applyNodePatches, provider } from '../engine/document';
 import { deleteNodesWithFrames } from '../engine/interaction/frameMembership';
 import { useStore } from '../hooks/useStore';
 import { editor } from '../engine/api/EditorAPI';
-import { Type, Square, Image as ImageIcon, StickyNote, Mic, LayoutTemplate, MessageSquare, PenTool, Lock, Unlock, Copy, Trash2, Eye, EyeOff, Layers, FolderOpen, Ungroup, Frame as FrameIcon, ChevronRight, ChevronDown, Search, X, PanelLeftClose, Spline } from 'lucide-react';
+import { Type, Square, Image as ImageIcon, StickyNote, Mic, LayoutTemplate, MessageSquare, PenTool, Lock, Unlock, Copy, Trash2, Eye, EyeOff, Layers, Folder, FolderOpen, Ungroup, Frame as FrameIcon, ChevronRight, ChevronDown, Search, X, PanelLeftClose, Spline } from 'lucide-react';
 import { nanoid } from 'nanoid';
 import { type AnyNode, type NodeType } from '../engine/model/schema';
 import { nodeLabel } from '../engine/model/nodeLabel';
@@ -195,6 +195,25 @@ export const LayersPanel: React.FC<LayersPanelProps> = ({ selectedIds, overrideO
     updateNode(id, { hidden: !obj.hidden });
   };
 
+  /**
+   * Hide or show every member of a group at once.
+   *
+   * The group row had a fold and an ungroup and no eye, so hiding a cluster
+   * meant hiding each object in it one row at a time — the exact chore the
+   * group exists to remove.
+   *
+   * "Are they hidden?" is answered by *all* of them being hidden, not by any:
+   * a group with one hidden member is a group you can still see, so the toggle
+   * offers to hide it. That also makes the action idempotent in the direction
+   * people expect — press once to hide everything, press again to show it.
+   */
+  const toggleGroupVisibility = (ids: string[]) => {
+    const nodes = ids.map((id) => objects[id]).filter(Boolean);
+    if (nodes.length === 0) return;
+    const allHidden = nodes.every((n) => n.hidden);
+    applyNodePatches(nodes.map((n) => ({ id: n.id, changes: { hidden: !allHidden } })));
+  };
+
   const handleBulkDelete = () => {
     deleteNodesWithFrames(selectedIds);
     setSelectedIds?.([]);
@@ -293,7 +312,15 @@ export const LayersPanel: React.FC<LayersPanelProps> = ({ selectedIds, overrideO
           seenGroups.add(obj.parentId);
           const members = list.filter((o: any) => o.parentId === obj.parentId);
           rows.push({ kind: 'group', groupId: obj.parentId, members, indent });
-          members.forEach((m) => rows.push({ kind: 'object', obj: m, indent: indent + 20 }));
+          // Foldable, like a frame. A group was always expanded, so a board
+          // with a few grouped clusters buried everything else under their
+          // members — and the panel's whole job is finding one object among
+          // many. The same collapse set serves both: to a reader they are the
+          // same gesture on the same kind of thing, and two sets would mean
+          // two behaviours to keep in step.
+          if (!collapsedFrames.has(obj.parentId)) {
+            members.forEach((m) => rows.push({ kind: 'object', obj: m, indent: indent + 20 }));
+          }
           return;
         }
 
@@ -496,6 +523,8 @@ export const LayersPanel: React.FC<LayersPanelProps> = ({ selectedIds, overrideO
       case 'ArrowRight':
         // Fold and unfold act on frames only; on anything else the key is
         // free to do nothing rather than being swallowed.
+        // Works on a group id as well as a frame id — the cursor can sit on
+        // either, and both are foldable.
         if (cursorId && collapsedFrames.has(cursorId)) {
           e.preventDefault();
           toggleFrameCollapsed(cursorId);
@@ -875,6 +904,8 @@ export const LayersPanel: React.FC<LayersPanelProps> = ({ selectedIds, overrideO
 
                 const memberIds = item.members.map((m) => m.id);
                 const groupSelected = memberIds.length > 0 && memberIds.every((id) => selectedIds.includes(id));
+                // Every member hidden, matching what the toggle acts on.
+                const groupHidden = item.members.length > 0 && item.members.every((m) => m.hidden);
 
                 return (
                   <div
@@ -890,17 +921,44 @@ export const LayersPanel: React.FC<LayersPanelProps> = ({ selectedIds, overrideO
                       fontWeight: 'var(--weight-semibold)',
                     }}
                   >
-                    <span aria-hidden />
-                    <span className="layer-row__icon"><FolderOpen size={14} /></span>
-                    <span className="layer-row__name">Group ({item.members.length})</span>
                     <button
-                      onClick={(e) => { e.stopPropagation(); handleUngroup(memberIds); }}
+                      onClick={(e) => { e.stopPropagation(); toggleFrameCollapsed(item.groupId); }}
                       className="layer-row__btn"
-                      data-tooltip="Ungroup (Cmd+Shift+G)"
-                      aria-label="Ungroup"
+                      aria-label={collapsedFrames.has(item.groupId) ? 'Expand group' : 'Collapse group'}
+                      aria-expanded={!collapsedFrames.has(item.groupId)}
+                      style={{ padding: 0 }}
                     >
-                      <Ungroup size={14} />
+                      <ChevronRight
+                        size={12}
+                        style={{
+                          transform: collapsedFrames.has(item.groupId) ? 'none' : 'rotate(90deg)',
+                          transition: 'transform var(--motion-hover)',
+                        }}
+                      />
                     </button>
+                    <span className="layer-row__icon">
+                      {collapsedFrames.has(item.groupId) ? <Folder size={14} /> : <FolderOpen size={14} />}
+                    </span>
+                    <span className="layer-row__name">Group ({item.members.length})</span>
+                    <div className="layer-row__actions" data-sticky={groupHidden || undefined}>
+                      <button
+                        onClick={(e) => { e.stopPropagation(); toggleGroupVisibility(memberIds); }}
+                        className="layer-row__btn"
+                        data-tooltip={groupHidden ? 'Show group' : 'Hide group'}
+                        aria-label={groupHidden ? 'Show group' : 'Hide group'}
+                        aria-pressed={groupHidden}
+                      >
+                        {groupHidden ? <EyeOff size={14} /> : <Eye size={14} />}
+                      </button>
+                      <button
+                        onClick={(e) => { e.stopPropagation(); handleUngroup(memberIds); }}
+                        className="layer-row__btn"
+                        data-tooltip="Ungroup (Cmd+Shift+G)"
+                        aria-label="Ungroup"
+                      >
+                        <Ungroup size={14} />
+                      </button>
+                    </div>
                   </div>
                 );
               })}

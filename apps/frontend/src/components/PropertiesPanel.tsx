@@ -1,7 +1,7 @@
 import React, { useMemo, useState } from 'react';
 import { useShallow } from 'zustand/react/shallow';
 import {
-  AlignCenter, AlignLeft, AlignRight, Bold, BringToFront, CaseSensitive, ChevronDown, ChevronRight,
+  AlignCenter, AlignLeft, AlignRight, Bold, BringToFront, CaseSensitive, ChevronRight,
   FlipHorizontal, FlipVertical, ImageIcon, Italic, LayoutTemplate, Lock, MessageSquare,
   Mic, MoveHorizontal, MoveVertical, PenLine, SendToBack, Sliders, Square, StickyNote,
   Strikethrough, Type, Underline, Unlock, PanelRightClose,
@@ -24,6 +24,7 @@ import {
 import {
   BLEND_MODES,
   DEFAULT_MITER_LIMIT,
+  DEFAULT_SHADOW_COLOR,
   DEFAULT_TYPOGRAPHY,
   MAX_MITER_LIMIT,
   MAX_POLYGON_SIDES,
@@ -65,6 +66,7 @@ import { NumberStepper } from './ui/NumberStepper';
 import { FontSelector } from './ui/FontSelector';
 import { SegmentedControl } from './ui/SegmentedControl';
 import { Slider } from './ui/Slider';
+import { Switch } from './ui/Switch';
 import {
   ADJUSTMENT_IDS,
   ADJUSTMENT_LABELS,
@@ -75,9 +77,20 @@ import {
   type AdjustmentId,
 } from '../engine/model/imageAdjustments';
 import { THEMES, nearestTheme } from './canvas/renderers/StickyRenderer';
+import { getColorForUser } from '../engine/presence/ColorPalette';
+import type { FillStyle, SketchLevel } from '../engine/model/rough';
+import { FillStyleIcon, SketchLevelIcon } from './panel/sketchIcons';
+import {
+  DEFAULT_TEXT_GLOW,
+  DEFAULT_TEXT_HIGHLIGHT,
+  DEFAULT_TEXT_OUTLINE,
+  TEXT_PRESETS,
+  activeTextEffects,
+  isTextPresetActive,
+} from './panel/textEffectPresets';
 import { MATERIALS, MATERIAL_IDS, resolveMaterial } from '../utils/behaviorSystem';
 import { TagEditor } from './ui/TagEditor';
-import { END_CAP_KINDS, END_CAP_LABELS, endCapShape, type EndCapKind } from '../engine/model/connectorEnds';
+import { END_CAP_KINDS, END_CAP_LABELS, MAX_END_SCALE, MIN_END_SCALE, endCapShape, type EndCapKind } from '../engine/model/connectorEnds';
 
 /**
  * Types that are simulated at all. Comments and frames are anchors — offering
@@ -103,24 +116,86 @@ interface PropertiesPanelProps {
   onCollapse?: () => void;
 }
 
-const Accordion: React.FC<{ title: string; children: React.ReactNode; defaultOpen?: boolean }> = ({ title, children, defaultOpen = true }) => {
+/**
+ * One collapsible block of the inspector.
+ *
+ * ## What changed and why
+ *
+ * The header was 11px **bold uppercase at 0.1em tracking**. That breaks
+ * DESIGN.md's rule that tracking is never applied below 16px — and the rule is
+ * not arbitrary: opening up an 11px uppercase run is what made this panel read
+ * as shouty and cramped at once, a dozen small headings all shouting the same
+ * volume as each other down a narrow column. Sentence case at 600 needs no
+ * tracking, is quieter against the controls it labels, and is what Figma and
+ * the Apple inspectors both use.
+ *
+ * `aria-controls` and a real region were missing, so a screen reader could hear
+ * "collapsed" without being told what had collapsed. The chevron is
+ * `aria-hidden` because the button's own `aria-expanded` already carries that
+ * state — announcing it twice is worse than not drawing it.
+ *
+ * The chevron **rotates** rather than swapping glyph. Two different icons at
+ * the same spot read as two different controls; one that turns reads as the
+ * same control in a different state, which is what it is.
+ */
+const Accordion: React.FC<{
+  title: string;
+  children: React.ReactNode;
+  defaultOpen?: boolean;
+  /** A count or a state word shown beside the title, e.g. an active effect. */
+  badge?: string;
+}> = ({ title, children, defaultOpen = true, badge }) => {
   const [isOpen, setIsOpen] = useState(defaultOpen);
+  const id = React.useId();
   return (
     <div style={{ display: 'flex', flexDirection: 'column', borderBottom: '1px solid var(--border-divider)' }}>
       <button
+        type="button"
         style={{
-          display: 'flex', alignItems: 'center', justifyContent: 'space-between',
-          padding: '12px 16px', background: 'transparent', border: 'none',
+          display: 'flex', alignItems: 'center', gap: '8px',
+          padding: '10px 16px', background: 'transparent', border: 'none',
           cursor: 'pointer', textAlign: 'left', width: '100%',
         }}
-        className="hover-surface"
+        className="hover-surface prop-section__header"
         aria-expanded={isOpen}
+        aria-controls={`${id}-panel`}
         onClick={() => setIsOpen(!isOpen)}
       >
-        <span style={{ fontSize: '11px', fontWeight: 'bold', color: 'var(--text-secondary)', textTransform: 'uppercase', letterSpacing: '0.1em' }}>{title}</span>
-        {isOpen ? <ChevronDown size={14} color="var(--text-secondary)" /> : <ChevronRight size={14} color="var(--text-secondary)" />}
+        <ChevronRight
+          size={13}
+          color="var(--text-tertiary)"
+          aria-hidden="true"
+          style={{
+            flexShrink: 0,
+            transform: isOpen ? 'rotate(90deg)' : 'none',
+            transition: 'transform var(--motion-hover)',
+          }}
+        />
+        <span className="prop-section__title">{title}</span>
+        {badge && (
+          <span
+            style={{
+              marginLeft: 'auto',
+              fontSize: 'var(--text-2xs)',
+              fontWeight: 600,
+              color: 'var(--text-tertiary)',
+              fontVariantNumeric: 'tabular-nums',
+            }}
+          >
+            {badge}
+          </span>
+        )}
       </button>
-      {isOpen && <div style={{ padding: '0 16px 16px', display: 'flex', flexDirection: 'column', gap: '12px' }}>{children}</div>}
+      {isOpen && (
+        <div
+          id={`${id}-panel`}
+          role="region"
+          aria-label={title}
+          style={{ padding: '0 16px 14px', display: 'flex', flexDirection: 'column', gap: '10px' }}
+        >
+          {children}
+        </div>
+      )}
     </div>
   );
 };
@@ -175,6 +250,34 @@ const Row: React.FC<{ label: string; children: React.ReactNode; hint?: string }>
   </div>
 );
 
+/**
+ * One effect inside a section: a switch that owns the controls beneath it.
+ *
+ * The section this replaced was a flat list — a toggle row, then that effect's
+ * five detail rows, then the next toggle row — all at one indentation, so
+ * nothing said which rows belonged to which switch. Turning on a highlight
+ * grew the panel by five rows that looked exactly like the three above them.
+ *
+ * The hairline and the inset are doing the whole job: they make "these belong
+ * to that" a fact you can see rather than one you have to infer from order.
+ * Nothing is drawn at all when the effect is off, so a section with three
+ * effects off is three rows, not eighteen.
+ */
+const SubGroup: React.FC<{
+  label: string;
+  hint?: string;
+  on: boolean;
+  onToggle: (on: boolean) => void;
+  children?: React.ReactNode;
+}> = ({ label, hint, on, onToggle, children }) => (
+  <div className="prop-subgroup" data-on={on || undefined}>
+    <Row label={label} hint={hint}>
+      <Switch checked={on} onChange={onToggle} />
+    </Row>
+    {on && children && <div className="prop-subgroup__body">{children}</div>}
+  </div>
+);
+
 const TYPE_ICONS: Record<string, React.ReactNode> = {
   sticky: <StickyNote size={16} color="var(--text-secondary)" />,
   shape: <Square size={16} color="var(--text-secondary)" />,
@@ -225,7 +328,7 @@ const BLEND_LABELS: Record<BlendMode, string> = {
  * which reads as the feature being broken.
  */
 const DEFAULT_SHADOW: Shadow = {
-  color: '#000000',
+  color: DEFAULT_SHADOW_COLOR,
   blur: 12,
   offsetX: 0,
   offsetY: 4,
@@ -241,7 +344,7 @@ const DEFAULT_SHADOW: Shadow = {
  * off the page just fogs the inside of it.
  */
 const DEFAULT_INNER_SHADOW: Shadow = {
-  color: '#000000',
+  color: DEFAULT_SHADOW_COLOR,
   blur: 8,
   offsetX: 0,
   offsetY: 2,
@@ -432,7 +535,7 @@ export const PropertiesPanel: React.FC<PropertiesPanelProps> = ({ selectedIds, o
         )}
         <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', flex: 1, color: 'var(--text-secondary)', gap: '12px', opacity: 0.7 }}>
           <Sliders size={28} />
-          <span style={{ fontSize: '14px', fontWeight: 500 }}>Select an object</span>
+          <span style={{ fontSize: 'var(--text-lg)', fontWeight: 600 }}>Nothing selected</span>
         </div>
       </div>
     );
@@ -486,6 +589,32 @@ export const PropertiesPanel: React.FC<PropertiesPanelProps> = ({ selectedIds, o
    */
   const openShape = nodes.some((n) => n.type === 'shape' && isOpenShape(n.geometry.kind));
   /**
+   * Which types can be drawn by hand.
+   *
+   * Shapes and connectors — the two whose renderers actually run the sketcher.
+   * A flowchart is the case the feature is for, and boxes that could be
+   * sketched joined by arrows that could not left every diagram half-drafted.
+   */
+  /**
+   * Whether everything selected can be drawn by hand.
+   *
+   * Deliberately **not** gated on `uniformType`. A flowchart selection is
+   * boxes *and* the arrows joining them, and that is the single most likely
+   * thing anyone wants to sketch in one go — requiring one type meant the
+   * control vanished for exactly the selection it was most useful on.
+   *
+   * Shapes and connectors are the set whose renderers honour it. Paths are
+   * excluded on purpose: a freehand stroke is already a hand-drawn mark, so
+   * offering to sketch one is a promise with nothing behind it.
+   */
+  const sketchable =
+    nodes.length > 0 && nodes.every((n) => n.type === 'shape' || n.type === 'connector');
+
+  /** Every selected object has an interior — the precondition for shading it. */
+  const allClosed =
+    nodes.length > 0 &&
+    nodes.every((n) => n.type === 'shape' && !isOpenShape(n.geometry.kind));
+  /**
    * Whether a connector is in the selection.
    *
    * Connectors reached the paint sections for the first time when they were
@@ -493,6 +622,19 @@ export const PropertiesPanel: React.FC<PropertiesPanelProps> = ({ selectedIds, o
    * couple of controls that assume an object with an interior.
    */
   const hasConnector = nodes.some((n) => n.type === 'connector');
+  /** Images carry their own blur in Adjust, so the generic one is suppressed. */
+  const hasImage = nodes.some((n) => n.type === 'image');
+
+  /**
+   * Whether the selection is mirrored, per axis.
+   *
+   * Read from the sign of the scale, which is where a flip lives — there is no
+   * separate `flipped` field, and adding one would be a second source of truth
+   * that a transform drag could contradict.
+   */
+  const flipX = shared((n) => n.scaleX < 0);
+  const flipY = shared((n) => n.scaleY < 0);
+  const flipped = { x: Boolean(flipX.value), mixedX: flipX.mixed, y: Boolean(flipY.value), mixedY: flipY.mixed };
   /**
    * Whether this object's outline has a corner for a join to apply to.
    *
@@ -751,9 +893,16 @@ export const PropertiesPanel: React.FC<PropertiesPanelProps> = ({ selectedIds, o
   };
 
   /** Shift every selected object by the same amount, from wherever it is. */
-  const nudgeEach = (key: 'x' | 'y' | 'rotation' | 'opacity', delta: number, min?: number, max?: number) =>
+  const nudgeEach = (
+    key: 'x' | 'y' | 'rotation' | 'opacity' | 'skewX' | 'skewY',
+    delta: number,
+    min?: number,
+    max?: number
+  ) =>
     patchEach((n) => {
-      let next = (n[key] as number) + delta;
+      // Skew is absent when unsheared, so a nudge from nothing starts at zero
+      // rather than turning the field into NaN on its first arrow press.
+      let next = ((n[key] as number | undefined) ?? 0) + delta;
       if (min !== undefined) next = Math.max(min, next);
       if (max !== undefined) next = Math.min(max, next);
       return { [key]: next };
@@ -803,7 +952,14 @@ export const PropertiesPanel: React.FC<PropertiesPanelProps> = ({ selectedIds, o
       Array.isArray(state.selection) &&
       selectedIdsPresent.some((id) => state.selection.includes(id))
     ) {
-      activeEditors.push({ name: state.user.name || 'Teammate', color: state.user.color || '#EC4899' });
+      // Falls back through the palette that already answers "what colour is
+      // this person", rather than a literal pink chosen here. A second
+      // opinion about identity colour is how one person ends up two colours
+      // in two surfaces of the same app.
+      activeEditors.push({
+        name: state.user.name || 'Teammate',
+        color: state.user.color || getColorForUser(String(clientId)),
+      });
     }
   });
 
@@ -845,7 +1001,7 @@ export const PropertiesPanel: React.FC<PropertiesPanelProps> = ({ selectedIds, o
               is information about nothing anyone asked about. */}
           <span style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
             {!isMulti && (
-              <span style={{ fontSize: '10px', color: 'var(--text-secondary)', background: 'var(--surface-hover)', padding: '2px 6px', borderRadius: '4px', textTransform: 'uppercase', fontFamily: 'monospace' }}>
+              <span style={{ fontSize: 'var(--text-2xs)', fontWeight: 600, color: 'var(--text-tertiary)', background: 'var(--surface-hover)', padding: '2px 6px', borderRadius: 'var(--radius-sm)', letterSpacing: '0.04em', fontFamily: 'var(--font-mono, monospace)' }}>
                 {node.id.slice(0, 4)}
               </span>
             )}
@@ -864,7 +1020,7 @@ export const PropertiesPanel: React.FC<PropertiesPanelProps> = ({ selectedIds, o
         </div>
 
         {activeEditors.length > 0 && (
-          <div style={{ display: 'flex', alignItems: 'center', gap: '4px', fontSize: '10px', color: 'var(--text-secondary)' }}>
+          <div style={{ display: 'flex', alignItems: 'center', gap: '4px', fontSize: 'var(--text-xs)', color: 'var(--text-secondary)' }}>
             <span style={{ position: 'relative', display: 'flex', height: '8px', width: '8px' }}>
               <span style={{ position: 'absolute', height: '100%', width: '100%', borderRadius: '50%', backgroundColor: activeEditors[0].color, opacity: 0.7, animation: 'ping 1s cubic-bezier(0, 0, 0.2, 1) infinite' }} />
               <span style={{ position: 'relative', display: 'inline-flex', borderRadius: '50%', height: '8px', width: '8px', backgroundColor: activeEditors[0].color }} />
@@ -899,8 +1055,28 @@ export const PropertiesPanel: React.FC<PropertiesPanelProps> = ({ selectedIds, o
           {/* Each object flips about its own centre. Flipping the selection as
               a unit — mirroring positions across the bounding box too — is a
               different operation, and not the one this button has ever been. */}
-          <button className="btn-icon" style={{ flex: 1, padding: '6px' }} onClick={() => patchEach((n) => ({ scaleX: -n.scaleX }))} title="Flip Horizontal"><FlipHorizontal size={14} /></button>
-          <button className="btn-icon" style={{ flex: 1, padding: '6px' }} onClick={() => patchEach((n) => ({ scaleY: -n.scaleY }))} title="Flip Vertical"><FlipVertical size={14} /></button>
+          {/* `data-tooltip` rather than `title`, so these match every other
+              control in the panel — a native tooltip appears after a browser
+              delay, in a different typeface, in a different place, and reads as
+              a different application. `aria-pressed` carries the state the icon
+              cannot: a flipped object looks identical to an unflipped one, and
+              the button is the only thing that knows. */}
+          <button
+            className="btn-icon"
+            style={{ flex: 1, padding: '6px' }}
+            onClick={() => patchEach((n) => ({ scaleX: -n.scaleX }))}
+            data-tooltip="Flip horizontally"
+            aria-label="Flip horizontally"
+            aria-pressed={!flipped.mixedX && flipped.x}
+          ><FlipHorizontal size={14} /></button>
+          <button
+            className="btn-icon"
+            style={{ flex: 1, padding: '6px' }}
+            onClick={() => patchEach((n) => ({ scaleY: -n.scaleY }))}
+            data-tooltip="Flip vertically"
+            aria-label="Flip vertically"
+            aria-pressed={!flipped.mixedY && flipped.y}
+          ><FlipVertical size={14} /></button>
         </div>
       </div>
 
@@ -965,6 +1141,33 @@ export const PropertiesPanel: React.FC<PropertiesPanelProps> = ({ selectedIds, o
             step={15}
           />
         </div>
+        {/* Shear, in degrees, about the centre — Illustrator's Shear Tool as a
+            pair of numbers rather than a drag, because a precise angle is the
+            thing the tool is for and the transformer already owns the
+            free-form gestures. Per object and mixed-aware, the same as
+            rotation and for the same reason: there is no single shear for a
+            selection that disagrees. */}
+        <div style={{ marginTop: '8px', display: 'flex', gap: '8px' }}>
+          {(['skewX', 'skewY'] as const).map((axis) => {
+            const s = shared((n) => n[axis] ?? 0);
+            return (
+              <NumberStepper
+                key={axis}
+                value={Math.round(s.value ?? 0)}
+                mixed={s.mixed}
+                // Stored absent rather than as zero, so an unsheared node
+                // stays byte-identical to every document written before shear
+                // existed.
+                onChange={(v) => set({ [axis]: v === 0 ? undefined : v } as Partial<AnyNode>)}
+                onNudge={(d) => nudgeEach(axis, d)}
+                label={axis === 'skewX' ? 'SX' : 'SY'}
+                suffix="deg"
+                min={-89} max={89}
+                step={5}
+              />
+            );
+          })}
+        </div>
       </Accordion>
 
       {(capabilities.supportsFill || capabilities.supportsOpacity || capabilities.supportsRadius) && (
@@ -982,6 +1185,22 @@ export const PropertiesPanel: React.FC<PropertiesPanelProps> = ({ selectedIds, o
               />
             </Row>
           )}
+          {/* The hand-drawn look, per object.
+
+              Three named hands rather than a slider, and they differ in *how
+              the pen behaves* rather than in one amplitude: Light is a single
+              confident pass, Medium goes round twice — the look people
+              recognise — and Heavy goes round twice and crosses well past
+              every corner. An amplitude knob was tried first and could not
+              produce three usable settings, because turning displacement up
+              makes a shape read as broken rather than as drawn. */}
+          {/* Radius belongs to Appearance, with fill and opacity.
+              It briefly followed the Sketch controls into the Stroke section
+              when those moved, and Stroke is gated on `supportsStroke` — which
+              an image does not have. So images silently lost their corner
+              radius even though the renderer had always drawn one. A control
+              that exists and cannot be reached is the same defect as one that
+              was never built. */}
           {capabilities.supportsRadius && (!uniformType || node.type !== 'shape' || node.geometry.kind === 'rect') && !openShape && (
             <Row label="Radius" hint="Rounds every corner by the same amount.">
               {(() => {
@@ -1082,293 +1301,14 @@ export const PropertiesPanel: React.FC<PropertiesPanelProps> = ({ selectedIds, o
         </Accordion>
       )}
 
-      {/* Image adjustments. `filters` sat on the schema for the project's
-          whole life and `ImageRenderer` read four properties, none of them
-          this — so a stored adjustment was silently ignored. */}
-      {uniformType && node.type === 'image' && (
-        <Accordion title="Adjust">
-          {ADJUSTMENT_IDS.map((id) => (
-            <Slider
-              key={id}
-              label={ADJUSTMENT_LABELS[id]}
-              value={adjustments[id]}
-              min={ADJUSTMENT_MIN[id]}
-              max={100}
-              /* Blur runs from zero, so its fill starts at the left like a
-                 quantity. The other three are departures from "as shot" and
-                 fill outward from the middle. */
-              origin={0}
-              onChange={(v) => setAdjustment(id, v)}
-            />
-          ))}
-          {hasAdjustments(adjustments) && (
-            <button
-              type="button"
-              className="adjustments__reset"
-              onClick={() => set({ filters: undefined } as Partial<AnyNode>)}
-            >
-              Reset adjustments
-            </button>
-          )}
-        </Accordion>
-      )}
-
-      {/* Star geometry. The renderer has always honoured `points` and
-          `innerRatio` and nothing has ever set them, so every star in every
-          document has been five-pointed at half depth. */}
-      {uniformKind && node.type === 'shape' && node.geometry.kind === 'star' && (
-        <Accordion title="Star">
-          <Row label="Points">
-            <NumberStepper
-              value={node.geometry.points ?? 5}
-              onChange={(points) => setGeometry({ points })}
-              min={MIN_STAR_POINTS}
-              max={MAX_STAR_POINTS}
-            />
-          </Row>
-          <Row label="Depth">
-            {/* Stored as a fraction of the outer radius; shown as a
-                percentage, because "0.35" is not a quantity anyone has an
-                intuition for. Inverted so that more depth means spikier: the
-                stored value is an inner *radius*, where a bigger number is a
-                blunter star, and a control that gets sharper as you turn it
-                down is one nobody predicts. */}
-            <NumberStepper
-              value={Math.round((1 - (node.geometry.innerRatio ?? 0.5)) * 100)}
-              onChange={(depth) => setGeometry({ innerRatio: 1 - depth / 100 })}
-              min={Math.round((1 - MAX_STAR_RATIO) * 100)}
-              max={Math.round((1 - MIN_STAR_RATIO) * 100)}
-              step={5}
-            />
-          </Row>
-        </Accordion>
-      )}
-
-      {/* The safe area, for the frame sizes where part of the rectangle is
-          covered by something that is not yours. Seeded from the preset and
-          editable here, because the presets can only cover the cases that are
-          the same for everyone — a slide deck's own template, or a printer
-          with a wider margin than most, is a number only the person making it
-          knows. Four edges rather than one: a story's insets are not
-          symmetrical, and forcing them to be would waste 320 units of width to
-          protect against nothing. */}
-      {uniformType && node.type === 'frame' && (
-        <Accordion title="Safe Area" defaultOpen={Boolean(node.safeArea)}>
-          {/* Two by two, not four across: a stepper is a label, a value and
-              two buttons, and four of them in a 230px panel leaves no room for
-              the number — which is the only part anyone reads. The X/Y row
-              above already settled on two per line. */}
-          <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '8px' }}>
-            {SAFE_EDGES.map(({ key, label }) => (
-              <NumberStepper
-                key={key}
-                value={Math.round(node.safeArea?.[key] ?? 0)}
-                onChange={(v) => setSafeArea(key, v)}
-                label={label}
-                min={0}
-                step={8}
-              />
-            ))}
-          </div>
-          <p style={{ margin: '8px 0 0', fontSize: 'var(--text-xs)', color: 'var(--text-tertiary)', lineHeight: 1.4 }}>
-            A guide only. Nothing is clipped or moved, and it never appears in an export.
-          </p>
-        </Accordion>
-      )}
-
-      {/* Shadow. `Appearance.shadow` was on the schema from the first commit,
-          read and written by the normalizer, declared as a capability by five
-          types — and rendered by nothing. There has never been a control for
-          it either, which is presumably how it stayed invisible for so long. */}
-      {capabilities.supportsShadow && appearance && (
-        <Accordion title="Drop shadow" defaultOpen={Boolean(appearance.shadow)}>
-          <Row label="Enabled" hint="A shadow cast outward, behind the object.">
-            <input
-              type="checkbox"
-              checked={Boolean(appearance.shadow)}
-              onChange={(e) =>
-                setAppearance({ shadow: e.target.checked ? { ...DEFAULT_SHADOW } : undefined })
-              }
-              aria-label="Drop shadow"
-            />
-          </Row>
-          {appearance.shadow && (
-            <>
-              <Row label="Color">
-                <ColorPickerPopover
-                  color={appearance.shadow.color}
-                  mixed={sharedPaint((a) => a.shadow?.color).mixed}
-                  onChange={(color) => setShadow({ color })}
-                />
-              </Row>
-              <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '8px' }}>
-                <NumberStepper
-                  value={Math.round(appearance.shadow.offsetX)}
-                  onChange={(v) => setShadow({ offsetX: v })}
-                  label="X"
-                />
-                <NumberStepper
-                  value={Math.round(appearance.shadow.offsetY)}
-                  onChange={(v) => setShadow({ offsetY: v })}
-                  label="Y"
-                />
-              </div>
-              <Row label="Blur">
-                <NumberStepper
-                  value={Math.round(appearance.shadow.blur)}
-                  onChange={(v) => setShadow({ blur: v })}
-                  min={0}
-                  max={200}
-                />
-              </Row>
-              {/* Spread grows the shadow's silhouette by stroking the same
-                  path, which needs a shape a stroke can grow — not a pen path
-                  that is already stroked, nor glyphs a stroke would fatten. */}
-              {capabilities.supportsShadowSpread && !openShape && (
-                <Row label="Spread" hint="Grows the shadow\u2019s own silhouette before it is blurred.">
-                  <NumberStepper
-                    value={Math.round(appearance.shadow.spread ?? 0)}
-                    onChange={(v) => setShadow({ spread: v })}
-                    min={0}
-                    max={100}
-                  />
-                </Row>
-              )}
-              <Row label="Opacity">
-                <NumberStepper
-                  value={Math.round((appearance.shadow.opacity ?? 1) * 100)}
-                  onChange={(v) => setShadow({ opacity: v / 100 })}
-                  min={0}
-                  max={100}
-                  step={10}
-                />
-              </Row>
-            </>
-          )}
-        </Accordion>
-      )}
-
-      {/* A connector's own properties: how it gets there, and which ends it
-          points at. Everything else it needs — stroke colour, weight, dash,
-          opacity — is the ordinary Stroke and Appearance sections, because a
-          connector is a line and those already describe lines. */}
-      {uniformType && node.type === 'connector' && (
-        <Accordion title="Connector">
-          <Row label="Route" hint="Straight goes corner to corner. Orthogonal turns at right angles, which is what a flowchart reads as. Curved eases between the two ends.">
-            <SegmentedControl
-              ariaLabel="Routing"
-              mixed={shared((n) => (n.type === 'connector' ? n.routing : null)).mixed}
-              value={node.routing}
-              onChange={(routing) => set({ routing } as Partial<AnyNode>)}
-              segments={[
-                {
-                  value: 'straight', label: 'Straight', icon: <Minus size={14} />,
-                  hint: 'A direct line',
-                },
-                {
-                  value: 'orthogonal', label: 'Right angles', icon: <CornerDownRight size={14} />,
-                  hint: 'Right-angled elbows',
-                },
-                {
-                  value: 'curved', label: 'Curved', icon: <Spline size={14} />,
-                  hint: 'A smooth arc',
-                },
-              ]}
-            />
-          </Row>
-          {/* Each end chosen independently, from the same vocabulary. Two
-              rows rather than one, because "what is at the start" and "what is
-              at the end" are separate decisions and a combined control would
-              have to enumerate thirty-six pairs. */}
-          <Row label="Start" hint="What sits at the first end.">
-            <SegmentedControl
-              ariaLabel="Start cap"
-              mixed={shared((n) => (n.type === 'connector' ? n.endStart ?? 'none' : null)).mixed}
-              value={node.endStart ?? 'none'}
-              onChange={(v) => set({ endStart: v } as Partial<AnyNode>)}
-              segments={END_CAP_KINDS.map((k) => ({
-                value: k,
-                label: END_CAP_LABELS[k],
-                hint: END_CAP_LABELS[k],
-                icon: <EndCapIcon kind={k} flip />,
-              }))}
-            />
-          </Row>
-          <Row label="End" hint="What sits at the second end.">
-            <SegmentedControl
-              ariaLabel="End cap"
-              mixed={shared((n) => (n.type === 'connector' ? n.endEnd ?? 'none' : null)).mixed}
-              value={node.endEnd ?? 'none'}
-              onChange={(v) => set({ endEnd: v } as Partial<AnyNode>)}
-              segments={END_CAP_KINDS.map((k) => ({
-                value: k,
-                label: END_CAP_LABELS[k],
-                hint: END_CAP_LABELS[k],
-                icon: <EndCapIcon kind={k} />,
-              }))}
-            />
-          </Row>
-          <Row label="Label" hint="A word riding the middle of the run — yes, no, retry.">
-            <input
-              className="prop-input"
-              value={node.label ?? ''}
-              placeholder="None"
-              onChange={(e) => set({ label: e.target.value || undefined } as Partial<AnyNode>)}
-              aria-label="Connector label"
-            />
-          </Row>
-          {/* Attachment is stated rather than editable: it is set by drawing,
-              and a dropdown of node ids would be a control nobody can read. */}
-          <p style={{ margin: 0, fontSize: 'var(--text-xs)', color: 'var(--text-tertiary)', lineHeight: 1.5 }}>
-            {node.from.nodeId && node.to.nodeId
-              ? 'Both ends follow the objects they are attached to.'
-              : 'One end is loose — drag it onto an object to attach it.'}
-          </p>
-        </Accordion>
-      )}
-
-      {/* One number, one control. `triangle` and `hexagon` used to be separate
-          shape kinds, which is two hard-coded side counts where the
-          specification asks for any of them. */}
-      {uniformKind && node.type === 'shape' && node.geometry.kind === 'polygon' && (
-        <Accordion title="Polygon">
-          <Row label="Sides">
-            <NumberStepper
-              value={node.geometry.points ?? 3}
-              onChange={(points) => setGeometry({ points })}
-              min={MIN_POLYGON_SIDES}
-              max={MAX_POLYGON_SIDES}
-            />
-          </Row>
-        </Accordion>
-      )}
-
-      {/* A line and an arrow are the same shape with different ends, so the
-          heads are a property rather than a second kind — turning one on makes
-          a line an arrow without changing what the object is. */}
-      {uniformKind && node.type === 'shape' && openShape && (
-        <Accordion title="Ends">
-          <Row label="Start">
-            <input
-              type="checkbox"
-              checked={node.geometry.arrowStart ?? false}
-              onChange={(e) => setGeometry({ arrowStart: e.target.checked })}
-              aria-label="Arrowhead at the start"
-            />
-          </Row>
-          <Row label="End">
-            <input
-              type="checkbox"
-              checked={node.geometry.arrowEnd ?? false}
-              onChange={(e) => setGeometry({ arrowEnd: e.target.checked })}
-              aria-label="Arrowhead at the end"
-            />
-          </Row>
-        </Accordion>
-      )}
-
       {capabilities.supportsStroke && appearance && (
-        <Accordion title="Stroke" defaultOpen={Boolean(appearance.stroke?.width)}>
+        <Accordion
+          title="Stroke"
+          // Open when there is a stroke *or* a sketch. Sketch moved into this
+          // section, and a shape with no stroke weight left it collapsed —
+          // burying the control that had just been given a better home.
+          defaultOpen={Boolean(appearance.stroke?.width || appearance.sketch)}
+        >
           {/* Offered up in Appearance instead when the object has no fill, so
               a connector shows one colour control rather than two. */}
           {capabilities.supportsFill && (
@@ -1415,6 +1355,72 @@ export const PropertiesPanel: React.FC<PropertiesPanelProps> = ({ selectedIds, o
               }))}
             />
           </Row>
+
+          {/* Sketch lives with Stroke, not with Fill.
+              It is a decision about *how the marks are made* — the same
+              question the dash pattern answers — and it is orthogonal to both:
+              a dashed sketch is a real thing, so these stay separate controls
+              rather than one merged "style" enum that would make them
+              mutually exclusive for no reason but its own shape. */}
+          {/* Offered for shapes and connectors, which is exactly the set whose
+              renderers honour it. Deliberately *not* for paths: a freehand
+              stroke is already a hand-drawn mark, and sketching one is a
+              promise with nothing behind it. Declaring a capability the
+              renderer ignores is the failure this codebase names most often. */}
+          {sketchable && appearance && (
+            <Row label="Sketch" hint="Draw this by hand. The result is stable — it never re-randomises.">
+              {(() => {
+                const sketch = sharedPaint((a) => a.sketch ?? 'off');
+                return (
+                  <SegmentedControl
+                    ariaLabel="Hand-drawn sketch"
+                    mixed={sketch.mixed}
+                    value={String(sketch.value ?? 'off')}
+                    onChange={(v) =>
+                      setAppearance({ sketch: v === 'off' ? undefined : (v as SketchLevel) })
+                    }
+                    segments={[
+                      { value: 'off', label: 'Off — a ruled shape', icon: <SketchLevelIcon level="off" /> },
+                      { value: 'light', label: 'Light — one confident pass', icon: <SketchLevelIcon level="light" /> },
+                      { value: 'medium', label: 'Medium — drawn twice', icon: <SketchLevelIcon level="medium" /> },
+                      { value: 'heavy', label: 'Heavy — twice, and past every corner', icon: <SketchLevelIcon level="heavy" /> },
+                    ]}
+                  />
+                );
+              })()}
+            </Row>
+          )}
+          {/* Shading, and only where there is a sketch for it to belong to.
+              Hachure on a crisp machine-drawn rectangle is a mixed metaphor:
+              the strokes say "a hand did this" while the outline says the
+              opposite. Offered as specimens rather than words because the
+              difference between hachure and cross-hatch is entirely visual. */}
+          {/* Every selected object must have an interior to shade. `openShape`
+              alone reads only the *primary* node, so a selection mixing a
+              rectangle with a line would have offered hachure and applied it
+              to something with no inside. */}
+          {sketchable && capabilities.supportsFill && appearance?.sketch && allClosed && (
+            <Row label="Shading" hint="How the inside is filled: flat colour, or pen strokes laid across it.">
+              {(() => {
+                const style = sharedPaint((a) => a.fillStyle ?? 'solid');
+                return (
+                  <SegmentedControl
+                    ariaLabel="Sketch fill style"
+                    mixed={style.mixed}
+                    value={String(style.value ?? 'solid')}
+                    onChange={(v) =>
+                      setAppearance({ fillStyle: v === 'solid' ? undefined : (v as FillStyle) })
+                    }
+                    segments={[
+                      { value: 'solid', label: 'Solid — a flat fill', icon: <FillStyleIcon style="solid" /> },
+                      { value: 'hachure', label: 'Hachure — parallel pen strokes', icon: <FillStyleIcon style="hachure" /> },
+                      { value: 'crosshatch', label: 'Cross-hatch — two sets, crossed', icon: <FillStyleIcon style="crosshatch" /> },
+                    ]}
+                  />
+                );
+              })()}
+            </Row>
+          )}
           {/* Where the line sits on the path. A canvas only draws centred, so
               inside and outside are a double-weight stroke clipped to one
               side — which needs an outline, and is why this is offered on
@@ -1522,44 +1528,74 @@ export const PropertiesPanel: React.FC<PropertiesPanelProps> = ({ selectedIds, o
         </Accordion>
       )}
 
-      {/* Blur, with the shadows rather than inside Appearance.
-          Layer blur and backdrop blur used to sit under "Appearance", two rows
-          below Fill, while the two shadows were top-level sections of their
-          own — so the four effects an object can carry were split across two
-          places on no principle at all. They are all effects; they are all
-          here; and paint is only paint. */}
-      {appearance && (
-        <Accordion
-          title="Blur"
-          defaultOpen={Boolean(appearance.blur || appearance.backdropBlur)}
-        >
-          <Row label="Layer" hint="Blurs this object itself.">
-            {(() => {
-              const blur = sharedPaint((a) => a.blur ?? 0);
-              return (
-                <NumberStepper
-                  value={Math.round(blur.value ?? 0)}
-                  mixed={blur.mixed}
-                  onChange={(v) => setAppearance({ blur: v > 0 ? v : undefined })}
-                  min={0} max={100} step={2} suffix="px"
-                />
-              );
-            })()}
+      {/* Shadow. `Appearance.shadow` was on the schema from the first commit,
+          read and written by the normalizer, declared as a capability by five
+          types — and rendered by nothing. There has never been a control for
+          it either, which is presumably how it stayed invisible for so long. */}
+      {capabilities.supportsShadow && appearance && (
+        <Accordion title="Drop shadow" defaultOpen={Boolean(appearance.shadow)}>
+          <Row label="Enabled" hint="A shadow cast outward, behind the object.">
+            <input
+              type="checkbox"
+              checked={Boolean(appearance.shadow)}
+              onChange={(e) =>
+                setAppearance({ shadow: e.target.checked ? { ...DEFAULT_SHADOW } : undefined })
+              }
+              aria-label="Drop shadow"
+            />
           </Row>
-          {capabilities.supportsEdgeEffects && !openShape && (
-            <Row label="Backdrop" hint="Blurs the board behind this object. Only visible through a fill that is not fully opaque.">
-              {(() => {
-                const backdrop = sharedPaint((a) => a.backdropBlur ?? 0);
-                return (
+          {appearance.shadow && (
+            <>
+              <Row label="Color">
+                <ColorPickerPopover
+                  color={appearance.shadow.color}
+                  mixed={sharedPaint((a) => a.shadow?.color).mixed}
+                  onChange={(color) => setShadow({ color })}
+                />
+              </Row>
+              <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '8px' }}>
+                <NumberStepper
+                  value={Math.round(appearance.shadow.offsetX)}
+                  onChange={(v) => setShadow({ offsetX: v })}
+                  label="X"
+                />
+                <NumberStepper
+                  value={Math.round(appearance.shadow.offsetY)}
+                  onChange={(v) => setShadow({ offsetY: v })}
+                  label="Y"
+                />
+              </div>
+              <Row label="Blur">
+                <NumberStepper
+                  value={Math.round(appearance.shadow.blur)}
+                  onChange={(v) => setShadow({ blur: v })}
+                  min={0}
+                  max={200}
+                />
+              </Row>
+              {/* Spread grows the shadow's silhouette by stroking the same
+                  path, which needs a shape a stroke can grow — not a pen path
+                  that is already stroked, nor glyphs a stroke would fatten. */}
+              {capabilities.supportsShadowSpread && !openShape && (
+                <Row label="Spread" hint="Grows the shadow\u2019s own silhouette before it is blurred.">
                   <NumberStepper
-                    value={Math.round(backdrop.value ?? 0)}
-                    mixed={backdrop.mixed}
-                    onChange={(v) => setAppearance({ backdropBlur: v > 0 ? v : undefined })}
-                    min={0} max={100} step={2} suffix="px"
+                    value={Math.round(appearance.shadow.spread ?? 0)}
+                    onChange={(v) => setShadow({ spread: v })}
+                    min={0}
+                    max={100}
                   />
-                );
-              })()}
-            </Row>
+                </Row>
+              )}
+              <Row label="Opacity">
+                <NumberStepper
+                  value={Math.round((appearance.shadow.opacity ?? 1) * 100)}
+                  onChange={(v) => setShadow({ opacity: v / 100 })}
+                  min={0}
+                  max={100}
+                  step={10}
+                />
+              </Row>
+            </>
           )}
         </Accordion>
       )}
@@ -1630,6 +1666,64 @@ export const PropertiesPanel: React.FC<PropertiesPanelProps> = ({ selectedIds, o
         </Accordion>
       )}
 
+      {/* Blur, with the shadows rather than inside Appearance.
+          Layer blur and backdrop blur used to sit under "Appearance", two rows
+          below Fill, while the two shadows were top-level sections of their
+          own — so the four effects an object can carry were split across two
+          places on no principle at all. They are all effects; they are all
+          here; and paint is only paint. */}
+      {/* Only when at least one row inside it will actually render.
+          Suppressing the Layer row for images left this section with nothing
+          in it — Backdrop needs `supportsEdgeEffects`, which an image does not
+          declare — so an image showed an accordion that opened onto empty
+          space. An empty disclosure is worse than a missing one: it promises a
+          control, costs a click to find out there is none, and does it again
+          every time. */}
+      {appearance && (!hasImage || (capabilities.supportsEdgeEffects && !openShape)) && (
+        <Accordion
+          title="Blur"
+          defaultOpen={Boolean(appearance.blur || appearance.backdropBlur)}
+        >
+          {/* Not offered on an image, which already has a blur of its own in
+              Adjust. Two controls both named Blur on one object, doing visibly
+              the same thing, is a question the user has to answer before they
+              can use either — and for a photograph the adjustment is the one
+              that belongs. Backdrop stays, because blurring *what is behind*
+              an object is a different effect and an image is a good place to
+              want it. */}
+          {!hasImage && (
+            <Row label="Layer" hint="Blurs this object itself.">
+              {(() => {
+                const blur = sharedPaint((a) => a.blur ?? 0);
+                return (
+                  <NumberStepper
+                    value={Math.round(blur.value ?? 0)}
+                    mixed={blur.mixed}
+                    onChange={(v) => setAppearance({ blur: v > 0 ? v : undefined })}
+                    min={0} max={100} step={2} suffix="px"
+                  />
+                );
+              })()}
+            </Row>
+          )}
+          {capabilities.supportsEdgeEffects && !openShape && (
+            <Row label="Backdrop" hint="Blurs the board behind this object. Only visible through a fill that is not fully opaque.">
+              {(() => {
+                const backdrop = sharedPaint((a) => a.backdropBlur ?? 0);
+                return (
+                  <NumberStepper
+                    value={Math.round(backdrop.value ?? 0)}
+                    mixed={backdrop.mixed}
+                    onChange={(v) => setAppearance({ backdropBlur: v > 0 ? v : undefined })}
+                    min={0} max={100} step={2} suffix="px"
+                  />
+                );
+              })()}
+            </Row>
+          )}
+        </Accordion>
+      )}
+
       {capabilities.supportsTypography && typography && (
         <Accordion title="Typography">
           <FontSelector value={typography.fontFamily} onChange={(fontFamily) => setTypography({ fontFamily })} />
@@ -1638,9 +1732,14 @@ export const PropertiesPanel: React.FC<PropertiesPanelProps> = ({ selectedIds, o
               const size = sharedType((t) => t.fontSize);
               return (
                 <NumberStepper
-                  value={size.value ?? 16}
+                  /* Rounded for display *and* on write. A drag stores an
+                     arbitrary real factor, so a box scaled by hand carried a
+                     size like 24.424470292956038 — which is not a size anyone
+                     set, is not one any renderer resolves, and reads as the
+                     software having failed rather than as a number. */
+                  value={Math.round(size.value ?? 16)}
                   mixed={size.mixed}
-                  onChange={(fontSize) => setTypography({ fontSize })}
+                  onChange={(fontSize) => setTypography({ fontSize: Math.round(fontSize) })}
                   onNudge={(d) =>
                     patchEach((n) => {
                       const t = typographyOf(n);
@@ -1732,12 +1831,29 @@ export const PropertiesPanel: React.FC<PropertiesPanelProps> = ({ selectedIds, o
               );
             })()}
           </Row>
+          {/* Leading opens up every line; this opens up only the gap between
+              blocks. They are separate controls because they are separate
+              questions, and raising leading to separate two paragraphs is the
+              workaround this exists to remove. */}
+          <Row label="Paragraph" hint="Extra space between paragraphs, on top of the leading.">
+            {(() => {
+              const ps = sharedType((t) => t.paragraphSpacing ?? 0);
+              return (
+                <NumberStepper
+                  value={ps.value ?? 0}
+                  mixed={ps.mixed}
+                  onChange={(v) => setTypography({ paragraphSpacing: v > 0 ? v : undefined })}
+                  min={0} max={200} step={2}
+                />
+              );
+            })()}
+          </Row>
           {/* Which of the box's dimensions follow the words. Replaces
               `autoHeight`, which was written by the normalizer and the text
               tool and read by nothing — and could only express two of these
               three, which is part of why nothing ever consumed it. */}
           {uniformType && node.type === 'text' && (
-            <Row label="Resize" hint="Auto width grows sideways, auto height wraps and grows down, fixed clips.">
+            <Row label="Resize" hint="Auto width grows sideways. Auto height wraps and grows down. Fixed imposes both — and is the mode where dragging an edge stretches the letterforms.">
               <SegmentedControl
                 ariaLabel="Text box resizing"
                 mixed={shared((n) => (n.type === 'text' ? n.resize : null)).mixed}
@@ -1746,11 +1862,448 @@ export const PropertiesPanel: React.FC<PropertiesPanelProps> = ({ selectedIds, o
                 segments={[
                   { value: 'width', label: 'Auto width — the box is as wide as the longest line', icon: <MoveHorizontal size={14} /> },
                   { value: 'height', label: 'Auto height — wraps at this width and grows down', icon: <MoveVertical size={14} /> },
-                  { value: 'fixed', label: 'Fixed — overflow is truncated', icon: <Square size={14} /> },
+                  { value: 'fixed', label: 'Fixed — both dimensions imposed; drag an edge to stretch the type', icon: <Square size={14} /> },
                 ]}
               />
             </Row>
           )}
+        </Accordion>
+      )}
+
+      {/* Text effects — the block-level treatments, kept out of Typography
+          because they are not properties of the type. Typography answers
+          "what do the letters look like"; these answer "what is drawn around
+          them", and they all need the per-line boxes that
+          `engine/text/layout.ts` computes rather than anything a font knows.
+
+          Structured as presets first, then three groups that each own their
+          own controls. The flat stack this replaces put twelve rows at one
+          level with no indication which belonged to what, so turning on a
+          highlight grew the section by five rows indistinguishable from the
+          three above them. Presets are also how people actually reach for
+          this: nobody wants to specify a radius and a padding, they want the
+          look they have already seen somewhere. */}
+      {capabilities.supportsTypography && typography && (
+        <Accordion
+          title="Text effects"
+          badge={activeTextEffects(typography)}
+          defaultOpen={Boolean(typography.highlight || typography.outline || typography.glow)}
+        >
+          {/* The looks, one click each. `TEXT_PRESETS` owns what each one
+              means, so a preset's values are not spread through the panel. */}
+          <div className="prop-presets" role="group" aria-label="Text effect presets">
+            {TEXT_PRESETS.map((preset) => {
+              const active = isTextPresetActive(preset, typography);
+              return (
+                <button
+                  key={preset.id}
+                  type="button"
+                  className="prop-preset"
+                  data-active={active || undefined}
+                  aria-pressed={active}
+                  onClick={() => setTypography(preset.patch(typography))}
+                  data-tooltip={preset.hint}
+                  data-tooltip-pos="top"
+                >
+                  {preset.label}
+                </button>
+              );
+            })}
+          </div>
+
+          <SubGroup
+            label="Highlight"
+            hint="A rounded plate behind each line, sized to that line's own words."
+            on={Boolean(typography.highlight)}
+            onToggle={(on) => setTypography({ highlight: on ? DEFAULT_TEXT_HIGHLIGHT : undefined })}
+          >
+            {typography.highlight && (
+              <>
+                <Row label="Colour">
+                  <ColorPickerPopover
+                    color={typography.highlight.color}
+                    onChange={(color) =>
+                      setTypography({ highlight: { ...typography.highlight!, color } })
+                    }
+                  />
+                </Row>
+                <Row label="Shape" hint="Ribbon welds the lines into one shape with tucked corners. Plates keeps each line separate.">
+                  <SegmentedControl
+                    ariaLabel="Highlight shape"
+                    value={typography.highlight.join}
+                    onChange={(v) =>
+                      setTypography({
+                        highlight: { ...typography.highlight!, join: v as 'ribbon' | 'plates' },
+                      })
+                    }
+                    segments={[
+                      { value: 'ribbon', label: 'Ribbon' },
+                      { value: 'plates', label: 'Plates' },
+                    ]}
+                  />
+                </Row>
+                <Row label="Corner" hint="How round each corner of the plate is.">
+                  <NumberStepper
+                    value={typography.highlight.radius}
+                    onChange={(radius) =>
+                      setTypography({ highlight: { ...typography.highlight!, radius } })
+                    }
+                    min={0}
+                    max={60}
+                    step={1}
+                    suffix="px"
+                  />
+                </Row>
+                <Row label="Padding" hint="Breathing room either side of each line's words.">
+                  <NumberStepper
+                    value={typography.highlight.paddingX}
+                    onChange={(paddingX) =>
+                      setTypography({ highlight: { ...typography.highlight!, paddingX } })
+                    }
+                    min={0}
+                    max={80}
+                    step={1}
+                    suffix="px"
+                  />
+                </Row>
+                {/* A highlight is picked for how it reads against the board; the
+                    words then have to stay legible against *it*, which is a
+                    different question and one people reliably get wrong. */}
+                <Row label="Auto ink" hint="Choose the text colour automatically, by contrast against the highlight.">
+                  <Switch
+                    checked={Boolean(typography.highlight.autoContrast)}
+                    onChange={(autoContrast) =>
+                      setTypography({
+                        highlight: {
+                          ...typography.highlight!,
+                          autoContrast: autoContrast || undefined,
+                        },
+                      })
+                    }
+                  />
+                </Row>
+              </>
+            )}
+          </SubGroup>
+
+          <SubGroup
+            label="Outline"
+            hint="A stroke around the letterforms, drawn wholly outside them."
+            on={Boolean(typography.outline)}
+            onToggle={(on) => setTypography({ outline: on ? DEFAULT_TEXT_OUTLINE : undefined })}
+          >
+            {typography.outline && (
+              <>
+                <Row label="Colour">
+                  <ColorPickerPopover
+                    color={typography.outline.color}
+                    onChange={(color) =>
+                      setTypography({ outline: { ...typography.outline!, color } })
+                    }
+                  />
+                </Row>
+                <Row label="Weight">
+                  <NumberStepper
+                    value={typography.outline.width}
+                    onChange={(width) =>
+                      setTypography({ outline: { ...typography.outline!, width } })
+                    }
+                    min={0.5}
+                    max={20}
+                    step={0.5}
+                    suffix="px"
+                  />
+                </Row>
+              </>
+            )}
+          </SubGroup>
+
+          <SubGroup
+            label="Glow"
+            hint="A soft halo behind the words. Takes the place of the layer shadow."
+            on={Boolean(typography.glow)}
+            onToggle={(on) => setTypography({ glow: on ? DEFAULT_TEXT_GLOW : undefined })}
+          >
+            {typography.glow && (
+              <>
+                <Row label="Colour">
+                  <ColorPickerPopover
+                    color={typography.glow.color}
+                    onChange={(color) => setTypography({ glow: { ...typography.glow!, color } })}
+                  />
+                </Row>
+                <Row label="Spread">
+                  <NumberStepper
+                    value={typography.glow.blur}
+                    onChange={(blur) => setTypography({ glow: { ...typography.glow!, blur } })}
+                    min={1}
+                    max={100}
+                    step={1}
+                    suffix="px"
+                  />
+                </Row>
+              </>
+            )}
+          </SubGroup>
+        </Accordion>
+      )}
+
+      {/* Star geometry. The renderer has always honoured `points` and
+          `innerRatio` and nothing has ever set them, so every star in every
+          document has been five-pointed at half depth. */}
+      {uniformKind && node.type === 'shape' && node.geometry.kind === 'star' && (
+        <Accordion title="Star">
+          <Row label="Points">
+            <NumberStepper
+              value={node.geometry.points ?? 5}
+              onChange={(points) => setGeometry({ points })}
+              min={MIN_STAR_POINTS}
+              max={MAX_STAR_POINTS}
+            />
+          </Row>
+          <Row label="Depth">
+            {/* Stored as a fraction of the outer radius; shown as a
+                percentage, because "0.35" is not a quantity anyone has an
+                intuition for. Inverted so that more depth means spikier: the
+                stored value is an inner *radius*, where a bigger number is a
+                blunter star, and a control that gets sharper as you turn it
+                down is one nobody predicts. */}
+            <NumberStepper
+              value={Math.round((1 - (node.geometry.innerRatio ?? 0.5)) * 100)}
+              onChange={(depth) => setGeometry({ innerRatio: 1 - depth / 100 })}
+              min={Math.round((1 - MAX_STAR_RATIO) * 100)}
+              max={Math.round((1 - MIN_STAR_RATIO) * 100)}
+              step={5}
+            />
+          </Row>
+        </Accordion>
+      )}
+
+      {/* One number, one control. `triangle` and `hexagon` used to be separate
+          shape kinds, which is two hard-coded side counts where the
+          specification asks for any of them. */}
+      {uniformKind && node.type === 'shape' && node.geometry.kind === 'polygon' && (
+        <Accordion title="Polygon">
+          <Row label="Sides">
+            <NumberStepper
+              value={node.geometry.points ?? 3}
+              onChange={(points) => setGeometry({ points })}
+              min={MIN_POLYGON_SIDES}
+              max={MAX_POLYGON_SIDES}
+            />
+          </Row>
+        </Accordion>
+      )}
+
+      {/* A line and an arrow are the same shape with different ends, so the
+          heads are a property rather than a second kind — turning one on makes
+          a line an arrow without changing what the object is. */}
+      {uniformKind && node.type === 'shape' && openShape && (
+        <Accordion title="Ends">
+          {/* The same six styles a connector offers, through the same control
+              and the same specimens. These were two raw checkboxes — the only
+              unstyled input left in this panel — and they could express one
+              shape of head where a connector could express five. A line and a
+              connector are both a run with two ends; which tool drew it should
+              not decide what you can put on it. */}
+          {/* One size for both ends. Two independent sizes is a control nobody
+              asks for — an arrow with a big head and a small tail reads as a
+              mistake — and it would double this section for a case that does
+              not exist. */}
+          <Row label="End size" hint="How big both markers are, relative to the stroke.">
+            {(() => {
+              const scale = shared((n) => (n.type === 'shape' ? n.geometry.endScale ?? 1 : null));
+              return (
+                <NumberStepper
+                  value={Math.round((scale.value ?? 1) * 100)}
+                  mixed={scale.mixed}
+                  onChange={(v) => setGeometry({ endScale: v === 100 ? undefined : v / 100 })}
+                  min={MIN_END_SCALE * 100}
+                  max={MAX_END_SCALE * 100}
+                  step={25}
+                  suffix="%"
+                />
+              );
+            })()}
+          </Row>
+          {(['endStart', 'endEnd'] as const).map((side) => (
+            <Row
+              key={side}
+              label={side === 'endStart' ? 'Start' : 'End'}
+              hint={side === 'endStart' ? 'What sits at the first end.' : 'What sits at the second end.'}
+            >
+              <SegmentedControl
+                ariaLabel={side === 'endStart' ? 'Start of the line' : 'End of the line'}
+                mixed={shared((n) => (n.type === 'shape' ? n.geometry[side] ?? 'none' : null)).mixed}
+                value={node.geometry[side] ?? 'none'}
+                onChange={(v) => setGeometry({ [side]: v as EndCapKind })}
+                segments={END_CAP_KINDS.map((kind) => ({
+                  value: kind,
+                  label: END_CAP_LABELS[kind],
+                  icon: <EndCapIcon kind={kind} flip={side === 'endStart'} />,
+                }))}
+              />
+            </Row>
+          ))}
+        </Accordion>
+      )}
+
+      {/* A connector's own properties: how it gets there, and which ends it
+          points at. Everything else it needs — stroke colour, weight, dash,
+          opacity — is the ordinary Stroke and Appearance sections, because a
+          connector is a line and those already describe lines. */}
+      {uniformType && node.type === 'connector' && (
+        <Accordion title="Connector">
+          <Row label="Route" hint="Straight goes corner to corner. Orthogonal turns at right angles, which is what a flowchart reads as. Curved eases between the two ends.">
+            <SegmentedControl
+              ariaLabel="Routing"
+              mixed={shared((n) => (n.type === 'connector' ? n.routing : null)).mixed}
+              value={node.routing}
+              onChange={(routing) => set({ routing } as Partial<AnyNode>)}
+              segments={[
+                {
+                  value: 'straight', label: 'Straight', icon: <Minus size={14} />,
+                  hint: 'A direct line',
+                },
+                {
+                  value: 'orthogonal', label: 'Right angles', icon: <CornerDownRight size={14} />,
+                  hint: 'Right-angled elbows',
+                },
+                {
+                  value: 'curved', label: 'Curved', icon: <Spline size={14} />,
+                  hint: 'A smooth arc',
+                },
+              ]}
+            />
+          </Row>
+          {/* Each end chosen independently, from the same vocabulary. Two
+              rows rather than one, because "what is at the start" and "what is
+              at the end" are separate decisions and a combined control would
+              have to enumerate thirty-six pairs. */}
+          <Row label="Start" hint="What sits at the first end.">
+            <SegmentedControl
+              ariaLabel="Start cap"
+              mixed={shared((n) => (n.type === 'connector' ? n.endStart ?? 'none' : null)).mixed}
+              value={node.endStart ?? 'none'}
+              onChange={(v) => set({ endStart: v } as Partial<AnyNode>)}
+              segments={END_CAP_KINDS.map((k) => ({
+                value: k,
+                label: END_CAP_LABELS[k],
+                hint: END_CAP_LABELS[k],
+                icon: <EndCapIcon kind={k} flip />,
+              }))}
+            />
+          </Row>
+          <Row label="End" hint="What sits at the second end.">
+            <SegmentedControl
+              ariaLabel="End cap"
+              mixed={shared((n) => (n.type === 'connector' ? n.endEnd ?? 'none' : null)).mixed}
+              value={node.endEnd ?? 'none'}
+              onChange={(v) => set({ endEnd: v } as Partial<AnyNode>)}
+              segments={END_CAP_KINDS.map((k) => ({
+                value: k,
+                label: END_CAP_LABELS[k],
+                hint: END_CAP_LABELS[k],
+                icon: <EndCapIcon kind={k} />,
+              }))}
+            />
+          </Row>
+          {/* The same control the line gets, for the same reason. */}
+          <Row label="End size" hint="How big both markers are, relative to the stroke.">
+            {(() => {
+              const scale = shared((n) => (n.type === 'connector' ? n.endScale ?? 1 : null));
+              return (
+                <NumberStepper
+                  value={Math.round((scale.value ?? 1) * 100)}
+                  mixed={scale.mixed}
+                  onChange={(v) => set({ endScale: v === 100 ? undefined : v / 100 } as Partial<AnyNode>)}
+                  min={MIN_END_SCALE * 100}
+                  max={MAX_END_SCALE * 100}
+                  step={25}
+                  suffix="%"
+                />
+              );
+            })()}
+          </Row>
+          <Row label="Label" hint="A word riding the middle of the run — yes, no, retry.">
+            <input
+              className="prop-input"
+              value={node.label ?? ''}
+              placeholder="None"
+              onChange={(e) => set({ label: e.target.value || undefined } as Partial<AnyNode>)}
+              aria-label="Connector label"
+            />
+          </Row>
+          {/* Attachment is stated rather than editable: it is set by drawing,
+              and a dropdown of node ids would be a control nobody can read. */}
+          <p style={{ margin: 0, fontSize: 'var(--text-xs)', color: 'var(--text-tertiary)', lineHeight: 1.5 }}>
+            {node.from.nodeId && node.to.nodeId
+              ? 'Both ends follow the objects they are attached to.'
+              : 'One end is loose — drag it onto an object to attach it.'}
+          </p>
+        </Accordion>
+      )}
+
+      {/* Image adjustments. `filters` sat on the schema for the project's
+          whole life and `ImageRenderer` read four properties, none of them
+          this — so a stored adjustment was silently ignored. */}
+      {uniformType && node.type === 'image' && (
+        <Accordion title="Adjust">
+          {ADJUSTMENT_IDS.map((id) => (
+            <Slider
+              key={id}
+              label={ADJUSTMENT_LABELS[id]}
+              value={adjustments[id]}
+              min={ADJUSTMENT_MIN[id]}
+              max={100}
+              /* Blur runs from zero, so its fill starts at the left like a
+                 quantity. The other three are departures from "as shot" and
+                 fill outward from the middle. */
+              origin={0}
+              onChange={(v) => setAdjustment(id, v)}
+            />
+          ))}
+          {hasAdjustments(adjustments) && (
+            <button
+              type="button"
+              className="adjustments__reset"
+              onClick={() => set({ filters: undefined } as Partial<AnyNode>)}
+            >
+              Reset adjustments
+            </button>
+          )}
+        </Accordion>
+      )}
+
+      {/* The safe area, for the frame sizes where part of the rectangle is
+          covered by something that is not yours. Seeded from the preset and
+          editable here, because the presets can only cover the cases that are
+          the same for everyone — a slide deck's own template, or a printer
+          with a wider margin than most, is a number only the person making it
+          knows. Four edges rather than one: a story's insets are not
+          symmetrical, and forcing them to be would waste 320 units of width to
+          protect against nothing. */}
+      {uniformType && node.type === 'frame' && (
+        <Accordion title="Safe area" defaultOpen={Boolean(node.safeArea)}>
+          {/* Two by two, not four across: a stepper is a label, a value and
+              two buttons, and four of them in a 230px panel leaves no room for
+              the number — which is the only part anyone reads. The X/Y row
+              above already settled on two per line. */}
+          <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '8px' }}>
+            {SAFE_EDGES.map(({ key, label }) => (
+              <NumberStepper
+                key={key}
+                value={Math.round(node.safeArea?.[key] ?? 0)}
+                onChange={(v) => setSafeArea(key, v)}
+                label={label}
+                min={0}
+                step={8}
+              />
+            ))}
+          </div>
+          <p style={{ margin: '8px 0 0', fontSize: 'var(--text-xs)', color: 'var(--text-tertiary)', lineHeight: 1.4 }}>
+            A guide only. Nothing is clipped or moved, and it never appears in an export.
+          </p>
         </Accordion>
       )}
 
@@ -1838,7 +2391,7 @@ export const PropertiesPanel: React.FC<PropertiesPanelProps> = ({ selectedIds, o
           first, which is a fact about nothing the panel is describing. */}
       {!isMulti && (
       <Accordion title="Metadata" defaultOpen={false}>
-        <div style={{ display: 'flex', flexDirection: 'column', gap: '8px', fontSize: '12px', color: 'var(--text-secondary)' }}>
+        <div style={{ display: 'flex', flexDirection: 'column', gap: '8px', fontSize: 'var(--text-xs)', color: 'var(--text-secondary)' }}>
           <Row label="ID">
             <span style={{ fontFamily: 'monospace', background: 'var(--surface-hover)', padding: '2px 4px', borderRadius: '4px' }}>{node.id.slice(0, 8)}</span>
           </Row>
@@ -1856,6 +2409,7 @@ export const PropertiesPanel: React.FC<PropertiesPanelProps> = ({ selectedIds, o
         </div>
       </Accordion>
       )}
+
     </div>
   );
 };

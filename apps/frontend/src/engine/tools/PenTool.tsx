@@ -1,4 +1,6 @@
 import { nanoid } from 'nanoid';
+import { DEFAULT_INK } from '../model/schema';
+import { simplifyPoints } from '../model/simplify';
 import type { Tool, ToolContext } from './Tool';
 import * as React from 'react';
 import { getStroke } from 'perfect-freehand';
@@ -23,7 +25,7 @@ export class PenTool implements Tool {
   id = 'pen';
   cursor = 'crosshair';
 
-  static currentColor = '#1F2937';
+  static currentColor = DEFAULT_INK;
 
   /** The nib, from the store so the dock's control and the stroke agree. */
   private static get size(): number {
@@ -183,7 +185,21 @@ export class PenTool implements Tool {
       // points (relative to the same origin) is what lets the Eraser cut an
       // actual gap in a freehand stroke instead of only being able to delete
       // the whole thing.
-      const centerline = this.points.map(p => ({ x: p.x - minX, y: p.y - minY }));
+      /**
+       * Thinned before it is stored.
+       *
+       * The raw samples are what the pointer reported — hundreds for a short
+       * stroke, and nearly all of them on straight runs where the neighbours
+       * already say everything. They are replicated to every client, written
+       * into every snapshot and serialized into every export. Douglas–Peucker
+       * at just over a unit keeps every corner and drops the rest; the drawn
+       * outline is unaffected because it comes from `svgPath`, which
+       * `perfect-freehand` has already produced from the full-rate input.
+       */
+      const centerline = simplifyPoints(
+        this.points.map(p => ({ x: p.x - minX, y: p.y - minY })),
+        1.2
+      );
 
       ctx.editor.createNode({
         id: nanoid(),

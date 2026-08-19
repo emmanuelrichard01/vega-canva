@@ -34,8 +34,13 @@ import {
   type StrokeAlign,
   type TextAlign,
   type Typography,
+  type TextGlow,
+  type TextHighlight,
+  type TextOutline,
 } from '../model/schema';
-import { END_CAP_KINDS, type EndCapKind } from '../model/connectorEnds';
+import { END_CAP_KINDS, MAX_END_SCALE, MIN_END_SCALE, type EndCapKind } from '../model/connectorEnds';
+import { FILL_STYLES, SKETCH_LEVELS } from '../model/rough';
+import { getColorForUser } from '../presence/ColorPalette';
 import { packAdjustments, readAdjustments } from '../model/imageAdjustments';
 
 /**
@@ -51,6 +56,17 @@ import { packAdjustments, readAdjustments } from '../model/imageAdjustments';
  * through an older client, hand-edited, or partially written during an
  * interrupted sync still has to render.
  */
+
+/**
+ * The colour a stored shadow falls back to when it has none of its own.
+ *
+ * Semi-transparent black, and it keeps its alpha inline rather than deferring
+ * to `Shadow.opacity`, because it is a **read** fallback for documents written
+ * before that field existed. `DEFAULT_SHADOW_COLOR` is the opaque ink a *new*
+ * shadow is seeded with; these are two different questions and collapsing them
+ * would darken every legacy shadow on the board.
+ */
+const LEGACY_SHADOW_COLOR = 'rgba(0,0,0,0.2)';
 
 const num = (value: unknown, fallback: number): number =>
   typeof value === 'number' && Number.isFinite(value) ? value : fallback;
@@ -238,7 +254,11 @@ function toShadow(raw: unknown): Shadow | undefined {
   if (!raw || typeof raw !== 'object') return undefined;
   const s = raw as Record<string, unknown>;
   return {
-    color: str(s.color, 'rgba(0,0,0,0.2)'),
+    // Carries its own alpha, unlike `DEFAULT_SHADOW_COLOR`, and deliberately:
+    // this is the *read* fallback for a stored shadow that has no colour at
+    // all, which predates `Shadow.opacity` existing. Swapping it for the
+    // opaque default would darken every legacy shadow that relied on it.
+    color: str(s.color, LEGACY_SHADOW_COLOR),
     // A negative blur or spread is not a smaller shadow; a canvas reads the
     // first as a very large positive one and the second inverts the stroke
     // that draws it.
@@ -344,6 +364,20 @@ function normalizeAppearance(raw: any): Appearance {
   const backdropBlur = num(source.backdropBlur, 0);
   if (backdropBlur > 0) appearance.backdropBlur = backdropBlur;
 
+  // Absent unless on, so an object that has never been sketched stores nothing.
+  // Two legacy forms are read: `sketch: true` from the boolean this replaced,
+  // and a numeric `roughness` from the one before that. Both map to `medium`,
+  // which is what each of them drew.
+  if (SKETCH_LEVELS.includes(source.sketch)) appearance.sketch = source.sketch;
+  else if (source.sketch === true || num(source.roughness, 0) > 0) appearance.sketch = 'medium';
+
+  // Absent is `solid`, so a shape that has never been shaded stores nothing —
+  // and only stored at all when there is a sketch for it to describe, since
+  // hachure on a crisp shape is a setting with no effect.
+  if (appearance.sketch && FILL_STYLES.includes(source.fillStyle) && source.fillStyle !== 'solid') {
+    appearance.fillStyle = source.fillStyle;
+  }
+
   return appearance;
 }
 
@@ -362,7 +396,11 @@ function normalizeTypography(raw: any, overrides: Partial<Typography> = {}): Typ
 
   return {
     fontFamily: str(t.fontFamily ?? c.fontFamily, overrides.fontFamily ?? DEFAULT_TYPOGRAPHY.fontFamily),
-    fontSize: num(t.fontSize ?? c.fontSize, overrides.fontSize ?? DEFAULT_TYPOGRAPHY.fontSize),
+    // Whole points. A resize drag multiplies by an arbitrary real factor, so
+    // documents carry sizes like 24.424470292956038; rounding here means no
+    // consumer — the panel, the canvas, an export — ever sees one, and the
+    // panel's reading agrees with what is actually drawn.
+    fontSize: Math.round(num(t.fontSize ?? c.fontSize, overrides.fontSize ?? DEFAULT_TYPOGRAPHY.fontSize)),
     fontWeight:
       typeof legacyWeight === 'number'
         ? legacyWeight
@@ -387,7 +425,51 @@ function normalizeTypography(raw: any, overrides: Partial<Typography> = {}): Typ
       overrides.letterSpacing ?? DEFAULT_TYPOGRAPHY.letterSpacing
     ),
     color: str(t.color ?? c.color, overrides.color ?? DEFAULT_TYPOGRAPHY.color),
+    // The four block-level fields below are all *absent by default*, and stay
+    // absent rather than being written as a zero or an empty object. Every
+    // existing document has none of them, and a stored `paragraphSpacing: 0`
+    // or a highlight with no colour would cost bytes in the CRDT and emit
+    // attributes in every export to say "nothing here".
+    ...(Number.isFinite(t.paragraphSpacing) && t.paragraphSpacing > 0
+      ? { paragraphSpacing: t.paragraphSpacing }
+      : null),
+    ...normalizeTextHighlight(t.highlight),
+    ...normalizeTextOutline(t.outline),
+    ...normalizeTextGlow(t.glow),
   };
+}
+
+/** The rounded ribbon behind the words. Absent unless it has a colour to draw. */
+function normalizeTextHighlight(raw: any): { highlight?: TextHighlight } {
+  if (!raw || typeof raw.color !== 'string') return {};
+  return {
+    highlight: {
+      color: raw.color,
+      radius: Math.max(0, num(raw.radius, 8)),
+      paddingX: Math.max(0, num(raw.paddingX, 10)),
+      paddingY: Math.max(0, num(raw.paddingY, 4)),
+      // `ribbon` is the default because it is the treatment people mean when
+      // they ask for this; `plates` is the deliberate opt-out.
+      join: raw.join === 'plates' ? 'plates' : 'ribbon',
+      ...(raw.autoContrast ? { autoContrast: true } : null),
+    },
+  };
+}
+
+/** A stroke on the letterforms. A zero weight is no outline, not an outline of nothing. */
+function normalizeTextOutline(raw: any): { outline?: TextOutline } {
+  if (!raw || typeof raw.color !== 'string') return {};
+  const width = num(raw.width, 0);
+  if (!(width > 0)) return {};
+  return { outline: { color: raw.color, width } };
+}
+
+/** A halo behind the letterforms. Same rule: no radius is no glow. */
+function normalizeTextGlow(raw: any): { glow?: TextGlow } {
+  if (!raw || typeof raw.color !== 'string') return {};
+  const blur = num(raw.blur, 0);
+  if (!(blur > 0)) return {};
+  return { glow: { color: raw.color, blur } };
 }
 
 function normalizeAuthor(raw: any): Author {
@@ -396,7 +478,13 @@ function normalizeAuthor(raw: any): Author {
   return {
     id: str(author.id ?? meta.authorId ?? raw?.createdBy, 'unknown'),
     name: str(author.name ?? meta.authorName ?? raw?.createdByName, 'Unknown'),
-    color: str(author.color ?? meta.authorColor ?? raw?.createdByColor, '#3B82F6'),
+    // Through the palette that already answers "what colour is this person",
+    // rather than a literal repeated here. A second opinion about identity
+    // colour is how one author ends up two colours in two surfaces.
+    color: str(
+      author.color ?? meta.authorColor ?? raw?.createdByColor,
+      getColorForUser(str(author.id ?? meta.authorId ?? raw?.createdBy, ''))
+    ),
   };
 }
 
@@ -441,8 +529,18 @@ function normalizeShapeGeometry(raw: any): ShapeGeometry {
     // An `arrow` with no stored head is one this build created before it could
     // say so; a `line` with no stored head is a plain line. The kind carries
     // the default so neither has to be rewritten.
-    geometry.arrowStart = bool(raw?.geometry?.arrowStart, false);
-    geometry.arrowEnd = bool(raw?.geometry?.arrowEnd, alias.kind === 'arrow');
+    // Read through the same `endCap` the connector uses, so a line and a
+    // connector cannot disagree about what "arrow" means. The two booleans are
+    // the legacy form and map straight across; the kind still carries the
+    // default, so an `arrow` drawn before end styles existed keeps its head.
+    geometry.endStart = endCap(raw?.geometry?.endStart, bool(raw?.geometry?.arrowStart, false));
+    geometry.endEnd = endCap(
+      raw?.geometry?.endEnd,
+      bool(raw?.geometry?.arrowEnd, alias.kind === 'arrow')
+    );
+    // Absent is the proportional default, so an untouched line stores nothing.
+    const endScale = num(raw?.geometry?.endScale, 1);
+    if (endScale !== 1) geometry.endScale = clamp(endScale, MIN_END_SCALE, MAX_END_SCALE);
   }
 
   return geometry;
@@ -596,6 +694,11 @@ export function normalizeNode(raw: any, id?: string): AnyNode {
     rotation: num(raw?.rotation, 0),
     scaleX: num(raw?.scaleX, 1),
     scaleY: num(raw?.scaleY, 1),
+    // Absent rather than zero when unsheared. Every document written before
+    // shear existed has neither key, and writing `skewX: 0` onto all of them
+    // would cost CRDT bytes and an exported attribute to say "no shear".
+    ...(num(raw?.skewX, 0) !== 0 ? { skewX: num(raw.skewX, 0) } : null),
+    ...(num(raw?.skewY, 0) !== 0 ? { skewY: num(raw.skewY, 0) } : null),
     opacity: num(raw?.opacity, 1),
     zIndex: num(raw?.zIndex, 0),
     parentId: typeof raw?.parentId === 'string' ? raw.parentId : undefined,
@@ -733,6 +836,9 @@ export function normalizeNode(raw: any, id?: string): AnyNode {
          */
         endStart: endCap(raw?.endStart, bool(raw?.arrowStart, false)),
         endEnd: endCap(raw?.endEnd, bool(raw?.arrowEnd, true)),
+        ...(num(raw?.endScale, 1) !== 1
+          ? { endScale: clamp(num(raw.endScale, 1), MIN_END_SCALE, MAX_END_SCALE) }
+          : null),
         label: typeof raw?.label === 'string' ? raw.label : undefined,
       };
 

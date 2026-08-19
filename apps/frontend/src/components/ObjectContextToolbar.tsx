@@ -30,9 +30,11 @@ import { FontSelector } from './ui/FontSelector';
 import { THEMES } from './canvas/renderers/StickyRenderer';
 import { STICKY_THEMES, type StickyTheme } from '../engine/model/schema';
 import {
-  DEFAULT_TYPOGRAPHY, MAX_POLYGON_SIDES, MIN_POLYGON_SIDES, isOpenShape,
-  type AnyNode, type Appearance, type ShapeKind, type TextAlign, type Typography,
+  DEFAULT_INK, DEFAULT_TYPOGRAPHY, MAX_POLYGON_SIDES, MIN_POLYGON_SIDES, isOpenShape,
+  type AnyNode, type Appearance, type FillStyle, type ShapeKind, type SketchLevel,
+  type TextAlign, type Typography,
 } from '../engine/model/schema';
+import { FillStyleIcon, SketchLevelIcon } from './panel/sketchIcons';
 import { alignSelection, distributeSelection, type AlignEdge } from '../engine/model/align';
 import { sharedValue } from '../engine/model/selection';
 
@@ -380,6 +382,26 @@ const PopoverSlider: React.FC<{
   </div>
 );
 
+/**
+ * What each sketch level and shading style is called.
+ *
+ * Written out here rather than inline, because these strings appear twice —
+ * as the tooltip and as the accessible name — and a button whose label and
+ * whose tooltip disagree is worse than one with neither.
+ */
+const SKETCH_LABELS: Record<'off' | SketchLevel, string> = {
+  off: 'Off — a ruled shape',
+  light: 'Light — one confident pass',
+  medium: 'Medium — drawn twice',
+  heavy: 'Heavy — twice, and past every corner',
+};
+
+const FILL_LABELS: Record<FillStyle, string> = {
+  solid: 'Solid — a flat fill',
+  hachure: 'Hachure — parallel pen strokes',
+  crosshatch: 'Cross-hatch — two sets, crossed',
+};
+
 interface Props {
   selectedId: string | null;
   selectedIds?: string[];
@@ -612,6 +634,18 @@ export const ObjectContextToolbar: React.FC<Props> = ({ selectedId, selectedIds,
     const canDistribute = bulkNodes.length >= 3;
     const locked = sharedValue(bulkNodes, (n) => Boolean(n.locked));
     const allFillable = bulkNodes.length > 0 && bulkNodes.every((n) => FILLABLE_TYPES.has(n.type));
+    /**
+     * Whether the whole selection can be drawn by hand.
+     *
+     * Shapes *and* connectors, mixed, which is the point: a flowchart
+     * selection is boxes and the arrows joining them, and sketching those in
+     * one gesture is the single most likely thing anyone wants this for.
+     */
+    const allSketchable =
+      bulkNodes.length > 0 && bulkNodes.every((n) => n.type === 'shape' || n.type === 'connector');
+    const bulkSketch = sharedValue(bulkNodes, (n) =>
+      (n as { appearance?: Appearance }).appearance?.sketch ?? 'off'
+    );
     const opacity = sharedValue(bulkNodes, (n) => n.opacity);
 
     return (
@@ -691,6 +725,48 @@ export const ObjectContextToolbar: React.FC<Props> = ({ selectedId, selectedIds,
                 onChange={(v) => updateNodes(bulkIds, { opacity: v / 100 })}
               />
             </RailPopover>
+            {allSketchable && (
+              <RailPopover
+                label="Sketch"
+                trigger={
+                  <SketchLevelIcon
+                    level={(bulkSketch.mixed ? 'off' : (bulkSketch.value as SketchLevel | 'off')) ?? 'off'}
+                  />
+                }
+              >
+                <span className="ctx-popover__label">Sketch</span>
+                <div className="ctx-shape-grid">
+                  {(['off', 'light', 'medium', 'heavy'] as const).map((lvl) => (
+                    <button
+                      key={lvl}
+                      type="button"
+                      className="ctx-shape-btn"
+                      aria-pressed={!bulkSketch.mixed && (bulkSketch.value ?? 'off') === lvl}
+                      aria-label={SKETCH_LABELS[lvl]}
+                      data-tooltip={SKETCH_LABELS[lvl]}
+                      // Merged per node, so applying a sketch across a
+                      // selection cannot overwrite each object's own fill,
+                      // stroke and shadow with the first one's paint.
+                      onClick={() =>
+                        applyNodePatches(
+                          bulkNodes.map((n) => ({
+                            id: n.id,
+                            changes: {
+                              appearance: {
+                                ...((n as { appearance?: Appearance }).appearance ?? {}),
+                                sketch: lvl === 'off' ? undefined : lvl,
+                              },
+                            },
+                          }))
+                        )
+                      }
+                    >
+                      <SketchLevelIcon level={lvl} />
+                    </button>
+                  ))}
+                </div>
+              </RailPopover>
+            )}
             <RailButton
               label={locked.mixed || !locked.value ? 'Lock all' : 'Unlock all'}
               pressed={!locked.mixed && locked.value}
@@ -817,15 +893,75 @@ export const ObjectContextToolbar: React.FC<Props> = ({ selectedId, selectedIds,
                 >
                   <div className="ctx-popover__row">
                     <span className="ctx-popover__label">Colour</span>
+                    {/* Opens on the colour the renderer will actually draw.
+                        This defaulted to pure black while every renderer falls
+                        back to `DEFAULT_INK`, so a shape with no stroke set
+                        showed a black swatch and drew dark slate — the picker
+                        was reporting a colour that existed nowhere. */}
                     <ColorPickerPopover
-                      color={appearance.stroke?.color ?? '#000000'}
+                      color={appearance.stroke?.color ?? DEFAULT_INK}
                       onChange={(color) => setAppearance({ stroke: { width: strokeWidth || 2, ...appearance.stroke, color } })}
                     />
                   </div>
                   <PopoverSlider
                     label="Weight" value={strokeWidth} min={0} max={40}
-                    onChange={(width) => setAppearance({ stroke: { color: appearance.stroke?.color ?? '#000000', ...appearance.stroke, width } })}
+                    onChange={(width) => setAppearance({ stroke: { color: appearance.stroke?.color ?? DEFAULT_INK, ...appearance.stroke, width } })}
                   />
+                </RailPopover>
+              )}
+              {/* Sketch lives on the rail, not only in the panel, because it
+                  is a *drawing* decision: you reach for it while laying out a
+                  diagram, repeatedly, and walking to the inspector each time
+                  is the difference between using it and not. Shading is inside
+                  the same popover rather than beside it — it is meaningless
+                  without a sketch level, so it should not occupy rail width
+                  when there is none. */}
+              {node.type === 'shape' && (
+                <RailPopover
+                  label="Sketch"
+                  trigger={<SketchLevelIcon level={appearance.sketch ?? 'off'} />}
+                  align="start"
+                >
+                  <span className="ctx-popover__label">Sketch</span>
+                  <div className="ctx-shape-grid">
+                    {(['off', 'light', 'medium', 'heavy'] as const).map((lvl) => (
+                      <button
+                        key={lvl}
+                        type="button"
+                        className="ctx-shape-btn"
+                        aria-pressed={(appearance.sketch ?? 'off') === lvl}
+                        aria-label={SKETCH_LABELS[lvl]}
+                        data-tooltip={SKETCH_LABELS[lvl]}
+                        onClick={() =>
+                          setAppearance({ sketch: lvl === 'off' ? undefined : lvl })
+                        }
+                      >
+                        <SketchLevelIcon level={lvl} />
+                      </button>
+                    ))}
+                  </div>
+                  {appearance.sketch && !openShape && (
+                    <>
+                      <span className="ctx-popover__label">Shading</span>
+                      <div className="ctx-shape-grid">
+                        {(['solid', 'hachure', 'crosshatch'] as const).map((st) => (
+                          <button
+                            key={st}
+                            type="button"
+                            className="ctx-shape-btn"
+                            aria-pressed={(appearance.fillStyle ?? 'solid') === st}
+                            aria-label={FILL_LABELS[st]}
+                            data-tooltip={FILL_LABELS[st]}
+                            onClick={() =>
+                              setAppearance({ fillStyle: st === 'solid' ? undefined : st })
+                            }
+                          >
+                            <FillStyleIcon style={st} />
+                          </button>
+                        ))}
+                      </div>
+                    </>
+                  )}
                 </RailPopover>
               )}
               {node.type === 'shape' && node.geometry.kind === 'rect' && (

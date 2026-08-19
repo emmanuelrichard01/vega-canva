@@ -43,3 +43,30 @@ export function consumePendingEdit(id: string): boolean {
 export function clearPendingEdit(): void {
   pendingId = null;
 }
+
+/**
+ * Where the caret should land when the editor opens.
+ *
+ * A second latch beside the one above, and for the same reason it exists at
+ * all: the editor mounts a frame after the click that asked for it, so there
+ * is no way to hand it anything except by leaving it somewhere to collect.
+ *
+ * Kept separate from `requestEditOnMount` rather than folded into it because
+ * most callers have no caret to offer — a sticky chained with Tab wants the
+ * start, a shape label wants the whole thing — and an optional second argument
+ * on the existing function would make those callers look like they had made a
+ * decision they never made.
+ */
+let pendingCaret: { id: string; offset: number } | null = null;
+
+export function requestCaretOnMount(id: string, offset: number): void {
+  pendingCaret = { id, offset };
+}
+
+/** Read and clear. Returns null when this node was not the one asked for. */
+export function consumePendingCaret(id: string): number | null {
+  if (pendingCaret?.id !== id) return null;
+  const { offset } = pendingCaret;
+  pendingCaret = null;
+  return offset;
+}

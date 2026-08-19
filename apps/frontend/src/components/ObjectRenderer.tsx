@@ -2,7 +2,7 @@ import React, { useCallback, useEffect, useRef, useState, useSyncExternalStore }
 import { Circle, Group, Rect, Text } from 'react-konva';
 import Konva from 'konva';
 import { deleteNode, localAuthorId, toggleReaction, updateNode } from '../engine/document';
-import { consumePendingEdit } from '../engine/interaction/pendingEdit';
+import { consumePendingEdit, requestCaretOnMount } from '../engine/interaction/pendingEdit';
 import { cropMode } from '../engine/interaction/cropMode';
 import { pathEdit } from '../engine/interaction/pathEdit';
 import { EXPORT_CHROME } from '../engine/export/chrome';
@@ -26,6 +26,36 @@ import { FrameRenderer } from './canvas/renderers/FrameRenderer';
 import { ConnectorRenderer } from './canvas/renderers/ConnectorRenderer';
 import { useLayerFilters } from './canvas/renderers/useLayerFilters';
 import { TextRenderer } from './canvas/renderers/TextRenderer';
+import { caretAt, layoutText } from '../engine/text/layout';
+import { measurerFor } from '../engine/text/measure';
+import { applyTextCase } from '../engine/model/textCase';
+
+/**
+ * Which character a click inside a text node landed on.
+ *
+ * Lays the text out again rather than reaching for the renderer's copy: this
+ * runs once per click, the layout is cheap, and reaching across for a memo
+ * owned by another component would couple the two in the one direction that
+ * makes the renderer harder to change.
+ */
+function caretOffsetFor(node: AnyNode, local: { x: number; y: number }): number {
+  if (node.type !== 'text') return 0;
+  const t = node.typography;
+  const layout = layoutText({
+    text: applyTextCase(node.text, t.textCase),
+    wrap: node.resize === 'width' ? 'none' : 'word',
+    width: node.width,
+    height: node.resize === 'fixed' ? node.height : undefined,
+    fontSize: t.fontSize,
+    lineHeight: t.lineHeight,
+    letterSpacing: t.letterSpacing,
+    paragraphSpacing: t.paragraphSpacing,
+    align: t.align,
+    verticalAlign: t.verticalAlign,
+    measure: measurerFor(t),
+  });
+  return caretAt(layout, local, measurerFor(t), t.letterSpacing);
+}
 
 interface ObjectRendererProps {
   objId: string;
@@ -385,6 +415,12 @@ export const ObjectRenderer = React.memo(
           rotation={rotation}
           scaleX={node.scaleX}
           scaleY={node.scaleY}
+          // Degrees in the document, matrix coefficients here. Konva's
+          // `skewX` is the coefficient itself, not an angle, and this `tan` is
+          // the only place the two conventions meet — the same arrangement
+          // `fontStyle` has, for the same reason.
+          skewX={node.skewX ? Math.tan((node.skewX * Math.PI) / 180) : 0}
+          skewY={node.skewY ? Math.tan((node.skewY * Math.PI) / 180) : 0}
           // Dimmed, not hidden, when a tag filter excludes this object. Hiding
           // would make the board look emptied and lose the spatial context —
           // the point of filtering on a canvas is to see the matches *among*
@@ -404,7 +440,33 @@ export const ObjectRenderer = React.memo(
           // object would otherwise start a drag instead of applying the force,
           // which made the tools look inert exactly where you would aim them.
           draggable={!flight && !node.locked && !forceToolActive && !filteredOut}
-          onClick={(e) => onSelect(objId, e)}
+          /**
+           * A click on an *already selected* text object opens the editor with
+           * the caret where you clicked.
+           *
+           * Which is what every text tool does and what this one did not: the
+           * editor is focused programmatically and never sees the click that
+           * opened it, so the caret landed at the start and editing a sentence
+           * meant clicking once to get in and again to get where you were
+           * aiming the first time.
+           *
+           * Gated on the object already being selected, so the first click
+           * still just selects. Going straight into edit on a single click
+           * would make text impossible to drag.
+           */
+          onClick={(e) => {
+            if (isSelected && node && node.type === 'text' && !isEditing) {
+              const stage = e.target.getStage();
+              const pointer = stage?.getPointerPosition();
+              if (pointer) {
+                const world = cameraSystem.screenToWorld(pointer.x, pointer.y);
+                requestCaretOnMount(objId, caretOffsetFor(node, { x: world.x - node.x, y: world.y - node.y }));
+              }
+              setIsEditing(true);
+              return;
+            }
+            onSelect(objId, e);
+          }}
           onTap={(e) => onSelect(objId, e as unknown as Konva.KonvaEventObject<MouseEvent>)}
           onDblClick={handleDblClick}
           onDblTap={handleDblClick}
