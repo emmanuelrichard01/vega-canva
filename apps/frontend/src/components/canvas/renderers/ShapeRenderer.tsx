@@ -13,7 +13,7 @@ import { roughShape } from '../../../engine/model/roughShape';
 import { roughEllipse, roughPolyline, seedFrom } from '../../../engine/model/rough';
 import { endCapShape } from '../../../engine/model/connectorEnds';
 import { ThemeService } from '../../../engine/ThemeService';
-import { readableOn } from '../../../engine/model/color';
+import { readableOnSurface } from '../../../engine/model/color';
 
 interface Props {
   node: ShapeNode;
@@ -186,7 +186,12 @@ export const ShapeRenderer: React.FC<Props> = React.memo(({ node, showLabel }) =
             fontSize={11}
             fontStyle="600"
             letterSpacing={0.4}
-            fill={readableOn(stroke ?? DEFAULT_INK, ThemeService.isDarkMode(), 3.2)}
+            // Against the *plate*, not against the board. `readableOn` assumes
+            // a near-white or near-black surface; the plate is a mid-tone
+            // panel, and a colour that clears 3:1 on white can be nearly
+            // invisible on it. 4.5 rather than 3.2 because this is small text
+            // now — 11px semibold is not the "large text" the lower bar is for.
+            fill={readableOnSurface(stroke ?? DEFAULT_INK, plateFill)}
           />
         </Label>
       ) : node.typography ? (

@@ -48,6 +48,15 @@ export interface RoughShape {
  * worth hachuring — a gradient, for instance, keeps the ordinary fill path and
  * only its outline is sketched.
  */
+/**
+ * The line profiles made of samples rather than corners.
+ *
+ * `straight` and `zigzag` are absent on purpose: every vertex in them is a real
+ * turn, and the polyline sketcher's overshoot past a real turn is the whole
+ * look of a hand-drawn line.
+ */
+const SAMPLED_PROFILES: ReadonlySet<string> = new Set(['curved', 'wavy', 'coil']);
+
 export function roughShape(
   node: Pick<ShapeNode, 'geometry' | 'width' | 'height' | 'appearance'> & { id: string },
   wantsFill: boolean
@@ -122,20 +131,26 @@ export function roughShape(
       // what a shared code path gets wrong if it does not ask.
       ring = outline.points;
       /**
-       * Which sketcher, decided by whether the run has real corners.
+       * Which sketcher, decided by the **profile** rather than by counting
+       * points.
        *
-       * A straight line is two points and a zigzag is a handful, all of them
-       * genuine turns, and the polyline sketcher's overshoot past each is what
-       * makes them read as drawn rather than ruled.
+       * A straight line and a zigzag are made of genuine corners, and the
+       * polyline sketcher's overshoot past each one is exactly what makes them
+       * read as drawn: the sharp crossing strokes at every turn are the
+       * character of a hand-drawn zigzag, and they are the first thing lost if
+       * it goes anywhere else.
        *
-       * A wavy, coiled or curved run is a hundred sampled points and *none* of
-       * them is a corner — so overshooting each one produced the same
-       * bristling mess a heart did before `roughLoop` existed. It takes the
-       * drift sampler instead, which wanders wide of the curve and comes back
-       * the way a hand does. Same decision `ConnectorRenderer` makes for a
-       * curved route, and the same threshold: corners or samples.
+       * A wavy, curved or coiled run is a hundred *samples* and none of them
+       * is a corner, so overshooting each produced the same bristling mess a
+       * heart did before `roughLoop` existed.
+       *
+       * This was a point count for one commit — anything over eight samples
+       * took the drift sampler — which is a proxy for "is this a curve" that
+       * gets the one case wrong that matters: a zigzag with six repeats is
+       * fourteen points, so it was quietly reclassified as a curve and lost
+       * its corners. The profile knows the answer; counting was guessing.
        */
-      sketched = ring.length > 8
+      sketched = SAMPLED_PROFILES.has(node.geometry.lineProfile ?? 'straight')
         ? roughLoop(ring, { seed, level, closed: false })
         : roughPolyline(ring, { seed, closed: false, level });
       return { outline: sketched, fill: '', silhouette: '' };

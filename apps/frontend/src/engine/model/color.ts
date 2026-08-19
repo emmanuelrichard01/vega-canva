@@ -147,6 +147,53 @@ export function contrastInk(hex: string): string {
  * it clears a minimum contrast against the surface. A dark red stays
  * recognisably red; it just stops being indistinguishable from the panel.
  */
+/**
+ * The same lift, measured against the surface it will actually sit on.
+ *
+ * `readableOn` assumes the surface is the board — near-white at 0.96 or
+ * near-black at 0.05. A label on a **plate** is on neither: the plate is a
+ * mid-tone panel drawn under the words so the line crossing behind them does
+ * not cut through the text, and against it a colour that clears 3:1 on white
+ * can be nearly invisible. The plate solves the *line* over the words and does
+ * nothing about the words themselves, which is exactly the case that needs the
+ * real number.
+ *
+ * Same walk through HSV, so the hue survives and a dark red label stays
+ * recognisably red rather than being replaced with black.
+ */
+export function readableOnSurface(color: string, surface: string, minRatio = 4.5): string {
+  const rgb = hexToRgb(color);
+  const surfaceLum = luminance(surface);
+  // An unparseable colour is left alone rather than guessed at: returning
+  // black would silently discard whatever the author chose.
+  if (!rgb || Number.isNaN(surfaceLum)) return color;
+
+  const ratio = (a: number, b: number) => (Math.max(a, b) + 0.05) / (Math.min(a, b) + 0.05);
+  if (ratio(luminance(color), surfaceLum) >= minRatio) return color;
+
+  // Away from the surface, whichever way that is. Deciding by the surface's
+  // own luminance rather than by a dark-mode flag is the whole point — a pale
+  // plate in dark mode wants dark ink, and a flag would give it light ink.
+  const towardDark = surfaceLum > 0.5;
+  const hsv = rgbToHsv(rgb);
+  let best = color;
+  let bestRatio = ratio(luminance(color), surfaceLum);
+  for (let i = 1; i <= 14; i += 1) {
+    const v = towardDark ? Math.max(0, hsv.v - i * 0.07) : Math.min(1, hsv.v + i * 0.07);
+    const s = !towardDark && hsv.v < 0.2 ? Math.max(hsv.s, 0.35) : hsv.s;
+    const candidate = hsvToHex({ h: hsv.h, s, v });
+    const r = ratio(luminance(candidate), surfaceLum);
+    if (r > bestRatio) {
+      bestRatio = r;
+      best = candidate;
+    }
+    if (r >= minRatio) return candidate;
+  }
+  // Nothing reached the target — a mid-grey plate under a mid-grey ink has no
+  // answer in this hue. The best of the attempts beats giving up on the first.
+  return best;
+}
+
 export function readableOn(color: string, surfaceIsDark: boolean, minRatio = 2.6): string {
   const rgb = hexToRgb(color);
   if (!rgb) return color;

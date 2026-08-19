@@ -9,6 +9,7 @@ import { capExtentPoints, connectorCaps, trimPolyline } from '../../../engine/mo
 import { updateNode } from '../../../engine/document';
 import { useStore } from '../../../hooks/useStore';
 import { canvasPlateFill } from '../../../engine/ThemeService';
+import { readableOnSurface } from '../../../engine/model/color';
 import { strokeColor, strokeDashProps, strokeWidth } from './shared';
 
 interface Props {
@@ -401,8 +402,19 @@ export const ConnectorRenderer: React.FC<Props> = React.memo(({ node }) => {
           y={points[(Math.floor(points.length / 4) * 2) + 1] ?? points[1]}
           listening={false}
         >
+          {/* The ink is lifted against the plate, not taken on trust. A
+              connector's colour is arbitrary — a pale one put pale words on a
+              pale panel, and the plate only ever solved the *line* crossing
+              the text, never the text itself. */}
           <Tag fill={canvasPlateFill(dark)} cornerRadius={3} />
-          <Text text={node.label} fontSize={11} padding={3} fill={stroke} />
+          <Text
+            text={node.label.toUpperCase()}
+            fontSize={11}
+            fontStyle="600"
+            letterSpacing={0.4}
+            padding={3}
+            fill={readableOnSurface(stroke, canvasPlateFill(dark))}
+          />
         </Label>
       ) : null}
     </Group>

@@ -178,7 +178,21 @@ export function linePoints(
   // A coil turns through a full circle per repeat, so it needs more samples
   // per unit of run than a wave that only rises and falls once.
   const steps = count * Math.round(stepsFor(period) * 1.5);
-  const loop = amplitude * 1.6;
+  /**
+   * A coil's loop is sized against its *period*, not against the shared wave
+   * amplitude.
+   *
+   * It used to be a multiple of `amplitude`, so when that came down to keep a
+   * wave's arrival angle reasonable the coil's loops shrank with it — and a
+   * coil whose loops are small is just a wobbly line. The two profiles want
+   * different things from the same number: a wave wants to stay shallow enough
+   * that its ends do not leave steeply, and a coil wants loops big enough to
+   * close and read as loops.
+   *
+   * At 0.62 of the period a turn is a clear open circle rather than a kink,
+   * and consecutive turns still clear each other along the run.
+   */
+  const loop = period * 0.62;
   return Array.from({ length: steps + 1 }, (_, i) => {
     const t = i / steps;
     const turn = t * count * Math.PI * 2;
