@@ -593,13 +593,15 @@ independent corner radii → frame wrapping and drag-reparenting.
 > the one that is easy to forget is the one written in English. When you finish
 > something listed here, strike it in the commit that finishes it, not later.
 
-Two things newly visible on connectors, now that they finally reach the paint
-sections at all: **Blend is deliberately hidden for them** — a connector's job
-is to stay legible across whatever it crosses, and multiply darkens it into the
-shapes it runs over — while **Blur is still offered and probably should not
-be**. Backdrop blur on a hairline is close to meaningless. That was noticed and
-left alone rather than changed past what was asked for; it is a two-line fix
-next to the `hasConnector` gate if you agree.
+**Blend and Blur are both hidden for connectors now.** Neither was a decision
+anyone made: both arrived as a side effect of connectors being added to
+`APPEARANCE_TYPES`, and neither survives contact with what a connector is. A
+connector's job is to stay legible across whatever it crosses — multiply
+darkens it into the shapes it runs over, screen washes it out — and layer blur
+turns a 2px stroke into a smear, destroying the one property the object exists
+to have, while backdrop blur is invisible under a stroke that thin. Both gate
+on `hasConnector` in `PropertiesPanel.tsx`. **The general lesson: when you give
+a type a capability it never had, walk every control that capability unlocks.**
 
 ### 5e. Still logged, from earlier phases
 

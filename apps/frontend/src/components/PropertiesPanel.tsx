@@ -618,8 +618,11 @@ export const PropertiesPanel: React.FC<PropertiesPanelProps> = ({ selectedIds, o
    * Whether a connector is in the selection.
    *
    * Connectors reached the paint sections for the first time when they were
-   * added to `APPEARANCE_TYPES`, which is right for colour and wrong for a
-   * couple of controls that assume an object with an interior.
+   * added to `APPEARANCE_TYPES`, which is right for colour and wrong for the
+   * controls that assume an object with an interior. Two are gated off here:
+   * **Blend** and **Blur**. Neither was a decision anyone made — both arrived
+   * as a side effect of the appearance block, which is exactly the kind of
+   * thing to check for when a type is given a capability it never had.
    */
   const hasConnector = nodes.some((n) => n.type === 'connector');
   /** Images carry their own blur in Adjust, so the generic one is suppressed. */
@@ -1679,7 +1682,16 @@ export const PropertiesPanel: React.FC<PropertiesPanelProps> = ({ selectedIds, o
           space. An empty disclosure is worse than a missing one: it promises a
           control, costs a click to find out there is none, and does it again
           every time. */}
-      {appearance && (!hasImage || (capabilities.supportsEdgeEffects && !openShape)) && (
+      {/* Not on connectors, for the same reason Blend is not. Both blurs
+          assume an object with an interior and something meaningful behind it.
+          A connector is a hairline: layer blur turns a 2px stroke into a smear
+          and destroys the one property the object exists to have, which is
+          being followable from one end to the other; backdrop blur is
+          invisible under a stroke that thin. Like Blend, it appeared here only
+          as a side effect of connectors finally being given an appearance
+          block, and an accordion of controls that do nothing worth doing is
+          the empty-disclosure problem above with extra steps. */}
+      {appearance && !hasConnector && (!hasImage || (capabilities.supportsEdgeEffects && !openShape)) && (
         <Accordion
           title="Blur"
           defaultOpen={Boolean(appearance.blur || appearance.backdropBlur)}
