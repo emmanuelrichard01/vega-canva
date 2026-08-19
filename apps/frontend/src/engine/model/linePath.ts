@@ -172,94 +172,93 @@ export function linePoints(
   }
 
   /**
-   * Coil: a loop that also travels, which is what a phone cord does. The
-   * across-component turns through a full circle per period while the
-   * along-component advances, so each turn closes on itself without the line
-   * ever going backwards far enough to double over.
+   * Coil: a straight run with a row of loops standing on it.
    *
-   * ## How the ends are brought back to the axis
+   * ## Why this is a prolate cycloid and not a shaped sine
    *
-   * A coil is the one profile whose ends fall *inside* a turn: without help it
-   * arrives at its last point still curving hard, so a marker there is tangent
-   * to a loop and reads as flung off the side rather than as terminating the
-   * line.
+   * Three attempts were made by taking a wave and bending it — moving the
+   * phase around, easing the amplitude, narrowing the window a loop happens
+   * in. Every one of them produced a scallop, an arch or a flat-topped hump,
+   * because none of them was ever going to produce a loop: a sine has one
+   * value per position, so it cannot double back, and a curve that never
+   * doubles back cannot cross itself. Tuning the numbers was never going to
+   * fix a construction that had no crossing in it.
    *
-   * The first attempt was a straight lead at each end — coil in the middle,
-   * plain run at the extremities. It seated the heads correctly and left a
-   * visible **corner** where the straight met the first loop, which is the
-   * opposite of what a coil should look like: a spring flows out of its
-   * winding, it does not get welded to a stick.
+   * A **prolate cycloid** is the curve traced by a point held *outside* a
+   * circle that rolls along a line. The loop is not a shape imposed on it —
+   * the loop is what the point does when the circle's rotation carries it
+   * backwards faster than the rolling carries it forwards, which happens near
+   * the bottom of every turn. That is exactly the reference: loops standing on
+   * a baseline, each crossing itself right at the line.
    *
-   * The fix is to ease the loop's *radius* to zero with `smoothstep`, whose
-   * derivative is also zero at the ends. Both the across-component and its rate
-   * of change vanish together, so the tangent approaches the axis on its own
-   * and the run simply unwinds into a straight line. No corner, and the heads
-   * still sit flat — the same result the lead was after, arrived at by the
-   * geometry rather than bolted on.
+   *   x(t) = r*t - d*sin(t)
+   *   y(t) = d - d*cos(t)
+   *
+   * `r` is the rolling radius and `d` how far the traced point sits from the
+   * centre. `d > r` is the whole condition for loops — at `d = r` it is an
+   * ordinary cycloid with cusps and no loop at all, and below it a gentle wave.
+   * Nothing here needs a special case to make a loop appear; it appears because
+   * the geometry says so.
+   *
+   * Both ends land on `y = 0` at every multiple of 2π, so the loops sit on the
+   * baseline by construction rather than by being eased onto it.
    */
-  const smoothstep = (t: number): number => {
-    const x = Math.max(0, Math.min(1, t));
-    return x * x * (3 - 2 * x);
-  };
-  /**
-   * How much of each end is spent unwinding, and why it is not one number.
-   *
-   * The unwind exists so a head is never tangent to a tight loop. At eight
-   * turns that is a real risk and it needs room. At one, two or three it is
-   * not: those turns are large and slow, and flattening a sixth of each end
-   * straightened the very stretch the eye reads as the line's flow — the curve
-   * swept upward into the head while the head pointed flat along the axis, and
-   * the two looked like different objects stuck together.
-   *
-   * A short unwind at low counts keeps the terminal tangent *on* the curve, so
-   * the head continues the sweep it is attached to. The full one comes back as
-   * the turns tighten and start to need it.
-   */
-  const UNWIND = count <= 3 ? 0.06 : 0.16;
 
   /**
-   * The loop's radius, capped against the *whole run* as well as the period.
+   * How far the traced point sits outside the rolling circle.
    *
-   * `period * 0.62` alone is right at five or six turns and absurd at one,
-   * where the period is the entire line and the coil becomes a single circle
-   * wider than the thing it is drawn on. The cap is what makes low counts
-   * usable, which is the point of having a count at all — one big loop, three
-   * medium ones and eight tight ones are all things people ask a coil for.
+   * The only thing that decides whether there is a loop at all: above 1 the
+   * point swings back faster than the circle rolls forward and the curve
+   * crosses itself, at 1 it makes a cusp, below it a gentle wave. Four gives a
+   * loop clearly taller than the advance between loops, which is the
+   * proportion a hand draws.
    */
-  /**
-   * Bigger when there are few loops, so one loop is a *loop*.
-   *
-   * A flat cap made a single loop a small hook on a long shallow curve — the
-   * run was mostly travel and barely any winding, which reads as a line that
-   * happens to cross itself rather than as a deliberate loop. Few turns means
-   * each one can afford to be generous, and many turns means each must be
-   * tight or they collide, so the allowance falls as the count rises rather
-   * than being one number for both cases.
-   */
-  const share = count <= 2 ? 0.34 : count <= 4 ? 0.26 : 0.2;
-  const loop = Math.min(period * 0.62, length * share);
-  const steps = Math.max(48, (count + 1) * Math.round(stepsFor(period) * 1.5));
+  const PROLATE = 4;
 
   /**
-   * One more turn than the number asked for, because the ends eat one.
+   * The loops are a fixed size and the *leads* absorb the difference.
    *
-   * The unwinding above suppresses the loop across the first and last stretch,
-   * which is what brings the run back to the axis — and it costs about half a
-   * turn at each end. So `count` turns produced `count - 1` *visible* loops:
-   * one asked for a curve, two asked for one loop, three for two. The number
-   * on the control has to mean the number of loops on the screen, so the extra
-   * turn is added here rather than the user being asked to compensate.
+   * Deriving the size from the span divided by the count was backwards: one
+   * loop then took the whole span for itself and came out enormous, and
+   * capping it instead pushed `d` below `r`, which does not make a small loop
+   * — it removes the loop entirely and leaves an arch. That is what one loop
+   * was drawing.
+   *
+   * Sizing the loop against the *run* keeps it recognisable at any count, and
+   * one loop simply sits in the middle of a long flat line, which is what the
+   * reference shows.
+   *
+   * The numbers come from measuring the reference rather than from taste. Per
+   * loop it runs a pitch of 16 with a height of 20 and a width of 20 — so
+   * height over pitch is 1.25, and for this curve that ratio *is* `d / (pi r)`,
+   * which puts the prolate ratio at 3.93. The predicted loop width at that
+   * ratio is 1.23 pitches against the measured 1.25, which is the check that
+   * the reference really is this curve and not something that resembles it.
+   * Its loops stand a tenth of the run tall, hence the coefficient here.
    */
-  const turns = count + 1;
-  return Array.from({ length: steps + 1 }, (_, i) => {
-    const t = i / steps;
-    const turn = t * turns * Math.PI * 2;
-    const edge = smoothstep(t / UNWIND) * smoothstep((1 - t) / UNWIND);
-    return at(
-      t * length - Math.sin(turn) * loop * 0.55 * edge,
-      (1 - Math.cos(turn)) * loop * 0.5 * edge
-    );
-  });
+  let d = length * 0.05;
+  let r = d / PROLATE;
+  const sweep = Math.PI * 2 * count;
+  let coilSpan = r * sweep;
+
+  // Crowded: shrink the loops rather than run off the end of the line.
+  const maxSpan = length * 0.82;
+  if (coilSpan > maxSpan) {
+    const k = maxSpan / coilSpan;
+    d *= k;
+    r *= k;
+    coilSpan = maxSpan;
+  }
+  const lead = (length - coilSpan) / 2;
+
+  const steps = Math.max(96, count * 44);
+  const points: Point[] = [at(0, 0), at(lead, 0)];
+  for (let i = 1; i <= steps; i += 1) {
+    const theta = (i / steps) * sweep;
+    points.push(at(lead + r * theta - d * Math.sin(theta), -(d - d * Math.cos(theta))));
+  }
+  points.push(at(length, 0));
+  return points;
 }
 
 /**
