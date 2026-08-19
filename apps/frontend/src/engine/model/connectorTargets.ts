@@ -13,9 +13,10 @@
  */
 
 import type { AnyNode } from './schema';
-import { portPoint, type Box, type ConnectorEnd, type Point } from './connector';
-import { anchorPoint } from './connectorAnchor';
+import { portPoint, type Box, type ConnectorEnd, type Point, type Port } from './connector';
 import type { BindCandidate } from './connectorBinding';
+import { outlineOfNode, projectToOutline } from './shapePerimeter';
+import { anchorPoint, type Anchor } from './connectorAnchor';
 
 /**
  * Types a connector can attach to.
@@ -107,4 +108,95 @@ export function endPoint(end: ConnectorEnd, objects: Record<string, AnyNode>): P
     return { x: box.x + box.width / 2, y: box.y + box.height / 2 };
   }
   return { x: end.x ?? 0, y: end.y ?? 0 };
+}
+
+/**
+ * A node's outline, flattened once and remembered.
+ *
+ * Flattening an ellipse produces around sixty points, and `connectorPoints`
+ * runs on every render of every connector — on a flowchart that is the same
+ * curve being subdivided hundreds of times a second to answer a question whose
+ * answer did not change. The cache key is everything the outline depends on,
+ * so it invalidates itself when the shape does and no caller has to remember
+ * to clear it.
+ *
+ * Bounded, because a board can hold more shapes than are worth keeping
+ * outlines for and this must not become a leak that grows with session length.
+ * Oldest-out rather than least-recently-used: an LRU needs bookkeeping on every
+ * *read*, and reads are the hot path here.
+ */
+const outlineCache = new Map<string, Point[] | null>();
+const OUTLINE_CACHE_LIMIT = 400;
+
+function outlineKey(node: AnyNode): string {
+  const geo = 'geometry' in node ? node.geometry : undefined;
+  return [
+    node.id,
+    node.type,
+    Math.round(node.x),
+    Math.round(node.y),
+    Math.round(node.width),
+    Math.round(node.height),
+    node.scaleX ?? 1,
+    node.scaleY ?? 1,
+    geo ? JSON.stringify(geo) : '',
+  ].join('|');
+}
+
+/** The cached outline for a node, computing it the first time. */
+export function outlineFor(node: AnyNode): Point[] | null {
+  const key = outlineKey(node);
+  const hit = outlineCache.get(key);
+  if (hit !== undefined) return hit;
+  const value = outlineOfNode(node);
+  if (outlineCache.size >= OUTLINE_CACHE_LIMIT) {
+    const oldest = outlineCache.keys().next().value;
+    if (oldest !== undefined) outlineCache.delete(oldest);
+  }
+  outlineCache.set(key, value);
+  return value;
+}
+
+/**
+ * The outline lookup `connectorPoints` takes, or `null` for a node whose box
+ * already tells the truth.
+ */
+export function outlineLookup(
+  objects: Record<string, AnyNode>
+): (id: string) => Point[] | null {
+  return (id) => {
+    const n = objects[id];
+    return n ? outlineFor(n) : null;
+  };
+}
+
+/**
+ * A point the connector logic derived from the box, moved onto the shape.
+ *
+ * The affordances have to agree with the result. The four rings a user aims at
+ * were drawn at `portPoint(box, side)` while the arrow they produced now lands
+ * on the outline — so on a triangle the ring floated in empty air a good
+ * distance from where the arrow would actually attach. A target that is not
+ * where the thing lands is worse than no target: it teaches the wrong place.
+ */
+export function attachPoint(node: AnyNode, boxPoint: Point): Point {
+  const outline = outlineFor(node);
+  if (!outline || outline.length < 3) return boxPoint;
+  const box = boxOfNode(node);
+  const centre = { x: box.x + box.width / 2, y: box.y + box.height / 2 };
+  return projectToOutline(outline, centre, boxPoint) ?? boxPoint;
+}
+
+/** The four named ports of a node, on its outline. */
+export function portPointsFor(node: AnyNode): Array<{ side: Exclude<Port, 'auto'>; point: Point }> {
+  const box = boxOfNode(node);
+  return (['top', 'right', 'bottom', 'left'] as const).map((side) => ({
+    side,
+    point: attachPoint(node, portPoint(box, side)),
+  }));
+}
+
+/** Where an anchor sits on a node, on its outline. */
+export function anchorPointOn(node: AnyNode, anchor: Anchor): Point {
+  return attachPoint(node, anchorPoint(boxOfNode(node), anchor));
 }

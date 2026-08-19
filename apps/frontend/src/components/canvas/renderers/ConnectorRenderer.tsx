@@ -4,6 +4,7 @@ import { roughPolyline, seedFrom } from '../../../engine/model/rough';
 import { useShallow } from 'zustand/react/shallow';
 import { DEFAULT_CONNECTOR_INK, type ConnectorNode } from '../../../engine/model/schema';
 import { connectorBounds, connectorPoints, type Box } from '../../../engine/model/connector';
+import { outlineFor } from '../../../engine/model/connectorTargets';
 import { capExtentPoints, connectorCaps, trimPolyline } from '../../../engine/model/connectorEnds';
 import { updateNode } from '../../../engine/document';
 import { useStore } from '../../../hooks/useStore';
@@ -75,7 +76,21 @@ export const ConnectorRenderer: React.FC<Props> = React.memo(({ node }) => {
     [fromId, toId, fromNode, toNode]
   );
 
-  const world = connectorPoints(node.from, node.to, node.routing, boxOf);
+  /**
+   * The outline of each end's object, so the arrow lands on the shape rather
+   * than on the rectangle it happens to occupy. Cached in
+   * `connectorTargets.outlineFor`, which is why calling it per render is
+   * affordable: the flatten happens once per shape, not once per frame.
+   */
+  const outlineOf = React.useCallback(
+    (id: string) => {
+      const n = id === fromId ? fromNode : id === toId ? toNode : undefined;
+      return n ? outlineFor(n) : null;
+    },
+    [fromId, toId, fromNode, toNode]
+  );
+
+  const world = connectorPoints(node.from, node.to, node.routing, boxOf, outlineOf);
 
   /**
    * Keep the stored box in step with the route, on a trailing delay.

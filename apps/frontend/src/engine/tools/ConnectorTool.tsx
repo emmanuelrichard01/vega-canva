@@ -4,14 +4,10 @@ import { nanoid } from 'nanoid';
 import type { Tool, ToolContext } from './Tool';
 import { useStore } from '../../hooks/useStore';
 import { ThemeService } from '../ThemeService';
+import { connectorPoints, type ConnectorEnd } from '../model/connector';
 import {
-  connectorPoints,
-  portPoint,
-  type ConnectorEnd,
-  type Port,
-} from '../model/connector';
-import { anchorPoint } from '../model/connectorAnchor';
-import { bindCandidates, boxLookup, boxOfNode, isConnectable } from '../model/connectorTargets';
+  anchorPointOn, bindCandidates, boxLookup, boxOfNode, isConnectable, outlineLookup, portPointsFor,
+} from '../model/connectorTargets';
 import { endPoint } from '../model/connectorTargets';
 import { bindingAt } from '../model/connectorBinding';
 
@@ -25,8 +21,6 @@ const MIN_DRAG = 6;
  * click-move-click gesture entirely.
  */
 const DRAG_SCREEN = 5;
-
-const SIDES: Array<Exclude<Port, 'auto'>> = ['top', 'right', 'bottom', 'left'];
 
 /**
  * Drawing a connector.
@@ -294,16 +288,16 @@ export class ConnectorTool implements Tool {
 
     for (const node of Object.values(objects)) {
       if (!isConnectable(node)) continue;
-      const box = boxOfNode(node);
-      for (const side of SIDES) {
-        const p = portPoint(box, side);
-        ports.push({ x: p.x, y: p.y, nodeId: node.id, side });
+      // On the outline, not on the box. A ring floating beside a triangle
+      // points at a place the arrow will not go.
+      for (const { side, point } of portPointsFor(node)) {
+        ports.push({ x: point.x, y: point.y, nodeId: node.id, side });
       }
     }
 
     const target = this.endAt(this.cursorWorld, ctx);
     const preview = this.from
-      ? connectorPoints(this.from, target, 'orthogonal', boxLookup(objects))
+      ? connectorPoints(this.from, target, 'orthogonal', boxLookup(objects), outlineLookup(objects))
       : null;
 
     /**
@@ -316,7 +310,7 @@ export class ConnectorTool implements Tool {
      */
     const targetNode = target.nodeId ? objects[target.nodeId] : undefined;
     const spot =
-      target.anchor && targetNode ? anchorPoint(boxOfNode(targetNode), target.anchor) : null;
+      target.anchor && targetNode ? anchorPointOn(targetNode, target.anchor) : null;
 
     /** The object about to be bound as a whole, so `auto` is not silent either. */
     const bodyBox =

@@ -6,16 +6,17 @@ import { EXPORT_CHROME } from '../../engine/export/chrome';
 import {
   connectorBounds,
   connectorPoints,
-  portPoint,
   type ConnectorEnd,
 } from '../../engine/model/connector';
-import { anchorPoint } from '../../engine/model/connectorAnchor';
 import { bindingAt } from '../../engine/model/connectorBinding';
 import {
   bindCandidates,
   boxLookup,
   boxOfNode,
   isConnectable,
+  outlineLookup,
+  anchorPointOn,
+  portPointsFor,
 } from '../../engine/model/connectorTargets';
 import type { ConnectorNode } from '../../engine/model/schema';
 import { useStore } from '../../hooks/useStore';
@@ -29,7 +30,6 @@ interface Props {
 /** Screen size of a handle, in pixels. Matches the line editor's. */
 const HANDLE = 10;
 const ACCENT = '#3B82F6';
-const SIDES = ['top', 'right', 'bottom', 'left'] as const;
 
 type Which = 'from' | 'to';
 
@@ -76,9 +76,12 @@ export const ConnectorEditor: React.FC<Props> = ({ node, stageScale }) => {
   const to = live?.which === 'to' ? live.end : node.to;
 
   const lookup = useMemo(() => boxLookup(objects), [objects]);
+  // So the handle sits where the arrow actually touches the shape, not
+  // where its bounding box would have put it.
+  const outlines = useMemo(() => outlineLookup(objects), [objects]);
   const candidates = useMemo(() => bindCandidates(objects), [objects]);
 
-  const points = connectorPoints(from, to, node.routing, lookup);
+  const points = connectorPoints(from, to, node.routing, lookup, outlines);
   const a = { x: points[0], y: points[1] };
   const b = { x: points[points.length - 2], y: points[points.length - 1] };
 
@@ -109,7 +112,7 @@ export const ConnectorEditor: React.FC<Props> = ({ node, stageScale }) => {
     }
     const nextFrom = which === 'from' ? end : node.from;
     const nextTo = which === 'to' ? end : node.to;
-    const box = connectorBounds(connectorPoints(nextFrom, nextTo, node.routing, lookup));
+    const box = connectorBounds(connectorPoints(nextFrom, nextTo, node.routing, lookup, outlines));
     // The derived box goes with the binding in one write. It is only read by
     // culling, the radar and marquee selection — but a stale one there is an
     // arrow that vanishes when it scrolls to the edge of the viewport.
@@ -173,17 +176,15 @@ export const ConnectorEditor: React.FC<Props> = ({ node, stageScale }) => {
 
   const liveEnd = live?.end;
   const liveNode = liveEnd?.nodeId ? objects[liveEnd.nodeId] : undefined;
-  const spot =
-    liveEnd?.anchor && liveNode ? anchorPoint(boxOfNode(liveNode), liveEnd.anchor) : null;
+  const spot = liveEnd?.anchor && liveNode ? anchorPointOn(liveNode, liveEnd.anchor) : null;
   const bodyBox = liveEnd?.port === 'auto' && liveNode ? boxOfNode(liveNode) : null;
 
   return (
     <Group name={EXPORT_CHROME}>
       <Group listening={false}>
-        {targets.map((n) => {
-          const box = boxOfNode(n);
-          return SIDES.map((side) => {
-            const p = portPoint(box, side);
+        {targets.map((n) =>
+          // On the outline, so the ring is where the arrow will actually land.
+          portPointsFor(n).map(({ side, point: p }) => {
             const armed = liveEnd?.nodeId === n.id && liveEnd?.port === side;
             return (
               <Circle
@@ -196,8 +197,8 @@ export const ConnectorEditor: React.FC<Props> = ({ node, stageScale }) => {
                 strokeWidth={1.5 / stageScale}
               />
             );
-          });
-        })}
+          })
+        )}
         {bodyBox && (
           <Rect
             x={bodyBox.x}
