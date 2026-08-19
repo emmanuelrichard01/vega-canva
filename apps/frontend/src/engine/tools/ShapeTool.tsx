@@ -151,8 +151,13 @@ export class ShapeTool implements Tool {
     // The profile armed on the dock, written onto the node — a line is
     // finished when the gesture is, so this cannot be a decision made after.
     if (preset.kind === 'line' || preset.kind === 'arrow') {
-      const profile = useStore.getState().lineProfile;
-      if (profile !== 'straight') geometry.lineProfile = profile;
+      const { lineProfile: profile, lineWaves } = useStore.getState();
+      if (profile !== 'straight') {
+        geometry.lineProfile = profile;
+        // Only when it disagrees with the default, so the document does not
+        // carry a value that just restates the rule.
+        if (lineWaves !== 6) geometry.lineWaves = lineWaves;
+      }
     }
     return geometry;
   }

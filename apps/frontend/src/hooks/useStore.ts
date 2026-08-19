@@ -141,6 +141,8 @@ interface StoreState {
   setPenStrokeWidth: (val: number) => void;
   lineProfile: LineProfile;
   setLineProfile: (val: LineProfile) => void;
+  lineWaves: number;
+  setLineWaves: (val: number) => void;
   setConnectorColor: (val: string) => void;
 
   showRulers: boolean;
@@ -409,6 +411,20 @@ export const useStore = create<StoreState>((set) => ({
    * line, selecting it, and changing it — every time. The dock is where you
    * say what kind of line you are about to draw, next to whether it has a head.
    */
+  /**
+   * How many repeats a new profiled line gets.
+   *
+   * Beside the profile rather than only in the inspector, because "a coil"
+   * and "a coil with two loops" are the same decision — choosing the shape
+   * without being able to say how much of it means drawing a five-turn coil
+   * and then editing it every single time.
+   */
+  lineWaves: Number(window.localStorage.getItem('vega_line_waves')) || 6,
+  setLineWaves: (val) => {
+    window.localStorage.setItem('vega_line_waves', String(val));
+    set({ lineWaves: val });
+  },
+
   lineProfile: (window.localStorage.getItem('vega_line_profile') as LineProfile) || 'straight',
   setLineProfile: (val) => {
     window.localStorage.setItem('vega_line_profile', val);

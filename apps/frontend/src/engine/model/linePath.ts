@@ -177,50 +177,54 @@ export function linePoints(
    * along-component advances, so each turn closes on itself without the line
    * ever going backwards far enough to double over.
    *
-   * ## Straight leads at both ends
+   * ## How the ends are brought back to the axis
    *
-   * A coil is the one profile whose ends are *inside* a turn: the run arrives
-   * at its last point still curving hard, so a marker there is tangent to a
-   * loop and reads as flung off the side rather than as terminating the line.
-   * Easing the loop to nothing only made it a smaller loop — the direction was
-   * still rotating.
+   * A coil is the one profile whose ends fall *inside* a turn: without help it
+   * arrives at its last point still curving hard, so a marker there is tangent
+   * to a loop and reads as flung off the side rather than as terminating the
+   * line.
    *
-   * A real drawn spring does not do this either. It leaves its anchor straight,
-   * coils, and comes back to straight before it arrives — which is what gives a
-   * head somewhere flat to sit. So the first and last stretch are a plain run
-   * along the axis, and the coiling happens between them.
+   * The first attempt was a straight lead at each end — coil in the middle,
+   * plain run at the extremities. It seated the heads correctly and left a
+   * visible **corner** where the straight met the first loop, which is the
+   * opposite of what a coil should look like: a spring flows out of its
+   * winding, it does not get welded to a stick.
+   *
+   * The fix is to ease the loop's *radius* to zero with `smoothstep`, whose
+   * derivative is also zero at the ends. Both the across-component and its rate
+   * of change vanish together, so the tangent approaches the axis on its own
+   * and the run simply unwinds into a straight line. No corner, and the heads
+   * still sit flat — the same result the lead was after, arrived at by the
+   * geometry rather than bolted on.
    */
-  const LEAD = 0.09;
-  const coilFrom = length * LEAD;
-  const coilTo = length * (1 - LEAD);
-  const coilSpan = coilTo - coilFrom;
-  const steps = count * Math.round(stepsFor(period) * 1.5);
+  const smoothstep = (t: number): number => {
+    const x = Math.max(0, Math.min(1, t));
+    return x * x * (3 - 2 * x);
+  };
+  /** How much of each end is spent unwinding. */
+  const UNWIND = 0.16;
+
   /**
-   * A coil's loop is sized against its *period*, not against the shared wave
-   * amplitude.
+   * The loop's radius, capped against the *whole run* as well as the period.
    *
-   * It used to be a multiple of `amplitude`, so when that came down to keep a
-   * wave's arrival angle reasonable the coil's loops shrank with it — and a
-   * coil whose loops are small is just a wobbly line. The two profiles want
-   * different things from the same number: a wave wants to stay shallow enough
-   * that its ends do not leave steeply, and a coil wants loops big enough to
-   * close and read as loops.
-   *
-   * At 0.62 of the period a turn is a clear open circle rather than a kink,
-   * and consecutive turns still clear each other along the run.
+   * `period * 0.62` alone is right at five or six turns and absurd at one,
+   * where the period is the entire line and the coil becomes a single circle
+   * wider than the thing it is drawn on. The cap is what makes low counts
+   * usable, which is the point of having a count at all — one big loop, three
+   * medium ones and eight tight ones are all things people ask a coil for.
    */
-  const loop = period * 0.62;
-  const coiled = Array.from({ length: steps + 1 }, (_, i) => {
+  const loop = Math.min(period * 0.62, length * 0.18);
+  const steps = Math.max(48, count * Math.round(stepsFor(period) * 1.5));
+
+  return Array.from({ length: steps + 1 }, (_, i) => {
     const t = i / steps;
     const turn = t * count * Math.PI * 2;
+    const edge = smoothstep(t / UNWIND) * smoothstep((1 - t) / UNWIND);
     return at(
-      coilFrom + t * coilSpan - Math.sin(turn) * loop * 0.55,
-      (1 - Math.cos(turn)) * loop * 0.5
+      t * length - Math.sin(turn) * loop * 0.55 * edge,
+      (1 - Math.cos(turn)) * loop * 0.5 * edge
     );
   });
-  // The leads are two points each rather than sampled: they are straight, and
-  // a straight run needs no samples to be straight.
-  return [at(0, 0), ...coiled, at(length, 0)];
 }
 
 /**

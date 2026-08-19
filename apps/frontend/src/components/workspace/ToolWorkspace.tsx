@@ -4,7 +4,7 @@ import { Minus, Spline } from 'lucide-react';
 import { SegmentedControl } from '../ui/SegmentedControl';
 import { SketchLevelIcon } from '../panel/sketchIcons';
 import type { PencilNib } from '../../engine/model/rough';
-import { LINE_PROFILES, LINE_PROFILE_LABELS, type LineProfile } from '../../engine/model/linePath';
+import { LINE_PROFILES, LINE_PROFILE_LABELS, MIN_WAVES, type LineProfile } from '../../engine/model/linePath';
 import { LineProfileIcon } from '../panel/lineProfileIcons';
 import { LineSpecimen } from '../panel/lineSpecimen';
 import { isForceTool } from '../../engine/physics/forces';
@@ -249,6 +249,8 @@ export const ToolWorkspace: React.FC<Props> = ({ activeToolId, onOpenDiagram, on
   const setPenStrokeWidth = useStore((s) => s.setPenStrokeWidth);
   const lineProfile = useStore((s) => s.lineProfile);
   const setLineProfile = useStore((s) => s.setLineProfile);
+  const lineWaves = useStore((s) => s.lineWaves);
+  const setLineWaves = useStore((s) => s.setLineWaves);
   const lastForce = useStore((s) => s.lastForce);
   const eraserSize = useStore((s) => s.eraserSize);
   const setEraserSize = useStore((s) => s.setEraserSize);
@@ -668,6 +670,20 @@ export const ToolWorkspace: React.FC<Props> = ({ activeToolId, onOpenDiagram, on
                     }))}
                   />
                 </div>
+                {/* How much of the shape. A profile without a count is half a
+                    choice: "a coil" and "a coil with two loops" are the same
+                    decision, and splitting them means drawing the wrong one
+                    and editing it every time. Curved has a single arc and
+                    nothing to count. */}
+                {lineProfile !== 'straight' && lineProfile !== 'curved' && (
+                  <NibSize
+                    label={lineProfile === 'coil' ? 'Loops' : 'Repeats'}
+                    value={lineWaves}
+                    min={MIN_WAVES}
+                    max={20}
+                    onChange={setLineWaves}
+                  />
+                )}
               </Flyout>
             )}
           </DockButton>

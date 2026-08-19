@@ -39,48 +39,57 @@ const ring = rectRing(BOX - PAD * 2, BOX - PAD * 2);
  * a more elaborate way of drawing the same two lines.
  */
 /**
- * The stroke every sketch specimen is drawn from: a shallow open arc.
+ * The stroke every sketch specimen is drawn from: a swooshing S.
  *
- * ## Why an arc, and why one of them
+ * ## Why a swoosh rather than a line or an arc
  *
- * The previous version used two straight marks, and it failed for a reason
- * worth writing down: at `light` and `medium` the sketcher's deviation on a
- * short straight run is small enough that both looked like *parallel lines*,
- * and `heavy` only looked different because a third crossing stroke had been
- * bolted on to force a difference. Three icons that differ by an added
- * decoration rather than by the thing they measure is not a set — it is one
- * icon and two exceptions.
+ * Two earlier attempts failed for the same underlying reason. Straight marks
+ * made `light` and `medium` look identical, because the sketcher's deviation
+ * on a short *straight* run is a fraction of a pixel. A single shallow arc was
+ * better — a curve gives the eye a smooth reference to judge the wobble
+ * against — but one bend still left the three levels close.
  *
- * A curve fixes it because deviation is *visible against a curve* in a way it
- * is not against a straight line: the eye has a smooth reference to compare
- * against, so a wobble reads as a wobble instead of as a slightly crooked
- * line. And an arc cannot be confused with anything else on the rail — not the
- * stroke-weight bar, which is a solid rectangle, and not the shape swapper,
- * which now wears the object's own silhouette.
+ * A swoosh has two bends and a change of direction, which is three chances for
+ * the deviation to show rather than one, and it is also simply what the mark a
+ * person makes when they scribble looks like. The gesture and the specimen are
+ * the same shape.
  *
- * The levels then differ by the two things that actually define them, both
- * emerging from the sketcher rather than being drawn on top:
+ * ## The three things that separate the levels
  *
- *  - **Wander**, which grows with the level.
- *  - **Passes**, which is why `medium` and `heavy` show a doubled line — the
- *    profiles genuinely draw twice, and a hand going over a line twice never
- *    lands in the same place. That doubling *is* the difference between light
- *    and medium, and it is legible at 20px.
+ * All of them come out of the profiles rather than being drawn on top, which
+ * is the difference between a set of icons and one icon with decorations:
+ *
+ *  - **Wander** — how far the line strays, which is `offset` and grows.
+ *  - **Density** — `medium` and `heavy` draw *two passes*, so the mark doubles
+ *    and the strokes cross. A hand going over a line twice never lands in the
+ *    same place, and that doubling is the most legible difference of the three
+ *    at 20px.
+ *  - **Weight** — each level is drawn a little heavier, so the set also reads
+ *    as a progression from a light touch to a hard scribble at a glance,
+ *    before any of the detail is resolved.
  */
-const ARC_STEPS = 10;
+const SWOOSH_STEPS = 14;
 
-function arc(span: number, scale: number): Array<{ x: number; y: number }> {
-  return Array.from({ length: ARC_STEPS + 1 }, (_, i) => {
-    const t = i / ARC_STEPS;
+function swoosh(span: number, scale: number): Array<{ x: number; y: number }> {
+  return Array.from({ length: SWOOSH_STEPS + 1 }, (_, i) => {
+    const t = i / SWOOSH_STEPS;
     return {
-      x: (0.5 + t * (span - 1)) * scale,
-      // A shallow rise and fall — deep enough to read as a curve at 20px,
-      // shallow enough that the wobble is what changes between levels rather
-      // than the arc swamping it.
-      y: (span * 0.78 - Math.sin(t * Math.PI) * span * 0.42) * scale,
+      x: (0.6 + t * (span - 1.2)) * scale,
+      // One full sine period: down, up, down. Two bends and a reversal, drawn
+      // shallow enough that the wobble is the thing that changes between
+      // levels rather than the curve swamping it.
+      y: (span * 0.5 - Math.sin(t * Math.PI * 2) * span * 0.3) * scale,
     };
   });
 }
+
+/** How heavy each level draws, so the set reads as a progression at a glance. */
+const LEVEL_WEIGHT: Record<SketchLevel | 'off', number> = {
+  off: 1.3,
+  light: 1.4,
+  medium: 1.6,
+  heavy: 1.9,
+};
 
 export const SketchLevelIcon: React.FC<{ level: SketchLevel | 'off' }> = ({ level }) => {
   const span = BOX - PAD * 2;
@@ -90,16 +99,15 @@ export const SketchLevelIcon: React.FC<{ level: SketchLevel | 'off' }> = ({ leve
    * The sketcher's wobble is in **absolute units** — it has to be, because a
    * hand's deviation does not scale with the thing it is drawing. On a
    * 14-unit mark that puts light, medium and heavy within about a pixel of
-   * each other. Generating at four times the size and scaling the result down
-   * multiplies the deviation relative to the mark, which is what makes "one
-   * confident pass" and "twice, past every corner" different pictures.
+   * each other. Generating at four times the size and scaling down multiplies
+   * the deviation relative to the mark.
    *
    * A specimen is allowed to exaggerate — that is what optical sizing is — so
    * long as the *ordering* it shows is the real one, and it is: the same
    * profiles, the same seeds, just further from the ruler.
    */
   const S = 4;
-  const stroke = arc(span, S);
+  const stroke = swoosh(span, S);
   const d = stroke
     .map((p, i) => `${i === 0 ? 'M' : 'L'} ${p.x.toFixed(2)} ${p.y.toFixed(2)}`)
     .join(' ');
@@ -108,13 +116,13 @@ export const SketchLevelIcon: React.FC<{ level: SketchLevel | 'off' }> = ({ leve
     <svg width={BOX} height={BOX} viewBox={`0 0 ${BOX} ${BOX}`} aria-hidden="true" focusable="false">
       <g transform={`translate(${PAD} ${PAD - 1}) scale(${1 / S})`}>
         <path
-          // `off` is the one specimen not generated: a clean arc is exactly
+          // `off` is the one specimen not generated: a clean swoosh is exactly
           // what the setting produces, and running it through the sketcher at
           // zero would be a more elaborate way of drawing the same curve.
           d={level === 'off' ? d : roughPolyline(stroke, { seed: SPECIMEN_SEED, level, closed: false })}
           fill="none"
           stroke="currentColor"
-          strokeWidth={1.5 * S}
+          strokeWidth={LEVEL_WEIGHT[level] * S}
           strokeLinecap="round"
           strokeLinejoin="round"
         />
