@@ -38,6 +38,22 @@ const ring = rectRing(BOX - PAD * 2, BOX - PAD * 2);
  * the setting produces, and running them through the sketcher at zero would be
  * a more elaborate way of drawing the same two lines.
  */
+/**
+ * The third mark heavy gets, crossing the other two.
+ *
+ * Amplitude alone separates light from medium well enough once the specimen is
+ * drawn large, but heavy is the *most* scribbled and had nowhere further to go
+ * — three levels of wobble on two marks compresses at the top. A crossing
+ * stroke is a difference in kind rather than degree, and it is honest about
+ * what heavy is: the level that goes past every corner and back over itself.
+ */
+function crossStroke(span: number, scale: number): Array<{ x: number; y: number }> {
+  return [
+    { x: 1.5 * scale, y: span * 0.34 * scale },
+    { x: (span - 1.5) * scale, y: span * 0.9 * scale },
+  ];
+}
+
 export const SketchLevelIcon: React.FC<{ level: SketchLevel | 'off' }> = ({ level }) => {
   const span = BOX - PAD * 2;
   /**
@@ -61,21 +77,38 @@ export const SketchLevelIcon: React.FC<{ level: SketchLevel | 'off' }> = ({ leve
    * enough to show a wobble at 20px, which is the whole job: `off` is two
    * ruled strokes, and each level bends them further.
    */
+  /**
+   * Drawn large and scaled down, so the levels are actually distinguishable.
+   *
+   * The sketcher's wobble is in **absolute units** — it has to be, because a
+   * hand's deviation does not scale with the thing it is drawing. On a 14-unit
+   * stroke that puts light, medium and heavy within about a pixel of each
+   * other, which is why the three specimens looked nearly identical: they were
+   * nearly identical.
+   *
+   * Generating at four times the size and scaling the result down multiplies
+   * the deviation by four relative to the mark, which is what makes the
+   * difference between "one confident pass" and "twice, past every corner"
+   * visible at 20px. A specimen is allowed to exaggerate — that is what optical
+   * sizing is — as long as the *ordering* it shows is the real one, and it is:
+   * the same profiles, the same seeds, just further from the ruler.
+   */
+  const S = 4;
   const strokes: Array<Array<{ x: number; y: number }>> = [
-    [{ x: 0.5, y: span * 0.68 }, { x: span - 0.5, y: span * 0.3 }],
-    [{ x: 0.5, y: span * 0.95 }, { x: span - 0.5, y: span * 0.57 }],
+    [{ x: 0.5 * S, y: span * 0.68 * S }, { x: (span - 0.5) * S, y: span * 0.3 * S }],
+    [{ x: 0.5 * S, y: span * 0.95 * S }, { x: (span - 0.5) * S, y: span * 0.57 * S }],
   ];
 
   return (
     <svg width={BOX} height={BOX} viewBox={`0 0 ${BOX} ${BOX}`} aria-hidden="true" focusable="false">
-      <g transform={`translate(${PAD} ${PAD - 1})`}>
-        {strokes.map((stroke, i) =>
+      <g transform={`translate(${PAD} ${PAD - 1}) scale(${1 / S})`}>
+        {(level === 'heavy' ? [...strokes, crossStroke(span, S)] : strokes).map((stroke, i) =>
           level === 'off' ? (
             <line
               key={i}
               x1={stroke[0].x} y1={stroke[0].y}
               x2={stroke[1].x} y2={stroke[1].y}
-              stroke="currentColor" strokeWidth="1.5" strokeLinecap="round"
+              stroke="currentColor" strokeWidth={1.5 * S} strokeLinecap="round"
             />
           ) : (
             <path
@@ -86,9 +119,8 @@ export const SketchLevelIcon: React.FC<{ level: SketchLevel | 'off' }> = ({ leve
               d={roughPolyline(stroke, { seed: SPECIMEN_SEED + i * 97, level, closed: false })}
               fill="none"
               stroke="currentColor"
-              strokeWidth="1.4"
+              strokeWidth={1.4 * S}
               strokeLinecap="round"
-              vectorEffect="non-scaling-stroke"
             />
           )
         )}

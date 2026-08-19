@@ -623,9 +623,33 @@ export const ObjectRenderer = React.memo(
       </>
     );
   },
+  /**
+   * Every prop this component's *output* depends on has to be here.
+   *
+   * `selectable` was missing, and that turned out to matter enormously once it
+   * started gating selection. It changes when the active tool does — the whole
+   * point of it — but the comparator said "nothing changed", so an object that
+   * had not re-rendered for some other reason kept the old value: `draggable`
+   * stayed false and the press handler kept a closure over `selectable ===
+   * false`. Clicking it did nothing.
+   *
+   * The symptom was maddeningly selective, and the selectivity is the tell:
+   * objects that happened to re-render for another reason — moved, edited, or
+   * unmounted by culling and remounted on the way back — picked up the fresh
+   * prop and behaved. Ones that had sat untouched did not. "It refuses to
+   * select things that have been sitting there a while" is exactly what a
+   * stale memo looks like from the outside.
+   *
+   * It was wrong before too, and invisible: `selectable` only gated the hover
+   * outline, so a stale one meant an outline that failed to appear. Making it
+   * gate the click promoted a cosmetic bug to a functional one — which is the
+   * general hazard in widening what an existing prop controls, and worth
+   * checking the memo for every time.
+   */
   (prev, next) =>
     prev.objId === next.objId &&
     prev.isSelected === next.isSelected &&
+    prev.selectable === next.selectable &&
     prev.stageScale === next.stageScale
 );
 

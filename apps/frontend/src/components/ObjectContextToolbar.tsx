@@ -3,11 +3,11 @@ import { motion, AnimatePresence } from 'framer-motion';
 import {
   AlignCenter, AlignHorizontalJustifyCenter, AlignHorizontalJustifyEnd, AlignHorizontalJustifyStart,
   AlignHorizontalSpaceAround, AlignLeft, AlignRight, AlignVerticalJustifyCenter, AlignVerticalJustifyEnd,
-  AlignVerticalJustifyStart, AlignVerticalSpaceAround, Bold, BringToFront, Circle, Copy, Crop, Download,
-  Droplet, FlipHorizontal, FlipVertical, Group, Heart, ImageIcon, Italic, List, ListOrdered, Layers, Lock, Menu, MessageSquare,
-  MessageSquarePlus, Mic, Minus, MoveRight, PenLine, Pin, Scissors, SendToBack, SmilePlus, Spline,
-  SquaresExclude, SquaresIntersect, SquaresSubtract, SquaresUnite, Square, Star, StickyNote,
-  Strikethrough, Trash2, Triangle, Type, Underline, Ungroup, Unlock,
+  AlignVerticalJustifyStart, AlignVerticalSpaceAround, Bold, BringToFront, Copy, Crop, Download,
+  Droplet, FlipHorizontal, FlipVertical, Group, ImageIcon, Italic, List, ListOrdered, Layers, Lock, Menu, MessageSquare,
+  MessageSquarePlus, Mic, Minus, PenLine, Pin, Scissors, SendToBack, SmilePlus, Spline,
+  SquaresExclude, SquaresIntersect, SquaresSubtract, SquaresUnite, Square, StickyNote,
+  Strikethrough, Trash2, Type, Underline, Ungroup, Unlock,
 } from 'lucide-react';
 
 import {
@@ -42,6 +42,7 @@ import { FillStyleIcon, SketchLevelIcon } from './panel/sketchIcons';
 import { EndCapIcon, RouteIcon } from './panel/connectorIcons';
 import { StrokeWeightIcon } from './panel/strokeWeightIcon';
 import { LineSpecimen } from './panel/lineSpecimen';
+import { ShapeIcon } from './workspace/shapeIcons';
 import { END_CAP_KINDS, END_CAP_LABELS, MAX_END_SCALE, MIN_END_SCALE, type EndCapKind } from '../engine/model/connectorEnds';
 import type { Routing } from '../engine/model/connector';
 import { alignSelection, distributeSelection, type AlignEdge } from '../engine/model/align';
@@ -194,15 +195,27 @@ const ALIGN_BUTTONS: Array<{ edge: AlignEdge; label: string; icon: React.ReactNo
  * leaving the previous shape's count in place would turn a hexagon into a
  * three-sided "triangle" that still said six.
  */
+/**
+ * The shapes this swapper offers, wearing the dock's own glyphs.
+ *
+ * They were lucide icons, which is where a **hexagon drawn as a spline** came
+ * from — lucide has no hexagon, so a curve stood in for one, and the tile that
+ * turns a shape into a six-sided polygon showed a wiggle. `ShapeIcon` already
+ * generates the whole set from side counts for the tool dock, so the swapper
+ * and the dock now show the same mark for the same shape and no glyph is a
+ * stand-in for a shape the library happened not to have.
+ */
 const SHAPE_CHOICES: Array<{ kind: ShapeKind; points?: number; label: string; icon: React.ReactNode }> = [
-  { kind: 'rect', label: 'Rectangle', icon: <Square size={16} /> },
-  { kind: 'ellipse', label: 'Ellipse', icon: <Circle size={16} /> },
-  { kind: 'polygon', points: 3, label: 'Triangle', icon: <Triangle size={16} /> },
-  { kind: 'polygon', points: 6, label: 'Hexagon', icon: <Spline size={16} /> },
-  { kind: 'star', points: 5, label: 'Star', icon: <Star size={16} /> },
-  { kind: 'heart', label: 'Heart', icon: <Heart size={16} /> },
-  { kind: 'line', label: 'Line', icon: <Minus size={16} /> },
-  { kind: 'arrow', label: 'Arrow', icon: <MoveRight size={16} /> },
+  { kind: 'rect', label: 'Rectangle', icon: <ShapeIcon kind="rect" size={16} /> },
+  { kind: 'ellipse', label: 'Ellipse', icon: <ShapeIcon kind="ellipse" size={16} /> },
+  { kind: 'polygon', points: 3, label: 'Triangle', icon: <ShapeIcon kind="triangle" size={16} /> },
+  { kind: 'polygon', points: 5, label: 'Pentagon', icon: <ShapeIcon kind="pentagon" size={16} /> },
+  { kind: 'polygon', points: 6, label: 'Hexagon', icon: <ShapeIcon kind="hexagon" size={16} /> },
+  { kind: 'polygon', points: 8, label: 'Octagon', icon: <ShapeIcon kind="octagon" size={16} /> },
+  { kind: 'star', points: 5, label: 'Star', icon: <ShapeIcon kind="star" size={16} /> },
+  { kind: 'heart', label: 'Heart', icon: <ShapeIcon kind="heart" size={16} /> },
+  { kind: 'line', label: 'Line', icon: <ShapeIcon kind="line" size={16} /> },
+  { kind: 'arrow', label: 'Arrow', icon: <ShapeIcon kind="arrow" size={16} /> },
 ];
 
 /**
@@ -883,9 +896,19 @@ export const ObjectContextToolbar: React.FC<Props> = ({ selectedId, selectedIds,
                   }
                   align="start"
                 >
+                  {/*
+                    Closed shapes and lines, separated.
+
+                    They were one undifferentiated grid, which quietly offered
+                    to turn a rectangle into a line — a conversion that keeps
+                    the box and throws away the fill, the corner radius and the
+                    interior, and is almost never what someone reaching for a
+                    shape swapper wants. Two labelled groups do not forbid it;
+                    they just stop it being one slip away from a hexagon.
+                  */}
                   <span className="ctx-popover__label">Shape</span>
                   <div className="ctx-shape-grid">
-                    {SHAPE_CHOICES.map((choice) => {
+                    {SHAPE_CHOICES.filter((c) => !isOpenShape(c.kind)).map((choice) => {
                       const active = node.geometry.kind === choice.kind
                         && (choice.points === undefined || node.geometry.points === choice.points);
                       return (
@@ -910,6 +933,64 @@ export const ObjectContextToolbar: React.FC<Props> = ({ selectedId, selectedIds,
                           })}
                         >
                           {choice.icon}
+                        </button>
+                      );
+                    })}
+                  </div>
+
+                  {/* The side count, where the shape has one.
+                      It lived only in the properties panel, so changing a
+                      hexagon to a heptagon meant leaving the object you were
+                      looking at — while the grid beside it offered a *fixed*
+                      triangle and hexagon, implying those were the only
+                      counts. The presets are shortcuts to common answers; this
+                      is the answer itself. */}
+                  {(node.geometry.kind === 'polygon' || node.geometry.kind === 'star') && (
+                    <PopoverSlider
+                      label={node.geometry.kind === 'star' ? 'Points' : 'Sides'}
+                      value={node.geometry.points ?? 3}
+                      min={MIN_POLYGON_SIDES}
+                      max={MAX_POLYGON_SIDES}
+                      onChange={(points) => updateProp({ geometry: { ...node.geometry, points } })}
+                    />
+                  )}
+
+                  {/* Star only, and next to its point count for the same
+                      reason: the two together are what a star *is*. */}
+                  {node.geometry.kind === 'star' && (
+                    <PopoverSlider
+                      label="Depth"
+                      value={Math.round((node.geometry.innerRatio ?? 0.5) * 100)}
+                      min={10}
+                      max={90}
+                      suffix="%"
+                      onChange={(v) => updateProp({ geometry: { ...node.geometry, innerRatio: v / 100 } })}
+                    />
+                  )}
+
+                  <span className="ctx-popover__label">Line</span>
+                  <div className="ctx-shape-grid">
+                    {SHAPE_CHOICES.filter((c) => isOpenShape(c.kind)).map((choice) => {
+                      const active = node.geometry.kind === choice.kind;
+                      return (
+                        <button
+                          key={choice.kind}
+                          type="button"
+                          className="ctx-shape-btn"
+                          aria-pressed={active}
+                          aria-label={choice.label}
+                          data-tooltip={choice.label}
+                          onClick={() => updateProp({
+                            geometry: { ...node.geometry, kind: choice.kind },
+                          })}
+                        >
+                          {/* Under the object's own profile, so switching
+                              between line and arrow shows the one thing that
+                              actually differs between them. */}
+                          <LineSpecimen
+                            profile={node.geometry.lineProfile}
+                            endEnd={choice.kind === 'arrow' ? (node.geometry.endEnd ?? 'arrow') : 'none'}
+                          />
                         </button>
                       );
                     })}
