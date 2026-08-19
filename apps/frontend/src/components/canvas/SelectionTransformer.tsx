@@ -97,8 +97,18 @@ export const SelectionTransformer: React.FC<Props> = ({ selectedIds, stageRef })
      * box operation and there is no single pair of ends to offer.
      */
     const store = useStore.getState().objects;
+    const solo = selectedIds.length === 1 ? store[selectedIds[0]] : undefined;
+    /**
+     * A connector is the same case, and a worse one.
+     *
+     * Its `width`/`height` are *derived* from whatever its two ends resolve
+     * to, so the eight handles here were not just the wrong affordance — they
+     * were inert. A drag wrote a box that the next render recomputed from the
+     * bindings and discarded, which made an arrow look adjustable and refuse
+     * to be adjusted. `ConnectorEditor` owns it now.
+     */
     const soloLine =
-      selectedIds.length === 1 && isLineLike(store[selectedIds[0]] ?? { type: '' });
+      Boolean(solo) && (isLineLike(solo ?? { type: '' }) || solo!.type === 'connector');
 
     const nodes = soloLine
       ? []

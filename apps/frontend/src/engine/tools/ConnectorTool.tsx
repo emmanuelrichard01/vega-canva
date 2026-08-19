@@ -1,5 +1,5 @@
 import * as React from 'react';
-import { Circle, Group, Line } from 'react-konva';
+import { Circle, Group, Line, Rect } from 'react-konva';
 import { nanoid } from 'nanoid';
 import type { Tool, ToolContext } from './Tool';
 import { useStore } from '../../hooks/useStore';
@@ -7,29 +7,18 @@ import { ThemeService } from '../ThemeService';
 import {
   connectorPoints,
   portPoint,
-  type Box,
   type ConnectorEnd,
   type Port,
 } from '../model/connector';
+import { anchorPoint } from '../model/connectorAnchor';
+import { bindCandidates, boxLookup, boxOfNode, isConnectable } from '../model/connectorTargets';
+import { endPoint } from '../model/connectorTargets';
+import { bindingAt } from '../model/connectorBinding';
 
-/** How close the pointer must be to a port before it snaps, in screen px. */
-const PORT_SNAP_SCREEN = 22;
 /** Below this a drag was a click, and a click connects nothing. */
 const MIN_DRAG = 6;
 
 const SIDES: Array<Exclude<Port, 'auto'>> = ['top', 'right', 'bottom', 'left'];
-
-/** Types a connector can attach to. Another connector is not one of them. */
-const CONNECTABLE = new Set(['shape', 'sticky', 'image', 'text', 'frame', 'path']);
-
-function boxOfNode(n: { x: number; y: number; width: number; height: number; scaleX?: number; scaleY?: number }): Box {
-  return {
-    x: n.x,
-    y: n.y,
-    width: n.width * Math.abs(n.scaleX || 1),
-    height: n.height * Math.abs(n.scaleY || 1),
-  };
-}
 
 /**
  * Drawing a connector.
@@ -155,62 +144,21 @@ export class ConnectorTool implements Tool {
   }
 
   /**
-   * What the pointer is over: a port, an object, or nothing.
+   * What the pointer is over: a port, an exact spot, an object, or nothing.
    *
-   * Ports win over the body of the object, because aiming at one is a more
-   * specific statement than landing anywhere inside it — and it is the only
-   * way to say "leave from the left" when the automatic choice would pick the
-   * right.
+   * The rule itself is `bindingAt`, shared with the endpoint editor so that
+   * drawing an arrow onto a place and dragging an existing arrow to the same
+   * place produce the same binding. It used to live here as a private method,
+   * which was fine while this was the only thing that asked the question.
    */
   private endAt(world: { x: number; y: number }, ctx: ToolContext): ConnectorEnd {
-    const objects = useStore.getState().objects;
-    const tolerance = PORT_SNAP_SCREEN / (ctx.camera.zoom || 1);
-
-    let best: { end: ConnectorEnd; distance: number } | null = null;
-
-    for (const node of Object.values(objects)) {
-      if (!CONNECTABLE.has(node.type) || node.hidden || node.locked) continue;
-      const box = boxOfNode(node);
-
-      for (const side of SIDES) {
-        const p = portPoint(box, side);
-        const d = Math.hypot(world.x - p.x, world.y - p.y);
-        if (d <= tolerance && (!best || d < best.distance)) {
-          best = { end: { nodeId: node.id, port: side }, distance: d };
-        }
-      }
-    }
-    if (best) return best.end;
-
-    // Inside an object but not near a port: attach to the object and let the
-    // routing choose the side, which is what `port: 'auto'` means.
-    const hit = Object.values(objects).find(
-      (node) =>
-        CONNECTABLE.has(node.type) &&
-        !node.hidden &&
-        !node.locked &&
-        (() => {
-          const b = boxOfNode(node);
-          return world.x >= b.x && world.x <= b.x + b.width && world.y >= b.y && world.y <= b.y + b.height;
-        })()
-    );
-    if (hit) return { nodeId: hit.id, port: 'auto' };
-
-    return { x: world.x, y: world.y };
+    return bindingAt(world, bindCandidates(useStore.getState().objects), {
+      scale: 1 / (ctx.camera.zoom || 1),
+    });
   }
 
   private resolvePoint(end: ConnectorEnd, _ctx: ToolContext) {
-    const objects = useStore.getState().objects;
-    if (end.nodeId) {
-      const node = objects[end.nodeId];
-      if (node) {
-        const box = boxOfNode(node);
-        return end.port && end.port !== 'auto'
-          ? portPoint(box, end.port)
-          : { x: box.x + box.width / 2, y: box.y + box.height / 2 };
-      }
-    }
-    return { x: end.x ?? 0, y: end.y ?? 0 };
+    return endPoint(end, useStore.getState().objects);
   }
 
   private pushOverlay(ctx: ToolContext) {
@@ -218,7 +166,7 @@ export class ConnectorTool implements Tool {
     const ports: Array<{ x: number; y: number; nodeId: string; side: string }> = [];
 
     for (const node of Object.values(objects)) {
-      if (!CONNECTABLE.has(node.type) || node.hidden || node.locked) continue;
+      if (!isConnectable(node)) continue;
       const box = boxOfNode(node);
       for (const side of SIDES) {
         const p = portPoint(box, side);
@@ -228,11 +176,24 @@ export class ConnectorTool implements Tool {
 
     const target = this.endAt(this.cursorWorld, ctx);
     const preview = this.from
-      ? connectorPoints(this.from, target, 'orthogonal', (id) => {
-          const n = objects[id];
-          return n ? boxOfNode(n) : null;
-        })
+      ? connectorPoints(this.from, target, 'orthogonal', boxLookup(objects))
       : null;
+
+    /**
+     * Where an exact binding would land, drawn as its own mark.
+     *
+     * The four rings answer "which side"; they cannot answer "where along it",
+     * and without this the anchor binding is invisible until after you commit
+     * to it. A tool whose most precise mode gives no feedback is one people do
+     * not discover and do not trust when they do.
+     */
+    const targetNode = target.nodeId ? objects[target.nodeId] : undefined;
+    const spot =
+      target.anchor && targetNode ? anchorPoint(boxOfNode(targetNode), target.anchor) : null;
+
+    /** The object about to be bound as a whole, so `auto` is not silent either. */
+    const bodyBox =
+      target.nodeId && target.port === 'auto' && targetNode ? boxOfNode(targetNode) : null;
 
     ctx.setOverlayState?.({
       type: 'connector',
@@ -240,7 +201,9 @@ export class ConnectorTool implements Tool {
       active: this.isDragging,
       zoom: ctx.camera.zoom,
       // Which port is armed, so the overlay can light exactly one.
-      armed: target.nodeId ? `${target.nodeId}:${target.port}` : null,
+      armed: target.nodeId && target.port ? `${target.nodeId}:${target.port}` : null,
+      spot,
+      bodyBox,
       preview,
     });
   }
@@ -252,6 +215,22 @@ export class ConnectorTool implements Tool {
 
     return (
       <Group listening={false}>
+        {/* The whole object lights up when the binding is `auto`, because that
+            is what `auto` means — this object, side to be decided — and a
+            highlight that named a side would be describing a choice that has
+            not been made and will change when things move. */}
+        {overlayState.bodyBox && (
+          <Rect
+            x={overlayState.bodyBox.x}
+            y={overlayState.bodyBox.y}
+            width={overlayState.bodyBox.width}
+            height={overlayState.bodyBox.height}
+            stroke="#3B82F6"
+            strokeWidth={1.5 / zoom}
+            dash={[4 / zoom, 3 / zoom]}
+            fill="rgba(59, 130, 246, 0.06)"
+          />
+        )}
         {overlayState.preview && overlayState.preview.length >= 4 && (
           <Line
             points={overlayState.preview}
@@ -277,6 +256,17 @@ export class ConnectorTool implements Tool {
             />
           );
         })}
+        {/* Drawn last so it sits over the rings it may be standing between. */}
+        {overlayState.spot && (
+          <Circle
+            x={overlayState.spot.x}
+            y={overlayState.spot.y}
+            radius={5 / zoom}
+            fill="#3B82F6"
+            stroke="#FFFFFF"
+            strokeWidth={1.5 / zoom}
+          />
+        )}
       </Group>
     );
   }

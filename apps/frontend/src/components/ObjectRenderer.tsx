@@ -66,6 +66,15 @@ interface ObjectRendererProps {
    *
    * Gates the hover outline as well as being the reason the click will land.
    * Without it the outline appeared under every tool and quietly lied.
+   *
+   * It also gates **dragging**, which is the same question asked of the
+   * pointer instead of the click, and which it did not gate for a long time:
+   * with the Connector tool armed, pressing on a shape to draw an arrow from
+   * it started a Konva drag and *moved the shape* instead. The tool did still
+   * receive its events, so the gesture both moved the box and drew a
+   * connector from wherever the box had ended up. The same was true of the
+   * eraser and of every shape variant. If a tool cannot select an object it
+   * has no business moving it either.
    */
   selectable?: boolean;
   onThrow?: (id: string, x: number, y: number, vx: number, vy: number) => void;
@@ -439,7 +448,10 @@ export const ObjectRenderer = React.memo(
           // Not draggable while a force tool is armed: pressing on or near an
           // object would otherwise start a drag instead of applying the force,
           // which made the tools look inert exactly where you would aim them.
-          draggable={!flight && !node.locked && !forceToolActive && !filteredOut}
+          // And not draggable under a tool that cannot select — see
+          // `selectable`, and `canSelectWith` for why one predicate answers
+          // both questions.
+          draggable={selectable && !flight && !node.locked && !forceToolActive && !filteredOut}
           /**
            * A click on an *already selected* text object opens the editor with
            * the caret where you clicked.

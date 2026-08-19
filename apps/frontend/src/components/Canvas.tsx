@@ -59,8 +59,9 @@ import { useVisibleSet } from '../engine/useVisibleSet';
 import { DEFAULT_TYPOGRAPHY } from '../engine/model/schema';
 import { SelectionTransformer } from './canvas/SelectionTransformer';
 import { LineEditor } from './canvas/LineEditor';
+import { ConnectorEditor } from './canvas/ConnectorEditor';
 import { isLineLike } from '../engine/model/lineEnds';
-import type { ShapeNode } from '../engine/model/schema';
+import type { ConnectorNode, ShapeNode } from '../engine/model/schema';
 import { CropOverlay } from './canvas/CropOverlay';
 import { cropMode } from '../engine/interaction/cropMode';
 import { textEditing } from '../engine/interaction/textEditing';
@@ -1363,9 +1364,16 @@ export const Canvas: React.FC<CanvasProps> = ({ activeTool, selectedIds, setSele
               ever on screen. */}
           {!croppingId && !editingPathId && !editingTextId && selectedIds.length === 1 && (() => {
             const only = objects[selectedIds[0]];
-            return only && isLineLike(only) ? (
-              <LineEditor node={only as ShapeNode} stageScale={cameraSystem.zoom} />
-            ) : null;
+            if (!only) return null;
+            if (isLineLike(only)) {
+              return <LineEditor node={only as ShapeNode} stageScale={cameraSystem.zoom} />;
+            }
+            // A connector is edited at its ends for the same reason, and the
+            // transformer stands down for it under the same rule.
+            if (only.type === 'connector') {
+              return <ConnectorEditor node={only as ConnectorNode} stageScale={cameraSystem.zoom} />;
+            }
+            return null;
           })()}
 
           {/* Above the transformer's slot so its handles are never buried

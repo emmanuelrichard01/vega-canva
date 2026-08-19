@@ -139,3 +139,57 @@ describe('connectorBounds', () => {
     expect(b.width).toBe(200);
   });
 });
+
+describe('an anchored end', () => {
+  const boxes: Record<string, Box> = { a: box(0, 0, 100, 60), b: box(300, 0, 100, 60) };
+  const boxOf = (id: string) => boxes[id] ?? null;
+
+  it('leaves from the exact spot rather than the edge midpoint', () => {
+    const pts = connectorPoints(
+      { nodeId: 'a', anchor: { u: 1, v: 0.8 } },
+      { nodeId: 'b' },
+      'straight',
+      boxOf
+    );
+    // Right edge at 80% down, not the midpoint at y=30.
+    expect(pts.slice(0, 2)).toEqual([100, 48]);
+  });
+
+  it('outranks an explicit port on the same end', () => {
+    // Three fields answer one question and the order has to be decided
+    // somewhere. `resolveEnd` is that somewhere, so it is asserted here
+    // rather than left for each caller to rediscover.
+    const r = resolveEnd(
+      { nodeId: 'a', port: 'left', anchor: { u: 1, v: 0.5 } },
+      null,
+      boxOf,
+      { x: 500, y: 30 }
+    );
+    expect(r.point).toEqual({ x: 100, y: 30 });
+    expect(r.port).toBe('right');
+  });
+
+  it('falls back to the stored coordinate when the object is gone', () => {
+    // An anchor is a ratio of a box. With no box it means nothing, and the
+    // end has to detach exactly as a port-bound one does — otherwise deleting
+    // a shape collapses every arrow that pointed at it onto the origin.
+    const r = resolveEnd(
+      { nodeId: 'missing', anchor: { u: 1, v: 0.5 }, x: 42, y: 99 },
+      null,
+      () => null,
+      null
+    );
+    expect(r.point).toEqual({ x: 42, y: 99 });
+  });
+
+  it('follows the object when it moves and when it resizes', () => {
+    // The whole reason the anchor is normalized: a fixed offset would slide
+    // off a box that got narrower.
+    const at = (bx: Box) =>
+      connectorPoints({ nodeId: 'x', anchor: { u: 0, v: 0.5 } }, { x: 900, y: 30 }, 'straight',
+        (id) => (id === 'x' ? bx : null)).slice(0, 2);
+    expect(at(box(0, 0, 100, 60))).toEqual([0, 30]);
+    expect(at(box(200, 100, 100, 60))).toEqual([200, 130]);
+    expect(at(box(200, 100, 40, 200))).toEqual([200, 200]);
+  });
+});

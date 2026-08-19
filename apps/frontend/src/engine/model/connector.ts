@@ -13,6 +13,8 @@
  * looks like *a* path.
  */
 
+import { anchorPoint, anchorPort, type Anchor } from './connectorAnchor';
+
 /** The four sides an end can attach to, plus "work it out". */
 export type Port = 'top' | 'right' | 'bottom' | 'left' | 'auto';
 
@@ -27,6 +29,19 @@ export interface ConnectorEnd {
    */
   nodeId?: string;
   port?: Port;
+  /**
+   * An exact spot on the object, in its own proportions — see
+   * `connectorAnchor.ts`. Takes precedence over `port`, which is the four
+   * edge midpoints and `auto`.
+   *
+   * Three fields for one question looks like two too many, and each earns its
+   * place: `auto` is the only one that keeps choosing a sensible side as
+   * things move, a named port says something a reader of the document can
+   * understand at a glance, and an anchor is the only one that can express
+   * *here*. Precedence is checked in one function, `resolveEnd`, so no reader
+   * has to know the order.
+   */
+  anchor?: Anchor;
   x?: number;
   y?: number;
 }
@@ -177,6 +192,15 @@ export function resolveEnd(
 ): { point: Point; port: Exclude<Port, 'auto'>; box: Box | null } {
   const box = end.nodeId ? boxOf(end.nodeId) : null;
   const explicit = end.port && end.port !== 'auto' ? end.port : null;
+
+  // An anchor is the most specific thing an end can say, so it is checked
+  // before either of the others. It is meaningless without a box — a loose end
+  // has no proportions to be a ratio of — so it falls through when the object
+  // is gone, and the stored coordinate takes over exactly as it does for a
+  // detached port.
+  if (box && end.anchor) {
+    return { point: anchorPoint(box, end.anchor), port: anchorPort(end.anchor), box };
+  }
   // Wherever the far end is, however it is expressed.
   const away =
     other ? { x: other.x + other.width / 2, y: other.y + other.height / 2 } : otherPoint;

@@ -867,12 +867,28 @@ function endCap(raw: any, legacyOn: boolean): EndCapKind {
   return (END_CAP_KINDS as string[]).includes(raw) ? (raw as EndCapKind) : legacyOn ? 'arrow' : 'none';
 }
 
-function normalizeConnectorEnd(raw: any): { nodeId?: string; port?: any; x?: number; y?: number } {
-  const end: { nodeId?: string; port?: any; x?: number; y?: number } = {};
+function normalizeConnectorEnd(raw: any): {
+  nodeId?: string;
+  port?: any;
+  anchor?: { u: number; v: number };
+  x?: number;
+  y?: number;
+} {
+  const end: { nodeId?: string; port?: any; anchor?: { u: number; v: number }; x?: number; y?: number } = {};
   if (typeof raw?.nodeId === 'string' && raw.nodeId) end.nodeId = raw.nodeId;
   const port = raw?.port;
   if (port === 'top' || port === 'right' || port === 'bottom' || port === 'left' || port === 'auto') {
     end.port = port;
+  }
+  // Clamped here rather than trusted, because an anchor out of range is not a
+  // recoverable value further downstream — it is a coordinate off the edge of
+  // the object, and every consumer would have to guard for it separately.
+  // Only accepted alongside a node id: a ratio of nothing has no meaning.
+  if (end.nodeId && Number.isFinite(raw?.anchor?.u) && Number.isFinite(raw?.anchor?.v)) {
+    end.anchor = {
+      u: Math.min(1, Math.max(0, raw.anchor.u)),
+      v: Math.min(1, Math.max(0, raw.anchor.v)),
+    };
   }
   if (Number.isFinite(raw?.x)) end.x = raw.x;
   if (Number.isFinite(raw?.y)) end.y = raw.y;
