@@ -141,7 +141,12 @@ const TIPS: Array<{ title: string; body: string }> = [
   {
     title: 'Connectors follow their objects',
     body:
-      'An arrow stores which two objects it joins, never a coordinate — so rearranging a flowchart never breaks it. Draw from the edge of a shape with the Connector tool (X).',
+      'An arrow stores which two objects it joins, never a coordinate — so rearranging a flowchart never breaks it. With the Connector tool (X), click one object and then the other; dragging between them works too.',
+  },
+  {
+    title: 'Aim at the middle, or at a spot',
+    body:
+      'Dropping an end in the middle of an object binds to the object and lets the route pick a side, which keeps looking right as things move. Dropping it on an edge binds to that exact place. Select a connector and drag either end to re-aim it, or off onto empty board to detach it.',
   },
   {
     title: 'Diagrams go both ways',

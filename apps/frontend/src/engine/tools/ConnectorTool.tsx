@@ -15,8 +15,16 @@ import { bindCandidates, boxLookup, boxOfNode, isConnectable } from '../model/co
 import { endPoint } from '../model/connectorTargets';
 import { bindingAt } from '../model/connectorBinding';
 
-/** Below this a drag was a click, and a click connects nothing. */
+/** Below this the two ends are the same place, and there is no connector. */
 const MIN_DRAG = 6;
+/**
+ * How far a press must travel before it counts as a drag, in screen px.
+ *
+ * Generous enough to survive the wobble of a real click on a trackpad, which
+ * would otherwise turn every click into a one-pixel drag and defeat the
+ * click-move-click gesture entirely.
+ */
+const DRAG_SCREEN = 5;
 
 const SIDES: Array<Exclude<Port, 'auto'>> = ['top', 'right', 'bottom', 'left'];
 
@@ -25,10 +33,17 @@ const SIDES: Array<Exclude<Port, 'auto'>> = ['top', 'right', 'bottom', 'left'];
  *
  * ## The gesture
  *
- * Press on one object, release on another. While the tool is active every
- * connectable object shows its four ports, and the nearest one lights up as
- * you approach — so the thing you are aiming at tells you what it will do
- * before you commit, rather than after.
+ * **Click one object, then click another** — the route follows the cursor in
+ * between, so you can see what you are about to make before you make it.
+ * Dragging from one to the other does the same thing, and is the faster of the
+ * two over a short hop. See `pending` for why both exist.
+ *
+ * While the tool is active every connectable object shows its four ports, and
+ * the nearest one lights up as you approach — so the thing you are aiming at
+ * tells you what it will do before you commit, rather than after. Aim at the
+ * middle instead and the whole object lights up: that is `auto`, and the route
+ * picks a side. Aim anywhere else on the edge and a dot shows the exact spot
+ * it will attach to.
  *
  * ## Why ports are shown for *everything* while drawing
  *
@@ -50,16 +65,54 @@ export class ConnectorTool implements Tool {
   id = 'connector';
   cursor = 'crosshair';
 
+  /** A press is down and has travelled far enough to be a drag. */
   private isDragging = false;
+  /**
+   * A connector whose start is anchored, waiting for the click that ends it.
+   *
+   * This is the same gesture the line and arrow tool uses, and it is here for
+   * the same reason, which `ShapeTool` writes out in full: a connector is
+   * often long, and holding a button down across a whole board is an awkward,
+   * imprecise gesture that a trackpad makes worse. Two clicks with a live
+   * preview between them is steadier, and it leaves the hand free to reach a
+   * modifier.
+   *
+   * It was drag-only until now, which meant the two things in this app that
+   * draw a line from one point to another disagreed about how you draw a line
+   * from one point to another. That costs more than it sounds: the gesture is
+   * the first thing anyone learns about a tool, and having to learn it twice
+   * teaches them that the app has no rules.
+   *
+   * **Dragging still works.** These are not alternatives to choose between — a
+   * short hop between two adjacent boxes is genuinely faster as a drag, and
+   * removing it would be taking something away in exchange for a consistency
+   * nobody asked for. The press decides which gesture it was by whether it
+   * moved.
+   */
+  private pending = false;
   private from: ConnectorEnd | null = null;
   private cursorWorld = { x: 0, y: 0 };
+  /** Where the press went down, in screen space, to tell a drag from a click. */
+  private pressScreen: { x: number; y: number } | null = null;
 
   onPointerDown(ctx: ToolContext, e: any) {
     const pos = this.getPointerPos(ctx, e);
     if (!pos) return;
     this.cursorWorld = pos;
+
+    // The second click of a click-move-click. Committed on the press rather
+    // than the release, because a connector is ended by the *click* — ending
+    // it on release would mean the press that starts the next connector also
+    // finishes this one, and the gesture would collapse back into a drag.
+    if (this.pending && this.from) {
+      this.finish(ctx);
+      return;
+    }
+
     this.from = this.endAt(pos, ctx);
-    this.isDragging = true;
+    this.pending = true;
+    this.isDragging = false;
+    this.pressScreen = this.getScreenPos(e);
     this.pushOverlay(ctx);
   }
 
@@ -67,14 +120,41 @@ export class ConnectorTool implements Tool {
     const pos = this.getPointerPos(ctx, e);
     if (!pos) return;
     this.cursorWorld = pos;
-    // Pushed even when not dragging: the ports and the hover highlight are the
-    // tool's whole affordance, and they have to be live before the gesture
-    // starts rather than only during it.
+
+    // A press that has travelled is a drag, and will commit on release. Judged
+    // in *screen* pixels: whether a hand moved is a question about the hand,
+    // and at 10% zoom a six-world-unit threshold is most of a screen away.
+    if (this.pressScreen && !this.isDragging) {
+      const now = this.getScreenPos(e);
+      if (now && Math.hypot(now.x - this.pressScreen.x, now.y - this.pressScreen.y) >= DRAG_SCREEN) {
+        this.isDragging = true;
+      }
+    }
+
+    // Pushed even when nothing is in progress: the ports and the hover
+    // highlight are the tool's whole affordance, and they have to be live
+    // before the gesture starts rather than only during it.
     this.pushOverlay(ctx);
   }
 
   onPointerUp(ctx: ToolContext) {
-    if (!this.isDragging || !this.from) {
+    this.pressScreen = null;
+    // A press that never moved is the *first* click of a click-move-click, so
+    // releasing it has to leave the gesture standing. That is the entire
+    // difference between the two gestures, and it is one branch.
+    if (!this.isDragging || !this.from) return;
+    this.finish(ctx);
+  }
+
+  /**
+   * End the connector wherever the cursor is now.
+   *
+   * Shared by both gestures deliberately: a connector drawn by dragging and
+   * one drawn by two clicks have to produce the same node, or the tool has two
+   * behaviours wearing one name.
+   */
+  private finish(ctx: ToolContext) {
+    if (!this.from) {
       this.reset(ctx);
       return;
     }
@@ -84,12 +164,18 @@ export class ConnectorTool implements Tool {
     const end = this.resolvePoint(to, ctx);
     const travelled = Math.hypot(end.x - start.x, end.y - start.y);
 
-    // A click that went nowhere, or a loop from an object back to itself:
-    // neither describes a relationship, and both would leave an invisible or
-    // degenerate node on the board.
+    // A loop from an object back to itself describes no relationship, and
+    // draws as a degenerate stub inside the shape.
     const sameObject = this.from.nodeId && to.nodeId && this.from.nodeId === to.nodeId;
     if (travelled < MIN_DRAG || sameObject) {
-      this.reset(ctx);
+      // A refused *click* leaves the pending gesture standing rather than
+      // discarding it. Silently throwing away a connector the user has already
+      // started, in answer to a click they meant to make, reads as the tool
+      // being broken — the preview is still on screen so the state is legible,
+      // and Escape gets out. A refused drag has nothing to stand and resets.
+      if (!this.pending || this.isDragging) this.reset(ctx);
+      this.isDragging = false;
+      this.pushOverlay(ctx);
       return;
     }
 
@@ -130,7 +216,10 @@ export class ConnectorTool implements Tool {
   }
 
   onKeyDown(ctx: ToolContext, e: KeyboardEvent) {
-    if (e.key === 'Escape' && this.isDragging) this.reset(ctx);
+    // Escape has to reach a *pending* gesture too. Gated on `isDragging`
+    // alone, a connector anchored by a click and then thought better of had no
+    // way out but to finish it and undo it.
+    if (e.key === 'Escape' && (this.isDragging || this.pending)) this.reset(ctx);
   }
 
   onDeactivate(ctx: ToolContext) {
@@ -139,8 +228,16 @@ export class ConnectorTool implements Tool {
 
   private reset(ctx: ToolContext) {
     this.isDragging = false;
+    this.pending = false;
+    this.pressScreen = null;
     this.from = null;
     ctx.setOverlayState?.(null);
+  }
+
+  /** The pointer in screen space, where "did the hand move" is asked. */
+  private getScreenPos(e: any): { x: number; y: number } | null {
+    const stage = e.target?.getStage?.();
+    return stage?.getPointerPosition?.() ?? null;
   }
 
   /**
@@ -198,7 +295,7 @@ export class ConnectorTool implements Tool {
     ctx.setOverlayState?.({
       type: 'connector',
       ports,
-      active: this.isDragging,
+      active: this.pending,
       zoom: ctx.camera.zoom,
       // Which port is armed, so the overlay can light exactly one.
       armed: target.nodeId && target.port ? `${target.nodeId}:${target.port}` : null,

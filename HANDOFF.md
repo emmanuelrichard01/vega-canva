@@ -74,7 +74,7 @@ Verify in ~30 seconds:
 
 ```bash
 npx tsc --noEmit -p apps/frontend/tsconfig.app.json   # must be silent
-npx vitest run --root apps/frontend                   # 736 tests, 43 files
+npx vitest run --root apps/frontend                   # 763 tests, 45 files
 npx oxlint apps/frontend/src                          # 16 cosmetic warnings, exit 0
 npm run build -w apps/frontend                        # must succeed
 ```
@@ -89,7 +89,7 @@ history were vacuous for exactly that reason. Use `tsconfig.app.json`, or
 | --- | --- |
 | Branch | `rebuild/time-travel-and-physics`, nothing pushed, nothing merged |
 | Typecheck | clean |
-| Tests | **736** across 43 files |
+| Tests | **763** across 45 files |
 | Lint | exits 0; 16 `only-export-components` warnings, all cosmetic |
 | Build | clean, 1.51MB JS (gzip 474KB) + 119KB CSS (gzip 19KB) — still no code splitting |
 
@@ -118,6 +118,9 @@ Recent commits, newest first:
 
 | | |
 | --- | --- |
+| `006d92e` | connectors: anchored binding, draggable ends, and the shape that moved while you drew |
+| `f848435` | Blend and Blur hidden for connectors |
+| `417ec41` | the keyboard audit recorded; §5a-ii restored |
 | `260bcab` | the keyboard audit — nudge, Cmd+A and `?` bound, the help screen corrected |
 | `44d807e` | diagrams as code, the line/arrow rework, the right-click menu, help, text layout |
 | `5cebd12` | connectors given the appearance block they were declared to have |
@@ -325,6 +328,71 @@ selection, the minimap's pan/zoom/fit keys, and the replay bar's step, play and
 jump. The list roughly doubled, so it no longer fits without scrolling; three
 columns at that width would wrap descriptions, which costs more than the scroll
 does. The CSS comment that claimed it all fit was corrected with it.
+
+## 4a-iii. The connector rework (`006d92e` and after)
+
+The user reported one bug and asked for one feature; the bug turned out to be
+the smaller half.
+
+**Objects moved while you were connecting them.** `ObjectRenderer` decided
+`draggable` from the node alone and never asked which tool was armed, so
+pressing on a shape to draw an arrow from it started a Konva drag — *and* the
+tool still received its events, so the gesture both moved the box and drew a
+connector from wherever the box ended up. The fix is one word: `selectable`,
+already computed from `canSelectWith` and already gating the hover outline, now
+gates dragging too. **If a tool cannot select an object it has no business
+moving it**, and that is one predicate, not two.
+
+**A selected connector had the bounding-box transformer, and it was inert.**
+Not merely the wrong affordance — a connector's `width`/`height` are *derived*
+from what its ends resolve to, so a resize drag wrote a box the next render
+recomputed and discarded. The only way to change what an arrow joined was to
+delete it and draw another. `ConnectorEditor` gives it two endpoint handles;
+the transformer stands down under the rule already written for a solo line.
+
+**Three ways to bind an end, and the precedence lives in one function.**
+`ConnectorEnd` now carries `anchor: {u, v}` alongside `port`:
+
+| | Means | Resolves to |
+| --- | --- | --- |
+| `port: 'auto'` | *this object* | whichever side faces the other end |
+| `port: 'left'` etc. | *this side* | the edge midpoint |
+| `anchor: {u, v}` | *this spot* | a point on the perimeter, in the node's own proportions |
+
+Normalized rather than absolute for exactly the reason a connector stores a
+node id rather than a coordinate: **the binding has to survive a resize**, and
+a fixed offset slides off a box that gets narrower. The anchor is an *aim* —
+`anchorPoint` projects it to the perimeter, keeping the free coordinate and
+snapping the bound one, so an endpoint slides along an edge and round a corner.
+The edge is chosen in **normalized space**, the same reasoning `portFacing`
+already used: on a 400x60 node a point 60px left of centre and 40px above is
+barely a third of the way to the left edge but four fifths of the way to the
+top. Pixel comparison gets that backwards on every wide node.
+
+Precedence is resolved in `resolveEnd` alone and asserted there, so no caller
+has to know the order.
+
+**One rule, two callers.** `bindingAt` decides what a pointer means. It used to
+be a private method on the tool, which was fine while the tool was the only
+thing that asked — the moment endpoints became draggable there were two, and
+two implementations of "what is the pointer over" is how a tool comes to
+disagree with itself: draw onto a box's left edge and get one binding, drag an
+existing arrow to the same pixel and get another.
+
+**Both gestures, not one.** Drawing is click–move–click *and* drag. The line
+tool had already made this decision, with its reasons written down, and the
+connector was the odd one out — two things that draw a line from one point to
+another, disagreeing about how you draw a line from one point to another. The
+press decides which gesture it was by whether it moved, judged in **screen**
+pixels: whether a hand moved is a question about the hand, and at 10% zoom a
+world-unit threshold is most of a screen. A refused *click* leaves the pending
+gesture standing rather than silently discarding a connector the user had
+already started; a refused drag has nothing to stand and resets.
+
+**Known gap, recorded in `connectorTargets.ts`: rotation is not handled**
+anywhere in the connector system. A rotated node's ports sit on its unrotated
+bounding box. Fixing it means every consumer working in the node's local frame
+and rotating the resolved point back out — worth doing, not small.
 
 ## 4b. What the recent sessions changed
 
@@ -695,6 +763,11 @@ Physics, templates and the product shell (newest):
 | `engine/model/boardPreview.ts` | the board summary in `localStorage`, `PREVIEW_VERSION`, `previewPolygonPoints`. Pure, tested. |
 | `components/WorkspaceCover.tsx` | that summary drawn as SVG — the only thumbnail renderer, shared by boards and templates |
 | `engine/objects/appearanceTypes.ts` | which types carry an `appearance` block, held against the registry by a test |
+| `engine/model/connector.ts` | routing: ports, auto-side choice, orthogonal and curved routes, bounds. Pure, tested. |
+| `engine/model/connectorAnchor.ts` | an exact attachment point in a node's own proportions. Pure, tested. |
+| `engine/model/connectorBinding.ts` | what a pointer means, as an end. The one rule the tool and the editor share. Pure, tested. |
+| `engine/model/connectorTargets.ts` | the only bridge from nodes to boxes — what is connectable, and where its box is |
+| `components/canvas/ConnectorEditor.tsx` | the two ends as handles you can drag onto anything |
 | `engine/tools/shortcuts.ts` | the single-key tool bindings, and the inverse map `Room` resolves through |
 | `engine/tools/toolNames.ts` | what each tool is *called* on the help screen, tested against the bindings |
 | `engine/tools/nudge.ts` | what an arrow keypress means, in world units. Pure, tested. |

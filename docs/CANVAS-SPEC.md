@@ -50,6 +50,7 @@ it.
 | Scale tool | **Absent** | The transformer resizes geometry; nothing scales strokes, corner radii, shadows or type with the object. This is a distinct tool in the spec and it does not exist. |
 | Deep select / direct selection | **Absent** | Groups are flat — members share a synthetic `parentId`, there is no nesting and no enter-group editing, so there is nothing to select *into*. |
 | Marquee selection | **Shipped** | `SelectTool` draws the rect; `Canvas` resolves it to ids. |
+| Connector binding | **Shipped** | Drawn **click–move–click** or by dragging, the same grammar the line tool uses. An end binds three ways, most specific first: a named edge midpoint, an **anchor** — an exact spot stored in the node's own proportions, so it survives the object being resized — or `auto`, which names the object and lets the route pick a side. Dropped anywhere else it stays loose at that coordinate, which a diagram in progress needs constantly. Existing connectors are edited at their ends (`ConnectorEditor`); the bounding-box transformer stands down, as it does for a line, because a connector's `width`/`height` are derived and its resize handles were **inert**. One drag covers connect, re-connect, re-place and detach, because both the tool and the editor ask `bindingAt`. **Rotation is not handled**: a rotated node's ports sit on its unrotated bounding box. |
 | Nudge | **Shipped** | Arrow keys move the selection by one unit, ten with Shift, as a **single transaction** so a multi-object nudge is one press to undo. The step is in **world units, not screen pixels** — a nudge is an alignment gesture, and scaling it with zoom would make the same press mean different things at 40% and 400%. Locked objects are skipped rather than the press being refused. Arrows are claimed by four components (the board, the Layers tree, the minimap, the replay bar), all reaching the same window listener, so nudging applies only when focus is on the board itself. `engine/tools/nudge.ts`, pure and tested. **It was advertised on the help screen and bound nowhere until 2026-08-19.** |
 | Hand / pan tool | **Shipped** | `HandTool`, plus space-drag. |
 | Zoom / canvas scale | **Shipped** | Wheel and pinch through one non-passive native listener; the percentage readout lives in the radar panel. Covered by `CameraSystem.test.ts`. |
@@ -251,7 +252,7 @@ shipped surfaces that a reader of this document would otherwise assume absent.
 
 Roughly, across the ~100 discrete items above:
 
-- **Shipped: ~62** — the canvas core, collaboration, frames, the whole paint model, the precision tools, the vector engine, and the parts of the transform/typography blocks that a whiteboard needs.
+- **Shipped: ~63** — the canvas core, collaboration, frames, the whole paint model, the precision tools, the vector engine, and the parts of the transform/typography blocks that a whiteboard needs.
 - **Partial: ~10**
 - **Dead: 1** — `FrameNode.layout`, the auto-layout declaration, which Phase 6 owns. `Appearance.shadow` was the second entry here until 2026-08-11.
 - **Absent: ~26** — design systems and prototyping. Vector manipulation left this list on 2026-08-12; **the export pipeline left it on 2026-08-18** — six formats with a live preview, a hand-rolled PDF writer, batch export of every frame, and a JSON export that can now actually be read back.
