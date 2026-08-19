@@ -81,6 +81,8 @@ export const SCHEMA_VERSION = 3;
  * still reads as one description of the document.
  */
 export type { GradientStop, Paint, PaintType } from './paint';
+export type { ColorCycle, CycleUnit } from '../text/colorCycle';
+import type { ColorCycle } from '../text/colorCycle';
 import type { Paint } from './paint';
 
 /** Connector geometry lives in `model/connector`, re-exported here so the
@@ -390,6 +392,18 @@ export interface Typography {
    * Absent is no list, which is every existing document.
    */
   list?: ListStyle;
+  /**
+   * A ramp of colours spread across the block, a letter or a word at a time.
+   *
+   * Overrides `color` while it is set, and is deliberately not merged with it:
+   * "the text is this colour" and "the text runs through these colours" are
+   * different statements, and a blend of the two has no meaning anyone could
+   * predict. Clearing it returns the block to `color`, untouched.
+   *
+   * See `engine/text/colorCycle.ts` — the spread is proportional to the length
+   * of the text, so editing it re-spaces the ramp rather than stranding it.
+   */
+  colorCycle?: ColorCycle;
   /**
    * Extra space between paragraphs only, in world units. Absent is none.
    *

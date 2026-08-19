@@ -1,4 +1,5 @@
 import { LIST_STYLES } from '../model/schema';
+import { CYCLE_UNITS } from '../text/colorCycle';
 import {
   BLEND_MODES,
   DEFAULT_MITER_LIMIT,
@@ -425,6 +426,21 @@ function normalizeTypography(raw: any, overrides: Partial<Typography> = {}): Typ
     // Absent is no list, so an unrecognised value is dropped rather than
     // defaulted — a document should not acquire bullets it never had.
     ...((LIST_STYLES as readonly string[]).includes(t.list) ? { list: t.list } : null),
+    // A ramp needs at least one colour and a unit it can be divided by.
+    // Anything short of that is dropped rather than repaired: a half-formed
+    // cycle would override `color` and leave the text an unexplained black.
+    ...(CYCLE_UNITS.includes(t.colorCycle?.unit) && Array.isArray(t.colorCycle?.colors)
+      && t.colorCycle.colors.length > 0
+      ? {
+          colorCycle: {
+            unit: t.colorCycle.unit,
+            colors: t.colorCycle.colors.filter((c: unknown) => typeof c === 'string').slice(0, 12),
+            ...(Number.isFinite(t.colorCycle.repeat) && t.colorCycle.repeat > 1
+              ? { repeat: Math.min(8, t.colorCycle.repeat) }
+              : null),
+          },
+        }
+      : null),
     letterSpacing: num(
       t.letterSpacing ?? c.letterSpacing,
       overrides.letterSpacing ?? DEFAULT_TYPOGRAPHY.letterSpacing

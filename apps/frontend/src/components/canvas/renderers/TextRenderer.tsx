@@ -6,6 +6,7 @@ import { applyTextCase } from '../../../engine/model/textCase';
 import { contrastInk } from '../../../engine/model/color';
 import { layoutText, type TextLayout } from '../../../engine/text/layout';
 import { measurerFor, textFontEpoch } from '../../../engine/text/measure';
+import { cycleColor, cycleRuns, cycleTotal, piecesBefore } from '../../../engine/text/colorCycle';
 import { highlightPath } from '../../../engine/text/highlight';
 import { konvaFontStyle, konvaTextDecoration, shadowProps } from './shared';
 
@@ -119,6 +120,19 @@ export const TextRenderer: React.FC<Props> = React.memo(({ node, visible }) => {
     ? { shadowColor: glow.color, shadowBlur: glow.blur, shadowOpacity: 1, shadowOffset: { x: 0, y: 0 } }
     : shadowProps(node.appearance);
 
+  /**
+   * The colour cycle, and the two numbers it needs from the whole block.
+   *
+   * `caseText` rather than `node.text`: the ramp is spread over what is
+   * *drawn*, and a title-cased or upper-cased block can have a different
+   * character count from what is stored. Counting the stored form would put
+   * the ramp slightly out of step with the glyphs.
+   */
+  const cycle = t.colorCycle && t.colorCycle.colors.length > 0 ? t.colorCycle : null;
+  const caseText = React.useMemo(() => applyTextCase(node.text, t.textCase), [node.text, t.textCase]);
+  const cycleUnits = cycle ? cycleTotal(caseText, cycle.unit) : 0;
+  const measure = React.useMemo(() => measurerFor(t), [t]);
+
   const common = {
     fontSize: t.fontSize,
     fontFamily: t.fontFamily,
@@ -173,6 +187,10 @@ export const TextRenderer: React.FC<Props> = React.memo(({ node, visible }) => {
       )}
       {layout.lines.map((line, i) => (
         <React.Fragment key={i}>
+          {/* Bullets take the block's plain ink even under a colour cycle: a
+              marker is punctuation, not content, and giving it a slot in the
+              ramp shifts every word's colour by one and makes the list read as
+              off-by-one against a paragraph of the same text. */}
           {/* The bullet or number, drawn as its own run to the left of the
               indent. Its own `<Text>` rather than being prepended to the
               line's string, because a marker is not part of the text: it must
@@ -207,14 +225,46 @@ export const TextRenderer: React.FC<Props> = React.memo(({ node, visible }) => {
               fillAfterStrokeEnabled
             />
           )}
-          <Text
-            {...common}
-            {...(outline && outline.width > 0 ? {} : halo)}
-            x={line.x}
-            y={line.y}
-            text={line.text}
-            fill={ink}
-          />
+          {/*
+            One `<Text>` per coloured piece, positioned by measuring the run
+            before it.
+
+            Konva gives a text node exactly one fill, so per-letter colour has
+            to be per-node — there is no cheaper way, and the alternatives are
+            worse in kind rather than in degree: a gradient fill would let a
+            single glyph straddle two colours, and a canvas-level clip per
+            letter costs more than a node.
+
+            The runs are measured with the *same* measurer the layout wrapped
+            with, so a piece's offset is exactly where the layout put it. A
+            second opinion about advance width here would drift from the wrap
+            by a fraction of a pixel per character and show up as text that
+            slowly loses its own kerning across a long line.
+          */}
+          {cycle && line.text.length > 0 ? (
+            cycleRuns(line.text, cycle.unit, piecesBefore(caseText, cycle.unit, line.start)).map(
+              (run) => (
+                <Text
+                  key={run.at}
+                  {...common}
+                  {...(outline && outline.width > 0 ? {} : halo)}
+                  x={line.x + measure(line.text.slice(0, run.at))}
+                  y={line.y}
+                  text={run.text}
+                  fill={cycleColor(cycle, run.index, cycleUnits)}
+                />
+              )
+            )
+          ) : (
+            <Text
+              {...common}
+              {...(outline && outline.width > 0 ? {} : halo)}
+              x={line.x}
+              y={line.y}
+              text={line.text}
+              fill={ink}
+            />
+          )}
         </React.Fragment>
       ))}
     </Group>

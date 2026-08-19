@@ -11,8 +11,8 @@ const node = (kind: string, radius: number, extra: Record<string, unknown> = {})
 describe('sketch honours the corner radius', () => {
   for (const kind of ['rect', 'polygon', 'star', 'heart']) {
     it(`differs with and without a radius: ${kind}`, () => {
-      const sharp = roughShape(node(kind, 0));
-      const round = roughShape(node(kind, 30));
+      const sharp = roughShape(node(kind, 0), true);
+      const round = roughShape(node(kind, 30), true);
       expect(sharp.outline.length).toBeGreaterThan(0);
       expect(round.outline.length).toBeGreaterThan(0);
       expect(round.outline).not.toBe(sharp.outline);

@@ -42,6 +42,7 @@ import {
   type LineCap,
   type LineJoin,
   type ListStyle,
+  type CycleUnit,
   type TextCase,
   type TextResize,
   type ShapeGeometry,
@@ -83,6 +84,7 @@ import { getColorForUser } from '../engine/presence/ColorPalette';
 import type { FillStyle, SketchLevel } from '../engine/model/rough';
 import { FillStyleIcon, SketchLevelIcon } from './panel/sketchIcons';
 import { EndCapIcon } from './panel/connectorIcons';
+import { CYCLE_PRESETS } from '../engine/text/colorCycle';
 import {
   DEFAULT_TEXT_GLOW,
   DEFAULT_TEXT_HIGHLIGHT,
@@ -678,6 +680,11 @@ export const PropertiesPanel: React.FC<PropertiesPanelProps> = ({ selectedIds, o
 
   const setAppearance = (patch: Partial<Appearance>) =>
     patchEach((n) => ({ appearance: { ...(appearanceOf(n) ?? {}), ...patch } }));
+  const cycleKey =
+    Object.entries(CYCLE_PRESETS).find(
+      ([, preset]) => preset.colors.join(',') === typography?.colorCycle?.colors.join(',')
+    )?.[0] ?? (typography?.colorCycle ? 'rainbow' : 'none');
+
   const setTypography = (patch: Partial<Typography>) =>
     patchEach((n) => ({ typography: { ...(typographyOf(n) ?? DEFAULT_TYPOGRAPHY), ...patch } }));
 
@@ -1779,6 +1786,65 @@ export const PropertiesPanel: React.FC<PropertiesPanelProps> = ({ selectedIds, o
           {/* A list is a property of the block, not markup inside the text —
               see `Typography.list`. So it is a row here rather than something
               you type, and turning it off leaves exactly the text you wrote. */}
+          {/* Which preset the current ramp is, matched by its colours rather
+              than by a stored name — the ramp is the truth, so a document
+              written before a preset was renamed still lights the right chip. */}
+          {(() => null)()}
+          {/* The ramp, and how finely it is handed out. Two rows rather than
+              one control, because "which colours" and "how big a piece" are
+              independent choices and a combined picker would have to enumerate
+              every pairing. */}
+          <Row label="Colour cycle" hint="Spreads a ramp of colours across the whole block. Editing the text re-spaces it.">
+            <SegmentedControl
+              ariaLabel="Colour ramp"
+              mixed={sharedType((t) => t.colorCycle?.colors.join(',') ?? 'none').mixed}
+              value={cycleKey}
+              onChange={(key) => setTypography({
+                colorCycle: key === 'none'
+                  ? undefined
+                  : {
+                      unit: typography.colorCycle?.unit ?? 'character',
+                      colors: CYCLE_PRESETS[key].colors,
+                      ...(typography.colorCycle?.repeat ? { repeat: typography.colorCycle.repeat } : null),
+                    },
+              })}
+              segments={[
+                { value: 'none', label: 'None', hint: 'One flat colour', icon: <Minus size={14} /> },
+                ...Object.entries(CYCLE_PRESETS).map(([key, preset]) => ({
+                  value: key,
+                  label: preset.label,
+                  hint: preset.label,
+                  // The ramp itself as the swatch, so the choice is visible
+                  // rather than named — six words for six presets would say
+                  // nothing about what any of them looks like.
+                  icon: (
+                    <span
+                      aria-hidden
+                      style={{
+                        display: 'block', width: 16, height: 10, borderRadius: 2,
+                        background: `linear-gradient(90deg, ${preset.colors.join(', ')})`,
+                      }}
+                    />
+                  ),
+                })),
+              ]}
+            />
+          </Row>
+          {typography.colorCycle && (
+            <Row label="Cycle by" hint="A colour per letter reads as a gradient; a colour per word stays legible at small sizes.">
+              <SegmentedControl
+                ariaLabel="Colour cycle unit"
+                value={typography.colorCycle.unit}
+                onChange={(unit) => setTypography({
+                  colorCycle: { ...typography.colorCycle!, unit: unit as CycleUnit },
+                })}
+                segments={[
+                  { value: 'character', label: 'Letter', hint: 'Every character', icon: <span style={{ fontSize: 11, fontWeight: 600 }}>A</span> },
+                  { value: 'word', label: 'Word', hint: 'Every word', icon: <Type size={13} /> },
+                ]}
+              />
+            </Row>
+          )}
           <Row label="List" hint="Marks every paragraph in this block. An empty line is a spacer and takes no marker.">
             <SegmentedControl
               ariaLabel="List style"
