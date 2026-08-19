@@ -338,6 +338,10 @@ export type VerticalAlign = 'top' | 'middle' | 'bottom';
  */
 export type TextCase = 'none' | 'upper' | 'lower' | 'title';
 
+/** How each paragraph in a block is marked. Absent is no list at all. */
+export const LIST_STYLES = ['bullet', 'dash', 'circle', 'number', 'letter'] as const;
+export type ListStyle = (typeof LIST_STYLES)[number];
+
 /**
  * How a text box takes its size from its contents.
  *
@@ -372,6 +376,20 @@ export interface Typography {
   color: string;
   /** Absent is `none`, which is every existing document. */
   textCase?: TextCase;
+  /**
+   * Bullets or numbering, applied to every paragraph in the block.
+   *
+   * Per-*block* rather than per-paragraph, and that is a real decision rather
+   * than a shortcut. A per-paragraph list needs the list state to live in the
+   * text itself — markup, or a parallel array indexed by paragraph that every
+   * edit has to keep in step — and this model stores text as a plain string on
+   * purpose, because that is what makes the CRDT merge sanely and the editor a
+   * `<textarea>`. A sticky note or a label is a list or it is not; mixing the
+   * two inside one box is a document-editor feature, not a canvas one.
+   *
+   * Absent is no list, which is every existing document.
+   */
+  list?: ListStyle;
   /**
    * Extra space between paragraphs only, in world units. Absent is none.
    *

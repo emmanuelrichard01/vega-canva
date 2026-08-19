@@ -4,7 +4,7 @@ import {
   AlignCenter, AlignHorizontalJustifyCenter, AlignHorizontalJustifyEnd, AlignHorizontalJustifyStart,
   AlignHorizontalSpaceAround, AlignLeft, AlignRight, AlignVerticalJustifyCenter, AlignVerticalJustifyEnd,
   AlignVerticalJustifyStart, AlignVerticalSpaceAround, Bold, BringToFront, Circle, Copy, Crop, Download,
-  Droplet, FlipHorizontal, FlipVertical, Group, Heart, ImageIcon, Italic, Layers, Lock, Menu, MessageSquare,
+  Droplet, FlipHorizontal, FlipVertical, Group, Heart, ImageIcon, Italic, List, ListOrdered, Layers, Lock, Menu, MessageSquare,
   MessageSquarePlus, Mic, Minus, MoveRight, PenLine, Pin, Scissors, SendToBack, SmilePlus, Spline,
   SquaresExclude, SquaresIntersect, SquaresSubtract, SquaresUnite, Square, Star, StickyNote,
   Strikethrough, Trash2, Triangle, Type, Underline, Ungroup, Unlock,
@@ -32,7 +32,7 @@ import { STICKY_THEMES, type StickyTheme } from '../engine/model/schema';
 import {
   DEFAULT_INK, DEFAULT_TYPOGRAPHY, MAX_POLYGON_SIDES, MIN_POLYGON_SIDES, isOpenShape,
   type AnyNode, type Appearance, type FillStyle, type ShapeKind, type SketchLevel,
-  type TextAlign, type Typography,
+  type ListStyle, type TextAlign, type Typography,
 } from '../engine/model/schema';
 import { FillStyleIcon, SketchLevelIcon } from './panel/sketchIcons';
 import { EndCapIcon, RouteIcon } from './panel/connectorIcons';
@@ -1129,6 +1129,25 @@ export const ObjectContextToolbar: React.FC<Props> = ({ selectedId, selectedIds,
               <RailButton label="Italic" pressed={typography.italic} onClick={() => setTypography({ italic: !typography.italic })}><Italic size={15} /></RailButton>
               <RailButton label="Underline" pressed={typography.underline} onClick={() => setTypography({ underline: !typography.underline })}><Underline size={15} /></RailButton>
               <RailButton label="Strikethrough" pressed={typography.strikethrough} onClick={() => setTypography({ strikethrough: !typography.strikethrough })}><Strikethrough size={15} /></RailButton>
+              {/* On the rail as well as in the panel: turning a few lines into
+                  a list is something you do *while writing*, and the walk to
+                  the inspector is what stops people doing it. */}
+              <RailPopover label="List" trigger={<List size={16} />} align="start">
+                <span className="ctx-popover__label">List</span>
+                <SegmentedControl
+                  ariaLabel="List style"
+                  value={typography.list ?? 'none'}
+                  onChange={(v) => setTypography({ list: v === 'none' ? undefined : (v as ListStyle) })}
+                  segments={[
+                    { value: 'none', label: 'None', hint: 'No list', icon: <Minus size={14} /> },
+                    { value: 'bullet', label: 'Bullet', hint: 'A round dot', icon: <List size={14} /> },
+                    { value: 'dash', label: 'Dash', hint: 'An en dash', icon: <span style={{ fontSize: 12, fontWeight: 700 }}>&#8211;</span> },
+                    { value: 'circle', label: 'Hollow', hint: 'An open circle', icon: <span style={{ fontSize: 12 }}>&#9702;</span> },
+                    { value: 'number', label: 'Numbered', hint: '1. 2. 3.', icon: <ListOrdered size={14} /> },
+                    { value: 'letter', label: 'Lettered', hint: 'a. b. c.', icon: <span style={{ fontSize: 11, fontWeight: 600 }}>a.</span> },
+                  ]}
+                />
+              </RailPopover>
               <RailPopover label="Alignment" trigger={<AlignLeft size={16} />}>
                 <span className="ctx-popover__label">Alignment</span>
                 <SegmentedControl

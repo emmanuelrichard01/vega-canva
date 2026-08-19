@@ -1,3 +1,4 @@
+import { LIST_STYLES } from '../model/schema';
 import {
   BLEND_MODES,
   DEFAULT_MITER_LIMIT,
@@ -421,6 +422,9 @@ function normalizeTypography(raw: any, overrides: Partial<Typography> = {}): Typ
         : overrides.verticalAlign ?? DEFAULT_TYPOGRAPHY.verticalAlign,
     lineHeight: num(t.lineHeight ?? c.lineHeight, overrides.lineHeight ?? DEFAULT_TYPOGRAPHY.lineHeight),
     ...(TEXT_CASES.has(t.textCase) && t.textCase !== 'none' ? { textCase: t.textCase } : null),
+    // Absent is no list, so an unrecognised value is dropped rather than
+    // defaulted — a document should not acquire bullets it never had.
+    ...((LIST_STYLES as readonly string[]).includes(t.list) ? { list: t.list } : null),
     letterSpacing: num(
       t.letterSpacing ?? c.letterSpacing,
       overrides.letterSpacing ?? DEFAULT_TYPOGRAPHY.letterSpacing

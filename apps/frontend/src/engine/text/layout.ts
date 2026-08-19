@@ -33,7 +33,8 @@
  * arrives is measured against a fallback face and is wrong.
  */
 
-import type { TextAlign, VerticalAlign } from '../model/schema';
+import type { ListStyle, TextAlign, VerticalAlign } from '../model/schema';
+import { LIST_INDENT_EMS, listMarker, paragraphTakesMarker } from './listMarkers';
 
 /** Advance width of a run at the layout's font, in world units, without tracking. */
 export type TextMeasurer = (text: string) => number;
@@ -70,6 +71,15 @@ export interface LayoutInput {
   verticalAlign?: VerticalAlign;
   /** Replace the tail with `…` when an imposed height cannot hold every line. */
   ellipsis?: boolean;
+  /**
+   * Bullets or numbering. Absent is no list.
+   *
+   * The indent is taken out of the wrapping width rather than added after it,
+   * so a wrapped list item stays inside the box it was told to fit — wrapping
+   * to the full width and then shifting right is how a bulleted sticky note
+   * ends up with its second line hanging over the edge.
+   */
+  list?: ListStyle;
   measure: TextMeasurer;
 }
 
@@ -96,6 +106,14 @@ export interface TextLine {
   paragraph: number;
   /** True for the last line of its paragraph, which is where the gap is added. */
   endsParagraph: boolean;
+  /**
+   * The bullet or number drawn to the left of this line, if any.
+   *
+   * Only the first line of a paragraph carries one; a wrapped continuation
+   * lines up under the text rather than under the marker, which is what a
+   * hanging indent is and is why the indent lives in `x` for every line.
+   */
+  marker?: string;
   /**
    * Where this line begins in the *source* string.
    *
@@ -214,6 +232,7 @@ export function layoutText(input: LayoutInput): TextLayout {
     align,
     verticalAlign = 'top',
     ellipsis = false,
+    list,
     measure,
   } = input;
 
@@ -225,13 +244,17 @@ export function layoutText(input: LayoutInput): TextLayout {
   // `\r\n` and a lone `\r` are newlines too; a document pasted from Windows or
   // from an old Mac would otherwise render its paragraph breaks as glyphs.
   const paragraphs = text.split(/\r\n|\r|\n/);
-  const limit = wrap === 'word' && width && width > 0 ? width : Infinity;
+  // Taken out of the wrapping width, not added afterwards — see `list`.
+  const indent = list ? fontSize * LIST_INDENT_EMS : 0;
+  const declared = wrap === 'word' && width && width > 0 ? width : Infinity;
+  const limit = declared === Infinity ? Infinity : Math.max(1, declared - indent);
 
   interface Raw {
     text: string;
     paragraph: number;
     endsParagraph: boolean;
     start: number;
+    marker?: string;
   }
   const raw: Raw[] = [];
   /**
@@ -240,17 +263,25 @@ export function layoutText(input: LayoutInput): TextLayout {
    * the editor holds, not into the paragraph it happens to belong to.
    */
   let paragraphStart = 0;
+  // Counts only the paragraphs that actually take a marker, so a blank line
+  // used to space a list out does not consume a number.
+  let ordinal = 0;
   paragraphs.forEach((paragraph, index) => {
     const wrapped =
       limit === Infinity
         ? [{ text: paragraph, start: 0 }]
         : wrapParagraph(paragraph, limit, measure, letterSpacing);
+    const marker =
+      list && paragraphTakesMarker(paragraph) ? listMarker(list, ordinal) : null;
+    if (marker) ordinal += 1;
     wrapped.forEach((line, i) => {
       raw.push({
         text: line.text,
         paragraph: index,
         endsParagraph: i === wrapped.length - 1,
         start: paragraphStart + line.start,
+        // Only the first line of the paragraph; the rest hang under the text.
+        marker: i === 0 && marker ? marker : undefined,
       });
     });
     paragraphStart += paragraph.length + 1;
@@ -277,10 +308,10 @@ export function layoutText(input: LayoutInput): TextLayout {
     return { ...line, text: body, width: advance(body, measure, letterSpacing) };
   });
 
-  const contentWidth = runs.reduce((max, r) => Math.max(max, r.width), 0);
+  const contentWidth = runs.reduce((max, r) => Math.max(max, r.width), 0) + indent;
   // The box aligns within its declared width where it has one; an auto-width
   // box has no width but its own content, so alignment resolves against that.
-  const boxWidth = limit === Infinity ? contentWidth : limit;
+  const boxWidth = limit === Infinity ? contentWidth - indent : limit;
 
   let y = 0;
   const lines: TextLine[] = runs.map((run) => {
@@ -292,12 +323,16 @@ export function layoutText(input: LayoutInput): TextLayout {
           : 0;
     const line: TextLine = {
       text: run.text,
-      x,
+      // Every line of a list is pushed right, not only the marked one — that
+      // is what makes a wrapped item line up under its own text instead of
+      // under its bullet, which is the whole of a hanging indent.
+      x: x + indent,
       y,
       width: run.width,
       height: lineAdvance,
       baseline,
       paragraph: run.paragraph,
+      marker: run.marker,
       start: run.start,
       endsParagraph: run.endsParagraph,
     };

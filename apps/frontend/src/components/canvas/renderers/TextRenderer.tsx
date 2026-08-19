@@ -58,6 +58,7 @@ export const TextRenderer: React.FC<Props> = React.memo(({ node, visible }) => {
       align: t.align,
       verticalAlign: t.verticalAlign,
       ellipsis: node.resize === 'fixed',
+      list: t.list,
       measure: measurerFor(t),
     });
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -172,6 +173,22 @@ export const TextRenderer: React.FC<Props> = React.memo(({ node, visible }) => {
       )}
       {layout.lines.map((line, i) => (
         <React.Fragment key={i}>
+          {/* The bullet or number, drawn as its own run to the left of the
+              indent. Its own `<Text>` rather than being prepended to the
+              line's string, because a marker is not part of the text: it must
+              not be measured into the wrap, selected, edited or exported as
+              characters the author never typed. */}
+          {line.marker && (
+            <Text
+              {...common}
+              x={0}
+              y={line.y}
+              width={line.x}
+              align="left"
+              text={line.marker}
+              fill={ink}
+            />
+          )}
           {/* The outline is drawn as its own pass beneath the fill, because a
               stroke centred on the letterforms eats into them from both sides
               — half the weight lands inside the glyph. Drawing the stroked

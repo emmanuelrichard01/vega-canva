@@ -110,6 +110,7 @@ function textMarkup(node: TextNode): string {
   const t = node.typography;
   const layout = layoutText({
     text: applyTextCase(node.text, t.textCase),
+    list: t.list,
     wrap: node.resize === 'width' ? 'none' : 'word',
     width: node.width,
     height: node.resize === 'fixed' ? node.height : undefined,

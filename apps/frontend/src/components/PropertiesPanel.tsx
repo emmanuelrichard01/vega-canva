@@ -2,6 +2,7 @@ import React, { useMemo, useState } from 'react';
 import { useShallow } from 'zustand/react/shallow';
 import {
   AlignCenter, AlignLeft, AlignRight, Bold, BringToFront, CaseSensitive, ChevronRight,
+  List, ListOrdered,
   FlipHorizontal, FlipVertical, ImageIcon, Italic, LayoutTemplate, Lock, MessageSquare,
   Mic, MoveHorizontal, MoveVertical, PenLine, SendToBack, Sliders, Square, StickyNote,
   Strikethrough, Type, Underline, Unlock, PanelRightClose,
@@ -40,6 +41,7 @@ import {
   type BlendMode,
   type LineCap,
   type LineJoin,
+  type ListStyle,
   type TextCase,
   type TextResize,
   type ShapeGeometry,
@@ -1767,6 +1769,25 @@ export const PropertiesPanel: React.FC<PropertiesPanelProps> = ({ selectedIds, o
                 { value: 'upper', label: 'Upper case', icon: <span style={{ fontSize: 11, fontWeight: 600 }}>AG</span> },
                 { value: 'lower', label: 'Lower case', icon: <span style={{ fontSize: 11, fontWeight: 600 }}>ag</span> },
                 { value: 'title', label: 'Title Case', icon: <CaseSensitive size={14} /> },
+              ]}
+            />
+          </Row>
+          {/* A list is a property of the block, not markup inside the text —
+              see `Typography.list`. So it is a row here rather than something
+              you type, and turning it off leaves exactly the text you wrote. */}
+          <Row label="List" hint="Marks every paragraph in this block. An empty line is a spacer and takes no marker.">
+            <SegmentedControl
+              ariaLabel="List style"
+              mixed={sharedType((t) => t.list ?? 'none').mixed}
+              value={typography.list ?? 'none'}
+              onChange={(v) => setTypography({ list: v === 'none' ? undefined : (v as ListStyle) })}
+              segments={[
+                { value: 'none', label: 'None', hint: 'No list', icon: <Minus size={14} /> },
+                { value: 'bullet', label: 'Bullet', hint: 'A round dot', icon: <List size={14} /> },
+                { value: 'dash', label: 'Dash', hint: 'An en dash', icon: <span style={{ fontSize: 12, fontWeight: 700 }}>&#8211;</span> },
+                { value: 'circle', label: 'Hollow', hint: 'An open circle', icon: <span style={{ fontSize: 12 }}>&#9702;</span> },
+                { value: 'number', label: 'Numbered', hint: '1. 2. 3.', icon: <ListOrdered size={14} /> },
+                { value: 'letter', label: 'Lettered', hint: 'a. b. c.', icon: <span style={{ fontSize: 11, fontWeight: 600 }}>a.</span> },
               ]}
             />
           </Row>
