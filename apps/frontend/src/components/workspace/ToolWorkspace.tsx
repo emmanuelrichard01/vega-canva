@@ -1,6 +1,9 @@
 import React, { useCallback, useEffect, useRef, useState } from 'react';
 import { MousePointer2, Hand, Pen, PenTool as PenToolIcon, Type, Square, StickyNote, MessageSquare, ImageIcon, Mic, Sparkles, Frame, Eraser, Workflow, MoreVertical, TextQuote } from 'lucide-react';
-import { Spline } from 'lucide-react';
+import { Minus, Spline } from 'lucide-react';
+import { SegmentedControl } from '../ui/SegmentedControl';
+import { SketchLevelIcon } from '../panel/sketchIcons';
+import type { PencilNib } from '../../engine/model/rough';
 import { isForceTool } from '../../engine/physics/forces';
 import { FRAME_PRESETS, FRAME_PRESET_GROUPS } from '../../engine/model/frames';
 import { ShapeIcon, LINE_KINDS, SHAPE_KINDS, SHAPE_LABELS, shapeToolId, shapeKindFromToolId, type ShapePreset } from './shapeIcons';
@@ -237,6 +240,8 @@ export const ToolWorkspace: React.FC<Props> = ({ activeToolId, onOpenDiagram, on
 
   const penSize = useStore((s) => s.penSize);
   const setPenSize = useStore((s) => s.setPenSize);
+  const pencilNib = useStore((s) => s.pencilNib);
+  const setPencilNib = useStore((s) => s.setPencilNib);
   const lastForce = useStore((s) => s.lastForce);
   const eraserSize = useStore((s) => s.eraserSize);
   const setEraserSize = useStore((s) => s.setEraserSize);
@@ -411,6 +416,27 @@ export const ToolWorkspace: React.FC<Props> = ({ activeToolId, onOpenDiagram, on
                     onClick={() => pick('bezier-pen')}
                   />
                   <NibSize label="Brush size" value={penSize} min={1} max={60} onChange={setPenSize} />
+                  {/* Which nib is in the pencil.
+                      A tool setting rather than an object one, because a
+                      stroke is finished the moment the pen lifts — deciding
+                      afterwards means drawing a line, selecting it and
+                      changing it, every time. Asked once, here, next to the
+                      brush size, which is the other thing about the pencil you
+                      set before drawing rather than after. */}
+                  <div className="flyout-field">
+                    <span className="flyout-field__label">Stroke</span>
+                    <SegmentedControl
+                      ariaLabel="Pencil nib"
+                      value={pencilNib}
+                      onChange={(v) => setPencilNib(v as PencilNib)}
+                      segments={[
+                        { value: 'smooth', label: 'Smooth', hint: 'One continuous, tapered line', icon: <Minus size={14} /> },
+                        { value: 'light', label: 'Drawn', hint: 'Gone over once, by hand', icon: <SketchLevelIcon level="light" /> },
+                        { value: 'medium', label: 'Sketched', hint: 'Gone over twice', icon: <SketchLevelIcon level="medium" /> },
+                        { value: 'heavy', label: 'Scribbled', hint: 'Twice, and past every turn', icon: <SketchLevelIcon level="heavy" /> },
+                      ]}
+                    />
+                  </div>
                 </Flyout>
               )}
             </DockButton>

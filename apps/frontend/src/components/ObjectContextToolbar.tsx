@@ -17,6 +17,7 @@ import { useStore } from '../hooks/useStore';
 import { cameraSystem } from '../engine/CameraSystem';
 import { engineEvents } from '../engine/EventBus';
 import { cropMode } from '../engine/interaction/cropMode';
+import { pathEdit } from '../engine/interaction/pathEdit';
 import { applyBoolean, canVectorize, flattenToPath, outlineStrokeOf } from '../engine/document/vectorOps';
 import { BOOLEAN_OPS, type BooleanOp } from '../engine/model/pathBoolean';
 import { deleteNodesWithFrames } from '../engine/interaction/frameMembership';
@@ -455,6 +456,9 @@ export const ObjectContextToolbar: React.FC<Props> = ({ selectedId, selectedIds,
   const [showReactions, setShowReactions] = useState(false);
   const myAuthorId = localAuthorId();
   const cropping = useSyncExternalStore(cropMode.subscribe, cropMode.getSnapshot, cropMode.getSnapshot);
+  // So the button reads as pressed while the anchors are on screen, and can
+  // close what it opened.
+  const editingPath = useSyncExternalStore(pathEdit.subscribe, pathEdit.getSnapshot, pathEdit.getSnapshot)?.nodeId ?? null;
   const isDraggingRef = useRef(false);
   const reactionsRef = useRef<HTMLDivElement>(null);
   // Mirrors state, read inside the rAF loop so it can skip setState on frames
@@ -1112,6 +1116,30 @@ export const ObjectContextToolbar: React.FC<Props> = ({ selectedId, selectedIds,
                   aria-label="Connector label"
                 />
               </RailPopover>
+            </div>
+            <Divider />
+          </>
+        )}
+
+        {/* --------------------------------------------------------- vectors */}
+        {/* Anchor editing has always worked — double-click a pen path and its
+            points and handles appear. Nothing ever *said* so, which for a
+            feature reached by a gesture on one node type out of a dozen means
+            it may as well not exist: the only way to find it is to try
+            double-clicking things. A button costs one slot on a rail that only
+            appears for the paths it applies to. */}
+        {node.type === 'path' && node.geometry.kind === 'bezier' && (
+          <>
+            <div className="ctx-group">
+              <RailButton
+                label="Edit points"
+                pressed={editingPath === node.id}
+                onClick={() =>
+                  editingPath === node.id ? pathEdit.exit() : pathEdit.enter(node.id)
+                }
+              >
+                <Spline size={15} />
+              </RailButton>
             </div>
             <Divider />
           </>

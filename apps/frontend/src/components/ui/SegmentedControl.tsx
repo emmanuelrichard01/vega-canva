@@ -77,6 +77,15 @@ export const SegmentedControl: React.FC<Props> = ({ segments, value, onChange, a
         pointerEvents: disabled ? 'none' : undefined,
         display: 'flex',
         alignItems: 'center',
+        // Wraps rather than overflowing. A six- or seven-segment group in the
+        // properties panel's control column is wider than the column, and a
+        // non-wrapping flex row does not shrink below its content — so the
+        // group ran out under its own label and the two drew on top of each
+        // other. `minWidth: 0` is the other half: without it the flex item
+        // refuses to be narrower than its contents and the wrap never fires.
+        flexWrap: 'wrap',
+        minWidth: 0,
+        rowGap: '2px',
         background: 'var(--surface-hover)',
         padding: '2px',
         borderRadius: 'var(--radius-md)',
@@ -102,6 +111,10 @@ export const SegmentedControl: React.FC<Props> = ({ segments, value, onChange, a
               display: 'flex',
               alignItems: 'center',
               justifyContent: 'center',
+              // Never squeezed narrower than its own icon: a segment that
+              // shrinks to fit is a specimen you can no longer recognise,
+              // which is the whole reason these are specimens.
+              flex: '0 0 auto',
               gap: 'var(--space-1)',
               padding: '4px 6px',
               borderRadius: 'var(--radius-sm)',

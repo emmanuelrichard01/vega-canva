@@ -196,6 +196,7 @@ export class PenTool implements Tool {
        * outline is unaffected because it comes from `svgPath`, which
        * `perfect-freehand` has already produced from the full-rate input.
        */
+      const nib = useStore.getState().pencilNib;
       const centerline = simplifyPoints(
         this.points.map(p => ({ x: p.x - minX, y: p.y - minY })),
         1.2
@@ -214,8 +215,26 @@ export class PenTool implements Tool {
           points: centerline,
           strokeSize: PenTool.size,
         },
-        // perfect-freehand emits a filled outline polygon, not a stroked line.
-        appearance: { fill: [{ type: 'solid', color: PenTool.currentColor, opacity: 1 }] },
+        /**
+         * The nib in the pencil, written onto the stroke.
+         *
+         * A stroke is finished the moment the pen lifts, so this cannot be a
+         * decision made afterwards without drawing, selecting and editing every
+         * single line. It is stored on the node rather than read from the store
+         * at render time for the ordinary reason: a document has to draw the
+         * same on every machine, and a tool setting is a property of *this*
+         * browser.
+         *
+         * The fill is what a smooth stroke is made of — perfect-freehand emits
+         * a filled outline polygon, not a stroked line — and the stroke colour
+         * is what a sketched one uses, so both are written and the renderer
+         * takes whichever its branch needs.
+         */
+        appearance: {
+          fill: [{ type: 'solid', color: PenTool.currentColor, opacity: 1 }],
+          stroke: { color: PenTool.currentColor, width: PenTool.size },
+          ...(nib !== 'smooth' ? { sketch: nib } : null),
+        },
       });
     }
     

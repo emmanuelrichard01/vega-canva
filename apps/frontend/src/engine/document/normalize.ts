@@ -435,9 +435,6 @@ function normalizeTypography(raw: any, overrides: Partial<Typography> = {}): Typ
           colorCycle: {
             unit: t.colorCycle.unit,
             colors: t.colorCycle.colors.filter((c: unknown) => typeof c === 'string').slice(0, 12),
-            ...(Number.isFinite(t.colorCycle.repeat) && t.colorCycle.repeat > 1
-              ? { repeat: Math.min(8, t.colorCycle.repeat) }
-              : null),
           },
         }
       : null),

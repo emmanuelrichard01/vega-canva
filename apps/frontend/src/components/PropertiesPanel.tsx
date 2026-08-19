@@ -248,8 +248,26 @@ const StrokeStyleIcon: React.FC<{ style: StrokeStyleId }> = ({ style }) => (
  * label rather than in prose beneath it — this panel is scanned far more often
  * than it is read.
  */
-const Row: React.FC<{ label: string; children: React.ReactNode; hint?: string }> = ({ label, children, hint }) => (
-  <div className="prop-row">
+/**
+ * `stack` puts the control on its own line beneath the label.
+ *
+ * For the rows whose control is a long run of specimens — six end styles, six
+ * list markers, seven colour ramps. Side by side they have about 150px, which
+ * is not enough, so they wrapped into two cramped lines squeezed against the
+ * label or, before the group learned to wrap at all, straight over the top of
+ * it. Given the full width they fit on one line and stay readable.
+ *
+ * Not applied automatically by counting children: a row does not know whether
+ * its control is six specimens or one stepper, and guessing from the child
+ * count would stack a row holding a single wide input for no reason.
+ */
+const Row: React.FC<{
+  label: string;
+  children: React.ReactNode;
+  hint?: string;
+  stack?: boolean;
+}> = ({ label, children, hint, stack }) => (
+  <div className={stack ? 'prop-row prop-row--stack' : 'prop-row'}>
     <span className="prop-row__label" data-tooltip={hint} data-tooltip-pos="left">{label}</span>
     <div className="prop-row__control">{children}</div>
   </div>
@@ -1441,7 +1459,7 @@ export const PropertiesPanel: React.FC<PropertiesPanelProps> = ({ selectedIds, o
               silently absent, because a control that is missing is
               indistinguishable from one that is broken. */}
           {capabilities.supportsStroke && (
-            <Row label="Cap" hint="How the two ends of an open line are finished.">
+            <Row stack label="Cap" hint="How the two ends of an open line are finished.">
               <SegmentedControl
                 ariaLabel="Line cap"
                 disabledReason={
@@ -1479,7 +1497,7 @@ export const PropertiesPanel: React.FC<PropertiesPanelProps> = ({ selectedIds, o
               control that silently is not there is indistinguishable from one
               that is broken, which is exactly how these read. */}
           {capabilities.supportsStroke && (
-            <Row label="Join" hint="How two straight edges meet at a corner.">
+            <Row stack label="Join" hint="How two straight edges meet at a corner.">
               <SegmentedControl
                 ariaLabel="Line join"
                 disabledReason={hasCorners ? undefined : 'This shape has no straight corners — a rounded or curved edge has no join.'}
@@ -1782,7 +1800,7 @@ export const PropertiesPanel: React.FC<PropertiesPanelProps> = ({ selectedIds, o
           {/* A case shown, not typed. The stored string is never rewritten, so
               switching to upper case and back returns what was written rather
               than a shouted version of it. */}
-          <Row label="Case" hint="Changes how the text is shown, never what is stored — switching back returns exactly what you typed.">
+          <Row stack label="Case" hint="Changes how the text is shown, never what is stored — switching back returns exactly what you typed.">
             <SegmentedControl
               ariaLabel="Text case"
               mixed={sharedType((t) => t.textCase ?? 'none').mixed}
@@ -1807,7 +1825,7 @@ export const PropertiesPanel: React.FC<PropertiesPanelProps> = ({ selectedIds, o
               one control, because "which colours" and "how big a piece" are
               independent choices and a combined picker would have to enumerate
               every pairing. */}
-          <Row label="Colour cycle" hint="Spreads a ramp of colours across the whole block. Editing the text re-spaces it.">
+          <Row stack label="Colour cycle" hint="Spreads a ramp of colours across the whole block. Editing the text re-spaces it.">
             <SegmentedControl
               ariaLabel="Colour ramp"
               mixed={sharedType((t) => t.colorCycle?.colors.join(',') ?? 'none').mixed}
@@ -1818,7 +1836,6 @@ export const PropertiesPanel: React.FC<PropertiesPanelProps> = ({ selectedIds, o
                   : {
                       unit: typography.colorCycle?.unit ?? 'character',
                       colors: CYCLE_PRESETS[key].colors,
-                      ...(typography.colorCycle?.repeat ? { repeat: typography.colorCycle.repeat } : null),
                     },
               })}
               segments={[
@@ -1844,7 +1861,7 @@ export const PropertiesPanel: React.FC<PropertiesPanelProps> = ({ selectedIds, o
             />
           </Row>
           {typography.colorCycle && (
-            <Row label="Cycle by" hint="A colour per letter reads as a gradient; a colour per word stays legible at small sizes.">
+            <Row stack label="Cycle by" hint="A colour per letter reads as a gradient; a colour per word stays legible at small sizes.">
               <SegmentedControl
                 ariaLabel="Colour cycle unit"
                 value={typography.colorCycle.unit}
@@ -1858,7 +1875,7 @@ export const PropertiesPanel: React.FC<PropertiesPanelProps> = ({ selectedIds, o
               />
             </Row>
           )}
-          <Row label="List" hint="Marks every paragraph in this block. An empty line is a spacer and takes no marker.">
+          <Row stack label="List" hint="Marks every paragraph in this block. An empty line is a spacer and takes no marker.">
             <SegmentedControl
               ariaLabel="List style"
               mixed={sharedType((t) => t.list ?? 'none').mixed}
@@ -1935,7 +1952,7 @@ export const PropertiesPanel: React.FC<PropertiesPanelProps> = ({ selectedIds, o
               tool and read by nothing — and could only express two of these
               three, which is part of why nothing ever consumed it. */}
           {uniformType && node.type === 'text' && (
-            <Row label="Resize" hint="Auto width grows sideways. Auto height wraps and grows down. Fixed imposes both — and is the mode where dragging an edge stretches the letterforms.">
+            <Row stack label="Resize" hint="Auto width grows sideways. Auto height wraps and grows down. Fixed imposes both — and is the mode where dragging an edge stretches the letterforms.">
               <SegmentedControl
                 ariaLabel="Text box resizing"
                 mixed={shared((n) => (n.type === 'text' ? n.resize : null)).mixed}
@@ -2210,6 +2227,7 @@ export const PropertiesPanel: React.FC<PropertiesPanelProps> = ({ selectedIds, o
           </Row>
           {(['endStart', 'endEnd'] as const).map((side) => (
             <Row
+              stack
               key={side}
               label={side === 'endStart' ? 'Start' : 'End'}
               hint={side === 'endStart' ? 'What sits at the first end.' : 'What sits at the second end.'}
@@ -2236,7 +2254,7 @@ export const PropertiesPanel: React.FC<PropertiesPanelProps> = ({ selectedIds, o
           connector is a line and those already describe lines. */}
       {uniformType && node.type === 'connector' && (
         <Accordion title="Connector">
-          <Row label="Route" hint="Straight goes corner to corner. Orthogonal turns at right angles, which is what a flowchart reads as. Curved eases between the two ends.">
+          <Row stack label="Route" hint="Straight goes corner to corner. Orthogonal turns at right angles, which is what a flowchart reads as. Curved eases between the two ends.">
             <SegmentedControl
               ariaLabel="Routing"
               mixed={shared((n) => (n.type === 'connector' ? n.routing : null)).mixed}
@@ -2262,7 +2280,7 @@ export const PropertiesPanel: React.FC<PropertiesPanelProps> = ({ selectedIds, o
               rows rather than one, because "what is at the start" and "what is
               at the end" are separate decisions and a combined control would
               have to enumerate thirty-six pairs. */}
-          <Row label="Start" hint="What sits at the first end.">
+          <Row stack label="Start" hint="What sits at the first end.">
             <SegmentedControl
               ariaLabel="Start cap"
               mixed={shared((n) => (n.type === 'connector' ? n.endStart ?? 'none' : null)).mixed}
@@ -2276,7 +2294,7 @@ export const PropertiesPanel: React.FC<PropertiesPanelProps> = ({ selectedIds, o
               }))}
             />
           </Row>
-          <Row label="End" hint="What sits at the second end.">
+          <Row stack label="End" hint="What sits at the second end.">
             <SegmentedControl
               ariaLabel="End cap"
               mixed={shared((n) => (n.type === 'connector' ? n.endEnd ?? 'none' : null)).mixed}

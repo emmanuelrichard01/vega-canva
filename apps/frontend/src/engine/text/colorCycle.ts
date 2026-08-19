@@ -3,26 +3,28 @@
  *
  * ## What it is
  *
- * A ramp of colours spread across the whole text block, handed out one piece at
- * a time — a letter each, or a word each. The spread is *proportional*, so a
- * three-word heading and a thirty-word paragraph both run the full ramp from
- * end to end. Nobody has to pick a colour per word, and nothing has to be
- * re-picked when the text is edited: adding a word re-spaces the ramp.
+ * A palette handed out across a block of text, one colour per piece — a letter
+ * each, or a word each — cycling when the text outruns the palette. "He is a
+ * boy" with the rainbow is red, yellow, blue, green: four words, four colours,
+ * each one a colour somebody chose.
+ *
+ * Nobody has to pick a colour per word, and nothing has to be re-picked when
+ * the text is edited. Adding a word simply takes the next colour.
  *
  * ## Why it is not a gradient fill
  *
  * A gradient fill on text is continuous — a letter can be half one colour and
  * half the next, and a single glyph straddling a stop reads as a printing
- * error rather than as a choice. This quantises: each piece takes one flat
- * colour sampled at its own position along the ramp, which is what makes it
- * legible at small sizes and what people actually mean by rainbow text.
+ * error rather than as a choice. Each piece here takes one flat colour, which
+ * is what keeps it legible at small sizes and what people mean by rainbow
+ * text.
  *
- * ## Why the position is measured in *pieces*, not in characters
+ * ## Why a piece is a whole word, not a share of the line
  *
- * A word-cycled block asks for its colour once per word, so a long word and a
- * short one get equal shares of the ramp. Spacing by character instead would
- * give "extraordinarily" nine times the spectrum of "of", which reads as an
- * accident. The unit chosen is the unit the ramp is divided by.
+ * A word-cycled block asks once per word, so "extraordinarily" and "of" each
+ * take one colour. Anything measured by length instead would give the long
+ * word a bigger share of the palette, which reads as an accident rather than
+ * as a rule.
  *
  * Everything here is pure and works on strings and numbers, so the renderer,
  * the exporter and any future consumer sample exactly the same colours.
@@ -36,24 +38,17 @@ export type CycleUnit = (typeof CYCLE_UNITS)[number];
 
 export interface ColorCycle {
   unit: CycleUnit;
-  /** The ramp, as at least two colours. Sampled by position, not by index. */
+  /** The palette, handed out one colour per piece and wrapping when it runs out. */
   colors: string[];
-  /**
-   * How many times the ramp runs across the block. Absent is once.
-   *
-   * A repeat above one is what turns a long paragraph from a slow wash into a
-   * visible cycle; below one is not offered, because half a ramp is just a
-   * two-colour gradient with extra steps.
-   */
-  repeat?: number;
 }
 
 /**
  * The ramps offered by name.
  *
- * Ends are deliberately not equal — a ramp whose first and last colours match
- * looks like a mistake at low piece counts, where the wrap is visible as two
- * neighbours sharing a colour.
+ * First and last are deliberately different. The palette wraps, so a matching
+ * pair would put two identical neighbours next to each other at the seam —
+ * visible on any text longer than the palette, and it reads as a repeat rather
+ * than as a cycle.
  */
 export const CYCLE_PRESETS: Record<string, { label: string; colors: string[] }> = {
   rainbow: {
@@ -102,19 +97,30 @@ export function sampleRamp(colors: readonly string[], t: number): string {
 }
 
 /**
- * The colour for one piece out of `total`.
+ * The colour for one piece.
  *
- * `total - 1` in the denominator so the first piece is the ramp's start and the
- * last is its end. Dividing by `total` instead would stop short and never reach
- * the final colour, which on a six-colour rainbow means the violet simply never
- * appears — the sort of off-by-one that reads as "the preset is wrong".
+ * ## Why this hands out palette colours rather than sampling the ramp
+ *
+ * It sampled at first — piece `i` of `n` took the colour at `i / (n - 1)` along
+ * a blend. That is the right answer for a *gradient* and the wrong one here.
+ * On "He is a boy" it gives four colours interpolated between six stops, so
+ * every word comes out a muddy in-between shade and none of them is a colour
+ * anybody chose. What rainbow text means is *these* colours, one each, in
+ * order: red, yellow, blue, green.
+ *
+ * So the palette is handed out directly and wraps when the text outruns it. A
+ * cycle is a cycle — a fifth word starts the palette again, which is both what
+ * the name says and what reads as deliberate on a long block, where a slow
+ * interpolated wash just looks like a gradient that failed.
+ *
+ * `total` is kept in the signature and unused: callers already compute it for
+ * layout, and a colour that depends on the length of the whole block is the
+ * kind of thing this may want back. Naming it out loud is cheaper than
+ * removing it and rediscovering why it was there.
  */
-export function cycleColor(cycle: ColorCycle, index: number, total: number): string {
-  if (total <= 1) return cycle.colors[0] ?? '#000000';
-  const repeat = Math.max(1, cycle.repeat ?? 1);
-  const progress = (index / (total - 1)) * repeat;
-  // Wraps on repeat, so each lap runs the full ramp rather than the tail of it.
-  return sampleRamp(cycle.colors, repeat === 1 ? progress : progress % 1);
+export function cycleColor(cycle: ColorCycle, index: number, _total: number): string {
+  if (cycle.colors.length === 0) return '#000000';
+  return cycle.colors[index % cycle.colors.length];
 }
 
 /** One coloured piece of a line: what to draw, and where it belongs in the ramp. */

@@ -44,6 +44,16 @@
 import type { Point } from './schema';
 
 /** The three hands. */
+/**
+ * What is in the pencil.
+ *
+ * `smooth` is perfect-freehand's tapered ribbon — the stroke the tool has
+ * always drawn. The others are the sketch levels, which redraw the stroke from
+ * its centreline as a line gone over by hand. One union rather than a boolean
+ * plus a level, because "drawn, but how much" is one question.
+ */
+export type PencilNib = 'smooth' | SketchLevel;
+
 export type SketchLevel = 'light' | 'medium' | 'heavy';
 export const SKETCH_LEVELS: SketchLevel[] = ['light', 'medium', 'heavy'];
 

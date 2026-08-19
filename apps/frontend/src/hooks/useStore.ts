@@ -2,6 +2,7 @@ import { create } from 'zustand';
 import { normalizeNode, objectsMap, observeNodes, provider, scheduleMigration, updateNode } from '../engine/document';
 import { STICKY_THEMES, type AnyNode, type StickyTheme } from '../engine/model/schema';
 import { sceneGraph } from '../engine/SceneGraph';
+import type { PencilNib } from '../engine/model/rough';
 import {
   DEFAULT_FORCE_RADIUS_SCALE,
   DEFAULT_FORCE_SCALE,
@@ -132,6 +133,9 @@ interface StoreState {
    * only way to change one was to draw it and then go and find it again.
    */
   connectorColor: string;
+  /** `smooth` is perfect-freehand's tapered ribbon; the rest are sketch levels. */
+  pencilNib: PencilNib;
+  setPencilNib: (val: PencilNib) => void;
   setConnectorColor: (val: string) => void;
 
   showRulers: boolean;
@@ -363,6 +367,25 @@ export const useStore = create<StoreState>((set) => ({
   setConnectorColor: (val) => {
     window.localStorage.setItem('vega_connector_color', val);
     set({ connectorColor: val });
+  },
+
+  /**
+   * The pencil's nib: a smooth stroke, or a drawn one.
+   *
+   * A *tool* setting rather than only an object one, and the difference
+   * matters. Sketch on a shape is a thing you decide about an object you can
+   * see; a pencil stroke is finished the moment you lift the pen, so deciding
+   * afterwards means drawing a line, selecting it, and changing it — every
+   * time. Which nib is in the pencil is the question you actually have, and it
+   * is asked once.
+   *
+   * Persisted per origin, like the connector's colour and the throw switch: a
+   * board drawn with the drawn nib should still be drawn with it tomorrow.
+   */
+  pencilNib: (window.localStorage.getItem('vega_pencil_nib') as PencilNib) || 'smooth',
+  setPencilNib: (val) => {
+    window.localStorage.setItem('vega_pencil_nib', val);
+    set({ pencilNib: val });
   },
 
   showRulers: loadBoolPref('vega_show_rulers', true),

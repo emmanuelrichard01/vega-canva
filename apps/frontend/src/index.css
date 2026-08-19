@@ -5462,6 +5462,28 @@ body[data-rulers='off'] {
   min-height: 28px;
 }
 
+/* A row whose control needs the panel's full width: the label goes above it
+   rather than beside it. Six specimen segments in a 150px column is a wrap
+   into two cramped lines at best; given the whole width they sit on one. */
+.prop-row--stack {
+  grid-template-columns: minmax(0, 1fr);
+  align-items: start;
+  row-gap: 6px;
+  /* The row is two lines now, so a fixed height would clip the second. */
+  min-height: 0;
+  padding-block: 2px;
+}
+
+/* Under its own label, not pushed to the far edge.
+   Side-by-side rows right-align their control so every value in the panel
+   lines up in one column, which is what makes a stack of steppers scannable.
+   A stacked row has no such column — the label is above, not beside — so the
+   same rule strands the control against the right margin with a gap where the
+   label used to be, and the two stop reading as one row. */
+.prop-row--stack .prop-row__control {
+  justify-content: flex-start;
+}
+
 .prop-row__label {
   font-size: var(--text-xs);
   color: var(--text-secondary);
@@ -8391,5 +8413,24 @@ body[data-zen='physics'] .forces-handle { bottom: 32px; }
   max-width: 210px;
   font-size: var(--text-2xs);
   line-height: 1.45;
+  color: var(--text-tertiary);
+}
+
+/* A labelled control inside a dock flyout.
+   Stacked, not side by side: a flyout is about 200px and a four-segment
+   specimen group beside a label is the same overflow the properties panel had
+   before its rows learned to stack. */
+.flyout-field {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  padding: 6px 8px 2px;
+}
+
+.flyout-field__label {
+  font-size: var(--text-2xs);
+  font-weight: var(--weight-semibold);
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
   color: var(--text-tertiary);
 }
