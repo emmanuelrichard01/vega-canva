@@ -16,6 +16,7 @@
 
 import { ellipseRing, rectRing, roughEllipse, roughLoop, roughPolyline, roughSilhouette, seedFrom, shapeFill } from './rough';
 import { shapeOutline } from './shapeOutline';
+import { shapeToPath } from './shapeToPath';
 import { flattenPath } from './pathGeometry';
 import type { Point, ShapeNode } from './schema';
 
@@ -75,11 +76,29 @@ export function roughShape(
       break;
 
     case 'rect':
-      // The corner radius is deliberately ignored: a hand-drawn rounded
-      // rectangle is drawn as a rectangle, and the overshoot at each corner
-      // already softens it further than a radius would.
-      ring = rectRing(outline.width, outline.height);
-      sketched = roughPolyline(ring, { seed, level });
+      /**
+       * A rounded rectangle is drawn as the rounded shape it is.
+       *
+       * This used to ignore the radius outright, on the argument that a
+       * hand-drawn rectangle's corner overshoot already softens it further
+       * than a radius would. That is true of a *slight* radius and plainly
+       * false of a large one: a pill sketched as a rectangle is not a pill,
+       * and once the radius is something you drag with a knob, watching the
+       * shape refuse to change is the whole feature failing in front of you.
+       *
+       * Sharp corners keep the polyline sketcher, because they have corners to
+       * overshoot and that overshoot is what makes a hand-drawn box read as
+       * one. Rounded corners have none, so they take the same continuous
+       * wandering loop an ellipse and a heart take — the straight runs stay
+       * straight, because the drift is small and slow, and the turns curve.
+       */
+      if (outline.radius > 0) {
+        ring = flattenPath(shapeToPath(node));
+        sketched = roughLoop(ring, { seed, level });
+      } else {
+        ring = rectRing(outline.width, outline.height);
+        sketched = roughPolyline(ring, { seed, level });
+      }
       break;
 
     case 'polygon':
