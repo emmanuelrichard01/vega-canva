@@ -8,8 +8,8 @@ import { roughPolyline, seedFrom } from '../model/rough';
 import { SvgPaintDefs } from './svgPaint';
 import { pointsAttribute, regularPolygonPoints, starPoints } from '../model/shapeOutline';
 import { shapeToPath } from '../model/shapeToPath';
-import { linePoints } from '../model/linePath';
-import { connectorCaps, endCapShape, trimPolyline } from '../model/connectorEnds';
+import { defaultEndAlign, linePoints } from '../model/linePath';
+import { endCapShape, terminateRun } from '../model/connectorEnds';
 import { pathData } from '../model/pathGeometry';
 import { contourData, translatePath } from '../model/pathGeometry';
 import { applyTextCase } from '../model/textCase';
@@ -322,23 +322,21 @@ function openShapeMarkup(node: ShapeNode): string {
    *    never saw `endStart`/`endEnd` at all. `endCapShape` is the canvas's own
    *    geometry, including where each marker sits relative to the endpoint.
    */
-  const caps = connectorCaps(
+  const { run: trimmedRun, start: startCap, end: endCap } = terminateRun(
     run.flatMap((p) => [p.x, p.y]),
     {
       start: node.geometry.endStart ?? (node.geometry.arrowStart ? 'arrow' : 'none'),
       end: node.geometry.endEnd ?? (node.geometry.arrowEnd ? 'arrow' : 'none'),
       strokeWidth: sw,
       scale: node.geometry.endScale,
+      align: node.geometry.endAlign ?? defaultEndAlign(node.geometry.lineProfile),
     }
   );
 
-  const trimmed = trimPolyline(
-    trimPolyline(run.flatMap((p) => [p.x, p.y]), caps.start?.inset ?? 0, true),
-    caps.end?.inset ?? 0,
-    false
-  );
   const drawn: Array<{ x: number; y: number }> = [];
-  for (let i = 0; i + 1 < trimmed.length; i += 2) drawn.push({ x: trimmed[i], y: trimmed[i + 1] });
+  for (let i = 0; i + 1 < trimmedRun.length; i += 2) {
+    drawn.push({ x: trimmedRun[i], y: trimmedRun[i + 1] });
+  }
 
   const parts = [
     drawn.length === 2
@@ -361,8 +359,8 @@ function openShapeMarkup(node: ShapeNode): string {
       : `<polyline points="${pairs.join(' ')}" fill="none" stroke="${stroke}" stroke-width="${sw}" stroke-linecap="round" />`;
   };
 
-  parts.push(markerMarkup(caps.start));
-  parts.push(markerMarkup(caps.end));
+  parts.push(markerMarkup(startCap));
+  parts.push(markerMarkup(endCap));
 
   return rot ? `<g${rot}>${parts.join('')}</g>` : parts.join('');
 }

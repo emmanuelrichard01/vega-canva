@@ -207,3 +207,15 @@ export function linePoints(
     );
   });
 }
+
+/**
+ * The alignment a line uses when it has not been told.
+ *
+ * A straight run has nothing to protect, so its head takes the classic
+ * placement: tip on the last point. Anything with a shape does, so its head
+ * projects instead and the run keeps every crest and corner. One rule, stated
+ * once, read by the canvas, the exporter and the specimen alike.
+ */
+export function defaultEndAlign(profile: LineProfile | undefined): 'inside' | 'extend' {
+  return !profile || profile === 'straight' ? 'inside' : 'extend';
+}

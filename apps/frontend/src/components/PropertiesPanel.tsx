@@ -1,7 +1,7 @@
 import React, { useMemo, useState } from 'react';
 import { useShallow } from 'zustand/react/shallow';
 import {
-  AlignCenter, AlignLeft, AlignRight, Bold, BringToFront, CaseSensitive, ChevronRight,
+  AlignCenter, AlignLeft, AlignRight, ArrowRight, ArrowRightToLine, Bold, BringToFront, CaseSensitive, ChevronRight,
   List, ListOrdered,
   FlipHorizontal, FlipVertical, ImageIcon, Italic, LayoutTemplate, Lock, MessageSquare,
   Mic, MoveHorizontal, MoveVertical, PenLine, SendToBack, Sliders, Square, StickyNote,
@@ -85,7 +85,8 @@ import type { FillStyle, SketchLevel } from '../engine/model/rough';
 import { FillStyleIcon, SketchLevelIcon } from './panel/sketchIcons';
 import { EndCapIcon } from './panel/connectorIcons';
 import { CYCLE_PRESETS } from '../engine/text/colorCycle';
-import { LINE_PROFILES, LINE_PROFILE_LABELS, MAX_WAVES, MIN_WAVES, type LineProfile } from '../engine/model/linePath';
+import { LINE_PROFILES, LINE_PROFILE_LABELS, MAX_WAVES, MIN_WAVES, defaultEndAlign, type LineProfile } from '../engine/model/linePath';
+import type { EndAlign } from '../engine/model/connectorEnds';
 import { LineProfileIcon } from './panel/lineProfileIcons';
 import {
   DEFAULT_TEXT_GLOW,
@@ -2252,6 +2253,24 @@ export const PropertiesPanel: React.FC<PropertiesPanelProps> = ({ selectedIds, o
               asks for — an arrow with a big head and a small tail reads as a
               mistake — and it would double this section for a case that does
               not exist. */}
+          {/* Illustrator's two arrowhead alignments. Both exist because the
+              right answer differs: a straight line loses nothing by giving its
+              last few pixels to the head, while a wave or zigzag trimmed by one
+              loses a crest or a corner at exactly the end being looked at. */}
+          <Row stack label="Head" hint="Whether the marker sits inside the line's length or projects past its end.">
+            <SegmentedControl
+              ariaLabel="Arrowhead alignment"
+              mixed={shared((n) => (n.type === 'shape'
+                ? n.geometry.endAlign ?? defaultEndAlign(n.geometry.lineProfile)
+                : null)).mixed}
+              value={node.geometry.endAlign ?? defaultEndAlign(node.geometry.lineProfile)}
+              onChange={(v) => setGeometry({ endAlign: v as EndAlign })}
+              segments={[
+                { value: 'inside', label: 'At the end', hint: 'The tip lands on the last point', icon: <ArrowRightToLine size={14} /> },
+                { value: 'extend', label: 'Past the end', hint: 'The line keeps its full length and the head projects', icon: <ArrowRight size={14} /> },
+              ]}
+            />
+          </Row>
           <Row label="End size" hint="How big both markers are, relative to the stroke.">
             {(() => {
               const scale = shared((n) => (n.type === 'shape' ? n.geometry.endScale ?? 1 : null));

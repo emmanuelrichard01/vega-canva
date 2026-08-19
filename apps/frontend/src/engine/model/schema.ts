@@ -82,6 +82,8 @@ export const SCHEMA_VERSION = 3;
  */
 export type { GradientStop, Paint, PaintType } from './paint';
 export type { LineProfile } from './linePath';
+export type { EndAlign } from './connectorEnds';
+import type { EndAlign } from './connectorEnds';
 import type { LineProfile } from './linePath';
 export type { ColorCycle, CycleUnit } from '../text/colorCycle';
 import type { ColorCycle } from '../text/colorCycle';
@@ -717,6 +719,18 @@ export interface ShapeGeometry {
   lineProfile?: LineProfile;
   /** How many repeats the profile makes across the run. Absent is six. */
   lineWaves?: number;
+  /**
+   * Whether a marker sits inside the run's length or projects beyond it.
+   *
+   * Absent means **`extend` for a profiled line and `inside` for a straight
+   * one**, which is not fence-sitting: the two modes exist because the right
+   * answer genuinely differs. A straight line loses nothing by giving its last
+   * few pixels to the head. A wave, zigzag or coil trimmed by a head loses a
+   * crest or a corner at exactly the end being looked at, and a shortened
+   * zigzag stops mid-stroke — which is what makes a profiled arrow look
+   * broken. See `EndAlign`.
+   */
+  endAlign?: EndAlign;
   /**
    * Star only: inner radius as a fraction of the outer radius, clamped to
    * `MIN_STAR_RATIO`..`MAX_STAR_RATIO`. At 1 the points vanish and the shape

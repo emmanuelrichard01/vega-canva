@@ -6,8 +6,8 @@ import { useFillProps } from './useFillProps';
 import { AlignedStroke, BackdropBlur, InnerShadow } from './ShapeEffects';
 import { shapePath2D } from './shapePath2D';
 import { shapeToPath } from '../../../engine/model/shapeToPath';
-import { linePoints } from '../../../engine/model/linePath';
-import { trimPolyline } from '../../../engine/model/connectorEnds';
+import { defaultEndAlign, linePoints } from '../../../engine/model/linePath';
+import { terminateRun } from '../../../engine/model/connectorEnds';
 import { pathData } from '../../../engine/model/pathGeometry';
 import { roughShape } from '../../../engine/model/roughShape';
 import { roughEllipse, roughPolyline, seedFrom } from '../../../engine/model/rough';
@@ -369,7 +369,6 @@ export const ShapeRenderer: React.FC<Props> = React.memo(({ node, showLabel }) =
       node.geometry.lineWaves
     );
     const points = profile.flatMap((p) => [p.x, p.y]);
-    const headSize = Math.max(6, (sw || 2) * ARROW_HEAD_SCALE) * (node.geometry.endScale ?? 1);
     const common = {
       points,
       stroke: stroke ?? DEFAULT_INK,
@@ -411,33 +410,24 @@ export const ShapeRenderer: React.FC<Props> = React.memo(({ node, showLabel }) =
     const startKind = node.geometry.endStart ?? 'none';
     const endKind = node.geometry.endEnd ?? 'none';
     /**
-     * The ends, and the direction the run is actually travelling at each.
+     * The ends, placed by the alignment the line asks for.
      *
-     * From the first and last *segments*, not from the two corners of the box.
-     * On a straight line they are the same thing; on a wavy or coiled one they
-     * are not, and taking the box diagonal would point an arrowhead along the
-     * overall run while the line arrives at it from a different angle — the
-     * head would sit visibly crooked on its own line.
+     * `terminateRun` owns both modes and the terminal tangent they share, so
+     * the canvas, the SVG exporter and the toolbar specimen cannot disagree
+     * about where a head sits or which way it faces — which they already did
+     * once, when the exporter oriented its heads along the box diagonal.
      */
-    const a = profile[0];
-    const b = profile[profile.length - 1];
-    const outAt = profile[Math.min(1, profile.length - 1)];
-    const inAt = profile[Math.max(0, profile.length - 2)];
-    const startAngle = Math.atan2(a.y - outAt.y, a.x - outAt.x);
-    const along = Math.atan2(b.y - inAt.y, b.x - inAt.x);
-    const startCap = endCapShape(startKind, a, startAngle, headSize / 2);
-    const endCap = endCapShape(endKind, b, along, headSize / 2);
-
-    // Pull the run back under each marker, so a solid head does not have the
-    // line poking through its tip — the same trim `ConnectorRenderer` makes,
-    // and through the same function, so a wavy line's trim walks back across
-    // its samples instead of only shortening one of them.
-    const trimmedRun = trimPolyline(
-      trimPolyline(points, startCap?.inset ?? 0, true),
-      endCap?.inset ?? 0,
-      false
-    );
-    const run = trimmedRun;
+    const {
+      run,
+      start: startCap,
+      end: endCap,
+    } = terminateRun(points, {
+      start: startKind,
+      end: endKind,
+      strokeWidth: sw || 2,
+      scale: node.geometry.endScale,
+      align: node.geometry.endAlign ?? defaultEndAlign(node.geometry.lineProfile),
+    });
 
     const marker = (cap: typeof startCap, key: string) => {
       if (!cap) return null;

@@ -307,3 +307,94 @@ export function capExtentPoints(cap: EndCapShape | null): number[] {
   }
   return cap.points ?? [];
 }
+
+/**
+ * How a marker meets the end of the run it terminates.
+ *
+ * Illustrator's two arrowhead alignments, and the reason it has two is that
+ * neither is right for every case:
+ *
+ *  - **`inside`** puts the marker's *tip* on the path's last point, so the
+ *    head sits entirely within the line's original length. Right for a
+ *    straight line, where "the arrow ends here" is the whole statement and
+ *    nothing is lost by giving the last few pixels to the head.
+ *
+ *  - **`extend`** keeps the path at full length and projects the marker
+ *    *outward* along the terminal tangent, so the run finishes flush against
+ *    the back of the head. Right for anything with a shape to preserve: a
+ *    wave, a zigzag or a coil trimmed by a head loses a crest or a corner at
+ *    exactly the end you are looking at, and a shortened zigzag stops
+ *    mid-stroke.
+ */
+export type EndAlign = 'inside' | 'extend';
+
+/**
+ * Where a marker goes for a given alignment, and what is left of the run.
+ *
+ * One function because three surfaces need the same answer — the canvas, the
+ * SVG exporter and the toolbar specimen — and a head placed by three separate
+ * pieces of arithmetic is three chances to disagree about where the tip is.
+ * That has already happened once here: the exporter oriented its heads along
+ * the box diagonal while the canvas used the true tangent.
+ *
+ * The terminal tangent is taken from the run's last segment, which is what
+ * SVG's `orient="auto"` means and what has to be computed by hand when the
+ * marker is a polygon rather than a `<marker>` element.
+ */
+export function terminateRun(
+  points: number[],
+  spec: {
+    start: EndCapKind;
+    end: EndCapKind;
+    strokeWidth: number;
+    scale?: number;
+    align?: EndAlign;
+  }
+): { run: number[]; start: EndCapShape | null; end: EndCapShape | null; size: number } {
+  const { size } = connectorCaps(points, spec);
+  if (points.length < 4) return { run: points.slice(), start: null, end: null, size };
+
+  const align: EndAlign = spec.align ?? 'inside';
+
+  const a = { x: points[0], y: points[1] };
+  const b = { x: points[points.length - 2], y: points[points.length - 1] };
+  const outAt = { x: points[2], y: points[3] };
+  const inAt = { x: points[points.length - 4], y: points[points.length - 3] };
+  const startAngle = Math.atan2(a.y - outAt.y, a.x - outAt.x);
+  const endAngle = Math.atan2(b.y - inAt.y, b.x - inAt.x);
+
+  if (align === 'extend') {
+    /**
+     * The tip is projected out along the tangent by the marker's own depth, so
+     * its *base* lands on the path's last point and the run needs no trimming
+     * at all. That is the whole of "extend": the line keeps every crest and
+     * corner it had, and the head grows out of the end rather than eating it.
+     */
+    const startCap = endCapShape(spec.start, a, startAngle, size);
+    const endCap = endCapShape(spec.end, b, endAngle, size);
+    const push = (p: Point, angle: number, by: number): Point => ({
+      x: p.x + Math.cos(angle) * by,
+      y: p.y + Math.sin(angle) * by,
+    });
+    return {
+      run: points.slice(),
+      start: startCap
+        ? endCapShape(spec.start, push(a, startAngle, startCap.inset), startAngle, size)
+        : null,
+      end: endCap ? endCapShape(spec.end, push(b, endAngle, endCap.inset), endAngle, size) : null,
+      size,
+    };
+  }
+
+  // `inside`: the tip stays on the path's last point and the run is pulled
+  // back under the marker, or the stroke draws through the head and out past
+  // its tip.
+  const startCap = endCapShape(spec.start, a, startAngle, size);
+  const endCap = endCapShape(spec.end, b, endAngle, size);
+  const run = trimPolyline(
+    trimPolyline(points, startCap?.inset ?? 0, true),
+    endCap?.inset ?? 0,
+    false
+  );
+  return { run, start: startCap, end: endCap, size };
+}

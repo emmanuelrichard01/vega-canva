@@ -536,6 +536,12 @@ function normalizeShapeGeometry(raw: any): ShapeGeometry {
     if (Number.isFinite(raw?.geometry?.lineWaves)) {
       geometry.lineWaves = Math.max(MIN_WAVES, Math.min(MAX_WAVES, Math.round(raw.geometry.lineWaves)));
     }
+    // Absent is the profile's own default — see `defaultEndAlign`. Storing it
+    // only when it disagrees keeps every existing line untouched and keeps the
+    // document from carrying a value that just restates the rule.
+    if (raw?.geometry?.endAlign === 'inside' || raw?.geometry?.endAlign === 'extend') {
+      geometry.endAlign = raw.geometry.endAlign;
+    }
   }
 
   if (alias.kind === 'star') {
