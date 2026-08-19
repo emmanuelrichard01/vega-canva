@@ -51,6 +51,44 @@ const BOX_IS_THE_SHAPE: ReadonlySet<string> = new Set([
   'audio',
 ]);
 
+/** A point turned about another, in degrees. Zero returns the point untouched. */
+export function rotatePoint(p: Point, about: Point, degrees: number): Point {
+  if (!degrees) return p;
+  const rad = (degrees * Math.PI) / 180;
+  const cos = Math.cos(rad);
+  const sin = Math.sin(rad);
+  const dx = p.x - about.x;
+  const dy = p.y - about.y;
+  return { x: about.x + dx * cos - dy * sin, y: about.y + dx * sin + dy * cos };
+}
+
+/** The centre a node rotates about. */
+export function centreOf(node: {
+  x: number; y: number; width: number; height: number; scaleX?: number; scaleY?: number;
+}): Point {
+  return {
+    x: node.x + (node.width * Math.abs(node.scaleX || 1)) / 2,
+    y: node.y + (node.height * Math.abs(node.scaleY || 1)) / 2,
+  };
+}
+
+/** The four corners of a node's box, turned by its rotation. */
+function rotatedCorners(node: {
+  x: number; y: number; width: number; height: number;
+  scaleX?: number; scaleY?: number; rotation?: number;
+}): Point[] {
+  const w = node.width * Math.abs(node.scaleX || 1);
+  const h = node.height * Math.abs(node.scaleY || 1);
+  const c = centreOf(node);
+  const r = node.rotation ?? 0;
+  return [
+    { x: node.x, y: node.y },
+    { x: node.x + w, y: node.y },
+    { x: node.x + w, y: node.y + h },
+    { x: node.x, y: node.y + h },
+  ].map((p) => rotatePoint(p, c, r));
+}
+
 /**
  * A node's outline in world space, or `null` when its box already tells the truth.
  *
@@ -59,17 +97,34 @@ const BOX_IS_THE_SHAPE: ReadonlySet<string> = new Set([
  * most of the objects on most boards.
  */
 export function outlineOfNode(node: AnyNode): Point[] | null {
-  if (BOX_IS_THE_SHAPE.has(node.type)) return null;
+  const rotation = node.rotation ?? 0;
+  const centre = centreOf(node);
+  const place = (local: readonly Point[]): Point[] =>
+    local.map((p) => rotatePoint({ x: node.x + p.x, y: node.y + p.y }, centre, rotation));
+
+  const boxIsTheShape =
+    BOX_IS_THE_SHAPE.has(node.type) ||
+    (node.type === 'shape' && (!node.geometry?.kind || node.geometry.kind === 'rect'));
+
+  if (boxIsTheShape) {
+    /**
+     * A rectangle *turned* is no longer its axis-aligned box.
+     *
+     * This is where rotation entered the connector system, and the whole of
+     * it: an outline is a silhouette in world space, so once it carries the
+     * rotation every consumer downstream — port rings, anchors, hit testing,
+     * the route itself — is rotation-correct without knowing rotation exists.
+     * Unrotated, the box still tells the truth, so `null` keeps the fast path
+     * for the overwhelming majority of objects.
+     */
+    return rotation ? rotatedCorners(node) : null;
+  }
 
   if (node.type === 'shape') {
-    const kind = node.geometry?.kind;
-    // A rectangle is its box. A rounded one differs only within the corner
-    // radius, which is not worth flattening a path per frame to honour.
-    if (!kind || kind === 'rect') return null;
     try {
       const local = flattenPath(shapeToPath(node));
       if (local.length < 3) return null;
-      return local.map((p) => ({ x: node.x + p.x, y: node.y + p.y }));
+      return place(local);
     } catch {
       // A malformed geometry must not take down the render. The box is a
       // worse answer, not a broken one.
@@ -81,13 +136,53 @@ export function outlineOfNode(node: AnyNode): Point[] | null {
     try {
       const local = flattenPath(node.geometry as never);
       if (local.length < 3) return null;
-      return local.map((p) => ({ x: node.x + p.x, y: node.y + p.y }));
+      return place(local);
     } catch {
       return null;
     }
   }
 
   return null;
+}
+
+/** Whether a point is inside a polygon. Even-odd, the usual ray cast. */
+export function pointInPolygon(outline: readonly Point[], p: Point): boolean {
+  let inside = false;
+  for (let i = 0, j = outline.length - 1; i < outline.length; j = i, i += 1) {
+    const a = outline[i];
+    const b = outline[j];
+    const straddles = a.y > p.y !== b.y > p.y;
+    if (!straddles) continue;
+    const x = a.x + ((p.y - a.y) / (b.y - a.y)) * (b.x - a.x);
+    if (p.x < x) inside = !inside;
+  }
+  return inside;
+}
+
+/** The closest point on a polygon's edges to `p`, and how far away it is. */
+export function nearestOnOutline(
+  outline: readonly Point[],
+  p: Point
+): { point: Point; distance: number } | null {
+  let best: Point | null = null;
+  let bestDist = Infinity;
+  for (let i = 0; i < outline.length; i += 1) {
+    const a = outline[i];
+    const b = outline[(i + 1) % outline.length];
+    const dx = b.x - a.x;
+    const dy = b.y - a.y;
+    const lenSq = dx * dx + dy * dy;
+    // A zero-length edge is a point; clamping t to 0 makes it fall out
+    // correctly rather than needing a branch of its own.
+    const t = lenSq === 0 ? 0 : Math.max(0, Math.min(1, ((p.x - a.x) * dx + (p.y - a.y) * dy) / lenSq));
+    const q = { x: a.x + dx * t, y: a.y + dy * t };
+    const d = Math.hypot(q.x - p.x, q.y - p.y);
+    if (d < bestDist) {
+      bestDist = d;
+      best = q;
+    }
+  }
+  return best ? { point: best, distance: bestDist } : null;
 }
 
 /** Where two segments cross, or null. Standard parametric form. */

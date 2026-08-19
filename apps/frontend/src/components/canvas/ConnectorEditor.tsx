@@ -14,7 +14,7 @@ import {
   boxLookup,
   boxOfNode,
   isConnectable,
-  outlineLookup,
+  attachLookup,
   anchorPointOn,
   portPointsFor,
 } from '../../engine/model/connectorTargets';
@@ -76,12 +76,12 @@ export const ConnectorEditor: React.FC<Props> = ({ node, stageScale }) => {
   const to = live?.which === 'to' ? live.end : node.to;
 
   const lookup = useMemo(() => boxLookup(objects), [objects]);
-  // So the handle sits where the arrow actually touches the shape, not
-  // where its bounding box would have put it.
-  const outlines = useMemo(() => outlineLookup(objects), [objects]);
+  // So the handle sits where the arrow actually touches the shape, not where
+  // its bounding box would have put it.
+  const attach = useMemo(() => attachLookup(objects), [objects]);
   const candidates = useMemo(() => bindCandidates(objects), [objects]);
 
-  const points = connectorPoints(from, to, node.routing, lookup, outlines);
+  const points = connectorPoints(from, to, node.routing, lookup, attach);
   const a = { x: points[0], y: points[1] };
   const b = { x: points[points.length - 2], y: points[points.length - 1] };
 
@@ -112,7 +112,7 @@ export const ConnectorEditor: React.FC<Props> = ({ node, stageScale }) => {
     }
     const nextFrom = which === 'from' ? end : node.from;
     const nextTo = which === 'to' ? end : node.to;
-    const box = connectorBounds(connectorPoints(nextFrom, nextTo, node.routing, lookup, outlines));
+    const box = connectorBounds(connectorPoints(nextFrom, nextTo, node.routing, lookup, attach));
     // The derived box goes with the binding in one write. It is only read by
     // culling, the radar and marquee selection — but a stale one there is an
     // arrow that vanishes when it scrolls to the edge of the viewport.

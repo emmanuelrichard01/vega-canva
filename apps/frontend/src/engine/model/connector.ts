@@ -14,7 +14,6 @@
  */
 
 import { anchorPoint, anchorPort, type Anchor } from './connectorAnchor';
-import { projectToOutline } from './shapePerimeter';
 
 /** The four sides an end can attach to, plus "work it out". */
 export type Port = 'top' | 'right' | 'bottom' | 'left' | 'auto';
@@ -191,16 +190,17 @@ export function resolveEnd(
    */
   otherPoint: Point | null = null,
   /**
-   * The object's actual outline, when its box is not the truth.
+   * Where a box-derived point really lands on the object.
    *
    * Optional and last, so every existing caller and every test keeps the
    * answer it had. A triangle's box has a left-middle in empty air and a star
    * has four of them; landing an arrow there is the difference between a
-   * diagram that looks drawn and one that looks approximated. The fallback
-   * whenever this is absent, or the ray misses, is the box point.
-   * See `shapePerimeter.ts`.
+   * diagram that looks drawn and one that looks approximated. Rotation lives
+   * in here too — this module works in the node's own frame and lets the
+   * callback put the point where the object actually is. Absent, or returning
+   * null, means the box point stands. See `connectorTargets.attachLookup`.
    */
-  outlineOf: ((id: string) => readonly Point[] | null) | null = null
+  attachOf: ((id: string, boxPoint: Point) => Point | null) | null = null
 ): { point: Point; port: Exclude<Port, 'auto'>; box: Box | null } {
   const box = end.nodeId ? boxOf(end.nodeId) : null;
   const explicit = end.port && end.port !== 'auto' ? end.port : null;
@@ -212,7 +212,7 @@ export function resolveEnd(
   // detached port.
   if (box && end.anchor) {
     return {
-      point: onOutline(anchorPoint(box, end.anchor), box, end.nodeId, outlineOf),
+      point: onOutline(anchorPoint(box, end.anchor), box, end.nodeId, attachOf),
       port: anchorPort(end.anchor),
       box,
     };
@@ -238,7 +238,7 @@ export function resolveEnd(
   const port =
     explicit ?? (other ? autoPorts(box, other).from : away ? portFacing(box, away) : 'right');
 
-  return { point: onOutline(portPoint(box, port), box, end.nodeId, outlineOf), port, box };
+  return { point: onOutline(portPoint(box, port), box, end.nodeId, attachOf), port, box };
 }
 
 /**
@@ -250,15 +250,12 @@ export function resolveEnd(
  */
 function onOutline(
   point: Point,
-  box: Box,
+  _box: Box,
   nodeId: string | undefined,
-  outlineOf: ((id: string) => readonly Point[] | null) | null
+  attachOf: ((id: string, boxPoint: Point) => Point | null) | null
 ): Point {
-  if (!outlineOf || !nodeId) return point;
-  const outline = outlineOf(nodeId);
-  if (!outline || outline.length < 3) return point;
-  const centre = { x: box.x + box.width / 2, y: box.y + box.height / 2 };
-  return projectToOutline(outline, centre, point) ?? point;
+  if (!attachOf || !nodeId) return point;
+  return attachOf(nodeId, point) ?? point;
 }
 
 /** The full route for a connector, as a flat Konva points array. */
@@ -268,7 +265,7 @@ export function connectorPoints(
   routing: Routing,
   boxOf: (id: string) => Box | null,
   /** See `resolveEnd`. Optional; absent means the box is the answer. */
-  outlineOf: ((id: string) => readonly Point[] | null) | null = null
+  attachOf: ((id: string, boxPoint: Point) => Point | null) | null = null
 ): number[] {
   const fromBox = from.nodeId ? boxOf(from.nodeId) : null;
   const toBox = to.nodeId ? boxOf(to.nodeId) : null;
@@ -279,8 +276,8 @@ export function connectorPoints(
   const fromLoose = fromBox ? null : { x: from.x ?? 0, y: from.y ?? 0 };
   const toLoose = toBox ? null : { x: to.x ?? 0, y: to.y ?? 0 };
 
-  const a = resolveEnd(from, toBox, boxOf, toLoose, outlineOf);
-  const b = resolveEnd(to, fromBox, boxOf, fromLoose, outlineOf);
+  const a = resolveEnd(from, toBox, boxOf, toLoose, attachOf);
+  const b = resolveEnd(to, fromBox, boxOf, fromLoose, attachOf);
 
   const path =
     routing === 'orthogonal'

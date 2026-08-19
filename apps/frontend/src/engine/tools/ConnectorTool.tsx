@@ -6,7 +6,7 @@ import { useStore } from '../../hooks/useStore';
 import { ThemeService } from '../ThemeService';
 import { connectorPoints, type ConnectorEnd } from '../model/connector';
 import {
-  anchorPointOn, bindCandidates, boxLookup, boxOfNode, isConnectable, outlineLookup, portPointsFor,
+  anchorPointOn, bindCandidates, boxLookup, boxOfNode, isConnectable, attachLookup, portPointsFor,
 } from '../model/connectorTargets';
 import { endPoint } from '../model/connectorTargets';
 import { bindingAt } from '../model/connectorBinding';
@@ -297,7 +297,7 @@ export class ConnectorTool implements Tool {
 
     const target = this.endAt(this.cursorWorld, ctx);
     const preview = this.from
-      ? connectorPoints(this.from, target, 'orthogonal', boxLookup(objects), outlineLookup(objects))
+      ? connectorPoints(this.from, target, 'orthogonal', boxLookup(objects), attachLookup(objects))
       : null;
 
     /**

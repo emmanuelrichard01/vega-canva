@@ -113,17 +113,16 @@ describe('connectorPoints with an outline lookup', () => {
   });
 
   it('moves the end onto the shape when one is', () => {
-    const outlineOf = (id: string) => (id === 'tri' ? TRIANGLE : null);
-    const pts = connectorPoints({ nodeId: 'tri' }, { nodeId: 'b' }, 'straight', boxOf, outlineOf);
+    const attachOf = (id: string, bp: { x: number; y: number }) =>
+      id === 'tri' ? projectToOutline(TRIANGLE, { x: 50, y: 50 }, bp) : null;
+    const pts = connectorPoints({ nodeId: 'tri' }, { nodeId: 'b' }, 'straight', boxOf, attachOf);
     // The triangle's right edge at mid-height is at x=75, not the box's 100.
     expect(pts[0]).toBeCloseTo(75);
     expect(pts[1]).toBeCloseTo(50);
   });
 
-  it('falls back to the box point when the outline is unusable', () => {
-    for (const outlineOf of [() => null, () => [{ x: 0, y: 0 }]]) {
-      const pts = connectorPoints({ nodeId: 'tri' }, { nodeId: 'b' }, 'straight', boxOf, outlineOf);
-      expect(pts.slice(0, 2)).toEqual([100, 50]);
-    }
+  it('falls back to the box point when the lookup has no answer', () => {
+    const pts = connectorPoints({ nodeId: 'tri' }, { nodeId: 'b' }, 'straight', boxOf, () => null);
+    expect(pts.slice(0, 2)).toEqual([100, 50]);
   });
 });

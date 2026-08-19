@@ -4,7 +4,7 @@ import { roughPolyline, seedFrom } from '../../../engine/model/rough';
 import { useShallow } from 'zustand/react/shallow';
 import { DEFAULT_CONNECTOR_INK, type ConnectorNode } from '../../../engine/model/schema';
 import { connectorBounds, connectorPoints, type Box } from '../../../engine/model/connector';
-import { outlineFor } from '../../../engine/model/connectorTargets';
+import { attachPoint } from '../../../engine/model/connectorTargets';
 import { capExtentPoints, connectorCaps, trimPolyline } from '../../../engine/model/connectorEnds';
 import { updateNode } from '../../../engine/document';
 import { useStore } from '../../../hooks/useStore';
@@ -77,20 +77,20 @@ export const ConnectorRenderer: React.FC<Props> = React.memo(({ node }) => {
   );
 
   /**
-   * The outline of each end's object, so the arrow lands on the shape rather
-   * than on the rectangle it happens to occupy. Cached in
-   * `connectorTargets.outlineFor`, which is why calling it per render is
-   * affordable: the flatten happens once per shape, not once per frame.
+   * Where each end really lands: on the object's outline, turned by its
+   * rotation. The flatten behind it is cached per shape, which is why calling
+   * this per render is affordable — the work happens once per shape, not once
+   * per frame.
    */
-  const outlineOf = React.useCallback(
-    (id: string) => {
+  const attachOf = React.useCallback(
+    (id: string, boxPoint: { x: number; y: number }) => {
       const n = id === fromId ? fromNode : id === toId ? toNode : undefined;
-      return n ? outlineFor(n) : null;
+      return n ? attachPoint(n, boxPoint) : null;
     },
     [fromId, toId, fromNode, toNode]
   );
 
-  const world = connectorPoints(node.from, node.to, node.routing, boxOf, outlineOf);
+  const world = connectorPoints(node.from, node.to, node.routing, boxOf, attachOf);
 
   /**
    * Keep the stored box in step with the route, on a trailing delay.

@@ -41,6 +41,7 @@
 
 import { portPoint, type Box, type ConnectorEnd, type Point, type Port } from './connector';
 import { anchorFromPoint, isCentreAnchor, normalizeAnchor } from './connectorAnchor';
+import { nearestOnOutline, pointInPolygon, projectToOutline, rotatePoint } from './shapePerimeter';
 
 /** How close the pointer must be to an edge midpoint before it snaps, in screen px. */
 export const PORT_SNAP_SCREEN = 22;
@@ -59,6 +60,22 @@ const SIDES: Array<Exclude<Port, 'auto'>> = ['top', 'right', 'bottom', 'left'];
 export interface BindCandidate {
   id: string;
   box: Box;
+  /**
+   * The shape's real silhouette in world space, when its box is not it.
+   *
+   * Without this the rule measured the pointer against the box while the rings
+   * were *drawn* on the outline — so on a triangle you had to hover empty air
+   * beside the shape to arm a ring sitting on the shape, and hovering the
+   * triangle itself did nothing. Two different answers to "what am I pointing
+   * at", one for the eye and one for the hand.
+   *
+   * It also carries the rotation, because an outline is a silhouette: a turned
+   * rectangle's outline is its turned corners. Everything below therefore
+   * works on rotated objects without knowing rotation exists.
+   */
+  outline?: readonly Point[] | null;
+  /** Degrees, needed only to express an anchor back in the node's own frame. */
+  rotation?: number;
 }
 
 export interface BindOptions {
@@ -72,14 +89,63 @@ export interface BindOptions {
   excludeId?: string | null;
 }
 
-const contains = (box: Box, p: Point): boolean =>
+const inBox = (box: Box, p: Point): boolean =>
   p.x >= box.x && p.x <= box.x + box.width && p.y >= box.y && p.y <= box.y + box.height;
 
-/** Shortest distance from a point to the box's outline (0 when on it). */
-function distanceToPerimeter(box: Box, p: Point): number {
+const centreOfBox = (box: Box): Point => ({
+  x: box.x + box.width / 2,
+  y: box.y + box.height / 2,
+});
+
+/** Whether the pointer is within the candidate — its silhouette, if it has one. */
+function contains(c: BindCandidate, p: Point): boolean {
+  return c.outline && c.outline.length >= 3 ? pointInPolygon(c.outline, p) : inBox(c.box, p);
+}
+
+/** Shortest distance from a point to the candidate's edge (0 when on it). */
+function distanceToEdge(c: BindCandidate, p: Point): number {
+  if (c.outline && c.outline.length >= 3) {
+    return nearestOnOutline(c.outline, p)?.distance ?? Infinity;
+  }
+  const box = c.box;
   const dx = Math.min(Math.abs(p.x - box.x), Math.abs(p.x - (box.x + box.width)));
   const dy = Math.min(Math.abs(p.y - box.y), Math.abs(p.y - (box.y + box.height)));
-  return contains(box, p) ? Math.min(dx, dy) : Math.hypot(Math.max(0, dx), Math.max(0, dy));
+  return inBox(box, p) ? Math.min(dx, dy) : Math.hypot(Math.max(0, dx), Math.max(0, dy));
+}
+
+/**
+ * Where a candidate's named port actually sits.
+ *
+ * The ring the user aims at is drawn here, so the snap has to be measured here
+ * too. A ray from the centre through the box's midpoint, taking the outermost
+ * crossing — the same construction `attachPoint` uses, kept in step by both
+ * going through the outline rather than by being the same code, since this one
+ * has a candidate and that one has a node.
+ */
+function portAt(c: BindCandidate, side: Exclude<Port, 'auto'>): Point {
+  const boxPoint = portPoint(c.box, side);
+  if (!c.outline || c.outline.length < 3) return boxPoint;
+  const centre = centreOfBox(c.box);
+  return projectToOutline(c.outline, centre, boxPoint) ?? boxPoint;
+}
+
+/**
+ * The pointer expressed as an anchor in the node's own, unrotated proportions.
+ *
+ * Two conversions, and both matter. The pointer is first snapped to the
+ * nearest point *on the silhouette*, so the stored anchor describes where the
+ * user actually pointed rather than where the box would have projected them.
+ * That point is then turned back into the node's own frame, because an anchor
+ * is a ratio of an unrotated box — store a rotated one and turning the object
+ * afterwards would drag its connectors around the outside.
+ */
+function anchorAt(c: BindCandidate, world: Point): { u: number; v: number } {
+  const onEdge =
+    c.outline && c.outline.length >= 3
+      ? (nearestOnOutline(c.outline, world)?.point ?? world)
+      : world;
+  const local = rotatePoint(onEdge, centreOfBox(c.box), -(c.rotation ?? 0));
+  return normalizeAnchor(anchorFromPoint(c.box, local));
 }
 
 /**
@@ -101,7 +167,7 @@ export function bindingAt(
   for (const c of candidates) {
     if (c.id === excludeId) continue;
     for (const side of SIDES) {
-      const p = portPoint(c.box, side);
+      const p = portAt(c, side);
       const d = Math.hypot(world.x - p.x, world.y - p.y);
       if (d <= portTolerance && (!nearestPort || d < nearestPort.distance)) {
         nearestPort = { end: { nodeId: c.id, port: side }, distance: d };
@@ -116,16 +182,16 @@ export function bindingAt(
   // draw a loose end anywhere near existing content.
   let nearestBody: { c: BindCandidate; depth: number } | null = null;
   for (const c of candidates) {
-    if (c.id === excludeId || !contains(c.box, world)) continue;
-    const depth = distanceToPerimeter(c.box, world);
-    // The innermost containing box wins — on nested content (a note on a
+    if (c.id === excludeId || !contains(c, world)) continue;
+    const depth = distanceToEdge(c, world);
+    // The innermost containing shape wins — on nested content (a note on a
     // frame) that is the smaller, more specific one.
     if (!nearestBody || depth < nearestBody.depth) nearestBody = { c, depth };
   }
   if (!nearestBody) return { x: world.x, y: world.y };
 
   const { c, depth } = nearestBody;
-  const anchor = normalizeAnchor(anchorFromPoint(c.box, world));
+  const anchor = anchorAt(c, world);
 
   // Deep inside, or near enough to the middle that a spot would be arbitrary:
   // bind to the object and let the route choose. Both tests, not either —

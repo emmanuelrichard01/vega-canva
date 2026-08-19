@@ -15,7 +15,7 @@
 import type { AnyNode } from './schema';
 import { portPoint, type Box, type ConnectorEnd, type Point, type Port } from './connector';
 import type { BindCandidate } from './connectorBinding';
-import { outlineOfNode, projectToOutline } from './shapePerimeter';
+import { centreOf, outlineOfNode, projectToOutline, rotatePoint } from './shapePerimeter';
 import { anchorPoint, type Anchor } from './connectorAnchor';
 
 /**
@@ -76,7 +76,15 @@ export function bindCandidates(objects: Record<string, AnyNode>): BindCandidate[
   const out: BindCandidate[] = [];
   for (const node of Object.values(objects)) {
     if (!isConnectable(node)) continue;
-    out.push({ id: node.id, box: boxOfNode(node) });
+    // The silhouette goes with the box, so the rule that decides what the
+    // pointer means measures the same thing the eye is looking at. Cached, so
+    // building this per pointer-move costs a map lookup per object.
+    out.push({
+      id: node.id,
+      box: boxOfNode(node),
+      outline: outlineFor(node),
+      rotation: node.rotation ?? 0,
+    });
   }
   return out;
 }
@@ -158,15 +166,19 @@ export function outlineFor(node: AnyNode): Point[] | null {
 }
 
 /**
- * The outline lookup `connectorPoints` takes, or `null` for a node whose box
- * already tells the truth.
+ * The attachment lookup `connectorPoints` takes.
+ *
+ * A callback that turns a box-derived point into the real one, rather than
+ * handing the routing code an outline to reason about. Rotation and the
+ * silhouette are both inside it, so `connector.ts` stays a module about routes
+ * that has never heard of either.
  */
-export function outlineLookup(
+export function attachLookup(
   objects: Record<string, AnyNode>
-): (id: string) => Point[] | null {
-  return (id) => {
+): (id: string, boxPoint: Point) => Point | null {
+  return (id, boxPoint) => {
     const n = objects[id];
-    return n ? outlineFor(n) : null;
+    return n ? attachPoint(n, boxPoint) : null;
   };
 }
 
@@ -180,11 +192,15 @@ export function outlineLookup(
  * where the thing lands is worse than no target: it teaches the wrong place.
  */
 export function attachPoint(node: AnyNode, boxPoint: Point): Point {
+  const centre = centreOf(node);
+  // The box point is in the node's own, unrotated frame — that is what
+  // `portPoint` and `anchorPoint` produce, and what the anchor stores. Turning
+  // it out first is what makes a named port mean the *shape's* top rather than
+  // the screen's, and it is the whole of rotation support for the ports.
+  const turned = rotatePoint(boxPoint, centre, node.rotation ?? 0);
   const outline = outlineFor(node);
-  if (!outline || outline.length < 3) return boxPoint;
-  const box = boxOfNode(node);
-  const centre = { x: box.x + box.width / 2, y: box.y + box.height / 2 };
-  return projectToOutline(outline, centre, boxPoint) ?? boxPoint;
+  if (!outline || outline.length < 3) return turned;
+  return projectToOutline(outline, centre, turned) ?? turned;
 }
 
 /** The four named ports of a node, on its outline. */
