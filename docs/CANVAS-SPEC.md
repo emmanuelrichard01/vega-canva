@@ -50,6 +50,7 @@ it.
 | Scale tool | **Absent** | The transformer resizes geometry; nothing scales strokes, corner radii, shadows or type with the object. This is a distinct tool in the spec and it does not exist. |
 | Deep select / direct selection | **Absent** | Groups are flat — members share a synthetic `parentId`, there is no nesting and no enter-group editing, so there is nothing to select *into*. |
 | Marquee selection | **Shipped** | `SelectTool` draws the rect; `Canvas` resolves it to ids. |
+| Nudge | **Shipped** | Arrow keys move the selection by one unit, ten with Shift, as a **single transaction** so a multi-object nudge is one press to undo. The step is in **world units, not screen pixels** — a nudge is an alignment gesture, and scaling it with zoom would make the same press mean different things at 40% and 400%. Locked objects are skipped rather than the press being refused. Arrows are claimed by four components (the board, the Layers tree, the minimap, the replay bar), all reaching the same window listener, so nudging applies only when focus is on the board itself. `engine/tools/nudge.ts`, pure and tested. **It was advertised on the help screen and bound nowhere until 2026-08-19.** |
 | Hand / pan tool | **Shipped** | `HandTool`, plus space-drag. |
 | Zoom / canvas scale | **Shipped** | Wheel and pinch through one non-passive native listener; the percentage readout lives in the radar panel. Covered by `CameraSystem.test.ts`. |
 
@@ -241,6 +242,7 @@ shipped surfaces that a reader of this document would otherwise assume absent.
 | Sharing | **Partial** | The sheet is real: the link is rebuilt from the room id rather than echoed from `location.href`, a failed copy says so, and it states plainly that a link is full access permanently. **There are no permissions** — no roles, no view-only, no revocation. The sheet says this rather than implying otherwise. Session *creation* — a board made, named and shared for the first time — has not been built. |
 | Guided walkthroughs | **Absent** | Agreed design: an arrow anchored to a real object that advances by *doing the thing*, launched against a matching template rather than an empty canvas. The templates exist to give these somewhere to happen. |
 | Onboarding / product page | **Absent** | The canvas empty state and the rooms page are done; first-run and marketing surfaces are not. |
+| Keyboard shortcuts & help | **Shipped** | A searchable reference — tools, navigation, selection, editing, type, the Layers panel, the minimap, replay, sticky notes — plus tips for the things that are not a keystroke. The tool rows are **derived** from `TOOL_SHORTCUTS`, the same map `Room` resolves keypresses through and the dock renders its badges from, so a tool's key and its badge cannot disagree. Everything below that section is hand-written, and **on 2026-08-19 four of those rows advertised keys nothing listened for** while roughly as many real bindings went undocumented; three of the four were bound rather than deleted. Opens with `?`, which the command palette had also been advertising with nothing behind it. |
 | Design system | **Shipped** | `DESIGN.md` — two token layers, PRIMITIVES and SEMANTIC, with components referencing roles only. It exists because the same contrast bug (a raw palette primitive where the accent role belongs, giving ~2.15:1) shipped in five separate places. |
 
 ---
@@ -249,14 +251,15 @@ shipped surfaces that a reader of this document would otherwise assume absent.
 
 Roughly, across the ~100 discrete items above:
 
-- **Shipped: ~61** — the canvas core, collaboration, frames, the whole paint model, the precision tools, the vector engine, and the parts of the transform/typography blocks that a whiteboard needs.
+- **Shipped: ~62** — the canvas core, collaboration, frames, the whole paint model, the precision tools, the vector engine, and the parts of the transform/typography blocks that a whiteboard needs.
 - **Partial: ~10**
 - **Dead: 1** — `FrameNode.layout`, the auto-layout declaration, which Phase 6 owns. `Appearance.shadow` was the second entry here until 2026-08-11.
 - **Absent: ~26** — design systems and prototyping. Vector manipulation left this list on 2026-08-12; **the export pipeline left it on 2026-08-18** — six formats with a live preview, a hand-rolled PDF writer, batch export of every frame, and a JSON export that can now actually be read back.
 
 Section 15 is counted separately: it audits the product *around* the canvas
-(templates, physics, thumbnails, sharing, the design system), which the
-original brief does not cover and which is where the last two sessions went.
+(templates, physics, thumbnails, sharing, the help screen, the design system),
+which the original brief does not cover and which is where the last two
+sessions went.
 
 **Phase 0 is otherwise done** (2026-07-31). Stroke dash, star parameters,
 follow mode, image adjustments and image cropping each shipped with the control

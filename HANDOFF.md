@@ -42,6 +42,19 @@ time, where the work stopped, and what is next.
 > every reader of it before you finish.** Each of these was one call site that
 > still pointed at the old half.
 >
+> **A seventh turned up since, and this one was found by auditing rather than
+> by the user.** The Keyboard & help modal — the screen people open precisely
+> when they are lost — advertised four shortcuts that nothing listened for:
+> `Cmd+A`, `Arrows`, `Shift+Arrows`, and `Cmd+0` for a reset bound to bare `0`.
+> Roughly as many real bindings went undocumented. The file's own header
+> comment warns that *a hint which lies is worse than no hint*, and holds the
+> tool rows to that by deriving them from `TOOL_SHORTCUTS` — but that guarantee
+> only ever covered one section, and everything written by hand below it
+> drifted exactly as the comment predicted. Fixed in `260bcab`: three of the
+> four are now **bound** rather than deleted, because they are keys a canvas
+> should have. **If you write a list of shortcuts, derive it or bind it — do
+> not type it.**
+>
 > **What the browser did catch that tests did not**: the Mermaid layout put a
 > retry loop's decision diamond *below* both of its branches, because ranking
 > included the back edge. The cycle test only asserted termination. Cycles are
@@ -61,7 +74,7 @@ Verify in ~30 seconds:
 
 ```bash
 npx tsc --noEmit -p apps/frontend/tsconfig.app.json   # must be silent
-npx vitest run --root apps/frontend                   # 729 tests, 41 files
+npx vitest run --root apps/frontend                   # 736 tests, 43 files
 npx oxlint apps/frontend/src                          # 16 cosmetic warnings, exit 0
 npm run build -w apps/frontend                        # must succeed
 ```
@@ -76,7 +89,7 @@ history were vacuous for exactly that reason. Use `tsconfig.app.json`, or
 | --- | --- |
 | Branch | `rebuild/time-travel-and-physics`, nothing pushed, nothing merged |
 | Typecheck | clean |
-| Tests | **729** across 41 files |
+| Tests | **736** across 43 files |
 | Lint | exits 0; 16 `only-export-components` warnings, all cosmetic |
 | Build | clean, 1.51MB JS (gzip 474KB) + 119KB CSS (gzip 19KB) — still no code splitting |
 
@@ -105,7 +118,9 @@ Recent commits, newest first:
 
 | | |
 | --- | --- |
-| *(uncommitted)* | diagrams as code, the line/arrow rework, the right-click menu, help, text layout |
+| `260bcab` | the keyboard audit — nudge, Cmd+A and `?` bound, the help screen corrected |
+| `44d807e` | diagrams as code, the line/arrow rework, the right-click menu, help, text layout |
+| `5cebd12` | connectors given the appearance block they were declared to have |
 | `54697cd` | preview versioning, star/polygon geometry, connector colour in Appearance |
 | `0b83d28` | the colour picker and gradient editor off inline styles |
 | `e0fee09` | ruler/grid toggles, the dot field, focus mode, export, share sheet |
@@ -212,6 +227,15 @@ Each was learned from a real defect here and is documented at its source.
    `engine/objects/appearanceTypes.ts` with `appearanceTypes.test.ts` holding
    it against the registry. Any time you find yourself writing a second list
    of types, write the test with it.
+
+   **The prose form of this is the same bug and has no compiler.** The help
+   modal's key list, and this file's own "what is missing" lists, are second
+   records of a fact the code already holds. Both have been wrong in the same
+   week: four shortcuts advertised and unbound, and two sections here still
+   listed as missing after they shipped — one of them struck by the very commit
+   that edited this file. Where a list can be derived, derive it
+   (`TOOL_SHORTCUTS` → the help screen's tool rows). Where it cannot, strike it
+   in the commit that finishes the work, never afterwards.
 8. **A cache of derived data needs a version.** Board covers are summarised
    into `localStorage` and only rewritten when a board is opened, so a fix to
    the *renderer* cannot reach a board nobody has opened since. Bump
@@ -257,6 +281,50 @@ transaction, so one swipe cost a dozen undos. It now reads the normalized store
 and transacts the whole sweep. The pencil now thins its stored centreline with
 Douglas–Peucker at commit; the drawn outline is untouched, and that is where
 nearly all the points were.
+
+## 4a-ii. The keyboard audit (`260bcab`)
+
+Small in code, worth reading before you touch any key handling.
+
+**Keys are bound in four places and they all reach the same window.**
+`Room.tsx` owns the global map (tools via `TOOL_FOR_KEY`, undo, the palette,
+`\`, `0`, and now `Cmd+A` and `?`). `Canvas.tsx` owns everything scoped to a
+selection (delete, duplicate, restack, group, `Cmd+B/I/U`, Enter, and now the
+arrow nudge). `LayersPanel`, `Minimap` and `TimeTravelBar` each bind their own,
+as **React handlers on a focused element** — which still bubble to the window,
+so a global listener sees them too. Two consequences, both now handled and both
+easy to reintroduce:
+
+- **Arrows are claimed by four components.** Nudging is what the *board* means
+  by an arrow, so it applies only when focus is on the board itself — `null`,
+  `body`, or inside the stage container. Without that check, arrowing through
+  the Layers tree would also drag the selection across the canvas.
+- **`Cmd+A` is bound twice on purpose.** The Layers tree scopes it to the rows
+  it is showing; the board means everything. The board handler stands aside on
+  `e.defaultPrevented`, so the narrower one wins where it applies.
+
+**`nudgeDelta` is a pure module** (`engine/tools/nudge.ts`) for the usual
+reason, and the step is in **world units, not screen pixels**: a nudge is an
+alignment gesture, and scaling it with zoom would make the same press mean
+different things at 40% and 400%. A multi-object nudge is one
+`applyNodePatches` transaction, so it is one press to undo. Locked objects are
+skipped rather than the press being refused.
+
+**`TOOL_NAMES` moved out of the modal** to `engine/tools/toolNames.ts`, held
+against `TOOL_SHORTCUTS` by a test. The modal renders `TOOL_NAMES[id] ?? id`,
+which fails *quietly* — a new tool would appear on the help screen under its
+internal id, which is worse than not appearing.
+
+**Corrected, not just added:** the reset is bare `0`, never `Cmd+0`; and zoom
+listens for `ctrl+wheel`, which is also how every browser reports a trackpad
+pinch — so the old `Cmd + Scroll` row named a key nothing binds on a Mac.
+
+**Newly documented, all previously bound and invisible:** `\` to hide the
+chrome, `Cmd+Shift+[`/`]` to restack, `Cmd+B/I/U` on type, Enter to edit the
+selection, the minimap's pan/zoom/fit keys, and the replay bar's step, play and
+jump. The list roughly doubled, so it no longer fits without scrolling; three
+columns at that width would wrap descriptions, which costs more than the scroll
+does. The CSS comment that claimed it all fit was corrected with it.
 
 ## 4b. What the recent sessions changed
 
@@ -370,6 +438,41 @@ broken; all of it is unwatched.
   stand in for.
 
 ### 5a-ii. The walkthrough project (still what the user originally asked for)
+
+Agreed scope, in order. Two of five are done:
+
+1. ~~**Demo rooms**~~ — done. **26 templates in 5 categories**, including
+   deliberate scale showcases at 100/500/1000 objects.
+2. **Per-tool guided walkthroughs.** *Not started, and this is the next
+   substantial piece of the brief.* The agreed design: an arrow anchored to a
+   real object that **advances by doing the thing**, not by a Next button. A
+   wizard becomes the thing people dismiss, and it would contradict what makes
+   the templates work — you learn connectors by dragging a box. The templates
+   now give these somewhere to happen; launch a walkthrough *against* a
+   matching template rather than an empty canvas. The user chose "scripted
+   real mutations" over a recorded video when asked.
+3. ~~**Visual refinement** of existing surfaces~~ — largely done; see §4b.
+4. **New surfaces** — the canvas empty state and the rooms page are done. A
+   **first-run onboarding** and a **marketing-grade first run** are not.
+5. **A product page.** Not started.
+
+**Session creation is the loose thread.** The share *sheet* was rebuilt, but
+the flow that gets you a named board and shares it the first time was not
+touched. The user asked for "session creation and sharing, end to end" and only
+the second half landed. Start there if you want a short, well-defined piece.
+
+Also outstanding and explicitly deferred by the user: **Supabase** for auth and
+storage. They chose it over own-auth/PocketBase/Clerk. It is a multi-file change
+across the server, a new schema with RLS, and moving voice notes out of the CRDT
+into object storage — worth its own session. Note that voice notes are still
+base64 inside the Yjs document; the bitrate fix cut that ~5x but did not solve
+it.
+
+> This whole section was blank for two commits. A rewrite of §5a retitled it
+> and left the `5a-ii` heading standing with nothing under it, so the single
+> most important "what to do next" in the file read as an empty line. Restored
+> from `5cebd12`. It is the same failure as the panel-navigation entry below,
+> and the same lesson: **this file is a record with no test holding it.**
 
 ### 5b. Watch Phases 3–5 (still partly unverified)
 
@@ -590,5 +693,9 @@ Physics, templates and the product shell (newest):
 | `engine/model/boardPreview.ts` | the board summary in `localStorage`, `PREVIEW_VERSION`, `previewPolygonPoints`. Pure, tested. |
 | `components/WorkspaceCover.tsx` | that summary drawn as SVG — the only thumbnail renderer, shared by boards and templates |
 | `engine/objects/appearanceTypes.ts` | which types carry an `appearance` block, held against the registry by a test |
+| `engine/tools/shortcuts.ts` | the single-key tool bindings, and the inverse map `Room` resolves through |
+| `engine/tools/toolNames.ts` | what each tool is *called* on the help screen, tested against the bindings |
+| `engine/tools/nudge.ts` | what an arrow keypress means, in world units. Pure, tested. |
+| `components/HelpModal.tsx` | the shortcut reference. Its tool rows are derived; the rest is hand-written and has drifted before — see §4a-ii. |
 | `Home.tsx` | the rooms page: rail, stage, boards and templates as separate views |
 | `DESIGN.md` | the token layers and the named rules. Read before touching `index.css`. |
