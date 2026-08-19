@@ -242,3 +242,33 @@ export function projectToOutline(
   }
   return best;
 }
+
+/**
+ * Where a point in a node's own, unrotated frame really lands on it.
+ *
+ * ## Why this is one function
+ *
+ * It was two. `connectorTargets.attachPoint` did this for a node, and
+ * `connectorBinding.portAt` did it for a bind candidate — and when rotation was
+ * added, only the first one got it. So on a turned shape the ring was *drawn*
+ * at the rotated attachment and the snap was *measured* at the unrotated one,
+ * tens of units apart: the exact defect this whole area has produced over and
+ * over, one question with two implementations that drift.
+ *
+ * The two callers have different inputs — one holds a node, the other a
+ * candidate — so they cannot share a signature. They can share this, which is
+ * the part that was actually duplicated: turn the point out by the rotation,
+ * then take the outermost crossing of the silhouette along the ray from the
+ * centre.
+ */
+export function attachOnOutline(
+  box: { x: number; y: number; width: number; height: number },
+  outline: readonly Point[] | null | undefined,
+  rotation: number,
+  boxPoint: Point
+): Point {
+  const centre = { x: box.x + box.width / 2, y: box.y + box.height / 2 };
+  const turned = rotatePoint(boxPoint, centre, rotation);
+  if (!outline || outline.length < 3) return turned;
+  return projectToOutline(outline, centre, turned) ?? turned;
+}

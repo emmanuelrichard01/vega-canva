@@ -71,6 +71,11 @@ export function isCentreAnchor(a: Anchor): boolean {
 /**
  * Which edge an anchor belongs to.
  *
+ * Used for the *direction a route leaves*, which is one of four normals and so
+ * is discrete by nature. It is deliberately no longer used to place the point
+ * — see `anchorPoint`, where making that choice per-pixel was what made an
+ * endpoint stutter across corners.
+ *
  * Compared in normalized space, which is the load-bearing detail: on a
  * 400x60 node, a point 20px in from the left and 20px down from the top is
  * far more of the way down than across, and the edge it is really near is the
@@ -85,20 +90,50 @@ export function anchorPort(a: Anchor): Exclude<Port, 'auto'> {
 }
 
 /**
- * Where an anchor sits in world space, projected onto the box's perimeter.
+ * Where an anchor sits in world space, on the box's perimeter.
  *
- * The coordinate on the anchor's own edge is kept and the other is snapped to
- * that edge, so an anchor at `{u: 0.05, v: 0.8}` lands 80% of the way down the
- * left edge rather than just inside the shape.
+ * ## Why this is a ray and not a snap
+ *
+ * It used to keep the coordinate on the anchor's own edge and snap the other
+ * one to that edge — pick the nearest side, then slide along it. That reads
+ * fine and it is **discontinuous at every corner**, which is what made
+ * dragging an endpoint around a shape jump and stutter.
+ *
+ * On a 100x100 box, sliding an anchor along the top-right diagonal gives
+ * `(100, 9)`, then `(92, 0)` — a twelve-unit leap sideways — and because the
+ * side is chosen by comparing `|du|` against `|dv|`, values near the diagonal
+ * *oscillate* between the two edges as the cursor moves smoothly. The endpoint
+ * flickers back and forth across the corner. Nothing about that looks like a
+ * tool; it looks like a bug, which is what it was.
+ *
+ * A ray from the centre through the anchor has none of that. It is continuous
+ * everywhere, it lands exactly on the corner from both approaches, and it
+ * agrees with the four named ports by construction — `{u: 0.5, v: 0}` is
+ * straight up, which is the top midpoint. A point already on the perimeter
+ * maps to itself, so `anchorFromPoint` and this are exact inverses on the edge
+ * and the round trip a drag makes cannot drift.
  */
 export function anchorPoint(box: Box, a: Anchor): Point {
   const { u, v } = normalizeAnchor(a);
-  switch (anchorPort({ u, v })) {
-    case 'left': return { x: box.x, y: box.y + box.height * v };
-    case 'right': return { x: box.x + box.width, y: box.y + box.height * v };
-    case 'top': return { x: box.x + box.width * u, y: box.y };
-    case 'bottom': return { x: box.x + box.width * u, y: box.y + box.height };
-  }
+  const halfW = box.width / 2;
+  const halfH = box.height / 2;
+  const cx = box.x + halfW;
+  const cy = box.y + halfH;
+  const dx = (u - 0.5) * box.width;
+  const dy = (v - 0.5) * box.height;
+
+  // Dead centre has no direction. The top midpoint is as good an answer as any
+  // and matches what `anchorPort` reports for it.
+  if (dx === 0 && dy === 0) return { x: cx, y: box.y };
+
+  // How far the ray can be scaled before it leaves the box on each axis; the
+  // smaller one is the edge it actually crosses. `Infinity` for a zero
+  // component is correct and is what makes an axis-aligned ray work without a
+  // branch of its own.
+  const tx = dx === 0 ? Infinity : halfW / Math.abs(dx);
+  const ty = dy === 0 ? Infinity : halfH / Math.abs(dy);
+  const t = Math.min(tx, ty);
+  return { x: cx + dx * t, y: cy + dy * t };
 }
 
 /** A world point expressed in a box's own proportions. Not clamped. */

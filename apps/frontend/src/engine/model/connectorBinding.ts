@@ -17,13 +17,15 @@
  *
  * ## The three answers, in order of specificity
  *
- * 1. **A named port.** The pointer is within snapping distance of one of the
- *    four edge midpoints. The most explicit thing a user can say, and what the
- *    rings the tool draws are for.
- * 2. **An anchor.** The pointer is on or near the object's perimeter but not
- *    at a midpoint. This is "here specifically", and it is what makes two
+ * 1. **A named port.** The pointer is within a short snap of one of the four
+ *    edge midpoints. The most explicit thing a user can say, and what the
+ *    rings the tool draws are for. Kept deliberately tight — see
+ *    `PORT_SNAP_SCREEN` for what a generous one does to the feel.
+ * 2. **An anchor.** The pointer is within a ribbon straddling the outline,
+ *    inside or outside. This is "here specifically", it is what makes two
  *    arrows into the same long box arrive at different places instead of
- *    stacking on one point.
+ *    stacking, and it is the *continuous* answer — the one that has to track
+ *    the cursor exactly, because it is what a person sees while moving.
  * 3. **`auto`.** The pointer is well inside the object. This says *this
  *    object*, not a spot on it, and it is the answer that keeps looking right
  *    when things move — the route picks whichever side faces the other end.
@@ -40,17 +42,37 @@
  */
 
 import { portPoint, type Box, type ConnectorEnd, type Point, type Port } from './connector';
-import { anchorFromPoint, isCentreAnchor, normalizeAnchor } from './connectorAnchor';
-import { nearestOnOutline, pointInPolygon, projectToOutline, rotatePoint } from './shapePerimeter';
-
-/** How close the pointer must be to an edge midpoint before it snaps, in screen px. */
-export const PORT_SNAP_SCREEN = 22;
+import { anchorFromPoint, normalizeAnchor } from './connectorAnchor';
+import { attachOnOutline, nearestOnOutline, pointInPolygon, rotatePoint } from './shapePerimeter';
 
 /**
- * How far inside the perimeter still counts as pointing at the edge, in screen px.
+ * How close the pointer must be to an edge midpoint before it snaps, in screen px.
  *
- * Wider than the port snap, because the edge is a much easier target than a
- * point and because overshooting into the shape is the common way to miss it.
+ * Deliberately small. At 22 the four snap zones were 44px across and covered
+ * most of the perimeter of an ordinary sticky note, so running the cursor
+ * round a shape spent more time captured than free — and each entry and exit
+ * teleported the endpoint, because a snap is a jump by definition. Four hard
+ * jumps per lap is the difference between a tool that assists and one that
+ * fights.
+ *
+ * At 11 the midpoints are an *assist*: close enough to catch a deliberate aim
+ * at "the middle of this edge", small enough that the continuous anchor is
+ * what you get the rest of the time.
+ */
+export const PORT_SNAP_SCREEN = 11;
+
+/**
+ * How far from the outline still counts as pointing at the edge, in screen px.
+ *
+ * Reaches **both ways** — outside the shape as well as inside. It used to
+ * reach inwards only, so tracing the outer perimeter, which is the natural way
+ * to aim at an edge, produced nothing at all until the cursor crossed the
+ * stroke; one pixel further and it became an anchor. That boundary flicker was
+ * on the outside of every object on the board.
+ *
+ * Reaching outward was previously unsafe because it would have swallowed the
+ * space where a loose end could be placed. Loose ends can no longer be
+ * authored, so that cost is gone and the band can do what it should.
  */
 export const EDGE_BAND_SCREEN = 26;
 
@@ -116,17 +138,14 @@ function distanceToEdge(c: BindCandidate, p: Point): number {
 /**
  * Where a candidate's named port actually sits.
  *
- * The ring the user aims at is drawn here, so the snap has to be measured here
- * too. A ray from the centre through the box's midpoint, taking the outermost
- * crossing — the same construction `attachPoint` uses, kept in step by both
- * going through the outline rather than by being the same code, since this one
- * has a candidate and that one has a node.
+ * The ring the user aims at is drawn from `attachPoint`, so the snap has to be
+ * measured at the same place — through `attachOnOutline`, which is the shared
+ * construction rather than a second copy of it. It *was* a second copy, and
+ * when rotation arrived only the drawing side got it: on a turned square the
+ * ring sat on one edge and the snap listened on another.
  */
 function portAt(c: BindCandidate, side: Exclude<Port, 'auto'>): Point {
-  const boxPoint = portPoint(c.box, side);
-  if (!c.outline || c.outline.length < 3) return boxPoint;
-  const centre = centreOfBox(c.box);
-  return projectToOutline(c.outline, centre, boxPoint) ?? boxPoint;
+  return attachOnOutline(c.box, c.outline, c.rotation ?? 0, portPoint(c.box, side));
 }
 
 /**
@@ -140,13 +159,25 @@ function portAt(c: BindCandidate, side: Exclude<Port, 'auto'>): Point {
  * afterwards would drag its connectors around the outside.
  */
 function anchorAt(c: BindCandidate, world: Point): { u: number; v: number } {
-  const onEdge =
-    c.outline && c.outline.length >= 3
-      ? (nearestOnOutline(c.outline, world)?.point ?? world)
-      : world;
+  return anchorFor(c, snapToEdge(c, world));
+}
+
+/** The point on the candidate's silhouette nearest `world`. */
+function snapToEdge(c: BindCandidate, world: Point): Point {
+  if (!c.outline || c.outline.length < 3) return world;
+  return nearestOnOutline(c.outline, world)?.point ?? world;
+}
+
+/** A world point already on the edge, expressed in the node's own frame. */
+function anchorFor(c: BindCandidate, onEdge: Point): { u: number; v: number } {
   const local = rotatePoint(onEdge, centreOfBox(c.box), -(c.rotation ?? 0));
   return normalizeAnchor(anchorFromPoint(c.box, local));
 }
+
+const lerp = (a: Point, b: Point, t: number): Point => ({
+  x: a.x + (b.x - a.x) * t,
+  y: a.y + (b.y - a.y) * t,
+});
 
 /**
  * The end a pointer at `world` describes.
@@ -163,23 +194,66 @@ export function bindingAt(
   const portTolerance = PORT_SNAP_SCREEN * scale;
   const edgeBand = EDGE_BAND_SCREEN * scale;
 
-  let nearestPort: { end: ConnectorEnd; distance: number } | null = null;
+  /**
+   * The nearest edge midpoint, and how the pull toward it is applied.
+   *
+   * ## Why a snap is not a jump here
+   *
+   * A snap moves the result to somewhere the cursor is not, so crossing into
+   * its zone teleports the endpoint. Four zones on a shape means four leaps per
+   * lap of its outline, in both directions — which is most of what "jarring
+   * jumps and glitches" is describing, and it is the part a person feels even
+   * when every individual answer is correct.
+   *
+   * So the zone has two halves. Inside the inner half the answer is the named
+   * port outright. Across the outer half the anchor is *drawn toward* the
+   * midpoint, from no pull at all at the rim to fully arrived at the halfway
+   * mark — which is exactly where the binding flips to the port. The position
+   * is therefore continuous the whole way through, and the change of *kind*
+   * happens at the one radius where both kinds agree about where the point is.
+   *
+   * It still feels magnetic. It simply stops teleporting to get there.
+   */
+  let pull: { c: BindCandidate; side: Exclude<Port, 'auto'>; point: Point; distance: number } | null = null;
   for (const c of candidates) {
     if (c.id === excludeId) continue;
     for (const side of SIDES) {
       const p = portAt(c, side);
       const d = Math.hypot(world.x - p.x, world.y - p.y);
-      if (d <= portTolerance && (!nearestPort || d < nearestPort.distance)) {
-        nearestPort = { end: { nodeId: c.id, port: side }, distance: d };
+      if (d <= portTolerance && (!pull || d < pull.distance)) {
+        pull = { c, side, point: p, distance: d };
       }
     }
   }
-  if (nearestPort) return nearestPort.end;
+  if (pull) {
+    const grip = portTolerance / 2;
+    if (pull.distance <= grip) return { nodeId: pull.c.id, port: pull.side };
+    // 0 at the rim of the zone, 1 at the halfway mark.
+    const t = 1 - (pull.distance - grip) / grip;
+    const eased = lerp(snapToEdge(pull.c, world), pull.point, t);
+    return { nodeId: pull.c.id, anchor: anchorFor(pull.c, eased) };
+  }
 
-  // Only objects the pointer is actually within can claim it from here. The
-  // edge band reaches *inwards*: an arrow aimed at the outside of a box has
-  // not arrived yet, and treating near-misses as hits makes it impossible to
-  // draw a loose end anywhere near existing content.
+  /**
+   * The edge, from either side.
+   *
+   * Measured as an absolute distance to the outline rather than as depth
+   * *within* the shape, so the band is a ribbon straddling the stroke. That is
+   * what makes running the cursor round the outside of an object work at all,
+   * and it is the reason this loop is separate from the containment one below
+   * rather than nested inside it.
+   */
+  let nearestEdge: { c: BindCandidate; distance: number } | null = null;
+  for (const c of candidates) {
+    if (c.id === excludeId) continue;
+    const d = distanceToEdge(c, world);
+    if (d <= edgeBand && (!nearestEdge || d < nearestEdge.distance)) {
+      nearestEdge = { c, distance: d };
+    }
+  }
+  if (nearestEdge) return { nodeId: nearestEdge.c.id, anchor: anchorAt(nearestEdge.c, world) };
+
+  // Well inside something: that object as a whole, side left to the route.
   let nearestBody: { c: BindCandidate; depth: number } | null = null;
   for (const c of candidates) {
     if (c.id === excludeId || !contains(c, world)) continue;
@@ -190,14 +264,5 @@ export function bindingAt(
   }
   if (!nearestBody) return { x: world.x, y: world.y };
 
-  const { c, depth } = nearestBody;
-  const anchor = anchorAt(c, world);
-
-  // Deep inside, or near enough to the middle that a spot would be arbitrary:
-  // bind to the object and let the route choose. Both tests, not either —
-  // a tall narrow node has a centre that is never far from an edge, and a
-  // huge frame has vast regions that are neither central nor near one.
-  if (depth > edgeBand || isCentreAnchor(anchor)) return { nodeId: c.id, port: 'auto' };
-
-  return { nodeId: c.id, anchor };
+  return { nodeId: nearestBody.c.id, port: 'auto' };
 }

@@ -15,7 +15,7 @@
 import type { AnyNode } from './schema';
 import { portPoint, type Box, type ConnectorEnd, type Point, type Port } from './connector';
 import type { BindCandidate } from './connectorBinding';
-import { centreOf, outlineOfNode, projectToOutline, rotatePoint } from './shapePerimeter';
+import { attachOnOutline, outlineOfNode } from './shapePerimeter';
 import { anchorPoint, type Anchor } from './connectorAnchor';
 
 /**
@@ -111,8 +111,13 @@ export function endPoint(end: ConnectorEnd, objects: Record<string, AnyNode>): P
   const node = end.nodeId ? objects[end.nodeId] : undefined;
   if (node) {
     const box = boxOfNode(node);
-    if (end.anchor) return anchorPoint(box, end.anchor);
-    if (end.port && end.port !== 'auto') return portPoint(box, end.port);
+    // Through `attachPoint`, like everything else. It answered from the box
+    // alone, which meant the tool measured a gesture against one place while
+    // the route drew it at another — on a triangle, tens of units apart. The
+    // disagreement was small enough to be invisible and exactly the kind that
+    // turns into a bug report about a gesture "sometimes" not registering.
+    if (end.anchor) return attachPoint(node, anchorPoint(box, end.anchor));
+    if (end.port && end.port !== 'auto') return attachPoint(node, portPoint(box, end.port));
     return { x: box.x + box.width / 2, y: box.y + box.height / 2 };
   }
   return { x: end.x ?? 0, y: end.y ?? 0 };
@@ -192,15 +197,11 @@ export function attachLookup(
  * where the thing lands is worse than no target: it teaches the wrong place.
  */
 export function attachPoint(node: AnyNode, boxPoint: Point): Point {
-  const centre = centreOf(node);
   // The box point is in the node's own, unrotated frame — that is what
-  // `portPoint` and `anchorPoint` produce, and what the anchor stores. Turning
-  // it out first is what makes a named port mean the *shape's* top rather than
-  // the screen's, and it is the whole of rotation support for the ports.
-  const turned = rotatePoint(boxPoint, centre, node.rotation ?? 0);
-  const outline = outlineFor(node);
-  if (!outline || outline.length < 3) return turned;
-  return projectToOutline(outline, centre, turned) ?? turned;
+  // `portPoint` and `anchorPoint` produce, and what the anchor stores.
+  // `attachOnOutline` turns it out and lands it on the silhouette, and it is
+  // shared with the binding rule so the ring and the snap cannot disagree.
+  return attachOnOutline(boxOfNode(node), outlineFor(node), node.rotation ?? 0, boxPoint);
 }
 
 /** The four named ports of a node, on its outline. */

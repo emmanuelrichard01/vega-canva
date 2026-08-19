@@ -1,5 +1,8 @@
 import { describe, it, expect } from 'vitest';
-import { bindingAt, type BindCandidate } from './connectorBinding';
+import { bindingAt, PORT_SNAP_SCREEN, type BindCandidate } from './connectorBinding';
+import { anchorPoint } from './connectorAnchor';
+import { portPoint } from './connector';
+import { attachOnOutline } from './shapePerimeter';
 import type { Box } from './connector';
 
 const box = (x: number, y: number, width: number, height: number): Box => ({ x, y, width, height });
@@ -29,11 +32,53 @@ describe('bindingAt', () => {
     expect(bindingAt({ x: 900, y: 900 }, [A], opts)).toEqual({ x: 900, y: 900 });
   });
 
-  it('does not claim a point just outside a box', () => {
-    // The edge band reaches inwards only: an arrow aimed at the outside of a
-    // box has not arrived, and grabbing near-misses makes a loose end
-    // impossible to place next to existing content.
-    expect(bindingAt({ x: 210, y: 92 }, [A], opts)).toEqual({ x: 210, y: 92 });
+  it('claims a point just outside, because that is how people aim at an edge', () => {
+    // The band straddles the outline rather than reaching inwards only.
+    // Inward-only meant tracing the outer perimeter produced nothing until the
+    // cursor crossed the stroke, and one pixel further became an anchor — a
+    // flicker on the outside of every object. It was inward-only to protect
+    // room for a loose end, and loose ends can no longer be authored.
+    expect(bindingAt({ x: 210, y: 92 }, [A], opts).nodeId).toBe('a');
+  });
+
+  it('leaves a point well clear of everything alone', () => {
+    expect(bindingAt({ x: 400, y: 92 }, [A], opts)).toEqual({ x: 400, y: 92 });
+  });
+
+  it('tracks the cursor without jumping as it runs round the perimeter', () => {
+    // The whole complaint: four generous snap zones and a discontinuous
+    // anchor made a lap of a shape a series of teleports. Sampling the
+    // resolved point all the way round must move in small steps.
+    const box200 = { x: 0, y: 0, width: 200, height: 100 };
+    const cand: BindCandidate = { id: 'a', box: box200 };
+    /** A lap of the box's own perimeter — the gesture the complaint describes. */
+    const onPerimeter = (t: number) => {
+      const d = t * 600; // 2*(200+100)
+      if (d < 200) return { x: d, y: 0 };
+      if (d < 300) return { x: 200, y: d - 200 };
+      if (d < 500) return { x: 500 - d, y: 100 };
+      return { x: 0, y: 600 - d };
+    };
+    const at = (t: number) => {
+      const p = onPerimeter(t);
+      const end = bindingAt(p, [cand], opts);
+      return end.anchor
+        ? anchorPoint(box200, end.anchor)
+        : end.port && end.port !== 'auto'
+          ? portPoint(box200, end.port)
+          : { x: p.x, y: p.y };
+    };
+    let previous = at(0);
+    let worst = 0;
+    for (let i = 1; i <= 400; i += 1) {
+      const p = at(i / 400);
+      worst = Math.max(worst, Math.hypot(p.x - previous.x, p.y - previous.y));
+      previous = p;
+    }
+    // The only jump left is the port snap itself, which is a snap by
+    // definition and is bounded by its own radius — a fingertip, not the
+    // twelve-to-forty-unit leaps the old anchor and the old 22px zones made.
+    expect(worst).toBeLessThanOrEqual(PORT_SNAP_SCREEN + 2);
   });
 
   it('refuses the excluded node, so an end cannot bind to its own other end', () => {
@@ -43,12 +88,27 @@ describe('bindingAt', () => {
     });
   });
 
-  it('scales both tolerances with the zoom', () => {
-    const far = { x: 200, y: 80 };
-    // 30 world units from the right midpoint: outside 22px at 100% zoom...
-    expect(bindingAt(far, [A], { scale: 1 }).port).not.toBe('right');
-    // ...and inside it at 50%, where 22 screen px is 44 world units.
-    expect(bindingAt(far, [A], { scale: 2 }).port).toBe('right');
+  it('scales the port snap with the zoom', () => {
+    // Written against the constant rather than a literal, so changing the snap
+    // cannot silently turn this into a test of nothing. Three quarters of the
+    // radius is inside the zone but outside the inner half, so at 100% it is
+    // an eased anchor and at 50% — where the zone is twice as wide in world
+    // units — the same place is within the grip and binds to the port.
+    const p = { x: 200, y: 50 + PORT_SNAP_SCREEN * 0.75 };
+    expect(bindingAt(p, [A], { scale: 1 }).port).not.toBe('right');
+    expect(bindingAt(p, [A], { scale: 2 }).port).toBe('right');
+  });
+
+  it('eases into a port instead of teleporting to it', () => {
+    // At the rim of the zone there must be no pull at all, or entering it is
+    // a jump; by the halfway mark the pull must be complete, because that is
+    // where the binding becomes the port and the two have to agree about
+    // where the point is.
+    const atRim = bindingAt({ x: 200, y: 50 + PORT_SNAP_SCREEN }, [A], opts);
+    expect(anchorPoint(A.box, atRim.anchor!).y).toBeCloseTo(50 + PORT_SNAP_SCREEN, 1);
+
+    const atGrip = bindingAt({ x: 200, y: 50 + PORT_SNAP_SCREEN / 2 + 0.01 }, [A], opts);
+    expect(anchorPoint(A.box, atGrip.anchor!).y).toBeCloseTo(50, 0);
   });
 
   it('prefers a small node port over a large node it sits on top of', () => {
@@ -144,7 +204,24 @@ describe('bindingAt on a rotated object', () => {
   });
 
   it('rejects a corner of the unrotated box, which the turned shape vacated', () => {
-    expect(bindingAt({ x: 2, y: 2 }, [rotated], opts).nodeId).toBeUndefined();
+    // Far enough out that the edge band cannot reach it either — the corner of
+    // the axis-aligned box is only about eighteen units from the diamond's
+    // nearest edge, which the band is entitled to claim.
+    expect(bindingAt({ x: -40, y: -40 }, [rotated], opts).nodeId).toBeUndefined();
+  });
+
+  it('listens for the snap exactly where the ring is drawn', () => {
+    // The defect this holds shut: `portAt` and `attachPoint` were two
+    // implementations of one question, and when rotation arrived only the
+    // drawing side got it. On this turned square the ring sat on one edge
+    // while the snap listened on another, tens of units away — a lap of the
+    // outline jumped eighty units. Aiming at a drawn ring must bind to that
+    // port, or the affordance is lying.
+    for (const side of ['top', 'right', 'bottom', 'left'] as const) {
+      const drawn = attachOnOutline(rotated.box, rotated.outline, 45, portPoint(rotated.box, side));
+      const end = bindingAt(drawn, [rotated], opts);
+      expect({ side, port: end.port }).toEqual({ side, port: side });
+    }
   });
 
   it('stores the anchor in the node own unrotated frame', () => {

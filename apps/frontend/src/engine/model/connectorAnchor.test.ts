@@ -31,9 +31,41 @@ describe('anchorPort', () => {
 });
 
 describe('anchorPoint', () => {
-  it('projects to the perimeter, keeping the free coordinate', () => {
-    // 80% down the left edge, not a point floating inside the shape.
-    expect(anchorPoint(BOX, { u: 0.05, v: 0.8 })).toEqual({ x: 100, y: 280 });
+  it('projects to the perimeter, not to a point floating inside the shape', () => {
+    const p = anchorPoint(BOX, { u: 0.05, v: 0.8 });
+    expect(p.x).toBe(100);                       // on the left edge
+    expect(p.y).toBeGreaterThan(BOX.y + BOX.height / 2);  // below the middle
+  });
+
+  it('moves smoothly across a corner instead of jumping', () => {
+    // The defect this replaced: the edge was chosen by comparing |du| with
+    // |dv| and the point was then snapped to that edge, which is
+    // discontinuous at every corner. Sliding along the top-right diagonal of a
+    // 100x100 box gave (100, 9) and then (92, 0) — a twelve-unit leap — and
+    // near the diagonal the comparison *oscillated*, so the endpoint flickered
+    // back and forth across the corner while the cursor moved smoothly.
+    const square: Box = { x: 0, y: 0, width: 100, height: 100 };
+    let previous = anchorPoint(square, { u: 0.5, v: 0 });
+    let worst = 0;
+    // A full lap of the perimeter in small steps.
+    for (let i = 1; i <= 720; i += 1) {
+      const angle = (i / 720) * Math.PI * 2 - Math.PI / 2;
+      const p = anchorPoint(square, {
+        u: 0.5 + Math.cos(angle) * 0.5,
+        v: 0.5 + Math.sin(angle) * 0.5,
+      });
+      worst = Math.max(worst, Math.hypot(p.x - previous.x, p.y - previous.y));
+      previous = p;
+    }
+    // Each step is under a degree of arc; no step may leap a corner.
+    expect(worst).toBeLessThan(2);
+  });
+
+  it('lands exactly on the corner from both approaches', () => {
+    const square: Box = { x: 0, y: 0, width: 100, height: 100 };
+    const fromTheSide = anchorPoint(square, { u: 1, v: 0.001 });
+    const fromTheTop = anchorPoint(square, { u: 0.999, v: 0 });
+    expect(Math.hypot(fromTheSide.x - fromTheTop.x, fromTheSide.y - fromTheTop.y)).toBeLessThan(1);
   });
 
   it('slides along one edge as the free coordinate changes', () => {
