@@ -3,7 +3,7 @@ import { Circle, Group, Line } from 'react-konva';
 import type Konva from 'konva';
 import { updateNode } from '../../engine/document';
 import { EXPORT_CHROME } from '../../engine/export/chrome';
-import { boxFromEndpoints, constrainToAngle, lineEndpoints } from '../../engine/model/lineEnds';
+import { constrainToAngle, lineEndpoints, lineNodeFromEndpoints } from '../../engine/model/lineEnds';
 import type { ShapeNode } from '../../engine/model/schema';
 
 interface Props {
@@ -48,7 +48,13 @@ export const LineEditor: React.FC<Props> = ({ node, stageScale }) => {
   const radius = HANDLE / 2 / stageScale;
 
   const commit = (next: { a: typeof a; b: typeof b }) => {
-    updateNode(node.id, boxFromEndpoints(next.a, next.b));
+    // Both halves in one write: the endpoints into `geometry`, and a box that
+    // is the extent of what the line draws rather than the diagonal between
+    // its ends. See `lineNodeFromEndpoints`.
+    updateNode(
+      node.id,
+      lineNodeFromEndpoints(next.a, next.b, node.geometry, node.appearance?.stroke?.width ?? 2)
+    );
     setLive(null);
   };
 

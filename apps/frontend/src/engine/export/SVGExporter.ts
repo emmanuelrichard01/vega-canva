@@ -9,6 +9,7 @@ import { SvgPaintDefs } from './svgPaint';
 import { pointsAttribute, regularPolygonPoints, starPoints } from '../model/shapeOutline';
 import { shapeToPath } from '../model/shapeToPath';
 import { defaultEndAlign, linePoints } from '../model/linePath';
+import { localRunEnds } from '../model/lineEnds';
 import { endCapShape, terminateRun } from '../model/connectorEnds';
 import { pathData } from '../model/pathGeometry';
 import { contourData, translatePath } from '../model/pathGeometry';
@@ -282,11 +283,6 @@ function openShapeMarkup(node: ShapeNode): string {
   const stroke = node.appearance.stroke?.color ?? DEFAULT_INK;
   const sw = node.appearance.stroke?.width ?? 2;
   const rot = rotationTransform(node);
-  const x1 = node.x;
-  const y1 = node.y;
-  const x2 = node.x + node.width;
-  const y2 = node.y + node.height;
-
   /**
    * Through `linePoints`, so an exported wavy line is the wavy line on screen.
    *
@@ -294,9 +290,12 @@ function openShapeMarkup(node: ShapeNode): string {
    * still a `<line>` — the smaller, more readable markup, and what every
    * previously exported document contains.
    */
+  // The stored endpoints, in world space. `localRunEnds` answers the legacy
+  // box form too, so an old document exports exactly as it always did.
+  const ends = localRunEnds(node);
   const run = linePoints(
-    { x: x1, y: y1 },
-    { x: x2, y: y2 },
+    { x: node.x + ends.a.x, y: node.y + ends.a.y },
+    { x: node.x + ends.b.x, y: node.y + ends.b.y },
     node.geometry.lineProfile,
     node.geometry.lineWaves
   );

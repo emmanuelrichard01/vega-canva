@@ -6,7 +6,7 @@ import type { Tool, ToolContext } from './Tool';
 import type { ShapeGeometry } from '../model/schema';
 import { PRESET_GEOMETRY, type ShapePreset } from '../../components/workspace/shapeIcons';
 import { gridSnap } from '../interaction/gridSnap';
-import { boxFromEndpoints, constrainToAngle } from '../model/lineEnds';
+import { constrainToAngle, lineNodeFromEndpoints } from '../model/lineEnds';
 import * as React from 'react';
 
 /** Minimum drag before a shape is sized by the drag rather than dropped at a default size. */
@@ -245,15 +245,19 @@ export class ShapeTool implements Tool {
     }
 
     /**
-     * An open run records which diagonal it takes; a box cannot.
+     * A line stores its two endpoints, and its box is what it draws.
      *
-     * `boxFromEndpoints` returns the same `x`/`y`/`width`/`height` a box would,
-     * plus the `scaleX`/`scaleY` signs that say which way the line actually
-     * runs. Without them every line committed as the top-left to bottom-right
-     * diagonal whatever direction it was drawn in — which is what made the tool
-     * look like it was stuck at one angle.
+     * The endpoints used to *be* the box — corner to corner, with the flip
+     * signs recording the diagonal — which is exact for a straight line and
+     * wrong for a profiled one, because the run deviates across the diagonal
+     * and the box stayed flat while the drawing did not. `lineNodeFromEndpoints`
+     * returns both halves: the endpoints for `geometry`, and a box that is the
+     * extent of the line and its markers.
      */
-    const run = this.isOpen() ? boxFromEndpoints(this.endpoints().a, this.endpoints().b) : null;
+    const openGeometry = this.geometry();
+    const run = this.isOpen()
+      ? lineNodeFromEndpoints(this.endpoints().a, this.endpoints().b, openGeometry)
+      : null;
     if (run) {
       x = run.x;
       y = run.y;
@@ -267,12 +271,11 @@ export class ShapeTool implements Tool {
       type: 'shape',
       x,
       y,
-      ...(run ? { scaleX: run.scaleX, scaleY: run.scaleY } : {}),
       // width/height on the base node are the only record of size; `geometry`
       // describes the form alone.
       width,
       height,
-      geometry: this.geometry(),
+      geometry: run ? run.geometry : openGeometry,
       appearance: {
         fill: [{ type: 'solid', color: ThemeService.getDefaultShapeFill(), opacity: 1 }],
         stroke: { color: ThemeService.getDefaultStrokeColor(), width: 2 },

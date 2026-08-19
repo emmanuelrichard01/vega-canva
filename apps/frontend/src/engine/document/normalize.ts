@@ -542,6 +542,31 @@ function normalizeShapeGeometry(raw: any): ShapeGeometry {
     if (raw?.geometry?.endAlign === 'inside' || raw?.geometry?.endAlign === 'extend') {
       geometry.endAlign = raw.geometry.endAlign;
     }
+    /**
+     * The two endpoints, when the document has them.
+     *
+     * Absent is the **legacy form**, and it is deliberately not repaired here.
+     * A line written before endpoints existed runs corner to corner of its box
+     * and `localRunEnds` still reads it that way, so it opens and draws exactly
+     * as it always did. Inventing endpoints at the boundary would also have to
+     * invent a *box* — the old one is the diagonal, not the drawn extent — and
+     * normalization is not allowed to move objects on somebody's board.
+     *
+     * It converts the first time the line is edited, because that is the moment
+     * a correct box can be computed from a real gesture rather than guessed.
+     */
+    const pt = (v: unknown): { x: number; y: number } | null =>
+      v && typeof v === 'object' && Number.isFinite((v as any).x) && Number.isFinite((v as any).y)
+        ? { x: (v as any).x, y: (v as any).y }
+        : null;
+    const a = pt(raw?.geometry?.a);
+    const b = pt(raw?.geometry?.b);
+    // Both or neither: one endpoint alone describes nothing, and a half-stored
+    // pair would send `localRunEnds` down the stored branch with a hole in it.
+    if (a && b) {
+      geometry.a = a;
+      geometry.b = b;
+    }
   }
 
   if (alias.kind === 'star') {

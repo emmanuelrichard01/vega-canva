@@ -7,6 +7,7 @@ import { AlignedStroke, BackdropBlur, InnerShadow } from './ShapeEffects';
 import { shapePath2D } from './shapePath2D';
 import { shapeToPath } from '../../../engine/model/shapeToPath';
 import { defaultEndAlign, linePoints } from '../../../engine/model/linePath';
+import { localRunEnds } from '../../../engine/model/lineEnds';
 import { terminateRun } from '../../../engine/model/connectorEnds';
 import { pathData } from '../../../engine/model/pathGeometry';
 import { roughShape } from '../../../engine/model/roughShape';
@@ -233,9 +234,10 @@ export const ShapeRenderer: React.FC<Props> = React.memo(({ node, showLabel }) =
    * unchanged and everything below — the caps, the trim, the sketcher —
    * carries on working on a two-point list without knowing profiles exist.
    */
+  const runEnds = localRunEnds(node);
   const profile = linePoints(
-    { x: 0, y: 0 },
-    { x: w, y: h },
+    runEnds.a,
+    runEnds.b,
     node.geometry.lineProfile,
     node.geometry.lineWaves
   );

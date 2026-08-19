@@ -32,6 +32,7 @@ import type { BezierGeometry, Point, ShapeNode } from './schema';
 import { fromAnchors, type Anchor } from './pathGeometry';
 import { roundPathCorners } from './roundCorners';
 import { linePoints } from './linePath';
+import { localRunEnds } from './lineEnds';
 
 export function regularPolygonPoints(
   cx: number,
@@ -176,14 +177,13 @@ export function shapeOutline(node: Pick<ShapeNode, 'geometry' | 'width' | 'heigh
     //
     // The *profile* decides what happens between those two corners. Straight
     // returns exactly the two points, so nothing already on a board moves.
+    // Between the *stored* endpoints, which for a legacy line are still the
+    // box corners — `localRunEnds` answers both forms, so nothing here has to
+    // know which one it is looking at.
+    const ends = localRunEnds(node);
     return {
       kind: 'open',
-      points: linePoints(
-        { x: 0, y: 0 },
-        { x: w, y: h },
-        node.geometry.lineProfile,
-        node.geometry.lineWaves
-      ),
+      points: linePoints(ends.a, ends.b, node.geometry.lineProfile, node.geometry.lineWaves),
     };
   }
 
