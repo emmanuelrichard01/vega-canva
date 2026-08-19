@@ -42,6 +42,8 @@ import { FillStyleIcon, SketchLevelIcon } from './panel/sketchIcons';
 import { EndCapIcon, RouteIcon } from './panel/connectorIcons';
 import { StrokeWeightIcon } from './panel/strokeWeightIcon';
 import { LineSpecimen } from './panel/lineSpecimen';
+import { LineProfileIcon } from './panel/lineProfileIcons';
+import { LINE_PROFILES, LINE_PROFILE_LABELS, MIN_WAVES, type LineProfile } from '../engine/model/linePath';
 import { ShapeIcon } from './workspace/shapeIcons';
 import { END_CAP_KINDS, END_CAP_LABELS, MAX_END_SCALE, MIN_END_SCALE, type EndCapKind } from '../engine/model/connectorEnds';
 import type { Routing } from '../engine/model/connector';
@@ -979,6 +981,41 @@ export const ObjectContextToolbar: React.FC<Props> = ({ selectedId, selectedIds,
                     />
                   )}
 
+                  {/* The profile and how much of it, on the rail as well as
+                      in the inspector. Changing a coil from five loops to two
+                      is something you do while looking at the line, and the
+                      walk to the panel is what stops people doing it. */}
+                  {isOpenShape(node.geometry.kind) && (
+                    <>
+                      <span className="ctx-popover__label">Style</span>
+                      <SegmentedControl
+                        ariaLabel="Line style"
+                        value={node.geometry.lineProfile ?? 'straight'}
+                        onChange={(v) => updateProp({
+                          geometry: {
+                            ...node.geometry,
+                            lineProfile: v === 'straight' ? undefined : (v as LineProfile),
+                          },
+                        })}
+                        segments={LINE_PROFILES.map((profile) => ({
+                          value: profile,
+                          label: LINE_PROFILE_LABELS[profile],
+                          hint: LINE_PROFILE_LABELS[profile],
+                          icon: <LineProfileIcon profile={profile} />,
+                        }))}
+                      />
+                      {(node.geometry.lineProfile ?? 'straight') !== 'straight'
+                        && node.geometry.lineProfile !== 'curved' && (
+                        <PopoverSlider
+                          label={node.geometry.lineProfile === 'coil' ? 'Loops' : 'Repeats'}
+                          value={node.geometry.lineWaves ?? 6}
+                          min={MIN_WAVES}
+                          max={20}
+                          onChange={(v) => updateProp({ geometry: { ...node.geometry, lineWaves: v } })}
+                        />
+                      )}
+                    </>
+                  )}
                   <span className="ctx-popover__label">Line</span>
                   <div className="ctx-shape-grid">
                     {SHAPE_CHOICES.filter((c) => isOpenShape(c.kind)).map((choice) => {

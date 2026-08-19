@@ -214,11 +214,22 @@ export function linePoints(
    * medium ones and eight tight ones are all things people ask a coil for.
    */
   const loop = Math.min(period * 0.62, length * 0.18);
-  const steps = Math.max(48, count * Math.round(stepsFor(period) * 1.5));
+  const steps = Math.max(48, (count + 1) * Math.round(stepsFor(period) * 1.5));
 
+  /**
+   * One more turn than the number asked for, because the ends eat one.
+   *
+   * The unwinding above suppresses the loop across the first and last stretch,
+   * which is what brings the run back to the axis — and it costs about half a
+   * turn at each end. So `count` turns produced `count - 1` *visible* loops:
+   * one asked for a curve, two asked for one loop, three for two. The number
+   * on the control has to mean the number of loops on the screen, so the extra
+   * turn is added here rather than the user being asked to compensate.
+   */
+  const turns = count + 1;
   return Array.from({ length: steps + 1 }, (_, i) => {
     const t = i / steps;
-    const turn = t * count * Math.PI * 2;
+    const turn = t * turns * Math.PI * 2;
     const edge = smoothstep(t / UNWIND) * smoothstep((1 - t) / UNWIND);
     return at(
       t * length - Math.sin(turn) * loop * 0.55 * edge,

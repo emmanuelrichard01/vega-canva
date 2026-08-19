@@ -611,7 +611,19 @@ export const ToolWorkspace: React.FC<Props> = ({ activeToolId, onOpenDiagram, on
             active={isLine}
             hasMenu
             menuOpen={openMenu === 'line'}
-            onClick={() => toggleMenu('line')}
+            /**
+             * Arms the tool as well as opening the menu.
+             *
+             * It only opened the menu, so the seat lit up while nothing was
+             * armed — you could pick a style, close the flyout, click the
+             * board and have a marquee appear, because Select was still the
+             * active tool the whole time. A seat that looks armed and is not
+             * is the worst of the three states.
+             *
+             * This is what the eraser seat already did; the line seat was the
+             * one that did not.
+             */
+            onClick={() => { pick(shapeToolId(armedLine ?? lastLine)); toggleMenu('line'); }}
           >
             {openMenu === 'line' && (
               <Flyout title="Line">

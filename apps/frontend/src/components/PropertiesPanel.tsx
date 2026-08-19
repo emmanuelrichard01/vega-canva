@@ -2223,7 +2223,10 @@ export const PropertiesPanel: React.FC<PropertiesPanelProps> = ({ selectedIds, o
           </Row>
           {(node.geometry.lineProfile ?? 'straight') !== 'straight'
             && node.geometry.lineProfile !== 'curved' && (
-            <Row label="Repeats" hint="How many times the shape repeats along the run. More makes them tighter, not smaller.">
+            <Row
+              label={node.geometry.lineProfile === 'coil' ? 'Loops' : 'Repeats'}
+              hint="How many times the shape repeats along the run. More makes them tighter, not smaller."
+            >
               {(() => {
                 const waves = shared((n) => (n.type === 'shape' ? n.geometry.lineWaves ?? 6 : null));
                 return (
