@@ -100,6 +100,29 @@ export const TextRenderer: React.FC<Props> = React.memo(({ node, visible }) => {
     return () => window.clearTimeout(timer);
   }, [node.id, node.resize, node.width, node.height, node.text, layout, visible]);
 
+  /**
+   * Above the early return, because they are hooks.
+   *
+   * These sat below it, which is a bug React reports as "rendered fewer hooks
+   * than expected" — and the symptom was spectacular rather than subtle:
+   * entering the text editor flips `visible` to false, the component returns
+   * early, two `useMemo` calls vanish from the render, React throws, and the
+   * whole Konva subtree unmounts. Double-clicking a text object emptied the
+   * canvas.
+   *
+   * The rule is not "hooks before returns" as a style preference — it is the
+   * one thing that makes a hook a hook. Anything conditional has to be inside
+   * the hook, never around it.
+   */
+  const cycle = t.colorCycle && t.colorCycle.colors.length > 0 ? t.colorCycle : null;
+  // `caseText` rather than `node.text`: the ramp is spread over what is
+  // *drawn*, and an upper-cased or title-cased block can have a different
+  // character count from what is stored, which would put the ramp slightly out
+  // of step with the glyphs.
+  const caseText = React.useMemo(() => applyTextCase(node.text, t.textCase), [node.text, t.textCase]);
+  const measure = React.useMemo(() => measurerFor(t), [t]);
+  const cycleUnits = cycle ? cycleTotal(caseText, cycle.unit) : 0;
+
   if (!visible) return null;
 
   const highlight = t.highlight;
@@ -119,19 +142,6 @@ export const TextRenderer: React.FC<Props> = React.memo(({ node, visible }) => {
   const halo = glow
     ? { shadowColor: glow.color, shadowBlur: glow.blur, shadowOpacity: 1, shadowOffset: { x: 0, y: 0 } }
     : shadowProps(node.appearance);
-
-  /**
-   * The colour cycle, and the two numbers it needs from the whole block.
-   *
-   * `caseText` rather than `node.text`: the ramp is spread over what is
-   * *drawn*, and a title-cased or upper-cased block can have a different
-   * character count from what is stored. Counting the stored form would put
-   * the ramp slightly out of step with the glyphs.
-   */
-  const cycle = t.colorCycle && t.colorCycle.colors.length > 0 ? t.colorCycle : null;
-  const caseText = React.useMemo(() => applyTextCase(node.text, t.textCase), [node.text, t.textCase]);
-  const cycleUnits = cycle ? cycleTotal(caseText, cycle.unit) : 0;
-  const measure = React.useMemo(() => measurerFor(t), [t]);
 
   const common = {
     fontSize: t.fontSize,

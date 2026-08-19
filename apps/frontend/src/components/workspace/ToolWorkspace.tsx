@@ -646,7 +646,20 @@ export const ToolWorkspace: React.FC<Props> = ({ activeToolId, onOpenDiagram, on
                   <SegmentedControl
                     ariaLabel="Line style"
                     value={lineProfile}
-                    onChange={(v) => setLineProfile(v as LineProfile)}
+                    /**
+                     * Picking a style arms the tool as well as setting it.
+                     *
+                     * Choosing "wavy" is already a statement that you are about
+                     * to draw a wavy line — making you then click Line or Arrow
+                     * to confirm it is a second question with the same answer.
+                     * The seat wears whichever of the two was used last, so
+                     * there is always one armed; switching between them stays a
+                     * single click for the times you do want the other.
+                     */
+                    onChange={(v) => {
+                      setLineProfile(v as LineProfile);
+                      pick(shapeToolId(armedLine ?? lastLine));
+                    }}
                     segments={LINE_PROFILES.map((profile) => ({
                       value: profile,
                       label: LINE_PROFILE_LABELS[profile],
