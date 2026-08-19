@@ -146,7 +146,12 @@ const TIPS: Array<{ title: string; body: string }> = [
   {
     title: 'Aim at the middle, or at a spot',
     body:
-      'Dropping an end in the middle of an object binds to the object and lets the route pick a side, which keeps looking right as things move. Dropping it on an edge binds to that exact place. Select a connector and drag either end to re-aim it, or off onto empty board to detach it.',
+      'Dropping an end in the middle of an object binds to the object and lets the route pick a side, which keeps looking right as things move. Dropping it on an edge binds to that exact place. Select a connector and drag either end to re-aim it.',
+  },
+  {
+    title: 'A connector needs two objects',
+    body:
+      'Both ends have to land on something — an arrow that joins nothing is a line, and the Line tool (R) draws one. Deleting a shape still leaves its connectors where they were rather than collapsing them.',
   },
   {
     title: 'Diagrams go both ways',

@@ -50,9 +50,15 @@ type Which = 'from' | 'to';
  * Exactly what the same drop means to the Connector tool, because both ask
  * `bindingAt`. Near an edge midpoint binds to that port; on the perimeter binds
  * to that exact spot as an anchor; well inside binds to the object with the
- * side left open; anywhere else leaves the end loose at that coordinate. One
- * gesture covers connect, re-connect, re-place and detach, which is why there
- * is no modifier and no menu.
+ * side left open. One gesture covers connect, re-connect and re-place, which is
+ * why there is no modifier and no menu.
+ *
+ * **A drop onto empty board is refused and the end springs back**, for the same
+ * reason the tool will not draw one — see the note on `ConnectorTool`. Letting
+ * the editor author a loose end while the tool refuses to would be the same
+ * object having two sets of rules depending on which surface you reached it
+ * through. Detaching is still real, but it is something *deleting a box* does,
+ * not something you can do on purpose.
  *
  * ## Live, then committed
  *
@@ -94,6 +100,13 @@ export const ConnectorEditor: React.FC<Props> = ({ node, stageScale }) => {
   };
 
   const commit = (which: Which, end: ConnectorEnd) => {
+    // Refused rather than written. `setLive(null)` alone puts the handle back
+    // where the binding says it is, so a rejected drop reads as a spring-back
+    // rather than as nothing happening.
+    if (!end.nodeId) {
+      setLive(null);
+      return;
+    }
     const nextFrom = which === 'from' ? end : node.from;
     const nextTo = which === 'to' ? end : node.to;
     const box = connectorBounds(connectorPoints(nextFrom, nextTo, node.routing, lookup));
@@ -113,10 +126,10 @@ export const ConnectorEditor: React.FC<Props> = ({ node, stageScale }) => {
         x={point.x}
         y={point.y}
         radius={radius}
-        // Filled when bound, hollow when loose, so an end that is merely
-        // sitting on top of a shape is visibly different from one attached to
-        // it. That distinction is invisible otherwise and is the whole thing a
-        // connector is for.
+        // Filled when bound, hollow when not. A committed end is always
+        // bound, so hollow means one of two things: this end is mid-drag over
+        // empty board and will spring back, or its object was deleted and the
+        // connector detached. Both are worth seeing at a glance.
         fill={bound ? ACCENT : '#FFFFFF'}
         stroke={ACCENT}
         strokeWidth={1.5 / stageScale}
@@ -202,7 +215,10 @@ export const ConnectorEditor: React.FC<Props> = ({ node, stageScale }) => {
         {live && (
           <Line
             points={points}
-            stroke={ACCENT}
+            // Grey while the dragged end is over nothing, so "this will not
+            // stick" is answered during the drag rather than by a spring-back
+            // afterwards.
+            stroke={live.end.nodeId ? ACCENT : '#9CA3AF'}
             strokeWidth={1 / stageScale}
             dash={[4 / stageScale, 4 / stageScale]}
             lineJoin="round"

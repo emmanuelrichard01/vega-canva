@@ -54,12 +54,28 @@ const SIDES: Array<Exclude<Port, 'auto'>> = ['top', 'right', 'bottom', 'left'];
  * the slow way. They cost one small ring each and disappear the moment the
  * tool does.
  *
- * ## Ending on empty canvas
+ * ## Both ends must land on an object
  *
- * Allowed, and it makes a loose end at that point. A diagram in progress
- * routinely has an arrow pointing at a box that does not exist yet, and
- * refusing to draw one means holding the shape in your head until you have
- * made somewhere for it to land.
+ * This used to allow a loose end, on the reasoning that a diagram in progress
+ * often has an arrow pointing at a box that does not exist yet. That reasoning
+ * is sound in a tool where the arrow *is* the line tool. It is not sound here,
+ * and the reason is specific to this app: `shape:line` and `shape:arrow`
+ * already exist, and they are the right object for a mark that points at
+ * nothing. An unbound connector is a worse version of one of those — it costs
+ * a node type that promises to follow what it joins, and then joins nothing.
+ *
+ * Put in the terms this codebase already uses, an unbound end is a node
+ * **declaring a capability it does not have** (invariant 6). Everything
+ * downstream is entitled to believe a connector connects.
+ *
+ * The loose coordinate stays in the model, because **detaching is still real**
+ * — deleting a box has to leave its arrows where they were rather than
+ * collapsing them onto the origin. It is a fallback, not something you can
+ * author.
+ *
+ * Refusal is *shown*, never silent. A gesture that cannot land stays pending
+ * with its preview on screen and its free end drawn hollow, so the tool reads
+ * as waiting rather than broken. Nothing is discarded until Escape.
  */
 export class ConnectorTool implements Tool {
   id = 'connector';
@@ -109,7 +125,17 @@ export class ConnectorTool implements Tool {
       return;
     }
 
-    this.from = this.endAt(pos, ctx);
+    const from = this.endAt(pos, ctx);
+    // A connector starts on something. Pressing empty board arms nothing, so
+    // there is no half-gesture to abandon and no line trailing off a point
+    // that means nothing. The ports on every connectable object are already
+    // on screen saying where to aim.
+    if (!from.nodeId) {
+      this.pushOverlay(ctx);
+      return;
+    }
+
+    this.from = from;
     this.pending = true;
     this.isDragging = false;
     this.pressScreen = this.getScreenPos(e);
@@ -167,7 +193,11 @@ export class ConnectorTool implements Tool {
     // A loop from an object back to itself describes no relationship, and
     // draws as a degenerate stub inside the shape.
     const sameObject = this.from.nodeId && to.nodeId && this.from.nodeId === to.nodeId;
-    if (travelled < MIN_DRAG || sameObject) {
+    // Unbound is refused for the same reason the first click is — see the
+    // note on the class. It is the common refusal, so it must be the one that
+    // feels least like a failure: the gesture stands, the preview stays, and
+    // the next click on something real finishes it.
+    if (!to.nodeId || travelled < MIN_DRAG || sameObject) {
       // A refused *click* leaves the pending gesture standing rather than
       // discarding it. Silently throwing away a connector the user has already
       // started, in answer to a click they meant to make, reads as the tool
@@ -302,6 +332,10 @@ export class ConnectorTool implements Tool {
       spot,
       bodyBox,
       preview,
+      // Whether releasing here would make a connector. Drives the preview's
+      // treatment, so "this cannot land" is answered while you are still
+      // deciding rather than by nothing happening when you click.
+      landable: Boolean(target.nodeId) && target.nodeId !== this.from?.nodeId,
     });
   }
 
@@ -329,13 +363,30 @@ export class ConnectorTool implements Tool {
           />
         )}
         {overlayState.preview && overlayState.preview.length >= 4 && (
-          <Line
-            points={overlayState.preview}
-            stroke="#3B82F6"
-            strokeWidth={2 / zoom}
-            dash={[6 / zoom, 4 / zoom]}
-            lineJoin="round"
-          />
+          <>
+            <Line
+              points={overlayState.preview}
+              // Grey while the far end is over nothing. The route is still
+              // drawn — you need to see where it would go — but it stops
+              // claiming it is about to become a connector.
+              stroke={overlayState.landable ? '#3B82F6' : '#9CA3AF'}
+              strokeWidth={2 / zoom}
+              dash={[6 / zoom, 4 / zoom]}
+              lineJoin="round"
+            />
+            {/* A hollow ring on a free end, which is the same vocabulary the
+                endpoint handles use: filled means bound, hollow means not. */}
+            {!overlayState.landable && (
+              <Circle
+                x={overlayState.preview[overlayState.preview.length - 2]}
+                y={overlayState.preview[overlayState.preview.length - 1]}
+                radius={4 / zoom}
+                fill="transparent"
+                stroke="#9CA3AF"
+                strokeWidth={1.5 / zoom}
+              />
+            )}
+          </>
         )}
         {overlayState.ports.map((p: any) => {
           const isArmed = overlayState.armed === `${p.nodeId}:${p.side}`;
