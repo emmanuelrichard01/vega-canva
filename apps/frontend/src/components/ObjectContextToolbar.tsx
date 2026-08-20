@@ -18,6 +18,11 @@ import { cameraSystem } from '../engine/CameraSystem';
 import { engineEvents } from '../engine/EventBus';
 import { cropMode } from '../engine/interaction/cropMode';
 import { pathEdit } from '../engine/interaction/pathEdit';
+import {
+  alignPickedAnchors,
+  deletePickedAnchor,
+  setPickedAnchorMode,
+} from './canvas/PathEditor';
 import { applyBoolean, canVectorize, flattenToPath, outlineStrokeOf } from '../engine/document/vectorOps';
 import { BOOLEAN_OPS, type BooleanOp } from '../engine/model/pathBoolean';
 import { deleteNodesWithFrames } from '../engine/interaction/frameMembership';
@@ -152,6 +157,27 @@ const StickyPalette: React.FC<{
       })}
     </div>
   </RailPopover>
+);
+
+/**
+ * Corner or smooth, drawn rather than lettered.
+ *
+ * The two states an anchor can be in are a shape, and the anchors themselves
+ * are already drawn square and round to say which — so the buttons that set
+ * them use the same two shapes. A pair of words would be a second vocabulary
+ * for a distinction the canvas has already taught.
+ */
+const CornerIcon: React.FC<{ rounded: boolean }> = ({ rounded }) => (
+  <svg width="15" height="15" viewBox="0 0 15 15" fill="none" aria-hidden>
+    <path
+      d={rounded ? 'M3 12 Q3 3 12 3' : 'M3 12 V3 H12'}
+      stroke="currentColor"
+      strokeWidth="1.6"
+      strokeLinecap="round"
+      fill="none"
+    />
+    <circle cx="3" cy="12" r="1.8" fill="currentColor" />
+  </svg>
 );
 
 const TYPE_LABEL: Record<string, { icon: React.ReactNode; name: string }> = {
@@ -518,7 +544,10 @@ export const ObjectContextToolbar: React.FC<Props> = ({ selectedId, selectedIds,
   const cropping = useSyncExternalStore(cropMode.subscribe, cropMode.getSnapshot, cropMode.getSnapshot);
   // So the button reads as pressed while the anchors are on screen, and can
   // close what it opened.
-  const editingPath = useSyncExternalStore(pathEdit.subscribe, pathEdit.getSnapshot, pathEdit.getSnapshot)?.nodeId ?? null;
+  const pathSelection = useSyncExternalStore(pathEdit.subscribe, pathEdit.getSnapshot, pathEdit.getSnapshot);
+  const editingPath = pathSelection?.nodeId ?? null;
+  /** How many anchors are picked, which is what the anchor rail is gated on. */
+  const pickedAnchors = pathSelection?.anchors.length ?? 0;
   const isDraggingRef = useRef(false);
   const reactionsRef = useRef<HTMLDivElement>(null);
   // Mirrors state, read inside the rAF loop so it can skip setState on frames
@@ -1390,11 +1419,15 @@ export const ObjectContextToolbar: React.FC<Props> = ({ selectedId, selectedIds,
             it may as well not exist: the only way to find it is to try
             double-clicking things. A button costs one slot on a rail that only
             appears for the paths it applies to. */}
-        {node.type === 'path' && node.geometry.kind === 'bezier' && (
+        {/* Compound paths too, now that anchors are addressed per contour.
+            Every boolean result was previously uneditable — the button was
+            hidden on exactly the paths whose shape most needed correcting. */}
+        {node.type === 'path' && node.geometry.kind !== 'freehand' && (
           <>
             <div className="ctx-group">
               <RailButton
                 label="Edit points"
+                hint="Direct select (A)"
                 pressed={editingPath === node.id}
                 onClick={() =>
                   editingPath === node.id ? pathEdit.exit() : pathEdit.enter(node.id)
@@ -1403,6 +1436,55 @@ export const ObjectContextToolbar: React.FC<Props> = ({ selectedId, selectedIds,
                 <Spline size={15} />
               </RailButton>
             </div>
+
+            {/**
+              * The anchor rail: what you can do to the points you have picked.
+              *
+              * Appears only while anchors are actually selected, which is the
+              * whole reason it can sit inline rather than in a panel — it is
+              * never on screen at a moment when it applies to nothing. Corner
+              * and smooth were reachable only by double-clicking an anchor, a
+              * gesture with no affordance at all; align had no route in.
+              */}
+            {editingPath === node.id && pickedAnchors > 0 && (
+              <>
+                <Divider />
+                <div className="ctx-group">
+                  <span className="ctx-value" style={{ marginRight: 2 }}>{pickedAnchors}</span>
+                  <RailButton label="Corner" hint="Straighten these points" onClick={() => setPickedAnchorMode('corner')}>
+                    <CornerIcon rounded={false} />
+                  </RailButton>
+                  <RailButton label="Smooth" hint="Round these points" onClick={() => setPickedAnchorMode('smooth')}>
+                    <CornerIcon rounded />
+                  </RailButton>
+                </div>
+                {/* Align needs two points to mean anything, so it is offered
+                    on two rather than shown disabled on one. */}
+                {pickedAnchors > 1 && (
+                  <>
+                    <Divider />
+                    <div className="ctx-group">
+                      {/* The same six edges the multi-select rail offers, read
+                          from the same table — aligning three objects and
+                          aligning three anchors are the same question asked of
+                          different things, and two tables would be two chances
+                          for "middle" to mean different edges. */}
+                      {ALIGN_BUTTONS.map(({ edge, label, icon }) => (
+                        <RailButton key={edge} label={label} onClick={() => alignPickedAnchors(edge)}>
+                          {icon}
+                        </RailButton>
+                      ))}
+                    </div>
+                  </>
+                )}
+                <Divider />
+                <div className="ctx-group">
+                  <RailButton label="Delete points" hint="Remove these points (Del)" onClick={() => deletePickedAnchor()}>
+                    <Trash2 size={15} />
+                  </RailButton>
+                </div>
+              </>
+            )}
             <Divider />
           </>
         )}

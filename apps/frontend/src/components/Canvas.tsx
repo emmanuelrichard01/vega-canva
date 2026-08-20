@@ -11,7 +11,7 @@ import { editor } from '../engine/api/EditorAPI';
 import { EXPORT_CHROME } from '../engine/export/chrome';
 import { SmartGuides } from './canvas/SmartGuides';
 import { RulerGuides } from './canvas/RulerGuides';
-import { PathEditor, deletePickedAnchor } from './canvas/PathEditor';
+import { PathEditor, deletePickedAnchor, nudgePickedAnchors, selectAllAnchors } from './canvas/PathEditor';
 import { pathEdit } from '../engine/interaction/pathEdit';
 import { RULER_SIZE, Rulers } from './canvas/Rulers';
 import { tickStep } from '../engine/interaction/rulerTicks';
@@ -48,7 +48,22 @@ const isDrawingTool = (toolId: string) => DRAWING_TOOLS.has(toolId) || toolId.st
 import { cursorModeForTool, LocalCursor } from '../engine/cursor';
 import { GestureOverlay } from "./GestureOverlay";
 import { ToolManager, SelectTool, ShapeTool, TextTool, StickyTool, AudioTool, PenTool, BezierPenTool, HandTool, EraserTool, CommentTool, FrameTool, ConnectorTool } from '../engine/tools';
-import { canSelectWith } from '../engine/tools/shortcuts';
+import { canSelectWith, opensPathWith } from '../engine/tools/shortcuts';
+import { DirectSelectTool } from '../engine/tools/DirectSelectTool';
+
+/**
+ * Which way each arrow key nudges, as a unit vector.
+ *
+ * A table rather than a switch, because the same four keys are read in two
+ * places — here for anchors and in `engine/tools/nudge` for nodes — and two
+ * switches is two chances for up and down to end up swapped in one of them.
+ */
+const NUDGE_KEYS: Record<string, [number, number]> = {
+  ArrowLeft: [-1, 0],
+  ArrowRight: [1, 0],
+  ArrowUp: [0, -1],
+  ArrowDown: [0, 1],
+};
 import { nudgeDelta } from '../engine/tools/nudge';
 import { CommentsOverlay } from "./CommentsOverlay";
 import { AudioRecordingHUD } from "./AudioRecordingHUD";
@@ -175,6 +190,25 @@ export const Canvas: React.FC<CanvasProps> = ({ activeTool, selectedIds, setSele
         e.stopPropagation();
         pathEdit.exit();
       } else if ((e.key === 'Backspace' || e.key === 'Delete') && deletePickedAnchor()) {
+        e.stopPropagation();
+        e.preventDefault();
+      } else if (NUDGE_KEYS[e.key]) {
+        /**
+         * Arrows move the picked anchors, not the node.
+         *
+         * While a path is open, moving the whole object is the opposite of what
+         * direct selection is for — and with nothing picked this falls through
+         * to the node nudge, so the key never simply stops working.
+         */
+        const [dx, dy] = NUDGE_KEYS[e.key];
+        const step = e.shiftKey ? 10 : 1;
+        if (nudgePickedAnchors(dx * step, dy * step)) {
+          e.stopPropagation();
+          e.preventDefault();
+        }
+      } else if ((e.metaKey || e.ctrlKey) && e.key.toLowerCase() === 'a' && selectAllAnchors()) {
+        // Select-all means "every anchor on this path" while one is open, which
+        // is the only reading of it that acts on what you are looking at.
         e.stopPropagation();
         e.preventDefault();
       }
@@ -626,6 +660,20 @@ export const Canvas: React.FC<CanvasProps> = ({ activeTool, selectedIds, setSele
     const isShift = !!e?.evt?.shiftKey;
 
     /**
+     * With direct selection armed, clicking a path opens it — no double-click
+     * and no toolbar hunt. It still selects the node, because the transformer
+     * and the properties panel both key off selection and an object being
+     * edited that reads as unselected everywhere else is a lie.
+     */
+    if (opensPathWith(activeTool)) {
+      if (DirectSelectTool.open(id)) {
+        setSelectedIds([id]);
+        return;
+      }
+      pathEdit.exit();
+    }
+
+    /**
      * A double-click steps one level into whatever is under it.
      *
      * `groupToEnter` answers where that lands and returns `null` when there is
@@ -675,7 +723,7 @@ export const Canvas: React.FC<CanvasProps> = ({ activeTool, selectedIds, setSele
     } else {
       setSelectedIds(groupIds);
     }
-  }, [activeTool, setSelectedIds, objects]);
+  }, [activeTool, setSelectedIds, objects, groups]);
 
   const sortedObjects = useMemo(() => {
     return Object.values(objects).sort((a: any, b: any) => (a.zIndex || 0) - (b.zIndex || 0));
@@ -1045,6 +1093,7 @@ export const Canvas: React.FC<CanvasProps> = ({ activeTool, selectedIds, setSele
   const toolManager = useMemo(() => {
     const tm = new ToolManager({ editor, camera: cameraSystem, setOverlayState });
     tm.registerTool(new SelectTool());
+    tm.registerTool(new DirectSelectTool());
     /**
      * Every preset, across both dock seats.
      *

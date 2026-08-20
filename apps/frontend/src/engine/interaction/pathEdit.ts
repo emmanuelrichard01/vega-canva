@@ -1,5 +1,7 @@
+import type { AnchorRef } from '../model/pathEditing';
+
 /**
- * Which path is open for anchor editing, and which anchor is picked.
+ * Which path is open for direct selection, and which of its anchors are picked.
  *
  * The same shape as `cropMode`, and for the same reasons: it is a mode
  * belonging to one object, entered from that object, and left by pressing
@@ -7,16 +9,30 @@
  * *you* have selected is not a property of the board, and syncing it would put
  * a collaborator's handle selection on everyone's screen.
  *
- * Unlike crop, there is no snapshot to restore. Every anchor edit is a single
- * `updateNode` with the whole geometry in it, so it is one undo step already
- * and "cancel" has no separate meaning — Escape leaves the mode and the path
- * stays as you last dragged it, exactly as leaving any other tool does.
+ * ## Why the selection is a list
+ *
+ * It used to be `anchor: number | null`: one index, on the assumption of one
+ * contour. Both halves were too small.
+ *
+ * One anchor at a time is not a slower way to reshape an edge, it is a
+ * different result — moving the two corners of a box's top edge separately
+ * passes through a shape you did not want, and any constraint or snap applies
+ * to the wrong thing on the way. And a bare index cannot name an anchor on a
+ * compound path at all: a boolean result or a glyph with a hole has several
+ * contours, and `3` does not say which.
+ *
+ * ## No snapshot to restore
+ *
+ * Every edit writes the whole geometry, so the UndoManager's capture window
+ * already folds a drag into one step, and "cancel" has no separate meaning —
+ * Escape leaves the mode and the path stays as you last dragged it, exactly as
+ * leaving any other tool does.
  */
 
 export interface PathSelection {
   nodeId: string;
-  /** Index of the picked anchor, or `null` when nothing in particular is picked. */
-  anchor: number | null;
+  /** The picked anchors. Empty means the path is open but nothing is chosen. */
+  anchors: AnchorRef[];
 }
 
 type Listener = () => void;
@@ -28,6 +44,9 @@ function emit() {
   listeners.forEach((fn) => fn());
 }
 
+const sameSelection = (a: readonly AnchorRef[], b: readonly AnchorRef[]) =>
+  a.length === b.length && a.every((r, i) => r.sub === b[i].sub && r.index === b[i].index);
+
 export const pathEdit = {
   getSnapshot: (): PathSelection | null => active,
 
@@ -38,16 +57,24 @@ export const pathEdit = {
 
   isEditing: (nodeId: string) => active?.nodeId === nodeId,
 
-  /** Open a path for editing. Re-entering on the same node keeps the picked anchor. */
+  /** Open a path for editing. Re-entering on the same node keeps the selection. */
   enter(nodeId: string) {
     if (active?.nodeId === nodeId) return;
-    active = { nodeId, anchor: null };
+    active = { nodeId, anchors: [] };
     emit();
   },
 
-  select(anchor: number | null) {
-    if (!active || active.anchor === anchor) return;
-    active = { ...active, anchor };
+  /**
+   * Replace the picked anchors.
+   *
+   * Compared before emitting, because a drag reports a selection on every
+   * pointer move and an unconditional emit would re-render the overlay sixty
+   * times a second to draw the same handles in the same places.
+   */
+  select(anchors: AnchorRef[]) {
+    if (!active) return;
+    if (sameSelection(active.anchors, anchors)) return;
+    active = { ...active, anchors };
     emit();
   },
 

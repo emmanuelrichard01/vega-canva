@@ -18,6 +18,7 @@
  */
 export const TOOL_SHORTCUTS: Record<string, string> = {
   select: 'V',
+  'direct-select': 'A',
   hand: 'H',
   pen: 'N',
   'bezier-pen': 'P',
@@ -63,4 +64,15 @@ export const shortcutFor = (toolId: string): string | undefined => TOOL_SHORTCUT
  * The rule itself is unchanged and correct — a drawing tool that also selected
  * would fight the stroke you are trying to start.
  */
-export const canSelectWith = (toolId: string): boolean => toolId === 'select';
+export const canSelectWith = (toolId: string): boolean =>
+  toolId === 'select' || toolId === 'direct-select';
+
+/**
+ * Whether a click with this tool opens a path for anchor editing.
+ *
+ * Separate from `canSelectWith` because direct selection does *both*: it opens
+ * a path when it lands on one, and it selects like the arrow when it lands on
+ * anything else — an editor that appears inert on half the board is worse than
+ * one that does something reasonable.
+ */
+export const opensPathWith = (toolId: string): boolean => toolId === 'direct-select';

@@ -1,6 +1,7 @@
 export * from './Tool';
 export * from './ToolManager';
 export * from './SelectTool';
+export * from './DirectSelectTool';
 export * from './ShapeTool';
 export * from './TextTool';
 export * from './StickyTool';

@@ -1,5 +1,5 @@
 import React, { useCallback, useEffect, useRef, useState } from 'react';
-import { MousePointer2, Hand, Pen, PenTool as PenToolIcon, Type, Square, StickyNote, MessageSquare, ImageIcon, Mic, Sparkles, Frame, Eraser, Workflow, MoreVertical, TextQuote } from 'lucide-react';
+import { MousePointer2, MousePointerClick, Hand, Pen, PenTool as PenToolIcon, Type, Square, StickyNote, MessageSquare, ImageIcon, Mic, Sparkles, Frame, Eraser, Workflow, MoreVertical, TextQuote } from 'lucide-react';
 import { Minus, Spline } from 'lucide-react';
 import { SegmentedControl } from '../ui/SegmentedControl';
 import { SketchLevelIcon } from '../panel/sketchIcons';
@@ -208,11 +208,11 @@ interface Props {
 
 /** Left-to-right order of the dock, and so the order the arrow keys walk it. */
 const SEAT = {
-  select: 0, hand: 1,
-  draw: 2, eraser: 3,
-  text: 4, block: 5, shape: 6, line: 7, frame: 8, connector: 9, sticky: 10,
-  image: 11, audio: 12, forces: 13,
-  more: 14,
+  select: 0, directSelect: 1, hand: 2,
+  draw: 3, eraser: 4,
+  text: 5, block: 6, shape: 7, line: 8, frame: 9, connector: 10, sticky: 11,
+  image: 12, audio: 13, forces: 14,
+  more: 15,
 } as const;
 
 
@@ -393,6 +393,16 @@ export const ToolWorkspace: React.FC<Props> = ({ activeToolId, onOpenDiagram, on
           {...seatProps(SEAT.select)}
           icon={<MousePointer2 size={18} />} label="Select" toolId="select"
           active={activeToolId === 'select'} onClick={() => setTool('select')}
+        />
+        {/* Direct selection sits beside Select because it is the same act at a
+            different grain — one asks which object, the other which part of it.
+            Every vector editor pairs them, and putting it in a drawer would
+            make the only way to reshape a curve a thing you have to find. */}
+        <DockButton
+          {...seatProps(SEAT.directSelect)}
+          icon={<MousePointerClick size={18} />} label="Direct select" toolId="direct-select"
+          description="anchors and handles"
+          active={activeToolId === 'direct-select'} onClick={() => setTool('direct-select')}
         />
         <DockButton
           {...seatProps(SEAT.hand)}

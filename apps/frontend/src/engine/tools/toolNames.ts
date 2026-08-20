@@ -21,6 +21,7 @@
  */
 export const TOOL_NAMES: Record<string, string> = {
   select: 'Select and move',
+  'direct-select': 'Direct select — anchors and handles',
   hand: 'Pan the board',
   pen: 'Pencil — freehand',
   'bezier-pen': 'Pen — anchors and curves',
