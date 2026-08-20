@@ -12,6 +12,8 @@ import {
 } from '../../engine/export';
 import { parseDocumentExport, describeImport } from '../../engine/export/DocumentImport';
 import { restoreDocument } from '../../engine/export/restoreDocument';
+import { computeContentBounds } from '../../engine/export/bounds';
+import { fitScale } from '../../engine/export/rasterLimits';
 import { useFocusTrap } from '../../hooks/useFocusTrap';
 import { useStore } from '../../hooks/useStore';
 
@@ -80,6 +82,26 @@ export const ExportModal: React.FC<Props> = ({ onClose, title }) => {
   const dialogRef = useFocusTrap(true, onClose);
   const spec = FORMAT_SPECS[format];
 
+  /**
+   * Which formats the browser can show back to you.
+   *
+   * This was `spec.raster`, which left **SVG** — the one vector format, and the
+   * one most likely to surprise you, since it is rebuilt from the document
+   * rather than captured from the screen — as the only visual format with no
+   * preview. An image element renders an SVG blob perfectly well; there was
+   * never a technical reason, only the assumption that "previewable" and "made
+   * of pixels" were the same question.
+   */
+  const previewable = spec.raster || format === 'svg';
+
+  /**
+   * A background is meaningful for anything that draws, which is everything
+   * except the document dump. Gated on `spec.raster` before, so SVG offered no
+   * background control at all — and now that the SVG exporter honours the
+   * setting, hiding the control would leave it permanently transparent.
+   */
+  const paintsBackground = format !== 'json';
+
   const objects = useStore((s) => s.objects);
   const frameList = React.useMemo(
     () =>
@@ -92,6 +114,9 @@ export const ExportModal: React.FC<Props> = ({ onClose, title }) => {
   );
   const activeFrame = frameList.find((f) => f.id === target);
   const isBatch = target === EVERY_FRAME;
+
+  /** The document's own extent, for the size readout and the clamp warning. */
+  const contentBounds = React.useMemo(() => computeContentBounds(objects), [objects]);
 
   const baseOptions = () => ({
     scale,
@@ -110,7 +135,7 @@ export const ExportModal: React.FC<Props> = ({ onClose, title }) => {
    * and show a stale image.
    */
   useEffect(() => {
-    if (!spec.raster || isBatch) {
+    if (!previewable || isBatch) {
       setPreview(null);
       return;
     }
@@ -137,7 +162,7 @@ export const ExportModal: React.FC<Props> = ({ onClose, title }) => {
       window.clearTimeout(timer);
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [format, target, quality, background, spec.raster, isBatch]);
+  }, [format, target, quality, background, previewable, isBatch]);
 
   // The object URL outlives React's own cleanup unless it is revoked by hand.
   useEffect(() => () => { if (preview) URL.revokeObjectURL(preview.url); }, [preview]);
@@ -151,12 +176,46 @@ export const ExportModal: React.FC<Props> = ({ onClose, title }) => {
    */
   const estimatedBytes = preview ? preview.bytes * (spec.raster ? scale * scale : 1) : null;
 
+  /**
+   * Whether the browser will actually honour the chosen density.
+   *
+   * `captureRaster` silently reduces the scale when the canvas would exceed
+   * what the browser can allocate, which is right — a smaller image beats a
+   * blank one — but it happened invisibly, so picking 4× on a large board
+   * produced a file quietly smaller than the label promised. Asking the same
+   * function the export asks means the warning cannot disagree with what is
+   * about to happen.
+   */
+  const exportBox = activeFrame
+    ? { width: activeFrame.width, height: activeFrame.height }
+    : contentBounds;
+  const effectiveScale = spec.raster
+    ? fitScale(exportBox.width, exportBox.height, scale)
+    : scale;
+  const scaleClamped = spec.raster && effectiveScale < scale - 1e-6;
+
   const handleExport = async () => {
     setIsExporting(true);
     setStatus(null);
     setError(null);
     try {
-      if (isBatch) {
+      if (isBatch && format === 'pdf') {
+        /**
+         * PDF is one document, not a folder of them.
+         *
+         * Every other format has to save a file per frame because there is no
+         * such thing as a multi-frame PNG. A PDF has pages, and the exporter
+         * turns each frame into one — so looping here would produce N
+         * single-page documents where the format's own answer is one document
+         * of N pages.
+         */
+        await ExportService.export(format, {
+          ...baseOptions(),
+          frameId: undefined,
+          filename: exportFilename(title, format, scale),
+        });
+        setStatus(`Saved ${frameList.length} pages`);
+      } else if (isBatch) {
         // Saved one at a time rather than zipped: a ZIP would mean shipping a
         // compression library to bundle files the browser is perfectly willing
         // to save individually.
@@ -214,10 +273,16 @@ export const ExportModal: React.FC<Props> = ({ onClose, title }) => {
     const summary = restoreDocument(result.document, mode);
     setPendingRestore(null);
     pendingDocRef.current = null;
+    // Threads are counted separately because they are restored separately —
+    // and because saying "12 objects" for a board that also regained its
+    // comment threads under-reports what just happened.
+    const threads = summary.comments > 0
+      ? ` and ${summary.comments} comment thread${summary.comments === 1 ? '' : 's'}`
+      : '';
     setStatus(
       mode === 'replace'
-        ? `Restored ${summary.added} objects`
-        : `Added ${summary.added} objects`
+        ? `Restored ${summary.added} objects${threads}`
+        : `Added ${summary.added} objects${threads}`
     );
     setTimeout(onClose, 900);
   };
@@ -241,7 +306,7 @@ export const ExportModal: React.FC<Props> = ({ onClose, title }) => {
           {/* Left: what you will get. Rendered through the export path itself,
               so the preview is the export rather than a likeness of it. */}
           <div className="export__preview">
-            {spec.raster && !isBatch ? (
+            {previewable && !isBatch ? (
               <>
                 <div className={`export__canvas export__canvas--${background === 'ink' ? 'ink' : background === 'paper' ? 'paper' : 'checker'}`}>
                   {preview
@@ -250,17 +315,25 @@ export const ExportModal: React.FC<Props> = ({ onClose, title }) => {
                   {previewing && <span className="export__preview-busy"><Loader2 size={14} /></span>}
                 </div>
                 <div className="export__meta">
-                  <span>{activeFrame
-                    ? `${Math.round(activeFrame.width * scale)} × ${Math.round(activeFrame.height * scale)}`
+                  <span>{spec.raster
+                    ? `${Math.round(exportBox.width * effectiveScale)} × ${Math.round(exportBox.height * effectiveScale)}`
                     : 'Fits content'}</span>
                   {estimatedBytes !== null && <span>~{formatBytes(estimatedBytes)}</span>}
                 </div>
+                {scaleClamped && (
+                  <p className="export__hint export__hint--warn">
+                    <AlertTriangle size={12} aria-hidden="true" />
+                    {` This board is too large for ${scale}× in a browser — it will export at ${effectiveScale.toFixed(2)}×.`}
+                  </p>
+                )}
               </>
             ) : (
               <div className="export__canvas export__canvas--flat">
                 <span className="export__preview-empty">
                   {isBatch
-                    ? `${frameList.length} files, one per frame`
+                    ? format === 'pdf'
+                      ? `One document, ${frameList.length} pages — a frame each`
+                      : `${frameList.length} files, one per frame`
                     : `${spec.label} has no image preview`}
                 </span>
               </div>
@@ -294,7 +367,11 @@ export const ExportModal: React.FC<Props> = ({ onClose, title }) => {
                 <span className="export__label">Region</span>
                 <select className="export__select" value={target} onChange={(e) => setTarget(e.target.value)}>
                   <option value={WHOLE_DOCUMENT}>Whole canvas</option>
-                  <option value={EVERY_FRAME}>Every frame — {frameList.length} files</option>
+                  <option value={EVERY_FRAME}>
+                    {format === 'pdf'
+                      ? `Every frame — ${frameList.length} pages, one document`
+                      : `Every frame — ${frameList.length} files`}
+                  </option>
                   {frameList.map((f) => (
                     <option key={f.id} value={f.id}>
                       {f.label} — {Math.round(f.width)} × {Math.round(f.height)}
@@ -324,7 +401,7 @@ export const ExportModal: React.FC<Props> = ({ onClose, title }) => {
             {/* Shown for every format that can express one — and for JPEG and
                 PDF, which cannot, "None" is honestly labelled as unavailable
                 rather than silently producing a black backing. */}
-            {spec.raster && (
+            {paintsBackground && (
               <div className="export__field">
                 <span className="export__label">Background</span>
                 <div className="export__segmented" role="radiogroup" aria-label="Background">

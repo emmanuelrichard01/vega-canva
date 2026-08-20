@@ -1,12 +1,13 @@
 import { computeContentBounds, type ExportBounds } from './bounds';
+import { useStore } from '../../hooks/useStore';
 import { hideExportChrome } from './chrome';
 import { resolveBackground, type ExportOptions, type FormatSpec } from './ExportTypes';
+import { fitScale } from './rasterLimits';
 
-/**
- * Browsers cap canvas dimensions (and total area). Exceeding the cap yields a
- * blank image rather than an error, so the scale is reduced to fit instead.
- */
-export const MAX_CANVAS_EDGE = 8192;
+// Re-exported so importers keep one name for the cap, while the arithmetic
+// itself lives in a module Node can load.
+export { MAX_CANVAS_EDGE, MAX_CANVAS_AREA, fitScale } from './rasterLimits';
+
 
 export interface RasterCapture {
   canvas: HTMLCanvasElement;
@@ -49,17 +50,15 @@ export function captureRaster(options: ExportOptions, spec: FormatSpec): RasterC
   const bounds =
     options.bounds ??
     computeContentBounds(
-      undefined,
+      // Read here rather than defaulted inside `computeContentBounds`, so that
+      // module stays free of the store and can be asserted in Node.
+      useStore.getState().objects,
       options.selectedOnly ? options.selectedIds : undefined,
       options.padding
     );
 
   const requested = options.scale ?? 2;
-  const scale = Math.min(
-    requested,
-    MAX_CANVAS_EDGE / Math.max(bounds.width, 1),
-    MAX_CANVAS_EDGE / Math.max(bounds.height, 1)
-  );
+  const scale = fitScale(bounds.width, bounds.height, requested);
 
   const previous = {
     x: stage.x(),

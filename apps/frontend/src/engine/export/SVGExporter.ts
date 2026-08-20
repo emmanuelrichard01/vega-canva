@@ -1,11 +1,13 @@
-import type { Exporter, ExportOptions, ExportFormat } from './ExportTypes';
+import { FORMAT_SPECS, resolveBackground, type Exporter, type ExportOptions, type ExportFormat } from './ExportTypes';
 import { useStore } from '../../hooks/useStore';
 import { computeContentBounds } from './bounds';
 import { THEMES } from '../../components/canvas/renderers/StickyRenderer';
-import type { AnyNode, ConnectorNode, PathNode, ShapeNode, TextNode, Typography } from '../model/schema';
+import type { AnyNode, ConnectorNode, ImageNode, PathNode, ShapeNode, TextNode, Typography } from '../model/schema';
 import { connectorPoints, type Box } from '../model/connector';
 import { roughPolyline, seedFrom } from '../model/rough';
 import { SvgPaintDefs } from './svgPaint';
+import { assembleSvg } from './svgDocument';
+import { fetchBlob, inlineImageSources } from './inlineImages';
 import { pointsAttribute, regularPolygonPoints, starPoints } from '../model/shapeOutline';
 import { shapeToPath } from '../model/shapeToPath';
 import { defaultEndAlign, linePoints } from '../model/linePath';
@@ -214,29 +216,116 @@ function connectorMarkup(node: ConnectorNode, objects: Record<string, AnyNode>):
   const pts: { x: number; y: number }[] = [];
   for (let i = 0; i + 1 < world.length; i += 2) pts.push({ x: world[i], y: world[i + 1] });
 
+  /**
+   * The heads, and the run trimmed back under them.
+   *
+   * These used to be omitted outright, on the reasoning that `endCapShape`
+   * works in the renderer's local frame and half-reproducing it here would put
+   * arrowheads slightly wrong on every line. That reasoning was sound and the
+   * conclusion was not: `terminateRun` takes a flat world-space run and returns
+   * the trimmed run plus both caps, and `openShapeMarkup` a hundred lines below
+   * has been calling it that way for lines and arrows all along. There was
+   * nothing to reproduce — only a second caller to add.
+   *
+   * The cost of leaving it was the same one this file's header describes for
+   * connectors themselves: **an exported flowchart had no arrowheads**, so
+   * every edge lost its direction and a process diagram became an undirected
+   * graph. A diagram with its direction removed is not a smaller version of the
+   * diagram.
+   */
+  const { run: trimmed, start: startCap, end: endCap } = terminateRun(world, {
+    start: node.endStart ?? 'none',
+    end: node.endEnd ?? 'arrow',
+    strokeWidth: width,
+    scale: node.endScale,
+    // A connector's route is orthogonal or curved and arrives at its target at
+    // the route's own angle, never the box diagonal — so the cap has to face
+    // along the run. `extend` keeps every corner of the route intact and puts
+    // the head beyond the last point, which is what the canvas does.
+    align: 'extend',
+  });
+
+  const tpts: { x: number; y: number }[] = [];
+  for (let i = 0; i + 1 < trimmed.length; i += 2) tpts.push({ x: trimmed[i], y: trimmed[i + 1] });
+
   // Sketched connectors export as the sketch, seeded identically to the canvas
   // so the strokes in the file are the same strokes. The geometry is generated
   // in node-local space by the renderer, so it is generated in world space here
   // and needs no transform.
   const d = node.appearance?.sketch
-    ? roughPolyline(pts, { seed: seedFrom(node.id), closed: false, level: node.appearance.sketch })
-    : `M ${pts.map((p) => `${p.x} ${p.y}`).join(' L ')}`;
+    ? roughPolyline(tpts.length >= 2 ? tpts : pts, {
+        seed: seedFrom(node.id),
+        closed: false,
+        level: node.appearance.sketch,
+      })
+    : `M ${(tpts.length >= 2 ? tpts : pts).map((p) => `${p.x} ${p.y}`).join(' L ')}`;
 
-  // End caps are deliberately omitted rather than approximated. `endCapShape`
-  // builds them in the renderer's local frame with a per-cap inset that trims
-  // the run underneath them, and reproducing half of that here would export
-  // arrowheads that sit slightly wrong on every line. A line without its head
-  // is honestly incomplete; a head in the wrong place looks like a bug.
-  return `<path d="${d}" fill="none" stroke="${stroke}" stroke-width="${width}"${dash} stroke-linecap="round" stroke-linejoin="round" />`;
+  const parts = [
+    `<path d="${d}" fill="none" stroke="${stroke}" stroke-width="${width}"${dash} stroke-linecap="round" stroke-linejoin="round" />`,
+    capMarkup(startCap, stroke, width),
+    capMarkup(endCap, stroke, width),
+  ];
+  return parts.filter(Boolean).join('');
+}
+
+/**
+ * One end cap as SVG, for whichever run produced it.
+ *
+ * Shared by connectors and by lines/arrows. It was written twice before — once
+ * inside `openShapeMarkup` and, in an earlier revision, not at all for
+ * connectors — which is the second-list failure invariant 7 names. A cap is a
+ * cap; the only thing that varies is the paint it takes.
+ */
+function capMarkup(
+  cap: ReturnType<typeof endCapShape>,
+  stroke: string,
+  sw: number
+): string {
+  if (!cap) return '';
+  if (cap.circle) {
+    return `<circle cx="${cap.circle.x.toFixed(2)}" cy="${cap.circle.y.toFixed(2)}" r="${cap.circle.radius.toFixed(2)}" fill="${cap.filled ? stroke : 'none'}" stroke="${stroke}" stroke-width="${sw}" />`;
+  }
+  const pts = cap.points ?? [];
+  const pairs: string[] = [];
+  for (let i = 0; i + 1 < pts.length; i += 2) pairs.push(`${pts[i].toFixed(2)},${pts[i + 1].toFixed(2)}`);
+  if (pairs.length === 0) return '';
+  // Open markers — the bar — are a polyline, not a polygon: closing a
+  // two-point run draws it back over itself and fills nothing.
+  return cap.filled
+    ? `<polygon points="${pairs.join(' ')}" fill="${stroke}" stroke="${stroke}" stroke-width="${sw}" stroke-linejoin="round" />`
+    : `<polyline points="${pairs.join(' ')}" fill="none" stroke="${stroke}" stroke-width="${sw}" stroke-linecap="round" />`;
 }
 
 function rotationTransform(node: AnyNode): string {
   const { rotation, skewX, skewY } = node;
-  if (!rotation && !skewX && !skewY) return '';
+  /**
+   * Scale belongs here too, and its absence was a silent data loss.
+   *
+   * `scaleX: -1` is how this app flips an object — it is what the Flip
+   * horizontal command writes and what the transformer writes when a handle is
+   * dragged through the opposite edge. Nothing in the SVG output read it, so
+   * **every flipped object exported unflipped**: a mirrored arrow pointed the
+   * wrong way in the file, and a flipped photo came out the right way round.
+   * The raster path never showed it because Konva applies the scale itself.
+   */
+  const sx = node.scaleX ?? 1;
+  const sy = node.scaleY ?? 1;
+  const scaled = sx !== 1 || sy !== 1;
+  if (!rotation && !skewX && !skewY && !scaled) return '';
+
   const cx = node.x + node.width / 2;
   const cy = node.y + node.height / 2;
   const ops = [`translate(${cx} ${cy})`];
+  /**
+   * Rotate, then scale, then shear — the order Konva composes them in, all
+   * about the centre because that is where `ObjectRenderer` puts the offset.
+   * A different order is a different picture the moment two of them are set at
+   * once, so this follows the renderer rather than reading well.
+   */
   if (rotation) ops.push(`rotate(${rotation})`);
+  if (scaled) ops.push(`scale(${sx} ${sy})`);
+  // Degrees in both conventions: the document stores degrees, SVG's `skewX`
+  // takes degrees. Only Konva wants the tangent, and the renderer converts.
   if (skewX) ops.push(`skewX(${skewX})`);
   if (skewY) ops.push(`skewY(${skewY})`);
   ops.push(`translate(${-cx} ${-cy})`);
@@ -343,23 +432,10 @@ function openShapeMarkup(node: ShapeNode): string {
       : `<polyline points="${drawn.map((p) => `${p.x.toFixed(2)},${p.y.toFixed(2)}`).join(' ')}" fill="none" stroke="${stroke}" stroke-width="${sw}" stroke-linecap="round" stroke-linejoin="round"${dashAttrs(node.appearance.stroke)} />`,
   ];
 
-  const markerMarkup = (cap: ReturnType<typeof endCapShape>): string => {
-    if (!cap) return '';
-    if (cap.circle) {
-      return `<circle cx="${cap.circle.x.toFixed(2)}" cy="${cap.circle.y.toFixed(2)}" r="${cap.circle.radius.toFixed(2)}" fill="${cap.filled ? stroke : 'none'}" stroke="${stroke}" stroke-width="${sw}" />`;
-    }
-    const pts = cap.points ?? [];
-    const pairs: string[] = [];
-    for (let i = 0; i + 1 < pts.length; i += 2) pairs.push(`${pts[i].toFixed(2)},${pts[i + 1].toFixed(2)}`);
-    // Open markers — the bar — are a polyline, not a polygon: closing a
-    // two-point run draws it back over itself and fills nothing.
-    return cap.filled
-      ? `<polygon points="${pairs.join(' ')}" fill="${stroke}" stroke="${stroke}" stroke-width="${sw}" stroke-linejoin="round" />`
-      : `<polyline points="${pairs.join(' ')}" fill="none" stroke="${stroke}" stroke-width="${sw}" stroke-linecap="round" />`;
-  };
-
-  parts.push(markerMarkup(startCap));
-  parts.push(markerMarkup(endCap));
+  // Through the shared `capMarkup`, so a connector's arrowhead and a line's
+  // arrowhead are the same markup from the same geometry.
+  parts.push(capMarkup(startCap, stroke, sw));
+  parts.push(capMarkup(endCap, stroke, sw));
 
   return rot ? `<g${rot}>${parts.join('')}</g>` : parts.join('');
 }
@@ -460,7 +536,43 @@ export class SVGExporter implements Exporter {
     const parts: string[] = [];
     const defs = new SvgPaintDefs();
 
+    /**
+     * Image bytes are pulled into the file before the walk begins.
+     *
+     * An SVG that carries object-storage URLs is a picture only while that
+     * server is reachable by whoever opens it — which, for the recipient of a
+     * shared file, it never is. Fetched once per distinct URL; anything that
+     * cannot be read stays a reference, so a CORS refusal degrades the export
+     * rather than failing it.
+     */
+    const { embedded } = await inlineImageSources(
+      nodes.filter((n) => n.type === 'image').map((n) => (n as ImageNode).src ?? ''),
+      fetchBlob
+    );
+
+    /**
+     * Everything one node draws, wrapped once in its own opacity.
+     *
+     * `BaseNode.opacity` is a required field the renderer applies to every
+     * object, and nothing in this file read it — so a shape faded to 20% on the
+     * board exported fully opaque, and the SVG of a document disagreed with the
+     * PNG of the same document. Applied here, at the one point every type
+     * passes through, rather than threaded into eleven markup builders that
+     * would each have to remember it.
+     */
+    const emit = (node: AnyNode, markup: string) => {
+      if (!markup) return;
+      const opacity = node.opacity ?? 1;
+      parts.push(opacity >= 1 ? markup : `<g opacity="${opacity}">${markup}</g>`);
+    };
+
     nodes.forEach((node) => {
+      // Everything this node contributes, gathered before it is emitted, so
+      // the opacity wrapper goes around all of it rather than around the first
+      // element and not the label sitting on top of it.
+      const chunk: string[] = [];
+      const parts = chunk;
+
       switch (node.type) {
         case 'shape': {
           parts.push(shapeMarkup(node, defs));
@@ -511,8 +623,12 @@ export class SVGExporter implements Exporter {
 
         case 'image': {
           if (!node.src) break;
+          // The inlined bytes when they could be read, the original URL when
+          // they could not — so the file is self-contained where possible and
+          // no worse than before where it is not.
+          const href = embedded.get(node.src) ?? node.src;
           parts.push(
-            `<image href="${escapeXml(node.src)}" x="${node.x}" y="${node.y}" width="${node.width}" height="${node.height}" preserveAspectRatio="xMidYMid slice"${rotationTransform(node)} />`
+            `<image href="${escapeXml(href)}" x="${node.x}" y="${node.y}" width="${node.width}" height="${node.height}" preserveAspectRatio="xMidYMid slice"${rotationTransform(node)} />`
           );
           break;
         }
@@ -560,15 +676,42 @@ export class SVGExporter implements Exporter {
         case 'comment':
           break;
       }
+
+      emit(node, chunk.filter(Boolean).join(''));
     });
 
-    // Frame to the actual content. Shared with the PNG exporter so the two
-    // formats crop identically; a hardcoded viewBox exported a blank image for
-    // any document not sitting at the world origin.
-    const bounds = options.bounds ?? computeContentBounds(state.objects, options.selectedOnly ? options.selectedIds : undefined);
+    /**
+     * Frame to the actual content, with the caller's own padding.
+     *
+     * `options.padding` was not passed, so the padding control moved the PNG's
+     * crop and left the SVG's alone — the two formats framed the same document
+     * differently, which is precisely what sharing `computeContentBounds` was
+     * meant to prevent.
+     */
+    const bounds =
+      options.bounds ??
+      computeContentBounds(
+        state.objects,
+        options.selectedOnly ? options.selectedIds : undefined,
+        options.padding
+      );
 
-    return `<svg xmlns="http://www.w3.org/2000/svg" xmlns:xlink="http://www.w3.org/1999/xlink" viewBox="${bounds.x} ${bounds.y} ${bounds.width} ${bounds.height}" width="${bounds.width}" height="${bounds.height}">
-${parts.join('\n')}
-</svg>`;
+    /**
+     * Assembled by `assembleSvg`, which drains the paint collector.
+     *
+     * The gradient definitions used to be collected here and thrown away — the
+     * call to `markup()` existed nowhere in the codebase — so every gradient
+     * fill referenced a paint server the file did not contain. Handing the
+     * collector to the assembler rather than its output makes that omission
+     * impossible to repeat, and the background is resolved through the same
+     * `resolveBackground` the raster path uses so the two formats cannot
+     * disagree about what "White" means.
+     */
+    return assembleSvg({
+      bounds,
+      defs,
+      background: resolveBackground(options.background, FORMAT_SPECS.svg),
+      body: parts,
+    });
   }
 }

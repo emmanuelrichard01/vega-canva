@@ -74,7 +74,7 @@ Verify in ~30 seconds:
 
 ```bash
 npx tsc --noEmit -p apps/frontend/tsconfig.app.json   # must be silent
-npx vitest run --root apps/frontend                   # 849 tests, 49 files
+npx vitest run --root apps/frontend                   # 955 tests, 56 files
 npx oxlint apps/frontend/src                          # 16 cosmetic warnings, exit 0
 npm run build -w apps/frontend                        # must succeed
 ```
@@ -89,7 +89,7 @@ history were vacuous for exactly that reason. Use `tsconfig.app.json`, or
 | --- | --- |
 | Branch | `rebuild/time-travel-and-physics`, nothing pushed, nothing merged |
 | Typecheck | clean |
-| Tests | **849** across 49 files |
+| Tests | **955** across 56 files |
 | Lint | exits 0; 16 `only-export-components` warnings, all cosmetic |
 | Build | clean, 1.55MB JS (gzip 488KB) + 128KB CSS (gzip 21KB) — still no code splitting |
 
@@ -872,6 +872,11 @@ Physics, templates and the product shell (newest):
 | `engine/model/lineEnds.ts` | endpoints ↔ node, both the current form and the legacy box. Pure, tested. |
 | `engine/model/connectorEnds.ts` | end caps, the trim, and `terminateRun` — the one place a marker is placed |
 | `components/canvas/ConnectorEditor.tsx` | the two ends as handles you can drag onto anything |
+| `engine/export/svgDocument.ts` | assembling the SVG file: definitions, backdrop, artwork. Takes the paint collector and drains it, so the gradient `<defs>` cannot go unwritten again. Pure, tested. |
+| `engine/export/pdfWriter.ts` | the PDF file format: a frame is a page, the xref offsets, the page-size limit. Pure, tested. |
+| `engine/export/rasterLimits.ts` | the browser canvas caps, edge **and** area, and the scale that fits them. Pure, tested. |
+| `engine/export/filenames.ts` | what an exported file is called, in any writing system. Pure, tested. |
+| `engine/export/inlineImages.ts` | pulling media into an exported SVG so the file survives being sent to someone. Pure, tested. |
 | `engine/tools/shortcuts.ts` | the single-key tool bindings, and the inverse map `Room` resolves through |
 | `engine/tools/toolNames.ts` | what each tool is *called* on the help screen, tested against the bindings |
 | `engine/tools/nudge.ts` | what an arrow keypress means, in world units. Pure, tested. |

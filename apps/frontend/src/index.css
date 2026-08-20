@@ -7147,6 +7147,26 @@ body[data-zen='physics'] .forces-handle { bottom: 32px; }
   min-height: 2.3em;
 }
 
+/* The clamp notice under the preview. Warning rather than danger: the export
+   still succeeds, it just will not be the density that was asked for.
+   `--status-warning` is the role, defined in both themes — the raw amber
+   primitive here is the contrast bug DESIGN.md exists to stop. */
+.export__hint--warn {
+  display: flex;
+  align-items: flex-start;
+  gap: var(--space-1);
+  color: var(--status-warning);
+  /* Sits beneath a fixed-size preview, so it must not reserve the blurb's two
+     lines and push the meta row off the panel. */
+  min-height: 0;
+  margin-top: var(--space-1);
+}
+
+.export__hint--warn svg {
+  flex-shrink: 0;
+  margin-top: 2px;
+}
+
 .export__select {
   width: 100%;
   /* Without this a long frame name sets the select's intrinsic width and

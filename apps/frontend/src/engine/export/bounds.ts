@@ -1,5 +1,18 @@
-import { useStore } from '../../hooks/useStore';
+import { nodeBounds } from '../SceneGraph';
 import type { AnyNode } from '../model/schema';
+
+/**
+ * This module deliberately imports no store.
+ *
+ * It used to default its `objects` argument to `useStore.getState().objects`,
+ * which is a convenience that cost the whole file its testability: the store
+ * reaches the document layer, which reads `window.location` at import time, so
+ * loading this pure arithmetic in Node threw before a single assertion ran. The
+ * two callers that relied on the default both already hold the objects.
+ *
+ * Geometry that decides what lands in an exported file is exactly the kind this
+ * codebase keeps runnable without a browser.
+ */
 
 export interface ExportBounds {
   x: number;
@@ -46,13 +59,13 @@ export function frameExportBounds(frame: {
 }
 
 export function computeContentBounds(
-  objects?: Record<string, AnyNode>,
+  objects: Record<string, AnyNode>,
   ids?: string[],
   /** Overrides `EXPORT_PADDING`. Zero is a legitimate value, hence `??`. */
   padding?: number
 ): ExportBounds {
   const pad = padding ?? EXPORT_PADDING;
-  const all = objects ?? useStore.getState().objects;
+  const all = objects ?? {};
   const list = ids ? ids.map((id) => all[id]).filter(Boolean) : Object.values(all);
 
   if (list.length === 0) return { x: 0, y: 0, width: 800, height: 600 };
@@ -65,12 +78,23 @@ export function computeContentBounds(
   list.forEach((node) => {
     // Hidden objects are not part of the exported document.
     if (node.hidden) return;
-    const sx = Math.abs(node.scaleX || 1);
-    const sy = Math.abs(node.scaleY || 1);
-    minX = Math.min(minX, node.x);
-    minY = Math.min(minY, node.y);
-    maxX = Math.max(maxX, node.x + node.width * sx);
-    maxY = Math.max(maxY, node.y + node.height * sy);
+    /**
+     * Through the same `nodeBounds` the spatial index culls by.
+     *
+     * This loop used to be a second implementation that read position and
+     * scale and ignored **rotation and skew**, so the box it produced was the
+     * node's *unrotated* rectangle. A shape rotated 45° at the edge of a board
+     * therefore had its corners cropped off every export, and a rotated object
+     * sitting just outside the unrotated hull was missed entirely — while the
+     * culling, the marquee and the minimap all saw it correctly. The canonical
+     * function's own docstring already claimed to be "what an export frames
+     * to"; now it is.
+     */
+    const b = nodeBounds(node);
+    minX = Math.min(minX, b.minX);
+    minY = Math.min(minY, b.minY);
+    maxX = Math.max(maxX, b.maxX);
+    maxY = Math.max(maxY, b.maxY);
   });
 
   if (minX === Infinity) return { x: 0, y: 0, width: 800, height: 600 };

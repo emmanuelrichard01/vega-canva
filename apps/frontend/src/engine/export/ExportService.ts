@@ -4,6 +4,10 @@ import { descendantsOfFrame } from '../model/frames';
 import { useStore } from '../../hooks/useStore';
 import { FORMAT_SPECS, type ExportFormat, type ExportOptions } from './ExportTypes';
 
+// Filenames live in their own module so they can be asserted without the
+// document store this one depends on. Re-exported to keep one import site.
+export { slugify, exportFilename } from './filenames';
+
 /**
  * Turn `frameId` into the `bounds` and `selectedIds` the exporters understand.
  *
@@ -36,27 +40,6 @@ function toBlob(data: Blob | string, type: ExportFormat): Blob {
   return new Blob([data], { type: FORMAT_SPECS[type].mime });
 }
 
-/** `checkout flow` → `checkout-flow`. Safe on every filesystem we care about. */
-export function slugify(name: string): string {
-  return (
-    name
-      .trim()
-      .toLowerCase()
-      // Anything that is not a letter, digit or dash becomes a dash — which
-      // covers the slashes and colons Windows refuses outright, as well as the
-      // spaces that make a filename annoying to handle in a terminal.
-      .replace(/[^a-z0-9]+/g, '-')
-      .replace(/^-+|-+$/g, '')
-      .slice(0, 60) || 'untitled'
-  );
-}
-
-/** The filename an export should get, including its extension. */
-export function exportFilename(base: string, format: ExportFormat, scale = 1): string {
-  const spec = FORMAT_SPECS[format];
-  const density = spec.raster && scale !== 1 ? `@${scale}x` : '';
-  return `${slugify(base)}${density}.${spec.extension}`;
-}
 
 class ExportServiceClass {
   /**
@@ -110,8 +93,20 @@ class ExportServiceClass {
    * checks `canCopy` rather than finding out by failing.
    */
   async copyToClipboard(options: ExportOptions = {}): Promise<void> {
-    const blob = await this.render('png', options);
-    await navigator.clipboard.write([new ClipboardItem({ 'image/png': blob })]);
+    /**
+     * The blob is handed over as a **promise**, not awaited first.
+     *
+     * Safari ties clipboard writes to the user gesture that started them, and
+     * an `await` before `clipboard.write` ends that gesture — so rendering the
+     * PNG and then writing it failed there with a bare NotAllowedError while
+     * working perfectly in Chrome. `ClipboardItem` accepts a `Promise<Blob>`
+     * for exactly this: the item is constructed synchronously inside the
+     * gesture and resolves afterwards. Chrome and Firefox accept the same
+     * form, so this is one path rather than a branch per engine.
+     */
+    await navigator.clipboard.write([
+      new ClipboardItem({ 'image/png': this.render('png', options) }),
+    ]);
   }
 
   get canCopy(): boolean {

@@ -24,16 +24,32 @@ export interface ImportedDocument {
   nodes: Record<string, Record<string, unknown>>;
   comments: unknown[];
   exportedAt: string | null;
-  /** Schema version the file was written with. */
+  /** Envelope (file format) version the file was written with. */
   version: number;
+  /**
+   * Node schema version, when the file records one.
+   *
+   * `null` for anything written before the field existed, which is every
+   * export up to now — and that is the honest answer rather than assuming the
+   * current one, since a file that does not say cannot be presumed to be new.
+   */
+  schemaVersion: number | null;
 }
 
 export type ImportResult =
   | { ok: true; document: ImportedDocument; warnings: string[] }
   | { ok: false; error: string };
 
-/** The highest export version this build knows how to read. */
-export const SUPPORTED_IMPORT_VERSION = 1;
+/**
+ * The envelope version this build writes, and the highest it can read.
+ *
+ * One constant rather than a literal in the exporter and a second in the
+ * importer: the pair that must agree is exactly the pair most likely to be
+ * edited apart, and a writer that outruns its own reader produces files the
+ * app refuses to open.
+ */
+export const EXPORT_ENVELOPE_VERSION = 1;
+export const SUPPORTED_IMPORT_VERSION = EXPORT_ENVELOPE_VERSION;
 
 /**
  * Validate a JSON export and return what it contains.
@@ -118,6 +134,7 @@ export function parseDocumentExport(text: string): ImportResult {
       comments: Array.isArray(doc.comments) ? doc.comments : [],
       exportedAt: typeof doc.exportedAt === 'string' ? doc.exportedAt : null,
       version,
+      schemaVersion: typeof doc.schemaVersion === 'number' ? doc.schemaVersion : null,
     },
   };
 }
@@ -125,7 +142,13 @@ export function parseDocumentExport(text: string): ImportResult {
 /** A short, human description of what a validated file holds. */
 export function describeImport(document: ImportedDocument): string {
   const count = Object.keys(document.nodes).length;
-  const objects = `${count} object${count === 1 ? '' : 's'}`;
+  // Threads are named because they are now actually restored. While they were
+  // silently dropped, counting them here would have been a promise the restore
+  // did not keep.
+  const threads = document.comments.length;
+  const objects =
+    `${count} object${count === 1 ? '' : 's'}` +
+    (threads > 0 ? ` and ${threads} comment thread${threads === 1 ? '' : 's'}` : '');
   if (!document.exportedAt) return objects;
 
   const when = new Date(document.exportedAt);
