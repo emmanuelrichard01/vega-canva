@@ -23,8 +23,8 @@ const linear: Paint = {
   from: { x: 0, y: 0 },
   to: { x: 1, y: 1 },
   stops: [
-    { offset: 0, color: '#FF0000' },
-    { offset: 1, color: '#0000FF' },
+    { offset: 0, color: '#F3A024' },
+    { offset: 1, color: '#10B981' },
   ],
 };
 
@@ -34,7 +34,7 @@ const radial: Paint = {
   radius: 0.5,
   stops: [
     { offset: 0, color: '#FFFFFF' },
-    { offset: 1, color: '#000000' },
+    { offset: 1, color: '#161616' },
   ],
 };
 
@@ -93,7 +93,7 @@ describe('assembleSvg', () => {
 
   it('omits the defs block entirely when nothing needed one', () => {
     const defs = new SvgPaintDefs();
-    defs.fill({ type: 'solid', color: '#FF0000' }, bounds, 'none');
+    defs.fill({ type: 'solid', color: '#F3A024' }, bounds, 'none');
     const svg = assembleSvg({ bounds, defs, background: null, body: ['<rect />'] });
     expect(svg).not.toContain('<defs>');
   });
@@ -160,7 +160,7 @@ describe('assembleSvg', () => {
 describe('SvgPaintDefs', () => {
   it('returns a solid colour without registering anything', () => {
     const defs = new SvgPaintDefs();
-    expect(defs.fill({ type: 'solid', color: '#ABCDEF' }, bounds, 'none')).toContain('ABCDEF');
+    expect(defs.fill({ type: 'solid', color: '#4B5563' }, bounds, 'none')).toContain('4B5563');
     expect(defs.markup()).toBe('');
   });
 
@@ -188,7 +188,7 @@ describe('SvgPaintDefs', () => {
       type: 'conic',
       center: { x: 0.5, y: 0.5 },
       angle: 0,
-      stops: [{ offset: 0, color: '#123456' }],
+      stops: [{ offset: 0, color: '#B45309' }],
     } as Paint;
     const flat = defs.fill(conic, bounds, 'none');
     expect(flat).not.toContain('url(#');

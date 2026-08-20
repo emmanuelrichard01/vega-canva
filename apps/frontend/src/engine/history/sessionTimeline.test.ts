@@ -1,6 +1,11 @@
 import { describe, it, expect } from 'vitest';
 import * as Y from 'yjs';
-import { buildTimeline, materialiseAt, type RawUpdate } from './sessionTimeline';
+import {
+  BOOKKEEPING_FIELD_NAMES,
+  buildTimeline,
+  materialiseAt,
+  type RawUpdate,
+} from './sessionTimeline';
 
 /**
  * The timeline builder is the piece that turns a raw CRDT log into something a
@@ -162,18 +167,69 @@ describe('buildTimeline', () => {
     objects.set('a', baseNode(doc));
 
     const node = objects.get('a')!;
-    // Exactly what mutations.updateNode writes: the real field plus bookkeeping.
+    // Exactly what mutations.updateNode writes: the real fields plus *every*
+    // piece of bookkeeping it stamps. Listing only `updatedAt` here is what let
+    // `updatedBy` and `updatedByName` be added to the write path without this
+    // suite noticing that every edit had started classifying as 'mixed'.
     doc.transact(() => {
       node.set('x', 90);
       node.set('y', 120);
       node.set('updatedAt', Date.now());
+      node.set('updatedBy', 'author-1');
+      node.set('updatedByName', 'Ada');
     });
 
     const timeline = buildTimeline(log);
-    // Without filtering, `updatedAt` is unclassifiable and drags the whole
+    // Without filtering, the stamps are unclassifiable and drag the whole
     // moment down to 'mixed' — "changed" instead of "moved".
     expect(timeline.moments.map(m => m.kind)).toEqual(['create', 'move']);
     expect(timeline.moments[1].label).toBe('Ada moved Ship the thing');
+  });
+
+  /**
+   * The set is a second record of what the write path stamps, with no compiler
+   * holding the two together. Whatever it declares invisible must genuinely be
+   * invisible — so this walks the declared list rather than restating it, and a
+   * field added to the set without being handled would fail here.
+   */
+  it('classifies past every field it calls bookkeeping', () => {
+    for (const field of BOOKKEEPING_FIELD_NAMES) {
+      if (field === 'id') continue; // rewriting the id is not an edit of a node
+      const doc = new Y.Doc();
+      const log: RawUpdate[] = [];
+      recorder(doc, log);
+      const objects = doc.getMap<Y.Map<unknown>>('objects');
+      objects.set('a', baseNode(doc));
+
+      doc.transact(() => {
+        objects.get('a')!.set('x', 90);
+        objects.get('a')!.set(field, field === 'updatedAt' || field === 'createdAt' ? Date.now() : 'x');
+      });
+
+      const timeline = buildTimeline(log);
+      expect(timeline.moments.map(m => m.kind), `stamped alongside ${field}`).toEqual([
+        'create',
+        'move',
+      ]);
+    }
+  });
+
+  it('does not invent a moment for a transaction that is only bookkeeping', () => {
+    // The whole trio this time, which is what a no-op write really looks like
+    // coming out of `updateNode`.
+    const doc = new Y.Doc();
+    const log: RawUpdate[] = [];
+    recorder(doc, log);
+    const objects = doc.getMap<Y.Map<unknown>>('objects');
+    objects.set('a', baseNode(doc));
+    doc.transact(() => {
+      objects.get('a')!.set('updatedAt', Date.now());
+      objects.get('a')!.set('updatedBy', 'author-1');
+      objects.get('a')!.set('updatedByName', 'Ada');
+    });
+
+    const timeline = buildTimeline(log);
+    expect(timeline.moments.map(m => m.kind)).toEqual(['create']);
   });
 
   it('does not invent a moment for a transaction that only bumps updatedAt', () => {
@@ -307,5 +363,77 @@ describe('materialiseAt', () => {
     expect(rewound.doc).not.toBe(atEnd.doc); // a rewind needs a fresh doc
     expect(rewound.appliedThrough).toBe(20);
     expect([...rewound.doc.getMap('objects').keys()]).toHaveLength(21);
+  });
+
+  /**
+   * The ends of the scrubber, which is where a seek is most likely to be asked
+   * for an index that does not exist: dragging the playhead hard left, pressing
+   * Home, or landing on the last moment of a session that was still being
+   * written when the log was fetched.
+   */
+  describe('at the ends of the log', () => {
+    const session = () => {
+      const doc = new Y.Doc();
+      const log: RawUpdate[] = [];
+      recorder(doc, log);
+      const objects = doc.getMap<Y.Map<unknown>>('objects');
+      objects.set('a', baseNode(doc));
+      objects.set('b', baseNode(doc, { text: 'Second' }));
+      return { log, timeline: buildTimeline(log) };
+    };
+
+    it('gives back an empty board for a seek before the first update', () => {
+      // "Rewind to before this moment" on the very first moment asks for -1,
+      // and the honest answer is the room as it was: empty.
+      const { log, timeline } = session();
+      const start = materialiseAt(log, -1, timeline.keyframes);
+      expect([...start.doc.getMap('objects').keys()]).toEqual([]);
+    });
+
+    it('clamps a seek past the end to the last update', () => {
+      const { log, timeline } = session();
+      const past = materialiseAt(log, 999, timeline.keyframes);
+      expect(past.appliedThrough).toBe(log.length - 1);
+      expect([...past.doc.getMap('objects').keys()].sort()).toEqual(['a', 'b']);
+    });
+
+    it('rewinds to the beginning from a doc that is already ahead', () => {
+      // The forward fast-path must not be taken here: `appliedThrough` is past
+      // the target, so it has to rebuild rather than hand back a doc that still
+      // holds everything.
+      const { log, timeline } = session();
+      const atEnd = materialiseAt(log, log.length - 1, timeline.keyframes);
+      const rewound = materialiseAt(log, -1, timeline.keyframes, atEnd);
+      expect(rewound.doc).not.toBe(atEnd.doc);
+      expect([...rewound.doc.getMap('objects').keys()]).toEqual([]);
+    });
+
+    it('works with no keyframes at all', () => {
+      // A short session never accumulates one, so the rewind path has to cope
+      // with an empty list rather than assume a seed is always available.
+      const { log } = session();
+      const at0 = materialiseAt(log, 0, []);
+      expect([...at0.doc.getMap('objects').keys()]).toEqual(['a']);
+    });
+
+    it('survives an empty log without throwing', () => {
+      const empty = materialiseAt([], 0, []);
+      expect([...empty.doc.getMap('objects').keys()]).toEqual([]);
+    });
+  });
+
+  it('skips a corrupt row rather than abandoning the seek', () => {
+    // The log is server-side data and one unreadable row must not cost the
+    // whole replay — the surrounding updates still apply.
+    const doc = new Y.Doc();
+    const log: RawUpdate[] = [];
+    recorder(doc, log);
+    const objects = doc.getMap<Y.Map<unknown>>('objects');
+    objects.set('a', baseNode(doc));
+    log.push({ createdAt: new Date().toISOString(), update: 'not-base64-at-all!!' });
+    objects.set('b', baseNode(doc, { text: 'Second' }));
+
+    const result = materialiseAt(log, log.length - 1, []);
+    expect([...result.doc.getMap('objects').keys()].sort()).toEqual(['a', 'b']);
   });
 });

@@ -123,9 +123,19 @@ export function usePhysics(
   const heldForce = useRef<{ mode: ForceId; x: number; y: number; dx: number; dy: number; gesture: number } | null>(null);
   const applyForceRef = useRef<(x: number, y: number, mode: ForceId, extra?: { dx?: number; dy?: number; gesture?: number }) => void>(() => {});
 
+  /**
+   * Start the frame loop, if it is not already running.
+   *
+   * Assigned by the effect below and called by every entry point that creates
+   * work — a throw, a held press, a latched field. Held in a ref because those
+   * callbacks are defined outside the effect that owns the loop.
+   */
+  const wake = useRef<() => void>(() => {});
+
   useEffect(() => {
     const sim = simRef.current!;
     let frameId = 0;
+    let running = false;
     let lastTime = performance.now();
 
     const throttledBroadcast = throttle((updates: Record<string, unknown>) => {
@@ -220,12 +230,62 @@ export function usePhysics(
 
       if (Object.keys(broadcast).length > 0) throttledBroadcast(broadcast);
 
+      /**
+       * Stop when there is nothing left to simulate.
+       *
+       * This loop used to reschedule unconditionally, so it ran sixty times a
+       * second for the entire life of the room whether or not anything was
+       * moving — on a board where nobody ever throws anything, which is most
+       * boards most of the time. Each idle frame still read the clock, called
+       * `advance`, allocated its three result arrays and a broadcast object,
+       * and asked `Object.keys` about it: a few hundred short-lived allocations
+       * a second, plus a permanently live rAF keeping the compositor awake, for
+       * a feature nobody was using.
+       *
+       * The three things that constitute work are a body still in motion, a
+       * finger held down, and a latched field counting itself out. When none of
+       * them holds, the loop parks and `wake()` restarts it.
+       */
+      if (sim.activeCount > 0 || heldForce.current || latched.current) {
+        frameId = requestAnimationFrame(tick);
+      } else {
+        running = false;
+        /**
+         * Flush before parking.
+         *
+         * The final payload of a throw is the one carrying the `null` that
+         * tells peers to stop drawing the flight path and read the document.
+         * Throttled, it may still be pending — and parking the loop with it
+         * pending would strand every other client rendering an object at a
+         * position it left seconds ago.
+         */
+        throttledBroadcast.flush();
+      }
+    };
+
+    /**
+     * Restart the loop, resetting the clock.
+     *
+     * `lastTime` has to be reset or the first frame after an idle period hands
+     * `advance` the entire idle duration as its delta — which the accumulator
+     * clamps to five steps, so a throw would begin with a visible lurch.
+     */
+    const start = () => {
+      if (running) return;
+      running = true;
+      lastTime = performance.now();
       frameId = requestAnimationFrame(tick);
     };
 
-    frameId = requestAnimationFrame(tick);
+    wake.current = start;
+    // Bodies may already be mid-flight if this remounted; otherwise `start`
+    // is a no-op until something asks for it.
+    if (sim.activeCount > 0) start();
+
     return () => {
       cancelAnimationFrame(frameId);
+      running = false;
+      wake.current = () => {};
       throttledBroadcast.cancel();
     };
   }, [stageRef]);
@@ -285,6 +345,16 @@ export function usePhysics(
         gesture: extra?.gesture,
       });
       claimOwnershipAll(woken);
+      /**
+       * A one-shot force has to start the loop itself.
+       *
+       * Held and latched forces reach this from inside the loop, where waking
+       * is a no-op — but Shockwave is a single click that wakes bodies and then
+       * returns, and with the loop parked nothing would ever step them. They
+       * would sit still, having been given velocity, until the next unrelated
+       * throw happened to start the loop again.
+       */
+      if (woken.length > 0) wake.current();
     },
     [selectedIdsRef]
   );
@@ -346,7 +416,11 @@ export function usePhysics(
       return;
     }
 
-    if (sim.launch(id, x, y, vx, vy)) claimOwnershipAll([id]);
+    if (sim.launch(id, x, y, vx, vy)) {
+      claimOwnershipAll([id]);
+      // The loop parks when nothing is in flight, so a throw has to start it.
+      wake.current();
+    }
   }, []);
 
   /**
@@ -378,6 +452,9 @@ export function usePhysics(
   const beginHeldForce = useCallback((mode: ForceId, x: number, y: number) => {
     gestureSeq.current += 1;
     heldForce.current = { mode, x, y, dx: 0, dy: 0, gesture: gestureSeq.current };
+    // A held press is work even before it moves anything, because the force is
+    // applied per frame rather than per mousemove.
+    wake.current();
   }, []);
 
   const moveHeldForce = useCallback((x: number, y: number, dx = 0, dy = 0) => {
@@ -408,6 +485,9 @@ export function usePhysics(
       gesture: gestureSeq.current,
     };
     engineEvents.emit('ForceLatchChanged', { x, y, mode, remainingMs: seconds * 1000 });
+    // The field counts itself down in the loop, so the loop has to be running
+    // for it to ever expire.
+    wake.current();
   }, []);
 
   const releaseLatch = useCallback(() => {

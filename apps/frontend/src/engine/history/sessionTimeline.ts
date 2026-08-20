@@ -143,13 +143,33 @@ const STYLE_FIELDS = new Set([
 /**
  * Bookkeeping stamped by the write path rather than chosen by a person.
  *
- * `mutations.updateNode` sets `updatedAt` on *every* write, so without this
- * every edit arrived carrying an unclassifiable field and collapsed to
- * "mixed" — the timeline said "Dave changed Ship the beta" where it should
- * have said "moved" or "edited". These are invisible to classification, and a
- * transaction touching nothing else is not an authored moment at all.
+ * `mutations.updateNode` sets these on *every* write, so without this every
+ * edit arrived carrying an unclassifiable field and collapsed to "mixed" — the
+ * timeline said "Dave changed Ship the beta" where it should have said "moved"
+ * or "edited". These are invisible to classification, and a transaction
+ * touching nothing else is not an authored moment at all.
+ *
+ * **This list has to move whenever the write path learns to stamp something
+ * new.** It is a second record of what `updateNode` writes, with no compiler
+ * holding the two together — invariant 7 in its purest form. `updatedBy` and
+ * `updatedByName` were added to the write path and missed here, and the tests
+ * did not notice because their fixtures build updates by hand rather than going
+ * through `updateNode`, so nothing in them ever carried the new fields. The
+ * test below now asserts the set against the real stamping instead.
  */
-const BOOKKEEPING_FIELDS = new Set(['updatedAt', 'createdAt', 'id']);
+const BOOKKEEPING_FIELDS = new Set([
+  'updatedAt',
+  'updatedBy',
+  'updatedByName',
+  'createdAt',
+  'id',
+]);
+
+/**
+ * Exported so a test can hold it against what `mutations.updateNode` actually
+ * stamps, rather than against a second hand-written list.
+ */
+export const BOOKKEEPING_FIELD_NAMES: readonly string[] = Array.from(BOOKKEEPING_FIELDS);
 
 function classifyField(field: string): MomentKind {
   if (FIELD_KIND[field]) return FIELD_KIND[field];
