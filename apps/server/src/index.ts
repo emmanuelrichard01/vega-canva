@@ -157,14 +157,29 @@ app.get("/rooms/:roomId/history", async (req, res) => {
     // Whether retention has discarded anything for this room, so replay can say
     // plainly that it does not reach the beginning instead of presenting a
     // partial session as the whole story.
-    const trimmedResult = await pool.query<{ updates_trimmed: string; total: string }>(
+    const trimmedResult = await pool.query<{
+      updates_trimmed: string;
+      total: string;
+      replay_base: Buffer | null;
+    }>(
       `SELECT COALESCE(r.updates_trimmed, 0) AS updates_trimmed,
+              r.replay_base,
               (SELECT COUNT(*) FROM room_updates WHERE room_id = $1) AS total
          FROM rooms r WHERE r.id = $1`,
       [roomId]
     );
     const trimmedCount = Number(trimmedResult.rows[0]?.updates_trimmed ?? 0);
     const total = Number(trimmedResult.rows[0]?.total ?? updates.length);
+    /**
+     * The document as it stood before the retained window begins.
+     *
+     * Yjs updates are deltas, so without this a trimmed log replays as an
+     * empty board: the object creations were in the discarded rows, and every
+     * retained update refers to structs that never arrive. Seeding from the
+     * baseline is what makes a bounded log a shorter *history* rather than no
+     * history at all.
+     */
+    const replayBase = trimmedResult.rows[0]?.replay_base ?? null;
     // Rows the sweep has not reached yet are just as absent from this response
     // as rows it deleted, so both count toward "this does not reach the start".
     const withheld = Math.max(0, total - updates.length);
@@ -172,6 +187,7 @@ app.get("/rooms/:roomId/history", async (req, res) => {
     res.json({
       roomId,
       updates,
+      baseline: replayBase ? replayBase.toString("base64") : null,
       trimmed: trimmedCount > 0 || withheld > 0,
       trimmedCount: trimmedCount + withheld,
       retentionLimit: MAX_UPDATES_PER_ROOM,

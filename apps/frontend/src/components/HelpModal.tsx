@@ -35,7 +35,7 @@ function buildSections(): Section[] {
     },
     {
       title: 'Moving around',
-      blurb: 'The board has no edges — you cannot run out of room in any direction.',
+      blurb: 'The board has no edges. You cannot run out of space in any direction.',
       rows: [
         { keys: 'Scroll', what: 'Pan up, down and sideways' },
         // Zoom is bound to ctrl+wheel, which is also how every browser reports
@@ -174,14 +174,14 @@ const TIPS: Array<{ title: string; body: string }> = [
       'Play mode hands everything on the canvas to a physics engine — objects fall, collide and settle. Pin anything you want to stay put, and stopping puts the board back exactly as it was.',
   },
   {
-    title: 'The room remembers how it was built',
+    title: 'Every board remembers how it was built',
     body:
-      'Replay scrubs through the room’s authoring history, moment by moment, with each edit attributed. It is a view, not an undo — the live document is untouched while you watch.',
+      'Replay steps through the board’s history one moment at a time, showing who made each change. It is a view, not an undo. The live board is untouched while you watch.',
   },
   {
     title: 'Nothing here is an account',
     body:
-      'Your boards are listed by this browser, and anyone with a room link can edit that room. There are no roles and no revoking — treat a link as the permission.',
+      'Your boards are listed by this browser, and anyone with the link can edit the board. There are no roles and no way to revoke access, so treat the link itself as the permission.',
   },
   {
     title: 'Offline is fine',

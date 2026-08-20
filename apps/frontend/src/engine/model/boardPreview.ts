@@ -1,4 +1,15 @@
 import type { AnyNode } from './schema';
+import { linePoints } from './linePath';
+import { localRunEnds } from './lineEnds';
+
+/**
+ * How many points of a line's run a summary keeps.
+ *
+ * A coil at twenty loops is several hundred, and this is stored in
+ * `localStorage` for every line on every board. A card is a couple of hundred
+ * pixels across, so past a few dozen the extra points are bytes nobody can see.
+ */
+const PREVIEW_LINE_POINTS = 48;
 
 /**
  * A board, small enough to keep.
@@ -168,7 +179,7 @@ export interface BoardPreview {
  * Bump it whenever a *renderer* starts relying on a field older records do
  * not have.
  */
-export const PREVIEW_VERSION = 2;
+export const PREVIEW_VERSION = 3;
 
 /**
  * The most objects worth keeping.
@@ -281,6 +292,48 @@ export function buildPreview(
         // one thing they can never be: solid.
         item.s = 'line';
         item.c = n.appearance?.stroke?.color ?? item.c;
+
+        /**
+         * The run it actually draws, not a stroke across the middle of its box.
+         *
+         * The card drew every line as one horizontal rule from the left edge of
+         * its box to the right, which is wrong twice over. A line that runs
+         * corner to corner came out flat, and a line with a **profile** — wavy,
+         * zigzag, curved, or the coil — lost the entire thing that makes it that
+         * profile. A board of loops had a thumbnail of plain rules, which is a
+         * confidently wrong picture rather than a simplified one.
+         *
+         * Through `linePoints`, so the card and the canvas draw from one
+         * description. The point list is normalised into the same 0..1 space
+         * `x`/`y` use, reusing the `l` polyline field connectors already added
+         * for exactly this reason.
+         */
+        const ends = localRunEnds(n);
+        const run = linePoints(
+          { x: n.x + ends.a.x, y: n.y + ends.a.y },
+          { x: n.x + ends.b.x, y: n.y + ends.b.y },
+          geo.lineProfile,
+          geo.lineWaves
+        );
+        if (run.length >= 2) {
+          /**
+           * Sampled down before it is stored.
+           *
+           * A coil at twenty loops is several hundred points, and this goes
+           * into `localStorage` for every line on every board. A thumbnail is
+           * at most a couple of hundred pixels across, so anything past a few
+           * dozen points is bytes nobody can see. The first and last are always
+           * kept, because the ends are where a line visibly starts and stops.
+           */
+          const stride = Math.max(1, Math.ceil(run.length / PREVIEW_LINE_POINTS));
+          const flat: number[] = [];
+          for (let i = 0; i < run.length; i += stride) {
+            flat.push(round((run[i].x - minX) / boardW), round((run[i].y - minY) / boardH));
+          }
+          const last = run[run.length - 1];
+          flat.push(round((last.x - minX) / boardW), round((last.y - minY) / boardH));
+          item.l = flat;
+        }
       }
     }
     // Only when it is actually turned: a `rotate(0 …)` on every object is

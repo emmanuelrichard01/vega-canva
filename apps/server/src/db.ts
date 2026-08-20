@@ -1,4 +1,5 @@
 import { Pool } from "pg";
+import * as Y from "yjs";
 
 export const pool = new Pool({
   user: process.env.POSTGRES_USER || "canva_user",
@@ -19,7 +20,27 @@ export const pool = new Pool({
  * The room *snapshot* is the canonical recovery state, so this log is purely
  * for scrubbing recent authoring history and can be trimmed freely.
  */
-export const MAX_UPDATES_PER_ROOM = 2000;
+/**
+ * How much authoring history a replay scrubs through.
+ *
+ * **2000 was chosen when the log was the only record and was far too many.**
+ * Applying Yjs updates gets slower as the document accumulates them — measured
+ * in Chrome on a real room: the first two hundred took 489ms and the *next*
+ * two hundred took 1,856ms, for the same count. The cost is superlinear, so
+ * two thousand is not ten times the first two hundred, it is the tens of
+ * seconds of frozen tab that Time Travel was reported for.
+ *
+ * A smaller window is only safe because of `replay_base`. Before that, trimming
+ * discarded the object creations and a trimmed room replayed as an empty board,
+ * so the log had to be long enough to reach back to the start of the session —
+ * which no fixed number can guarantee anyway. With a baseline, the window is
+ * just how far back you can *scrub*: everything before it is still on screen,
+ * it simply is not steppable.
+ *
+ * 400 keeps the load comfortably inside a second and still covers a
+ * substantial working session.
+ */
+export const MAX_UPDATES_PER_ROOM = 400;
 const PRUNE_INTERVAL_MS = 10 * 60 * 1000;
 
 /**
@@ -35,18 +56,71 @@ const PRUNE_INTERVAL_MS = 10 * 60 * 1000;
  * below the cap reads as complete.
  */
 export const pruneRoomUpdates = async (roomId: string) => {
-  const result = await pool.query(
-    `DELETE FROM room_updates
-      WHERE room_id = $1
-        AND id < (
-          SELECT MIN(id) FROM (
-            SELECT id FROM room_updates
-             WHERE room_id = $1
-             ORDER BY id DESC
-             LIMIT $2
-          ) AS keep
-        )`,
+  /**
+   * Fold what is about to be discarded into the replay baseline first.
+   *
+   * A Yjs update is a delta against structs created by earlier updates, so
+   * deleting the head of the log deletes every object's *creation* and leaves
+   * the survivors referring to structs that never arrive. A trimmed room
+   * therefore replayed as a completely empty board — not a shorter history, no
+   * history at all. Measured on a real room here: after applying four hundred
+   * retained updates the replay document held **zero** objects.
+   *
+   * Rolling rather than rebuilt: the existing baseline plus the rows leaving
+   * now is the new baseline, so each prune costs only the updates it is
+   * actually discarding rather than the room's whole history.
+   */
+  const cutoff = await pool.query<{ min_id: string | null }>(
+    `SELECT MIN(id) AS min_id FROM (
+       SELECT id FROM room_updates WHERE room_id = $1 ORDER BY id DESC LIMIT $2
+     ) AS keep`,
     [roomId, MAX_UPDATES_PER_ROOM]
+  );
+  const keepFrom = cutoff.rows[0]?.min_id;
+  if (keepFrom == null) return 0;
+
+  const doomed = await pool.query<{ update_data: Buffer }>(
+    `SELECT update_data FROM room_updates
+      WHERE room_id = $1 AND id < $2 ORDER BY id ASC`,
+    [roomId, keepFrom]
+  );
+
+  if (doomed.rows.length > 0) {
+    const existing = await pool.query<{ replay_base: Buffer | null }>(
+      `SELECT replay_base FROM rooms WHERE id = $1`,
+      [roomId]
+    );
+
+    const doc = new Y.Doc();
+    const base = existing.rows[0]?.replay_base;
+    if (base) {
+      try {
+        Y.applyUpdate(doc, new Uint8Array(base));
+      } catch (err) {
+        // A corrupt baseline is recoverable: the rows about to be discarded
+        // are still here, so rebuilding from them loses only what was already
+        // folded in, rather than taking the prune down with it.
+        console.error("Replay baseline unreadable, rebuilding:", err);
+      }
+    }
+    for (const row of doomed.rows) {
+      try {
+        Y.applyUpdate(doc, new Uint8Array(row.update_data));
+      } catch {
+        /* one unreadable row must not stop the fold */
+      }
+    }
+
+    await pool.query(`UPDATE rooms SET replay_base = $2 WHERE id = $1`, [
+      roomId,
+      Buffer.from(Y.encodeStateAsUpdate(doc)),
+    ]);
+    doc.destroy();
+  }
+
+  const result = await pool.query(
+    `DELETE FROM room_updates WHERE room_id = $1 AND id < $2`,
+    [roomId, keepFrom]
   );
 
   const discarded = result.rowCount ?? 0;
@@ -125,6 +199,22 @@ export const initDb = async (retries = 10, delayMs = 2000) => {
           -- a table that already exists on a deployed database.
           ALTER TABLE rooms
             ADD COLUMN IF NOT EXISTS updates_trimmed BIGINT NOT NULL DEFAULT 0;
+
+          -- The document as it stood at the moment retention cut the log.
+          --
+          -- Without this, trimming does not merely shorten a replay, it
+          -- *empties* it. Yjs updates are deltas against structs created by
+          -- earlier updates, so discarding the beginning of the log discards
+          -- every object's creation — and the retained updates then reference
+          -- structs that never arrive. Replaying a trimmed room produced a
+          -- document with **zero objects** in it, which is exactly what "most
+          -- objects never show up during playback" looks like from the outside.
+          --
+          -- Seeding replay from this baseline and applying the retained
+          -- updates on top reconstructs the board correctly, and it is what
+          -- makes a bounded log safe to keep bounded.
+          ALTER TABLE rooms
+            ADD COLUMN IF NOT EXISTS replay_base BYTEA;
         `);
         console.log("Database initialized successfully");
         return;

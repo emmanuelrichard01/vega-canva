@@ -303,9 +303,9 @@ export const Home: React.FC = () => {
                   opened at scale" is the kind of phrase that sounds like it
                   means something — scale of what, and opened by whom? The
                   number is the point, so the heading is the number. */}
-              <h3 className="stage__subhead">Boards with hundreds of objects on them</h3>
+              <h3 className="stage__subhead">Built at scale</h3>
               <div className="tgrid tgrid--featured">{featured.map(templateCard)}</div>
-              <h3 className="stage__subhead stage__subhead--spaced">Boards to start real work in</h3>
+              <h3 className="stage__subhead stage__subhead--spaced">Start your work here</h3>
             </>
           )}
           <div className="tgrid">{rest.map(templateCard)}</div>
@@ -317,10 +317,10 @@ export const Home: React.FC = () => {
   const boardsBody = !hasRooms ? (
     <div className="stage__empty">
       <Layers size={22} aria-hidden="true" />
-      <h3>Nothing here yet</h3>
+      <h3>No boards yet</h3>
       <p>
-        Boards you open show up here. Start from a template, make a blank one,
-        or open a link someone sent you.
+        Boards you open will appear here. Start from a template, create a blank
+        board, or open a link someone shared with you.
       </p>
     </div>
   ) : matchedRooms.length === 0 ? (
@@ -365,7 +365,7 @@ export const Home: React.FC = () => {
         <h2 id="boards-heading" className="stage__title">Your boards</h2>
         <p className="stage__lede">
           {hasRooms
-            ? 'Boards you have opened on this device. The list lives in this browser — it is not an account.'
+            ? 'Boards you have opened on this device. This list is stored in your browser, not in an account.'
             : 'Boards you open on this device collect here.'}
         </p>
       </div>
@@ -381,8 +381,8 @@ export const Home: React.FC = () => {
         </h2>
         <p className="stage__lede">
           {category
-            ? `${matchedTemplates.length} board${matchedTemplates.length === 1 ? '' : 's'} here. Each opens as an ordinary board you can change.`
-            : 'Real boards, already full — open one and change anything in it. Several are here to be checked rather than admired: a thousand objects is a claim, and you can count them.'}
+            ? `${matchedTemplates.length} board${matchedTemplates.length === 1 ? '' : 's'} here. Each one opens as a working board you can edit.`
+            : 'Working boards, already filled in. Open one and change anything in it. A few are built at full scale so you can test how the canvas holds up.'}
         </p>
       </div>
       {templatesBody}
@@ -559,9 +559,9 @@ export const Home: React.FC = () => {
                   it is a different view, and the arrow carries the rest. */}
               <button type="button" className="seam" onClick={() => goTemplates(null)}>
                 <span className="seam__text">
-                  <span className="seam__title">Every template is a real board</span>
+                  <span className="seam__title">Browse templates</span>
                   <span className="seam__sub">
-                    Open one and change anything in it.
+                    {TEMPLATES.length} boards that open already filled in, ready to edit.
                   </span>
                 </span>
                 <span className="seam__go" aria-hidden="true"><ArrowRight size={16} /></span>

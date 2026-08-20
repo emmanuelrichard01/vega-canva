@@ -7,6 +7,7 @@ import { fitPose, type FitBounds } from '../engine/cameraFit';
 import {
   activityBuckets,
   buildTimeline,
+  decodeBase64Update,
   materialiseAt,
   type Moment,
   type RawUpdate,
@@ -30,7 +31,7 @@ const SPEEDS = [1, 2, 4, 8];
  * cap. Building a timeline is synchronous, so this is the bound on how long
  * opening Time Travel can block the tab.
  */
-const MAX_REPLAY_UPDATES = 2000;
+const MAX_REPLAY_UPDATES = 400;
 
 /**
  * Room left below the framed session for the bar itself.
@@ -154,6 +155,8 @@ export const TimeTravelBar: React.FC<TimeTravelBarProps> = ({ roomId, onClose, o
     setCollapsed(val);
   };
 
+  /** The state the retained log builds on. See `BuildOptions.baseline`. */
+  const baselineRef = useRef<Uint8Array | null>(null);
   const playbackTimerRef = useRef<any>(null);
   const replayRef = useRef<{ doc: Y.Doc; appliedThrough: number } | null>(null);
 
@@ -196,7 +199,9 @@ export const TimeTravelBar: React.FC<TimeTravelBarProps> = ({ roomId, onClose, o
           (data.trimmed ? Number(data.trimmedCount ?? 0) : 0) + withheld
         );
         if (rows.length > 0) {
-          const built = buildTimeline(rows);
+          const baseline = typeof data.baseline === 'string' ? decodeBase64Update(data.baseline) : null;
+          baselineRef.current = baseline;
+          const built = buildTimeline(rows, { baseline });
           setUpdates(rows);
           setTimeline(built);
           setMomentIndex(Math.max(0, built.moments.length - 1));
@@ -274,7 +279,13 @@ export const TimeTravelBar: React.FC<TimeTravelBarProps> = ({ roomId, onClose, o
 
     const before = replayRef.current?.doc;
     changedRef.current.clear();
-    const next = materialiseAt(updates, current.index, timeline.keyframes, replayRef.current);
+    const next = materialiseAt(
+      updates,
+      current.index,
+      timeline.keyframes,
+      replayRef.current,
+      baselineRef.current
+    );
 
     // materialiseAt returns a fresh doc when it had to rewind; drop the old one.
     const rebuilt = next.doc !== before;

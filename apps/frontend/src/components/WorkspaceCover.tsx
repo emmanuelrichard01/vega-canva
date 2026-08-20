@@ -200,14 +200,49 @@ export const WorkspaceCover: React.FC<Props> = ({ workspaceId, name, preview: su
              * the same shape at some other rotation.
              */
             if (item.s === 'line') {
-              // No interior to fill: a stroke across the box it occupies.
+              /**
+               * The run the line actually draws, when the summary carries one.
+               *
+               * This used to be a single horizontal rule from the left of the
+               * box to the right, which was wrong twice: a line running corner
+               * to corner drew flat, and a line with a **profile** — wavy,
+               * zigzag, curved, or the coil — lost the whole thing that makes
+               * it that profile. A board of loops had a thumbnail of plain
+               * rules, which is a confidently wrong picture rather than a
+               * simplified one.
+               *
+               * The straight fallback stays for summaries written before the
+               * points were carried. It is honest about being approximate,
+               * where the old one was not.
+               */
+              const stroke = Math.max(0.5, Math.min(1.4, h || 1));
+              if (item.l && item.l.length >= 4) {
+                // Same mapping the connector polyline above uses: the points
+                // are normalised into the board's box, exactly like `x`/`y`.
+                const pts: string[] = [];
+                for (let p = 0; p + 1 < item.l.length; p += 2) {
+                  pts.push(`${offX + item.l[p] * drawW},${offY + item.l[p + 1] * drawH}`);
+                }
+                return (
+                  <polyline
+                    key={i}
+                    points={pts.join(' ')}
+                    {...spin}
+                    fill="none"
+                    stroke={item.c}
+                    strokeWidth={stroke}
+                    strokeLinecap="round"
+                    strokeLinejoin="round"
+                  />
+                );
+              }
               return (
                 <line
                   key={i}
                   x1={x} y1={y + h / 2} x2={x + w} y2={y + h / 2}
                   {...spin}
                   stroke={item.c}
-                  strokeWidth={Math.max(0.5, Math.min(1.4, h))}
+                  strokeWidth={stroke}
                   strokeLinecap="round"
                 />
               );

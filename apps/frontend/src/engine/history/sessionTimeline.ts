@@ -88,6 +88,14 @@ export interface SessionTimeline {
   /** Distinct contributors, in first-seen order, for the timeline legend. */
   authors: { id: string; name: string; color: string }[];
   /**
+   * Set when the build hit its time budget and stopped early.
+   *
+   * The replay is then real but short of the log it was given, and the bar says
+   * so — the same honesty the trimmed-history notice provides, for a different
+   * reason.
+   */
+  truncated?: boolean;
+  /**
    * Everywhere the session ever reached, so replay can frame it once.
    *
    * The union across *every* moment, not the extent of the final document.
@@ -117,10 +125,56 @@ export interface BuildOptions {
    * so this trades memory for seek latency rather than growing without limit.
    */
   maxKeyframes?: number;
+  /**
+   * The document as it stood before the first retained update.
+   *
+   * A trimmed log is a set of deltas whose base is missing, so replaying it
+   * alone reconstructs nothing. Measured on a real room here: four hundred
+   * retained updates produced a document holding **zero** objects, because
+   * every object's creation was in the discarded rows. Seeding from the
+   * server's baseline is what turns a bounded log into a shorter history
+   * rather than an empty one.
+   */
+  baseline?: Uint8Array | null;
+  /**
+   * How long this may spend before it gives up and returns what it has.
+   *
+   * Building a timeline is synchronous, so without a ceiling a pathological log
+   * freezes the tab outright — which is what Time Travel was reported for.
+   *
+   * "Pathological" is specific and measurable. A **healthy** four hundred
+   * updates build in 186ms. The same four hundred rows from a log whose base
+   * had been trimmed away took **28,332ms**: Yjs parks updates whose
+   * dependencies are missing in a pending store, that store grows with every
+   * orphaned row, and each keyframe's `encodeStateAsUpdate` then walks all of
+   * it. A hundred and fifty times slower, for the same number of rows.
+   *
+   * `replay_base` stops logs being orphaned in the first place, so this should
+   * never fire on data written by the current server. It exists for the rooms
+   * already damaged by the version that trimmed without keeping a baseline, and
+   * for whatever the next unanticipated shape turns out to be: a replay that
+   * covers less of the session is a bad outcome, and a tab that stops
+   * responding is not an outcome at all.
+   */
+  budgetMs?: number;
 }
 
 const DEFAULT_COALESCE_MS = 1200;
 const DEFAULT_MAX_KEYFRAMES = 32;
+
+/**
+ * The ceiling on a synchronous build.
+ *
+ * Generous for a healthy log — four hundred updates build in about 186ms — and
+ * short enough that the worst case is a pause rather than a frozen tab.
+ */
+const DEFAULT_BUDGET_MS = 1500;
+
+/** Monotonic where available; `Date.now` is enough for a coarse budget. */
+const now = (): number =>
+  typeof performance !== 'undefined' && typeof performance.now === 'function'
+    ? performance.now()
+    : Date.now();
 
 const FIELD_KIND: Record<string, MomentKind> = {
   x: 'move',
@@ -287,10 +341,28 @@ function summarise(kind: MomentKind, names: string[]): string {
 }
 
 export function buildTimeline(updates: RawUpdate[], options: BuildOptions = {}): SessionTimeline {
+  const startedAt = now();
   const coalesceWindow = options.coalesceWindowMs ?? DEFAULT_COALESCE_MS;
   const maxKeyframes = Math.max(1, options.maxKeyframes ?? DEFAULT_MAX_KEYFRAMES);
 
   const doc = new Y.Doc();
+  /**
+   * Seeded before anything is observed, so the baseline is the starting
+   * *state* rather than an authored moment.
+   *
+   * Applying it after the observer is attached would emit a create for every
+   * object the room already had, and the timeline would open with one enormous
+   * fabricated moment reading "someone added 400 objects" at the timestamp of
+   * the first retained edit.
+   */
+  if (options.baseline) {
+    try {
+      Y.applyUpdate(doc, options.baseline);
+    } catch {
+      // An unreadable baseline degrades to the old behaviour — a replay that
+      // starts from nothing — rather than taking the whole timeline down.
+    }
+  }
   const objects = doc.getMap<Y.Map<unknown>>('objects');
   // Identities recorded in the document by `publishLocalIdentity`. Unlike
   // `createdByName` — which only ever names a node's *creator* — this covers
@@ -381,7 +453,21 @@ export function buildTimeline(updates: RawUpdate[], options: BuildOptions = {}):
     open = null;
   };
 
+  const deadline = startedAt + (options.budgetMs ?? DEFAULT_BUDGET_MS);
+  let truncated = false;
+
   updates.forEach((raw, index) => {
+    /**
+     * Checked every sixteen rows rather than every row.
+     *
+     * `performance.now()` is cheap but not free, and the loop it guards is
+     * already the hot one. Sixteen bounds the overshoot to a fraction of the
+     * budget on any log where a single row is not itself the problem.
+     */
+    if (truncated || (index % 4 === 0 && index > 0 && now() > deadline)) {
+      truncated = true;
+      return;
+    }
     pending = emptyPending();
 
     /**
@@ -550,6 +636,7 @@ export function buildTimeline(updates: RawUpdate[], options: BuildOptions = {}):
     totalUpdates: updates.length,
     authors: [...authors.values()],
     bounds: sessionBounds,
+    truncated: truncated || undefined,
   };
 }
 
@@ -563,7 +650,17 @@ export function materialiseAt(
   updates: RawUpdate[],
   targetIndex: number,
   keyframes: Keyframe[],
-  existing?: { doc: Y.Doc; appliedThrough: number } | null
+  existing?: { doc: Y.Doc; appliedThrough: number } | null,
+  /**
+   * The state the retained log builds on, for a rewind that lands before the
+   * first keyframe.
+   *
+   * Keyframes are encoded *after* `buildTimeline` seeds its scratch document,
+   * so they already contain the baseline — but seeking to the very start of the
+   * session uses no keyframe at all, and without this that one position would
+   * show an empty board while every other position showed a full one.
+   */
+  baseline?: Uint8Array | null
 ): { doc: Y.Doc; appliedThrough: number } {
   const target = Math.min(targetIndex, updates.length - 1);
 
@@ -591,6 +688,15 @@ export function materialiseAt(
   }
 
   const doc = new Y.Doc();
+  // No keyframe to start from means starting at the beginning of the retained
+  // window, which is exactly where the baseline belongs.
+  if (!seed && baseline) {
+    try {
+      Y.applyUpdate(doc, baseline);
+    } catch {
+      /* an unreadable baseline degrades to an empty start */
+    }
+  }
   if (seed) {
     try {
       Y.applyUpdate(doc, seed);

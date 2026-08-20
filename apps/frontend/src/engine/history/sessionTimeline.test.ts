@@ -515,3 +515,85 @@ describe('materialiseAt', () => {
     expect([...result.doc.getMap('objects').keys()].sort()).toEqual(['a', 'b']);
   });
 });
+
+/**
+ * A trimmed log without its base reconstructs nothing.
+ *
+ * Yjs updates are deltas against structs created by earlier updates, so
+ * discarding the head of the log discards every object's creation and leaves
+ * the survivors referring to structs that never arrive. Measured on a real room
+ * in Chrome: four hundred retained updates produced a document holding **zero**
+ * objects. That is what "most objects never show up during playback" is.
+ */
+describe('replay baseline', () => {
+  /** A session split in two: the part retention discards, and the part it keeps. */
+  function splitSession() {
+    const doc = new Y.Doc();
+    const log: RawUpdate[] = [];
+    recorder(doc, log);
+    const objects = doc.getMap<Y.Map<unknown>>('objects');
+
+    // The discarded half: three objects are created here.
+    objects.set('a', baseNode(doc, { text: 'First' }));
+    objects.set('b', baseNode(doc, { text: 'Second' }));
+    objects.set('c', baseNode(doc, { text: 'Third' }));
+    const discarded = log.length;
+    const baseline = Y.encodeStateAsUpdate(doc);
+
+    // The retained half: only edits, no creations.
+    objects.get('a')!.set('x', 400);
+    objects.get('b')!.set('text', 'Renamed');
+
+    return { retained: log.slice(discarded), baseline };
+  }
+
+  it('reconstructs nothing from a trimmed log alone', () => {
+    // The failing case, stated outright, so the fix cannot be mistaken for
+    // something that was always working.
+    const { retained } = splitSession();
+    const timeline = buildTimeline(retained);
+    const doc = materialiseAt(retained, retained.length - 1, timeline.keyframes).doc;
+    expect(doc.getMap('objects').size).toBe(0);
+  });
+
+  it('reconstructs the board when seeded from the baseline', () => {
+    const { retained, baseline } = splitSession();
+    const timeline = buildTimeline(retained, { baseline });
+    const doc = materialiseAt(
+      retained,
+      retained.length - 1,
+      timeline.keyframes,
+      null,
+      baseline
+    ).doc;
+
+    const objects = doc.getMap<Y.Map<unknown>>('objects');
+    expect([...objects.keys()].sort()).toEqual(['a', 'b', 'c']);
+    // And the retained edits landed on top of it.
+    expect(objects.get('a')!.get('x')).toBe(400);
+    expect(objects.get('b')!.get('text')).toBe('Renamed');
+  });
+
+  it('does not invent a moment for the baseline itself', () => {
+    // Seeding happens before the observer is attached. Applied after, the
+    // timeline would open with one fabricated moment reading "added 3 objects"
+    // at the timestamp of the first retained edit.
+    const { retained, baseline } = splitSession();
+    const timeline = buildTimeline(retained, { baseline });
+    expect(timeline.moments.every((m) => m.kind !== 'create')).toBe(true);
+  });
+
+  it('seeds a seek that lands before the first keyframe', () => {
+    const { retained, baseline } = splitSession();
+    const timeline = buildTimeline(retained, { baseline });
+    // The very start of the retained window uses no keyframe at all.
+    const doc = materialiseAt(retained, -1, timeline.keyframes, null, baseline).doc;
+    expect(doc.getMap('objects').size).toBe(3);
+  });
+
+  it('degrades to an empty start rather than throwing on a corrupt baseline', () => {
+    const { retained } = splitSession();
+    const junk = new Uint8Array([9, 9, 9, 9]);
+    expect(() => buildTimeline(retained, { baseline: junk })).not.toThrow();
+  });
+});

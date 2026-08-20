@@ -96,3 +96,90 @@ describe('previewPolygonPoints', () => {
     expect(Math.hypot(pts[1][0] - 50, pts[1][1] - 50)).toBeGreaterThan(0);
   });
 });
+
+/**
+ * A line's run, not a rule across its box.
+ *
+ * The cover drew every line as one horizontal stroke from the left of its box
+ * to the right. That is wrong twice: a line running corner to corner came out
+ * flat, and a line with a **profile** — wavy, zigzag, curved, or the coil —
+ * lost the entire thing that makes it that profile. A board of loops had a
+ * thumbnail of plain rules, which is a confidently wrong picture rather than a
+ * simplified one.
+ */
+describe('board preview — lines carry the shape they draw', () => {
+  const line = (geometry: Record<string, unknown>) =>
+    node({
+      geometry: { kind: 'line', ...geometry },
+      appearance: { stroke: { color: '#B45309', width: 2 } },
+    });
+
+  /** The stored polyline as [x, y] pairs. */
+  const runOf = (item: { l?: number[] }) => {
+    const flat = item.l ?? [];
+    const pairs: [number, number][] = [];
+    for (let i = 0; i + 1 < flat.length; i += 2) pairs.push([flat[i], flat[i + 1]]);
+    return pairs;
+  };
+
+  it('marks a line as a line rather than a filled box', () => {
+    const p = buildPreview([line({})], () => '#B45309')!;
+    expect(p.items[0].s).toBe('line');
+  });
+
+  it('stores a straight line as its two endpoints', () => {
+    const p = buildPreview([line({})], () => '#B45309')!;
+    expect(runOf(p.items[0]).length).toBeGreaterThanOrEqual(2);
+  });
+
+  /**
+   * The defect this exists to hold shut. A coil doubles back on itself, so its
+   * run cannot be a function of position — which is exactly what a single
+   * horizontal rule is.
+   */
+  it('stores a coil as a run that actually loops', () => {
+    const p = buildPreview([line({ lineProfile: 'coil', lineWaves: 4 })], () => '#B45309')!;
+    const run = runOf(p.items[0]);
+
+    expect(run.length).toBeGreaterThan(8);
+    // It must double back somewhere, or it is not a loop.
+    const backtracks = run.filter(([x], i) => i > 0 && x < run[i - 1][0] - 1e-9).length;
+    expect(backtracks).toBeGreaterThan(0);
+  });
+
+  it('stores a wavy line as a run that leaves the straight path', () => {
+    const p = buildPreview([line({ lineProfile: 'wavy', lineWaves: 5 })], () => '#B45309')!;
+    const run = runOf(p.items[0]);
+    const ys = run.map(([, y]) => y);
+    // A flat rule would have one y value; a wave has a spread.
+    expect(Math.max(...ys) - Math.min(...ys)).toBeGreaterThan(0.01);
+  });
+
+  it('draws a straight profile as fewer points than a coil', () => {
+    // Storage is the reason the run is sampled down; a plain line must not pay
+    // for a feature it is not using.
+    const straight = buildPreview([line({})], () => '#B45309')!;
+    const coil = buildPreview([line({ lineProfile: 'coil', lineWaves: 6 })], () => '#B45309')!;
+    expect(runOf(straight.items[0]).length).toBeLessThan(runOf(coil.items[0]).length);
+  });
+
+  it('keeps a stored run within the normalised box', () => {
+    // Everything else in a summary is 0..1 against the board's bounds, and the
+    // renderer maps it with the same arithmetic. A run outside that draws
+    // outside the card.
+    const p = buildPreview([line({ lineProfile: 'coil', lineWaves: 3 })], () => '#B45309')!;
+    for (const [x, y] of runOf(p.items[0])) {
+      expect(x).toBeGreaterThanOrEqual(-0.5);
+      expect(x).toBeLessThanOrEqual(1.5);
+      expect(y).toBeGreaterThanOrEqual(-0.5);
+      expect(y).toBeLessThanOrEqual(1.5);
+    }
+  });
+
+  it('caps how many points it will store', () => {
+    const p = buildPreview([line({ lineProfile: 'coil', lineWaves: 40 })], () => '#B45309')!;
+    // Sampled down: a forty-loop coil is several hundred points and this goes
+    // into localStorage for every line on every board.
+    expect(runOf(p.items[0]).length).toBeLessThanOrEqual(64);
+  });
+});
