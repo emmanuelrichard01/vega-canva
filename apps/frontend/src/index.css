@@ -2929,8 +2929,8 @@ textarea:focus-visible {
   background: linear-gradient(
     to right,
     var(--surface-sunken) var(--slider-fill-start),
-    var(--text-primary) var(--slider-fill-start),
-    var(--text-primary) var(--slider-fill-end),
+    var(--slider-accent, var(--text-primary)) var(--slider-fill-start),
+    var(--slider-accent, var(--text-primary)) var(--slider-fill-end),
     var(--surface-sunken) var(--slider-fill-end)
   );
 }
@@ -2941,8 +2941,8 @@ textarea:focus-visible {
   background: linear-gradient(
     to right,
     var(--surface-sunken) var(--slider-fill-start),
-    var(--text-primary) var(--slider-fill-start),
-    var(--text-primary) var(--slider-fill-end),
+    var(--slider-accent, var(--text-primary)) var(--slider-fill-start),
+    var(--slider-accent, var(--text-primary)) var(--slider-fill-end),
     var(--surface-sunken) var(--slider-fill-end)
   );
 }
@@ -6312,12 +6312,18 @@ body[data-zen='replay'] .canvas-container::after {
   pointer-events: none;
   /* Two stops and no ellipse. The amber is the same role the scrubber's
      elapsed track uses, so the tint and the instrument are visibly the same
-     idea; at six per cent over the bottom third it is a warmth in the room,
-     not a filter over someone's work. */
+     idea.
+
+     Three per cent over the bottom fifth, down from six over the bottom third.
+     The first pass read as a glow — a light source at the bottom of the
+     screen, which is a thing the room does not contain and which sat visibly
+     *on top of* the board rather than behind it. What is wanted is the
+     suggestion that the instrument has weight, not an effect anyone notices.
+     If you can see where it stops, it is too strong. */
   background: linear-gradient(
     to top,
-    color-mix(in srgb, var(--history-accent) 6%, transparent) 0%,
-    transparent 34%
+    color-mix(in srgb, var(--history-accent) 3%, transparent) 0%,
+    transparent 20%
   );
   animation: zenVeil 420ms var(--ease-settle) both;
 }
@@ -6342,7 +6348,10 @@ body[data-zen='replay'] .canvas-container::before {
     var(--history-elapsed) 78%,
     transparent 100%
   );
-  opacity: 0.55;
+  /* Quieter, for the same reason as the wash above: this is a status mark, and
+     a status mark that competes with the work is doing the opposite of its
+     job. It only needs to be findable once you wonder whether you are live. */
+  opacity: 0.3;
   animation: zenVeil 420ms var(--ease-settle) both;
 }
 
@@ -6550,34 +6559,25 @@ body[data-zen='physics'] .forces-handle { bottom: 32px; }
   gap: var(--space-4);
 }
 
-.forces__dial {
-  display: flex;
-  align-items: center;
-  gap: var(--space-2);
-  min-width: 0;
+/* The dials are `ui/Slider` now — see the note on `Dial` in `ForcesBar`.
+
+   What is left here is the panel's own proportions. The primitive's default
+   grid gives the label 68px and the readout 38px, which is right for the
+   properties panel's narrow column and wrong in a 820px bar: the labels here
+   are one short word, and the readouts are wider ("480px", "1.25×") than the
+   signed integers it was sized for. */
+.forces__dial { min-width: 0; }
+
+.forces__dial .slider {
+  grid-template-columns: auto 1fr 52px;
+  gap: var(--space-3);
 }
 
-.forces__dial-label {
-  flex-shrink: 0;
+/* Quieter than the properties panel's, because this panel has a picker row of
+   six named forces above it and the dials are the supporting act. */
+.forces__dial .slider__label {
   font-size: var(--text-xs);
   color: var(--text-tertiary);
-}
-
-.forces__dial input[type='range'] {
-  flex: 1;
-  min-width: 40px;
-  cursor: pointer;
-}
-
-/* Tabular and fixed-width, so the number does not shuffle the slider beside it
-   as it counts. */
-.forces__dial-value {
-  flex-shrink: 0;
-  width: 46px;
-  text-align: right;
-  font-size: var(--text-xs);
-  font-variant-numeric: tabular-nums;
-  color: var(--text-secondary);
 }
 
 /* --------------------------------------------------------- falloff + scope */
@@ -6763,6 +6763,65 @@ body[data-zen='physics'] .forces-handle { bottom: 32px; }
     bottom var(--motion-expand);
 }
 
+/* The collapsed instrument.
+
+   The forces handle's twin, and deliberately the same object at the same place
+   on screen — two modes that hide the same way should not hide differently.
+   What it says is different, because the question each mode leaves behind is:
+   physics asks "which force is in my hand", replay asks "where in the session
+   am I". */
+.timetravel-handle {
+  position: absolute;
+  bottom: 32px;
+  left: 50%;
+  /* `translate`, not `transform` — see the note on `.timetravel`. */
+  translate: -50%;
+  z-index: 1000;
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  height: var(--control-h-md);
+  padding: 0 var(--space-3);
+  border: none;
+  border-radius: var(--radius-pill);
+  color: var(--text-primary);
+  font-family: var(--font-sans);
+  font-size: var(--text-sm);
+  font-weight: 500;
+  cursor: pointer;
+  box-shadow: var(--shadow-float);
+  transition: transform var(--motion-hover), box-shadow var(--motion-hover);
+  animation: popIn 200ms var(--ease-settle);
+}
+
+.timetravel-handle:hover {
+  transform: translateY(-1px);
+  box-shadow: var(--shadow-lg);
+}
+
+/* The current moment's author, as a mark rather than a fill — the handle has
+   to read on any board, and a saturated pill would not. */
+.timetravel-handle__dot {
+  width: 10px;
+  height: 10px;
+  border-radius: var(--radius-pill);
+  flex-shrink: 0;
+}
+
+.timetravel-handle__count { font-variant-numeric: tabular-nums; }
+
+/* It keeps playing while hidden, so it has to show that it is moving. A still
+   handle over a board that is changing by itself reads as a bug. */
+.timetravel-handle__spin {
+  color: var(--history-accent);
+  animation: spin 1.4s linear infinite;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .timetravel-handle { animation-duration: 1ms; }
+  .timetravel-handle__spin { animation: none; }
+}
+
 /* Loading and empty states: same shell, one line, no controls to lay out. */
 .timetravel--message {
   flex-direction: row;
@@ -6836,6 +6895,38 @@ body[data-zen='physics'] .forces-handle { bottom: 32px; }
 /* A readout, not a control: pointer-events none, so it can never compete with
    the track below for a press. That competition is the bug this whole redesign
    came from. */
+/* The captioned strip.
+
+   Sixty-four bars of varying height with nothing around them are not
+   self-evident — they read as blocks that ought to do something, and the only
+   clue to what they were was a `title` nobody hovers a chart they have not
+   understood yet. A title above and two clock times below turn the same marks
+   into an axis, which is the whole difference between a chart and decoration.
+   Both are `aria-hidden`; the strip itself carries the description. */
+.timetravel__strip {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.timetravel__strip-head,
+.timetravel__strip-axis {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  font-size: var(--text-xs);
+  color: var(--text-tertiary);
+  /* Tabular, so the two clock times do not shuffle their own width as the
+     digits change and drag the strip's edges with them. */
+  font-variant-numeric: tabular-nums;
+}
+
+.timetravel__strip-title {
+  font-weight: 500;
+  color: var(--text-secondary);
+  letter-spacing: -0.005em;
+}
+
 .timetravel__activity {
   position: relative;
   display: flex;
@@ -6843,6 +6934,11 @@ body[data-zen='physics'] .forces-handle { bottom: 32px; }
   gap: 1px;
   height: 26px;
   pointer-events: none;
+  /* A baseline under the bars. Without one, a quiet stretch renders as a row
+     of near-invisible stubs and the strip appears to have gaps in it — which
+     reads as missing data rather than as a quiet afternoon. */
+  border-bottom: 1px solid var(--border-divider);
+  padding-bottom: 1px;
 }
 
 .timetravel__bar {
@@ -7002,9 +7098,19 @@ body[data-zen='physics'] .forces-handle { bottom: 32px; }
 }
 
 .timetravel__play:hover { opacity: 0.85; }
-/* A play triangle is visually left-heavy; the nudge centres what the eye sees
-   rather than what the bounding box says. */
-.timetravel__play-glyph { margin-left: 2px; }
+
+/* A play triangle is visually left-heavy, so it needs a nudge right — but this
+   was a `margin-left`, and a margin on a flex child is part of what
+   `justify-content: center` centres. The 2px therefore moved the glyph and
+   then the centring gave half of it back, and it compounded with Lucide's own
+   geometry: its play polygon already sits a unit right of the viewBox centre.
+   The net was visibly too far right, which is exactly how it looked.
+
+   `translate` instead, because it is applied after layout and so shifts by
+   precisely what it says. One pixel: the triangle's centroid sits about six
+   per cent of its width left of centre, which at this size is a little under
+   a pixel. */
+.timetravel__play-glyph { translate: 1px 0; }
 
 .timetravel__count {
   margin-left: var(--space-2);

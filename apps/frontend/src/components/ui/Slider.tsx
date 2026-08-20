@@ -19,6 +19,20 @@ interface Props {
   origin?: number;
   /** Appended to the readout and the accessible value. */
   unit?: string;
+  /**
+   * Render the readout, when the raw number is not the useful one.
+   *
+   * The forces panel shows Area as a distance in world pixels — the size of
+   * the ring actually drawn on the canvas — rather than as the multiplier it
+   * stores, because a radius is a distance and not a ratio. Without this, a
+   * panel needing that has to keep its own bare `input[type=range]`, which is
+   * exactly the divergence this component exists to end.
+   */
+  format?: (value: number) => string;
+  /** Tints the fill and thumb, for a panel that carries an accent. */
+  accent?: string;
+  /** Long-form description, surfaced through the app's own tooltip layer. */
+  hint?: string;
 }
 
 /**
@@ -44,10 +58,18 @@ export const Slider: React.FC<Props> = ({
   label,
   origin,
   unit = '',
+  format,
+  accent,
+  hint,
 }) => {
   const id = useId();
   const from = origin ?? min;
   const pct = (n: number) => ((n - min) / (max - min)) * 100;
+  // The formatter owns the whole readout when there is one, sign included —
+  // "1.25×" has no business gaining a leading plus.
+  const readout = format
+    ? format(value)
+    : `${value > from && origin !== undefined ? '+' : ''}${value}${unit}`;
 
   // The filled segment runs between the origin and the value, in either
   // direction, so a negative adjustment fills leftward from the middle.
@@ -56,7 +78,7 @@ export const Slider: React.FC<Props> = ({
   const isDefault = value === from;
 
   return (
-    <div className="slider">
+    <div className="slider" data-tooltip={hint}>
       <label className="slider__label" htmlFor={id}>
         {label}
       </label>
@@ -68,7 +90,8 @@ export const Slider: React.FC<Props> = ({
         max={max}
         step={step}
         value={value}
-        aria-valuetext={`${value}${unit}`}
+        aria-valuetext={readout}
+        aria-describedby={undefined}
         onChange={(e) => onChange(Number(e.target.value))}
         /* Double-click to reset is the convention every adjustment panel
            uses, and it is the only way back to exactly the neutral value
@@ -78,13 +101,12 @@ export const Slider: React.FC<Props> = ({
           {
             '--slider-fill-start': `${a}%`,
             '--slider-fill-end': `${b}%`,
+            ...(accent ? { '--slider-accent': accent, accentColor: accent } : {}),
           } as React.CSSProperties
         }
       />
       <output className="slider__value" data-default={isDefault} htmlFor={id}>
-        {value > from && origin !== undefined ? '+' : ''}
-        {value}
-        {unit}
+        {readout}
       </output>
     </div>
   );

@@ -1,6 +1,6 @@
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import * as Y from 'yjs';
-import { Play, Pause, SkipBack, SkipForward, X, History, Loader2, ChevronLeft, ChevronRight, AlertTriangle } from 'lucide-react';
+import { Play, Pause, SkipBack, SkipForward, X, History, Loader2, ChevronLeft, ChevronRight, ChevronUp, ChevronDown, AlertTriangle } from 'lucide-react';
 import { roomHistoryUrl } from '../utils/endpoints';
 import { cameraSystem } from '../engine/CameraSystem';
 import { fitPose, type FitBounds } from '../engine/cameraFit';
@@ -136,6 +136,23 @@ export const TimeTravelBar: React.FC<TimeTravelBarProps> = ({ roomId, onClose, o
   const [error, setError] = useState<string | null>(null);
   /** Updates retention has discarded, as reported by the server. */
   const [trimmedCount, setTrimmedCount] = useState(0);
+
+  /**
+   * Hidden, but still replaying.
+   *
+   * The same affordance the forces panel has, for the same reason: the
+   * instrument sits over the bottom of the board, and the moment you want to
+   * *look* at what you have scrubbed to is the moment it is in the way. The
+   * preference is remembered, because someone who works this way works this
+   * way every time.
+   */
+  const [collapsed, setCollapsed] = useState(
+    () => window.localStorage.getItem('vega_timetravel_collapsed') === '1'
+  );
+  const setCollapsedPref = (val: boolean) => {
+    window.localStorage.setItem('vega_timetravel_collapsed', val ? '1' : '0');
+    setCollapsed(val);
+  };
 
   const playbackTimerRef = useRef<any>(null);
   const replayRef = useRef<{ doc: Y.Doc; appliedThrough: number } | null>(null);
@@ -376,6 +393,38 @@ export const TimeTravelBar: React.FC<TimeTravelBarProps> = ({ roomId, onClose, o
 
   const elapsed = span > 0 ? Math.round(span / 60000) : 0;
 
+  /**
+   * The collapsed instrument.
+   *
+   * Not a bare chevron. The question the panel's absence creates is *where in
+   * the session am I* — so the handle answers that, and reopening is the side
+   * effect. It keeps playing while hidden, so it also has to say whether it is
+   * moving; a still handle over a moving board would read as a bug.
+   */
+  if (collapsed) {
+    return (
+      <button
+        type="button"
+        className="panel-surface timetravel-handle"
+        onClick={() => setCollapsedPref(false)}
+        data-tooltip="Show the replay controls — Escape leaves Time Travel"
+        aria-label={`Replaying, moment ${momentIndex + 1} of ${moments.length}. Show the replay controls`}
+      >
+        <span
+          className="timetravel-handle__dot"
+          style={{ background: current?.authorColor ?? 'var(--history-accent)' }}
+          aria-hidden="true"
+        />
+        <span className="timetravel-handle__count">
+          {momentIndex + 1}
+          <span className="timetravel__count-of"> / {moments.length}</span>
+        </span>
+        {isPlaying && <Loader2 size={12} className="timetravel-handle__spin" aria-hidden="true" />}
+        <ChevronUp size={14} aria-hidden="true" />
+      </button>
+    );
+  }
+
   return (
     <div className="timetravel panel-surface" role="group" aria-label="Time Travel session replay">
       {/* Row 1: what you are looking at. The description leads, because it is
@@ -399,6 +448,15 @@ export const TimeTravelBar: React.FC<TimeTravelBarProps> = ({ roomId, onClose, o
         )}
 
         <span className="timetravel__time">{timeLabel}</span>
+        <button
+          type="button"
+          className="timetravel__icon-btn"
+          onClick={() => setCollapsedPref(true)}
+          aria-label="Hide the replay controls"
+          data-tooltip="Hide these controls and keep replaying"
+        >
+          <ChevronDown size={16} />
+        </button>
         <button type="button" className="timetravel__icon-btn" onClick={onClose} aria-label="Exit Time Travel" data-tooltip="Exit Time Travel">
           <X size={16} />
         </button>
@@ -406,12 +464,27 @@ export const TimeTravelBar: React.FC<TimeTravelBarProps> = ({ roomId, onClose, o
 
       {/* Row 2: the session at a glance, on the wall-clock axis. Purely a
           readout — every interactive thing lives on the track below, so there
-          are never two controls stacked over the same pixels. */}
+          are never two controls stacked over the same pixels.
+
+          It is *captioned* now. Sixty-four bars of varying height, unlabelled,
+          are not self-evident — they were read as blocks that must do
+          something, and the only clue to what they were was a `title`
+          attribute that requires already suspecting there is something to
+          learn. The caption names the axis and the ends give it a scale, which
+          together is the difference between a chart and decoration. */}
       {span > 0 && (
+        <div className="timetravel__strip">
+          <div className="timetravel__strip-head" aria-hidden="true">
+            <span className="timetravel__strip-title">Activity over the session</span>
+            <span className="timetravel__strip-scale">
+              {moments.length} moments · {elapsed || '<1'} min
+            </span>
+          </div>
         <div
           className="timetravel__activity"
-          aria-hidden="true"
-          title={`${moments.length} moments over ${elapsed || '<1'} minute${elapsed === 1 ? '' : 's'}`}
+          role="img"
+          aria-label={`Activity across the session: ${moments.length} moments over ${elapsed || 'less than a'} minute${elapsed === 1 ? '' : 's'}. Taller marks are busier stretches.`}
+          title="Taller marks are busier stretches. Colour is who was working."
         >
           {buckets.map((bucket, i) => (
             <span
@@ -433,6 +506,14 @@ export const TimeTravelBar: React.FC<TimeTravelBarProps> = ({ roomId, onClose, o
             />
           ))}
           <span className="timetravel__activity-playhead" style={{ left: `${timePct}%` }} />
+        </div>
+          {/* The scale, which is what turns a row of bars into an axis. Two
+              clock times at the ends say "this is time, running left to right"
+              in less space than any label could. */}
+          <div className="timetravel__strip-axis" aria-hidden="true">
+            <span>{new Date(first).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}</span>
+            <span>{new Date(last).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}</span>
+          </div>
         </div>
       )}
 

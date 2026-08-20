@@ -4,6 +4,7 @@ import {
   RotateCcw, Check, Snowflake, Target, Hand, ChevronDown, ChevronUp,
 } from 'lucide-react';
 import { useStore } from '../hooks/useStore';
+import { Slider } from './ui/Slider';
 import {
   FALLOFF_IDS,
   FALLOFF_SPECS,
@@ -65,7 +66,32 @@ const FalloffIcon: React.FC<{ id: FalloffId }> = ({ id }) => {
   );
 };
 
-/** A labelled slider with its value, used for both continuous controls. */
+/**
+ * A labelled slider with its value, used for both continuous controls.
+ *
+ * ## Why this is now a wrapper rather than an implementation
+ *
+ * It was a bare `input[type="range"]` with an inline `accentColor` — which is
+ * precisely what `ui/Slider` was built to replace, and its docstring says so:
+ * "the three ranges already in this codebase are bare `input[type=range]`
+ * elements with inline styles, so they inherit each browser's default track
+ * and thumb — which do not follow the theme, do not follow the focus ring, and
+ * do not look like each other across platforms."
+ *
+ * Only the properties panel had adopted it, so the forces panel was one of the
+ * ranges that comment was describing. These two dials sit in the app's most
+ * deliberately-designed surface and were rendering with Chrome's stock thumb.
+ *
+ * The primitive gained a `format`, an `accent` and a `hint` to take them, which
+ * is a smaller change than keeping a second slider alive — and it brings
+ * double-click-to-reset and a real focus ring with it.
+ *
+ * The hint also stops being a `title`. Everywhere else in this app a hint is
+ * `data-tooltip`, drawn by `TooltipLayer`; `title` is the browser's own, with a
+ * second of delay, no styling and no theme. Two of the four controls on this
+ * panel explained themselves through a different, worse mechanism than the
+ * other two.
+ */
 const Dial: React.FC<{
   label: string;
   hint: string;
@@ -77,20 +103,19 @@ const Dial: React.FC<{
   accent: string;
   onChange: (v: number) => void;
 }> = ({ label, hint, value, min, max, step, format, accent, onChange }) => (
-  <label className="forces__dial" title={hint}>
-    <span className="forces__dial-label">{label}</span>
-    <input
-      type="range"
+  <div className="forces__dial">
+    <Slider
+      label={label}
+      hint={hint}
+      value={value}
       min={min}
       max={max}
       step={step}
-      value={value}
-      aria-label={`${label} — ${hint}`}
-      onChange={(e) => onChange(Number(e.target.value))}
-      style={{ accentColor: accent }}
+      format={format}
+      accent={accent}
+      onChange={onChange}
     />
-    <span className="forces__dial-value">{format(value)}</span>
-  </label>
+  </div>
 );
 
 /**
