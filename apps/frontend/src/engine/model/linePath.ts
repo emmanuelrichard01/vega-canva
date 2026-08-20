@@ -172,93 +172,147 @@ export function linePoints(
   }
 
   /**
-   * Coil: a straight run with a row of loops standing on it.
+   * Coil: a baseline that rises into a loop, crosses itself, dips, and repeats.
    *
-   * ## Why this is a prolate cycloid and not a shaped sine
+   * ## One template, translated
    *
-   * Three attempts were made by taking a wave and bending it — moving the
-   * phase around, easing the amplitude, narrowing the window a loop happens
-   * in. Every one of them produced a scallop, an arch or a flat-topped hump,
-   * because none of them was ever going to produce a loop: a sine has one
-   * value per position, so it cannot double back, and a curve that never
-   * doubles back cannot cross itself. Tuning the numbers was never going to
-   * fix a construction that had no crossing in it.
+   * Every loop is the *same* cubics moved along by one period, so uniformity is
+   * structural rather than something that has to be eyeballed. Four earlier
+   * attempts derived the shape from a formula — a shaped sine, a phase-warped
+   * circle, a prolate cycloid — and each produced a curve with the wrong
+   * character, because the mark is a mark rather than the output of an
+   * equation. A cycloid's loops in particular are tied in size to how many
+   * there are, and run into each other with no baseline between.
    *
-   * A **prolate cycloid** is the curve traced by a point held *outside* a
-   * circle that rolls along a line. The loop is not a shape imposed on it —
-   * the loop is what the point does when the circle's rotation carries it
-   * backwards faster than the rolling carries it forwards, which happens near
-   * the bottom of every turn. That is exactly the reference: loops standing on
-   * a baseline, each crossing itself right at the line.
+   * ## The geometry, per period, with the crossing at the local origin
    *
-   *   x(t) = r*t - d*sin(t)
-   *   y(t) = d - d*cos(t)
+   *  - **Loop** — four cubics: node → right flank → apex → left flank → node.
+   *  - **Valley** — one symmetric cubic from a node to the next, dipping below
+   *    the crossing level. This is what puts a *baseline* between two loops
+   *    instead of running one straight into the other.
+   *  - **The crossing** — the one deliberate corner. The strand entering the
+   *    loop and the strand leaving into the valley meet at an angle, mirrored,
+   *    and that angle is what draws the X.
+   *  - **Leads** — the straight runs enter at the valley's depth, so they are
+   *    level with the bottom of each dip rather than with the crossings, and
+   *    the curve joins them without a kink.
    *
-   * `r` is the rolling radius and `d` how far the traced point sits from the
-   * centre. `d > r` is the whole condition for loops — at `d = r` it is an
-   * ordinary cycloid with cusps and no loop at all, and below it a gentle wave.
-   * Nothing here needs a special case to make a loop appear; it appears because
-   * the geometry says so.
-   *
-   * Both ends land on `y = 0` at every multiple of 2π, so the loops sit on the
-   * baseline by construction rather than by being eased onto it.
+   * The numbers are the reference's own, kept in its coordinates — period 455,
+   * loop height 290, valley depth 55 — and scaled uniformly. Keeping them
+   * unscaled is deliberate: they can be read against the source they came from,
+   * and one factor moves all of them together, so no proportion can drift.
    */
+  const REF_PERIOD = 455;
+  /** Total height of the drawing: apex to the flat lead. */
+  const REF_TOTAL = 345;
+  /** How far the flat lead sits below the crossings. */
+  const REF_VALLEY = 55;
+
+  /** The loop, as four cubics from the node at (0, 0). Reference coordinates. */
+  const LOOP: ReadonlyArray<readonly number[]> = [
+    [49.21, -49.21, 102.13, -69.6, 102.13, -145],
+    [102.13, -225.08, 60.88, -290, 10, -290],
+    [-57.86, -290, -112.87, -231.83, -112.87, -160.08],
+    [-112.87, -80.04, -67.67, -67.67, 0, 0],
+  ];
+  /** The dip between two crossings, one cubic. */
+  const VALLEY: readonly number[] = [73.33, 73.33, 381.67, 73.33, 455, 0];
 
   /**
-   * How far the traced point sits outside the rolling circle.
+   * One uniform scale, so every proportion above survives together, sized so
+   * the loops fill the run with only a short lead at each end.
    *
-   * The only thing that decides whether there is a loop at all: above 1 the
-   * point swings back faster than the circle rolls forward and the curve
-   * crosses itself, at 1 it makes a cusp, below it a gentle wave. Four gives a
-   * loop clearly taller than the advance between loops, which is the
-   * proportion a hand draws.
+   * Two rules, and the smaller wins. The first sets a loop's height against
+   * the run — a fifth of it — which is what keeps a single loop a proper loop
+   * rather than a bump. The second stops the row overflowing once there are
+   * enough of them, by which point the height rule has long since been the
+   * generous one.
+   *
+   * The span is 92% rather than a half: the leads are a *finish* on the mark,
+   * not the bulk of it, and a row of loops marooned in the middle of a long
+   * straight line reads as a line that happens to have loops instead of as a
+   * looping arrow.
    */
-  const PROLATE = 4;
+  const MAX_SPAN = 0.92;
+  let S = (length * 0.2) / REF_TOTAL;
+  const maxSpan = length * MAX_SPAN;
+  if (REF_PERIOD * S * count > maxSpan) S = maxSpan / (REF_PERIOD * count);
+
+  const pitch = REF_PERIOD * S;
+  /**
+   * Where the first crossing sits, and why the half-pitch is here.
+   *
+   * `lead` is the origin the reference coordinates are laid out from, and the
+   * drawing does **not** start there: the lead-in cubic begins half a period
+   * *before* the first crossing and the tail ends half a period after the
+   * last. Splitting the leftover evenly and using it directly therefore put
+   * the whole row half a period to the left — the flat run on the right came
+   * out a full period longer than the one on the left, which is exactly what
+   * it looked like.
+   */
+  const lead = (length - pitch * count) / 2 + pitch / 2;
+  // Reference y is measured with the crossings at 0 and the leads at +55; the
+  // run's own axis is the leads, so everything shifts up by the valley depth.
+  const px = (x: number) => lead + x * S;
+  const py = (y: number) => (y - REF_VALLEY) * S;
 
   /**
-   * The loops are a fixed size and the *leads* absorb the difference.
+   * Samples per cubic.
    *
-   * Deriving the size from the span divided by the count was backwards: one
-   * loop then took the whole span for itself and came out enormous, and
-   * capping it instead pushed `d` below `r`, which does not make a small loop
-   * — it removes the loop entirely and leaves an arch. That is what one loop
-   * was drawing.
-   *
-   * Sizing the loop against the *run* keeps it recognisable at any count, and
-   * one loop simply sits in the middle of a long flat line, which is what the
-   * reference shows.
-   *
-   * The numbers come from measuring the reference rather than from taste. Per
-   * loop it runs a pitch of 16 with a height of 20 and a width of 20 — so
-   * height over pitch is 1.25, and for this curve that ratio *is* `d / (pi r)`,
-   * which puts the prolate ratio at 3.93. The predicted loop width at that
-   * ratio is 1.23 pitches against the measured 1.25, which is the check that
-   * the reference really is this curve and not something that resembles it.
-   * Its loops stand a tenth of the run tall, hence the coefficient here.
+   * Judged against the *pitch* rather than the whole run, so a loop is drawn
+   * with the same fidelity whether there is one of them or twenty. Coarse
+   * sampling shows first on the tight turn at the apex, which is exactly where
+   * a loop stops looking round.
    */
-  let d = length * 0.05;
-  let r = d / PROLATE;
-  const sweep = Math.PI * 2 * count;
-  let coilSpan = r * sweep;
+  const steps = Math.max(8, Math.min(22, Math.round(pitch / 7)));
+  const out: Point[] = [at(0, 0), at(px(-REF_PERIOD / 2), 0)];
 
-  // Crowded: shrink the loops rather than run off the end of the line.
-  const maxSpan = length * 0.82;
-  if (coilSpan > maxSpan) {
-    const k = maxSpan / coilSpan;
-    d *= k;
-    r *= k;
-    coilSpan = maxSpan;
-  }
-  const lead = (length - coilSpan) / 2;
+  /** Sample one cubic from `from`, in reference coordinates. */
+  const cubic = (fx: number, fy: number, c: readonly number[]) => {
+    for (let k = 1; k <= steps; k += 1) {
+      const t = k / steps;
+      const m = 1 - t;
+      const a = m * m * m;
+      const b = 3 * m * m * t;
+      const d = 3 * m * t * t;
+      const e = t * t * t;
+      out.push(
+        at(
+          px(a * fx + b * c[0] + d * c[2] + e * c[4]),
+          py(a * fy + b * c[1] + d * c[3] + e * c[5])
+        )
+      );
+    }
+  };
 
-  const steps = Math.max(96, count * 44);
-  const points: Point[] = [at(0, 0), at(lead, 0)];
-  for (let i = 1; i <= steps; i += 1) {
-    const theta = (i / steps) * sweep;
-    points.push(at(lead + r * theta - d * Math.sin(theta), -(d - d * Math.cos(theta))));
+  // Lead-in: half a valley, so the straight run flows into the first crossing.
+  const hv = REF_VALLEY / 0.75;
+  const hx = (REF_PERIOD - 2 * hv) / 4 + hv / 2;
+  cubic(-REF_PERIOD / 2, REF_VALLEY, [-REF_PERIOD / 2 + hx, REF_VALLEY, -hv / 2, hv / 2, 0, 0]);
+
+  for (let i = 0; i < count; i += 1) {
+    const x = i * REF_PERIOD;
+    let fx = x;
+    let fy = 0;
+    for (const c of LOOP) {
+      cubic(fx, fy, [c[0] + x, c[1], c[2] + x, c[3], c[4] + x, c[5]]);
+      fx = c[4] + x;
+      fy = c[5];
+    }
+    if (i < count - 1) {
+      cubic(x, 0, [VALLEY[0] + x, VALLEY[1], VALLEY[2] + x, VALLEY[3], VALLEY[4] + x, VALLEY[5]]);
+    }
   }
-  points.push(at(length, 0));
-  return points;
+
+  // Tail: the mirror of the lead-in.
+  const last = (count - 1) * REF_PERIOD;
+  cubic(last, 0, [
+    last + hv / 2, hv / 2,
+    last + REF_PERIOD / 2 - hx, REF_VALLEY,
+    last + REF_PERIOD / 2, REF_VALLEY,
+  ]);
+  out.push(at(length, 0));
+  return out;
 }
 
 /**

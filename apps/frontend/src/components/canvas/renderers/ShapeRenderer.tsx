@@ -125,6 +125,41 @@ export const ShapeRenderer: React.FC<Props> = React.memo(({ node, showLabel }) =
    * no interior. A sketched arrow's label therefore sat in empty space beside
    * the run rather than on it, and only when sketched.
    */
+/**
+   * The run, as the profile draws it.
+   *
+   * Straight gives back exactly `[0, 0, w, h]`, so the ordinary line is
+   * unchanged and everything below — the caps, the trim, the sketcher —
+   * carries on working on a two-point list without knowing profiles exist.
+   */
+  const runEnds = localRunEnds(node);
+  const profile = linePoints(
+    runEnds.a,
+    runEnds.b,
+    node.geometry.lineProfile,
+    node.geometry.lineWaves
+  );
+  const points = profile.flatMap((p) => [p.x, p.y]);
+
+  /**
+   * Where a line's label rides: the midpoint of the run it belongs to.
+   *
+   * Taken from the profile's own points, so it follows a wave or a coil rather
+   * than floating at the centre of the rectangle that contains one.
+   */
+  const labelAt = ((): { x: number; y: number } => {
+    if (!open || profile.length === 0) return { x: w / 2, y: h / 2 };
+    // Interpolated rather than indexed. A straight line is *two* points, so
+    // `points[length / 2]` is its second one — the label sat on the far end,
+    // past the arrowhead. Halfway along the indices lands in the middle of a
+    // two-point run and on the middle sample of a hundred-point one.
+    const mid = (profile.length - 1) / 2;
+    const lo = profile[Math.floor(mid)];
+    const hi = profile[Math.ceil(mid)];
+    const t = mid - Math.floor(mid);
+    return { x: lo.x + (hi.x - lo.x) * t, y: lo.y + (hi.y - lo.y) * t };
+  })();
+
   const plateFill = ThemeService.getCanvasPlateFill();
   const label =
     showLabel && node.text ? (
@@ -142,8 +177,19 @@ export const ShapeRenderer: React.FC<Props> = React.memo(({ node, showLabel }) =
          * recognisably red instead of being replaced with black.
          */
         <Label
-          x={w / 2}
-          y={h / 2}
+          /**
+           * The middle of the **run**, not the middle of the box.
+           *
+           * These were the same thing while a line's box was its endpoint
+           * diagonal. They stopped being the same when the box became the
+           * extent of what is drawn: a coil's box is as tall as its loops, so
+           * the box centre is up among them, and a straight line's box is now
+           * barely thicker than its stroke, so the centre is fine there and
+           * nowhere else. Halfway along the drawn points is what "the middle
+           * of this line" has always meant.
+           */
+          x={labelAt.x}
+          y={labelAt.y}
           listening={false}
           // Counter-rotated so the words stay upright whatever the object does.
           // A label inherits the node's rotation and flips, and a line flipped
@@ -227,21 +273,7 @@ export const ShapeRenderer: React.FC<Props> = React.memo(({ node, showLabel }) =
    * place doing the arithmetic itself — and it is why this is hoisted rather
    * than fixed in place. One computation, two renderings of it.
    */
-/**
-   * The run, as the profile draws it.
-   *
-   * Straight gives back exactly `[0, 0, w, h]`, so the ordinary line is
-   * unchanged and everything below — the caps, the trim, the sketcher —
-   * carries on working on a two-point list without knowing profiles exist.
-   */
-  const runEnds = localRunEnds(node);
-  const profile = linePoints(
-    runEnds.a,
-    runEnds.b,
-    node.geometry.lineProfile,
-    node.geometry.lineWaves
-  );
-  const points = profile.flatMap((p) => [p.x, p.y]);
+
   const common = {
     points,
     stroke: stroke ?? DEFAULT_INK,

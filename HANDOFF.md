@@ -74,7 +74,7 @@ Verify in ~30 seconds:
 
 ```bash
 npx tsc --noEmit -p apps/frontend/tsconfig.app.json   # must be silent
-npx vitest run --root apps/frontend                   # 763 tests, 45 files
+npx vitest run --root apps/frontend                   # 822 tests, 48 files
 npx oxlint apps/frontend/src                          # 16 cosmetic warnings, exit 0
 npm run build -w apps/frontend                        # must succeed
 ```
@@ -89,9 +89,9 @@ history were vacuous for exactly that reason. Use `tsconfig.app.json`, or
 | --- | --- |
 | Branch | `rebuild/time-travel-and-physics`, nothing pushed, nothing merged |
 | Typecheck | clean |
-| Tests | **763** across 45 files |
+| Tests | **822** across 48 files |
 | Lint | exits 0; 16 `only-export-components` warnings, all cosmetic |
-| Build | clean, 1.51MB JS (gzip 474KB) + 119KB CSS (gzip 19KB) — still no code splitting |
+| Build | clean, 1.55MB JS (gzip 488KB) + 128KB CSS (gzip 21KB) — still no code splitting |
 
 **Read the failing-suite line, not the test count.** Vitest reports a suite
 that failed to *load* separately from tests that failed, so a file that throws
@@ -118,6 +118,10 @@ Recent commits, newest first:
 
 | | |
 | --- | --- |
+| `54a9ad4`… | the line-profile arc — see §4a-iv. Twelve commits; read that section rather than the log |
+| `f047011` | a line's box becomes what it draws; endpoints move into `geometry` |
+| `a605dec` | the hooks-order bug that emptied the canvas on double-click |
+| `42efea7` | selection restored after a tool change (a stale `React.memo` comparator) |
 | `006d92e` | connectors: anchored binding, draggable ends, and the shape that moved while you drew |
 | `f848435` | Blend and Blur hidden for connectors |
 | `417ec41` | the keyboard audit recorded; §5a-ii restored |
@@ -393,6 +397,102 @@ already started; a refused drag has nothing to stand and resets.
 anywhere in the connector system. A rotated node's ports sit on its unrotated
 bounding box. Fixing it means every consumer working in the node's local frame
 and rotating the resolved point back out — worth doing, not small.
+
+## 4a-iv. Lines, profiles and the two bugs that cost the most
+
+### The two bugs worth remembering
+
+**A `useMemo` below an early return emptied the whole canvas.** Two hooks were
+added under `if (!visible) return null` in `TextRenderer`. Entering the text
+editor flips `visible`, the component returns early, two hooks vanish from the
+render, React throws "Rendered fewer hooks than expected", and the *entire*
+Konva subtree unmounts — so double-clicking one text object took every object
+on the board with it. Invisible to the type checker and to 800-odd tests,
+because it is a runtime rule about render order. **The console named it in one
+line.** Opening the console first would have saved most of the time it took.
+
+**A `React.memo` comparator that omitted a prop made objects unselectable.**
+`ObjectRenderer` compared `objId`, `isSelected` and `stageScale` but not
+`selectable`. That prop changes when the active tool does, so an object which
+had not re-rendered for some other reason kept `draggable={false}` and a press
+handler closed over a stale `false`. The selectivity was the tell: objects that
+happened to re-render — moved, edited, or unmounted by culling and remounted —
+behaved, and ones sitting untouched did not.
+
+It had been wrong for a long time and was *invisible*, because `selectable`
+only gated the hover outline. Widening it to gate the click promoted a cosmetic
+bug into a functional one. **When you widen what an existing prop controls,
+check the memo.**
+
+### A line is no longer its bounding box
+
+`width`/`height` used to *be* the two endpoints, corner to corner, with the
+flip signs choosing the diagonal. Exact for a straight line; wrong the moment
+the run has a profile, because the profile deviates *across* that diagonal.
+Measured on a live board: a wavy arrow stored **380x0** and drew **380x49**.
+
+Marquee, culling, the radar and export framing all read that box. So the box is
+now the extent of what is drawn, markers included, and the endpoints moved into
+`geometry`. Half the stroke is added on every side — a stroke is centred on its
+path, and the old model gave a horizontal line a height of zero.
+
+**Legacy lines are read, not rewritten.** `localRunEnds` answers both forms.
+The normalizer deliberately does *not* invent endpoints: it would have to
+invent a box too, since the old one is the diagonal rather than the drawn
+extent, and normalization is not allowed to move objects on somebody's board.
+A line converts the first time it is edited. `lineEnds.test.ts` covers both
+legacy forms including the up-and-left one where the flip *is* the direction —
+if that branch goes, every line drawn before this collapses to a point.
+
+### Profiles, and what four failed attempts taught
+
+Five profiles — straight, curved, wavy, zigzag, coil — as a property of the
+existing line rather than five new kinds. `straight` returns its two endpoints
+untouched, so nothing already drawn moved.
+
+The **coil** took five attempts and the failures are the useful part. A shaped
+sine, a phase-warped circle and a prolate cycloid were each derived from a
+formula, and none had the right character: **a sine has one value per position,
+so it cannot double back, and a curve that never doubles back cannot cross
+itself.** Tuning numbers was never going to add a crossing to a construction
+with none in it. The cycloid did produce real crossings — but a cycloid's loops
+are tied in size to how many there are and run into each other with no baseline
+between.
+
+What it is now: one loop template of four cubics, plus a valley cubic between
+consecutive crossings, translated by a fixed period. **Uniformity is
+structural** — every loop is the same curve at the same size — and the loops
+keep their size at any count, with the straight leads absorbing the difference.
+The numbers are the reference's own, kept in its coordinates and scaled by one
+factor so no proportion can drift.
+
+The general lesson, and it is worth more than the coil: **when a shape is a
+mark rather than a function, store the mark.** Four attempts to derive it cost
+more than transcribing it once.
+
+### Everything else on lines
+
+- **Arrowhead alignment**, both of Illustrator's modes, in `terminateRun` —
+  shared by the canvas, the exporter and the toolbar specimen, because a head
+  placed by three separate pieces of arithmetic is three chances to disagree,
+  and that had already happened: the exporter oriented heads along the box
+  diagonal while the canvas used the true tangent.
+- **The sketch branch had its own copy** of the cap placement and had never
+  been updated — box corners, flat angle, its own size. Now hoisted so both
+  branches render the same markers.
+- **A line's label is a tag**, not a text block: fixed size, weight and case on
+  a plate, riding the midpoint of the *run*. Interpolated rather than indexed —
+  a straight line is two points, so `points[length / 2]` is its *end*, and the
+  label sat past the arrowhead.
+- **Label ink is lifted against the plate**, not the board. `readableOn`
+  assumes a near-white or near-black surface; a plate is a mid-tone, and a
+  colour clearing 3:1 on white can be invisible on it.
+- **Sketchers are chosen by profile, not by counting points.** Straight and
+  zigzag have real corners and keep the polyline sketcher's overshoot; curved,
+  wavy and coil are samples and take the drift sampler. A point-count proxy got
+  the one case wrong that mattered — a six-repeat zigzag is fourteen points, so
+  it was reclassified as a curve and lost the corners that are its whole
+  character.
 
 ## 4b. What the recent sessions changed
 
@@ -767,6 +867,9 @@ Physics, templates and the product shell (newest):
 | `engine/model/connectorAnchor.ts` | an exact attachment point in a node's own proportions. Pure, tested. |
 | `engine/model/connectorBinding.ts` | what a pointer means, as an end. The one rule the tool and the editor share. Pure, tested. |
 | `engine/model/connectorTargets.ts` | the only bridge from nodes to boxes — what is connectable, and where its box is |
+| `engine/model/linePath.ts` | the five line profiles as point lists, including the stamped coil. Pure. |
+| `engine/model/lineEnds.ts` | endpoints ↔ node, both the current form and the legacy box. Pure, tested. |
+| `engine/model/connectorEnds.ts` | end caps, the trim, and `terminateRun` — the one place a marker is placed |
 | `components/canvas/ConnectorEditor.tsx` | the two ends as handles you can drag onto anything |
 | `engine/tools/shortcuts.ts` | the single-key tool bindings, and the inverse map `Room` resolves through |
 | `engine/tools/toolNames.ts` | what each tool is *called* on the help screen, tested against the bindings |
