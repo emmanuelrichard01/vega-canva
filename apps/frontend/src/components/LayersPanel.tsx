@@ -9,6 +9,8 @@ import { type AnyNode, type NodeType } from '../engine/model/schema';
 import { nodeLabel } from '../engine/model/nodeLabel';
 import { paintColor } from '../engine/model/paint';
 import { readableOn } from '../engine/model/color';
+import { getColorForUser } from '../engine/presence/ColorPalette';
+import { planLayerDrop } from '../engine/model/layerDrop';
 import { THEMES } from './canvas/renderers/StickyRenderer';
 import { tagFilter } from '../engine/model/tagFilter';
 import { tagCounts } from '../engine/model/tags';
@@ -95,7 +97,10 @@ export const LayersPanel: React.FC<LayersPanelProps> = ({ selectedIds, overrideO
       state.selection.forEach((id: string) => {
         activeEditorsMap.set(id, {
           name: state.user.name || 'Peer',
-          color: state.user.color || '#EC4899',
+          // Derived from the peer's own id rather than a literal pink, so a
+          // peer whose colour has not arrived yet still gets the colour every
+          // other surface will show for them a moment later.
+          color: state.user.color || getColorForUser(String(clientId)),
         });
       });
     }
@@ -152,9 +157,45 @@ export const LayersPanel: React.FC<LayersPanelProps> = ({ selectedIds, overrideO
   // objects with exactly the words this panel uses.
   const getName = nodeLabel;
 
+  /**
+   * Dragging rows: reorder, and move between groups.
+   *
+   * ## What this replaces
+   *
+   * The old version could only reorder. There was no way to drag an object
+   * *into* a group, *out of* one, or from one group to another — the panel
+   * showed a hierarchy it could not edit — and the group row carried no drag
+   * handlers at all, so a group could be neither picked up nor dropped onto.
+   *
+   * It also rewrote `zIndex` on **every node in the document**, one
+   * `updateNode` per node, outside any transaction. On a five-hundred-object
+   * board that is five hundred CRDT updates, five hundred store notifications,
+   * five hundred renders and five hundred undo steps, for moving one row.
+   *
+   * ## What a drop means
+   *
+   * The target row answers "where does this belong", which is the question a
+   * layers panel exists to let you change:
+   *
+   *  - onto a **group** row — join that group
+   *  - onto a **member** of a group — join that group, and sit beside it
+   *  - onto a **loose** row — leave whatever group it was in
+   *
+   * That is the rule every layer panel uses, and it means leaving a group needs
+   * no separate gesture: you drop it next to something that is not in one.
+   */
+  const dragIdsFor = (id: string): string[] => {
+    // Dragging one of several selected rows moves the whole selection, which
+    // is what makes reordering a multi-select possible at all.
+    if (selectedIds.includes(id) && selectedIds.length > 1) return [...selectedIds];
+    return [id];
+  };
+
   const handleDragStart = (e: React.DragEvent, id: string) => {
     setDraggedId(id);
     e.dataTransfer.effectAllowed = 'move';
+    // Firefox refuses to start a drag without payload.
+    e.dataTransfer.setData('text/plain', id);
   };
 
   const handleDragOver = (e: React.DragEvent, id: string) => {
@@ -162,25 +203,40 @@ export const LayersPanel: React.FC<LayersPanelProps> = ({ selectedIds, overrideO
     if (id !== draggedId) setDragOverId(id);
   };
 
-  const handleDrop = (e: React.DragEvent, targetId: string) => {
+  /** A cancelled drag must not leave a row stranded at half opacity. */
+  const handleDragEnd = () => {
+    setDraggedId(null);
+    setDragOverId(null);
+  };
+
+  /**
+   * @param targetId  The row dropped onto: a node id, or a group id.
+   * @param targetIsGroup Whether that id names a group rather than a node.
+   */
+  const handleDrop = (e: React.DragEvent, targetId: string, targetIsGroup = false) => {
     e.preventDefault();
     setDragOverId(null);
+    setDraggedId(null);
     if (!draggedId || draggedId === targetId) return;
 
-    const newOrder = [...sortedObjects];
-    const draggedIndex = newOrder.findIndex(o => o.id === draggedId);
-    const draggedItem = newOrder[draggedIndex];
-    newOrder.splice(draggedIndex, 1);
-
-    const targetIndex = newOrder.findIndex(o => o.id === targetId);
-    newOrder.splice(targetIndex, 0, draggedItem);
-
-    newOrder.forEach((obj, index) => {
-      if (obj.zIndex !== newOrder.length - index) {
-        updateNode(obj.id, { zIndex: newOrder.length - index });
-      }
+    /**
+     * The arithmetic is `planLayerDrop`, which is pure and tested.
+     *
+     * It returns only the rows that actually change, in one batch — the
+     * previous version wrote `zIndex` on every node in the document, one
+     * `updateNode` each, outside any transaction.
+     */
+    const patches = planLayerDrop({
+      order: sortedObjects.map((o) => o.id),
+      objects,
+      moving: dragIdsFor(draggedId),
+      targetId,
+      targetIsGroup,
     });
-    setDraggedId(null);
+
+    if (patches.length > 0) {
+      applyNodePatches(patches as { id: string; changes: Record<string, unknown> }[]);
+    }
   };
 
   const toggleLock = (id: string) => {
@@ -662,8 +718,9 @@ export const LayersPanel: React.FC<LayersPanelProps> = ({ selectedIds, overrideO
         onDragOver={(e) => handleDragOver(e, obj.id)}
         onDragLeave={() => setDragOverId(null)}
         onDrop={(e) => handleDrop(e, obj.id)}
+        onDragEnd={handleDragEnd}
         onClick={(e) => handleRowClick(e, obj.id)}
-        className={`layer-row${isSelected ? ' is-selected' : ''}`}
+        className={`layer-row${isSelected ? ' is-selected' : ''}${obj.id === cursorId ? ' is-cursor' : ''}`}
         style={{
           padding: '0 8px 0 ' + (12 + indent) + 'px',
           // Fixed height is what makes virtualization possible — see the
@@ -716,7 +773,7 @@ export const LayersPanel: React.FC<LayersPanelProps> = ({ selectedIds, overrideO
               }
             }}
             autoFocus
-            style={{ flex: 1, background: 'var(--surface-primary)', border: '1px solid var(--border-focus)', borderRadius: '4px', padding: '2px 6px', color: 'var(--text-primary)', fontSize: '12px', outline: 'none' }}
+            style={{ flex: 1, background: 'var(--surface-primary)', border: '1px solid var(--border-focus)', borderRadius: 'var(--radius-sm)', padding: '2px 6px', color: 'var(--text-primary)', fontSize: 'var(--text-xs)', outline: 'none' }}
           />
         ) : (
           <span
@@ -755,7 +812,19 @@ export const LayersPanel: React.FC<LayersPanelProps> = ({ selectedIds, overrideO
           <div
             style={{
               display: 'flex', alignItems: 'center', gap: '4px', background: activeEditor.color,
-              color: 'white', padding: '2px 6px', borderRadius: '10px', fontSize: '10px', fontWeight: 600
+              /**
+               * Ink chosen against the badge, not assumed to be white.
+               *
+               * Presence colours span the whole palette, so a fixed white label
+               * sat at roughly 1.4:1 on the lighter half of it — the amber and
+               * the lime were effectively unreadable. `readableOn` is already
+               * imported here for the type icons and answers the same question.
+               */
+              color: readableOn(activeEditor.color, darkTheme),
+              padding: '2px 6px',
+              borderRadius: 'var(--radius-pill)',
+              fontSize: 'var(--text-2xs)',
+              fontWeight: 600,
             }}
             title={`${activeEditor.name} is currently editing this item`}
           >
@@ -939,8 +1008,8 @@ export const LayersPanel: React.FC<LayersPanelProps> = ({ selectedIds, overrideO
         tabIndex={0}
         aria-activedescendant={cursorId ? `layer-row-${cursorId}` : undefined}
         onKeyDown={handleTreeKeyDown}
-        style={{ padding: '8px', overflowY: 'auto', overflowX: 'hidden', flex: 1, outline: 'none' }}
-        className="custom-scrollbar"
+        style={{ padding: '8px', overflowY: 'auto', overflowX: 'hidden', flex: 1 }}
+        className="custom-scrollbar layers-tree"
       >
         {sortedObjects.length === 0 ? (
           <div style={{ color: 'var(--text-secondary)', textAlign: 'center', marginTop: '40px', fontSize: '13px' }}>
@@ -999,8 +1068,29 @@ export const LayersPanel: React.FC<LayersPanelProps> = ({ selectedIds, overrideO
                     key={item.groupId}
                     role="treeitem"
                     aria-selected={groupSelected}
+                    /**
+                     * A group is a drop target and a drag source.
+                     *
+                     * It was neither, so a group could not be moved in the
+                     * stack and nothing could be dragged into one — the panel
+                     * drew a hierarchy it gave you no way to change. Dropping
+                     * onto this row is how an object *joins* the group.
+                     */
+                    draggable
+                    onDragStart={(e) => {
+                      // Picking up the header moves the whole group, which is
+                      // what grabbing a folder means everywhere else.
+                      setDraggedId(memberIds[0] ?? item.groupId);
+                      if (setSelectedIds) setSelectedIds(memberIds);
+                      e.dataTransfer.effectAllowed = 'move';
+                      e.dataTransfer.setData('text/plain', item.groupId);
+                    }}
+                    onDragOver={(e) => handleDragOver(e, item.groupId)}
+                    onDragLeave={() => setDragOverId(null)}
+                    onDrop={(e) => handleDrop(e, item.groupId, true)}
+                    onDragEnd={handleDragEnd}
                     onClick={(e) => handleGroupClick(e, memberIds)}
-                    className={`layer-row${groupSelected ? ' is-selected' : ''}`}
+                    className={`layer-row${groupSelected ? ' is-selected' : ''}${dragOverId === item.groupId ? ' is-drop-into' : ''}`}
                     style={{
                       padding: '0 8px 0 ' + (12 + item.indent) + 'px',
                       height: ROW_HEIGHT - ROW_GAP,
