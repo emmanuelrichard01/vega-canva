@@ -6285,6 +6285,121 @@ body[data-zen='physics'] .forces__status {
   body[data-zen='physics'] .forces { animation-duration: 1ms; }
 }
 
+/* ---------------------------------------------------------------------------
+   THE HISTORY ROOM
+
+   Replay clears the room for a stronger reason than physics does. Arming a
+   force is still editing, so that mode waits until you have hidden the chrome
+   yourself. Here the document on screen is one from the past: every tool is
+   inert, the two side panels describe a moment you cannot change, and the dock
+   offers eleven things none of which will do anything. That is not furniture
+   deprioritised, it is furniture for an impossible job — so entering takes it
+   away and leaving puts back exactly what was there.
+
+   The character is different too, and deliberately. Physics is a *field*: a
+   radial vignette pulling the eye to a ring under the cursor. History has no
+   focal point — the change could be anywhere on the board — so the treatment
+   is a horizon rather than a spotlight: warm at the bottom edge where the
+   instrument is, clearing entirely across the work itself. It reads as looking
+   *back* at something rather than down into it.
+   --------------------------------------------------------------------------- */
+
+body[data-zen='replay'] .canvas-container::after {
+  content: '';
+  position: absolute;
+  inset: 0;
+  z-index: var(--z-canvas-overlay);
+  pointer-events: none;
+  /* Two stops and no ellipse. The amber is the same role the scrubber's
+     elapsed track uses, so the tint and the instrument are visibly the same
+     idea; at six per cent over the bottom third it is a warmth in the room,
+     not a filter over someone's work. */
+  background: linear-gradient(
+    to top,
+    color-mix(in srgb, var(--history-accent) 6%, transparent) 0%,
+    transparent 34%
+  );
+  animation: zenVeil 420ms var(--ease-settle) both;
+}
+
+/* A hairline along the very bottom, the width of the viewport.
+
+   The one piece of chrome that says "this is not live" without words, and it
+   is placed where the eye already is — under the instrument. Drawn on the
+   container rather than on the bar so it spans the whole edge, which is what
+   makes it read as a property of the room and not a border on a panel. */
+body[data-zen='replay'] .canvas-container::before {
+  content: '';
+  position: absolute;
+  inset: auto 0 0 0;
+  height: 2px;
+  z-index: var(--z-canvas-overlay);
+  pointer-events: none;
+  background: linear-gradient(
+    to right,
+    transparent 0%,
+    var(--history-elapsed) 22%,
+    var(--history-elapsed) 78%,
+    transparent 100%
+  );
+  opacity: 0.55;
+  animation: zenVeil 420ms var(--ease-settle) both;
+}
+
+/* The instrument, once it is the only thing left.
+
+   Wider and lower, for the same reason the forces panel is: the bar sits along
+   the bottom edge, so what it costs the board is its *height*, and width there
+   is nearly free. At 680px the activity strip is coarse and the transport row
+   crowds the trimmed-history notice onto a second line; at 860px both breathe
+   and the strip resolves enough columns to actually show the session's rhythm.
+
+   It arrives a beat after the veil, so the room empties and *then* the
+   instrument appears — one moment rather than two things at once. */
+body[data-zen='replay'] .timetravel {
+  bottom: 32px;
+  width: 860px;
+  gap: var(--space-4);
+  padding: var(--space-5) var(--space-6);
+  box-shadow: var(--shadow-overlay);
+  animation: zenInstrument 420ms var(--ease-settle) 90ms both;
+}
+
+/* The moment description carries the mode, so it can take a step up.
+
+   Unlike the forces status line — which was bumped and had to be put back,
+   because it was one short instruction sitting beside the controls it
+   explained — this is the thing you are navigating *by*. It is the answer to
+   "where am I", it changes on every step, and with the panels gone it is the
+   only text on screen naming what you are looking at. */
+body[data-zen='replay'] .timetravel__label {
+  font-size: var(--text-base);
+  font-weight: 600;
+  letter-spacing: -0.01em;
+}
+
+/* The track is the whole interaction here, so give it something to grab. */
+body[data-zen='replay'] .timetravel__track { height: 26px; }
+body[data-zen='replay'] .timetravel__activity { height: 34px; }
+
+@media (prefers-reduced-motion: reduce) {
+  body[data-zen='replay'] .canvas-container::after,
+  body[data-zen='replay'] .canvas-container::before,
+  body[data-zen='replay'] .timetravel { animation-duration: 1ms; }
+}
+
+/* Narrow viewports get the room but not the width.
+
+   The lift and the veil cost nothing on a phone; 860px does not fit, and the
+   base rule's `max-width` already handles that — this only stops the padding
+   growing on a surface that has no room for it. */
+@media (max-width: 900px) {
+  body[data-zen='replay'] .timetravel {
+    padding: var(--space-4);
+    gap: var(--space-3);
+  }
+}
+
 /* The collapsed instrument.
 
    Small, quiet, and it answers the one question the panel's absence creates:
@@ -6621,7 +6736,15 @@ body[data-zen='physics'] .forces-handle { bottom: 32px; }
   position: absolute;
   bottom: 96px;
   left: 50%;
-  transform: translateX(-50%);
+  /* Centred with `translate`, not `transform`.
+
+     `popIn` animates `transform`, so centring with it means the animation
+     overwrites the centring: the bar flew in half its own width to the right
+     and snapped into place on the last frame. That is the trap DESIGN.md names
+     — four surfaces had it before this one — and the cure is the same, because
+     the independent `translate` property composes with `transform` instead of
+     being replaced by it. */
+  translate: -50% 0;
   z-index: 1000;
   display: flex;
   flex-direction: column;
@@ -6634,6 +6757,10 @@ body[data-zen='physics'] .forces-handle { bottom: 32px; }
   color: var(--text-primary);
   font-family: var(--font-sans);
   animation: popIn 200ms var(--ease-settle);
+  /* Width and lift move when the room clears; see THE HISTORY ROOM below. */
+  transition:
+    width var(--motion-expand),
+    bottom var(--motion-expand);
 }
 
 /* Loading and empty states: same shell, one line, no controls to lay out. */

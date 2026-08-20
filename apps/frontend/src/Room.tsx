@@ -1397,12 +1397,43 @@ export default function Room() {
     return () => { window.clearTimeout(fade); window.clearTimeout(drop); };
   }, [isUiVisible, activeTool]);
 
+  /**
+   * Time Travel clears the room by itself, rather than asking you to.
+   *
+   * Physics enters its immersive mode only once you have *also* hidden the
+   * chrome, because arming a force tool is still editing and the panels remain
+   * useful. Replay is not: the canvas is showing a document from the past,
+   * every tool is inert (`Canvas` gates on `isReplaying`), and the two side
+   * panels are describing a moment you cannot edit. The supporting cast is
+   * furniture for a job that is not merely deprioritised but impossible — so
+   * entering replay hides it, and leaving puts back exactly what was there.
+   *
+   * The previous state is captured in a ref rather than derived, so closing
+   * restores a hidden dock as hidden rather than helpfully revealing it.
+   */
+  const chromeBeforeReplay = useRef<boolean | null>(null);
+  useEffect(() => {
+    if (showTimeTravel) {
+      if (chromeBeforeReplay.current === null) {
+        chromeBeforeReplay.current = isUiVisible;
+        setIsUiVisible(false);
+      }
+      return;
+    }
+    if (chromeBeforeReplay.current !== null) {
+      setIsUiVisible(chromeBeforeReplay.current);
+      chromeBeforeReplay.current = null;
+    }
+  }, [showTimeTravel, isUiVisible]);
+
   /** Drives the immersive treatment in CSS. See `[data-zen]` in `index.css`. */
   const zenPhysics = isForceTool(activeTool) && !isUiVisible;
   useEffect(() => {
-    document.body.dataset.zen = zenPhysics ? 'physics' : '';
+    // Replay wins when both could apply: you cannot arm a force while the
+    // document on screen is a historical one.
+    document.body.dataset.zen = showTimeTravel ? 'replay' : zenPhysics ? 'physics' : '';
     return () => { document.body.dataset.zen = ''; };
-  }, [zenPhysics]);
+  }, [zenPhysics, showTimeTravel]);
 
 
   const handleOrganize = (mode: LayoutMode) => {
@@ -1814,20 +1845,26 @@ export default function Room() {
           reach for them. The grabber at the bottom edge is what stops that
           being a secret: an invisible hot zone is not an affordance, it is
           folklore. */}
-      {/* Not in the physics room.
+      {/* Not in the physics room, and not in the history room either.
 
           The dock's whole job there would be to leave the mode, which Done
           and Escape already do — and it reveals itself from the bottom edge,
           which is precisely where the Forces bar now sits. Two panels fighting
           for the same thirty pixels, one of which appears on hover, is a way
-          to make the instrument feel unreliable. */}
-      {focusHint && (
+          to make the instrument feel unreliable.
+
+          Replay has the same collision and a stronger reason on top of it:
+          every tool in the dock is inert while a historical document is on
+          screen, so revealing it offers eleven controls that will not do
+          anything. An affordance that does nothing when used is worse than no
+          affordance. */}
+      {focusHint && !showTimeTravel && (
         <div className={`focus-hint${focusHintLeaving ? ' is-leaving' : ''}`} role="status">
           Panels hidden. Press <kbd>\</kbd> to bring them back.
         </div>
       )}
 
-      {!isUiVisible && !zenPhysics && (
+      {!isUiVisible && !zenPhysics && !showTimeTravel && (
         <>
           <div
             className="focus-edge"

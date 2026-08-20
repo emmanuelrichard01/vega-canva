@@ -2,6 +2,8 @@ import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import * as Y from 'yjs';
 import { Play, Pause, SkipBack, SkipForward, X, History, Loader2, ChevronLeft, ChevronRight, AlertTriangle } from 'lucide-react';
 import { roomHistoryUrl } from '../utils/endpoints';
+import { cameraSystem } from '../engine/CameraSystem';
+import { fitPose, type FitBounds } from '../engine/cameraFit';
 import {
   activityBuckets,
   buildTimeline,
@@ -29,6 +31,52 @@ const SPEEDS = [1, 2, 4, 8];
  * opening Time Travel can block the tab.
  */
 const MAX_REPLAY_UPDATES = 2000;
+
+/**
+ * Room left below the framed session for the bar itself.
+ *
+ * The instrument sits along the bottom edge and is opaque, so fitting to the
+ * bare viewport would tuck the lowest objects underneath it — and on a replay
+ * the whole point is that nothing is hidden. Generous rather than exact,
+ * because the bar's height changes with its content (the trimmed-history
+ * notice adds a line) and a fit that has to be recomputed when a notice
+ * appears is a camera that moves for no reason a viewer can see.
+ */
+const REPLAY_BOTTOM_CLEARANCE = 190;
+
+/**
+ * Put the whole session on screen before anything plays.
+ *
+ * On an infinite canvas the camera is wherever it was left, and the history
+ * being replayed is very often somewhere else entirely — so playback ran with
+ * most of it outside the viewport, which reads as objects simply never
+ * appearing. Framing once on entry, against the union of everywhere the
+ * session ever reached, means nothing is clipped at any point along it.
+ *
+ * Done once rather than per moment on purpose: a camera that re-fits on every
+ * step chases the content around and is far harder to follow than a fixed
+ * frame you can watch things move within.
+ */
+function frameSession(bounds: FitBounds | null) {
+  if (!bounds) return;
+  const pose = fitPose(
+    bounds,
+    cameraSystem.width,
+    Math.max(cameraSystem.height - REPLAY_BOTTOM_CLEARANCE, 200),
+    { ...cameraSystem.zoomLimits }
+  );
+  if (!pose) return;
+  /**
+   * No further correction: shortening the viewport is the whole adjustment.
+   *
+   * `fitPose` centres within whatever height it is handed, and it was handed
+   * the height *above* the bar — so the content already lands in the middle of
+   * the clear strip, measured from the top of the screen. Shifting again would
+   * move it up by another half-clearance, out of the space it was just fitted
+   * into.
+   */
+  cameraSystem.setPose(pose.x, pose.y, pose.zoom);
+}
 
 /** Columns in the activity strip. Enough to show rhythm, few enough to read. */
 const ACTIVITY_COLUMNS = 64;
@@ -135,6 +183,7 @@ export const TimeTravelBar: React.FC<TimeTravelBarProps> = ({ roomId, onClose, o
           setUpdates(rows);
           setTimeline(built);
           setMomentIndex(Math.max(0, built.moments.length - 1));
+          frameSession(built.bounds);
         }
       } catch (err: any) {
         if (!cancelled) setError(err?.message || 'Could not load session history');

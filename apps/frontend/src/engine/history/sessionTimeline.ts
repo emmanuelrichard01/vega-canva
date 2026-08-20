@@ -1,6 +1,7 @@
 import * as Y from 'yjs';
 import { normalizeNode } from '../document/normalize';
 import { nodeLabel } from '../model/nodeLabel';
+import { unionBounds, type FitBounds } from '../cameraFit';
 
 /**
  * Turns the server's raw CRDT update log into a human session timeline.
@@ -86,6 +87,21 @@ export interface SessionTimeline {
   totalUpdates: number;
   /** Distinct contributors, in first-seen order, for the timeline legend. */
   authors: { id: string; name: string; color: string }[];
+  /**
+   * Everywhere the session ever reached, so replay can frame it once.
+   *
+   * The union across *every* moment, not the extent of the final document.
+   * Framing the end state is the obvious thing and it is wrong in both
+   * directions on an infinite canvas: an object created far out and later
+   * deleted is outside the final box, and an object dragged across the board
+   * occupies ground the final box does not include — so playback would run
+   * partly off screen, which reads as objects failing to appear at all.
+   *
+   * Accumulated during the pass that is already walking every update, so it
+   * costs a box comparison per touched node and nothing else. `null` when the
+   * session never contained anything with a position.
+   */
+  bounds: FitBounds | null;
 }
 
 export interface BuildOptions {
@@ -327,6 +343,8 @@ export function buildTimeline(updates: RawUpdate[], options: BuildOptions = {}):
   const authors = new Map<string, { id: string; name: string; color: string }>();
   const keyframes: Keyframe[] = [];
   const moments: Moment[] = [];
+  /** The ground the session ever covered; see `SessionTimeline.bounds`. */
+  let sessionBounds: FitBounds | null = null;
   let open: OpenMoment | null = null;
 
   const keyframeEvery = Math.max(1, Math.ceil(updates.length / maxKeyframes));
@@ -411,6 +429,31 @@ export function buildTimeline(updates: RawUpdate[], options: BuildOptions = {}):
     const authorId = dominantClient(bytes);
 
     pending.createdIds.forEach(registerAuthor);
+
+    /**
+     * Grow the session's extent by wherever the touched nodes now are.
+     *
+     * Only the touched ones, because a node can only move through an update
+     * that touches it — so the union over every touched node at every step is
+     * exactly the ground the session ever covered, at O(touched) rather than
+     * O(document) per update.
+     */
+    for (const id of touched) {
+      const ymap = objects.get(id);
+      if (!ymap) continue;
+      const x = ymap.get('x');
+      const y = ymap.get('y');
+      const w = ymap.get('width');
+      const h = ymap.get('height');
+      if (typeof x !== 'number' || typeof y !== 'number') continue;
+      if (!Number.isFinite(x) || !Number.isFinite(y)) continue;
+      sessionBounds = unionBounds(sessionBounds, {
+        x,
+        y,
+        width: typeof w === 'number' && Number.isFinite(w) ? w : 0,
+        height: typeof h === 'number' && Number.isFinite(h) ? h : 0,
+      });
+    }
 
     /**
      * Names are refreshed only when something that *is* a name changed.
@@ -506,6 +549,7 @@ export function buildTimeline(updates: RawUpdate[], options: BuildOptions = {}):
     keyframes,
     totalUpdates: updates.length,
     authors: [...authors.values()],
+    bounds: sessionBounds,
   };
 }
 

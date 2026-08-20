@@ -4,7 +4,32 @@ import type { AnyNode } from '../model/schema';
 import { nanoid } from 'nanoid';
 import { provider, type NewNodeInput } from '../document';
 import { cameraSystem } from '../CameraSystem';
-import { engineEvents } from '../EventBus';
+import { fitPose, type FitBounds } from '../cameraFit';
+
+/**
+ * The world box every visible node occupies, or `null` on an empty board.
+ *
+ * Hidden nodes are excluded for the same reason the exporter excludes them:
+ * framing to something nobody can see strands the visible work in a corner.
+ */
+function sceneBounds(): FitBounds | null {
+  let minX = Infinity;
+  let minY = Infinity;
+  let maxX = -Infinity;
+  let maxY = -Infinity;
+
+  sceneGraph.nodes.forEach((node) => {
+    if (node.hidden) return;
+    const b = sceneGraph.getNodeBounds(node);
+    if (b.minX < minX) minX = b.minX;
+    if (b.minY < minY) minY = b.minY;
+    if (b.maxX > maxX) maxX = b.maxX;
+    if (b.maxY > maxY) maxY = b.maxY;
+  });
+
+  if (minX === Infinity) return null;
+  return { x: minX, y: minY, width: maxX - minX, height: maxY - minY };
+}
 
 export class EditorAPI {
   // --- Document Mutations --- //
@@ -81,35 +106,28 @@ export class EditorAPI {
 
   // --- Camera & Viewport --- //
 
+  /**
+   * Frame everything on the board.
+   *
+   * The arithmetic is `cameraFit.fitPose`, which exists because the version
+   * that used to live here was wrong in three ways at once: it assigned a
+   * *world* offset to a field the renderer multiplies by the zoom, it measured
+   * `window.innerWidth` rather than the canvas the board is actually drawn in,
+   * and it anchored the content to a corner instead of centring it. The first
+   * of those meant that any fit which genuinely had to zoom put the content
+   * off screen — the further from 1:1, the further off.
+   *
+   * `setPose` rather than three field writes: it clamps, and it emits one
+   * `CameraChanged` instead of leaving the emit to be remembered separately.
+   */
   zoomToFit() {
-    // Basic implementation: find bounds of all root nodes and set camera
-    const allBounds = { minX: Infinity, minY: Infinity, maxX: -Infinity, maxY: -Infinity };
-    sceneGraph.nodes.forEach(node => {
-      const b = sceneGraph.getNodeBounds(node);
-      if (b.minX < allBounds.minX) allBounds.minX = b.minX;
-      if (b.minY < allBounds.minY) allBounds.minY = b.minY;
-      if (b.maxX > allBounds.maxX) allBounds.maxX = b.maxX;
-      if (b.maxY > allBounds.maxY) allBounds.maxY = b.maxY;
+    const bounds = sceneBounds();
+    if (!bounds) return; // Empty scene
+
+    const pose = fitPose(bounds, cameraSystem.width, cameraSystem.height, {
+      ...cameraSystem.zoomLimits,
     });
-
-    if (allBounds.minX === Infinity) return; // Empty scene
-
-    const w = allBounds.maxX - allBounds.minX;
-    const h = allBounds.maxY - allBounds.minY;
-    
-    // Simplistic zoom to fit
-    cameraSystem.x = -allBounds.minX + 50;
-    cameraSystem.y = -allBounds.minY + 50;
-    cameraSystem.zoom = Math.min(window.innerWidth / (w + 100), window.innerHeight / (h + 100));
-    
-    // Static import, and emitted synchronously with the camera write above.
-    // This was a dynamic `import()`, which bought no code splitting — six
-    // other modules import EventBus statically, so the chunk is already in
-    // the graph and the bundler said so — and cost correctness: the camera
-    // moved now while `CameraChanged` fired a microtask later, so anything
-    // reading the camera in that gap saw the new position with no notice
-    // that it had changed.
-    engineEvents.emit('CameraChanged', cameraSystem);
+    if (pose) cameraSystem.setPose(pose.x, pose.y, pose.zoom);
   }
 
   // --- Utilities --- //

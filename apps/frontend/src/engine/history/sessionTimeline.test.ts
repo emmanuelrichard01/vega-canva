@@ -34,7 +34,7 @@ function makeNode(fields: Record<string, unknown>) {
 const AUTHOR = {
   createdBy: '', // filled with the doc's real clientID per test
   createdByName: 'Ada',
-  createdByColor: '#7C3AED',
+  createdByColor: '#B45309',
 };
 
 function baseNode(doc: Y.Doc, over: Record<string, unknown> = {}) {
@@ -65,7 +65,7 @@ describe('buildTimeline', () => {
     // Named from the node's own text, via the shared nodeLabel rule.
     expect(timeline.moments[0].label).toBe('Ada added Ship the thing');
     expect(timeline.moments[0].authorName).toBe('Ada');
-    expect(timeline.moments[0].authorColor).toBe('#7C3AED');
+    expect(timeline.moments[0].authorColor).toBe('#B45309');
   });
 
   it('folds a drag into one moment instead of one per transaction', () => {
@@ -257,13 +257,13 @@ describe('buildTimeline', () => {
     Y.applyUpdate(docB, Y.encodeStateAsUpdate(docA));
 
     docB.getMap<{ name: string; color: string }>('identities')
-      .set(String(docB.clientID), { name: 'Linus', color: '#059669' });
+      .set(String(docB.clientID), { name: 'Linus', color: '#10B981' });
     (docB.getMap('objects').get('a') as Y.Map<unknown>).set('x', 999);
 
     const timeline = buildTimeline(log);
     const edit = timeline.moments.find(m => m.kind === 'move')!;
     expect(edit.authorName).toBe('Linus');
-    expect(edit.authorColor).toBe('#059669');
+    expect(edit.authorColor).toBe('#10B981');
   });
 
   it('does not create a moment for an identity announcement', () => {
@@ -271,7 +271,7 @@ describe('buildTimeline', () => {
     const log: RawUpdate[] = [];
     recorder(doc, log);
     doc.getMap<{ name: string; color: string }>('identities')
-      .set(String(doc.clientID), { name: 'Ada', color: '#7C3AED' });
+      .set(String(doc.clientID), { name: 'Ada', color: '#B45309' });
 
     const timeline = buildTimeline(log);
     expect(timeline.moments).toHaveLength(0);
@@ -287,7 +287,7 @@ describe('buildTimeline', () => {
     docA.getMap('objects').set('a', baseNode(docA, { text: 'From Ada' }));
     docB.getMap('objects').set('b', makeNode({
       type: 'sticky', x: 0, y: 0, width: 100, height: 100, text: 'From Linus',
-      createdBy: String(docB.clientID), createdByName: 'Linus', createdByColor: '#059669',
+      createdBy: String(docB.clientID), createdByName: 'Linus', createdByColor: '#10B981',
     }));
 
     const timeline = buildTimeline(log);
@@ -304,6 +304,84 @@ describe('buildTimeline', () => {
 
     const timeline = buildTimeline(log);
     expect(timeline.moments.length).toBeGreaterThanOrEqual(1);
+  });
+});
+
+/**
+ * What the camera frames before playback starts.
+ *
+ * On an infinite canvas the camera is wherever it was left, and the history
+ * being replayed is usually somewhere else — so playback ran mostly off screen,
+ * which reads as objects never appearing at all. The frame has to cover
+ * everywhere the session *ever* reached, not where it ended.
+ */
+describe('session bounds', () => {
+  it('is null for a session with nothing positioned in it', () => {
+    const doc = new Y.Doc();
+    const log: RawUpdate[] = [];
+    recorder(doc, log);
+    doc.getMap('identities').set('a', { name: 'Ada', color: '#F3A024' });
+    expect(buildTimeline(log).bounds).toBeNull();
+  });
+
+  it('covers a single object', () => {
+    const doc = new Y.Doc();
+    const log: RawUpdate[] = [];
+    recorder(doc, log);
+    doc.getMap<Y.Map<unknown>>('objects').set('a', baseNode(doc, { x: 100, y: 200 }));
+
+    const b = buildTimeline(log).bounds!;
+    expect(b.x).toBe(100);
+    expect(b.y).toBe(200);
+    expect(b.width).toBeGreaterThan(0);
+  });
+
+  it('spans objects in opposite corners of the board', () => {
+    const doc = new Y.Doc();
+    const log: RawUpdate[] = [];
+    recorder(doc, log);
+    const objects = doc.getMap<Y.Map<unknown>>('objects');
+    objects.set('a', baseNode(doc, { x: -500, y: -300 }));
+    objects.set('b', baseNode(doc, { x: 900, y: 700 }));
+
+    const b = buildTimeline(log).bounds!;
+    expect(b.x).toBe(-500);
+    expect(b.y).toBe(-300);
+    expect(b.x + b.width).toBeGreaterThanOrEqual(900);
+    expect(b.y + b.height).toBeGreaterThanOrEqual(700);
+  });
+
+  /**
+   * The case the end-state box gets wrong. An object dragged across the board
+   * occupies ground the final document does not include, so framing the end
+   * would run the middle of the playback off screen.
+   */
+  it('includes ground an object only passed over', () => {
+    const doc = new Y.Doc();
+    const log: RawUpdate[] = [];
+    recorder(doc, log);
+    const objects = doc.getMap<Y.Map<unknown>>('objects');
+    objects.set('a', baseNode(doc, { x: 0, y: 0 }));
+    // Out to the far right, then back to where it started.
+    objects.get('a')!.set('x', 5_000);
+    objects.get('a')!.set('x', 0);
+
+    const b = buildTimeline(log).bounds!;
+    expect(b.x + b.width).toBeGreaterThanOrEqual(5_000);
+  });
+
+  it('includes an object that was created and then deleted', () => {
+    // It is on screen for part of the replay, so it has to be in the frame.
+    const doc = new Y.Doc();
+    const log: RawUpdate[] = [];
+    recorder(doc, log);
+    const objects = doc.getMap<Y.Map<unknown>>('objects');
+    objects.set('a', baseNode(doc, { x: 0, y: 0 }));
+    objects.set('gone', baseNode(doc, { x: 4_000, y: 0 }));
+    objects.delete('gone');
+
+    const b = buildTimeline(log).bounds!;
+    expect(b.x + b.width).toBeGreaterThanOrEqual(4_000);
   });
 });
 
