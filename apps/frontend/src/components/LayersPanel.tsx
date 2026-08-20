@@ -355,6 +355,25 @@ export const LayersPanel: React.FC<LayersPanelProps> = ({ selectedIds, overrideO
     [flatRows]
   );
 
+  /**
+   * Whether a row can be folded at all.
+   *
+   * Derived from the rows themselves rather than from a second list of types,
+   * so a new kind of foldable row is foldable by the keyboard the moment it can
+   * be folded by the chevron. The two disagreed before: `←` asked whether the
+   * node was a frame, which is false for a group cluster, whose id belongs to
+   * no node at all.
+   */
+  const isFoldable = React.useCallback(
+    (id: string) =>
+      flatRows.some(
+        (row) =>
+          (row.kind === 'group' && row.groupId === id) ||
+          (row.kind === 'frame' && row.obj.id === id)
+      ),
+    [flatRows]
+  );
+
   const toggleFrameCollapsed = (id: string) => {
     setCollapsedFrames((prev) => {
       const next = new Set(prev);
@@ -485,16 +504,56 @@ export const LayersPanel: React.FC<LayersPanelProps> = ({ selectedIds, overrideO
   };
 
   /** Restack the selection one place, without collapsing it into one slot. */
+  /**
+   * Move the chosen rows one place up or down the stack.
+   *
+   * ## Why this swaps rather than adds one
+   *
+   * It used to write `zIndex ± 1`, which only reorders anything when the stack
+   * happens to be consecutive. It is not: `nextZIndex` returns one above the
+   * maximum, so deleting objects leaves gaps, and "send to back" writes a value
+   * well below everything. With a gap of five, pressing restack four times did
+   * nothing at all and the fifth press suddenly jumped — a control that appears
+   * broken and then appears to overshoot.
+   *
+   * Swapping with the neighbour is what "move one place" actually means, and it
+   * is exact whatever the numbers are.
+   *
+   * `direction` is in **stack** terms: `up` means nearer the front, which is
+   * also nearer the top of this list, because the list is sorted by descending
+   * z-index.
+   */
   const restack = (direction: 'up' | 'down') => {
     const chosen = selectedIds.length > 0 ? selectedIds : cursorId ? [cursorId] : [];
     if (chosen.length === 0) return;
-    const step = direction === 'up' ? 1 : -1;
-    applyNodePatches(
-      chosen.map((id) => {
-        const node = objects[id];
-        return node ? { id, changes: { zIndex: node.zIndex + step } } : { id, changes: {} };
-      })
-    );
+
+    // Front to back, matching the list. `up` walks toward index 0.
+    const order = sortedObjects.map((o: AnyNode) => o.id);
+    const chosenSet = new Set(chosen);
+    const step = direction === 'up' ? -1 : 1;
+
+    /**
+     * Moved nearest-edge first, so a multi-row selection keeps its order and
+     * cannot have one member leapfrog another it is being moved with.
+     */
+    const moving = order
+      .map((id, index) => ({ id, index }))
+      .filter(({ id }) => chosenSet.has(id));
+    if (direction === 'down') moving.reverse();
+
+    const patches: { id: string; changes: Record<string, unknown> }[] = [];
+    for (const { id, index } of moving) {
+      const neighbour = order[index + step];
+      // Already at the edge, or the thing next to it is coming along anyway.
+      if (!neighbour || chosenSet.has(neighbour)) continue;
+      const a = objects[id];
+      const b = objects[neighbour];
+      if (!a || !b) continue;
+      patches.push({ id, changes: { zIndex: b.zIndex } });
+      patches.push({ id: neighbour, changes: { zIndex: a.zIndex } });
+    }
+
+    if (patches.length > 0) applyNodePatches(patches);
   };
 
   const handleTreeKeyDown = (e: React.KeyboardEvent) => {
@@ -510,28 +569,42 @@ export const LayersPanel: React.FC<LayersPanelProps> = ({ selectedIds, overrideO
     const mod = e.metaKey || e.ctrlKey;
 
     switch (e.key) {
+      /**
+       * The modified arrows were **inverted**.
+       *
+       * This list is sorted by descending z-index, so the front of the stack is
+       * the top of the list. `Cmd+↓` called `restack('up')` and `Cmd+↑` called
+       * `restack('down')`, so the row moved the opposite way from the key in
+       * both directions — and the help screen simply says "Restack", which is
+       * true of any behaviour and therefore checks nothing.
+       */
       case 'ArrowDown':
         e.preventDefault();
-        if (mod) restack('up');
+        if (mod) restack('down');
         else moveCursor(1, e.shiftKey);
         return;
       case 'ArrowUp':
         e.preventDefault();
-        if (mod) restack('down');
+        if (mod) restack('up');
         else moveCursor(-1, e.shiftKey);
         return;
+      /**
+       * Fold and unfold, on anything that folds.
+       *
+       * Frames fold and so do group clusters, and the help screen says so —
+       * but `←` tested `type === 'frame'` while `→` tested only whether the id
+       * was already collapsed. A group could therefore be opened with `→` and
+       * never closed again with `←`, which is the asymmetry you find by trying
+       * it and cannot find by reading either key on its own.
+       */
       case 'ArrowRight':
-        // Fold and unfold act on frames only; on anything else the key is
-        // free to do nothing rather than being swallowed.
-        // Works on a group id as well as a frame id — the cursor can sit on
-        // either, and both are foldable.
-        if (cursorId && collapsedFrames.has(cursorId)) {
+        if (cursorId && isFoldable(cursorId) && collapsedFrames.has(cursorId)) {
           e.preventDefault();
           toggleFrameCollapsed(cursorId);
         }
         return;
       case 'ArrowLeft':
-        if (cursorId && objects[cursorId]?.type === 'frame' && !collapsedFrames.has(cursorId)) {
+        if (cursorId && isFoldable(cursorId) && !collapsedFrames.has(cursorId)) {
           e.preventDefault();
           toggleFrameCollapsed(cursorId);
         }
@@ -598,7 +671,21 @@ export const LayersPanel: React.FC<LayersPanelProps> = ({ selectedIds, overrideO
           height: ROW_HEIGHT - ROW_GAP,
           marginBottom: ROW_GAP,
           color: obj.locked ? 'var(--text-secondary)' : 'var(--text-primary)',
-          borderTop: dragOverId === obj.id ? '2px solid var(--brand-orange)' : '2px solid transparent',
+          /**
+           * The drop indicator is a shadow, not a border.
+           *
+           * It was `2px solid transparent`, reserved on **every** row so the
+           * real one would not shift the layout when it appeared. A transparent
+           * border is not nothing: it is a two-pixel strip through which the
+           * panel behind shows, sitting across the top of a row that has its
+           * own background — so every selected and every hovered row wore a
+           * pale line along its top edge, permanently, for a drag that was not
+           * happening.
+           *
+           * An outset shadow draws in the gap between rows, takes no layout
+           * space at all, and so needs no placeholder to reserve.
+           */
+          boxShadow: dragOverId === obj.id ? '0 -2px 0 0 var(--brand-orange)' : undefined,
           opacity: obj.hidden ? 0.45 : (draggedId === obj.id ? 0.5 : 1),
         }}
       >

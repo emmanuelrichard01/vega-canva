@@ -96,6 +96,36 @@
   --surface-hover: rgba(0, 0, 0, 0.04);
   --surface-active: rgba(0, 0, 0, 0.08);
   --surface-sunken: var(--gray-100);
+
+  /**
+   * Glass: a surface you can see the board through.
+   *
+   * Its own role rather than an alpha applied at each call site, because the
+   * two halves have to move together — translucency without blur is a
+   * see-through panel with text unreadable over whatever is behind it, and
+   * blur without translucency is a filter with nothing to filter.
+   *
+   * That second one is what the header actually had: `backdrop-filter:
+   * blur(24px)` over `--surface-elevated`, which is fully opaque. The blur
+   * covered a backdrop it had already hidden, so it rendered nothing at all
+   * and cost a compositor layer and a blur pass every frame to do it.
+   *
+   * 78% is deliberately restrained. Enough that the board moving underneath is
+   * legible as depth, not so much that the header competes with the work: the
+   * canvas is the subject and this is the frame around it.
+   */
+  --glass-surface: color-mix(in srgb, var(--gray-000) 78%, transparent);
+  /** A touch of saturation, which is what stops blurred colour going muddy. */
+  --glass-filter: blur(20px) saturate(180%);
+  /**
+   * The lit top edge.
+   *
+   * One hairline of white along the top is the whole tell that a surface is
+   * glass rather than paint; it reads as light catching an edge. Kept under
+   * ten per cent — above that it becomes a drawn line, which is the opposite
+   * of the effect.
+   */
+  --glass-edge: rgba(255, 255, 255, 0.55);
   /* For surfaces that deliberately invert against the theme (toasts, the
      activity feed) rather than hardcoding a dark rgba() in a component. */
   --surface-inverse: rgba(20, 23, 30, 0.94);
@@ -351,6 +381,19 @@
   --surface-elevated: var(--zinc-900);
   --surface-hover: rgba(255, 255, 255, 0.06);
   --surface-active: rgba(255, 255, 255, 0.11);
+
+  /**
+   * Glass, dark.
+   *
+   * Denser than the light theme at 82%, because a dark board has far more
+   * tonal range beneath it — light objects on a near-black canvas read
+   * straight through a thinner panel and turn the header into noise. More
+   * saturation for the same reason and less edge light: a bright hairline on
+   * a dark surface reads as a border, which is precisely what it must not.
+   */
+  --glass-surface: color-mix(in srgb, var(--zinc-900) 82%, transparent);
+  --glass-filter: blur(20px) saturate(160%);
+  --glass-edge: rgba(255, 255, 255, 0.08);
   --surface-sunken: var(--zinc-950);
   --surface-inverse: rgba(244, 244, 245, 0.96);
   --border-inverse: rgba(0, 0, 0, 0.14);
@@ -2246,16 +2289,43 @@ textarea:focus-visible {
   right: 0;
   width: 100%;
   height: var(--header-h);
-  background-color: var(--surface-elevated);
+  /**
+   * Glass, and this time the blur has something to do.
+   *
+   * The fill was `--surface-elevated`, which is opaque in both themes, so the
+   * `blur(24px)` that sat here blurred a backdrop it then completely covered:
+   * invisible, and paid for on every frame. The tokens carry both halves
+   * together and are tuned per theme, because a dark board has more tonal
+   * range showing through and needs a denser panel over it.
+   */
+  background-color: var(--glass-surface);
+  backdrop-filter: var(--glass-filter);
+  -webkit-backdrop-filter: var(--glass-filter);
   border-bottom: 1px solid var(--border-divider);
+  /* The lit top edge, drawn as a shadow so it costs no layout and cannot be
+     confused with the divider below. */
+  box-shadow: inset 0 1px 0 0 var(--glass-edge);
   display: flex;
   align-items: center;
   justify-content: space-between;
   padding: 0 24px;
   z-index: 100;
-  backdrop-filter: blur(24px);
-  -webkit-backdrop-filter: blur(24px);
   gap: 24px;
+}
+
+/**
+ * Where the backdrop cannot be filtered, the panel goes solid.
+ *
+ * A translucent header with no blur behind it is not a softer version of this
+ * effect, it is unreadable text over whatever the board happens to hold. The
+ * fallback is the opaque surface the header used to have, which is a perfectly
+ * good header.
+ */
+@supports not ((backdrop-filter: blur(1px)) or (-webkit-backdrop-filter: blur(1px))) {
+  .workspace-header {
+    background-color: var(--surface-elevated);
+    box-shadow: none;
+  }
 }
 
 /* Both header clusters must be allowed to shrink. Flex items default to

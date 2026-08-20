@@ -93,7 +93,9 @@ function buildSections(): Section[] {
       rows: [
         { keys: '↑ / ↓', what: 'Move the cursor; Shift extends the selection' },
         { keys: '← / →', what: 'Fold and unfold a frame or group' },
-        { keys: `${MOD} + ↑ / ↓`, what: 'Restack' },
+        // "Restack" was true of any behaviour, including the inverted one this
+        // had for its whole life. A hint has to be specific enough to be wrong.
+        { keys: `${MOD} + ↑ / ↓`, what: 'Move one place forward or back in the stack' },
         { keys: 'Enter', what: 'Rename' },
         { keys: 'Space', what: 'Show or hide' },
         { keys: `${MOD} + A`, what: 'Select every row on show' },
