@@ -12,6 +12,7 @@ import { applyNodePatches, localAuthorId, lowestZIndex, nextZIndex, provider, up
 import { useStore } from '../hooks/useStore';
 import { APPEARANCE_TYPES } from '../engine/objects/appearanceTypes';
 import { resolveAffordances, type AffordanceId } from '../engine/selection/affordances';
+import { GridSection, gridGroupFor } from './panel/GridSection';
 import { objectRegistry } from '../engine/objects';
 import {
   canResizeAsBox,
@@ -534,6 +535,9 @@ export const PropertiesPanel: React.FC<PropertiesPanelProps> = ({ selectedIds, o
   }
 
   const selectedIdsPresent = nodes.map((n) => n.id);
+
+  /** The group under the selection, when the selection is exactly one grid. */
+  const gridGroup = gridGroupFor(selectedIdsPresent);
 
   /**
    * Whether every selected object is the same type.
@@ -1107,6 +1111,21 @@ export const PropertiesPanel: React.FC<PropertiesPanelProps> = ({ selectedIds, o
           ><FlipVertical size={14} /></button>
         </div>
       </div>
+
+      {/**
+        * A grid, when the selection is one.
+        *
+        * First, above Transform, because when a grid is selected the thing you
+        * came to change is almost always the grid rather than one cell's x —
+        * and burying a section that only ever appears for one kind of
+        * selection under the sections that appear for every kind is putting
+        * the specific behind the generic.
+        */}
+      {gridGroup && (
+        <Accordion title="Grid" defaultOpen>
+          <GridSection groupId={gridGroup} />
+        </Accordion>
+      )}
 
       <Accordion title="Transform">
         {/* X/Y/W/H describe the selection's box, not any one member of it, so

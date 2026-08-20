@@ -8973,3 +8973,216 @@ body[data-zen='physics'] .forces-handle { bottom: 32px; }
 @media (prefers-reduced-motion: reduce) {
   .canvas-notice { animation-duration: 1ms; }
 }
+
+/* ===========================================================================
+   GRID SECTION
+   ---------------------------------------------------------------------------
+   The panel for a grid the generator made. Denser than the rest of the
+   inspector on purpose: the whole section is comparative — is four columns
+   better than three, does this palette carry the hierarchy — and every scroll
+   between a control and the board is a comparison you have to hold in your
+   head instead of seeing.
+   ------------------------------------------------------------------------ */
+.grid-section {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+/* The ten systems, drawn rather than listed. A grid system is a picture, and
+   the words for them mean nothing until you have seen one. */
+.grid-section__kinds {
+  display: grid;
+  grid-template-columns: repeat(5, 1fr);
+  gap: 4px;
+}
+
+.grid-kind {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 3px;
+  padding: 6px 2px;
+  border: 1px solid transparent;
+  border-radius: var(--radius-md);
+  background: transparent;
+  color: var(--text-secondary);
+  cursor: pointer;
+  transition: background-color var(--motion-hover), color var(--motion-hover), border-color var(--motion-hover);
+}
+
+.grid-kind:hover {
+  background: var(--surface-hover);
+  color: var(--text-primary);
+}
+
+.grid-kind[data-active] {
+  background: var(--accent-quiet);
+  border-color: var(--accent-line);
+  color: var(--accent-strong, var(--brand-orange));
+}
+
+/* The name under each miniature, at the smallest size the system has. Five
+   across a 260px panel leaves about forty pixels a label, so it ellipsizes
+   rather than wrapping into a second line that would make the row ragged. */
+.grid-kind__label {
+  max-width: 100%;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: var(--text-2xs);
+  font-weight: var(--weight-medium);
+  letter-spacing: 0.01em;
+}
+
+.grid-section__hint {
+  margin: 0;
+  color: var(--text-secondary);
+  font-size: var(--text-2xs);
+  line-height: 1.45;
+}
+
+.grid-section__label {
+  margin-top: 4px;
+  color: var(--text-secondary);
+  font-size: var(--text-2xs);
+  font-weight: var(--weight-semibold);
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+}
+
+.grid-section__row {
+  display: flex;
+  gap: 8px;
+}
+
+.grid-field {
+  display: flex;
+  flex: 1;
+  min-width: 0;
+  flex-direction: column;
+  gap: 4px;
+  color: var(--text-secondary);
+  font-size: var(--text-2xs);
+}
+
+.grid-field--wide { flex-basis: 100%; }
+
+.grid-link {
+  align-self: flex-end;
+  padding: 6px 8px;
+  border: 1px solid var(--border-divider);
+  border-radius: var(--radius-md);
+  background: transparent;
+  color: var(--text-secondary);
+  font-size: var(--text-2xs);
+  font-weight: var(--weight-medium);
+  cursor: pointer;
+  white-space: nowrap;
+}
+
+.grid-link:hover {
+  background: var(--surface-hover);
+  color: var(--text-primary);
+}
+
+.grid-section__shapes {
+  display: flex;
+  gap: 4px;
+}
+
+.grid-shape {
+  display: flex;
+  flex: 1;
+  align-items: center;
+  justify-content: center;
+  height: 30px;
+  border: 1px solid var(--border-divider);
+  border-radius: var(--radius-md);
+  background: transparent;
+  color: var(--text-secondary);
+  cursor: pointer;
+  transition: background-color var(--motion-hover), color var(--motion-hover), border-color var(--motion-hover);
+}
+
+.grid-shape:hover { background: var(--surface-hover); color: var(--text-primary); }
+
+.grid-shape[data-active] {
+  border-color: var(--accent-line);
+  background: var(--accent-quiet);
+  color: var(--accent-strong, var(--brand-orange));
+}
+
+.grid-section__palettes {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+/* A palette reads as its own ramp: six chips flush against each other, so the
+   thing being chosen is the *progression* rather than six separate colours. */
+.grid-palette {
+  display: flex;
+  overflow: hidden;
+  height: 22px;
+  padding: 0;
+  border: 1px solid var(--border-divider);
+  border-radius: var(--radius-md);
+  background: transparent;
+  cursor: pointer;
+}
+
+.grid-palette[data-active] {
+  border-color: var(--accent-strong, var(--brand-orange));
+  box-shadow: 0 0 0 1px var(--accent-strong, var(--brand-orange));
+}
+
+.grid-palette__chip { flex: 1; }
+
+.grid-section__swatches {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px;
+}
+
+.grid-select {
+  width: 100%;
+  padding: 6px 8px;
+  border: 1px solid var(--border-divider);
+  border-radius: var(--radius-md);
+  background: var(--surface-primary);
+  color: var(--text-primary);
+  font-family: inherit;
+  font-size: var(--text-xs);
+}
+
+.grid-section__rolls {
+  display: flex;
+  gap: 4px;
+  margin-top: 2px;
+}
+
+/* Three dice, not one: layout randomness and colour randomness are separate
+   questions, and a single re-roll that moved both would make it impossible to
+   keep an arrangement you liked while trying colours against it. */
+.grid-roll {
+  display: flex;
+  flex: 1;
+  align-items: center;
+  justify-content: center;
+  gap: 4px;
+  padding: 7px 6px;
+  border: 1px solid var(--border-divider);
+  border-radius: var(--radius-md);
+  background: transparent;
+  color: var(--text-secondary);
+  font-size: var(--text-2xs);
+  font-weight: var(--weight-medium);
+  cursor: pointer;
+  transition: background-color var(--motion-hover), color var(--motion-hover);
+}
+
+.grid-roll:hover {
+  background: var(--accent-quiet);
+  color: var(--accent-strong, var(--brand-orange));
+}

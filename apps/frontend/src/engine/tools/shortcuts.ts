@@ -26,6 +26,7 @@ export const TOOL_SHORTCUTS: Record<string, string> = {
   text: 'T',
   shape: 'R',
   frame: 'F',
+  grid: 'G',
   connector: 'X',
   sticky: 'S',
   comment: 'C',

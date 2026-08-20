@@ -29,6 +29,7 @@ export const TOOL_NAMES: Record<string, string> = {
   text: 'Text',
   shape: 'Shape',
   frame: 'Frame',
+  grid: 'Grid — lay out a composition',
   connector: 'Connector',
   sticky: 'Sticky note',
   comment: 'Comment',

@@ -33,12 +33,25 @@
  * to reach by clicking and trivial to state as tests.
  */
 
+import type { GridRecipe } from '../grid/gridBuild';
+
 export interface GroupRecord {
   id: string;
   /** The group holding this one. Absent means top level. */
   parentId?: string;
   /** What the user renamed it to, if anything. */
   name?: string;
+  /**
+   * The recipe that made this group, when a generator made it.
+   *
+   * A grid that forgets what it was doing is a one-shot: every real question
+   * about a grid arrives *after* you have looked at it, and answering "one
+   * more column" by deleting and regenerating loses every edit made in the
+   * meantime. Kept on the group because the group already *is* the grid — the
+   * set of objects it produced — and because living in the document means it
+   * syncs, undoes and reopens with everything else.
+   */
+  grid?: GridRecipe;
 }
 
 export type Groups = Readonly<Record<string, GroupRecord>>;

@@ -1,5 +1,8 @@
-import React, { useCallback, useEffect, useRef, useState } from 'react';
-import { MousePointer2, MousePointerClick, Hand, Pen, PenTool as PenToolIcon, Type, Square, StickyNote, MessageSquare, ImageIcon, Mic, Sparkles, Frame, Eraser, Workflow, MoreVertical, TextQuote } from 'lucide-react';
+import React, { useCallback, useEffect, useRef, useState, useSyncExternalStore } from 'react';
+import { GridKindIcon } from './gridIcons';
+import { GRID_HINTS, GRID_KINDS, GRID_LABELS } from '../../engine/grid/gridLayout';
+import { gridDefaults } from '../../engine/grid/gridDefaults';
+import { MousePointer2, MousePointerClick, LayoutGrid, Hand, Pen, PenTool as PenToolIcon, Type, Square, StickyNote, MessageSquare, ImageIcon, Mic, Sparkles, Frame, Eraser, Workflow, MoreVertical, TextQuote } from 'lucide-react';
 import { Minus, Spline } from 'lucide-react';
 import { SegmentedControl } from '../ui/SegmentedControl';
 import { SketchLevelIcon } from '../panel/sketchIcons';
@@ -210,9 +213,9 @@ interface Props {
 const SEAT = {
   select: 0, directSelect: 1, hand: 2,
   draw: 3, eraser: 4,
-  text: 5, block: 6, shape: 7, line: 8, frame: 9, connector: 10, sticky: 11,
-  image: 12, audio: 13, forces: 14,
-  more: 15,
+  text: 5, block: 6, shape: 7, line: 8, frame: 9, grid: 10, connector: 11, sticky: 12,
+  image: 13, audio: 14, forces: 15,
+  more: 16,
 } as const;
 
 
@@ -264,7 +267,20 @@ export const ToolWorkspace: React.FC<Props> = ({ activeToolId, onOpenDiagram, on
    * these buttons simply could not be reached. One piece of state rather than
    * a pair per menu also guarantees only one can ever be open.
    */
-  type DockMenu = 'pen' | 'shape' | 'line' | 'frame' | 'eraser' | 'block' | 'more';
+  /**
+   * Which grid system the next drag will produce.
+   *
+   * Read from `gridDefaults` rather than held here, because the tool reads it
+   * from there too — a second copy in this component would let the flyout's
+   * tick and the preview under the pointer disagree about what is armed.
+   */
+  const gridKind = useSyncExternalStore(
+    gridDefaults.subscribe,
+    () => gridDefaults.getSnapshot().spec.kind,
+    () => gridDefaults.getSnapshot().spec.kind
+  );
+
+  type DockMenu = 'pen' | 'shape' | 'line' | 'frame' | 'grid' | 'eraser' | 'block' | 'more';
   const [pinnedMenu, setPinnedMenu] = useState<DockMenu | null>(null);
   const [hoveredMenu, setHoveredMenu] = useState<DockMenu | null>(null);
   const openMenu = pinnedMenu ?? hoveredMenu;
@@ -750,6 +766,47 @@ export const ToolWorkspace: React.FC<Props> = ({ activeToolId, onOpenDiagram, on
                 </Flyout>
               )}
             </DockButton>
+        </div>
+
+        {/* Grid. Beside Frame because both answer "where does everything go"
+            — a frame bounds a composition, a grid divides one — and because
+            drawing a grid inside a frame you have just drawn is the sequence
+            people actually perform. The flyout picks the system before the
+            drag, so the preview under the pointer is already the right one. */}
+        <div {...hoverProps('grid')} className="dock-slot-wrap">
+          <DockButton
+            {...seatProps(SEAT.grid)}
+            icon={<LayoutGrid size={17} />} label="Grid" toolId="grid"
+            description="lay out a composition"
+            active={activeToolId === 'grid'} hasMenu menuOpen={openMenu === 'grid'}
+            onClick={() => toggleMenu('grid')}
+          >
+            {openMenu === 'grid' && (
+              <Flyout title="Grid system" wide>
+                <div className="dock-flyout__scroll">
+                  {GRID_KINDS.map((kind) => (
+                    <FlyoutItem
+                      key={kind}
+                      icon={<GridKindIcon kind={kind} />}
+                      label={GRID_LABELS[kind]}
+                      description={GRID_HINTS[kind]}
+                      active={gridKind === kind}
+                      onClick={() => {
+                        // Remembering the pick *and* arming the tool, so the
+                        // flyout is a choice rather than a menu of ten tools
+                        // that would each need registering.
+                        gridDefaults.remember({
+                          ...gridDefaults.forBox({ x: 0, y: 0, width: 0, height: 0 }),
+                          spec: { ...gridDefaults.getSnapshot().spec, x: 0, y: 0, width: 0, height: 0, kind },
+                        });
+                        pick('grid');
+                      }}
+                    />
+                  ))}
+                </div>
+              </Flyout>
+            )}
+          </DockButton>
         </div>
 
         {/* Connector. Sits with the creation tools rather than with the shapes,

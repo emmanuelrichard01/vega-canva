@@ -406,6 +406,7 @@ function stripUndefined(record: GroupRecord): GroupRecord {
   const out: GroupRecord = { id: record.id };
   if (record.parentId !== undefined) out.parentId = record.parentId;
   if (record.name !== undefined) out.name = record.name;
+  if (record.grid !== undefined) out.grid = record.grid;
   return out;
 }
 
