@@ -13,6 +13,7 @@ export {
   provider,
   indexeddbProvider,
   objectsMap,
+  groupsMap,
   metadataMap,
   identitiesMap,
   commentsMap,
@@ -40,6 +41,8 @@ export {
   publishLocalIdentity,
 } from './mutations';
 export type { NewNodeInput } from './mutations';
+export { applyGroupPlan, renameGroup } from './mutations';
+export { observeGroups } from './observe';
 
 export { observeNodes } from './observe';
 export type { NodeChangeSet } from './observe';

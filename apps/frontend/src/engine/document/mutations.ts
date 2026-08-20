@@ -1,6 +1,7 @@
 import * as Y from 'yjs';
 import { nanoid } from 'nanoid';
-import { doc, identitiesMap, objectsMap, provider } from './doc';
+import { doc, groupsMap, identitiesMap, objectsMap, provider } from './doc';
+import type { GroupPlan, GroupRecord } from '../model/groupTree';
 import { applyReactionToggle, seedReactions } from './reactions';
 import { frameForNode } from '../model/frames';
 import { getColorForUser } from '../presence/ColorPalette';
@@ -345,6 +346,74 @@ export function applyNodePatches(
       ymap.set('updatedAt', now);
     });
   });
+}
+
+/**
+ * Apply a group plan: create, reparent and delete, as one act.
+ *
+ * ## Why this is one function and not three calls
+ *
+ * Grouping writes to both maps — a record into `groups`, a `parentId` onto
+ * every member — and those two writes are only meaningful together. Split
+ * across transactions, a peer receiving them in between sees nodes pointing at
+ * a group that does not exist yet, and undo has a step where the folder is
+ * there and empty. One `doc.transact` makes it one update, one history entry,
+ * one undo, and one thing a peer can observe.
+ *
+ * The plan itself is computed by `engine/model/groupTree`, which is pure and
+ * tested — including the parts that are tedious to reach by clicking, like
+ * grouping a selection that happens to *be* a whole group, or a drag that
+ * would put a folder inside itself.
+ */
+export function applyGroupPlan(plan: GroupPlan): void {
+  const touchesNothing =
+    plan.nodes.length === 0 && plan.groups.length === 0 && !plan.create && plan.remove.length === 0;
+  if (touchesNothing) return;
+
+  const now = Date.now();
+  doc.transact(() => {
+    if (plan.create) groupsMap.set(plan.create.id, stripUndefined(plan.create));
+
+    for (const { id, parentId } of plan.groups) {
+      const existing = groupsMap.get(id);
+      if (!existing) continue;
+      groupsMap.set(id, stripUndefined({ ...existing, parentId }));
+    }
+
+    for (const { id, parentId } of plan.nodes) {
+      const ymap = objectsMap.get(id);
+      if (!ymap) continue;
+      if (parentId === undefined) ymap.delete('parentId');
+      else ymap.set('parentId', parentId);
+      ymap.set('updatedAt', now);
+    }
+
+    // Deleted last, so a group being emptied and a group being removed in the
+    // same plan cannot resurrect each other through ordering.
+    for (const id of plan.remove) groupsMap.delete(id);
+  });
+}
+
+/**
+ * `undefined` is a value in a Y.Map, and it is not the same as absent.
+ *
+ * A record stored with `parentId: undefined` round-trips through sync as a key
+ * that exists and holds nothing, which every `?? ` and `if (parentId)` in the
+ * tree code then has to agree about. Dropping the key is the only form that
+ * means "top level" unambiguously.
+ */
+function stripUndefined(record: GroupRecord): GroupRecord {
+  const out: GroupRecord = { id: record.id };
+  if (record.parentId !== undefined) out.parentId = record.parentId;
+  if (record.name !== undefined) out.name = record.name;
+  return out;
+}
+
+/** Rename a group. The one field of a group anybody edits directly. */
+export function renameGroup(id: string, name: string): void {
+  const existing = groupsMap.get(id);
+  if (!existing) return;
+  groupsMap.set(id, stripUndefined({ ...existing, name: name.trim() || undefined }));
 }
 
 /**

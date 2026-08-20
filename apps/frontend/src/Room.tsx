@@ -17,11 +17,12 @@ import { ObjectContextToolbar } from './components/ObjectContextToolbar';
 import { PropertiesPanel } from './components/PropertiesPanel';
 import { LayersPanel } from './components/LayersPanel';
 import { useAuth } from './hooks/AuthContext';
-import { doc, provider, metadataMap, undoManager, updateNode, deleteNode, applyNodePatches, nextZIndex, lowestZIndex, localAuthor, localAuthorId, publishLocalIdentity } from './engine/document';
+import { doc, provider, metadataMap, undoManager, updateNode, deleteNode, applyNodePatches, nextZIndex, lowestZIndex, localAuthor, localAuthorId, publishLocalIdentity, applyGroupPlan } from './engine/document';
 import { useRoomState } from './hooks/useSync';
 import { initSyncBridge, useStore } from './hooks/useStore';
 import { editor } from './engine/api/EditorAPI';
 import { alignSelection, distributeSelection, type AlignEdge, type DistributeAxis } from './engine/model/align';
+import { emptyGroups } from './engine/model/groupTree';
 import { ActivityFeed } from './components/ActivityFeed';
 import { PresenceEdgeMarkers } from './components/PresenceEdgeMarkers';
 import { FollowIndicator } from './components/FollowIndicator';
@@ -462,9 +463,13 @@ export default function Room() {
     // No explicit point means the same board, so it offsets from the originals
     // rather than landing on top of them and looking like nothing happened.
     const target = at ?? offsetOrigin(payload);
-    const { nodes, ids } = pasteNodes(payload, target);
+    const { nodes, ids, groups } = pasteNodes(payload, target, useStore.getState().groups);
     if (nodes.length === 0) return;
     doc.transact(() => {
+      // Folders first: the nodes about to be created point at them, and a
+      // peer observing the transaction should never see a node whose group
+      // has not arrived.
+      for (const record of groups) applyGroupPlan({ nodes: [], groups: [], create: record, remove: [] });
       nodes.forEach((node) => editor.createNode(node as never));
     });
     setSelectedIds(ids);
@@ -662,6 +667,29 @@ export default function Room() {
   };
   /** The live document, for the diagram round trip. Same source every other consumer here reads. */
   const diagramObjects = useStore((s) => s.objects);
+
+  /**
+   * Sweep folders that no longer hold anything.
+   *
+   * They arise from ordinary editing: delete the last two members of a group
+   * and the group record is still there — an empty row that cannot be selected
+   * and whose only remaining behaviour is to take up space in the panel.
+   *
+   * Swept rather than prevented, because the alternative is every deletion
+   * path in the app having to know about groups, and there are several. One
+   * peer doing it is enough; a delete of a key that is already gone is a no-op
+   * in Yjs, so the others racing to agree costs nothing.
+   *
+   * Terminates in one step: `emptyGroups` already iterates to a fixed point,
+   * so the write it triggers cannot produce a second round.
+   */
+  const groupRecords = useStore((s) => s.groups);
+  useEffect(() => {
+    const order = Object.keys(diagramObjects);
+    const dead = emptyGroups(order, diagramObjects, groupRecords);
+    if (dead.length > 0) applyGroupPlan({ nodes: [], groups: [], remove: dead });
+  }, [diagramObjects, groupRecords]);
+
 
   /**
    * Open the diagram editor, seeded from the selection where there is one.

@@ -1,5 +1,6 @@
 import { create } from 'zustand';
-import { normalizeNode, objectsMap, observeNodes, provider, scheduleMigration, updateNode } from '../engine/document';
+import { groupsMap, normalizeNode, objectsMap, observeGroups, observeNodes, provider, scheduleMigration, updateNode } from '../engine/document';
+import type { GroupRecord } from '../engine/model/groupTree';
 import { STICKY_THEMES, type AnyNode, type StickyTheme } from '../engine/model/schema';
 import { sceneGraph } from '../engine/SceneGraph';
 import { mergeReplayObjects } from '../engine/history/replayMerge';
@@ -24,6 +25,15 @@ import {
 interface StoreState {
   /** Latest snapshot of every node, keyed by id. */
   objects: Record<string, AnyNode>;
+  /**
+   * Latest snapshot of every group, keyed by group id.
+   *
+   * Separate from `objects` because a group draws nothing and every consumer
+   * of `objects` iterates it on the assumption that everything in it does. Its
+   * own slice also means a reparent re-renders the layers panel and nothing
+   * else — no renderer subscribes to this.
+   */
+  groups: Record<string, GroupRecord>;
   /** Bumped on every applied change, for coarse subscriptions. */
   version: number;
   /**
@@ -244,6 +254,7 @@ const prefersDarkScheme = () =>
 
 export const useStore = create<StoreState>((set) => ({
   objects: {},
+  groups: {},
   version: 0,
   lastChangedIds: [],
   lastRemovedIds: [],
@@ -547,6 +558,7 @@ export const useStore = create<StoreState>((set) => ({
 }));
 
 let bridgeDisposer: (() => void) | null = null;
+let groupsDisposer: (() => void) | null = null;
 let migrationDisposer: (() => void) | null = null;
 
 /**
@@ -580,6 +592,7 @@ function readCanonical(id: string): AnyNode | null {
  */
 export const initSyncBridge = () => {
   bridgeDisposer?.();
+  groupsDisposer?.();
   migrationDisposer?.();
 
   const initialObjects: Record<string, AnyNode> = {};
@@ -595,6 +608,13 @@ export const initSyncBridge = () => {
     version: 1,
     lastChangedIds: Object.keys(initialObjects),
     lastRemovedIds: [],
+  });
+
+  useStore.setState({ groups: Object.fromEntries(groupsMap.entries()) });
+  groupsDisposer = observeGroups((groups) => {
+    // Replay drives the canvas from snapshots; live traffic must not fight it.
+    if (useStore.getState().isReplaying) return;
+    useStore.setState({ groups });
   });
 
   bridgeDisposer = observeNodes(({ changed, removed }) => {

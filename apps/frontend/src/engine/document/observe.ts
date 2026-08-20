@@ -1,5 +1,6 @@
 import * as Y from 'yjs';
-import { objectsMap } from './doc';
+import { groupsMap, objectsMap } from './doc';
+import type { GroupRecord } from '../model/groupTree';
 
 export interface NodeChangeSet {
   /** Ids whose data was added or modified (including deep changes to nested fields). */
@@ -71,4 +72,18 @@ export function observeNodes(handler: (changes: NodeChangeSet) => void): () => v
 
   objectsMap.observeDeep(listener);
   return () => objectsMap.unobserveDeep(listener);
+}
+
+/**
+ * Subscribe to group changes. Returns an unsubscribe function.
+ *
+ * Shallow, deliberately. A group record is three scalar fields with no nested
+ * structure to reach into, so the deep walk `observeNodes` needs — resolving a
+ * change to `node.appearance.stroke.width` back to the node that owns it — has
+ * nothing to do here and would only cost a traversal per edit.
+ */
+export function observeGroups(handler: (groups: Record<string, GroupRecord>) => void): () => void {
+  const listener = () => handler(Object.fromEntries(groupsMap.entries()));
+  groupsMap.observe(listener);
+  return () => groupsMap.unobserve(listener);
 }

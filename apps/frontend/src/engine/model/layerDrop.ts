@@ -34,6 +34,8 @@
  * put something in a frame by dragging it into the frame.
  */
 
+import { wouldCycle } from './groupTree';
+
 export interface DropNode {
   id: string;
   zIndex: number;
@@ -56,6 +58,9 @@ export interface DropRow {
   collapsed?: boolean;
 }
 
+/** The part of the group tree this module needs, keyed by group id. */
+export type DropGroups = Readonly<Record<string, { id: string; parentId?: string }>>;
+
 export type DropWhere = 'before' | 'after' | 'inside';
 
 export interface DropPlan {
@@ -73,11 +78,56 @@ export interface DropInput {
   moving: readonly string[];
   /** The row under the pointer, and which of its three zones. */
   target: { id: string; where: DropWhere };
+  /** The group tree, for nesting. Omit on a document that has no groups. */
+  groups?: DropGroups;
+  /**
+   * The group being dragged, when the drag began on a folder header.
+   *
+   * This is what separates "move these five objects" from "move this folder".
+   * Dropping a *folder* into another folder must reparent the folder record and
+   * leave its members' own membership alone — rewriting the members' `parentId`
+   * would dissolve the folder into the target, which is exactly the flattening
+   * that nesting exists to end.
+   */
+  movingGroup?: string;
 }
 
-/** The members of a group, in stacking order. */
-const membersOf = (order: readonly string[], objects: DropInput['objects'], groupId: string) =>
-  order.filter((id) => objects[id]?.parentId === groupId);
+export interface DropResult {
+  /** Node patches: stacking order, and membership for a plain multi-row drag. */
+  nodes: DropPlan[];
+  /** Group records whose own parent changes. Only ever from a folder drag. */
+  groups: { id: string; parentId: string | undefined }[];
+}
+
+/**
+ * Everything inside a group, at any depth, in stacking order.
+ *
+ * Direct members are not enough once groups nest: dropping above a folder whose
+ * first row is *another folder* has to anchor at that inner folder's first
+ * node, or the insertion lands in the middle of the thing it was aimed above.
+ */
+const membersOf = (
+  order: readonly string[],
+  objects: DropInput['objects'],
+  groups: DropGroups,
+  groupId: string
+) => {
+  const inside = new Set<string>([groupId]);
+  const queue = [groupId];
+  while (queue.length > 0) {
+    const at = queue.shift()!;
+    for (const g of Object.values(groups)) {
+      if (g.parentId === at && !inside.has(g.id)) {
+        inside.add(g.id);
+        queue.push(g.id);
+      }
+    }
+  }
+  return order.filter((id) => {
+    const parent = objects[id]?.parentId;
+    return parent !== undefined && inside.has(parent);
+  });
+};
 
 /**
  * Where the insertion actually goes, once the dragged rows are lifted out.
@@ -127,13 +177,23 @@ function insertionIndex(
  * immediately above its own first child.
  */
 function resolveDrop(input: DropInput): { parentId: string | undefined; anchor: string | undefined; side: 'before' | 'after' } {
-  const { order, objects, rows, target } = input;
+  const { order, objects, rows, target, groups = {} } = input;
   const row = rows.find((r) => r.id === target.id);
 
   if (row?.kind === 'group') {
-    const members = membersOf(order, objects, row.id);
+    const members = membersOf(order, objects, groups, row.id);
     const first = members[0];
     const last = members[members.length - 1];
+    /**
+     * The level a folder's own edges belong to is the folder's *parent*, not
+     * the root.
+     *
+     * Under the flat model those were the same thing, because a folder could
+     * only ever be top level. Nested, dropping above an inner folder means "in
+     * the outer one, above this" — reading it as the root would eject the
+     * dragged rows two levels instead of none.
+     */
+    const beside = groups[row.id]?.parentId;
 
     if (target.where === 'inside') {
       // The top of the group, which is where a folder receives a drop.
@@ -141,10 +201,10 @@ function resolveDrop(input: DropInput): { parentId: string | undefined; anchor: 
     }
     if (target.where === 'before') {
       // Above the folder is not in the folder. This is how you get out.
-      return { parentId: undefined, anchor: first, side: 'before' };
+      return { parentId: beside, anchor: first, side: 'before' };
     }
     return row.collapsed
-      ? { parentId: undefined, anchor: last, side: 'after' }
+      ? { parentId: beside, anchor: last, side: 'after' }
       : { parentId: row.id, anchor: first, side: 'before' };
   }
 
@@ -171,28 +231,41 @@ function resolveDrop(input: DropInput): { parentId: string | undefined; anchor: 
  * silently do nothing, and normalising once is cheaper than carrying the
  * ambiguity forever.
  */
-export function planLayerDrop(input: DropInput): DropPlan[] {
-  const { order, objects, moving, target } = input;
+export function planLayerDrop(input: DropInput): DropResult {
+  const { order, objects, moving, target, groups = {}, movingGroup } = input;
+  const empty: DropResult = { nodes: [], groups: [] };
 
   const movingSet = new Set(moving.filter((id) => objects[id]));
-  if (movingSet.size === 0) return [];
+  if (movingSet.size === 0) return empty;
   // Dropping a selection onto one of its own rows is a gesture that means
   // nothing — not a cycle to guard against, just nowhere to go.
-  if (movingSet.has(target.id)) return [];
+  if (movingSet.has(target.id)) return empty;
+  if (movingGroup && target.id === movingGroup) return empty;
 
   const { parentId, anchor, side } = resolveDrop(input);
 
   /**
-   * A group cannot be dropped into itself.
+   * A folder cannot go inside itself, or inside anything it contains.
    *
-   * Dragging a folder's header onto that same folder resolves to "inside me",
-   * which would be a no-op with a distracting amount of z-index churn behind
-   * it. Nothing outside the set can be its own parent, so this is the only
-   * shape the check needs.
+   * Unlike the flat model, this is a real cycle and not merely a pointless
+   * gesture: written to the document it would make every walk over the tree
+   * defend against it forever, so it is refused here rather than repaired
+   * later.
    */
-  if (parentId && moving.every((id) => objects[id]?.parentId === parentId) && target.id === parentId) {
-    return [];
-  }
+  if (movingGroup && wouldCycle(groups, movingGroup, parentId)) return empty;
+
+  /**
+   * Dragging a folder moves the folder, not its contents.
+   *
+   * Its members keep pointing at it; what changes is where *it* points. The
+   * nodes still get new stacking order below, because a folder that moved in
+   * the list without its contents moving in the stack would be a folder drawn
+   * somewhere it does not paint.
+   */
+  const groupPatches =
+    movingGroup && (groups[movingGroup]?.parentId ?? undefined) !== (parentId ?? undefined)
+      ? [{ id: movingGroup, parentId }]
+      : [];
 
   const remaining = order.filter((id) => !movingSet.has(id));
   const at = insertionIndex(order, remaining, anchor, side);
@@ -202,7 +275,7 @@ export function planLayerDrop(input: DropInput): DropPlan[] {
   const ordered = order.filter((id) => movingSet.has(id));
   const next = [...remaining.slice(0, at), ...ordered, ...remaining.slice(at)];
 
-  const plans: DropPlan[] = [];
+  const nodes: DropPlan[] = [];
   next.forEach((id, index) => {
     const node = objects[id];
     if (!node) return;
@@ -210,11 +283,14 @@ export function planLayerDrop(input: DropInput): DropPlan[] {
     const zIndex = next.length - index;
     const changes: DropPlan['changes'] = {};
     if (node.zIndex !== zIndex) changes.zIndex = zIndex;
-    if (movingSet.has(id) && node.parentId !== parentId) changes.parentId = parentId;
-    if (Object.keys(changes).length > 0) plans.push({ id, changes });
+    // Only a plain drag rewrites membership. A folder drag moves the folder.
+    if (!movingGroup && movingSet.has(id) && node.parentId !== parentId) {
+      changes.parentId = parentId;
+    }
+    if (Object.keys(changes).length > 0) nodes.push({ id, changes });
   });
 
-  return plans;
+  return { nodes, groups: groupPatches };
 }
 
 /**

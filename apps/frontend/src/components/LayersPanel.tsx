@@ -1,5 +1,5 @@
 import React, { useEffect, useMemo, useRef, useState, useSyncExternalStore } from 'react';
-import { updateNode, applyNodePatches, provider } from '../engine/document';
+import { updateNode, applyNodePatches, applyGroupPlan, renameGroup, provider } from '../engine/document';
 import { deleteNodesWithFrames } from '../engine/interaction/frameMembership';
 import { useStore } from '../hooks/useStore';
 import { editor } from '../engine/api/EditorAPI';
@@ -11,6 +11,7 @@ import { paintColor } from '../engine/model/paint';
 import { readableOn } from '../engine/model/color';
 import { getColorForUser } from '../engine/presence/ColorPalette';
 import { dropZone, planLayerDrop, type DropRow, type DropWhere } from '../engine/model/layerDrop';
+import { childGroups, nodesInGroup, planUngroup, wouldCycle } from '../engine/model/groupTree';
 import { THEMES } from './canvas/renderers/StickyRenderer';
 import { tagFilter } from '../engine/model/tagFilter';
 import { tagCounts } from '../engine/model/tags';
@@ -46,6 +47,14 @@ export const LayersPanel: React.FC<LayersPanelProps> = ({ selectedIds, overrideO
   // shared store here removes the duplicate subscription and guarantees this
   // panel can't momentarily disagree with Properties/Canvas/the toolbar.
   const liveObjects = useStore(state => state.objects);
+  /**
+   * The group tree.
+   *
+   * Its own slice of the store rather than a field on the nodes, because a
+   * group holds no geometry and nothing that renders the board reads it — so a
+   * reparent re-renders this panel and nothing else.
+   */
+  const groups = useStore(state => state.groups);
   const darkTheme = useStore(state => state.darkTheme);
   const objects = overrideObjects || liveObjects;
 
@@ -201,6 +210,14 @@ export const LayersPanel: React.FC<LayersPanelProps> = ({ selectedIds, overrideO
    * happened to be winnable rather than a rule.
    */
   const dragPayloadRef = useRef<string[]>([]);
+  /**
+   * The folder being dragged, when the drag began on a header.
+   *
+   * What separates "move these five objects" from "move this folder". Without
+   * it a folder drag would rewrite its members' `parentId` and dissolve the
+   * folder into wherever it landed — the exact flattening nesting exists to end.
+   */
+  const dragGroupRef = useRef<string | null>(null);
 
   const dragIdsFor = (id: string): string[] => {
     // Dragging one of several selected rows moves the whole selection, which
@@ -209,8 +226,9 @@ export const LayersPanel: React.FC<LayersPanelProps> = ({ selectedIds, overrideO
     return [id];
   };
 
-  const beginDrag = (e: React.DragEvent, ids: string[], label: string) => {
+  const beginDrag = (e: React.DragEvent, ids: string[], label: string, groupId?: string) => {
     dragPayloadRef.current = ids;
+    dragGroupRef.current = groupId ?? null;
     setDraggedId(ids[0] ?? null);
     e.dataTransfer.effectAllowed = 'move';
     // Firefox refuses to start a drag without payload.
@@ -327,6 +345,7 @@ export const LayersPanel: React.FC<LayersPanelProps> = ({ selectedIds, overrideO
     setDraggedId(null);
     setDropHint(null);
     dragPayloadRef.current = [];
+    dragGroupRef.current = null;
     stopAutoScroll();
     cancelSpring();
   };
@@ -350,16 +369,30 @@ export const LayersPanel: React.FC<LayersPanelProps> = ({ selectedIds, overrideO
     handleDragEnd();
     if (!target || moving.length === 0) return;
 
-    const patches = planLayerDrop({
+    const plan = planLayerDrop({
       order: sortedObjects.map((o) => o.id),
       objects,
       rows: dropRows,
       moving,
       target,
+      groups,
+      movingGroup: dragGroupRef.current ?? undefined,
     });
 
-    if (patches.length > 0) {
-      applyNodePatches(patches as { id: string; changes: Record<string, unknown> }[]);
+    /**
+     * Both halves, and the group half first.
+     *
+     * A folder's new parent and its contents' new stacking order are one act —
+     * applied apart, a peer receiving them in between sees the folder in its
+     * new place with its contents still drawn in the old one. `applyGroupPlan`
+     * runs its own transaction; the node patches run in theirs, and the order
+     * matters only in that the tree is consistent the moment anything reads it.
+     */
+    if (plan.groups.length > 0) {
+      applyGroupPlan({ nodes: [], groups: plan.groups, remove: [] });
+    }
+    if (plan.nodes.length > 0) {
+      applyNodePatches(plan.nodes as { id: string; changes: Record<string, unknown> }[]);
     }
   };
 
@@ -441,7 +474,7 @@ export const LayersPanel: React.FC<LayersPanelProps> = ({ selectedIds, overrideO
   type FlatRow =
     | { kind: 'object'; obj: AnyNode; indent: number }
     | { kind: 'frame'; obj: AnyNode; indent: number; childCount: number }
-    | { kind: 'group'; groupId: string; members: AnyNode[]; indent: number };
+    | { kind: 'group'; groupId: string; members: AnyNode[]; indent: number; name?: string };
 
   /**
    * Indent per level of frame nesting, in px.
@@ -450,6 +483,15 @@ export const LayersPanel: React.FC<LayersPanelProps> = ({ selectedIds, overrideO
    * three levels deep at 20px leaves no room for a name in a 260px panel.
    */
   const FRAME_INDENT = 16;
+
+  /**
+   * Indent per level of *group* nesting, in px.
+   *
+   * Wider than a frame's, because a group's whole visual job is to read as a
+   * container at a glance and nothing else distinguishes its members — a frame
+   * at least has its own row on the board.
+   */
+  const GROUP_INDENT = 18;
 
   /**
    * Search results, keyed by id, or null when nothing is being filtered.
@@ -499,50 +541,96 @@ export const LayersPanel: React.FC<LayersPanelProps> = ({ selectedIds, overrideO
       else childrenOf.set(owner, [obj]);
     });
 
+    const order = sortedObjects.map((o: AnyNode) => o.id);
+
+    /**
+     * Where a group sits in the stack: the front-most thing inside it.
+     *
+     * A group has no z of its own — it has no geometry at all — so it has to
+     * take one from its contents, and "front-most" is the only choice that
+     * puts a folder above a loose object it is drawn over. Computed once for
+     * every group rather than per comparison, because it is a walk of the
+     * whole subtree and the sort would otherwise repeat it O(n log n) times.
+     */
+    const groupZ = new Map<string, number>();
+    for (const id of Object.keys(groups)) {
+      const inside = nodesInGroup(order, objects, groups, id);
+      groupZ.set(id, inside.length === 0 ? -Infinity : Math.max(...inside.map((n) => objects[n]?.zIndex ?? 0)));
+    }
+
     const rows: FlatRow[] = [];
     // `frameForNode` cannot produce a cycle, but a hand-edited or concurrently
     // merged document is not bound by that, and a cycle here would hang the tab
     // rather than mis-indent a rectangle.
     const openFrames = new Set<string>();
 
-    const emit = (list: AnyNode[], indent: number) => {
-      const seenGroups = new Set<string>();
-      list.forEach((obj: any) => {
-        if (obj.parentId) {
-          if (seenGroups.has(obj.parentId)) return;
-          seenGroups.add(obj.parentId);
-          const members = list.filter((o: any) => o.parentId === obj.parentId);
-          rows.push({ kind: 'group', groupId: obj.parentId, members, indent });
-          // Foldable, like a frame. A group was always expanded, so a board
-          // with a few grouped clusters buried everything else under their
-          // members — and the panel's whole job is finding one object among
-          // many. The same collapse set serves both: to a reader they are the
-          // same gesture on the same kind of thing, and two sets would mean
-          // two behaviours to keep in step.
-          if (!collapsedFrames.has(obj.parentId)) {
-            members.forEach((m) => rows.push({ kind: 'object', obj: m, indent: indent + 20 }));
-          }
-          return;
-        }
+    /**
+     * One level of the tree, in stacking order.
+     *
+     * The old version of this could only ever draw one level: it scanned for
+     * distinct `parentId` values and emitted a header for each, with the
+     * members flat underneath. Groups holding groups were not merely
+     * unsupported, they were unrepresentable — so this is recursive now, and
+     * a level is a mixed run of *folders and objects* that has to be ordered
+     * against each other rather than folders-then-objects.
+     */
+    const emitLevel = (groupId: string | undefined, pool: AnyNode[], indent: number) => {
+      const poolIds = new Set(pool.map((o) => o.id));
 
-        if (obj.type === 'frame' && !openFrames.has(obj.id)) {
-          const children = childrenOf.get(obj.id) ?? [];
-          rows.push({ kind: 'frame', obj, indent, childCount: children.length });
-          if (children.length > 0 && !collapsedFrames.has(obj.id)) {
-            openFrames.add(obj.id);
-            emit(children, indent + FRAME_INDENT);
-            openFrames.delete(obj.id);
-          }
-          return;
-        }
+      type Entry = { z: number; render: () => void };
+      const entries: Entry[] = [];
 
-        rows.push({ kind: 'object', obj, indent });
-      });
+      for (const child of childGroups(groups, groupId)) {
+        const inside = nodesInGroup(order, objects, groups, child).filter((id) => poolIds.has(id));
+        // A group whose contents all live in another frame is that frame's to
+        // draw, not this level's.
+        if (inside.length === 0) continue;
+        entries.push({
+          z: groupZ.get(child) ?? -Infinity,
+          render: () => emitGroup(child, pool, indent),
+        });
+      }
+
+      for (const obj of pool) {
+        const parent = (obj as AnyNode).parentId;
+        if (parent && groups[parent]) continue; // drawn by its folder
+        if ((parent ?? undefined) !== (groupId ?? undefined)) continue;
+        entries.push({ z: obj.zIndex ?? 0, render: () => emitNode(obj, pool, indent) });
+      }
+
+      entries.sort((a, b) => b.z - a.z);
+      for (const entry of entries) entry.render();
     };
 
-    emit(roots, 0);
+    const emitGroup = (id: string, pool: AnyNode[], indent: number) => {
+      const members = nodesInGroup(order, objects, groups, id)
+        .map((n) => objects[n])
+        .filter(Boolean) as AnyNode[];
+      rows.push({ kind: 'group', groupId: id, members, indent, name: groups[id]?.name });
+      // Foldable, like a frame. A board with a few grouped clusters otherwise
+      // buries everything else under their members, and finding one object
+      // among many is the panel's whole job. The same collapse set serves both:
+      // to a reader they are the same gesture on the same kind of thing.
+      if (!collapsedFrames.has(id)) emitLevel(id, pool, indent + GROUP_INDENT);
+    };
+
+    const emitNode = (obj: AnyNode, _pool: AnyNode[], indent: number) => {
+      if (obj.type === 'frame' && !openFrames.has(obj.id)) {
+        const children = childrenOf.get(obj.id) ?? [];
+        rows.push({ kind: 'frame', obj, indent, childCount: children.length });
+        if (children.length > 0 && !collapsedFrames.has(obj.id)) {
+          openFrames.add(obj.id);
+          emitLevel(undefined, children, indent + FRAME_INDENT);
+          openFrames.delete(obj.id);
+        }
+        return;
+      }
+      rows.push({ kind: 'object', obj, indent });
+    };
+
+    emitLevel(undefined, roots, 0);
     return rows;
-  }, [sortedObjects, objects, collapsedFrames, matches]);
+  }, [sortedObjects, objects, groups, collapsedFrames, matches]);
 
   /**
    * The displayed rows, as the drop planner needs to see them.
@@ -652,8 +740,17 @@ export const LayersPanel: React.FC<LayersPanelProps> = ({ selectedIds, overrideO
     lastClickedRef.current = null;
   };
 
-  const handleUngroup = (memberIds: string[]) => {
-    editor.ungroupNodes(memberIds);
+  /**
+   * Take apart *this* folder, not the outermost one holding it.
+   *
+   * `editor.ungroupNodes` takes member ids and resolves upward to the whole
+   * assembly, which is right for the canvas — a selection there is the outer
+   * group. It is wrong here: the panel draws every level, and pressing Ungroup
+   * on an inner row has to mean that row. The row knows its own id, so it says so.
+   */
+  const handleUngroup = (groupId: string) => {
+    const plan = planUngroup(sortedObjects.map((o: AnyNode) => o.id), objects, groups, groupId);
+    if (plan) applyGroupPlan(plan);
   };
 
   /** The node types this document actually contains, in a stable order. */
@@ -1330,7 +1427,7 @@ export const LayersPanel: React.FC<LayersPanelProps> = ({ selectedIds, overrideO
                     onDragStart={(e) => {
                       // Picking up the header moves the whole group, which is
                       // what grabbing a folder means everywhere else.
-                      beginDrag(e, memberIds, item.groupId);
+                      beginDrag(e, memberIds, item.groupId, item.groupId);
                       if (setSelectedIds) setSelectedIds(memberIds);
                     }}
                     onDragOver={(e) => handleDragOver(e, item.groupId, true)}
@@ -1386,7 +1483,41 @@ export const LayersPanel: React.FC<LayersPanelProps> = ({ selectedIds, overrideO
                     <span className="layer-row__icon">
                       {collapsedFrames.has(item.groupId) ? <Folder size={14} /> : <FolderOpen size={14} />}
                     </span>
-                    <span className="layer-row__name">Group ({item.members.length})</span>
+                    {editingTitleId === item.groupId ? (
+                      <input
+                        type="text"
+                        value={titleInput}
+                        onChange={(e) => setTitleInput(e.target.value)}
+                        onClick={(e) => e.stopPropagation()}
+                        onBlur={() => { renameGroup(item.groupId, titleInput); setEditingTitleId(null); }}
+                        onKeyDown={(e) => {
+                          e.stopPropagation();
+                          if (e.key === 'Enter') { renameGroup(item.groupId, titleInput); setEditingTitleId(null); }
+                          if (e.key === 'Escape') setEditingTitleId(null);
+                        }}
+                        autoFocus
+                        style={{ flex: 1, minWidth: 0, background: 'var(--surface-primary)', border: '1px solid var(--border-focus)', borderRadius: 'var(--radius-sm)', padding: '2px 6px', color: 'var(--text-primary)', fontSize: 'var(--text-xs)', outline: 'none' }}
+                      />
+                    ) : (
+                      <span
+                        className="layer-row__name"
+                        onDoubleClick={(e) => {
+                          e.stopPropagation();
+                          setEditingTitleId(item.groupId);
+                          setTitleInput(item.name ?? '');
+                        }}
+                        data-tooltip="Double click to rename"
+                      >
+                        {/* A named folder beats a counted one the moment there
+                            are two of them. The count stays as a subtitle
+                            because it is the thing you check when deciding
+                            whether the folder is the one you meant. */}
+                        {item.name || 'Group'}
+                        <span style={{ marginLeft: 6, opacity: 0.6, fontWeight: 'var(--weight-medium)' }}>
+                          {item.members.length}
+                        </span>
+                      </span>
+                    )}
                     <div className="layer-row__actions" data-sticky={groupHidden || undefined}>
                       <button
                         onClick={(e) => { e.stopPropagation(); toggleGroupVisibility(memberIds); }}
@@ -1398,7 +1529,7 @@ export const LayersPanel: React.FC<LayersPanelProps> = ({ selectedIds, overrideO
                         {groupHidden ? <EyeOff size={14} /> : <Eye size={14} />}
                       </button>
                       <button
-                        onClick={(e) => { e.stopPropagation(); handleUngroup(memberIds); }}
+                        onClick={(e) => { e.stopPropagation(); handleUngroup(item.groupId); }}
                         className="layer-row__btn"
                         data-tooltip="Ungroup (Cmd+Shift+G)"
                         aria-label="Ungroup"

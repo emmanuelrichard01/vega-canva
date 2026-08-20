@@ -2,7 +2,9 @@ import { commandManager, CreateNodeCommand, UpdateNodeCommand, DeleteNodeCommand
 import { sceneGraph } from '../SceneGraph';
 import type { AnyNode } from '../model/schema';
 import { nanoid } from 'nanoid';
-import { provider, type NewNodeInput } from '../document';
+import { applyGroupPlan, provider, type NewNodeInput } from '../document';
+import { planGroup, planUngroup, rootGroupOf } from '../model/groupTree';
+import { useStore } from '../../hooks/useStore';
 import { cameraSystem } from '../CameraSystem';
 import { fitPose, type FitBounds } from '../cameraFit';
 
@@ -57,28 +59,69 @@ export class EditorAPI {
     commandManager.execute(new DeleteNodeCommand(id));
   }
 
-  // A group is its members sharing one synthetic `parentId` — the schema
-  // already reserves this field for "Frames and Groups" and SceneGraph
-  // already maintains a parentId-keyed hierarchy, but nothing ever actually
-  // set it. (The previous implementation created a Command whose execute()
-  // body was entirely commented out — `groupNodes()` looked wired up
-  // end-to-end but silently did nothing at all.) No group node needs to
-  // exist in objectsMap; this also piggybacks on the existing multi-select
-  // machinery for free — selecting any member re-selects the whole group,
-  // and dragging one drags all of them together.
+  /**
+   * Group a selection, nesting rather than flattening.
+   *
+   * ## What changed, and why it had to
+   *
+   * A group used to be nothing but a synthetic id its members shared in
+   * `parentId`. That is elegant — no group object has to exist, selection and
+   * dragging fall out for free — and it has one consequence with no way
+   * around it: **a group could not contain a group**, because the only thing
+   * that can hold a `parentId` is a node.
+   *
+   * So grouping a group with anything else silently destroyed it. Both sets of
+   * members were rewritten to one new id and the inner structure was gone,
+   * unrecoverably. Group the axis labels of a chart, group the bars, select
+   * both and group those — the gesture every tool supports — and you got one
+   * flat bag of twelve objects.
+   *
+   * `planGroup` decides what the selection actually names: a set of nodes that
+   * happens to *be* a whole group is nested as that group, while a set that is
+   * only part of one is taken out of it. Both are what the gesture means, and
+   * telling them apart is why this is a tested pure function rather than a
+   * loop here.
+   *
+   * @returns the new group's id, or `null` when the selection did not warrant
+   *   one — fewer than two things, or exactly one group already.
+   */
   groupNodes(childIds: string[]): string | null {
-    if (childIds.length < 2) return null;
-    const groupId = nanoid();
-    childIds.forEach(id => {
-      commandManager.execute(new UpdateNodeCommand(id, { parentId: groupId }));
-    });
-    return groupId;
+    const { objects, groups } = useStore.getState();
+    const order = Object.keys(objects);
+    const plan = planGroup(order, objects, groups, childIds, nanoid());
+    if (!plan) return null;
+    applyGroupPlan(plan);
+    return plan.create?.id ?? null;
   }
 
+  /**
+   * Take a group apart, one level.
+   *
+   * Ungrouping is not recursive: pressing it once undoes one Group, and its
+   * child groups survive as groups. Dismantling everything inside would make
+   * the command unrepeatable in the direction people expect — there would be
+   * nothing left to press it on.
+   *
+   * Accepts member ids because that is what a selection holds; the groups they
+   * belong to are what actually comes apart. Outermost first, so ungrouping a
+   * selection spanning a nest does not try to unwrap a folder that a previous
+   * step has already lifted.
+   */
   ungroupNodes(childIds: string[]) {
-    childIds.forEach(id => {
-      commandManager.execute(new UpdateNodeCommand(id, { parentId: undefined }));
-    });
+    const { objects, groups } = useStore.getState();
+    const order = Object.keys(objects);
+
+    const targets = new Set<string>();
+    for (const id of childIds) {
+      const parent = objects[id]?.parentId;
+      if (parent && groups[parent]) targets.add(rootGroupOf(groups, parent));
+    }
+    if (targets.size === 0) return;
+
+    for (const groupId of targets) {
+      const plan = planUngroup(order, objects, groups, groupId);
+      if (plan) applyGroupPlan(plan);
+    }
   }
 
   // --- Selection & Presence --- //

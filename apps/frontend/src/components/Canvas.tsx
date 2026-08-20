@@ -2,6 +2,7 @@ import { usePhysics } from '../hooks/usePhysics';
 import React, { useRef, useState, useEffect, useCallback, useMemo, useSyncExternalStore } from "react";
 import { Stage, Layer, Circle, Group } from "react-konva";
 import Konva from "konva";
+import { groupToEnter, nodesInGroup, selectionWithin } from '../engine/model/groupTree';
 import { provider, updateNode, applyNodePatches, nextZIndex, lowestZIndex } from '../engine/document';
 import { nanoid } from 'nanoid';
 import { useStore } from '../hooks/useStore';
@@ -510,6 +511,16 @@ export const Canvas: React.FC<CanvasProps> = ({ activeTool, selectedIds, setSele
 
   const { visibleIds } = useVisibleSet();
   const objects = useStore(state => state.objects);
+  const groups = useStore(state => state.groups);
+  /**
+   * How far into a nested group the pointer is currently working.
+   *
+   * A ref rather than state: nothing renders differently because of it — the
+   * selection it produces is what shows — and the click handler that reads it
+   * is also the handler that sets it, so a re-render in between would only be
+   * a chance for the two to disagree.
+   */
+  const enteredGroupRef = useRef<string | null>(null);
   const {
     handleThrow, applyGlobalForce,
     beginHeldForce, moveHeldForce, endHeldForce,
@@ -614,14 +625,47 @@ export const Canvas: React.FC<CanvasProps> = ({ activeTool, selectedIds, setSele
     if (!canSelectWith(activeTool)) return;
     const isShift = !!e?.evt?.shiftKey;
 
-    // Clicking any member of a group selects the whole group, matching
-    // Figma/Illustrator — you have to explicitly ungroup (or, in richer
-    // editors, double-click to "enter" the group) to work with one member
-    // alone. We don't implement enter-group; that's a deliberate scope cut.
-    const clicked = objects[id];
-    const groupIds = clicked?.parentId
-      ? Object.values(objects).filter((o: any) => o.parentId === clicked.parentId).map((o: any) => o.id)
-      : [id];
+    /**
+     * A double-click steps one level into whatever is under it.
+     *
+     * `groupToEnter` answers where that lands and returns `null` when there is
+     * nowhere further, so the step is only taken when it goes somewhere — a
+     * gesture that reports success and does nothing is worse than one that
+     * declines. Clicking something outside the entered group resets, which is
+     * how you get back out without a second gesture to learn.
+     */
+    const table = objects as Record<string, { id: string; parentId?: string }>;
+    if (e?.evt?.detail === 2) {
+      const step = groupToEnter(table, groups, id, enteredGroupRef.current);
+      if (step) enteredGroupRef.current = step;
+    } else if (
+      enteredGroupRef.current &&
+      !nodesInGroup(Object.keys(objects), table, groups, enteredGroupRef.current).includes(id)
+    ) {
+      enteredGroupRef.current = null;
+    }
+
+    /**
+     * Clicking any member of a group selects the whole group.
+     *
+     * That is what makes a group behave as one object, and it used to be the
+     * end of it — the note here said enter-group was "a deliberate scope cut",
+     * which was defensible while a group was one level deep and is not now
+     * that groups nest. An assembly three levels down would have to be
+     * dismantled to touch anything inside it.
+     *
+     * So a double-click steps *in* one level, and `enteredGroup` remembers how
+     * far. Clicking anything outside what you entered starts over at the
+     * outermost, which is what stops the mode being sticky: you leave a group
+     * by clicking something that is not in it.
+     */
+    const groupIds = selectionWithin(
+      Object.keys(objects),
+      objects as Record<string, { id: string; parentId?: string }>,
+      groups,
+      id,
+      enteredGroupRef.current
+    );
 
     if (isShift) {
       setSelectedIds(prev => {
@@ -1281,13 +1325,14 @@ export const Canvas: React.FC<CanvasProps> = ({ activeTool, selectedIds, setSele
            * does the canvas know this is a diagram" — so the menu has to read
            * it the same way selection does.
            */
-          const grouped = (id: string): string[] => {
-            const node = objects[id];
-            if (!node?.parentId) return [id];
-            return Object.values(objects)
-              .filter((o) => o.parentId === node.parentId)
-              .map((o) => o.id);
-          };
+          const grouped = (id: string): string[] =>
+            selectionWithin(
+              Object.keys(objects),
+              objects as Record<string, { id: string; parentId?: string }>,
+              groups,
+              id,
+              enteredGroupRef.current
+            );
 
           const ids = underPointer
             ? selectedIds.includes(underPointer)

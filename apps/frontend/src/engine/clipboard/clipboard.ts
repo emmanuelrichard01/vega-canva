@@ -1,5 +1,6 @@
 import { nanoid } from 'nanoid';
 import type { AnyNode } from '../model/schema';
+import { ancestorsOf, remapGroups, type GroupRecord, type Groups } from '../model/groupTree';
 
 /**
  * Copying objects, and pasting them back.
@@ -93,6 +94,8 @@ export interface PasteResult {
   nodes: Record<string, unknown>[];
   /** The new ids, in the order they were produced, for selecting the result. */
   ids: string[];
+  /** Group records to create, with the copy's own nesting rather than the original's. */
+  groups: GroupRecord[];
 }
 
 /**
@@ -118,7 +121,9 @@ export interface PasteResult {
  */
 export function pasteNodes(
   payload: ClipboardPayload,
-  at: { x: number; y: number }
+  at: { x: number; y: number },
+  /** The board's group tree, so a copied folder's nesting survives the paste. */
+  groupTable: Groups = {}
 ): PasteResult {
   const remap = new Map<string, string>();
   for (const raw of payload.nodes) {
@@ -143,6 +148,13 @@ export function pasteNodes(
   for (const raw of payload.nodes) {
     const parent = typeof raw.parentId === 'string' ? raw.parentId : null;
     if (parent && !groups.has(parent)) groups.set(parent, nanoid());
+  }
+  // Ancestors too: copying an inner folder brings the outer one that gave it
+  // its place, or the copy's nesting is one level of guesswork.
+  for (const old of [...groups.keys()]) {
+    for (const up of ancestorsOf(groupTable, old)) {
+      if (!groups.has(up)) groups.set(up, nanoid());
+    }
   }
 
   const dx = at.x - payload.origin.x;
@@ -179,7 +191,28 @@ export function pasteNodes(
     ids.push(id);
   }
 
-  return { nodes, ids };
+  /**
+   * The group *records*, remapped alongside the ids on the nodes.
+   *
+   * The ids on the nodes were already being remapped, which was the whole
+   * answer while a group was nothing but a shared string. Now that a group is a
+   * record with a parent of its own, the record has to come too — otherwise the
+   * pasted nodes point at folders that do not exist, and the panel shows a copy
+   * with no hierarchy at all.
+   *
+   * `remapGroups` also pulls in the *ancestors* of every copied group, so
+   * copying an inner folder brings the outer one that gave it its place. A
+   * folder whose parent was not part of the fragment comes out at the top
+   * level, because the alternative is a paste that silently joins something the
+   * user did not copy.
+   */
+  const { records } = remapGroups(
+    groupTable,
+    [...groups.keys()],
+    (old) => groups.get(old) ?? nanoid()
+  );
+
+  return { nodes, ids, groups: records };
 }
 
 /**

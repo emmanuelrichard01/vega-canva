@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { dropZone, planLayerDrop, type DropNode, type DropRow, type DropWhere } from './layerDrop';
+import { dropZone, planLayerDrop, type DropNode, type DropResult, type DropRow, type DropWhere } from './layerDrop';
 
 /**
  * Where a dragged row lands.
@@ -34,34 +34,50 @@ function board(...spec: [string, string | undefined][]) {
     }
     rows.push({ id, kind: 'object' });
   }
-  return { objects, order, rows };
+  /** The group records those parentIds imply, all top level unless nested. */
+  const groups: Record<string, { id: string; parentId?: string }> = {};
+  for (const r of rows) if (r.kind === 'group') groups[r.id] = { id: r.id };
+
+  return { objects, order, rows, groups };
 }
 
+/** Node patches only — the shape the ordering and membership cases assert on. */
 const drop = (
   b: ReturnType<typeof board>,
   moving: string[],
   id: string,
   where: DropWhere,
   collapsed?: string
-) =>
+) => full(b, moving, id, where, collapsed).nodes;
+
+const full = (
+  b: ReturnType<typeof board>,
+  moving: string[],
+  id: string,
+  where: DropWhere,
+  collapsed?: string,
+  extra: { groups?: Record<string, { id: string; parentId?: string }>; movingGroup?: string } = {}
+): DropResult =>
   planLayerDrop({
     order: b.order,
     objects: b.objects,
     rows: collapsed ? b.rows.map((r) => (r.id === collapsed ? { ...r, collapsed: true } : r)) : b.rows,
     moving,
     target: { id, where },
+    ...extra,
   });
 
 /** The parent a plan assigns to one id, or `undefined` if it did not touch it. */
-const parentOf = (plans: ReturnType<typeof planLayerDrop>, id: string) =>
+type Patches = DropResult['nodes'];
+
+const parentOf = (plans: Patches, id: string) =>
   plans.find((p) => p.id === id)?.changes.parentId;
 
 /** Did the plan mention this row at all? */
-const touched = (plans: ReturnType<typeof planLayerDrop>, id: string) =>
-  plans.some((p) => p.id === id);
+const touched = (plans: Patches, id: string) => plans.some((p) => p.id === id);
 
 /** The stack after applying a plan, front to back. */
-function settle(b: ReturnType<typeof board>, plans: ReturnType<typeof planLayerDrop>) {
+function settle(b: ReturnType<typeof board>, plans: Patches) {
   const z = new Map(b.order.map((id) => [id, b.objects[id].zIndex]));
   for (const p of plans) if (p.changes.zIndex !== undefined) z.set(p.id, p.changes.zIndex);
   return [...z.entries()].sort((a, b2) => b2[1] - a[1]).map(([id]) => id);
@@ -224,6 +240,81 @@ describe('planLayerDrop', () => {
       expect(settle(b, plans)).toEqual(['a', 'frame']);
       expect(parentOf(plans, 'a')).toBeUndefined();
     });
+  });
+});
+
+/**
+ * Dragging a folder, now that a folder can hold one.
+ *
+ * The distinction these pin is the one the flat model had no way to make:
+ * moving a folder must move *the folder*, leaving its members pointing at it.
+ * Rewriting their `parentId` instead would dissolve it into wherever it landed,
+ * which is exactly the flattening nesting exists to end.
+ */
+describe('planLayerDrop with nested groups', () => {
+  const nested = () => {
+    const b = board(['a1', 'inner'], ['a2', 'inner'], ['b1', 'outer'], ['loose', undefined]);
+    b.groups.inner = { id: 'inner', parentId: 'outer' };
+    b.groups.outer = { id: 'outer' };
+    return b;
+  };
+
+  it('reparents the folder, not its members', () => {
+    const b = board(['a1', 'g1'], ['a2', 'g1'], ['b1', 'g2']);
+    const plan = full(b, ['a1', 'a2'], 'g2', 'inside', undefined, {
+      groups: b.groups,
+      movingGroup: 'g1',
+    });
+    expect(plan.groups).toEqual([{ id: 'g1', parentId: 'g2' }]);
+    // The members keep their own membership: `g1` still holds them, and `g1`
+    // is what moved.
+    expect(plan.nodes.every((p) => p.changes.parentId === undefined)).toBe(true);
+  });
+
+  it('refuses to put a folder inside itself', () => {
+    const b = nested();
+    const plan = full(b, ['b1', 'a1', 'a2'], 'outer', 'inside', undefined, {
+      groups: b.groups,
+      movingGroup: 'outer',
+    });
+    expect(plan).toEqual({ nodes: [], groups: [] });
+  });
+
+  it('refuses to put a folder inside one of its own descendants', () => {
+    // A real cycle, not merely a pointless gesture: written to the document,
+    // every walk over the tree would have to defend against it forever.
+    const b = nested();
+    const plan = full(b, ['a1', 'a2', 'b1'], 'inner', 'inside', undefined, {
+      groups: b.groups,
+      movingGroup: 'outer',
+    });
+    expect(plan.groups).toEqual([]);
+    expect(plan.nodes).toEqual([]);
+  });
+
+  it('takes a folder out to its parent, not to the root', () => {
+    // Above an *inner* folder means "in the outer one, above this". Reading it
+    // as the root would eject the dragged rows two levels instead of none.
+    const b = nested();
+    const plan = full(b, ['loose'], 'inner', 'before', undefined, { groups: b.groups });
+    expect(parentOf(plan.nodes, 'loose')).toBe('outer');
+  });
+
+  it('anchors above a folder at its first node however deep that is', () => {
+    // `outer` opens onto `inner`, so its first *node* is two levels down.
+    const b = nested();
+    const plan = full(b, ['loose'], 'outer', 'before', undefined, { groups: b.groups });
+    expect(settle(b, plan.nodes)).toEqual(['loose', 'a1', 'a2', 'b1']);
+  });
+
+  it('leaves the folder record alone when a folder drag does not change level', () => {
+    const b = board(['a1', 'g1'], ['a2', 'g1'], ['loose', undefined]);
+    const plan = full(b, ['a1', 'a2'], 'loose', 'after', undefined, {
+      groups: b.groups,
+      movingGroup: 'g1',
+    });
+    // Already top level, staying top level: reordering only.
+    expect(plan.groups).toEqual([]);
   });
 });
 
