@@ -95,12 +95,20 @@ export interface SelectionFacts {
   hasUngrouped: boolean;
   /** Shape kinds present, when the selection is shapes. */
   shapeKinds: ReadonlySet<string>;
+  /** Path kinds present. Freehand, pen and boolean paths afford different things. */
+  pathKinds: ReadonlySet<string>;
   locked: boolean;
 }
 
 const PAINTABLE = new Set(['shape', 'path', 'text', 'sticky', 'image', 'frame', 'connector']);
 const FILLABLE = new Set(['shape', 'path', 'frame']);
-const SKETCHABLE = new Set(['shape', 'connector']);
+/**
+ * Sketchable includes `path`, but only freehand ones — see the rule below.
+ *
+ * The set alone cannot say that, which is exactly why the rule carries the
+ * extra clause rather than the set carrying a lie.
+ */
+const SKETCHABLE = new Set(['shape', 'connector', 'path']);
 const VECTORIZABLE = new Set(['shape', 'path']);
 const TEXTUAL = new Set(['text', 'sticky', 'shape']);
 
@@ -111,6 +119,7 @@ export function selectionFacts(
 ): SelectionFacts {
   const types = new Set<string>();
   const shapeKinds = new Set<string>();
+  const pathKinds = new Set<string>();
   let hasUngrouped = false;
   let locked = nodes.length > 0;
 
@@ -120,6 +129,7 @@ export function selectionFacts(
     if (!n.locked) locked = false;
     const kind = (n as { geometry?: { kind?: string } }).geometry?.kind;
     if (n.type === 'shape' && kind) shapeKinds.add(kind);
+    if (n.type === 'path' && kind) pathKinds.add(kind);
   }
 
   /**
@@ -141,6 +151,7 @@ export function selectionFacts(
     isWholeGroup,
     hasUngrouped,
     shapeKinds,
+    pathKinds,
     locked,
   };
 }
@@ -165,7 +176,7 @@ const all = (facts: SelectionFacts, set: ReadonlySet<string>) =>
 const RULES: readonly (Affordance & { when: (f: SelectionFacts) => boolean })[] = [
   // ---------------------------------------------------------------- the type
   {
-    id: 'routing', label: 'Routing', weight: 99, surfaces: ['toolbar', 'panel', 'menu'],
+    id: 'routing', label: 'Routing', weight: 99, surfaces: ['toolbar', 'panel'],
     when: (f) => f.uniformType === 'connector',
   },
   {
@@ -193,8 +204,14 @@ const RULES: readonly (Affordance & { when: (f: SelectionFacts) => boolean })[] 
       [...f.shapeKinds].every((k) => k === 'rect'),
   },
   {
-    id: 'crop', label: 'Crop', weight: 94, surfaces: ['toolbar', 'menu'],
+    id: 'crop', label: 'Crop', weight: 94, surfaces: ['toolbar'],
     // One image: cropping several at once has no single frame to drag.
+    //
+    // Toolbar only. Crop is a *mode* the canvas enters, with its own overlay
+    // and its own commit, and only the canvas can start it — a menu item that
+    // named it without being able to run it would be the resolver promising
+    // something no surface delivers, which is the failure this file exists to
+    // prevent.
     when: (f) => f.uniformType === 'image' && f.count === 1,
   },
   {
@@ -225,9 +242,24 @@ const RULES: readonly (Affordance & { when: (f: SelectionFacts) => boolean })[] 
   },
   {
     id: 'sketch', label: 'Sketch', weight: 57, surfaces: ['toolbar', 'panel'],
-    // Shapes and connectors mixed is the point: a flowchart is boxes and the
-    // arrows joining them, and sketching both in one gesture is the reason.
-    when: (f) => all(f, SKETCHABLE),
+    /**
+     * Shapes and connectors mixed is the point: a flowchart is boxes and the
+     * arrows joining them, and sketching both in one gesture is the reason.
+     *
+     * Freehand paths belong here and the first version of this rule left them
+     * out — the properties panel already included them, which is precisely the
+     * drift this resolver exists to end, and the panel was the one that had it
+     * right. A pencil stroke looks hand-drawn but `perfect-freehand` renders it
+     * as a smooth tapered ribbon; sketching redraws it from its centreline as a
+     * run gone over twice, which is a different way to draw rather than a
+     * filter over the first.
+     *
+     * Pen and boolean paths stay out. Their renderer strokes a curve and has no
+     * centreline to go over, so the control would promise nothing.
+     */
+    when: (f) =>
+      all(f, SKETCHABLE) &&
+      (!f.types.has('path') || [...f.pathKinds].every((k) => k === 'freehand')),
   },
   {
     id: 'opacity', label: 'Opacity', weight: 56, surfaces: ['toolbar', 'panel'],
@@ -240,7 +272,9 @@ const RULES: readonly (Affordance & { when: (f: SelectionFacts) => boolean })[] 
 
   // ----------------------------------------------------------- the structure
   {
-    id: 'boolean', label: 'Combine', weight: 19, surfaces: ['toolbar', 'menu'],
+    // Toolbar only: each of the four boolean ops is its own button, and one
+    // menu item cannot ask which.
+    id: 'boolean', label: 'Combine', weight: 19, surfaces: ['toolbar'],
     when: (f) => f.count > 1 && all(f, VECTORIZABLE),
   },
   {

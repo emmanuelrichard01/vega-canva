@@ -11,6 +11,7 @@ import {
 import { applyNodePatches, localAuthorId, lowestZIndex, nextZIndex, provider, updateNodes } from '../engine/document';
 import { useStore } from '../hooks/useStore';
 import { APPEARANCE_TYPES } from '../engine/objects/appearanceTypes';
+import { resolveAffordances, type AffordanceId } from '../engine/selection/affordances';
 import { objectRegistry } from '../engine/objects';
 import {
   canResizeAsBox,
@@ -580,39 +581,35 @@ export const PropertiesPanel: React.FC<PropertiesPanelProps> = ({ selectedIds, o
    */
   const openShape = nodes.some((n) => n.type === 'shape' && isOpenShape(n.geometry.kind));
   /**
-   * Which types can be drawn by hand.
+   * What this selection affords, resolved once.
    *
-   * Shapes and connectors — the two whose renderers actually run the sketcher.
-   * A flowchart is the case the feature is for, and boxes that could be
-   * sketched joined by arrows that could not left every diagram half-drafted.
+   * ## Why a panel this long asks something else the question
+   *
+   * Every section below used to gate on a predicate written out here —
+   * `nodes.every((n) => n.type === 'shape' || n.type === 'connector')` and a
+   * dozen relatives — and the context toolbar and the right-click menu each
+   * had their own copies of the same questions. Three surfaces answering one
+   * question three times, none of them able to agree by construction, and each
+   * only as clever as whoever last edited it.
+   *
+   * They had already drifted. Sketch is the one that proves it: this panel
+   * correctly included freehand paths and the toolbar did not, so whether a
+   * pencil stroke could be sketched depended on which control you reached for.
+   * The resolver now carries that rule, and carries the panel's version of it,
+   * because the panel's was the right one.
+   *
+   * `affords` is the same function the toolbar and the menu call, with the same
+   * arguments, so a rule can no longer be true in one place and false in
+   * another. Where a section needs something *finer* than a capability —
+   * whether this particular outline has a corner for a join to sit on — that
+   * stays local, because it is a question about one node's geometry rather
+   * than about what the selection is.
    */
-  /**
-   * Whether everything selected can be drawn by hand.
-   *
-   * Deliberately **not** gated on `uniformType`. A flowchart selection is
-   * boxes *and* the arrows joining them, and that is the single most likely
-   * thing anyone wants to sketch in one go — requiring one type meant the
-   * control vanished for exactly the selection it was most useful on.
-   *
-   * Freehand paths are included now. They were excluded on the argument that a
-   * pencil stroke is already a hand-drawn mark — true of the *gesture* and not
-   * of the *line*, which perfect-freehand renders as a smooth tapered ribbon.
-   * Sketching one redraws it from its centreline as a run the sketcher has
-   * been over twice, which is a genuinely different way to draw rather than a
-   * filter over the first: a continuous line, or a drawn one.
-   *
-   * Pen and boolean paths stay out. Their renderer strokes a curve and has no
-   * centreline to go over, so the control would promise something with nothing
-   * behind it.
-   */
-  const sketchable =
-    nodes.length > 0 &&
-    nodes.every(
-      (n) =>
-        n.type === 'shape' ||
-        n.type === 'connector' ||
-        (n.type === 'path' && n.geometry.kind === 'freehand')
-    );
+  const offered = new Set(resolveAffordances(nodes, { surface: 'panel' }).map((a) => a.id));
+  const affords = (id: AffordanceId) => offered.has(id);
+
+  /** Whether everything selected can be drawn by hand. See the `sketch` rule. */
+  const sketchable = affords('sketch');
 
   /** Every selected object has an interior — the precondition for shading it. */
   const allClosed =
@@ -2336,7 +2333,11 @@ export const PropertiesPanel: React.FC<PropertiesPanelProps> = ({ selectedIds, o
           points at. Everything else it needs — stroke colour, weight, dash,
           opacity — is the ordinary Stroke and Appearance sections, because a
           connector is a line and those already describe lines. */}
-      {uniformType && node.type === 'connector' && (
+      {/* The resolver's `routing` rule is `uniformType === 'connector'`, so
+          within this block the primary really does speak for the rest — but
+          only the rule knows that, and a type cannot be inferred from a
+          predicate that lives in another file. Named here, once. */}
+      {affords('routing') && node.type === 'connector' && (
         <Accordion title="Connector">
           <Row stack label="Route" hint="Straight goes corner to corner. Orthogonal turns at right angles, which is what a flowchart reads as. Curved eases between the two ends.">
             <SegmentedControl
@@ -2431,7 +2432,7 @@ export const PropertiesPanel: React.FC<PropertiesPanelProps> = ({ selectedIds, o
       {/* Image adjustments. `filters` sat on the schema for the project's
           whole life and `ImageRenderer` read four properties, none of them
           this — so a stored adjustment was silently ignored. */}
-      {uniformType && node.type === 'image' && (
+      {affords('image-adjust') && node.type === 'image' && (
         <Accordion title="Adjust">
           {ADJUSTMENT_IDS.map((id) => (
             <Slider
@@ -2467,7 +2468,7 @@ export const PropertiesPanel: React.FC<PropertiesPanelProps> = ({ selectedIds, o
           knows. Four edges rather than one: a story's insets are not
           symmetrical, and forcing them to be would waste 320 units of width to
           protect against nothing. */}
-      {uniformType && node.type === 'frame' && (
+      {affords('frame-preset') && node.type === 'frame' && (
         <Accordion title="Safe area" defaultOpen={Boolean(node.safeArea)}>
           {/* Two by two, not four across: a stepper is a label, a value and
               two buttons, and four of them in a 230px panel leaves no room for
@@ -2491,7 +2492,7 @@ export const PropertiesPanel: React.FC<PropertiesPanelProps> = ({ selectedIds, o
         </Accordion>
       )}
 
-      {uniformType && node.type === 'sticky' && (
+      {affords('sticky-theme') && node.type === 'sticky' && (
         <Accordion title="Note">
           <Row label="Color">
             <ColorPickerPopover

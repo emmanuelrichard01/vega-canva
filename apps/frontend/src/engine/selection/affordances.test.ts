@@ -192,3 +192,79 @@ describe('affords', () => {
     expect(affords([node({ type: 'text' })], 'routing')).toBe(false);
   });
 });
+
+/**
+ * The rules that were promoted here from a surface that had them right.
+ *
+ * Each of these is a case where two surfaces disagreed, and the resolver's
+ * first draft happened to agree with the wrong one. Pinned so the merge is not
+ * silently undone by whichever copy is edited next.
+ */
+describe('rules promoted from the surfaces', () => {
+  const path = (kind: string) => node({ type: 'path', geometry: { kind } });
+
+  it('sketches a freehand path', () => {
+    // The properties panel already allowed this and the toolbar did not, so
+    // whether a pencil stroke could be sketched depended on which control you
+    // reached for. `perfect-freehand` renders it as a smooth tapered ribbon;
+    // sketching redraws it from its centreline, which is a different way to
+    // draw rather than a filter over the first.
+    expect(affords([path('freehand')], 'sketch')).toBe(true);
+  });
+
+  it('sketches a flowchart: shapes and the connectors joining them', () => {
+    expect(affords([shape('rect'), node({ type: 'connector' })], 'sketch')).toBe(true);
+  });
+
+  it('does not sketch a pen or boolean path', () => {
+    // Their renderer strokes a curve and has no centreline to go over, so the
+    // control would promise something with nothing behind it.
+    for (const kind of ['pen', 'boolean']) {
+      expect(affords([path(kind)], 'sketch')).toBe(false);
+    }
+  });
+
+  it('does not sketch a freehand path mixed with a pen one', () => {
+    expect(affords([path('freehand'), path('pen')], 'sketch')).toBe(false);
+  });
+
+  it('does not offer fill on an image', () => {
+    // The toolbar's own list said images were fillable. The registry declares
+    // `supportsFill` on shape, path and frame only, and an image's pixels are
+    // not a fill you can set.
+    expect(affords([node({ type: 'image' })], 'fill')).toBe(false);
+    expect(affords([shape('rect')], 'fill')).toBe(true);
+  });
+});
+
+/**
+ * Every affordance a surface is offered has somewhere to be rendered.
+ *
+ * This is the failure mode the resolver introduces if nobody watches it: a rule
+ * declares `surfaces: ['menu']`, the menu has no command for it, and the
+ * resolver is quietly promising something no surface delivers — the same class
+ * of defect as three surfaces disagreeing, arrived at from the other direction.
+ *
+ * Held here rather than in the menu's own file because it is a statement about
+ * the *table*, and the table is what would be edited.
+ */
+describe('surface declarations', () => {
+  const MENU_RENDERS = new Set([
+    'group', 'ungroup', 'order', 'lock', 'visibility', 'delete', 'align', 'distribute',
+  ]);
+
+  it('offers the menu only what the menu can run', () => {
+    const everything = [
+      [shape('rect'), shape('ellipse')],
+      [node({ type: 'connector' }), node({ type: 'connector' })],
+      [node({ type: 'image' })],
+      [node({ type: 'sticky' }), node({ type: 'text' })],
+      [node({ id: 'a', parentId: 'g' }), node({ id: 'b', parentId: 'g' })],
+    ];
+    for (const sel of everything) {
+      for (const id of ids(sel as AnyNode[], 'menu')) {
+        expect(MENU_RENDERS.has(id), `menu is offered "${id}" and cannot run it`).toBe(true);
+      }
+    }
+  });
+});

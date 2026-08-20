@@ -21,6 +21,7 @@ import { doc, provider, metadataMap, undoManager, updateNode, deleteNode, applyN
 import { useRoomState } from './hooks/useSync';
 import { initSyncBridge, useStore } from './hooks/useStore';
 import { editor } from './engine/api/EditorAPI';
+import { alignSelection, distributeSelection, type AlignEdge, type DistributeAxis } from './engine/model/align';
 import { ActivityFeed } from './components/ActivityFeed';
 import { PresenceEdgeMarkers } from './components/PresenceEdgeMarkers';
 import { FollowIndicator } from './components/FollowIndicator';
@@ -606,6 +607,38 @@ export default function Room() {
       setDiagramReplacing(diagramIdOf(selected.find((n) => diagramIdOf(n)) ?? selected[0]) ?? null);
       setDiagramReplaceIds(selected.map((n) => n.id));
       setDiagramOpen(true);
+    },
+    /**
+     * The four structural commands the menu was missing entirely.
+     *
+     * They existed on the floating toolbar and nowhere else, so the menu was
+     * not a smaller version of it but a differently-shaped one — and which
+     * commands you could reach depended on where you asked. `resolveAffordances`
+     * now decides *whether* each belongs on a given selection; these decide
+     * what it does. One transaction each, so a lock across nine objects is one
+     * undo step rather than nine.
+     */
+    group: () => { if (selectedIds.length > 1) editor.groupNodes(selectedIds); },
+    ungroup: () => { if (selectedIds.length > 0) editor.ungroupNodes(selectedIds); },
+    align: (edge: AlignEdge) => {
+      const nodes = selectedIds.map((id) => diagramObjects[id]).filter(Boolean) as AnyNode[];
+      applyNodePatches(alignSelection(nodes, edge));
+    },
+    distribute: (axis: DistributeAxis) => {
+      const nodes = selectedIds.map((id) => diagramObjects[id]).filter(Boolean) as AnyNode[];
+      applyNodePatches(distributeSelection(nodes, axis));
+    },
+    toggleLock: () => {
+      const nodes = selectedIds.map((id) => diagramObjects[id]).filter(Boolean) as AnyNode[];
+      // Unlock only when *all* of them are locked, so a mixed selection locks
+      // rather than half-unlocking — the same rule the group eye follows.
+      const locked = nodes.length > 0 && nodes.every((n) => n.locked);
+      applyNodePatches(nodes.map((n) => ({ id: n.id, changes: { locked: !locked } })));
+    },
+    hide: () => {
+      const nodes = selectedIds.map((id) => diagramObjects[id]).filter(Boolean) as AnyNode[];
+      const hidden = nodes.length > 0 && nodes.every((n) => n.hidden);
+      applyNodePatches(nodes.map((n) => ({ id: n.id, changes: { hidden: !hidden } })));
     },
     swapShape: (kind: string, points?: number) => {
       applyNodePatches(
@@ -1614,6 +1647,7 @@ export default function Room() {
         objects={diagramObjects}
         actions={contextActions}
         canPaste={clipboardRef.current !== null}
+        allObjects={diagramObjects}
       />
       <HelpModal open={showHelp} onClose={() => setShowHelp(false)} />
       <MermaidModal

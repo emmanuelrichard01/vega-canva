@@ -154,15 +154,6 @@ const StickyPalette: React.FC<{
   </RailPopover>
 );
 
-/**
- * Types whose `appearance.fill` the renderer actually reads.
- *
- * Mirrors the registry's `supportsFill`. A sticky's colour is a named theme and
- * a voice note has no fill at all, so offering the control across a selection
- * containing either would be a control that half-applies.
- */
-const FILLABLE_TYPES = new Set(['shape', 'path', 'image', 'frame']);
-
 const TYPE_LABEL: Record<string, { icon: React.ReactNode; name: string }> = {
   shape: { icon: <Square size={15} />, name: 'Shape' },
   text: { icon: <Type size={15} />, name: 'Text' },
@@ -703,13 +694,6 @@ export const ObjectContextToolbar: React.FC<Props> = ({ selectedId, selectedIds,
       });
     };
 
-    // The selection already *is* one whole group when every member shares a
-    // parentId and nothing outside the selection belongs to it.
-    const firstParent = bulkNodes[0]?.parentId;
-    const isWholeGroup = Boolean(firstParent)
-      && bulkNodes.every((n) => n.parentId === firstParent)
-      && Object.values(allObjects).every((o) => o.parentId !== firstParent || bulkIds.includes(o.id));
-
     /**
      * What this selection affords, resolved once.
      *
@@ -723,19 +707,17 @@ export const ObjectContextToolbar: React.FC<Props> = ({ selectedId, selectedIds,
     );
     const bulkAffords = (id: AffordanceId) => bulkOffers.has(id);
 
-    const canBoolean = bulkNodes.length > 1 && bulkNodes.every((n) => canVectorize(n));
-    const canDistribute = bulkNodes.length >= 3;
-    const locked = sharedValue(bulkNodes, (n) => Boolean(n.locked));
-    const allFillable = bulkNodes.length > 0 && bulkNodes.every((n) => FILLABLE_TYPES.has(n.type));
     /**
-     * Whether the whole selection can be drawn by hand.
+     * Six predicates used to live here, each one a second copy of a question
+     * the resolver above had just answered.
      *
-     * Shapes *and* connectors, mixed, which is the point: a flowchart
-     * selection is boxes and the arrows joining them, and sketching those in
-     * one gesture is the single most likely thing anyone wants this for.
+     * They had already drifted: `allSketchable` was shapes and connectors,
+     * while the properties panel's version of the same rule also included
+     * freehand paths — so whether a pencil stroke could be sketched depended
+     * on which control you happened to reach for. The resolver carries the
+     * panel's version, because the panel's was right.
      */
-    const allSketchable =
-      bulkNodes.length > 0 && bulkNodes.every((n) => n.type === 'shape' || n.type === 'connector');
+    const locked = sharedValue(bulkNodes, (n) => Boolean(n.locked));
     const bulkSketch = sharedValue(bulkNodes, (n) =>
       (n as { appearance?: Appearance }).appearance?.sketch ?? 'off'
     );
@@ -817,12 +799,12 @@ export const ObjectContextToolbar: React.FC<Props> = ({ selectedId, selectedIds,
 
           {/* Zone A — structure. */}
           <div className="ctx-group">
-            {isWholeGroup ? (
+            {bulkAffords('ungroup') ? (
               <RailButton label="Ungroup" hint="Ungroup (Cmd+Shift+G)" onClick={() => editor.ungroupNodes(bulkIds)}><Ungroup size={16} /></RailButton>
             ) : (
               <RailButton label="Group" hint="Group (Cmd+G)" onClick={() => editor.groupNodes(bulkIds)}><Group size={16} /></RailButton>
             )}
-            {canBoolean && BOOLEAN_OPS.map((op) => (
+            {bulkAffords('boolean') && BOOLEAN_OPS.map((op) => (
               <RailButton
                 key={op}
                 label={BOOLEAN_BUTTONS[op].label}
@@ -844,14 +826,14 @@ export const ObjectContextToolbar: React.FC<Props> = ({ selectedId, selectedIds,
             ))}
             <RailButton
               label="Distribute horizontally"
-              hint={canDistribute ? 'Even horizontal gaps' : 'Needs three or more objects'}
-              disabled={!canDistribute}
+              hint={bulkAffords('distribute') ? 'Even horizontal gaps' : 'Needs three or more objects'}
+              disabled={!bulkAffords('distribute')}
               onClick={() => applyNodePatches(distributeSelection(bulkNodes, 'horizontal'))}
             ><AlignHorizontalSpaceAround size={16} /></RailButton>
             <RailButton
               label="Distribute vertically"
-              hint={canDistribute ? 'Even vertical gaps' : 'Needs three or more objects'}
-              disabled={!canDistribute}
+              hint={bulkAffords('distribute') ? 'Even vertical gaps' : 'Needs three or more objects'}
+              disabled={!bulkAffords('distribute')}
               onClick={() => applyNodePatches(distributeSelection(bulkNodes, 'vertical'))}
             ><AlignVerticalSpaceAround size={16} /></RailButton>
           </div>
@@ -859,7 +841,7 @@ export const ObjectContextToolbar: React.FC<Props> = ({ selectedId, selectedIds,
 
           {/* Zone C — what every one of them has. */}
           <div className="ctx-group">
-            {allFillable && (
+            {bulkAffords('fill') && (
               <FillEditor
                 paint={(bulkNodes[0] as { appearance?: Appearance }).appearance?.fill?.[0]}
                 mixed={sharedValue(bulkNodes, (n) => (n as { appearance?: Appearance }).appearance?.fill?.[0]).mixed}
@@ -886,7 +868,7 @@ export const ObjectContextToolbar: React.FC<Props> = ({ selectedId, selectedIds,
                 onChange={(v) => updateNodes(bulkIds, { opacity: v / 100 })}
               />
             </RailPopover>
-            {allSketchable && (
+            {bulkAffords('sketch') && (
               <RailPopover
                 label="Sketch"
                 trigger={
