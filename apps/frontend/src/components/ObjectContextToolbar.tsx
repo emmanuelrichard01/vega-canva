@@ -1,4 +1,4 @@
-import React, { useEffect, useRef, useState, useSyncExternalStore } from 'react';
+import React, { useEffect, useLayoutEffect, useRef, useState, useSyncExternalStore } from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
 import {
   AlignCenter, AlignHorizontalJustifyCenter, AlignHorizontalJustifyEnd, AlignHorizontalJustifyStart,
@@ -35,7 +35,7 @@ import { THEMES } from './canvas/renderers/StickyRenderer';
 import { STICKY_THEMES, type StickyTheme } from '../engine/model/schema';
 import {
   DEFAULT_INK, DEFAULT_TYPOGRAPHY, MAX_POLYGON_SIDES, MIN_POLYGON_SIDES, isOpenShape,
-  type AnyNode, type Appearance, type FillStyle, type ShapeKind, type SketchLevel,
+  type AnyNode, type Appearance, type ConnectorNode, type FillStyle, type ShapeKind, type SketchLevel,
   type ListStyle, type TextAlign, type Typography,
 } from '../engine/model/schema';
 import { FillStyleIcon, SketchLevelIcon } from './panel/sketchIcons';
@@ -47,6 +47,7 @@ import { LINE_PROFILES, LINE_PROFILE_LABELS, MIN_WAVES, type LineProfile } from 
 import { ShapeIcon } from './workspace/shapeIcons';
 import { END_CAP_KINDS, END_CAP_LABELS, MAX_END_SCALE, MIN_END_SCALE, type EndCapKind } from '../engine/model/connectorEnds';
 import type { Routing } from '../engine/model/connector';
+import { resolveAffordances, type AffordanceId } from '../engine/selection/affordances';
 import { alignSelection, distributeSelection, type AlignEdge } from '../engine/model/align';
 import { sharedValue } from '../engine/model/selection';
 
@@ -328,6 +329,45 @@ const RailPopover: React.FC<{
 }> = ({ label, trigger, children, placement = 'bottom', align = 'center' }) => {
   const [open, setOpen] = useState(false);
   const ref = useRef<HTMLDivElement>(null);
+  const panelRef = useRef<HTMLDivElement>(null);
+
+  /**
+   * Which way it actually opens, decided by whether there is room.
+   *
+   * `placement` was a fixed prop, so a popover on a rail near the bottom of the
+   * window opened downward into the edge and was cut off — which is precisely
+   * where this rail sits when the object it belongs to is low on the board. The
+   * prop is the *preference* now; this is the answer after measuring.
+   */
+  const [side, setSide] = useState<'top' | 'bottom'>(placement);
+
+  useLayoutEffect(() => {
+    if (!open) return;
+    const trigger = ref.current;
+    const panel = panelRef.current;
+    if (!trigger || !panel) return;
+
+    const rect = trigger.getBoundingClientRect();
+    // Measured rather than assumed: these panels hold anything from two swatches
+    // to a stack of sliders, and a guess would be wrong for one of them.
+    const needed = panel.offsetHeight + 8;
+    const below = window.innerHeight - rect.bottom;
+    const above = rect.top;
+
+    /**
+     * Only flips when the preferred side genuinely cannot hold it *and* the
+     * other side can. Flipping toward a side that is also too small trades a
+     * clipped popover for a clipped popover that moved, which is worse — it
+     * looks like a glitch rather than a constraint.
+     */
+    if (placement === 'bottom' && below < needed && above > below) setSide('top');
+    else if (placement === 'top' && above < needed && below > above) setSide('bottom');
+    else setSide(placement);
+  }, [open, placement]);
+
+  // Re-measured on the next open rather than kept, because the rail moves with
+  // its object and the room available is a property of where it is now.
+  useEffect(() => { if (!open) setSide(placement); }, [open, placement]);
 
   useEffect(() => {
     if (!open) return;
@@ -362,13 +402,25 @@ const RailPopover: React.FC<{
       </button>
       {open && (
         <div
+          ref={panelRef}
           className="ctx-popover"
           role="dialog"
           aria-label={label}
+          data-side={side}
           style={{
-            [placement === 'bottom' ? 'top' : 'bottom']: 'calc(100% + 8px)',
+            [side === 'bottom' ? 'top' : 'bottom']: 'calc(100% + 8px)',
+            /**
+             * Centred with `translate`, not `transform`.
+             *
+             * `ctxPopIn` animates `transform`, so centring with it meant the
+             * entrance overwrote the centring: the panel flew in half its own
+             * width to the right and snapped into place on the last frame. The
+             * independent `translate` property composes instead of being
+             * replaced — the trap DESIGN.md names, and this is the sixth
+             * surface to have had it.
+             */
             ...(align === 'center'
-              ? { left: '50%', transform: 'translateX(-50%)' }
+              ? { left: '50%', translate: '-50% 0' }
               : align === 'end'
                 ? { right: 0 }
                 : { left: 0 }),
@@ -658,6 +710,19 @@ export const ObjectContextToolbar: React.FC<Props> = ({ selectedId, selectedIds,
       && bulkNodes.every((n) => n.parentId === firstParent)
       && Object.values(allObjects).every((o) => o.parentId !== firstParent || bulkIds.includes(o.id));
 
+    /**
+     * What this selection affords, resolved once.
+     *
+     * The predicates below were each written out inline — `every((n) =>
+     * FILLABLE_TYPES.has(n.type))` and friends — which is three surfaces
+     * answering the same question with three copies of the answer. They ask the
+     * resolver now, and it is the same one the panel and the menu use.
+     */
+    const bulkOffers = new Set(
+      resolveAffordances(bulkNodes, { surface: 'toolbar', allObjects }).map((a) => a.id)
+    );
+    const bulkAffords = (id: AffordanceId) => bulkOffers.has(id);
+
     const canBoolean = bulkNodes.length > 1 && bulkNodes.every((n) => canVectorize(n));
     const canDistribute = bulkNodes.length >= 3;
     const locked = sharedValue(bulkNodes, (n) => Boolean(n.locked));
@@ -681,6 +746,74 @@ export const ObjectContextToolbar: React.FC<Props> = ({ selectedId, selectedIds,
         <Rail id="union" placement={placement} anchorRef={anchorRef} ref={railRef}>
           <span className="ctx-kind"><Layers size={15} />{bulkNodes.length}</span>
           <Divider />
+
+          {/**
+            * Zone 0 — what this selection *is*.
+            *
+            * A selection with a uniform type has a subject, and that type's own
+            * controls are the answer to "why did I select these". Five
+            * connectors used to get group, align and opacity — generic to the
+            * point of useless, because no branch here knew what they were.
+            *
+            * Which controls belong is `resolveAffordances`, not a condition
+            * written out again at each surface: the same resolver answers for
+            * the properties panel and the right-click menu, so the three cannot
+            * disagree about what a selection offers or which part of it leads.
+            */}
+          {bulkAffords('routing') && (
+            <>
+              <div className="ctx-group">
+                <RailPopover
+                  label="Route"
+                  trigger={<RouteIcon routing={(bulkNodes[0] as ConnectorNode).routing} />}
+                  align="start"
+                >
+                  <span className="ctx-popover__label">Route · {bulkNodes.length} connectors</span>
+                  <SegmentedControl
+                    ariaLabel="Routing"
+                    value={sharedValue(bulkNodes, (n) => (n as ConnectorNode).routing).value ?? 'orthogonal'}
+                    onChange={(routing) =>
+                      applyNodePatches(bulkNodes.map((n) => ({ id: n.id, changes: { routing } })))
+                    }
+                    segments={[
+                      { value: 'straight', label: 'Straight', hint: 'A direct line', icon: <RouteIcon routing="straight" /> },
+                      { value: 'orthogonal', label: 'Right angles', hint: 'Elbows, the way a flowchart reads', icon: <RouteIcon routing="orthogonal" /> },
+                      { value: 'curved', label: 'Curved', hint: 'A smooth arc', icon: <RouteIcon routing="curved" /> },
+                    ]}
+                  />
+                </RailPopover>
+
+                <RailPopover
+                  label="Ends"
+                  trigger={
+                    <span style={{ display: 'inline-flex', alignItems: 'center', gap: 1 }}>
+                      <EndCapIcon kind={(bulkNodes[0] as ConnectorNode).endStart ?? 'none'} flip />
+                      <EndCapIcon kind={(bulkNodes[0] as ConnectorNode).endEnd ?? 'none'} />
+                    </span>
+                  }
+                  align="start"
+                >
+                  <span className="ctx-popover__label">Ends · {bulkNodes.length} connectors</span>
+                  {(['endStart', 'endEnd'] as const).map((which) => (
+                    <SegmentedControl
+                      key={which}
+                      ariaLabel={which === 'endStart' ? 'Start cap' : 'End cap'}
+                      value={sharedValue(bulkNodes, (n) => (n as ConnectorNode)[which] ?? 'none').value ?? 'none'}
+                      onChange={(kind) =>
+                        applyNodePatches(bulkNodes.map((n) => ({ id: n.id, changes: { [which]: kind } })))
+                      }
+                      segments={END_CAP_KINDS.map((kind) => ({
+                        value: kind,
+                        label: kind,
+                        icon: <EndCapIcon kind={kind} flip={which === 'endStart'} />,
+                      }))}
+                    />
+                  ))}
+                </RailPopover>
+              </div>
+              <Divider />
+            </>
+          )}
 
           {/* Zone A — structure. */}
           <div className="ctx-group">

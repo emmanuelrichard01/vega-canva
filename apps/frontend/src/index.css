@@ -3945,8 +3945,19 @@ textarea:focus-visible {
   outline-offset: -1px;
 }
 
+/* Rises from whichever edge it is anchored to, so a flipped popover does not
+   animate downward out of the button it belongs to. */
 @keyframes ctxPopIn {
   from { opacity: 0; transform: translateY(-3px); }
+  to   { opacity: 1; transform: translateY(0); }
+}
+
+.ctx-popover[data-side='top'] {
+  animation-name: ctxPopInUp;
+}
+
+@keyframes ctxPopInUp {
+  from { opacity: 0; transform: translateY(3px); }
   to   { opacity: 1; transform: translateY(0); }
 }
 
