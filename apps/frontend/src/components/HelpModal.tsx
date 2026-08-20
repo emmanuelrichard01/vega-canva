@@ -68,6 +68,9 @@ function buildSections(): Section[] {
       rows: [
         { keys: `${MOD} + Z`, what: 'Undo' },
         { keys: `${MOD} + Shift + Z`, what: 'Redo' },
+        { keys: `${MOD} + C`, what: 'Copy — works into another board, or another tab' },
+        { keys: `${MOD} + X`, what: 'Cut' },
+        { keys: `${MOD} + V`, what: 'Paste. SVG from another tool pastes as editable shapes' },
         { keys: `${MOD} + D`, what: 'Duplicate, offset slightly' },
         { keys: `${MOD} + G`, what: 'Group' },
         { keys: `${MOD} + Shift + G`, what: 'Ungroup' },

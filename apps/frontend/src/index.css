@@ -8766,3 +8766,47 @@ body[data-zen='physics'] .forces-handle { bottom: 32px; }
   margin: 6px 8px 2px;
   background: var(--border-divider);
 }
+
+/* ---------------------------------------------------------------------------
+   THE PASTE CONFIRMATION
+
+   Paste is the one gesture here whose result can land off screen, or land
+   partially: an SVG becomes twelve objects, or nine with the text left out.
+   Without a word about it, "worked" and "partly worked" look identical and the
+   difference is something you go and check.
+
+   So it confirms and then leaves. It sits above the dock rather than over the
+   canvas, never takes a click, and says what happened rather than that
+   something happened.
+   --------------------------------------------------------------------------- */
+.canvas-notice {
+  position: absolute;
+  bottom: calc(var(--dock-h, 64px) + 32px);
+  left: 50%;
+  /* `translate`, not `transform` — `popIn` animates transform, and centring
+     with it is the trap DESIGN.md names. */
+  translate: -50%;
+  z-index: 1100;
+  max-width: min(560px, calc(100vw - 2 * var(--gutter)));
+  padding: 8px 14px;
+  border-radius: var(--radius-pill);
+  background: var(--glass-surface);
+  backdrop-filter: var(--glass-filter);
+  -webkit-backdrop-filter: var(--glass-filter);
+  box-shadow: var(--shadow-float), inset 0 1px 0 0 var(--glass-edge);
+  color: var(--text-primary);
+  font-family: var(--font-sans);
+  font-size: var(--text-sm);
+  font-weight: 500;
+  text-align: center;
+  pointer-events: none;
+  animation: popIn 180ms var(--ease-settle);
+}
+
+@supports not ((backdrop-filter: blur(1px)) or (-webkit-backdrop-filter: blur(1px))) {
+  .canvas-notice { background: var(--surface-elevated); }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .canvas-notice { animation-duration: 1ms; }
+}

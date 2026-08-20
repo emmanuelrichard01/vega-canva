@@ -42,6 +42,14 @@ import { parseMermaid } from './engine/diagram/mermaid';
 import { buildDiagram, canEmitDiagram, diagramIdOf, diagramToMermaid } from './engine/diagram/build';
 import { demoBox, demoText } from './engine/text/demoText';
 import { deleteNodesWithFrames } from './engine/interaction/frameMembership';
+import {
+  offsetOrigin,
+  parseClipboard,
+  pasteNodes,
+  writeClipboard,
+  type ClipboardPayload,
+} from './engine/clipboard/clipboard';
+import { importSvg, looksLikeSvg } from './engine/clipboard/svgImport';
 import { DEFAULT_TYPOGRAPHY, type AnyNode } from './engine/model/schema';
 import { cameraSystem } from './engine/CameraSystem';
 import { useBreakpoint } from './hooks/useBreakpoint';
@@ -334,6 +342,10 @@ export default function Room() {
 
   const [activeTool, setActiveTool] = useState('select');
   const [selectedIds, setSelectedIds] = useState<string[]>([]);
+  // Mirrored into a ref on every render, for the window-level copy and cut
+  // listeners that live for the room and must not re-register on every click.
+  const selectionRef = useRef<string[]>([]);
+  selectionRef.current = selectedIds;
   // Convenience accessors for the many panels that only ever make sense for a
   // single selected object (properties panel, floating toolbar, etc). When 0
   // or 2+ objects are selected these simply fall back to their empty state.
@@ -380,7 +392,26 @@ export default function Room() {
    * state would re-render the whole room on a copy — which is the one moment
    * the user is expecting nothing to happen at all.
    */
-  const clipboardRef = useRef<AnyNode[]>([]);
+  /**
+   * A short, self-clearing confirmation.
+   *
+   * Paste is the one gesture in this app whose result can be off screen — an
+   * SVG converts to twelve objects, or to nine with the text left out, and
+   * without a word about it the difference between "worked" and "partly
+   * worked" is something you have to go and check. `role="status"` so it is
+   * announced as well as shown.
+   */
+  const [notice, setNotice] = useState<string | null>(null);
+  const noticeTimer = useRef<number | undefined>(undefined);
+  const showToast = React.useCallback((message: string) => {
+    window.clearTimeout(noticeTimer.current);
+    setNotice(message);
+    noticeTimer.current = window.setTimeout(() => setNotice(null), 3200);
+  }, []);
+  useEffect(() => () => window.clearTimeout(noticeTimer.current), []);
+
+  /** The last copy, so the menu can say whether there is anything to paste. */
+  const clipboardRef = useRef<ClipboardPayload | null>(null);
 
   /**
    * What the right-click menu can do.
@@ -390,53 +421,130 @@ export default function Room() {
    * second implementation, and a menu that re-implemented copy would be a copy
    * that could drift from the keyboard's.
    */
+  /**
+   * Copy, paste and SVG paste — one implementation, reached three ways.
+   *
+   * The keyboard, the right-click menu and the object toolbar all end up here.
+   * The menu used to carry its own copy that kept nodes in a ref: it could not
+   * cross a tab, did not survive a reload, and — the real defect — regenerated
+   * ids without rewriting the references between them, so a pasted flowchart's
+   * arrows stayed attached to the *originals*. Dragging the copy left its
+   * arrows behind.
+   */
+  const copySelection = (): boolean => {
+    const nodes = selectionRef.current
+      .map((id) => diagramObjects[id])
+      .filter(Boolean) as AnyNode[];
+    const payload = writeClipboard(nodes);
+    if (!payload) return false;
+
+    clipboardRef.current = payload;
+    /**
+     * Written to the real clipboard as well as remembered here.
+     *
+     * The in-memory copy is what makes the context menu's "Paste" able to say
+     * whether there is anything to paste without asking for clipboard read
+     * permission; the system write is what makes the paste work in another tab
+     * at all. Failure is ignored on purpose — a denied clipboard permission
+     * should degrade to same-tab copy, not report an error for a gesture that
+     * visibly worked.
+     */
+    void navigator.clipboard?.writeText?.(JSON.stringify(payload)).catch(() => {});
+    return true;
+  };
+
+  /** Where a paste lands when nothing more specific says otherwise. */
+  const viewportCentre = () =>
+    cameraSystem.screenToWorld(window.innerWidth / 2, window.innerHeight / 2);
+
+  const pasteObjects = (payload: ClipboardPayload, at?: { x: number; y: number }) => {
+    // No explicit point means the same board, so it offsets from the originals
+    // rather than landing on top of them and looking like nothing happened.
+    const target = at ?? offsetOrigin(payload);
+    const { nodes, ids } = pasteNodes(payload, target);
+    if (nodes.length === 0) return;
+    doc.transact(() => {
+      nodes.forEach((node) => editor.createNode(node as never));
+    });
+    setSelectedIds(ids);
+    showToast(`Pasted ${ids.length} object${ids.length === 1 ? '' : 's'}`);
+  };
+
+  const pasteSvg = (text: string) => {
+    const art = importSvg(text);
+    if (!art) {
+      showToast('That SVG could not be read');
+      return;
+    }
+    // Centred on the view, so pasted artwork arrives where you are looking
+    // rather than at whatever coordinates the exporting tool used.
+    const centre = viewportCentre();
+    const originX = centre.x - art.width / 2;
+    const originY = centre.y - art.height / 2;
+
+    const made: string[] = [];
+    doc.transact(() => {
+      art.nodes.forEach((node) => {
+        const id = nanoid();
+        made.push(id);
+        editor.createNode({
+          ...node,
+          id,
+          x: (node.x as number) + originX,
+          y: (node.y as number) + originY,
+        } as never);
+      });
+    });
+    setSelectedIds(made);
+
+    /**
+     * What arrived, and what did not.
+     *
+     * Naming the skipped elements is the whole difference between a converter
+     * and a black box: text and embedded images are the two people notice
+     * missing, and being told beats comparing two pictures by eye.
+     */
+    const noun = `${made.length} object${made.length === 1 ? '' : 's'}`;
+    showToast(
+      art.skipped.length > 0
+        ? `Pasted ${noun}. Not converted: ${art.skipped.join(', ')}`
+        : `Pasted ${noun} from SVG`
+    );
+  };
+
   const contextActions = {
-    copy: () => {
-      clipboardRef.current = selectedIds.map((id) => diagramObjects[id]).filter(Boolean);
-    },
+    copy: () => { void copySelection(); },
     paste: () => {
       const at = contextTarget
         ? cameraSystem.screenToWorld(contextTarget.x, contextTarget.y)
         : cameraSystem.screenToWorld(window.innerWidth / 2, window.innerHeight / 2);
-      const source = clipboardRef.current;
-      if (source.length === 0) return;
+      const payload = clipboardRef.current;
+      if (!payload) return;
       // Pasted relative to the click, keeping the group's own arrangement —
       // stacking them all on the pointer would destroy the thing that made
       // them worth copying together.
-      const minX = Math.min(...source.map((n) => n.x));
-      const minY = Math.min(...source.map((n) => n.y));
-      const made: string[] = [];
-      doc.transact(() => {
-        source.forEach((node) => {
-          const id = nanoid();
-          made.push(id);
-          editor.createNode({
-            ...(node as unknown as Record<string, unknown>),
-            id,
-            x: at.x + (node.x - minX),
-            y: at.y + (node.y - minY),
-          } as never);
-        });
-      });
-      setSelectedIds(made);
+      pasteObjects(payload, at);
     },
+    /**
+     * Duplicate is a copy and a paste that never touch the clipboard.
+     *
+     * It used to spread `...node` and change only the id, which carried
+     * **`parentId`** through unchanged — and `parentId` is the synthetic id
+     * that *is* the group. So duplicating a group's members produced members of
+     * the same group: the copy landed inside the original, and the two moved
+     * together from then on. The same spread kept `frameId`, so a duplicate
+     * also claimed membership of a frame it had just been offset out of, and
+     * left connector ends pointing at the originals.
+     *
+     * Going through the clipboard's own remapping fixes all three at once and
+     * means duplicate, paste and cross-tab paste cannot drift apart — which is
+     * exactly how they came to disagree in the first place.
+     */
     duplicate: () => {
-      const made: string[] = [];
-      doc.transact(() => {
-        selectedIds.forEach((id) => {
-          const node = diagramObjects[id];
-          if (!node) return;
-          const clone = nanoid();
-          made.push(clone);
-          editor.createNode({
-            ...(node as unknown as Record<string, unknown>),
-            id: clone,
-            x: node.x + 20,
-            y: node.y + 20,
-          } as never);
-        });
-      });
-      if (made.length) setSelectedIds(made);
+      const nodes = selectedIds.map((id) => diagramObjects[id]).filter(Boolean) as AnyNode[];
+      const payload = writeClipboard(nodes);
+      if (!payload) return;
+      pasteObjects(payload, offsetOrigin(payload));
     },
     remove: () => {
       deleteNodesWithFrames(selectedIds);
@@ -1224,8 +1332,34 @@ export default function Room() {
       return el instanceof HTMLInputElement || el instanceof HTMLTextAreaElement || (el as HTMLElement)?.isContentEditable;
     };
 
+    /**
+     * One paste handler, three kinds of payload.
+     *
+     * Order matters and is not arbitrary. A copy of our own objects is checked
+     * first because it is the only unambiguous case; SVG next, because Figma
+     * and Illustrator put the markup on the clipboard as *text* alongside a
+     * rendered PNG, and taking the image would silently hand back a picture
+     * when vector was available — the one failure that looks like success.
+     * Files last, which is what a screenshot or a copied image is.
+     */
     const onPaste = (e: ClipboardEvent) => {
       if (inTextField()) return;
+
+      const text = e.clipboardData?.getData('text/plain') ?? '';
+
+      const payload = parseClipboard(text);
+      if (payload) {
+        e.preventDefault();
+        pasteObjects(payload);
+        return;
+      }
+
+      if (looksLikeSvg(text)) {
+        e.preventDefault();
+        pasteSvg(text);
+        return;
+      }
+
       const files = Array.from(e.clipboardData?.items ?? [])
         .filter((item) => item.kind === 'file')
         .map((item) => item.getAsFile())
@@ -1236,6 +1370,28 @@ export default function Room() {
       // of what you are looking at — which is where you were looking when you
       // decided to paste.
       void placeFiles(files);
+    };
+
+    /**
+     * Copy and cut, from the same event the browser already gives us.
+     *
+     * Listening for `copy` rather than binding Cmd+C means the browser decides
+     * what "copy" means — so it still does the right thing inside a text field,
+     * on a native selection, and with whatever key the platform actually uses.
+     */
+    const onCopy = (e: ClipboardEvent) => {
+      if (inTextField()) return;
+      const written = copySelection();
+      if (written) e.preventDefault();
+    };
+
+    const onCut = (e: ClipboardEvent) => {
+      if (inTextField()) return;
+      const written = copySelection();
+      if (!written) return;
+      e.preventDefault();
+      deleteNodesWithFrames(selectionRef.current);
+      setSelectedIds([]);
     };
 
     const onDragOver = (e: DragEvent) => {
@@ -1267,11 +1423,15 @@ export default function Room() {
       void placeFiles(files, at);
     };
 
+    window.addEventListener('copy', onCopy);
+    window.addEventListener('cut', onCut);
     window.addEventListener('paste', onPaste);
     window.addEventListener('dragover', onDragOver);
     window.addEventListener('dragleave', onDragLeave);
     window.addEventListener('drop', onDrop);
     return () => {
+      window.removeEventListener('copy', onCopy);
+      window.removeEventListener('cut', onCut);
       window.removeEventListener('paste', onPaste);
       window.removeEventListener('dragover', onDragOver);
       window.removeEventListener('dragleave', onDragLeave);
@@ -1453,7 +1613,7 @@ export default function Room() {
         onClose={() => setContextTarget(null)}
         objects={diagramObjects}
         actions={contextActions}
-        canPaste={clipboardRef.current.length > 0}
+        canPaste={clipboardRef.current !== null}
       />
       <HelpModal open={showHelp} onClose={() => setShowHelp(false)} />
       <MermaidModal
@@ -1505,6 +1665,14 @@ export default function Room() {
       <div className="sr-only" role="status" aria-live="polite">
         {status === 'connected' ? 'Connected. Changes are syncing.' : 'Offline. Changes are saved locally and will sync when you reconnect.'}
       </div>
+
+      {/* What a paste actually produced. Above the dock, out of the way of the
+          canvas, and gone by itself — this confirms, it does not ask. */}
+      {notice && (
+        <div className="canvas-notice" role="status" aria-live="polite">
+          {notice}
+        </div>
+      )}
 
       {/* OFFLINE BANNER */}
       {status !== 'connected' && (
