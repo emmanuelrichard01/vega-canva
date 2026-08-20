@@ -74,7 +74,7 @@ Verify in ~30 seconds:
 
 ```bash
 npx tsc --noEmit -p apps/frontend/tsconfig.app.json   # must be silent
-npx vitest run --root apps/frontend                   # 822 tests, 48 files
+npx vitest run --root apps/frontend                   # 849 tests, 49 files
 npx oxlint apps/frontend/src                          # 16 cosmetic warnings, exit 0
 npm run build -w apps/frontend                        # must succeed
 ```
@@ -89,7 +89,7 @@ history were vacuous for exactly that reason. Use `tsconfig.app.json`, or
 | --- | --- |
 | Branch | `rebuild/time-travel-and-physics`, nothing pushed, nothing merged |
 | Typecheck | clean |
-| Tests | **822** across 48 files |
+| Tests | **849** across 49 files |
 | Lint | exits 0; 16 `only-export-components` warnings, all cosmetic |
 | Build | clean, 1.55MB JS (gzip 488KB) + 128KB CSS (gzip 21KB) — still no code splitting |
 
@@ -695,7 +695,7 @@ The user's brief for this is long and specific; the short version is that both
 panels exist, both are functional, and both are thin against what the brief
 asks for. What follows is an audit, not a wish list.
 
-**`components/LayersPanel.tsx` (913 lines) already does:** a virtualized
+**`components/LayersPanel.tsx` (971 lines) already does:** a virtualized
 uniform-row tree (frames and group clusters, indented), inline rename, drag
 reorder, per-row visibility and lock toggles, Shift-range and Cmd-toggle
 multi-select, per-frame collapse held outside the CRDT, tag filtering, type
@@ -725,7 +725,7 @@ document change with 500 objects, which was ~88% of the cost of moving one.
 - Section, Component, Instance and Mask node types. These are **blocked**:
   sections and masks are their own features, components are Phase 7.
 
-**`components/PropertiesPanel.tsx` (1895 lines) already does:** Transform
+**`components/PropertiesPanel.tsx` (2614 lines) already does:** Transform
 (X/Y/W/H with aspect lock, rotation, flip), Appearance (fill with all five
 paint types, opacity, corner radius, blend), Stroke (colour, weight, dash
 preset, alignment, join, miter limit), Shadow, Inner Shadow, Blur (layer and
@@ -793,7 +793,8 @@ a type a capability it never had, walk every control that capability unlocks.**
 - **The shell around the canvas.** No router — every navigation is a full page
   reload rebuilding the Y.Doc. No workspace deletion. The dashboard reads
   `localStorage` only. No landing page.
-- **Bundle splitting.** 1.33MB in one chunk.
+- **Bundle splitting.** 1.55MB in one chunk (gzip 488KB). Trust the table at
+  the top of this file; this line sat at a stale 1.33MB for several sessions.
 - **Two real browsers with two real mice** — still the one check automation
   cannot stand in for.
 
@@ -867,7 +868,7 @@ Physics, templates and the product shell (newest):
 | `engine/model/connectorAnchor.ts` | an exact attachment point in a node's own proportions. Pure, tested. |
 | `engine/model/connectorBinding.ts` | what a pointer means, as an end. The one rule the tool and the editor share. Pure, tested. |
 | `engine/model/connectorTargets.ts` | the only bridge from nodes to boxes — what is connectable, and where its box is |
-| `engine/model/linePath.ts` | the five line profiles as point lists, including the stamped coil. Pure. |
+| `engine/model/linePath.ts` | the five line profiles as point lists, including the stamped coil. Pure, tested. |
 | `engine/model/lineEnds.ts` | endpoints ↔ node, both the current form and the legacy box. Pure, tested. |
 | `engine/model/connectorEnds.ts` | end caps, the trim, and `terminateRun` — the one place a marker is placed |
 | `components/canvas/ConnectorEditor.tsx` | the two ends as handles you can drag onto anything |

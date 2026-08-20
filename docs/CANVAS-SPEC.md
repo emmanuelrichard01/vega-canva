@@ -256,12 +256,15 @@ shipped surfaces that a reader of this document would otherwise assume absent.
 
 ## The tally
 
-Roughly, across the ~100 discrete items above:
+Counted from the status column of sections 1-14, which hold 109 rows. These
+counts are a second record of what the tables already say, so they drift: they
+read ~66/~10/1/~26 for several sessions after the tables had moved past them.
+Recount before quoting them.
 
-- **Shipped: ~66** — the canvas core, collaboration, frames, the whole paint model, the precision tools, the vector engine, and the parts of the transform/typography blocks that a whiteboard needs.
-- **Partial: ~10**
+- **Shipped: 72** — the canvas core, collaboration, frames, the whole paint model, the precision tools, the vector engine, and the parts of the transform/typography blocks that a whiteboard needs.
+- **Partial: 8**
 - **Dead: 1** — `FrameNode.layout`, the auto-layout declaration, which Phase 6 owns. `Appearance.shadow` was the second entry here until 2026-08-11.
-- **Absent: ~26** — design systems and prototyping. Vector manipulation left this list on 2026-08-12; **the export pipeline left it on 2026-08-18** — six formats with a live preview, a hand-rolled PDF writer, batch export of every frame, and a JSON export that can now actually be read back.
+- **Absent: 28** — design systems and prototyping. Vector manipulation left this list on 2026-08-12; **the export pipeline left it on 2026-08-18** — six formats with a live preview, a hand-rolled PDF writer, batch export of every frame, and a JSON export that can now actually be read back.
 
 Section 15 is counted separately: it audits the product *around* the canvas
 (templates, physics, thumbnails, sharing, the help screen, the design system),
