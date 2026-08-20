@@ -14,10 +14,21 @@ import {
 interface TimeTravelBarProps {
   roomId: string;
   onClose: () => void;
-  onApplySnapshot: (objects: Record<string, any> | null) => void;
+  /**
+   * @param changedIds Exactly which nodes differ from the previous frame, or
+   *   `null` when that is not knowable (a rewind rebuilds the document).
+   */
+  onApplySnapshot: (objects: Record<string, any> | null, changedIds?: string[] | null) => void;
 }
 
 const SPEEDS = [1, 2, 4, 8];
+
+/**
+ * The most transactions this will replay, matching the server's own retention
+ * cap. Building a timeline is synchronous, so this is the bound on how long
+ * opening Time Travel can block the tab.
+ */
+const MAX_REPLAY_UPDATES = 2000;
 
 /** Columns in the activity strip. Enough to show rhythm, few enough to read. */
 const ACTIVITY_COLUMNS = 64;
@@ -102,8 +113,23 @@ export const TimeTravelBar: React.FC<TimeTravelBarProps> = ({ roomId, onClose, o
         if (!res.ok) throw new Error(`Server responded ${res.status}`);
         const data = await res.json();
         if (cancelled) return;
-        const rows: RawUpdate[] = data.updates ?? [];
-        setTrimmedCount(data.trimmed ? Number(data.trimmedCount ?? 0) : 0);
+        const all: RawUpdate[] = data.updates ?? [];
+        /**
+         * A ceiling on what this will attempt, independent of the server.
+         *
+         * The endpoint bounds its own response now, but it did not always, and
+         * a client that trusts a server to hand it a reasonable amount of work
+         * has no defence when it does not: building a timeline is synchronous
+         * main-thread work, so an oversized log froze the tab outright rather
+         * than loading slowly. Keeping the most recent window means an old or
+         * misconfigured server degrades to "history starts later than it might"
+         * instead of to an unresponsive page.
+         */
+        const rows = all.length > MAX_REPLAY_UPDATES ? all.slice(-MAX_REPLAY_UPDATES) : all;
+        const withheld = all.length - rows.length;
+        setTrimmedCount(
+          (data.trimmed ? Number(data.trimmedCount ?? 0) : 0) + withheld
+        );
         if (rows.length > 0) {
           const built = buildTimeline(rows);
           setUpdates(rows);
@@ -136,26 +162,62 @@ export const TimeTravelBar: React.FC<TimeTravelBarProps> = ({ roomId, onClose, o
   const moments = useMemo(() => timeline?.moments ?? [], [timeline]);
   const current: Moment | undefined = moments[momentIndex];
 
-  const emit = useCallback((doc: Y.Doc) => {
+  /**
+   * Ids the replay document changed since the last frame we published.
+   *
+   * Collected by an observer on the replay doc rather than by diffing two
+   * snapshots: applying an update already tells Yjs exactly which entries
+   * moved, so this costs nothing on top of the seek itself.
+   */
+  const changedRef = useRef<Set<string>>(new Set());
+
+  /** Watch a replay document so forward steps can report a precise change set. */
+  const observeReplayDoc = useCallback((doc: Y.Doc) => {
+    doc.getMap<Y.Map<any>>('objects').observeDeep((events) => {
+      events.forEach((event) => {
+        const path = event.path as (string | number)[];
+        if (path.length === 0) {
+          event.keys.forEach((_change, id) => changedRef.current.add(String(id)));
+        } else {
+          changedRef.current.add(String(path[0]));
+        }
+      });
+    });
+  }, []);
+
+  /**
+   * Publish the document at the playhead.
+   *
+   * `changedIds` is `null` after a rewind, because that builds a brand new
+   * document and there is nothing to have observed. Rewinds are one user
+   * action; forward steps are the ones that happen up to eight times a second,
+   * and those carry an exact set.
+   */
+  const emit = useCallback((doc: Y.Doc, changedIds: string[] | null) => {
     const objectsMap = doc.getMap<Y.Map<any>>('objects');
     const snapshot: Record<string, any> = {};
     objectsMap.forEach((objMap, id) => {
       snapshot[id] = objMap.toJSON();
     });
-    onApplySnapshotRef.current(snapshot);
+    onApplySnapshotRef.current(snapshot, changedIds);
   }, []);
 
   // Materialise whatever moment the playhead is on.
   useEffect(() => {
     if (!timeline || moments.length === 0 || !current) return;
+
+    const before = replayRef.current?.doc;
+    changedRef.current.clear();
     const next = materialiseAt(updates, current.index, timeline.keyframes, replayRef.current);
+
     // materialiseAt returns a fresh doc when it had to rewind; drop the old one.
-    if (replayRef.current && replayRef.current.doc !== next.doc) {
-      replayRef.current.doc.destroy();
-    }
+    const rebuilt = next.doc !== before;
+    if (before && rebuilt) before.destroy();
+    if (rebuilt) observeReplayDoc(next.doc);
+
     replayRef.current = next;
-    emit(next.doc);
-  }, [momentIndex, timeline, updates, current, moments.length, emit]);
+    emit(next.doc, rebuilt ? null : Array.from(changedRef.current));
+  }, [momentIndex, timeline, updates, current, moments.length, emit, observeReplayDoc]);
 
   useEffect(() => {
     if (isPlaying && moments.length > 0) {

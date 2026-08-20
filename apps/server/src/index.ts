@@ -117,9 +117,37 @@ app.post("/rooms/:roomId/media", upload.single("media"), async (req: any, res) =
 app.get("/rooms/:roomId/history", async (req, res) => {
   const roomId = req.params.roomId;
   try {
+    /**
+     * Bounded by the query, not by housekeeping.
+     *
+     * This used to be an unbounded `ORDER BY id ASC` over every row the room
+     * had ever written, on the assumption that the retention sweep keeps the
+     * table at `MAX_UPDATES_PER_ROOM`. The sweep runs every **ten minutes**, so
+     * that assumption holds only between bursts: a room being actively worked
+     * in hands back everything accumulated since the last pass, and a drag
+     * emits a transaction every few frames. Ten minutes of real use is tens of
+     * thousands of rows.
+     *
+     * The client then had to parse all of it, replay all of it into a scratch
+     * document and build a moment per transaction — on the main thread. That is
+     * the "loading Time Travel freezes the tab" report, and no amount of work on
+     * the client fixes it, because the client was being handed an unbounded
+     * amount of work by an endpoint that promised a bounded one.
+     *
+     * Newest rows are selected and then re-sorted ascending, so the window is
+     * the most *recent* history rather than the oldest — which is the half
+     * anyone scrubbing actually wants.
+     */
     const result = await pool.query(
-      `SELECT update_data, created_at FROM room_updates WHERE room_id = $1 ORDER BY id ASC`,
-      [roomId]
+      `SELECT update_data, created_at FROM (
+         SELECT id, update_data, created_at
+           FROM room_updates
+          WHERE room_id = $1
+          ORDER BY id DESC
+          LIMIT $2
+       ) AS recent
+       ORDER BY id ASC`,
+      [roomId, MAX_UPDATES_PER_ROOM]
     );
     const updates = result.rows.map(row => ({
       createdAt: row.created_at,
@@ -129,17 +157,23 @@ app.get("/rooms/:roomId/history", async (req, res) => {
     // Whether retention has discarded anything for this room, so replay can say
     // plainly that it does not reach the beginning instead of presenting a
     // partial session as the whole story.
-    const trimmedResult = await pool.query<{ updates_trimmed: string }>(
-      `SELECT COALESCE(updates_trimmed, 0) AS updates_trimmed FROM rooms WHERE id = $1`,
+    const trimmedResult = await pool.query<{ updates_trimmed: string; total: string }>(
+      `SELECT COALESCE(r.updates_trimmed, 0) AS updates_trimmed,
+              (SELECT COUNT(*) FROM room_updates WHERE room_id = $1) AS total
+         FROM rooms r WHERE r.id = $1`,
       [roomId]
     );
     const trimmedCount = Number(trimmedResult.rows[0]?.updates_trimmed ?? 0);
+    const total = Number(trimmedResult.rows[0]?.total ?? updates.length);
+    // Rows the sweep has not reached yet are just as absent from this response
+    // as rows it deleted, so both count toward "this does not reach the start".
+    const withheld = Math.max(0, total - updates.length);
 
     res.json({
       roomId,
       updates,
-      trimmed: trimmedCount > 0,
-      trimmedCount,
+      trimmed: trimmedCount > 0 || withheld > 0,
+      trimmedCount: trimmedCount + withheld,
       retentionLimit: MAX_UPDATES_PER_ROOM,
     });
   } catch (err) {

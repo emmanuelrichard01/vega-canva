@@ -366,21 +366,25 @@ export function buildTimeline(updates: RawUpdate[], options: BuildOptions = {}):
   updates.forEach((raw, index) => {
     pending = emptyPending();
 
+    /**
+     * Decoded **once**.
+     *
+     * This used to call `decodeBase64Update(raw.update)` twice — once to apply
+     * and once again, immediately, to hand to `dominantClient` — so every
+     * transaction in the log paid for two base64 walks and two `Uint8Array`
+     * allocations. On a two-thousand-row session that is two thousand copies
+     * thrown away for nothing.
+     */
+    let bytes: Uint8Array;
     try {
-      Y.applyUpdate(doc, decodeBase64Update(raw.update));
+      bytes = decodeBase64Update(raw.update);
+      Y.applyUpdate(doc, bytes);
     } catch {
       // A corrupt row must not abort the whole session; skip it and continue.
       return;
     }
 
     const at = new Date(raw.createdAt).getTime();
-    const authorId = dominantClient(decodeBase64Update(raw.update));
-
-    pending.createdIds.forEach((id) => {
-      registerAuthor(id);
-      refreshName(id);
-    });
-    pending.fieldsById.forEach((_fields, id) => refreshName(id));
 
     // Decide this transaction's single dominant kind and target set.
     const touched = new Set<string>([
@@ -395,6 +399,34 @@ export function buildTimeline(updates: RawUpdate[], options: BuildOptions = {}):
       }
       return;
     }
+
+    /**
+     * Attribution is resolved *after* the no-op check, not before.
+     *
+     * `dominantClient` runs a full `Y.decodeUpdate` — it walks every struct in
+     * the transaction — and it was being run on every row including the many
+     * that turn out to describe no authored change at all. Those now cost
+     * nothing beyond the apply.
+     */
+    const authorId = dominantClient(bytes);
+
+    pending.createdIds.forEach(registerAuthor);
+
+    /**
+     * Names are refreshed only when something that *is* a name changed.
+     *
+     * `refreshName` runs the node through `normalizeNode` — the full read
+     * boundary — and it was called for every touched node on every update. A
+     * drag emits a transaction every few frames and changes nothing but
+     * coordinates, so the same sticky was fully re-normalized dozens of times
+     * to re-derive a label that could not have moved. Creation and deletion
+     * still refresh, because those are the cases where the label is new or
+     * about to become unreachable.
+     */
+    pending.createdIds.forEach(refreshName);
+    pending.fieldsById.forEach((fields, id) => {
+      if (fields.has('text') || fields.has('title') || fields.has('mixed')) refreshName(id);
+    });
 
     let kind: MomentKind;
     if (pending.createdIds.size > 0) kind = 'create';

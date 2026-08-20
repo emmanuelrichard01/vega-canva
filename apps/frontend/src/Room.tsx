@@ -1626,7 +1626,7 @@ export default function Room() {
                that is what puts the replay on the canvas. It stays in local
                state as well because Layers and Properties read it directly to
                show history without subscribing to replay state. */
-            onApplySnapshot={(snap) => { applyReplaySnapshot(snap); setTimeTravelSnapshot(snap); }}
+            onApplySnapshot={(snap, changedIds) => { applyReplaySnapshot(snap, changedIds); setTimeTravelSnapshot(snap); }}
           />
         )}
         

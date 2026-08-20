@@ -3,6 +3,7 @@ import { nanoid } from 'nanoid';
 import { doc, identitiesMap, objectsMap, provider } from './doc';
 import { applyReactionToggle, seedReactions } from './reactions';
 import { frameForNode } from '../model/frames';
+import { getColorForUser } from '../presence/ColorPalette';
 
 /**
  * The write path for canvas objects.
@@ -149,10 +150,21 @@ export function localAuthor(): { id: string; name: string; color: string } {
   const user = provider.awareness?.getLocalState()?.user as
     | { name?: string; color?: string }
     | undefined;
+  const id = localAuthorId();
   return {
-    id: localAuthorId(),
+    id,
     name: user?.name ?? 'Unknown',
-    color: user?.color ?? '#3B82F6',
+    /**
+     * The fallback comes from the presence palette, not from a literal.
+     *
+     * This was a hardcoded blue, which is both a colour outside the design
+     * system and — more to the point — a *different* colour from the one every
+     * other surface shows for the same person. `getColorForUser` derives a
+     * stable colour from the id, so a node stamped before awareness has
+     * published gets the same colour the cursor, the radar and the avatar will
+     * use a moment later, instead of a blue that never appears again.
+     */
+    color: user?.color ?? getColorForUser(id),
   };
 }
 
@@ -247,20 +259,34 @@ export function updateNode(id: string, updates: Record<string, unknown>): void {
       else ymap.set(key, value);
     });
     ymap.set('updatedAt', Date.now());
+
     /**
-     * Who touched it last, alongside when.
+     * Who touched it last, alongside when — but **only when the answer
+     * changes**.
      *
      * `updatedAt` has been stamped here since this file existed and `updatedBy`
      * was never recorded, so the Metadata panel could say a node changed four
-     * minutes ago and not who changed it — which on a board with thirty people
-     * on it is the half of the fact worth having. "Created by Ada, updated four
-     * minutes ago" reads as though Ada did it; often she did not.
+     * minutes ago and not who changed it — on a board with thirty people that
+     * is the half of the fact worth having, and "Created by Ada, updated four
+     * minutes ago" reads as though Ada did it when often she did not.
      *
-     * Written from `localAuthorId()`, the same stable id `createdBy` uses, so
-     * the two are comparable and both survive the author disconnecting.
+     * The guard is not a micro-optimisation. Writing both fields
+     * unconditionally put an id *and a display name string* into every single
+     * transaction — and a drag emits one every few frames, so a five-second
+     * drag wrote the same name fifty times. That inflates the update log, which
+     * is the CRDT's append-only history: it costs storage, it costs bandwidth
+     * on every sync, and it costs Time Travel most of all, because replay has
+     * to decode and apply every one of those transactions. The first version of
+     * this made an already-heavy replay materially heavier.
+     *
+     * Comparing first means a run of edits by one person writes the pair once.
+     * A `Y.Map` read is local and cheap; the write is neither.
      */
-    ymap.set('updatedBy', localAuthorId());
-    ymap.set('updatedByName', localAuthor().name);
+    const author = localAuthorId();
+    if (ymap.get('updatedBy') !== author) {
+      ymap.set('updatedBy', author);
+      ymap.set('updatedByName', localAuthor().name);
+    }
   });
 }
 

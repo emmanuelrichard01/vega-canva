@@ -2,6 +2,7 @@ import { create } from 'zustand';
 import { normalizeNode, objectsMap, observeNodes, provider, scheduleMigration, updateNode } from '../engine/document';
 import { STICKY_THEMES, type AnyNode, type StickyTheme } from '../engine/model/schema';
 import { sceneGraph } from '../engine/SceneGraph';
+import { mergeReplayObjects } from '../engine/history/replayMerge';
 import type { PencilNib } from '../engine/model/rough';
 import type { LineProfile } from '../engine/model/linePath';
 import {
@@ -49,7 +50,15 @@ interface StoreState {
    * moved two side panels while the canvas kept rendering the live document,
    * which is the whole reason replay looked broken.
    */
-  applyReplaySnapshot: (objects: Record<string, unknown> | null) => void;
+  /**
+   * @param changedIds Ids whose contents actually differ from the previous
+   *   snapshot. Omit (or pass `null`) when that is not known — a rewind builds
+   *   a fresh document and cannot say — and everything is rebuilt.
+   */
+  applyReplaySnapshot: (
+    objects: Record<string, unknown> | null,
+    changedIds?: string[] | null
+  ) => void;
   zenMode: boolean;
   setZenMode: (val: boolean) => void;
   /**
@@ -241,7 +250,7 @@ export const useStore = create<StoreState>((set) => ({
   isReplaying: false,
   setIsReplaying: (val) => set({ isReplaying: val }),
   setObjects: (objects) => set({ objects }),
-  applyReplaySnapshot: (snapshot) => {
+  applyReplaySnapshot: (snapshot, changedIds) => {
     const previous = useStore.getState().objects;
 
     if (!snapshot) {
@@ -267,29 +276,46 @@ export const useStore = create<StoreState>((set) => ({
       return;
     }
 
+    /**
+     * A playback step costs what changed, not what exists.
+     *
+     * Every step used to re-normalize every node in the document, re-upsert
+     * every node into the scene graph, and report every id as changed. On a
+     * board of five hundred objects that is, sixty to nine hundred milliseconds
+     * apart: five hundred `normalizeNode` calls, five hundred R-tree
+     * remove-and-reinserts, a full `sim.sync` rebuilding Matter bodies, and —
+     * worst of the four — five hundred **new object identities**, so every
+     * `React.memo` comparator on every renderer failed and the entire canvas
+     * re-rendered. That is the freeze: not one slow function, but O(document)
+     * work repeated at playback rate.
+     *
+     * Nodes that did not change now keep their previous normalized object *by
+     * reference*, which is what lets the memoized renderers stand still.
+     */
     // Replayed nodes go through the same normalization as live ones, so a
     // snapshot from early in the room's life — written before the current
     // schema — renders exactly as it does after migration.
-    const next: Record<string, AnyNode> = {};
-    Object.entries(snapshot).forEach(([id, raw]) => {
-      const node = normalizeNode(raw as Record<string, unknown>, id);
-      if (node) next[id] = node;
-    });
+    const { objects: next, touched, removed } = mergeReplayObjects(
+      previous,
+      snapshot,
+      changedIds ?? null,
+      normalizeNode
+    );
 
     // Keep the spatial index honest during replay rather than switching culling
     // off. The old code rendered every object in the document while replaying,
     // which turned Time Travel into a performance cliff on exactly the large
     // documents the rest of the engine is built to handle.
-    Object.keys(previous).forEach((id) => {
-      if (!next[id]) sceneGraph.removeNode(id);
-    });
-    Object.entries(next).forEach(([id, node]) => sceneGraph.upsertNode(id, node));
+    for (const id of removed) sceneGraph.removeNode(id);
+    // Only what actually moved goes back into the index. An unchanged node is
+    // already in it, at the position it is still at.
+    for (const id of touched) sceneGraph.upsertNode(id, next[id]);
 
     set((state) => ({
       objects: next,
       version: state.version + 1,
-      lastChangedIds: Object.keys(next),
-      lastRemovedIds: Object.keys(previous).filter((id) => !next[id]),
+      lastChangedIds: touched,
+      lastRemovedIds: removed,
       isReplaying: true,
     }));
   },
