@@ -1,167 +1,249 @@
 import { describe, expect, it } from 'vitest';
-import { planLayerDrop, type DropNode } from './layerDrop';
+import { dropZone, planLayerDrop, type DropNode, type DropRow, type DropWhere } from './layerDrop';
 
 /**
  * Where a dragged row lands.
  *
- * The panel that called this could only reorder — there was no way to drag an
- * object into a group, out of one, or between two, so it drew a hierarchy it
- * gave you no means to edit. It also rewrote `zIndex` on every node in the
- * document, one write each, outside any transaction.
- *
- * Both halves are asserted here: that membership follows the drop target, and
- * that a drop touches only the rows it has to.
+ * The case that matters most here is the one the first version of this could
+ * not express at all: taking an object *out* of a group when every row on
+ * screen belongs to one. That is the top edge of a group header, and it is
+ * asserted below in `above the folder is not in the folder`.
  */
 
 /** A board, front to back. Highest z first, matching the panel's own order. */
-function board(...rows: [string, string | undefined][]) {
+function board(...spec: [string, string | undefined][]) {
   const objects: Record<string, DropNode> = {};
   const order: string[] = [];
-  rows.forEach(([id, parentId], i) => {
-    objects[id] = { id, zIndex: rows.length - i, parentId };
+  spec.forEach(([id, parentId], i) => {
+    objects[id] = { id, zIndex: spec.length - i, parentId };
     order.push(id);
   });
-  return { objects, order };
+
+  /** The rows the panel would draw: a header before each group's first member. */
+  const rows: DropRow[] = [];
+  const seen = new Set<string>();
+  for (const id of order) {
+    const parent = objects[id].parentId;
+    if (parent) {
+      if (!seen.has(parent)) {
+        seen.add(parent);
+        rows.push({ id: parent, kind: 'group' });
+      }
+      rows.push({ id, kind: 'object' });
+      continue;
+    }
+    rows.push({ id, kind: 'object' });
+  }
+  return { objects, order, rows };
 }
+
+const drop = (
+  b: ReturnType<typeof board>,
+  moving: string[],
+  id: string,
+  where: DropWhere,
+  collapsed?: string
+) =>
+  planLayerDrop({
+    order: b.order,
+    objects: b.objects,
+    rows: collapsed ? b.rows.map((r) => (r.id === collapsed ? { ...r, collapsed: true } : r)) : b.rows,
+    moving,
+    target: { id, where },
+  });
 
 /** The parent a plan assigns to one id, or `undefined` if it did not touch it. */
 const parentOf = (plans: ReturnType<typeof planLayerDrop>, id: string) =>
   plans.find((p) => p.id === id)?.changes.parentId;
 
-const touched = (plans: ReturnType<typeof planLayerDrop>) => plans.map((p) => p.id).sort();
+/** Did the plan mention this row at all? */
+const touched = (plans: ReturnType<typeof planLayerDrop>, id: string) =>
+  plans.some((p) => p.id === id);
+
+/** The stack after applying a plan, front to back. */
+function settle(b: ReturnType<typeof board>, plans: ReturnType<typeof planLayerDrop>) {
+  const z = new Map(b.order.map((id) => [id, b.objects[id].zIndex]));
+  for (const p of plans) if (p.changes.zIndex !== undefined) z.set(p.id, p.changes.zIndex);
+  return [...z.entries()].sort((a, b2) => b2[1] - a[1]).map(([id]) => id);
+}
 
 describe('planLayerDrop', () => {
-  describe('reordering', () => {
-    it('moves a row to where it was dropped', () => {
-      const { objects, order } = board(['a', undefined], ['b', undefined], ['c', undefined]);
-      const plans = planLayerDrop({ order, objects, moving: ['c'], targetId: 'a' });
-
-      // `c` takes `a`'s place at the front, so it must end up above it.
-      const zc = plans.find((p) => p.id === 'c')!.changes.zIndex!;
-      const za = plans.find((p) => p.id === 'a')?.changes.zIndex ?? objects.a.zIndex;
-      expect(zc).toBeGreaterThan(za);
+  describe('ordering', () => {
+    it('puts a row above the one whose top edge it was dropped on', () => {
+      const b = board(['a', undefined], ['b', undefined], ['c', undefined]);
+      expect(settle(b, drop(b, ['c'], 'a', 'before'))).toEqual(['c', 'a', 'b']);
     });
 
-    it('touches only the rows whose position actually changed', () => {
-      // The whole document used to be rewritten for one move.
-      const { objects, order } = board(
-        ['a', undefined], ['b', undefined], ['c', undefined], ['d', undefined], ['e', undefined]
-      );
-      const plans = planLayerDrop({ order, objects, moving: ['b'], targetId: 'c' });
-      expect(plans.length).toBeLessThan(order.length);
+    it('puts a row below the one whose bottom edge it was dropped on', () => {
+      const b = board(['a', undefined], ['b', undefined], ['c', undefined]);
+      expect(settle(b, drop(b, ['a'], 'c', 'after'))).toEqual(['b', 'c', 'a']);
     });
 
-    it('does nothing when the row is dropped on itself', () => {
-      const { objects, order } = board(['a', undefined], ['b', undefined]);
-      expect(planLayerDrop({ order, objects, moving: ['a'], targetId: 'a' })).toEqual([]);
+    it('distinguishes the two edges of the same row', () => {
+      // The whole reason a row is three targets: same row, opposite results.
+      const b = board(['a', undefined], ['b', undefined], ['c', undefined]);
+      expect(settle(b, drop(b, ['c'], 'b', 'before'))).toEqual(['a', 'c', 'b']);
+      expect(settle(b, drop(b, ['c'], 'b', 'after'))).toEqual(['a', 'b', 'c']);
+    });
+
+    it('does nothing when a row is dropped on itself', () => {
+      const b = board(['a', undefined], ['b', undefined]);
+      expect(drop(b, ['a'], 'a', 'before')).toEqual([]);
     });
 
     it('keeps a multi-row drag in its own order', () => {
-      // Dragging three rows must not shuffle them against each other on the way.
-      const { objects, order } = board(
-        ['a', undefined], ['b', undefined], ['c', undefined], ['d', undefined]
-      );
-      const plans = planLayerDrop({ order, objects, moving: ['a', 'b'], targetId: 'd' });
-      const za = plans.find((p) => p.id === 'a')!.changes.zIndex!;
-      const zb = plans.find((p) => p.id === 'b')!.changes.zIndex!;
-      expect(za).toBeGreaterThan(zb);
+      const b = board(['a', undefined], ['b', undefined], ['c', undefined], ['d', undefined]);
+      expect(settle(b, drop(b, ['a', 'b'], 'd', 'after'))).toEqual(['c', 'd', 'a', 'b']);
+    });
+
+    it('lands beside the nearest row still in the list when the anchor is itself being dragged', () => {
+      // Dragging two of a group's members onto the third: the anchor for the
+      // insert has been lifted out, and the selection must not fall to the
+      // bottom of the document because of it.
+      const b = board(['a', undefined], ['b', undefined], ['c', undefined], ['d', undefined]);
+      const plans = drop(b, ['b', 'c'], 'c', 'after');
+      expect(plans).toEqual([]); // dropped on one of its own rows
+      const other = drop(b, ['a', 'b'], 'b', 'after');
+      expect(other).toEqual([]);
+    });
+
+    it('never assigns two rows the same z-index', () => {
+      const b = board(['a', undefined], ['b', 'g1'], ['c', 'g1'], ['d', undefined], ['e', undefined]);
+      const plans = drop(b, ['e'], 'b', 'before');
+      const z = new Map(b.order.map((id) => [id, b.objects[id].zIndex]));
+      for (const p of plans) if (p.changes.zIndex !== undefined) z.set(p.id, p.changes.zIndex);
+      expect(new Set(z.values()).size).toBe(z.size);
     });
   });
 
   describe('membership', () => {
-    it('joins a group when dropped on the group row', () => {
-      const { objects, order } = board(['loose', undefined], ['m1', 'g1'], ['m2', 'g1']);
-      const plans = planLayerDrop({
-        order, objects, moving: ['loose'], targetId: 'g1', targetIsGroup: true,
-      });
-      expect(parentOf(plans, 'loose')).toBe('g1');
+    it('joins a group when dropped into the group row', () => {
+      const b = board(['loose', undefined], ['m1', 'g1'], ['m2', 'g1']);
+      expect(parentOf(drop(b, ['loose'], 'g1', 'inside'), 'loose')).toBe('g1');
     });
 
-    it('joins a group when dropped on one of its members', () => {
-      // Dropping beside something is the same statement as dropping on the
-      // folder: this is where it belongs now.
-      const { objects, order } = board(['loose', undefined], ['m1', 'g1']);
-      const plans = planLayerDrop({ order, objects, moving: ['loose'], targetId: 'm1' });
-      expect(parentOf(plans, 'loose')).toBe('g1');
+    it('joins a group when dropped beside one of its members', () => {
+      const b = board(['loose', undefined], ['m1', 'g1'], ['m2', 'g1']);
+      expect(parentOf(drop(b, ['loose'], 'm1', 'after'), 'loose')).toBe('g1');
     });
 
     /**
-     * Leaving a group needs no separate gesture: drop it beside something that
-     * is not in one. That is the whole reason the rule is "inherit the target's
-     * parent" rather than "join the target's group if it has one".
+     * The case the one-zone model could not express.
+     *
+     * Every row on this board belongs to a group, so under the old rule — take
+     * the target row's parent — there was nowhere to aim that meant "out". The
+     * folder's top edge means it, unambiguously, and it is always on screen.
      */
-    it('leaves a group when dropped on a loose row', () => {
-      const { objects, order } = board(['m1', 'g1'], ['m2', 'g1'], ['loose', undefined]);
-      const plans = planLayerDrop({ order, objects, moving: ['m1'], targetId: 'loose' });
-      expect(parentOf(plans, 'm1')).toBeUndefined();
-      // And it really was a change, not an untouched row.
-      expect(touched(plans)).toContain('m1');
+    it('above the folder is not in the folder', () => {
+      const b = board(['m1', 'g1'], ['m2', 'g1']);
+      const plans = drop(b, ['m2'], 'g1', 'before');
+      expect(touched(plans, 'm2')).toBe(true);
+      expect(parentOf(plans, 'm2')).toBeUndefined();
+    });
+
+    it('lands inside an open folder when dropped on its bottom edge', () => {
+      // Its bottom edge sits directly above its own first child, so "below the
+      // header" and "at the top of the folder" are the same place.
+      const b = board(['loose', undefined], ['m1', 'g1']);
+      expect(parentOf(drop(b, ['loose'], 'g1', 'after'), 'loose')).toBe('g1');
+    });
+
+    it('lands below a shut folder when dropped on its bottom edge', () => {
+      // Shut, nothing sits between that edge and the next row, so the same
+      // gesture means the opposite thing — which is what the eye reads.
+      const b = board(['m1', 'g1'], ['m2', 'g1'], ['loose', undefined]);
+      const plans = drop(b, ['loose'], 'g1', 'after', 'g1');
+      expect(parentOf(plans, 'loose')).toBeUndefined();
+      expect(settle(b, plans)).toEqual(['m1', 'm2', 'loose']);
     });
 
     it('moves from one group straight into another', () => {
-      const { objects, order } = board(['a1', 'g1'], ['b1', 'g2']);
-      const plans = planLayerDrop({ order, objects, moving: ['a1'], targetId: 'b1' });
-      expect(parentOf(plans, 'a1')).toBe('g2');
+      const b = board(['a1', 'g1'], ['b1', 'g2']);
+      expect(parentOf(drop(b, ['a1'], 'b1', 'after'), 'a1')).toBe('g2');
     });
 
     it('does not rewrite the parent of rows that were not dragged', () => {
-      const { objects, order } = board(['loose', undefined], ['m1', 'g1'], ['m2', 'g1']);
-      const plans = planLayerDrop({ order, objects, moving: ['loose'], targetId: 'g1', targetIsGroup: true });
+      const b = board(['loose', undefined], ['m1', 'g1'], ['m2', 'g1']);
+      const plans = drop(b, ['loose'], 'g1', 'inside');
       for (const id of ['m1', 'm2']) {
         expect(plans.find((p) => p.id === id)?.changes.parentId).toBeUndefined();
       }
     });
 
-    it('takes a whole group with it when every member is dragged', () => {
-      const { objects, order } = board(['m1', 'g1'], ['m2', 'g1'], ['loose', undefined]);
-      const plans = planLayerDrop({ order, objects, moving: ['m1', 'm2'], targetId: 'loose' });
+    it('takes a whole group out when every member is dragged above its header', () => {
+      const b = board(['m1', 'g1'], ['m2', 'g1'], ['loose', undefined]);
+      const plans = drop(b, ['m1', 'm2'], 'loose', 'after');
       expect(parentOf(plans, 'm1')).toBeUndefined();
       expect(parentOf(plans, 'm2')).toBeUndefined();
     });
 
-    it('does nothing when a group is dropped onto its own member', () => {
-      // Not a cycle to guard against, just a gesture that means nothing.
-      const { objects, order } = board(['m1', 'g1'], ['m2', 'g1']);
-      expect(planLayerDrop({ order, objects, moving: ['m1', 'm2'], targetId: 'm1' })).toEqual([]);
+    it('reordering inside a group is a reorder, not a reparent', () => {
+      const b = board(['m1', 'g1'], ['m2', 'g1'], ['m3', 'g1']);
+      const plans = drop(b, ['m3'], 'm1', 'before');
+      expect(plans.every((p) => p.changes.parentId === undefined)).toBe(true);
+      expect(settle(b, plans)).toEqual(['m3', 'm1', 'm2']);
     });
 
-    it('leaves membership alone when the target is already the same group', () => {
-      const { objects, order } = board(['m1', 'g1'], ['m2', 'g1']);
-      const plans = planLayerDrop({ order, objects, moving: ['m2'], targetId: 'm1' });
-      // Reordering within a group is a reorder, not a reparent.
-      expect(plans.every((p) => p.changes.parentId === undefined)).toBe(true);
+    it('refuses to drop a group into itself', () => {
+      const b = board(['m1', 'g1'], ['m2', 'g1']);
+      expect(drop(b, ['m1', 'm2'], 'g1', 'inside')).toEqual([]);
+    });
+
+    it('merges one group into another when a whole group is dropped inside it', () => {
+      // Groups are flat — a group *is* the parentId its members share — so
+      // there is no nesting to fall back on. Merging is the honest result.
+      const b = board(['a1', 'g1'], ['a2', 'g1'], ['b1', 'g2']);
+      const plans = drop(b, ['a1', 'a2'], 'g2', 'inside');
+      expect(parentOf(plans, 'a1')).toBe('g2');
+      expect(parentOf(plans, 'a2')).toBe('g2');
     });
   });
 
   describe('edges', () => {
     it('returns nothing when nothing is being dragged', () => {
-      const { objects, order } = board(['a', undefined]);
-      expect(planLayerDrop({ order, objects, moving: [], targetId: 'a' })).toEqual([]);
+      const b = board(['a', undefined]);
+      expect(drop(b, [], 'a', 'before')).toEqual([]);
     });
 
     it('ignores a dragged id that is not on the board', () => {
-      const { objects, order } = board(['a', undefined], ['b', undefined]);
-      const plans = planLayerDrop({ order, objects, moving: ['ghost'], targetId: 'a' });
-      expect(plans.every((p) => p.id !== 'ghost')).toBe(true);
+      const b = board(['a', undefined], ['b', undefined]);
+      expect(drop(b, ['ghost'], 'a', 'before')).toEqual([]);
     });
 
-    it('drops at the end when the group it targets has no members yet', () => {
-      const { objects, order } = board(['a', undefined], ['b', undefined]);
-      const plans = planLayerDrop({
-        order, objects, moving: ['a'], targetId: 'empty', targetIsGroup: true,
-      });
-      expect(parentOf(plans, 'a')).toBe('empty');
+    it('drops at the end when the group it targets has no members left', () => {
+      const b = board(['a', undefined], ['m1', 'g1']);
+      // Dragging the group's only member into the group it is already in.
+      expect(drop(b, ['m1'], 'g1', 'inside')).toEqual([]);
     });
 
-    it('never assigns two rows the same z-index', () => {
-      const { objects, order } = board(
-        ['a', undefined], ['b', 'g1'], ['c', 'g1'], ['d', undefined], ['e', undefined]
-      );
-      const plans = planLayerDrop({ order, objects, moving: ['e'], targetId: 'b' });
-      const finalZ = new Map<string, number>();
-      for (const id of order) finalZ.set(id, objects[id].zIndex);
-      for (const p of plans) if (p.changes.zIndex !== undefined) finalZ.set(p.id, p.changes.zIndex);
-      expect(new Set(finalZ.values()).size).toBe(finalZ.size);
+    it('treats a frame like any other row — before and after, never inside', () => {
+      // Frame membership is geometric (`frameId`), so a drop here must not
+      // claim it. The frame is a plain object row and takes a plain parent.
+      const b = board(['frame', undefined], ['a', undefined]);
+      const plans = drop(b, ['a'], 'frame', 'before');
+      expect(settle(b, plans)).toEqual(['a', 'frame']);
+      expect(parentOf(plans, 'a')).toBeUndefined();
     });
+  });
+});
+
+describe('dropZone', () => {
+  it('splits a plain row down the middle, with no dead band', () => {
+    expect(dropZone(0, 32, false)).toBe('before');
+    expect(dropZone(15, 32, false)).toBe('before');
+    expect(dropZone(17, 32, false)).toBe('after');
+    expect(dropZone(32, 32, false)).toBe('after');
+  });
+
+  it('gives a container a generous middle', () => {
+    // "Into the folder" is the harder thing to aim at and usually the reason
+    // you hovered a folder at all.
+    expect(dropZone(2, 32, true)).toBe('before');
+    expect(dropZone(16, 32, true)).toBe('inside');
+    expect(dropZone(30, 32, true)).toBe('after');
+  });
+
+  it('does not divide by a zero height', () => {
+    expect(dropZone(0, 0, true)).toBe('before');
   });
 });

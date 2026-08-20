@@ -114,9 +114,31 @@
    * legible as depth, not so much that the header competes with the work: the
    * canvas is the subject and this is the frame around it.
    */
-  --glass-surface: color-mix(in srgb, var(--gray-000) 78%, transparent);
-  /** A touch of saturation, which is what stops blurred colour going muddy. */
-  --glass-filter: blur(20px) saturate(180%);
+  --glass-surface: color-mix(in srgb, var(--gray-000) 70%, transparent);
+  /**
+   * Blur, saturate, and — the part that makes it hold up over a canvas —
+   * *normalise*.
+   *
+   * A fixed translucency is only ever tuned for one backdrop. This one sits
+   * over an infinite board that might hold a white grid or a full-bleed
+   * photograph, and at 70% the difference between those two arrives almost
+   * intact: the same header reads clean over one and loses its text over the
+   * other. No CSS can measure what is behind an element, but it does not have
+   * to — `brightness` and `contrast` in the backdrop chain **compress the
+   * range before the fill goes over it**, so a dark backdrop is lifted and a
+   * bright one pulled in, and what reaches the fill varies far less than what
+   * went in. That is what the material in every OS actually does, and it is
+   * why theirs stays legible while a plain `blur()` does not.
+   *
+   * Doing that work in the filter is also what buys the transparency back: the
+   * fill can drop from 78% to 70% and read *better*, because it is no longer
+   * the only thing defending the contrast of the text on top.
+   *
+   * `saturate` last of the three, so it acts on the compressed range rather
+   * than on the raw backdrop — otherwise `contrast` immediately eats most of
+   * what it added.
+   */
+  --glass-filter: blur(20px) brightness(1.08) contrast(0.86) saturate(180%);
   /**
    * The lit top edge.
    *
@@ -126,6 +148,15 @@
    * of the effect.
    */
   --glass-edge: rgba(255, 255, 255, 0.55);
+  /**
+   * What the sheet casts onto whatever is under it.
+   *
+   * Tokenised rather than written into `.workspace-header`, because the answer
+   * is different per theme and not by a scale factor: a black shadow on a
+   * near-black canvas is invisible, so the dark theme separates its surfaces
+   * with a deeper, wider cast that reads as distance rather than as darkness.
+   */
+  --glass-cast: 0 1px 2px -1px rgb(0 0 0 / 0.06), 0 6px 16px -8px rgb(0 0 0 / 0.10);
   /* For surfaces that deliberately invert against the theme (toasts, the
      activity feed) rather than hardcoding a dark rgba() in a component. */
   --surface-inverse: rgba(20, 23, 30, 0.94);
@@ -391,9 +422,15 @@
    * saturation for the same reason and less edge light: a bright hairline on
    * a dark surface reads as a border, which is precisely what it must not.
    */
-  --glass-surface: color-mix(in srgb, var(--zinc-900) 82%, transparent);
-  --glass-filter: blur(20px) saturate(160%);
+  --glass-surface: color-mix(in srgb, var(--zinc-900) 74%, transparent);
+  /* The same normalisation, aimed the other way: a dark material has to pull
+     bright content *down* toward itself, where the light one lifts dark
+     content up. `contrast` is above 1 here rather than below it because the
+     danger on a dark board is a washed-out mid-grey mush, not a blown
+     highlight. */
+  --glass-filter: blur(20px) brightness(0.74) contrast(1.08) saturate(160%);
   --glass-edge: rgba(255, 255, 255, 0.08);
+  --glass-cast: 0 1px 3px -1px rgb(0 0 0 / 0.5), 0 10px 28px -12px rgb(0 0 0 / 0.6);
   --surface-sunken: var(--zinc-950);
   --surface-inverse: rgba(244, 244, 245, 0.96);
   --border-inverse: rgba(0, 0, 0, 0.14);
@@ -2301,10 +2338,25 @@ textarea:focus-visible {
   background-color: var(--glass-surface);
   backdrop-filter: var(--glass-filter);
   -webkit-backdrop-filter: var(--glass-filter);
-  border-bottom: 1px solid var(--border-divider);
-  /* The lit top edge, drawn as a shadow so it costs no layout and cannot be
-     confused with the divider below. */
-  box-shadow: inset 0 1px 0 0 var(--glass-edge);
+  /**
+   * The lit edge belongs at the **bottom**, and it was at the top.
+   *
+   * A specular hairline is the whole tell that a surface is glass rather than
+   * paint — and this bar is flush against the top of the viewport, so an inset
+   * highlight on its top edge is drawn along a line no one can see. Every
+   * pixel of it was wasted. The edge that is actually visible is the one where
+   * the material meets the board, and putting the light there is also the
+   * physically right answer: the sheet is lit from above, so its lower lip is
+   * where the light comes out.
+   *
+   * The hard `1px solid --border-divider` that used to sit there is gone with
+   * it. A drawn line under a soft material is the single most common way glass
+   * ends up looking like a screenshot of glass: the eye reads the ruled edge
+   * first and the depth never registers. A short, tight shadow separates the
+   * two surfaces without ever resolving into a line — the header floats over
+   * the canvas instead of being taped to it.
+   */
+  box-shadow: inset 0 -1px 0 0 var(--glass-edge), var(--glass-cast);
   display: flex;
   align-items: center;
   justify-content: space-between;
@@ -2324,7 +2376,11 @@ textarea:focus-visible {
 @supports not ((backdrop-filter: blur(1px)) or (-webkit-backdrop-filter: blur(1px))) {
   .workspace-header {
     background-color: var(--surface-elevated);
+    /* Opaque, so the specular edge has nothing to be specular about — but the
+       header still has to separate from the canvas, and without a backdrop
+       doing it a plain divider is the honest tool. */
     box-shadow: none;
+    border-bottom: 1px solid var(--border-divider);
   }
 }
 
@@ -3771,8 +3827,8 @@ textarea:focus-visible {
 }
 
 .ctx-btn--danger:hover:not(:disabled) {
-  background: color-mix(in srgb, var(--danger, #ef4444) 14%, transparent);
-  color: var(--danger, #ef4444);
+  background: color-mix(in srgb, var(--status-danger) 14%, transparent);
+  color: var(--status-danger);
 }
 
 /* The type glyph that opens the rail. Tertiary because it is a label, not a
@@ -3900,8 +3956,8 @@ textarea:focus-visible {
 }
 
 .ctx-menu-item--danger:hover {
-  background: color-mix(in srgb, var(--danger, #ef4444) 14%, transparent);
-  color: var(--danger, #ef4444);
+  background: color-mix(in srgb, var(--status-danger) 14%, transparent);
+  color: var(--status-danger);
 }
 
 .ctx-menu-item__key {
@@ -5793,6 +5849,8 @@ html.dark-theme,
   font-size: var(--text-xs);
   font-weight: var(--weight-medium);
   transition: background-color var(--motion-hover);
+  /* The insertion line hangs off the row it names. */
+  position: relative;
 }
 
 .layer-row:hover { background: var(--surface-hover); }
@@ -5860,6 +5918,52 @@ html.dark-theme,
 .layer-row.is-drop-into {
   background: var(--accent-quiet);
   box-shadow: inset 0 0 0 2px var(--brand-orange);
+}
+
+/**
+ * Where the dragged rows will land.
+ *
+ * Drawn in the gap between rows rather than on either of them, and indented to
+ * the level it would insert at — which is the half that makes it readable.
+ * Vertical position says *where in the order*; the left edge says *whose child*,
+ * and without the second one the two most different outcomes of a drag near a
+ * group boundary look identical at the moment you have to choose between them.
+ *
+ * The knob on the left end is what distinguishes it from a divider at a glance:
+ * a plain 2px rule reads as furniture, a rule with a terminal reads as a caret.
+ */
+.layer-drop-line {
+  position: absolute;
+  right: 6px;
+  height: 2px;
+  border-radius: 1px;
+  background: var(--brand-orange);
+  pointer-events: none;
+  z-index: 2;
+}
+
+.layer-drop-line[data-edge='before'] { top: -3px; }
+/* Rows sit 32px tall in a 36px pitch, so -3px lands in the 4px gap. */
+.layer-drop-line[data-edge='after'] { bottom: -3px; }
+
+.layer-drop-line::before {
+  content: '';
+  position: absolute;
+  left: -3px;
+  top: -2px;
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  border: 2px solid var(--brand-orange);
+  background: var(--surface-primary);
+  box-sizing: border-box;
+}
+
+/* A folder reads as a folder: the header carries the group's own weight, and
+   its members are tied to it by a hairline rather than by indentation alone.
+   Indentation on its own is ambiguous at a glance once frames also nest. */
+.layer-row--group {
+  color: var(--text-primary);
 }
 
 .layer-row__name {
@@ -8724,7 +8828,7 @@ body[data-zen='physics'] .forces-handle { bottom: 32px; }
    menu of eight neutral rows, which is the opposite of the weighting — it is
    the item people least often want. */
 .ctxmenu__item.is-danger:hover:not(:disabled) {
-  background: var(--danger-quiet, rgba(239, 68, 68, 0.1));
+  background: color-mix(in srgb, var(--status-danger) 10%, transparent);
   color: var(--text-danger, #B42318);
 }
 

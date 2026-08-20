@@ -10,7 +10,7 @@ import { nodeLabel } from '../engine/model/nodeLabel';
 import { paintColor } from '../engine/model/paint';
 import { readableOn } from '../engine/model/color';
 import { getColorForUser } from '../engine/presence/ColorPalette';
-import { planLayerDrop } from '../engine/model/layerDrop';
+import { dropZone, planLayerDrop, type DropRow, type DropWhere } from '../engine/model/layerDrop';
 import { THEMES } from './canvas/renderers/StickyRenderer';
 import { tagFilter } from '../engine/model/tagFilter';
 import { tagCounts } from '../engine/model/tags';
@@ -61,6 +61,7 @@ export const LayersPanel: React.FC<LayersPanelProps> = ({ selectedIds, overrideO
   useEffect(() => {
     tagFilter.prune(allTags.map((t) => t.tag));
   }, [allTags]);
+
   // The search field, and the type it is narrowed to. Both are a way of
   // looking rather than a fact about the board, so neither goes near the CRDT
   // — the same rule the frame-collapse set follows.
@@ -68,7 +69,14 @@ export const LayersPanel: React.FC<LayersPanelProps> = ({ selectedIds, overrideO
   const [typeFilter, setTypeFilter] = useState<LayerTypeFilter>('all');
   const searchRef = useRef<HTMLInputElement>(null);
   const [draggedId, setDraggedId] = useState<string | null>(null);
-  const [dragOverId, setDragOverId] = useState<string | null>(null);
+  /**
+   * The row the drag is over, and which of its three zones.
+   *
+   * One piece of state rather than two, because "which row" and "which edge of
+   * it" are never meaningfully known apart — a row id with a stale edge is the
+   * insertion line pointing at the wrong gap, which is worse than none.
+   */
+  const [dropHint, setDropHint] = useState<{ id: string; where: DropWhere } | null>(null);
   const [editingTitleId, setEditingTitleId] = useState<string | null>(null);
   const [titleInput, setTitleInput] = useState('');
   // Which frames are folded shut. A way of looking, not a fact about the
@@ -160,30 +168,40 @@ export const LayersPanel: React.FC<LayersPanelProps> = ({ selectedIds, overrideO
   /**
    * Dragging rows: reorder, and move between groups.
    *
-   * ## What this replaces
+   * ## Three zones, not one target
    *
-   * The old version could only reorder. There was no way to drag an object
-   * *into* a group, *out of* one, or from one group to another — the panel
-   * showed a hierarchy it could not edit — and the group row carried no drag
-   * handlers at all, so a group could be neither picked up nor dropped onto.
+   * A row is not one drop target but three, which is how Photoshop and
+   * Illustrator both work and the reason their layer panels feel exact:
    *
-   * It also rewrote `zIndex` on **every node in the document**, one
-   * `updateNode` per node, outside any transaction. On a five-hundred-object
-   * board that is five hundred CRDT updates, five hundred store notifications,
-   * five hundred renders and five hundred undo steps, for moving one row.
+   *  - its **top edge** — land above it, as its sibling
+   *  - its **bottom edge** — land below it, as its sibling
+   *  - the **middle of a group** — go inside it
    *
-   * ## What a drop means
+   * The version this replaces asked only "which row did you drop on?" and read
+   * membership off that row's parent. That makes position and parent the same
+   * answer, and so leaves no gesture at all for "put this at the top level,
+   * between two grouped rows" — every row you could aim at was in a group, so
+   * every drop joined one. Getting an object *out* meant finding an ungrouped
+   * row elsewhere to aim at, and on a board that had none it could not be done.
    *
-   * The target row answers "where does this belong", which is the question a
-   * layers panel exists to let you change:
+   * Out of a group is now the group header's own top edge: above the folder,
+   * therefore not in it. Always on screen, and it means one thing.
    *
-   *  - onto a **group** row — join that group
-   *  - onto a **member** of a group — join that group, and sit beside it
-   *  - onto a **loose** row — leave whatever group it was in
-   *
-   * That is the rule every layer panel uses, and it means leaving a group needs
-   * no separate gesture: you drop it next to something that is not in one.
+   * The arithmetic is `planLayerDrop`, which is pure and tested — including the
+   * cases that are tedious to reach by hand, like dropping the last row of a
+   * group or dropping a folder onto itself.
    */
+
+  /**
+   * What is being dragged, captured at `dragstart`.
+   *
+   * A ref rather than state because the drop handler needs it *now*: reading
+   * `selectedIds` at drop time worked only because React had flushed the
+   * selection the group header sets when you pick it up, which is a race that
+   * happened to be winnable rather than a rule.
+   */
+  const dragPayloadRef = useRef<string[]>([]);
+
   const dragIdsFor = (id: string): string[] => {
     // Dragging one of several selected rows moves the whole selection, which
     // is what makes reordering a multi-select possible at all.
@@ -191,47 +209,153 @@ export const LayersPanel: React.FC<LayersPanelProps> = ({ selectedIds, overrideO
     return [id];
   };
 
-  const handleDragStart = (e: React.DragEvent, id: string) => {
-    setDraggedId(id);
+  const beginDrag = (e: React.DragEvent, ids: string[], label: string) => {
+    dragPayloadRef.current = ids;
+    setDraggedId(ids[0] ?? null);
     e.dataTransfer.effectAllowed = 'move';
     // Firefox refuses to start a drag without payload.
-    e.dataTransfer.setData('text/plain', id);
+    e.dataTransfer.setData('text/plain', label);
   };
 
-  const handleDragOver = (e: React.DragEvent, id: string) => {
+  const handleDragStart = (e: React.DragEvent, id: string) => {
+    beginDrag(e, dragIdsFor(id), id);
+  };
+
+  /**
+   * Scroll the list while a drag hovers its edges.
+   *
+   * Without this a virtualized list is a trap: the row you want to drop on is
+   * not merely off screen, it is not in the DOM, so there is nothing to hover
+   * and no way to reach it — a drag can only ever land within one screenful of
+   * where it started. HTML5 drag suppresses wheel scrolling over the source, so
+   * the panel has to do it.
+   *
+   * Speed scales with how far into the margin the pointer is, which is what
+   * makes it controllable: rest at the edge to creep, push past it to travel.
+   */
+  const autoScrollRef = useRef<number | null>(null);
+  const scrollVelocityRef = useRef(0);
+
+  const stopAutoScroll = () => {
+    if (autoScrollRef.current !== null) cancelAnimationFrame(autoScrollRef.current);
+    autoScrollRef.current = null;
+    scrollVelocityRef.current = 0;
+  };
+
+  const stepAutoScroll = () => {
+    const el = containerRef.current;
+    if (!el || scrollVelocityRef.current === 0) {
+      autoScrollRef.current = null;
+      return;
+    }
+    el.scrollTop += scrollVelocityRef.current;
+    autoScrollRef.current = requestAnimationFrame(stepAutoScroll);
+  };
+
+  const updateAutoScroll = (clientY: number) => {
+    const el = containerRef.current;
+    if (!el) return;
+    const box = el.getBoundingClientRect();
+    const MARGIN = 44;
+    const MAX_SPEED = 18;
+    let v = 0;
+    if (clientY < box.top + MARGIN) v = -MAX_SPEED * Math.min(1, (box.top + MARGIN - clientY) / MARGIN);
+    else if (clientY > box.bottom - MARGIN) v = MAX_SPEED * Math.min(1, (clientY - (box.bottom - MARGIN)) / MARGIN);
+    scrollVelocityRef.current = v;
+    if (v !== 0 && autoScrollRef.current === null) autoScrollRef.current = requestAnimationFrame(stepAutoScroll);
+    if (v === 0) stopAutoScroll();
+  };
+
+  /**
+   * Open a folder the drag has been resting on.
+   *
+   * A shut group can only take a drop as a whole — there is no way to say
+   * "third from the top, inside" when you cannot see its members. Hovering to
+   * open it is the gesture every file manager uses, and the delay is what keeps
+   * it from firing on every folder a drag merely passes over.
+   */
+  const springRef = useRef<{ id: string; timer: number } | null>(null);
+
+  const cancelSpring = () => {
+    if (springRef.current) window.clearTimeout(springRef.current.timer);
+    springRef.current = null;
+  };
+
+  const armSpring = (id: string) => {
+    if (springRef.current?.id === id) return;
+    cancelSpring();
+    if (!collapsedFrames.has(id)) return;
+    springRef.current = {
+      id,
+      timer: window.setTimeout(() => {
+        springRef.current = null;
+        setCollapsedFrames((prev) => {
+          const next = new Set(prev);
+          next.delete(id);
+          return next;
+        });
+      }, 600),
+    };
+  };
+
+  /**
+   * @param isContainer Whether this row can be dropped *into*. Groups can;
+   *   frames deliberately cannot — a frame owns its children through `frameId`,
+   *   which is maintained from the board's geometry, so writing it from here
+   *   would claim membership of a frame the object is nowhere near.
+   */
+  const handleDragOver = (e: React.DragEvent, id: string, isContainer = false) => {
     e.preventDefault();
-    if (id !== draggedId) setDragOverId(id);
+    // The tree itself handles the empty space past the last row; a row that
+    // let the event through would have its answer overwritten by that one.
+    e.stopPropagation();
+    e.dataTransfer.dropEffect = 'move';
+    updateAutoScroll(e.clientY);
+    if (dragPayloadRef.current.includes(id)) {
+      setDropHint(null);
+      return;
+    }
+    const box = e.currentTarget.getBoundingClientRect();
+    const where = dropZone(e.clientY - box.top, box.height, isContainer);
+    if (isContainer && where === 'inside') armSpring(id);
+    else cancelSpring();
+    setDropHint((prev) => (prev?.id === id && prev.where === where ? prev : { id, where }));
   };
 
   /** A cancelled drag must not leave a row stranded at half opacity. */
   const handleDragEnd = () => {
     setDraggedId(null);
-    setDragOverId(null);
+    setDropHint(null);
+    dragPayloadRef.current = [];
+    stopAutoScroll();
+    cancelSpring();
   };
 
   /**
-   * @param targetId  The row dropped onto: a node id, or a group id.
-   * @param targetIsGroup Whether that id names a group rather than a node.
+   * Nothing survives the panel closing mid-drag.
+   *
+   * Collapsing the panel while a row is in the air leaves an rAF loop
+   * scrolling a detached element and a timer about to unfold a group that is
+   * no longer rendered — neither visible, both real. Both closures here read
+   * only refs, so the ones captured on the first render stay correct.
    */
-  const handleDrop = (e: React.DragEvent, targetId: string, targetIsGroup = false) => {
-    e.preventDefault();
-    setDragOverId(null);
-    setDraggedId(null);
-    if (!draggedId || draggedId === targetId) return;
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  useEffect(() => () => { stopAutoScroll(); cancelSpring(); }, []);
 
-    /**
-     * The arithmetic is `planLayerDrop`, which is pure and tested.
-     *
-     * It returns only the rows that actually change, in one batch — the
-     * previous version wrote `zIndex` on every node in the document, one
-     * `updateNode` each, outside any transaction.
-     */
+  const handleDrop = (e: React.DragEvent) => {
+    e.preventDefault();
+    e.stopPropagation();
+    const moving = dragPayloadRef.current;
+    const target = dropHint;
+    handleDragEnd();
+    if (!target || moving.length === 0) return;
+
     const patches = planLayerDrop({
       order: sortedObjects.map((o) => o.id),
       objects,
-      moving: dragIdsFor(draggedId),
-      targetId,
-      targetIsGroup,
+      rows: dropRows,
+      moving,
+      target,
     });
 
     if (patches.length > 0) {
@@ -249,6 +373,27 @@ export const LayersPanel: React.FC<LayersPanelProps> = ({ selectedIds, overrideO
     const obj = objects[id];
     if (!obj) return;
     updateNode(id, { hidden: !obj.hidden });
+  };
+
+  /**
+   * Show only this, or put everything back.
+   *
+   * Alt-clicking an eye is the gesture Photoshop has had for thirty years, and
+   * it is the fastest way to answer "which of these forty things is the one I
+   * am looking at" — the question a layers panel exists for. One press
+   * isolates, a second restores, because a solo you cannot undo in the same
+   * motion is a solo nobody uses twice.
+   *
+   * One transaction, so the whole board changing state is one undo step rather
+   * than forty.
+   */
+  const soloVisibility = (id: string) => {
+    const others = sortedObjects.filter((o: AnyNode) => o.id !== id);
+    const alreadySolo = others.every((o: AnyNode) => o.hidden) && !objects[id]?.hidden;
+    applyNodePatches([
+      { id, changes: { hidden: false } },
+      ...others.map((o: AnyNode) => ({ id: o.id, changes: { hidden: !alreadySolo } })),
+    ]);
   };
 
   /**
@@ -398,6 +543,26 @@ export const LayersPanel: React.FC<LayersPanelProps> = ({ selectedIds, overrideO
     emit(roots, 0);
     return rows;
   }, [sortedObjects, objects, collapsedFrames, matches]);
+
+  /**
+   * The displayed rows, as the drop planner needs to see them.
+   *
+   * The planner cannot work from the node table alone: a group header is a row
+   * but not a node — a group is only ever the `parentId` its members share —
+   * and whether it is folded shut changes what its bottom edge means. Shut,
+   * nothing sits between that edge and the next row, so dropping there lands
+   * *below the whole group*; open, its own first child is directly beneath, so
+   * the same gesture lands *inside*.
+   */
+  const dropRows: DropRow[] = React.useMemo(
+    () =>
+      flatRows.map((row) =>
+        row.kind === 'group'
+          ? { id: row.groupId, kind: 'group' as const, collapsed: collapsedFrames.has(row.groupId) }
+          : { id: row.obj.id, kind: 'object' as const }
+      ),
+    [flatRows, collapsedFrames]
+  );
 
   /**
    * The object rows in the order they are *shown*.
@@ -685,6 +850,26 @@ export const LayersPanel: React.FC<LayersPanelProps> = ({ selectedIds, overrideO
           handleBulkDelete();
         }
         return;
+      case 'Home':
+      case 'End': {
+        // The two keys every list has and this one did not. On a board with
+        // four hundred layers, "the top of the stack" was a scroll.
+        const ids = visibleObjectIds;
+        if (ids.length === 0) return;
+        e.preventDefault();
+        const id = e.key === 'Home' ? ids[0] : ids[ids.length - 1];
+        if (e.shiftKey && setSelectedIds && cursorId) {
+          const a = ids.indexOf(lastClickedRef.current ?? cursorId);
+          const b = ids.indexOf(id);
+          const [start, end] = a < b ? [a, b] : [b, a];
+          setSelectedIds(ids.slice(start, end + 1));
+        } else if (setSelectedIds) {
+          setSelectedIds([id]);
+          lastClickedRef.current = id;
+        }
+        revealRow(id);
+        return;
+      }
       case 'a':
       case 'A':
         if (mod && setSelectedIds) {
@@ -692,8 +877,34 @@ export const LayersPanel: React.FC<LayersPanelProps> = ({ selectedIds, overrideO
           setSelectedIds(visibleObjectIds);
         }
         return;
+      /**
+       * Group and ungroup, from the panel that draws groups.
+       *
+       * They were on the canvas and nowhere else, so the one surface whose
+       * entire subject is the hierarchy could not create a level of it — you
+       * had to click back onto the board, group there, and come back. Same
+       * keys as the canvas and as every other tool: Cmd+G, Cmd+Shift+G.
+       */
+      case 'g':
+      case 'G': {
+        if (!mod) return;
+        e.preventDefault();
+        if (e.shiftKey) {
+          if (selectedIds.length > 0) editor.ungroupNodes(selectedIds);
+          return;
+        }
+        if (selectedIds.length > 1) editor.groupNodes(selectedIds);
+        return;
+      }
       case 'Escape':
         e.preventDefault();
+        // A drag in flight is the thing Escape most obviously cancels, and
+        // clearing the selection out from under it would be the wrong answer
+        // to the wrong question.
+        if (draggedId) {
+          handleDragEnd();
+          return;
+        }
         setSelectedIds?.([]);
         lastClickedRef.current = null;
         return;
@@ -705,6 +916,8 @@ export const LayersPanel: React.FC<LayersPanelProps> = ({ selectedIds, overrideO
     const activeEditor = activeEditorsMap.get(obj.id);
     const isEditingThisTitle = editingTitleId === obj.id;
     const isSelected = selectedIds.includes(obj.id);
+    // A plain row has no `inside`, so the hint is always an edge.
+    const rowEdge = dropHint && dropHint.id === obj.id ? dropHint.where : null;
 
     return (
       <div
@@ -716,8 +929,8 @@ export const LayersPanel: React.FC<LayersPanelProps> = ({ selectedIds, overrideO
         draggable
         onDragStart={(e) => handleDragStart(e, obj.id)}
         onDragOver={(e) => handleDragOver(e, obj.id)}
-        onDragLeave={() => setDragOverId(null)}
-        onDrop={(e) => handleDrop(e, obj.id)}
+        onDragLeave={() => cancelSpring()}
+        onDrop={handleDrop}
         onDragEnd={handleDragEnd}
         onClick={(e) => handleRowClick(e, obj.id)}
         className={`layer-row${isSelected ? ' is-selected' : ''}${obj.id === cursorId ? ' is-cursor' : ''}`}
@@ -728,24 +941,33 @@ export const LayersPanel: React.FC<LayersPanelProps> = ({ selectedIds, overrideO
           height: ROW_HEIGHT - ROW_GAP,
           marginBottom: ROW_GAP,
           color: obj.locked ? 'var(--text-secondary)' : 'var(--text-primary)',
-          /**
-           * The drop indicator is a shadow, not a border.
-           *
-           * It was `2px solid transparent`, reserved on **every** row so the
-           * real one would not shift the layout when it appeared. A transparent
-           * border is not nothing: it is a two-pixel strip through which the
-           * panel behind shows, sitting across the top of a row that has its
-           * own background — so every selected and every hovered row wore a
-           * pale line along its top edge, permanently, for a drag that was not
-           * happening.
-           *
-           * An outset shadow draws in the gap between rows, takes no layout
-           * space at all, and so needs no placeholder to reserve.
-           */
-          boxShadow: dragOverId === obj.id ? '0 -2px 0 0 var(--brand-orange)' : undefined,
-          opacity: obj.hidden ? 0.45 : (draggedId === obj.id ? 0.5 : 1),
+          opacity: obj.hidden ? 0.45 : (draggedId === obj.id ? 0.4 : 1),
         }}
       >
+        {/**
+          * Where the row would land, drawn in the gap rather than on the row.
+          *
+          * It was a `2px solid transparent` border reserved on *every* row so
+          * the real one would not shift the layout when it appeared — and a
+          * transparent border is not nothing, it is a two-pixel strip through
+          * which the panel shows, across the top of a row that has its own
+          * background. Every selected and every hovered row therefore wore a
+          * pale line along its top edge, permanently, for a drag that was not
+          * happening.
+          *
+          * Absolutely positioned, so it costs no layout at all and can be
+          * *indented to the level it would insert at* — which is the part that
+          * makes it readable: the line's left edge says which group you are
+          * dropping into as clearly as its vertical position says where.
+          */}
+        {rowEdge && (
+          <span
+            className="layer-drop-line"
+            data-edge={rowEdge}
+            style={{ left: 12 + indent }}
+            aria-hidden
+          />
+        )}
         {/* Every row reserves the twisty slot, whether or not it has one, so a
             frame's icon sits on the same vertical line as its siblings' rather
             than shunted right by the width of a chevron. */}
@@ -844,8 +1066,12 @@ export const LayersPanel: React.FC<LayersPanelProps> = ({ selectedIds, overrideO
           <div className="layer-row__actions" data-sticky={obj.hidden || obj.locked}>
             <button
               className="layer-row__btn"
-              onClick={(e) => { e.stopPropagation(); toggleVisibility(obj.id); }}
-              data-tooltip={obj.hidden ? 'Show' : 'Hide'}
+              onClick={(e) => {
+                e.stopPropagation();
+                if (e.altKey) soloVisibility(obj.id);
+                else toggleVisibility(obj.id);
+              }}
+              data-tooltip={obj.hidden ? 'Show (Alt: show only this)' : 'Hide (Alt: show only this)'}
               aria-label={obj.hidden ? `Show ${getName(obj)}` : `Hide ${getName(obj)}`}
               aria-pressed={obj.hidden}
             >
@@ -871,7 +1097,7 @@ export const LayersPanel: React.FC<LayersPanelProps> = ({ selectedIds, overrideO
       {/* HEADER */}
       <div style={{ display: 'flex', alignItems: 'center', gap: '8px', padding: '16px', borderBottom: '1px solid var(--border-divider)', background: 'var(--surface-elevated)', position: 'sticky', top: 0, zIndex: 10 }}>
         <Layers size={16} color="var(--text-secondary)" />
-        <span style={{ color: 'var(--text-primary)', fontWeight: 600, fontSize: '13px', flex: 1 }}>Layers</span>
+        <span style={{ color: 'var(--text-primary)', fontWeight: 600, fontSize: 'var(--text-sm)', flex: 1 }}>Layers</span>
         {onCollapse && selectedIds.length <= 1 && (
           <button
             className="btn-icon"
@@ -885,11 +1111,11 @@ export const LayersPanel: React.FC<LayersPanelProps> = ({ selectedIds, overrideO
         )}
         {selectedIds.length > 1 && (
           <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
-            <span style={{ fontSize: '11px', color: 'var(--text-secondary)', fontWeight: 600 }}>{selectedIds.length} selected</span>
+            <span style={{ fontSize: 'var(--text-2xs)', color: 'var(--text-secondary)', fontWeight: 600 }}>{selectedIds.length} selected</span>
             <button className="btn-icon" style={{ padding: '4px' }} onClick={handleBulkDuplicate} data-tooltip="Duplicate selected (Cmd+D)">
               <Copy size={14} />
             </button>
-            <button className="btn-icon" style={{ padding: '4px', color: '#ef4444' }} onClick={handleBulkDelete} data-tooltip="Delete selected (Del)">
+            <button className="btn-icon" style={{ padding: '4px', color: 'var(--status-danger)' }} onClick={handleBulkDelete} data-tooltip="Delete selected (Del)">
               <Trash2 size={14} />
             </button>
           </div>
@@ -1008,11 +1234,33 @@ export const LayersPanel: React.FC<LayersPanelProps> = ({ selectedIds, overrideO
         tabIndex={0}
         aria-activedescendant={cursorId ? `layer-row-${cursorId}` : undefined}
         onKeyDown={handleTreeKeyDown}
+        /**
+         * The empty space below the last row is a drop target too.
+         *
+         * "Send it to the back" is one of the two things anyone drags a layer
+         * for, and aiming at the last row's bottom sliver to say it is a
+         * precision task for something that should be the easiest drop on the
+         * panel. Releasing anywhere in the space beneath the list means it.
+         */
+        onDragOver={(e) => {
+          if (dragPayloadRef.current.length === 0) return;
+          e.preventDefault();
+          e.dataTransfer.dropEffect = 'move';
+          updateAutoScroll(e.clientY);
+          cancelSpring();
+          const last = [...dropRows].reverse().find((r) => !dragPayloadRef.current.includes(r.id));
+          if (!last) return;
+          setDropHint((prev) =>
+            prev?.id === last.id && prev.where === 'after' ? prev : { id: last.id, where: 'after' }
+          );
+        }}
+        onDrop={handleDrop}
+        onDragEnd={handleDragEnd}
         style={{ padding: '8px', overflowY: 'auto', overflowX: 'hidden', flex: 1 }}
         className="custom-scrollbar layers-tree"
       >
         {sortedObjects.length === 0 ? (
-          <div style={{ color: 'var(--text-secondary)', textAlign: 'center', marginTop: '40px', fontSize: '13px' }}>
+          <div style={{ color: 'var(--text-secondary)', textAlign: 'center', marginTop: '40px', fontSize: 'var(--text-sm)' }}>
             Canvas is empty
           </div>
         ) : flatRows.length === 0 ? (
@@ -1060,6 +1308,8 @@ export const LayersPanel: React.FC<LayersPanelProps> = ({ selectedIds, overrideO
 
                 const memberIds = item.members.map((m) => m.id);
                 const groupSelected = memberIds.length > 0 && memberIds.every((id) => selectedIds.includes(id));
+                const hint = dropHint && dropHint.id === item.groupId ? dropHint.where : null;
+                const groupEdge = hint === 'inside' ? null : hint;
                 // Every member hidden, matching what the toggle acts on.
                 const groupHidden = item.members.length > 0 && item.members.every((m) => m.hidden);
 
@@ -1080,24 +1330,44 @@ export const LayersPanel: React.FC<LayersPanelProps> = ({ selectedIds, overrideO
                     onDragStart={(e) => {
                       // Picking up the header moves the whole group, which is
                       // what grabbing a folder means everywhere else.
-                      setDraggedId(memberIds[0] ?? item.groupId);
+                      beginDrag(e, memberIds, item.groupId);
                       if (setSelectedIds) setSelectedIds(memberIds);
-                      e.dataTransfer.effectAllowed = 'move';
-                      e.dataTransfer.setData('text/plain', item.groupId);
                     }}
-                    onDragOver={(e) => handleDragOver(e, item.groupId)}
-                    onDragLeave={() => setDragOverId(null)}
-                    onDrop={(e) => handleDrop(e, item.groupId, true)}
+                    onDragOver={(e) => handleDragOver(e, item.groupId, true)}
+                    onDragLeave={() => cancelSpring()}
+                    onDrop={handleDrop}
                     onDragEnd={handleDragEnd}
                     onClick={(e) => handleGroupClick(e, memberIds)}
-                    className={`layer-row${groupSelected ? ' is-selected' : ''}${dragOverId === item.groupId ? ' is-drop-into' : ''}`}
+                    className={`layer-row layer-row--group${groupSelected ? ' is-selected' : ''}${
+                      hint === 'inside' ? ' is-drop-into' : ''
+                    }`}
                     style={{
                       padding: '0 8px 0 ' + (12 + item.indent) + 'px',
                       height: ROW_HEIGHT - ROW_GAP,
                       marginBottom: ROW_GAP,
                       fontWeight: 'var(--weight-semibold)',
+                      opacity: memberIds.includes(draggedId ?? '') ? 0.4 : 1,
                     }}
                   >
+                    {/* The folder's top edge is how something leaves the group:
+                        above the folder is not in the folder. Its bottom edge
+                        means inside when open and below-the-whole-group when
+                        shut, which is what the eye reads in each case. */}
+                    {groupEdge && (
+                      <span
+                        className="layer-drop-line"
+                        data-edge={groupEdge}
+                        // Its bottom edge indents to the members' level when
+                        // the folder is open, because that is where the drop
+                        // would land — inside, at the top.
+                        style={{
+                          left:
+                            12 + item.indent +
+                            (groupEdge === 'after' && !collapsedFrames.has(item.groupId) ? 20 : 0),
+                        }}
+                        aria-hidden
+                      />
+                    )}
                     <button
                       onClick={(e) => { e.stopPropagation(); toggleFrameCollapsed(item.groupId); }}
                       className="layer-row__btn"
