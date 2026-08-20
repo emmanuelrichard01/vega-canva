@@ -44,6 +44,12 @@ import {
 import { END_CAP_KINDS, MAX_END_SCALE, MIN_END_SCALE, type EndCapKind } from '../model/connectorEnds';
 import { FILL_STYLES, SKETCH_LEVELS } from '../model/rough';
 import { getColorForUser } from '../presence/ColorPalette';
+import { MATERIAL_IDS, type MaterialId } from '../../utils/behaviorSystem';
+
+/** Whether a raw value names a material the simulation actually knows. */
+function isMaterialId(value: unknown): value is MaterialId {
+  return typeof value === 'string' && (MATERIAL_IDS as readonly string[]).includes(value);
+}
 import { packAdjustments, readAdjustments } from '../model/imageAdjustments';
 
 /**
@@ -771,15 +777,35 @@ export function normalizeNode(raw: any, id?: string): AnyNode {
     // Layers panel have always gated on `hidden`.
     hidden: bool(raw?.hidden, raw?.visible === false),
     title: typeof raw?.title === 'string' ? raw.title : undefined,
-    // Absent means "this type's default material", so documents written before
-    // materials existed keep behaving exactly as they did.
-    material: typeof raw?.material === 'string' ? raw.material : undefined,
+    /**
+     * Absent means "this type's default material", so documents written before
+     * materials existed keep behaving exactly as they did.
+     *
+     * Checked against the real set rather than accepting any string. The
+     * schema now types this as `MaterialId`, and a boundary that lets an
+     * arbitrary string through would be handing every consumer a value the type
+     * says cannot exist — which is the one thing this file promises not to do.
+     * An unrecognised material becomes absent, so the node falls back to its
+     * type's default instead of carrying a name nothing can look up.
+     */
+    material: isMaterialId(raw?.material) ? raw.material : undefined,
     createdBy: str(raw?.createdBy, 'unknown'),
     createdByName: typeof raw?.createdByName === 'string' ? raw.createdByName : raw?.metadata?.authorName,
     createdByColor:
       typeof raw?.createdByColor === 'string' ? raw.createdByColor : raw?.metadata?.authorColor,
     createdAt: num(raw?.createdAt, now),
     updatedAt: num(raw?.updatedAt, num(raw?.createdAt, now)),
+    /**
+     * Left absent rather than defaulted to the creator.
+     *
+     * A node written before `updatedBy` existed genuinely has no answer, and
+     * filling it in with `createdBy` would manufacture a fact — the panel would
+     * then state that Ada made the last edit on every node in every old
+     * document, which is exactly the confident wrong answer this boundary is
+     * supposed to prevent. Absent means "not recorded", and the panel says so.
+     */
+    updatedBy: typeof raw?.updatedBy === 'string' ? raw.updatedBy : undefined,
+    updatedByName: typeof raw?.updatedByName === 'string' ? raw.updatedByName : undefined,
   };
 
   switch (type) {

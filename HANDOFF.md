@@ -74,7 +74,7 @@ Verify in ~30 seconds:
 
 ```bash
 npx tsc --noEmit -p apps/frontend/tsconfig.app.json   # must be silent
-npx vitest run --root apps/frontend                   # 955 tests, 56 files
+npx vitest run --root apps/frontend                   # 963 tests, 56 files
 npx oxlint apps/frontend/src                          # 16 cosmetic warnings, exit 0
 npm run build -w apps/frontend                        # must succeed
 ```
@@ -89,7 +89,7 @@ history were vacuous for exactly that reason. Use `tsconfig.app.json`, or
 | --- | --- |
 | Branch | `rebuild/time-travel-and-physics`, nothing pushed, nothing merged |
 | Typecheck | clean |
-| Tests | **955** across 56 files |
+| Tests | **963** across 56 files |
 | Lint | exits 0; 16 `only-export-components` warnings, all cosmetic |
 | Build | clean, 1.55MB JS (gzip 488KB) + 128KB CSS (gzip 21KB) — still no code splitting |
 

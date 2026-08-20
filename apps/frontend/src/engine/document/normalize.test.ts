@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import { isCanonical, normalizeNode } from './normalize';
+import { MATERIAL_IDS } from '../../utils/behaviorSystem';
 import type { ShapeNode, StickyNode, TextNode, PathNode, ImageNode, AudioNode } from '../model/schema';
 
 /**
@@ -361,6 +362,19 @@ describe('normalizeNode — legacy shapes', () => {
     // before materials existed behaving exactly as they did.
     expect(normalizeNode({ id: 'm2', type: 'sticky' }).material).toBeUndefined();
     expect(normalizeNode({ id: 'm3', type: 'sticky', material: 42 }).material).toBeUndefined();
+  });
+
+  it('drops a material name the simulation does not know', () => {
+    // The schema types this as `MaterialId`, so letting an arbitrary string
+    // through would hand every consumer a value the type says cannot exist.
+    // Absent is the honest answer: the node falls back to its type's default
+    // rather than carrying a name nothing can look up.
+    expect(normalizeNode({ id: 'm4', type: 'sticky', material: 'adamantium' }).material).toBeUndefined();
+    expect(normalizeNode({ id: 'm5', type: 'sticky', material: 'Stone' }).material).toBeUndefined();
+    // Every real one still survives.
+    for (const id of MATERIAL_IDS) {
+      expect(normalizeNode({ id: `m-${id}`, type: 'sticky', material: id }).material, id).toBe(id);
+    }
   });
 
   it('maps the legacy artboard type onto frame', () => {

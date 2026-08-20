@@ -8,7 +8,7 @@ import {
   Strikethrough, Type, Underline, Unlock, PanelRightClose,
   CornerDownRight, Minus, Spline,
 } from 'lucide-react';
-import { applyNodePatches, lowestZIndex, nextZIndex, provider, updateNodes } from '../engine/document';
+import { applyNodePatches, localAuthorId, lowestZIndex, nextZIndex, provider, updateNodes } from '../engine/document';
 import { useStore } from '../hooks/useStore';
 import { APPEARANCE_TYPES } from '../engine/objects/appearanceTypes';
 import { objectRegistry } from '../engine/objects';
@@ -96,7 +96,7 @@ import {
   activeTextEffects,
   isTextPresetActive,
 } from './panel/textEffectPresets';
-import { MATERIALS, MATERIAL_IDS, resolveMaterial } from '../utils/behaviorSystem';
+import { MATERIALS, MATERIAL_IDS, resolveMaterial, type MaterialId } from '../utils/behaviorSystem';
 import { TagEditor } from './ui/TagEditor';
 import { END_CAP_KINDS, END_CAP_LABELS, MAX_END_SCALE, MIN_END_SCALE, type EndCapKind } from '../engine/model/connectorEnds';
 
@@ -975,11 +975,30 @@ export const PropertiesPanel: React.FC<PropertiesPanelProps> = ({ selectedIds, o
     }
   });
 
-  // Authorship is denormalised onto the node at creation, so it survives the
-  // author disconnecting. This used to resolve a bare client id against the
-  // live awareness roster and fall back to "Unknown" for anyone who had left.
+  /**
+   * Authorship is denormalised onto the node at creation, so it survives the
+   * author disconnecting. This used to resolve a bare client id against the
+   * live awareness roster and fall back to "Unknown" for anyone who had left.
+   *
+   * **"Is this mine?" is asked of `localAuthorId()`, not of the client id.**
+   * Those are two different identifier spaces: `createdBy` is written by
+   * `localAuthorId()`, which returns the stable id `AuthContext` mints and
+   * persists, while `awareness.clientID` is a random 32-bit number Yjs assigns
+   * per connection. Comparing them was never true after sign-in had published,
+   * so the panel showed *your own name* instead of "You" on everything you had
+   * made.
+   *
+   * This is the same defect, in a second place, that the activity feed had:
+   * it compared `author.id` against `clientID` and so narrated your own actions
+   * back at you. Every other caller in the codebase already asks
+   * `localAuthorId()`; this was the last one that did not.
+   */
   const createdByLabel =
-    String(node.createdBy) === String(myClientId) ? 'You' : node.createdByName || 'Unknown';
+    String(node.createdBy) === localAuthorId() ? 'You' : node.createdByName || 'Unknown';
+
+  /** The same question about the last edit, answered the same way. */
+  const updatedByLabel =
+    String(node.updatedBy) === localAuthorId() ? 'You' : node.updatedByName || 'Unknown';
 
   // Every typographic control reads across the selection; `typography` above
   // remains the primary's, which is what these fall back to when they agree.
@@ -2527,7 +2546,12 @@ export const PropertiesPanel: React.FC<PropertiesPanelProps> = ({ selectedIds, o
             <select
               id="material-select"
               value={resolveMaterial(node).id}
-              onChange={(e) => set({ material: e.target.value } as Partial<AnyNode>)}
+              // `as MaterialId` rather than `as Partial<AnyNode>`: the options
+              // below are generated from `MATERIAL_IDS`, so the value is one of
+              // them by construction — and narrowing here means the cast that
+              // used to hide the whole patch now covers one field the compiler
+              // can still check against the schema.
+              onChange={(e) => set({ material: e.target.value as MaterialId })}
               style={{
                 width: '100%',
                 background: 'var(--surface-secondary)',
@@ -2566,6 +2590,13 @@ export const PropertiesPanel: React.FC<PropertiesPanelProps> = ({ selectedIds, o
               this always displayed the creation date. */}
           <Row label="Updated"><span>{new Date(node.updatedAt).toLocaleString()}</span></Row>
           <Row label="Author"><span>{createdByLabel}</span></Row>
+          {/* Only when it is actually recorded. Every node written before
+              `updatedBy` existed has no answer, and the honest thing is to omit
+              the row rather than name the creator and imply they made the last
+              edit — which on a shared board is frequently untrue. */}
+          {node.updatedBy && (
+            <Row label="Edited by"><span>{updatedByLabel}</span></Row>
+          )}
           {node.parentId && (
             <Row label="Group">
               <span style={{ fontFamily: 'monospace', background: 'var(--surface-hover)', padding: '2px 4px', borderRadius: '4px' }}>{node.parentId.slice(0, 8)}</span>

@@ -70,7 +70,19 @@ export function nextZIndex(): number {
  * that will hold in seven. Reads `objectsMap` directly so the write path keeps
  * no dependency on the store or on `frameMembership`, which imports this file.
  */
-function frameToJoin(box: { id: string; x: number; y: number; width: number; height: number }): string | null {
+function frameToJoin(box: {
+  id: string;
+  /**
+   * Carried because a frame is placed by a stricter rule than anything else —
+   * see `frameForNode`. Omitting it here is what let a frame drawn inside
+   * another one become that frame's *parent* at the moment it was created.
+   */
+  type: string;
+  x: number;
+  y: number;
+  width: number;
+  height: number;
+}): string | null {
   const frames: Array<{ id: string; x: number; y: number; width: number; height: number; zIndex: number }> = [];
   objectsMap.forEach((node, id) => {
     if (node.get('type') !== 'frame') return;
@@ -193,7 +205,14 @@ export function createNode(input: NewNodeInput): string {
   // would be written into the Y.Map as a literal null and defeat every
   // `if (node.frameId)` downstream; undefined is dropped by the loop below.
   node.frameId =
-    frameToJoin({ id, x: input.x, y: input.y, width: input.width, height: input.height }) ??
+    frameToJoin({
+      id,
+      type: input.type,
+      x: input.x,
+      y: input.y,
+      width: input.width,
+      height: input.height,
+    }) ??
     undefined;
 
   const ymap = new Y.Map<unknown>();
@@ -228,6 +247,20 @@ export function updateNode(id: string, updates: Record<string, unknown>): void {
       else ymap.set(key, value);
     });
     ymap.set('updatedAt', Date.now());
+    /**
+     * Who touched it last, alongside when.
+     *
+     * `updatedAt` has been stamped here since this file existed and `updatedBy`
+     * was never recorded, so the Metadata panel could say a node changed four
+     * minutes ago and not who changed it — which on a board with thirty people
+     * on it is the half of the fact worth having. "Created by Ada, updated four
+     * minutes ago" reads as though Ada did it; often she did not.
+     *
+     * Written from `localAuthorId()`, the same stable id `createdBy` uses, so
+     * the two are comparable and both survive the author disconnecting.
+     */
+    ymap.set('updatedBy', localAuthorId());
+    ymap.set('updatedByName', localAuthor().name);
   });
 }
 

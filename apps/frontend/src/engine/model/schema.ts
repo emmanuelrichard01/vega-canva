@@ -54,6 +54,8 @@ export const NODE_TYPES = [
 export type NodeType = (typeof NODE_TYPES)[number];
 
 /** Re-exported so a node's own type is readable without a second import. */
+export type { MaterialId } from '../../utils/behaviorSystem';
+import type { MaterialId } from '../../utils/behaviorSystem';
 export type { EndCapKind } from './connectorEnds';
 import type { EndCapKind } from './connectorEnds';
 
@@ -597,14 +599,21 @@ export interface BaseNode {
   /** Renderer and Layers panel both gate on this. There is no `visible` field. */
   hidden: boolean;
   /**
-   * How this object behaves under force — 'feather' | 'paper' | 'rubber' |
-   * 'wood' | 'stone', from `utils/behaviorSystem`.
+   * How this object behaves under force.
    *
    * Optional because behaviour used to be implied entirely by `type`. Absent
    * means "whatever this type defaults to", so existing documents keep the
    * behaviour they already had.
+   *
+   * **Typed as the union, not as `string`.** It was `string`, and the union
+   * lived in `utils/behaviorSystem` where the one consumer cast to it —
+   * `node.material as MaterialId` — which is the shape of a type that is not
+   * being checked at all. Any string compiled, the normalizer accepted any
+   * string, and a wrong one falls through to the type default: a material that
+   * silently does nothing, with no error anywhere to say so. Importing the
+   * union means the compiler holds the schema and the simulation together.
    */
-  material?: string;
+  material?: MaterialId;
   /** User-supplied name shown in the Layers panel, if renamed. */
   title?: string;
 
@@ -613,6 +622,25 @@ export interface BaseNode {
   createdByColor?: string;
   createdAt: number;
   updatedAt: number;
+  /**
+   * Who last changed this node, alongside `updatedAt`'s when.
+   *
+   * `updatedAt` was recorded from the first commit and this was not, so the
+   * panel could say a node changed four minutes ago without saying who changed
+   * it — on a board with thirty people that is the half of the fact worth
+   * having, and "Created by Ada, updated four minutes ago" actively implies it
+   * was Ada when often it was not.
+   *
+   * Optional because every node written before this existed has no answer, and
+   * inventing one would be worse than admitting it. Absent means "not
+   * recorded", never "the creator".
+   *
+   * The name is denormalised for the same reason `createdByName` is: an id
+   * alone resolves only for people still in the room, so an edit made by
+   * someone who has since left would read as "Unknown" forever.
+   */
+  updatedBy?: string;
+  updatedByName?: string;
 }
 
 // ---------------------------------------------------------------------------

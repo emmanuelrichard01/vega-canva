@@ -208,25 +208,84 @@ export function centreIsInside(
 }
 
 /**
+ * Whether one box sits wholly inside another.
+ *
+ * The strict rule, used **only when the thing being placed is itself a frame**
+ * — see `frameForNode` for why nesting a region cannot use the forgiving rule
+ * that ordinary objects get.
+ */
+export function boxIsInside(
+  node: { x: number; y: number; width: number; height: number },
+  frame: { x: number; y: number; width: number; height: number }
+): boolean {
+  return (
+    node.x >= frame.x &&
+    node.y >= frame.y &&
+    node.x + node.width <= frame.x + frame.width &&
+    node.y + node.height <= frame.y + frame.height
+  );
+}
+
+/**
  * Which frame should own this node, given every frame on the board.
  *
  * The **smallest** containing frame wins, so a frame nested inside another
  * takes ownership of what is dropped into it rather than the outer one
  * silently keeping it. Ties break toward the frame drawn last, which is the
  * one on top and therefore the one being pointed at.
+ *
+ * ## Why a frame is placed by a different rule from everything else
+ *
+ * Ordinary objects use `centreIsInside`, which is forgiving on purpose: an
+ * object half over an edge belongs to the frame its middle is over, because
+ * that is where it looks like it is.
+ *
+ * Applied to a *frame*, that rule produced a **mutual cycle from an entirely
+ * ordinary gesture**. Draw a small frame in the middle of a board-sized one and
+ * both centres coincide, so each frame's centre is inside the other: the small
+ * one is inside the big one (correct), and the big one is "inside" the small
+ * one (nonsense, but the rule cannot tell). The document then holds
+ * `small.frameId = big` and `big.frameId = small` at once.
+ *
+ * What that cost was not subtle. `descendantsOfFrame(small)` walks to `big` and
+ * everything `big` owns — so **deleting the small frame deleted the outer frame
+ * and its entire contents**, and dragging the small frame dragged the whole
+ * board region with it. The delete path is cycle-*safe*, in that it terminates,
+ * which is exactly why nothing caught this: it did not hang, it just took the
+ * wrong things with it.
+ *
+ * The fix is structural rather than a guard. A frame is a *region*, and one
+ * region nests inside another only if it genuinely fits inside it — so
+ * frame-in-frame uses whole-box containment and requires the parent to be
+ * strictly larger. Containment of that kind is a partial order, so a cycle
+ * cannot be expressed at all, whatever order the two assignments happen in and
+ * whichever client makes them.
  */
 export function frameForNode(
-  node: { id?: string; x: number; y: number; width: number; height: number },
+  node: { id?: string; type?: string; x: number; y: number; width: number; height: number },
   frames: Array<{ id: string; x: number; y: number; width: number; height: number; zIndex: number }>
 ): string | null {
+  const nodeIsFrame = node.type === 'frame';
+  const nodeArea = node.width * node.height;
+
   let best: { id: string; area: number; zIndex: number } | null = null;
   for (const frame of frames) {
     // A frame cannot contain itself. Without this a frame dropped anywhere
     // becomes its own child, and every rule that walks a frame's contents
     // then has a cycle to fall into.
     if (node.id !== undefined && frame.id === node.id) continue;
-    if (!centreIsInside(node, frame)) continue;
+
     const area = frame.width * frame.height;
+
+    if (nodeIsFrame) {
+      // Whole-box containment, and strictly larger. Equal boxes are two frames
+      // stacked, not one nested in the other — and calling them nested would
+      // reintroduce the cycle by way of a tie.
+      if (!boxIsInside(node, frame) || area <= nodeArea) continue;
+    } else if (!centreIsInside(node, frame)) {
+      continue;
+    }
+
     if (!best || area < best.area || (area === best.area && frame.zIndex > best.zIndex)) {
       best = { id: frame.id, area, zIndex: frame.zIndex };
     }

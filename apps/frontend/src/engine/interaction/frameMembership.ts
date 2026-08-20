@@ -154,8 +154,17 @@ export function captureExistingIntoFrame(frameId: string): void {
   doc.transact(() => {
     for (const node of Object.values(objects)) {
       if (node.id === frameId) continue;
-      // Never re-parent something that is already a descendant of this frame,
-      // and never let a frame swallow one of its own ancestors.
+      /**
+       * `frameForNode` decides, and it is the only thing that decides.
+       *
+       * It knows that a frame nests only by whole-box containment inside a
+       * strictly larger one, so it will not hand back this frame for an
+       * outer frame the new one was merely drawn on top of. That rule used to
+       * live nowhere: a frame drawn in the middle of a board-sized frame
+       * claimed it as a child here, while the board frame simultaneously
+       * claimed the new one — and deleting the small frame then took the
+       * whole board with it.
+       */
       const owner = frameForNode(node, frames);
       if (owner !== frameId) continue;
       if (node.frameId === frameId) continue;
