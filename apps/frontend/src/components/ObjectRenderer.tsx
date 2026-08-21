@@ -1,7 +1,7 @@
 import React, { useCallback, useEffect, useRef, useState, useSyncExternalStore } from 'react';
 import { Circle, Group, Rect, Text } from 'react-konva';
 import Konva from 'konva';
-import { deleteNode, localAuthorId, toggleReaction, updateNode } from '../engine/document';
+import { applyNodePatches, deleteNode, localAuthorId, toggleReaction, updateNode } from '../engine/document';
 import { consumePendingEdit, requestCaretOnMount } from '../engine/interaction/pendingEdit';
 import { cropMode } from '../engine/interaction/cropMode';
 import { pathEdit } from '../engine/interaction/pathEdit';
@@ -317,13 +317,31 @@ export const ObjectRenderer = React.memo(
         if (groupDragRef.current) {
           const dx = e.target.x() - groupDragRef.current.startX;
           const dy = e.target.y() - groupDragRef.current.startY;
-          Object.entries(groupDragRef.current.siblings).forEach(([sid, s]) => {
-            updateNode(sid, { x: s.rawX + dx, y: s.rawY + dy });
-          });
+
+          /**
+           * The whole selection lands in **one** update.
+           *
+           * It used to be a loop of `updateNode`, one Yjs transaction each. The
+           * store observer fires per transaction and every one of them
+           * re-renders the canvas, so a nine-cell selection came apart and
+           * reassembled over nine frames: the cells written so far sat at their
+           * new positions while the rest waited at their old ones, and the
+           * arrangement visibly scattered and snapped back on every drop.
+           *
+           * It is also wrong in the document, not merely on screen. Nine
+           * transactions are nine updates a peer receives separately and nine
+           * steps the history has to fold, for one thing that happened.
+           */
+          applyNodePatches([
+            ...Object.entries(groupDragRef.current.siblings).map(([sid, s]) => ({
+              id: sid,
+              changes: { x: s.rawX + dx, y: s.rawY + dy },
+            })),
+            // Flicking a whole multi-selection into a throw isn't a supported
+            // gesture, so the dragged object is a plain move like the rest.
+            { id: objId, changes: { x: e.target.x() - halfW, y: e.target.y() - halfH } },
+          ]);
           groupDragRef.current = null;
-          // Flicking a whole multi-selection into a throw isn't a supported
-          // gesture, so treat the dragged object as a plain move too.
-          updateNode(objId, { x: e.target.x() - halfW, y: e.target.y() - halfH });
           return;
         }
 

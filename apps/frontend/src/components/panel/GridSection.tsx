@@ -68,7 +68,22 @@ export const GridSection: React.FC<Props> = ({ groupId }) => {
    * Starts on, because a grid with matching gaps is what almost everyone wants
    * and the link is easier to notice when breaking it is the deliberate act.
    */
-  const [linked, setLinked] = React.useState(true);
+  const [linkWanted, setLinkWanted] = React.useState(true);
+  /**
+   * Linked only when you want it **and** the two actually agree.
+   *
+   * Stored preference alone was wrong in both directions. It started on, so a
+   * kind whose defaults are deliberately uneven -- baseline runs 0 across and
+   * 12 down -- showed a closed chain over two different numbers, and the next
+   * edit silently flattened one into the other. And switching kind changes the
+   * gutters underneath the state, so the chain kept claiming a link that the
+   * values had stopped honouring.
+   *
+   * Deriving it means the chain can only ever be closed over a pair that is
+   * equal, which is the only state in which the chain is true rather than a
+   * promise about the next edit.
+   */
+  const linked = linkWanted && recipe?.spec.gutterX === recipe?.spec.gutterY;
   /**
    * What the current settings actually produce.
    *
@@ -242,7 +257,9 @@ export const GridSection: React.FC<Props> = ({ groupId }) => {
           aria-label={linked ? 'Unlink the gaps' : 'Link the gaps'}
           onClick={() => {
             const next = !linked;
-            setLinked(next);
+            setLinkWanted(next);
+            // Closing the chain over two different numbers has to pick one, and
+            // cross\ is the one the eye reads first.
             if (next) patchSpec({ gutterY: recipe.spec.gutterX });
           }}
         >
@@ -405,7 +422,13 @@ export const GridSection: React.FC<Props> = ({ groupId }) => {
       {/* Two rows of swatches sat here with nothing to tell them apart: a
           column of ramps to pick from, then a row of the current ramp's own
           colours to edit. Identical shapes, opposite meanings. */}
-      <span className="grid-section__caption">Pick a palette</span>
+      {/* The caption carries the current palette's name, which frees the tiles
+          from carrying names of their own -- and a name per tile was what kept
+          the list one column wide and mostly out of sight. */}
+      <span className="grid-section__caption">
+        Palette
+        <strong>{GRID_PALETTES.find((p) => p.colors.join() === recipe.style.palette.join())?.name ?? 'Custom'}</strong>
+      </span>
       <div className="grid-section__palettes" role="radiogroup" aria-label="Palette">
         {GRID_PALETTES.map((palette) => {
           const on = palette.colors.join() === recipe.style.palette.join();
@@ -417,6 +440,7 @@ export const GridSection: React.FC<Props> = ({ groupId }) => {
               aria-checked={on}
               className="grid-palette"
               data-active={on || undefined}
+              data-tooltip={palette.name}
               onClick={() => patchStyle({ palette: palette.colors })}
             >
               <span className="grid-palette__ramp">
@@ -424,11 +448,6 @@ export const GridSection: React.FC<Props> = ({ groupId }) => {
                   <span key={c} className="grid-palette__chip" style={{ background: c }} />
                 ))}
               </span>
-              {/* Named, not hovered. Seven tooltips is seven separate
-                  discoveries to learn a list you are meant to be scanning, and
-                  the name is the only thing distinguishing two ramps that share
-                  a hue. */}
-              <span className="grid-palette__name">{palette.name}</span>
             </button>
           );
         })}

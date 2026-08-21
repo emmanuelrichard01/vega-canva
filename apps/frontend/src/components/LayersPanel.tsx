@@ -896,6 +896,19 @@ export const LayersPanel: React.FC<LayersPanelProps> = ({ selectedIds, overrideO
     const target = e.target as HTMLElement;
     if (target.tagName === 'INPUT' || target.tagName === 'TEXTAREA') return;
 
+    /**
+     * A key this panel handles must not reach the canvas as well.
+     *
+     * Both bind Cmd+G, and the canvas listens on `window` -- above the root
+     * React delegates from -- so grouping from the layers panel ran the whole
+     * gesture twice: a group was made, and then that group was immediately
+     * nested inside a second one. Delete fired twice too, which is two history
+     * entries for one press.
+     *
+     * Every branch below already calls `preventDefault`; stopping propagation
+     * beside it is what makes "this panel handled it" true rather than merely
+     * "the browser will not scroll".
+     */
     const mod = e.metaKey || e.ctrlKey;
 
     switch (e.key) {
@@ -910,11 +923,13 @@ export const LayersPanel: React.FC<LayersPanelProps> = ({ selectedIds, overrideO
        */
       case 'ArrowDown':
         e.preventDefault();
+        e.stopPropagation();
         if (mod) restack('down');
         else moveCursor(1, e.shiftKey);
         return;
       case 'ArrowUp':
         e.preventDefault();
+        e.stopPropagation();
         if (mod) restack('up');
         else moveCursor(-1, e.shiftKey);
         return;
@@ -930,18 +945,21 @@ export const LayersPanel: React.FC<LayersPanelProps> = ({ selectedIds, overrideO
       case 'ArrowRight':
         if (cursorId && isFoldable(cursorId) && collapsedFrames.has(cursorId)) {
           e.preventDefault();
+        e.stopPropagation();
           toggleFrameCollapsed(cursorId);
         }
         return;
       case 'ArrowLeft':
         if (cursorId && isFoldable(cursorId) && !collapsedFrames.has(cursorId)) {
           e.preventDefault();
+        e.stopPropagation();
           toggleFrameCollapsed(cursorId);
         }
         return;
       case 'Enter':
         if (cursorId) {
           e.preventDefault();
+        e.stopPropagation();
           setEditingTitleId(cursorId);
         }
         return;
@@ -949,6 +967,7 @@ export const LayersPanel: React.FC<LayersPanelProps> = ({ selectedIds, overrideO
       case 'Spacebar':
         if (cursorId) {
           e.preventDefault();
+        e.stopPropagation();
           toggleVisibility(cursorId);
         }
         return;
@@ -956,6 +975,7 @@ export const LayersPanel: React.FC<LayersPanelProps> = ({ selectedIds, overrideO
       case 'Backspace':
         if (selectedIds.length > 0) {
           e.preventDefault();
+        e.stopPropagation();
           handleBulkDelete();
         }
         return;
@@ -966,6 +986,7 @@ export const LayersPanel: React.FC<LayersPanelProps> = ({ selectedIds, overrideO
         const ids = visibleObjectIds;
         if (ids.length === 0) return;
         e.preventDefault();
+        e.stopPropagation();
         const id = e.key === 'Home' ? ids[0] : ids[ids.length - 1];
         if (e.shiftKey && setSelectedIds && cursorId) {
           const a = ids.indexOf(lastClickedRef.current ?? cursorId);
@@ -983,6 +1004,7 @@ export const LayersPanel: React.FC<LayersPanelProps> = ({ selectedIds, overrideO
       case 'A':
         if (mod && setSelectedIds) {
           e.preventDefault();
+        e.stopPropagation();
           setSelectedIds(visibleObjectIds);
         }
         return;
@@ -998,6 +1020,7 @@ export const LayersPanel: React.FC<LayersPanelProps> = ({ selectedIds, overrideO
       case 'G': {
         if (!mod) return;
         e.preventDefault();
+        e.stopPropagation();
         if (e.shiftKey) {
           if (selectedIds.length > 0) editor.ungroupNodes(selectedIds);
           return;
@@ -1007,6 +1030,7 @@ export const LayersPanel: React.FC<LayersPanelProps> = ({ selectedIds, overrideO
       }
       case 'Escape':
         e.preventDefault();
+        e.stopPropagation();
         // A drag in flight is the thing Escape most obviously cancels, and
         // clearing the selection out from under it would be the wrong answer
         // to the wrong question.

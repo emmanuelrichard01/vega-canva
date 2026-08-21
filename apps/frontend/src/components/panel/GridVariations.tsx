@@ -163,6 +163,17 @@ function useOverflow(ref: React.RefObject<HTMLElement | null>, deps: unknown[]) 
   return { edges, measure };
 }
 
+/**
+ * Whether two recipes would draw the same grid.
+ *
+ * A structural compare rather than a reference one: the store hands back a new
+ * object on every change, so identity would say "different" for a grid nobody
+ * has touched and the baseline tile would never read as current.
+ */
+function sameRecipe(a: GridRecipe, b: GridRecipe): boolean {
+  return JSON.stringify(a) === JSON.stringify(b);
+}
+
 interface Props {
   recipe: GridRecipe;
   onPick: (next: GridRecipe) => void;
@@ -180,7 +191,36 @@ export const GridVariations: React.FC<Props> = ({ recipe, onPick }) => {
    */
   const [salt, setSalt] = React.useState(1);
 
-  const variants = React.useMemo(() => variantsOf(recipe, mode, salt), [recipe, mode, salt]);
+  /**
+   * The grid as it was when this set was drawn.
+   *
+   * ## Why the strip carries its own starting point
+   *
+   * Comparing five candidates against each other is the easy half; the question
+   * that actually matters is whether any of them beats what you already have,
+   * and that was off screen behind the panel. Worse, once you picked one the
+   * original was gone — recoverable only through undo, which on a thirty-cell
+   * grid means undoing a re-lay rather than a choice.
+   *
+   * Held in a ref and refreshed only when the set is, so picking a tile does
+   * not quietly move the baseline to whatever you last tried. The thing you are
+   * measuring against has to hold still or it is not a measurement.
+   */
+  const baseline = React.useRef(recipe);
+  React.useEffect(() => {
+    baseline.current = recipe;
+    // Only when a new set is drawn: `recipe` changing because a tile was picked
+    // must not adopt that tile as the new "before".
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [salt, mode]);
+
+  const variants = React.useMemo(
+    // Eight rather than five. The strip scrolls, so the cost of more is a
+    // scroll rather than a squeeze, and five was thin for a mode as broad as
+    // Anything -- where two of them routinely land on the same system.
+    () => variantsOf(recipe, mode, salt, 8),
+    [recipe, mode, salt]
+  );
 
   const stripRef = React.useRef<HTMLDivElement>(null);
   const { edges } = useOverflow(stripRef, [variants]);
@@ -245,6 +285,20 @@ export const GridVariations: React.FC<Props> = ({ recipe, onPick }) => {
         )}
 
         <div className="grid-variations__strip" ref={stripRef}>
+          {/* Where you started, first and marked. Clicking it puts the grid
+              back, which is a way out of a comparison that does not depend on
+              the history stack knowing a re-lay was a decision. */}
+          <button
+            type="button"
+            className="grid-variations__tile grid-variations__tile--baseline"
+            data-current={sameRecipe(recipe, baseline.current) || undefined}
+            aria-label="Back to where you started"
+            onClick={() => onPick(baseline.current)}
+          >
+            <GridThumb recipe={baseline.current} />
+            <span className="grid-variations__badge">Now</span>
+          </button>
+
           {variants.map((variant, i) => (
             <button
               key={i}

@@ -9207,10 +9207,21 @@ body[data-zen='physics'] .forces-handle { bottom: 32px; }
    apart: a column of ramps to pick from, then a row of the current ramp's own
    colours to edit. Identical shapes, opposite meanings. */
 .grid-section__caption {
+  display: flex;
+  justify-content: space-between;
+  gap: 8px;
   margin-top: 2px;
   color: var(--text-tertiary);
   font-size: var(--text-2xs);
   font-weight: var(--weight-medium);
+}
+
+/* The current value, on the caption's own line: it names what is chosen
+   without costing a row, which is what freed the tiles below to lose their
+   labels and fit two across. */
+.grid-section__caption strong {
+  color: var(--text-secondary);
+  font-weight: var(--weight-semibold);
 }
 
 /* The two gaps, with the chain that binds them sitting between them rather
@@ -9358,99 +9369,29 @@ body[data-zen='physics'] .forces-handle { bottom: 32px; }
   color: var(--accent-strong, var(--brand-orange));
 }
 
-/* Three at a time, and the rest a scroll away.
-   Seven full-width ramps is a block of colour taller than every other control
-   in the section put together, so the palette -- one decision among a dozen --
-   took over the panel by sheer area. Three is enough to compare against each
-   other, which is what the list is for. */
+/**
+ * Every palette at once, in two columns.
+ *
+ * ## Why the scrolling list was wrong twice
+ *
+ * A column of full-width named ramps is about 26px a row, so fifteen palettes
+ * is nearly four hundred pixels — taller than the rest of the section put
+ * together. Capping it made the list scrollable and the cap was then wrong in
+ * the other direction: three visible, then six, and neither is enough to
+ * *compare* in, which is the entire reason the ramps are stacked rather than
+ * hidden behind a dropdown. A picker you have to scroll to see the options in
+ * is a dropdown with extra steps.
+ *
+ * Dropping the per-tile name is what buys the second column, and the name is
+ * not lost: the caption above says which one is current, and a tooltip names
+ * the rest. Fifteen fit in eight rows, with nothing to scroll and every option
+ * in one glance.
+ */
 .grid-section__palettes {
-  display: flex;
-  flex-direction: column;
-  gap: 2px;
-  /* Six rows, not three. Ninety-six pixels showed two and a half ramps and a
-     scrollbar, which is a list you cannot compare anything in -- and comparing
-     is the entire reason the ramps are stacked rather than hidden behind a
-     dropdown. */
-  max-height: 170px;
-  overflow-y: auto;
-  padding-right: 2px;
-  /* The cut edge is the affordance: a ramp sliced by the boundary says the
-     list continues, where a clean edge would say it had ended. */
-  scrollbar-width: thin;
-  scrollbar-color: var(--border-strong) transparent;
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 4px;
 }
-
-.grid-section__palettes::-webkit-scrollbar { width: 5px; }
-.grid-section__palettes::-webkit-scrollbar-track { background: transparent; }
-.grid-section__palettes::-webkit-scrollbar-thumb {
-  border-radius: 3px;
-  background: var(--border-strong);
-}
-
-/* The tracks caption and what they produce, on one line: the label on the
-   left, the consequence on the right, so setting a number and reading its
-   result is one glance rather than two. */
-.grid-section__tracks {
-  display: flex;
-  align-items: baseline;
-  justify-content: space-between;
-  gap: 8px;
-}
-
-.grid-section__count {
-  color: var(--text-secondary);
-  font-size: var(--text-2xs);
-  font-weight: var(--weight-semibold);
-  font-variant-numeric: tabular-nums;
-}
-
-/* A palette reads as its own ramp: six chips flush against each other, so the
-   thing being chosen is the *progression* rather than six separate colours.
-   The name sits beside it, because seven tooltips is seven discoveries to
-   learn a list you are meant to be scanning. */
-.grid-palette {
-  display: flex;
-  align-items: center;
-  gap: 8px;
-  padding: 3px;
-  border: 1px solid transparent;
-  border-radius: var(--radius-md);
-  background: transparent;
-  cursor: pointer;
-  transition: background-color var(--motion-hover), border-color var(--motion-hover);
-}
-
-.grid-palette:hover { background: var(--surface-hover); }
-
-.grid-palette__ramp {
-  display: flex;
-  flex: 1;
-  overflow: hidden;
-  height: 18px;
-  border-radius: var(--radius-sm);
-  box-shadow: inset 0 0 0 1px rgb(0 0 0 / 0.06);
-}
-
-.grid-palette__name {
-  flex-shrink: 0;
-  width: 54px;
-  text-align: left;
-  color: var(--text-secondary);
-  font-size: var(--text-2xs);
-  font-weight: var(--weight-medium);
-}
-
-.grid-palette[data-active] {
-  border-color: var(--accent-line);
-  background: var(--accent-quiet);
-}
-
-.grid-palette[data-active] .grid-palette__name {
-  color: var(--accent-strong, var(--brand-orange));
-  font-weight: var(--weight-semibold);
-}
-
-.grid-palette__chip { flex: 1; }
 
 .grid-section__swatches {
   display: flex;
@@ -9635,6 +9576,34 @@ body[data-zen='physics'] .forces-handle { bottom: 32px; }
   transition: border-color var(--motion-hover), transform var(--motion-hover), box-shadow var(--motion-hover);
 }
 
+/* The starting point, set apart from the candidates by a rule rather than by
+   a colour: it is the same kind of thing as the tiles beside it, just the one
+   you already have. */
+.grid-variations__tile--baseline {
+  position: relative;
+  border-style: dashed;
+}
+
+.grid-variations__tile--baseline[data-current] {
+  border-style: solid;
+  border-color: var(--accent-strong, var(--brand-orange));
+}
+
+.grid-variations__badge {
+  position: absolute;
+  left: 50%;
+  bottom: 2px;
+  translate: -50%;
+  padding: 0 4px;
+  border-radius: var(--radius-sm);
+  background: var(--surface-inverse);
+  color: var(--text-inverse);
+  font-size: 8px;
+  font-weight: var(--weight-semibold);
+  letter-spacing: 0.02em;
+  pointer-events: none;
+}
+
 .grid-variations__tile:hover {
   border-color: var(--accent-strong, var(--brand-orange));
   /* Lifts rather than fills: the tile's own contents are the subject, and a
@@ -9644,5 +9613,33 @@ body[data-zen='physics'] .forces-handle { bottom: 32px; }
 }
 
 @media (prefers-reduced-motion: reduce) {
-  .grid-variations__tile:hover { transform: none; }
+  /* The starting point, set apart from the candidates by a rule rather than by
+   a colour: it is the same kind of thing as the tiles beside it, just the one
+   you already have. */
+.grid-variations__tile--baseline {
+  position: relative;
+  border-style: dashed;
+}
+
+.grid-variations__tile--baseline[data-current] {
+  border-style: solid;
+  border-color: var(--accent-strong, var(--brand-orange));
+}
+
+.grid-variations__badge {
+  position: absolute;
+  left: 50%;
+  bottom: 2px;
+  translate: -50%;
+  padding: 0 4px;
+  border-radius: var(--radius-sm);
+  background: var(--surface-inverse);
+  color: var(--text-inverse);
+  font-size: 8px;
+  font-weight: var(--weight-semibold);
+  letter-spacing: 0.02em;
+  pointer-events: none;
+}
+
+.grid-variations__tile:hover { transform: none; }
 }

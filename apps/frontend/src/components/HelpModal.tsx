@@ -45,6 +45,9 @@ function buildSections(): Section[] {
         { keys: 'Ctrl + Scroll', what: 'Zoom with a mouse wheel' },
         { keys: 'Space + Drag', what: 'Pan without leaving the current tool' },
         { keys: '0', what: 'Back to the origin at 100%' },
+        // Not F. That is the Frame tool everywhere except inside the radar,
+        // and a global fit needed a letter nothing else had claimed.
+        { keys: 'Shift 1', what: 'Fit everything on screen' },
         { keys: `${MOD} + K`, what: 'Command palette — everything else' },
         { keys: '?', what: 'This screen' },
         { keys: '\\', what: 'Hide the panels and work on the board alone' },

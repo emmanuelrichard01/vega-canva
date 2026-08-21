@@ -4,6 +4,9 @@ import Konva from 'konva';
 import { updateNode } from '../../engine/document';
 import { EXPORT_CHROME } from '../../engine/export/chrome';
 import { useStore } from '../../hooks/useStore';
+import { resizeGridTo } from '../../engine/grid/gridApply';
+import { gridGroupOf } from '../panel/GridSection';
+import type { Box } from '../../engine/grid/gridBuild';
 import { cursorForAnchor } from '../../engine/interaction/resizeCursor';
 import { scalePathGeometry } from '../../engine/model/pathGeometry';
 import { isLineLike } from '../../engine/model/lineEnds';
@@ -151,9 +154,32 @@ export const SelectionTransformer: React.FC<Props> = ({ selectedIds, stageRef })
     };
   }, [selectedIds, selectionGeometry, stageRef]);
 
+  /**
+   * The selection's bounds when the gesture began.
+   *
+   * Read from the store before anything moves, so it is a *measurement* rather
+   * than a prediction — see `resizeGridTo` for why that distinction is the
+   * whole bug. A ref, because it must survive the renders a live transform
+   * causes and is never read during one.
+   */
+  const gestureStart = useRef<{ ids: string[]; box: Box } | null>(null);
+
   const handleTransformStart = () => {
     window.dispatchEvent(new CustomEvent('canvas-drag-start'));
     setTransforming(true);
+
+    const before = useStore.getState().objects;
+    const ids = (trRef.current?.nodes() ?? []).map((n) => n.id());
+    const boxes = ids.map((id) => before[id]).filter(Boolean);
+    gestureStart.current = boxes.length === 0 ? null : {
+      ids,
+      box: {
+        x: Math.min(...boxes.map((n) => n.x)),
+        y: Math.min(...boxes.map((n) => n.y)),
+        width: Math.max(...boxes.map((n) => n.x + n.width)) - Math.min(...boxes.map((n) => n.x)),
+        height: Math.max(...boxes.map((n) => n.y + n.height)) - Math.min(...boxes.map((n) => n.y)),
+      },
+    };
   };
 
   const handleTransformEnd = () => {
@@ -163,6 +189,8 @@ export const SelectionTransformer: React.FC<Props> = ({ selectedIds, stageRef })
     if (!tr) return;
 
     const store = useStore.getState().objects;
+    /** Where the selection lands, accumulated from the values being written. */
+    const landing = { minX: Infinity, minY: Infinity, maxX: -Infinity, maxY: -Infinity };
     /**
      * Which handle was dragged, so a corner and an edge can mean different
      * things — which for text they must.
@@ -355,6 +383,11 @@ export const SelectionTransformer: React.FC<Props> = ({ selectedIds, stageRef })
         scaleY: finalScaleY,
       });
 
+      landing.minX = Math.min(landing.minX, konvaNode.x() - boxW / 2);
+      landing.minY = Math.min(landing.minY, konvaNode.y() - boxH / 2);
+      landing.maxX = Math.max(landing.maxX, konvaNode.x() + boxW / 2);
+      landing.maxY = Math.max(landing.maxY, konvaNode.y() + boxH / 2);
+
       konvaNode.scaleX(finalScaleX);
       konvaNode.scaleY(finalScaleY);
     });
@@ -365,12 +398,34 @@ export const SelectionTransformer: React.FC<Props> = ({ selectedIds, stageRef })
      * The loop above folds the scale into each node, which is right for a
      * rectangle and wrong for a grid: gutters and corner radii are absolute
      * measurements chosen against the page, not proportions of the modules, so
-     * scaling the whole thing by 1.6 takes a 16px gutter to 26px. The one
-     * property the person actually set is the one the drag would destroy.
+     * a drag to 1.6x takes a 16px gutter to 26px. The one property the person
+     * actually set is the one the gesture would destroy, a little more on every
+     * resize.
      *
-     * Deferred a frame because `commitGridTransform` measures the members from
-     * the store, and the writes above have to land there first.
+     * Both boxes are **measured**: one from the store before anything moved,
+     * one from the values this loop has just written. Two earlier versions took
+     * the box the recipe *predicted* its cells would occupy as the "before",
+     * and that only matches the document when the recipe is exactly in step
+     * with it -- never true after a drag, and never true at all for a layout
+     * whose cells do not fill their box. The gap between a prediction and a
+     * measurement came out as a scale nobody had applied.
      */
+    const started = gestureStart.current;
+    gestureStart.current = null;
+    if (started && Number.isFinite(landing.minX)) {
+      const group = gridGroupOf(
+        started.ids.map((id) => store[id]).filter(Boolean),
+        useStore.getState().groups
+      );
+      if (group) {
+        resizeGridTo(group, started.box, {
+          x: landing.minX,
+          y: landing.minY,
+          width: landing.maxX - landing.minX,
+          height: landing.maxY - landing.minY,
+        });
+      }
+    }
   };
 
   /**

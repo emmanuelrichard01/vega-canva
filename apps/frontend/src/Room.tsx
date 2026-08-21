@@ -1165,6 +1165,21 @@ export default function Room() {
           // Reset camera to origin
           window.dispatchEvent(new CustomEvent('navigateViewport', { detail: { x: 0, y: 0, zoom: 1 } }));
           break;
+        /**
+         * Fit everything on screen.
+         *
+         * The help screen advertised **F** for this, and F is the Frame tool.
+         * The fit itself was only ever bound on the radar, which has to be
+         * focused first -- so the one place a person goes when they are already
+         * unsure taught them a key that makes a rectangle instead.
+         *
+         * Shift+1 is what Figma, Sketch and Illustrator all use for it, so the
+         * hint is now both true and the one people arrive expecting. The
+         * radar keeps its own local F, where nothing competes for the letter.
+         */
+        case '!':
+          editor.zoomToFit();
+          break;
       }
     };
     
