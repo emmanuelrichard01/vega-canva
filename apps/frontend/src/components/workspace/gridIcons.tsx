@@ -47,13 +47,19 @@ function lattice(rows: number, cols: number, gap = 8) {
 const SHAPES: Record<GridKind, React.ReactNode> = {
   columns: <>{lattice(1, 4).map((c, i) => <Cell key={i} {...c} />)}</>,
   modular: <>{lattice(3, 3).map((c, i) => <Cell key={i} {...c} />)}</>,
+  /* Compartments, none of them the main one -- which is the whole difference
+     from `hierarchical` below, and the icon has to say so or the two read as
+     the same thing before they are even tried. */
   bento: (
     <>
-      <Cell x={0} y={0} w={58} h={58} solid />
-      <Cell x={66} y={0} w={34} h={26} />
-      <Cell x={66} y={32} w={34} h={26} />
-      <Cell x={0} y={66} w={26} h={34} />
-      <Cell x={34} y={66} w={66} h={34} />
+      <Cell x={0} y={0} w={44} h={44} />
+      <Cell x={52} y={0} w={20} h={20} />
+      <Cell x={80} y={0} w={20} h={20} />
+      <Cell x={52} y={28} w={48} h={16} />
+      <Cell x={0} y={52} w={20} h={48} />
+      <Cell x={28} y={52} w={44} h={20} />
+      <Cell x={28} y={80} w={44} h={20} />
+      <Cell x={80} y={52} w={20} h={48} />
     </>
   ),
   masonry: (
@@ -93,13 +99,30 @@ const SHAPES: Record<GridKind, React.ReactNode> = {
       <Cell x={92} y={68} w={8} h={32} />
     </>
   ),
+  /* Two concentric rings, six blocks each, spokes lined up between them.
+     A single ring was the layout's own shape misreported: a picker that shows
+     one thing and produces another is worse than one with no picture at all,
+     because the reader has no reason to doubt it. The faint circles are the
+     rings the blocks are stepped around. */
   radial: (
     <>
-      <circle cx={50} cy={50} r={38} fill="none" stroke="currentColor" strokeWidth={6} opacity={0.3} />
-      {[0, 1, 2, 3, 4, 5].map((i) => {
-        const a = (i / 6) * Math.PI * 2 - Math.PI / 2;
-        return <Cell key={i} x={50 + Math.cos(a) * 38 - 11} y={50 + Math.sin(a) * 38 - 11} w={22} h={22} solid />;
-      })}
+      <circle cx={50} cy={50} r={19} fill="none" stroke="currentColor" strokeWidth={4} opacity={0.25} />
+      <circle cx={50} cy={50} r={40} fill="none" stroke="currentColor" strokeWidth={4} opacity={0.25} />
+      {[19, 40].map((r) =>
+        [0, 1, 2, 3, 4, 5].map((i) => {
+          const a = (i / 6) * Math.PI * 2 - Math.PI / 2;
+          return (
+            <Cell
+              key={`${r}-${i}`}
+              x={50 + Math.cos(a) * r - 6}
+              y={50 + Math.sin(a) * r - 6}
+              w={12}
+              h={12}
+              solid
+            />
+          );
+        })
+      )}
     </>
   ),
   diagonal: (

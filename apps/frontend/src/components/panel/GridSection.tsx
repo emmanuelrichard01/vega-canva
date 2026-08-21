@@ -1,5 +1,5 @@
 import React from 'react';
-import { Dices, Shuffle, Sparkles } from 'lucide-react';
+import { Dices, Shuffle, Sparkles, Wand2 } from 'lucide-react';
 import { useStore } from '../../hooks/useStore';
 import { GridKindIcon } from '../workspace/gridIcons';
 import { NumberStepper } from '../ui/NumberStepper';
@@ -7,8 +7,21 @@ import { SegmentedControl } from '../ui/SegmentedControl';
 import { Slider } from '../ui/Slider';
 import { ColorPickerPopover } from '../ui/ColorPickerPopover';
 import { gridRecipe, refitGrid, relayoutGrid } from '../../engine/grid/gridApply';
-import { reroll, withSpec, withStyle, type GridRecipe } from '../../engine/grid/gridBuild';
-import { GRID_HINTS, GRID_KINDS, GRID_LABELS, type GridKind } from '../../engine/grid/gridLayout';
+import {
+  randomiseRecipe,
+  reroll,
+  switchKind,
+  withSpec,
+  withStyle,
+  type GridRecipe,
+} from '../../engine/grid/gridBuild';
+import {
+  GRID_HINTS,
+  GRID_KINDS,
+  GRID_LABELS,
+  VARIATION_LABELS,
+  type GridKind,
+} from '../../engine/grid/gridLayout';
 import {
   CELL_SHAPES,
   COLOR_MODES,
@@ -52,6 +65,8 @@ interface Props {
 
 export const GridSection: React.FC<Props> = ({ groupId }) => {
   const recipe = useStore((s) => s.groups[groupId]?.grid ?? null);
+  // Subscribed to, not merely read: the section has to re-render when a peer
+  // re-lays the grid, and when this client's own relayout lands.
   if (!recipe) return null;
 
   /**
@@ -63,6 +78,16 @@ export const GridSection: React.FC<Props> = ({ groupId }) => {
    * adjustment from silently undoing another.
    */
   const apply = (next: GridRecipe) => {
+    /**
+     * Carry any move or resize into the box before re-laying.
+     *
+     * `refitGrid` compares where the recipe says its cells should be against
+     * where they are, so an untouched grid returns unchanged and a dragged one
+     * returns the same transform applied to its box. Skipping this would make
+     * the first panel edit after a resize snap the grid back to where it used
+     * to be; measuring the members' bounds instead would shrink it a little on
+     * every edit, for every layout that leaves slack inside its box.
+     */
     const fitted = refitGrid(groupId);
     relayoutGrid(groupId, fitted ? { ...next, spec: { ...next.spec, ...boxOf(fitted) } } : next);
   };
@@ -73,13 +98,25 @@ export const GridSection: React.FC<Props> = ({ groupId }) => {
   /** Which kinds care about rows, and which about columns. A control that does nothing is worse than none. */
   const usesRows = !['columns', 'manuscript'].includes(recipe.spec.kind);
   const usesColumns = !['manuscript', 'baseline'].includes(recipe.spec.kind);
-  const usesVariation = !['columns', 'modular'].includes(recipe.spec.kind);
+  /**
+   * What the dial is called here, which is different in every kind.
+   *
+   * It opens a hole in the dial, mixes the compartments in a bento box, sizes
+   * the hero of a hierarchy and shears a cascade. One word for four controls
+   * meant the only way to learn which was to drag it and watch. `golden` has no
+   * notion of it and gets no slider, rather than a slider that does nothing.
+   */
+  const variationLabel = VARIATION_LABELS[recipe.spec.kind];
 
   return (
     <div className="grid-section">
       {/* The system. Ten miniatures rather than a dropdown of ten words,
           because a grid system is a picture and the words mean nothing until
           you have seen one. */}
+      {/* Switching kind brings that kind's own track counts with it -- see
+          `KIND_DEFAULTS`. The same two fields mean twelve spokes to a dial and
+          three modules to a modular grid, so carrying the old numbers across
+          would show most kinds at their worst. */}
       <div className="grid-section__kinds" role="radiogroup" aria-label="Grid system">
         {GRID_KINDS.map((kind: GridKind) => (
           <button
@@ -90,7 +127,7 @@ export const GridSection: React.FC<Props> = ({ groupId }) => {
             className="grid-kind"
             data-active={recipe.spec.kind === kind || undefined}
             data-tooltip={`${GRID_LABELS[kind]} — ${GRID_HINTS[kind]}`}
-            onClick={() => patchSpec({ kind })}
+            onClick={() => apply(switchKind(recipe, kind))}
           >
             <GridKindIcon kind={kind} size={22} />
             <span className="grid-kind__label">{GRID_LABELS[kind]}</span>
@@ -104,13 +141,20 @@ export const GridSection: React.FC<Props> = ({ groupId }) => {
       <div className="grid-section__row">
         {usesRows && (
           <label className="grid-field">
-            <span>Rows</span>
+            <span>{recipe.spec.kind === 'radial' ? 'Rings' : 'Rows'}</span>
             <NumberStepper value={recipe.spec.rows} min={1} max={24} onChange={(rows) => patchSpec({ rows })} />
           </label>
         )}
         {usesColumns && (
           <label className="grid-field">
-            <span>Columns</span>
+            {/* A dial is divided into spokes and a spiral into steps. Calling
+                both "columns" is the same failure as calling four different
+                controls "variation". */}
+            <span>
+              {recipe.spec.kind === 'radial' ? 'Spokes'
+                : recipe.spec.kind === 'golden' ? 'Steps'
+                : 'Columns'}
+            </span>
             <NumberStepper value={recipe.spec.columns} min={1} max={24} onChange={(columns) => patchSpec({ columns })} />
           </label>
         )}
@@ -145,11 +189,11 @@ export const GridSection: React.FC<Props> = ({ groupId }) => {
         </button>
       </div>
 
-      {usesVariation && (
+      {variationLabel && (
         <label className="grid-field grid-field--wide">
-          <span>Variation</span>
+          <span>{variationLabel}</span>
           <Slider
-            label="Variation"
+            label={variationLabel}
             value={Math.round(recipe.spec.variation * 100)}
             min={0}
             max={100}
@@ -296,7 +340,27 @@ export const GridSection: React.FC<Props> = ({ groupId }) => {
         </select>
       </label>
 
-      {/* Two dice, not one. See the note at the top of this file. */}
+      {/**
+        * Three dice and a wand.
+        *
+        * The dice re-roll an arrangement *of the same system*, which is the
+        * right tool once you have decided what you are making. Before that the
+        * useful question is broader -- what would this look like as a dial, or
+        * a cascade, or a card wall -- and answering it by hand is four
+        * decisions to see one idea. `randomiseRecipe` makes all four at once,
+        * staying inside the ranges that look deliberate.
+        */}
+      <div className="grid-section__rolls">
+        <button
+          type="button"
+          className="grid-roll grid-roll--wide"
+          data-tooltip="A different system, tracks, spacing and palette"
+          onClick={() => apply(randomiseRecipe(recipe, Date.now() & 0xffff))}
+        >
+          <Wand2 size={14} /> Surprise me
+        </button>
+      </div>
+
       <div className="grid-section__rolls">
         <button type="button" className="grid-roll" onClick={() => apply(reroll(recipe, 'layout'))}>
           <Shuffle size={14} /> Arrangement

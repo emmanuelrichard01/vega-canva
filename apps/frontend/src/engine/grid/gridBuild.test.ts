@@ -1,11 +1,11 @@
 import { describe, expect, it } from 'vitest';
-import { defaultSpec } from './gridLayout';
+import { defaultSpec, gridBounds, layoutGrid } from './gridLayout';
 import { defaultStyle } from './gridStyle';
 import {
   cellPatch,
   planGridUpdate,
   recipeCells,
-  refit,
+  refitBox,
   reroll,
   withSpec,
   withStyle,
@@ -157,21 +157,97 @@ describe('reroll', () => {
   });
 });
 
-describe('refit', () => {
-  it('rewrites the box so the recipe and the objects agree', () => {
-    // The transformer scales the nodes; without this the next gutter change
-    // snaps everything back to where the grid used to be.
-    const after = refit(recipe(), { x: 100, y: 50, width: 800, height: 200 });
-    expect(after.spec).toMatchObject({ x: 100, y: 50, width: 800, height: 200 });
-    const cells = recipeCells(after);
-    expect(Math.min(...cells.map((c) => c.x))).toBeCloseTo(100, 0);
+describe('refitBox', () => {
+  /** Where a recipe says its cells belong. */
+  const expected = (r: GridRecipe) => gridBounds(layoutGrid(r.spec));
+
+  it('returns the recipe unchanged when nothing moved', () => {
+    // The property the measuring version could not have, and the reason the
+    // grid used to shrink a little on every edit.
+    const before = recipe();
+    expect(refitBox(before, expected(before), expected(before))).toBe(before);
   });
 
-  it('keeps everything else', () => {
+  it('leaves a layout that does not fill its box alone', () => {
+    // Manuscript stands its block in air, so its cells' bounds are *smaller*
+    // than the spec's box. Re-deriving the box from them shrank the grid — and
+    // then shrank it again on the next edit, and the next.
+    const before = recipe({ kind: 'manuscript', variation: 1 });
+    const cells = expected(before)!;
+    expect(cells.width).toBeLessThan(before.spec.width);
+    expect(refitBox(before, cells, cells).spec).toEqual(before.spec);
+  });
+
+  it('does not shrink under repeated edits', () => {
+    // The bug, stated directly: four adjustments used to walk the grid in from
+    // its own edges.
+    let r = recipe({ kind: 'radial', rows: 2, columns: 8 });
+    const started = r.spec.width;
+    for (let i = 0; i < 5; i += 1) r = refitBox(r, expected(r), expected(r));
+    expect(r.spec.width).toBeCloseTo(started, 6);
+  });
+
+  it('carries a move into the box', () => {
+    const before = recipe();
+    const cells = expected(before)!;
+    const moved = { ...cells, x: cells.x + 120, y: cells.y - 40 };
+    const after = refitBox(before, cells, moved);
+    expect(after.spec.x).toBeCloseTo(before.spec.x + 120, 6);
+    expect(after.spec.y).toBeCloseTo(before.spec.y - 40, 6);
+    expect(after.spec.width).toBeCloseTo(before.spec.width, 6);
+  });
+
+  it('carries a resize into the box, by the same factor', () => {
+    const before = recipe();
+    const cells = expected(before)!;
+    const scaled = { x: cells.x, y: cells.y, width: cells.width * 2, height: cells.height * 0.5 };
+    const after = refitBox(before, cells, scaled);
+    expect(after.spec.width).toBeCloseTo(before.spec.width * 2, 6);
+    expect(after.spec.height).toBeCloseTo(before.spec.height * 0.5, 6);
+  });
+
+  it('round-trips exactly for a layout that scales affinely', () => {
+    // What makes the transform the right answer rather than an approximation:
+    // refit the box, re-lay the grid, and the cells are where they were put.
+    const before = recipe({ kind: 'modular' });
+    const cells = expected(before)!;
+    const scaled = { x: cells.x + 30, y: cells.y, width: cells.width * 1.5, height: cells.height };
+    const after = refitBox(before, cells, scaled);
+    const now = expected(after)!;
+    expect(now.x).toBeCloseTo(scaled.x, 4);
+    expect(now.width).toBeCloseTo(scaled.width, 4);
+  });
+
+  it('is stable, not exact, for a layout that does not scale affinely', () => {
+    /**
+     * `manuscript` insets its block by a fraction of `min(width, height)`, so
+     * stretching only the width does not stretch the inset with it. No affine
+     * correction can round-trip that, and pretending otherwise would mean
+     * inventing a per-kind inverse for every layout.
+     *
+     * What has to hold is the weaker and more important property: refitting an
+     * untouched grid changes nothing, so repeated edits cannot accumulate a
+     * drift. Exactness is a nicety; stability is the bug that was reported.
+     */
+    let r = recipe({ kind: 'manuscript', variation: 1 });
+    const cells = expected(r)!;
+    r = refitBox(r, cells, { ...cells, width: cells.width * 1.5 });
+    const settled = { ...r.spec };
+    for (let i = 0; i < 5; i += 1) r = refitBox(r, expected(r), expected(r));
+    expect(r.spec.width).toBeCloseTo(settled.width, 6);
+  });
+
+  it('keeps everything but the box', () => {
     const before = recipe({ kind: 'bento', seed: 9 });
-    const after = refit(before, { x: 0, y: 0, width: 100, height: 100 });
+    const cells = expected(before)!;
+    const after = refitBox(before, cells, { ...cells, x: cells.x + 100 });
     expect(after.spec.kind).toBe('bento');
     expect(after.spec.seed).toBe(9);
     expect(after.style).toEqual(before.style);
+  });
+
+  it('survives a grid with no cells at all', () => {
+    const before = recipe();
+    expect(refitBox(before, null, null)).toBe(before);
   });
 });

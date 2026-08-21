@@ -147,6 +147,9 @@ export function assignColors(cells: readonly GridCell[], style: GridStyle): stri
   });
 }
 
+/** How much of a block's short side a corner radius may claim. See `styleCells`. */
+export const MAX_ROUNDING = 1 / 3;
+
 /** Star and polygon need a point count; the rest are shapes on their own. */
 const POINTS: Partial<Record<CellShape, number>> = {
   triangle: 3,
@@ -177,10 +180,19 @@ export function styleCells(cells: readonly GridCell[], style: GridStyle): Styled
       shape,
       points: POINTS[shape],
       fill: colors[index],
-      // A radius wider than half the cell is not a rounder corner, it is a
-      // stadium — and past that it silently stops changing, which reads as the
-      // control being broken.
-      radius: Math.min(style.radius, Math.min(cell.width, cell.height) / 2),
+      /**
+       * Rounded, never round.
+       *
+       * Clamping at half the cell lets the radius turn a small block into a
+       * circle -- which is what a 12px radius does to a 20px cell, and why a
+       * ring of blocks came out looking like a ring of dots. A third of the
+       * short side is as far as a corner can go and still read as a corner.
+       *
+       * Nothing is lost by refusing the rest: a grid of circles is a grid of
+       * **ellipses**, and that is a shape you pick above, not a radius you
+       * drive a rectangle into.
+       */
+      radius: Math.min(style.radius, Math.min(cell.width, cell.height) * MAX_ROUNDING),
     };
   });
 }

@@ -2,6 +2,7 @@ import React, { useCallback, useEffect, useRef, useState, useSyncExternalStore }
 import { GridKindIcon } from './gridIcons';
 import { GRID_HINTS, GRID_KINDS, GRID_LABELS } from '../../engine/grid/gridLayout';
 import { gridDefaults } from '../../engine/grid/gridDefaults';
+import { switchKind } from '../../engine/grid/gridBuild';
 import { MousePointer2, MousePointerClick, LayoutGrid, Hand, Pen, PenTool as PenToolIcon, Type, Square, StickyNote, MessageSquare, ImageIcon, Mic, Sparkles, Frame, Eraser, Workflow, MoreVertical, TextQuote } from 'lucide-react';
 import { Minus, Spline } from 'lucide-react';
 import { SegmentedControl } from '../ui/SegmentedControl';
@@ -795,10 +796,14 @@ export const ToolWorkspace: React.FC<Props> = ({ activeToolId, onOpenDiagram, on
                         // Remembering the pick *and* arming the tool, so the
                         // flyout is a choice rather than a menu of ten tools
                         // that would each need registering.
-                        gridDefaults.remember({
-                          ...gridDefaults.forBox({ x: 0, y: 0, width: 0, height: 0 }),
-                          spec: { ...gridDefaults.getSnapshot().spec, x: 0, y: 0, width: 0, height: 0, kind },
-                        });
+                        //
+                        // `switchKind` brings the kind's own track counts along:
+                        // twelve spokes for a dial, five squares for a golden
+                        // spiral. Carrying a 3x3 across would make the preview
+                        // under the pointer the worst version of what was picked.
+                        gridDefaults.remember(
+                          switchKind(gridDefaults.forBox({ x: 0, y: 0, width: 0, height: 0 }), kind)
+                        );
                         pick('grid');
                       }}
                     />

@@ -90,8 +90,19 @@ export class GridTool implements Tool {
       : drawn;
 
     const recipe = gridDefaults.forBox(box);
-    const groupId = createGrid(recipe);
-    if (groupId) gridDefaults.remember(recipe);
+    const made = createGrid(recipe);
+    if (made) {
+      gridDefaults.remember(recipe);
+      /**
+       * Select what was just drawn.
+       *
+       * Without this the tool produced a grid and left nothing selected, so the
+       * panel that exists to adjust it never opened — you had to guess that
+       * clicking a cell would reveal it. Selecting the members (rather than the
+       * group, which is not a node) is what every other creation tool does.
+       */
+      window.dispatchEvent(new CustomEvent('requestSelectNodes', { detail: { ids: made.ids } }));
+    }
 
     window.dispatchEvent(new CustomEvent('legacy_tool_change', { detail: 'select' }));
   }

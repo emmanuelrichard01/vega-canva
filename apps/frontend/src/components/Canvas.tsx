@@ -535,10 +535,25 @@ export const Canvas: React.FC<CanvasProps> = ({ activeTool, selectedIds, setSele
       }
     };
 
+    /**
+     * Select several at once, from a tool that made several.
+     *
+     * `requestSelectNode` takes one id, which is right for every tool that
+     * makes one object and useless for the one that makes thirty — a grid that
+     * selected only its first cell would open the panel on a rectangle rather
+     * than on the grid.
+     */
+    const handleSelectNodes = (e: Event) => {
+      const ids = (e as CustomEvent<{ ids?: string[] }>).detail?.ids;
+      if (Array.isArray(ids)) setSelectedIds(ids);
+    };
+
     document.addEventListener('requestSelectNode', handleSelectNode);
+    window.addEventListener('requestSelectNodes', handleSelectNodes);
     document.addEventListener('marqueeSelect', handleMarqueeSelect);
     return () => {
       document.removeEventListener('requestSelectNode', handleSelectNode);
+      window.removeEventListener('requestSelectNodes', handleSelectNodes);
       document.removeEventListener('marqueeSelect', handleMarqueeSelect);
     };
   }, [setSelectedIds]);

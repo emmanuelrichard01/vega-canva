@@ -9186,3 +9186,13 @@ body[data-zen='physics'] .forces-handle { bottom: 32px; }
   background: var(--accent-quiet);
   color: var(--accent-strong, var(--brand-orange));
 }
+
+/* The broad one. It changes the system, the tracks, the spacing and the
+   palette at once, so it gets its own row rather than sitting as a fourth
+   equal die -- the three beside it re-roll within a decision, this one
+   reopens the decision. */
+.grid-roll--wide {
+  padding: 9px 6px;
+  border-style: dashed;
+  color: var(--accent-strong, var(--brand-orange));
+}

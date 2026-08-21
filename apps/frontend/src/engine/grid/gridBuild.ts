@@ -1,5 +1,13 @@
-import { layoutGrid, type GridSpec } from './gridLayout';
-import { styleCells, type CellShape, type GridStyle, type StyledCell } from './gridStyle';
+import { GRID_KINDS, KIND_DEFAULTS, layoutGrid, rng, type GridSpec } from './gridLayout';
+import {
+  CELL_SHAPES,
+  COLOR_MODES,
+  GRID_PALETTES,
+  styleCells,
+  type CellShape,
+  type GridStyle,
+  type StyledCell,
+} from './gridStyle';
 import type { ShapeKind } from '../model/schema';
 
 /**
@@ -147,17 +155,129 @@ export function reroll(recipe: GridRecipe, what: 'layout' | 'colour' | 'both'): 
   };
 }
 
+/** Ignore differences below this many world units when deciding if a grid moved. */
+export const MOVED_EPSILON = 0.5;
+
+export interface Box { x: number; y: number; width: number; height: number }
+
 /**
- * Move and resize a whole grid, keeping its proportions.
+ * A different composition entirely, from one press.
  *
- * The transformer scales the *nodes*, which leaves the recipe describing a box
- * the grid no longer occupies — so the next gutter change would snap everything
- * back to where it used to be. Rewriting the spec's box from the group's actual
- * bounds is what keeps the two agreeing.
+ * ## Why this is not just re-rolling the seed
+ *
+ * `reroll` gives another arrangement *of the same system*: a different bento
+ * packing, a different scatter of colour. That is the right tool once you have
+ * decided what you are making. Before that, the useful question is the broader
+ * one -- what would this look like as a dial, or a cascade, or a card wall --
+ * and answering it by hand means changing the kind, then the tracks it wants,
+ * then the gutters, then finding a palette. Four decisions to see one idea.
+ *
+ * So this changes all of them at once, and it stays *inside the ranges that
+ * look deliberate*: tracks come from the kind's own defaults with a small
+ * jitter rather than from a uniform draw, gutters are picked from a spacing
+ * scale rather than any integer, and the palette is one of the shipped ramps.
+ * A randomiser that produces a seventeen-column grid with a nineteen-pixel
+ * gutter is a randomiser people press once.
+ *
+ * The box is untouched: this is about what fills the space, not where it is.
  */
-export function refit(
-  recipe: GridRecipe,
-  box: { x: number; y: number; width: number; height: number }
-): GridRecipe {
-  return withSpec(recipe, box);
+export function randomiseRecipe(recipe: GridRecipe, seed: number): GridRecipe {
+  const next = rng(seed);
+  const pick = <T,>(list: readonly T[]): T => list[Math.floor(next() * list.length)];
+
+  const kind = pick(GRID_KINDS);
+  const base = KIND_DEFAULTS[kind];
+  // Around the kind's own number rather than an arbitrary one, so a dial still
+  // gets a dozen spokes and a golden spiral still gets about five squares.
+  const jitter = (n: number, by: number) => Math.max(1, Math.round(n + (next() - 0.5) * 2 * by));
+
+  // A spacing scale, because a gutter is a design decision with conventional
+  // values and 19px is not one of them.
+  const gutter = pick([0, 4, 8, 12, 16, 24, 32]);
+  const palette = pick(GRID_PALETTES);
+
+  return {
+    spec: {
+      ...recipe.spec,
+      kind,
+      rows: jitter(base.rows, base.rows > 2 ? 1 : 0),
+      columns: jitter(base.columns, base.columns > 4 ? 2 : 1),
+      gutterX: gutter,
+      // Matching more often than not: two different gutters is a deliberate
+      // choice, and a randomiser that made it every time would look careless.
+      gutterY: next() < 0.7 ? gutter : pick([0, 4, 8, 12, 16, 24, 32]),
+      variation: Math.min(1, Math.max(0, base.variation + (next() - 0.5) * 0.5)),
+      seed: Math.floor(next() * 10000),
+    },
+    style: {
+      ...recipe.style,
+      palette: palette.colors,
+      colorMode: pick(COLOR_MODES.filter((m) => m !== 'solid')),
+      // Mixed shapes are a strong statement, so they turn up sometimes rather
+      // than half the time.
+      shapeMode: next() < 0.25 ? 'mixed' : 'uniform',
+      shapes: next() < 0.25
+        ? [pick(CELL_SHAPES), pick(CELL_SHAPES)] as CellShape[]
+        : [pick(CELL_SHAPES)] as CellShape[],
+      radius: pick([0, 0, 4, 8, 12, 24, 999]),
+      seed: Math.floor(next() * 10000),
+    },
+  };
+}
+
+/**
+ * Bring a kind's own track counts with it when the kind changes.
+ *
+ * See `KIND_DEFAULTS` for why: the same two fields mean twelve spokes to a dial
+ * and three modules to a modular grid, so carrying the old numbers across shows
+ * most kinds at their worst.
+ */
+export function switchKind(recipe: GridRecipe, kind: GridSpec['kind']): GridRecipe {
+  return withSpec(recipe, { kind, ...KIND_DEFAULTS[kind] });
+}
+
+/**
+ * Carry a move or a resize of the objects back into the recipe's box.
+ *
+ * ## Why this compares rather than measures
+ *
+ * The obvious implementation reads the members' bounding box and calls that the
+ * grid's box. It is wrong for every layout whose cells do not fill the box they
+ * were given — manuscript stands its block in air, radial leaves the corners
+ * empty, masonry can fall short — because the measured box is then *smaller
+ * than the spec's*, and writing it back shrinks the grid. Every subsequent
+ * adjustment shrinks it again, so changing the palette four times walks the
+ * grid quietly in from its own edges.
+ *
+ * So this asks a different question: not "where is the grid" but "what did the
+ * user do to it". `expected` is where the recipe says its cells belong;
+ * `actual` is where they are. The difference between them *is* the transform
+ * the transformer applied, and applying that same transform to the box that
+ * produced them is exact for every layout, including the ones that leave slack.
+ *
+ * An untouched grid yields the identity and the recipe comes back unchanged,
+ * which is the property the measuring version could not have.
+ */
+export function refitBox(recipe: GridRecipe, expected: Box | null, actual: Box | null): GridRecipe {
+  if (!expected || !actual) return recipe;
+
+  const sx = expected.width > MOVED_EPSILON ? actual.width / expected.width : 1;
+  const sy = expected.height > MOVED_EPSILON ? actual.height / expected.height : 1;
+  const dx = actual.x - expected.x;
+  const dy = actual.y - expected.y;
+
+  const still =
+    Math.abs(dx) < MOVED_EPSILON &&
+    Math.abs(dy) < MOVED_EPSILON &&
+    Math.abs(sx - 1) * expected.width < MOVED_EPSILON &&
+    Math.abs(sy - 1) * expected.height < MOVED_EPSILON;
+  if (still) return recipe;
+
+  // The same affine the cells underwent, applied to the box that produced them.
+  return withSpec(recipe, {
+    x: (recipe.spec.x - expected.x) * sx + actual.x,
+    y: (recipe.spec.y - expected.y) * sy + actual.y,
+    width: recipe.spec.width * sx,
+    height: recipe.spec.height * sy,
+  });
 }

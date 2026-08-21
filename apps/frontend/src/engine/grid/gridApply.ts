@@ -1,9 +1,9 @@
 import { nanoid } from 'nanoid';
-import { applyGroupPlan, applyNodePatches, deleteNode, doc, groupsMap, lowestZIndex } from '../document';
+import { applyGroupPlan, applyNodePatches, deleteNode, doc, groupsMap, nextZIndex } from '../document';
 import { editor } from '../api/EditorAPI';
 import { useStore } from '../../hooks/useStore';
 import { nodesInGroup } from '../model/groupTree';
-import { planGridUpdate, recipeCells, type GridRecipe } from './gridBuild';
+import { cellPatch, planGridUpdate, recipeCells, refitBox, type GridRecipe } from './gridBuild';
 import { gridBounds, layoutGrid } from './gridLayout';
 
 /**
@@ -19,16 +19,22 @@ import { gridBounds, layoutGrid } from './gridLayout';
  * the grid halfway through re-laying itself.
  */
 
-/** The nodes of a grid, in cell order. */
+/**
+ * The nodes of a grid, in cell order.
+ *
+ * ## Why the order matters so much
+ *
+ * `planGridUpdate` pairs cell *n* with member *n*. Get the order wrong and a
+ * gutter change does not adjust the grid, it shuffles it — every cell takes
+ * some other cell's geometry, once, invisibly, and there is no way back but
+ * undo.
+ *
+ * Ascending z is the order, because that is the order the cells were created
+ * in. `nodesInGroup` follows whatever order it is handed, and the layers panel
+ * hands it front-to-back — which for a grid is exactly backwards.
+ */
 export function gridMembers(groupId: string): string[] {
   const { objects, groups } = useStore.getState();
-  /**
-   * Cell order is *ascending* z: cell 0 was created first and so sits lowest.
-   *
-   * `nodesInGroup` follows the order it is given, and the layers panel gives it
-   * front-to-back — which for a grid is exactly backwards, and would silently
-   * pair cell 0's geometry with the last node in the grid.
-   */
   const order = Object.values(objects)
     .sort((a, b) => (a.zIndex || 0) - (b.zIndex || 0))
     .map((n) => n.id);
@@ -41,6 +47,18 @@ export function gridRecipe(groupId: string | undefined): GridRecipe | null {
   return useStore.getState().groups[groupId]?.grid ?? null;
 }
 
+/** The box a set of nodes occupies. */
+function boundsOf(ids: readonly string[]) {
+  const { objects } = useStore.getState();
+  const nodes = ids.map((id) => objects[id]).filter(Boolean);
+  if (nodes.length === 0) return null;
+  const x = Math.min(...nodes.map((n) => n.x));
+  const y = Math.min(...nodes.map((n) => n.y));
+  const right = Math.max(...nodes.map((n) => n.x + (n.width || 0)));
+  const bottom = Math.max(...nodes.map((n) => n.y + (n.height || 0)));
+  return { x, y, width: right - x, height: bottom - y };
+}
+
 /**
  * Create a grid, as one group of shapes.
  *
@@ -50,14 +68,21 @@ export function gridRecipe(groupId: string | undefined): GridRecipe | null {
  * grouped with other things without losing what it is, which the flat model
  * could not have done.
  *
- * @returns the new group's id.
+ * @returns the new group's id and its members, for selecting the result.
  */
-export function createGrid(recipe: GridRecipe): string | null {
+export function createGrid(recipe: GridRecipe): { groupId: string; ids: string[] } | null {
+  // Laid out **once**. The first version called `planGridUpdate` inside the
+  // loop, which recomputed the whole grid for every cell in it — thirty
+  // layouts to place thirty rectangles.
   const cells = recipeCells(recipe);
   if (cells.length === 0) return null;
 
   const groupId = nanoid();
-  const base = lowestZIndex();
+  const ids = cells.map(() => nanoid());
+  // In front, not behind. `lowestZIndex` put a grid you had just drawn under
+  // everything already on the board, so the usual result of the tool was a
+  // composition you could not see.
+  const base = nextZIndex();
 
   doc.transact(() => {
     // The group first: the nodes about to be created point at it, and a peer
@@ -67,19 +92,17 @@ export function createGrid(recipe: GridRecipe): string | null {
 
     cells.forEach((cell, i) => {
       editor.createNode({
-        id: nanoid(),
+        id: ids[i],
         parentId: groupId,
-        // Below whatever is already on the board, ascending within the grid so
-        // cell order and stacking order are the same thing. `gridMembers` reads
-        // that back, and a grid whose cells were stacked in some other order
-        // would re-lay itself scrambled.
-        zIndex: base - cells.length + i,
-        ...planGridUpdate(recipe, []).create[i],
+        // Ascending within the grid, so cell order and stacking order are the
+        // same thing — which is what `gridMembers` reads back.
+        zIndex: base + i,
+        ...cellPatch(cell, recipe.style),
       } as never);
     });
   });
 
-  return groupId;
+  return { groupId, ids };
 }
 
 /**
@@ -93,7 +116,18 @@ export function createGrid(recipe: GridRecipe): string | null {
 export function relayoutGrid(groupId: string, recipe: GridRecipe): void {
   const existing = gridMembers(groupId);
   const plan = planGridUpdate(recipe, existing);
-  const base = lowestZIndex();
+
+  /**
+   * New cells stack **above** the grid's existing ones, not below.
+   *
+   * `gridMembers` reads cell order back out of the stacking order, so a cell
+   * created underneath the others would sort to the front of the list and take
+   * cell 0's geometry on the very next edit — the whole grid scrambling one
+   * adjustment after it grew.
+   */
+  const { objects } = useStore.getState();
+  const top = existing.reduce((max, id) => Math.max(max, objects[id]?.zIndex ?? 0), -Infinity);
+  const base = Number.isFinite(top) ? top + 1 : nextZIndex();
 
   doc.transact(() => {
     groupsMap.set(groupId, { ...(groupsMap.get(groupId) ?? { id: groupId }), grid: recipe });
@@ -101,12 +135,7 @@ export function relayoutGrid(groupId: string, recipe: GridRecipe): void {
     if (plan.update.length > 0) applyNodePatches(plan.update);
 
     plan.create.forEach((node, i) => {
-      editor.createNode({
-        id: nanoid(),
-        parentId: groupId,
-        zIndex: base - plan.create.length + i,
-        ...node,
-      } as never);
+      editor.createNode({ id: nanoid(), parentId: groupId, zIndex: base + i, ...node } as never);
     });
 
     for (const id of plan.remove) deleteNode(id);
@@ -114,33 +143,17 @@ export function relayoutGrid(groupId: string, recipe: GridRecipe): void {
 }
 
 /**
- * Re-read the recipe's box from where the grid actually sits.
+ * Carry a move or a resize of the objects back into the recipe.
  *
- * The transformer scales the *nodes*; the recipe still describes the box the
- * grid used to occupy, so the next gutter change would snap everything back.
- * Called when a grid group has been moved or resized, which is the only time
- * the two can disagree.
+ * The arithmetic is `refitBox`, which is pure and tested — including the case
+ * that made the measuring version wrong, where a layout's cells do not fill the
+ * box they were given and re-deriving the box from them shrinks the grid a
+ * little on every single edit.
  */
 export function refitGrid(groupId: string): GridRecipe | null {
   const recipe = gridRecipe(groupId);
   if (!recipe) return null;
-  const { objects } = useStore.getState();
-  const nodes = gridMembers(groupId).map((id) => objects[id]).filter(Boolean);
-  if (nodes.length === 0) return null;
-
-  const x = Math.min(...nodes.map((n) => n.x));
-  const y = Math.min(...nodes.map((n) => n.y));
-  const right = Math.max(...nodes.map((n) => n.x + (n.width || 0)));
-  const bottom = Math.max(...nodes.map((n) => n.y + (n.height || 0)));
-
-  // The recipe's box includes its margin; the cells sit inside it. Adding the
-  // margin back is what keeps a refit from shrinking the grid by 2×margin on
-  // every pass — a slow leak that only shows after the third adjustment.
-  const m = recipe.spec.margin;
-  return {
-    ...recipe,
-    spec: { ...recipe.spec, x: x - m, y: y - m, width: right - x + m * 2, height: bottom - y + m * 2 },
-  };
+  return refitBox(recipe, gridBounds(layoutGrid(recipe.spec)), boundsOf(gridMembers(groupId)));
 }
 
 /** The box a recipe's cells will occupy, for a live preview. */
