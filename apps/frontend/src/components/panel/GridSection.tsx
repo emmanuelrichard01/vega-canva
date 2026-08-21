@@ -9,6 +9,7 @@ import { ColorPickerPopover } from '../ui/ColorPickerPopover';
 import { gridRecipe, refitGrid, relayoutGrid } from '../../engine/grid/gridApply';
 import { recipeCells, switchKind, withSpec, withStyle, type GridRecipe } from '../../engine/grid/gridBuild';
 import { GridVariations } from './GridVariations';
+import { CellFace } from './CellFace';
 import {
   GRID_HINTS,
   GRID_KINDS,
@@ -77,6 +78,19 @@ export const GridSection: React.FC<Props> = ({ groupId }) => {
    * asking it is cheaper than any guess would be wrong.
    */
   const cellCount = React.useMemo(() => (recipe ? recipeCells(recipe).length : 0), [recipe]);
+  /**
+   * How big a module actually is, so a 22px swatch can round in proportion.
+   *
+   * A 12px radius is a soft corner on a 120px module and a pill on a swatch;
+   * without the real size the preview would exaggerate every radius above
+   * about six and stop being a preview.
+   */
+  const sampleCell = React.useMemo(() => {
+    if (!recipe) return 0;
+    const cells = recipeCells(recipe);
+    if (cells.length === 0) return 0;
+    return Math.min(...cells.map((c) => Math.min(c.width, c.height)));
+  }, [recipe]);
   // Subscribed to, not merely read: the section has to re-render when a peer
   // re-lays the grid, and when this client's own relayout lands.
   if (!recipe) return null;
@@ -267,8 +281,29 @@ export const GridSection: React.FC<Props> = ({ groupId }) => {
         </label>
       )}
 
-      {/* Shapes. */}
-      <div className="grid-section__label">Cells</div>
+      {/**
+        * The heading carries a specimen of the module itself.
+        *
+        * Shape, corner radius, stroke and opacity are four controls whose only
+        * meaningful output is one picture, and that picture was only available
+        * on the board -- so setting a radius meant adjusting, looking away,
+        * and coming back. One 30px tile answers all four at once.
+        */}
+      <div className="grid-section__cells-head">
+        <span className="grid-section__label">Cells</span>
+        <span className="grid-section__specimen" data-tooltip="One module, as it will be drawn">
+          <CellFace
+            shape={recipe.style.shapes[0] ?? 'rect'}
+            size={30}
+            fill={recipe.style.palette[Math.floor(recipe.style.palette.length / 2)] ?? '#94A3B8'}
+            radius={recipe.style.radius}
+            cellSize={sampleCell}
+            strokeColor={recipe.style.strokeColor}
+            strokeWidth={recipe.style.strokeWidth}
+            opacity={recipe.style.opacity}
+          />
+        </span>
+      </div>
       <SegmentedControl
         ariaLabel="Shape mode"
         value={recipe.style.shapeMode}
@@ -314,7 +349,13 @@ export const GridSection: React.FC<Props> = ({ groupId }) => {
                 patchStyle({ shapes: next.length > 0 ? next : [shape] });
               }}
             >
-              <ShapeGlyph shape={shape} />
+              <CellFace
+                shape={shape}
+                size={22}
+                fill="currentColor"
+                radius={recipe.style.radius}
+                cellSize={sampleCell}
+              />
             </button>
           );
         })}
@@ -443,38 +484,37 @@ function boxOf(recipe: GridRecipe) {
   return { x, y, width, height };
 }
 
-/** A cell shape at swatch size, drawn rather than named. */
-const ShapeGlyph: React.FC<{ shape: CellShape }> = ({ shape }) => {
-  const d: Record<CellShape, React.ReactNode> = {
-    rect: <rect x={2} y={2} width={14} height={14} rx={3} />,
-    ellipse: <circle cx={9} cy={9} r={7} />,
-    triangle: <polygon points="9,2 16,16 2,16" />,
-    diamond: <polygon points="9,1 17,9 9,17 1,9" />,
-    hexagon: <polygon points="9,1 16,5 16,13 9,17 2,13 2,5" />,
-    star: <polygon points="9,1 11,7 17,7 12,11 14,17 9,13 4,17 6,11 1,7 7,7" />,
-  };
-  return (
-    <svg width={18} height={18} viewBox="0 0 18 18" fill="currentColor" aria-hidden>
-      {d[shape]}
-    </svg>
-  );
-};
-
 /**
  * Whether a selection is exactly one grid, and which.
  *
- * Exported so the properties panel can ask without importing the whole grid
- * engine, and so the answer is written once — the section, the context toolbar
- * and anything else that wants to offer a grid control all need the same test.
+ * ## Why it takes the nodes rather than their ids
+ *
+ * It used to take ids and reach into `useStore.getState()` for the rest, which
+ * made it a *read of the store dressed as a pure function*: three components
+ * called it during render and none of them subscribed to the answer. They
+ * happened to re-render anyway, because a grid's group record never changes
+ * without its nodes changing too — a coincidence, not a guarantee, and exactly
+ * the kind that survives until the day something changes only the record.
+ *
+ * Taking what the caller already has makes it pure, makes the subscription the
+ * caller's own business, and removes the hook-order problem that a store read
+ * inside a component with early returns would otherwise have.
  */
-export function gridGroupFor(selectedIds: readonly string[]): string | null {
-  const { objects, groups } = useStore.getState();
-  if (selectedIds.length === 0) return null;
-  const parent = objects[selectedIds[0]]?.parentId;
+export function gridGroupOf(
+  nodes: readonly { id: string; parentId?: string }[],
+  groups: Readonly<Record<string, { grid?: unknown }>>
+): string | null {
+  if (nodes.length === 0) return null;
+  const parent = nodes[0].parentId;
   if (!parent || !groups[parent]?.grid) return null;
-  // Every selected node must belong to it, or the controls would re-lay cells
-  // the user has not selected — which is a bulk edit nobody asked for.
-  return selectedIds.every((id) => objects[id]?.parentId === parent) ? parent : null;
+  /**
+   * Every selected node must belong to it.
+   *
+   * A selection of six cells out of nine is not "the grid": offering the grid
+   * controls there would re-lay three modules the person had not selected,
+   * which is a bulk edit nobody asked for.
+   */
+  return nodes.every((n) => n.parentId === parent) ? parent : null;
 }
 
 /** The live recipe for a group, for callers outside React. */

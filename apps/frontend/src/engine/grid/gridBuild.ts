@@ -253,25 +253,60 @@ export function variantsOf(
 ): GridRecipe[] {
   const next = rng(salt);
   const seed = () => Math.floor(next() * 100000);
+  const pick = <T,>(list: readonly T[]): T => list[Math.floor(next() * list.length)];
 
   return Array.from({ length: count }, () => {
     if (mode === 'everything') return randomiseRecipe(recipe, seed());
+
     if (mode === 'colour') {
-      const palette = GRID_PALETTES[Math.floor(next() * GRID_PALETTES.length)];
+      const palette = pick(GRID_PALETTES);
       return {
-        // The layout is held *exactly*, which is the point of the mode: you
-        // have settled the arrangement and you are trying colour against it.
+        // The layout is held *exactly*: the point of the mode is that you have
+        // settled the arrangement and are trying colour against it.
         spec: recipe.spec,
         style: {
           ...recipe.style,
           seed: seed(),
           palette: palette.colors,
-          colorMode: COLOR_MODES[Math.floor(next() * COLOR_MODES.length)],
+          colorMode: pick(COLOR_MODES),
+          // Corner treatment belongs to how a grid *looks* rather than to its
+          // structure, so it varies here rather than under Layout -- and it
+          // changes the character of a wall more than a re-scatter does.
+          radius: pick([0, 0, 4, 8, 16, 32, 999]),
         },
       };
     }
-    // Layout only: the palette is held, so the tiles differ in shape alone.
-    return { spec: { ...recipe.spec, seed: seed() }, style: recipe.style };
+
+    /**
+     * Layout: the *arrangement*, not merely another shuffle of the same one.
+     *
+     * Re-seeding alone is a poor offer on half the kinds. A modular grid has no
+     * randomness at all, so five re-seeds are five identical tiles; columns and
+     * golden are the same. Even where the seed does something — bento, masonry
+     * — five draws from one distribution look like five draws from one
+     * distribution, which is a picker showing one idea five times.
+     *
+     * So a layout variant may also move the tracks and the dial. Those are the
+     * knobs that change what the grid *is* while leaving it the same system,
+     * which is exactly the promise of the mode: still a bento wall, genuinely a
+     * different bento wall.
+     */
+    const base = KIND_DEFAULTS[recipe.spec.kind];
+    const drift = (n: number, by: number) =>
+      Math.max(1, Math.round(n + (next() - 0.5) * 2 * by));
+
+    return {
+      spec: {
+        ...recipe.spec,
+        seed: seed(),
+        rows: drift(recipe.spec.rows, recipe.spec.rows > 2 ? 1 : 0),
+        columns: drift(recipe.spec.columns, recipe.spec.columns > 3 ? 2 : 1),
+        // Around the kind's own looseness rather than the current setting, so a
+        // dial pinned at zero can still be offered something with life in it.
+        variation: Math.min(1, Math.max(0, base.variation + (next() - 0.5) * 0.7)),
+      },
+      style: recipe.style,
+    };
   });
 }
 

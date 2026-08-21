@@ -20,7 +20,7 @@ import { cropMode } from '../engine/interaction/cropMode';
 import { pathEdit } from '../engine/interaction/pathEdit';
 import { Palette, Shuffle } from 'lucide-react';
 import { GridKindIcon } from './workspace/gridIcons';
-import { gridGroupFor } from './panel/GridSection';
+import { gridGroupOf } from './panel/GridSection';
 import { gridRecipe as gridRecipeFor, relayoutGrid } from '../engine/grid/gridApply';
 import { switchKind } from '../engine/grid/gridBuild';
 import { GRID_HINTS, GRID_KINDS, GRID_LABELS } from '../engine/grid/gridLayout';
@@ -573,6 +573,8 @@ export const ObjectContextToolbar: React.FC<Props> = ({ selectedId, selectedIds,
 
   const liveNode = useStore((state) => (activeId ? state.objects[activeId] : undefined));
   const allObjects = useStore((state) => state.objects);
+  /** The group tree, so the grid rail re-renders when a grid is re-laid. */
+  const groupTree = useStore((state) => state.groups);
 
   useEffect(() => {
     if (!activeId && !isBulk) { setIsVisible(false); return; }
@@ -742,7 +744,7 @@ export const ObjectContextToolbar: React.FC<Props> = ({ selectedId, selectedIds,
       resolveAffordances(bulkNodes, { surface: 'toolbar', allObjects }).map((a) => a.id)
     );
     /** The grid under this selection, when the selection is exactly one. */
-    const gridGroup = gridGroupFor(bulkIds);
+    const gridGroup = gridGroupOf(bulkNodes, groupTree);
     const bulkAffords = (id: AffordanceId) => bulkOffers.has(id);
 
     /**

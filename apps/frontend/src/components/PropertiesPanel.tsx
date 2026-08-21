@@ -14,7 +14,7 @@ import { applyNodePatches, localAuthorId, lowestZIndex, nextZIndex, provider, up
 import { useStore } from '../hooks/useStore';
 import { APPEARANCE_TYPES } from '../engine/objects/appearanceTypes';
 import { resolveAffordances, type AffordanceId } from '../engine/selection/affordances';
-import { GridSection, gridGroupFor } from './panel/GridSection';
+import { GridSection, gridGroupOf } from './panel/GridSection';
 import { objectRegistry } from '../engine/objects';
 import {
   canResizeAsBox,
@@ -524,6 +524,14 @@ export const PropertiesPanel: React.FC<PropertiesPanelProps> = ({ selectedIds, o
     )
   );
   const [aspectLocked, setAspectLocked] = useState(false);
+  /**
+   * The group tree, subscribed to before any early return.
+   *
+   * Only the grid section reads it, and only to ask whether this selection is
+   * a grid — but asking through `useStore.getState()` during render would be a
+   * read nothing re-renders for.
+   */
+  const groups = useStore((state) => state.groups);
 
   const nodes: AnyNode[] = useMemo(() => {
     if (!overrideObjects) return storeNodes;
@@ -571,7 +579,7 @@ export const PropertiesPanel: React.FC<PropertiesPanelProps> = ({ selectedIds, o
   const selectedIdsPresent = nodes.map((n) => n.id);
 
   /** The group under the selection, when the selection is exactly one grid. */
-  const gridGroup = gridGroupFor(selectedIdsPresent);
+  const gridGroup = gridGroupOf(nodes, groups);
 
   /**
    * Whether every selected object is the same type.

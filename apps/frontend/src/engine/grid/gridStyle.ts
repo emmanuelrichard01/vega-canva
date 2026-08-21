@@ -108,6 +108,23 @@ export const GRID_PALETTES: { id: string; name: string; colors: string[] }[] = [
   { id: 'clay', name: 'Clay', colors: ['#FAF7F2', '#EADDC8', '#D6BFA0', '#B79268', '#8A6642', '#5B4028'] },
   { id: 'graphite', name: 'Graphite', colors: ['#F8FAFC', '#E2E8F0', '#CBD5E1', '#94A3B8', '#475569', '#1E293B'] },
   { id: 'punch', name: 'Punch', colors: ['#FDE68A', '#FCA5A5', '#F472B6', '#818CF8', '#22D3EE', '#4ADE80'] },
+  { id: 'dusk', name: 'Dusk', colors: ['#FEF3C7', '#FDBA74', '#FB7185', '#C026D3', '#6D28D9', '#312E81'] },
+  { id: 'lagoon', name: 'Lagoon', colors: ['#ECFEFF', '#A5F3FC', '#5EEAD4', '#2DD4BF', '#0D9488', '#134E4A'] },
+  { id: 'bloom', name: 'Bloom', colors: ['#FFF1F2', '#FECDD3', '#FDA4AF', '#FB7185', '#E11D48', '#881337'] },
+  { id: 'citrus', name: 'Citrus', colors: ['#FEFCE8', '#FEF08A', '#FDE047', '#FACC15', '#CA8A04', '#713F12'] },
+  { id: 'slate', name: 'Slate', colors: ['#F0F9FF', '#DBEAFE', '#BFDBFE', '#60A5FA', '#2563EB', '#1E3A8A'] },
+  { id: 'terra', name: 'Terra', colors: ['#FDF4E3', '#F5D5A8', '#E0A96D', '#C1743C', '#8C4A21', '#4A2410'] },
+  /**
+   * The one that does not ramp, and says so by being last.
+   *
+   * Every set above runs light to dark so `gradient` and `weight` have
+   * something to ramp along -- the property that makes a palette usable as a
+   * scale rather than an assortment. This one is deliberately equal-weight:
+   * six colours that hold their own against each other, for the grids where
+   * the modules are peers and a ramp would invent a hierarchy that is not
+   * there. It reads badly under `weight` and that is the honest trade.
+   */
+  { id: 'flags', name: 'Flags', colors: ['#EF4444', '#F97316', '#EAB308', '#22C55E', '#3B82F6', '#8B5CF6'] },
 ];
 
 /**

@@ -176,6 +176,27 @@ describe('variantsOf', () => {
     }
   });
 
+  it('offers genuinely different layouts even where the seed does nothing', () => {
+    /**
+     * A modular grid has no randomness in it at all, so five re-seeds were five
+     * identical tiles -- a picker showing one idea five times. Columns and
+     * golden were the same. A layout variant may move the tracks and the dial,
+     * which changes what the grid *is* while leaving it the same system.
+     */
+    for (const kind of ['modular', 'columns', 'golden'] as const) {
+      const from = recipe({ kind });
+      const shapes = variantsOf(from, 'arrangement', 5).map((v) => JSON.stringify(recipeCells(v)));
+      expect(new Set(shapes).size, kind).toBeGreaterThan(1);
+    }
+  });
+
+  it('keeps a layout variant inside its own system', () => {
+    // Still a bento wall, genuinely a different bento wall.
+    for (const v of variantsOf(recipe({ kind: 'bento' }), 'arrangement', 3)) {
+      expect(v.spec.kind).toBe('bento');
+    }
+  });
+
   it('holds the palette when only the layout may vary', () => {
     for (const v of variantsOf(base, 'arrangement', 2)) {
       expect(v.style).toEqual(base.style);

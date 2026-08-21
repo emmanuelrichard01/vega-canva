@@ -92,8 +92,17 @@ interface ObjectRendererProps {
 interface SiblingDragState {
   rawX: number;
   rawY: number;
-  nodeStartX: number;
-  nodeStartY: number;
+  /**
+   * Where its Konva node started, or `null` when it has none.
+   *
+   * The canvas only renders what is in view, so a selected object scrolled off
+   * the edge has no Konva node to move. That is fine for the *live* drag --
+   * nothing is drawn there — and fatal for the commit, which is why the two are
+   * now separate: the position comes from the store and only the preview needs
+   * a node.
+   */
+  nodeStartX: number | null;
+  nodeStartY: number | null;
 }
 
 /**
@@ -222,14 +231,33 @@ export const ObjectRenderer = React.memo(
           const stage = e.target.getStage();
           const all = useStore.getState().objects;
           const siblings: Record<string, SiblingDragState> = {};
+          /**
+           * Every selected sibling, whether or not it is on screen.
+           *
+           * This used to require a Konva node and skip the sibling when there
+           * was none — and the canvas only renders what is in view, so any
+           * selected object outside the viewport was silently dropped from the
+           * drag and left exactly where it was. On a grid that reads as the
+           * modules scattering and their gaps coming apart on every move: the
+           * cells you could see moved, the ones you could not did not, and the
+           * arrangement tore along the edge of the viewport.
+           *
+           * A drag is defined by the selection, not by what happens to be
+           * drawn, so the snapshot comes from the store and the Konva node is
+           * an optional extra for the live preview.
+           */
           selection
             .filter((sid) => sid !== objId)
             .forEach((sid) => {
               const sibling = all[sid];
+              if (!sibling) return;
               const konvaNode = stage?.findOne('#' + sid);
-              if (sibling && konvaNode) {
-                siblings[sid] = { rawX: sibling.x, rawY: sibling.y, nodeStartX: konvaNode.x(), nodeStartY: konvaNode.y() };
-              }
+              siblings[sid] = {
+                rawX: sibling.x,
+                rawY: sibling.y,
+                nodeStartX: konvaNode ? konvaNode.x() : null,
+                nodeStartY: konvaNode ? konvaNode.y() : null,
+              };
             });
           groupDragRef.current = { startX: e.target.x(), startY: e.target.y(), siblings };
         } else {
@@ -256,6 +284,10 @@ export const ObjectRenderer = React.memo(
           const dx = e.target.x() - groupDragRef.current.startX;
           const dy = e.target.y() - groupDragRef.current.startY;
           Object.entries(groupDragRef.current.siblings).forEach(([sid, s]) => {
+            // Only what is drawn needs dragging. A sibling that scrolled into
+            // view mid-drag has no start position recorded, so it is left to
+            // the commit rather than snapped to a delta it never began.
+            if (s.nodeStartX === null || s.nodeStartY === null) return;
             const konvaNode = stage?.findOne('#' + sid);
             if (konvaNode) {
               konvaNode.x(s.nodeStartX + dx);

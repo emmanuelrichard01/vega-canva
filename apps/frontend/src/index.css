@@ -9301,6 +9301,36 @@ body[data-zen='physics'] .forces-handle { bottom: 32px; }
   color: var(--text-primary);
 }
 
+/* The heading and the specimen it describes, on one line. */
+.grid-section__cells-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+}
+
+.grid-section__cells-head .grid-section__label { margin-top: 0; }
+
+/* Checkered, so an opacity below one reads as transparency rather than as a
+   paler colour -- the only way a flat swatch can tell those two apart. */
+.grid-section__specimen {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 34px;
+  height: 34px;
+  border: 1px solid var(--border-divider);
+  border-radius: var(--radius-md);
+  background-color: var(--surface-primary);
+  background-image:
+    linear-gradient(45deg, var(--surface-hover) 25%, transparent 25%),
+    linear-gradient(-45deg, var(--surface-hover) 25%, transparent 25%),
+    linear-gradient(45deg, transparent 75%, var(--surface-hover) 75%),
+    linear-gradient(-45deg, transparent 75%, var(--surface-hover) 75%);
+  background-size: 8px 8px;
+  background-position: 0 0, 0 4px, 4px -4px, -4px 0;
+}
+
 .grid-section__shapes {
   display: flex;
   gap: 4px;
@@ -9337,7 +9367,11 @@ body[data-zen='physics'] .forces-handle { bottom: 32px; }
   display: flex;
   flex-direction: column;
   gap: 2px;
-  max-height: 96px;
+  /* Six rows, not three. Ninety-six pixels showed two and a half ramps and a
+     scrollbar, which is a list you cannot compare anything in -- and comparing
+     is the entire reason the ramps are stacked rather than hidden behind a
+     dropdown. */
+  max-height: 170px;
   overflow-y: auto;
   padding-right: 2px;
   /* The cut edge is the affordance: a ramp sliced by the boundary says the
