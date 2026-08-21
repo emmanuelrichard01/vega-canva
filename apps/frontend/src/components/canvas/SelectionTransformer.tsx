@@ -4,6 +4,8 @@ import Konva from 'konva';
 import { updateNode } from '../../engine/document';
 import { EXPORT_CHROME } from '../../engine/export/chrome';
 import { useStore } from '../../hooks/useStore';
+import { commitGridTransform } from '../../engine/grid/gridApply';
+import { gridGroupFor } from '../panel/GridSection';
 import { cursorForAnchor } from '../../engine/interaction/resizeCursor';
 import { scalePathGeometry } from '../../engine/model/pathGeometry';
 import { isLineLike } from '../../engine/model/lineEnds';
@@ -161,6 +163,7 @@ export const SelectionTransformer: React.FC<Props> = ({ selectedIds, stageRef })
     setTransforming(false);
     const tr = trRef.current;
     if (!tr) return;
+    const touched = tr.nodes().map((n) => n.id());
 
     const store = useStore.getState().objects;
     /**
@@ -358,6 +361,21 @@ export const SelectionTransformer: React.FC<Props> = ({ selectedIds, stageRef })
       konvaNode.scaleX(finalScaleX);
       konvaNode.scaleY(finalScaleY);
     });
+
+    /**
+     * A grid re-lays itself rather than staying scaled.
+     *
+     * The loop above folds the scale into each node, which is right for a
+     * rectangle and wrong for a grid: gutters and corner radii are absolute
+     * measurements chosen against the page, not proportions of the modules, so
+     * scaling the whole thing by 1.6 takes a 16px gutter to 26px. The one
+     * property the person actually set is the one the drag would destroy.
+     *
+     * Deferred a frame because `commitGridTransform` measures the members from
+     * the store, and the writes above have to land there first.
+     */
+    const group = gridGroupFor(touched);
+    if (group) requestAnimationFrame(() => commitGridTransform(group));
   };
 
   /**

@@ -3,7 +3,8 @@ import { updateNode, applyNodePatches, applyGroupPlan, renameGroup, provider } f
 import { deleteNodesWithFrames } from '../engine/interaction/frameMembership';
 import { useStore } from '../hooks/useStore';
 import { editor } from '../engine/api/EditorAPI';
-import { Type, Square, Image as ImageIcon, StickyNote, Mic, LayoutTemplate, MessageSquare, PenTool, Lock, Unlock, Copy, Trash2, Eye, EyeOff, Layers, Folder, FolderOpen, Ungroup, Frame as FrameIcon, ChevronRight, ChevronDown, Search, X, PanelLeftClose, Spline } from 'lucide-react';
+import { Type, Square, Image as ImageIcon, StickyNote, Mic, LayoutTemplate, MessageSquare, PenTool, Lock, Unlock, Copy, Trash2, Eye, EyeOff, Layers, Folder, FolderOpen, Ungroup, Frame as FrameIcon, ChevronRight, ChevronDown, Search, X, PanelLeftClose, Spline, LayoutGrid } from 'lucide-react';
+import { GRID_LABELS } from '../engine/grid/gridLayout';
 import { nanoid } from 'nanoid';
 import { type AnyNode, type NodeType } from '../engine/model/schema';
 import { nodeLabel } from '../engine/model/nodeLabel';
@@ -592,9 +593,20 @@ export const LayersPanel: React.FC<LayersPanelProps> = ({ selectedIds, overrideO
       }
 
       for (const obj of pool) {
-        const parent = (obj as AnyNode).parentId;
-        if (parent && groups[parent]) continue; // drawn by its folder
-        if ((parent ?? undefined) !== (groupId ?? undefined)) continue;
+        /**
+         * The level a node belongs to, with an unknown parent read as the root.
+         *
+         * This used to `continue` on any node with a `parentId` at all, on the
+         * reasoning that its folder would draw it -- which skipped the members
+         * of the folder being drawn *right now*, so expanding a group showed
+         * nothing. Every grouped object was invisible in this panel.
+         *
+         * A `parentId` naming a group that no longer exists resolves to the
+         * root rather than nowhere: an object stranded by a concurrent delete
+         * belongs somewhere in the list, and the board is still drawing it.
+         */
+        const parent = obj.parentId && groups[obj.parentId] ? obj.parentId : undefined;
+        if (parent !== (groupId ?? undefined)) continue;
         entries.push({ z: obj.zIndex ?? 0, render: () => emitNode(obj, pool, indent) });
       }
 
@@ -1405,6 +1417,16 @@ export const LayersPanel: React.FC<LayersPanelProps> = ({ selectedIds, overrideO
 
                 const memberIds = item.members.map((m) => m.id);
                 const groupSelected = memberIds.length > 0 && memberIds.every((id) => selectedIds.includes(id));
+                /**
+                 * A grid is a group, and it should not read as one.
+                 *
+                 * Every group row said "Group" with a folder on it, so a
+                 * composition the grid tool had just built was indistinguishable
+                 * from twelve objects somebody had happened to select. The
+                 * recipe on the group already knows what it is; the row just has
+                 * to say so.
+                 */
+                const grid = groups[item.groupId]?.grid;
                 const hint = dropHint && dropHint.id === item.groupId ? dropHint.where : null;
                 const groupEdge = hint === 'inside' ? null : hint;
                 // Every member hidden, matching what the toggle acts on.
@@ -1480,8 +1502,16 @@ export const LayersPanel: React.FC<LayersPanelProps> = ({ selectedIds, overrideO
                         }}
                       />
                     </button>
-                    <span className="layer-row__icon">
-                      {collapsedFrames.has(item.groupId) ? <Folder size={14} /> : <FolderOpen size={14} />}
+                    <span
+                      className="layer-row__icon"
+                      // Grids take the accent the grid tool uses, because a
+                      // generated composition is a different kind of thing from
+                      // a folder somebody made by selecting and pressing Group.
+                      style={grid ? { color: 'var(--brand-orange)' } : undefined}
+                    >
+                      {grid
+                        ? <LayoutGrid size={14} />
+                        : collapsedFrames.has(item.groupId) ? <Folder size={14} /> : <FolderOpen size={14} />}
                     </span>
                     {editingTitleId === item.groupId ? (
                       <input
@@ -1512,9 +1542,11 @@ export const LayersPanel: React.FC<LayersPanelProps> = ({ selectedIds, overrideO
                             are two of them. The count stays as a subtitle
                             because it is the thing you check when deciding
                             whether the folder is the one you meant. */}
-                        {item.name || 'Group'}
+                        {item.name || (grid ? GRID_LABELS[grid.spec.kind] : 'Group')}
+                        {/* The system, then the count. "Bento 12" says what it
+                            is and how big; "Group (12)" says neither. */}
                         <span style={{ marginLeft: 6, opacity: 0.6, fontWeight: 'var(--weight-medium)' }}>
-                          {item.members.length}
+                          {grid && !item.name ? 'grid' : ''} {item.members.length}
                         </span>
                       </span>
                     )}
@@ -1531,8 +1563,8 @@ export const LayersPanel: React.FC<LayersPanelProps> = ({ selectedIds, overrideO
                       <button
                         onClick={(e) => { e.stopPropagation(); handleUngroup(item.groupId); }}
                         className="layer-row__btn"
-                        data-tooltip="Ungroup (Cmd+Shift+G)"
-                        aria-label="Ungroup"
+                        data-tooltip={grid ? 'Break the grid apart' : 'Ungroup (Cmd+Shift+G)'}
+                        aria-label={grid ? 'Break the grid apart' : 'Ungroup'}
                       >
                         <Ungroup size={14} />
                       </button>

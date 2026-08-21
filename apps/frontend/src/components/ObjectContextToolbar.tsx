@@ -18,6 +18,13 @@ import { cameraSystem } from '../engine/CameraSystem';
 import { engineEvents } from '../engine/EventBus';
 import { cropMode } from '../engine/interaction/cropMode';
 import { pathEdit } from '../engine/interaction/pathEdit';
+import { Palette, Shuffle } from 'lucide-react';
+import { GridKindIcon } from './workspace/gridIcons';
+import { gridGroupFor } from './panel/GridSection';
+import { gridRecipe as gridRecipeFor, relayoutGrid } from '../engine/grid/gridApply';
+import { switchKind } from '../engine/grid/gridBuild';
+import { GRID_HINTS, GRID_KINDS, GRID_LABELS } from '../engine/grid/gridLayout';
+import { GRID_PALETTES } from '../engine/grid/gridStyle';
 import {
   alignPickedAnchors,
   deletePickedAnchor,
@@ -734,6 +741,8 @@ export const ObjectContextToolbar: React.FC<Props> = ({ selectedId, selectedIds,
     const bulkOffers = new Set(
       resolveAffordances(bulkNodes, { surface: 'toolbar', allObjects }).map((a) => a.id)
     );
+    /** The grid under this selection, when the selection is exactly one. */
+    const gridGroup = gridGroupFor(bulkIds);
     const bulkAffords = (id: AffordanceId) => bulkOffers.has(id);
 
     /**
@@ -821,6 +830,95 @@ export const ObjectContextToolbar: React.FC<Props> = ({ selectedId, selectedIds,
                     />
                   ))}
                 </RailPopover>
+              </div>
+              <Divider />
+            </>
+          )}
+
+          {/**
+            * A grid leads with the fact that it *is* a grid.
+            *
+            * Selecting one used to raise the ordinary multi-select rail --
+            * group, align, distribute, opacity -- which is a true description
+            * of twelve rectangles and a useless one for a composition that was
+            * generated from a system. The first thing anyone wants from a grid
+            * they have just made is a different arrangement of it, and that was
+            * four clicks away in a panel.
+            *
+            * The same resolver rule as everywhere else: what the selection *is*
+            * comes before what can be done to the set.
+            */}
+          {gridGroup && gridRecipeFor(gridGroup) && (
+            <>
+              <div className="ctx-group">
+                <RailPopover
+                  label="System"
+                  trigger={
+                    <span style={{ display: 'inline-flex', alignItems: 'center', gap: 5 }}>
+                      <GridKindIcon kind={gridRecipeFor(gridGroup)!.spec.kind} size={15} />
+                      <span className="ctx-value">{GRID_LABELS[gridRecipeFor(gridGroup)!.spec.kind]}</span>
+                    </span>
+                  }
+                  align="start"
+                >
+                  <span className="ctx-popover__label">Grid system</span>
+                  {/* The same ten miniatures the panel shows, so a system picked
+                      here and a system picked there are the same act. */}
+                  <div className="ctx-shape-grid">
+                    {GRID_KINDS.map((kind) => (
+                      <button
+                        key={kind}
+                        type="button"
+                        className="ctx-shape"
+                        data-active={gridRecipeFor(gridGroup)!.spec.kind === kind || undefined}
+                        data-tooltip={`${GRID_LABELS[kind]} — ${GRID_HINTS[kind]}`}
+                        aria-label={GRID_LABELS[kind]}
+                        onClick={() => {
+                          const recipe = gridRecipeFor(gridGroup);
+                          if (recipe) relayoutGrid(gridGroup, switchKind(recipe, kind));
+                        }}
+                      >
+                        <GridKindIcon kind={kind} size={16} />
+                      </button>
+                    ))}
+                  </div>
+                </RailPopover>
+
+                <RailButton
+                  label="Another arrangement"
+                  hint="Re-lay this grid, same system"
+                  onClick={() => {
+                    const recipe = gridRecipeFor(gridGroup);
+                    if (recipe) {
+                      relayoutGrid(gridGroup, {
+                        ...recipe,
+                        spec: { ...recipe.spec, seed: Math.floor(Math.random() * 100000) },
+                      });
+                    }
+                  }}
+                >
+                  <Shuffle size={16} />
+                </RailButton>
+
+                <RailButton
+                  label="Another palette"
+                  hint="Recolour this grid, same arrangement"
+                  onClick={() => {
+                    const recipe = gridRecipeFor(gridGroup);
+                    if (!recipe) return;
+                    // Steps to the *next* shipped palette rather than a random
+                    // one, so pressing it repeatedly walks the set instead of
+                    // returning to the same two or three by chance.
+                    const at = GRID_PALETTES.findIndex((p) => p.colors.join() === recipe.style.palette.join());
+                    const nextPalette = GRID_PALETTES[(at + 1) % GRID_PALETTES.length];
+                    relayoutGrid(gridGroup, {
+                      ...recipe,
+                      style: { ...recipe.style, palette: nextPalette.colors },
+                    });
+                  }}
+                >
+                  <Palette size={16} />
+                </RailButton>
               </div>
               <Divider />
             </>

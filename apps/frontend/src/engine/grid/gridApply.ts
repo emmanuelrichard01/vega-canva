@@ -3,7 +3,14 @@ import { applyGroupPlan, applyNodePatches, deleteNode, doc, groupsMap, nextZInde
 import { editor } from '../api/EditorAPI';
 import { useStore } from '../../hooks/useStore';
 import { nodesInGroup } from '../model/groupTree';
-import { cellPatch, planGridUpdate, recipeCells, refitBox, type GridRecipe } from './gridBuild';
+import {
+  cellPatch,
+  MOVED_EPSILON,
+  planGridUpdate,
+  recipeCells,
+  refitBox,
+  type GridRecipe,
+} from './gridBuild';
 import { gridBounds, layoutGrid } from './gridLayout';
 
 /**
@@ -154,6 +161,52 @@ export function refitGrid(groupId: string): GridRecipe | null {
   const recipe = gridRecipe(groupId);
   if (!recipe) return null;
   return refitBox(recipe, gridBounds(layoutGrid(recipe.spec)), boundsOf(gridMembers(groupId)));
+}
+
+/**
+ * Follow a move or a resize of the objects, and re-lay if the size changed.
+ *
+ * ## Why a grid must not simply scale
+ *
+ * The transformer folds its scale into each node's width and height, which is
+ * right for a rectangle and wrong for a grid. A grid is not nine rectangles
+ * that happen to be near each other, it is a *system*: gutters and corner radii
+ * are absolute measurements chosen against the page, not proportions of the
+ * modules. Scale the whole thing by 1.6 and the gutters go from 16px to 26px --
+ * so the one property the person actually set is the one the drag destroys, and
+ * the composition drifts a little further from its own spacing scale every time
+ * it is resized.
+ *
+ * Re-laying costs one transaction and keeps the system: the modules take the
+ * new box, the gutters stay where they were put, and the radii stay round
+ * rather than oval.
+ *
+ * ## Why a move is treated differently
+ *
+ * Translation changes nothing about the arrangement, so re-laying would write
+ * thirty node updates to produce the identical drawing. The recipe's box still
+ * has to follow -- otherwise the next gutter change snaps the grid back to
+ * where it used to be -- but that is one write to the group, not thirty to its
+ * members.
+ */
+export function commitGridTransform(groupId: string): void {
+  const recipe = gridRecipe(groupId);
+  if (!recipe) return;
+
+  const fitted = refitGrid(groupId);
+  if (!fitted || fitted === recipe) return;
+
+  const scaled =
+    Math.abs(fitted.spec.width - recipe.spec.width) > MOVED_EPSILON ||
+    Math.abs(fitted.spec.height - recipe.spec.height) > MOVED_EPSILON;
+
+  if (scaled) {
+    relayoutGrid(groupId, fitted);
+    return;
+  }
+
+  // Moved only: record where it went and touch nothing else.
+  groupsMap.set(groupId, { ...(groupsMap.get(groupId) ?? { id: groupId }), grid: fitted });
 }
 
 /** The box a recipe's cells will occupy, for a live preview. */
