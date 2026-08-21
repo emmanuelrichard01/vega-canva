@@ -1547,12 +1547,30 @@ export const PropertiesPanel: React.FC<PropertiesPanelProps> = ({ selectedIds, o
             however many objects are inside it. Editing X moves everything by
             the same delta, which keeps the arrangement intact — setting four
             objects to the same X would stack them. */}
-        <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '8px' }}>
+        {/**
+          * Three columns, and the middle one is the lock's lane.
+          *
+          * The width and height row was a flex with the aspect lock wedged
+          * between its two steppers, so those steppers were narrower than the
+          * X and Y above them and started at a different offset. One row out of
+          * four broke the column of values that makes an inspector scannable,
+          * and it broke it in the middle.
+          *
+          * Reserving the lane in every row costs 26px of a column nothing else
+          * uses and puts all eight numbers back on two lines.
+          *
+          * `minmax(0, 1fr)` rather than `1fr`: a bare `fr` track will not
+          * shrink below its content, so the skew steppers -- a shade wider than
+          * the rest because they carry a degree sign -- pushed the last one off
+          * the panel edge.
+          */}
+        <div style={{ display: 'grid', gridTemplateColumns: 'minmax(0, 1fr) 26px minmax(0, 1fr)', gap: '6px', alignItems: 'center' }}>
           <NumberStepper value={Math.round(bounds?.x ?? node.x)} onChange={(v) => setOrigin('x', v)} label="X" />
+          <span aria-hidden />
           <NumberStepper value={Math.round(bounds?.y ?? node.y)} onChange={(v) => setOrigin('y', v)} label="Y" />
         </div>
-        <div style={{ display: 'flex', alignItems: 'center', gap: '6px' }}>
-          <div style={{ flex: 1, minWidth: 0 }}>
+        <div style={{ display: 'grid', gridTemplateColumns: 'minmax(0, 1fr) 26px minmax(0, 1fr)', gap: '6px', alignItems: 'center' }}>
+          <div style={{ minWidth: 0 }}>
             <NumberStepper
               value={Math.round(bounds?.width ?? node.width)}
               onChange={(v) => resizeSelection('width', v)}
@@ -1577,7 +1595,7 @@ export const PropertiesPanel: React.FC<PropertiesPanelProps> = ({ selectedIds, o
           >
             {aspectLocked ? <Lock size={13} /> : <Unlock size={13} />}
           </button>
-          <div style={{ flex: 1, minWidth: 0 }}>
+          <div style={{ minWidth: 0 }}>
             <NumberStepper
               value={Math.round(bounds?.height ?? node.height)}
               onChange={(v) => resizeSelection('height', v)}
@@ -1596,7 +1614,7 @@ export const PropertiesPanel: React.FC<PropertiesPanelProps> = ({ selectedIds, o
             pair on its own line, stretched across both columns -- so its value
             landed nowhere near the values above and below it, and the column
             of numbers that makes an inspector scannable broke exactly once. */}
-        <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '8px' }}>
+        <div style={{ display: 'grid', gridTemplateColumns: 'minmax(0, 1fr) 26px minmax(0, 1fr)', gap: '6px', alignItems: 'center' }}>
           <NumberStepper
             value={Math.round(rotationShared.value ?? 0)}
             mixed={rotationShared.mixed}
@@ -1619,7 +1637,7 @@ export const PropertiesPanel: React.FC<PropertiesPanelProps> = ({ selectedIds, o
             invented abbreviation is a control nobody touches. The caption says
             it once for the pair rather than twice inside it. */}
         <Row stack label="Skew" hint="Slants the object about its centre, in degrees.">
-        <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '8px', width: '100%' }}>
+        <div style={{ display: 'grid', gridTemplateColumns: 'minmax(0, 1fr) 26px minmax(0, 1fr)', gap: '6px', width: '100%', alignItems: 'center' }}>
           {(['skewX', 'skewY'] as const).map((axis) => {
             const s = shared((n) => n[axis] ?? 0);
             return (
@@ -1638,7 +1656,7 @@ export const PropertiesPanel: React.FC<PropertiesPanelProps> = ({ selectedIds, o
                 step={5}
               />
             );
-          })}
+          }).flatMap((el, i) => (i === 0 ? [el, <span key="lane" aria-hidden />] : [el]))}
         </div>
         </Row>
       </Accordion>

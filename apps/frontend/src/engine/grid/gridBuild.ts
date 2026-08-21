@@ -139,45 +139,23 @@ export function withStyle(recipe: GridRecipe, patch: Partial<GridStyle>): GridRe
 }
 
 /**
- * Another arrangement, same everything else.
+ * A different composition entirely, from one draw.
  *
- * Two seeds rather than one, incremented together: the layout's randomness and
- * the palette's are separate questions, and a single "re-roll" that moved both
- * would make it impossible to keep an arrangement you liked while trying
- * colours against it — which is most of what anyone does with a generator.
- */
-export function reroll(recipe: GridRecipe, what: 'layout' | 'colour' | 'both'): GridRecipe {
-  const layout = what !== 'colour' ? recipe.spec.seed + 1 : recipe.spec.seed;
-  const colour = what !== 'layout' ? recipe.style.seed + 1 : recipe.style.seed;
-  return {
-    spec: { ...recipe.spec, seed: layout },
-    style: { ...recipe.style, seed: colour },
-  };
-}
-
-/** Ignore differences below this many world units when deciding if a grid moved. */
-export const MOVED_EPSILON = 0.5;
-
-export interface Box { x: number; y: number; width: number; height: number }
-
-/**
- * A different composition entirely, from one press.
+ * ## Why this is not just a new seed
  *
- * ## Why this is not just re-rolling the seed
+ * A new seed gives another arrangement *of the same system*. That is the right
+ * question once you have decided what you are making. Before that, the useful
+ * one is broader -- what would this look like as a dial, or a cascade, or a
+ * card wall -- and answering it by hand means changing the kind, then the
+ * tracks it wants, then the gutters, then finding a palette. Four decisions to
+ * see one idea.
  *
- * `reroll` gives another arrangement *of the same system*: a different bento
- * packing, a different scatter of colour. That is the right tool once you have
- * decided what you are making. Before that, the useful question is the broader
- * one -- what would this look like as a dial, or a cascade, or a card wall --
- * and answering it by hand means changing the kind, then the tracks it wants,
- * then the gutters, then finding a palette. Four decisions to see one idea.
- *
- * So this changes all of them at once, and it stays *inside the ranges that
- * look deliberate*: tracks come from the kind's own defaults with a small
- * jitter rather than from a uniform draw, gutters are picked from a spacing
- * scale rather than any integer, and the palette is one of the shipped ramps.
- * A randomiser that produces a seventeen-column grid with a nineteen-pixel
- * gutter is a randomiser people press once.
+ * So this makes all four at once, and stays *inside the ranges that look
+ * deliberate*: tracks come from the kind's own defaults with a small jitter
+ * rather than a uniform draw, gutters are picked from a spacing scale rather
+ * than any integer, and the palette is one of the shipped ramps. A randomiser
+ * that produces a seventeen-column grid with a nineteen-pixel gutter is a
+ * randomiser people press once.
  *
  * The box is untouched: this is about what fills the space, not where it is.
  */
@@ -190,9 +168,6 @@ export function randomiseRecipe(recipe: GridRecipe, seed: number): GridRecipe {
   // Around the kind's own number rather than an arbitrary one, so a dial still
   // gets a dozen spokes and a golden spiral still gets about five squares.
   const jitter = (n: number, by: number) => Math.max(1, Math.round(n + (next() - 0.5) * 2 * by));
-
-  // A spacing scale, because a gutter is a design decision with conventional
-  // values and 19px is not one of them.
   const gutter = pick([0, 4, 8, 12, 16, 24, 32]);
   const palette = pick(GRID_PALETTES);
 
@@ -217,12 +192,74 @@ export function randomiseRecipe(recipe: GridRecipe, seed: number): GridRecipe {
       // than half the time.
       shapeMode: next() < 0.25 ? 'mixed' : 'uniform',
       shapes: next() < 0.25
-        ? [pick(CELL_SHAPES), pick(CELL_SHAPES)] as CellShape[]
-        : [pick(CELL_SHAPES)] as CellShape[],
+        ? ([pick(CELL_SHAPES), pick(CELL_SHAPES)] as CellShape[])
+        : ([pick(CELL_SHAPES)] as CellShape[]),
       radius: pick([0, 0, 4, 8, 12, 24, 999]),
       seed: Math.floor(next() * 10000),
     },
   };
+}
+
+/** What a set of candidate variations is allowed to change. */
+export type VariantMode = 'arrangement' | 'colour' | 'everything';
+
+export const VARIANT_MODES: readonly VariantMode[] = ['arrangement', 'colour', 'everything'];
+
+export const VARIANT_LABELS: Record<VariantMode, string> = {
+  arrangement: 'Layout',
+  colour: 'Colour',
+  everything: 'Anything',
+};
+
+/**
+ * Candidate grids to choose between, rather than one to accept blind.
+ *
+ * ## Why a set and not a button
+ *
+ * Re-rolling was four buttons that each committed a change you could not see
+ * until it had happened. That is a slot machine, and it has the failure every
+ * slot machine has: press twice and the arrangement you liked is gone. The only
+ * way back was undo, which on a thirty-cell grid is a coarse instrument aimed
+ * at the wrong thing.
+ *
+ * Generating several and showing them is the whole fix. You compare instead of
+ * gambling, what you are on stays on screen while you look, and nothing is
+ * written until you pick. It also makes the three modes legible: what varies
+ * between the tiles *is* what the mode changes, which no amount of labelling a
+ * button could have said as clearly.
+ *
+ * Seeds come from one stream rather than by incrementing, so the tiles differ
+ * from each other as much as from the original. Five consecutive seeds would be
+ * five near-identical thumbnails and a picker worth nothing.
+ */
+export function variantsOf(
+  recipe: GridRecipe,
+  mode: VariantMode,
+  salt: number,
+  count = 5
+): GridRecipe[] {
+  const next = rng(salt);
+  const seed = () => Math.floor(next() * 100000);
+
+  return Array.from({ length: count }, () => {
+    if (mode === 'everything') return randomiseRecipe(recipe, seed());
+    if (mode === 'colour') {
+      const palette = GRID_PALETTES[Math.floor(next() * GRID_PALETTES.length)];
+      return {
+        // The layout is held *exactly*, which is the point of the mode: you
+        // have settled the arrangement and you are trying colour against it.
+        spec: recipe.spec,
+        style: {
+          ...recipe.style,
+          seed: seed(),
+          palette: palette.colors,
+          colorMode: COLOR_MODES[Math.floor(next() * COLOR_MODES.length)],
+        },
+      };
+    }
+    // Layout only: the palette is held, so the tiles differ in shape alone.
+    return { spec: { ...recipe.spec, seed: seed() }, style: recipe.style };
+  });
 }
 
 /**
@@ -235,6 +272,11 @@ export function randomiseRecipe(recipe: GridRecipe, seed: number): GridRecipe {
 export function switchKind(recipe: GridRecipe, kind: GridSpec['kind']): GridRecipe {
   return withSpec(recipe, { kind, ...KIND_DEFAULTS[kind] });
 }
+
+/** Ignore differences below this many world units when deciding if a grid moved. */
+export const MOVED_EPSILON = 0.5;
+
+export interface Box { x: number; y: number; width: number; height: number }
 
 /**
  * Carry a move or a resize of the objects back into the recipe's box.

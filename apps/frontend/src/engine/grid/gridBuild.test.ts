@@ -6,7 +6,8 @@ import {
   planGridUpdate,
   recipeCells,
   refitBox,
-  reroll,
+  variantsOf,
+  VARIANT_MODES,
   withSpec,
   withStyle,
   type GridRecipe,
@@ -128,32 +129,66 @@ describe('withSpec and withStyle', () => {
   });
 });
 
-describe('reroll', () => {
-  it('moves the layout without touching the palette', () => {
-    // Keeping an arrangement you liked while trying colours against it is most
-    // of what anyone does with a generator.
-    const before = recipe({ seed: 1 }, { seed: 1 });
-    const after = reroll(before, 'layout');
-    expect(after.spec.seed).not.toBe(before.spec.seed);
-    expect(after.style.seed).toBe(before.style.seed);
+describe('variantsOf', () => {
+  const base = recipe({ kind: 'bento', rows: 4, columns: 4, variation: 0.7, seed: 1 }, { seed: 1 });
+
+  it('offers a set to choose between, not one to accept', () => {
+    // Re-rolling used to commit a change you could not see until it had
+    // happened, so pressing twice lost the arrangement you liked.
+    expect(variantsOf(base, 'arrangement', 1)).toHaveLength(5);
   });
 
-  it('moves the palette without touching the layout', () => {
-    const before = recipe({ seed: 1 }, { seed: 1 });
-    const after = reroll(before, 'colour');
-    expect(after.spec.seed).toBe(before.spec.seed);
-    expect(after.style.seed).not.toBe(before.style.seed);
+  it('makes the tiles differ from each other, not just from the original', () => {
+    /**
+     * Incrementing a seed gives five consecutive draws, which on any decent
+     * PRNG are unrelated but on a *layout* often land on similar arrangements.
+     * Drawing all five from one stream spreads them, and a picker whose tiles
+     * look alike is a picker worth nothing.
+     */
+    const seeds = variantsOf(base, 'arrangement', 4).map((v) => v.spec.seed);
+    expect(new Set(seeds).size).toBe(5);
   });
 
-  it('moves both when asked', () => {
-    const after = reroll(recipe({ seed: 1 }, { seed: 1 }), 'both');
-    expect(after.spec.seed).toBe(2);
-    expect(after.style.seed).toBe(2);
+  it('holds the layout exactly when only colour may vary', () => {
+    // The point of the mode: you have settled the arrangement and you are
+    // trying colour against it.
+    for (const v of variantsOf(base, 'colour', 2)) {
+      expect(v.spec).toEqual(base.spec);
+    }
   });
 
-  it('actually produces a different arrangement', () => {
-    const before = recipe({ kind: 'bento', rows: 5, columns: 5, variation: 1, seed: 1 });
-    expect(recipeCells(reroll(before, 'layout'))).not.toEqual(recipeCells(before));
+  it('holds the palette when only the layout may vary', () => {
+    for (const v of variantsOf(base, 'arrangement', 2)) {
+      expect(v.style).toEqual(base.style);
+    }
+  });
+
+  it('changes the system itself only in the broadest mode', () => {
+    const kinds = new Set(variantsOf(base, 'everything', 6).map((v) => v.spec.kind));
+    expect(kinds.size).toBeGreaterThan(1);
+    for (const v of variantsOf(base, 'colour', 6)) expect(v.spec.kind).toBe(base.spec.kind);
+  });
+
+  it('is reproducible from its salt, so the tiles hold still', () => {
+    // Regenerating on every render would move the tiles under the pointer:
+    // you would go to click the third one and click something else.
+    for (const mode of VARIANT_MODES) {
+      expect(variantsOf(base, mode, 9)).toEqual(variantsOf(base, mode, 9));
+    }
+  });
+
+  it('gives a different set for a different salt', () => {
+    expect(variantsOf(base, 'arrangement', 1)).not.toEqual(variantsOf(base, 'arrangement', 2));
+  });
+
+  it('produces a drawable grid for every candidate', () => {
+    // A blank tile in the picker is worse than no tile: it reads as a broken
+    // option rather than an absent one.
+    for (const mode of VARIANT_MODES) {
+      for (const v of variantsOf(base, mode, 3)) {
+        expect(recipeCells(v).length).toBeGreaterThan(0);
+      }
+    }
   });
 });
 

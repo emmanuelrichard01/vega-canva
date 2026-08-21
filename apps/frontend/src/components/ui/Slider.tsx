@@ -8,6 +8,15 @@ interface Props {
   step?: number;
   label: string;
   /**
+   * Hide the label, keeping it for screen readers.
+   *
+   * For the rows that already carry a caption of their own. Two visible labels
+   * for one control is not a redundancy you stop noticing -- the caption reads
+   * "Uneven modules" and the slider's own label reads "Uneven m..." beside it,
+   * so the panel appears to have truncated something for no reason.
+   */
+  labelHidden?: boolean;
+  /**
    * The value the fill is measured *from*, and the value a double-click
    * returns to. Defaults to `min`.
    *
@@ -56,6 +65,7 @@ export const Slider: React.FC<Props> = ({
   max,
   step = 1,
   label,
+  labelHidden,
   origin,
   unit = '',
   format,
@@ -79,7 +89,7 @@ export const Slider: React.FC<Props> = ({
 
   return (
     <div className="slider" data-tooltip={hint}>
-      <label className="slider__label" htmlFor={id}>
+      <label className={labelHidden ? 'sr-only' : 'slider__label'} htmlFor={id}>
         {label}
       </label>
       <input

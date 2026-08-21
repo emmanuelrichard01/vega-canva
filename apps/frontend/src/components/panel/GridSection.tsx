@@ -1,5 +1,5 @@
 import React from 'react';
-import { Dices, Link2, Shuffle, Sparkles, Unlink2, Wand2 } from 'lucide-react';
+import { Link2, Unlink2 } from 'lucide-react';
 import { useStore } from '../../hooks/useStore';
 import { GridKindIcon } from '../workspace/gridIcons';
 import { NumberStepper } from '../ui/NumberStepper';
@@ -7,14 +7,8 @@ import { SegmentedControl } from '../ui/SegmentedControl';
 import { Slider } from '../ui/Slider';
 import { ColorPickerPopover } from '../ui/ColorPickerPopover';
 import { gridRecipe, refitGrid, relayoutGrid } from '../../engine/grid/gridApply';
-import {
-  randomiseRecipe,
-  reroll,
-  switchKind,
-  withSpec,
-  withStyle,
-  type GridRecipe,
-} from '../../engine/grid/gridBuild';
+import { switchKind, withSpec, withStyle, type GridRecipe } from '../../engine/grid/gridBuild';
+import { GridVariations } from './GridVariations';
 import {
   GRID_HINTS,
   GRID_KINDS,
@@ -239,6 +233,7 @@ export const GridSection: React.FC<Props> = ({ groupId }) => {
           <span>{variationLabel}</span>
           <Slider
             label={variationLabel}
+            labelHidden
             value={Math.round(recipe.spec.variation * 100)}
             min={0}
             max={100}
@@ -328,6 +323,7 @@ export const GridSection: React.FC<Props> = ({ groupId }) => {
         <span>Opacity</span>
         <Slider
           label="Opacity"
+          labelHidden
           value={Math.round(recipe.style.opacity * 100)}
           min={0}
           max={100}
@@ -394,37 +390,15 @@ export const GridSection: React.FC<Props> = ({ groupId }) => {
       </label>
 
       {/**
-        * Three dice and a wand.
+        * Picking a grid by looking at it, rather than rolling for one.
         *
-        * The dice re-roll an arrangement *of the same system*, which is the
-        * right tool once you have decided what you are making. Before that the
-        * useful question is broader -- what would this look like as a dial, or
-        * a cascade, or a card wall -- and answering it by hand is four
-        * decisions to see one idea. `randomiseRecipe` makes all four at once,
-        * staying inside the ranges that look deliberate.
+        * This was four buttons -- Arrangement, Colour, Both, Surprise me --
+        * each committing a change you could not see until it had happened.
+        * Press twice and the arrangement you liked was gone. `GridVariations`
+        * shows five candidates and writes nothing until one is chosen.
         */}
-      <div className="grid-section__rolls">
-        <button
-          type="button"
-          className="grid-roll grid-roll--wide"
-          data-tooltip="A different system, tracks, spacing and palette"
-          onClick={() => apply(randomiseRecipe(recipe, Date.now() & 0xffff))}
-        >
-          <Wand2 size={14} /> Surprise me
-        </button>
-      </div>
+      <GridVariations recipe={recipe} onPick={apply} />
 
-      <div className="grid-section__rolls">
-        <button type="button" className="grid-roll" onClick={() => apply(reroll(recipe, 'layout'))}>
-          <Shuffle size={14} /> Arrangement
-        </button>
-        <button type="button" className="grid-roll" onClick={() => apply(reroll(recipe, 'colour'))}>
-          <Sparkles size={14} /> Colour
-        </button>
-        <button type="button" className="grid-roll" onClick={() => apply(reroll(recipe, 'both'))}>
-          <Dices size={14} /> Both
-        </button>
-      </div>
     </div>
   );
 };
