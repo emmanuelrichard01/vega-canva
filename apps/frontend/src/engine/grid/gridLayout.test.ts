@@ -354,6 +354,44 @@ describe('masonry', () => {
     expect(Math.max(...heights) / Math.min(...heights)).toBeGreaterThan(1.8);
   });
 
+  it('reaches the old maximum by sixty per cent of the dial', () => {
+    /**
+     * The blend used to stop at the drawn ratio, so the whole interesting half
+     * of the range sat above 0.6 and everything below it read as a modular
+     * grid with untidy rows -- most of the dial spent saying nothing.
+     */
+    const spreadAt = (variation: number) => {
+      const h = masonry({ rows: 5, columns: 4, variation, seed: 3 }).map((c) => c.height);
+      return Math.max(...h) / Math.min(...h);
+    };
+    expect(spreadAt(0.6)).toBeGreaterThan(2.5);
+    // And the top of the dial goes well past where it used to stop.
+    expect(spreadAt(1)).toBeGreaterThan(spreadAt(0.6) * 1.3);
+  });
+
+  it('is unmistakably masonry at full variation', () => {
+    /**
+     * The bug this pins is subtle and was fatal: normalising every card in a
+     * column so they summed to the height exactly leaves their *proportions*
+     * untouched, which divided the column's own scale straight back out. The
+     * one lever meant to set columns against each other reached the drawing as
+     * nothing but a different card count, and the result looked modular even
+     * with the dial at maximum.
+     */
+    for (const seed of [2, 9, 14, 41]) {
+      const cells = masonry({ rows: 5, columns: 4, variation: 1, seed });
+      const heights = cells.map((c) => c.height);
+      expect(Math.max(...heights) / Math.min(...heights), `seed ${seed}`).toBeGreaterThan(2.5);
+
+      // And the columns disagree about where their cards begin.
+      const starts = (col: number) =>
+        cells.filter((c) => c.col === col).map((c) => Math.round(c.y / 4));
+      const a = new Set(starts(0));
+      const shared = starts(1).filter((y) => y > 0 && a.has(y)).length;
+      expect(shared, `seed ${seed}`).toBeLessThan(2);
+    }
+  });
+
   it('is a plain modular grid at zero variation', () => {
     // The property that makes `variation` a dial rather than a switch.
     const cells = masonry({ rows: 4, columns: 3, variation: 0 });

@@ -51,12 +51,19 @@ export type ColorMode =
 
 export const COLOR_MODES: readonly ColorMode[] = ['sequence', 'scatter', 'gradient', 'weight', 'alternate', 'solid'];
 
+/**
+ * Named for what you get, not for how it works.
+ *
+ * "Across" and "By size" were descriptions of the *algorithm* -- across what,
+ * and by the size of what? A menu is read once, at the moment of choosing,
+ * with no way to try each option but to try each option.
+ */
 export const COLOR_MODE_LABELS: Record<ColorMode, string> = {
-  sequence: 'In order',
-  scatter: 'Scattered',
-  gradient: 'Across',
-  weight: 'By size',
-  alternate: 'Alternating',
+  sequence: 'Palette in order',
+  scatter: 'Random',
+  gradient: 'Ramp across the grid',
+  weight: 'Biggest cells darkest',
+  alternate: 'Chequerboard',
   solid: 'One colour',
 };
 

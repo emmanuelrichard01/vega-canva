@@ -5593,10 +5593,10 @@ body[data-rulers='off'] {
      control. 88px clears the longest label in the panel at 11px without
      taking width from the controls, which are the part that has to stay
      usable at the panel's narrowest. */
-  grid-template-columns: 88px minmax(0, 1fr);
+  grid-template-columns: 84px minmax(0, 1fr);
   align-items: center;
   gap: 10px;
-  min-height: 28px;
+  min-height: 26px;
 }
 
 /* A row whose control needs the panel's full width: the label goes above it
@@ -5651,6 +5651,80 @@ body[data-rulers='off'] {
 
 /* ------------------------------------------------- properties sections --- */
 
+/**
+ * A section is a disclosure, and it should read as one whether or not it is
+ * open.
+ *
+ * The panel used to draw a full-width hairline under every section, open or
+ * shut, so nineteen sections were nineteen rules stacked down the panel with
+ * the controls trapped between them. That is a table, and a table of one column
+ * is just noise: the rule is doing no separating that the header's own weight
+ * was not already doing.
+ *
+ * A shut section is a row. An open one gets its background lifted and keeps a
+ * single rule beneath it, which is enough to say where it ends and costs
+ * nothing when it is closed.
+ */
+.prop-section {
+  display: flex;
+  flex-direction: column;
+}
+
+.prop-section[data-open] {
+  border-bottom: 1px solid var(--border-divider);
+}
+
+.prop-section[data-open] + .prop-section[data-open] {
+  /* Two open sections need one rule between them, not two stacked. */
+  border-top: none;
+}
+
+.prop-section__header {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  width: 100%;
+  padding: 9px 16px;
+  border: none;
+  background: transparent;
+  color: inherit;
+  cursor: pointer;
+  text-align: left;
+  transition: background-color var(--motion-hover);
+}
+
+.prop-section__header:hover {
+  background: var(--surface-hover);
+}
+
+.prop-section__chevron {
+  flex-shrink: 0;
+  color: var(--text-tertiary);
+  transition: transform var(--motion-hover), color var(--motion-hover);
+}
+
+.prop-section[data-open] .prop-section__chevron {
+  transform: rotate(90deg);
+  color: var(--text-secondary);
+}
+
+/* The glyph, not a second label.
+   Nineteen sections is past what a list of words can be scanned as, and the
+   icon is what lets the eye find "Typography" without reading the three titles
+   above it first. Kept at the tertiary tone so it guides rather than competes:
+   an icon as dark as its title is two things shouting one word. */
+.prop-section__icon {
+  display: flex;
+  flex-shrink: 0;
+  color: var(--text-tertiary);
+  transition: color var(--motion-hover);
+}
+
+.prop-section[data-open] .prop-section__icon,
+.prop-section__header:hover .prop-section__icon {
+  color: var(--text-secondary);
+}
+
 /* Sentence case, not uppercase-with-tracking.
    The headers were 11px bold, uppercase, at 0.1em tracking — which breaks
    DESIGN.md's rule that tracking is never applied below 16px, and it is not an
@@ -5659,10 +5733,56 @@ body[data-rulers='off'] {
    is quieter, is what Figma and the Apple inspectors both settled on, and
    needs no tracking to be legible. */
 .prop-section__title {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
   font-size: var(--text-xs);
   font-weight: 600;
   color: var(--text-secondary);
   letter-spacing: normal;
+}
+
+.prop-section[data-open] .prop-section__title {
+  color: var(--text-primary);
+}
+
+/**
+ * What the section holds, said without opening it.
+ *
+ * A closed row reading "Drop shadow" tells you a drop shadow exists as an
+ * idea; one reading "Drop shadow · On" tells you about the object in front of
+ * you. Quiet, and quieter still while the section is open, where the controls
+ * below already say it in full — a badge that stayed loud would be the same
+ * fact twice, competing with the answer it duplicates.
+ */
+.prop-section__badge {
+  flex-shrink: 0;
+  max-width: 40%;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  padding: 1px 6px;
+  border-radius: var(--radius-pill);
+  background: var(--surface-hover);
+  color: var(--text-tertiary);
+  font-size: var(--text-2xs);
+  font-weight: 600;
+  font-variant-numeric: tabular-nums;
+}
+
+.prop-section[data-open] .prop-section__badge {
+  background: transparent;
+  padding-inline: 0;
+  opacity: 0.55;
+}
+
+.prop-section__body {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  padding: 2px 16px 14px;
 }
 
 /* The disclosure header is a button, so it must show focus. It previously
@@ -5684,6 +5804,66 @@ body[data-rulers='off'] {
   outline: 2px solid var(--focus-ring-color);
   outline-offset: 1px;
   border-radius: var(--radius-md);
+}
+
+/**
+ * A disclosure inside a section.
+ *
+ * Quieter than a section header in every dimension -- smaller, lighter, no
+ * icon, no rule -- because it is subordinate to the section it sits in and
+ * anything louder would read as a second section that had lost its divider.
+ */
+.prop-details {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.prop-details__toggle {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  align-self: flex-start;
+  padding: 2px 6px 2px 2px;
+  margin-left: -2px;
+  border: none;
+  border-radius: var(--radius-sm);
+  background: transparent;
+  color: var(--text-tertiary);
+  font-family: inherit;
+  font-size: var(--text-2xs);
+  font-weight: var(--weight-semibold);
+  cursor: pointer;
+  transition: color var(--motion-hover), background-color var(--motion-hover);
+}
+
+.prop-details__toggle:hover {
+  background: var(--surface-hover);
+  color: var(--text-secondary);
+}
+
+.prop-details__toggle svg {
+  transition: transform var(--motion-hover);
+}
+
+.prop-details[data-open] .prop-details__toggle svg {
+  transform: rotate(90deg);
+}
+
+.prop-details[data-open] .prop-details__toggle {
+  color: var(--text-secondary);
+}
+
+/* Indented and tied to the toggle by a hairline: the same device the effect
+   sub-groups use, so "these belong to that" is one visual idea in this panel
+   rather than two. */
+.prop-details__body {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  padding-left: 10px;
+  margin-left: 3px;
+  border-left: 1px solid var(--border-divider);
 }
 
 /* ------------------------------------------------ properties sub-groups --- */
@@ -8999,10 +9179,10 @@ body[data-zen='physics'] .forces-handle { bottom: 32px; }
 
 .grid-kind {
   display: flex;
-  flex-direction: column;
   align-items: center;
-  gap: 3px;
-  padding: 6px 2px;
+  justify-content: center;
+  aspect-ratio: 1;
+  padding: 5px;
   border: 1px solid transparent;
   border-radius: var(--radius-md);
   background: transparent;
@@ -9022,17 +9202,52 @@ body[data-zen='physics'] .forces-handle { bottom: 32px; }
   color: var(--accent-strong, var(--brand-orange));
 }
 
-/* The name under each miniature, at the smallest size the system has. Five
-   across a 260px panel leaves about forty pixels a label, so it ellipsizes
-   rather than wrapping into a second line that would make the row ragged. */
-.grid-kind__label {
-  max-width: 100%;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
+/* A caption above a run of swatches, saying what the run is.
+   Two rows of swatches sat in the colour block with nothing to tell them
+   apart: a column of ramps to pick from, then a row of the current ramp's own
+   colours to edit. Identical shapes, opposite meanings. */
+.grid-section__caption {
+  margin-top: 2px;
+  color: var(--text-tertiary);
   font-size: var(--text-2xs);
   font-weight: var(--weight-medium);
-  letter-spacing: 0.01em;
+}
+
+/* The two gaps, with the chain that binds them sitting between them rather
+   than beside something else. */
+.grid-section__gaps {
+  display: flex;
+  align-items: flex-end;
+  gap: 6px;
+}
+
+.grid-lock {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  flex-shrink: 0;
+  width: 26px;
+  height: 26px;
+  margin-bottom: 1px;
+  border: 1px solid var(--border-divider);
+  border-radius: var(--radius-md);
+  background: transparent;
+  color: var(--text-tertiary);
+  cursor: pointer;
+  transition: background-color var(--motion-hover), color var(--motion-hover), border-color var(--motion-hover);
+}
+
+.grid-lock:hover { background: var(--surface-hover); color: var(--text-secondary); }
+
+.grid-lock[data-active] {
+  border-color: var(--accent-line);
+  background: var(--accent-quiet);
+  color: var(--accent-strong, var(--brand-orange));
+}
+
+.grid-section__hint strong {
+  color: var(--text-primary);
+  font-weight: var(--weight-semibold);
 }
 
 .grid-section__hint {

@@ -1,5 +1,5 @@
 import React from 'react';
-import { Dices, Shuffle, Sparkles, Wand2 } from 'lucide-react';
+import { Dices, Link2, Shuffle, Sparkles, Unlink2, Wand2 } from 'lucide-react';
 import { useStore } from '../../hooks/useStore';
 import { GridKindIcon } from '../workspace/gridIcons';
 import { NumberStepper } from '../ui/NumberStepper';
@@ -65,6 +65,15 @@ interface Props {
 
 export const GridSection: React.FC<Props> = ({ groupId }) => {
   const recipe = useStore((s) => s.groups[groupId]?.grid ?? null);
+  /**
+   * Whether the two gaps move together.
+   *
+   * Local rather than stored: it is a way of *editing*, not a property of the
+   * grid, and a collaborator who unlinks their gaps has not changed the board.
+   * Starts on, because a grid with matching gaps is what almost everyone wants
+   * and the link is easier to notice when breaking it is the deliberate act.
+   */
+  const [linked, setLinked] = React.useState(true);
   // Subscribed to, not merely read: the section has to re-render when a peer
   // re-lays the grid, and when this client's own relayout lands.
   if (!recipe) return null;
@@ -129,13 +138,25 @@ export const GridSection: React.FC<Props> = ({ groupId }) => {
             data-tooltip={`${GRID_LABELS[kind]} — ${GRID_HINTS[kind]}`}
             onClick={() => apply(switchKind(recipe, kind))}
           >
-            <GridKindIcon kind={kind} size={22} />
-            <span className="grid-kind__label">{GRID_LABELS[kind]}</span>
+            {/* No label under the tile.
+                Five across a 260px panel leaves about forty pixels a word, so
+                "Hierarchical" and "Manuscript" both arrived as "Hier..." --
+                which identifies nothing and takes a line to do it. The caption
+                below names whichever is chosen, in full, and the tooltip names
+                the rest. */}
+            <GridKindIcon kind={kind} size={24} />
           </button>
         ))}
       </div>
 
-      <p className="grid-section__hint">{GRID_HINTS[recipe.spec.kind]}</p>
+      {/* The caption carries the name the tiles no longer show, and the one
+          line explaining what the system is *for*. Both belong to the current
+          choice, so they sit under the picker rather than inside it. */}
+      <p className="grid-section__hint">
+        <strong>{GRID_LABELS[recipe.spec.kind]}</strong>
+        {' '}
+        {GRID_HINTS[recipe.spec.kind]}
+      </p>
 
       {/* Tracks. */}
       <div className="grid-section__row">
@@ -160,17 +181,49 @@ export const GridSection: React.FC<Props> = ({ groupId }) => {
         )}
       </div>
 
-      {/* Gutters, separately per axis, because they are read separately: a
-          wide horizontal gutter with a tight vertical one is a real layout and
-          one number could not express it. */}
-      <div className="grid-section__row">
+      {/**
+        * Two gaps with a link between them, not two gaps and a button.
+        *
+        * "Match gaps" was a labelled button sitting beside Margin, which put a
+        * control for the row above inside the row below and made it read as
+        * something Margin did. A chain between the two fields is the pattern
+        * every inspector uses for a locked pair -- including the width and
+        * height a few sections up -- and it says which two things it binds by
+        * being between them.
+        */}
+      <div className="grid-section__gaps">
         <label className="grid-field">
           <span>Gap across</span>
-          <NumberStepper value={recipe.spec.gutterX} min={0} max={200} onChange={(gutterX) => patchSpec({ gutterX })} />
+          <NumberStepper
+            value={recipe.spec.gutterX}
+            min={0}
+            max={200}
+            onChange={(gutterX) => patchSpec(linked ? { gutterX, gutterY: gutterX } : { gutterX })}
+          />
         </label>
+        <button
+          type="button"
+          className="grid-lock"
+          data-active={linked || undefined}
+          aria-pressed={linked}
+          data-tooltip={linked ? 'Gaps are linked' : 'Link the gaps'}
+          aria-label={linked ? 'Unlink the gaps' : 'Link the gaps'}
+          onClick={() => {
+            const next = !linked;
+            setLinked(next);
+            if (next) patchSpec({ gutterY: recipe.spec.gutterX });
+          }}
+        >
+          {linked ? <Link2 size={13} /> : <Unlink2 size={13} />}
+        </button>
         <label className="grid-field">
           <span>Gap down</span>
-          <NumberStepper value={recipe.spec.gutterY} min={0} max={200} onChange={(gutterY) => patchSpec({ gutterY })} />
+          <NumberStepper
+            value={recipe.spec.gutterY}
+            min={0}
+            max={200}
+            onChange={(gutterY) => patchSpec(linked ? { gutterX: gutterY, gutterY } : { gutterY })}
+          />
         </label>
       </div>
 
@@ -179,14 +232,6 @@ export const GridSection: React.FC<Props> = ({ groupId }) => {
           <span>Margin</span>
           <NumberStepper value={recipe.spec.margin} min={0} max={400} onChange={(margin) => patchSpec({ margin })} />
         </label>
-        <button
-          type="button"
-          className="grid-link"
-          data-tooltip="Match the gaps to each other"
-          onClick={() => patchSpec({ gutterY: recipe.spec.gutterX })}
-        >
-          Match gaps
-        </button>
       </div>
 
       {variationLabel && (
@@ -214,6 +259,9 @@ export const GridSection: React.FC<Props> = ({ groupId }) => {
         ]}
       />
 
+      <span className="grid-section__caption">
+        {recipe.style.shapeMode === 'uniform' ? 'Pick a shape' : 'Pick two or more to mix'}
+      </span>
       <div className="grid-section__shapes" role="group" aria-label="Cell shapes">
         {CELL_SHAPES.map((shape: CellShape) => {
           const on = recipe.style.shapes.includes(shape);
@@ -289,6 +337,10 @@ export const GridSection: React.FC<Props> = ({ groupId }) => {
 
       {/* Colour. */}
       <div className="grid-section__label">Colour</div>
+      {/* Two rows of swatches sat here with nothing to tell them apart: a
+          column of ramps to pick from, then a row of the current ramp's own
+          colours to edit. Identical shapes, opposite meanings. */}
+      <span className="grid-section__caption">Pick a palette</span>
       <div className="grid-section__palettes" role="radiogroup" aria-label="Palette">
         {GRID_PALETTES.map((palette) => {
           const on = palette.colors.join() === recipe.style.palette.join();
@@ -313,6 +365,7 @@ export const GridSection: React.FC<Props> = ({ groupId }) => {
 
       {/* Swatch-level editing, so a shipped palette is a starting point rather
           than the only answer. */}
+      <span className="grid-section__caption">Or edit these colours</span>
       <div className="grid-section__swatches">
         {recipe.style.palette.map((color, i) => (
           <ColorPickerPopover
@@ -328,7 +381,7 @@ export const GridSection: React.FC<Props> = ({ groupId }) => {
       </div>
 
       <label className="grid-field grid-field--wide">
-        <span>Assignment</span>
+        <span>How colours are used</span>
         <select
           className="grid-select"
           value={recipe.style.colorMode}

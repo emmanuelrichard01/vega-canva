@@ -137,7 +137,11 @@ export const KIND_DEFAULTS: Record<
   GridKind,
   { rows: number; columns: number; variation: number; gutterX: number; gutterY: number }
 > = {
-  columns: { rows: 1, columns: 12, variation: 0, gutterX: 16, gutterY: 16 },
+  // Four, not twelve. A twelve-column grid is a *measure* you place things
+  // against, and this tool draws the tracks as objects -- so twelve of them is
+  // twelve tall slivers rather than the four broad columns anyone picturing a
+  // column layout has in mind.
+  columns: { rows: 1, columns: 4, variation: 0, gutterX: 16, gutterY: 16 },
   modular: { rows: 3, columns: 3, variation: 0, gutterX: 16, gutterY: 16 },
   bento: { rows: 4, columns: 4, variation: 0.7, gutterX: 12, gutterY: 12 },
   masonry: { rows: 4, columns: 3, variation: 0.7, gutterX: 12, gutterY: 12 },
@@ -438,7 +442,22 @@ function bento(spec: GridSpec): Omit<GridCell, 'weight'>[] {
  * the whole look, and the first version's gentle jitter is exactly why it came
  * out resembling a modular grid with untidy rows.
  */
-const MASONRY_RATIOS: readonly number[] = [2.4, 1.8, 1.35, 1, 0.74, 0.52];
+const MASONRY_RATIOS: readonly number[] = [2.6, 1.9, 1.4, 1, 0.7, 0.48];
+
+/**
+ * How far past the ratios above the dial is allowed to push.
+ *
+ * The blend used to stop at the drawn ratio: at full variation a 2.4x card was
+ * 2.4x, and the whole interesting half of the range sat above 0.6 -- below
+ * that it read as a modular grid with untidy rows, which is most of the dial
+ * spent saying nothing.
+ *
+ * Extrapolating rather than interpolating fixes both ends at once. Sixty per
+ * cent now lands where the old maximum did, and the maximum goes half again
+ * beyond it: a 2.6x card becomes 3.7x, a 0.48x card becomes 0.12x, and a wall
+ * at the top of the dial is genuinely wild rather than merely uneven.
+ */
+const MASONRY_SPREAD = 1.7;
 
 /** A runaway column would hang the tab; no real feed has forty cards in one. */
 const MASONRY_MAX_CARDS = 40;
@@ -484,48 +503,73 @@ function masonry(spec: GridSpec): Omit<GridCell, 'weight'>[] {
   // The height a card of ratio 1 would have. `rows` sets this rather than a
   // quota, which is what anyone asking for more or fewer cards actually means.
   const baseHeight = tracks(box.height, nRows, spec.gutterY).size;
+  // Below this a trimmed card stops reading as a card and starts reading as a
+  // mistake, so the column gives its remainder to the one before instead.
+  const minCard = baseHeight * 0.35;
 
   for (let col = 0; col < nCols; col += 1) {
     /**
      * Each column runs at its own scale.
      *
-     * Per-card randomness alone was not enough: with every column drawing from
-     * one distribution they all landed on about the same count, and similar
-     * counts over the same total height put the boundaries back at about the
-     * same depths -- faint horizontal bands, which is the modular look this
-     * kind must not have.
-     *
-     * A column-wide multiplier is what breaks that, because it shifts the whole
-     * column rather than jittering inside it: one column runs tall-and-few
-     * against a neighbour running short-and-many, and after the first card
-     * nothing the two of them do can agree again.
+     * Per-card randomness alone was not enough: every column drawing from one
+     * distribution landed on about the same count, and similar counts over the
+     * same height put the boundaries back at about the same depths.
      */
-    const columnScale = 1 + (next() - 0.5) * 2 * spec.variation * 0.55;
+    const spread = spec.variation * MASONRY_SPREAD;
+    const columnScale = 1 + (next() - 0.5) * 2 * spread * 0.4;
 
     /**
-     * Draw until the column is full. The count falls out of the draw.
-     *
-     * A column that draws two double-height cards fits four where its
-     * neighbour fits seven, so no boundary in one lines up with a boundary in
-     * the next.
+     * Cards at their drawn heights, stacked from the top until the column is
+     * full. The count falls out of the draw.
      */
-    const ratios: number[] = [];
-    let filled = 0;
-    while (filled + 0.5 < box.height && ratios.length < MASONRY_MAX_CARDS) {
+    const cards: number[] = [];
+    const extent = () =>
+      cards.reduce((a, b) => a + b, 0) + spec.gutterY * Math.max(0, cards.length - 1);
+
+    while (extent() < box.height - 0.5 && cards.length < MASONRY_MAX_CARDS) {
       const drawn = MASONRY_RATIOS[Math.floor(next() * MASONRY_RATIOS.length)];
       // Blended toward 1 by `variation`, so the dial runs from a modular grid
       // to a full card wall rather than switching between them.
-      const ratio = (1 + (drawn - 1) * spec.variation) * columnScale;
-      ratios.push(ratio);
-      filled += ratio * baseHeight + spec.gutterY;
+      // Floored, not clamped to the drawn set: extrapolation past 1 can take a
+      // short card below a tenth of the base, and a card you cannot see is not
+      // a bolder layout, it is a gap.
+      const ratio = Math.max(0.26, 1 + (drawn - 1) * spread) * columnScale;
+      cards.push(Math.max(1, ratio * baseHeight));
     }
 
-    const sum = ratios.reduce((a, b) => a + b, 0);
-    const usable = box.height - spec.gutterY * (ratios.length - 1);
+    /**
+     * Only the **last** card is adjusted to meet the bottom edge.
+     *
+     * This is the whole difference between masonry and a modular grid with
+     * untidy rows, and the previous version had it backwards: it normalised
+     * every card in the column so they summed to the height exactly. Scaling a
+     * whole column by a constant leaves the *proportions* untouched -- which
+     * divided the column's own scale straight back out, so the one lever that
+     * was supposed to set columns against each other reached the drawing as
+     * nothing but a different card count.
+     *
+     * Keeping the drawn heights and trimming one card is what real feeds do,
+     * and it means a card at 2.4x is genuinely 2.4x its neighbour rather than
+     * 2.4x within a column that was then squashed to match.
+     */
+    const over = extent() - box.height;
+    if (over > 0 && cards.length > 0) {
+      const last = cards.length - 1;
+      cards[last] -= over;
+      if (cards[last] < minCard && cards.length > 1) {
+        // Too short to be a card: fold it into the one before rather than
+        // leaving a sliver against the bottom edge.
+        cards.pop();
+        const rest = cards.slice(0, -1).reduce((a, b) => a + b, 0);
+        cards[cards.length - 1] = Math.max(
+          1,
+          box.height - rest - spec.gutterY * (cards.length - 1)
+        );
+      }
+    }
 
     let y = box.y;
-    ratios.forEach((ratio, row) => {
-      const h = Math.max(1, (ratio / sum) * usable);
+    cards.forEach((h, row) => {
       out.push({ x: box.x + col * cols.step, y, width: cols.size, height: h, row, col });
       y += h + spec.gutterY;
     });
