@@ -4,7 +4,7 @@ import Konva from 'konva';
 import { updateNode } from '../../engine/document';
 import { EXPORT_CHROME } from '../../engine/export/chrome';
 import { useStore } from '../../hooks/useStore';
-import { commitGridTransform } from '../../engine/grid/gridApply';
+import { resizeGridTo } from '../../engine/grid/gridApply';
 import { gridGroupFor } from '../panel/GridSection';
 import { cursorForAnchor } from '../../engine/interaction/resizeCursor';
 import { scalePathGeometry } from '../../engine/model/pathGeometry';
@@ -164,6 +164,15 @@ export const SelectionTransformer: React.FC<Props> = ({ selectedIds, stageRef })
     const tr = trRef.current;
     if (!tr) return;
     const touched = tr.nodes().map((n) => n.id());
+    /**
+     * The box the resize is about to put these nodes in.
+     *
+     * Accumulated from the rectangles being written rather than measured back
+     * out of the store afterwards: a read taken after the loop catches the
+     * writes half-applied, and the union of some-new-some-old positions is a
+     * box the selection never occupied.
+     */
+    const landing = { minX: Infinity, minY: Infinity, maxX: -Infinity, maxY: -Infinity };
 
     const store = useStore.getState().objects;
     /**
@@ -358,6 +367,11 @@ export const SelectionTransformer: React.FC<Props> = ({ selectedIds, stageRef })
         scaleY: finalScaleY,
       });
 
+      landing.minX = Math.min(landing.minX, konvaNode.x() - boxW / 2);
+      landing.minY = Math.min(landing.minY, konvaNode.y() - boxH / 2);
+      landing.maxX = Math.max(landing.maxX, konvaNode.x() + boxW / 2);
+      landing.maxY = Math.max(landing.maxY, konvaNode.y() + boxH / 2);
+
       konvaNode.scaleX(finalScaleX);
       konvaNode.scaleY(finalScaleY);
     });
@@ -375,7 +389,14 @@ export const SelectionTransformer: React.FC<Props> = ({ selectedIds, stageRef })
      * the store, and the writes above have to land there first.
      */
     const group = gridGroupFor(touched);
-    if (group) requestAnimationFrame(() => commitGridTransform(group));
+    if (group && Number.isFinite(landing.minX)) {
+      resizeGridTo(group, {
+        x: landing.minX,
+        y: landing.minY,
+        width: landing.maxX - landing.minX,
+        height: landing.maxY - landing.minY,
+      });
+    }
   };
 
   /**

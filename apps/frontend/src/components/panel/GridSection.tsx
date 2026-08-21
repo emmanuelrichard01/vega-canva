@@ -7,7 +7,7 @@ import { SegmentedControl } from '../ui/SegmentedControl';
 import { Slider } from '../ui/Slider';
 import { ColorPickerPopover } from '../ui/ColorPickerPopover';
 import { gridRecipe, refitGrid, relayoutGrid } from '../../engine/grid/gridApply';
-import { switchKind, withSpec, withStyle, type GridRecipe } from '../../engine/grid/gridBuild';
+import { recipeCells, switchKind, withSpec, withStyle, type GridRecipe } from '../../engine/grid/gridBuild';
 import { GridVariations } from './GridVariations';
 import {
   GRID_HINTS,
@@ -68,6 +68,15 @@ export const GridSection: React.FC<Props> = ({ groupId }) => {
    * and the link is easier to notice when breaking it is the deliberate act.
    */
   const [linked, setLinked] = React.useState(true);
+  /**
+   * What the current settings actually produce.
+   *
+   * Laid out rather than multiplied, because most kinds do not multiply: bento
+   * merges compartments, masonry derives a count per column, golden takes its
+   * own number of steps. The layout is pure arithmetic over a dozen numbers, so
+   * asking it is cheaper than any guess would be wrong.
+   */
+  const cellCount = React.useMemo(() => (recipe ? recipeCells(recipe).length : 0), [recipe]);
   // Subscribed to, not merely read: the section has to re-render when a peer
   // re-lays the grid, and when this client's own relayout lands.
   if (!recipe) return null;
@@ -152,7 +161,21 @@ export const GridSection: React.FC<Props> = ({ groupId }) => {
         {GRID_HINTS[recipe.spec.kind]}
       </p>
 
-      {/* Tracks. */}
+      {/**
+        * How many modules this makes, said as you set it.
+        *
+        * Rows and columns multiply, and most kinds do not multiply them the way
+        * you would guess: bento merges compartments, masonry derives its own
+        * count per column, radial multiplies rings by spokes. So "4 x 4" is not
+        * a number anyone can compute from the two steppers, and the count is
+        * exactly what decides whether a grid is a layout or a texture.
+        */}
+      <div className="grid-section__tracks">
+        <span className="grid-section__caption">Tracks</span>
+        <span className="grid-section__count">
+          {cellCount} {cellCount === 1 ? 'module' : 'modules'}
+        </span>
+      </div>
       <div className="grid-section__row">
         {usesRows && (
           <label className="grid-field">
@@ -189,6 +212,7 @@ export const GridSection: React.FC<Props> = ({ groupId }) => {
         <label className="grid-field">
           <span>Gap across</span>
           <NumberStepper
+            suffix="px"
             value={recipe.spec.gutterX}
             min={0}
             max={200}
@@ -213,6 +237,7 @@ export const GridSection: React.FC<Props> = ({ groupId }) => {
         <label className="grid-field">
           <span>Gap down</span>
           <NumberStepper
+            suffix="px"
             value={recipe.spec.gutterY}
             min={0}
             max={200}
@@ -224,7 +249,7 @@ export const GridSection: React.FC<Props> = ({ groupId }) => {
       <div className="grid-section__row">
         <label className="grid-field">
           <span>Margin</span>
-          <NumberStepper value={recipe.spec.margin} min={0} max={400} onChange={(margin) => patchSpec({ margin })} />
+          <NumberStepper suffix="px" value={recipe.spec.margin} min={0} max={400} onChange={(margin) => patchSpec({ margin })} />
         </label>
       </div>
 
@@ -255,7 +280,9 @@ export const GridSection: React.FC<Props> = ({ groupId }) => {
       />
 
       <span className="grid-section__caption">
-        {recipe.style.shapeMode === 'uniform' ? 'Pick a shape' : 'Pick two or more to mix'}
+        {recipe.style.shapeMode === 'uniform'
+          ? 'Pick a shape'
+          : `Mixing ${recipe.style.shapes.length} of ${CELL_SHAPES.length}`}
       </span>
       <div className="grid-section__shapes" role="group" aria-label="Cell shapes">
         {CELL_SHAPES.map((shape: CellShape) => {
@@ -296,11 +323,12 @@ export const GridSection: React.FC<Props> = ({ groupId }) => {
       <div className="grid-section__row">
         <label className="grid-field">
           <span>Corners</span>
-          <NumberStepper value={recipe.style.radius} min={0} max={200} onChange={(radius) => patchStyle({ radius })} />
+          <NumberStepper suffix="px" value={recipe.style.radius} min={0} max={200} onChange={(radius) => patchStyle({ radius })} />
         </label>
         <label className="grid-field">
           <span>Stroke</span>
           <NumberStepper
+            suffix="px"
             value={recipe.style.strokeWidth}
             min={0}
             max={40}
@@ -348,12 +376,18 @@ export const GridSection: React.FC<Props> = ({ groupId }) => {
               aria-checked={on}
               className="grid-palette"
               data-active={on || undefined}
-              data-tooltip={palette.name}
               onClick={() => patchStyle({ palette: palette.colors })}
             >
-              {palette.colors.map((c) => (
-                <span key={c} className="grid-palette__chip" style={{ background: c }} />
-              ))}
+              <span className="grid-palette__ramp">
+                {palette.colors.map((c) => (
+                  <span key={c} className="grid-palette__chip" style={{ background: c }} />
+                ))}
+              </span>
+              {/* Named, not hovered. Seven tooltips is seven separate
+                  discoveries to learn a list you are meant to be scanning, and
+                  the name is the only thing distinguishing two ramps that share
+                  a hue. */}
+              <span className="grid-palette__name">{palette.name}</span>
             </button>
           );
         })}

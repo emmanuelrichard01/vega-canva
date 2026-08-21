@@ -9328,28 +9328,92 @@ body[data-zen='physics'] .forces-handle { bottom: 32px; }
   color: var(--accent-strong, var(--brand-orange));
 }
 
+/* Three at a time, and the rest a scroll away.
+   Seven full-width ramps is a block of colour taller than every other control
+   in the section put together, so the palette -- one decision among a dozen --
+   took over the panel by sheer area. Three is enough to compare against each
+   other, which is what the list is for. */
 .grid-section__palettes {
   display: flex;
   flex-direction: column;
-  gap: 4px;
+  gap: 2px;
+  max-height: 96px;
+  overflow-y: auto;
+  padding-right: 2px;
+  /* The cut edge is the affordance: a ramp sliced by the boundary says the
+     list continues, where a clean edge would say it had ended. */
+  scrollbar-width: thin;
+  scrollbar-color: var(--border-strong) transparent;
+}
+
+.grid-section__palettes::-webkit-scrollbar { width: 5px; }
+.grid-section__palettes::-webkit-scrollbar-track { background: transparent; }
+.grid-section__palettes::-webkit-scrollbar-thumb {
+  border-radius: 3px;
+  background: var(--border-strong);
+}
+
+/* The tracks caption and what they produce, on one line: the label on the
+   left, the consequence on the right, so setting a number and reading its
+   result is one glance rather than two. */
+.grid-section__tracks {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 8px;
+}
+
+.grid-section__count {
+  color: var(--text-secondary);
+  font-size: var(--text-2xs);
+  font-weight: var(--weight-semibold);
+  font-variant-numeric: tabular-nums;
 }
 
 /* A palette reads as its own ramp: six chips flush against each other, so the
-   thing being chosen is the *progression* rather than six separate colours. */
+   thing being chosen is the *progression* rather than six separate colours.
+   The name sits beside it, because seven tooltips is seven discoveries to
+   learn a list you are meant to be scanning. */
 .grid-palette {
   display: flex;
-  overflow: hidden;
-  height: 22px;
-  padding: 0;
-  border: 1px solid var(--border-divider);
+  align-items: center;
+  gap: 8px;
+  padding: 3px;
+  border: 1px solid transparent;
   border-radius: var(--radius-md);
   background: transparent;
   cursor: pointer;
+  transition: background-color var(--motion-hover), border-color var(--motion-hover);
+}
+
+.grid-palette:hover { background: var(--surface-hover); }
+
+.grid-palette__ramp {
+  display: flex;
+  flex: 1;
+  overflow: hidden;
+  height: 18px;
+  border-radius: var(--radius-sm);
+  box-shadow: inset 0 0 0 1px rgb(0 0 0 / 0.06);
+}
+
+.grid-palette__name {
+  flex-shrink: 0;
+  width: 54px;
+  text-align: left;
+  color: var(--text-secondary);
+  font-size: var(--text-2xs);
+  font-weight: var(--weight-medium);
 }
 
 .grid-palette[data-active] {
-  border-color: var(--accent-strong, var(--brand-orange));
-  box-shadow: 0 0 0 1px var(--accent-strong, var(--brand-orange));
+  border-color: var(--accent-line);
+  background: var(--accent-quiet);
+}
+
+.grid-palette[data-active] .grid-palette__name {
+  color: var(--accent-strong, var(--brand-orange));
+  font-weight: var(--weight-semibold);
 }
 
 .grid-palette__chip { flex: 1; }
@@ -9445,6 +9509,74 @@ body[data-zen='physics'] .forces-handle { bottom: 32px; }
   color: var(--text-primary);
   box-shadow: var(--shadow-xs, 0 1px 2px rgb(0 0 0 / 0.06));
 }
+
+/* The strip and its edges.
+   Relative, because the fades and the nudge buttons are drawn over the
+   scroller rather than beside it -- beside it, they would take width from the
+   tiles, which are the only thing here worth any. */
+.grid-variations__viewport {
+  position: relative;
+  min-width: 0;
+}
+
+/* Content running under the edge, rather than stopping at it.
+   A hard edge on a scroller says nothing; a fade says the row continues. Only
+   drawn on the side that actually has more, so it never promises content that
+   is not there. */
+.grid-variations__viewport::before,
+.grid-variations__viewport::after {
+  content: "";
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  width: 28px;
+  pointer-events: none;
+  opacity: 0;
+  transition: opacity var(--motion-hover);
+  z-index: 1;
+}
+
+.grid-variations__viewport::before {
+  left: 0;
+  background: linear-gradient(to right, var(--surface-primary), transparent);
+}
+
+.grid-variations__viewport::after {
+  right: 0;
+  background: linear-gradient(to left, var(--surface-primary), transparent);
+}
+
+.grid-variations__viewport[data-more-start]::before,
+.grid-variations__viewport[data-more-end]::after { opacity: 1; }
+
+/* The nudge. Sits on the fade, so the two read as one affordance: the fade
+   says there is more and the button is where you press for it. */
+.grid-variations__nudge {
+  position: absolute;
+  top: 50%;
+  translate: 0 -50%;
+  z-index: 2;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 22px;
+  height: 22px;
+  border: 1px solid var(--border-divider);
+  border-radius: 50%;
+  background: var(--surface-primary);
+  color: var(--text-secondary);
+  box-shadow: var(--shadow-float);
+  cursor: pointer;
+  transition: color var(--motion-hover), background-color var(--motion-hover);
+}
+
+.grid-variations__nudge:hover {
+  background: var(--surface-hover);
+  color: var(--text-primary);
+}
+
+.grid-variations__nudge--start { left: 0; }
+.grid-variations__nudge--end { right: 0; }
 
 /* Scrolls rather than wraps: five tiles at their natural size is worth more
    than five squeezed onto one line, and a second row of two reads as leftovers. */

@@ -51,6 +51,19 @@ const SHAPE_KIND: Record<CellShape, { kind: ShapeKind; points?: number }> = {
   star: { kind: 'star', points: 5 },
 };
 
+/**
+ * The board geometry a cell becomes.
+ *
+ * Exported so anything that has to *draw* a cell — the variations picker, most
+ * of all — reads the same mapping the document write does. A preview that
+ * built its own idea of what a "hexagon" cell looks like would be a second
+ * answer to a question with one, and the picker would offer arrangements the
+ * canvas then declined to produce.
+ */
+export function cellGeometry(cell: StyledCell): { kind: ShapeKind; points?: number } {
+  return SHAPE_KIND[cell.shape] ?? SHAPE_KIND.rect;
+}
+
 /** The cells a recipe describes, laid out and styled. */
 export function recipeCells(recipe: GridRecipe): StyledCell[] {
   return styleCells(layoutGrid(recipe.spec), recipe.style);

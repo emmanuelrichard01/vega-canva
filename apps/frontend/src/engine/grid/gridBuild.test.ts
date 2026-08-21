@@ -2,6 +2,7 @@ import { describe, expect, it } from 'vitest';
 import { defaultSpec, gridBounds, layoutGrid } from './gridLayout';
 import { defaultStyle } from './gridStyle';
 import {
+  cellGeometry,
   cellPatch,
   planGridUpdate,
   recipeCells,
@@ -72,6 +73,24 @@ describe('cellPatch', () => {
       appearance: { fill: { color: string }[] };
     };
     expect(patch.appearance.fill[0].color).toBe('#ABCDEF');
+  });
+});
+
+describe('cellGeometry', () => {
+  it('previews a cell as the shape the document will actually get', () => {
+    /**
+     * The picker drew every cell as a rectangle and special-cased the ellipse,
+     * so a grid of hexagons previewed as a grid of squares -- you chose the
+     * tile you liked and got something else. One mapping, read by both, is the
+     * only thing that keeps a preview honest.
+     */
+    for (const shape of ['rect', 'ellipse', 'triangle', 'hexagon', 'star', 'diamond'] as const) {
+      const cell = recipeCells(recipe({ rows: 1, columns: 1 }, { shapes: [shape] }))[0];
+      const written = (cellPatch(cell, defaultStyle()) as { geometry: { kind: string; points?: number } }).geometry;
+      const previewed = cellGeometry(cell);
+      expect(previewed.kind, shape).toBe(written.kind);
+      expect(previewed.points, shape).toBe(written.points);
+    }
   });
 });
 

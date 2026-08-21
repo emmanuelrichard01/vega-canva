@@ -1614,7 +1614,15 @@ export const PropertiesPanel: React.FC<PropertiesPanelProps> = ({ selectedIds, o
             pair on its own line, stretched across both columns -- so its value
             landed nowhere near the values above and below it, and the column
             of numbers that makes an inspector scannable broke exactly once. */}
-        <div style={{ display: 'grid', gridTemplateColumns: 'minmax(0, 1fr) 26px minmax(0, 1fr)', gap: '6px', alignItems: 'center' }}>
+        {/* No lane on this row or the skew one.
+            The lane exists to hold the aspect lock, and these two rows have no
+            lock -- what they do have is a degree sign, which needs about fifteen
+            pixels more than the panel can spare once 26px is taken out of a
+            237px column. Reserving it here bought alignment at the price of
+            clipping the stepper's own plus button, which is the wrong trade:
+            a control you cannot press is worse than one that starts a few
+            pixels wide of the one above it. */}
+        <div style={{ display: 'grid', gridTemplateColumns: 'minmax(0, 1fr) minmax(0, 1fr)', gap: '6px', alignItems: 'center' }}>
           <NumberStepper
             value={Math.round(rotationShared.value ?? 0)}
             mixed={rotationShared.mixed}
@@ -1637,7 +1645,7 @@ export const PropertiesPanel: React.FC<PropertiesPanelProps> = ({ selectedIds, o
             invented abbreviation is a control nobody touches. The caption says
             it once for the pair rather than twice inside it. */}
         <Row stack label="Skew" hint="Slants the object about its centre, in degrees.">
-        <div style={{ display: 'grid', gridTemplateColumns: 'minmax(0, 1fr) 26px minmax(0, 1fr)', gap: '6px', width: '100%', alignItems: 'center' }}>
+        <div style={{ display: 'grid', gridTemplateColumns: 'minmax(0, 1fr) minmax(0, 1fr)', gap: '6px', width: '100%', alignItems: 'center' }}>
           {(['skewX', 'skewY'] as const).map((axis) => {
             const s = shared((n) => n[axis] ?? 0);
             return (
@@ -1656,7 +1664,7 @@ export const PropertiesPanel: React.FC<PropertiesPanelProps> = ({ selectedIds, o
                 step={5}
               />
             );
-          }).flatMap((el, i) => (i === 0 ? [el, <span key="lane" aria-hidden />] : [el]))}
+          })}
         </div>
         </Row>
       </Accordion>

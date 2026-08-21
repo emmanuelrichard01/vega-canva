@@ -3,14 +3,7 @@ import { applyGroupPlan, applyNodePatches, deleteNode, doc, groupsMap, nextZInde
 import { editor } from '../api/EditorAPI';
 import { useStore } from '../../hooks/useStore';
 import { nodesInGroup } from '../model/groupTree';
-import {
-  cellPatch,
-  MOVED_EPSILON,
-  planGridUpdate,
-  recipeCells,
-  refitBox,
-  type GridRecipe,
-} from './gridBuild';
+import { cellPatch, planGridUpdate, recipeCells, refitBox, type GridRecipe } from './gridBuild';
 import { gridBounds, layoutGrid } from './gridLayout';
 
 /**
@@ -164,52 +157,63 @@ export function refitGrid(groupId: string): GridRecipe | null {
 }
 
 /**
- * Follow a move or a resize of the objects, and re-lay if the size changed.
+ * Move a grid's recipe by the same delta the gesture moved its objects.
  *
- * ## Why a grid must not simply scale
+ * ## Why this is told rather than measured
  *
- * The transformer folds its scale into each node's width and height, which is
- * right for a rectangle and wrong for a grid. A grid is not nine rectangles
- * that happen to be near each other, it is a *system*: gutters and corner radii
- * are absolute measurements chosen against the page, not proportions of the
- * modules. Scale the whole thing by 1.6 and the gutters go from 16px to 26px --
- * so the one property the person actually set is the one the drag destroys, and
- * the composition drifts a little further from its own spacing scale every time
- * it is resized.
+ * The first version read the members' bounding box after the drag and inferred
+ * the transform from it. That looks equivalent and is not, because the drag
+ * writes one node per call and the reading happened before every write had
+ * reached the store: the box it measured was half the cells in their new
+ * positions and half in their old, which is *wider* than either. A phantom
+ * scale came out of the division, the grid re-laid to fit a box it had never
+ * occupied, and the whole thing jumped somewhere else and came apart.
  *
- * Re-laying costs one transaction and keeps the system: the modules take the
- * new box, the gutters stay where they were put, and the radii stay round
- * rather than oval.
+ * A move already knows its own delta. Taking it as an argument removes the
+ * race, the measurement and the arithmetic in one go, and it cannot be wrong
+ * about a gesture it was handed.
  *
- * ## Why a move is treated differently
- *
- * Translation changes nothing about the arrangement, so re-laying would write
- * thirty node updates to produce the identical drawing. The recipe's box still
- * has to follow -- otherwise the next gutter change snaps the grid back to
- * where it used to be -- but that is one write to the group, not thirty to its
- * members.
+ * One write to the group, not thirty to its members: translation changes
+ * nothing about the arrangement, so there is nothing to re-lay.
  */
-export function commitGridTransform(groupId: string): void {
+export function translateGrid(groupId: string, dx: number, dy: number): void {
+  if (dx === 0 && dy === 0) return;
   const recipe = gridRecipe(groupId);
   if (!recipe) return;
-
-  const fitted = refitGrid(groupId);
-  if (!fitted || fitted === recipe) return;
-
-  const scaled =
-    Math.abs(fitted.spec.width - recipe.spec.width) > MOVED_EPSILON ||
-    Math.abs(fitted.spec.height - recipe.spec.height) > MOVED_EPSILON;
-
-  if (scaled) {
-    relayoutGrid(groupId, fitted);
-    return;
-  }
-
-  // Moved only: record where it went and touch nothing else.
-  groupsMap.set(groupId, { ...(groupsMap.get(groupId) ?? { id: groupId }), grid: fitted });
+  groupsMap.set(groupId, {
+    ...(groupsMap.get(groupId) ?? { id: groupId }),
+    grid: { ...recipe, spec: { ...recipe.spec, x: recipe.spec.x + dx, y: recipe.spec.y + dy } },
+  });
 }
 
-/** The box a recipe's cells will occupy, for a live preview. */
+/**
+ * Re-lay a grid into the box a resize just gave it.
+ *
+ * `actual` is the box the caller has *just written*, not one read back from
+ * the store — see `translateGrid` for why that distinction matters. The
+ * transformer knows every node's new rectangle at the moment it commits them,
+ * so it can hand over their union without anything having to be measured
+ * afterwards.
+ *
+ * Re-laying rather than leaving the cells scaled is the point: gutters and
+ * corner radii are absolute measurements chosen against the page, not
+ * proportions of the modules, so a drag to 1.6x would otherwise take a 16px
+ * gutter to 26px.
+ */
+export function resizeGridTo(
+  groupId: string,
+  actual: { x: number; y: number; width: number; height: number }
+): void {
+  const recipe = gridRecipe(groupId);
+  if (!recipe) return;
+  if (!(actual.width > 0) || !(actual.height > 0)) return;
+
+  const fitted = refitBox(recipe, gridBounds(layoutGrid(recipe.spec)), actual);
+  if (fitted === recipe) return;
+  relayoutGrid(groupId, fitted);
+}
+
+/** The box a recipe's cells will occupy, for a live preview. *//** The box a recipe's cells will occupy, for a live preview. */
 export function previewBounds(recipe: GridRecipe) {
   return gridBounds(layoutGrid(recipe.spec));
 }

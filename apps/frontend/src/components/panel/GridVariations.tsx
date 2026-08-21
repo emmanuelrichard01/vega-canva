@@ -1,6 +1,18 @@
 import React from 'react';
-import { RefreshCw } from 'lucide-react';
-import { recipeCells, variantsOf, VARIANT_LABELS, VARIANT_MODES, type GridRecipe, type VariantMode } from '../../engine/grid/gridBuild';
+import { ChevronLeft, ChevronRight, RefreshCw } from 'lucide-react';
+import {
+  cellGeometry,
+  recipeCells,
+  variantsOf,
+  VARIANT_LABELS,
+  VARIANT_MODES,
+  type GridRecipe,
+  type VariantMode,
+} from '../../engine/grid/gridBuild';
+import type { StyledCell } from '../../engine/grid/gridStyle';
+import { pointsAttribute, shapeOutline } from '../../engine/model/shapeOutline';
+import { contourData } from '../../engine/model/pathGeometry';
+import type { ShapeNode } from '../../engine/model/schema';
 import { gridBounds } from '../../engine/grid/gridLayout';
 
 /**
@@ -24,11 +36,66 @@ import { gridBounds } from '../../engine/grid/gridLayout';
  * `recipeCells` is pure arithmetic over a dozen numbers, so five thumbnails
  * cost about as much as one layout pass. Going through the real renderer would
  * mean five off-screen Konva stages to draw thirty rectangles apiece, which is
- * three orders of magnitude more work for a picture 56 pixels wide.
+ * three orders of magnitude more work for a picture 62 pixels wide.
  */
 
 const THUMB_W = 62;
 const THUMB_H = 44;
+
+/**
+ * One cell, drawn exactly as the board will draw it.
+ *
+ * ## Why this goes through `shapeOutline`
+ *
+ * The first version drew every cell as a rectangle and special-cased the
+ * ellipse, so a grid of hexagons previewed as a grid of squares. The picker was
+ * then offering compositions the canvas would decline to produce, which is a
+ * worse failure than an ugly preview: you choose the tile you like and get
+ * something else, and the control has lied about the one thing it exists to do.
+ *
+ * `shapeOutline` is the same geometry the SVG exporter draws from, so a
+ * thumbnail and a rendered board cannot disagree about what a star is. It
+ * returns outlines in the cell's own coordinates, which is why each is wrapped
+ * in its own transform rather than having the maths inlined per shape.
+ */
+const CellPreview: React.FC<{
+  cell: StyledCell;
+  scale: number;
+  ox: number;
+  oy: number;
+  box: { x: number; y: number };
+}> = ({ cell, scale, ox, oy, box }) => {
+  const outline = shapeOutline({
+    geometry: cellGeometry(cell) as ShapeNode['geometry'],
+    width: cell.width,
+    height: cell.height,
+    appearance: { cornerRadius: cell.radius },
+  });
+
+  const inner = (() => {
+    switch (outline.kind) {
+      case 'rect':
+        return <rect x={0} y={0} width={outline.width} height={outline.height} rx={outline.radius} fill={cell.fill} />;
+      case 'ellipse':
+        return <ellipse cx={outline.cx} cy={outline.cy} rx={outline.rx} ry={outline.ry} fill={cell.fill} />;
+      case 'polygon':
+        return <polygon points={pointsAttribute(outline.points)} fill={cell.fill} />;
+      case 'bezier':
+        return <path d={contourData(outline.geometry)} fill={cell.fill} />;
+      default:
+        // An open run has no interior, so there is nothing to fill. No grid
+        // kind produces one today; drawing nothing beats drawing a rectangle
+        // that is not there.
+        return null;
+    }
+  })();
+
+  return (
+    <g transform={`translate(${(cell.x - box.x) * scale + ox} ${(cell.y - box.y) * scale + oy}) scale(${scale})`}>
+      {inner}
+    </g>
+  );
+};
 
 /** One candidate, drawn small. */
 const GridThumb: React.FC<{ recipe: GridRecipe }> = ({ recipe }) => {
@@ -45,28 +112,56 @@ const GridThumb: React.FC<{ recipe: GridRecipe }> = ({ recipe }) => {
 
   return (
     <svg width={THUMB_W} height={THUMB_H} viewBox={`0 0 ${THUMB_W} ${THUMB_H}`} aria-hidden focusable="false">
-      {cells.map((cell, i) => {
-        const w = Math.max(0.6, cell.width * scale);
-        const h = Math.max(0.6, cell.height * scale);
-        return (
-          <rect
-            key={i}
-            x={(cell.x - box.x) * scale + ox}
-            y={(cell.y - box.y) * scale + oy}
-            width={w}
-            height={h}
-            // An ellipse reads as a circle at this size and a rounded rect does
-            // not, so the one shape that changes the tile's character is drawn
-            // as itself. The rest are close enough to a rectangle that telling
-            // them apart at 62px would be a lie about the resolution.
-            rx={cell.shape === 'ellipse' ? Math.min(w, h) / 2 : Math.min(cell.radius * scale, Math.min(w, h) / 3)}
-            fill={cell.fill}
-          />
-        );
-      })}
+      {cells.map((cell, i) => (
+        <CellPreview key={i} cell={cell} scale={scale} ox={ox} oy={oy} box={box} />
+      ))}
     </svg>
   );
 };
+
+/**
+ * Whether a scroller has more to show, and which way.
+ *
+ * ## Why this is measured rather than assumed
+ *
+ * Five tiles overflow a 260px panel today, so a permanent "there is more"
+ * marker would be right today and a lie the moment the panel is widened or the
+ * count changes. A fade with nothing behind it is worse than no fade: it
+ * promises content that does not exist, and the reader who chases it learns to
+ * distrust the next one.
+ */
+function useOverflow(ref: React.RefObject<HTMLElement | null>, deps: unknown[]) {
+  const [edges, setEdges] = React.useState({ start: false, end: false });
+
+  const measure = React.useCallback(() => {
+    const el = ref.current;
+    if (!el) return;
+    // A pixel of slack: sub-pixel layout leaves `scrollWidth` a hair above
+    // `clientWidth` on content that fits exactly, which would light the marker
+    // permanently on a strip with nothing to scroll.
+    setEdges({
+      start: el.scrollLeft > 1,
+      end: el.scrollLeft + el.clientWidth < el.scrollWidth - 1,
+    });
+  }, [ref]);
+
+  React.useEffect(() => {
+    measure();
+    const el = ref.current;
+    if (!el) return;
+    el.addEventListener('scroll', measure, { passive: true });
+    // The panel is resizable, and a strip that fits at 320px does not at 240.
+    const observer = new ResizeObserver(measure);
+    observer.observe(el);
+    return () => {
+      el.removeEventListener('scroll', measure);
+      observer.disconnect();
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [measure, ...deps]);
+
+  return { edges, measure };
+}
 
 interface Props {
   recipe: GridRecipe;
@@ -85,10 +180,14 @@ export const GridVariations: React.FC<Props> = ({ recipe, onPick }) => {
    */
   const [salt, setSalt] = React.useState(1);
 
-  const variants = React.useMemo(
-    () => variantsOf(recipe, mode, salt),
-    [recipe, mode, salt]
-  );
+  const variants = React.useMemo(() => variantsOf(recipe, mode, salt), [recipe, mode, salt]);
+
+  const stripRef = React.useRef<HTMLDivElement>(null);
+  const { edges } = useOverflow(stripRef, [variants]);
+
+  /** One tile plus its gap: a nudge should land on a tile edge, not between two. */
+  const step = THUMB_W + 14;
+  const slide = (dir: -1 | 1) => stripRef.current?.scrollBy({ left: dir * step * 2, behavior: 'smooth' });
 
   return (
     <div className="grid-variations">
@@ -124,18 +223,51 @@ export const GridVariations: React.FC<Props> = ({ recipe, onPick }) => {
         ))}
       </div>
 
-      <div className="grid-variations__strip">
-        {variants.map((variant, i) => (
+      {/**
+        * The strip, and two ways of knowing there is more of it.
+        *
+        * A fade alone says "this continues" but cannot be used; an arrow alone
+        * is a button with no explanation of what it will reveal. Together the
+        * fade shows content running under the edge and the arrow gives it
+        * somewhere to go — and a trackpad or a touch drag still works, because
+        * neither is doing the scrolling.
+        */}
+      <div className="grid-variations__viewport" data-more-start={edges.start || undefined} data-more-end={edges.end || undefined}>
+        {edges.start && (
           <button
-            key={i}
             type="button"
-            className="grid-variations__tile"
-            aria-label={`Use variation ${i + 1}`}
-            onClick={() => onPick(variant)}
+            className="grid-variations__nudge grid-variations__nudge--start"
+            aria-label="Previous variations"
+            onClick={() => slide(-1)}
           >
-            <GridThumb recipe={variant} />
+            <ChevronLeft size={13} />
           </button>
-        ))}
+        )}
+
+        <div className="grid-variations__strip" ref={stripRef}>
+          {variants.map((variant, i) => (
+            <button
+              key={i}
+              type="button"
+              className="grid-variations__tile"
+              aria-label={`Use variation ${i + 1}`}
+              onClick={() => onPick(variant)}
+            >
+              <GridThumb recipe={variant} />
+            </button>
+          ))}
+        </div>
+
+        {edges.end && (
+          <button
+            type="button"
+            className="grid-variations__nudge grid-variations__nudge--end"
+            aria-label="More variations"
+            onClick={() => slide(1)}
+          >
+            <ChevronRight size={13} />
+          </button>
+        )}
       </div>
     </div>
   );

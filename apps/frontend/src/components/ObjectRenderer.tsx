@@ -10,7 +10,7 @@ import { moveFrameWithChildren, reassignFrame } from '../engine/interaction/fram
 import { tagFilter } from '../engine/model/tagFilter';
 import { matchesTagFilter } from '../engine/model/tags';
 import { useStore } from '../hooks/useStore';
-import { commitGridTransform } from '../engine/grid/gridApply';
+import { translateGrid } from '../engine/grid/gridApply';
 import { gridGroupFor } from './panel/GridSection';
 import { cameraSystem } from '../engine/CameraSystem';
 import { gridSnap } from '../engine/interaction/gridSnap';
@@ -298,16 +298,16 @@ export const ObjectRenderer = React.memo(
            * A grid that has been moved records where it went.
            *
            * The recipe holds the box its cells were laid out in, so a grid
-           * dragged across the board still describes its old position -- and
-           * the next gutter change would snap the whole thing back there. One
-           * write to the group, not thirty to its members: translation changes
-           * nothing about the arrangement, so there is nothing to re-lay.
+           * dragged across the board still describes its old position, and the
+           * next gutter change would snap the whole thing back there.
            *
-           * Deferred a frame because the writes above have to reach the store
-           * before the new bounds can be measured from it.
+           * Handed the delta rather than left to measure it. Reading the
+           * members' bounds here catches the writes above half-applied, which
+           * reads as a *stretch* rather than a move -- and the grid then re-laid
+           * itself into a box it had never occupied.
            */
           const moved = gridGroupFor([objId]);
-          if (moved) requestAnimationFrame(() => commitGridTransform(moved));
+          if (moved) translateGrid(moved, dx, dy);
           return;
         }
 
