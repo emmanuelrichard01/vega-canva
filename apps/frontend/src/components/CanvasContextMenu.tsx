@@ -19,31 +19,33 @@ export interface ContextTarget {
   ids: string[];
 }
 
+export interface CanvasContextMenuActions {
+  copy: () => void;
+  paste: () => void;
+  duplicate: () => void;
+  remove: () => void;
+  bringToFront: () => void;
+  sendToBack: () => void;
+  selectAll: () => void;
+  selectAllOfType: () => void;
+  copyPng: () => void;
+  copySvg: () => void;
+  copyMermaid: () => void;
+  editMermaid: () => void;
+  swapShape: (kind: ShapeKind, points?: number) => void;
+  group: () => void;
+  ungroup: () => void;
+  align: (edge: AlignEdge) => void;
+  distribute: (axis: DistributeAxis) => void;
+  toggleLock: () => void;
+  hide: () => void;
+}
+
 interface Props {
   target: ContextTarget | null;
   onClose: () => void;
   objects: Record<string, AnyNode>;
-  actions: {
-    copy: () => void;
-    paste: () => void;
-    duplicate: () => void;
-    remove: () => void;
-    bringToFront: () => void;
-    sendToBack: () => void;
-    selectAll: () => void;
-    selectAllOfType: () => void;
-    copyPng: () => void;
-    copySvg: () => void;
-    copyMermaid: () => void;
-    editMermaid: () => void;
-    swapShape: (kind: ShapeKind, points?: number) => void;
-    group: () => void;
-    ungroup: () => void;
-    align: (edge: AlignEdge) => void;
-    distribute: (axis: DistributeAxis) => void;
-    toggleLock: () => void;
-    hide: () => void;
-  };
+  actions: CanvasContextMenuActions;
   canPaste: boolean;
   /** Everything on the board, so the resolver can tell a whole group from part of one. */
   allObjects?: Record<string, AnyNode>;

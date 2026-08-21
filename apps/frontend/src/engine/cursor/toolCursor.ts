@@ -58,6 +58,7 @@ const FORCE_TOOLS = new Set(['magnet', 'repel', 'wind', 'shockwave', 'gravity'])
 
 const BY_TOOL: Record<string, CursorMode> = {
   select: 'pointer',
+  'direct-select': 'pointer',
   hand: 'pan',
   pen: 'draw',
   'bezier-pen': 'draw',

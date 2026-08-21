@@ -26,6 +26,7 @@ const PALETTE = [
 describe('cursorModeForTool', () => {
   it('gives each tool a mode that matches what a drag will actually do', () => {
     expect(cursorModeForTool('select')).toBe('pointer');
+    expect(cursorModeForTool('direct-select')).toBe('pointer');
     expect(cursorModeForTool('hand')).toBe('pan');
     expect(cursorModeForTool('text')).toBe('text');
     expect(cursorModeForTool('eraser')).toBe('erase');

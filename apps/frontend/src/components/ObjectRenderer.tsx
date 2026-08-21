@@ -1,7 +1,8 @@
 import React, { useCallback, useEffect, useRef, useState, useSyncExternalStore } from 'react';
 import { Circle, Group, Rect, Text } from 'react-konva';
 import Konva from 'konva';
-import { applyNodePatches, deleteNode, localAuthorId, toggleReaction, updateNode } from '../engine/document';
+import { applyNodePatches, createNode, deleteNode, localAuthorId, toggleReaction, updateNode } from '../engine/document';
+import { nanoid } from 'nanoid';
 import { consumePendingEdit, requestCaretOnMount } from '../engine/interaction/pendingEdit';
 import { cropMode } from '../engine/interaction/cropMode';
 import { pathEdit } from '../engine/interaction/pathEdit';
@@ -81,6 +82,12 @@ interface ObjectRendererProps {
   onThrow?: (id: string, x: number, y: number, vx: number, vy: number) => void;
   stageScale?: number;
   /**
+   * Whether Alt-drag duplication is permitted.
+   * Only true when the active tool is the Select tool ('select' / V).
+   * In Direct Select tool ('direct-select' / A), Alt is reserved for breaking curve handles.
+   */
+  canDuplicate?: boolean;
+  /**
    * Stable-identity ref holding the live multi-selection, read imperatively
    * during a drag so moving one selected object carries the rest. Passed as a
    * ref rather than a prop so a selection change doesn't re-render every
@@ -118,9 +125,51 @@ interface SiblingDragState {
  * mounted 100 transformer instances, 99 of them with an empty node list. A
  * single shared transformer lives in Canvas and is pointed at the selection.
  */
+/**
+ * Module-level reactive store for active Alt-drag duplication ghost rendering.
+ * Tracks which node IDs are currently being duplicated via Alt-drag
+ * so their origin ghost twins remain anchored and visible during drag gestures.
+ */
+const altDragState = {
+  activeIds: new Set<string>(),
+  listeners: new Set<() => void>(),
+  set(ids: string[]) {
+    this.activeIds = new Set(ids);
+    this.listeners.forEach((l) => l());
+  },
+  clear() {
+    if (this.activeIds.size === 0) return;
+    this.activeIds = new Set();
+    this.listeners.forEach((l) => l());
+  },
+  subscribe(listener: () => void) {
+    altDragState.listeners.add(listener);
+    return () => {
+      altDragState.listeners.delete(listener);
+    };
+  },
+  getSnapshot() {
+    return altDragState.activeIds;
+  },
+};
+
 export const ObjectRenderer = React.memo(
-  ({ objId, isSelected, onSelect, onThrow, stageScale = 1, selectedIdsRef, selectable = true }: ObjectRendererProps) => {
+  ({
+    objId,
+    isSelected,
+    onSelect,
+    onThrow,
+    stageScale = 1,
+    selectedIdsRef,
+    selectable = true,
+    canDuplicate = true,
+  }: ObjectRendererProps) => {
     const node = useStore((state) => state.objects[objId]);
+    const isAltDuplicating = useSyncExternalStore(
+      altDragState.subscribe,
+      altDragState.getSnapshot,
+      altDragState.getSnapshot
+    ).has(objId);
     /**
      * The frame that owns this object, if any.
      *
@@ -156,6 +205,7 @@ export const ObjectRenderer = React.memo(
     const lastPos = useRef({ x: 0, y: 0, time: 0 });
     const velocity = useRef({ x: 0, y: 0 });
     const groupDragRef = useRef<{ startX: number; startY: number; siblings: Record<string, SiblingDragState> } | null>(null);
+    const altDragRef = useRef(false);
 
     // Claimed during the first render, which is the point: a tool that has
     // just created this node asked for it to open ready to type in, and there
@@ -225,27 +275,14 @@ export const ObjectRenderer = React.memo(
         presenceManager.updateActivity('moving');
         lastPos.current = { x: e.target.x(), y: e.target.y(), time: performance.now() };
         velocity.current = { x: 0, y: 0 };
+        const isAlt = Boolean((e.evt as MouseEvent)?.altKey) && canDuplicate;
+        altDragRef.current = isAlt;
 
         const selection = selectedIdsRef?.current;
         if (isSelected && selection && selection.length > 1) {
           const stage = e.target.getStage();
           const all = useStore.getState().objects;
           const siblings: Record<string, SiblingDragState> = {};
-          /**
-           * Every selected sibling, whether or not it is on screen.
-           *
-           * This used to require a Konva node and skip the sibling when there
-           * was none — and the canvas only renders what is in view, so any
-           * selected object outside the viewport was silently dropped from the
-           * drag and left exactly where it was. On a grid that reads as the
-           * modules scattering and their gaps coming apart on every move: the
-           * cells you could see moved, the ones you could not did not, and the
-           * arrangement tore along the edge of the viewport.
-           *
-           * A drag is defined by the selection, not by what happens to be
-           * drawn, so the snapshot comes from the store and the Konva node is
-           * an optional extra for the live preview.
-           */
           selection
             .filter((sid) => sid !== objId)
             .forEach((sid) => {
@@ -260,11 +297,21 @@ export const ObjectRenderer = React.memo(
               };
             });
           groupDragRef.current = { startX: e.target.x(), startY: e.target.y(), siblings };
+          if (isAlt) {
+            altDragState.set(selection);
+          } else {
+            altDragState.clear();
+          }
         } else {
           groupDragRef.current = null;
+          if (isAlt) {
+            altDragState.set([objId]);
+          } else {
+            altDragState.clear();
+          }
         }
       },
-      [isSelected, objId, selectedIdsRef]
+      [canDuplicate, isSelected, objId, selectedIdsRef]
     );
 
     const handleDragMove = useCallback(
@@ -278,15 +325,21 @@ export const ObjectRenderer = React.memo(
           };
           lastPos.current = { x: e.target.x(), y: e.target.y(), time: now };
         }
+        const isAlt = Boolean((e.evt as MouseEvent)?.altKey) && canDuplicate;
+        if (isAlt && !altDragRef.current) {
+          altDragRef.current = true;
+          const selection = selectedIdsRef?.current;
+          altDragState.set(isSelected && selection && selection.length > 1 ? selection : [objId]);
+        } else if (!isAlt && altDragRef.current) {
+          altDragRef.current = false;
+          altDragState.clear();
+        }
 
         if (groupDragRef.current) {
           const stage = e.target.getStage();
           const dx = e.target.x() - groupDragRef.current.startX;
           const dy = e.target.y() - groupDragRef.current.startY;
           Object.entries(groupDragRef.current.siblings).forEach(([sid, s]) => {
-            // Only what is drawn needs dragging. A sibling that scrolled into
-            // view mid-drag has no start position recorded, so it is left to
-            // the commit rather than snapped to a delta it never began.
             if (s.nodeStartX === null || s.nodeStartY === null) return;
             const konvaNode = stage?.findOne('#' + sid);
             if (konvaNode) {
@@ -297,78 +350,160 @@ export const ObjectRenderer = React.memo(
           stage?.batchDraw();
         }
       },
-      []
+      [canDuplicate, isSelected, objId, selectedIdsRef]
     );
+
+    useEffect(() => {
+      const handleKeyDown = (e: KeyboardEvent) => {
+        if (e.key === 'Alt' && canDuplicate) {
+          if (shapeRef.current?.isDragging()) {
+            altDragRef.current = true;
+            const selection = selectedIdsRef?.current;
+            altDragState.set(isSelected && selection && selection.length > 1 ? selection : [objId]);
+          }
+        }
+      };
+      const handleKeyUp = (e: KeyboardEvent) => {
+        if (e.key === 'Alt') {
+          if (shapeRef.current?.isDragging()) {
+            altDragRef.current = false;
+            altDragState.clear();
+          }
+        }
+      };
+      window.addEventListener('keydown', handleKeyDown);
+      window.addEventListener('keyup', handleKeyUp);
+      return () => {
+        window.removeEventListener('keydown', handleKeyDown);
+        window.removeEventListener('keyup', handleKeyUp);
+      };
+    }, [canDuplicate, isSelected, objId, selectedIdsRef]);
 
     const handleDragEnd = useCallback(
       (e: Konva.KonvaEventObject<DragEvent>) => {
         window.dispatchEvent(new CustomEvent('canvas-drag-end'));
         presenceManager.updateActivity(null);
-        // The guides explained a gesture that is now over.
         clearSnapGuides();
 
-        // The Konva group sits at the object's centre (see the offset in the
-        // render below), so committing its position back to the document has
-        // to subtract the half-extents to recover the stored top-left.
         const current = useStore.getState().objects[objId];
         const halfW = current ? current.width / 2 : 0;
         const halfH = current ? current.height / 2 : 0;
+        const isAlt = Boolean((e.evt as MouseEvent)?.altKey || altDragRef.current) && canDuplicate;
+        altDragRef.current = false;
+        altDragState.clear();
 
         if (groupDragRef.current) {
           const dx = e.target.x() - groupDragRef.current.startX;
           const dy = e.target.y() - groupDragRef.current.startY;
 
-          /**
-           * The whole selection lands in **one** update.
-           *
-           * It used to be a loop of `updateNode`, one Yjs transaction each. The
-           * store observer fires per transaction and every one of them
-           * re-renders the canvas, so a nine-cell selection came apart and
-           * reassembled over nine frames: the cells written so far sat at their
-           * new positions while the rest waited at their old ones, and the
-           * arrangement visibly scattered and snapped back on every drop.
-           *
-           * It is also wrong in the document, not merely on screen. Nine
-           * transactions are nine updates a peer receives separately and nine
-           * steps the history has to fold, for one thing that happened.
-           */
+          if (isAlt && (Math.abs(dx) > 1 || Math.abs(dy) > 1)) {
+            // Restore original nodes back to start positions
+            const stage = e.target.getStage();
+            if (current) {
+              e.target.x(groupDragRef.current.startX);
+              e.target.y(groupDragRef.current.startY);
+            }
+            Object.entries(groupDragRef.current.siblings).forEach(([sid, s]) => {
+              if (s.nodeStartX !== null && s.nodeStartY !== null) {
+                const kn = stage?.findOne('#' + sid);
+                if (kn) {
+                  kn.x(s.nodeStartX);
+                  kn.y(s.nodeStartY);
+                }
+              }
+            });
+            stage?.batchDraw();
+
+            // Create new duplicated clones for all items in selection
+            const all = useStore.getState().objects;
+            const newIds: string[] = [];
+
+            Object.entries(groupDragRef.current.siblings).forEach(([sid, s]) => {
+              const sibling = all[sid];
+              if (sibling) {
+                const cloneId = nanoid();
+                newIds.push(cloneId);
+                createNode({
+                  ...sibling,
+                  id: cloneId,
+                  x: s.rawX + dx,
+                  y: s.rawY + dy,
+                } as any);
+              }
+            });
+
+            if (current) {
+              const cloneId = nanoid();
+              newIds.push(cloneId);
+              createNode({
+                ...current,
+                id: cloneId,
+                x: current.x + dx,
+                y: current.y + dy,
+              } as any);
+            }
+
+            groupDragRef.current = null;
+            if (newIds.length > 0) {
+              window.dispatchEvent(new CustomEvent('requestSelectNodes', { detail: { ids: newIds } }));
+            }
+            return;
+          }
+
           applyNodePatches([
             ...Object.entries(groupDragRef.current.siblings).map(([sid, s]) => ({
               id: sid,
               changes: { x: s.rawX + dx, y: s.rawY + dy },
             })),
-            // Flicking a whole multi-selection into a throw isn't a supported
-            // gesture, so the dragged object is a plain move like the rest.
             { id: objId, changes: { x: e.target.x() - halfW, y: e.target.y() - halfH } },
           ]);
           groupDragRef.current = null;
           return;
         }
 
+        const nextX = e.target.x() - halfW;
+        const nextY = e.target.y() - halfH;
+        const dx = nextX - (current?.x ?? 0);
+        const dy = nextY - (current?.y ?? 0);
+
+        if (isAlt && current && (Math.abs(dx) > 1 || Math.abs(dy) > 1)) {
+          // Snap original node back to start
+          e.target.x(current.x + halfW);
+          e.target.y(current.y + halfH);
+          e.target.getStage()?.batchDraw();
+
+          // Create duplicate node at drop position
+          const cloneId = nanoid();
+          createNode({
+            ...current,
+            id: cloneId,
+            x: nextX,
+            y: nextY,
+          } as any);
+
+          if (current.type === 'frame') {
+            moveFrameWithChildren(cloneId, dx, dy);
+          }
+          reassignFrame(cloneId);
+          if (onSelect) {
+            onSelect(cloneId);
+          }
+          return;
+        }
+
         const speed = Math.hypot(velocity.current.x, velocity.current.y);
         if (speed > 0.5 && onThrow) {
-          // Matter positions bodies by their centre, which is precisely what
-          // e.target reports here — no conversion needed.
           onThrow(objId, e.target.x(), e.target.y(), velocity.current.x * 15, velocity.current.y * 15);
         } else {
-          const nextX = e.target.x() - halfW;
-          const nextY = e.target.y() - halfH;
           updateNode(objId, { x: nextX, y: nextY });
 
-          // Dragging a frame takes its contents with it. Computed from the
-          // committed position rather than from Konva's, so it stays correct
-          // when the drag was snapped to the grid.
           if (current?.type === 'frame') {
             moveFrameWithChildren(objId, nextX - current.x, nextY - current.y);
           }
-
-          // Where it landed decides which frame it belongs to. Deliberately
-          // after the move is committed, because membership is derived from
-          // the object's new centre.
           reassignFrame(objId);
         }
       },
-      [objId, onThrow]
+      [objId, onThrow, onSelect]
     );
 
     const handleDblClick = useCallback((e?: Konva.KonvaEventObject<MouseEvent | TouchEvent>) => {
@@ -487,6 +622,37 @@ export const ObjectRenderer = React.memo(
 
     return (
       <>
+        {/* Live Drag-Duplication Ghost: Origin Anchor Twin */}
+        {isAltDuplicating && (
+          <Group
+            x={x + cx}
+            y={y + cy}
+            offsetX={cx}
+            offsetY={cy}
+            rotation={rotation}
+            scaleX={node.scaleX}
+            scaleY={node.scaleY}
+            skewX={node.skewX ? Math.tan((node.skewX * Math.PI) / 180) : 0}
+            skewY={node.skewY ? Math.tan((node.skewY * Math.PI) / 180) : 0}
+            opacity={0.45}
+            listening={false}
+            name={EXPORT_CHROME}
+          >
+            <NodeContent node={node} isEditing={false} stageScale={stageScale} />
+            <Rect
+              x={-2}
+              y={-2}
+              width={node.width + 4}
+              height={node.height + 4}
+              stroke="#2563EB"
+              strokeWidth={1.5 / stageScale}
+              dash={[5 / stageScale, 4 / stageScale]}
+              listening={false}
+              name={EXPORT_CHROME}
+            />
+          </Group>
+        )}
+
         <Group
           id={objId}
           ref={shapeRef}
@@ -556,7 +722,8 @@ export const ObjectRenderer = React.memo(
            */
           onMouseDown={(e) => {
             if (!selectable) return;
-            if (isSelected && !e.evt?.shiftKey) return;
+            const isAdditive = Boolean(e.evt?.shiftKey || e.evt?.ctrlKey || e.evt?.metaKey);
+            if (isSelected && !isAdditive) return;
             onSelect(objId, e);
           }}
           onTap={(e) => onSelect(objId, e as unknown as Konva.KonvaEventObject<MouseEvent>)}
@@ -700,6 +867,7 @@ export const ObjectRenderer = React.memo(
     prev.objId === next.objId &&
     prev.isSelected === next.isSelected &&
     prev.selectable === next.selectable &&
+    prev.canDuplicate === next.canDuplicate &&
     prev.stageScale === next.stageScale
 );
 

@@ -1,7 +1,7 @@
 import React, { useMemo, useState } from 'react';
 import { useShallow } from 'zustand/react/shallow';
 import {
-  AlignCenter, AlignLeft, AlignRight, ArrowRight, ArrowRightToLine, Bold, BringToFront, CaseSensitive, ChevronRight,
+  AlignCenter, AlignJustify, AlignLeft, AlignRight, ArrowRight, ArrowRightToLine, Bold, BringToFront, CaseSensitive, ChevronRight,
   List, ListOrdered,
   FlipHorizontal, FlipVertical, ImageIcon, Italic, LayoutTemplate, Lock, MessageSquare,
   Mic, MoveHorizontal, MoveVertical, PenLine, SendToBack, Sliders, Square, StickyNote,
@@ -2424,6 +2424,7 @@ export const PropertiesPanel: React.FC<PropertiesPanelProps> = ({ selectedIds, o
                 { value: 'left', icon: <AlignLeft size={14} /> },
                 { value: 'center', icon: <AlignCenter size={14} /> },
                 { value: 'right', icon: <AlignRight size={14} /> },
+                { value: 'justify', icon: <AlignJustify size={14} /> },
               ]}
             />
           </Row>

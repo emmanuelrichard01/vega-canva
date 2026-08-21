@@ -1,5 +1,5 @@
 import { Rect } from 'react-konva';
-import type {  Tool, ToolContext  } from './Tool';
+import type { Tool, ToolContext } from './Tool';
 
 export class SelectTool implements Tool {
   id = 'select';
@@ -13,11 +13,11 @@ export class SelectTool implements Tool {
   private additive = false;
 
   onPointerDown(ctx: ToolContext, e: any) {
-    const stage = e.target.getStage();
+    const stage = e.target.getStage?.() ?? e.target;
     // Only start marquee if clicking on the background (the Stage)
     if (e.target === stage) {
       this.isMarquee = true;
-      this.additive = !!e.evt?.shiftKey;
+      this.additive = Boolean(e.evt?.shiftKey || e.evt?.ctrlKey || e.evt?.metaKey);
       const pos = this.getPointerPos(ctx, e);
       this.startX = pos.x;
       this.startY = pos.y;
@@ -32,6 +32,7 @@ export class SelectTool implements Tool {
       const pos = this.getPointerPos(ctx, e);
       this.currentX = pos.x;
       this.currentY = pos.y;
+      this.additive = Boolean(e.evt?.shiftKey || e.evt?.ctrlKey || e.evt?.metaKey);
       ctx.setOverlayState?.({ type: 'marquee', startX: this.startX, startY: this.startY, currentX: this.currentX, currentY: this.currentY });
     }
   }
@@ -44,10 +45,9 @@ export class SelectTool implements Tool {
       const width = Math.abs(this.currentX - this.startX);
       const height = Math.abs(this.currentY - this.startY);
       
-      if (width < 5 && height < 5) {
+      if (width < 4 && height < 4) {
         // Just a click on empty background. A plain click clears the
-        // selection; a shift+click on empty space is a no-op (nothing to
-        // add or remove from the selection).
+        // selection; a shift/ctrl/cmd+click on empty space is a no-op.
         if (!this.additive) {
           document.dispatchEvent(new CustomEvent('requestSelectNode', { detail: { id: null } }));
         }
@@ -70,16 +70,22 @@ export class SelectTool implements Tool {
 
   renderOverlay(ctx: ToolContext, overlayState: any) {
     if (overlayState?.type === 'marquee') {
-      
+      const zoom = ctx.camera.zoom || 1;
+      const x = Math.min(overlayState.startX, overlayState.currentX);
+      const y = Math.min(overlayState.startY, overlayState.currentY);
+      const width = Math.abs(overlayState.currentX - overlayState.startX);
+      const height = Math.abs(overlayState.currentY - overlayState.startY);
+
       return (
         <Rect
-          x={Math.min(overlayState.startX, overlayState.currentX)}
-          y={Math.min(overlayState.startY, overlayState.currentY)}
-          width={Math.abs(overlayState.currentX - overlayState.startX)}
-          height={Math.abs(overlayState.currentY - overlayState.startY)}
-          fill="rgba(59, 130, 246, 0.1)"
+          x={x}
+          y={y}
+          width={width}
+          height={height}
+          fill="rgba(59, 130, 246, 0.08)"
           stroke="#3B82F6"
-          strokeWidth={1}
+          strokeWidth={1 / zoom}
+          cornerRadius={2 / zoom}
           listening={false}
         />
       );
@@ -88,8 +94,8 @@ export class SelectTool implements Tool {
   }
 
   private getPointerPos(ctx: ToolContext, e: any) {
-    const stage = e.target.getStage();
-    const pos = stage.getPointerPosition();
+    const stage = e.target.getStage?.() ?? e.target;
+    const pos = stage?.getPointerPosition?.() ?? { x: 0, y: 0 };
     return {
       x: (pos.x - ctx.camera.x) / ctx.camera.zoom,
       y: (pos.y - ctx.camera.y) / ctx.camera.zoom

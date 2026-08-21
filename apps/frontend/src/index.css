@@ -8651,6 +8651,11 @@ body[data-zen='physics'] .forces-handle { bottom: 32px; }
   transition: transform var(--motion-hover), box-shadow var(--motion-hover);
 }
 
+.cp-swatch--none {
+  position: relative;
+  overflow: hidden;
+}
+
 .cp-swatch:hover { transform: scale(1.14); box-shadow: var(--shadow-sm); }
 
 /* The accent, not a hardcoded blue. */
@@ -8843,6 +8848,51 @@ body[data-zen='physics'] .forces-handle { bottom: 32px; }
   color: var(--text-primary);
   font-size: var(--text-xs);
   outline: none;
+}
+
+.help-modal__tabs {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  padding: 8px var(--space-5);
+  border-bottom: 1px solid var(--border-divider);
+  background: var(--surface-secondary);
+  overflow-x: auto;
+  scrollbar-width: none;
+}
+
+.help-modal__tabs::-webkit-scrollbar {
+  display: none;
+}
+
+.help-modal__tab {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  padding: 4px 12px;
+  border-radius: var(--radius-pill);
+  border: 1px solid transparent;
+  background: transparent;
+  color: var(--text-secondary);
+  font-size: var(--text-xs);
+  font-weight: 500;
+  cursor: pointer;
+  white-space: nowrap;
+  user-select: none;
+  transition: all 0.15s ease;
+}
+
+.help-modal__tab:hover {
+  background: var(--surface-hover);
+  color: var(--text-primary);
+}
+
+.help-modal__tab--active {
+  background: var(--surface-primary);
+  color: var(--text-primary);
+  border-color: var(--border-divider);
+  font-weight: 600;
+  box-shadow: var(--shadow-sm);
 }
 
 .help-modal__body {
@@ -9152,6 +9202,128 @@ body[data-zen='physics'] .forces-handle { bottom: 32px; }
 
 @media (prefers-reduced-motion: reduce) {
   .canvas-notice { animation-duration: 1ms; }
+}
+
+/* ===========================================================================
+   FLATTEN SHAPE ACTION BANNER
+   ---------------------------------------------------------------------------
+   Inline contextual action banner when Direct Select (A) targets a shape.
+   Replaces the fullscreen modal takeover with a floating non-blocking pill.
+   --------------------------------------------------------------------------- */
+.flatten-banner {
+  position: absolute;
+  bottom: calc(var(--dock-h, 64px) + 24px);
+  left: 50%;
+  translate: -50%;
+  z-index: 1200;
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 5px 6px 5px 12px;
+  border-radius: var(--radius-pill);
+  background: var(--glass-surface);
+  backdrop-filter: var(--glass-filter);
+  -webkit-backdrop-filter: var(--glass-filter);
+  border: 1px solid var(--border-subtle, rgba(255, 255, 255, 0.12));
+  box-shadow: var(--shadow-float, 0 16px 36px -8px rgba(0, 0, 0, 0.36)), inset 0 1px 0 0 var(--glass-edge, rgba(255, 255, 255, 0.12));
+  color: var(--text-primary);
+  font-family: var(--font-sans);
+  font-size: var(--text-sm, 13px);
+  white-space: nowrap;
+  pointer-events: auto;
+  user-select: none;
+}
+
+@supports not ((backdrop-filter: blur(1px)) or (-webkit-backdrop-filter: blur(1px))) {
+  .flatten-banner { background: var(--surface-elevated, #1e2024); }
+}
+
+.flatten-banner-body {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.flatten-banner-icon {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 22px;
+  height: 22px;
+  border-radius: 50%;
+  background: rgba(37, 99, 235, 0.16);
+  color: var(--accent, #3b82f6);
+  flex-shrink: 0;
+}
+
+.flatten-banner-text {
+  font-size: 13px;
+  color: var(--text-primary);
+  font-weight: 450;
+  letter-spacing: -0.01em;
+}
+
+.flatten-banner-text strong {
+  font-weight: 600;
+  color: var(--text-primary);
+}
+
+.flatten-banner-actions {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+}
+
+.flatten-banner-btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 5px;
+  height: 28px;
+  padding: 0 11px;
+  border-radius: var(--radius-pill);
+  font-family: var(--font-sans);
+  font-size: 12px;
+  font-weight: 500;
+  cursor: pointer;
+  transition: all 120ms ease;
+  border: none;
+  outline: none;
+}
+
+.flatten-banner-btn--cancel {
+  background: transparent;
+  color: var(--text-secondary, rgba(255, 255, 255, 0.7));
+}
+
+.flatten-banner-btn--cancel:hover {
+  background: var(--bg-hover, rgba(255, 255, 255, 0.08));
+  color: var(--text-primary);
+}
+
+.flatten-banner-btn--cancel:active {
+  transform: scale(0.96);
+}
+
+.flatten-banner-btn--confirm {
+  background: var(--accent, #2563eb);
+  color: #ffffff;
+  font-weight: 600;
+  box-shadow: 0 2px 8px rgba(37, 99, 235, 0.35);
+}
+
+.flatten-banner-btn--confirm:hover {
+  filter: brightness(1.1);
+  box-shadow: 0 4px 12px rgba(37, 99, 235, 0.45);
+}
+
+.flatten-banner-btn--confirm:active {
+  transform: scale(0.96);
+}
+
+.flatten-banner-btn--confirm:focus-visible {
+  outline: 2px solid var(--accent, #3b82f6);
+  outline-offset: 1px;
 }
 
 /* ===========================================================================
@@ -9642,4 +9814,29 @@ body[data-zen='physics'] .forces-handle { bottom: 32px; }
 }
 
 .grid-variations__tile:hover { transform: none; }
+}
+
+@keyframes indeterminate-bar {
+  0% {
+    left: -40%;
+  }
+  50% {
+    left: 40%;
+    width: 60%;
+  }
+  100% {
+    left: 100%;
+    width: 40%;
+  }
+}
+
+@keyframes cursorBadgePop {
+  from {
+    transform: scale(0.4);
+    opacity: 0;
+  }
+  to {
+    transform: scale(1);
+    opacity: 1;
+  }
 }

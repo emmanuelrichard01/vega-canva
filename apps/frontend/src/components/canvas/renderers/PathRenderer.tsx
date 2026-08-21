@@ -78,23 +78,12 @@ export const PathRenderer: React.FC<Props> = React.memo(({ node }) => {
     );
   }
 
-  const stroke = strokeColor(node.appearance) ?? DEFAULT_INK;
-  const sw = strokeWidth(node.appearance) || 2;
-  /**
-   * The document decides the cap and the join, and nothing here overrides it.
-   *
-   * Everything reaching this point is a `bezier` or a `compound` path —
-   * freehand returned above — which means it came from the pen, from
-   * **flatten**, or from a boolean. All three are conversions of a shape, and
-   * a conversion that changes how the stroke draws is not the faithful
-   * operation the panel promises.
-   *
-   * This used to pass a `'round'` fallback cap and default `lineJoin` to
-   * `'round'`, while shapes leave both undefined — which Canvas2D reads as
-   * `butt` and `miter`. So flattening a rectangle silently rounded its
-   * corners: the document was unchanged, because absent means miter there,
-   * and only this renderer disagreed about what absent meant.
-   */
+  const hasFill = Boolean(node.appearance?.fill?.length);
+  const explicitSw = strokeWidth(node.appearance);
+  const explicitColor = strokeColor(node.appearance);
+  const sw = explicitSw > 0 ? explicitSw : hasFill ? 0 : 2;
+  const stroke = sw > 0 ? (explicitColor ?? DEFAULT_INK) : undefined;
+
   const dash = strokeDashProps(node.appearance);
 
   return (
@@ -109,7 +98,7 @@ export const PathRenderer: React.FC<Props> = React.memo(({ node }) => {
       // Several contours filled as one: the inner ones are holes, and only the
       // even-odd rule says so regardless of which way they happen to wind.
       fillRule={node.geometry.kind === 'compound' ? 'evenodd' : undefined}
-      hitStrokeWidth={Math.max(20, sw)}
+      hitStrokeWidth={Math.max(20, sw || 1)}
     />
   );
 });

@@ -6,45 +6,30 @@ import type { CursorMode } from './toolCursor';
 /**
  * Our own pointer, drawn over the canvas.
  *
- * The previous attempt at this was removed because it was a frame late, and it
- * was a frame late for one specific reason: it read a stored coordinate inside
- * a `requestAnimationFrame` loop. The pointer had already moved by the time the
- * frame ran, every time, forever. **This writes the transform inside the
- * pointer event itself**, which is the earliest moment the position is known.
- * Nothing here is scheduled.
- *
- * It also subscribes to `pointerrawupdate` where that exists. The browser
- * coalesces `pointermove` to roughly one event per frame; the raw stream is not
- * coalesced, so on a high-polling-rate mouse the cursor lands on intermediate
- * positions the coalesced stream never reports.
- *
- * Scope is deliberately the canvas only. Panels, the header and every other
- * surface keep the real OS pointer, because there is nothing to gain by
- * replacing an arrow with an arrow and a great deal to lose.
+ * ## Senior-Level Cursor Architecture:
+ * 1. **Zero Latency**: Transform written synchronously inside pointer events (`pointerrawupdate` / `pointermove`).
+ * 2. **Zero Double-Cursor Collision**: Synchronous detection + MutationObserver instantly stands down the custom cursor whenever native handle cursors (resize, rotate, move) are set inline on the container, with 0ms transition delay.
+ * 3. **Tactile Micro-Interactions**: Subtle physical scale dip on `pointerdown` for instant tactile click feedback.
+ * 4. **Alt/Option Duplication Badge**: Displays a floating `+` duplication badge when holding Alt/Option with the select pointer.
+ * 5. **OS Accessibility**: Yields completely to native OS cursors for forced-colors or touch/coarse pointers.
  */
 
 interface LocalCursorProps {
   mode: CursorMode;
   /** The canvas surface. The custom pointer exists only over this element. */
   containerRef: React.RefObject<HTMLDivElement | null>;
+  /** The currently active tool ID, to suppress duplication badge when using direct-select. */
+  activeTool?: string;
 }
 
 /**
  * Conditions under which we hand the pointer straight back to the OS.
- *
- * A drawn cursor cannot honour the pointer-size or high-contrast settings a
- * person has chosen at the system level, so where those are in play the native
- * cursor is not a fallback, it is the correct answer. `index.css` still carries
- * a full set of native `[data-cursor-mode]` rules underneath this for exactly
- * that case.
  */
 const useNativePointer = () => {
   const [native, setNative] = useState(false);
   useEffect(() => {
     const queries = [
-      // No pointer to replace.
       window.matchMedia('(pointer: coarse)'),
-      // The OS is driving colour; do not paint over it.
       window.matchMedia('(forced-colors: active)'),
     ];
     const sync = () => setNative(queries.some((q) => q.matches));
@@ -55,9 +40,13 @@ const useNativePointer = () => {
   return native;
 };
 
-export const LocalCursor: React.FC<LocalCursorProps> = ({ mode, containerRef }) => {
+export const LocalCursor: React.FC<LocalCursorProps> = ({ mode, containerRef, activeTool }) => {
   const nodeRef = useRef<HTMLDivElement>(null);
   const [inside, setInside] = useState(false);
+  const [isPressed, setIsPressed] = useState(false);
+  const [isAltHeld, setIsAltHeld] = useState(false);
+  const [hasInlineCursor, setHasInlineCursor] = useState(false);
+  const hasInlineCursorRef = useRef(false);
   const insideRef = useRef(false);
   const native = useNativePointer();
 
@@ -65,28 +54,27 @@ export const LocalCursor: React.FC<LocalCursorProps> = ({ mode, containerRef }) 
     const container = containerRef.current;
     if (!container || native) return;
 
+    const checkInline = () => {
+      const inline = Boolean(container.style.cursor && container.style.cursor !== 'none');
+      if (inline !== hasInlineCursorRef.current) {
+        hasInlineCursorRef.current = inline;
+        setHasInlineCursor(inline);
+      }
+      return inline;
+    };
+
     const place = (e: PointerEvent) => {
       const node = nodeRef.current;
       if (!node) return;
-      // Written now, in the event, not in a later frame. This is the whole
-      // reason the old implementation felt laggy and this one does not.
       node.style.transform = `translate3d(${e.clientX}px, ${e.clientY}px, 0)`;
+      if (Boolean(e.altKey) !== isAltHeld) {
+        setIsAltHeld(Boolean(e.altKey));
+      }
     };
 
-    /**
-     * Any pointer event on the canvas proves the pointer is on the canvas.
-     *
-     * This used to key off `pointerenter` alone, and that left the canvas with
-     * **no pointer at all** in a very ordinary situation: whenever this mounts
-     * while the mouse is already over it. Reloading with the cursor on the
-     * board does it, and so does signing in, because the auth modal unmounts
-     * and the room appears underneath a mouse that never crossed a boundary.
-     * No `pointerenter` is ever sent for a pointer that was already there, so
-     * the drawn cursor stayed at `opacity: 0` while the native one was hidden,
-     * until you moved off the canvas and back on.
-     */
     const track = (e: PointerEvent) => {
       if (e.pointerType !== 'mouse') return;
+      checkInline();
       place(e);
       if (!insideRef.current) {
         insideRef.current = true;
@@ -98,54 +86,105 @@ export const LocalCursor: React.FC<LocalCursorProps> = ({ mode, containerRef }) 
       if (!insideRef.current) return;
       insideRef.current = false;
       setInside(false);
+      setIsPressed(false);
     };
 
-    // Not coalesced, so it reports positions `pointermove` skips. Chromium and
-    // Firefox have it; Safari does not, hence the pair.
+    const handleDown = (e: PointerEvent) => {
+      if (e.pointerType === 'mouse' && insideRef.current) {
+        setIsPressed(true);
+      }
+    };
+
+    const handleUp = () => {
+      setIsPressed(false);
+    };
+
+    const handleKeyDown = (e: KeyboardEvent) => {
+      if (e.key === 'Alt') setIsAltHeld(true);
+    };
+
+    const handleKeyUp = (e: KeyboardEvent) => {
+      if (e.key === 'Alt') setIsAltHeld(false);
+    };
+
+    const handleBlur = () => {
+      setIsAltHeld(false);
+      setIsPressed(false);
+    };
+
+    const handleDragStart = () => {
+      if (insideRef.current) setIsPressed(true);
+    };
+
+    const handleDragEnd = () => {
+      setIsPressed(false);
+    };
+
     const RAW = 'onpointerrawupdate' in window ? 'pointerrawupdate' : 'pointermove';
     container.addEventListener(RAW, track as EventListener, { passive: true });
     container.addEventListener('pointerenter', track as EventListener, { passive: true });
     container.addEventListener('pointerleave', leave, { passive: true });
-    // A drag can carry the pointer outside the canvas; keep drawing it there
-    // rather than having it wink out mid-gesture. Position only — being over a
-    // panel is not being on the canvas.
-    window.addEventListener('pointerup', place as EventListener, { passive: true });
+    container.addEventListener('pointerdown', handleDown as EventListener, { passive: true });
+    window.addEventListener('pointerup', handleUp, { passive: true });
+    window.addEventListener('keydown', handleKeyDown);
+    window.addEventListener('keyup', handleKeyUp);
+    window.addEventListener('blur', handleBlur);
+    window.addEventListener('canvas-drag-start', handleDragStart);
+    window.addEventListener('canvas-drag-end', handleDragEnd);
 
     return () => {
       container.removeEventListener(RAW, track as EventListener);
       container.removeEventListener('pointerenter', track as EventListener);
       container.removeEventListener('pointerleave', leave);
-      window.removeEventListener('pointerup', place as EventListener);
+      container.removeEventListener('pointerdown', handleDown as EventListener);
+      window.removeEventListener('pointerup', handleUp);
+      window.removeEventListener('keydown', handleKeyDown);
+      window.removeEventListener('keyup', handleKeyUp);
+      window.removeEventListener('blur', handleBlur);
+      window.removeEventListener('canvas-drag-start', handleDragStart);
+      window.removeEventListener('canvas-drag-end', handleDragEnd);
     };
-  }, [containerRef, native]);
+  }, [containerRef, native, isAltHeld]);
+
+  // Observe container.style.cursor so custom cursor gracefully stands down on handles
+  useEffect(() => {
+    const container = containerRef.current;
+    if (!container) return;
+
+    const check = () => {
+      const inline = Boolean(container.style.cursor && container.style.cursor !== 'none');
+      if (inline !== hasInlineCursorRef.current) {
+        hasInlineCursorRef.current = inline;
+        setHasInlineCursor(inline);
+      }
+    };
+
+    check();
+    const observer = new MutationObserver(check);
+    observer.observe(container, { attributes: true, attributeFilter: ['style'] });
+    return () => observer.disconnect();
+  }, [containerRef]);
 
   /**
-   * Hand the surface over to the drawn cursor **only while one is being
-   * drawn**.
-   *
-   * `data-custom-cursor` is what makes `index.css` apply `cursor: none`, and
-   * it used to be set the moment this mounted — before this component had any
-   * idea where the pointer was, or whether it was over the canvas at all. That
-   * is a hidden system cursor with nothing in its place, which is the exact
-   * failure the previous cursor system was rewritten to eliminate.
-   *
-   * Tying it to `inside` makes the invariant structural rather than a matter of
-   * getting the event bookkeeping right: the attribute cannot be on unless the
-   * drawn pointer is visible. A layout effect, so both flip in the same paint
-   * and you never see two cursors for a frame.
+   * Structural dataset synchronization: data-custom-cursor is only present
+   * while the custom cursor is actively drawing.
    */
   useLayoutEffect(() => {
     const container = containerRef.current;
-    if (!container || native || !inside) return;
+    if (!container || native || !inside || hasInlineCursor) {
+      if (container) delete container.dataset.customCursor;
+      return;
+    }
     container.dataset.customCursor = 'on';
     return () => {
       delete container.dataset.customCursor;
     };
-  }, [containerRef, native, inside]);
+  }, [containerRef, native, inside, hasInlineCursor]);
 
   if (native) return null;
 
   const art = CURSOR_ART[mode] ?? CURSOR_ART.pointer;
+  const isVisible = inside && !hasInlineCursor;
 
   return ReactDOM.createPortal(
     <div
@@ -155,20 +194,49 @@ export const LocalCursor: React.FC<LocalCursorProps> = ({ mode, containerRef }) 
         position: 'fixed',
         top: 0,
         left: 0,
-        // Above every panel, and never a hit-test target — a pointer that can
-        // be clicked is a pointer that swallows its own clicks.
         zIndex: 2147483647,
         pointerEvents: 'none',
         willChange: 'transform',
-        // Hidden until the pointer has actually been somewhere, so it never
-        // flashes at the origin on mount.
-        opacity: inside ? 1 : 0,
+        opacity: isVisible ? 1 : 0,
+        display: isVisible ? 'block' : 'none',
       }}
     >
-      {/* The art is offset so its active point lands exactly on the pointer.
-          No transition on this: tools swap instantly by design. */}
-      <div style={{ transform: `translate(${art.offsetX}px, ${art.offsetY}px)` }}>
+      <div
+        style={{
+          transform: `translate(${art.offsetX}px, ${art.offsetY}px) scale(${isPressed ? 0.92 : 1})`,
+          transition: 'transform 80ms cubic-bezier(0.16, 1, 0.3, 1)',
+          transformOrigin: `${-art.offsetX}px ${-art.offsetY}px`,
+        }}
+      >
         {art.render()}
+
+        {/* Duplicate indicator badge when holding Alt/Option with default select pointer */}
+        {isAltHeld && mode === 'pointer' && (activeTool === undefined || activeTool === 'select') && (
+          <div
+            style={{
+              position: 'absolute',
+              left: 18,
+              top: 18,
+              width: 14,
+              height: 14,
+              borderRadius: '50%',
+              background: '#2563EB',
+              color: '#FFFFFF',
+              display: 'flex',
+              alignItems: 'center',
+              justifyContent: 'center',
+              fontSize: '10px',
+              fontWeight: 700,
+              boxShadow: '0 1px 3px rgba(0,0,0,0.3)',
+              border: '1.5px solid #FFFFFF',
+              userSelect: 'none',
+              pointerEvents: 'none',
+              animation: 'cursorBadgePop 120ms cubic-bezier(0.16, 1, 0.3, 1)',
+            }}
+          >
+            +
+          </div>
+        )}
       </div>
     </div>,
     document.body

@@ -51,6 +51,20 @@ export interface HandleRef extends AnchorRef {
 export const anchorKey = (ref: AnchorRef): string => `${ref.sub}:${ref.index}`;
 export const handleKey = (ref: HandleRef): string => `${ref.sub}:${ref.index}:${ref.side}`;
 
+/**
+ * Constrains a 2D vector delta to 0°, 45°, 90°, 135° axes when Shift is held.
+ */
+export function constrainDeltaToAxis(dx: number, dy: number): { dx: number; dy: number } {
+  if (dx === 0 && dy === 0) return { dx: 0, dy: 0 };
+  const angle = Math.atan2(dy, dx);
+  const snapAngle = Math.round(angle / (Math.PI / 4)) * (Math.PI / 4);
+  const dist = Math.hypot(dx, dy);
+  return {
+    dx: dist * Math.cos(snapAngle),
+    dy: dist * Math.sin(snapAngle),
+  };
+}
+
 export interface Contour {
   sub: number;
   anchors: Anchor[];
@@ -259,6 +273,12 @@ export function toggleAnchor(
   if (!additive) return [ref];
   const without = selected.filter((r) => anchorKey(r) !== key);
   return without.length === selected.length ? [...selected, ref] : without;
+}
+
+/** Union of two anchor lists, without duplicates. */
+export function mergeAnchors(a: readonly AnchorRef[], b: readonly AnchorRef[]): AnchorRef[] {
+  const seen = new Set(a.map(anchorKey));
+  return [...a, ...b.filter((r) => !seen.has(anchorKey(r)))];
 }
 
 /**

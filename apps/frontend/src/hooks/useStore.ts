@@ -233,24 +233,40 @@ interface StoreState {
    */
   darkTheme: boolean;
   setDarkTheme: (val: boolean) => void;
+  /**
+   * Pending shape node ID awaiting confirmation to flatten into an editable vector path.
+   */
+  flattenConfirmNodeId: string | null;
+  setFlattenConfirmNodeId: (id: string | null) => void;
 }
 
 const loadNumberPref = (key: string, fallback: number, min: number, max: number) => {
-  if (typeof window === 'undefined') return fallback;
+  if (typeof window === 'undefined' || !window.localStorage) return fallback;
   const stored = Number(window.localStorage.getItem(key));
   if (!Number.isFinite(stored) || stored === 0) return fallback;
   return Math.min(max, Math.max(min, stored));
 };
 
 const loadBoolPref = (key: string, fallback: boolean) => {
-  if (typeof window === 'undefined') return fallback;
+  if (typeof window === 'undefined' || !window.localStorage) return fallback;
   const stored = window.localStorage.getItem(key);
   return stored === null ? fallback : stored === 'true';
 };
 
+const loadStringPref = (key: string, fallback: string = ''): string => {
+  if (typeof window === 'undefined' || !window.localStorage) return fallback;
+  return window.localStorage.getItem(key) ?? fallback;
+};
+
+const setStoragePref = (key: string, value: string) => {
+  if (typeof window !== 'undefined' && window.localStorage) {
+    window.localStorage.setItem(key, value);
+  }
+};
+
 /** Honour the OS setting until the user makes an explicit choice. */
 const prefersDarkScheme = () =>
-  typeof window !== 'undefined' && window.matchMedia('(prefers-color-scheme: dark)').matches;
+  typeof window !== 'undefined' && typeof window.matchMedia === 'function' && window.matchMedia('(prefers-color-scheme: dark)').matches;
 
 export const useStore = create<StoreState>((set) => ({
   objects: {},
@@ -337,37 +353,37 @@ export const useStore = create<StoreState>((set) => ({
   // a surprise to discover mid-gesture on a board you are trying to arrange.
   physicsEnabled: loadBoolPref('vega_physics_enabled', false),
   setPhysicsEnabled: (val) => {
-    window.localStorage.setItem('vega_physics_enabled', String(val));
+    setStoragePref('vega_physics_enabled', String(val));
     set({ physicsEnabled: val });
   },
   penSize: loadNumberPref('vega_pen_size', 6, 1, 60),
   setPenSize: (val) => {
     const clamped = Math.min(60, Math.max(1, val));
-    window.localStorage.setItem('vega_pen_size', String(clamped));
+    setStoragePref('vega_pen_size', String(clamped));
     set({ penSize: clamped });
   },
   eraserSize: loadNumberPref('vega_eraser_size', 15, 4, 200),
   setEraserSize: (val) => {
     const clamped = Math.min(200, Math.max(4, val));
-    window.localStorage.setItem('vega_eraser_size', String(clamped));
+    setStoragePref('vega_eraser_size', String(clamped));
     set({ eraserSize: clamped });
   },
 
   forceScale: loadNumberPref('vega_force_scale', DEFAULT_FORCE_SCALE, MIN_FORCE_SCALE, MAX_FORCE_SCALE),
   setForceScale: (val) => {
     const clamped = Math.min(MAX_FORCE_SCALE, Math.max(MIN_FORCE_SCALE, val));
-    window.localStorage.setItem('vega_force_scale', String(clamped));
+    setStoragePref('vega_force_scale', String(clamped));
     set({ forceScale: clamped });
   },
   stickyTheme: ((): StickyTheme => {
-    const stored = window.localStorage.getItem('vega_sticky_theme');
+    const stored = loadStringPref('vega_sticky_theme');
     // Validated rather than cast: `localStorage` is user-writable, and an
     // unknown theme would reach the renderer's lookup table and fall through
     // to a default on every paint instead of failing where it can be seen.
     return STICKY_THEMES.includes(stored as StickyTheme) ? (stored as StickyTheme) : 'yellow';
   })(),
   setStickyTheme: (theme) => {
-    window.localStorage.setItem('vega_sticky_theme', theme);
+    setStoragePref('vega_sticky_theme', theme);
     set({ stickyTheme: theme });
   },
 
@@ -379,19 +395,19 @@ export const useStore = create<StoreState>((set) => ({
   ),
   setForceRadiusScale: (val) => {
     const clamped = Math.min(MAX_FORCE_RADIUS_SCALE, Math.max(MIN_FORCE_RADIUS_SCALE, val));
-    window.localStorage.setItem('vega_force_radius_scale', String(clamped));
+    setStoragePref('vega_force_radius_scale', String(clamped));
     set({ forceRadiusScale: clamped });
   },
 
   forceFalloff: ((): FalloffId => {
-    const stored = window.localStorage.getItem('vega_force_falloff');
+    const stored = loadStringPref('vega_force_falloff');
     // Validated rather than cast: `localStorage` is user-writable and a bad
     // value here would reach `falloffAt`, which would silently fall through to
     // its default on every frame instead of failing where it could be seen.
     return FALLOFF_IDS.includes(stored as FalloffId) ? (stored as FalloffId) : 'smooth';
   })(),
   setForceFalloff: (val) => {
-    window.localStorage.setItem('vega_force_falloff', val);
+    setStoragePref('vega_force_falloff', val);
     set({ forceFalloff: val });
   },
 
@@ -399,17 +415,17 @@ export const useStore = create<StoreState>((set) => ({
   setForceSelectionOnly: (val) => set({ forceSelectionOnly: val }),
 
   lastForce: ((): ForceId => {
-    const stored = window.localStorage.getItem('vega_last_force');
+    const stored = loadStringPref('vega_last_force');
     return FORCE_IDS.includes(stored as ForceId) ? (stored as ForceId) : 'magnet';
   })(),
   setLastForce: (id) => {
-    window.localStorage.setItem('vega_last_force', id);
+    setStoragePref('vega_last_force', id);
     set({ lastForce: id });
   },
 
-  connectorColor: window.localStorage.getItem('vega_connector_color') || '',
+  connectorColor: loadStringPref('vega_connector_color'),
   setConnectorColor: (val) => {
-    window.localStorage.setItem('vega_connector_color', val);
+    setStoragePref('vega_connector_color', val);
     set({ connectorColor: val });
   },
 
@@ -426,9 +442,9 @@ export const useStore = create<StoreState>((set) => ({
    * Persisted per origin, like the connector's colour and the throw switch: a
    * board drawn with the drawn nib should still be drawn with it tomorrow.
    */
-  pencilNib: (window.localStorage.getItem('vega_pencil_nib') as PencilNib) || 'smooth',
+  pencilNib: (loadStringPref('vega_pencil_nib') as PencilNib) || 'smooth',
   setPencilNib: (val) => {
-    window.localStorage.setItem('vega_pencil_nib', val);
+    setStoragePref('vega_pencil_nib', val);
     set({ pencilNib: val });
   },
 
@@ -456,44 +472,44 @@ export const useStore = create<StoreState>((set) => ({
    * without being able to say how much of it means drawing a five-turn coil
    * and then editing it every single time.
    */
-  lineWaves: Number(window.localStorage.getItem('vega_line_waves')) || 6,
+  lineWaves: Number(loadStringPref('vega_line_waves')) || 6,
   setLineWaves: (val) => {
-    window.localStorage.setItem('vega_line_waves', String(val));
+    setStoragePref('vega_line_waves', String(val));
     set({ lineWaves: val });
   },
 
-  lineProfile: (window.localStorage.getItem('vega_line_profile') as LineProfile) || 'straight',
+  lineProfile: (loadStringPref('vega_line_profile') as LineProfile) || 'straight',
   setLineProfile: (val) => {
-    window.localStorage.setItem('vega_line_profile', val);
+    setStoragePref('vega_line_profile', val);
     set({ lineProfile: val });
   },
 
-  penStrokeWidth: Number(window.localStorage.getItem('vega_pen_stroke')) || 2,
+  penStrokeWidth: Number(loadStringPref('vega_pen_stroke')) || 2,
   setPenStrokeWidth: (val) => {
-    window.localStorage.setItem('vega_pen_stroke', String(val));
+    setStoragePref('vega_pen_stroke', String(val));
     set({ penStrokeWidth: val });
   },
 
   showRulers: loadBoolPref('vega_show_rulers', true),
   setShowRulers: (val) => {
-    window.localStorage.setItem('vega_show_rulers', String(val));
+    setStoragePref('vega_show_rulers', String(val));
     set({ showRulers: val });
   },
 
   showGrid: loadBoolPref('vega_show_grid', true),
   setShowGrid: (val) => {
-    window.localStorage.setItem('vega_show_grid', String(val));
+    setStoragePref('vega_show_grid', String(val));
     set({ showGrid: val });
   },
 
-  forceLatch: window.localStorage.getItem('vega_force_latch') === '1',
+  forceLatch: loadStringPref('vega_force_latch') === '1',
   setForceLatch: (val) => {
-    window.localStorage.setItem('vega_force_latch', val ? '1' : '0');
+    setStoragePref('vega_force_latch', val ? '1' : '0');
     set({ forceLatch: val });
   },
 
   forceLatchSeconds: ((): LatchSeconds => {
-    const stored = Number(window.localStorage.getItem('vega_force_latch_seconds'));
+    const stored = Number(loadStringPref('vega_force_latch_seconds'));
     // Validated against the offered set rather than clamped: `localStorage` is
     // user-writable, and an arbitrary number here would drive a field for a
     // duration no control can express or cancel.
@@ -502,7 +518,7 @@ export const useStore = create<StoreState>((set) => ({
       : DEFAULT_LATCH_SECONDS;
   })(),
   setForceLatchSeconds: (val) => {
-    window.localStorage.setItem('vega_force_latch_seconds', String(val));
+    setStoragePref('vega_force_latch_seconds', String(val));
     set({ forceLatchSeconds: val });
   },
 
@@ -547,14 +563,16 @@ export const useStore = create<StoreState>((set) => ({
   },
   snapToGrid: loadBoolPref('vega_snap_to_grid', false),
   setSnapToGrid: (val) => {
-    window.localStorage.setItem('vega_snap_to_grid', String(val));
+    setStoragePref('vega_snap_to_grid', String(val));
     set({ snapToGrid: val });
   },
   darkTheme: loadBoolPref('vega_dark_theme', prefersDarkScheme()),
   setDarkTheme: (val) => {
-    window.localStorage.setItem('vega_dark_theme', String(val));
+    setStoragePref('vega_dark_theme', String(val));
     set({ darkTheme: val });
   },
+  flattenConfirmNodeId: null,
+  setFlattenConfirmNodeId: (flattenConfirmNodeId) => set({ flattenConfirmNodeId }),
 }));
 
 let bridgeDisposer: (() => void) | null = null;

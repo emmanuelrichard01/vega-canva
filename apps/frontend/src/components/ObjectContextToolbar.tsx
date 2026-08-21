@@ -2,13 +2,14 @@ import React, { useEffect, useLayoutEffect, useRef, useState, useSyncExternalSto
 import { motion, AnimatePresence } from 'framer-motion';
 import {
   AlignCenter, AlignHorizontalJustifyCenter, AlignHorizontalJustifyEnd, AlignHorizontalJustifyStart,
-  AlignHorizontalSpaceAround, AlignLeft, AlignRight, AlignVerticalJustifyCenter, AlignVerticalJustifyEnd,
+  AlignHorizontalSpaceAround, AlignJustify, AlignLeft, AlignRight, AlignVerticalJustifyCenter, AlignVerticalJustifyEnd,
   AlignVerticalJustifyStart, AlignVerticalSpaceAround, Bold, BringToFront, Copy, Crop, Download,
   Droplet, FlipHorizontal, FlipVertical, Group, ImageIcon, Italic, List, ListOrdered, Layers, Lock, Menu, MessageSquare,
-  MessageSquarePlus, Mic, Minus, PenLine, Pin, Scissors, SendToBack, SmilePlus, Spline,
+  MessageSquarePlus, Mic, Minus, PenLine, Pin, Scissors, SendToBack, SmilePlus,
   SquaresExclude, SquaresIntersect, SquaresSubtract, SquaresUnite, Square, StickyNote,
-  Strikethrough, Trash2, Type, Underline, Ungroup, Unlock,
+  Strikethrough, Trash2, Type, Underline, Ungroup, Unlock, Sparkles,
 } from 'lucide-react';
+import { TEXT_PRESETS, isTextPresetActive } from './panel/textEffectPresets';
 
 import {
   applyNodePatches, localAuthorId, lowestZIndex, nextZIndex, toggleReaction, updateNodes,
@@ -28,6 +29,7 @@ import { GRID_PALETTES } from '../engine/grid/gridStyle';
 import {
   alignPickedAnchors,
   deletePickedAnchor,
+  setMultiplePathsAnchorMode,
   setPickedAnchorMode,
 } from './canvas/PathEditor';
 import { applyBoolean, canVectorize, flattenToPath, outlineStrokeOf } from '../engine/document/vectorOps';
@@ -184,6 +186,20 @@ const CornerIcon: React.FC<{ rounded: boolean }> = ({ rounded }) => (
       fill="none"
     />
     <circle cx="3" cy="12" r="1.8" fill="currentColor" />
+  </svg>
+);
+
+/**
+ * Dedicated vector edit icon representing an anchor point with control handles.
+ * Distinct from connector/spline icons.
+ */
+const VectorEditIcon: React.FC<{ size?: number }> = ({ size = 15 }) => (
+  <svg width={size} height={size} viewBox="0 0 16 16" fill="none" aria-hidden style={{ display: 'block', flexShrink: 0 }}>
+    <path d="M3 13 C 3 7, 9 9, 13 3" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" />
+    <rect x="1.5" y="11.5" width="3" height="3" rx="0.5" fill="currentColor" stroke="currentColor" strokeWidth="0.5" />
+    <rect x="11.5" y="1.5" width="3" height="3" rx="0.5" fill="currentColor" stroke="currentColor" strokeWidth="0.5" />
+    <line x1="3" y1="11.5" x2="3" y2="6.5" stroke="currentColor" strokeWidth="1.2" strokeDasharray="1.2 1.2" />
+    <circle cx="3" cy="6.5" r="1.3" fill="currentColor" />
   </svg>
 );
 
@@ -968,6 +984,29 @@ export const ObjectContextToolbar: React.FC<Props> = ({ selectedId, selectedIds,
           </div>
           <Divider />
 
+          {/* Multi-vector corner and curve conversion */}
+          {bulkNodes.every((n) => (n.type === 'path' && (n.geometry as any)?.kind !== 'freehand') || n.type === 'shape') && (
+            <>
+              <div className="ctx-group">
+                <RailButton
+                  label="Make Sharp"
+                  hint="Convert all points across selected shapes to sharp corners"
+                  onClick={() => setMultiplePathsAnchorMode(bulkIds, 'corner')}
+                >
+                  <CornerIcon rounded={false} />
+                </RailButton>
+                <RailButton
+                  label="Make Curved"
+                  hint="Convert all points across selected shapes to smooth curves"
+                  onClick={() => setMultiplePathsAnchorMode(bulkIds, 'smooth')}
+                >
+                  <CornerIcon rounded />
+                </RailButton>
+              </div>
+              <Divider />
+            </>
+          )}
+
           {/* Zone C — what every one of them has. */}
           <div className="ctx-group">
             {bulkAffords('fill') && (
@@ -1392,7 +1431,7 @@ export const ObjectContextToolbar: React.FC<Props> = ({ selectedId, selectedIds,
                 </RailPopover>
               )}
               {node.type === 'shape' && node.geometry.kind === 'rect' && (
-                <RailPopover label="Corner radius" trigger={<><Spline size={16} /><span className="ctx-value">{appearance.cornerRadius ?? 0}</span></>}>
+                <RailPopover label="Corner radius" trigger={<><CornerIcon rounded /><span className="ctx-value">{appearance.cornerRadius ?? 0}</span></>}>
                   <PopoverSlider
                     label="Corner radius" value={appearance.cornerRadius ?? 0} min={0} max={200}
                     onChange={(cornerRadius) => setAppearance({ cornerRadius })}
@@ -1513,62 +1552,59 @@ export const ObjectContextToolbar: React.FC<Props> = ({ selectedId, selectedIds,
         )}
 
         {/* --------------------------------------------------------- vectors */}
-        {/* Anchor editing has always worked — double-click a pen path and its
-            points and handles appear. Nothing ever *said* so, which for a
-            feature reached by a gesture on one node type out of a dozen means
-            it may as well not exist: the only way to find it is to try
-            double-clicking things. A button costs one slot on a rail that only
-            appears for the paths it applies to. */}
-        {/* Compound paths too, now that anchors are addressed per contour.
-            Every boolean result was previously uneditable — the button was
-            hidden on exactly the paths whose shape most needed correcting. */}
+        {/* Anchor editing for vector paths */}
         {node.type === 'path' && node.geometry.kind !== 'freehand' && (
           <>
             <div className="ctx-group">
               <RailButton
                 label="Edit points"
-                hint="Direct select (A)"
+                hint="Direct select anchors (A)"
                 pressed={editingPath === node.id}
-                onClick={() =>
-                  editingPath === node.id ? pathEdit.exit() : pathEdit.enter(node.id)
-                }
+                onClick={() => {
+                  if (editingPath === node.id) {
+                    pathEdit.exit();
+                    if (typeof window !== 'undefined') {
+                      window.dispatchEvent(new CustomEvent('legacy_tool_change', { detail: 'select' }));
+                    }
+                  } else {
+                    if (typeof window !== 'undefined') {
+                      window.dispatchEvent(new CustomEvent('legacy_tool_change', { detail: 'direct-select' }));
+                    }
+                    pathEdit.enter(node.id);
+                  }
+                }}
               >
-                <Spline size={15} />
+                <VectorEditIcon size={15} />
               </RailButton>
             </div>
 
-            {/**
-              * The anchor rail: what you can do to the points you have picked.
-              *
-              * Appears only while anchors are actually selected, which is the
-              * whole reason it can sit inline rather than in a panel — it is
-              * never on screen at a moment when it applies to nothing. Corner
-              * and smooth were reachable only by double-clicking an anchor, a
-              * gesture with no affordance at all; align had no route in.
-              */}
-            {editingPath === node.id && pickedAnchors > 0 && (
+            {editingPath === node.id && (
               <>
                 <Divider />
                 <div className="ctx-group">
-                  <span className="ctx-value" style={{ marginRight: 2 }}>{pickedAnchors}</span>
-                  <RailButton label="Corner" hint="Straighten these points" onClick={() => setPickedAnchorMode('corner')}>
+                  {pickedAnchors > 0 && (
+                    <span className="ctx-value" style={{ marginRight: 2 }}>{pickedAnchors} pts</span>
+                  )}
+                  <RailButton
+                    label="Corner"
+                    hint={pickedAnchors > 0 ? "Make selected points sharp (Corner)" : "Make all points sharp (Corner)"}
+                    onClick={() => setPickedAnchorMode('corner')}
+                  >
                     <CornerIcon rounded={false} />
                   </RailButton>
-                  <RailButton label="Smooth" hint="Round these points" onClick={() => setPickedAnchorMode('smooth')}>
+                  <RailButton
+                    label="Smooth"
+                    hint={pickedAnchors > 0 ? "Make selected points curved (Smooth)" : "Make all points curved (Smooth)"}
+                    onClick={() => setPickedAnchorMode('smooth')}
+                  >
                     <CornerIcon rounded />
                   </RailButton>
                 </div>
-                {/* Align needs two points to mean anything, so it is offered
-                    on two rather than shown disabled on one. */}
+                {/* Align needs two points to mean anything */}
                 {pickedAnchors > 1 && (
                   <>
                     <Divider />
                     <div className="ctx-group">
-                      {/* The same six edges the multi-select rail offers, read
-                          from the same table — aligning three objects and
-                          aligning three anchors are the same question asked of
-                          different things, and two tables would be two chances
-                          for "middle" to mean different edges. */}
                       {ALIGN_BUTTONS.map(({ edge, label, icon }) => (
                         <RailButton key={edge} label={label} onClick={() => alignPickedAnchors(edge)}>
                           {icon}
@@ -1577,12 +1613,16 @@ export const ObjectContextToolbar: React.FC<Props> = ({ selectedId, selectedIds,
                     </div>
                   </>
                 )}
-                <Divider />
-                <div className="ctx-group">
-                  <RailButton label="Delete points" hint="Remove these points (Del)" onClick={() => deletePickedAnchor()}>
-                    <Trash2 size={15} />
-                  </RailButton>
-                </div>
+                {pickedAnchors > 0 && (
+                  <>
+                    <Divider />
+                    <div className="ctx-group">
+                      <RailButton label="Delete points" hint="Remove selected points (Del)" onClick={() => deletePickedAnchor()}>
+                        <Trash2 size={15} />
+                      </RailButton>
+                    </div>
+                  </>
+                )}
               </>
             )}
             <Divider />
@@ -1646,7 +1686,20 @@ export const ObjectContextToolbar: React.FC<Props> = ({ selectedId, selectedIds,
                   ]}
                 />
               </RailPopover>
-              <RailPopover label="Alignment" trigger={<AlignLeft size={16} />}>
+              <RailPopover
+                label="Alignment"
+                trigger={
+                  typography.align === 'center' ? (
+                    <AlignCenter size={16} />
+                  ) : typography.align === 'right' ? (
+                    <AlignRight size={16} />
+                  ) : typography.align === 'justify' ? (
+                    <AlignJustify size={16} />
+                  ) : (
+                    <AlignLeft size={16} />
+                  )
+                }
+              >
                 <span className="ctx-popover__label">Alignment</span>
                 <SegmentedControl
                   ariaLabel="Text alignment"
@@ -1656,8 +1709,65 @@ export const ObjectContextToolbar: React.FC<Props> = ({ selectedId, selectedIds,
                     { value: 'left', label: 'Left', icon: <AlignLeft size={14} /> },
                     { value: 'center', label: 'Centre', icon: <AlignCenter size={14} /> },
                     { value: 'right', label: 'Right', icon: <AlignRight size={14} /> },
+                    { value: 'justify', label: 'Justify', icon: <AlignJustify size={14} /> },
                   ]}
                 />
+              </RailPopover>
+              <RailPopover label="Effects" trigger={<Sparkles size={16} />} align="start">
+                <span className="ctx-popover__label">Text Effects</span>
+                <div style={{ display: 'grid', gridTemplateColumns: 'repeat(5, 1fr)', gap: '4px', marginBottom: '8px' }}>
+                  {TEXT_PRESETS.map((preset) => {
+                    const active = isTextPresetActive(preset, typography);
+                    return (
+                      <button
+                        key={preset.id}
+                        type="button"
+                        className="ctx-shape-btn"
+                        style={{
+                          fontSize: '11px',
+                          fontWeight: 500,
+                          padding: '4px 6px',
+                          background: active ? 'var(--accent, #2563EB)' : 'rgba(255,255,255,0.06)',
+                          color: active ? '#FFFFFF' : 'var(--text-primary)',
+                          borderRadius: '6px',
+                          border: 'none',
+                          cursor: 'pointer',
+                        }}
+                        onClick={() => setTypography(preset.patch(typography))}
+                        data-tooltip={preset.hint}
+                      >
+                        {preset.label}
+                      </button>
+                    );
+                  })}
+                </div>
+                {typography.highlight && (
+                  <div className="ctx-popover__row">
+                    <span className="ctx-popover__label">Highlight</span>
+                    <ColorPickerPopover
+                      color={typography.highlight.color}
+                      onChange={(color) => setTypography({ highlight: { ...typography.highlight!, color } })}
+                    />
+                  </div>
+                )}
+                {typography.outline && (
+                  <div className="ctx-popover__row">
+                    <span className="ctx-popover__label">Outline</span>
+                    <ColorPickerPopover
+                      color={typography.outline.color}
+                      onChange={(color) => setTypography({ outline: { ...typography.outline!, color } })}
+                    />
+                  </div>
+                )}
+                {typography.glow && (
+                  <div className="ctx-popover__row">
+                    <span className="ctx-popover__label">Glow</span>
+                    <ColorPickerPopover
+                      color={typography.glow.color}
+                      onChange={(color) => setTypography({ glow: { ...typography.glow!, color } })}
+                    />
+                  </div>
+                )}
               </RailPopover>
               <ColorPickerPopover color={typography.color} onChange={(color) => setTypography({ color })} />
             </div>
@@ -1799,8 +1909,20 @@ export const ObjectContextToolbar: React.FC<Props> = ({ selectedId, selectedIds,
               <span className="ctx-menu-item__key">⌘⇧L</span>
             </button>
             {node.type === 'shape' && canVectorize(node) && (
-              <button className="ctx-menu-item" onClick={() => { const id = flattenToPath(node.id); if (id) editor.select(id); }}>
-                <Spline size={15} /> Flatten to path
+              <button
+                className="ctx-menu-item"
+                onClick={() => {
+                  const id = flattenToPath(node.id);
+                  if (id) {
+                    editor.select(id);
+                    if (typeof window !== 'undefined') {
+                      window.dispatchEvent(new CustomEvent('legacy_tool_change', { detail: 'direct-select' }));
+                    }
+                    pathEdit.enter(id);
+                  }
+                }}
+              >
+                <VectorEditIcon size={15} /> Flatten to path
               </button>
             )}
             {canVectorize(node) && strokeWidth > 0 && (

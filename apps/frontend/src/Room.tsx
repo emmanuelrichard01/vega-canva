@@ -1,11 +1,9 @@
 import { nanoid } from 'nanoid';
-import React, { useState, useRef, useEffect, useSyncExternalStore } from 'react';
+import React, { useState, useRef, useEffect, useSyncExternalStore, Suspense, lazy } from 'react';
 import { Canvas } from './components/Canvas';
 import { AuthModal } from './components/AuthModal';
-import { ShareModal } from './components/ShareModal';
 import { WorkspaceShell } from './components/workspace/WorkspaceShell';
 import { ToolWorkspace } from './components/workspace/ToolWorkspace';
-import { TOOL_FOR_KEY } from './engine/tools/shortcuts';
 import { takePendingRestore, takePendingTemplate } from './engine/export/pendingRestore';
 import { templateById } from './engine/templates/templates';
 import { parseDocumentExport } from './engine/export/DocumentImport';
@@ -27,19 +25,18 @@ import { ActivityFeed } from './components/ActivityFeed';
 import { PresenceEdgeMarkers } from './components/PresenceEdgeMarkers';
 import { FollowIndicator } from './components/FollowIndicator';
 import { ExportService } from './engine/export';
-import { TimeTravelBar } from './components/TimeTravelBar';
-import { ForcesBar } from './components/ForcesBar';
 import { isForceTool, type ForceId } from './engine/physics/forces';
 import { mediaUploadUrl } from './utils/endpoints';
-import { CommandPalette } from './components/CommandPalette';
 import { processOfflineMediaQueue, queueOfflineMedia } from './utils/offlineMediaQueue';
 import { calculateLayout, animateToLayout, type LayoutMode } from './utils/spatialLayout';
 import { Mic, TriangleAlert, X } from 'lucide-react';
 import { RemoteCursors } from './engine/cursor';
-import { ExportModal } from './components/ui/ExportModal';
-import { MermaidModal } from './components/MermaidModal';
-import { HelpModal } from './components/HelpModal';
-import { CanvasContextMenu, type ContextTarget } from './components/CanvasContextMenu';
+import type { ContextTarget } from './components/CanvasContextMenu';
+import { RoomModals } from './components/workspace/RoomModals';
+import { useRoomShortcuts } from './hooks/useRoomShortcuts';
+
+const TimeTravelBar = lazy(() => import('./components/TimeTravelBar').then((m) => ({ default: m.TimeTravelBar })));
+const ForcesBar = lazy(() => import('./components/ForcesBar').then((m) => ({ default: m.ForcesBar })));
 import { parseMermaid } from './engine/diagram/mermaid';
 import { buildDiagram, canEmitDiagram, diagramIdOf, diagramToMermaid } from './engine/diagram/build';
 import { demoBox, demoText } from './engine/text/demoText';
@@ -931,16 +928,7 @@ export default function Room() {
   }, [radarOpen]);
 
 
-  // Escape closes the overlay panels, matching every other dismissible
-  // surface in the app.
-  useEffect(() => {
-    if (!isCompact || !panelsOpen) return;
-    const onKey = (e: KeyboardEvent) => {
-      if (e.key === 'Escape') setPanelsOpen(false);
-    };
-    window.addEventListener('keydown', onKey);
-    return () => window.removeEventListener('keydown', onKey);
-  }, [isCompact, panelsOpen]);
+
 
   // The theme class is applied once at the app root (App.tsx). This used to
   // assign `document.body.className` wholesale, which also clobbered any other
@@ -975,6 +963,13 @@ export default function Room() {
   }, []);
 
   const fileInputRef = useRef<HTMLInputElement>(null);
+  const selectTool = (tool: string) => {
+    setActiveTool(tool);
+    if (tool === 'image' && fileInputRef.current) {
+      fileInputRef.current.accept = 'image/*';
+      fileInputRef.current.click();
+    }
+  };
   const { roomId, status, metadata } = useRoomState();
 
   /**
@@ -1083,118 +1078,20 @@ export default function Room() {
     setLocalTitle(finalTitle);
     metadataMap.set('name', finalTitle);
   };
-  // Keyboard Shortcuts
-  useEffect(() => {
-    const handleKeyDown = (e: KeyboardEvent) => {
-      if (e.target instanceof HTMLInputElement || e.target instanceof HTMLTextAreaElement) return;
-
-      if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === 'z') {
-        e.preventDefault();
-        if (e.shiftKey) undoManager.redo();
-        else undoManager.undo();
-        return;
-      }
-
-      // Object deletion for the current selection is handled in Canvas.tsx,
-      // which already owns per-object existence checks for the other
-      // selection-scoped shortcuts (duplicate, z-order, bold/italic). Keeping
-      // a second Delete/Backspace listener here double-fired deleteNode()
-      // for the same id on every press.
-
-      if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === 'a') {
-        // Select-all lived only on the right-click menu while the help screen
-        // advertised the key, so the one place a person looks when they are
-        // already unsure taught them a keystroke that did nothing. Read
-        // through getState() rather than closing over `diagramObjects`, which
-        // changes on every edit and would re-register this listener.
-        //
-        // The Layers tree binds the same key on itself, scoped to the rows it
-        // is actually showing. Its handler runs first on the way up and marks
-        // the event handled, so this one stands aside rather than immediately
-        // widening that selection back out to the whole board.
-        if (e.defaultPrevented) return;
-        e.preventDefault();
-        setSelectedIds(Object.keys(useStore.getState().objects));
-        return;
-      }
-
-      if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === 'k') {
-        e.preventDefault();
-        setShowCommandPalette(prev => !prev);
-        return;
-      }
-      
-      if ((e.metaKey || e.ctrlKey) && e.key === 'p') {
-        e.preventDefault();
-        setShowCommandPalette(true);
-        // Missing here (unlike the Cmd+Z/Cmd+K checks above) meant this fell
-        // through into the switch below, which matches on e.key alone with
-        // no modifier check — so Cmd+P didn't just open the palette, it also
-        // silently switched the active tool to Bezier Pen (case 'p') at the
-        // same time.
-        return;
-      }
-
-      // Single-key tool shortcuts must never fire while a modifier is held.
-      // Without this guard the switch matched on the bare key, so Ctrl+S also
-      // selected the Sticky tool (on top of opening the browser's save
-      // dialog), Ctrl+R switched to Shape while reloading the page, Ctrl+E
-      // selected the Eraser, and so on. Alt is included because it composes
-      // OS-level menu accelerators on Windows and Linux.
-      if (e.ctrlKey || e.metaKey || e.altKey) return;
-
-      const key = e.key.toLowerCase();
-
-      // Resolved through the same map the dock renders its badges from, so a
-      // hint and its binding cannot drift apart. This used to be a switch of
-      // twelve hand-written cases sitting opposite twelve hand-written
-      // tooltips, and two of those tooltips advertised keys nothing bound.
-      const tool = TOOL_FOR_KEY[key];
-      if (tool) {
-        selectTool(tool);
-        return;
-      }
-
-      switch (key) {
-        // The command palette has always listed `?` beside "Keyboard
-        // shortcuts & help" without anything binding it. A help key that does
-        // not open help is the least forgivable version of a stale hint.
-        case '?': setShowHelp(true); break;
-        case '\\': setIsUiVisible(prev => !prev); break;
-        case '0':
-          // Reset camera to origin
-          window.dispatchEvent(new CustomEvent('navigateViewport', { detail: { x: 0, y: 0, zoom: 1 } }));
-          break;
-        /**
-         * Fit everything on screen.
-         *
-         * The help screen advertised **F** for this, and F is the Frame tool.
-         * The fit itself was only ever bound on the radar, which has to be
-         * focused first -- so the one place a person goes when they are already
-         * unsure taught them a key that makes a rectangle instead.
-         *
-         * Shift+1 is what Figma, Sketch and Illustrator all use for it, so the
-         * hint is now both true and the one people arrive expecting. The
-         * radar keeps its own local F, where nothing competes for the letter.
-         */
-        case '!':
-          editor.zoomToFit();
-          break;
-      }
-    };
-    
-    const handleToolChange = (e: any) => {
-      selectTool(e.detail);
-    };
-
-    window.addEventListener('keydown', handleKeyDown);
-    window.addEventListener('legacy_tool_change', handleToolChange);
-    
-    return () => {
-      window.removeEventListener('keydown', handleKeyDown);
-      window.removeEventListener('legacy_tool_change', handleToolChange);
-    };
-  }, []);
+  // Keyboard Shortcuts routed through dedicated useRoomShortcuts hook
+  useRoomShortcuts({
+    selectTool,
+    selectedIds,
+    setSelectedIds,
+    setShowCommandPalette,
+    setShowHelp,
+    setIsUiVisible,
+    isCompact,
+    panelsOpen,
+    setPanelsOpen,
+    activeTool,
+    setActiveTool,
+  });
 
   useEffect(() => {
     const handleExportPNG = () => {
@@ -1516,13 +1413,7 @@ export default function Room() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [roomId]);
 
-  const selectTool = (tool: string) => {
-    setActiveTool(tool);
-    if (tool === 'image' && fileInputRef.current) {
-      fileInputRef.current.accept = 'image/*';
-      fileInputRef.current.click();
-    }
-  };
+
 
   // Clicking Image opens the native file picker; activeTool only resets back
   // to 'select' from handleMediaUpload's `finally`, which never runs if the
@@ -1538,20 +1429,7 @@ export default function Room() {
     return () => input.removeEventListener('cancel', handleCancel);
   }, []);
 
-  // Escape leaves Forces the same way it leaves every other mode here. A mode
-  // you can only exit by finding the right button is a mode people feel stuck
-  // in, and force is the one mode where feeling stuck is alarming.
-  useEffect(() => {
-    if (!isForceTool(activeTool)) return;
-    const onKey = (e: KeyboardEvent) => {
-      if (e.key !== 'Escape') return;
-      const el = document.activeElement?.tagName;
-      if (el === 'INPUT' || el === 'TEXTAREA') return;
-      setActiveTool('select');
-    };
-    window.addEventListener('keydown', onKey);
-    return () => window.removeEventListener('keydown', onKey);
-  }, [activeTool]);
+
 
   /**
    * Arming a force clears the room.
@@ -1682,23 +1560,27 @@ export default function Room() {
 
   return (
     <div className={`app-container ${isDarkTheme ? 'dark-theme' : 'light-theme'}`} style={{ width: '100%', height: '100vh', display: 'flex', flexDirection: 'column', position: 'relative', overflow: 'hidden', background: 'var(--surface-primary)' }}>
-      {showShareModal && <ShareModal onClose={() => setShowShareModal(false)} />}
-      {showExportMenu && <ExportModal onClose={() => setShowExportMenu(false)} title={localTitle} />}
-      <CanvasContextMenu
-        target={contextTarget}
-        onClose={() => setContextTarget(null)}
-        objects={diagramObjects}
-        actions={contextActions}
+      <RoomModals
+        showShareModal={showShareModal}
+        setShowShareModal={setShowShareModal}
+        showExportMenu={showExportMenu}
+        setShowExportMenu={setShowExportMenu}
+        localTitle={localTitle}
+        contextTarget={contextTarget}
+        setContextTarget={setContextTarget}
+        diagramObjects={diagramObjects}
+        contextActions={contextActions}
         canPaste={clipboardRef.current !== null}
-        allObjects={diagramObjects}
-      />
-      <HelpModal open={showHelp} onClose={() => setShowHelp(false)} />
-      <MermaidModal
-        open={diagramOpen}
-        onClose={() => setDiagramOpen(false)}
-        initialSource={diagramSource}
-        replacing={Boolean(diagramReplacing)}
-        onApply={applyDiagram}
+        showHelp={showHelp}
+        setShowHelp={setShowHelp}
+        diagramOpen={diagramOpen}
+        setDiagramOpen={setDiagramOpen}
+        diagramSource={diagramSource ?? ''}
+        diagramReplacing={diagramReplacing}
+        applyDiagram={applyDiagram}
+        showCommandPalette={showCommandPalette}
+        setShowCommandPalette={setShowCommandPalette}
+        handleCommandPaletteAction={handleCommandPaletteAction}
       />
       
       {/* AUDIO RECORDER HINT — hides once AudioTool's real HUD takes over (isRecording). */}
@@ -1894,68 +1776,27 @@ export default function Room() {
           onRequestContextMenu={setContextTarget}
         />
         
-        {showTimeTravel && (
-          <TimeTravelBar
-            roomId={roomId}
-            onClose={() => { setShowTimeTravel(false); applyReplaySnapshot(null); setTimeTravelSnapshot(null); }}
-            /* The snapshot has to reach the store, not just these two panels —
-               that is what puts the replay on the canvas. It stays in local
-               state as well because Layers and Properties read it directly to
-               show history without subscribing to replay state. */
-            onApplySnapshot={(snap, changedIds) => { applyReplaySnapshot(snap, changedIds); setTimeTravelSnapshot(snap); }}
-          />
-        )}
+        <Suspense fallback={null}>
+          {showTimeTravel && (
+            <TimeTravelBar
+              roomId={roomId}
+              onClose={() => { setShowTimeTravel(false); applyReplaySnapshot(null); setTimeTravelSnapshot(null); }}
+              onApplySnapshot={(snap, changedIds) => { applyReplaySnapshot(snap, changedIds); setTimeTravelSnapshot(snap); }}
+            />
+          )}
+        </Suspense>
         
-        {/* Forces mode owns the bottom of the screen while it is active, in the
-            same slot and the same shell as Time Travel — both are modes you
-            enter, work inside, and leave. */}
-        {isForceTool(activeTool) && (
-          <ForcesBar
-            activeForce={activeTool as ForceId}
-            onPickForce={(id) => setActiveTool(id)}
-            /* Leaving the tool is enough — Canvas clears the layout snapshot
-               for every exit path, including picking another tool. */
-            onExit={() => setActiveTool('select')}
-            /* The simulation lives inside Canvas, which owns the physics loop.
-               Announced rather than threaded down through Room as a prop, the
-               same way tool changes are — the alternative is lifting the whole
-               physics hook up two levels to serve one button. */
-            onCalm={() => window.dispatchEvent(new CustomEvent('physics-calm'))}
-            selectedCount={selectedIds.length}
-          />
-        )}
-
-        {/* Says what happened when a room was opened to receive a backup, or
-            names the template it was opened from.
-
-            A restore confirmation is dismissible rather than timed: it is the
-            evidence the recovery worked, and it must not vanish while you are
-            still checking the board against what you remember. A template
-            greeting has nothing to confirm, so it fades on its own — see the
-            effect above. */}
-        {restoreNotice && (
-          <div
-            className={`restore-notice ${restoreNotice.ok ? 'is-ok' : 'is-error'}${noticeLeaving ? ' is-leaving' : ''}`}
-            role="status"
-          >
-            <span>{restoreNotice.message}</span>
-            <button
-              type="button"
-              onClick={() => setRestoreNotice(null)}
-              aria-label="Dismiss"
-              className="restore-notice__close"
-            >
-              <X size={14} />
-            </button>
-          </div>
-        )}
-
-        {showCommandPalette && (
-          <CommandPalette 
-            onClose={() => setShowCommandPalette(false)} 
-            onSelectAction={handleCommandPaletteAction} 
-          />
-        )}
+        <Suspense fallback={null}>
+          {isForceTool(activeTool) && (
+            <ForcesBar
+              activeForce={activeTool as ForceId}
+              onPickForce={(id) => setActiveTool(id)}
+              onExit={() => setActiveTool('select')}
+              onCalm={() => window.dispatchEvent(new CustomEvent('physics-calm'))}
+              selectedCount={selectedIds.length}
+            />
+          )}
+        </Suspense>
       </div>
 
       {/* FLOATING CONTEXT TOOLBAR */}

@@ -1,7 +1,8 @@
 import React, { useSyncExternalStore } from 'react';
 import type Konva from 'konva';
-import { Circle, Group, Line, Path, Rect } from 'react-konva';
+import { Circle, Group, Line, Path, Rect, Text } from 'react-konva';
 import { deleteNode, updateNode } from '../../engine/document';
+import { flattenToPath } from '../../engine/document/vectorOps';
 import { useStore } from '../../hooks/useStore';
 import { pathEdit } from '../../engine/interaction/pathEdit';
 import { EXPORT_CHROME } from '../../engine/export/chrome';
@@ -17,12 +18,15 @@ import {
 } from '../../engine/model/pathGeometry';
 import {
   alignAnchors,
+  anchorAt,
   anchorBounds,
   anchorKey,
   anchorsInRect,
+  constrainDeltaToAxis,
   contours,
   deleteAnchors,
   dragHandle,
+  mergeAnchors,
   moveAnchors,
   setAnchorsMode,
   toggleAnchor,
@@ -36,9 +40,10 @@ interface Props {
 }
 
 const ACCENT = '#2563EB';
+const ACCENT_GLOW = 'rgba(37, 99, 235, 0.25)';
 /** Anchor square, in screen pixels. Matches the transformer's handles. */
-const ANCHOR_SIZE = 7;
-const HANDLE_RADIUS = 3.5;
+const ANCHOR_SIZE = 8;
+const HANDLE_RADIUS = 4.5;
 /** How near the outline a click has to land to insert an anchor there, in screen pixels. */
 const INSERT_SLOP = 8;
 /** Pointer travel, in screen px, before a press counts as a drag rather than a click. */
@@ -47,68 +52,44 @@ const DRAG_SLOP = 3;
 /**
  * Direct selection: reshaping part of a path rather than all of it.
  *
- * ## What this replaces
- *
- * The pen tool could always place anchors and drag out handles *while* drawing.
- * What did not exist was any way to touch one afterwards, so every correction
- * meant deleting the path and drawing it again. Closing that for a single
- * anchor on a single contour turned out to be two limits rather than one
- * convenience: reshaping a box's top edge means moving two corners *together*,
- * and a bare index cannot name a point on a compound path at all — so every
- * result of the boolean tools was permanently uneditable.
- *
- * ## Why one pointer session, and not Konva drags
- *
- * The first version made every anchor and handle `draggable` and wrote geometry
- * from Konva's reported position. Three separate faults came out of that, and
- * they compounded:
- *
- *  - **The origin moved under the drag.** Every frame called `reframePath`,
- *    which re-origins the geometry and shifts `node.x/y` to compensate. The
- *    next frame then measured its delta against a coordinate space that had
- *    just moved, so the path crept away from the pointer.
- *  - **React state lagged the pointer.** `moveAnchors` read the `geometry`
- *    prop, which only updates on re-render. Two moves inside one frame both
- *    read the same stale geometry, and the second overwrote the first.
- *  - **Konva and React fought over position.** Konva sets the shape's `x/y` as
- *    you drag; React sets it back from the geometry. Which won depended on
- *    frame timing.
- *
- * So there are no draggable shapes here. One press starts a session, a working
- * copy of the geometry is advanced synchronously on every move, and the reframe
- * happens exactly once on release — where a moving origin cannot affect a delta
- * that has already been applied.
+ * ## Features:
+ * - Direct anchor picking, shift multi-selection & marquee.
+ * - Shift axis constraint (0°, 45°, 90°, 135°) for precision vector drafting.
+ * - Alt/Option-click to convert anchors and retract bezier handles.
+ * - Smooth vs corner mode visual cues and double-click conversion.
+ * - Real-time delta coordinate HUD badges during manipulation.
+ * - Non-destructive outline anchor insertion.
  */
 export const PathEditor: React.FC<Props> = ({ stageScale }) => {
   const selection = useSyncExternalStore(pathEdit.subscribe, pathEdit.getSnapshot, pathEdit.getSnapshot);
   const node = useStore((s) => (selection ? s.objects[selection.nodeId] : undefined));
   const [marquee, setMarquee] = React.useState<{ x: number; y: number; w: number; h: number } | null>(null);
+  const [hoveredKey, setHoveredKey] = React.useState<string | null>(null);
+  const [hoveredHandleKey, setHoveredHandleKey] = React.useState<string | null>(null);
+  const [dragBadge, setDragBadge] = React.useState<{ x: number; y: number; text: string } | null>(null);
 
   /**
-   * The live drag, if there is one.
-   *
-   * A ref rather than state: it is read and written inside pointer handlers
-   * that must see the value from the move a millisecond ago, not the value
-   * React last rendered with.
+   * The live drag session.
    */
   const session = React.useRef<{
     kind: 'anchor' | 'handle' | 'marquee';
     ref?: AnchorRef;
     side?: 'in' | 'out';
-    /** The geometry as of this frame, ahead of anything React has rendered. */
     working: ContourGeometry;
-    /** Node origin at the moment the drag began. Fixed for its whole duration. */
     origin: { x: number; y: number };
     start: { x: number; y: number };
     last: { x: number; y: number };
+    appliedDelta: { dx: number; dy: number };
     moved: boolean;
     anchors: AnchorRef[];
   } | null>(null);
 
+  /** Modifier keys tracked during pointer movement */
+  const altHeld = React.useRef(false);
+  const shiftHeld = React.useRef(false);
+  const marqueeAdditive = React.useRef(false);
+
   if (!selection || !node || node.type !== 'path') return null;
-  // A freehand blob has an outline rather than anchors — its `svgPath` *is* the
-  // shape of its own stroke, so there is nothing to grab. Bezier and compound
-  // paths both have contours, and both are editable here.
   if (node.geometry.kind === 'freehand') return null;
 
   const geometry: ContourGeometry = node.geometry;
@@ -118,15 +99,9 @@ export const PathEditor: React.FC<Props> = ({ stageScale }) => {
 
   /**
    * Write geometry back.
-   *
-   * @param reframe Whether to re-origin the path and move the node to
-   *   compensate. **False for every frame of a drag and true once on release**
-   *   — re-origining mid-drag moves the coordinate space the next delta is
-   *   measured in, which is what made the path creep away from the pointer.
    */
   const commit = (next: ContourGeometry | null, reframe = true) => {
     if (!next) {
-      // Fewer than two anchors left: there is no path, so there is no node.
       deleteNode(node.id);
       pathEdit.exit();
       return;
@@ -157,12 +132,6 @@ export const PathEditor: React.FC<Props> = ({ stageScale }) => {
 
   /**
    * Run a session to completion, on the stage and on the window.
-   *
-   * The stage carries the moves, because `getRelativePointerPosition` is the
-   * only thing that knows the camera's transform. The window carries the
-   * release, because a drag that ends off the canvas — over the properties
-   * panel, or outside the browser — still has to end, and a session left open
-   * would keep reshaping the path on the next unrelated mouse move.
    */
   const beginSession = (
     stage: Konva.Stage | null,
@@ -177,79 +146,140 @@ export const PathEditor: React.FC<Props> = ({ stageScale }) => {
       origin: { x: node.x, y: node.y },
       start: at,
       last: at,
+      appliedDelta: { dx: 0, dy: 0 },
       moved: false,
       anchors: extra.anchors ?? [],
       ref: extra.ref,
       side: extra.side,
     };
 
-    const onMove = () => {
+    const onMove = (evt?: any) => {
       const s = session.current;
       const p = worldPointer(stage);
       if (!s || !p) return;
+
+      if (evt?.evt) {
+        altHeld.current = Boolean(evt.evt.altKey);
+        shiftHeld.current = Boolean(evt.evt.shiftKey);
+      }
 
       if (!s.moved && Math.hypot(p.x - s.start.x, p.y - s.start.y) * stageScale < DRAG_SLOP) return;
       s.moved = true;
 
       if (s.kind === 'marquee') {
+        const startX = s.start.x - s.origin.x;
+        const startY = s.start.y - s.origin.y;
+        const currX = p.x - s.origin.x;
+        const currY = p.y - s.origin.y;
         setMarquee({
-          x: s.start.x - s.origin.x,
-          y: s.start.y - s.origin.y,
-          w: p.x - s.start.x,
-          h: p.y - s.start.y,
+          x: Math.min(startX, currX),
+          y: Math.min(startY, currY),
+          w: Math.abs(currX - startX),
+          h: Math.abs(currY - startY),
         });
         return;
       }
 
       if (s.kind === 'handle' && s.ref && s.side) {
-        // Handles take an absolute destination, so no working copy is needed —
-        // but it is kept current anyway so a release reframes what is on screen.
+        let dest = { x: p.x - s.origin.x, y: p.y - s.origin.y };
+        if (shiftHeld.current && s.ref) {
+          const a = anchorAt(s.working, s.ref);
+          if (a) {
+            const relDx = dest.x - a.x;
+            const relDy = dest.y - a.y;
+            const snapped = constrainDeltaToAxis(relDx, relDy);
+            dest = { x: a.x + snapped.dx, y: a.y + snapped.dy };
+          }
+        }
         s.working = dragHandle(
           s.working,
           { ...s.ref, side: s.side },
-          { x: p.x - s.origin.x, y: p.y - s.origin.y },
+          dest,
           { break: altHeld.current }
         );
+
+        const dx = p.x - s.start.x;
+        const dy = p.y - s.start.y;
+        const angle = ((Math.atan2(dy, dx) * 180) / Math.PI + 360) % 360;
+        const isBroken = altHeld.current;
+        const isSnapped = shiftHeld.current;
+        setDragBadge({
+          x: p.x - node.x,
+          y: p.y - node.y,
+          text: `Handle · ${angle.toFixed(0)}°${isBroken ? ' (Broken Cusp)' : ''}${isSnapped ? ' (Snapped)' : ''}`,
+        });
       } else {
-        // The delta is measured against the *previous move*, and applied to the
-        // working copy — never to the `geometry` prop, which is one render
-        // behind and would lose every move that happened inside a frame.
-        s.working = moveAnchors(s.working, s.anchors, p.x - s.last.x, p.y - s.last.y);
+        const rawDx = p.x - s.start.x;
+        const rawDy = p.y - s.start.y;
+        const constrained = shiftHeld.current
+          ? constrainDeltaToAxis(rawDx, rawDy)
+          : { dx: rawDx, dy: rawDy };
+
+        const stepDx = constrained.dx - s.appliedDelta.dx;
+        const stepDy = constrained.dy - s.appliedDelta.dy;
+        s.appliedDelta = constrained;
+        s.working = moveAnchors(s.working, s.anchors, stepDx, stepDy);
+
+        const dist = Math.hypot(constrained.dx, constrained.dy);
+        setDragBadge({
+          x: p.x - node.x,
+          y: p.y - node.y,
+          text: `Δx: ${Math.round(constrained.dx)} Δy: ${Math.round(constrained.dy)}${shiftHeld.current ? ' (Snapping)' : ''}`,
+        });
       }
 
       s.last = p;
       commit(s.working, false);
     };
 
+    const onKeyDown = (e: KeyboardEvent) => {
+      if (e.key === 'Alt') {
+        altHeld.current = true;
+        onMove();
+      }
+      if (e.key === 'Shift') {
+        shiftHeld.current = true;
+        onMove();
+      }
+    };
+
+    const onKeyUp = (e: KeyboardEvent) => {
+      if (e.key === 'Alt') {
+        altHeld.current = false;
+        onMove();
+      }
+      if (e.key === 'Shift') {
+        shiftHeld.current = false;
+        onMove();
+      }
+    };
+
     const onUp = () => {
       const s = session.current;
       session.current = null;
+      setDragBadge(null);
       stage.off('mousemove.patheditor');
       window.removeEventListener('mouseup', onUp);
+      window.removeEventListener('keydown', onKeyDown);
+      window.removeEventListener('keyup', onKeyUp);
       if (!s) return;
 
       if (s.kind === 'marquee') {
         finishMarquee(s.moved);
         return;
       }
-      // One reframe, at the end, so the node's box describes what it draws
-      // again without any delta having been measured across the move.
       if (s.moved) commit(s.working, true);
     };
 
     stage.on('mousemove.patheditor', onMove);
     window.addEventListener('mouseup', onUp);
+    window.addEventListener('keydown', onKeyDown);
+    window.addEventListener('keyup', onKeyUp);
   };
-
-  /** Whether Alt is down, sampled on the press and kept current by the canvas. */
-  const altHeld = React.useRef(false);
 
   const finishMarquee = (moved: boolean) => {
     setMarquee((box) => {
       if (!moved || !box) {
-        // A click on empty space inside the path clears the anchor selection.
-        // It must not clear it on a *drag* that selected nothing, though —
-        // that is the same gesture and would undo itself.
         if (!moved) pathEdit.select([]);
         return null;
       }
@@ -259,59 +289,78 @@ export const PathEditor: React.FC<Props> = ({ stageScale }) => {
     });
   };
 
-  const marqueeAdditive = React.useRef(false);
+  const handleLine = (a: Anchor, hx: number, hy: number, ref: AnchorRef, which: 'in' | 'out') => {
+    const handleKeyStr = `${which}-${anchorKey(ref)}`;
+    const isHovered = hoveredHandleKey === handleKeyStr;
+    const isActive =
+      session.current?.kind === 'handle' &&
+      session.current.side === which &&
+      session.current.ref &&
+      anchorKey(session.current.ref) === anchorKey(ref);
 
-  const handleLine = (a: Anchor, hx: number, hy: number, ref: AnchorRef, which: 'in' | 'out') => (
-    <React.Fragment key={`${which}-${anchorKey(ref)}`}>
-      <Line
-        points={[a.x, a.y, hx, hy]}
-        stroke={ACCENT}
-        strokeWidth={scale}
-        opacity={0.6}
-        listening={false}
-        perfectDrawEnabled={false}
-      />
-      <Circle
-        x={hx}
-        y={hy}
-        radius={HANDLE_RADIUS * scale}
-        // A hit radius wider than the dot, because a 3.5px target is a target
-        // you miss — and missing a handle grabs the anchor behind it, which
-        // moves the whole point instead of bending the curve.
-        hitStrokeWidth={HANDLE_RADIUS * 4 * scale}
-        fill="#FFFFFF"
-        stroke={ACCENT}
-        strokeWidth={scale}
-        onMouseDown={(e) => {
-          e.cancelBubble = true;
-          altHeld.current = Boolean((e.evt as MouseEvent).altKey);
-          const p = worldPointer(e.target.getStage());
-          if (p) beginSession(e.target.getStage(), 'handle', p, { ref, side: which });
-        }}
-        onMouseEnter={(e) => {
-          const stage = e.target.getStage();
-          if (stage) stage.container().style.cursor = 'grab';
-        }}
-        onMouseLeave={(e) => {
-          const stage = e.target.getStage();
-          if (stage) stage.container().style.cursor = 'default';
-        }}
-        perfectDrawEnabled={false}
-      />
-    </React.Fragment>
-  );
+    return (
+      <React.Fragment key={handleKeyStr}>
+        {/* Handle stem line */}
+        <Line
+          points={[a.x, a.y, hx, hy]}
+          stroke={ACCENT}
+          strokeWidth={scale * 1.25}
+          opacity={0.85}
+          listening={false}
+          perfectDrawEnabled={false}
+        />
+        {/* Hover glow ring */}
+        {isHovered && !isActive && (
+          <Circle
+            x={hx}
+            y={hy}
+            radius={(HANDLE_RADIUS + 3) * scale}
+            fill={ACCENT_GLOW}
+            listening={false}
+            perfectDrawEnabled={false}
+          />
+        )}
+        {/* Handle control knob endpoint */}
+        <Circle
+          x={hx}
+          y={hy}
+          radius={HANDLE_RADIUS * scale}
+          hitStrokeWidth={HANDLE_RADIUS * 4 * scale}
+          fill={isActive ? ACCENT : '#FFFFFF'}
+          stroke={ACCENT}
+          strokeWidth={scale * 1.5}
+          shadowColor="rgba(0,0,0,0.22)"
+          shadowBlur={3 * scale}
+          shadowOffsetY={1 * scale}
+          onMouseDown={(e) => {
+            e.cancelBubble = true;
+            altHeld.current = Boolean((e.evt as MouseEvent).altKey);
+            shiftHeld.current = Boolean((e.evt as MouseEvent).shiftKey);
+            const p = worldPointer(e.target.getStage());
+            if (p) {
+              pathEdit.select([ref]);
+              beginSession(e.target.getStage(), 'handle', p, { ref, side: which });
+            }
+          }}
+          onMouseEnter={(e) => {
+            setHoveredHandleKey(handleKeyStr);
+            const stage = e.target.getStage();
+            if (stage) stage.container().style.cursor = 'grab';
+          }}
+          onMouseLeave={(e) => {
+            setHoveredHandleKey(null);
+            const stage = e.target.getStage();
+            if (stage) stage.container().style.cursor = '';
+          }}
+          perfectDrawEnabled={false}
+        />
+      </React.Fragment>
+    );
+  };
 
   return (
     <Group x={node.x} y={node.y} name={EXPORT_CHROME}>
-      {/**
-        * The marquee catcher, **underneath everything**.
-        *
-        * It was above the outline, which meant the click that inserts an anchor
-        * never reached it — the one gesture on the outline, permanently
-        * swallowed by a transparent rectangle. Bottom of the stack it catches
-        * only what nothing else wanted: a press on empty space inside the
-        * path's box, which is exactly what a marquee is.
-        */}
+      {/* Marquee catcher */}
       <Rect
         x={-INSERT_SLOP * scale}
         y={-INSERT_SLOP * scale}
@@ -323,16 +372,15 @@ export const PathEditor: React.FC<Props> = ({ stageScale }) => {
           const stage = e.target.getStage();
           const p = worldPointer(stage);
           if (!p) return;
-          marqueeAdditive.current = Boolean((e.evt as MouseEvent).shiftKey);
+          marqueeAdditive.current = Boolean(
+            (e.evt as MouseEvent).shiftKey || (e.evt as MouseEvent).ctrlKey || (e.evt as MouseEvent).metaKey
+          );
           beginSession(stage, 'marquee', p);
         }}
         perfectDrawEnabled={false}
       />
 
-      {/* The outline, redrawn on top of the path itself. It is the click
-          target for inserting an anchor, and it keeps the path visible when it
-          is behind something else — which, while you are editing it, it
-          routinely is. */}
+      {/* Interactive Path Outline */}
       <Path
         data={contourData(geometry)}
         stroke={ACCENT}
@@ -342,15 +390,6 @@ export const PathEditor: React.FC<Props> = ({ stageScale }) => {
         onClick={(e) => {
           const p = localPointer(e);
           if (!p) return;
-          /**
-           * Insert on whichever contour the click actually landed on.
-           *
-           * `nearestPointOnPath` reads one contour, so a compound path is
-           * searched ring by ring and the nearest wins. Running it on
-           * `subpaths[0]` alone — which is what a single-contour API forces —
-           * would insert an anchor into the outer ring of a donut when you
-           * clicked the inner one.
-           */
           const subs = subpathsOf(geometry);
           type Best = { sub: number; hit: NonNullable<ReturnType<typeof nearestPointOnPath>> };
           let best: Best | null = null;
@@ -376,87 +415,105 @@ export const PathEditor: React.FC<Props> = ({ stageScale }) => {
         }}
         onMouseLeave={(e) => {
           const stage = e.target.getStage();
-          if (stage) stage.container().style.cursor = 'default';
+          if (stage) stage.container().style.cursor = '';
         }}
         perfectDrawEnabled={false}
       />
 
-      {/* Every anchor. Drawn before the handles so a handle lying over a
-          neighbouring anchor is still the thing you grab — the handle is the
-          finer control and the harder target, so it wins the overlap. */}
+      {/* Anchor Points */}
       {rings.map((ring) =>
         ring.anchors.map((a, index) => {
           const ref: AnchorRef = { sub: ring.sub, index };
-          const isPicked = picked.has(anchorKey(ref));
+          const key = anchorKey(ref);
+          const isPicked = picked.has(key);
+          const isHovered = hoveredKey === key;
           const sub = subpathsOf(geometry)[ring.sub];
+          const isCorner = anchorMode(sub, index) === 'corner';
+          const size = ANCHOR_SIZE * scale;
+
           return (
-            <Rect
-              key={anchorKey(ref)}
-              x={a.x - (ANCHOR_SIZE * scale) / 2}
-              y={a.y - (ANCHOR_SIZE * scale) / 2}
-              width={ANCHOR_SIZE * scale}
-              height={ANCHOR_SIZE * scale}
-              // A hit area half again as wide as the mark, for the same reason
-              // the handles have one: seven screen pixels is not a target.
-              hitStrokeWidth={ANCHOR_SIZE * scale}
-              // Filled when picked, hollow when not: the same language the
-              // rest of the app uses for selected versus available.
-              fill={isPicked ? ACCENT : '#FFFFFF'}
-              stroke={ACCENT}
-              strokeWidth={scale}
-              // A smooth anchor is drawn round and a corner square, so the
-              // distinction is visible without clicking anything.
-              cornerRadius={anchorMode(sub, index) === 'corner' ? 0 : ANCHOR_SIZE * scale}
-              onMouseDown={(e) => {
-                e.cancelBubble = true;
-                const stage = e.target.getStage();
-                const p = worldPointer(stage);
-                if (!p) return;
-                const additive = Boolean((e.evt as MouseEvent).shiftKey);
+            <React.Fragment key={key}>
+              {/* Subtle hover glow ring on unselected */}
+              {isHovered && !isPicked && (
+                <Circle
+                  x={a.x}
+                  y={a.y}
+                  radius={(ANCHOR_SIZE + 2) * scale}
+                  fill={ACCENT_GLOW}
+                  listening={false}
+                  perfectDrawEnabled={false}
+                />
+              )}
+              <Rect
+                x={a.x - size / 2}
+                y={a.y - size / 2}
+                width={size}
+                height={size}
+                hitStrokeWidth={size * 1.5}
+                fill={isPicked ? ACCENT : '#FFFFFF'}
+                stroke={isPicked ? '#FFFFFF' : ACCENT}
+                strokeWidth={scale * (isPicked ? 1.5 : 1.25)}
+                cornerRadius={isCorner ? 0 : size}
+                shadowColor="rgba(0,0,0,0.22)"
+                shadowBlur={isPicked ? 3 * scale : 2 * scale}
+                shadowOffsetY={isPicked ? 1 * scale : 0.5 * scale}
+                onMouseDown={(e) => {
+                  e.cancelBubble = true;
+                  const isAlt = Boolean((e.evt as MouseEvent).altKey);
+                  const isShift = Boolean((e.evt as MouseEvent).shiftKey);
+                  const isCtrlOrCmd = Boolean((e.evt as MouseEvent).ctrlKey || (e.evt as MouseEvent).metaKey);
+                  const isAdditive = isShift || isCtrlOrCmd;
+                  altHeld.current = isAlt;
+                  shiftHeld.current = isShift;
 
-                /**
-                 * Pressing an anchor that is *already picked* keeps the whole
-                 * selection, so a drag beginning on one of five chosen anchors
-                 * moves all five. Replacing it here would make a multi-anchor
-                 * drag impossible to start.
-                 */
-                const next = !additive && isPicked
-                  ? selection.anchors
-                  : toggleAnchor(selection.anchors, ref, additive);
-                pathEdit.select(next);
+                  // Alt-click converts/retracts handles
+                  if (isAlt) {
+                    const to = isCorner ? 'smooth' : 'corner';
+                    commit(setAnchorsMode(geometry, isPicked ? selection.anchors : [ref], to));
+                    return;
+                  }
 
-                // Dragging acts on what is now selected, including this anchor
-                // even when a shift-click has just removed it — releasing
-                // without moving is what deselects, not the press.
-                const moving = next.some((r) => anchorKey(r) === anchorKey(ref)) ? next : [ref];
-                beginSession(stage, 'anchor', p, { anchors: moving });
-              }}
-              onDblClick={(e) => {
-                e.cancelBubble = true;
-                const to = anchorMode(sub, index) === 'corner' ? 'smooth' : 'corner';
-                commit(setAnchorsMode(geometry, isPicked ? selection.anchors : [ref], to));
-              }}
-              onMouseEnter={(e) => {
-                const stage = e.target.getStage();
-                if (stage) stage.container().style.cursor = 'pointer';
-              }}
-              onMouseLeave={(e) => {
-                const stage = e.target.getStage();
-                if (stage) stage.container().style.cursor = 'default';
-              }}
-              perfectDrawEnabled={false}
-            />
+                  const stage = e.target.getStage();
+                  const p = worldPointer(stage);
+                  if (!p) return;
+
+                  const next = !isAdditive && isPicked
+                    ? selection.anchors
+                    : toggleAnchor(selection.anchors, ref, isAdditive);
+                  pathEdit.select(next);
+
+                  const moving = next.some((r) => anchorKey(r) === key) ? next : [ref];
+                  beginSession(stage, 'anchor', p, { anchors: moving });
+                }}
+                onDblClick={(e) => {
+                  e.cancelBubble = true;
+                  const to = isCorner ? 'smooth' : 'corner';
+                  commit(setAnchorsMode(geometry, isPicked ? selection.anchors : [ref], to));
+                }}
+                onMouseEnter={(e) => {
+                  setHoveredKey(key);
+                  const stage = e.target.getStage();
+                  if (stage) stage.container().style.cursor = 'pointer';
+                }}
+                onMouseLeave={(e) => {
+                  setHoveredKey(null);
+                  const stage = e.target.getStage();
+                  if (stage) stage.container().style.cursor = '';
+                }}
+                perfectDrawEnabled={false}
+              />
+            </React.Fragment>
           );
         })
       )}
 
-      {/* Handles, above every anchor. Only on picked anchors: every handle at
-          once turns a path of thirty anchors into a thicket you cannot find
-          the outline in. */}
+      {/* Control Handles for Anchors (visible for picked anchors, or all curved anchors when none are picked yet) */}
       {rings.map((ring) =>
         ring.anchors.map((a, index) => {
           const ref: AnchorRef = { sub: ring.sub, index };
-          if (!picked.has(anchorKey(ref))) return null;
+          const isPicked = picked.has(anchorKey(ref));
+          const showHandles = isPicked || picked.size === 0;
+          if (!showHandles) return null;
           return (
             <React.Fragment key={`h-${anchorKey(ref)}`}>
               {a.inX !== undefined && handleLine(a, a.inX, a.inY!, ref, 'in')}
@@ -466,10 +523,29 @@ export const PathEditor: React.FC<Props> = ({ stageScale }) => {
         })
       )}
 
-      {/**
-        * The marquee, drawn last so it is never hidden by the anchors it is
-        * about to catch.
-        */}
+      {/* Drag Delta HUD Tooltip Badge */}
+      {dragBadge && (
+        <Group x={dragBadge.x + 10 * scale} y={dragBadge.y - 20 * scale} listening={false}>
+          <Rect
+            width={dragBadge.text.length * 6 * scale + 14 * scale}
+            height={18 * scale}
+            fill="rgba(15, 23, 42, 0.88)"
+            cornerRadius={4 * scale}
+            shadowColor="rgba(0,0,0,0.3)"
+            shadowBlur={6 * scale}
+          />
+          <Text
+            text={dragBadge.text}
+            x={7 * scale}
+            y={4 * scale}
+            fill="#FFFFFF"
+            fontSize={9 * scale}
+            fontFamily="monospace"
+          />
+        </Group>
+      )}
+
+      {/* Marquee Selection Box */}
       {marquee && (
         <Rect
           x={marquee.x}
@@ -479,7 +555,8 @@ export const PathEditor: React.FC<Props> = ({ stageScale }) => {
           stroke={ACCENT}
           strokeWidth={scale}
           dash={[4 * scale, 3 * scale]}
-          fill={`${ACCENT}18`}
+          fill="rgba(37, 99, 235, 0.12)"
+          cornerRadius={2 * scale}
           listening={false}
           perfectDrawEnabled={false}
         />
@@ -487,12 +564,6 @@ export const PathEditor: React.FC<Props> = ({ stageScale }) => {
     </Group>
   );
 };
-
-/** Union of two anchor lists, without duplicates. */
-function mergeAnchors(a: readonly AnchorRef[], b: readonly AnchorRef[]): AnchorRef[] {
-  const seen = new Set(a.map(anchorKey));
-  return [...a, ...b.filter((r) => !seen.has(anchorKey(r)))];
-}
 
 /** The path currently open for editing, and its geometry, or `null`. */
 function editing(): { id: string; node: { x: number; y: number }; geometry: ContourGeometry; anchors: AnchorRef[] } | null {
@@ -522,11 +593,6 @@ function write(id: string, node: { x: number; y: number }, next: ContourGeometry
 
 /**
  * Delete every picked anchor, if any are picked.
- *
- * Lives here rather than in the component because the key that triggers it is
- * handled at the canvas level, where Delete otherwise removes the whole node —
- * which, while a path is open for editing, is emphatically not what Delete
- * means. Returns whether it took the key.
  */
 export function deletePickedAnchor(): boolean {
   const state = editing();
@@ -540,9 +606,6 @@ export function deletePickedAnchor(): boolean {
 
 /**
  * Nudge the picked anchors, if any are picked.
- *
- * The arrow keys move the whole node otherwise, which while a path is open is
- * the opposite of what direct selection is for. Returns whether it took the key.
  */
 export function nudgePickedAnchors(dx: number, dy: number): boolean {
   const state = editing();
@@ -551,12 +614,50 @@ export function nudgePickedAnchors(dx: number, dy: number): boolean {
   return true;
 }
 
-/** Straighten or round the picked anchors. Returns whether anything happened. */
+/** Straighten or round the picked anchors (or all anchors if none picked). Returns whether anything happened. */
 export function setPickedAnchorMode(mode: 'corner' | 'smooth'): boolean {
   const state = editing();
-  if (!state || state.anchors.length === 0) return false;
-  write(state.id, state.node, setAnchorsMode(state.geometry, state.anchors, mode));
+  if (!state) return false;
+  const targetAnchors = state.anchors.length > 0
+    ? state.anchors
+    : contours(state.geometry).flatMap((c) => c.anchors.map((_, index) => ({ sub: c.sub, index })));
+  if (targetAnchors.length === 0) return false;
+  write(state.id, state.node, setAnchorsMode(state.geometry, targetAnchors, mode));
   return true;
+}
+
+/**
+ * Straighten or round every anchor across multiple selected paths/shapes.
+ */
+export function setMultiplePathsAnchorMode(ids: readonly string[], mode: 'corner' | 'smooth'): boolean {
+  const objects = useStore.getState().objects;
+  let changed = false;
+  for (const id of ids) {
+    let node = objects[id];
+    if (!node) continue;
+    if (node.type === 'shape') {
+      const newId = flattenToPath(id);
+      if (!newId) continue;
+      node = useStore.getState().objects[newId];
+    }
+    if (node && node.type === 'path' && node.geometry.kind !== 'freehand') {
+      const allRefs = contours(node.geometry).flatMap((c) =>
+        c.anchors.map((_, index) => ({ sub: c.sub, index }))
+      );
+      if (allRefs.length === 0) continue;
+      const next = setAnchorsMode(node.geometry, allRefs, mode);
+      const framed = reframePath(next);
+      updateNode(node.id, {
+        geometry: framed.geometry,
+        x: node.x + framed.dx,
+        y: node.y + framed.dy,
+        width: framed.width,
+        height: framed.height,
+      });
+      changed = true;
+    }
+  }
+  return changed;
 }
 
 /** Line the picked anchors up. Returns whether anything happened. */

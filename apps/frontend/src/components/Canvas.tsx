@@ -2,7 +2,7 @@ import { usePhysics } from '../hooks/usePhysics';
 import React, { useRef, useState, useEffect, useCallback, useMemo, useSyncExternalStore } from "react";
 import { Stage, Layer, Circle, Group } from "react-konva";
 import Konva from "konva";
-import { groupToEnter, nodesInGroup, selectionWithin } from '../engine/model/groupTree';
+import { selectionWithin } from '../engine/model/groupTree';
 import { provider, updateNode, applyNodePatches, nextZIndex, lowestZIndex } from '../engine/document';
 import { nanoid } from 'nanoid';
 import { useStore } from '../hooks/useStore';
@@ -19,6 +19,8 @@ import { ALL_SHAPE_PRESETS } from './workspace/shapeIcons';
 import { ObjectRenderer } from "./ObjectRenderer";
 import { PresenceRenderer } from "../engine/presence/PresenceRenderer";
 import { presenceManager } from "../engine/presence/PresenceManager";
+import { useCanvasNavigation } from '../hooks/useCanvasNavigation';
+import { useCanvasSelection } from '../hooks/useCanvasSelection';
 
 /**
  * Tools whose press begins a mark on the shared canvas.
@@ -123,15 +125,6 @@ export const Canvas: React.FC<CanvasProps> = ({ activeTool, selectedIds, setSele
     return () => { delete document.body.dataset.rulers; };
   }, [showRulers]);
 
-  const [dimensions, setDimensions] = useState({ width: 800, height: 600 });
-
-  // There used to be a derived `selectedId` and a `setSelectedId` helper here,
-  // for the code paths that only ever deal with one object. Both were removed:
-  // each was a fresh value on every render, and the effects that closed over
-  // them could not state that honestly in a dependency list. The single-object
-  // paths now narrow `selectedIds` where they use it, and call the stable
-  // `setSelectedIds` directly.
-
   // Stable-identity ref mirroring selectedIds, read imperatively by
   // ObjectRenderer during drags so a move on one selected object carries the
   // rest of the selection with it, without making every object's props
@@ -217,12 +210,20 @@ export const Canvas: React.FC<CanvasProps> = ({ activeTool, selectedIds, setSele
     return () => window.removeEventListener('keydown', onKey, true);
   }, [editingPathId]);
 
-  // Picking a tool, or leaving the object, ends the edit — the same two exits
-  // the crop has, and for the same reason: the mode belongs to the object.
+  // When activeTool is direct-select and an eligible object is selected, open it for anchor editing.
+  // When leaving direct-select, exit path editing so the transformer returns.
   useEffect(() => {
-    pathEdit.exit();
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [activeTool]);
+    if (activeTool === 'direct-select') {
+      if (selectedIds.length === 1 && (!editingPathId || editingPathId !== selectedIds[0])) {
+        const openedId = DirectSelectTool.open(selectedIds[0]);
+        if (openedId && openedId !== selectedIds[0]) {
+          setSelectedIds([openedId]);
+        }
+      }
+    } else {
+      pathEdit.exit();
+    }
+  }, [activeTool, selectedIds, editingPathId, setSelectedIds]);
 
   useEffect(() => {
     if (editingPathId && !selectedIds.includes(editingPathId)) pathEdit.exit();
@@ -346,6 +347,24 @@ export const Canvas: React.FC<CanvasProps> = ({ activeTool, selectedIds, setSele
         selectedIds.forEach((id, i) => updateNode(id, { zIndex: bottom - selectedIds.length + i }));
         return;
       }
+      if ((e.metaKey || e.ctrlKey) && !e.shiftKey && e.key === ']') {
+        e.preventDefault();
+        const store = useStore.getState().objects;
+        selectedIds.forEach((id) => {
+          const currentZ = (store[id]?.zIndex ?? 0) as number;
+          updateNode(id, { zIndex: currentZ + 1 });
+        });
+        return;
+      }
+      if ((e.metaKey || e.ctrlKey) && !e.shiftKey && e.key === '[') {
+        e.preventDefault();
+        const store = useStore.getState().objects;
+        selectedIds.forEach((id) => {
+          const currentZ = (store[id]?.zIndex ?? 0) as number;
+          updateNode(id, { zIndex: Math.max(0, currentZ - 1) });
+        });
+        return;
+      }
       if ((e.metaKey || e.ctrlKey) && e.shiftKey && e.key.toLowerCase() === 'g') {
         e.preventDefault();
         editor.ungroupNodes(selectedIds);
@@ -373,9 +392,17 @@ export const Canvas: React.FC<CanvasProps> = ({ activeTool, selectedIds, setSele
       const delta = nudgeDelta(e.key, e.shiftKey);
       if (delta) {
         const focus = document.activeElement;
-        const ownsArrows =
-          !focus || focus === document.body || containerRef.current?.contains(focus);
-        if (!ownsArrows) return;
+        const isEditingField = focus && (
+          focus.tagName === 'INPUT' ||
+          focus.tagName === 'TEXTAREA' ||
+          focus.tagName === 'SELECT' ||
+          (focus as HTMLElement).isContentEditable ||
+          focus.getAttribute?.('role') === 'listbox' ||
+          focus.getAttribute?.('role') === 'dialog' ||
+          focus.closest?.('[role="dialog"]') ||
+          focus.closest?.('.layers-panel')
+        );
+        if (isEditingField) return;
         const objects = useStore.getState().objects;
         const patches = selectedIds
           .map((id) => objects[id])
@@ -507,69 +534,16 @@ export const Canvas: React.FC<CanvasProps> = ({ activeTool, selectedIds, setSele
     return () => window.removeEventListener('boardArriving', onArrive);
   }, []);
 
-  useEffect(() => {
-    const handleSelectNode = (e: any) => {
-      // Calls the stable `setSelectedIds` directly. This went through a
-      // single-object helper defined in the component body, which was a fresh
-      // closure every render — so listing it as a dependency would have torn
-      // down and re-registered both listeners on every single render.
-      const id = e.detail?.id ?? null;
-      setSelectedIds(id ? [id] : []);
-    };
-    const handleMarqueeSelect = (e: any) => {
-      const { minX, minY, maxX, maxY, additive } = e.detail;
-      const storeObjects = Object.values(useStore.getState().objects);
-
-      // Collect every object that intersects the marquee box, not just the first.
-      const found = storeObjects
-        .filter((obj) => {
-          if (obj.locked || obj.hidden) return false;
-          return obj.x < maxX && obj.x + obj.width > minX && obj.y < maxY && obj.y + obj.height > minY;
-        })
-        .map((obj) => obj.id);
-
-      if (additive) {
-        setSelectedIds(prev => Array.from(new Set([...prev, ...found])));
-      } else {
-        setSelectedIds(found);
-      }
-    };
-
-    /**
-     * Select several at once, from a tool that made several.
-     *
-     * `requestSelectNode` takes one id, which is right for every tool that
-     * makes one object and useless for the one that makes thirty — a grid that
-     * selected only its first cell would open the panel on a rectangle rather
-     * than on the grid.
-     */
-    const handleSelectNodes = (e: Event) => {
-      const ids = (e as CustomEvent<{ ids?: string[] }>).detail?.ids;
-      if (Array.isArray(ids)) setSelectedIds(ids);
-    };
-
-    document.addEventListener('requestSelectNode', handleSelectNode);
-    window.addEventListener('requestSelectNodes', handleSelectNodes);
-    document.addEventListener('marqueeSelect', handleMarqueeSelect);
-    return () => {
-      document.removeEventListener('requestSelectNode', handleSelectNode);
-      window.removeEventListener('requestSelectNodes', handleSelectNodes);
-      document.removeEventListener('marqueeSelect', handleMarqueeSelect);
-    };
-  }, [setSelectedIds]);
-
   const { visibleIds } = useVisibleSet();
-  const objects = useStore(state => state.objects);
-  const groups = useStore(state => state.groups);
-  /**
-   * How far into a nested group the pointer is currently working.
-   *
-   * A ref rather than state: nothing renders differently because of it — the
-   * selection it produces is what shows — and the click handler that reads it
-   * is also the handler that sets it, so a re-render in between would only be
-   * a chance for the two to disagree.
-   */
-  const enteredGroupRef = useRef<string | null>(null);
+  const objects = useStore((state) => state.objects);
+  const groups = useStore((state) => state.groups);
+
+  // Hook-managed selection and nested group stepping
+  const { enteredGroupRef, handleObjectSelect } = useCanvasSelection({
+    activeTool,
+    selectedIds,
+    setSelectedIds,
+  });
   const {
     handleThrow, applyGlobalForce,
     beginHeldForce, moveHeldForce, endHeldForce,
@@ -617,33 +591,7 @@ export const Canvas: React.FC<CanvasProps> = ({ activeTool, selectedIds, setSele
     }
   }, [activeTool, endHeldForce]);
 
-  useEffect(() => {
-    const updateSize = () => {
-      if (!containerRef.current) return;
-      const w = containerRef.current.clientWidth || window.innerWidth;
-      const h = containerRef.current.clientHeight || window.innerHeight;
-      // A backgrounded tab reports clientWidth AND window.innerWidth as 0, so
-      // this fallback chain still resolved to zero and collapsed the stage to
-      // a degenerate size — which makes the viewport-culling bounds meaningless
-      // and, if an export runs while the tab is hidden, gets that zero size
-      // restored afterwards. Keeping the last good size is always closer to
-      // correct than zero; a real resize fires again on focus.
-      if (w <= 0 || h <= 0) return;
-      setDimensions({ width: w, height: h });
-      cameraSystem.resize(w, h);
-    };
-    
-    const observer = new ResizeObserver(() => {
-      updateSize();
-    });
 
-    if (containerRef.current) {
-      observer.observe(containerRef.current);
-    }
-    updateSize(); // Initial sizing
-
-    return () => observer.disconnect();
-  }, []);
 
   // The viewport used to be published from *here as well*, with a raw
   // `setLocalStateField` on every `CameraChanged` — the same two-writer bug
@@ -668,78 +616,6 @@ export const Canvas: React.FC<CanvasProps> = ({ activeTool, selectedIds, setSele
     currentAuthorId,
   } = useComments();
 
-  const handleObjectSelect = useCallback((id: string, e?: any) => {
-    // Same predicate the hover outline uses, so the two cannot disagree about
-    // whether this object is clickable right now.
-    if (!canSelectWith(activeTool)) return;
-    const isShift = !!e?.evt?.shiftKey;
-
-    /**
-     * With direct selection armed, clicking a path opens it — no double-click
-     * and no toolbar hunt. It still selects the node, because the transformer
-     * and the properties panel both key off selection and an object being
-     * edited that reads as unselected everywhere else is a lie.
-     */
-    if (opensPathWith(activeTool)) {
-      if (DirectSelectTool.open(id)) {
-        setSelectedIds([id]);
-        return;
-      }
-      pathEdit.exit();
-    }
-
-    /**
-     * A double-click steps one level into whatever is under it.
-     *
-     * `groupToEnter` answers where that lands and returns `null` when there is
-     * nowhere further, so the step is only taken when it goes somewhere — a
-     * gesture that reports success and does nothing is worse than one that
-     * declines. Clicking something outside the entered group resets, which is
-     * how you get back out without a second gesture to learn.
-     */
-    const table = objects as Record<string, { id: string; parentId?: string }>;
-    if (e?.evt?.detail === 2) {
-      const step = groupToEnter(table, groups, id, enteredGroupRef.current);
-      if (step) enteredGroupRef.current = step;
-    } else if (
-      enteredGroupRef.current &&
-      !nodesInGroup(Object.keys(objects), table, groups, enteredGroupRef.current).includes(id)
-    ) {
-      enteredGroupRef.current = null;
-    }
-
-    /**
-     * Clicking any member of a group selects the whole group.
-     *
-     * That is what makes a group behave as one object, and it used to be the
-     * end of it — the note here said enter-group was "a deliberate scope cut",
-     * which was defensible while a group was one level deep and is not now
-     * that groups nest. An assembly three levels down would have to be
-     * dismantled to touch anything inside it.
-     *
-     * So a double-click steps *in* one level, and `enteredGroup` remembers how
-     * far. Clicking anything outside what you entered starts over at the
-     * outermost, which is what stops the mode being sticky: you leave a group
-     * by clicking something that is not in it.
-     */
-    const groupIds = selectionWithin(
-      Object.keys(objects),
-      objects as Record<string, { id: string; parentId?: string }>,
-      groups,
-      id,
-      enteredGroupRef.current
-    );
-
-    if (isShift) {
-      setSelectedIds(prev => {
-        const allIn = groupIds.every(gid => prev.includes(gid));
-        return allIn ? prev.filter(x => !groupIds.includes(x)) : Array.from(new Set([...prev, ...groupIds]));
-      });
-    } else {
-      setSelectedIds(groupIds);
-    }
-  }, [activeTool, setSelectedIds, objects, groups]);
-
   const sortedObjects = useMemo(() => {
     return Object.values(objects).sort((a: any, b: any) => (a.zIndex || 0) - (b.zIndex || 0));
   }, [objects]);
@@ -748,33 +624,14 @@ export const Canvas: React.FC<CanvasProps> = ({ activeTool, selectedIds, setSele
     const storeObjects = Object.values(objects);
     if (storeObjects.length === 0) return [];
 
-    // There used to be a Time Travel bypass here that rendered every object in
-    // the document while replaying, because replay snapshots never reached the
-    // spatial index. `applyReplaySnapshot` now keeps the index in sync, so
-    // replay culls like any other frame and the bypass — a performance cliff on
-    // exactly the large documents culling exists for — is gone. Nothing needs to
-    // gate on `isReplaying` in this memo any more.
-
-    // If spatial culling returned IDs, use them — but always include selected + anything
-    // in the store that the spatial index missed (race-condition guard).
+    // Spatial culling: render visible items (plus selected items), in canonical z-index order
     if (visibleIds.length > 0) {
       const visibleSet = new Set(visibleIds);
-      selectedIds.forEach(id => visibleSet.add(id));
-
-      // Include all objects from store — the spatial index is advisory, not authoritative.
-      // This prevents the "objects exist in layers but not canvas" bug.
-      const result = sortedObjects.filter((o: any) => visibleSet.has(o.id));
-      
-      // If spatial culling returned fewer objects than the store has, and the difference
-      // is significant, fall back to showing everything (spatial index probably hasn't caught up)
-      if (result.length < storeObjects.length * 0.5 && storeObjects.length < 500) {
-        return storeObjects.sort((a: any, b: any) => (a.zIndex || 0) - (b.zIndex || 0));
-      }
-      return result;
+      selectedIds.forEach((id) => visibleSet.add(id));
+      return sortedObjects.filter((o: any) => visibleSet.has(o.id));
     }
-    
-    // Fallback: show all store objects sorted by z-index
-    return storeObjects.sort((a: any, b: any) => (a.zIndex || 0) - (b.zIndex || 0));
+
+    return sortedObjects;
   }, [sortedObjects, visibleIds, selectedIds, objects]);
 
   // The engine pushes RenderTick every frame. We apply camera to Konva and Grid directly bypassing React!
@@ -966,129 +823,6 @@ export const Canvas: React.FC<CanvasProps> = ({ activeTool, selectedIds, setSele
     presenceManager.clearCursor();
   };
 
-  /**
-   * Wheel and trackpad, bound natively and exactly once.
-   *
-   * This used to be a React `onWheel` on *both* the container and the Stage.
-   * That was two bugs at once:
-   *
-   * 1. **It fired twice.** Konva's stage handler ran, and the same native
-   *    event then bubbled to the container's React handler, so every scroll
-   *    panned and every pinch zoomed twice as far as it should.
-   * 2. **`preventDefault` did nothing.** React attaches wheel listeners as
-   *    passive, so the call was rejected — hundreds of "Unable to
-   *    preventDefault inside passive event listener invocation" warnings, and,
-   *    worse, the browser went on to apply its own page zoom and scroll on top
-   *    of the canvas camera.
-   *
-   * A passive listener cannot be opted out of through the React prop, so this
-   * has to be bound directly. `{ passive: false }` is the entire point.
-   */
-  useEffect(() => {
-    const el = containerRef.current;
-    if (!el) return;
-
-    const onWheel = (evt: WheelEvent) => {
-      evt.preventDefault();
-      if (evt.ctrlKey) {
-        // The browser reports a trackpad pinch as ctrl+wheel with a continuous
-        // delta, so pass it through rather than reducing the gesture to a
-        // direction and a fixed step.
-        cameraSystem.zoomByWheel(evt.deltaY, evt.clientX, evt.clientY);
-      } else {
-        cameraSystem.pan(evt.deltaX, evt.deltaY);
-      }
-    };
-
-    el.addEventListener('wheel', onWheel, { passive: false });
-    return () => el.removeEventListener('wheel', onWheel);
-  }, []);
-
-  /**
-   * Two-finger pinch-zoom and pan.
-   *
-   * Touch handling previously routed `onTouchMove` straight into the
-   * single-pointer mouse-move path, so a canvas billed as responsive had no
-   * pinch-zoom and no two-finger pan at all — on a tablet the only way to
-   * move around an infinite canvas was the Hand tool, and there was no way
-   * whatsoever to zoom. A second finger also silently kept driving whatever
-   * tool was active, so pinching on a touch device drew shapes.
-   */
-  const pinchRef = useRef<{ dist: number; midX: number; midY: number } | null>(null);
-  const isMultiTouchRef = useRef(false);
-
-  const touchMetrics = (touches: TouchList) => {
-    const [a, b] = [touches[0], touches[1]];
-    const dx = b.clientX - a.clientX;
-    const dy = b.clientY - a.clientY;
-    return {
-      dist: Math.hypot(dx, dy) || 1,
-      midX: (a.clientX + b.clientX) / 2,
-      midY: (a.clientY + b.clientY) / 2,
-    };
-  };
-
-  const handleTouchStartNative = (e: React.TouchEvent) => {
-    if (e.touches.length >= 2) {
-      isMultiTouchRef.current = true;
-      pinchRef.current = touchMetrics(e.touches as unknown as TouchList);
-      // Cancel any tool interaction the first finger already began.
-      toolManager.handlePointerUp({ target: { getStage: () => stageRef.current } });
-      setOverlayState(null);
-    }
-  };
-
-  const handleTouchMoveNative = (e: React.TouchEvent) => {
-    if (e.touches.length < 2 || !pinchRef.current) return;
-    e.preventDefault();
-
-    const next = touchMetrics(e.touches as unknown as TouchList);
-    const prev = pinchRef.current;
-
-    cameraSystem.zoomBy(next.dist / prev.dist, next.midX, next.midY);
-    // Panning uses the midpoint delta, so the gesture translates and scales
-    // in one motion the way it does in every native map/photo viewer.
-    cameraSystem.panBy(next.midX - prev.midX, next.midY - prev.midY);
-
-    pinchRef.current = next;
-  };
-
-  const handleTouchEndNative = (e: React.TouchEvent) => {
-    if (e.touches.length < 2) {
-      pinchRef.current = null;
-      // Stay latched until every finger lifts, so the remaining finger of a
-      // finished pinch doesn't get interpreted as the start of a drag.
-      if (e.touches.length === 0) isMultiTouchRef.current = false;
-    }
-  };
-
-  /**
-   * Publish where this client is looking, so other people stay on the radar.
-   *
-   * The camera is the durable presence signal — it says where someone is
-   * working even when they are reading rather than moving the mouse, or have
-   * the pointer over a panel. The cursor cannot do that job: it is correctly
-   * cleared when the pointer leaves the canvas, which is exactly when a
-   * collaborator used to disappear from the minimap entirely.
-   *
-   * `cameraSystem.x/y` is the stage translate, so the world point at the
-   * top-left of the screen is `-x / zoom`.
-   */
-  useEffect(() => {
-    const publish = () => {
-      presenceManager.updateViewport({
-        x: -cameraSystem.x / cameraSystem.zoom,
-        y: -cameraSystem.y / cameraSystem.zoom,
-        width: cameraSystem.width,
-        height: cameraSystem.height,
-        zoom: cameraSystem.zoom,
-      });
-    };
-    publish();
-    engineEvents.on('CameraChanged', publish);
-    return () => { engineEvents.off('CameraChanged', publish); };
-  }, []);
-
   // Push ephemeral state to PresenceManager
   useEffect(() => {
     presenceManager.updateTool(activeTool);
@@ -1136,6 +870,21 @@ export const Canvas: React.FC<CanvasProps> = ({ activeTool, selectedIds, setSele
     FRAME_PRESETS.forEach((preset) => tm.registerTool(new FrameTool(preset.id)));
     return tm;
   }, []);
+
+  const {
+    dimensions,
+    isMultiTouchRef,
+    handleTouchStartNative,
+    handleTouchMoveNative,
+    handleTouchEndNative,
+  } = useCanvasNavigation({
+    containerRef,
+    stageRef,
+    onCancelInteractions: () => {
+      toolManager.handlePointerUp({ target: { getStage: () => stageRef.current } });
+      setOverlayState(null);
+    },
+  });
 
   useEffect(() => {
     let mappedTool = activeTool;
@@ -1313,7 +1062,7 @@ export const Canvas: React.FC<CanvasProps> = ({ activeTool, selectedIds, setSele
       {/* Our own pointer, over the canvas only. It sets `data-custom-cursor`
           on this container itself, so if it bails out — touch, forced colors —
           the native `[data-cursor-mode]` cursors stay in force. */}
-      <LocalCursor mode={cursorMode} containerRef={containerRef} />
+      <LocalCursor mode={cursorMode} containerRef={containerRef} activeTool={activeTool} />
       {/* Outside the stage: the rulers are chrome pinned to the viewport, and
           drawing them inside a transformed canvas would mean fighting that
           transform on every pan. */}
@@ -1419,6 +1168,7 @@ export const Canvas: React.FC<CanvasProps> = ({ activeTool, selectedIds, setSele
                 isSelected={selectedIds.includes(id)}
                 onSelect={handleObjectSelect}
                 selectable={canSelectWith(activeTool)}
+                canDuplicate={activeTool === 'select'}
                 onThrow={handleThrow}
                 stageScale={cameraSystem.zoom}
                 selectedIdsRef={selectedIdsRef}
@@ -1466,14 +1216,14 @@ export const Canvas: React.FC<CanvasProps> = ({ activeTool, selectedIds, setSele
               provisional seed size, which is why they appeared as a crumpled
               cluster rather than a frame. You cannot resize and type at the
               same time; they come back the moment the caret leaves. */}
-          {!croppingId && !editingPathId && !editingTextId && (
+          {!croppingId && !editingPathId && !editingTextId && activeTool !== 'direct-select' && (
             <SelectionTransformer selectedIds={selectedIds} stageRef={stageRef} />
           )}
 
           {/* A line is edited at its two ends. The transformer stands down for
               a solo line — see its own note — so exactly one set of handles is
               ever on screen. */}
-          {!croppingId && !editingPathId && !editingTextId && selectedIds.length === 1 && (() => {
+          {!croppingId && !editingPathId && !editingTextId && activeTool !== 'direct-select' && selectedIds.length === 1 && (() => {
             const only = objects[selectedIds[0]];
             if (!only) return null;
             if (isLineLike(only)) {

@@ -72,12 +72,16 @@ function pushRecent(color: string): void {
  * hue ramp at one saturation so the row reads as a spectrum instead of as a
  * bag of colours.
  */
-const NEUTRALS = ['#000000', '#374151', '#6B7280', '#9CA3AF', '#D1D5DB', '#F3F4F6', '#FFFFFF'];
+const NEUTRALS = ['transparent', '#000000', '#374151', '#6B7280', '#9CA3AF', '#D1D5DB', '#F3F4F6', '#FFFFFF'];
 const HUES = ['#EF4444', '#F97316', '#F59E0B', '#22C55E', '#14B8A6', '#3B82F6', '#6366F1', '#A855F7', '#EC4899'];
 
 /** The checkerboard that says "this is see-through" rather than "this is grey". */
 const CHECKER =
   'repeating-conic-gradient(#c8c8c8 0% 25%, #ffffff 0% 50%) 50% / 8px 8px';
+
+/** The standard diagonal red sash over checkerboard representing None / Transparent. */
+const NO_FILL_PATTERN =
+  `linear-gradient(to top right, transparent calc(50% - 1.5px), #EF4444 calc(50% - 1.5px), #EF4444 calc(50% + 1.5px), transparent calc(50% + 1.5px)), ${CHECKER}`;
 
 export const ColorPickerPopover: React.FC<Props> = ({
   color,
@@ -94,9 +98,10 @@ export const ColorPickerPopover: React.FC<Props> = ({
   const popoverRef = useRef<HTMLDivElement>(null);
   const [position, setPosition] = useState<{ top: number; left: number } | null>(null);
 
+  const isNone = color === 'transparent' || opacity === 0;
   const displayColor = !color || color === 'transparent' ? '#000000' : color;
   const hsv = hexToHsv(displayColor) ?? { h: 0, s: 0, v: 0 };
-  const alpha = opacity ?? 1;
+  const alpha = isNone ? 0 : (opacity ?? 1);
 
   /**
    * Commit a colour, and remember it.
@@ -107,7 +112,7 @@ export const ColorPickerPopover: React.FC<Props> = ({
   const commit = useCallback(
     (next: string) => {
       onChange(next);
-      pushRecent(next);
+      if (next !== 'transparent') pushRecent(next);
       // Re-read rather than waiting for the next open: the whole point of a
       // recents row is the colour you just used being there.
       setRecents(readRecents());
@@ -115,12 +120,16 @@ export const ColorPickerPopover: React.FC<Props> = ({
     [onChange]
   );
 
-  const setHsv = (patch: Partial<HSV>) => commit(hsvToHex({ ...hsv, ...patch }));
+  const setHsv = (patch: Partial<HSV>) => {
+    const nextHex = hsvToHex({ ...hsv, ...patch });
+    commit(nextHex);
+    if (opacity === 0 && onOpacityChange) onOpacityChange(1);
+  };
 
   useEffect(() => {
     if (isOpen) {
       setRecents(readRecents());
-      setHexDraft(displayColor.toUpperCase());
+      setHexDraft(isNone ? 'NONE' : displayColor.toUpperCase());
     }
     // `displayColor` deliberately absent: reopening should re-seed the field,
     // but a colour changing *while* the picker is open must not overwrite what
@@ -221,14 +230,36 @@ export const ColorPickerPopover: React.FC<Props> = ({
     ? // Not one of the values, and not a colour of its own: a bar across the
       // swatch says "several" without claiming any of them is the answer.
       'linear-gradient(135deg, #EF4444 0 33%, #3B82F6 33% 66%, #F59E0B 66% 100%)'
-    : alpha < 1
-      ? `linear-gradient(${displayColor}, ${displayColor}), ${CHECKER}`
-      : displayColor;
+    : isNone
+      ? NO_FILL_PATTERN
+      : alpha < 1
+        ? `linear-gradient(${displayColor}, ${displayColor}), ${CHECKER}`
+        : displayColor;
 
   const commitHex = () => {
+    const raw = hexDraft.trim().toLowerCase();
+    if (raw === 'none' || raw === 'transparent') {
+      commit('transparent');
+      if (onOpacityChange) onOpacityChange(0);
+      return;
+    }
     const parsed = normalizeHex(hexDraft);
-    if (parsed) commit(parsed);
-    else setHexDraft(displayColor.toUpperCase());
+    if (parsed) {
+      commit(parsed);
+      if (opacity === 0 && onOpacityChange) onOpacityChange(1);
+    } else {
+      setHexDraft(isNone ? 'NONE' : displayColor.toUpperCase());
+    }
+  };
+
+  const handlePick = (c: string) => {
+    if (c === 'transparent') {
+      commit('transparent');
+      if (onOpacityChange) onOpacityChange(0);
+    } else {
+      commit(c);
+      if (opacity === 0 && onOpacityChange) onOpacityChange(1);
+    }
   };
 
   return (
@@ -240,12 +271,12 @@ export const ColorPickerPopover: React.FC<Props> = ({
         type="button"
         aria-haspopup="dialog"
         aria-expanded={isOpen}
-        aria-label={mixed ? 'Mixed colours — open the colour picker' : `Colour ${displayColor}`}
+        aria-label={mixed ? 'Mixed colours — open the colour picker' : isNone ? 'No fill / Transparent' : `Colour ${displayColor}`}
         onClick={() => setIsOpen((v) => !v)}
         className={`cp-trigger${isOpen ? ' is-open' : ''}`}
         style={{
           background: swatchBackground,
-          backgroundBlendMode: !mixed && alpha < 1 ? 'normal' : undefined,
+          backgroundBlendMode: !mixed && !isNone && alpha < 1 ? 'normal' : undefined,
         }}
       />
 
@@ -318,20 +349,20 @@ export const ColorPickerPopover: React.FC<Props> = ({
               onBlur={commitHex}
               onKeyDown={(e) => {
                 if (e.key === 'Enter') { e.preventDefault(); commitHex(); }
-                if (e.key === 'Escape') { setHexDraft(displayColor.toUpperCase()); }
+                if (e.key === 'Escape') { setHexDraft(isNone ? 'NONE' : displayColor.toUpperCase()); }
               }}
               className="cp-hex"
             />
             {onOpacityChange && (
               <span className="cp-alpha">{Math.round(alpha * 100)}%</span>
             )}
-            <EyedropperButton onPick={(picked) => commit(picked)} />
+            <EyedropperButton onPick={(picked) => handlePick(picked)} />
           </div>
 
-          <Swatches label="Neutrals" colors={NEUTRALS} current={displayColor} onPick={commit} />
-          <Swatches label="Colours" colors={HUES} current={displayColor} onPick={commit} />
+          <Swatches label="Neutrals" colors={NEUTRALS} current={displayColor} isNone={isNone} onPick={handlePick} />
+          <Swatches label="Colours" colors={HUES} current={displayColor} isNone={isNone} onPick={handlePick} />
           {recents.length > 0 && (
-            <Swatches label="Recent" colors={recents} current={displayColor} onPick={commit} />
+            <Swatches label="Recent" colors={recents} current={displayColor} isNone={isNone} onPick={handlePick} />
           )}
         </div>,
         document.body
@@ -390,26 +421,30 @@ const Swatches: React.FC<{
   label: string;
   colors: string[];
   current: string;
+  isNone?: boolean;
   onPick: (color: string) => void;
-}> = ({ label, colors, current, onPick }) => (
+}> = ({ label, colors, current, isNone = false, onPick }) => (
   <div className="cp-group">
     <span className="cp-group__label">{label}</span>
     <div className="cp-swatches">
       {colors.map((c) => {
-        const active = c.toUpperCase() === current.toUpperCase();
+        const isTransparent = c === 'transparent';
+        const active = isTransparent ? isNone : (!isNone && c.toUpperCase() === current.toUpperCase());
         return (
           <button
             key={`${label}-${c}`}
             type="button"
-            aria-label={c}
+            aria-label={isTransparent ? 'No fill / None' : c}
             aria-pressed={active}
-            data-tooltip={c.toUpperCase()}
+            data-tooltip={isTransparent ? 'No fill / None' : c.toUpperCase()}
             onClick={() => onPick(c)}
             // The selected ring is the accent, not a hardcoded blue: it used
             // to fall back to `#3B82F6`, which is neither the focus ring nor
             // anything else in the system.
-            className={`cp-swatch${active ? ' is-active' : ''}`}
-            style={{ background: c }}
+            className={`cp-swatch${isTransparent ? ' cp-swatch--none' : ''}${active ? ' is-active' : ''}`}
+            style={{
+              background: isTransparent ? NO_FILL_PATTERN : c,
+            }}
           />
         );
       })}

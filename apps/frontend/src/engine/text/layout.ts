@@ -83,6 +83,15 @@ export interface LayoutInput {
   measure: TextMeasurer;
 }
 
+export interface TextWord {
+  text: string;
+  /** Left edge of this word relative to the line's left edge (x). */
+  x: number;
+  width: number;
+  /** Character offset in line.text where this word starts. */
+  charStart: number;
+}
+
 export interface TextLine {
   /** The run as drawn. Never carries the newline that ended it. */
   text: string;
@@ -125,6 +134,11 @@ export interface TextLine {
    * happens to repeat earlier in the paragraph would find the wrong one.
    */
   start: number;
+  /**
+   * Positioned words when the line is justified.
+   * If defined and non-empty, the renderer places each word at x + word.x.
+   */
+  words?: TextWord[];
 }
 
 export interface TextLayout {
@@ -315,6 +329,39 @@ export function layoutText(input: LayoutInput): TextLayout {
 
   let y = 0;
   const lines: TextLine[] = runs.map((run) => {
+    let words: TextWord[] | undefined;
+    let effectiveWidth = run.width;
+
+    if (align === 'justify' && !run.endsParagraph && limit !== Infinity) {
+      const wordMatches = Array.from(run.text.matchAll(/\S+/g));
+      if (wordMatches.length > 1) {
+        const wordMetrics = wordMatches.map((m) => {
+          const wText = m[0];
+          return {
+            text: wText,
+            charStart: m.index ?? 0,
+            width: advance(wText, measure, letterSpacing),
+          };
+        });
+        const totalWordsWidth = wordMetrics.reduce((sum, w) => sum + w.width, 0);
+        const availableSlack = Math.max(0, boxWidth - totalWordsWidth);
+        const gap = availableSlack / (wordMatches.length - 1);
+
+        let curX = 0;
+        words = wordMetrics.map((wm) => {
+          const item: TextWord = {
+            text: wm.text,
+            x: curX,
+            width: wm.width,
+            charStart: wm.charStart,
+          };
+          curX += wm.width + gap;
+          return item;
+        });
+        effectiveWidth = boxWidth;
+      }
+    }
+
     const x =
       align === 'center'
         ? (boxWidth - run.width) / 2
@@ -328,13 +375,14 @@ export function layoutText(input: LayoutInput): TextLayout {
       // under its bullet, which is the whole of a hanging indent.
       x: x + indent,
       y,
-      width: run.width,
+      width: effectiveWidth,
       height: lineAdvance,
       baseline,
       paragraph: run.paragraph,
       marker: run.marker,
       start: run.start,
       endsParagraph: run.endsParagraph,
+      words,
     };
     y += lineAdvance;
     // The gap belongs *after* a paragraph's last line and not after the very
@@ -399,6 +447,34 @@ export function caretAt(
   const local = point.x - line.x;
   if (local <= 0) return line.start;
   if (local >= line.width) return line.start + line.text.length;
+
+  if (line.words && line.words.length > 0) {
+    for (let i = 0; i < line.words.length; i++) {
+      const w = line.words[i];
+      const nextW = line.words[i + 1];
+      if (local < w.x) {
+        return line.start + w.charStart;
+      }
+      if (local >= w.x && local <= w.x + w.width) {
+        const wordLocal = local - w.x;
+        let low = 0;
+        let high = w.text.length;
+        while (low < high) {
+          const mid = Math.floor((low + high) / 2);
+          if (advance(w.text.slice(0, mid), measure, letterSpacing) < wordLocal) low = mid + 1;
+          else high = mid;
+        }
+        const before = advance(w.text.slice(0, Math.max(0, low - 1)), measure, letterSpacing);
+        const after = advance(w.text.slice(0, low), measure, letterSpacing);
+        const offset = wordLocal - before < after - wordLocal ? Math.max(0, low - 1) : low;
+        return line.start + w.charStart + offset;
+      }
+      if (nextW && local > w.x + w.width && local < nextW.x) {
+        const midGap = (w.x + w.width + nextW.x) / 2;
+        return line.start + (local < midGap ? w.charStart + w.text.length : nextW.charStart);
+      }
+    }
+  }
 
   let low = 0;
   let high = line.text.length;

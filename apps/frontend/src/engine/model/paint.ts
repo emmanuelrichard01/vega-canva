@@ -227,11 +227,14 @@ export function convertPaint(paint: Paint | undefined, to: PaintType): Paint {
     return { type: 'solid', color: paintColor(current, '#4F46E5'), opacity: current.opacity };
   }
 
+  const solidColor = current.type === 'solid' ? current.color : undefined;
+  const effectiveColor = !solidColor || solidColor === 'transparent' ? '#4F46E5' : solidColor;
+
   const stops: GradientStop[] = isGradient(current)
     ? sortedStops(current)
     : [
-        { offset: 0, color: current.color, opacity: current.opacity ?? 1 },
-        { offset: 1, color: current.color, opacity: 0 },
+        { offset: 0, color: effectiveColor, opacity: current.opacity ?? 1 },
+        { offset: 1, color: effectiveColor, opacity: 0 },
       ];
 
   const base = { stops, opacity: current.opacity };

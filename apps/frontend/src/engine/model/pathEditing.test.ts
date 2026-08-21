@@ -6,6 +6,7 @@ import {
   anchorKey,
   anchorNear,
   anchorsInRect,
+  constrainDeltaToAxis,
   contours,
   deleteAnchors,
   dragHandle,
@@ -272,3 +273,28 @@ describe('anchorKey', () => {
     expect(anchorKey(ref(0, 1))).not.toBe(anchorKey(ref(1, 1)));
   });
 });
+
+describe('constrainDeltaToAxis', () => {
+  it('returns zero for zero input', () => {
+    expect(constrainDeltaToAxis(0, 0)).toEqual({ dx: 0, dy: 0 });
+  });
+
+  it('snaps mostly horizontal movement to horizontal axis (dy = 0)', () => {
+    const result = constrainDeltaToAxis(100, 10);
+    expect(Math.round(result.dy)).toBe(0);
+    expect(Math.round(result.dx)).toBe(100);
+  });
+
+  it('snaps mostly vertical movement to vertical axis (dx = 0)', () => {
+    const result = constrainDeltaToAxis(5, 100);
+    expect(Math.round(result.dx)).toBe(0);
+    expect(Math.round(result.dy)).toBe(100);
+  });
+
+  it('snaps ~45 deg diagonal movement to 45 deg angle', () => {
+    const result = constrainDeltaToAxis(50, 48);
+    expect(Math.round(result.dx)).toBe(Math.round(result.dy));
+    expect(result.dx).toBeGreaterThan(0);
+  });
+});
+

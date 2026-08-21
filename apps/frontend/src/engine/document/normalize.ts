@@ -392,7 +392,7 @@ function normalizeAppearance(raw: any): Appearance {
 }
 
 function normalizeAlign(value: unknown, fallback: TextAlign): TextAlign {
-  return value === 'left' || value === 'center' || value === 'right' ? value : fallback;
+  return value === 'left' || value === 'center' || value === 'right' || value === 'justify' ? value : fallback;
 }
 
 function normalizeTypography(raw: any, overrides: Partial<Typography> = {}): Typography {

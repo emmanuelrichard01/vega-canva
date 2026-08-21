@@ -141,8 +141,8 @@ export const Minimap: React.FC<MinimapProps> = ({ onCollapse }) => {
       case '+': case '=': zoomBy(1.25); break;
       case '-': case '_': zoomBy(1 / 1.25); break;
       case '0': navigate(centre.x, centre.y, 1); break;
-      // The same two the buttons offer, so the keyboard is not a lesser path.
-      case 'Home': case 'f': case 'F': engineRef.current?.fitToContent(); break;
+      // The same fit actions the canvas and buttons offer
+      case 'Home': case '!': case '1': engineRef.current?.fitToContent(); break;
       default: return;
     }
     // Only once a key was actually handled — otherwise Tab and Escape would be
@@ -163,7 +163,7 @@ export const Minimap: React.FC<MinimapProps> = ({ onCollapse }) => {
     collaborators.length > 0
       ? `${collaborators.length} other ${collaborators.length === 1 ? 'person' : 'people'} here.`
       : 'No one else here.',
-    'Arrow keys pan, plus and minus zoom, F fits everything.',
+    'Arrow keys pan, plus and minus zoom, Shift+1 or Home fits everything.',
   ].join(' ');
 
   /**

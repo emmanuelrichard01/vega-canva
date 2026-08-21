@@ -168,6 +168,13 @@ const GLYPH_BY_TOOL: Record<string, React.ReactNode> = {
       <path d="M3 16l5-5 5 5 3-3 5 5" />
     </>
   ),
+  'direct-select': (
+    <>
+      <path d="M4 18 C 5 10, 11 8, 19 5" />
+      <circle cx="4" cy="18" r="2.5" />
+      <circle cx="19" cy="5" r="2.5" />
+    </>
+  ),
 };
 
 /** The glyph a tool wears in a badge: its own, or its cursor mode's. */

@@ -16,9 +16,40 @@
          the self-hosted face carries the whole variable axis. -->
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
     <link href="https://fonts.googleapis.com/css2?family=Caveat:wght@400;600&display=swap" rel="stylesheet">
+    <style>
+      body { margin: 0; padding: 0; background: #0B0F17; }
+      @keyframes ind-bar {
+        0% { left: -40%; }
+        50% { left: 40%; width: 60%; }
+        100% { left: 100%; width: 40%; }
+      }
+    </style>
   </head>
   <body>
-    <div id="root"></div>
+    <div id="root">
+      <div style="display:flex;flex-direction:column;align-items:center;justify-content:center;height:100vh;width:100vw;background:#0B0F17;color:#F8FAFC;font-family:-apple-system,BlinkMacSystemFont,'Inter',sans-serif;position:relative;overflow:hidden;">
+        <div style="position:absolute;width:500px;height:500px;border-radius:50%;background:radial-gradient(circle,rgba(37,99,235,0.14) 0%,rgba(139,92,246,0.05) 50%,transparent 70%);filter:blur(40px);pointer-events:none;"></div>
+        <div style="display:flex;flex-direction:column;align-items:center;gap:1.25rem;z-index:1;padding:2.5rem;border-radius:1.25rem;background:rgba(255,255,255,0.03);backdrop-filter:blur(20px);border:1px solid rgba(255,255,255,0.08);box-shadow:0 20px 40px -15px rgba(0,0,0,0.3);">
+          <svg width="48" height="48" viewBox="0 0 48 48" fill="none">
+            <defs>
+              <linearGradient id="v-ld-grad" x1="0%" y1="0%" x2="100%" y2="100%">
+                <stop offset="0%" stop-color="#3B82F6"/>
+                <stop offset="50%" stop-color="#6366F1"/>
+                <stop offset="100%" stop-color="#EC4899"/>
+              </linearGradient>
+            </defs>
+            <path d="M12 12L24 36L36 12" stroke="url(#v-ld-grad)" stroke-width="4" stroke-linecap="round" stroke-linejoin="round"/>
+            <circle cx="24" cy="36" r="3" fill="#EC4899"/>
+          </svg>
+          <div style="display:flex;flex-direction:column;align-items:center;gap:0.625rem;">
+            <span style="font-size:0.875rem;font-weight:500;letter-spacing:0.02em;color:#94A3B8;">Initializing workspace…</span>
+            <div style="width:140px;height:3px;border-radius:9999px;background:rgba(255,255,255,0.08);overflow:hidden;position:relative;">
+              <div style="position:absolute;top:0;bottom:0;width:40%;background:linear-gradient(90deg,transparent,#3B82F6,#6366F1,transparent);border-radius:9999px;animation:ind-bar 1.2s cubic-bezier(0.4,0,0.2,1) infinite;"></div>
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
     <script type="module" src="/src/main.tsx"></script>
   </body>
 </html>

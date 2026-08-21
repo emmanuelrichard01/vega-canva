@@ -323,7 +323,7 @@ export interface Appearance {
   fillStyle?: FillStyle;
 }
 
-export type TextAlign = 'left' | 'center' | 'right';
+export type TextAlign = 'left' | 'center' | 'right' | 'justify';
 export type VerticalAlign = 'top' | 'middle' | 'bottom';
 
 /**

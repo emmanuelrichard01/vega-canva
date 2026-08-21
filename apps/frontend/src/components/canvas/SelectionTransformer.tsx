@@ -1,5 +1,5 @@
 import React, { useEffect, useRef, useState } from 'react';
-import { Group, Line, Transformer } from 'react-konva';
+import { Group, Line, Rect, Text, Transformer } from 'react-konva';
 import Konva from 'konva';
 import { updateNode } from '../../engine/document';
 import { EXPORT_CHROME } from '../../engine/export/chrome';
@@ -69,6 +69,8 @@ export const SelectionTransformer: React.FC<Props> = ({ selectedIds, stageRef })
   const trRef = useRef<Konva.Transformer>(null);
   /** True only while a handle is actually being dragged. */
   const [transforming, setTransforming] = useState(false);
+  /** Live dimensions (e.g. 240 × 180) or angle (e.g. 45°) HUD badge while transforming. */
+  const [liveBadge, setLiveBadge] = useState<{ text: string; x: number; y: number } | null>(null);
 
   // The handles must re-fit when a *selected* node's geometry changes from
   // elsewhere (the Properties panel, a remote peer). Subscribing to the whole
@@ -182,9 +184,27 @@ export const SelectionTransformer: React.FC<Props> = ({ selectedIds, stageRef })
     };
   };
 
+  const handleTransform = () => {
+    const tr = trRef.current;
+    if (!tr) return;
+    const anchor = (tr.getActiveAnchor() || '').split(' ')[0];
+    const isRotating = anchor === 'rotater';
+    const w = Math.round(tr.width());
+    const h = Math.round(tr.height());
+    const deg = Math.round(((tr.rotation() % 360) + 360) % 360);
+
+    const text = isRotating ? `${deg}°` : `${w} × ${h}`;
+    setLiveBadge({
+      text,
+      x: tr.x() + tr.width() / 2,
+      y: tr.y() + tr.height() + 18,
+    });
+  };
+
   const handleTransformEnd = () => {
     window.dispatchEvent(new CustomEvent('canvas-drag-end'));
     setTransforming(false);
+    setLiveBadge(null);
     const tr = trRef.current;
     if (!tr) return;
 
@@ -457,6 +477,7 @@ export const SelectionTransformer: React.FC<Props> = ({ selectedIds, stageRef })
       // Interface, not document: PNG export captures the live stage, so
       // without this the blue handles are baked into the image.
       name={EXPORT_CHROME}
+      onTransform={handleTransform}
       onTransformStart={handleTransformStart}
       onTransformEnd={handleTransformEnd}
       boundBoxFunc={(oldBox, newBox) => (newBox.width < MIN_SIZE || newBox.height < MIN_SIZE ? oldBox : newBox)}
@@ -528,10 +549,48 @@ export const SelectionTransformer: React.FC<Props> = ({ selectedIds, stageRef })
    */
   const centre = transforming ? centreMark : null;
 
+  /**
+   * Live transform HUD badge showing realtime dimensions (e.g. 320 × 240) or rotation angle (e.g. 45°).
+   */
+  const hudBadge = transforming && liveBadge ? (
+    <Group
+      x={liveBadge.x}
+      y={liveBadge.y}
+      listening={false}
+      name={EXPORT_CHROME}
+    >
+      <Rect
+        x={-44}
+        y={-12}
+        width={88}
+        height={24}
+        cornerRadius={6}
+        fill="#090d16"
+        stroke="rgba(255,255,255,0.18)"
+        strokeWidth={1}
+        shadowColor="rgba(0,0,0,0.4)"
+        shadowBlur={8}
+        shadowOffsetY={3}
+      />
+      <Text
+        x={-44}
+        y={-6}
+        width={88}
+        text={liveBadge.text}
+        fontSize={11}
+        fontFamily="Inter, -apple-system, BlinkMacSystemFont, sans-serif"
+        fontStyle="bold"
+        fill="#f8fafc"
+        align="center"
+      />
+    </Group>
+  ) : null;
+
   return (
     <>
       {transformer}
       {centre}
+      {hudBadge}
     </>
   );
 };

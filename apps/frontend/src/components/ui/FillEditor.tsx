@@ -38,7 +38,23 @@ interface Props {
  * picker you read instead of recognise, and these five are trivially
  * distinguishable at 20px when they are simply drawn.
  */
-const TYPES: Array<{ id: PaintType; label: string; swatch: string }> = [
+/** Behind every gradient preview, so transparency reads as transparency. */
+const BAR_CHECKER = 'repeating-conic-gradient(#c8c8c8 0% 25%, #ffffff 0% 50%) 50% / 8px 8px';
+
+/** The standard diagonal red sash over checkerboard representing None / Transparent. */
+const NO_FILL_SWATCH =
+  `linear-gradient(to top right, transparent calc(50% - 1.5px), #EF4444 calc(50% - 1.5px), #EF4444 calc(50% + 1.5px), transparent calc(50% + 1.5px)), ${BAR_CHECKER}`;
+
+/**
+ * The six kinds, in the order they escalate.
+ *
+ * Each icon is the gradient itself rather than a glyph standing for it: a
+ * picker for a visual property whose options are described in words is a
+ * picker you read instead of recognise, and these six are trivially
+ * distinguishable at 20px when they are simply drawn.
+ */
+const TYPES: Array<{ id: PaintType | 'none'; label: string; swatch: string }> = [
+  { id: 'none', label: 'No fill', swatch: NO_FILL_SWATCH },
   { id: 'solid', label: 'Solid', swatch: '#6366F1' },
   { id: 'linear', label: 'Linear', swatch: 'linear-gradient(180deg, #6366F1, #EC4899)' },
   { id: 'radial', label: 'Radial', swatch: 'radial-gradient(circle at 50% 50%, #6366F1, #EC4899)' },
@@ -56,9 +72,6 @@ const MAX_STOPS = 8;
  * as one of the fills rather than as the absence of a single answer.
  */
 const MIXED_SWATCH = 'linear-gradient(135deg, #EF4444 0 33%, #3B82F6 33% 66%, #F59E0B 66% 100%)';
-
-/** Behind every gradient preview, so transparency reads as transparency. */
-const BAR_CHECKER = 'repeating-conic-gradient(#c8c8c8 0% 25%, #ffffff 0% 50%) 50% / 8px 8px';
 
 /**
  * Editing a fill.
@@ -212,7 +225,21 @@ export const FillEditor: React.FC<Props> = ({ paint, onChange, mixed = false }) 
     };
   }, []);
 
+  const isNoFill = current.type === 'solid' && (current.color === 'transparent' || current.opacity === 0);
+  const activeTypeId: PaintType | 'none' = isNoFill ? 'none' : current.type;
+
+  const handleSelectType = (typeId: PaintType | 'none') => {
+    if (typeId === 'none') {
+      onChange({ type: 'solid', color: 'transparent', opacity: 0 });
+    } else if (isNoFill) {
+      onChange(convertPaint({ type: 'solid', color: '#4F46E5', opacity: 1 }, typeId));
+    } else {
+      onChange(convertPaint(current, typeId));
+    }
+  };
+
   const css = paintToCss(current);
+  const swatchBg = mixed ? MIXED_SWATCH : isNoFill ? NO_FILL_SWATCH : css;
 
   return (
     <div style={{ position: 'relative' }} ref={containerRef}>
@@ -221,13 +248,13 @@ export const FillEditor: React.FC<Props> = ({ paint, onChange, mixed = false }) 
         onClick={() => setOpen((v) => !v)}
         aria-haspopup="dialog"
         aria-expanded={open}
-        aria-label={mixed ? 'Edit fill — the selection has several' : 'Edit fill'}
+        aria-label={mixed ? 'Edit fill — the selection has several' : isNoFill ? 'No fill / Transparent' : 'Edit fill'}
         className="fill-swatch"
       >
         {/* The paint sits on a chequerboard the button itself draws. A
             semi-transparent fill shown over a flat panel is indistinguishable
             from an opaque paler one. */}
-        <span style={{ background: mixed ? MIXED_SWATCH : css }} />
+        <span style={{ background: swatchBg }} />
       </button>
 
       {open && (
@@ -238,11 +265,11 @@ export const FillEditor: React.FC<Props> = ({ paint, onChange, mixed = false }) 
                 key={t.id}
                 type="button"
                 role="radio"
-                aria-checked={current.type === t.id}
+                aria-checked={activeTypeId === t.id}
                 title={t.label}
                 aria-label={t.label}
-                className={`fill-editor__type ${current.type === t.id ? 'is-active' : ''}`}
-                onClick={() => onChange(convertPaint(current, t.id))}
+                className={`fill-editor__type ${activeTypeId === t.id ? 'is-active' : ''}`}
+                onClick={() => handleSelectType(t.id)}
               >
                 <span style={{ background: t.swatch }} />
               </button>
@@ -250,20 +277,48 @@ export const FillEditor: React.FC<Props> = ({ paint, onChange, mixed = false }) 
           </div>
 
           {current.type === 'solid' ? (
-            <div className="fill-editor__row">
-              <span className="fill-editor__label">Colour</span>
-              {/* The real picker, not the OS one. `input type=color` opens a
-                  native dialog that ignores the app's theme, cannot show the
-                  board's own colours, has no alpha that maps to `opacity`, and
-                  on Windows is a modal that steals the pointer. */}
-              <ColorPickerPopover
-                color={current.color || '#4F46E5'}
-                onChange={(color) => onChange({ ...current, color })}
-                opacity={current.opacity ?? 1}
-                onOpacityChange={(o) => onChange({ ...current, opacity: o >= 1 ? undefined : o })}
-              />
-              <EyedropperButton onPick={(color) => onChange({ ...current, color })} />
-            </div>
+            isNoFill ? (
+              <div className="fill-editor__row" style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', padding: '4px 0' }}>
+                <span className="fill-editor__label" style={{ fontStyle: 'italic', color: 'var(--text-tertiary)' }}>No fill (Transparent)</span>
+                <button
+                  type="button"
+                  style={{
+                    fontSize: '11px',
+                    fontWeight: 600,
+                    color: '#2563EB',
+                    background: 'rgba(37, 99, 235, 0.08)',
+                    border: 'none',
+                    borderRadius: '4px',
+                    padding: '4px 8px',
+                    cursor: 'pointer',
+                  }}
+                  onClick={() => onChange({ type: 'solid', color: '#4F46E5', opacity: 1 })}
+                >
+                  Add colour
+                </button>
+              </div>
+            ) : (
+              <div className="fill-editor__row">
+                <span className="fill-editor__label">Colour</span>
+                {/* The real picker, not the OS one. `input type=color` opens a
+                    native dialog that ignores the app's theme, cannot show the
+                    board's own colours, has no alpha that maps to `opacity`, and
+                    on Windows is a modal that steals the pointer. */}
+                <ColorPickerPopover
+                  color={current.color || '#4F46E5'}
+                  onChange={(color) => {
+                    if (color === 'transparent') {
+                      onChange({ ...current, color: 'transparent', opacity: 0 });
+                    } else {
+                      onChange({ ...current, color, opacity: current.opacity === 0 ? 1 : current.opacity });
+                    }
+                  }}
+                  opacity={current.opacity ?? 1}
+                  onOpacityChange={(o) => onChange({ ...current, opacity: o >= 1 ? undefined : o })}
+                />
+                <EyedropperButton onPick={(color) => onChange({ ...current, color, opacity: current.opacity === 0 ? 1 : current.opacity })} />
+              </div>
+            )
           ) : (
             <>
               {/* The bar shows the gradient along its own axis, not as it will

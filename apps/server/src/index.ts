@@ -66,26 +66,73 @@ const initS3 = async (retries = 10, delayMs = 2000) => {
 };
 initS3();
 
-// Set up Multer-S3 for direct object storage uploads
+// Supported media MIME types and corresponding allowed extensions
+const ALLOWED_MIME_TYPES = new Set([
+  // Images
+  'image/png',
+  'image/jpeg',
+  'image/webp',
+  'image/gif',
+  'image/svg+xml',
+  // Audio
+  'audio/webm',
+  'audio/mp4',
+  'audio/ogg',
+  'audio/wav',
+  'audio/mpeg',
+  'audio/aac',
+]);
+
+const ALLOWED_EXTENSIONS = new Set([
+  '.png', '.jpg', '.jpeg', '.webp', '.gif', '.svg',
+  '.webm', '.mp4', '.ogg', '.wav', '.mp3', '.m4a', '.aac'
+]);
+
+// Set up Multer-S3 for direct object storage uploads with strict security filters
 const upload = multer({
+  limits: {
+    fileSize: 50 * 1024 * 1024, // 50MB max file size
+  },
+  fileFilter: (_req: any, file: any, cb: any) => {
+    const ext = path.extname(file.originalname).toLowerCase();
+    if (!ALLOWED_MIME_TYPES.has(file.mimetype) || !ALLOWED_EXTENSIONS.has(ext)) {
+      return cb(new Error("Invalid file type. Only standard images and audio recordings are accepted."), false);
+    }
+    cb(null, true);
+  },
   storage: multerS3({
     s3: s3,
     bucket: s3Bucket,
     key: (req: any, file: any, cb: any) => {
       const mediaId = nanoid();
-      const roomId = req.params.roomId;
-      cb(null, `${roomId}/${mediaId}${path.extname(file.originalname)}`);
+      // Sanitize room ID to avoid path traversal
+      const rawRoomId = String(req.params.roomId || 'global');
+      const roomId = rawRoomId.replace(/[^a-zA-Z0-9_-]/g, '') || 'global';
+      const ext = path.extname(file.originalname).toLowerCase();
+      const safeExt = ALLOWED_EXTENSIONS.has(ext) ? ext : '.bin';
+      cb(null, `${roomId}/${mediaId}${safeExt}`);
     }
   })
 });
 
 // S3 Upload endpoint
-app.post("/rooms/:roomId/media", upload.single("media"), async (req: any, res) => {
+app.post("/rooms/:roomId/media", (req: any, res: any, next: any) => {
+  upload.single("media")(req, res, (err: any) => {
+    if (err) {
+      if (err.code === 'LIMIT_FILE_SIZE') {
+        return res.status(413).json({ error: "File exceeds the 50MB size limit." });
+      }
+      return res.status(400).json({ error: err.message || "Upload validation failed." });
+    }
+    next();
+  });
+}, async (req: any, res) => {
   if (!req.file) {
     return res.status(400).json({ error: "No file uploaded" });
   }
 
-  const roomId = req.params.roomId;
+  const rawRoomId = String(req.params.roomId || 'global');
+  const roomId = rawRoomId.replace(/[^a-zA-Z0-9_-]/g, '') || 'global';
   // Derive the public base URL from whatever host the browser actually used to reach us
   // (localhost, a LAN IP, or a real domain) instead of hardcoding localhost — otherwise
   // media only ever loads for whoever is running the containers.
@@ -252,6 +299,29 @@ extensions.push(
 // HTTP server so REST endpoints and WebSockets share one port.
 const server = new Hocuspocus({
   extensions,
+
+  /**
+   * Validate and authenticate incoming document connection requests.
+   * Ensures room IDs are structurally valid and prevents malformed room queries.
+   */
+  onAuthenticate: async ({ documentName, token }) => {
+    // Sanitize and validate document/room ID
+    if (!documentName || !/^[a-zA-Z0-9_-]{1,128}$/.test(documentName)) {
+      throw new Error("Invalid room identifier");
+    }
+
+    // Optional token validation hook: if a token secret is configured in environment, verify it
+    if (process.env.AUTH_SECRET && token !== process.env.AUTH_SECRET) {
+      throw new Error("Unauthorized room connection");
+    }
+
+    return {
+      user: {
+        id: nanoid(),
+        room: documentName,
+      },
+    };
+  },
 
   /**
    * Time Travel history log.

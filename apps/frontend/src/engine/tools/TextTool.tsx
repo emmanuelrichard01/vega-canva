@@ -140,16 +140,17 @@ export class TextTool implements Tool {
     const { x, y, width, height } = overlayState.box;
     if (width <= MIN_DRAG || height <= MIN_DRAG) return null;
     return (
-      // Dashed, because unlike a shape this box is not the thing being drawn —
-      // it is the column the words will flow into.
+      // Dashed with subtle tint, showing the column and area the words will flow into.
       <Rect
         x={x}
         y={y}
         width={width}
         height={height}
-        stroke="#3B82F6"
-        strokeWidth={1}
-        dash={[4, 4]}
+        stroke="#2563EB"
+        strokeWidth={1.5}
+        dash={[5, 4]}
+        fill="rgba(37, 99, 235, 0.06)"
+        cornerRadius={2}
         listening={false}
       />
     );

@@ -17,7 +17,10 @@ import { WS_URL } from '../../utils/endpoints';
  */
 
 /** Room id parsed from `/room/:id`. `home` keeps the landing page from opening a real room socket. */
-export const roomId = window.location.pathname.split('/room/')[1] || 'home';
+export const roomId =
+  typeof window !== 'undefined' && window.location
+    ? window.location.pathname.split('/room/')[1] || 'home'
+    : 'home';
 
 export const doc = new Y.Doc();
 
@@ -57,7 +60,10 @@ export const provider = new HocuspocusProvider({
 });
 
 /** Offline persistence — edits made while disconnected merge up on reconnect. */
-export const indexeddbProvider = new IndexeddbPersistence(roomId, doc);
+export const indexeddbProvider =
+  typeof indexedDB !== 'undefined'
+    ? new IndexeddbPersistence(roomId, doc)
+    : (null as unknown as IndexeddbPersistence);
 
 /** Canvas objects, keyed by node id. */
 export const objectsMap = doc.getMap<Y.Map<unknown>>('objects');
@@ -113,4 +119,6 @@ export const undoManager = new Y.UndoManager([objectsMap, groupsMap], {
 });
 
 /** Escape hatch for debugging in the browser console. */
-(window as unknown as Record<string, unknown>).objectsMap = objectsMap;
+if (typeof window !== 'undefined') {
+  (window as unknown as Record<string, unknown>).objectsMap = objectsMap;
+}

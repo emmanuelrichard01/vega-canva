@@ -223,17 +223,34 @@ export const TextRenderer: React.FC<Props> = React.memo(({ node, visible }) => {
               copy first and the filled copy over it leaves the whole stroke
               outside the shape, which is what an outline is supposed to be. */}
           {outline && outline.width > 0 && (
-            <Text
-              {...common}
-              {...halo}
-              x={line.x}
-              y={line.y}
-              text={line.text}
-              fill={undefined}
-              stroke={outline.color}
-              strokeWidth={outline.width * 2}
-              fillAfterStrokeEnabled
-            />
+            line.words && line.words.length > 0 ? (
+              line.words.map((w, wIdx) => (
+                <Text
+                  key={`out-${wIdx}`}
+                  {...common}
+                  {...halo}
+                  x={line.x + w.x}
+                  y={line.y}
+                  text={w.text}
+                  fill={undefined}
+                  stroke={outline.color}
+                  strokeWidth={outline.width * 2}
+                  fillAfterStrokeEnabled
+                />
+              ))
+            ) : (
+              <Text
+                {...common}
+                {...halo}
+                x={line.x}
+                y={line.y}
+                text={line.text}
+                fill={undefined}
+                stroke={outline.color}
+                strokeWidth={outline.width * 2}
+                fillAfterStrokeEnabled
+              />
+            )
           )}
           {/*
             One `<Text>` per coloured piece, positioned by measuring the run
@@ -251,7 +268,36 @@ export const TextRenderer: React.FC<Props> = React.memo(({ node, visible }) => {
             by a fraction of a pixel per character and show up as text that
             slowly loses its own kerning across a long line.
           */}
-          {cycle && line.text.length > 0 ? (
+          {line.words && line.words.length > 0 ? (
+            line.words.map((w, wIdx) => {
+              if (cycle && w.text.length > 0) {
+                return cycleRuns(w.text, cycle.unit, piecesBefore(caseText, cycle.unit, line.start + w.charStart)).map(
+                  (run) => (
+                    <Text
+                      key={`c-${wIdx}-${run.at}`}
+                      {...common}
+                      {...(outline && outline.width > 0 ? {} : halo)}
+                      x={line.x + w.x + measure(w.text.slice(0, run.at))}
+                      y={line.y}
+                      text={run.text}
+                      fill={cycleColor(cycle, run.index, cycleUnits)}
+                    />
+                  )
+                );
+              }
+              return (
+                <Text
+                  key={`w-${wIdx}`}
+                  {...common}
+                  {...(outline && outline.width > 0 ? {} : halo)}
+                  x={line.x + w.x}
+                  y={line.y}
+                  text={w.text}
+                  fill={ink}
+                />
+              );
+            })
+          ) : cycle && line.text.length > 0 ? (
             cycleRuns(line.text, cycle.unit, piecesBefore(caseText, cycle.unit, line.start)).map(
               (run) => (
                 <Text

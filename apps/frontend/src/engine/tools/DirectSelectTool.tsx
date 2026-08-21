@@ -1,84 +1,191 @@
+import { Rect } from 'react-konva';
 import type { Tool, ToolContext } from './Tool';
 import { pathEdit } from '../interaction/pathEdit';
 import { useStore } from '../../hooks/useStore';
+import { flattenToPath } from '../document/vectorOps';
+import { anchorsInRect, mergeAnchors } from '../model/pathEditing';
 
 /**
  * Direct selection — the white arrow.
  *
- * ## Why this is a tool and not a mode on Select
- *
- * Anchor editing already existed, and it was reachable in exactly two ways:
- * double-clicking a path, or finding a button on the floating toolbar. Both are
- * *discoveries*, and both are unavailable when the thing you want to reshape is
- * one of forty objects you have not selected yet. Every vector editor puts this
- * on the toolbar next to Select and binds it to a letter for the same reason:
- * it is not an advanced mode of moving things, it is a different question about
- * what a click means, and the answer has to be visible before you click.
- *
- * With this armed, clicking a path opens it. Clicking a different path opens
- * that one instead — no exit gesture, no double-click, which is what makes
- * walking a drawing and correcting it feel like one activity rather than a
- * sequence of entries and escapes.
- *
- * ## What it deliberately does not do
- *
- * Marquee, anchor picking, handle dragging and insertion all live in
- * `PathEditor`, on Konva nodes that sit above the board. That is not a
- * division of convenience: those targets are drawn in the *node's* coordinate
- * space and are the only things that know where an anchor is on screen. A tool
- * re-deriving that from stage coordinates would be a second implementation of
- * the same hit test, and the two would disagree at the edges — which, for a
- * seven-pixel target, is most of it.
+ * ## Features:
+ * - Click path / shape: opens it for anchor editing (auto-flattens shapes).
+ * - Click, hold & drag: marquee selects multiple anchor points across the path.
+ * - Shift+Click / Ctrl+Click / Cmd+Click: multi-selects and adds more points.
+ * - Click empty board: exits path editing mode and clears selection.
  */
 export class DirectSelectTool implements Tool {
   id = 'direct-select';
-  /**
-   * A crosshair, not the default arrow.
-   *
-   * The one thing a person needs to know before clicking is that this click
-   * means something different from the last one, and the pointer is where they
-   * are already looking.
-   */
   cursor = 'crosshair';
+
+  private isDown = false;
+  private startX = 0;
+  private startY = 0;
+  private currentX = 0;
+  private currentY = 0;
+  private isMarquee = false;
+  private isAdditive = false;
+
+  private getPointerPos(ctx: ToolContext, e: any) {
+    const stage = e?.target?.getStage?.();
+    if (!stage) return { x: 0, y: 0 };
+    const pos = stage.getPointerPosition();
+    if (!pos) return { x: 0, y: 0 };
+    return {
+      x: (pos.x - ctx.camera.x) / ctx.camera.zoom,
+      y: (pos.y - ctx.camera.y) / ctx.camera.zoom,
+    };
+  }
 
   onPointerDown(ctx: ToolContext, e: any) {
     const stage = e.target?.getStage?.();
-    /**
-     * Clicking the bare board leaves the path.
-     *
-     * Not merely deselecting: the mode itself ends, because a path open for
-     * editing with nothing picked still shows every anchor, and a screenful of
-     * handles over a drawing you have moved on from is noise.
-     */
     if (e.target === stage) {
-      pathEdit.exit();
-      ctx.editor.select(null);
+      this.isDown = true;
+      const pos = this.getPointerPos(ctx, e);
+      this.startX = pos.x;
+      this.startY = pos.y;
+      this.currentX = pos.x;
+      this.currentY = pos.y;
+      this.isMarquee = false;
+      this.isAdditive = Boolean(e?.evt?.shiftKey || e?.evt?.ctrlKey || e?.evt?.metaKey);
     }
   }
 
-  /**
-   * Nothing to track between down and up.
-   *
-   * The marquee belongs to `PathEditor`, which draws it in the node's own
-   * coordinate space where the anchors are — see the note above. These exist
-   * because the interface asks for them, and doing nothing is the honest body.
-   */
-  onPointerMove() {}
-  onPointerUp() {}
+  onPointerMove(ctx: ToolContext, e: any) {
+    if (!this.isDown) return;
+    const pos = this.getPointerPos(ctx, e);
+    this.currentX = pos.x;
+    this.currentY = pos.y;
+
+    const dist = Math.hypot(this.currentX - this.startX, this.currentY - this.startY);
+    if (dist > 3) {
+      this.isMarquee = true;
+      ctx.setOverlayState?.({
+        type: 'marquee',
+        startX: this.startX,
+        startY: this.startY,
+        currentX: this.currentX,
+        currentY: this.currentY,
+      });
+
+      // If no path is currently active, look for any path or shape that intersects the marquee
+      let activeSnapshot = pathEdit.getSnapshot();
+      if (!activeSnapshot) {
+        const objects = useStore.getState().objects;
+        const x1 = Math.min(this.startX, this.currentX);
+        const x2 = Math.max(this.startX, this.currentX);
+        const y1 = Math.min(this.startY, this.currentY);
+        const y2 = Math.max(this.startY, this.currentY);
+        const marqueeBox = { x: x1, y: y1, width: x2 - x1, height: y2 - y1 };
+
+        for (const obj of Object.values(objects)) {
+          if (!obj || obj.locked) continue;
+          if (obj.type === 'path' && obj.geometry.kind !== 'freehand') {
+            const found = anchorsInRect(obj.geometry, {
+              x: marqueeBox.x - obj.x,
+              y: marqueeBox.y - obj.y,
+              width: marqueeBox.width,
+              height: marqueeBox.height,
+            });
+            if (found.length > 0) {
+              pathEdit.enter(obj.id);
+              pathEdit.select(found);
+              ctx.editor.select(obj.id);
+              activeSnapshot = pathEdit.getSnapshot();
+              break;
+            }
+          }
+        }
+      }
+
+      if (activeSnapshot) {
+        const node = useStore.getState().objects[activeSnapshot.nodeId];
+        if (node && node.type === 'path' && node.geometry.kind !== 'freehand') {
+          const x1 = Math.min(this.startX, this.currentX) - node.x;
+          const x2 = Math.max(this.startX, this.currentX) - node.x;
+          const y1 = Math.min(this.startY, this.currentY) - node.y;
+          const y2 = Math.max(this.startY, this.currentY) - node.y;
+          const found = anchorsInRect(node.geometry, { x: x1, y: y1, width: x2 - x1, height: y2 - y1 });
+          pathEdit.select(this.isAdditive ? mergeAnchors(activeSnapshot.anchors, found) : found);
+        }
+      }
+    }
+  }
+
+  onPointerUp(ctx: ToolContext) {
+    if (!this.isDown) return;
+    this.isDown = false;
+
+    if (!this.isMarquee) {
+      // Bare click on empty canvas with no drag: deselect and leave edit mode
+      pathEdit.exit();
+      ctx.editor.select(null);
+    } else {
+      ctx.setOverlayState?.(null);
+      const activeSnapshot = pathEdit.getSnapshot();
+      if (!activeSnapshot) {
+        const box = {
+          x: Math.min(this.startX, this.currentX),
+          y: Math.min(this.startY, this.currentY),
+          width: Math.abs(this.currentX - this.startX),
+          height: Math.abs(this.currentY - this.startY),
+        };
+        document.dispatchEvent(new CustomEvent('marqueeSelect', {
+          detail: { box, additive: this.isAdditive }
+        }));
+      }
+    }
+
+    this.startX = 0;
+    this.startY = 0;
+    this.isMarquee = false;
+    this.isAdditive = false;
+  }
+
+  renderOverlay(ctx: ToolContext, overlayState: any) {
+    if (overlayState?.type === 'marquee') {
+      const zoom = ctx.camera?.zoom || 1;
+      const x = Math.min(overlayState.startX, overlayState.currentX);
+      const y = Math.min(overlayState.startY, overlayState.currentY);
+      const width = Math.abs(overlayState.currentX - overlayState.startX);
+      const height = Math.abs(overlayState.currentY - overlayState.startY);
+
+      return (
+        <Rect
+          x={x}
+          y={y}
+          width={width}
+          height={height}
+          fill="rgba(37, 99, 235, 0.12)"
+          stroke="#2563EB"
+          strokeWidth={1 / zoom}
+          cornerRadius={2 / zoom}
+          dash={[4 / zoom, 3 / zoom]}
+          listening={false}
+        />
+      );
+    }
+    return null;
+  }
 
   /**
-   * Open whatever path was clicked.
-   *
-   * Called by the canvas when an object is selected while this tool is armed.
-   * A non-path is left to ordinary selection, so the tool degrades to Select on
-   * everything it cannot edit rather than swallowing the click — an editor that
-   * appears inert on half the board is worse than one that does something
-   * reasonable.
+   * Open whatever path (or shape) was clicked for anchor/handle editing.
+   * If a shape was clicked, prompt confirmation before flattening.
    */
-  static open(id: string): boolean {
+  static open(id: string): string | null {
     const node = useStore.getState().objects[id];
-    if (!node || node.type !== 'path' || node.geometry.kind === 'freehand') return false;
-    pathEdit.enter(id);
-    return true;
+    if (!node) return null;
+
+    if (node.type === 'shape') {
+      useStore.getState().setFlattenConfirmNodeId(id);
+      return null;
+    }
+
+    if (node.type === 'path' && node.geometry.kind !== 'freehand') {
+      pathEdit.enter(id);
+      return id;
+    }
+
+    return null;
   }
 }
