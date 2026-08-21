@@ -9816,20 +9816,6 @@ body[data-zen='physics'] .forces-handle { bottom: 32px; }
 .grid-variations__tile:hover { transform: none; }
 }
 
-@keyframes indeterminate-bar {
-  0% {
-    left: -40%;
-  }
-  50% {
-    left: 40%;
-    width: 60%;
-  }
-  100% {
-    left: 100%;
-    width: 40%;
-  }
-}
-
 @keyframes cursorBadgePop {
   from {
     transform: scale(0.4);
