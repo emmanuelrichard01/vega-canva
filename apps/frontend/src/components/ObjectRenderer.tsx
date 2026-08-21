@@ -10,8 +10,6 @@ import { moveFrameWithChildren, reassignFrame } from '../engine/interaction/fram
 import { tagFilter } from '../engine/model/tagFilter';
 import { matchesTagFilter } from '../engine/model/tags';
 import { useStore } from '../hooks/useStore';
-import { translateGrid } from '../engine/grid/gridApply';
-import { gridGroupFor } from './panel/GridSection';
 import { cameraSystem } from '../engine/CameraSystem';
 import { gridSnap } from '../engine/interaction/gridSnap';
 import { clearSnapGuides, snapDraggedBox } from '../engine/interaction/objectSnap';
@@ -294,20 +292,6 @@ export const ObjectRenderer = React.memo(
           // Flicking a whole multi-selection into a throw isn't a supported
           // gesture, so treat the dragged object as a plain move too.
           updateNode(objId, { x: e.target.x() - halfW, y: e.target.y() - halfH });
-          /**
-           * A grid that has been moved records where it went.
-           *
-           * The recipe holds the box its cells were laid out in, so a grid
-           * dragged across the board still describes its old position, and the
-           * next gutter change would snap the whole thing back there.
-           *
-           * Handed the delta rather than left to measure it. Reading the
-           * members' bounds here catches the writes above half-applied, which
-           * reads as a *stretch* rather than a move -- and the grid then re-laid
-           * itself into a box it had never occupied.
-           */
-          const moved = gridGroupFor([objId]);
-          if (moved) translateGrid(moved, dx, dy);
           return;
         }
 

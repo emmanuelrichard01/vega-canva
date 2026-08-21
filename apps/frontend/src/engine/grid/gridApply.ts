@@ -157,61 +157,25 @@ export function refitGrid(groupId: string): GridRecipe | null {
 }
 
 /**
- * Move a grid's recipe by the same delta the gesture moved its objects.
+ * A grid follows a move or a resize **lazily**, at the next panel edit.
  *
- * ## Why this is told rather than measured
+ * ## Why not eagerly, at the end of the gesture
  *
- * The first version read the members' bounding box after the drag and inferred
- * the transform from it. That looks equivalent and is not, because the drag
- * writes one node per call and the reading happened before every write had
- * reached the store: the box it measured was half the cells in their new
- * positions and half in their old, which is *wider* than either. A phantom
- * scale came out of the division, the grid re-laid to fit a box it had never
- * occupied, and the whole thing jumped somewhere else and came apart.
+ * Two attempts said otherwise and both shipped a grid that teleported. The
+ * first measured the members' bounds after the drag and inferred a transform
+ * from them, which raced the writes and read a phantom scale out of a box that
+ * was half old positions and half new. The second was handed the delta and the
+ * landing rectangle instead -- and the grid still jumped, which means something
+ * else in the gesture path is also writing to these nodes and the premise was
+ * wrong rather than the arithmetic.
  *
- * A move already knows its own delta. Taking it as an argument removes the
- * race, the measurement and the arithmetic in one go, and it cannot be wrong
- * about a gesture it was handed.
- *
- * One write to the group, not thirty to its members: translation changes
- * nothing about the arrangement, so there is nothing to re-lay.
+ *  calls  before every change it makes, so a grid that
+ * has been dragged or scaled still corrects its own box the moment anyone
+ * touches a control. That is one frame later than ideal and it is *right*,
+ * which the eager version was not. Re-lay on resize is worth having and needs
+ * the transformer's own before-and-after box rather than anything reconstructed
+ * from the document afterwards.
  */
-export function translateGrid(groupId: string, dx: number, dy: number): void {
-  if (dx === 0 && dy === 0) return;
-  const recipe = gridRecipe(groupId);
-  if (!recipe) return;
-  groupsMap.set(groupId, {
-    ...(groupsMap.get(groupId) ?? { id: groupId }),
-    grid: { ...recipe, spec: { ...recipe.spec, x: recipe.spec.x + dx, y: recipe.spec.y + dy } },
-  });
-}
-
-/**
- * Re-lay a grid into the box a resize just gave it.
- *
- * `actual` is the box the caller has *just written*, not one read back from
- * the store — see `translateGrid` for why that distinction matters. The
- * transformer knows every node's new rectangle at the moment it commits them,
- * so it can hand over their union without anything having to be measured
- * afterwards.
- *
- * Re-laying rather than leaving the cells scaled is the point: gutters and
- * corner radii are absolute measurements chosen against the page, not
- * proportions of the modules, so a drag to 1.6x would otherwise take a 16px
- * gutter to 26px.
- */
-export function resizeGridTo(
-  groupId: string,
-  actual: { x: number; y: number; width: number; height: number }
-): void {
-  const recipe = gridRecipe(groupId);
-  if (!recipe) return;
-  if (!(actual.width > 0) || !(actual.height > 0)) return;
-
-  const fitted = refitBox(recipe, gridBounds(layoutGrid(recipe.spec)), actual);
-  if (fitted === recipe) return;
-  relayoutGrid(groupId, fitted);
-}
 
 /** The box a recipe's cells will occupy, for a live preview. *//** The box a recipe's cells will occupy, for a live preview. */
 export function previewBounds(recipe: GridRecipe) {
