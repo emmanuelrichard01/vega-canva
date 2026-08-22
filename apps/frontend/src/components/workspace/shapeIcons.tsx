@@ -15,7 +15,7 @@ import React from 'react';
  * and take their size from the caller, so they behave like any other icon.
  */
 
-import { heartAnchors } from '../../engine/model/shapeOutline';
+import { heartAnchors, squircleAnchors } from '../../engine/model/shapeOutline';
 import { fromAnchors, pathData } from '../../engine/model/pathGeometry';
 import type { ShapeKind } from '../../engine/model/schema';
 
@@ -30,6 +30,7 @@ import type { ShapeKind } from '../../engine/model/schema';
 export type ShapePreset =
   | 'rect'
   | 'ellipse'
+  | 'squircle'
   | 'triangle'
   | 'pentagon'
   | 'hexagon'
@@ -43,6 +44,7 @@ export type ShapePreset =
 export const PRESET_GEOMETRY: Record<ShapePreset, { kind: ShapeKind; points?: number }> = {
   rect: { kind: 'rect' },
   ellipse: { kind: 'ellipse' },
+  squircle: { kind: 'squircle' },
   triangle: { kind: 'polygon', points: 3 },
   pentagon: { kind: 'polygon', points: 5 },
   hexagon: { kind: 'polygon', points: 6 },
@@ -81,6 +83,23 @@ const heartGlyph = pathData(
   )
 );
 
+/**
+ * The squircle glyph, from the same continuous-curvature anchors the canvas draws.
+ */
+const squircleGlyph = pathData(
+  fromAnchors(
+    squircleAnchors(24 - STROKE * 2, 24 - STROKE * 2).map((a) => ({
+      x: a.x + STROKE,
+      y: a.y + STROKE,
+      inX: (a.inX ?? a.x) + STROKE,
+      inY: (a.inY ?? a.y) + STROKE,
+      outX: (a.outX ?? a.x) + STROKE,
+      outY: (a.outY ?? a.y) + STROKE,
+    })),
+    true
+  )
+);
+
 /** The regular polygon glyphs, generated so the set cannot drift by hand. */
 function polygonGlyph(sides: number): React.ReactNode {
   const pts = Array.from({ length: sides }, (_, i) => {
@@ -93,6 +112,7 @@ function polygonGlyph(sides: number): React.ReactNode {
 const PATHS: Record<ShapePreset, React.ReactNode> = {
   rect: <rect x="3" y="3" width="18" height="18" rx="2" ry="2" />,
   ellipse: <circle cx="12" cy="12" r="10" />,
+  squircle: <path d={squircleGlyph} />,
   triangle: polygonGlyph(3),
   pentagon: polygonGlyph(5),
   hexagon: polygonGlyph(6),
@@ -123,6 +143,7 @@ const PATHS: Record<ShapePreset, React.ReactNode> = {
 export const SHAPE_KINDS: ShapePreset[] = [
   'rect',
   'ellipse',
+  'squircle',
   'triangle',
   'pentagon',
   'hexagon',
@@ -137,6 +158,7 @@ export const LINE_KINDS: ShapePreset[] = ['line', 'arrow'];
 export const SHAPE_LABELS: Record<ShapePreset, string> = {
   rect: 'Rectangle',
   ellipse: 'Ellipse',
+  squircle: 'Squircle',
   triangle: 'Triangle',
   pentagon: 'Pentagon',
   hexagon: 'Hexagon',

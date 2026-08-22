@@ -88,7 +88,7 @@ objectRegistry.register({
     supportsOpacity: true,
     supportsComments: true,
   },
-  defaultProperties: () => ({ width: 240, height: 64 }),
+  defaultProperties: () => ({ width: 280, height: 64 }),
 });
 
 objectRegistry.register({

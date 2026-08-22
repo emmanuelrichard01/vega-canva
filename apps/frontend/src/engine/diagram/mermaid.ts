@@ -475,6 +475,7 @@ export const SHAPE_SPECS: Record<MermaidShape, ShapeSpec> = {
 /** The inverse, for reading a board back out as code. */
 export function shapeFromCanvas(kind: ShapeKind, points?: number, cornerRadius?: number): MermaidShape {
   if (kind === 'ellipse') return 'circle';
+  if (kind === 'squircle') return 'round';
   if (kind === 'polygon') {
     if (points === 4) return 'diamond';
     if (points === 6) return 'hexagon';

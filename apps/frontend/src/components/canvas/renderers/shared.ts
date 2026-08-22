@@ -163,10 +163,48 @@ export function shadowSpreadProps(appearance: Appearance | undefined): Record<st
   };
 }
 
+/**
+ * Maps logical font family names to comprehensive CSS font stacks with fallbacks,
+ * matching standard, variable, and generic font definitions across all browsers and platforms.
+ */
+export function canvasFontFamily(name: string | undefined): string {
+  if (!name) return "'Inter', 'Inter Variable', -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif";
+  switch (name) {
+    case 'Inter':
+      return "'Inter', 'Inter Variable', -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif";
+    case 'Plus Jakarta Sans':
+      return "'Plus Jakarta Sans', 'Plus Jakarta Sans Variable', -apple-system, BlinkMacSystemFont, sans-serif";
+    case 'DM Sans':
+      return "'DM Sans', 'DM Sans Variable', sans-serif";
+    case 'Outfit':
+      return "'Outfit', 'Outfit Variable', -apple-system, BlinkMacSystemFont, sans-serif";
+    case 'Space Grotesk':
+      return "'Space Grotesk', 'Space Grotesk Variable', sans-serif";
+    case 'Roboto':
+      return "'Roboto', 'Roboto Variable', -apple-system, BlinkMacSystemFont, sans-serif";
+    case 'Playfair Display':
+      return "'Playfair Display', 'Playfair Display Variable', Georgia, 'Times New Roman', serif";
+    case 'Lora':
+      return "'Lora', 'Lora Variable', Georgia, 'Times New Roman', serif";
+    case 'Georgia':
+      return "Georgia, 'Times New Roman', Times, serif";
+    case 'JetBrains Mono':
+      return "'JetBrains Mono', 'JetBrains Mono Variable', 'Fira Code', 'Courier New', monospace";
+    case 'Courier New':
+      return "'Courier New', Courier, monospace";
+    case 'Caveat':
+      return "'Caveat', cursive, sans-serif";
+    case 'Architects Daughter':
+      return "'Architects Daughter', cursive, sans-serif";
+    default:
+      return `${name}, -apple-system, BlinkMacSystemFont, sans-serif`;
+  }
+}
+
 /** CSS font shorthand pieces for the DOM textareas used during editing. */
 export function domTextStyle(typography: Typography): React.CSSProperties {
   return {
-    fontFamily: typography.fontFamily,
+    fontFamily: canvasFontFamily(typography.fontFamily),
     fontSize: `${typography.fontSize}px`,
     fontWeight: typography.fontWeight,
     fontStyle: typography.italic ? 'italic' : 'normal',

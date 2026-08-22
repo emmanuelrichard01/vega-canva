@@ -7,6 +7,8 @@ import { ACTIVITY_LABEL } from '../presence/collaborators';
 import { chipColorsFor, placeChip, type ChipColors } from './remoteCursor';
 import { ARROW_D, ARROW_SCALE, ARROW_TIP, CURSOR_SIZE, ToolBadge } from './cursorArt';
 import { cursorModeForTool } from './toolCursor';
+import { useStore } from '../../hooks/useStore';
+import { RULER_SIZE } from '../../components/canvas/Rulers';
 
 /**
  * Other people's pointers.
@@ -209,6 +211,8 @@ export const RemoteCursors: React.FC = () => {
       const zoom = cameraSystem.zoom;
       const camX = cameraSystem.x;
       const camY = cameraSystem.y;
+      const showRulers = useStore.getState().showRulers;
+      const rulerInset = showRulers ? RULER_SIZE : 0;
       const viewport = { width: window.innerWidth, height: window.innerHeight };
 
       for (const person of collaboratorStore.live()) {
@@ -218,8 +222,8 @@ export const RemoteCursors: React.FC = () => {
         const world = person.smoothed ?? person.cursor;
         if (!world) continue;
 
-        const screenX = world.x * zoom + camX;
-        const screenY = world.y * zoom + camY;
+        const screenX = world.x * zoom + camX + rulerInset;
+        const screenY = world.y * zoom + camY + rulerInset;
         entry.root.style.transform = `translate3d(${screenX - HOTSPOT.x}px, ${
           screenY - HOTSPOT.y
         }px, 0)`;

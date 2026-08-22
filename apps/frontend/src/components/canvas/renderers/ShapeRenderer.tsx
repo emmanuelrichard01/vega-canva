@@ -1,7 +1,7 @@
 import React from 'react';
 import { Circle, Ellipse, Group, Label, Line, Path, Rect, RegularPolygon, Star, Tag, Text } from 'react-konva';
 import { DEFAULT_INK, isOpenShape, type ShapeNode } from '../../../engine/model/schema';
-import { konvaFontStyle, konvaTextDecoration, shadowProps, shadowSpreadProps, strokeColor, strokeDashProps, strokeWidth } from './shared';
+import { canvasFontFamily, konvaFontStyle, konvaTextDecoration, shadowProps, shadowSpreadProps, strokeColor, strokeDashProps, strokeWidth } from './shared';
 import { useFillProps } from './useFillProps';
 import { AlignedStroke, BackdropBlur, InnerShadow } from './ShapeEffects';
 import { shapePath2D } from './shapePath2D';
@@ -14,6 +14,7 @@ import { roughShape } from '../../../engine/model/roughShape';
 import { roughEllipse, roughPolyline, seedFrom } from '../../../engine/model/rough';
 import { ThemeService } from '../../../engine/ThemeService';
 import { readableOnSurface } from '../../../engine/model/color';
+import { useLiveTransform } from '../../../engine/model/liveTransformStore';
 
 interface Props {
   node: ShapeNode;
@@ -31,6 +32,7 @@ interface Props {
  * committed, and resizing a hexagon on one axis did nothing at all.
  */
 export const ShapeRenderer: React.FC<Props> = React.memo(({ node, showLabel }) => {
+  const liveTransform = useLiveTransform(node.id);
   const w = node.width;
   const h = node.height;
   // Gradient geometry is unit-space against the shape's *own* box, and the
@@ -47,7 +49,7 @@ export const ShapeRenderer: React.FC<Props> = React.memo(({ node, showLabel }) =
   const polygonFill = useFillProps(node.appearance, { x: -base / 2, y: -base / 2, width: base, height: base }, '#4F46E5');
   const stroke = strokeColor(node.appearance);
   const sw = strokeWidth(node.appearance);
-  const radius = node.appearance?.cornerRadius ?? 0;
+  const radius = liveTransform?.cornerRadius ?? node.appearance?.cornerRadius ?? 0;
   // Dash pattern and the cap that goes with it. Spread rather than passed as
   // two props, because a dotted pattern draws nothing without its round cap.
   const dashProps = strokeDashProps(node.appearance);
@@ -68,15 +70,27 @@ export const ShapeRenderer: React.FC<Props> = React.memo(({ node, showLabel }) =
   const offCentre = !open && align !== 'center' && Boolean(stroke) && sw > 0;
   const innerShadow = open ? undefined : node.appearance?.innerShadow;
   const backdropBlur = open ? 0 : (node.appearance?.backdropBlur ?? 0);
+
+  const effectiveNode = React.useMemo(() => {
+    if (liveTransform?.cornerRadius === undefined) return node;
+    return {
+      ...node,
+      appearance: {
+        ...(node.appearance ?? {}),
+        cornerRadius: radius,
+      },
+    };
+  }, [node, liveTransform?.cornerRadius, radius]);
+
   // Built once and shared by both effects: `ctx.clip(path)` and
   // `ctx.fill(path, 'evenodd')` each take a path *object*, and building it
   // twice is how a clip and a fill end up describing marginally different
   // shapes. Only built when something needs it.
   const path = React.useMemo(
-    () => (offCentre || innerShadow || backdropBlur > 0 ? shapePath2D(node) : null),
+    () => (offCentre || innerShadow || backdropBlur > 0 ? shapePath2D(effectiveNode) : null),
     // The outline depends on the node's form and box, not on its paint.
     // eslint-disable-next-line react-hooks/exhaustive-deps
-    [offCentre, Boolean(innerShadow), backdropBlur > 0, node.geometry, w, h, node.appearance?.cornerRadius]
+    [offCentre, Boolean(innerShadow), backdropBlur > 0, effectiveNode.geometry, w, h, radius]
   );
   const primitiveStroke = offCentre ? undefined : stroke;
 
@@ -246,7 +260,7 @@ export const ShapeRenderer: React.FC<Props> = React.memo(({ node, showLabel }) =
           height={h}
           text={node.text}
           fontSize={node.typography.fontSize}
-          fontFamily={node.typography.fontFamily}
+          fontFamily={canvasFontFamily(node.typography.fontFamily)}
           fontStyle={konvaFontStyle(node.typography)}
           textDecoration={konvaTextDecoration(node.typography)}
           fill={node.typography.color}
@@ -531,6 +545,7 @@ export const ShapeRenderer: React.FC<Props> = React.memo(({ node, showLabel }) =
     shape = <Rect width={w} height={h} {...rectFill} {...shadow} stroke={primitiveStroke} strokeWidth={sw} {...dashProps} cornerRadius={Math.max(0, radius)} />;
   } else if (
     node.geometry.kind === 'heart' ||
+    node.geometry.kind === 'squircle' ||
     // A rounded polygon or star is no longer a Konva primitive: its corners
     // have been filleted into real curves, so it is drawn from the path the
     // outline describes. Konva's own `cornerRadius` exists on `Rect` alone,
@@ -543,7 +558,7 @@ export const ShapeRenderer: React.FC<Props> = React.memo(({ node, showLabel }) =
     // the three cannot draw three different hearts.
     shape = (
       <Path
-        data={pathData(shapeToPath(node))}
+        data={pathData(shapeToPath(effectiveNode))}
         {...polygonFill}
         {...shadow}
         stroke={primitiveStroke}

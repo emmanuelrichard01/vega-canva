@@ -51,11 +51,10 @@ type BoxNode = {
  * same rectangle, and a negative width would put every port on the wrong side
  * and give `anchorFromPoint` a negative ratio.
  *
- * Rotation is **not** handled, here or anywhere in the connector system, and
- * that is a known gap rather than an oversight — a rotated node's ports still
- * sit on its unrotated bounding box. Fixing it means every consumer working in
- * the node's local frame and rotating the resolved point back out; it is worth
- * doing and it is not a small change.
+ * Rotation is handled through the outline system rather than here: `outlineOfNode`
+ * returns world-space rotated points, and the outline cache includes rotation in
+ * its key so it self-invalidates when a node is turned. The box itself stays
+ * axis-aligned because it is the storage frame, not the display frame.
  */
 export function boxOfNode(n: BoxNode): Box {
   return {
@@ -152,6 +151,7 @@ function outlineKey(node: AnyNode): string {
     Math.round(node.height),
     node.scaleX ?? 1,
     node.scaleY ?? 1,
+    node.rotation ?? 0,
     geo ? JSON.stringify(geo) : '',
   ].join('|');
 }
@@ -233,3 +233,78 @@ export function bodyOutlinePoints(node: AnyNode): number[] {
   const b = boxOfNode(node);
   return [b.x, b.y, b.x + b.width, b.y, b.x + b.width, b.y + b.height, b.x, b.y + b.height];
 }
+
+import { connectorBounds, connectorPoints } from './connector';
+import { capExtentPoints, connectorCaps } from './connectorEnds';
+import type { ConnectorNode } from './schema';
+
+/**
+ * Computes the derived bounding box of a connector from the current document objects.
+ */
+export function deriveConnectorBounds(
+  connector: ConnectorNode,
+  objects: Record<string, AnyNode>
+): Box | null {
+  const lookup = boxLookup(objects);
+  const attach = attachLookup(objects);
+  const world = connectorPoints(connector.from, connector.to, connector.routing, lookup, attach);
+  if (world.length < 4) return null;
+
+  const width = connector.appearance?.stroke?.width ?? 2;
+  const caps = connectorCaps(world, {
+    start: connector.endStart ?? 'none',
+    end: connector.endEnd ?? 'none',
+    strokeWidth: width,
+    scale: connector.endScale,
+  });
+  const rawBox = connectorBounds([
+    ...world,
+    ...capExtentPoints(caps.start),
+    ...capExtentPoints(caps.end),
+  ]);
+
+  return {
+    x: Math.round(rawBox.x),
+    y: Math.round(rawBox.y),
+    width: Math.round(rawBox.width),
+    height: Math.round(rawBox.height),
+  };
+}
+
+/**
+ * Finds all connectors attached to any of the modified nodes, and computes
+ * their updated bounding box patches.
+ */
+export function syncConnectedConnectors(
+  modifiedNodeIds: Set<string> | string[],
+  objects: Record<string, AnyNode>
+): Array<{ id: string; changes: { x: number; y: number; width: number; height: number } }> {
+  const idSet = modifiedNodeIds instanceof Set ? modifiedNodeIds : new Set(modifiedNodeIds);
+  const patches: Array<{ id: string; changes: { x: number; y: number; width: number; height: number } }> = [];
+
+  for (const node of Object.values(objects)) {
+    if (node.type !== 'connector') continue;
+    const c = node as ConnectorNode;
+    const attached = (c.from.nodeId && idSet.has(c.from.nodeId)) || (c.to.nodeId && idSet.has(c.to.nodeId));
+    if (!attached) continue;
+
+    const box = deriveConnectorBounds(c, objects);
+    if (!box) continue;
+
+    const drifted =
+      Math.abs(box.x - c.x) >= 2 ||
+      Math.abs(box.y - c.y) >= 2 ||
+      Math.abs(box.width - c.width) >= 2 ||
+      Math.abs(box.height - c.height) >= 2;
+
+    if (drifted) {
+      patches.push({
+        id: c.id,
+        changes: { x: box.x, y: box.y, width: box.width, height: box.height },
+      });
+    }
+  }
+
+  return patches;
+}
+

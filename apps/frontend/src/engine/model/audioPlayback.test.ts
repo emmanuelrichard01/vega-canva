@@ -1,7 +1,9 @@
 import { describe, expect, it } from 'vitest';
 import {
   barCountFor,
+  calculateOptimalAudioWidth,
   clamp01,
+  formatAuthorShortName,
   formatClock,
   fractionFromPointer,
   keyboardSeek,
@@ -179,3 +181,50 @@ describe('clamp01', () => {
     expect(clamp01(NaN)).toBe(0);
   });
 });
+
+describe('formatAuthorShortName', () => {
+  it('extracts first name from full name', () => {
+    expect(formatAuthorShortName('Emmanuel Richard')).toBe('Emmanuel');
+    expect(formatAuthorShortName('Sarah Connor')).toBe('Sarah');
+  });
+
+  it('keeps single names intact', () => {
+    expect(formatAuthorShortName('Alexander')).toBe('Alexander');
+  });
+
+  it('preserves titles and honorifics', () => {
+    expect(formatAuthorShortName('Dr. Jane Smith')).toBe('Dr. Jane');
+    expect(formatAuthorShortName('Prof. Charles Xavier')).toBe('Prof. Charles');
+    expect(formatAuthorShortName('Mr. Anderson')).toBe('Mr. Anderson');
+  });
+
+  it('handles emails gracefully', () => {
+    expect(formatAuthorShortName('emmanuel.richard@company.com')).toBe('emmanuel.richard');
+  });
+
+  it('falls back to Anonymous on empty/missing names', () => {
+    expect(formatAuthorShortName('')).toBe('Anonymous');
+    expect(formatAuthorShortName(undefined)).toBe('Anonymous');
+    expect(formatAuthorShortName('   ')).toBe('Anonymous');
+  });
+});
+
+describe('calculateOptimalAudioWidth', () => {
+  it('returns appropriate proportional widths for different name lengths', () => {
+    const shortWidth = calculateOptimalAudioWidth('Bob');
+    const normalWidth = calculateOptimalAudioWidth('Emmanuel Richard');
+    const longWidth = calculateOptimalAudioWidth('Christopher Bartholomew');
+
+    expect(shortWidth).toBeGreaterThanOrEqual(250);
+    expect(normalWidth).toBeGreaterThan(shortWidth);
+    expect(longWidth).toBeGreaterThan(normalWidth);
+    expect(longWidth).toBeLessThanOrEqual(340);
+  });
+
+  it('accounts for long audio timestamps', () => {
+    const shortAudio = calculateOptimalAudioWidth('Sarah', 15_000);
+    const longAudio = calculateOptimalAudioWidth('Sarah', 750_000); // 12:30
+    expect(longAudio).toBeGreaterThanOrEqual(shortAudio);
+  });
+});
+

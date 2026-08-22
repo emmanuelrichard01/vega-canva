@@ -209,6 +209,7 @@ const ALIGN_BUTTONS: Array<{ edge: AlignEdge; label: string; icon: React.ReactNo
 const SHAPE_CHOICES: Array<{ kind: ShapeKind; points?: number; label: string; icon: React.ReactNode }> = [
   { kind: 'rect', label: 'Rectangle', icon: <ShapeIcon kind="rect" size={16} /> },
   { kind: 'ellipse', label: 'Ellipse', icon: <ShapeIcon kind="ellipse" size={16} /> },
+  { kind: 'squircle', label: 'Squircle', icon: <ShapeIcon kind="squircle" size={16} /> },
   { kind: 'polygon', points: 3, label: 'Triangle', icon: <ShapeIcon kind="triangle" size={16} /> },
   { kind: 'polygon', points: 5, label: 'Pentagon', icon: <ShapeIcon kind="pentagon" size={16} /> },
   { kind: 'polygon', points: 6, label: 'Hexagon', icon: <ShapeIcon kind="hexagon" size={16} /> },

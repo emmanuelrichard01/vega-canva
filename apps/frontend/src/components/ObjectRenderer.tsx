@@ -30,6 +30,8 @@ import { TextRenderer } from './canvas/renderers/TextRenderer';
 import { caretAt, layoutText } from '../engine/text/layout';
 import { measurerFor } from '../engine/text/measure';
 import { applyTextCase } from '../engine/model/textCase';
+import { liveTransformStore } from '../engine/model/liveTransformStore';
+import { syncConnectedConnectors } from '../engine/model/connectorTargets';
 
 /**
  * Which character a click inside a text node landed on.
@@ -278,17 +280,29 @@ export const ObjectRenderer = React.memo(
         const isAlt = Boolean((e.evt as MouseEvent)?.altKey) && canDuplicate;
         altDragRef.current = isAlt;
 
+        const currentObj = useStore.getState().objects[objId];
+        const halfW = currentObj ? currentObj.width / 2 : 0;
+        const halfH = currentObj ? currentObj.height / 2 : 0;
+
         const selection = selectedIdsRef?.current;
         if (isSelected && selection && selection.length > 1) {
           const stage = e.target.getStage();
           const all = useStore.getState().objects;
           const siblings: Record<string, SiblingDragState> = {};
+          const batch: Array<[string, { x: number; y: number }]> = [
+            [objId, { x: e.target.x() - halfW, y: e.target.y() - halfH }],
+          ];
           selection
             .filter((sid) => sid !== objId)
             .forEach((sid) => {
               const sibling = all[sid];
               if (!sibling) return;
               const konvaNode = stage?.findOne('#' + sid);
+              const sHalfW = sibling.width / 2;
+              const sHalfH = sibling.height / 2;
+              const sx = konvaNode ? konvaNode.x() - sHalfW : sibling.x;
+              const sy = konvaNode ? konvaNode.y() - sHalfH : sibling.y;
+              batch.push([sid, { x: sx, y: sy }]);
               siblings[sid] = {
                 rawX: sibling.x,
                 rawY: sibling.y,
@@ -296,6 +310,7 @@ export const ObjectRenderer = React.memo(
                 nodeStartY: konvaNode ? konvaNode.y() : null,
               };
             });
+          liveTransformStore.setBatch(batch);
           groupDragRef.current = { startX: e.target.x(), startY: e.target.y(), siblings };
           if (isAlt) {
             altDragState.set(selection);
@@ -303,6 +318,7 @@ export const ObjectRenderer = React.memo(
             altDragState.clear();
           }
         } else {
+          liveTransformStore.set(objId, { x: e.target.x() - halfW, y: e.target.y() - halfH });
           groupDragRef.current = null;
           if (isAlt) {
             altDragState.set([objId]);
@@ -335,19 +351,36 @@ export const ObjectRenderer = React.memo(
           altDragState.clear();
         }
 
+        const currentObj = useStore.getState().objects[objId];
+        const halfW = currentObj ? currentObj.width / 2 : 0;
+        const halfH = currentObj ? currentObj.height / 2 : 0;
+
         if (groupDragRef.current) {
           const stage = e.target.getStage();
+          const all = useStore.getState().objects;
           const dx = e.target.x() - groupDragRef.current.startX;
           const dy = e.target.y() - groupDragRef.current.startY;
+          const batch: Array<[string, { x: number; y: number }]> = [
+            [objId, { x: e.target.x() - halfW, y: e.target.y() - halfH }],
+          ];
           Object.entries(groupDragRef.current.siblings).forEach(([sid, s]) => {
             if (s.nodeStartX === null || s.nodeStartY === null) return;
+            const sx = s.nodeStartX + dx;
+            const sy = s.nodeStartY + dy;
+            const sibling = all[sid];
+            const sHalfW = sibling ? sibling.width / 2 : 0;
+            const sHalfH = sibling ? sibling.height / 2 : 0;
+            batch.push([sid, { x: sx - sHalfW, y: sy - sHalfH }]);
             const konvaNode = stage?.findOne('#' + sid);
             if (konvaNode) {
-              konvaNode.x(s.nodeStartX + dx);
-              konvaNode.y(s.nodeStartY + dy);
+              konvaNode.x(sx);
+              konvaNode.y(sy);
             }
           });
+          liveTransformStore.setBatch(batch);
           stage?.batchDraw();
+        } else {
+          liveTransformStore.set(objId, { x: e.target.x() - halfW, y: e.target.y() - halfH });
         }
       },
       [canDuplicate, isSelected, objId, selectedIdsRef]
@@ -384,6 +417,12 @@ export const ObjectRenderer = React.memo(
         window.dispatchEvent(new CustomEvent('canvas-drag-end'));
         presenceManager.updateActivity(null);
         clearSnapGuides();
+        // Batch-clear all live transforms for the drag group in one notification pass.
+        const idsToClean = [objId];
+        if (groupDragRef.current) {
+          idsToClean.push(...Object.keys(groupDragRef.current.siblings));
+        }
+        liveTransformStore.deleteBatch(idsToClean);
 
         const current = useStore.getState().objects[objId];
         const halfW = current ? current.width / 2 : 0;
@@ -450,13 +489,27 @@ export const ObjectRenderer = React.memo(
             return;
           }
 
-          applyNodePatches([
-            ...Object.entries(groupDragRef.current.siblings).map(([sid, s]) => ({
-              id: sid,
-              changes: { x: s.rawX + dx, y: s.rawY + dy },
-            })),
-            { id: objId, changes: { x: e.target.x() - halfW, y: e.target.y() - halfH } },
-          ]);
+          const all = useStore.getState().objects;
+          const updatedObjects = { ...all };
+          const nodePatches: Array<{ id: string; changes: Record<string, unknown> }> = [];
+
+          Object.entries(groupDragRef.current.siblings).forEach(([sid, s]) => {
+            const newPos = { x: s.rawX + dx, y: s.rawY + dy };
+            nodePatches.push({ id: sid, changes: newPos });
+            if (updatedObjects[sid]) {
+              updatedObjects[sid] = { ...updatedObjects[sid], ...newPos };
+            }
+          });
+
+          const mainPos = { x: e.target.x() - halfW, y: e.target.y() - halfH };
+          nodePatches.push({ id: objId, changes: mainPos });
+          if (updatedObjects[objId]) {
+            updatedObjects[objId] = { ...updatedObjects[objId], ...mainPos };
+          }
+
+          const modifiedIds = [objId, ...Object.keys(groupDragRef.current.siblings)];
+          const connectorPatches = syncConnectedConnectors(modifiedIds, updatedObjects);
+          applyNodePatches([...nodePatches, ...connectorPatches]);
           groupDragRef.current = null;
           return;
         }
@@ -495,7 +548,20 @@ export const ObjectRenderer = React.memo(
         if (speed > 0.5 && onThrow) {
           onThrow(objId, e.target.x(), e.target.y(), velocity.current.x * 15, velocity.current.y * 15);
         } else {
-          updateNode(objId, { x: nextX, y: nextY });
+          const all = useStore.getState().objects;
+          const updatedObjects = {
+            ...all,
+            [objId]: { ...(current ?? {}), x: nextX, y: nextY } as AnyNode,
+          };
+          const connectorPatches = syncConnectedConnectors([objId], updatedObjects);
+          if (connectorPatches.length > 0) {
+            applyNodePatches([
+              { id: objId, changes: { x: nextX, y: nextY } },
+              ...connectorPatches,
+            ]);
+          } else {
+            updateNode(objId, { x: nextX, y: nextY });
+          }
 
           if (current?.type === 'frame') {
             moveFrameWithChildren(objId, nextX - current.x, nextY - current.y);
@@ -614,9 +680,7 @@ export const ObjectRenderer = React.memo(
     // Rotate and scale about the centre, the way every design tool does, by
     // placing the group at the centre and pulling its contents back by the
     // same offset. The node's stored x/y therefore remain its top-left corner
-    // while `e.target.x()` during a drag reports the centre — which is also
-    // exactly what the physics body expects, since Matter positions bodies by
-    // their centre of mass.
+    // while `e.target.x()` during a drag reports the centre.
     const cx = node.width / 2;
     const cy = node.height / 2;
 

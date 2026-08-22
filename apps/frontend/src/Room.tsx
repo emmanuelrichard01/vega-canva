@@ -10,7 +10,7 @@ import { parseDocumentExport } from './engine/export/DocumentImport';
 import { restoreDocument } from './engine/export/restoreDocument';
 import { Minimap } from './components/Minimap';
 import { PanelRail } from './components/workspace/PanelRail';
-import { Eye, Radar } from 'lucide-react';
+import { Eye, Radar, X } from 'lucide-react';
 import { ObjectContextToolbar } from './components/ObjectContextToolbar';
 import { PropertiesPanel } from './components/PropertiesPanel';
 import { LayersPanel } from './components/LayersPanel';
@@ -49,6 +49,7 @@ import {
   type ClipboardPayload,
 } from './engine/clipboard/clipboard';
 import { importSvg, looksLikeSvg } from './engine/clipboard/svgImport';
+import { createPastedTextNode } from './engine/clipboard/externalText';
 import { DEFAULT_TYPOGRAPHY, type AnyNode } from './engine/model/schema';
 import { cameraSystem } from './engine/CameraSystem';
 import { useBreakpoint } from './hooks/useBreakpoint';
@@ -491,18 +492,47 @@ export default function Room() {
     );
   };
 
+  const pasteText = (rawText: string, at?: { x: number; y: number }) => {
+    const centre = at ?? viewportCentre();
+    const node = createPastedTextNode(rawText, centre);
+    if (!node) return;
+    editor.createNode(node as never);
+    setSelectedIds([node.id]);
+    showToast('Pasted text');
+  };
+
   const contextActions = {
     copy: () => { void copySelection(); },
-    paste: () => {
+    paste: async () => {
       const at = contextTarget
         ? cameraSystem.screenToWorld(contextTarget.x, contextTarget.y)
         : cameraSystem.screenToWorld(window.innerWidth / 2, window.innerHeight / 2);
       const payload = clipboardRef.current;
-      if (!payload) return;
-      // Pasted relative to the click, keeping the group's own arrangement —
-      // stacking them all on the pointer would destroy the thing that made
-      // them worth copying together.
-      pasteObjects(payload, at);
+      if (payload) {
+        // Pasted relative to the click, keeping the group's own arrangement —
+        // stacking them all on the pointer would destroy the thing that made
+        // them worth copying together.
+        pasteObjects(payload, at);
+        return;
+      }
+      try {
+        const text = await navigator.clipboard?.readText?.();
+        if (!text) return;
+        const externalPayload = parseClipboard(text);
+        if (externalPayload) {
+          pasteObjects(externalPayload, at);
+          return;
+        }
+        if (looksLikeSvg(text)) {
+          pasteSvg(text);
+          return;
+        }
+        if (text.trim()) {
+          pasteText(text, at);
+        }
+      } catch {
+        // Clipboard read permission might be denied
+      }
     },
     /**
      * Duplicate is a copy and a paste that never touch the clipboard.
@@ -910,10 +940,17 @@ export default function Room() {
   // assign `document.body.className` wholesale, which also clobbered any other
   // class on <body>.
 
-  // Reflects AudioTool's actual recording state (the real, working
-  // implementation) so the "click anywhere to record" hint below gets out of
-  // the way once recording genuinely starts, instead of a second, disconnected
-  const { isRecording, micError, setMicError } = useCanvasAudioRecording();
+  // Reflects AudioTool's actual recording state. Once recording finishes, is cancelled,
+  // or errors out, automatically resets activeTool back to the default 'select' tool
+  // so the user doesn't accidentally trigger another recording on subsequent clicks.
+  const { isRecording, micError, setMicError } = useCanvasAudioRecording({
+    onStop: () => {
+      setActiveTool((current) => (current === 'audio' ? 'select' : current));
+    },
+    onError: () => {
+      setActiveTool((current) => (current === 'audio' ? 'select' : current));
+    },
+  });
 
   const fileInputRef = useRef<HTMLInputElement>(null);
   const selectTool = (tool: string) => {
@@ -1158,12 +1195,19 @@ export default function Room() {
         .filter((item) => item.kind === 'file')
         .map((item) => item.getAsFile())
         .filter((f): f is File => Boolean(f));
-      if (files.length === 0) return;
-      e.preventDefault();
-      // Pasted content has no position of its own, so it lands in the middle
-      // of what you are looking at — which is where you were looking when you
-      // decided to paste.
-      void placeFiles(files);
+      if (files.length > 0) {
+        e.preventDefault();
+        // Pasted content has no position of its own, so it lands in the middle
+        // of what you are looking at — which is where you were looking when you
+        // decided to paste.
+        void placeFiles(files);
+        return;
+      }
+
+      if (text.trim()) {
+        e.preventDefault();
+        pasteText(text);
+      }
     };
 
     /**
@@ -1356,7 +1400,7 @@ export default function Room() {
         setContextTarget={setContextTarget}
         diagramObjects={diagramObjects}
         contextActions={contextActions}
-        canPaste={clipboardRef.current !== null}
+        canPaste={true}
         showHelp={showHelp}
         setShowHelp={setShowHelp}
         diagramOpen={diagramOpen}
@@ -1444,6 +1488,26 @@ export default function Room() {
           commentUnread={unreadCount(comments, commentMarks, myAuthorId)}
           onTogglePanels={() => setPanelsOpen(v => !v)}
         />
+      )}
+
+      {/* RESTORE / TEMPLATE RECEIPT NOTICE */}
+      {restoreNotice && (
+        <div
+          className={`restore-notice ${restoreNotice.ok ? 'is-ok' : 'is-error'}${
+            noticeLeaving ? ' is-leaving' : ''
+          }`}
+          role="status"
+        >
+          <span>{restoreNotice.message}</span>
+          <button
+            type="button"
+            className="restore-notice__close"
+            onClick={() => setRestoreNotice(null)}
+            aria-label="Dismiss notice"
+          >
+            <X size={14} />
+          </button>
+        </div>
       )}
 
       {/* TIMELINE / SESSION REPLAY OVERLAY */}

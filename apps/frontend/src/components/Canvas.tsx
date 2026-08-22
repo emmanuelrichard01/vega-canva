@@ -1261,8 +1261,33 @@ export const Canvas: React.FC<CanvasProps> = ({ activeTool, selectedIds, setSele
           <Group name={EXPORT_CHROME}>{toolManager.renderOverlay(overlayState)}</Group>
         </Layer>
       </Stage>
-      <PresenceRenderer />
-      <GestureOverlay />
+      {/* Canvas-space DOM overlays: positioned to match the Stage's exact coordinate origin (including rulerInset). */}
+      <div
+        className="canvas-overlays"
+        style={{
+          position: 'absolute',
+          top: rulerInset,
+          left: rulerInset,
+          width: Math.max(1, dimensions.width - rulerInset),
+          height: Math.max(1, dimensions.height - rulerInset),
+          pointerEvents: 'none',
+          overflow: 'hidden',
+        }}
+      >
+        <PresenceRenderer />
+        <GestureOverlay />
+        <CommentsOverlay
+          comments={comments}
+          objects={objects}
+          onAddComment={handleAddComment}
+          onAddReply={handleAddReply}
+          onEditMessage={handleEditMessage}
+          onDeleteMessage={handleDeleteMessage}
+          onResolveComment={handleResolveComment}
+          currentAuthorId={currentAuthorId}
+        />
+      </div>
+
       {overlayState?.type === 'audio-recording' && (
         <AudioRecordingHUD
           elapsedMs={overlayState.elapsedMs || 0}
@@ -1275,16 +1300,6 @@ export const Canvas: React.FC<CanvasProps> = ({ activeTool, selectedIds, setSele
           onStop={() => toolManager.handlePointerDown({ target: { getStage: () => stageRef.current } })}
         />
       )}
-      <CommentsOverlay
-        comments={comments}
-        objects={objects}
-        onAddComment={handleAddComment}
-        onAddReply={handleAddReply}
-        onEditMessage={handleEditMessage}
-        onDeleteMessage={handleDeleteMessage}
-        onResolveComment={handleResolveComment}
-        currentAuthorId={currentAuthorId}
-      />
       
     </div>
   );

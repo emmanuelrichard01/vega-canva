@@ -158,3 +158,60 @@ export function normalizeWaveform(peaks: number[], bars = 40): number[] {
   if (!(loudest > 0)) return new Array(usable.length).fill(0.12);
   return usable.map((p) => clamp01(p / loudest));
 }
+
+const HONORIFICS = new Set(['dr.', 'dr', 'mr.', 'mr', 'mrs.', 'mrs', 'ms.', 'ms', 'prof.', 'prof', 'rev.', 'rev']);
+
+/**
+ * Extracts a concise, friendly first name or short name for voice note badges.
+ *
+ * For example:
+ * - "Emmanuel Richard" -> "Emmanuel"
+ * - "Dr. Jane Smith" -> "Dr. Jane"
+ * - "Sarah Connor" -> "Sarah"
+ * - "user.name@example.com" -> "user.name"
+ * - "" / undefined -> "Anonymous"
+ */
+export function formatAuthorShortName(fullName: string | undefined): string {
+  if (!fullName || !fullName.trim()) return 'Anonymous';
+  const trimmed = fullName.trim();
+  // If it's an email, take the user portion before '@'
+  if (trimmed.includes('@')) {
+    const user = trimmed.split('@')[0];
+    if (user) return user;
+  }
+  const parts = trimmed.split(/\s+/);
+  if (parts.length === 1) return parts[0];
+  if (HONORIFICS.has(parts[0].toLowerCase()) && parts.length > 1) {
+    return `${parts[0]} ${parts[1]}`;
+  }
+  return parts[0];
+}
+
+/** Minimum width for an audio card on the canvas. */
+export const MIN_AUDIO_WIDTH = 250;
+/** Maximum default width for an audio card when created dynamically. */
+export const MAX_DEFAULT_AUDIO_WIDTH = 340;
+
+/**
+ * Calculates the optimal width for a voice note player based on author name length
+ * and clip duration, so that the name, waveform, and controls display with balanced proportions.
+ */
+export function calculateOptimalAudioWidth(name: string | undefined, durationMs?: number): number {
+  const shortName = formatAuthorShortName(name);
+  // ~8px per character for semibold 12px sans text + 13px for indicator dot & gap
+  const nameWidth = Math.max(32, shortName.length * 8 + 13);
+  // Timestamp width: ~68px for m:ss, ~80px for mm:ss
+  const timeWidth = durationMs && durationMs >= 600000 ? 80 : 68;
+  const headerNeededWidth = nameWidth + 12 + timeWidth;
+
+  // Fixed controls: padding(20) + play(34) + gap(8) + save(24) + gap(6) + speed(28) = 120px
+  const fixedChromeWidth = 120;
+  // Minimum comfortable width for the waveform scrubber
+  const minWaveformWidth = 110;
+
+  const targetBodyWidth = Math.max(minWaveformWidth, headerNeededWidth);
+  const totalCalculated = fixedChromeWidth + targetBodyWidth;
+
+  return Math.max(MIN_AUDIO_WIDTH, Math.min(MAX_DEFAULT_AUDIO_WIDTH, Math.round(totalCalculated)));
+}
+

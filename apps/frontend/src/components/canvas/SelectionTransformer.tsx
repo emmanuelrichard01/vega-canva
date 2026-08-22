@@ -1,7 +1,7 @@
 import React, { useEffect, useRef, useState } from 'react';
 import { Group, Line, Rect, Text, Transformer } from 'react-konva';
 import Konva from 'konva';
-import { updateNode } from '../../engine/document';
+import { applyNodePatches, updateNode } from '../../engine/document';
 import { EXPORT_CHROME } from '../../engine/export/chrome';
 import { useStore } from '../../hooks/useStore';
 import { resizeGridTo } from '../../engine/grid/gridApply';
@@ -10,6 +10,12 @@ import type { Box } from '../../engine/grid/gridBuild';
 import { cursorForAnchor } from '../../engine/interaction/resizeCursor';
 import { scalePathGeometry } from '../../engine/model/pathGeometry';
 import { isLineLike } from '../../engine/model/lineEnds';
+import { liveTransformStore } from '../../engine/model/liveTransformStore';
+import { syncConnectedConnectors } from '../../engine/model/connectorTargets';
+import { layoutText } from '../../engine/text/layout';
+import { measurerFor } from '../../engine/text/measure';
+import { applyTextCase } from '../../engine/model/textCase';
+import type { AnyNode } from '../../engine/model/schema';
 
 interface Props {
   selectedIds: string[];
@@ -122,6 +128,7 @@ export const SelectionTransformer: React.FC<Props> = ({ selectedIds, stageRef })
           .filter((n): n is Konva.Node => Boolean(n));
 
     tr.nodes(nodes);
+    tr.update();
     tr.getLayer()?.batchDraw();
 
     /**
@@ -164,7 +171,127 @@ export const SelectionTransformer: React.FC<Props> = ({ selectedIds, stageRef })
    * whole bug. A ref, because it must survive the renders a live transform
    * causes and is never read during one.
    */
+function rotatePoint(x: number, y: number, rad: number): { x: number; y: number } {
+  const cos = Math.cos(rad);
+  const sin = Math.sin(rad);
+  return {
+    x: x * cos - y * sin,
+    y: x * sin + y * cos,
+  };
+}
+
+/**
+ * Given the handle being dragged, the starting node geometry, and new width/height,
+ * computes the new top-left coordinates so that the opposite edge/corner stays strictly pinned in world space.
+ */
+function computePinnedBox(
+  anchor: string,
+  start: { x: number; y: number; width: number; height: number; rotation?: number },
+  newW: number,
+  newH: number
+): { x: number; y: number; cx: number; cy: number } {
+  const rad = ((start.rotation ?? 0) * Math.PI) / 180;
+  const w0 = start.width;
+  const h0 = start.height;
+  const cx0 = start.x + w0 / 2;
+  const cy0 = start.y + h0 / 2;
+
+  let localPinnedX = 0;
+  let localPinnedY = 0;
+  let newLocalPinnedX = 0;
+  let newLocalPinnedY = 0;
+
+  switch (anchor) {
+    case 'middle-right':
+    case 'right-center':
+      localPinnedX = -w0 / 2;
+      localPinnedY = 0;
+      newLocalPinnedX = -newW / 2;
+      newLocalPinnedY = 0;
+      break;
+
+    case 'middle-left':
+    case 'left-center':
+      localPinnedX = w0 / 2;
+      localPinnedY = 0;
+      newLocalPinnedX = newW / 2;
+      newLocalPinnedY = 0;
+      break;
+
+    case 'top-center':
+    case 'top-middle':
+      localPinnedX = 0;
+      localPinnedY = h0 / 2;
+      newLocalPinnedX = 0;
+      newLocalPinnedY = newH / 2;
+      break;
+
+    case 'bottom-center':
+    case 'bottom-middle':
+      localPinnedX = 0;
+      localPinnedY = -h0 / 2;
+      newLocalPinnedX = 0;
+      newLocalPinnedY = -newH / 2;
+      break;
+
+    case 'top-left':
+      localPinnedX = w0 / 2;
+      localPinnedY = h0 / 2;
+      newLocalPinnedX = newW / 2;
+      newLocalPinnedY = newH / 2;
+      break;
+
+    case 'top-right':
+      localPinnedX = -w0 / 2;
+      localPinnedY = h0 / 2;
+      newLocalPinnedX = -newW / 2;
+      newLocalPinnedY = newH / 2;
+      break;
+
+    case 'bottom-left':
+      localPinnedX = w0 / 2;
+      localPinnedY = -h0 / 2;
+      newLocalPinnedX = newW / 2;
+      newLocalPinnedY = -newH / 2;
+      break;
+
+    case 'bottom-right':
+      localPinnedX = -w0 / 2;
+      localPinnedY = -h0 / 2;
+      newLocalPinnedX = -newW / 2;
+      newLocalPinnedY = -newH / 2;
+      break;
+
+    default:
+      return {
+        x: cx0 - newW / 2,
+        y: cy0 - newH / 2,
+        cx: cx0,
+        cy: cy0,
+      };
+  }
+
+  const pinnedWorldRotated = rotatePoint(localPinnedX, localPinnedY, rad);
+  const pinnedWorldX = cx0 + pinnedWorldRotated.x;
+  const pinnedWorldY = cy0 + pinnedWorldRotated.y;
+
+  const newPinnedWorldRotated = rotatePoint(newLocalPinnedX, newLocalPinnedY, rad);
+  const cxNew = pinnedWorldX - newPinnedWorldRotated.x;
+  const cyNew = pinnedWorldY - newPinnedWorldRotated.y;
+
+  return {
+    x: cxNew - newW / 2,
+    y: cyNew - newH / 2,
+    cx: cxNew,
+    cy: cyNew,
+  };
+}
+
+  /**
+   * The selection's bounds and per-node snapshot when the gesture began.
+   */
   const gestureStart = useRef<{ ids: string[]; box: Box } | null>(null);
+  const initialNodesMap = useRef<Record<string, AnyNode>>({});
 
   const handleTransformStart = () => {
     window.dispatchEvent(new CustomEvent('canvas-drag-start'));
@@ -173,6 +300,13 @@ export const SelectionTransformer: React.FC<Props> = ({ selectedIds, stageRef })
     const before = useStore.getState().objects;
     const ids = (trRef.current?.nodes() ?? []).map((n) => n.id());
     const boxes = ids.map((id) => before[id]).filter(Boolean);
+
+    const startMap: Record<string, AnyNode> = {};
+    boxes.forEach((n) => {
+      startMap[n.id] = { ...n };
+    });
+    initialNodesMap.current = startMap;
+
     gestureStart.current = boxes.length === 0 ? null : {
       ids,
       box: {
@@ -193,6 +327,26 @@ export const SelectionTransformer: React.FC<Props> = ({ selectedIds, stageRef })
     const h = Math.round(tr.height());
     const deg = Math.round(((tr.rotation() % 360) + 360) % 360);
 
+    const store = useStore.getState().objects;
+    tr.nodes().forEach((konvaNode) => {
+      const id = konvaNode.id();
+      const node = store[id];
+      const startNode = initialNodesMap.current[id] || node;
+      if (!node || !startNode) return;
+      const scaleX = konvaNode.scaleX();
+      const scaleY = konvaNode.scaleY();
+      const width = Math.max(MIN_SIZE, startNode.width * Math.abs(scaleX));
+      const height = Math.max(MIN_SIZE, startNode.height * Math.abs(scaleY));
+      const pinned = computePinnedBox(anchor, startNode, width, height);
+      liveTransformStore.set(id, {
+        x: pinned.x,
+        y: pinned.y,
+        width,
+        height,
+        rotation: konvaNode.rotation(),
+      });
+    });
+
     const text = isRotating ? `${deg}°` : `${w} × ${h}`;
     setLiveBadge({
       text,
@@ -208,6 +362,10 @@ export const SelectionTransformer: React.FC<Props> = ({ selectedIds, stageRef })
     const tr = trRef.current;
     if (!tr) return;
 
+    // Batch-clear all live transforms before CRDT commit so the connector
+    // writeback effect doesn't see stale transient data.
+    liveTransformStore.deleteBatch(tr.nodes().map((n) => n.id()));
+
     const store = useStore.getState().objects;
     /** Where the selection lands, accumulated from the values being written. */
     const landing = { minX: Infinity, minY: Infinity, maxX: -Infinity, maxY: -Infinity };
@@ -218,199 +376,110 @@ export const SelectionTransformer: React.FC<Props> = ({ selectedIds, stageRef })
     const anchor = (tr.getActiveAnchor() || '').split(' ')[0];
     const draggedCorner = CORNERS.has(anchor);
 
+    const nodePatches: Array<{ id: string; changes: Record<string, unknown> }> = [];
+    const updatedObjects: Record<string, AnyNode> = { ...store };
+    const modifiedIds: string[] = [];
+
     tr.nodes().forEach((konvaNode) => {
       const id = konvaNode.id();
       const node = store[id];
-      if (!node) return;
+      const startNode = initialNodesMap.current[id] || node;
+      if (!node || !startNode) return;
 
       const scaleX = konvaNode.scaleX();
       const scaleY = konvaNode.scaleY();
 
-      // Fold the transient scale into real dimensions rather than persisting a
-      // scale factor — otherwise stroke widths, corner radii and text would
-      // all inherit the distortion.
-      const width = Math.max(MIN_SIZE, node.width * Math.abs(scaleX));
-      const height = Math.max(MIN_SIZE, node.height * Math.abs(scaleY));
+      // Reset scale on Konva node
+      konvaNode.scaleX(1);
+      konvaNode.scaleY(1);
+
+      let finalW = Math.max(MIN_SIZE, startNode.width * Math.abs(scaleX));
+      let finalH = Math.max(MIN_SIZE, startNode.height * Math.abs(scaleY));
 
       /**
        * Resizing a text box changes what kind of box it is.
-       *
-       * An auto-width text node takes its width from its own content — the
-       * renderer gives Konva no width at all — so writing a new width does
-       * nothing to it, and the derived-bounds sync then measures the content
-       * and writes the old number straight back. From the user's side the
-       * handles simply did not work on text.
-       *
-       * The fix is the one every vector editor uses, because it is the only
-       * one that makes both gestures meaningful:
-       *
-       *  - **An edge** sets a width and the text wraps inside it. The box
-       *    stops being auto-width and becomes auto-height, which is exactly
-       *    what "I want it this wide" means.
-       *  - **A corner** scales the type itself. Stretching letterforms is
-       *    almost never what someone wants from a corner drag, and a text box
-       *    with no interior has nothing else for a corner to do.
        */
       const textMode: Record<string, unknown> = {};
-      if (node.type === 'text') {
+      if (node.type === 'text' && startNode.type === 'text') {
         if (draggedCorner && uniformDrag(scaleX, scaleY)) {
-          // A corner drag that kept the proportions is "make this bigger", and
-          // the honest way to do that with type is to set a larger size rather
-          // than magnify the letterforms. A drag that *changed* the proportions
-          // is a distortion and is handled below, by keeping the scale.
           const factor = Math.abs(scaleX);
-          textMode.typography = {
-            ...node.typography,
-            /**
-             * Rounded to a whole point, and clamped.
-             *
-             * A drag produces an arbitrary real factor, so `40 * 1.0083…` was
-             * stored verbatim and the size field then read `40.33333333333333`.
-             * Nobody sets type in thirty-thirds of a point, no renderer resolves
-             * one, and a control showing sixteen digits reads as broken software
-             * — the number is the only part of this the user ever sees.
-             */
-            fontSize: Math.round(Math.max(4, Math.min(400, node.typography.fontSize * factor))),
-          };
-          // The height follows the type, so it is left to be re-derived.
+          const newFontSize = Math.round(Math.max(4, Math.min(400, startNode.typography.fontSize * factor)));
+          const tempTypo = { ...startNode.typography, fontSize: newFontSize };
+          const layout = layoutText({
+            text: applyTextCase(node.text, tempTypo.textCase),
+            wrap: startNode.resize === 'width' ? 'none' : 'word',
+            width: startNode.width * factor,
+            fontSize: newFontSize,
+            lineHeight: tempTypo.lineHeight,
+            letterSpacing: tempTypo.letterSpacing,
+            paragraphSpacing: tempTypo.paragraphSpacing,
+            align: tempTypo.align,
+            verticalAlign: tempTypo.verticalAlign,
+            measure: measurerFor(tempTypo),
+          });
+          textMode.typography = tempTypo;
+          finalW = Math.max(MIN_SIZE, Math.ceil(layout.width));
+          finalH = Math.max(MIN_SIZE, Math.ceil(layout.height));
         } else if (!draggedCorner && VERTICAL_EDGES.has(anchor)) {
-          /**
-           * A vertical edge imposes a height, and imposing a height *is* what
-           * `fixed` means.
-           *
-           * Without this the top and bottom handles did nothing at all, and
-           * did it invisibly: the drag wrote a height, and `TextRenderer`'s
-           * derived-bounds effect measured the content a moment later and
-           * wrote the old one straight back over it. The box sprang back a
-           * frame after release, which reads as the handle being broken
-           * rather than as the box being auto-height.
-           *
-           * Switching the mode is the same move the horizontal edge already
-           * makes for auto-width, and for the same reason: dragging the edge
-           * of a box that derives that dimension is a statement that you want
-           * to control it.
-           */
           textMode.resize = 'fixed';
-        } else if (node.resize === 'width') {
-          // A horizontal edge sets the wrap width, so an auto-width box — which
-          // has no width of its own to set — becomes an auto-height one.
+          finalW = startNode.width;
+          finalH = Math.max(MIN_SIZE, startNode.height * Math.abs(scaleY));
+        } else {
+          // Horizontal resize or box stretch: auto-wrap paragraph text
+          finalW = Math.max(MIN_SIZE, startNode.width * Math.abs(scaleX));
+          const layout = layoutText({
+            text: applyTextCase(node.text, startNode.typography.textCase),
+            wrap: 'word',
+            width: finalW,
+            fontSize: startNode.typography.fontSize,
+            lineHeight: startNode.typography.lineHeight,
+            letterSpacing: startNode.typography.letterSpacing,
+            paragraphSpacing: startNode.typography.paragraphSpacing,
+            align: startNode.typography.align,
+            verticalAlign: startNode.typography.verticalAlign,
+            measure: measurerFor(startNode.typography),
+          });
           textMode.resize = 'height';
+          finalH = Math.max(MIN_SIZE, Math.ceil(layout.height));
         }
       }
 
       /**
        * A path has to resize its own outline; nothing else describes its size.
-       *
-       * Every other type derives what it draws from `width`/`height` — a rect
-       * is drawn at the box, an ellipse takes its radii from it, a polygon is
-       * stretched to it. A path's shape lives in `geometry`, in coordinates
-       * relative to the node origin, and the renderer draws those numbers
-       * verbatim. So writing a new box and stopping left a resized path
-       * **drawing at exactly its old size** while the layers panel, the radar,
-       * the marquee and the snapping all reported the new one — the object was
-       * genuinely resized everywhere except on the canvas.
-       *
-       * `fitPathToBox` measures the geometry rather than applying the drag's
-       * scale factor, which makes it idempotent and lets it repair a path that
-       * an earlier resize already left behind. It returns null when the
-       * geometry already fits, so an ordinary move writes no outline.
        */
       const pathMode: Record<string, unknown> = {};
       if (node.type === 'path') {
-        /**
-         * Scaled by the factors the drag actually applied, not fitted to a box.
-         *
-         * `fitPathToBox` was the first attempt and it is the more elegant idea —
-         * measure the geometry, divide into the target — but it only works while
-         * `node.width` and the geometry's own extent agree, and for a freehand
-         * stroke they never did: `PenTool` frames the node by the centreline
-         * padded by a whole nib, while the stored outline extends about half a
-         * nib. Every freehand resize therefore scaled by the ratio of two
-         * different measurements and the stroke jumped.
-         *
-         * Multiplying by the drag's own `scaleX`/`scaleY` cannot mismatch,
-         * because it never consults the box at all. The geometry and the box are
-         * then both scaled by the same pair of numbers, which is what keeps them
-         * describing the same object.
-         */
         const scaled = scalePathGeometry(node.geometry, Math.abs(scaleX), Math.abs(scaleY));
         if (scaled !== node.geometry) pathMode.geometry = scaled;
       }
 
-      /**
-       * Text keeps a non-uniform scale rather than folding it away.
-       *
-       * Every other type folds the drag's scale into `width`/`height` and resets
-       * to a bare sign, because a persisted scale would distort strokes, corner
-       * radii and type along with the box. For text that reasoning inverts:
-       * distorting the type **is** the gesture. Illustrator shears and stretches
-       * type with its bounding box and Photoshop's Free Transform does the same;
-       * a text box that silently snapped back to its own proportions on release
-       * is the thing being reported here.
-       *
-       * A *uniform* corner drag still scales the font instead, because that is
-       * what people mean by making text bigger, and it keeps the type honest at
-       * its new size rather than magnifying a bitmap. Only a drag that changes
-       * the aspect is treated as a distortion, and it is kept as `scaleX`/
-       * `scaleY` on the node — non-destructive, so setting them back to 1
-       * restores the original letterforms exactly.
-       */
-      /**
-       * When a text node keeps its distortion instead of folding it away.
-       *
-       * **Not on a corner drag**, which was the first attempt and could never
-       * have worked: Konva's Transformer sets `keepRatio` on corner anchors by
-       * default, so a corner always reports `scaleX === scaleY` and the
-       * "non-uniform" branch was unreachable. That is why this kept reading as
-       * unfixed — the code was correct and the gesture could not reach it.
-       *
-       * The gate is the box mode instead, which is both reachable and
-       * meaningful. `width` and `height` derive their dimension from the text,
-       * so distorting them is a contradiction — but `fixed` means "I control
-       * both dimensions", and once both are imposed there is nothing left for a
-       * drag to mean *except* filling the box you gave it. Edge handles supply
-       * the one-axis scale that actually distorts; a corner still comes through
-       * uniform and is handled above as a font-size change, which keeps type
-       * crisp rather than magnifying it.
-       */
-      const stretched = node.type === 'text' && node.resize === 'fixed' && !uniformDrag(scaleX, scaleY);
-      const finalScaleX = stretched ? scaleX : Math.sign(scaleX) || 1;
-      const finalScaleY = stretched ? scaleY : Math.sign(scaleY) || 1;
-      // A distorted text node keeps its own box; the scale is what changed.
-      const boxW = stretched ? node.width : width;
-      const boxH = stretched ? node.height : height;
+      const pinned = computePinnedBox(anchor, startNode, finalW, finalH);
 
-      /**
-       * The group's visual centre, back to an unscaled top-left.
-       *
-       * Halved **without** the scale. `ObjectRenderer` sets `offsetX` to
-       * `width / 2` and Konva applies an offset after scaling, so the point the
-       * group is positioned by is the centre of the *unscaled* box — multiplying
-       * by the scale here moved every distorted node by half its own growth,
-       * which is the small position shift that came with a stretch.
-       */
-      updateNode(id, {
+      const changes = {
         ...textMode,
         ...pathMode,
-        x: konvaNode.x() - boxW / 2,
-        y: konvaNode.y() - boxH / 2,
-        width: boxW,
-        height: boxH,
-        rotation: konvaNode.rotation(),
-        // A negative scale is a flip; the sign is preserved either way, and the
-        // magnitude survives only where it is the point of the gesture.
-        scaleX: finalScaleX,
-        scaleY: finalScaleY,
-      });
+        x: pinned.x,
+        y: pinned.y,
+        width: finalW,
+        height: finalH,
+        rotation: startNode.rotation ?? node.rotation,
+        scaleX: 1,
+        scaleY: 1,
+      };
 
-      landing.minX = Math.min(landing.minX, konvaNode.x() - boxW / 2);
-      landing.minY = Math.min(landing.minY, konvaNode.y() - boxH / 2);
-      landing.maxX = Math.max(landing.maxX, konvaNode.x() + boxW / 2);
-      landing.maxY = Math.max(landing.maxY, konvaNode.y() + boxH / 2);
+      nodePatches.push({ id, changes });
+      updatedObjects[id] = { ...node, ...changes } as AnyNode;
+      modifiedIds.push(id);
 
-      konvaNode.scaleX(finalScaleX);
-      konvaNode.scaleY(finalScaleY);
+      landing.minX = Math.min(landing.minX, pinned.x);
+      landing.minY = Math.min(landing.minY, pinned.y);
+      landing.maxX = Math.max(landing.maxX, pinned.x + finalW);
+      landing.maxY = Math.max(landing.maxY, pinned.y + finalH);
     });
+
+    initialNodesMap.current = {};
+    const connectorPatches = syncConnectedConnectors(modifiedIds, updatedObjects);
+    applyNodePatches([...nodePatches, ...connectorPatches]);
 
     /**
      * A grid re-lays itself rather than staying scaled.

@@ -133,6 +133,8 @@ export const SHAPE_KIND_ALIASES: Record<string, { kind: ShapeKind; sides?: numbe
   oval: { kind: 'ellipse' },
   star: { kind: 'star' },
   heart: { kind: 'heart' },
+  squircle: { kind: 'squircle' },
+  superellipse: { kind: 'squircle' },
   line: { kind: 'line' },
   arrow: { kind: 'arrow' },
   polygon: { kind: 'polygon' },

@@ -1,9 +1,11 @@
 import { nanoid } from 'nanoid';
 import type { Tool, ToolContext } from './Tool';
-import { localAuthor } from '../document';
+import { localAuthor, roomId } from '../document';
 import { presenceManager } from '../presence/PresenceManager';
 import { meterLevel, rmsLevel, isSilent } from '../model/audioLevel';
-import { resampleWaveform } from '../model/audioPlayback';
+import { calculateOptimalAudioWidth, resampleWaveform } from '../model/audioPlayback';
+import { mediaUploadUrl } from '../../utils/endpoints';
+import { queueOfflineMedia } from '../../utils/offlineMediaQueue';
 
 /**
  * Hard stop for a single take.
@@ -389,38 +391,64 @@ export class AudioTool implements Tool {
       const recordedType = this.mediaRecorder?.mimeType || 'audio/webm';
       const audioBlob = new Blob(this.audioChunks, { type: recordedType });
 
-      const reader = new FileReader();
-      reader.readAsDataURL(audioBlob);
-      reader.onloadend = () => {
-        const base64data = reader.result as string;
-        const { x, y } = this.dropPoint;
+      const { x, y } = this.dropPoint;
+      const objId = nanoid();
+      const localUrl = URL.createObjectURL(audioBlob);
+      const ext = recordedType.includes('mp4') ? 'mp4' : 'webm';
 
-        ctx.editor.createNode({
-          id: nanoid(),
-          type: 'audio',
-          x,
-          y,
-          width: 240,
-          height: 64,
-          src: base64data,
-          durationMs,
-          /**
-           * Resampled by keeping the loudest of each bucket, using the same
-           * function the player uses to fit a waveform to its width.
-           *
-           * The recorder used to take every Nth sample instead. That is
-           * aliasing: a peak lands between two kept samples and simply
-           * disappears, so the stored shape was a random subset of the take
-           * rather than a summary of it — and the tool already had the correct
-           * resampler sitting one import away, written for the other half of
-           * the same problem.
-           */
-          waveform: resampleWaveform(peaks, STORED_PEAKS),
-          author: localAuthor(),
+      let resolvedUrl = localUrl;
+      let uploadSucceeded = false;
+
+      try {
+        const formData = new FormData();
+        formData.append('media', audioBlob, `voice-note.${ext}`);
+
+        const res = await fetch(mediaUploadUrl(roomId), {
+          method: 'POST',
+          body: formData,
         });
+        if (res.ok) {
+          const data = await res.json();
+          if (data.url) {
+            resolvedUrl = data.url;
+            uploadSucceeded = true;
+          }
+        }
+      } catch (err) {
+        console.warn('Network upload failed, queuing voice note for offline sync...', err);
+      }
 
-        this.releaseHardware();
-      };
+      const author = localAuthor();
+      const width = calculateOptimalAudioWidth(author.name, durationMs);
+
+      ctx.editor.createNode({
+        id: objId,
+        type: 'audio',
+        x,
+        y,
+        width,
+        height: 64,
+        src: resolvedUrl,
+        durationMs,
+        waveform: resampleWaveform(peaks, STORED_PEAKS),
+        author,
+      });
+
+      if (uploadSucceeded) {
+        URL.revokeObjectURL(localUrl);
+      } else {
+        queueOfflineMedia({
+          id: nanoid(),
+          objectId: objId,
+          roomId,
+          fileBlob: audioBlob,
+          fileName: `voice-note.${ext}`,
+          fileType: recordedType,
+          mediaType: 'audio',
+        });
+      }
+
+      this.releaseHardware();
     };
 
     this.mediaRecorder.stop();

@@ -8,6 +8,7 @@ import {
   AlignHorizontalSpaceAround, AlignVerticalSpaceAround,
 } from 'lucide-react';
 import type { AnyNode, ShapeKind } from '../engine/model/schema';
+import { ShapeIcon } from './workspace/shapeIcons';
 import { resolveAffordances, type AffordanceId } from '../engine/selection/affordances';
 import type { AlignEdge, DistributeAxis } from '../engine/model/align';
 
@@ -61,6 +62,7 @@ interface Props {
 const SWAP_CHOICES: Array<{ kind: ShapeKind; points?: number; label: string; icon: React.ReactNode }> = [
   { kind: 'rect', label: 'Rectangle', icon: <Square size={15} /> },
   { kind: 'ellipse', label: 'Ellipse', icon: <Circle size={15} /> },
+  { kind: 'squircle', label: 'Squircle', icon: <ShapeIcon kind="squircle" size={15} /> },
   { kind: 'polygon', points: 3, label: 'Triangle', icon: <Triangle size={15} /> },
   { kind: 'polygon', points: 6, label: 'Hexagon', icon: <Shapes size={15} /> },
   { kind: 'star', points: 5, label: 'Star', icon: <Star size={15} /> },

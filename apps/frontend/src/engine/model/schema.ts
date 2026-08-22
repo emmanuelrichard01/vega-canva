@@ -681,6 +681,7 @@ export interface BaseNode {
 export const SHAPE_KIND_VALUES = [
   'rect',
   'ellipse',
+  'squircle',
   'polygon',
   'star',
   'heart',

@@ -12,7 +12,7 @@
 
 import Konva from 'konva';
 import type { Typography } from '../model/schema';
-import { konvaFontStyle } from '../../components/canvas/renderers/shared';
+import { canvasFontFamily, konvaFontStyle } from '../../components/canvas/renderers/shared';
 import type { TextMeasurer } from './layout';
 
 /**
@@ -26,7 +26,7 @@ let probe: Konva.Text | null = null;
 
 function probeFor(typography: Typography): Konva.Text {
   probe ??= new Konva.Text({});
-  probe.fontFamily(typography.fontFamily);
+  probe.fontFamily(canvasFontFamily(typography.fontFamily));
   probe.fontSize(typography.fontSize);
   probe.fontStyle(konvaFontStyle(typography));
   // Tracking is added by the layout, not here: `getTextWidth` would apply it
@@ -46,6 +46,10 @@ function probeFor(typography: Typography): Konva.Text {
 export function measurerFor(typography: Typography): TextMeasurer {
   return (text: string) => {
     if (text === '') return 0;
+    if (typeof document === 'undefined') {
+      // Headless / Node.js test environment fallback when no DOM canvas is available
+      return text.length * typography.fontSize * 0.55;
+    }
     const p = probeFor(typography);
     p.text(text);
     return p.getTextWidth();
@@ -75,10 +79,29 @@ export const textFontEpoch = {
   },
 };
 
-if (typeof document !== 'undefined' && document.fonts?.ready) {
-  document.fonts.ready.then(() => {
+/** Proactively requests loading of a font family and bumps the epoch once ready. */
+export function ensureFontLoaded(family: string | undefined): void {
+  if (!family || typeof document === 'undefined' || !document.fonts?.load) return;
+  const stack = canvasFontFamily(family);
+  document.fonts
+    .load(`16px ${stack}`)
+    .then(() => {
+      probe = null;
+      epochValue += 1;
+      listeners.forEach((fn) => fn());
+    })
+    .catch(() => {
+      // Ignore load errors; fallback font is active.
+    });
+}
+
+if (typeof document !== 'undefined' && document.fonts) {
+  const triggerEpochUpdate = () => {
     probe = null;
     epochValue += 1;
     listeners.forEach((fn) => fn());
-  });
+  };
+
+  document.fonts.ready.then(triggerEpochUpdate);
+  document.fonts.addEventListener?.('loadingdone', triggerEpochUpdate);
 }

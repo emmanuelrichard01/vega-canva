@@ -6,10 +6,12 @@ import { DEFAULT_CONNECTOR_INK, type ConnectorNode } from '../../../engine/model
 import { connectorBounds, connectorPoints, type Box } from '../../../engine/model/connector';
 import { attachPoint } from '../../../engine/model/connectorTargets';
 import { capExtentPoints, connectorCaps, trimPolyline } from '../../../engine/model/connectorEnds';
-import { updateNode } from '../../../engine/document';
+import { provider, updateNode } from '../../../engine/document';
+import { collaboratorStore } from '../../../engine/presence/collaboratorStore';
 import { useStore } from '../../../hooks/useStore';
 import { canvasPlateFill } from '../../../engine/ThemeService';
 import { readableOnSurface } from '../../../engine/model/color';
+import { useLiveTransform, liveTransformStore } from '../../../engine/model/liveTransformStore';
 import { strokeColor, strokeDashProps, strokeWidth } from './shared';
 
 interface Props {
@@ -40,6 +42,18 @@ interface Props {
  * the whole objects map would re-render every connector on the board whenever
  * anything at all moved — on a flowchart, that is every arrow on every frame
  * of every drag.
+ *
+ * ## Live transform integration
+ *
+ * During active gestures (drag, resize, rotate), `ObjectRenderer` publishes
+ * transient coordinates to `liveTransformStore`. This component subscribes to
+ * the live transform of both endpoint nodes. When either is mid-gesture, the
+ * connector's route updates at 60fps from the transient position rather than
+ * waiting for the CRDT commit on mouseup.
+ *
+ * The stored-box writeback effect is suppressed entirely while any gesture is
+ * active — writing a CRDT update on every frame of a drag would thrash the
+ * network and the undo stack for a value that changes again 16ms later.
  */
 /** Konva's flat `[x, y, x, y, ...]` as the point list the sketcher takes. */
 function pairsOf(flat: readonly number[]): { x: number; y: number }[] {
@@ -59,36 +73,68 @@ export const ConnectorRenderer: React.FC<Props> = React.memo(({ node }) => {
     ])
   );
 
+  const liveFrom = useLiveTransform(fromId);
+  const liveTo = useLiveTransform(toId);
+
   // Subscribed rather than read from the DOM, so the label plate repaints when
   // the theme is toggled instead of keeping whichever one it was born under.
   const dark = useStore((state) => state.darkTheme);
 
+  /**
+   * The box for each endpoint, merging live gesture coordinates when available.
+   *
+   * Width and height fall through to the committed node dimensions multiplied
+   * by `scaleX`/`scaleY` (flip-safe via `Math.abs`). During a resize gesture,
+   * `SelectionTransformer` publishes the folded dimensions directly, so the
+   * `liveTransform.width` already accounts for scale.
+   */
   const boxOf = React.useCallback(
     (id: string): Box | null => {
       const n = id === fromId ? fromNode : id === toId ? toNode : undefined;
       if (!n) return null;
+      const live = id === fromId ? liveFrom : id === toId ? liveTo : undefined;
       return {
-        x: n.x,
-        y: n.y,
-        width: n.width * Math.abs(n.scaleX || 1),
-        height: n.height * Math.abs(n.scaleY || 1),
+        x: live?.x ?? n.x,
+        y: live?.y ?? n.y,
+        width: live?.width ?? n.width * Math.abs(n.scaleX || 1),
+        height: live?.height ?? n.height * Math.abs(n.scaleY || 1),
       };
     },
-    [fromId, toId, fromNode, toNode]
+    [fromId, toId, fromNode, toNode, liveFrom, liveTo]
   );
 
   /**
    * Where each end really lands: on the object's outline, turned by its
-   * rotation. The flatten behind it is cached per shape, which is why calling
-   * this per render is affordable — the work happens once per shape, not once
-   * per frame.
+   * rotation. During a live gesture, the effective node's position and
+   * dimensions are taken from the transient store so the attachment point
+   * tracks the moving shape rather than lagging a full gesture behind.
+   *
+   * The outline cache inside `connectorTargets` keys on position and size,
+   * so a synthetic node with live coordinates naturally gets its own cache
+   * entry — no explicit invalidation needed.
    */
   const attachOf = React.useCallback(
     (id: string, boxPoint: { x: number; y: number }) => {
       const n = id === fromId ? fromNode : id === toId ? toNode : undefined;
-      return n ? attachPoint(n, boxPoint) : null;
+      if (!n) return null;
+      const live = id === fromId ? liveFrom : id === toId ? liveTo : undefined;
+      if (!live) return attachPoint(n, boxPoint);
+      // Build an effective node with live overrides for the outline resolver.
+      // Only override fields that the gesture actually published — a drag
+      // publishes x/y, a resize adds width/height/rotation.
+      return attachPoint(
+        {
+          ...n,
+          x: live.x ?? n.x,
+          y: live.y ?? n.y,
+          width: live.width ?? n.width,
+          height: live.height ?? n.height,
+          rotation: live.rotation ?? n.rotation,
+        },
+        boxPoint
+      );
     },
-    [fromId, toId, fromNode, toNode]
+    [fromId, toId, fromNode, toNode, liveFrom, liveTo]
   );
 
   const world = connectorPoints(node.from, node.to, node.routing, boxOf, attachOf);
@@ -110,16 +156,14 @@ export const ConnectorRenderer: React.FC<Props> = React.memo(({ node }) => {
    * The guard matters as much as the delay — without it every client watching
    * the board would write the same numbers back on every update, each write
    * waking the others.
-   */
-  /**
-   * The two things the stored box depends on, as values a dependency array can
-   * be checked against statically.
    *
-   * `world.join(',')` was already here doing this job for the route. The
-   * markers needed the same treatment once the box started accounting for
-   * them, and an expression like `node.appearance?.stroke?.width` inline in
-   * the array is exactly what the lint rule is warning about: it cannot verify
-   * a dependency it cannot name.
+   * ## Gesture suppression
+   *
+   * While either endpoint is mid-gesture (`liveFrom` or `liveTo` is defined),
+   * the writeback is suppressed entirely. The route is changing 60 times per
+   * second from transient data — writing each intermediate box to the CRDT
+   * would flood the network, pollute the undo stack, and race with the commit
+   * that `handleDragEnd` / `handleTransformEnd` will issue.
    */
   const routeKey = world.join(',');
   const capKey = [
@@ -131,36 +175,62 @@ export const ConnectorRenderer: React.FC<Props> = React.memo(({ node }) => {
 
   React.useEffect(() => {
     if (world.length < 4) return;
-    // The markers are part of what the connector occupies. An arrowhead
-    // extends *sideways* out of the route, and a horizontal connector's route
-    // is a one-unit-tall box — so a box computed from the route alone had the
-    // arrow culled while its head was still on screen, and a marquee drawn
-    // over that head selected nothing. Raising End size is what made it
-    // obvious; it was wrong at every size.
+
+    // Suppress during active gestures — the box will be written once on commit.
+    if (liveFrom || liveTo) return;
+
+    // Authority check: if another collaborator is currently selecting the connector
+    // or either of its endpoint nodes, they are the author of the move — passive peers
+    // must not compete and write back.
+    const remotes = collaboratorStore.live();
+    const otherHasSelection = remotes.some((person) => {
+      const s = person.selection;
+      return (fromId && s.includes(fromId)) || (toId && s.includes(toId)) || s.includes(node.id);
+    });
+    if (otherHasSelection) return;
+
+    // If nobody in the room has it selected (e.g. initial mount or post-physics settle),
+    // elect the lowest clientID as the single writer to prevent concurrent write collisions.
+    const myId = provider.awareness?.clientID || 0;
+    const allIds = [myId, ...remotes.map((r) => r.clientId)].filter(Boolean);
+    const isElectedWriter = allIds.length <= 1 || Math.min(...allIds) === myId;
+    if (!isElectedWriter) return;
+
     const caps = connectorCaps(world, {
       start: node.endStart ?? 'none',
       end: node.endEnd ?? 'none',
       strokeWidth: strokeWidth(node.appearance) || 2,
       scale: node.endScale,
     });
-    const box = connectorBounds([
+    const rawBox = connectorBounds([
       ...world,
       ...capExtentPoints(caps.start),
       ...capExtentPoints(caps.end),
     ]);
+
+    // Deterministic integer rounding so multiple machines compute strictly identical numbers
+    const box = {
+      x: Math.round(rawBox.x),
+      y: Math.round(rawBox.y),
+      width: Math.round(rawBox.width),
+      height: Math.round(rawBox.height),
+    };
+
     const drifted =
-      Math.abs(box.x - node.x) > 0.5 ||
-      Math.abs(box.y - node.y) > 0.5 ||
-      Math.abs(box.width - node.width) > 0.5 ||
-      Math.abs(box.height - node.height) > 0.5;
+      Math.abs(box.x - node.x) >= 2 ||
+      Math.abs(box.y - node.y) >= 2 ||
+      Math.abs(box.width - node.width) >= 2 ||
+      Math.abs(box.height - node.height) >= 2;
     if (!drifted) return;
 
     const timer = window.setTimeout(() => {
+      // Double-check that no gesture started while the timer was pending.
+      if (liveTransformStore.active) return;
       updateNode(node.id, { x: box.x, y: box.y, width: box.width, height: box.height });
-    }, 180);
+    }, 0);
     return () => window.clearTimeout(timer);
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [node.id, node.x, node.y, node.width, node.height, routeKey, capKey]);
+  }, [node.id, node.x, node.y, node.width, node.height, fromId, toId, routeKey, capKey, liveFrom, liveTo]);
 
   if (world.length < 4) return null;
 

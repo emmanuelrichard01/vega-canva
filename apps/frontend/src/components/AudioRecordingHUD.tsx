@@ -141,7 +141,7 @@ export const AudioRecordingHUD: React.FC<Props> = ({
             data-tooltip={paused ? 'Resume (Space)' : 'Pause (Space)'}
             aria-label={paused ? 'Resume recording' : 'Pause recording'}
           >
-            {paused ? <Play size={14} /> : <Pause size={14} />}
+            {paused ? <Play size={14} fill="currentColor" className="rec-hud-play-glyph" /> : <Pause size={14} fill="currentColor" />}
           </button>
         )}
 

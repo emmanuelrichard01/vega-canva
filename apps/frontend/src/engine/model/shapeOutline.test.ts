@@ -202,6 +202,32 @@ describe('the heart', () => {
   });
 });
 
+describe('the squircle', () => {
+  it('is a smooth continuous bezier curve', () => {
+    const outline = shapeOutline(shape({ geometry: { kind: 'squircle' } }));
+    expect(outline.kind).toBe('bezier');
+  });
+
+  it('is four-fold symmetric and fills its bounds smoothly', () => {
+    const outline = shapeOutline(shape({ geometry: { kind: 'squircle' }, width: 200, height: 200 }));
+    if (outline.kind !== 'bezier') throw new Error('expected a bezier outline');
+    const pts = flattenPath(outline.geometry);
+    const xs = pts.map((p) => p.x);
+    const ys = pts.map((p) => p.y);
+    expect(Math.min(...xs)).toBeCloseTo(0, 0);
+    expect(Math.max(...xs)).toBeCloseTo(200, 0);
+    expect(Math.min(...ys)).toBeCloseTo(0, 0);
+    expect(Math.max(...ys)).toBeCloseTo(200, 0);
+  });
+
+  it('draws identically in shapeToPath as in shapeOutline', () => {
+    const node = shape({ geometry: { kind: 'squircle' }, width: 150, height: 100 });
+    const outline = shapeOutline(node);
+    if (outline.kind !== 'bezier') throw new Error('expected a bezier outline');
+    expect(shapeToPath(node)).toEqual(outline.geometry);
+  });
+});
+
 describe('every shape kind survives the round trip', () => {
   it('is representable by the normalizer, not silently rewritten', () => {
     // `heart` was added to the type and to the tool, and the normalizer's

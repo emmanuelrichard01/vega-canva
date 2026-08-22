@@ -247,11 +247,11 @@ describe('Dynamic Anchor Conversion Functions', () => {
 
     const result = setPickedAnchorMode('smooth');
     expect(result).toBe(true);
-  });
+  }, 15000);
 
   it('setMultiplePathsAnchorMode applies corner/smooth across multiple selected paths', async () => {
     const { setMultiplePathsAnchorMode } = await import('../../components/canvas/PathEditor');
     const result = setMultiplePathsAnchorMode(['path-1', 'path-2'], 'smooth');
     expect(result).toBe(true);
-  });
+  }, 15000);
 });

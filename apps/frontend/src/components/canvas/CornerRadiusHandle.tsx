@@ -7,6 +7,7 @@ import { flattenPath } from '../../engine/model/pathGeometry';
 import { shapeToPath } from '../../engine/model/shapeToPath';
 import type { Point, ShapeNode } from '../../engine/model/schema';
 import { isRoundableTurn } from '../../engine/model/roundCorners';
+import { liveTransformStore, useLiveTransform } from '../../engine/model/liveTransformStore';
 
 interface Props {
   node: ShapeNode;
@@ -31,6 +32,10 @@ interface Corner {
 
 /**
  * Where a shape's corners are, and which way each one opens.
+ *
+ * All coordinates are in the shape's own local space (origin at top-left,
+ * x right, y down), because that is what `shapeToPath` produces and what
+ * the Konva group's rotation will transform to world space.
  *
  * The outline is flattened and walked; a vertex counts as a corner when the
  * direction changes sharply enough — the same test `roundCorners` uses, and it
@@ -92,49 +97,44 @@ function cornersOf(node: ShapeNode): Corner[] {
 /**
  * The corner radius as a knob you drag, the way Illustrator and Photoshop do it.
  *
- * ## Why a knob rather than only a number
+ * ## Real-Time Live Transform Tracking
  *
- * The radius has always been reachable — a stepper in the properties panel, a
- * slider on the rail. Both are fine for *setting* a value you already know and
- * hopeless for *finding* one, which is what rounding a corner actually is: you
- * are matching a feeling against the rest of the board, and the answer arrives
- * by moving until it looks right rather than by typing 12.
+ * Subscribes to `useLiveTransform(node.id)`. When the shape is dragged across
+ * the canvas by `ObjectRenderer`, or resized/rotated by `SelectionTransformer`,
+ * the handle receives live coordinates at 60fps and moves in perfect lockstep
+ * with the shape instead of lagging or staying stuck until mouseup.
  *
- * ## Why it is not on the top-left of a rectangle
+ * ## Rotation invariance & Centre-Pivot
  *
- * Because "the corner" is not a rectangle's idea. The knob sits on whichever
- * corner the *shape* actually has, found by walking the flattened outline for
- * sharp turns — so a triangle gets one, a star gets ten, a hexagon six, and a
- * heart exactly one, at its point. A circle gets none, and correctly shows no
- * knob at all rather than a control that would do nothing.
+ * `ObjectRenderer` positions each node with centre-pivot rotation:
+ * `<Group x={node.x + cx} y={node.y + cy} offsetX={cx} offsetY={cy} rotation={node.rotation}>`.
  *
- * The knob is placed on the corner nearest the top-left of the shape's box, so
- * it lands somewhere predictable rather than wherever the outline happened to
- * start, and every knob edits the same single radius — one shape, one
- * roundness, which is what the model stores and what the panel has always said.
- *
- * ## What it is dragged along
- *
- * The corner's **bisector**, into the shape. A radius is a distance from the
- * corner along both edges at once, so the bisector is the one direction that
- * treats them equally — dragging along an axis instead would have to pick one
- * edge and would disagree with itself on every shape that is not a rectangle.
- * The pointer is projected onto that line, so the knob tracks the hand without
- * the hand having to be exact.
- *
- * It works in sketch mode for free, because the sketcher draws whatever
- * `shapeOutline` describes and the rounding happens there.
+ * This handle is a sibling mounted by `Canvas.tsx` and replicates the same
+ * centre-pivot transform using the live values, keeping shape-local corner
+ * calculations perfectly aligned.
  */
 export const CornerRadiusHandle: React.FC<Props> = ({ node, stageScale }) => {
-  const [live, setLive] = useState<number | null>(null);
+  const liveTransform = useLiveTransform(node.id);
+  const [liveRadius, setLiveRadius] = useState<number | null>(null);
 
-  // Corners are measured on the *unrounded* shape, so the knob's travel does
-  // not shrink as it is dragged — a handle that runs away from the pointer is
-  // the classic way this control goes wrong.
+  const xPos = liveTransform?.x ?? node.x;
+  const yPos = liveTransform?.y ?? node.y;
+  const width = liveTransform?.width ?? node.width;
+  const height = liveTransform?.height ?? node.height;
+  const rotation = liveTransform?.rotation ?? node.rotation ?? 0;
+
+  // Corners are measured on the *unrounded* shape, incorporating live width/height
   const corners = useMemo(
-    () => cornersOf({ ...node, appearance: { ...(node.appearance ?? {}), cornerRadius: 0 } }),
+    () =>
+      cornersOf({
+        ...node,
+        width,
+        height,
+        rotation,
+        appearance: { ...(node.appearance ?? {}), cornerRadius: 0 },
+      }),
     // eslint-disable-next-line react-hooks/exhaustive-deps
-    [node.geometry, node.width, node.height]
+    [node.geometry, width, height, rotation]
   );
 
   const corner = useMemo(() => {
@@ -148,24 +148,25 @@ export const CornerRadiusHandle: React.FC<Props> = ({ node, stageScale }) => {
 
   /**
    * The knob's own corner sets its travel, not the tightest corner on the shape.
-   *
-   * Taking the global minimum was the "not smart" behaviour: one short edge —
-   * a star's inner valley, a sliver on an irregular polygon — capped the whole
-   * shape's radius at almost nothing, so the knob barely moved and the control
-   * felt broken. `roundCorners` already clamps every corner to its own room,
-   * so each corner takes what it can and the others are not held back by it.
    */
   const max = corner.reach;
-  const radius = Math.min(live ?? node.appearance?.cornerRadius ?? 0, max);
+  const radius = Math.min(
+    liveRadius ?? liveTransform?.cornerRadius ?? node.appearance?.cornerRadius ?? 0,
+    max
+  );
 
+  // Clamped so the resting position stays within the shape on small shapes.
+  const restDistance = Math.min(REST_INSET / stageScale, max * 0.45);
   // Along the bisector from the corner. The rest position keeps the knob clear
   // of the transformer's own anchor when there is no radius yet.
-  const travel = Math.max(radius, REST_INSET / stageScale);
-  const origin = { x: node.x + corner.point.x, y: node.y + corner.point.y };
+  const travel = Math.min(max, Math.max(radius, restDistance));
+
+  // Shape-local coordinates — the wrapping Group's transform handles world placement.
+  const origin = { x: corner.point.x, y: corner.point.y };
   const x = origin.x + corner.inward.x * travel;
   const y = origin.y + corner.inward.y * travel;
 
-  /** The pointer projected onto the bisector, as a radius. */
+  /** The pointer projected onto the bisector, as a radius (in shape-local space). */
   const radiusFor = (px: number, py: number): number => {
     const along = (px - origin.x) * corner.inward.x + (py - origin.y) * corner.inward.y;
     return Math.max(0, Math.min(max, along));
@@ -178,15 +179,28 @@ export const CornerRadiusHandle: React.FC<Props> = ({ node, stageScale }) => {
         cornerRadius: value > 0.5 ? Math.round(value) : undefined,
       },
     } as Partial<ShapeNode>);
-    setLive(null);
+    liveTransformStore.delete(node.id);
+    setLiveRadius(null);
   };
 
+  // Centre-pivot: matches ObjectRenderer's `<Group x={node.x + cx} y={node.y + cy}
+  // offsetX={cx} offsetY={cy} rotation={rotation}>` exactly.
+  const cx = width / 2;
+  const cy = height / 2;
+
   return (
-    <Group name={EXPORT_CHROME}>
-      {/* The line the knob runs along, shown only while it is moving. Without
-          it the constraint is invisible and a diagonal drag reads as the knob
-          refusing to follow the pointer. */}
-      {live !== null && (
+    <Group
+      x={xPos + cx}
+      y={yPos + cy}
+      offsetX={cx}
+      offsetY={cy}
+      rotation={rotation}
+      scaleX={node.scaleX}
+      scaleY={node.scaleY}
+      name={EXPORT_CHROME}
+    >
+      {/* The line the knob runs along, shown only while dragging the knob */}
+      {liveRadius !== null && (
         <Line
           points={[origin.x, origin.y, origin.x + corner.inward.x * max, origin.y + corner.inward.y * max]}
           stroke={ACCENT}
@@ -206,10 +220,14 @@ export const CornerRadiusHandle: React.FC<Props> = ({ node, stageScale }) => {
         name={EXPORT_CHROME}
         onDragStart={() => {
           window.dispatchEvent(new CustomEvent('canvas-drag-start'));
-          setLive(node.appearance?.cornerRadius ?? 0);
+          const initial = node.appearance?.cornerRadius ?? 0;
+          setLiveRadius(initial);
+          liveTransformStore.set(node.id, { cornerRadius: initial });
         }}
         onDragMove={(e: Konva.KonvaEventObject<DragEvent>) => {
-          setLive(radiusFor(e.target.x(), e.target.y()));
+          const next = radiusFor(e.target.x(), e.target.y());
+          setLiveRadius(next);
+          liveTransformStore.set(node.id, { cornerRadius: next });
         }}
         onDragEnd={(e: Konva.KonvaEventObject<DragEvent>) => {
           window.dispatchEvent(new CustomEvent('canvas-drag-end'));
@@ -217,7 +235,7 @@ export const CornerRadiusHandle: React.FC<Props> = ({ node, stageScale }) => {
           commit(value);
           // Put the knob back on the bisector — it is drawn from the radius,
           // not from wherever the pointer let go.
-          const settled = Math.max(value, REST_INSET / stageScale);
+          const settled = Math.min(max, Math.max(value, restDistance));
           e.target.position({
             x: origin.x + corner.inward.x * settled,
             y: origin.y + corner.inward.y * settled,

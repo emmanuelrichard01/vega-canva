@@ -53,9 +53,9 @@ export function useRoomShortcuts({
     return () => window.removeEventListener('keydown', onKey);
   }, [isCompact, panelsOpen, setPanelsOpen]);
 
-  // Escape leaves Force mode
+  // Escape leaves Force mode or disarms Audio mode
   useEffect(() => {
-    if (!isForceTool(activeTool)) return;
+    if (!isForceTool(activeTool) && activeTool !== 'audio') return;
     const onKey = (e: KeyboardEvent) => {
       if (e.key !== 'Escape') return;
       const el = document.activeElement?.tagName;

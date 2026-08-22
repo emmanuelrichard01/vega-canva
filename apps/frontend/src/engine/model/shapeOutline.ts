@@ -133,6 +133,30 @@ export function heartAnchors(w: number, h: number): Anchor[] {
 }
 
 /**
+ * A squircle (superellipse / continuous-curvature rectangle) scaled into a
+ * `w` by `h` box as four cubic bezier anchors, oriented clockwise from 12 o'clock.
+ *
+ * For a standard circle, the handle length ratio is KAPPA ≈ 0.5523.
+ * For a squircle, the handle ratio ≈ 0.8604 produces the signature continuous-curvature
+ * Apple-grade superellipse with zero abrupt inflection points.
+ */
+export function squircleAnchors(w: number, h: number, curvature = 0.8604): Anchor[] {
+  const rx = w / 2;
+  const ry = h / 2;
+  const cx = rx;
+  const cy = ry;
+  const hx = rx * curvature;
+  const hy = ry * curvature;
+
+  return [
+    { x: cx, y: cy - ry, inX: cx - hx, inY: cy - ry, outX: cx + hx, outY: cy - ry },
+    { x: cx + rx, y: cy, inX: cx + rx, inY: cy - hy, outX: cx + rx, outY: cy + hy },
+    { x: cx, y: cy + ry, inX: cx + hx, inY: cy + ry, outX: cx - hx, outY: cy + ry },
+    { x: cx - rx, y: cy, inX: cx - rx, inY: cy + hy, outX: cx - rx, outY: cy - hy },
+  ];
+}
+
+/**
  * The outline of a shape node, in the node's own local coordinates.
  *
  * Local, not world: everything that consumes this is drawing inside the node's
@@ -155,6 +179,10 @@ export function shapeOutline(node: Pick<ShapeNode, 'geometry' | 'width' | 'heigh
 
   if (node.geometry.kind === 'ellipse') {
     return { kind: 'ellipse', cx, cy, rx: w / 2, ry: h / 2 };
+  }
+
+  if (node.geometry.kind === 'squircle') {
+    return { kind: 'bezier', geometry: fromAnchors(squircleAnchors(w, h), true) };
   }
 
   const radius = Math.max(0, node.appearance?.cornerRadius ?? 0);

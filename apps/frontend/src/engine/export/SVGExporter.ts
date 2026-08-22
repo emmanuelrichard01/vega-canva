@@ -21,6 +21,7 @@ import { layoutText } from '../text/layout';
 import { measurerFor } from '../text/measure';
 import { highlightPath } from '../text/highlight';
 import { roughShape } from '../model/roughShape';
+import { canvasFontFamily } from '../../components/canvas/renderers/shared';
 import { DEFAULT_INK } from '../model/schema';
 
 /**
@@ -58,7 +59,7 @@ function bezierPathData(node: PathNode, offsetX: number, offsetY: number): strin
 function textAttrs(t: Typography): string {
   const anchor = t.align === 'center' ? 'middle' : t.align === 'right' ? 'end' : 'start';
   return [
-    `font-family="${escapeXml(t.fontFamily)}"`,
+    `font-family="${escapeXml(canvasFontFamily(t.fontFamily))}"`,
     `font-size="${t.fontSize}"`,
     `font-weight="${t.fontWeight}"`,
     `font-style="${t.italic ? 'italic' : 'normal'}"`,
@@ -505,8 +506,9 @@ function shapeMarkup(node: ShapeNode, defs: SvgPaintDefs): string {
         : `<polygon points="${pointsAttribute(regularPolygonPoints(cx, cy, node.geometry.points ?? 3, w / 2, h / 2))}" ${paint}${rot} />`;
 
     case 'heart':
+    case 'squircle':
       // Through `shapeToPath`, which is what the canvas draws from, so an
-      // exported heart cannot be a second, hand-written approximation of the
+      // exported heart/squircle cannot be a second, hand-written approximation of the
       // one on screen — the failure this file's own header describes.
       return `<path d="${pathData(shapeToPath(node))}" ${paint}${rot} />`;
 

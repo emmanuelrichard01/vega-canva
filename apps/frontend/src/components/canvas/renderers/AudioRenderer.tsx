@@ -7,6 +7,7 @@ import { updateNode } from '../../../engine/document';
 import {
   barCountFor,
   clamp01,
+  formatAuthorShortName,
   formatClock,
   fractionFromPointer,
   keyboardSeek,
@@ -195,6 +196,11 @@ export const AudioRenderer: React.FC<Props> = React.memo(({ node }) => {
     updateNode(node.id, { durationMs: Math.round((elementSeconds as number) * 1000) });
   }, [elementSeconds, node.durationMs, node.id]);
 
+  // When `node.src` updates (e.g. upload finishes or offline sync resolves), clear failed state
+  useEffect(() => {
+    setFailed(false);
+  }, [node.src]);
+
   // A fresh `src` resets `playbackRate`, so this is re-applied on both.
   useEffect(() => {
     const el = audioRef.current;
@@ -337,17 +343,15 @@ export const AudioRenderer: React.FC<Props> = React.memo(({ node }) => {
             ) : isPlaying ? (
               <Pause size={15} fill="currentColor" />
             ) : (
-              // Nudged: a triangle centred on its bounding box always reads
-              // left of centre inside a circle.
-              <Play size={15} fill="currentColor" style={{ marginLeft: 2 }} />
+              <Play size={15} fill="currentColor" className="vn-play-glyph" />
             )}
           </button>
 
           <div className="vn-body">
             <div className="vn-top">
-              <span className="vn-author">
+              <span className="vn-author" title={node.author.name || 'Anonymous'}>
                 <span className="vn-who" style={{ background: node.author.color }} aria-hidden="true" />
-                {node.author.name}
+                <span className="vn-name">{formatAuthorShortName(node.author.name)}</span>
               </span>
               <span className="vn-time">
                 {formatClock(currentSeconds * 1000)}

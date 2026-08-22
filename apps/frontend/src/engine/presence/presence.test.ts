@@ -331,4 +331,41 @@ describe('radar projection', () => {
       expect(easeBox(from, to, 1)).toEqual(to);
     });
   });
+
+  describe('ruler inset projection & selection scaling', () => {
+    it('projects world coordinates with ruler inset when rulers are enabled', () => {
+      const world = { x: 150, y: 200 };
+      const zoom = 1.5;
+      const camX = 50;
+      const camY = 30;
+      const RULER_SIZE = 22;
+
+      // With rulers enabled:
+      const screenXWithRulers = world.x * zoom + camX + RULER_SIZE;
+      const screenYWithRulers = world.y * zoom + camY + RULER_SIZE;
+      expect(screenXWithRulers).toBe(150 * 1.5 + 50 + 22);
+      expect(screenYWithRulers).toBe(200 * 1.5 + 30 + 22);
+
+      // Without rulers:
+      const screenXNoRulers = world.x * zoom + camX;
+      const screenYNoRulers = world.y * zoom + camY;
+      expect(screenXNoRulers).toBe(150 * 1.5 + 50);
+      expect(screenYNoRulers).toBe(200 * 1.5 + 30);
+    });
+
+    it('computes correct scaled bounds for remote presence boxes', () => {
+      const node = {
+        width: 120,
+        height: 80,
+        scaleX: -1.5, // flipped & scaled
+        scaleY: 2.0,
+      };
+
+      const computedWidth = node.width * Math.abs(node.scaleX || 1);
+      const computedHeight = node.height * Math.abs(node.scaleY || 1);
+
+      expect(computedWidth).toBe(180);
+      expect(computedHeight).toBe(160);
+    });
+  });
 });

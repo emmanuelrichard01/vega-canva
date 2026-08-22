@@ -1,14 +1,15 @@
 import React from 'react';
 import { Group, Path, Rect, Text } from 'react-konva';
 import type { TextNode } from '../../../engine/model/schema';
-import { updateNode } from '../../../engine/document';
+import { provider, updateNode } from '../../../engine/document';
+import { collaboratorStore } from '../../../engine/presence/collaboratorStore';
 import { applyTextCase } from '../../../engine/model/textCase';
 import { contrastInk } from '../../../engine/model/color';
 import { layoutText, type TextLayout } from '../../../engine/text/layout';
-import { measurerFor, textFontEpoch } from '../../../engine/text/measure';
+import { measurerFor, textFontEpoch, ensureFontLoaded } from '../../../engine/text/measure';
 import { cycleColor, cycleRuns, cycleTotal, piecesBefore } from '../../../engine/text/colorCycle';
 import { highlightPath } from '../../../engine/text/highlight';
-import { konvaFontStyle, konvaTextDecoration, shadowProps } from './shared';
+import { canvasFontFamily, konvaFontStyle, konvaTextDecoration, shadowProps } from './shared';
 
 interface Props {
   node: TextNode;
@@ -90,13 +91,31 @@ export const TextRenderer: React.FC<Props> = React.memo(({ node, visible }) => {
     // the overlay is sized from the node.
     if (!node.text) return;
 
-    const width = node.resize === 'width' ? layout.width : node.width;
-    const height = layout.height;
-    if (Math.abs(width - node.width) < 0.5 && Math.abs(height - node.height) < 0.5) return;
+    // Authority check: if another collaborator is currently selecting this text node,
+    // they are the editor — passive peers must not compete and write back.
+    const remotes = collaboratorStore.live();
+    const otherHasSelection = remotes.some((person) => person.selection.includes(node.id));
+    if (otherHasSelection) return;
+
+    // If nobody has it selected (e.g. board mount, font epoch settlement), elect the lowest clientID
+    // as the single writer to prevent concurrent write ping-pong loops.
+    const myId = provider.awareness?.clientID || 0;
+    const allIds = [myId, ...remotes.map((r) => r.clientId)].filter(Boolean);
+    const isElectedWriter = allIds.length <= 1 || Math.min(...allIds) === myId;
+    if (!isElectedWriter) return;
+
+    const rawWidth = node.resize === 'width' ? layout.width : node.width;
+    const rawHeight = layout.height;
+
+    // Deterministic integer quantization so all machines compute identical values
+    const width = Math.ceil(rawWidth);
+    const height = Math.ceil(rawHeight);
+
+    if (Math.abs(width - node.width) < 2 && Math.abs(height - node.height) < 2) return;
 
     const timer = window.setTimeout(() => {
       updateNode(node.id, { width: Math.max(1, width), height: Math.max(1, height) });
-    }, 160);
+    }, 180);
     return () => window.clearTimeout(timer);
   }, [node.id, node.resize, node.width, node.height, node.text, layout, visible]);
 
@@ -123,6 +142,10 @@ export const TextRenderer: React.FC<Props> = React.memo(({ node, visible }) => {
   const measure = React.useMemo(() => measurerFor(t), [t]);
   const cycleUnits = cycle ? cycleTotal(caseText, cycle.unit) : 0;
 
+  React.useEffect(() => {
+    ensureFontLoaded(t.fontFamily);
+  }, [t.fontFamily]);
+
   if (!visible) return null;
 
   const highlight = t.highlight;
@@ -145,7 +168,7 @@ export const TextRenderer: React.FC<Props> = React.memo(({ node, visible }) => {
 
   const common = {
     fontSize: t.fontSize,
-    fontFamily: t.fontFamily,
+    fontFamily: canvasFontFamily(t.fontFamily),
     // Weight and slant are composed into Konva's single fontStyle string in
     // exactly one place — see shared.ts.
     fontStyle: konvaFontStyle(t),

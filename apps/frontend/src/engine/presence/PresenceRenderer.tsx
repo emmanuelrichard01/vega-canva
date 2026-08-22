@@ -32,11 +32,10 @@ const RemoteSelection = ({
   const obj = useStore((state) => state.objects[objectId]);
   if (!obj) return null;
 
-  // Size comes straight from the node — every type stores it in the same
-  // place, so there is nothing to disambiguate. Every object also rotates
-  // about its centre, so there is no per-type special case either.
-  const width = obj.width;
-  const height = obj.height;
+  // Size comes from the node with scale folded in as an absolute value,
+  // matching how ObjectRenderer paints it and how SelectionTransformer frames it.
+  const width = obj.width * Math.abs(obj.scaleX || 1);
+  const height = obj.height * Math.abs(obj.scaleY || 1);
 
   const screenX = obj.x * cameraSystem.zoom + cameraSystem.x;
   const screenY = obj.y * cameraSystem.zoom + cameraSystem.y;

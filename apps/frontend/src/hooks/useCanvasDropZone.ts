@@ -3,6 +3,7 @@ import { nanoid } from 'nanoid';
 import { editor } from '../engine/api/EditorAPI';
 import { cameraSystem } from '../engine/CameraSystem';
 import { localAuthor, updateNode } from '../engine/document';
+import { calculateOptimalAudioWidth } from '../engine/model/audioPlayback';
 import { mediaUploadUrl } from '../utils/endpoints';
 import { processOfflineMediaQueue, queueOfflineMedia } from '../utils/offlineMediaQueue';
 
@@ -38,8 +39,9 @@ export function useCanvasDropZone({ roomId, status, setSelectedIds }: UseCanvasD
       const type = file.type.startsWith('image/') ? 'image' : 'audio';
       const measured = type === 'image' ? await measureImage(localUrl) : null;
       const viewCenter = at ?? cameraSystem.screenToWorld(window.innerWidth / 2, window.innerHeight / 2);
+      const author = localAuthor();
 
-      let width = type === 'image' ? 300 : 240;
+      let width = type === 'image' ? 300 : calculateOptimalAudioWidth(author.name);
       let height = type === 'image' ? 300 : 64;
       if (measured) {
         const fit = Math.min(IMAGE_PLACE_MAX / measured.width, IMAGE_PLACE_MAX / measured.height, 1);
@@ -57,7 +59,7 @@ export function useCanvasDropZone({ roomId, status, setSelectedIds }: UseCanvasD
         src: localUrl,
         ...(measured ? { naturalWidth: measured.width, naturalHeight: measured.height } : {}),
         ...(type === 'audio'
-          ? { durationMs: 0, waveform: [], author: localAuthor() }
+          ? { durationMs: 0, waveform: [], author }
           : { appearance: {} }),
       });
 

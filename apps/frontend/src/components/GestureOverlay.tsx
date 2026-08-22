@@ -135,7 +135,7 @@ export const GestureOverlay: React.FC = () => {
   return (
     <>
       <div
-        style={{ pointerEvents: 'none', position: 'fixed', inset: 0, zIndex: 50, overflow: 'hidden' }}
+        style={{ pointerEvents: 'none', position: 'absolute', inset: 0, zIndex: 50, overflow: 'hidden' }}
       >
         <AnimatePresence>
           {gestures.map(g => {

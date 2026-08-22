@@ -84,7 +84,9 @@ export const TypographySection: React.FC<TypographySectionProps> = ({
         defaultOpen={node.type === 'text'}
         badge={typography ? shortFont(typography.fontFamily) : undefined}
       >
-        <FontSelector value={typography.fontFamily} onChange={(fontFamily) => setTypography({ fontFamily })} />
+        <Row label="Font">
+          <FontSelector value={typography.fontFamily} onChange={(fontFamily) => setTypography({ fontFamily })} />
+        </Row>
         <Row label="Size">
           {(() => {
             const size = sharedType((t) => t.fontSize);
