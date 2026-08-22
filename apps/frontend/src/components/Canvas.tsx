@@ -3,7 +3,7 @@ import React, { useRef, useState, useEffect, useCallback, useMemo, useSyncExtern
 import { Stage, Layer, Circle, Group } from "react-konva";
 import Konva from "konva";
 import { selectionWithin } from '../engine/model/groupTree';
-import { provider, updateNode, applyNodePatches, nextZIndex, lowestZIndex } from '../engine/document';
+import { updateNode, applyNodePatches, nextZIndex, lowestZIndex } from '../engine/document';
 import { nanoid } from 'nanoid';
 import { useStore } from '../hooks/useStore';
 import { FORCE_SPECS, canLatch, isForceTool } from '../engine/physics/forces';
@@ -50,15 +50,11 @@ const isDrawingTool = (toolId: string) => DRAWING_TOOLS.has(toolId) || toolId.st
 import { cursorModeForTool, LocalCursor } from '../engine/cursor';
 import { GestureOverlay } from "./GestureOverlay";
 import { ToolManager, SelectTool, ShapeTool, TextTool, StickyTool, AudioTool, PenTool, BezierPenTool, HandTool, EraserTool, CommentTool, FrameTool, GridTool, ConnectorTool } from '../engine/tools';
-import { canSelectWith, opensPathWith } from '../engine/tools/shortcuts';
+import { canSelectWith } from '../engine/tools/shortcuts';
 import { DirectSelectTool } from '../engine/tools/DirectSelectTool';
 
 /**
  * Which way each arrow key nudges, as a unit vector.
- *
- * A table rather than a switch, because the same four keys are read in two
- * places — here for anchors and in `engine/tools/nudge` for nodes — and two
- * switches is two chances for up and down to end up swapped in one of them.
  */
 const NUDGE_KEYS: Record<string, [number, number]> = {
   ArrowLeft: [-1, 0],
@@ -94,11 +90,6 @@ interface CanvasProps {
   /** Right-click on the board. Resolved here, shown by `Room`. */
   onRequestContextMenu?: (target: { x: number; y: number; ids: string[] }) => void;
 }
-
-export const navigateToViewport = (x: number, y: number, zoom: number) => {
-  window.dispatchEvent(new CustomEvent('navigateViewport', { detail: { x, y, zoom } }));
-};
-
 
 export const Canvas: React.FC<CanvasProps> = ({ activeTool, selectedIds, setSelectedIds, onRequestContextMenu }) => {
   const stageRef = useRef<Konva.Stage>(null);
@@ -601,10 +592,6 @@ export const Canvas: React.FC<CanvasProps> = ({ activeTool, selectedIds, setSele
   // The one publisher is the `presenceManager.updateViewport` call further
   // down, which shares the 15Hz gate with everything else ephemeral.
 
-  // Update selection awareness
-  useEffect(() => {
-    provider.awareness?.setLocalStateField("selection", selectedIds);
-  }, [selectedIds]);
 
   const {
     comments,

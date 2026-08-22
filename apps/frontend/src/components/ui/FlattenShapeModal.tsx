@@ -36,14 +36,14 @@ export const FlattenShapeModal: React.FC = () => {
   const node = useStore((s) => (flattenNodeId ? s.objects[flattenNodeId] : null));
   const confirmRef = useRef<HTMLButtonElement>(null);
 
-  const handleClose = () => {
+  const handleClose = React.useCallback(() => {
     setFlattenConfirmNodeId(null);
     if (typeof window !== 'undefined') {
       window.dispatchEvent(new CustomEvent('legacy_tool_change', { detail: 'select' }));
     }
-  };
+  }, [setFlattenConfirmNodeId]);
 
-  const handleConfirm = () => {
+  const handleConfirm = React.useCallback(() => {
     if (!flattenNodeId) return;
     const targetId = flattenNodeId;
     setFlattenConfirmNodeId(null);
@@ -55,7 +55,7 @@ export const FlattenShapeModal: React.FC = () => {
       }
       pathEdit.enter(newId);
     }
-  };
+  }, [flattenNodeId, setFlattenConfirmNodeId]);
 
   // Keyboard: Enter confirms, Escape cancels
   useEffect(() => {
@@ -71,7 +71,7 @@ export const FlattenShapeModal: React.FC = () => {
     };
     window.addEventListener('keydown', onKeyDown);
     return () => window.removeEventListener('keydown', onKeyDown);
-  }, [flattenNodeId]);
+  }, [flattenNodeId, handleClose, handleConfirm]);
 
   // Auto-dismiss when tool changes away from direct-select
   useEffect(() => {

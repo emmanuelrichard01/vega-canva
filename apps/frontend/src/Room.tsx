@@ -15,7 +15,7 @@ import { ObjectContextToolbar } from './components/ObjectContextToolbar';
 import { PropertiesPanel } from './components/PropertiesPanel';
 import { LayersPanel } from './components/LayersPanel';
 import { useAuth } from './hooks/AuthContext';
-import { doc, provider, metadataMap, undoManager, updateNode, deleteNode, applyNodePatches, nextZIndex, lowestZIndex, localAuthor, localAuthorId, publishLocalIdentity, applyGroupPlan } from './engine/document';
+import { doc, provider, metadataMap, deleteNode, applyNodePatches, nextZIndex, lowestZIndex, localAuthorId, publishLocalIdentity, applyGroupPlan } from './engine/document';
 import { useRoomState } from './hooks/useSync';
 import { initSyncBridge, useStore } from './hooks/useStore';
 import { editor } from './engine/api/EditorAPI';
@@ -26,14 +26,14 @@ import { PresenceEdgeMarkers } from './components/PresenceEdgeMarkers';
 import { FollowIndicator } from './components/FollowIndicator';
 import { ExportService } from './engine/export';
 import { isForceTool, type ForceId } from './engine/physics/forces';
-import { mediaUploadUrl } from './utils/endpoints';
-import { processOfflineMediaQueue, queueOfflineMedia } from './utils/offlineMediaQueue';
 import { calculateLayout, animateToLayout, type LayoutMode } from './utils/spatialLayout';
-import { Mic, TriangleAlert, X } from 'lucide-react';
+import { Mic, TriangleAlert } from 'lucide-react';
 import { RemoteCursors } from './engine/cursor';
 import type { ContextTarget } from './components/CanvasContextMenu';
 import { RoomModals } from './components/workspace/RoomModals';
 import { useRoomShortcuts } from './hooks/useRoomShortcuts';
+import { useCanvasAudioRecording } from './hooks/useCanvasAudioRecording';
+import { useCanvasDropZone } from './hooks/useCanvasDropZone';
 
 const TimeTravelBar = lazy(() => import('./components/TimeTravelBar').then((m) => ({ default: m.TimeTravelBar })));
 const ForcesBar = lazy(() => import('./components/ForcesBar').then((m) => ({ default: m.ForcesBar })));
@@ -172,28 +172,6 @@ const DOCK_OBSTRUCTION = 96;
 /** A little air around the content, so nothing touches an edge. */
 const FIT_MARGIN = 0.92;
 
-/** The longest edge a freshly placed image is fitted to, in world units. */
-const IMAGE_PLACE_MAX = 420;
-
-/** How far each additional file in one drop is offset, so none is hidden. */
-const MULTI_PLACE_STEP = 28;
-
-/**
- * The pixel dimensions of an image file, or null if it cannot be read.
- *
- * Resolves rather than rejects on failure: a picture the browser cannot decode
- * should still be placed — at the fallback size, where it shows as a broken
- * image the user can delete — rather than making the whole drop do nothing.
- */
-function measureImage(url: string): Promise<{ width: number; height: number } | null> {
-  return new Promise((resolve) => {
-    const img = new Image();
-    img.onload = () => resolve({ width: img.naturalWidth, height: img.naturalHeight });
-    img.onerror = () => resolve(null);
-    img.src = url;
-  });
-}
-
 export default function Room() {
   const { user } = useAuth();
   
@@ -220,8 +198,6 @@ export default function Room() {
     { ok: boolean; message: string; transient?: boolean } | null
   >(null);
   const [noticeLeaving, setNoticeLeaving] = useState(false);
-  /** True while a file is being dragged over the window. */
-  const [dropActive, setDropActive] = useState(false);
 
   /**
    * Pour in a backup, if this room was opened to receive one.
@@ -937,30 +913,7 @@ export default function Room() {
   // Reflects AudioTool's actual recording state (the real, working
   // implementation) so the "click anywhere to record" hint below gets out of
   // the way once recording genuinely starts, instead of a second, disconnected
-  // recording flow that never fired.
-  const [isRecording, setIsRecording] = useState(false);
-  // A blocked or missing microphone used to fail into `console.error` — from
-  // the user's side, clicking the canvas simply did nothing at all.
-  const [micError, setMicError] = useState<string | null>(null);
-  useEffect(() => {
-    const onStart = () => {
-      setIsRecording(true);
-      setMicError(null);
-    };
-    const onStop = () => setIsRecording(false);
-    const onError = (e: Event) => {
-      setIsRecording(false);
-      setMicError((e as CustomEvent<{ message: string }>).detail?.message ?? null);
-    };
-    window.addEventListener('audio-recording-start', onStart);
-    window.addEventListener('audio-recording-stop', onStop);
-    window.addEventListener('audio-recording-error', onError);
-    return () => {
-      window.removeEventListener('audio-recording-start', onStart);
-      window.removeEventListener('audio-recording-stop', onStop);
-      window.removeEventListener('audio-recording-error', onError);
-    };
-  }, []);
+  const { isRecording, micError, setMicError } = useCanvasAudioRecording();
 
   const fileInputRef = useRef<HTMLInputElement>(null);
   const selectTool = (tool: string) => {
@@ -1143,149 +1096,17 @@ export default function Room() {
     }
   };
 
-  useEffect(() => {
-    if (status === 'connected') {
-      processOfflineMediaQueue();
-    }
-  }, [status]);
-
-  /**
-   * Place one file on the board.
-   *
-   * Split out from the file-input handler so the same path serves every way a
-   * file can arrive — the picker, a paste, a drag from the desktop. Those were
-   * three journeys the app only offered one of, and duplicating the upload,
-   * the offline queue and the aspect measurement for each is how they drift
-   * into behaving differently.
-   */
-  const placeFile = async (file: File, at?: { x: number; y: number }, index = 0) => {
-    const localUrl = URL.createObjectURL(file);
-    const type = file.type.startsWith('image/') ? 'image' : 'audio';
-
-    /**
-     * An image is placed at the shape it actually is.
-     *
-     * Every upload was created 300×300 regardless of the picture, so a 16:9
-     * photo was squashed into a square — Konva stretches a bitmap to whatever
-     * box it is given. `naturalWidth`/`naturalHeight` were backfilled by the
-     * renderer once the file loaded, but nothing ever used them to correct the
-     * box, so the distortion was permanent unless you resized it by hand.
-     *
-     * Measured from the local blob before the node exists, so it is born
-     * correct rather than being created wrong and reflowed a moment later —
-     * which every collaborator would have seen as a jump.
-     */
-    const measured = type === 'image' ? await measureImage(localUrl) : null;
-    // window.innerWidth/innerHeight are screen pixels, not canvas world
-    // coordinates — using them directly placed every uploaded file at a fixed
-    // world position regardless of where you'd actually panned/zoomed to, so
-    // it would silently land off-screen for any view other than the default.
-    const viewCenter = at ?? cameraSystem.screenToWorld(window.innerWidth / 2, window.innerHeight / 2);
-    let width = type === 'image' ? 300 : 240;
-    let height = type === 'image' ? 300 : 64;
-    if (measured) {
-      // Fitted inside a sensible placement box rather than pasted at full
-      // size: a 4000px photo dropped at its own dimensions covers the board
-      // and lands mostly outside the viewport.
-      const fit = Math.min(IMAGE_PLACE_MAX / measured.width, IMAGE_PLACE_MAX / measured.height, 1);
-      width = Math.max(1, Math.round(measured.width * fit));
-      height = Math.max(1, Math.round(measured.height * fit));
-    }
-
-    // A single canonical `src`. The asset URL used to be written to both
-    // `assetId` and `content.url`, and the post-upload patch only replaced one
-    // of them — so the object kept pointing at a `blob:` URL that is valid
-    // only inside the uploading tab. Every other collaborator received that
-    // dead URL over the CRDT, and even the uploader lost the media on reload.
-    const objId = editor.createNode({
-      id: nanoid(),
-      type,
-      /**
-       * Fanned out by index, so dropping six files gives six visible objects
-       * rather than one visible object and five hidden exactly beneath it.
-       */
-      x: viewCenter.x - width / 2 + index * MULTI_PLACE_STEP,
-      y: viewCenter.y - height / 2 + index * MULTI_PLACE_STEP,
-      width,
-      height,
-      src: localUrl,
-      // Recorded at creation, so the crop tool and the aspect-lock have real
-      // numbers from the first frame rather than waiting for a render.
-      ...(measured ? { naturalWidth: measured.width, naturalHeight: measured.height } : {}),
-      ...(type === 'audio'
-        ? { durationMs: 0, waveform: [], author: localAuthor() }
-        : { appearance: {} }),
-    });
-
-    /**
-     * Select what was just placed.
-     *
-     * Every other tool selects the thing it creates — a new sticky opens ready
-     * to type in, a drawn shape comes back with handles on it. Media was the
-     * one path that created a node and then selected nothing, so an image
-     * arrived on the board inert: no transform handles, no context toolbar,
-     * and nothing in the inspector to round its corners with. It *was*
-     * clickable; it simply did not look like it had landed.
-     *
-     * The first file *replaces* the selection and the rest accumulate onto it,
-     * so dropping six files leaves those six selected — and not also whatever
-     * happened to be selected before the drop. Accumulating matters because
-     * these uploads are async and do not finish in order, so assigning would
-     * leave only whichever landed last.
-     */
-    setSelectedIds((current) =>
-      index === 0 ? [objId] : current.includes(objId) ? current : [...current, objId]
-    );
-
-    try {
-      const formData = new FormData();
-      formData.append("media", file);
-      const res = await fetch(mediaUploadUrl(roomId), {
-        method: 'POST',
-        body: formData,
-      });
-      const data = await res.json();
-      if (data.url) {
-        updateNode(objId, { src: data.url });
-        URL.revokeObjectURL(localUrl);
-      }
-    } catch (err) {
-      console.warn("Network upload failed, queuing offline media for sync...", err);
-      queueOfflineMedia({
-        id: nanoid(),
-        objectId: objId,
-        roomId,
-        fileBlob: file,
-        fileName: file.name,
-        fileType: file.type,
-        mediaType: type as 'image' | 'audio',
-      });
-    }
-  };
-
-  /**
-   * Place several files, sequentially.
-   *
-   * Sequential rather than `Promise.all`: each one uploads, and firing a dozen
-   * multipart requests at once is how a slow connection turns a drop into a
-   * stall. They appear on the board immediately regardless — the node is
-   * created from a local blob URL before its upload starts.
-   */
-  const placeFiles = async (files: File[], at?: { x: number; y: number }) => {
-    const usable = files.filter((f) => f.type.startsWith('image/') || f.type.startsWith('audio/'));
-    if (usable.length === 0) return;
-    for (let i = 0; i < usable.length; i += 1) {
-      await placeFile(usable[i], at, i);
-    }
-    setActiveTool('select');
-  };
+  const { dropActive, placeFiles } = useCanvasDropZone({
+    roomId: roomId ?? 'global',
+    status,
+    setSelectedIds,
+  });
 
   const handleMediaUpload = async (e: React.ChangeEvent<HTMLInputElement>) => {
     const files = Array.from(e.target.files ?? []);
-    // Cleared before the await: the picker must be able to offer the same file
-    // again immediately, and `value` is what makes a repeat selection fire.
     if (fileInputRef.current) fileInputRef.current.value = '';
     await placeFiles(files);
+    setActiveTool('select');
   };
 
   /**
@@ -1367,51 +1188,16 @@ export default function Room() {
       setSelectedIds([]);
     };
 
-    const onDragOver = (e: DragEvent) => {
-      if (!e.dataTransfer?.types?.includes('Files')) return;
-      // Without this the browser navigates away to the dropped file, which
-      // loses the board.
-      e.preventDefault();
-      e.dataTransfer.dropEffect = 'copy';
-      setDropActive(true);
-    };
-
-    const onDragLeave = (e: DragEvent) => {
-      // Only when the pointer has actually left the window; dragging across a
-      // child element fires `dragleave` constantly and would flicker the hint.
-      if (e.relatedTarget === null) setDropActive(false);
-    };
-
-    const onDrop = (e: DragEvent) => {
-      const files = Array.from(e.dataTransfer?.files ?? []);
-      setDropActive(false);
-      if (files.length === 0) return;
-      e.preventDefault();
-      // Dropped where the pointer released, so a file lands where it was aimed
-      // rather than in the middle of the view.
-      const stage = document.querySelector('.konvajs-content')?.getBoundingClientRect();
-      const at = stage
-        ? cameraSystem.screenToWorld(e.clientX - stage.left, e.clientY - stage.top)
-        : undefined;
-      void placeFiles(files, at);
-    };
-
     window.addEventListener('copy', onCopy);
     window.addEventListener('cut', onCut);
     window.addEventListener('paste', onPaste);
-    window.addEventListener('dragover', onDragOver);
-    window.addEventListener('dragleave', onDragLeave);
-    window.addEventListener('drop', onDrop);
     return () => {
       window.removeEventListener('copy', onCopy);
       window.removeEventListener('cut', onCut);
       window.removeEventListener('paste', onPaste);
-      window.removeEventListener('dragover', onDragOver);
-      window.removeEventListener('dragleave', onDragLeave);
-      window.removeEventListener('drop', onDrop);
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [roomId]);
+  }, [roomId, placeFiles]);
 
 
 

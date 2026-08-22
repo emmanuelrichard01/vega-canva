@@ -5,7 +5,7 @@ import { updateNode } from '../../engine/document';
 import { EXPORT_CHROME } from '../../engine/export/chrome';
 import { useStore } from '../../hooks/useStore';
 import { resizeGridTo } from '../../engine/grid/gridApply';
-import { gridGroupOf } from '../panel/GridSection';
+import { gridGroupOf } from '../../engine/grid/gridGroupUtils';
 import type { Box } from '../../engine/grid/gridBuild';
 import { cursorForAnchor } from '../../engine/interaction/resizeCursor';
 import { scalePathGeometry } from '../../engine/model/pathGeometry';

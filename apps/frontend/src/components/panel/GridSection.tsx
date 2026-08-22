@@ -6,7 +6,7 @@ import { NumberStepper } from '../ui/NumberStepper';
 import { SegmentedControl } from '../ui/SegmentedControl';
 import { Slider } from '../ui/Slider';
 import { ColorPickerPopover } from '../ui/ColorPickerPopover';
-import { gridRecipe, refitGrid, relayoutGrid } from '../../engine/grid/gridApply';
+import { refitGrid, relayoutGrid } from '../../engine/grid/gridApply';
 import { recipeCells, switchKind, withSpec, withStyle, type GridRecipe } from '../../engine/grid/gridBuild';
 import { GridVariations } from './GridVariations';
 import { CellFace } from './CellFace';
@@ -519,22 +519,5 @@ function boxOf(recipe: GridRecipe) {
  * caller's own business, and removes the hook-order problem that a store read
  * inside a component with early returns would otherwise have.
  */
-export function gridGroupOf(
-  nodes: readonly { id: string; parentId?: string }[],
-  groups: Readonly<Record<string, { grid?: unknown }>>
-): string | null {
-  if (nodes.length === 0) return null;
-  const parent = nodes[0].parentId;
-  if (!parent || !groups[parent]?.grid) return null;
-  /**
-   * Every selected node must belong to it.
-   *
-   * A selection of six cells out of nine is not "the grid": offering the grid
-   * controls there would re-lay three modules the person had not selected,
-   * which is a bulk edit nobody asked for.
-   */
-  return nodes.every((n) => n.parentId === parent) ? parent : null;
-}
+export { gridGroupOf, gridRecipe } from '../../engine/grid/gridGroupUtils';
 
-/** The live recipe for a group, for callers outside React. */
-export { gridRecipe };

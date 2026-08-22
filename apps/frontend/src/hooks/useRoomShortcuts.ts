@@ -231,5 +231,5 @@ export function useRoomShortcuts({
         window.removeEventListener('legacy_tool_change', handleToolChange);
       }
     };
-  }, [selectTool, setSelectedIds, setShowCommandPalette, setShowHelp, setIsUiVisible]);
+  }, [selectTool, setSelectedIds, setShowCommandPalette, setShowHelp, setIsUiVisible, selectedIds]);
 }

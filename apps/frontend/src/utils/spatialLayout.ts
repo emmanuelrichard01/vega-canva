@@ -146,6 +146,13 @@ export const calculateLayout = (objects: Record<string, any>, mode: LayoutMode):
     }
   }
 
+  // Preserve coordinates for pinned or locked objects so intentional structuring is never scrambled
+  objList.forEach((obj) => {
+    if ((obj as any).pinned === true || (obj as any).locked === true) {
+      targetPositions[obj.id] = { x: obj.x, y: obj.y };
+    }
+  });
+
   return targetPositions;
 };
 

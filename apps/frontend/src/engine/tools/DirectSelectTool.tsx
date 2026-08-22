@@ -2,7 +2,6 @@ import { Rect } from 'react-konva';
 import type { Tool, ToolContext } from './Tool';
 import { pathEdit } from '../interaction/pathEdit';
 import { useStore } from '../../hooks/useStore';
-import { flattenToPath } from '../document/vectorOps';
 import { anchorsInRect, mergeAnchors } from '../model/pathEditing';
 
 /**

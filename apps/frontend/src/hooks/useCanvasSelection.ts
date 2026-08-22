@@ -9,13 +9,12 @@ import { cameraSystem } from '../engine/CameraSystem';
 
 export interface CanvasSelectionOptions {
   activeTool: string;
-  selectedIds: string[];
+  selectedIds?: string[];
   setSelectedIds: React.Dispatch<React.SetStateAction<string[]>>;
 }
 
 export function useCanvasSelection({
   activeTool,
-  selectedIds,
   setSelectedIds,
 }: CanvasSelectionOptions) {
   const enteredGroupRef = useRef<string | null>(null);

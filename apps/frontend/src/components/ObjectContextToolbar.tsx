@@ -1,4 +1,4 @@
-import React, { useEffect, useLayoutEffect, useRef, useState, useSyncExternalStore } from 'react';
+import React, { useEffect, useRef, useState, useSyncExternalStore } from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
 import {
   AlignCenter, AlignHorizontalJustifyCenter, AlignHorizontalJustifyEnd, AlignHorizontalJustifyStart,
@@ -21,7 +21,7 @@ import { cropMode } from '../engine/interaction/cropMode';
 import { pathEdit } from '../engine/interaction/pathEdit';
 import { Palette, Shuffle } from 'lucide-react';
 import { GridKindIcon } from './workspace/gridIcons';
-import { gridGroupOf } from './panel/GridSection';
+import { gridGroupOf } from '../engine/grid/gridGroupUtils';
 import { gridRecipe as gridRecipeFor, relayoutGrid } from '../engine/grid/gridApply';
 import { switchKind } from '../engine/grid/gridBuild';
 import { GRID_HINTS, GRID_KINDS, GRID_LABELS } from '../engine/grid/gridLayout';
@@ -38,15 +38,15 @@ import { deleteNodesWithFrames } from '../engine/interaction/frameMembership';
 import { editor } from '../engine/api/EditorAPI';
 import { nanoid } from 'nanoid';
 import { ColorPickerPopover } from './ui/ColorPickerPopover';
-import { isInsidePortalSurface } from './ui/portalSurface';
 import { FillEditor } from './ui/FillEditor';
 import { SegmentedControl } from './ui/SegmentedControl';
 import { FontSelector } from './ui/FontSelector';
+import { RailPopover } from './toolbar/RailPopover';
+import { StickyPalette } from './toolbar/StickyToolbar';
 
 /** The hand-drawn faces, so the toggle knows which state it is in. */
 const HANDWRITTEN = ['Caveat', 'Architects Daughter'];
-import { THEMES } from './canvas/renderers/StickyRenderer';
-import { STICKY_THEMES, type StickyTheme } from '../engine/model/schema';
+import type { StickyTheme } from '../engine/model/schema';
 import {
   DEFAULT_INK, DEFAULT_TYPOGRAPHY, MAX_POLYGON_SIDES, MIN_POLYGON_SIDES, isOpenShape,
   type AnyNode, type Appearance, type ConnectorNode, type FillStyle, type ShapeKind, type SketchLevel,
@@ -106,8 +106,8 @@ const EDGE_MARGIN = 16;
 const STANDOFF = 14;
 const RAIL_HEIGHT = 40;
 
-/** Small, deliberately-limited reaction set — a full emoji picker is noise here. */
-const REACTION_SET = ['👍', '❤️', '🎯', '🔥', '❓'];
+/** Refined, high-intent reaction set for collaborative brainstorming. */
+const REACTION_SET = ['👍', '❤️', '🎉', '🔥', '🚀', '👀', '💡', '💯'];
 
 /**
  * The eight papers, offered as themselves.
@@ -124,49 +124,7 @@ const REACTION_SET = ['👍', '❤️', '🎯', '🔥', '❓'];
  * as a field the renderer ignores, arrived at from the other side: a control
  * that appears to do more than it does. It was also slow — a spectrum, a
  * gradient area and a hex field, to make a one-of-eight decision.
- *
- * Showing the eight directly is both more honest and fewer clicks: one press
- * to open, one to choose, and the options *are* the answer.
  */
-const StickyPalette: React.FC<{
-  theme: StickyTheme;
-  onPick: (theme: StickyTheme) => void;
-}> = ({ theme, onPick }) => (
-  <RailPopover
-    label="Note colour"
-    align="start"
-    trigger={
-      <span
-        className="ctx-sticky-swatch"
-        style={{ background: THEMES[theme]?.bg, borderColor: THEMES[theme]?.edge }}
-      />
-    }
-  >
-    <span className="ctx-popover__label">Note colour</span>
-    <div className="ctx-sticky-grid">
-      {STICKY_THEMES.map((id) => {
-        const paper = THEMES[id];
-        return (
-          <button
-            key={id}
-            type="button"
-            className="ctx-sticky-chip"
-            aria-pressed={id === theme}
-            aria-label={id}
-            data-tooltip={id[0].toUpperCase() + id.slice(1)}
-            onClick={() => onPick(id)}
-            style={{ background: paper.bg, borderColor: paper.edge, color: paper.text }}
-          >
-            {/* The letter is the note's own ink on its own paper, so each chip
-                previews the pairing rather than just the background — which is
-                the half of the choice that decides whether text reads. */}
-            Aa
-          </button>
-        );
-      })}
-    </div>
-  </RailPopover>
-);
 
 /**
  * Corner or smooth, drawn rather than lettered.
@@ -354,124 +312,7 @@ const Divider = () => <span className="ctx-divider" aria-hidden="true" />;
 
 /**
  * A button on the rail with a panel hanging off it.
- *
- * Closes on Escape and on a click outside — both, because either alone strands
- * it: Escape only helps if you know it is open, and outside-click only helps if
- * you can reach past it. Escape is captured so it closes the popover instead of
- * clearing the canvas selection underneath.
- */
-const RailPopover: React.FC<{
-  label: string;
-  trigger: React.ReactNode;
-  children: React.ReactNode;
-  placement?: 'top' | 'bottom';
-  align?: 'start' | 'center' | 'end';
-}> = ({ label, trigger, children, placement = 'bottom', align = 'center' }) => {
-  const [open, setOpen] = useState(false);
-  const ref = useRef<HTMLDivElement>(null);
-  const panelRef = useRef<HTMLDivElement>(null);
 
-  /**
-   * Which way it actually opens, decided by whether there is room.
-   *
-   * `placement` was a fixed prop, so a popover on a rail near the bottom of the
-   * window opened downward into the edge and was cut off — which is precisely
-   * where this rail sits when the object it belongs to is low on the board. The
-   * prop is the *preference* now; this is the answer after measuring.
-   */
-  const [side, setSide] = useState<'top' | 'bottom'>(placement);
-
-  useLayoutEffect(() => {
-    if (!open) return;
-    const trigger = ref.current;
-    const panel = panelRef.current;
-    if (!trigger || !panel) return;
-
-    const rect = trigger.getBoundingClientRect();
-    // Measured rather than assumed: these panels hold anything from two swatches
-    // to a stack of sliders, and a guess would be wrong for one of them.
-    const needed = panel.offsetHeight + 8;
-    const below = window.innerHeight - rect.bottom;
-    const above = rect.top;
-
-    /**
-     * Only flips when the preferred side genuinely cannot hold it *and* the
-     * other side can. Flipping toward a side that is also too small trades a
-     * clipped popover for a clipped popover that moved, which is worse — it
-     * looks like a glitch rather than a constraint.
-     */
-    if (placement === 'bottom' && below < needed && above > below) setSide('top');
-    else if (placement === 'top' && above < needed && below > above) setSide('bottom');
-    else setSide(placement);
-  }, [open, placement]);
-
-  // Re-measured on the next open rather than kept, because the rail moves with
-  // its object and the room available is a property of where it is now.
-  useEffect(() => { if (!open) setSide(placement); }, [open, placement]);
-
-  useEffect(() => {
-    if (!open) return;
-    const onDown = (e: MouseEvent) => {
-      // The stroke and fill popovers each host a portalled colour picker.
-      if (isInsidePortalSurface(e.target)) return;
-      if (ref.current && !ref.current.contains(e.target as Node)) setOpen(false);
-    };
-    const onKey = (e: KeyboardEvent) => {
-      if (e.key === 'Escape') { e.stopPropagation(); setOpen(false); }
-    };
-    document.addEventListener('mousedown', onDown);
-    document.addEventListener('keydown', onKey, true);
-    return () => {
-      document.removeEventListener('mousedown', onDown);
-      document.removeEventListener('keydown', onKey, true);
-    };
-  }, [open]);
-
-  return (
-    <div style={{ position: 'relative', display: 'flex' }} ref={ref}>
-      <button
-        type="button"
-        className="ctx-btn"
-        data-tooltip={label}
-        aria-label={label}
-        aria-haspopup="dialog"
-        aria-expanded={open}
-        onClick={() => setOpen((v) => !v)}
-      >
-        {trigger}
-      </button>
-      {open && (
-        <div
-          ref={panelRef}
-          className="ctx-popover"
-          role="dialog"
-          aria-label={label}
-          data-side={side}
-          style={{
-            [side === 'bottom' ? 'top' : 'bottom']: 'calc(100% + 8px)',
-            /**
-             * Centred with `translate`, not `transform`.
-             *
-             * `ctxPopIn` animates `transform`, so centring with it meant the
-             * entrance overwrote the centring: the panel flew in half its own
-             * width to the right and snapped into place on the last frame. The
-             * independent `translate` property composes instead of being
-             * replaced — the trap DESIGN.md names, and this is the sixth
-             * surface to have had it.
-             */
-            ...(align === 'center'
-              ? { left: '50%', translate: '-50% 0' }
-              : align === 'end'
-                ? { right: 0 }
-                : { left: 0 }),
-          } as React.CSSProperties}
-        >
-          {children}
-        </div>
-      )}
-    </div>
-  );
-};
 
 /**
  * A labelled slider for a value the rail shows but does not have room to edit.
@@ -1821,7 +1662,7 @@ export const ObjectContextToolbar: React.FC<Props> = ({ selectedId, selectedIds,
             <div className="ctx-group">
               <StickyPalette
                 theme={node.theme}
-                onPick={(theme) => {
+                onPick={(theme: StickyTheme) => {
                   updateProp({ theme });
                   // Recolouring a note also sets what the next one will be,
                   // the way picking a colour does in any drawing tool.
@@ -1839,30 +1680,57 @@ export const ObjectContextToolbar: React.FC<Props> = ({ selectedId, selectedIds,
                 <button type="button" className="ctx-btn" data-tooltip="React" aria-label="React" aria-expanded={showReactions} onClick={() => setShowReactions((v) => !v)}>
                   <SmilePlus size={16} />
                 </button>
-                {showReactions && (
-                  <div className="ctx-popover" style={{ top: 'calc(100% + 8px)', left: '50%', transform: 'translateX(-50%)', flexDirection: 'row', gap: 2, minWidth: 0, padding: 4 }}>
-                    {REACTION_SET.map((emoji) => {
-                      const mine = (node.reactions[emoji] ?? []).includes(myAuthorId);
-                      return (
-                        <button
-                          key={emoji}
-                          type="button"
-                          // A toggle, not a counter: this used to write
-                          // `count + 1`, so one person could react five times
-                          // and nobody could take a reaction back.
-                          onClick={() => { toggleReaction(node.id, emoji, myAuthorId); setShowReactions(false); }}
-                          aria-pressed={mine}
-                          title={mine ? `Remove ${emoji}` : `React ${emoji}`}
-                          style={{
-                            background: mine ? 'var(--surface-active)' : 'transparent',
-                            border: 'none', cursor: 'pointer', fontSize: 16, lineHeight: 1,
-                            padding: '4px 6px', borderRadius: 6,
-                          }}
-                        >{emoji}</button>
-                      );
-                    })}
-                  </div>
-                )}
+                <AnimatePresence>
+                  {showReactions && (
+                    <motion.div
+                      initial={{ scale: 0.75, opacity: 0, y: 6 }}
+                      animate={{ scale: 1, opacity: 1, y: 0 }}
+                      exit={{ scale: 0.75, opacity: 0, y: 6 }}
+                      transition={{ type: 'spring', stiffness: 500, damping: 28 }}
+                      className="ctx-popover"
+                      style={{
+                        top: 'calc(100% + 8px)',
+                        left: '50%',
+                        transform: 'translateX(-50%)',
+                        flexDirection: 'row',
+                        gap: 4,
+                        minWidth: 0,
+                        padding: '4px 6px',
+                        borderRadius: 10,
+                      }}
+                    >
+                      {REACTION_SET.map((emoji) => {
+                        const mine = (node.reactions[emoji] ?? []).includes(myAuthorId);
+                        return (
+                          <motion.button
+                            key={emoji}
+                            type="button"
+                            whileHover={{ scale: 1.25, y: -2 }}
+                            whileTap={{ scale: 0.88 }}
+                            onClick={() => {
+                              toggleReaction(node.id, emoji, myAuthorId);
+                              setShowReactions(false);
+                            }}
+                            aria-pressed={mine}
+                            title={mine ? `Remove ${emoji}` : `React ${emoji}`}
+                            style={{
+                              background: mine ? 'var(--surface-active)' : 'transparent',
+                              border: 'none',
+                              cursor: 'pointer',
+                              fontSize: 17,
+                              lineHeight: 1,
+                              padding: '4px 6px',
+                              borderRadius: 6,
+                              transition: 'background 0.15s ease',
+                            }}
+                          >
+                            {emoji}
+                          </motion.button>
+                        );
+                      })}
+                    </motion.div>
+                  )}
+                </AnimatePresence>
               </div>
             </div>
             <Divider />

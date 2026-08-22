@@ -320,12 +320,13 @@ export function routeCurved(
   fromPort: Exclude<Port, 'auto'>,
   toPort: Exclude<Port, 'auto'>
 ): Point[] {
-  const reach = curveTension(a, b);
   const na = portNormal(fromPort);
   const nb = portNormal(toPort);
+  const reachA = curveTension(a, b, na, nb);
+  const reachB = curveTension(b, a, nb, na);
 
-  const c1 = { x: a.x + na.x * reach, y: a.y + na.y * reach };
-  const c2 = { x: b.x + nb.x * reach, y: b.y + nb.y * reach };
+  const c1 = { x: a.x + na.x * reachA, y: a.y + na.y * reachA };
+  const c2 = { x: b.x + nb.x * reachB, y: b.y + nb.y * reachB };
 
   /**
    * Enough segments that the curve reads as smooth at a sensible zoom, few
@@ -355,8 +356,16 @@ export function routeCurved(
  * Proportional to the span so a short link stays tight and a long one bows,
  * and capped so a connector across the whole board does not loop out of it.
  */
-export function curveTension(a: Point, b: Point): number {
-  return Math.min(160, Math.max(30, Math.hypot(b.x - a.x, b.y - a.y) * 0.4));
+export function curveTension(a: Point, b: Point, na?: Point, _nb?: Point): number {
+  const dist = Math.hypot(b.x - a.x, b.y - a.y);
+  if (!na) {
+    return Math.min(160, Math.max(30, dist * 0.4));
+  }
+  const dx = (b.x - a.x) / (dist || 1);
+  const dy = (b.y - a.y) / (dist || 1);
+  const alignA = na.x * dx + na.y * dy;
+  const factor = alignA > 0 ? 0.38 : 0.28;
+  return Math.min(160, Math.max(24, dist * factor));
 }
 
 /**

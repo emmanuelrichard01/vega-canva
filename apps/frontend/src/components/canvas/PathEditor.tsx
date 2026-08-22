@@ -220,7 +220,6 @@ export const PathEditor: React.FC<Props> = ({ stageScale }) => {
         s.appliedDelta = constrained;
         s.working = moveAnchors(s.working, s.anchors, stepDx, stepDy);
 
-        const dist = Math.hypot(constrained.dx, constrained.dy);
         setDragBadge({
           x: p.x - node.x,
           y: p.y - node.y,

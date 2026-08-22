@@ -15,8 +15,65 @@ import { pool, initDb, startRetentionSweep, MAX_UPDATES_PER_ROOM } from "./db";
 initDb().then(startRetentionSweep);
 
 const app = express();
-app.use(cors());
+// Configurable CORS support (wildcard default in dev, or comma-separated list of origins)
+const allowedOrigins = process.env.ALLOWED_ORIGINS
+  ? process.env.ALLOWED_ORIGINS.split(',').map((o) => o.trim())
+  : '*';
+
+app.use(cors({
+  origin: (origin, callback) => {
+    if (allowedOrigins === '*' || !origin) {
+      callback(null, true);
+    } else if (Array.isArray(allowedOrigins) && allowedOrigins.includes(origin)) {
+      callback(null, true);
+    } else {
+      callback(new Error('Origin not allowed by CORS'));
+    }
+  }
+}));
 app.use(express.json());
+
+// Lightweight, sliding-window token bucket rate limiter for API protection
+interface RateLimitBucket {
+  tokens: number;
+  lastRefill: number;
+}
+
+const createRateLimiter = (maxTokens: number, refillRatePerSec: number) => {
+  const clients = new Map<string, RateLimitBucket>();
+  const cleanupTimer = setInterval(() => {
+    const now = Date.now();
+    for (const [ip, bucket] of clients.entries()) {
+      if (now - bucket.lastRefill > 10 * 60 * 1000) {
+        clients.delete(ip);
+      }
+    }
+  }, 5 * 60 * 1000);
+  cleanupTimer.unref?.();
+
+  return (req: any, res: any, next: any) => {
+    const clientIp = String(req.ip || req.socket?.remoteAddress || 'unknown');
+    const now = Date.now();
+    let bucket = clients.get(clientIp);
+    if (!bucket) {
+      bucket = { tokens: maxTokens, lastRefill: now };
+      clients.set(clientIp, bucket);
+    } else {
+      const elapsedSec = (now - bucket.lastRefill) / 1000;
+      bucket.tokens = Math.min(maxTokens, bucket.tokens + elapsedSec * refillRatePerSec);
+      bucket.lastRefill = now;
+    }
+
+    if (bucket.tokens < 1) {
+      return res.status(429).json({ error: "Too many requests. Please try again later." });
+    }
+    bucket.tokens -= 1;
+    next();
+  };
+};
+
+const mediaUploadLimiter = createRateLimiter(30, 1); // 30 bursts, 1 upload per second refill
+const historyLimiter = createRateLimiter(60, 2);     // 60 bursts, 2 requests per second refill
 
 // MinIO S3 Configuration
 const s3 = new S3Client({
@@ -115,8 +172,8 @@ const upload = multer({
   })
 });
 
-// S3 Upload endpoint
-app.post("/rooms/:roomId/media", (req: any, res: any, next: any) => {
+// S3 Upload endpoint with rate limiting
+app.post("/rooms/:roomId/media", mediaUploadLimiter, (req: any, res: any, next: any) => {
   upload.single("media")(req, res, (err: any) => {
     if (err) {
       if (err.code === 'LIMIT_FILE_SIZE') {
@@ -133,9 +190,6 @@ app.post("/rooms/:roomId/media", (req: any, res: any, next: any) => {
 
   const rawRoomId = String(req.params.roomId || 'global');
   const roomId = rawRoomId.replace(/[^a-zA-Z0-9_-]/g, '') || 'global';
-  // Derive the public base URL from whatever host the browser actually used to reach us
-  // (localhost, a LAN IP, or a real domain) instead of hardcoding localhost — otherwise
-  // media only ever loads for whoever is running the containers.
   const publicBase = process.env.PUBLIC_S3_URL || `${req.protocol}://${req.hostname}:9000`;
   const url = `${publicBase}/${s3Bucket}/${req.file.key}`;
   const mediaId = path.basename(req.file.key).split('.')[0]; 
@@ -156,12 +210,12 @@ app.post("/rooms/:roomId/media", (req: any, res: any, next: any) => {
     res.json({ id: mediaId, url, mimeType: req.file.mimetype, sizeBytes: req.file.size });
   } catch (err) {
     console.error("Error inserting media ref:", err);
-    res.status(500).json({ error: "Database error" });
+    res.status(500).json({ error: "Database error processing media upload." });
   }
 });
 
-// History endpoint for Time Travel session replay
-app.get("/rooms/:roomId/history", async (req, res) => {
+// History endpoint for Time Travel session replay with rate limiting
+app.get("/rooms/:roomId/history", historyLimiter, async (req, res) => {
   const roomId = req.params.roomId;
   try {
     /**
@@ -394,3 +448,39 @@ wss.on("connection", (socket: any, request: any) => {
     console.error("WebSocket error:", err.message);
   });
 });
+
+// Graceful shutdown handling for clean termination and resource drainage
+const gracefulShutdown = async (signal: string) => {
+  console.log(`\nReceived ${signal}. Starting graceful shutdown...`);
+
+  // 1. Close WebSocket server
+  wss.close(() => {
+    console.log("WebSocket server closed.");
+  });
+
+  for (const client of wss.clients) {
+    client.terminate();
+  }
+
+  // 2. Stop accepting new HTTP requests
+  httpServer.close(async () => {
+    console.log("HTTP server closed.");
+    try {
+      // 3. Drain PostgreSQL connection pool
+      await pool.end();
+      console.log("PostgreSQL pool drained successfully.");
+    } catch (err) {
+      console.error("Error closing PostgreSQL pool:", err);
+    }
+    process.exit(0);
+  });
+
+  // Safety timeout if connections refuse to drain
+  setTimeout(() => {
+    console.error("Forced shutdown after timeout.");
+    process.exit(1);
+  }, 10000).unref();
+};
+
+process.on("SIGTERM", () => gracefulShutdown("SIGTERM"));
+process.on("SIGINT", () => gracefulShutdown("SIGINT"));

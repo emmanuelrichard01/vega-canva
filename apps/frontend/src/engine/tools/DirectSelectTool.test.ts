@@ -2,7 +2,6 @@ import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { DirectSelectTool } from './DirectSelectTool';
 import { pathEdit } from '../interaction/pathEdit';
 import { useStore } from '../../hooks/useStore';
-import * as vectorOps from '../document/vectorOps';
 
 describe('DirectSelectTool', () => {
   beforeEach(() => {

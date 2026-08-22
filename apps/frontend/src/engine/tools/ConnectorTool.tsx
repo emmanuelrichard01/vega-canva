@@ -390,17 +390,26 @@ export class ConnectorTool implements Tool {
         {overlayState.ports.map((p: any) => {
           const isArmed = overlayState.armed === `${p.nodeId}:${p.side}`;
           return (
-            <Circle
-              key={`${p.nodeId}-${p.side}`}
-              x={p.x}
-              y={p.y}
-              // The armed port grows rather than only changing colour, so it
-              // is unmistakable at a glance and under `forced-colors`.
-              radius={isArmed ? r * 1.9 : r}
-              fill={isArmed ? '#3B82F6' : ThemeService.getCanvasPlateFill()}
-              stroke="#3B82F6"
-              strokeWidth={1.5 / zoom}
-            />
+            <Group key={`${p.nodeId}-${p.side}`}>
+              {isArmed && (
+                <Circle
+                  x={p.x}
+                  y={p.y}
+                  radius={r * 2.8}
+                  fill="rgba(59, 130, 246, 0.15)"
+                  stroke="rgba(59, 130, 246, 0.45)"
+                  strokeWidth={1.2 / zoom}
+                />
+              )}
+              <Circle
+                x={p.x}
+                y={p.y}
+                radius={isArmed ? r * 1.9 : r}
+                fill={isArmed ? '#3B82F6' : ThemeService.getCanvasPlateFill()}
+                stroke="#3B82F6"
+                strokeWidth={1.5 / zoom}
+              />
+            </Group>
           );
         })}
         {/* Drawn last so it sits over the rings it may be standing between. */}

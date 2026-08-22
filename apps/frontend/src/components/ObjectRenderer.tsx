@@ -503,7 +503,7 @@ export const ObjectRenderer = React.memo(
           reassignFrame(objId);
         }
       },
-      [objId, onThrow, onSelect]
+      [objId, onThrow, onSelect, canDuplicate]
     );
 
     const handleDblClick = useCallback((e?: Konva.KonvaEventObject<MouseEvent | TouchEvent>) => {

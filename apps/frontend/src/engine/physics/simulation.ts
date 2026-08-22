@@ -354,7 +354,7 @@ export class PhysicsSimulation {
         body.plugin = {
           width: w, height: h, type: node.type, id, massProps,
           materialId: material.id,
-          locked: node.locked === true,
+          locked: node.locked === true || (node as any).pinned === true,
           round: isRound,
         };
         Matter.Composite.add(this.engine.world, body);
@@ -369,7 +369,7 @@ export class PhysicsSimulation {
        * so it must not force a rebuild — but it does have to be current, or
        * locking something mid-cascade would not take effect until reload.
        */
-      if (body.plugin) body.plugin.locked = node.locked === true;
+      if (body.plugin) body.plugin.locked = node.locked === true || (node as any).pinned === true;
 
       // A resting body tracks the document; a moving one owns its own position.
       if (body.isStatic && finite(cx) && finite(cy)) {

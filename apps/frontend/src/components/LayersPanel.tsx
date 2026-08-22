@@ -13,7 +13,7 @@ import { readableOn } from '../engine/model/color';
 import { getColorForUser } from '../engine/presence/ColorPalette';
 import { dropZone, planLayerDrop, type DropRow, type DropWhere } from '../engine/model/layerDrop';
 import { childGroups, nodesInGroup, planUngroup } from '../engine/model/groupTree';
-import { THEMES } from './canvas/renderers/StickyRenderer';
+import { THEMES } from '../engine/model/stickyThemes';
 import { tagFilter } from '../engine/model/tagFilter';
 import { tagCounts } from '../engine/model/tags';
 import {
