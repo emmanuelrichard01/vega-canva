@@ -4,6 +4,9 @@ import type Konva from 'konva';
 import { updateNode } from '../../engine/document';
 import { EXPORT_CHROME } from '../../engine/export/chrome';
 import { constrainToAngle, lineEndpoints, lineNodeFromEndpoints } from '../../engine/model/lineEnds';
+import { bindCandidates } from '../../engine/model/connectorTargets';
+import { snapLineEndpoint } from '../../engine/interaction/lineMagneticSnap';
+import { useStore } from '../../hooks/useStore';
 import type { ShapeNode } from '../../engine/model/schema';
 
 interface Props {
@@ -15,6 +18,7 @@ interface Props {
 /** Screen size of a handle, in pixels. Matches the transformer's anchors. */
 const HANDLE = 9;
 const ACCENT = '#3B82F6';
+const SNAP_COLOR = '#10B981';
 
 /**
  * The two ends of a line, as handles you can drag.
@@ -43,6 +47,7 @@ export const LineEditor: React.FC<Props> = ({ node, stageScale }) => {
   const { a, b } = lineEndpoints(node);
   /** The end being dragged, so the preview follows it before anything is stored. */
   const [live, setLive] = useState<{ a: typeof a; b: typeof b } | null>(null);
+  const [snapMeta, setSnapMeta] = useState<import('../../engine/interaction/lineMagneticSnap').LineSnapIndicator | null>(null);
 
   const ends = live ?? { a, b };
   const radius = HANDLE / 2 / stageScale;
@@ -56,11 +61,15 @@ export const LineEditor: React.FC<Props> = ({ node, stageScale }) => {
       lineNodeFromEndpoints(next.a, next.b, node.geometry, node.appearance?.stroke?.width ?? 2)
     );
     setLive(null);
+    setSnapMeta(null);
   };
 
   const handleFor = (which: 'a' | 'b') => {
     const point = ends[which];
     const anchor = which === 'a' ? ends.b : ends.a;
+    const capKind = which === 'a'
+      ? (node.geometry.endStart ?? 'none')
+      : (node.geometry.endEnd ?? (node.geometry.kind === 'arrow' ? 'arrow' : 'none'));
 
     return (
       <Circle
@@ -80,19 +89,68 @@ export const LineEditor: React.FC<Props> = ({ node, stageScale }) => {
         }}
         onDragMove={(e: Konva.KonvaEventObject<DragEvent>) => {
           let moved = { x: e.target.x(), y: e.target.y() };
+          const evt = e.evt as unknown as { shiftKey?: boolean; altKey?: boolean };
           // Shift constrains to fifteen degrees from the *other* end, which is
           // what makes it read as swinging the line rather than as snapping to
           // a grid the line has no relationship to.
-          if ((e.evt as unknown as { shiftKey?: boolean }).shiftKey) {
+          if (evt.shiftKey) {
             moved = constrainToAngle(anchor, moved);
-            e.target.position(moved);
+            setSnapMeta(null);
+          } else if (!evt.altKey) {
+            // Magnetic snap to shape ports and outlines when not holding Alt
+            const candidates = bindCandidates(useStore.getState().objects);
+            const snap = snapLineEndpoint(
+              moved,
+              candidates,
+              stageScale,
+              {
+                anchor,
+                endType: which === 'a' ? 'start' : 'end',
+                capKind,
+                endScale: node.geometry.endScale ?? 1,
+                strokeWidth: node.appearance?.stroke?.width ?? 2,
+                lineProfile: node.geometry.lineProfile,
+                endAlign: node.geometry.endAlign,
+              },
+              node.id
+            );
+            if (snap.snapped) {
+              moved = snap.point;
+              setSnapMeta(snap.meta ?? null);
+            } else {
+              setSnapMeta(null);
+            }
+          } else {
+            setSnapMeta(null);
           }
+          e.target.position(moved);
           setLive(which === 'a' ? { a: moved, b: ends.b } : { a: ends.a, b: moved });
         }}
         onDragEnd={(e: Konva.KonvaEventObject<DragEvent>) => {
           window.dispatchEvent(new CustomEvent('canvas-drag-end'));
           let moved = { x: e.target.x(), y: e.target.y() };
-          if ((e.evt as unknown as { shiftKey?: boolean }).shiftKey) moved = constrainToAngle(anchor, moved);
+          const evt = e.evt as unknown as { shiftKey?: boolean; altKey?: boolean };
+          if (evt.shiftKey) {
+            moved = constrainToAngle(anchor, moved);
+          } else if (!evt.altKey) {
+            const candidates = bindCandidates(useStore.getState().objects);
+            const snap = snapLineEndpoint(
+              moved,
+              candidates,
+              stageScale,
+              {
+                anchor,
+                endType: which === 'a' ? 'start' : 'end',
+                capKind,
+                endScale: node.geometry.endScale ?? 1,
+                strokeWidth: node.appearance?.stroke?.width ?? 2,
+                lineProfile: node.geometry.lineProfile,
+                endAlign: node.geometry.endAlign,
+              },
+              node.id
+            );
+            if (snap.snapped) moved = snap.point;
+          }
           commit(which === 'a' ? { a: moved, b: ends.b } : { a: ends.a, b: moved });
         }}
         // The pointer says what the handle does before it is pressed.
@@ -110,6 +168,71 @@ export const LineEditor: React.FC<Props> = ({ node, stageScale }) => {
 
   return (
     <Group name={EXPORT_CHROME}>
+      {/* Target shape boundary halo when magnetically locked */}
+      {snapMeta && snapMeta.targetBox && (
+        <Line
+          points={[
+            snapMeta.targetBox.x,
+            snapMeta.targetBox.y,
+            snapMeta.targetBox.x + snapMeta.targetBox.width,
+            snapMeta.targetBox.y,
+            snapMeta.targetBox.x + snapMeta.targetBox.width,
+            snapMeta.targetBox.y + snapMeta.targetBox.height,
+            snapMeta.targetBox.x,
+            snapMeta.targetBox.y + snapMeta.targetBox.height,
+          ]}
+          closed
+          fill="#10B98112"
+          stroke={SNAP_COLOR}
+          strokeWidth={1 / stageScale}
+          dash={[4 / stageScale, 4 / stageScale]}
+          listening={false}
+        />
+      )}
+
+      {/* Dynamic port indicator with head/tail styling */}
+      {snapMeta && (
+        <Group listening={false}>
+          {/* Concentric outer halo */}
+          <Circle
+            x={snapMeta.point.x}
+            y={snapMeta.point.y}
+            radius={8 / stageScale}
+            fill="#10B98126"
+            stroke={SNAP_COLOR}
+            strokeWidth={1.5 / stageScale}
+          />
+          {/* Inner core marker */}
+          <Circle
+            x={snapMeta.point.x}
+            y={snapMeta.point.y}
+            radius={3 / stageScale}
+            fill={SNAP_COLOR}
+          />
+          {/* Directional crosshair ticks */}
+          <Line
+            points={[
+              snapMeta.point.x - 5 / stageScale,
+              snapMeta.point.y,
+              snapMeta.point.x + 5 / stageScale,
+              snapMeta.point.y,
+            ]}
+            stroke="#FFFFFF"
+            strokeWidth={1 / stageScale}
+          />
+          <Line
+            points={[
+              snapMeta.point.x,
+              snapMeta.point.y - 5 / stageScale,
+              snapMeta.point.x,
+              snapMeta.point.y + 5 / stageScale,
+            ]}
+            stroke="#FFFFFF"
+            strokeWidth={1 / stageScale}
+          />
+        </Group>
+      )}
+
       {/* A hairline along the run while it is being dragged, so the line is
           visible where it *will* be rather than only where it still is — the
           node itself does not move until the drag commits. */}
@@ -127,3 +250,5 @@ export const LineEditor: React.FC<Props> = ({ node, stageScale }) => {
     </Group>
   );
 };
+
+

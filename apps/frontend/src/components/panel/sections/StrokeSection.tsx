@@ -195,6 +195,8 @@ export const StrokeSection: React.FC<StrokeSectionProps> = ({
                   { value: 'solid', label: 'Solid — a flat fill', icon: <FillStyleIcon style="solid" /> },
                   { value: 'hachure', label: 'Hachure — parallel pen strokes', icon: <FillStyleIcon style="hachure" /> },
                   { value: 'crosshatch', label: 'Cross-hatch — two sets, crossed', icon: <FillStyleIcon style="crosshatch" /> },
+                  { value: 'zigzag', label: 'Scribble — continuous back-and-forth pen marks', icon: <FillStyleIcon style="zigzag" /> },
+                  { value: 'dots', label: 'Stipple — hand-drawn dots', icon: <FillStyleIcon style="dots" /> },
                 ]}
               />
             );

@@ -568,6 +568,113 @@ function hachurePass(
   return strokes.join(' ');
 }
 
+/**
+ * Zigzag / scribble fill — continuous back-and-forth pen strokes connecting at edges.
+ */
+function zigzagPass(
+  points: readonly Point[],
+  options: { seed: number; gap: number; angle: number; level?: SketchLevel }
+): string {
+  const { seed, gap, angle, level } = options;
+  if (points.length < 3) return '';
+
+  const prof = profileFor(level);
+  const rand = rng(seed ^ 0x9e3779b9);
+  const rad = (angle * Math.PI) / 180;
+  const cos = Math.cos(-rad);
+  const sin = Math.sin(-rad);
+  const rot = points.map((p) => ({ x: p.x * cos - p.y * sin, y: p.x * sin + p.y * cos }));
+  const minY = Math.min(...rot.map((p) => p.y));
+  const maxY = Math.max(...rot.map((p) => p.y));
+
+  const strokes: string[] = [];
+  const back = (x: number, y: number) => ({ x: x * cos + y * sin, y: -x * sin + y * cos });
+
+  let prevPoint: Point | null = null;
+  let forward = true;
+
+  for (let y = minY + gap / 2; y < maxY; y += gap) {
+    const crossings: number[] = [];
+    for (let i = 0; i < rot.length; i++) {
+      const a = rot[i];
+      const b = rot[(i + 1) % rot.length];
+      if (a.y <= y === b.y <= y) continue;
+      crossings.push(a.x + ((y - a.y) / (b.y - a.y)) * (b.x - a.x));
+    }
+    crossings.sort((p, q) => p - q);
+    for (let i = 0; i + 1 < crossings.length; i += 2) {
+      const left = back(crossings[i] + Math.abs(jitter(2, rand)), y + jitter(1, rand));
+      const right = back(crossings[i + 1] - Math.abs(jitter(2, rand)), y + jitter(1, rand));
+      const s = forward ? left : right;
+      const e = forward ? right : left;
+
+      if (prevPoint) {
+        // Connecting loop stroke between previous scanline and this one
+        strokes.push(edge(prevPoint.x, prevPoint.y, s.x, s.y, rand, false, prof));
+      }
+      strokes.push(edge(s.x, s.y, e.x, e.y, rand, false, prof));
+      prevPoint = e;
+      forward = !forward;
+    }
+  }
+  return strokes.join(' ');
+}
+
+/**
+ * Dots / stippling fill — organic hand-stippled dot clusters inside the shape.
+ *
+ * Performance-tuned: uses adaptive spacing and minimal stroked dot endpoints
+ * (`M x y l 0.01 0` with round caps) so rendering across zoom frames is instant
+ * in GPU Canvas2D rather than parsing thousands of heavy SVG arcs.
+ */
+function dotsPass(
+  points: readonly Point[],
+  options: { seed: number; gap: number; angle: number; level?: SketchLevel }
+): string {
+  const { seed, angle, level } = options;
+  if (points.length < 3) return '';
+
+  const rand = rng(seed ^ 0x9e3779b9);
+  const rad = (angle * Math.PI) / 180;
+  const cos = Math.cos(-rad);
+  const sin = Math.sin(-rad);
+  const rot = points.map((p) => ({ x: p.x * cos - p.y * sin, y: p.x * sin + p.y * cos }));
+  const minY = Math.min(...rot.map((p) => p.y));
+  const maxY = Math.max(...rot.map((p) => p.y));
+  const minX = Math.min(...rot.map((p) => p.x));
+  const maxX = Math.max(...rot.map((p) => p.x));
+
+  // Adaptive spacing based on shape diagonal so dot count stays optimal (30-150 dots max)
+  const diag = Math.hypot(maxX - minX, maxY - minY);
+  const baseSpacing = level === 'heavy' ? 12 : level === 'light' ? 18 : 15;
+  const step = Math.max(baseSpacing, Math.min(40, diag / 16));
+
+  const paths: string[] = [];
+  const back = (x: number, y: number) => ({ x: x * cos + y * sin, y: -x * sin + y * cos });
+
+  for (let y = minY + step * 0.6; y < maxY - step * 0.2; y += step) {
+    const crossings: number[] = [];
+    for (let i = 0; i < rot.length; i++) {
+      const a = rot[i];
+      const b = rot[(i + 1) % rot.length];
+      if (a.y <= y === b.y <= y) continue;
+      crossings.push(a.x + ((y - a.y) / (b.y - a.y)) * (b.x - a.x));
+    }
+    crossings.sort((p, q) => p - q);
+    for (let i = 0; i + 1 < crossings.length; i += 2) {
+      const xStart = crossings[i] + step * 0.4;
+      const xEnd = crossings[i + 1] - step * 0.4;
+      for (let x = xStart; x < xEnd; x += step) {
+        const jx = jitter(step * 0.3, rand);
+        const jy = jitter(step * 0.3, rand);
+        const p = back(x + jx, y + jy);
+        paths.push(`M ${r(p.x)} ${r(p.y)} l 0.01 0`);
+      }
+    }
+  }
+  return paths.join(' ');
+}
+
 /** A rectangle as a ring, so the polyline sketcher covers it. */
 export function rectRing(width: number, height: number): Point[] {
   return [
@@ -598,15 +705,14 @@ export function ellipseRing(cx: number, cy: number, rx: number, ry: number, step
 /**
  * How a sketched shape's interior is shaded.
  *
- * `solid` is the ordinary fill — a flat colour under a drawn outline, which is
- * the right answer when the shape is a label or a background and the sketch is
- * only meant to soften its edge. The other two are pen shading, and they are
- * what makes a diagram read as drawn rather than as filled: `hachure` is one
- * set of parallel strokes, `crosshatch` lays a second set across it at a right
- * angle for a denser, darker tone.
+ * `solid` is the ordinary fill — a flat colour under a drawn outline.
+ * `hachure` is parallel pen strokes.
+ * `crosshatch` lays a second set across it at a right angle for a denser tone.
+ * `zigzag` is continuous back-and-forth pencil shading.
+ * `dots` is organic stippling.
  */
-export type FillStyle = 'solid' | 'hachure' | 'crosshatch';
-export const FILL_STYLES: FillStyle[] = ['solid', 'hachure', 'crosshatch'];
+export type FillStyle = 'solid' | 'hachure' | 'crosshatch' | 'zigzag' | 'dots';
+export const FILL_STYLES: FillStyle[] = ['solid', 'hachure', 'crosshatch', 'zigzag', 'dots'];
 
 /**
  * The default hachure angle.
@@ -624,12 +730,6 @@ const HACHURE_GAP = 9;
 
 /**
  * Pen shading for a shape's interior.
- *
- * Cross-hatch is two passes, and the second is deliberately **not** simply the
- * first rotated: it takes a different seed and a slightly wider gap, so the two
- * grids do not land on each other and produce the regular lattice that reads as
- * a texture fill rather than as a hand shading twice. A wider second gap also
- * keeps the crossing density from doubling the apparent darkness.
  */
 export function shapeFill(
   points: readonly Point[],
@@ -637,6 +737,24 @@ export function shapeFill(
 ): string {
   const { seed, style, level } = options;
   if (style === 'solid') return '';
+
+  if (style === 'zigzag') {
+    return zigzagPass(points, {
+      seed,
+      gap: HACHURE_GAP * 1.2,
+      angle: HACHURE_ANGLE,
+      level,
+    });
+  }
+
+  if (style === 'dots') {
+    return dotsPass(points, {
+      seed,
+      gap: HACHURE_GAP * 1.3,
+      angle: HACHURE_ANGLE,
+      level,
+    });
+  }
 
   const first = hachurePass(points, {
     seed,

@@ -108,7 +108,7 @@ const FILLABLE = new Set(['shape', 'path', 'frame']);
  * The set alone cannot say that, which is exactly why the rule carries the
  * extra clause rather than the set carrying a lie.
  */
-const SKETCHABLE = new Set(['shape', 'connector', 'path']);
+const SKETCHABLE = new Set(['shape', 'connector', 'path', 'sticky']);
 const VECTORIZABLE = new Set(['shape', 'path']);
 const TEXTUAL = new Set(['text', 'sticky', 'shape']);
 

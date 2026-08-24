@@ -241,7 +241,7 @@ describe('Dynamic Anchor Conversion Functions', () => {
   });
 
   it('setPickedAnchorMode converts all anchors when none are explicitly picked', async () => {
-    const { setPickedAnchorMode } = await import('../../components/canvas/PathEditor');
+    const { setPickedAnchorMode } = await import('../interaction/pathAnchorActions');
     pathEdit.enter('path-1');
     expect(pathEdit.getSnapshot()?.anchors.length).toBe(0);
 
@@ -250,7 +250,7 @@ describe('Dynamic Anchor Conversion Functions', () => {
   }, 15000);
 
   it('setMultiplePathsAnchorMode applies corner/smooth across multiple selected paths', async () => {
-    const { setMultiplePathsAnchorMode } = await import('../../components/canvas/PathEditor');
+    const { setMultiplePathsAnchorMode } = await import('../interaction/pathAnchorActions');
     const result = setMultiplePathsAnchorMode(['path-1', 'path-2'], 'smooth');
     expect(result).toBe(true);
   }, 15000);

@@ -5,11 +5,11 @@ import { engineEvents } from '../../engine/EventBus';
 import { consumePendingCaret } from '../../engine/interaction/pendingEdit';
 import { textEditing } from '../../engine/interaction/textEditing';
 import { DEFAULT_TYPOGRAPHY, type TextBearingNode } from '../../engine/model/schema';
-import { domTextStyle } from './renderers/shared';
-import { STICKY_PADDING, THEMES } from './renderers/StickyRenderer';
+import { STICKY_PADDING, THEMES } from '../../engine/model/stickyThemes';
 import { measureStickyHeight, stickyFit, STICKY_FONT_FAMILY } from './renderers/stickyFit';
 import { STICKY_LINE_HEIGHT } from '../../engine/model/stickyText';
 import { chainSticky } from '../../engine/tools/stickyChain';
+import { domTextStyle } from './renderers/shared';
 
 interface Props {
   node: TextBearingNode;

@@ -31,7 +31,7 @@ import {
   deletePickedAnchor,
   setMultiplePathsAnchorMode,
   setPickedAnchorMode,
-} from './canvas/PathEditor';
+} from '../engine/interaction/pathAnchorActions';
 import { applyBoolean, canVectorize, flattenToPath, outlineStrokeOf } from '../engine/document/vectorOps';
 import { BOOLEAN_OPS, type BooleanOp } from '../engine/model/pathBoolean';
 import { deleteNodesWithFrames } from '../engine/interaction/frameMembership';
@@ -57,7 +57,7 @@ import { EndCapIcon, RouteIcon } from './panel/connectorIcons';
 import { StrokeWeightIcon } from './panel/strokeWeightIcon';
 import { LineSpecimen } from './panel/lineSpecimen';
 import { LineProfileIcon } from './panel/lineProfileIcons';
-import { LINE_PROFILES, LINE_PROFILE_LABELS, MIN_WAVES, type LineProfile } from '../engine/model/linePath';
+import { LINE_PROFILES, LINE_PROFILE_LABELS, type LineProfile } from '../engine/model/linePath';
 import { ShapeIcon } from './workspace/shapeIcons';
 import { END_CAP_KINDS, END_CAP_LABELS, MAX_END_SCALE, MIN_END_SCALE, type EndCapKind } from '../engine/model/connectorEnds';
 import type { Routing } from '../engine/model/connector';
@@ -359,6 +359,8 @@ const FILL_LABELS: Record<FillStyle, string> = {
   solid: 'Solid — a flat fill',
   hachure: 'Hachure — parallel pen strokes',
   crosshatch: 'Cross-hatch — two sets, crossed',
+  zigzag: 'Scribble — continuous back-and-forth pen marks',
+  dots: 'Stipple — hand-drawn dots',
 };
 
 interface Props {
@@ -1129,16 +1131,6 @@ export const ObjectContextToolbar: React.FC<Props> = ({ selectedId, selectedIds,
                           icon: <LineProfileIcon profile={profile} />,
                         }))}
                       />
-                      {(node.geometry.lineProfile ?? 'straight') !== 'straight'
-                        && node.geometry.lineProfile !== 'curved' && (
-                        <PopoverSlider
-                          label={node.geometry.lineProfile === 'coil' ? 'Loops' : 'Repeats'}
-                          value={node.geometry.lineWaves ?? 6}
-                          min={MIN_WAVES}
-                          max={20}
-                          onChange={(v) => updateProp({ geometry: { ...node.geometry, lineWaves: v } })}
-                        />
-                      )}
                     </>
                   )}
                   <span className="ctx-popover__label">Line</span>
@@ -1167,6 +1159,31 @@ export const ObjectContextToolbar: React.FC<Props> = ({ selectedId, selectedIds,
                         </button>
                       );
                     })}
+                  </div>
+                  <div style={{ marginTop: 8, paddingTop: 8, borderTop: '1px solid var(--border-subtle, rgba(255,255,255,0.08))' }}>
+                    <button
+                      type="button"
+                      style={{
+                        width: '100%',
+                        display: 'flex',
+                        alignItems: 'center',
+                        justifyContent: 'center',
+                        gap: 6,
+                        padding: '6px 8px',
+                        fontSize: 12,
+                        borderRadius: 6,
+                        background: 'var(--bg-active, rgba(255,255,255,0.06))',
+                        border: '1px solid var(--border-subtle, rgba(255,255,255,0.1))',
+                        color: 'inherit',
+                        cursor: 'pointer',
+                      }}
+                      onClick={() => {
+                        flattenToPath(node.id);
+                      }}
+                    >
+                      <VectorEditIcon size={14} />
+                      Convert to Vector Path
+                    </button>
                   </div>
                 </RailPopover>
               )}
@@ -1252,7 +1269,7 @@ export const ObjectContextToolbar: React.FC<Props> = ({ selectedId, selectedIds,
                     <>
                       <span className="ctx-popover__label">Shading</span>
                       <div className="ctx-shape-grid">
-                        {(['solid', 'hachure', 'crosshatch'] as const).map((st) => (
+                        {(['solid', 'hachure', 'crosshatch', 'zigzag', 'dots'] as const).map((st) => (
                           <button
                             key={st}
                             type="button"

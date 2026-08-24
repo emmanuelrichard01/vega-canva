@@ -1,6 +1,6 @@
 import React, { useEffect, useLayoutEffect, useRef, useState } from 'react';
 import ReactDOM from 'react-dom';
-import { CURSOR_ART } from './cursorArt';
+import { CURSOR_ART } from './cursorArtData';
 import type { CursorMode } from './toolCursor';
 
 /**

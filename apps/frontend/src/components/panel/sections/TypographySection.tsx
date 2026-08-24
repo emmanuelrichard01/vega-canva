@@ -18,7 +18,8 @@ import {
   Type,
   Underline,
 } from 'lucide-react';
-import { Accordion, Row, SubGroup, ToggleButton, shortFont } from '../panelPrimitives';
+import { Accordion, Row, SubGroup, ToggleButton } from '../panelPrimitives';
+import { shortFont } from '../panelHelpers';
 import { ColorPickerPopover } from '../../ui/ColorPickerPopover';
 import { EyedropperButton } from '../../ui/EyedropperButton';
 import { FontSelector } from '../../ui/FontSelector';

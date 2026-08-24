@@ -3,7 +3,7 @@ import { pointsAttribute, regularPolygonPoints, shapeOutline, starPoints } from 
 import { flattenPath } from './pathGeometry';
 import { SHAPE_KIND_VALUES } from './schema';
 import { SHAPE_KIND_ALIASES } from '../document/normalize';
-import { PRESET_GEOMETRY } from '../../components/workspace/shapeIcons';
+import { PRESET_GEOMETRY } from '../../components/workspace/shapePresetTypes';
 import { shapeToPath } from './shapeToPath';
 import type { ShapeNode } from './schema';
 

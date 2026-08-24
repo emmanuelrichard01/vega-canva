@@ -14,7 +14,7 @@ import { Eye, Radar, X } from 'lucide-react';
 import { ObjectContextToolbar } from './components/ObjectContextToolbar';
 import { PropertiesPanel } from './components/PropertiesPanel';
 import { LayersPanel } from './components/LayersPanel';
-import { useAuth } from './hooks/AuthContext';
+import { useAuth } from './hooks/useAuth';
 import { doc, provider, metadataMap, deleteNode, applyNodePatches, nextZIndex, lowestZIndex, localAuthorId, publishLocalIdentity, applyGroupPlan } from './engine/document';
 import { useRoomState } from './hooks/useSync';
 import { initSyncBridge, useStore } from './hooks/useStore';

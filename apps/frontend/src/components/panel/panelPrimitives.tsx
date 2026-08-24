@@ -1,14 +1,5 @@
 import React, { useState } from 'react';
-import {
-  ChevronRight,
-  ImageIcon,
-  MessageSquare,
-  Mic,
-  PenLine,
-  Square,
-  StickyNote,
-  Type,
-} from 'lucide-react';
+import { ChevronRight } from 'lucide-react';
 import { Switch } from '../ui/Switch';
 import type { StrokeStyleId } from '../../engine/model/strokeStyle';
 
@@ -104,16 +95,6 @@ export const Details: React.FC<{ label: string; children: React.ReactNode }> = (
   );
 };
 
-export const TYPE_ICONS: Record<string, React.ReactNode> = {
-  sticky: <StickyNote size={16} color="var(--text-secondary)" />,
-  shape: <Square size={16} color="var(--text-secondary)" />,
-  text: <Type size={16} color="var(--text-secondary)" />,
-  image: <ImageIcon size={16} color="var(--text-secondary)" />,
-  audio: <Mic size={16} color="var(--text-secondary)" />,
-  path: <PenLine size={16} color="var(--text-secondary)" />,
-  comment: <MessageSquare size={16} color="var(--text-secondary)" />,
-};
-
 export const ToggleButton: React.FC<{
   active: boolean;
   onClick: () => void;
@@ -138,7 +119,3 @@ export const ToggleButton: React.FC<{
     {children}
   </button>
 );
-
-export function shortFont(stack: string): string {
-  return (stack.split(',')[0] ?? stack).replace(/["']/g, '').trim();
-}

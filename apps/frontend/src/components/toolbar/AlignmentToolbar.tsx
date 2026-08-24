@@ -13,7 +13,7 @@ import { RailPopover } from './RailPopover';
 import { alignSelection, distributeSelection, type AlignEdge, type DistributeAxis } from '../../engine/model/align';
 import type { AnyNode } from '../../engine/model/schema';
 
-export const ALIGN_BUTTONS: Array<{ edge: AlignEdge; label: string; icon: React.ReactNode }> = [
+const ALIGN_BUTTONS: Array<{ edge: AlignEdge; label: string; icon: React.ReactNode }> = [
   { edge: 'left', label: 'Align left', icon: <AlignHorizontalJustifyStart size={16} /> },
   { edge: 'centerX', label: 'Align horizontal centres', icon: <AlignHorizontalJustifyCenter size={16} /> },
   { edge: 'right', label: 'Align right', icon: <AlignHorizontalJustifyEnd size={16} /> },

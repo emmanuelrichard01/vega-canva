@@ -1,12 +1,12 @@
 import React from 'react';
 import { RailPopover } from './RailPopover';
+import { ShapeIcon } from '../workspace/shapeIcons';
 import {
   SHAPE_KINDS,
   PRESET_GEOMETRY,
   SHAPE_LABELS,
-  ShapeIcon,
   type ShapePreset,
-} from '../workspace/shapeIcons';
+} from '../workspace/shapePresetTypes';
 import type { ShapeNode } from '../../engine/model/schema';
 
 export interface ShapeSwapperProps {

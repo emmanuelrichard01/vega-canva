@@ -211,7 +211,7 @@ export function shapeOutline(node: Pick<ShapeNode, 'geometry' | 'width' | 'heigh
     const ends = localRunEnds(node);
     return {
       kind: 'open',
-      points: linePoints(ends.a, ends.b, node.geometry.lineProfile, node.geometry.lineWaves),
+      points: linePoints(ends.a, ends.b, node.geometry.lineProfile, node.geometry.lineWaves, node.geometry.lineAmplitude),
     };
   }
 

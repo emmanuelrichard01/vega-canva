@@ -1,5 +1,5 @@
 import React, { useEffect, useMemo, useRef, useState } from 'react';
-import { useAuth } from './hooks/AuthContext';
+import { useAuth } from './hooks/useAuth';
 import { nanoid } from 'nanoid';
 import {
   ArrowRight, Compass, Layers, Link2, LogOut, Plus, Search, Sparkles, UploadCloud, X,

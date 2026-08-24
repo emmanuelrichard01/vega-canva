@@ -2,9 +2,11 @@ import { describe, it, expect } from 'vitest';
 import {
   LINE_PROFILES,
   LINE_PROFILE_LABELS,
+  MAX_AMPLITUDE_SCALE,
   MAX_WAVES,
   MIN_WAVES,
   defaultEndAlign,
+  dynamicWaves,
   linePoints,
   type LineProfile,
 } from './linePath';
@@ -341,3 +343,72 @@ describe('defaultEndAlign', () => {
     }
   });
 });
+
+describe('amplitude / loop size scaling', () => {
+  it('scales coil loop height directly with amplitudeScale', () => {
+    const baseline = peak(linePoints(A, B, 'coil', 2, 1.0));
+    const small = peak(linePoints(A, B, 'coil', 2, 0.5));
+    const large = peak(linePoints(A, B, 'coil', 2, 1.5));
+
+    expect(small).toBeLessThan(baseline);
+    expect(large).toBeGreaterThan(baseline);
+    expect(small).toBeCloseTo(baseline * 0.5, 4);
+    expect(large).toBeCloseTo(baseline * 1.5, 4);
+  });
+
+  it('scales wave amplitude directly with amplitudeScale', () => {
+    const baseline = peak(linePoints(A, B, 'wavy', 6, 1.0));
+    const small = peak(linePoints(A, B, 'wavy', 6, 0.5));
+    const large = peak(linePoints(A, B, 'wavy', 6, 2.0));
+
+    expect(small).toBeCloseTo(baseline * 0.5, 4);
+    expect(large).toBeCloseTo(baseline * 2.0, 4);
+  });
+
+  it('scales zigzag amplitude directly with amplitudeScale', () => {
+    const baseline = peak(linePoints(A, B, 'zigzag', 6, 1.0));
+    const small = peak(linePoints(A, B, 'zigzag', 6, 0.5));
+    const large = peak(linePoints(A, B, 'zigzag', 6, 2.0));
+
+    expect(small).toBeCloseTo(baseline * 0.5, 4);
+    expect(large).toBeCloseTo(baseline * 2.0, 4);
+  });
+
+  it('scales curved bow depth directly with amplitudeScale', () => {
+    const baseline = peak(linePoints(A, B, 'curved', 6, 1.0));
+    const small = peak(linePoints(A, B, 'curved', 6, 0.5));
+    const large = peak(linePoints(A, B, 'curved', 6, 2.0));
+
+    expect(small).toBeCloseTo(baseline * 0.5, 4);
+    expect(large).toBeCloseTo(baseline * 2.0, 4);
+  });
+
+  it('clamps amplitude scale to MAX_AMPLITUDE_SCALE (2.0 / 200%)', () => {
+    expect(MAX_AMPLITUDE_SCALE).toBe(2.0);
+    const maxed = peak(linePoints(A, B, 'wavy', 6, 2.0));
+    const over = peak(linePoints(A, B, 'wavy', 6, 4.5));
+    expect(over).toBeCloseTo(maxed, 4);
+  });
+});
+
+describe('smart and dynamic loop / wave count', () => {
+  it('calculates proportional loop counts for coil based on line length', () => {
+    expect(dynamicWaves(48, 'coil')).toBe(1);
+    expect(dynamicWaves(144, 'coil')).toBe(3);
+    expect(dynamicWaves(300, 'coil')).toBe(6);
+    expect(dynamicWaves(600, 'coil')).toBe(13);
+  });
+
+  it('calculates proportional wave counts for wavy/zigzag based on line length', () => {
+    expect(dynamicWaves(36, 'wavy')).toBe(1);
+    expect(dynamicWaves(180, 'wavy')).toBe(5);
+    expect(dynamicWaves(360, 'zigzag')).toBe(10);
+  });
+
+  it('uses dynamic waves in linePoints when waves is undefined', () => {
+    const pts150 = linePoints(A, { x: 150, y: 0 }, 'coil');
+    const pts600 = linePoints(A, { x: 600, y: 0 }, 'coil');
+    expect(pts600.length).toBeGreaterThan(pts150.length);
+  });
+});
+

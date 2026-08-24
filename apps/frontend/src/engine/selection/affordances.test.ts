@@ -216,6 +216,10 @@ describe('rules promoted from the surfaces', () => {
     expect(affords([shape('rect'), node({ type: 'connector' })], 'sketch')).toBe(true);
   });
 
+  it('sketches a sticky note', () => {
+    expect(affords([node({ type: 'sticky' })], 'sketch')).toBe(true);
+  });
+
   it('does not sketch a pen or boolean path', () => {
     // Their renderer strokes a curve and has no centreline to go over, so the
     // control would promise something with nothing behind it.

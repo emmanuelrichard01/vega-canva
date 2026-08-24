@@ -210,7 +210,7 @@ export function lineNodeFromEndpoints(
   geometry: ShapeGeometry;
 } {
   // The run as drawn, in world space, and the markers that terminate it.
-  const run = linePoints(a, b, geometry.lineProfile, geometry.lineWaves);
+  const run = linePoints(a, b, geometry.lineProfile, geometry.lineWaves, geometry.lineAmplitude);
   const flat = run.flatMap((p) => [p.x, p.y]);
   const { run: drawn, start, end } = terminateRun(flat, {
     start: geometry.endStart ?? 'none',

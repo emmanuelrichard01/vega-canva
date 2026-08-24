@@ -427,4 +427,22 @@ describe('normalizeNode — totality', () => {
     expect(isCanonical(legacy)).toBe(false);
     expect(isCanonical(normalizeNode(legacy))).toBe(true);
   });
+
+  it('preserves and clamps lineProfile, lineWaves, and lineAmplitude on open shapes', () => {
+    const node = normalizeNode({
+      id: 'l1',
+      type: 'shape',
+      geometry: {
+        kind: 'line',
+        lineProfile: 'coil',
+        lineWaves: 12,
+        lineAmplitude: 1.8,
+      },
+    }) as ShapeNode;
+
+    expect(node.geometry.lineProfile).toBe('coil');
+    expect(node.geometry.lineWaves).toBe(12);
+    expect(node.geometry.lineAmplitude).toBe(1.8);
+  });
 });
+

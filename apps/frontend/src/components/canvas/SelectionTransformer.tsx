@@ -1,7 +1,7 @@
 import React, { useEffect, useRef, useState } from 'react';
+import type Konva from 'konva';
 import { Group, Line, Rect, Text, Transformer } from 'react-konva';
-import Konva from 'konva';
-import { applyNodePatches, updateNode } from '../../engine/document';
+import { applyNodePatches } from '../../engine/document';
 import { EXPORT_CHROME } from '../../engine/export/chrome';
 import { useStore } from '../../hooks/useStore';
 import { resizeGridTo } from '../../engine/grid/gridApply';
@@ -298,11 +298,11 @@ function computePinnedBox(
     setTransforming(true);
 
     const before = useStore.getState().objects;
-    const ids = (trRef.current?.nodes() ?? []).map((n) => n.id());
-    const boxes = ids.map((id) => before[id]).filter(Boolean);
+    const ids = (trRef.current?.nodes() ?? []).map((n: Konva.Node) => n.id());
+    const boxes = ids.map((id: string) => before[id]).filter(Boolean) as AnyNode[];
 
     const startMap: Record<string, AnyNode> = {};
-    boxes.forEach((n) => {
+    boxes.forEach((n: AnyNode) => {
       startMap[n.id] = { ...n };
     });
     initialNodesMap.current = startMap;
@@ -310,10 +310,10 @@ function computePinnedBox(
     gestureStart.current = boxes.length === 0 ? null : {
       ids,
       box: {
-        x: Math.min(...boxes.map((n) => n.x)),
-        y: Math.min(...boxes.map((n) => n.y)),
-        width: Math.max(...boxes.map((n) => n.x + n.width)) - Math.min(...boxes.map((n) => n.x)),
-        height: Math.max(...boxes.map((n) => n.y + n.height)) - Math.min(...boxes.map((n) => n.y)),
+        x: Math.min(...boxes.map((n: AnyNode) => n.x)),
+        y: Math.min(...boxes.map((n: AnyNode) => n.y)),
+        width: Math.max(...boxes.map((n: AnyNode) => n.x + n.width)) - Math.min(...boxes.map((n: AnyNode) => n.x)),
+        height: Math.max(...boxes.map((n: AnyNode) => n.y + n.height)) - Math.min(...boxes.map((n: AnyNode) => n.y)),
       },
     };
   };
@@ -328,7 +328,7 @@ function computePinnedBox(
     const deg = Math.round(((tr.rotation() % 360) + 360) % 360);
 
     const store = useStore.getState().objects;
-    tr.nodes().forEach((konvaNode) => {
+    tr.nodes().forEach((konvaNode: Konva.Node) => {
       const id = konvaNode.id();
       const node = store[id];
       const startNode = initialNodesMap.current[id] || node;
@@ -364,7 +364,7 @@ function computePinnedBox(
 
     // Batch-clear all live transforms before CRDT commit so the connector
     // writeback effect doesn't see stale transient data.
-    liveTransformStore.deleteBatch(tr.nodes().map((n) => n.id()));
+    liveTransformStore.deleteBatch(tr.nodes().map((n: Konva.Node) => n.id()));
 
     const store = useStore.getState().objects;
     /** Where the selection lands, accumulated from the values being written. */
@@ -380,7 +380,7 @@ function computePinnedBox(
     const updatedObjects: Record<string, AnyNode> = { ...store };
     const modifiedIds: string[] = [];
 
-    tr.nodes().forEach((konvaNode) => {
+    tr.nodes().forEach((konvaNode: Konva.Node) => {
       const id = konvaNode.id();
       const node = store[id];
       const startNode = initialNodesMap.current[id] || node;

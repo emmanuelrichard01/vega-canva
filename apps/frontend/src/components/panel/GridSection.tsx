@@ -502,22 +502,3 @@ function boxOf(recipe: GridRecipe) {
   const { x, y, width, height } = recipe.spec;
   return { x, y, width, height };
 }
-
-/**
- * Whether a selection is exactly one grid, and which.
- *
- * ## Why it takes the nodes rather than their ids
- *
- * It used to take ids and reach into `useStore.getState()` for the rest, which
- * made it a *read of the store dressed as a pure function*: three components
- * called it during render and none of them subscribed to the answer. They
- * happened to re-render anyway, because a grid's group record never changes
- * without its nodes changing too — a coincidence, not a guarantee, and exactly
- * the kind that survives until the day something changes only the record.
- *
- * Taking what the caller already has makes it pure, makes the subscription the
- * caller's own business, and removes the hook-order problem that a store read
- * inside a component with early returns would otherwise have.
- */
-export { gridGroupOf, gridRecipe } from '../../engine/grid/gridGroupUtils';
-

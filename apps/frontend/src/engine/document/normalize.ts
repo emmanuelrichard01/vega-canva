@@ -1,6 +1,6 @@
 import { LIST_STYLES } from '../model/schema';
 import { CYCLE_UNITS } from '../text/colorCycle';
-import { LINE_PROFILES, MAX_WAVES, MIN_WAVES } from '../model/linePath';
+import { LINE_PROFILES, MAX_AMPLITUDE_SCALE, MAX_WAVES, MIN_AMPLITUDE_SCALE, MIN_WAVES } from '../model/linePath';
 import {
   BLEND_MODES,
   DEFAULT_MITER_LIMIT,
@@ -544,6 +544,9 @@ function normalizeShapeGeometry(raw: any): ShapeGeometry {
     if (Number.isFinite(raw?.geometry?.lineWaves)) {
       geometry.lineWaves = Math.max(MIN_WAVES, Math.min(MAX_WAVES, Math.round(raw.geometry.lineWaves)));
     }
+    if (Number.isFinite(raw?.geometry?.lineAmplitude) && raw.geometry.lineAmplitude !== 1) {
+      geometry.lineAmplitude = clamp(raw.geometry.lineAmplitude, MIN_AMPLITUDE_SCALE, MAX_AMPLITUDE_SCALE);
+    }
     // Absent is the profile's own default — see `defaultEndAlign`. Storing it
     // only when it disagrees keeps every existing line untouched and keeps the
     // document from carrying a value that just restates the rule.
@@ -844,6 +847,10 @@ export function normalizeNode(raw: any, id?: string): AnyNode {
 
     case 'sticky': {
       const theme = raw?.theme ?? raw?.appearance?.theme;
+      const app = normalizeAppearance(raw);
+      const hasAppearance = Boolean(
+        app.sketch || app.blur || app.shadow || app.innerShadow || app.backdropBlur || app.blendMode || app.stroke
+      );
       return {
         ...base,
         type: 'sticky',
@@ -854,6 +861,7 @@ export function normalizeNode(raw: any, id?: string): AnyNode {
         reactions: normalizeReactions(raw?.reactions ?? raw?.metadata?.reactions),
         tags: Array.isArray(raw?.tags) ? raw.tags : Array.isArray(raw?.metadata?.tags) ? raw.metadata.tags : [],
         pinned: bool(raw?.pinned, bool(raw?.metadata?.pinned, false)),
+        ...(hasAppearance ? { appearance: app } : null),
       };
     }
 

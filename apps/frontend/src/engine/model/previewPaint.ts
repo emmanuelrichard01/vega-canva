@@ -1,7 +1,7 @@
 import type { AnyNode } from './schema';
 import { paintColor } from './paint';
 import { connectorPoints } from './connector';
-import { THEMES } from '../../components/canvas/renderers/StickyRenderer';
+import { THEMES } from './stickyThemes';
 
 /**
  * What colour a node is, in a thumbnail.

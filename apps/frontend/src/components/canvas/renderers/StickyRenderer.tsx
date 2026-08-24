@@ -1,13 +1,12 @@
-import React, { useState, useSyncExternalStore } from 'react';
-import { Circle, Group, Label, Line, Rect, Tag, Text } from 'react-konva';
+import React, { useMemo, useState, useSyncExternalStore } from 'react';
+import { Circle, Group, Label, Line, Path, Rect, Tag, Text } from 'react-konva';
 import type { StickyNode } from '../../../engine/model/schema';
 import { initialsFor } from '../../../engine/presence/collaborators';
 import { STICKY_LINE_HEIGHT } from '../../../engine/model/stickyText';
 import { stickyFit, stickyFontEpoch, STICKY_FONT_FAMILY, STICKY_FONT_WEIGHT } from './stickyFit';
 import { formatVoterSummary } from '../../../engine/model/voters';
-import { THEMES, STICKY_PADDING, STICKY_RADIUS, nearestTheme } from '../../../engine/model/stickyThemes';
-
-export { THEMES, STICKY_PADDING, STICKY_RADIUS, nearestTheme };
+import { THEMES, STICKY_PADDING, STICKY_RADIUS } from '../../../engine/model/stickyThemes';
+import { rectRing, roughPolyline, roughSilhouette, seedFrom } from '../../../engine/model/rough';
 
 interface Props {
   node: StickyNode;
@@ -25,6 +24,17 @@ export const StickyRenderer: React.FC<Props> = React.memo(({ node, showText, myA
   const [isNoteHovered, setIsNoteHovered] = useState(false);
 
   const theme = THEMES[node.theme] ?? THEMES.yellow;
+  const sketchLevel = node.appearance?.sketch;
+
+  const sketchPaper = useMemo(() => {
+    if (!sketchLevel) return null;
+    const ring = rectRing(node.width, node.height);
+    const seed = seedFrom(node.id);
+    return {
+      silhouette: roughSilhouette(ring, { seed, level: sketchLevel }),
+      outline: roughPolyline(ring, { seed, level: sketchLevel }),
+    };
+  }, [node.id, node.width, node.height, sketchLevel]);
 
   // Room for footer badges and tags
   const hasFooter = Object.keys(node.reactions).length > 0;
@@ -82,18 +92,39 @@ export const StickyRenderer: React.FC<Props> = React.memo(({ node, showText, myA
         setHoveredEmoji(null);
       }}
     >
-      <Rect
-        width={node.width}
-        height={node.height}
-        fill={theme.bg}
-        stroke={theme.edge}
-        strokeWidth={1}
-        cornerRadius={STICKY_RADIUS}
-        shadowColor="rgba(0, 0, 0, 0.08)"
-        shadowBlur={8}
-        shadowOffsetY={3}
-        shadowOpacity={0.7}
-      />
+      {sketchPaper ? (
+        <Group>
+          <Path
+            data={sketchPaper.silhouette}
+            fill={theme.bg}
+            shadowColor="rgba(0, 0, 0, 0.08)"
+            shadowBlur={8}
+            shadowOffsetY={3}
+            shadowOpacity={0.7}
+          />
+          <Path
+            data={sketchPaper.outline}
+            fill="none"
+            stroke={theme.edge}
+            strokeWidth={1.2}
+            lineCap="round"
+            lineJoin="round"
+          />
+        </Group>
+      ) : (
+        <Rect
+          width={node.width}
+          height={node.height}
+          fill={theme.bg}
+          stroke={theme.edge}
+          strokeWidth={1}
+          cornerRadius={STICKY_RADIUS}
+          shadowColor="rgba(0, 0, 0, 0.08)"
+          shadowBlur={8}
+          shadowOffsetY={3}
+          shadowOpacity={0.7}
+        />
+      )}
 
       {showText && (
         <Text

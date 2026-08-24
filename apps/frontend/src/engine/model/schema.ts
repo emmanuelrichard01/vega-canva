@@ -749,6 +749,12 @@ export interface ShapeGeometry {
   /** How many repeats the profile makes across the run. Absent is six. */
   lineWaves?: number;
   /**
+   * Amplitude or loop scale multiplier for profiled lines (0.25 to 3.0).
+   * For coils, scales the loop height/size. For waves and zigzags, scales the wave amplitude.
+   * Absent is 1.0 (100%).
+   */
+  lineAmplitude?: number;
+  /**
    * Whether a marker sits inside the run's length or projects beyond it.
    *
    * Absent means **`extend` for a profiled line and `inside` for a straight
@@ -948,6 +954,7 @@ export interface StickyNode extends BaseNode {
   reactions: Record<string, string[]>;
   tags: string[];
   pinned: boolean;
+  appearance?: Appearance;
 }
 
 export interface ImageNode extends BaseNode {

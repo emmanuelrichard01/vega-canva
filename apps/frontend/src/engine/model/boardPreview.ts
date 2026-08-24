@@ -313,7 +313,8 @@ export function buildPreview(
           { x: n.x + ends.a.x, y: n.y + ends.a.y },
           { x: n.x + ends.b.x, y: n.y + ends.b.y },
           geo.lineProfile,
-          geo.lineWaves
+          geo.lineWaves,
+          geo.lineAmplitude
         );
         if (run.length >= 2) {
           /**

@@ -13,7 +13,8 @@ import { LineProfileIcon } from '../panel/lineProfileIcons';
 import { LineSpecimen } from '../panel/lineSpecimen';
 import { isForceTool } from '../../engine/physics/forces';
 import { FRAME_PRESETS, FRAME_PRESET_GROUPS } from '../../engine/model/frames';
-import { ShapeIcon, LINE_KINDS, SHAPE_KINDS, SHAPE_LABELS, shapeToolId, shapeKindFromToolId, type ShapePreset } from './shapeIcons';
+import { ShapeIcon } from './shapeIcons';
+import { LINE_KINDS, SHAPE_KINDS, SHAPE_LABELS, shapeToolId, shapeKindFromToolId, type ShapePreset } from './shapePresetTypes';
 import { shortcutFor } from '../../engine/tools/shortcuts';
 import { DEMO_LENGTHS } from '../../engine/text/demoText';
 import { useStore } from '../../hooks/useStore';
@@ -255,6 +256,8 @@ export const ToolWorkspace: React.FC<Props> = ({ activeToolId, onOpenDiagram, on
   const setLineProfile = useStore((s) => s.setLineProfile);
   const lineWaves = useStore((s) => s.lineWaves);
   const setLineWaves = useStore((s) => s.setLineWaves);
+  const lineAmplitude = useStore((s) => s.lineAmplitude);
+  const setLineAmplitude = useStore((s) => s.setLineAmplitude);
   const lastForce = useStore((s) => s.lastForce);
   const eraserSize = useStore((s) => s.eraserSize);
   const setEraserSize = useStore((s) => s.setEraserSize);
@@ -721,6 +724,15 @@ export const ToolWorkspace: React.FC<Props> = ({ activeToolId, onOpenDiagram, on
                     min={MIN_WAVES}
                     max={20}
                     onChange={setLineWaves}
+                  />
+                )}
+                {lineProfile !== 'straight' && (
+                  <NibSize
+                    label={lineProfile === 'coil' ? 'Loop size' : lineProfile === 'curved' ? 'Bow depth' : 'Wave height'}
+                    value={Math.round(lineAmplitude * 100)}
+                    min={25}
+                    max={300}
+                    onChange={(v) => setLineAmplitude(v / 100)}
                   />
                 )}
               </Flyout>

@@ -151,7 +151,8 @@ export const ShapeRenderer: React.FC<Props> = React.memo(({ node, showLabel }) =
     runEnds.a,
     runEnds.b,
     node.geometry.lineProfile,
-    node.geometry.lineWaves
+    node.geometry.lineWaves,
+    node.geometry.lineAmplitude
   );
   const points = profile.flatMap((p) => [p.x, p.y]);
 
@@ -420,15 +421,17 @@ export const ShapeRenderer: React.FC<Props> = React.memo(({ node, showLabel }) =
             perfectDrawEnabled={false}
           />
         )}
-        {/* Pen shading — one set of strokes, or two crossed. Thinner than the
-            outline, because a hand shades with the side of the nib and presses
-            harder on the line that defines the shape. */}
         {sketch.fill && hachureColor && (
           <Path
             data={sketch.fill}
             stroke={hachureColor}
-            strokeWidth={Math.max(0.8, nib * 0.7)}
+            strokeWidth={
+              node.appearance?.fillStyle === 'dots'
+                ? (node.appearance?.sketch === 'heavy' ? 3.6 : node.appearance?.sketch === 'light' ? 2.2 : 2.8)
+                : Math.max(0.8, nib * 0.7)
+            }
             lineCap="round"
+            lineJoin="round"
             opacity={fillPaint?.opacity ?? 1}
             listening={false}
             perfectDrawEnabled={false}

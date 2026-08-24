@@ -162,6 +162,8 @@ interface StoreState {
   setLineProfile: (val: LineProfile) => void;
   lineWaves: number;
   setLineWaves: (val: number) => void;
+  lineAmplitude: number;
+  setLineAmplitude: (val: number) => void;
   setConnectorColor: (val: string) => void;
 
   showRulers: boolean;
@@ -476,6 +478,12 @@ export const useStore = create<StoreState>((set) => ({
   setLineWaves: (val) => {
     setStoragePref('vega_line_waves', String(val));
     set({ lineWaves: val });
+  },
+
+  lineAmplitude: Number(loadStringPref('vega_line_amplitude')) || 1.0,
+  setLineAmplitude: (val) => {
+    setStoragePref('vega_line_amplitude', String(val));
+    set({ lineAmplitude: val });
   },
 
   lineProfile: (loadStringPref('vega_line_profile') as LineProfile) || 'straight',

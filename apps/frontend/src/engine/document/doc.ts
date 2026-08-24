@@ -24,9 +24,14 @@ export const roomId =
 
 export const doc = new Y.Doc();
 
+const isHome =
+  typeof window !== 'undefined' &&
+  window.location &&
+  (!window.location.pathname.startsWith('/room/') || roomId === 'home');
+
 export type ConnectionStatus = 'connecting' | 'connected' | 'disconnected';
 
-let currentStatus: ConnectionStatus = 'connecting';
+let currentStatus: ConnectionStatus = isHome ? 'disconnected' : 'connecting';
 const statusCallbacks = new Set<(status: ConnectionStatus) => void>();
 const syncCallbacks = new Set<(synced: boolean) => void>();
 
@@ -59,9 +64,13 @@ export const provider = new HocuspocusProvider({
   },
 });
 
+if (isHome) {
+  provider.disconnect();
+}
+
 /** Offline persistence — edits made while disconnected merge up on reconnect. */
 export const indexeddbProvider =
-  typeof indexedDB !== 'undefined'
+  typeof indexedDB !== 'undefined' && !isHome
     ? new IndexeddbPersistence(roomId, doc)
     : (null as unknown as IndexeddbPersistence);
 

@@ -5,7 +5,7 @@ import express from "express";
 import cors from "cors";
 import multer from "multer";
 import multerS3 from "multer-s3";
-import { S3Client, CreateBucketCommand, PutBucketPolicyCommand } from "@aws-sdk/client-s3";
+import { S3Client, CreateBucketCommand, PutBucketPolicyCommand, GetObjectCommand } from "@aws-sdk/client-s3";
 import path from "path";
 import { nanoid } from "nanoid";
 import { WebSocketServer } from "ws";
@@ -214,6 +214,54 @@ app.post("/rooms/:roomId/media", mediaUploadLimiter, (req: any, res: any, next: 
   }
 });
 
+// Streaming media proxy endpoint: serves S3 objects reliably across arbitrary network topologies
+app.get("/rooms/:roomId/media/:mediaKey", async (req: any, res: any) => {
+  const rawRoomId = String(req.params.roomId || '');
+  const roomId = rawRoomId.replace(/[^a-zA-Z0-9_-]/g, '');
+  const rawKey = String(req.params.mediaKey || '');
+  const mediaKey = path.basename(rawKey);
+
+  if (!roomId || !mediaKey) {
+    return res.status(400).json({ error: "Invalid room or media parameter" });
+  }
+
+  const s3Key = `${roomId}/${mediaKey}`;
+  try {
+    const s3Res = await s3.send(
+      new GetObjectCommand({
+        Bucket: s3Bucket,
+        Key: s3Key,
+      })
+    );
+
+    if (s3Res.ContentType) {
+      res.setHeader("Content-Type", s3Res.ContentType);
+    }
+    if (s3Res.ContentLength) {
+      res.setHeader("Content-Length", s3Res.ContentLength);
+    }
+    res.setHeader("Cache-Control", "public, max-age=31536000, immutable");
+
+    const stream = s3Res.Body as any;
+    if (stream && typeof stream.pipe === "function") {
+      stream.pipe(res);
+    } else {
+      const bytes = await s3Res.Body?.transformToByteArray();
+      if (bytes) {
+        res.send(Buffer.from(bytes));
+      } else {
+        res.status(404).json({ error: "Media not found" });
+      }
+    }
+  } catch (err: any) {
+    if (err.name === "NoSuchKey" || err.Code === "NoSuchKey") {
+      return res.status(404).json({ error: "Media not found" });
+    }
+    console.error("Error streaming media from S3:", err);
+    res.status(500).json({ error: "Failed to fetch media stream" });
+  }
+});
+
 // History endpoint for Time Travel session replay with rate limiting
 app.get("/rooms/:roomId/history", historyLimiter, async (req, res) => {
   const roomId = req.params.roomId;
@@ -418,35 +466,45 @@ const httpServer = app.listen(PORT, "0.0.0.0", () => {
 const wss = new WebSocketServer({ server: httpServer });
 
 wss.on("connection", (socket: any, request: any) => {
-  // Hocuspocus v4 expects a WHATWG `Request` rather than a Node IncomingMessage.
-  // Rebuild one from the upgrade request so the document name is still parsed
-  // from the URL path exactly as before.
-  const host = request.headers.host || `localhost:${PORT}`;
-  const fetchRequest = new Request(`http://${host}${request.url || "/"}`, {
-    headers: request.headers as any,
-  });
+  try {
+    // Hocuspocus v4 expects a WHATWG `Request` rather than a Node IncomingMessage.
+    // Rebuild one from the upgrade request so the document name is still parsed
+    // from the URL path exactly as before.
+    const host = request.headers.host || `localhost:${PORT}`;
+    const fetchRequest = new Request(`http://${host}${request.url || "/"}`, {
+      headers: request.headers as any,
+    });
 
-  // v4's `handleConnection` only *creates* the ClientConnection — unlike v2/v3 it
-  // no longer subscribes to the socket itself. The caller owns transport plumbing
-  // and must forward every frame in via `handleMessage` (and the close in via
-  // `handleClose`). Dropping the returned object on the floor meant the server
-  // accepted every WebSocket and then never read a single byte: clients sent
-  // Auth + SyncStep1 + Awareness and waited forever, so every session sat at
-  // "Offline", nothing synced between tabs, and nothing was ever persisted.
-  const connection = server.handleConnection(socket, fetchRequest);
+    const connection = server.handleConnection(socket, fetchRequest);
 
-  socket.on("message", (data: Buffer | ArrayBuffer | Buffer[]) => {
-    const buf = Array.isArray(data) ? Buffer.concat(data) : Buffer.from(data as any);
-    connection.handleMessage(new Uint8Array(buf.buffer, buf.byteOffset, buf.byteLength));
-  });
+    socket.on("message", (data: Buffer | ArrayBuffer | Buffer[]) => {
+      try {
+        const buf = Array.isArray(data) ? Buffer.concat(data) : Buffer.from(data as any);
+        connection.handleMessage(new Uint8Array(buf.buffer, buf.byteOffset, buf.byteLength));
+      } catch (err: any) {
+        console.error("Error processing WebSocket message frame:", err.message);
+      }
+    });
 
-  socket.on("close", (code: number, reason: Buffer) => {
-    connection.handleClose({ code, reason: reason?.toString() ?? "" });
-  });
+    socket.on("close", (code: number, reason: Buffer) => {
+      try {
+        connection.handleClose({ code, reason: reason?.toString() ?? "" });
+      } catch (err: any) {
+        console.error("Error handling WebSocket close:", err.message);
+      }
+    });
 
-  socket.on("error", (err: Error) => {
-    console.error("WebSocket error:", err.message);
-  });
+    socket.on("error", (err: Error) => {
+      console.error("WebSocket error:", err.message);
+    });
+  } catch (err: any) {
+    console.error("Failed to initialize WebSocket client connection:", err);
+    try {
+      socket.close(1011, "Internal server error during handshake");
+    } catch {
+      /* socket already closed */
+    }
+  }
 });
 
 // Graceful shutdown handling for clean termination and resource drainage

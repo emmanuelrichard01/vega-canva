@@ -1,7 +1,6 @@
 import { FORMAT_SPECS, resolveBackground, type Exporter, type ExportOptions, type ExportFormat } from './ExportTypes';
 import { useStore } from '../../hooks/useStore';
-import { computeContentBounds } from './bounds';
-import { THEMES } from '../../components/canvas/renderers/StickyRenderer';
+import { THEMES } from '../model/stickyThemes';
 import type { AnyNode, ConnectorNode, ImageNode, PathNode, ShapeNode, TextNode, Typography } from '../model/schema';
 import { connectorPoints, type Box } from '../model/connector';
 import { roughPolyline, seedFrom } from '../model/rough';
@@ -23,6 +22,7 @@ import { highlightPath } from '../text/highlight';
 import { roughShape } from '../model/roughShape';
 import { canvasFontFamily } from '../../components/canvas/renderers/shared';
 import { DEFAULT_INK } from '../model/schema';
+import { computeContentBounds } from './bounds';
 
 /**
  * Embedding raw user text into an SVG without escaping is an XML-corruption
@@ -387,7 +387,8 @@ function openShapeMarkup(node: ShapeNode): string {
     { x: node.x + ends.a.x, y: node.y + ends.a.y },
     { x: node.x + ends.b.x, y: node.y + ends.b.y },
     node.geometry.lineProfile,
-    node.geometry.lineWaves
+    node.geometry.lineWaves,
+    node.geometry.lineAmplitude
   );
   /**
    * The heads, and the run pulled back under them.
@@ -476,8 +477,12 @@ function shapeMarkup(node: ShapeNode, defs: SvgPaintDefs): string {
       parts.push(`<path d="${sketch.silhouette}" fill="${solidFill}"${place} />`);
     }
     if (sketch.fill && solidFill) {
+      const fillSw =
+        node.appearance.fillStyle === 'dots'
+          ? node.appearance.sketch === 'heavy' ? 3.6 : node.appearance.sketch === 'light' ? 2.2 : 2.8
+          : Math.max(0.8, nib * 0.7);
       parts.push(
-        `<path d="${sketch.fill}" fill="none" stroke="${solidFill}" stroke-width="${Math.max(0.8, nib * 0.7)}" stroke-linecap="round"${place} />`
+        `<path d="${sketch.fill}" fill="none" stroke="${solidFill}" stroke-width="${fillSw}" stroke-linecap="round"${place} />`
       );
     }
     parts.push(

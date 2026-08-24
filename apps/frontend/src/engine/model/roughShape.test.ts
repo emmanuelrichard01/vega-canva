@@ -20,3 +20,27 @@ describe('sketch honours the corner radius', () => {
     });
   }
 });
+
+describe('extended shading styles', () => {
+  it('generates continuous zigzag / scribble shading path', () => {
+    const n = {
+      ...node('rect', 0),
+      appearance: { sketch: 'medium' as const, fillStyle: 'zigzag' as const, fill: [{ type: 'solid' as const, color: '#ff0000' }] },
+    };
+    const res = roughShape(n, true);
+    expect(res.fill.length).toBeGreaterThan(0);
+    expect(res.fill).toContain('M ');
+    expect(res.fill).toContain('C ');
+  });
+
+  it('generates stippled dots shading path', () => {
+    const n = {
+      ...node('ellipse', 0),
+      appearance: { sketch: 'medium' as const, fillStyle: 'dots' as const, fill: [{ type: 'solid' as const, color: '#00ff00' }] },
+    };
+    const res = roughShape(n, true);
+    expect(res.fill.length).toBeGreaterThan(0);
+    expect(res.fill).toContain('M ');
+    expect(res.fill).toContain(' l ');
+  });
+});

@@ -24,9 +24,12 @@ import {
 import {
   LINE_PROFILES,
   LINE_PROFILE_LABELS,
+  MAX_AMPLITUDE_SCALE,
   MAX_WAVES,
+  MIN_AMPLITUDE_SCALE,
   MIN_WAVES,
   defaultEndAlign,
+  dynamicWaves,
   type LineProfile,
 } from '../../../engine/model/linePath';
 import {
@@ -147,7 +150,16 @@ export const ShapeGeometrySection: React.FC<ShapeGeometrySectionProps> = ({
               hint="How many times the shape repeats along the run. More makes them tighter, not smaller."
             >
               {(() => {
-                const waves = shared((n) => (n.type === 'shape' ? n.geometry.lineWaves ?? 6 : null));
+                const waves = shared((n) => {
+                  if (n.type !== 'shape') return null;
+                  if (typeof n.geometry.lineWaves === 'number') return n.geometry.lineWaves;
+                  if (n.geometry.a && n.geometry.b) {
+                    const dx = n.geometry.b.x - n.geometry.a.x;
+                    const dy = n.geometry.b.y - n.geometry.a.y;
+                    return dynamicWaves(Math.hypot(dx, dy), n.geometry.lineProfile);
+                  }
+                  return 6;
+                });
                 return (
                   <NumberStepper
                     value={waves.value ?? 6}
@@ -155,6 +167,37 @@ export const ShapeGeometrySection: React.FC<ShapeGeometrySectionProps> = ({
                     onChange={(v) => setGeometry({ lineWaves: v })}
                     min={MIN_WAVES}
                     max={MAX_WAVES}
+                  />
+                );
+              })()}
+            </Row>
+          )}
+          {(node.geometry.lineProfile ?? 'straight') !== 'straight' && (
+            <Row
+              label={
+                node.geometry.lineProfile === 'coil'
+                  ? 'Loop size'
+                  : node.geometry.lineProfile === 'curved'
+                    ? 'Bow depth'
+                    : 'Wave height'
+              }
+              hint={
+                node.geometry.lineProfile === 'coil'
+                  ? 'How large the loops are, relative to the baseline.'
+                  : 'Height / amplitude of the profile curve.'
+              }
+            >
+              {(() => {
+                const amp = shared((n) => (n.type === 'shape' ? n.geometry.lineAmplitude ?? 1.0 : null));
+                return (
+                  <NumberStepper
+                    value={Math.round((amp.value ?? 1.0) * 100)}
+                    mixed={amp.mixed}
+                    onChange={(v) => setGeometry({ lineAmplitude: v === 100 ? undefined : v / 100 })}
+                    min={MIN_AMPLITUDE_SCALE * 100}
+                    max={MAX_AMPLITUDE_SCALE * 100}
+                    step={10}
+                    suffix="%"
                   />
                 );
               })()}

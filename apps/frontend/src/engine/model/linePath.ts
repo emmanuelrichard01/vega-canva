@@ -42,10 +42,24 @@ export const LINE_PROFILE_LABELS: Record<LineProfile, string> = {
   coil: 'Coil',
 };
 
-/** How many repeats a profile makes across the run, before the user's count. */
-const DEFAULT_WAVES = 6;
 export const MIN_WAVES = 1;
 export const MAX_WAVES = 40;
+
+/** Amplitude / loop size scale bounds (25% to 200%). */
+export const MIN_AMPLITUDE_SCALE = 0.25;
+export const MAX_AMPLITUDE_SCALE = 2.0;
+export const DEFAULT_AMPLITUDE_SCALE = 1.0;
+
+/**
+ * Computes an aesthetically balanced, dynamic loop/wave count based on line length.
+ * Keeps loop density consistent and proportional at any line length.
+ */
+export function dynamicWaves(length: number, profile: LineProfile = 'wavy'): number {
+  if (profile === 'straight' || profile === 'curved') return 1;
+  const targetPeriod = profile === 'coil' ? 48 : 36;
+  const count = Math.round(length / targetPeriod);
+  return Math.max(MIN_WAVES, Math.min(MAX_WAVES, count || 1));
+}
 
 /**
  * How tall a wave is, relative to the distance between two of its crests.
@@ -91,7 +105,8 @@ export function linePoints(
   a: Point,
   b: Point,
   profile: LineProfile = 'straight',
-  waves: number = DEFAULT_WAVES
+  waves?: number,
+  amplitudeScale: number = DEFAULT_AMPLITUDE_SCALE
 ): Point[] {
   if (profile === 'straight') return [a, b];
 
@@ -112,9 +127,16 @@ export function linePoints(
   const nx = -uy;
   const ny = ux;
 
-  const count = Math.max(MIN_WAVES, Math.min(MAX_WAVES, Math.round(waves)));
+  const count =
+    typeof waves === 'number' && Number.isFinite(waves)
+      ? Math.max(MIN_WAVES, Math.min(MAX_WAVES, Math.round(waves)))
+      : dynamicWaves(length, profile);
   const period = length / count;
-  const amplitude = period * AMPLITUDE_RATIO;
+  const ampScale =
+    Number.isFinite(amplitudeScale) && amplitudeScale > 0
+      ? Math.min(MAX_AMPLITUDE_SCALE, Math.max(MIN_AMPLITUDE_SCALE, amplitudeScale))
+      : DEFAULT_AMPLITUDE_SCALE;
+  const amplitude = period * AMPLITUDE_RATIO * ampScale;
 
   const at = (along: number, across: number): Point => ({
     x: a.x + ux * along + nx * across,
@@ -123,9 +145,8 @@ export function linePoints(
 
   if (profile === 'curved') {
     // One arc across the whole run, bowed to the same amplitude a single wave
-    // would have — so switching between Curved and Wavy keeps the line the
-    // same weight of gesture rather than jumping in size.
-    const bow = (length / 2) * AMPLITUDE_RATIO;
+    // would have — scaled by amplitudeScale.
+    const bow = (length / 2) * AMPLITUDE_RATIO * ampScale;
     // One arc, so it is sampled against its own whole length.
     const steps = Math.max(24, Math.min(160, Math.round(length / UNITS_PER_SAMPLE)));
     return Array.from({ length: steps + 1 }, (_, i) => {
@@ -234,7 +255,7 @@ export function linePoints(
    * looping arrow.
    */
   const MAX_SPAN = 0.92;
-  let S = (length * 0.2) / REF_TOTAL;
+  let S = ((length * 0.2) / REF_TOTAL) * ampScale;
   const maxSpan = length * MAX_SPAN;
   if (REF_PERIOD * S * count > maxSpan) S = maxSpan / (REF_PERIOD * count);
 

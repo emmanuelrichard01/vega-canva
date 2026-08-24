@@ -4,9 +4,11 @@ import { useStore } from '../../hooks/useStore';
 import { ThemeService } from '../ThemeService';
 import type { Tool, ToolContext } from './Tool';
 import type { ShapeGeometry } from '../model/schema';
-import { PRESET_GEOMETRY, type ShapePreset } from '../../components/workspace/shapeIcons';
+import { PRESET_GEOMETRY, type ShapePreset } from '../../components/workspace/shapePresetTypes';
 import { gridSnap } from '../interaction/gridSnap';
 import { constrainToAngle, lineNodeFromEndpoints } from '../model/lineEnds';
+import { bindCandidates } from '../model/connectorTargets';
+import { snapLineEndpoint } from '../interaction/lineMagneticSnap';
 import * as React from 'react';
 
 /** Minimum drag before a shape is sized by the drag rather than dropped at a default size. */
@@ -50,16 +52,32 @@ export class ShapeTool implements Tool {
   private preset: ShapePreset;
 
   /**
-   * The run's two ends, with modifiers applied.
+   * The run's two ends, with modifiers and magnetic snapping applied.
    *
    * Shares `box()`'s grid snap and angle constraint but keeps the *direction*,
    * which a box cannot express — a box has a top-left and a size, and both
    * diagonals produce the same one.
    */
-  private endpoints(): { a: { x: number; y: number }; b: { x: number; y: number } } {
+  private endpoints(zoom = 1): { a: { x: number; y: number }; b: { x: number; y: number } } {
     let a = { x: this.startX, y: this.startY };
     let b = { x: this.currentX, y: this.currentY };
     if (this.shift) b = constrainToAngle(a, b);
+    if (!this.alt) {
+      const candidates = bindCandidates(useStore.getState().objects);
+      const capKind = this.preset === 'arrow' ? 'arrow' : 'none';
+      const snapB = snapLineEndpoint(b, candidates, zoom, {
+        anchor: a,
+        endType: 'end',
+        capKind,
+      });
+      if (snapB.snapped) b = snapB.point;
+      const snapA = snapLineEndpoint(a, candidates, zoom, {
+        anchor: b,
+        endType: 'start',
+        capKind: 'none',
+      });
+      if (snapA.snapped) a = snapA.point;
+    }
     if (gridSnap.shouldSnap()) {
       a = gridSnap.snapPoint(a.x, a.y);
       b = gridSnap.snapPoint(b.x, b.y);
@@ -151,12 +169,13 @@ export class ShapeTool implements Tool {
     // The profile armed on the dock, written onto the node — a line is
     // finished when the gesture is, so this cannot be a decision made after.
     if (preset.kind === 'line' || preset.kind === 'arrow') {
-      const { lineProfile: profile, lineWaves } = useStore.getState();
+      const { lineProfile: profile, lineWaves, lineAmplitude } = useStore.getState();
       if (profile !== 'straight') {
         geometry.lineProfile = profile;
         // Only when it disagrees with the default, so the document does not
         // carry a value that just restates the rule.
         if (lineWaves !== 6) geometry.lineWaves = lineWaves;
+        if (lineAmplitude && lineAmplitude !== 1.0) geometry.lineAmplitude = lineAmplitude;
       }
     }
     return geometry;

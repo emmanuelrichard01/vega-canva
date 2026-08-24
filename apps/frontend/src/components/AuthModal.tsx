@@ -1,5 +1,5 @@
 import React, { useState } from 'react';
-import { useAuth } from '../hooks/AuthContext';
+import { useAuth } from '../hooks/useAuth';
 import { ArrowRight } from 'lucide-react';
 import { Logo } from './ui/Logo';
 

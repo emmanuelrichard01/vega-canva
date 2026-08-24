@@ -180,9 +180,9 @@ export const FillStyleIcon: React.FC<{ style: FillStyle }> = ({ style }) => {
         {shading && (
           <path
             d={shading}
-            fill="none"
-            stroke="currentColor"
-            strokeWidth="0.9"
+            fill={style === 'dots' ? 'currentColor' : 'none'}
+            stroke={style === 'dots' ? 'none' : 'currentColor'}
+            strokeWidth={style === 'dots' ? undefined : '0.9'}
             strokeLinecap="round"
             opacity="0.95"
             // Clipped to the box, because the shading strokes deliberately
