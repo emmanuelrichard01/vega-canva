@@ -764,11 +764,31 @@ export const ObjectRenderer = React.memo(
 
     // A node in flight renders at the owner's broadcast position rather than
     // its (stale) committed one.
-    const x = flight?.x ?? live?.x ?? node.x;
-    const y = flight?.y ?? live?.y ?? node.y;
-    const width = live?.width ?? node.width;
-    const height = live?.height ?? node.height;
-    const rotation = flight?.rotation ?? live?.rotation ?? node.rotation;
+    /**
+     * While the handles are driving, Konva owns this node's transform.
+     *
+     * `Transformer` writes `x`, `y`, `scale` and `rotation` straight onto the
+     * Konva node on every frame, and computes each frame from what it finds
+     * there. If React also renders those attributes from the live store, the two
+     * overwrite each other and Konva's next frame is computed from our value
+     * rather than its own -- a feedback loop that compounds. That is the
+     * distortion, the rapid position change, and (once the box was written too)
+     * objects leaving the screen.
+     *
+     * So a transform-sourced entry contributes nothing to the geometry here.
+     * The gesture still previews correctly, because the *content* renderers read
+     * the same store directly: `TextRenderer` takes `live.width` to re-wrap, and
+     * a paragraph re-flows under the pointer without this group being touched.
+     *
+     * A drag is the opposite case and unchanged: nothing else is writing to the
+     * node, so publishing a position here is how it moves at all.
+     */
+    const driven = live?.fromTransform ? undefined : live;
+    const x = flight?.x ?? driven?.x ?? node.x;
+    const y = flight?.y ?? driven?.y ?? node.y;
+    const width = driven?.width ?? node.width;
+    const height = driven?.height ?? node.height;
+    const rotation = flight?.rotation ?? driven?.rotation ?? node.rotation;
 
     // Rotate and scale about the centre, the way every design tool does, by
     // placing the group at the centre and pulling its contents back by the

@@ -316,6 +316,24 @@ function computePinnedBox(
   const initialNodesMap = useRef<Record<string, AnyNode>>({});
 
   /**
+   * Which handle is being dragged, captured while Konva still knows.
+   *
+   * `getActiveAnchor()` is only valid *during* the gesture. By the time
+   * `transformend` fires, Konva has cleared it and the call returns an empty
+   * string -- so every check at commit time was comparing against `''`.
+   *
+   * That is not a cosmetic problem. `anchor !== 'rotater'` was the guard
+   * keeping a rotation out of the text-resize branch, and at commit it was
+   * always true, so turning a paragraph re-wrapped it: a 399 x 154 box came out
+   * of one rotation as 228 x 407. The live pass got the right answer and the
+   * commit overwrote it with the wrong one.
+   *
+   * Read once per `transform` event, where it is reliable, and used by both
+   * halves. A ref because it must survive the renders a live gesture causes.
+   */
+  const activeAnchor = useRef('');
+
+  /**
    * The geometry the live pass computed for each text node, for the commit.
    *
    * ## Why the commit cannot re-derive it
@@ -363,6 +381,8 @@ function computePinnedBox(
     const tr = trRef.current;
     if (!tr) return;
     const anchor = (tr.getActiveAnchor() || '').split(' ')[0];
+    // Recorded for the commit, which runs after Konva has forgotten it.
+    if (anchor) activeAnchor.current = anchor;
     const isRotating = anchor === 'rotater';
     const deg = Math.round(((tr.rotation() % 360) + 360) % 360);
 
@@ -378,10 +398,36 @@ function computePinnedBox(
       const scaleX = konvaNode.scaleX();
       const scaleY = konvaNode.scaleY();
 
-      if (node.type === 'text' && startNode.type === 'text') {
-        // Reset scale immediately on the Konva Group so glyphs are NEVER stretched or squished!
-        konvaNode.scaleX(1);
-        konvaNode.scaleY(1);
+      /**
+       * Turning a paragraph is not resizing it.
+       *
+       * The branch below sorts the eight resize handles into corner, vertical
+       * edge and "everything else" -- and `rotater` is none of the first two, so
+       * it fell into the horizontal-edge case and **re-wrapped the text on every
+       * frame of a rotation**. The box came out of a rotate gesture at a
+       * completely different size from the one it went in at: 389 x 120 became
+       * 335 x 380 on a single turn.
+       *
+       * A rotation changes one number and no others. Excluding it here lets the
+       * generic path below carry the angle through, which is all it has ever
+       * needed to do.
+       */
+      if (node.type === 'text' && startNode.type === 'text' && anchor !== 'rotater') {
+        /**
+         * The scale is **not** reset here any more.
+         *
+         * It used to be, to keep glyphs from stretching -- and it was the other
+         * half of the feedback loop described in `ObjectRenderer`. Konva's
+         * `Transformer` derives each frame's transform from the scale it finds
+         * on the node, so zeroing it mid-gesture left the widget solving
+         * against a node that had been changed underneath it, every frame.
+         *
+         * Glyphs stay unstretched by a different route now: `TextRenderer` reads
+         * the live width out of the store and re-wraps at it, so the text is
+         * laid out at the size the drag is asking for rather than drawn small
+         * and scaled up. The scale is folded into `width`/`height` once, at the
+         * commit, where nothing is competing for the node.
+         */
 
         let width = startNode.width;
         let height = startNode.height;
@@ -447,26 +493,30 @@ function computePinnedBox(
         };
 
         /**
-         * The selection frame follows the text, rather than lagging a release
-         * behind it.
+         * Nothing here writes to the Konva node's own box, and it must not.
          *
-         * Konva sizes the frame from the node's own client rect, and this node
-         * is a `Group` whose rect is the union of its children -- so it does not
-         * change until React has re-laid the glyphs. Meanwhile the live pass has
-         * already reset the scale to 1, so the frame had nothing left to
-         * describe the drag with and sat at the old box for the whole gesture,
-         * snapping to the new one on release.
+         * A previous version set `width`/`height` on the group and called
+         * `forceUpdate` to make the selection frame follow the re-wrap live
+         * instead of snapping on release. It made **every** gesture on **every**
+         * object type throw the object off the screen.
          *
-         * `width`/`height` on the group give Konva a box of its own to measure,
-         * and `forceUpdate` makes it measure again in this same event rather
-         * than on the next gesture.
+         * The group is positioned as `x + cx` with `offsetX: cx`, where `cx` is
+         * half the width React last rendered. Writing a new width straight onto
+         * the Konva node changes what the transformer measures while `offsetX`
+         * still holds the old half-width, so the next `_fitNodesInto` solves for
+         * a position against a box that no longer matches its own origin. The
+         * error is re-fed on the following frame and compounds -- which is
+         * exactly what flying off screen looks like. `forceUpdate` inside the
+         * `transform` handler made it worse by forcing that measurement to
+         * happen again mid-event.
+         *
+         * The frame lagging the re-wrap by one commit is a cosmetic fault. This
+         * was a functional one, and the trade is not close.
          */
-        konvaNode.width(width);
-        konvaNode.height(height);
-        trRef.current?.forceUpdate();
         singleBadgeW = width;
         singleBadgeH = height;
         liveTransformStore.set(id, {
+          fromTransform: true,
           x: pinned.x,
           y: pinned.y,
           width,
@@ -480,9 +530,6 @@ function computePinnedBox(
         liveTextGeometry.current[id] = {
           width, height, x: pinned.x, y: pinned.y, typography: typo, resize: 'height',
         };
-        konvaNode.width(width);
-        konvaNode.height(height);
-        trRef.current?.forceUpdate();
         return;
       }
 
@@ -492,6 +539,7 @@ function computePinnedBox(
       singleBadgeH = height;
       const pinned = computePinnedBox(anchor, startNode, width, height);
       liveTransformStore.set(id, {
+        fromTransform: true,
         x: pinned.x,
         y: pinned.y,
         width,
@@ -528,7 +576,10 @@ function computePinnedBox(
      * Which handle was dragged, so a corner and an edge can mean different
      * things — which for text they must.
      */
-    const anchor = (tr.getActiveAnchor() || '').split(' ')[0];
+    // From the ref, not from Konva: see `activeAnchor`. Asking the transformer
+    // here returns an empty string, which silently reclassified every gesture.
+    const anchor = activeAnchor.current;
+    activeAnchor.current = '';
     const draggedCorner = CORNERS.has(anchor);
 
     const nodePatches: Array<{ id: string; changes: Record<string, unknown> }> = [];
@@ -558,6 +609,8 @@ function computePinnedBox(
        * no live pass ran at all, which is a transform so short it produced no
        * `transform` event.
        */
+      // A rotation never records live geometry -- see the guard in the live
+      // pass -- so this is `undefined` for one and the generic path runs.
       const live = node.type === 'text' ? liveTextGeometry.current[id] : undefined;
       let finalW = live ? live.width : Math.max(MIN_SIZE, startNode.width * Math.abs(scaleX));
       let finalH = live ? live.height : Math.max(MIN_SIZE, startNode.height * Math.abs(scaleY));
@@ -570,7 +623,11 @@ function computePinnedBox(
         textMode.typography = live.typography;
         textMode.resize = live.resize;
       }
-      if (!live && node.type === 'text' && startNode.type === 'text') {
+      // `rotater` excluded here for the same reason as in the live pass: this
+      // branch sorts handles into corner / vertical edge / everything else, and
+      // a rotation is none of them -- so it fell into the horizontal-edge case
+      // and re-wrapped the paragraph as part of turning it.
+      if (!live && node.type === 'text' && startNode.type === 'text' && anchor !== 'rotater') {
         if (draggedCorner && uniformDrag(scaleX, scaleY)) {
           const factor = Math.abs(scaleX);
           const newFontSize = Math.round(Math.max(4, Math.min(400, startNode.typography.fontSize * factor)));

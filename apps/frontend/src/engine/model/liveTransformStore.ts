@@ -30,6 +30,28 @@
 import { useSyncExternalStore } from 'react';
 
 export interface LiveTransform {
+  /**
+   * This entry came from the resize/rotate handles, not from a drag.
+   *
+   * ## Why anyone downstream needs to know
+   *
+   * A drag is driven by *us*: `ObjectRenderer` publishes a position and React
+   * renders the node there. A transform is driven by **Konva** -- its
+   * `Transformer` writes the node's `x`, `y`, `scale` and `rotation` directly,
+   * every frame, computing each frame from what it finds on the node.
+   *
+   * So during a transform those two are writing to the same attributes at the
+   * same time. React renders `x = live.x + width / 2` with `offsetX = width / 2`
+   * and Konva then reads that back as the starting point for its next frame --
+   * a feedback loop, which is what "the object distorts and changes position
+   * rapidly" is, and what sent objects off the screen entirely once the box was
+   * being written too.
+   *
+   * Marking the source lets the renderer stand back and leave the node's
+   * transform to Konva for the duration, while still using the *size* for
+   * things Konva knows nothing about -- re-wrapping a paragraph, most of all.
+   */
+  fromTransform?: boolean;
   x?: number;
   y?: number;
   width?: number;
