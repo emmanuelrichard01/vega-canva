@@ -1,6 +1,6 @@
 import React, { useEffect, useRef, useState } from 'react';
 import type Konva from 'konva';
-import { Group, Line, Rect, Text, Transformer } from 'react-konva';
+import { Circle, Group, Rect, Text, Transformer } from 'react-konva';
 import { applyNodePatches } from '../../engine/document';
 import { EXPORT_CHROME } from '../../engine/export/chrome';
 import { useStore } from '../../hooks/useStore';
@@ -55,6 +55,40 @@ const VERTICAL_EDGES = new Set(['top-center', 'bottom-center']);
 const uniformDrag = (sx: number, sy: number): boolean =>
   Math.abs(Math.abs(sx) - Math.abs(sy)) < 0.001;
 
+/** The two edge handles that set the measure a paragraph wraps inside. */
+const HORIZONTAL_EDGES = new Set(['middle-left', 'middle-right', 'left-center', 'right-center']);
+
+/**
+ * Where a text box goes when a side handle changes how wide it is.
+ *
+ * ## Why this cannot use `computePinnedBox`
+ *
+ * That function pins the edge opposite the one you grabbed, which is right for
+ * every object whose height you are also setting. Text's height is not set by
+ * the drag -- it *falls out* of the re-wrap, and a narrower measure means more
+ * lines. `computePinnedBox` pins the vertical **centre** for a side handle, so
+ * that extra height was split between the top and the bottom and the paragraph
+ * grew upwards into the layout above it as well as down.
+ *
+ * A paragraph grows downwards. The first line stays where it was put, which is
+ * what every text engine does and what anyone dragging the right edge of a
+ * column expects -- the top of the column is a decision they already made.
+ *
+ * The horizontal edge is still pinned the ordinary way: dragging the left
+ * handle must keep the right edge still.
+ */
+function pinTextBox(
+  anchor: string,
+  start: { x: number; y: number; width: number },
+  newW: number
+): { x: number; y: number } {
+  const keepsRightEdge = anchor === 'middle-left' || anchor === 'left-center';
+  return {
+    x: keepsRightEdge ? start.x + start.width - newW : start.x,
+    y: start.y,
+  };
+}
+
 /** Ink and paper for the handles, matching the hover ring the canvas already draws. */
 const ACCENT = '#3B82F6';
 const HANDLE_FILL = '#FFFFFF';
@@ -74,6 +108,8 @@ export const SelectionTransformer: React.FC<Props> = ({ selectedIds, stageRef })
   const [transforming, setTransforming] = useState(false);
   /** Live dimensions (e.g. 240 × 180) or angle (e.g. 45°) HUD badge while transforming. */
   const [liveBadge, setLiveBadge] = useState<{ text: string; x: number; y: number } | null>(null);
+  /** Whether the gesture in flight is a rotation, so the pivot can be shown. */
+  const [isRotatingNow, setIsRotatingNow] = useState(false);
 
   // The handles must re-fit when a *selected* node's geometry changes from
   // elsewhere (the Properties panel, a remote peer). Subscribing to the whole
@@ -301,6 +337,8 @@ function computePinnedBox(
   const liveTextGeometry = useRef<Record<string, {
     width: number;
     height: number;
+    x: number;
+    y: number;
     typography: TextNode['typography'];
     resize: TextNode['resize'];
   }>>({});
@@ -391,16 +429,41 @@ function computePinnedBox(
           height = Math.max(MIN_SIZE, Math.ceil(layout.height));
         }
 
-        const pinned = computePinnedBox(anchor, startNode, width, height);
+        // A side handle sets the measure and the height follows, so the top
+        // stays put -- see `pinTextBox`. Any other handle is an ordinary resize.
+        const pinned = HORIZONTAL_EDGES.has(anchor)
+          ? pinTextBox(anchor, startNode, width)
+          : computePinnedBox(anchor, startNode, width, height);
         // Handed to the commit -- see `liveTextGeometry`. Recorded for every
         // branch above, because each one is a different answer and the commit
         // must not have to work out which ran.
         liveTextGeometry.current[id] = {
           width,
           height,
+          x: pinned.x,
+          y: pinned.y,
           typography: typo,
           resize: !draggedCorner && VERTICAL_EDGES.has(anchor) ? 'fixed' : 'height',
         };
+
+        /**
+         * The selection frame follows the text, rather than lagging a release
+         * behind it.
+         *
+         * Konva sizes the frame from the node's own client rect, and this node
+         * is a `Group` whose rect is the union of its children -- so it does not
+         * change until React has re-laid the glyphs. Meanwhile the live pass has
+         * already reset the scale to 1, so the frame had nothing left to
+         * describe the drag with and sat at the old box for the whole gesture,
+         * snapping to the new one on release.
+         *
+         * `width`/`height` on the group give Konva a box of its own to measure,
+         * and `forceUpdate` makes it measure again in this same event rather
+         * than on the next gesture.
+         */
+        konvaNode.width(width);
+        konvaNode.height(height);
+        trRef.current?.forceUpdate();
         singleBadgeW = width;
         singleBadgeH = height;
         liveTransformStore.set(id, {
@@ -414,7 +477,12 @@ function computePinnedBox(
         });
         // Handed to the commit, which cannot recover it from a scale this pass
         // has just zeroed -- see `liveTextGeometry`.
-        liveTextGeometry.current[id] = { width, height, typography: typo, resize: 'height' };
+        liveTextGeometry.current[id] = {
+          width, height, x: pinned.x, y: pinned.y, typography: typo, resize: 'height',
+        };
+        konvaNode.width(width);
+        konvaNode.height(height);
+        trRef.current?.forceUpdate();
         return;
       }
 
@@ -435,6 +503,7 @@ function computePinnedBox(
     const w = singleBadgeW || Math.round(tr.width());
     const h = singleBadgeH || Math.round(tr.height());
     const text = isRotating ? `${deg}°` : `${Math.round(w)} × ${Math.round(h)}`;
+    setIsRotatingNow(isRotating);
     setLiveBadge({
       text,
       x: tr.x() + tr.width() / 2,
@@ -446,6 +515,7 @@ function computePinnedBox(
     window.dispatchEvent(new CustomEvent('canvas-drag-end'));
     setTransforming(false);
     setLiveBadge(null);
+    setIsRotatingNow(false);
     const tr = trRef.current;
     if (!tr) return;
 
@@ -584,7 +654,12 @@ function computePinnedBox(
       const rotating = anchor === 'rotater';
       const box = rotating
         ? { x: konvaNode.x() - finalW / 2, y: konvaNode.y() - finalH / 2 }
-        : { x: pinned.x, y: pinned.y };
+        // Text commits the position the live pass pinned, for the reason
+        // `pinTextBox` gives: a paragraph grows downwards, and re-deriving it
+        // here would centre the growth again.
+        : live
+          ? { x: live.x, y: live.y }
+          : { x: pinned.x, y: pinned.y };
 
       const changes = {
         ...textMode,
@@ -638,15 +713,31 @@ function computePinnedBox(
   const box = tr && tr.nodes().length > 0
     ? { x: tr.x(), y: tr.y(), width: tr.width(), height: tr.height() }
     : null;
-  const centreMark = box ? (
+  /**
+   * The pivot, shown only while turning something.
+   *
+   * ## Why it used to be noise
+   *
+   * It was drawn on **every selection** — a small blue cross sitting in the
+   * middle of whatever you had clicked, permanently, over the artwork. A mark
+   * that is always present says nothing, and this one had a real job it was
+   * being prevented from doing: it is the point a rotation turns about, which
+   * is worth knowing at exactly one moment and is clutter at every other.
+   *
+   * Scoped to the rotate gesture, it becomes an answer to a question you are
+   * actually asking. Drawn as a ring with a gap rather than a solid cross, so
+   * it reads as a *centre* rather than as a small object someone has added to
+   * the board.
+   */
+  const centre = isRotatingNow && box ? (
     <Group
       x={box.x + box.width / 2}
       y={box.y + box.height / 2}
       listening={false}
       name={EXPORT_CHROME}
     >
-      <Line points={[-5, 0, 5, 0]} stroke={ACCENT} strokeWidth={1} />
-      <Line points={[0, -5, 0, 5]} stroke={ACCENT} strokeWidth={1} />
+      <Circle radius={7} stroke={ACCENT} strokeWidth={1} opacity={0.55} />
+      <Circle radius={1.5} fill={ACCENT} />
     </Group>
   ) : null;
 
@@ -710,60 +801,70 @@ function computePinnedBox(
     />
   );
 
-  /**
-   * The transform origin, marked while you are dragging a handle.
-   *
-   * ## Why a centre mark rather than a ninth handle
-   *
-   * A grabbable centre anchor is a third meaning for a click inside the box —
-   * on top of "select" and "drag" — and the thing it would do (move the
-   * object) is already what dragging the body does. So the centre earns a
-   * *readout* rather than a control: it says where the rotation and the
-   * scaling are happening from, which is the one thing about a transform you
-   * cannot otherwise see.
-   *
-   * Only while transforming. A permanent crosshair in the middle of every
-   * selection is a mark sitting on top of the artwork for no reason the rest
-   * of the time.
-   */
-  const centre = transforming ? centreMark : null;
 
   /**
-   * Live transform HUD badge showing realtime dimensions (e.g. 320 × 240) or rotation angle (e.g. 45°).
+   * The readout, while a handle is being dragged.
+   *
+   * ## What was wrong with it
+   *
+   * A near-black pill with a white hairline, a hard shadow and bold 11px type,
+   * on a canvas whose entire chrome is one hairline blue. It was the heaviest
+   * element on the screen and it appeared *because* you were busy looking at
+   * something else — so the thing competing hardest for attention was the thing
+   * least entitled to it. It also carried a fixed 88px width, so "45°" sat in
+   * the middle of a pill sized for "1920 × 1080".
+   *
+   * It is chrome now, in the same blue as the frame it belongs to: it reads as
+   * part of the selection rather than as a notification about it. The width
+   * follows the text, the numbers are tabular so they do not jitter as they
+   * count, and the ✕ between two dimensions is a proper multiplication sign
+   * rather than the letter.
+   *
+   * Rendered at a fixed pixel size regardless of zoom, because it is a label
+   * about the board and not a thing on it -- at 4x a zoomed readout would be
+   * enormous, and at 0.2x unreadable.
    */
-  const hudBadge = transforming && liveBadge ? (
-    <Group
-      x={liveBadge.x}
-      y={liveBadge.y}
-      listening={false}
-      name={EXPORT_CHROME}
-    >
-      <Rect
-        x={-44}
-        y={-12}
-        width={88}
-        height={24}
-        cornerRadius={6}
-        fill="#090d16"
-        stroke="rgba(255,255,255,0.18)"
-        strokeWidth={1}
-        shadowColor="rgba(0,0,0,0.4)"
-        shadowBlur={8}
-        shadowOffsetY={3}
-      />
-      <Text
-        x={-44}
-        y={-6}
-        width={88}
-        text={liveBadge.text}
-        fontSize={11}
-        fontFamily="Inter, -apple-system, BlinkMacSystemFont, sans-serif"
-        fontStyle="bold"
-        fill="#f8fafc"
-        align="center"
-      />
-    </Group>
-  ) : null;
+  const hudBadge = transforming && liveBadge ? (() => {
+    const scale = 1 / (stageRef.current?.scaleX() || 1);
+    // Measured from the string rather than fixed, so a short value gets a short
+    // pill. `6.4` is Inter's advance at 11px for the digits and the separator,
+    // which is all this ever shows.
+    const width = Math.max(46, liveBadge.text.length * 6.4 + 18);
+    return (
+      <Group
+        x={liveBadge.x}
+        y={liveBadge.y}
+        scaleX={scale}
+        scaleY={scale}
+        listening={false}
+        name={EXPORT_CHROME}
+      >
+        <Rect
+          x={-width / 2}
+          y={-11}
+          width={width}
+          height={22}
+          cornerRadius={11}
+          fill={ACCENT}
+          shadowColor="rgba(15, 23, 42, 0.28)"
+          shadowBlur={6}
+          shadowOffsetY={2}
+        />
+        <Text
+          x={-width / 2}
+          y={-4.5}
+          width={width}
+          text={liveBadge.text}
+          fontSize={11}
+          fontFamily="Inter, -apple-system, BlinkMacSystemFont, sans-serif"
+          fontStyle="500"
+          fill="#FFFFFF"
+          align="center"
+          letterSpacing={0.2}
+        />
+      </Group>
+    );
+  })() : null;
 
   return (
     <>
