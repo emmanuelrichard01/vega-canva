@@ -1,7 +1,7 @@
 import React, { useEffect, useState, useRef } from 'react';
 import { useRoomState } from '../../hooks/useSync';
 import { CollaborationLayer } from './CollaborationLayer';
-import { Moon, Sun, Undo2, Redo2, Share2, Download, EyeOff, History, PanelLeft, MessageSquare, MoreHorizontal, SlidersHorizontal, HelpCircle } from 'lucide-react';
+import { Moon, Sun, Undo2, Redo2, Share2, Download, EyeOff, History, PanelLeft, MessageSquare, SlidersHorizontal, HelpCircle } from 'lucide-react';
 import { editor } from '../../engine/api/EditorAPI';
 import { useStore } from '../../hooks/useStore';
 import { Switch } from '../ui/Switch';
@@ -28,7 +28,6 @@ interface Props {
 export const WorkspaceShell: React.FC<Props> = ({ localTitle, setLocalTitle, onTitleSave, isDarkTheme, setIsDarkTheme, onShareClick, onExportClick, onHelpClick, onHideUi, onToggleTimeline, onToggleComments, commentUnread, onTogglePanels }) => {
   const { status, synced } = useRoomState();
   const [isEditingTitle, setIsEditingTitle] = useState(false);
-  const [menuOpen, setMenuOpen] = useState(false);
   // What the title was when editing started, so Escape can revert to it
   // instead of just leaving the input stuck in edit mode with no way to
   // back out other than blurring (which commits, not cancels).
@@ -36,6 +35,8 @@ export const WorkspaceShell: React.FC<Props> = ({ localTitle, setLocalTitle, onT
   const physicsEnabled = useStore(state => state.physicsEnabled);
   const setPhysicsEnabled = useStore(state => state.setPhysicsEnabled);
   const snapToGrid = useStore(state => state.snapToGrid);
+  const showContextToolbar = useStore(state => state.showContextToolbar);
+  const setShowContextToolbar = useStore(state => state.setShowContextToolbar);
   const setSnapToGrid = useStore(state => state.setSnapToGrid);
   const showRulers = useStore(state => state.showRulers);
   const setShowRulers = useStore(state => state.setShowRulers);
@@ -73,7 +74,6 @@ export const WorkspaceShell: React.FC<Props> = ({ localTitle, setLocalTitle, onT
     };
   }, []);
 
-  const menuRef = useRef<HTMLDivElement>(null);
   const viewRef = useRef<HTMLDivElement>(null);
   const [viewOpen, setViewOpen] = useState(false);
 
@@ -86,16 +86,13 @@ export const WorkspaceShell: React.FC<Props> = ({ localTitle, setLocalTitle, onT
    * this one.
    */
   useEffect(() => {
-    if (!menuOpen && !viewOpen) return;
+    if (!viewOpen) return;
     const onDown = (e: MouseEvent) => {
       const t = e.target as Node;
-      if (menuRef.current && !menuRef.current.contains(t)) setMenuOpen(false);
       if (viewRef.current && !viewRef.current.contains(t)) setViewOpen(false);
     };
     const onKey = (e: KeyboardEvent) => {
-      if (e.key !== 'Escape') return;
-      setMenuOpen(false);
-      setViewOpen(false);
+      if (e.key === 'Escape') setViewOpen(false);
     };
     document.addEventListener('mousedown', onDown);
     document.addEventListener('keydown', onKey);
@@ -103,7 +100,7 @@ export const WorkspaceShell: React.FC<Props> = ({ localTitle, setLocalTitle, onT
       document.removeEventListener('mousedown', onDown);
       document.removeEventListener('keydown', onKey);
     };
-  }, [menuOpen, viewOpen]);
+  }, [viewOpen]);
 
   return (
     <div className="workspace-header panel-surface" style={{ opacity: receded ? 0.6 : 1 }}>
@@ -219,7 +216,7 @@ export const WorkspaceShell: React.FC<Props> = ({ localTitle, setLocalTitle, onT
           <button
             className={`btn-icon${viewOpen ? ' is-on' : ''}`}
             style={{ padding: '7px 9px' }}
-            onClick={() => { setViewOpen((v) => !v); setMenuOpen(false); }}
+            onClick={() => setViewOpen((v) => !v)}
             data-tooltip="View — snapping, throwing and focus mode"
             data-tooltip-pos="bottom"
             aria-label="View settings"
@@ -248,6 +245,19 @@ export const WorkspaceShell: React.FC<Props> = ({ localTitle, setLocalTitle, onT
                   tooltip={physicsEnabled ? 'Flick an object and it keeps moving. Turn off to place objects exactly where you drop them.' : 'Objects stop exactly where you drop them. Turn on to throw them with a flick.'}
                 />
               </div>
+              {/* What follows the selection. Grouped with Snap and Throw
+                  because all three answer "what happens when I touch this",
+                  rather than with the grid and rulers below, which are about
+                  what the board is drawn on. */}
+              <div className="hdr-view-row">
+                <Switch
+                  block
+                  checked={showContextToolbar}
+                  onChange={setShowContextToolbar}
+                  label="Selection toolbar"
+                  tooltip={showContextToolbar ? 'Hide the toolbar that follows the selection and work from the Properties panel instead' : 'Show a toolbar beside whatever is selected'}
+                />
+              </div>
               <div className="ctx-popover__rule" role="separator" />
               {/* What the board is drawn *on*. Separate from Snap and Throw
                   above, which are about how it behaves when you touch it. */}
@@ -270,6 +280,18 @@ export const WorkspaceShell: React.FC<Props> = ({ localTitle, setLocalTitle, onT
                 />
               </div>
               <div className="ctx-popover__rule" role="separator" />
+              {/* The theme, up from the overflow menu.
+
+                  It sat alone behind an unlabelled "…" on the reasoning that
+                  it is a once-a-session choice -- true, and beside the point:
+                  the question it answers is "how am I looking at this board",
+                  which is the question this whole menu answers. Moving it here
+                  left the overflow holding nothing, so that button is gone and
+                  the header is one control lighter. */}
+              <button className="ctx-menu-item" role="menuitem" onClick={() => setIsDarkTheme(!isDarkTheme)}>
+                {isDarkTheme ? <Sun size={15} /> : <Moon size={15} />}
+                {isDarkTheme ? 'Light theme' : 'Dark theme'}
+              </button>
               <button className="ctx-menu-item" role="menuitem" onClick={() => { setViewOpen(false); onHideUi(); }}>
                 <EyeOff size={15} /> Focus mode
                 <span className="ctx-menu-item__key">\</span>
@@ -345,35 +367,6 @@ export const WorkspaceShell: React.FC<Props> = ({ localTitle, setLocalTitle, onT
           <Share2 size={15} /> <span className="hdr-share-text">Share</span>
         </button>
 
-        {/* What is left is genuinely once a session.
-
-            This held Export and Focus mode as well, on the reasoning that
-            three always-on buttons all competed with Share for one corner of
-            the eye. That was right about the crowding and wrong about the
-            remedy: Export is a primary outcome and Focus is a view state, so
-            both now sit where they are looked for. The theme really is a
-            once-a-session choice, and stays. */}
-        <div style={{ position: 'relative' }} ref={menuRef}>
-          <button
-            className="btn-icon"
-            style={{ padding: '7px 9px' }}
-            onClick={() => setMenuOpen((v) => !v)}
-            data-tooltip="More"
-            data-tooltip-pos="bottom"
-            aria-label="More actions"
-            aria-haspopup="menu"
-            aria-expanded={menuOpen}
-          >
-            <MoreHorizontal size={18} />
-          </button>
-          {menuOpen && (
-            <div className="ctx-popover" role="menu" style={{ top: 'calc(100% + 8px)', right: 0, minWidth: 210 }}>
-              <button className="ctx-menu-item" role="menuitem" onClick={() => setIsDarkTheme(!isDarkTheme)}>
-                {isDarkTheme ? <Sun size={15} /> : <Moon size={15} />} {isDarkTheme ? 'Light theme' : 'Dark theme'}
-              </button>
-            </div>
-          )}
-        </div>
       </div>
     </div>
   );

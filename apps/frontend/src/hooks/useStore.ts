@@ -173,6 +173,18 @@ interface StoreState {
   setShowGrid: (val: boolean) => void;
 
   /**
+   * Whether the floating toolbar follows the selection.
+   *
+   * On by default, because it is where most editing actually happens and a
+   * canvas that hid its primary affordance until you found a setting would be
+   * teaching people the wrong thing. Off is for the people who work from the
+   * Properties panel and want nothing hovering over the artwork -- a real
+   * preference, and one nothing could express before.
+   */
+  showContextToolbar: boolean;
+  setShowContextToolbar: (val: boolean) => void;
+
+  /**
    * Place a field and let it run, rather than holding the cursor on it.
    *
    * Off by default: press-and-hold is what a force tool obviously does, and a
@@ -502,6 +514,12 @@ export const useStore = create<StoreState>((set) => ({
   setShowRulers: (val) => {
     setStoragePref('vega_show_rulers', String(val));
     set({ showRulers: val });
+  },
+
+  showContextToolbar: loadBoolPref('vega_context_toolbar', true),
+  setShowContextToolbar: (val) => {
+    setStoragePref('vega_context_toolbar', String(val));
+    set({ showContextToolbar: val });
   },
 
   showGrid: loadBoolPref('vega_show_grid', true),

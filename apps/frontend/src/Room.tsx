@@ -319,6 +319,7 @@ export default function Room() {
 
   const [activeTool, setActiveTool] = useState('select');
   const [selectedIds, setSelectedIds] = useState<string[]>([]);
+  const showContextToolbar = useStore((s) => s.showContextToolbar);
   // Mirrored into a ref on every render, for the window-level copy and cut
   // listeners that live for the room and must not re-register on every click.
   const selectionRef = useRef<string[]>([]);
@@ -1657,13 +1658,15 @@ export default function Room() {
         </Suspense>
       </div>
 
-      {/* FLOATING CONTEXT TOOLBAR */}
-      <ObjectContextToolbar
-        selectedId={selectedId}
-        selectedIds={selectedIds}
-        onDeselect={() => setSelectedIds([])}
-        sidebarsVisible={isUiVisible}
-      />
+      {/* FLOATING CONTEXT TOOLBAR — switchable from the View menu. */}
+      {showContextToolbar && (
+        <ObjectContextToolbar
+          selectedId={selectedId}
+          selectedIds={selectedIds}
+          onDeselect={() => setSelectedIds([])}
+          sidebarsVisible={isUiVisible}
+        />
+      )}
 
       {/* TOOL WORKSPACE (Dynamic Dock) */}
       {isUiVisible && (

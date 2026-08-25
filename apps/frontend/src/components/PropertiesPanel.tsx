@@ -7,7 +7,6 @@ import {
   LayoutGrid,
   LayoutTemplate,
   PanelRightClose,
-  Frame,
   SendToBack,
   StickyNote,
 } from 'lucide-react';
@@ -16,7 +15,6 @@ import { useStore } from '../hooks/useStore';
 import { APPEARANCE_TYPES } from '../engine/objects/appearanceTypes';
 import { resolveAffordances, type AffordanceId } from '../engine/selection/affordances';
 import { GridSection } from './panel/GridSection';
-import { BoardSection } from './panel/BoardSection';
 import { gridNodeOf } from '../engine/grid/gridApply';
 import { objectRegistry } from '../engine/objects';
 import {
@@ -120,44 +118,66 @@ export const PropertiesPanel: React.FC<PropertiesPanelProps> = ({ selectedIds, o
   const shared = <T,>(read: (n: AnyNode) => T): Shared<T> => sharedValue(nodes, read);
 
   /**
-   * Nothing selected is not nothing to show.
+   * Nothing selected.
    *
-   * This was a grey icon and the words "Nothing selected" at 70% opacity,
-   * filling a 260px column that is dead for as long as you are not holding
-   * something -- which on a canvas is most of the time, because you deselect to
-   * *look* at your work, and that is exactly when the panel is in your eyeline.
+   * ## Why this stayed a message
    *
-   * An empty selection is really a selection of the board, so the panel keeps
-   * doing its one job on a different subject. See `BoardSection`.
+   * The first attempt filled the space with board properties -- a count per
+   * node type that selected its type on click, and the snap and theme toggles.
+   * Useful in isolation and redundant in this app: the Layers panel already
+   * lists and filters by type, and both settings already live in the View menu.
+   * A panel that repeats two other surfaces is not richer, it is a third place
+   * to keep in step, and the reader has to work out which one is authoritative.
    *
-   * The shell below is a deliberate copy of the populated panel's, down to the
-   * sticky header and the same paddings, so switching between the two reads as
-   * one panel changing subject rather than as two screens. It is inline because
-   * the panel it has to match is inline; the new content underneath uses
-   * classes.
+   * So the honest answer is that there is nothing to inspect, and the work goes
+   * into saying it well rather than into finding something to say.
+   *
+   * ## What "well" means here
+   *
+   * The old version was an icon and a line at `opacity: 0.7`. Fading a whole
+   * block is the visual language of a *disabled* control -- it reads as
+   * something that should be working and is not, which is the one impression an
+   * empty state must avoid. Full-strength type in the tertiary role says the
+   * same thing calmly, and lets the two lines take a deliberate hierarchy
+   * instead of both being dimmed equally.
+   *
+   * The mark is a marquee: the dashed rectangle the Select tool drags, at the
+   * moment it has caught nothing. It says which gesture fills this panel,
+   * which a slider glyph -- the previous icon, borrowed from "settings" -- did
+   * not.
    */
   if (!node) {
     return (
-      <div className="custom-scrollbar" style={{ display: 'flex', flexDirection: 'column', height: '100%', overflowY: 'auto', overflowX: 'hidden', userSelect: 'none', background: 'var(--surface-primary)', paddingBottom: '24px' }}>
-        <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: '12px', padding: '16px', borderBottom: '1px solid var(--border-divider)', background: 'var(--surface-elevated)', position: 'sticky', top: 0, zIndex: 10 }}>
-          <div style={{ display: 'flex', alignItems: 'center', gap: '8px', color: 'var(--text-primary)', fontWeight: 500 }}>
-            <Frame size={16} color="var(--text-secondary)" />
-            <span>Board</span>
-          </div>
-          {onCollapse && (
+      <div className="props-empty">
+        {onCollapse && (
+          <div className="props-empty__bar">
             <button
               className="btn-icon"
-              style={{ padding: '4px' }}
               onClick={onCollapse}
               data-tooltip="Collapse panel"
               aria-label="Collapse the properties panel"
             >
               <PanelRightClose size={15} />
             </button>
-          )}
+          </div>
+        )}
+        <div className="props-empty__body">
+          <svg width="44" height="34" viewBox="0 0 44 34" fill="none" aria-hidden focusable="false">
+            {/* The marquee, mid-drag: three dashed sides and a cursor at the
+                corner it is being pulled from. Drawn rather than imported so it
+                matches the real marquee's dash rhythm. */}
+            <rect
+              x="1.5" y="1.5" width="33" height="25" rx="2.5"
+              stroke="currentColor" strokeWidth="1.5" strokeDasharray="4 3"
+            />
+            <path
+              d="M30 20.5 L41 25.5 L36.2 27.4 L34.3 32.2 Z"
+              fill="var(--surface-primary)" stroke="currentColor" strokeWidth="1.5" strokeLinejoin="round"
+            />
+          </svg>
+          <p className="props-empty__title">Nothing selected</p>
+          <p className="props-empty__hint">Pick an object on the board to edit it here.</p>
         </div>
-
-        <BoardSection overrideObjects={overrideObjects} />
       </div>
     );
   }
