@@ -195,9 +195,24 @@ export function styleCells(cells: readonly GridCell[], style: GridStyle): Styled
   const next = rng(style.seed ^ 0x5f3759df);
 
   return cells.map((cell, index) => {
-    const shape = style.shapeMode === 'uniform'
-      ? shapes[0]
-      : shapes[Math.floor(next() * shapes.length)];
+    /**
+     * A cell with an outline keeps it, and the shape picker does not apply.
+     *
+     * The picker asks "what shape is a module", and for a ring sector the
+     * answer is already decided by the arrangement -- a sector *is* the module.
+     * Drawing a star in its place would not be a styled sector, it would be a
+     * star sitting in a sector's bounding box, which is the mistake the old
+     * radial kind made for its whole life.
+     *
+     * `rect` is what the shape field carries, because every reader that does
+     * not understand outlines falls back to the box, and a box is the honest
+     * approximation of one.
+     */
+    const shape = cell.outline
+      ? ('rect' as CellShape)
+      : style.shapeMode === 'uniform'
+        ? shapes[0]
+        : shapes[Math.floor(next() * shapes.length)];
     return {
       ...cell,
       index,

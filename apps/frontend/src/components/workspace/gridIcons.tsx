@@ -104,7 +104,11 @@ const SHAPES: Record<GridKind, React.ReactNode> = {
      one thing and produces another is worse than one with no picture at all,
      because the reader has no reason to doubt it. The faint circles are the
      rings the blocks are stepped around. */
-  radial: (
+  /* The necklace: modules stepped around two rings, each one an upright shape.
+     What the kind actually draws, which is the whole reason it is no longer
+     called Radial -- that name now belongs to the segmented ring below, whose
+     picture this icon used to promise and its layout could not deliver. */
+  orbit: (
     <>
       <circle cx={50} cy={50} r={19} fill="none" stroke="currentColor" strokeWidth={4} opacity={0.25} />
       <circle cx={50} cy={50} r={40} fill="none" stroke="currentColor" strokeWidth={4} opacity={0.25} />
@@ -123,6 +127,42 @@ const SHAPES: Record<GridKind, React.ReactNode> = {
           );
         })
       )}
+    </>
+  ),
+  /* Sectors, drawn as sectors.
+     Built from the same arithmetic the layout uses rather than hand-drawn
+     paths, so the picture cannot promise a division the kind declines to
+     produce -- which is exactly what the old icon did. */
+  radial: (
+    <>
+      {[0, 1, 2, 3, 4, 5, 6, 7].map((i) => {
+        const step = (Math.PI * 2) / 8;
+        const gap = 0.16;
+        const a0 = i * step - Math.PI / 2 - step / 2 + gap / 2;
+        const a1 = a0 + step - gap;
+        const r0 = 24;
+        const r1 = 48;
+        const pt = (a: number, r: number) => `${50 + Math.cos(a) * r} ${50 + Math.sin(a) * r}`;
+        const d = [
+          `M ${pt(a0, r1)}`,
+          `A ${r1} ${r1} 0 0 1 ${pt(a1, r1)}`,
+          `L ${pt(a1, r0)}`,
+          `A ${r0} ${r0} 0 0 0 ${pt(a0, r0)}`,
+          'Z',
+        ].join(' ');
+        return (
+          <path
+            key={i}
+            d={d}
+            fill="currentColor"
+            // Every third sector solid, matching how the other icons mark a
+            // rhythm: enough contrast to read as divided rather than as a
+            // single ring with hairlines scratched into it.
+            opacity={i % 3 === 0 ? 0.85 : 0.3}
+            strokeLinejoin="round"
+          />
+        );
+      })}
     </>
   ),
   diagonal: (

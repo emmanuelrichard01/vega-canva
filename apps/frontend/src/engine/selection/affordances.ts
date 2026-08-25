@@ -55,6 +55,7 @@ export type AffordanceId =
   // Structure, which is about the set rather than about the type.
   | 'group'
   | 'ungroup'
+  | 'break-apart'
   | 'boolean'
   | 'align'
   | 'distribute'
@@ -284,6 +285,19 @@ const RULES: readonly (Affordance & { when: (f: SelectionFacts) => boolean })[] 
   {
     id: 'ungroup', label: 'Ungroup', weight: 18, surfaces: ['toolbar', 'menu'],
     when: (f) => f.isWholeGroup,
+  },
+  {
+    /**
+     * The way out of a generator.
+     *
+     * Sits at Ungroup's weight because it is the same gesture from the reader's
+     * side -- "give me the pieces" -- and the two can never both apply, so they
+     * never compete for the slot. It is what makes a grid being one object a
+     * trade rather than a restriction: the moment you want to nudge one module
+     * or recolour three, you convert, and from then on they are ordinary shapes.
+     */
+    id: 'break-apart', label: 'Break apart', weight: 18, surfaces: ['toolbar', 'menu'],
+    when: (f) => f.uniformType === 'grid' && f.count === 1,
   },
   {
     id: 'align', label: 'Align', weight: 17, surfaces: ['toolbar', 'menu'],

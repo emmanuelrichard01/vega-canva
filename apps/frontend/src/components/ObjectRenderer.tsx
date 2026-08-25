@@ -22,6 +22,7 @@ import { AudioRenderer } from './canvas/renderers/AudioRenderer';
 import { ImageRenderer } from './canvas/renderers/ImageRenderer';
 import { PathRenderer } from './canvas/renderers/PathRenderer';
 import { ShapeRenderer } from './canvas/renderers/ShapeRenderer';
+import { GridRenderer } from './canvas/renderers/GridRenderer';
 import { StickyRenderer } from './canvas/renderers/StickyRenderer';
 import { FrameRenderer } from './canvas/renderers/FrameRenderer';
 import { ConnectorRenderer } from './canvas/renderers/ConnectorRenderer';
@@ -31,7 +32,7 @@ import { caretAt, layoutText } from '../engine/text/layout';
 import { measurerFor } from '../engine/text/measure';
 import { applyTextCase } from '../engine/model/textCase';
 import { liveTransformStore, useLiveTransform } from '../engine/model/liveTransformStore';
-import { syncConnectedConnectors } from '../engine/model/connectorTargets';
+import { connectorDragPatch, syncConnectedConnectors } from '../engine/model/connectorTargets';
 
 /**
  * Which character a click inside a text node landed on.
@@ -208,6 +209,14 @@ export const ObjectRenderer = React.memo(
     const lastPos = useRef({ x: 0, y: 0, time: 0 });
     const velocity = useRef({ x: 0, y: 0 });
     const groupDragRef = useRef<{ startX: number; startY: number; siblings: Record<string, SiblingDragState> } | null>(null);
+    /**
+     * Selected connectors, held aside for the length of a group drag.
+     *
+     * Kept out of `siblings` because everything in there is translated, and a
+     * connector must not be. They are patched at drop instead, where a loose
+     * end can be offset and a bound one left to follow its object.
+     */
+    const connectorDragRef = useRef<string[]>([]);
     const altDragRef = useRef(false);
 
     // Claimed during the first render, which is the point: a tool that has
@@ -290,6 +299,7 @@ export const ObjectRenderer = React.memo(
           const stage = e.target.getStage();
           const all = useStore.getState().objects;
           const siblings: Record<string, SiblingDragState> = {};
+          connectorDragRef.current = [];
           const batch: Array<[string, { x: number; y: number }]> = [
             [objId, { x: e.target.x() - halfW, y: e.target.y() - halfH }],
           ];
@@ -298,6 +308,21 @@ export const ObjectRenderer = React.memo(
             .forEach((sid) => {
               const sibling = all[sid];
               if (!sibling) return;
+              /**
+               * A connector is carried by its ends, never translated.
+               *
+               * Its route is drawn at `world - node.x`, so moving the group it
+               * sits in shifts the frame and the route compensates the other
+               * way: the arrow visibly lags and slides away from the objects it
+               * joins for the length of the drag, then snaps back on release
+               * when the box is recomputed. Bound ends follow their objects on
+               * their own; loose ends are moved at drop by
+               * `connectorDragPatch`.
+               */
+              if (sibling.type === 'connector') {
+                connectorDragRef.current.push(sid);
+                return;
+              }
               const konvaNode = stage?.findOne('#' + sid);
               const sHalfW = sibling.width / 2;
               const sHalfH = sibling.height / 2;
@@ -321,6 +346,7 @@ export const ObjectRenderer = React.memo(
         } else {
           liveTransformStore.set(objId, { x: e.target.x() - halfW, y: e.target.y() - halfH });
           groupDragRef.current = null;
+          connectorDragRef.current = [];
           if (isAlt) {
             altDragState.set([objId]);
           } else {
@@ -508,10 +534,29 @@ export const ObjectRenderer = React.memo(
             updatedObjects[objId] = { ...updatedObjects[objId], ...mainPos };
           }
 
+          /**
+           * Selected connectors, resolved once at the end.
+           *
+           * A fully bound one contributes nothing: both its ends belong to
+           * objects, and `syncConnectedConnectors` below recomputes its box
+           * from wherever they landed. One with a loose end has that end
+           * carried by the drag, which is what dragging a half-attached arrow
+           * visibly does.
+           */
+          for (const cid of connectorDragRef.current) {
+            const c = all[cid];
+            if (c?.type !== 'connector') continue;
+            const patch = connectorDragPatch(c, dx, dy);
+            if (!patch) continue;
+            nodePatches.push({ id: cid, changes: patch });
+            updatedObjects[cid] = { ...c, ...patch } as AnyNode;
+          }
+
           const modifiedIds = [objId, ...Object.keys(groupDragRef.current.siblings)];
           const connectorPatches = syncConnectedConnectors(modifiedIds, updatedObjects);
           applyNodePatches([...nodePatches, ...connectorPatches]);
           groupDragRef.current = null;
+          connectorDragRef.current = [];
           return;
         }
 
@@ -548,6 +593,30 @@ export const ObjectRenderer = React.memo(
         const speed = Math.hypot(velocity.current.x, velocity.current.y);
         if (speed > 0.5 && onThrow) {
           onThrow(objId, e.target.x(), e.target.y(), velocity.current.x * 15, velocity.current.y * 15);
+        } else if (current?.type === 'connector') {
+          /**
+           * Dragging a connector by itself moves its loose ends, not its box.
+           *
+           * Writing `x`/`y` here was the single-selection form of the same bug:
+           * the stored origin is derived, so the write did nothing but put a
+           * stale box in the document, and the arrow sprang back to its ends the
+           * moment anything recomputed it. A connector bound at both ends now
+           * simply does not move, which is the truth -- it is held by the
+           * objects it joins.
+           */
+          const patch = connectorDragPatch(current, dx, dy);
+          if (patch) {
+            const all = useStore.getState().objects;
+            const updated = { ...all, [objId]: { ...current, ...patch } as AnyNode };
+            applyNodePatches([
+              { id: objId, changes: patch },
+              ...syncConnectedConnectors([objId], updated),
+            ]);
+          }
+          // Back where it started either way: the Konva node was dragged, and
+          // nothing in the document authorises it to stay there.
+          e.target.x(current.x + halfW);
+          e.target.y(current.y + halfH);
         } else {
           const all = useStore.getState().objects;
           const updatedObjects = {
@@ -983,5 +1052,7 @@ const NodeContent: React.FC<{ node: AnyNode; isEditing: boolean; stageScale?: nu
       return <FrameRenderer node={node} stageScale={stageScale} />;
     case 'connector':
       return <ConnectorRenderer node={node} />;
+    case 'grid':
+      return <GridRenderer node={node} />;
   }
 };

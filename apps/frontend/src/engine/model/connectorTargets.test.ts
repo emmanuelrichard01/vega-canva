@@ -1,5 +1,7 @@
 import { describe, it, expect } from 'vitest';
-import { boxOfNode, outlineFor, attachPoint, portPointsFor, bodyOutlinePoints } from './connectorTargets';
+import { boxOfNode, outlineFor, attachPoint, portPointsFor, bodyOutlinePoints,
+  connectorDragPatch,
+} from './connectorTargets';
 import type { AnyNode } from './schema';
 
 /** Minimal shape node factory — only the fields the functions under test read. */
@@ -127,5 +129,40 @@ describe('bodyOutlinePoints', () => {
     // The corners should NOT be axis-aligned (i.e. they should differ from the unrotated box).
     const unrotated = [0, 0, 100, 0, 100, 100, 0, 100];
     expect(pts).not.toEqual(unrotated);
+  });
+});
+
+
+describe('connectorDragPatch', () => {
+  const bound = (id: string) => ({ nodeId: id, x: 0, y: 0 });
+  const loose = (x: number, y: number) => ({ x, y });
+
+  it('refuses to move a connector held at both ends', () => {
+    /**
+     * The bug this exists to stop. A connector's box is derived, so translating
+     * it shifts the frame its route is drawn in and the route compensates the
+     * other way -- the arrow slides away from the objects it joins for the
+     * length of a group drag and jumps back on release.
+     */
+    expect(connectorDragPatch({ from: bound('a'), to: bound('b') }, 40, 25)).toBeNull();
+  });
+
+  it('carries a loose end and leaves a bound one alone', () => {
+    const patch = connectorDragPatch({ from: bound('a'), to: loose(100, 200) }, 40, 25)!;
+    expect(patch.from).toEqual(bound('a'));
+    expect(patch.to).toMatchObject({ x: 140, y: 225 });
+  });
+
+  it('carries both ends of a free-floating connector', () => {
+    const patch = connectorDragPatch({ from: loose(0, 0), to: loose(50, 50) }, -10, 5)!;
+    expect(patch.from).toMatchObject({ x: -10, y: 5 });
+    expect(patch.to).toMatchObject({ x: 40, y: 55 });
+  });
+
+  it('treats an end with no coordinates as sitting at the origin', () => {
+    // A detached end is written with `x`/`y`, but a document need not have
+    // them, and `undefined + 40` is `NaN` -- which Konva renders as nothing.
+    const patch = connectorDragPatch({ from: {}, to: {} }, 40, 25)!;
+    expect(patch.from).toMatchObject({ x: 40, y: 25 });
   });
 });

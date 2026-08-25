@@ -21,8 +21,7 @@ import { cropMode } from '../engine/interaction/cropMode';
 import { pathEdit } from '../engine/interaction/pathEdit';
 import { Palette, Shuffle } from 'lucide-react';
 import { GridKindIcon } from './workspace/gridIcons';
-import { gridGroupOf } from '../engine/grid/gridGroupUtils';
-import { gridRecipe as gridRecipeFor, relayoutGrid } from '../engine/grid/gridApply';
+import { breakApartGrid, gridNodeOf, gridRecipe as gridRecipeFor, setGridRecipe } from '../engine/grid/gridApply';
 import { switchKind } from '../engine/grid/gridBuild';
 import { GRID_HINTS, GRID_KINDS, GRID_LABELS } from '../engine/grid/gridLayout';
 import { GRID_PALETTES } from '../engine/grid/gridStyle';
@@ -434,7 +433,6 @@ export const ObjectContextToolbar: React.FC<Props> = ({ selectedId, selectedIds,
   const liveNode = useStore((state) => (activeId ? state.objects[activeId] : undefined));
   const allObjects = useStore((state) => state.objects);
   /** The group tree, so the grid rail re-renders when a grid is re-laid. */
-  const groupTree = useStore((state) => state.groups);
 
   useEffect(() => {
     if (!activeId && !isBulk) { setIsVisible(false); return; }
@@ -603,8 +601,8 @@ export const ObjectContextToolbar: React.FC<Props> = ({ selectedId, selectedIds,
     const bulkOffers = new Set(
       resolveAffordances(bulkNodes, { surface: 'toolbar', allObjects }).map((a) => a.id)
     );
-    /** The grid under this selection, when the selection is exactly one. */
-    const gridGroup = gridGroupOf(bulkNodes, groupTree);
+    /** The grid this selection names, when it names exactly one. */
+    const gridGroup = gridNodeOf(bulkNodes)?.id ?? null;
     const bulkAffords = (id: AffordanceId) => bulkOffers.has(id);
 
     /**
@@ -737,7 +735,7 @@ export const ObjectContextToolbar: React.FC<Props> = ({ selectedId, selectedIds,
                         aria-label={GRID_LABELS[kind]}
                         onClick={() => {
                           const recipe = gridRecipeFor(gridGroup);
-                          if (recipe) relayoutGrid(gridGroup, switchKind(recipe, kind));
+                          if (recipe) setGridRecipe(gridGroup, switchKind(recipe, kind));
                         }}
                       >
                         <GridKindIcon kind={kind} size={16} />
@@ -752,7 +750,7 @@ export const ObjectContextToolbar: React.FC<Props> = ({ selectedId, selectedIds,
                   onClick={() => {
                     const recipe = gridRecipeFor(gridGroup);
                     if (recipe) {
-                      relayoutGrid(gridGroup, {
+                      setGridRecipe(gridGroup, {
                         ...recipe,
                         spec: { ...recipe.spec, seed: Math.floor(Math.random() * 100000) },
                       });
@@ -773,13 +771,29 @@ export const ObjectContextToolbar: React.FC<Props> = ({ selectedId, selectedIds,
                     // returning to the same two or three by chance.
                     const at = GRID_PALETTES.findIndex((p) => p.colors.join() === recipe.style.palette.join());
                     const nextPalette = GRID_PALETTES[(at + 1) % GRID_PALETTES.length];
-                    relayoutGrid(gridGroup, {
+                    setGridRecipe(gridGroup, {
                       ...recipe,
                       style: { ...recipe.style, palette: nextPalette.colors },
                     });
                   }}
                 >
                   <Palette size={16} />
+                </RailButton>
+
+                {/* The escape hatch, on the rail rather than buried, because
+                    the moment you want it is the moment you are looking at one
+                    module and wishing it were somewhere else. */}
+                <RailButton
+                  label="Break apart"
+                  hint="Turn the modules into editable shapes"
+                  onClick={() => {
+                    const ids = breakApartGrid(gridGroup);
+                    if (ids.length > 0) {
+                      window.dispatchEvent(new CustomEvent('requestSelectNodes', { detail: { ids } }));
+                    }
+                  }}
+                >
+                  <Ungroup size={16} />
                 </RailButton>
               </div>
               <Divider />

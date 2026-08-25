@@ -167,6 +167,7 @@ export const LayersPanel: React.FC<LayersPanelProps> = ({ selectedIds, overrideO
       case 'frame': return <FrameIcon size={14} color={c} />;
       case 'comment': return <MessageSquare size={14} color={c} />;
       case 'connector': return <Spline size={14} color={c} />;
+      case 'grid': return <LayoutGrid size={14} color={c} />;
       default: return <Square size={14} color={c} />;
     }
   };

@@ -1,3 +1,4 @@
+import { normalizeRecipe } from '../grid/gridNode';
 import { LIST_STYLES } from '../model/schema';
 import { CYCLE_UNITS } from '../text/colorCycle';
 import { LINE_PROFILES, MAX_AMPLITUDE_SCALE, MAX_WAVES, MIN_AMPLITUDE_SCALE, MIN_WAVES } from '../model/linePath';
@@ -939,6 +940,21 @@ export function normalizeNode(raw: any, id?: string): AnyNode {
           ? { endScale: clamp(num(raw.endScale, 1), MIN_END_SCALE, MAX_END_SCALE) }
           : null),
         label: typeof raw?.label === 'string' ? raw.label : undefined,
+      };
+
+    /**
+     * A grid keeps only its box and its recipe; the modules are derived.
+     *
+     * The stored spec's own box is **discarded and replaced** with the node's,
+     * rather than merged or trusted. That is the invariant the whole node type
+     * exists to hold: two copies of one fact cannot disagree if the boundary
+     * refuses to let a second copy through.
+     */
+    case 'grid':
+      return {
+        ...base,
+        type: 'grid',
+        grid: normalizeRecipe(raw?.grid, width, height),
       };
 
     case 'frame':

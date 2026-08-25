@@ -49,6 +49,7 @@ export const NODE_TYPES = [
   'frame',
   'comment',
   'connector',
+  'grid',
 ] as const;
 
 export type NodeType = (typeof NODE_TYPES)[number];
@@ -58,6 +59,8 @@ export type { MaterialId } from '../../utils/behaviorSystem';
 import type { MaterialId } from '../../utils/behaviorSystem';
 export type { EndCapKind } from './connectorEnds';
 import type { EndCapKind } from './connectorEnds';
+export type { GridRecipe } from '../grid/gridBuild';
+import type { GridRecipe } from '../grid/gridBuild';
 
 /**
  * Current schema revision, stamped into document metadata by the migration.
@@ -1065,6 +1068,49 @@ export interface ConnectorNode extends BaseNode {
   label?: string;
 }
 
+/**
+ * A generated arrangement of modules, as **one** object.
+ *
+ * ## Why this is a node and not a group
+ *
+ * It was a group: one `GroupRecord` carrying the recipe, plus N loose shape
+ * nodes carrying their own coordinates. That model has no single answer to
+ * "where is the grid" — the recipe holds a box, the members hold N positions,
+ * and the two are free to disagree. Every gesture therefore had to keep them in
+ * step by hand: drag wrote N positions and then re-derived the box, resize
+ * measured the members before and after and divided, arrow-nudge moved N nodes,
+ * alt-duplicate cloned N nodes, alignment, snapping and the layers panel each
+ * had their own copy of the same obligation. Four separate fixes each closed
+ * one of those paths and the gaps still drifted, because the failure was not in
+ * any of them — it was that the invariant existed at all.
+ *
+ * Here the box **is** the node's own `x`/`y`/`width`/`height`, and the cells are
+ * derived from it on every read, exactly the way a connector derives its points
+ * from the objects it joins. Moving a grid is one write. Its bounding box is
+ * its bounds, not a measurement of thirty children. Resizing re-lays it for
+ * free, which is also the behaviour people want: gutters and corner radii are
+ * absolute measurements chosen against the page, so a grid dragged to 1.6x
+ * should gain columns, not a 26px gutter.
+ *
+ * The cost is that a module is no longer individually editable. `explodeGrid`
+ * buys that back on request, turning the grid into the loose shapes it draws —
+ * the same trade Illustrator's live effects and Figma's components make, and
+ * for the same reason.
+ */
+export interface GridNode extends BaseNode {
+  type: 'grid';
+  /**
+   * The generator.
+   *
+   * `grid.spec` carries a box of its own only because `GridSpec` is shared with
+   * the previews, which lay out into a thumbnail. On a node it is **not read**:
+   * the boundary overwrites it with the node's box on every load, and
+   * `gridSpecFor` overrides it on every draw. There is one box and it is the
+   * node's.
+   */
+  grid: GridRecipe;
+}
+
 export type AnyNode =
   | TextNode
   | ShapeNode
@@ -1074,7 +1120,8 @@ export type AnyNode =
   | PathNode
   | CommentNode
   | FrameNode
-  | ConnectorNode;
+  | ConnectorNode
+  | GridNode;
 
 // ---------------------------------------------------------------------------
 // Narrowing helpers
@@ -1088,6 +1135,7 @@ export const isAudio = (n: AnyNode): n is AudioNode => n.type === 'audio';
 export const isPath = (n: AnyNode): n is PathNode => n.type === 'path';
 export const isComment = (n: AnyNode): n is CommentNode => n.type === 'comment';
 export const isFrame = (n: AnyNode): n is FrameNode => n.type === 'frame';
+export const isGrid = (n: AnyNode): n is GridNode => n.type === 'grid';
 
 /**
  * Nodes carrying editable text, and the field it lives in.

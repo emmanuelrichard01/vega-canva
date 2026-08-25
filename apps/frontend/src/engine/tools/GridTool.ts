@@ -70,10 +70,13 @@ export class GridTool implements Tool {
       : drawn;
 
     const recipe = gridDefaults.forBox(box);
-    const made = createGrid(recipe);
-    if (made) {
+    // One node, selected as one thing. The group version selected N cells, so
+    // the very first gesture after drawing a grid was a multi-select drag --
+    // which is the gesture that scattered the gaps.
+    const id = createGrid(box, recipe);
+    if (id) {
       gridDefaults.remember(recipe);
-      window.dispatchEvent(new CustomEvent('requestSelectNodes', { detail: { ids: made.ids } }));
+      window.dispatchEvent(new CustomEvent('requestSelectNodes', { detail: { ids: [id] } }));
     }
 
     window.dispatchEvent(new CustomEvent('legacy_tool_change', { detail: 'select' }));

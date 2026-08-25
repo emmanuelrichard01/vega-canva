@@ -6,7 +6,7 @@ import { NumberStepper } from '../ui/NumberStepper';
 import { SegmentedControl } from '../ui/SegmentedControl';
 import { Slider } from '../ui/Slider';
 import { ColorPickerPopover } from '../ui/ColorPickerPopover';
-import { refitGrid, relayoutGrid } from '../../engine/grid/gridApply';
+import { setGridRecipe } from '../../engine/grid/gridApply';
 import { recipeCells, switchKind, withSpec, withStyle, type GridRecipe } from '../../engine/grid/gridBuild';
 import { GridVariations } from './GridVariations';
 import { CellFace } from './CellFace';
@@ -54,12 +54,20 @@ import {
  */
 
 interface Props {
-  /** The group under the selection, if the selection is a whole grid. */
-  groupId: string;
+  /** The selected grid node. */
+  nodeId: string;
 }
 
-export const GridSection: React.FC<Props> = ({ groupId }) => {
-  const recipe = useStore((s) => s.groups[groupId]?.grid ?? null);
+export const GridSection: React.FC<Props> = ({ nodeId }) => {
+  /**
+   * Subscribed to the node, not merely read once.
+   *
+   * A peer re-laying the grid, this client's own write landing, and an undo all
+   * arrive the same way, and every control here shows a value that has to
+   * follow them.
+   */
+  const node = useStore((s) => s.objects[nodeId]);
+  const recipe = node?.type === 'grid' ? node.grid : null;
   /**
    * Whether the two gaps move together.
    *
@@ -111,34 +119,40 @@ export const GridSection: React.FC<Props> = ({ groupId }) => {
   if (!recipe) return null;
 
   /**
-   * Every change re-reads the grid's box from where it actually sits.
+   * One write, whatever changed.
    *
-   * The transformer scales the *nodes*, so after a resize the recipe still
-   * describes the box the grid used to occupy — and the next gutter change
-   * would snap everything back to it. Refitting first is what keeps one
-   * adjustment from silently undoing another.
+   * ## What this used to have to do
+   *
+   * Three statements: measure where the grid's nodes had drifted to, divide
+   * that by where the recipe claimed they should be to recover the transform
+   * somebody had applied since the last edit, splice the corrected box into the
+   * new recipe, then reconcile thirty nodes against it. Skipping any part of it
+   * made the first panel edit after a resize snap the grid back to where it used
+   * to be.
+   *
+   * None of that is needed now, because none of it was ever about the edit. It
+   * was about a recipe and a set of nodes holding two copies of one box between
+   * them. The box is the node's, the modules are derived from it, and changing
+   * the recipe cannot move the grid.
    */
-  const apply = (next: GridRecipe) => {
-    /**
-     * Carry any move or resize into the box before re-laying.
-     *
-     * `refitGrid` compares where the recipe says its cells should be against
-     * where they are, so an untouched grid returns unchanged and a dragged one
-     * returns the same transform applied to its box. Skipping this would make
-     * the first panel edit after a resize snap the grid back to where it used
-     * to be; measuring the members' bounds instead would shrink it a little on
-     * every edit, for every layout that leaves slack inside its box.
-     */
-    const fitted = refitGrid(groupId);
-    relayoutGrid(groupId, fitted ? { ...next, spec: { ...next.spec, ...boxOf(fitted) } } : next);
-  };
+  const apply = (next: GridRecipe) => setGridRecipe(nodeId, next);
 
   const patchSpec = (patch: Parameters<typeof withSpec>[1]) => apply(withSpec(recipe, patch));
   const patchStyle = (patch: Parameters<typeof withStyle>[1]) => apply(withStyle(recipe, patch));
 
   /** Which kinds care about rows, and which about columns. A control that does nothing is worse than none. */
   const usesRows = !['columns', 'manuscript'].includes(recipe.spec.kind);
-  const usesColumns = !['manuscript', 'baseline'].includes(recipe.spec.kind);
+  /**
+   * A merged ring has one module, so its spoke count controls nothing.
+   *
+   * Leaving the stepper there would be the same failure as a variation slider
+   * on a kind with no notion of it: a control you can turn that does not turn
+   * anything, and the only way to learn that is to try.
+   */
+  const merged = recipe.spec.kind === 'radial' && recipe.spec.merged === true;
+  const usesColumns = !['manuscript', 'baseline'].includes(recipe.spec.kind) && !merged;
+  /** The two kinds built out of rings, and so the two with rings to turn. */
+  const hasRings = recipe.spec.kind === 'radial' || recipe.spec.kind === 'orbit';
   /**
    * What the dial is called here, which is different in every kind.
    *
@@ -208,7 +222,7 @@ export const GridSection: React.FC<Props> = ({ groupId }) => {
       <div className="grid-section__row">
         {usesRows && (
           <label className="grid-field">
-            <span>{recipe.spec.kind === 'radial' ? 'Rings' : 'Rows'}</span>
+            <span>{hasRings ? 'Rings' : 'Rows'}</span>
             <NumberStepper value={recipe.spec.rows} min={1} max={24} onChange={(rows) => patchSpec({ rows })} />
           </label>
         )}
@@ -218,7 +232,7 @@ export const GridSection: React.FC<Props> = ({ groupId }) => {
                 both "columns" is the same failure as calling four different
                 controls "variation". */}
             <span>
-              {recipe.spec.kind === 'radial' ? 'Spokes'
+              {hasRings ? 'Spokes'
                 : recipe.spec.kind === 'golden' ? 'Steps'
                 : 'Columns'}
             </span>
@@ -283,6 +297,59 @@ export const GridSection: React.FC<Props> = ({ groupId }) => {
           <NumberStepper suffix="px" value={recipe.spec.margin} min={0} max={400} onChange={(margin) => patchSpec({ margin })} />
         </label>
       </div>
+
+      {recipe.spec.kind === 'radial' && (
+        /**
+         * One ring, or several pieces of one.
+         *
+         * A toggle rather than a gutter of zero, which is what people reach for
+         * first and is not the same thing: butted sectors are still separate
+         * modules, so they take separate colours, separate strokes and separate
+         * corner radii, and every one of those turns the seams back on. What the
+         * shape wants to be is one closed band, and only one module can be that.
+         */
+        <label className="grid-field grid-field--wide grid-toggle-field">
+          <span>Continuous ring</span>
+          <button
+            type="button"
+            role="switch"
+            aria-checked={merged}
+            className="grid-switch"
+            data-active={merged || undefined}
+            data-tooltip={merged ? 'Split the ring into sectors' : 'Fuse the sectors into one band'}
+            onClick={() => patchSpec({ merged: !merged })}
+          >
+            <span className="grid-switch__dot" />
+          </button>
+        </label>
+      )}
+
+      {hasRings && recipe.spec.rows > 1 && !merged && (
+        /**
+         * Turning each ring past the one inside it.
+         *
+         * Rings that share their spokes read as a single wheel -- symmetrical,
+         * correct, and completely still. Offsetting them drops one ring's joins
+         * into the middle of the next one's modules, and the arrangement starts
+         * reading as layers rather than as a diagram. Only offered with more
+         * than one ring, because with one there is nothing to offset it against.
+         *
+         * Measured in modules rather than degrees so the effect survives a
+         * change of spoke count: half a module is half a module at six spokes
+         * and at twenty.
+         */
+        <label className="grid-field grid-field--wide">
+          <span>Ring offset</span>
+          <Slider
+            label="Ring offset"
+            labelHidden
+            value={Math.round((recipe.spec.stagger ?? 0) * 100)}
+            min={0}
+            max={100}
+            onChange={(v) => patchSpec({ stagger: v / 100 })}
+          />
+        </label>
+      )}
 
       {variationLabel && (
         <label className="grid-field grid-field--wide">
@@ -496,9 +563,3 @@ export const GridSection: React.FC<Props> = ({ groupId }) => {
     </div>
   );
 };
-
-/** The recipe's own box, for carrying a refit forward. */
-function boxOf(recipe: GridRecipe) {
-  const { x, y, width, height } = recipe.spec;
-  return { x, y, width, height };
-}

@@ -3,11 +3,14 @@ import { useStore } from '../../hooks/useStore';
 import { THEMES } from '../model/stickyThemes';
 import type { AnyNode, ConnectorNode, ImageNode, PathNode, ShapeNode, TextNode, Typography } from '../model/schema';
 import { connectorPoints, type Box } from '../model/connector';
+import { gridCellsOf } from '../grid/gridNode';
+import { roundPolygon } from '../grid/gridLayout';
+import { cellGeometry } from '../grid/gridBuild';
 import { roughPolyline, seedFrom } from '../model/rough';
 import { SvgPaintDefs } from './svgPaint';
 import { assembleSvg } from './svgDocument';
 import { fetchBlob, inlineImageSources } from './inlineImages';
-import { pointsAttribute, regularPolygonPoints, starPoints } from '../model/shapeOutline';
+import { pointsAttribute, regularPolygonPoints, shapeOutline, starPoints } from '../model/shapeOutline';
 import { shapeToPath } from '../model/shapeToPath';
 import { defaultEndAlign, linePoints } from '../model/linePath';
 import { localRunEnds } from '../model/lineEnds';
@@ -677,6 +680,70 @@ export class SVGExporter implements Exporter {
         // comment pins from exports.
         case 'connector': {
           parts.push(connectorMarkup(node, state.objects));
+          break;
+        }
+
+        /**
+         * A grid exports as the modules it draws, not as its box.
+         *
+         * Derived here from the same `gridCellsOf` the canvas renders from, for
+         * the reason the connector case gives one branch up: geometry that is a
+         * function of the node has to be recomputed by every consumer, or the
+         * two answers drift and the export stops matching the board. The box
+         * itself is scaffolding and is deliberately not drawn -- nobody wants a
+         * grey rectangle behind their composition.
+         */
+        case 'grid': {
+          const style = node.grid.style;
+          gridCellsOf(node).forEach((cell) => {
+            const paintOf =
+              `fill="${cell.fill}"` +
+              (style.strokeWidth > 0
+                ? ` stroke="${style.strokeColor}" stroke-width="${style.strokeWidth}"`
+                : '');
+
+            // A sector carries its own silhouette; nothing else here can
+            // describe it. Rounded by the layout's own rounder, so the file and
+            // the canvas cut the same fillet.
+            if (cell.outline) {
+              const pts = roundPolygon(cell.outline, cell.radius)
+                .map((pt) => `${node.x + cell.x + pt.x},${node.y + cell.y + pt.y}`)
+                .join(' ');
+              parts.push(`<polygon points="${pts}" ${paintOf} />`);
+              return;
+            }
+
+            const geo = cellGeometry(cell);
+            const outline = shapeOutline({
+              geometry: geo as never,
+              width: cell.width,
+              height: cell.height,
+              appearance: { cornerRadius: cell.radius },
+            });
+            const x = node.x + cell.x;
+            const y = node.y + cell.y;
+            const paint =
+              `fill="${cell.fill}"` +
+              (style.strokeWidth > 0
+                ? ` stroke="${style.strokeColor}" stroke-width="${style.strokeWidth}"`
+                : '');
+            switch (outline.kind) {
+              case 'rect':
+                parts.push(`<rect x="${x}" y="${y}" width="${outline.width}" height="${outline.height}" rx="${outline.radius}" ${paint} />`);
+                break;
+              case 'ellipse':
+                parts.push(`<ellipse cx="${x + outline.cx}" cy="${y + outline.cy}" rx="${outline.rx}" ry="${outline.ry}" ${paint} />`);
+                break;
+              case 'polygon':
+                parts.push(`<polygon points="${outline.points.map((p) => `${x + p.x},${y + p.y}`).join(' ')}" ${paint} />`);
+                break;
+              case 'bezier':
+                parts.push(`<path d="${contourData(outline.geometry)}" transform="translate(${x}, ${y})" ${paint} />`);
+                break;
+              default:
+                break;
+            }
+          });
           break;
         }
 

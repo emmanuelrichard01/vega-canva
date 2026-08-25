@@ -9,6 +9,7 @@ import {
   type StyledCell,
 } from './gridStyle';
 import type { ShapeKind } from '../model/schema';
+import { fromAnchors } from '../model/pathGeometry';
 
 /**
  * A grid, as objects on the board.
@@ -70,20 +71,56 @@ export function recipeCells(recipe: GridRecipe): StyledCell[] {
 }
 
 /**
- * The fields one cell contributes to a node.
+ * The fields one cell contributes to a **shape** node.
+ *
+ * The one thing left of the old document-writing path, and it earns its keep
+ * for exactly one caller: `explodeGrid`, which turns a grid into the loose
+ * shapes it draws. Nothing writes cells to the document any more -- a grid node
+ * derives its modules on every draw -- so this is a conversion, not a builder.
  *
  * The corner radius comes from the **cell**, not from `style`: `styleCells`
- * clamped it against that cell's own size, and reading the raw value again
- * here would be a second, unclamped answer to one question. `style` supplies
- * only what is uniform across the grid.
+ * clamped it against that cell's own size, and reading the raw value again here
+ * would be a second, unclamped answer to one question.
  *
- * Geometry and paint only — never `id`, `zIndex` or `parentId`. Those belong to
- * the document and are the caller's to assign; a builder that set them would
- * make re-laying a grid silently restack it, and moving the grid in the layers
- * panel would then be undone by the next gutter change.
+ * Geometry and paint only, never `id`, `zIndex` or `parentId`. Those belong to
+ * the document and are the caller's to assign.
  */
 export function cellPatch(cell: StyledCell, style: GridStyle): Record<string, unknown> {
   const shape = SHAPE_KIND[cell.shape] ?? SHAPE_KIND.rect;
+
+  /**
+   * A cell with an outline becomes a **path**, not a rectangle.
+   *
+   * Break apart has to hand back what was on the screen. A ring sector broken
+   * into rectangles would be a different composition wearing the same colours,
+   * and the one gesture whose entire promise is "the same thing, now editable"
+   * would be the one that changed it.
+   *
+   * Closed and unstroked-by-default, matching how the grid drew it.
+   */
+  if (cell.outline) {
+    return {
+      type: 'path',
+      x: cell.x,
+      y: cell.y,
+      width: cell.width,
+      height: cell.height,
+      rotation: 0,
+      opacity: style.opacity,
+      // Anchors with no handles: a Bezier path whose every run is straight,
+      // which is a polygon. The pen tool, the boolean ops and the direct
+      // selection tool all understand it without a special case, so a
+      // broken-apart sector is editable the same way anything else is.
+      geometry: fromAnchors(cell.outline.map((p) => ({ x: p.x, y: p.y })), true),
+      appearance: {
+        fill: [{ type: 'solid', color: cell.fill }],
+        ...(style.strokeWidth > 0
+          ? { stroke: { color: style.strokeColor, width: style.strokeWidth } }
+          : {}),
+      },
+    };
+  }
+
   return {
     type: 'shape',
     x: cell.x,
@@ -105,34 +142,6 @@ export function cellPatch(cell: StyledCell, style: GridStyle): Record<string, un
       // harmless and confusing: the control appears to do nothing.
       ...(shape.kind === 'rect' ? { cornerRadius: cell.radius } : {}),
     },
-  };
-}
-
-export interface GridUpdate {
-  /** Cell patches for nodes that already exist, keyed by node id. */
-  update: { id: string; changes: Record<string, unknown> }[];
-  /** Cells with no node yet, in cell order. The caller assigns ids. */
-  create: Record<string, unknown>[];
-  /** Nodes whose cell no longer exists. */
-  remove: string[];
-}
-
-/**
- * Re-lay a recipe onto the nodes it already made.
- *
- * @param existing The grid's current member ids, **in cell order**. The caller
- *   holds that order because it is the document's stacking order, and rebuilding
- *   it from geometry would guess wrong the moment anyone moved one cell.
- */
-export function planGridUpdate(recipe: GridRecipe, existing: readonly string[]): GridUpdate {
-  const cells = recipeCells(recipe);
-
-  return {
-    update: cells
-      .slice(0, existing.length)
-      .map((cell, i) => ({ id: existing[i], changes: cellPatch(cell, recipe.style) })),
-    create: cells.slice(existing.length).map((cell) => cellPatch(cell, recipe.style)),
-    remove: existing.slice(cells.length),
   };
 }
 
@@ -321,53 +330,3 @@ export function switchKind(recipe: GridRecipe, kind: GridSpec['kind']): GridReci
   return withSpec(recipe, { kind, ...KIND_DEFAULTS[kind] });
 }
 
-/** Ignore differences below this many world units when deciding if a grid moved. */
-export const MOVED_EPSILON = 0.5;
-
-export interface Box { x: number; y: number; width: number; height: number }
-
-/**
- * Carry a move or a resize of the objects back into the recipe's box.
- *
- * ## Why this compares rather than measures
- *
- * The obvious implementation reads the members' bounding box and calls that the
- * grid's box. It is wrong for every layout whose cells do not fill the box they
- * were given — manuscript stands its block in air, radial leaves the corners
- * empty, masonry can fall short — because the measured box is then *smaller
- * than the spec's*, and writing it back shrinks the grid. Every subsequent
- * adjustment shrinks it again, so changing the palette four times walks the
- * grid quietly in from its own edges.
- *
- * So this asks a different question: not "where is the grid" but "what did the
- * user do to it". `expected` is where the recipe says its cells belong;
- * `actual` is where they are. The difference between them *is* the transform
- * the transformer applied, and applying that same transform to the box that
- * produced them is exact for every layout, including the ones that leave slack.
- *
- * An untouched grid yields the identity and the recipe comes back unchanged,
- * which is the property the measuring version could not have.
- */
-export function refitBox(recipe: GridRecipe, expected: Box | null, actual: Box | null): GridRecipe {
-  if (!expected || !actual) return recipe;
-
-  const sx = expected.width > MOVED_EPSILON ? actual.width / expected.width : 1;
-  const sy = expected.height > MOVED_EPSILON ? actual.height / expected.height : 1;
-  const dx = actual.x - expected.x;
-  const dy = actual.y - expected.y;
-
-  const still =
-    Math.abs(dx) < MOVED_EPSILON &&
-    Math.abs(dy) < MOVED_EPSILON &&
-    Math.abs(sx - 1) * expected.width < MOVED_EPSILON &&
-    Math.abs(sy - 1) * expected.height < MOVED_EPSILON;
-  if (still) return recipe;
-
-  // The same affine the cells underwent, applied to the box that produced them.
-  return withSpec(recipe, {
-    x: (recipe.spec.x - expected.x) * sx + actual.x,
-    y: (recipe.spec.y - expected.y) * sy + actual.y,
-    width: recipe.spec.width * sx,
-    height: recipe.spec.height * sy,
-  });
-}

@@ -9,6 +9,7 @@ import {
   VARIATION_LABELS,
   KIND_DEFAULTS,
   rng,
+  roundPolygon,
   type GridCell,
   type GridSpec,
 } from './gridLayout';
@@ -543,7 +544,253 @@ describe('baseline', () => {
 });
 
 describe('radial', () => {
-  const s = () => spec({ kind: 'radial', rows: 3, columns: 12, gutterX: 4, gutterY: 6, margin: 0 });
+  const s = (over: Partial<GridSpec> = {}) =>
+    spec({ kind: 'radial', rows: 1, columns: 9, gutterX: 8, gutterY: 8, margin: 0, variation: 0.45, ...over });
+  const centre = (box: GridSpec) => ({ x: box.x + box.width / 2, y: box.y + box.height / 2 });
+
+  /** Every point of a cell's silhouette, in board coordinates. */
+  const worldOutline = (c: GridCell) => (c.outline ?? []).map((p) => ({ x: c.x + p.x, y: c.y + p.y }));
+
+  it('gives every module a silhouette, because a sector is not a box', () => {
+    // The whole reason this kind is not `orbit`. The old radial approximated a
+    // sector with an upright square, which is why it read as scattered dots.
+    const cells = layoutGrid(s());
+    expect(cells.length).toBe(9);
+    for (const c of cells) expect((c.outline ?? []).length).toBeGreaterThan(6);
+  });
+
+  it('divides the circle exactly, with no sector left over', () => {
+    for (const columns of [4, 6, 9, 12]) {
+      expect(layoutGrid(s({ columns })).length).toBe(columns);
+    }
+  });
+
+  it('keeps every point inside the ring it was cut from', () => {
+    const box = s();
+    const o = centre(box);
+    const maxR = Math.min(box.width, box.height) / 2;
+    for (const c of layoutGrid(box)) {
+      for (const p of worldOutline(c)) {
+        const r = Math.hypot(p.x - o.x, p.y - o.y);
+        expect(r).toBeLessThanOrEqual(maxR + 0.01);
+        // And outside the hole: a sector that reached the centre would close
+        // the ring up into a pie chart.
+        expect(r).toBeGreaterThan(0);
+      }
+    }
+  });
+
+  it('leaves a hole, and widens it as variation rises', () => {
+    const innerRadius = (variation: number) => {
+      const box = s({ variation });
+      const o = centre(box);
+      return Math.min(
+        ...layoutGrid(box).flatMap((c) => worldOutline(c).map((p) => Math.hypot(p.x - o.x, p.y - o.y)))
+      );
+    };
+    expect(innerRadius(0)).toBeGreaterThan(0);
+    expect(innerRadius(1)).toBeGreaterThan(innerRadius(0));
+  });
+
+  it('starts at twelve o\'clock, like the icon and like every dial', () => {
+    const box = s({ columns: 4, gutterX: 0 });
+    const o = centre(box);
+    const first = layoutGrid(box).find((c) => c.col === 0)!;
+    // The sector's own mid-angle, measured from its bounding box centre, which
+    // for a quarter centred on straight up is straight up.
+    const angle = Math.atan2(first.y + first.height / 2 - o.y, first.x + first.width / 2 - o.x);
+    expect(angle).toBeCloseTo(-Math.PI / 2, 2);
+  });
+
+  it('opens a gap between neighbours that the gutter controls', () => {
+    /**
+     * Measured as the closest approach between two sectors' silhouettes, which
+     * is the gap you actually see. Comparing bounding boxes would say nothing:
+     * the boxes of two sectors on a ring overlap heavily even when the sectors
+     * themselves are far apart.
+     */
+    const nearest = (gutterX: number) => {
+      const cells = layoutGrid(s({ gutterX }));
+      const a = worldOutline(cells[0]);
+      const b = worldOutline(cells[1]);
+      let best = Infinity;
+      for (const p of a) for (const q of b) best = Math.min(best, Math.hypot(p.x - q.x, p.y - q.y));
+      return best;
+    };
+    expect(nearest(20)).toBeGreaterThan(nearest(4));
+    expect(nearest(4)).toBeGreaterThan(0);
+  });
+
+  it('stacks rings outward without letting them meet', () => {
+    const box = s({ rows: 3, columns: 6, gutterY: 10 });
+    const o = centre(box);
+    const far = (ring: number) =>
+      Math.max(
+        ...layoutGrid(box)
+          .filter((c) => c.row === ring)
+          .flatMap((c) => worldOutline(c).map((p) => Math.hypot(p.x - o.x, p.y - o.y)))
+      );
+    const near = (ring: number) =>
+      Math.min(
+        ...layoutGrid(box)
+          .filter((c) => c.row === ring)
+          .flatMap((c) => worldOutline(c).map((p) => Math.hypot(p.x - o.x, p.y - o.y)))
+      );
+    expect(far(0)).toBeLessThan(near(1));
+    expect(far(1)).toBeLessThan(near(2));
+  });
+
+  it("does not divide by zero when the box has not been dragged open yet", () => {
+    // Half of every drag passes through zero, and the spec is live throughout.
+    expect(layoutGrid(s({ width: 0, height: 0 }))).toEqual([]);
+    for (const c of layoutGrid(s({ width: 4, height: 4 }))) {
+      for (const p of worldOutline(c)) {
+        expect(Number.isFinite(p.x) && Number.isFinite(p.y)).toBe(true);
+      }
+    }
+  });
+
+  it('survives a gutter far wider than the sectors it separates', () => {
+    // Not a hypothetical: the gutter stepper goes to 400 and the sector at
+    // twelve spokes on a small box is a few pixels across.
+    const cells = layoutGrid(s({ columns: 12, gutterX: 400, gutterY: 400, width: 200, height: 200 }));
+    for (const c of cells) {
+      expect(c.width).toBeGreaterThan(0);
+      for (const p of worldOutline(c)) expect(Number.isFinite(p.x)).toBe(true);
+    }
+  });
+});
+
+describe('radial, merged', () => {
+  const s = (over: Partial<GridSpec> = {}) =>
+    spec({ kind: 'radial', rows: 1, columns: 9, gutterX: 8, gutterY: 8, margin: 0, variation: 0.45, merged: true, ...over });
+
+  it('draws one band per ring instead of one module per spoke', () => {
+    // The point of the toggle: butting the sectors together with a zero gutter
+    // leaves nine modules, which take nine colours and nine strokes and show
+    // every seam. One band can only take one of each.
+    expect(layoutGrid(s()).length).toBe(1);
+    expect(layoutGrid(s({ rows: 3 })).length).toBe(3);
+    expect(layoutGrid(s({ columns: 24 })).length).toBe(1);
+  });
+
+  it('closes the full circle', () => {
+    const box = s();
+    const cell = layoutGrid(box)[0];
+    const o = { x: box.x + box.width / 2, y: box.y + box.height / 2 };
+    const angles = (cell.outline ?? []).map((p) =>
+      Math.atan2(cell.y + p.y - o.y, cell.x + p.x - o.x)
+    );
+    // Every quadrant is visited, which a sector of any size cannot manage.
+    for (const target of [0, Math.PI / 2, Math.PI - 0.01, -Math.PI / 2]) {
+      expect(angles.some((a) => Math.abs(a - target) < 0.2)).toBe(true);
+    }
+  });
+
+  it('keeps the hole, so it is a ring and not a disc', () => {
+    const box = s();
+    const cell = layoutGrid(box)[0];
+    const o = { x: box.x + box.width / 2, y: box.y + box.height / 2 };
+    const radii = (cell.outline ?? []).map((p) => Math.hypot(cell.x + p.x - o.x, cell.y + p.y - o.y));
+    const inner = Math.min(...radii);
+    const outer = Math.max(...radii);
+    expect(inner).toBeGreaterThan(outer * 0.05);
+    expect(inner).toBeLessThan(outer);
+  });
+
+  it('is square, because a full circle is', () => {
+    const cell = layoutGrid(s())[0];
+    expect(cell.width).toBeCloseTo(cell.height, 6);
+  });
+});
+
+describe('ring offset', () => {
+  const angleOfFirst = (kind: 'radial' | 'orbit', stagger: number, ring: number) => {
+    const box = spec({ kind, rows: 3, columns: 8, gutterX: 4, gutterY: 4, margin: 0, stagger });
+    const o = { x: box.x + box.width / 2, y: box.y + box.height / 2 };
+    const c = layoutGrid(box).find((cell) => cell.row === ring && cell.col === 0)!;
+    return Math.atan2(c.y + c.height / 2 - o.y, c.x + c.width / 2 - o.x);
+  };
+
+  it.each(['radial', 'orbit'] as const)('leaves %s aligned at zero', (kind) => {
+    expect(angleOfFirst(kind, 0, 0)).toBeCloseTo(angleOfFirst(kind, 0, 2), 3);
+  });
+
+  it.each(['radial', 'orbit'] as const)('turns each %s ring past the one inside it', (kind) => {
+    // The innermost ring is the reference and does not move -- turning it too
+    // would rotate the whole dial, which is a different control.
+    expect(angleOfFirst(kind, 0.5, 0)).toBeCloseTo(angleOfFirst(kind, 0, 0), 3);
+    expect(angleOfFirst(kind, 0.5, 1)).not.toBeCloseTo(angleOfFirst(kind, 0, 1), 2);
+  });
+
+  it('turns ring two exactly twice as far as ring one', () => {
+    /**
+     * Measured on `orbit` alone, and not because `radial` behaves differently.
+     *
+     * The turn is read here from each module's *bounding box* centre, and for
+     * an upright square that is exactly on the ray through it. A sector's box
+     * centre is not: the box is the extent of a curved wedge, and its centre
+     * drifts off the mid-angle by an amount that changes with the wedge's
+     * orientation. The progression is the same in both kinds -- it is one
+     * multiplication in shared code -- but only one of them can be measured
+     * this way without measuring the drift instead.
+     */
+    const turn = (ring: number) => angleOfFirst('orbit', 0.5, ring) - angleOfFirst('orbit', 0, ring);
+    expect(turn(2)).toBeCloseTo(2 * turn(1), 6);
+  });
+});
+
+describe('roundPolygon', () => {
+  const square = [
+    { x: 0, y: 0 },
+    { x: 100, y: 0 },
+    { x: 100, y: 100 },
+    { x: 0, y: 100 },
+  ];
+
+  it('leaves a polygon alone when there is no radius to cut', () => {
+    expect(roundPolygon(square, 0)).toEqual(square);
+  });
+
+  it('replaces each corner with a fillet, and keeps the outline closed', () => {
+    const out = roundPolygon(square, 10, 4);
+    // Four corners, each now a run of samples. The sharp vertex itself is gone.
+    expect(out.length).toBeGreaterThan(square.length);
+    expect(out.some((p) => p.x === 0 && p.y === 0)).toBe(false);
+    // And every point is still on or inside the original square.
+    for (const p of out) {
+      expect(p.x).toBeGreaterThanOrEqual(-0.01);
+      expect(p.y).toBeGreaterThanOrEqual(-0.01);
+      expect(p.x).toBeLessThanOrEqual(100.01);
+      expect(p.y).toBeLessThanOrEqual(100.01);
+    }
+  });
+
+  it('never cuts back more than half an edge, however large the radius', () => {
+    // Two fillets meeting in the middle of an edge is the limit; past it the
+    // outline would fold back through itself.
+    for (const p of roundPolygon(square, 10000, 4)) {
+      expect(Number.isFinite(p.x) && Number.isFinite(p.y)).toBe(true);
+      expect(p.x).toBeGreaterThanOrEqual(-0.01);
+      expect(p.x).toBeLessThanOrEqual(100.01);
+    }
+  });
+
+  it('passes a nearly straight vertex through untouched', () => {
+    // What lets one rule handle a sector: the sampled arc points barely turn
+    // and survive, while the four real corners are rounded.
+    const arc = [
+      { x: 0, y: 0 },
+      { x: 50, y: 0.01 },
+      { x: 100, y: 0 },
+      { x: 50, y: 80 },
+    ];
+    expect(roundPolygon(arc, 5).some((p) => p.x === 50 && p.y === 0.01)).toBe(true);
+  });
+});
+
+describe('orbit', () => {
+  const s = () => spec({ kind: 'orbit', rows: 3, columns: 12, gutterX: 4, gutterY: 6, margin: 0 });
   const centre = (box: GridSpec) => ({ x: box.x + box.width / 2, y: box.y + box.height / 2 });
   const radiusOf = (c: GridCell, o: { x: number; y: number }) =>
     Math.hypot(c.x + c.width / 2 - o.x, c.y + c.height / 2 - o.y);
@@ -572,7 +819,7 @@ describe('radial', () => {
   it('gives its blocks a usable size at the default settings', () => {
     // The failure was not subtle: the arrangement was correct and the blocks
     // were dots, which is the same thing as being wrong.
-    const box = spec({ kind: 'radial', ...KIND_DEFAULTS.radial, width: 480, height: 360, margin: 0 });
+    const box = spec({ kind: 'orbit', ...KIND_DEFAULTS.orbit, width: 480, height: 360, margin: 0 });
     const cells = layoutGrid(box);
     const smallest = Math.min(...cells.map((c) => c.width));
     expect(smallest).toBeGreaterThan(Math.min(box.width, box.height) * 0.04);
@@ -650,7 +897,7 @@ describe('radial', () => {
 
   it('leaves the middle open, and opens it further as variation rises', () => {
     const nearest = (variation: number) => {
-      const box = spec({ kind: 'radial', rows: 3, columns: 12, margin: 0, variation });
+      const box = spec({ kind: 'orbit', rows: 3, columns: 12, margin: 0, variation });
       const o = centre(box);
       return Math.min(...layoutGrid(box).map((c) => radiusOf(c, o)));
     };

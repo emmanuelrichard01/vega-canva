@@ -18,6 +18,7 @@ import { useAuth } from './hooks/useAuth';
 import { doc, provider, metadataMap, deleteNode, applyNodePatches, nextZIndex, lowestZIndex, localAuthorId, publishLocalIdentity, applyGroupPlan } from './engine/document';
 import { useRoomState } from './hooks/useSync';
 import { initSyncBridge, useStore } from './hooks/useStore';
+import { breakApartGrid } from './engine/grid/gridApply';
 import { editor } from './engine/api/EditorAPI';
 import { alignSelection, distributeSelection, type AlignEdge, type DistributeAxis } from './engine/model/align';
 import { emptyGroups } from './engine/model/groupTree';
@@ -628,6 +629,13 @@ export default function Room() {
      */
     group: () => { if (selectedIds.length > 1) editor.groupNodes(selectedIds); },
     ungroup: () => { if (selectedIds.length > 0) editor.ungroupNodes(selectedIds); },
+    'break-apart': () => {
+      if (selectedIds.length !== 1) return;
+      const ids = breakApartGrid(selectedIds[0]);
+      // Selected, because the point of converting is to edit what comes out,
+      // and landing on an empty selection means finding it again first.
+      if (ids.length > 0) setSelectedIds(ids);
+    },
     align: (edge: AlignEdge) => {
       const nodes = selectedIds.map((id) => diagramObjects[id]).filter(Boolean) as AnyNode[];
       applyNodePatches(alignSelection(nodes, edge));

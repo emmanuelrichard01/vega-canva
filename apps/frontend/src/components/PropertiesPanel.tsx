@@ -16,7 +16,7 @@ import { useStore } from '../hooks/useStore';
 import { APPEARANCE_TYPES } from '../engine/objects/appearanceTypes';
 import { resolveAffordances, type AffordanceId } from '../engine/selection/affordances';
 import { GridSection } from './panel/GridSection';
-import { gridGroupOf } from '../engine/grid/gridGroupUtils';
+import { gridNodeOf } from '../engine/grid/gridApply';
 import { objectRegistry } from '../engine/objects';
 import {
   canResizeAsBox,
@@ -107,7 +107,6 @@ export const PropertiesPanel: React.FC<PropertiesPanelProps> = ({ selectedIds, o
     )
   );
   const [aspectLocked, setAspectLocked] = useState(false);
-  const groups = useStore((state) => state.groups);
 
   const nodes: AnyNode[] = useMemo(() => {
     if (!overrideObjects) return storeNodes;
@@ -144,7 +143,7 @@ export const PropertiesPanel: React.FC<PropertiesPanelProps> = ({ selectedIds, o
   }
 
   const selectedIdsPresent = nodes.map((n) => n.id);
-  const gridGroup = gridGroupOf(nodes, groups);
+  const gridNode = gridNodeOf(nodes);
   const uniformType = !shared((n) => n.type).mixed;
   const uniformKind =
     uniformType &&
@@ -465,9 +464,9 @@ export const PropertiesPanel: React.FC<PropertiesPanelProps> = ({ selectedIds, o
         </div>
       </div>
 
-      {gridGroup && (
+      {gridNode && (
         <Accordion title="Grid" icon={<LayoutGrid size={13} />} defaultOpen>
-          <GridSection groupId={gridGroup} />
+          <GridSection nodeId={gridNode.id} />
         </Accordion>
       )}
 

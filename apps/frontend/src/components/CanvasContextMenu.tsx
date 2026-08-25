@@ -36,6 +36,7 @@ export interface CanvasContextMenuActions {
   swapShape: (kind: ShapeKind, points?: number) => void;
   group: () => void;
   ungroup: () => void;
+  'break-apart': () => void;
   align: (edge: AlignEdge) => void;
   distribute: (axis: DistributeAxis) => void;
   toggleLock: () => void;
@@ -89,6 +90,9 @@ const MENU_COMMANDS: Partial<Record<AffordanceId, {
 }>> = {
   group: { icon: () => <Group size={15} />, label: () => 'Group', shortcut: 'Ctrl G', run: (a) => a.group },
   ungroup: { icon: () => <Ungroup size={15} />, label: () => 'Ungroup', shortcut: '⇧Ctrl G', run: (a) => a.ungroup },
+  // No shortcut of its own: it is rare enough that a key would be a key spent,
+  // and it reads clearly from the menu where its one word says what it does.
+  'break-apart': { icon: () => <Ungroup size={15} />, label: () => 'Break apart', run: (a) => a['break-apart'] },
   order: { icon: () => <BringToFront size={15} />, label: () => 'Bring to front', run: (a) => a.bringToFront },
   lock: {
     // Says which way it will go. A toggle labelled with its own name rather

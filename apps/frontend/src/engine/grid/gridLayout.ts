@@ -26,6 +26,8 @@
  * Everything is in board coordinates with the origin at the spec's own `x, y`.
  */
 
+import type { Point } from '../model/schema';
+
 export type GridKind =
   | 'columns'
   | 'modular'
@@ -35,6 +37,16 @@ export type GridKind =
   | 'manuscript'
   | 'baseline'
   | 'golden'
+  /**
+   * Modules stepped around concentric rings, each one an upright shape.
+   *
+   * Called `radial` until the arrangement it draws and the name it carried were
+   * separated: this one *orbits* a centre, while `radial` proper radiates from
+   * it -- wedges whose edges point at the middle. Two genuinely different
+   * arrangements were sharing one word, and the icon could only ever be honest
+   * about one of them.
+   */
+  | 'orbit'
   | 'radial'
   | 'diagonal';
 
@@ -63,6 +75,36 @@ export interface GridSpec {
   variation: number;
   /** Every random draw comes from here, so a grid is reproducible. */
   seed: number;
+  /**
+   * How far each ring is turned relative to the one inside it, in steps.
+   *
+   * Zero leaves every ring's divisions on the same spokes, which is a wheel:
+   * correct, symmetrical, and completely static. Half a step drops the next
+   * ring's joins into the middle of this one's modules -- brickwork, wrapped
+   * round a circle -- and the arrangement stops reading as one wheel and starts
+   * reading as several. Anything in between is the deliberate near-miss that
+   * makes a dial look drawn rather than generated.
+   *
+   * Measured in the ring's **own** step rather than in degrees, so the effect
+   * survives a change of spoke count: half a step is half a module whether
+   * there are six of them or twenty.
+   *
+   * Read by `radial` and `orbit`, the two kinds that have rings to turn.
+   * Absent is zero.
+   */
+  stagger?: number;
+  /**
+   * Fuse a ring's sectors into one unbroken band. `radial` only.
+   *
+   * The Apple Park move: the same division of the circle, drawn as a single
+   * closed ring rather than as nine pieces with daylight between them. It is a
+   * genuinely different object -- one module per ring instead of `columns` of
+   * them -- so it belongs to the layout rather than to the styling, and every
+   * count, colour and radius control downstream reads it as such.
+   *
+   * Absent is off, so nothing already on a board changes shape.
+   */
+  merged?: boolean;
 }
 
 export interface GridCell {
@@ -70,6 +112,21 @@ export interface GridCell {
   y: number;
   width: number;
   height: number;
+  /**
+   * The cell's real silhouette, when a box does not describe it.
+   *
+   * Points in the cell's **own** coordinates -- `(0, 0)` is its top-left corner
+   * -- so a cell carrying one is still positioned, measured, culled and
+   * bounded exactly like every other. Absent on every kind but `radial`, which
+   * is the one whose modules are ring sectors rather than upright shapes.
+   *
+   * A polyline rather than a curve on purpose. The arcs are sampled finely
+   * enough that no zoom this canvas supports reveals a facet, and a polyline
+   * costs one branch in the four places a cell is drawn -- the renderer, the
+   * SVG exporter, the panel swatches and break-apart -- where a curve type
+   * would cost a conversion in each.
+   */
+  outline?: readonly Point[];
   /** Track indices, for row- and column-wise bulk edits. */
   row: number;
   col: number;
@@ -85,7 +142,7 @@ export interface GridCell {
 
 export const GRID_KINDS: readonly GridKind[] = [
   'columns', 'modular', 'bento', 'masonry', 'hierarchical',
-  'manuscript', 'baseline', 'golden', 'radial', 'diagonal',
+  'manuscript', 'baseline', 'golden', 'orbit', 'radial', 'diagonal',
 ];
 
 export const GRID_LABELS: Record<GridKind, string> = {
@@ -97,6 +154,7 @@ export const GRID_LABELS: Record<GridKind, string> = {
   manuscript: 'Manuscript',
   baseline: 'Baseline',
   golden: 'Golden',
+  orbit: 'Orbit',
   radial: 'Radial',
   diagonal: 'Diagonal',
 };
@@ -111,7 +169,8 @@ export const GRID_HINTS: Record<GridKind, string> = {
   manuscript: 'A single block inside generous margins. For one thing that deserves the page.',
   baseline: 'Full-width bands of varying depth. Horizontal rhythm rather than vertical.',
   golden: 'Squares spiralling inward by the golden ratio. Each one is the short side of what is left.',
-  radial: 'Concentric rings, evenly spaced and interlocked. For anything that orbits a centre.',
+  orbit: 'Modules stepped around concentric rings. For anything that circles a centre.',
+  radial: 'Wedges radiating from the middle, cut from a ring. For cycles, phases and stages.',
   diagonal: 'Rows cascading sideways, every cell whole. Motion, from nothing but an offset.',
 };
 
@@ -159,7 +218,17 @@ export const KIND_DEFAULTS: Record<
    * so a gutter costs a dial about 40% more than it costs a grid of rows and
    * columns. Sixteen here is what left the blocks as scattered dots.
    */
-  radial: { rows: 3, columns: 12, variation: 0.3, gutterX: 6, gutterY: 6 },
+  orbit: { rows: 3, columns: 12, variation: 0.3, gutterX: 6, gutterY: 6 },
+  /**
+   * One ring of nine, which is what a segmented ring wants to be.
+   *
+   * Sectors tile the circle exactly, so unlike every other kind here the
+   * spoke count is a *statement* rather than a density: nine reads as a
+   * deliberate division, twelve as a clock face, four as a pie chart. Two rings
+   * is a sunburst and worth reaching for; three is a diagram nobody can read,
+   * so the default stays at one.
+   */
+  radial: { rows: 1, columns: 9, variation: 0.45, gutterX: 8, gutterY: 8 },
   diagonal: { rows: 4, columns: 4, variation: 0.5, gutterX: 12, gutterY: 12 },
 };
 
@@ -258,7 +327,10 @@ export const VARIATION_LABELS: Partial<Record<GridKind, string>> = {
   hierarchical: 'Hero size',
   manuscript: 'Air',
   baseline: 'Band contrast',
-  radial: 'Centre hole',
+  orbit: 'Centre hole',
+  // The dial's one real decision: a fat ring at the low end, a thin band at the
+  // high one. Nothing else about a sector is a matter of degree.
+  radial: 'Ring width',
   diagonal: 'Cascade',
 };
 
@@ -838,7 +910,7 @@ const CLEARANCE = Math.SQRT2;
  * concentric rings actually look like; the spokes still line up, which is what
  * makes it a grid.
  */
-function radial(spec: GridSpec): Omit<GridCell, 'weight'>[] {
+function orbit(spec: GridSpec): Omit<GridCell, 'weight'>[] {
   const box = inner(spec);
   const rings = Math.max(1, Math.floor(spec.rows));
   // Three is the fewest that reads as a ring rather than as a pair.
@@ -888,10 +960,15 @@ function radial(spec: GridSpec): Omit<GridCell, 'weight'>[] {
     const byBand = band - spec.gutterY;
     const size = Math.max(2, Math.min(byArc, byBand));
 
+    // Each ring turned a little further than the one inside it -- see
+    // `stagger`. Zero keeps the blocks on shared spokes, which is a wheel; a
+    // half step interleaves them, which is a nest.
+    const twist = ((Math.PI * 2) / spokes) * (spec.stagger ?? 0) * ring;
+
     for (let spoke = 0; spoke < spokes; spoke += 1) {
       // From twelve o'clock, because that is where anyone reading a dial starts
       // -- and where the kind's own icon puts its first block.
-      const angle = (spoke / spokes) * Math.PI * 2 - Math.PI / 2;
+      const angle = (spoke / spokes) * Math.PI * 2 - Math.PI / 2 + twist;
       out.push({
         x: cx + Math.cos(angle) * r - size / 2,
         y: cy + Math.sin(angle) * r - size / 2,
@@ -902,6 +979,259 @@ function radial(spec: GridSpec): Omit<GridCell, 'weight'>[] {
       });
     }
   }
+  return out;
+}
+
+/**
+ * Round a polygon's corners, in place of the corners.
+ *
+ * ## Why a general rounder and not a sector-shaped one
+ *
+ * The four corners of a ring sector are not alike: two sit on arcs, two on
+ * straight radial edges, and the angle between them changes with the ring, the
+ * spoke count and the gutter. Special-casing them meant four fillet formulas
+ * and four ways to be subtly wrong at the extremes -- a two-spoke "ring" whose
+ * sector is a half-disc, a hole so small the inner arc is nearly a point.
+ *
+ * Rounding by *turn angle* instead has one rule with no cases in it: a vertex
+ * the outline barely turns at is left alone, and a vertex it turns hard at is
+ * replaced by a fillet. The sampled arcs turn by a fraction of a degree per
+ * point and pass straight through; the four real corners turn by tens of
+ * degrees and get rounded. Which vertices those are never has to be known.
+ *
+ * The fillet is a quadratic Bezier through the trim points with the corner as
+ * its control, sampled. That is not an exact circular arc -- it is a parabola --
+ * and at fillet sizes anyone would use the difference is well under a pixel,
+ * while the arithmetic is four lines that cannot produce a `NaN`.
+ *
+ * @param radius how far to cut back from each corner, in board units.
+ */
+export function roundPolygon(points: readonly Point[], radius: number, samples = 5): Point[] {
+  if (radius <= 0 || points.length < 3) return points.slice();
+
+  const out: Point[] = [];
+  const n = points.length;
+
+  for (let i = 0; i < n; i += 1) {
+    const cur = points[i];
+    const prev = points[(i - 1 + n) % n];
+    const next = points[(i + 1) % n];
+
+    const inX = prev.x - cur.x;
+    const inY = prev.y - cur.y;
+    const outX = next.x - cur.x;
+    const outY = next.y - cur.y;
+    const inLen = Math.hypot(inX, inY);
+    const outLen = Math.hypot(outX, outY);
+    if (inLen < 1e-9 || outLen < 1e-9) continue;
+
+    // How sharply the outline turns here, as the cosine between the two edges.
+    // Near -1 is a straight line -- an arc sample -- and is left as it is.
+    const cos = (inX * outX + inY * outY) / (inLen * outLen);
+    if (cos < -0.98) {
+      out.push(cur);
+      continue;
+    }
+
+    // Never more than half an edge, or two adjacent fillets would overlap and
+    // the outline would fold back through itself.
+    const t = Math.min(radius, inLen / 2, outLen / 2);
+    const a = { x: cur.x + (inX / inLen) * t, y: cur.y + (inY / inLen) * t };
+    const b = { x: cur.x + (outX / outLen) * t, y: cur.y + (outY / outLen) * t };
+
+    for (let k = 0; k <= samples; k += 1) {
+      const u = k / samples;
+      const v = 1 - u;
+      out.push({
+        x: v * v * a.x + 2 * v * u * cur.x + u * u * b.x,
+        y: v * v * a.y + 2 * v * u * cur.y + u * u * b.y,
+      });
+    }
+  }
+
+  return out;
+}
+
+/** How finely an arc is sampled, per radian. Well past what any zoom reveals. */
+const ARC_SAMPLES_PER_RADIAN = 16;
+
+/**
+ * Radial: wedges cut from a ring.
+ *
+ * ## What this is, and what `orbit` is
+ *
+ * The two were one kind called `radial`, and it drew neither of them
+ * convincingly. It stepped **upright squares** around a circle, so at any
+ * useful gutter the modules read as a scattered necklace of dots rather than as
+ * a divided ring -- and the kind's own icon, a segmented annulus, promised the
+ * thing it could not draw. Told about it, the honest fix was not a better icon:
+ * it was that a segmented ring and a ring of objects are two different
+ * arrangements, both worth having, sharing one name.
+ *
+ * So `orbit` keeps the necklace, which is genuinely what you want for a set of
+ * photographs or logos arranged around a hub, and `radial` draws the picture
+ * the icon always showed: sectors whose straight edges point at the centre and
+ * whose curved edges follow the ring.
+ *
+ * ## Why the modules carry an outline
+ *
+ * A sector is not a box and cannot be approximated by one -- that approximation
+ * *was* the old kind. So the cell keeps its bounding box for placement and
+ * culling, and carries its real silhouette in `outline`. It is the first kind
+ * to need one, and the reason `GridCell.outline` exists.
+ *
+ * ## The gutter, in two units at once
+ *
+ * The gap between two sectors on the same ring is an **angle**; the gap between
+ * two rings is a **length**. A single gutter measured in pixels therefore has
+ * to be converted for one of them, and it is converted at the sector's mid
+ * radius -- so the gap looks even along the sector's face rather than pinching
+ * shut at the inner edge and yawning at the outer.
+ */
+function radial(spec: GridSpec): Omit<GridCell, 'weight'>[] {
+  const box = inner(spec);
+  const rings = Math.max(1, Math.floor(spec.rows));
+  // Two is a ring cut in half, which is still a ring. One is a disc with a
+  // hole, which is not a grid -- and is what a spoke count of one would draw.
+  const spokes = Math.max(2, Math.floor(spec.columns));
+  const cx = box.x + box.width / 2;
+  const cy = box.y + box.height / 2;
+  const maxR = Math.min(box.width, box.height) / 2;
+  if (maxR <= 0) return [];
+
+  /**
+   * How much of the disc is hole.
+   *
+   * The one control that changes what the thing *is*: a hole at 0.14 is a pie
+   * chart with a dot missing, at 0.7 a thin dial. `variation` runs it across
+   * that whole range because there is no other dimension of a sector worth a
+   * slider -- the count is exact and the gutter is a gutter.
+   */
+  const hole = maxR * (0.14 + spec.variation * 0.56);
+  const band = (maxR - hole) / rings;
+  if (band <= 0) return [];
+
+  const step = (Math.PI * 2) / spokes;
+  const out: Omit<GridCell, 'weight'>[] = [];
+
+  for (let ring = 0; ring < rings; ring += 1) {
+    // The radial gutter is split between the two rings that share the gap, so
+    // asking for eight pixels of gap gets eight, not sixteen.
+    const r0 = hole + band * ring + (ring === 0 ? 0 : spec.gutterY / 2);
+    const r1 = hole + band * (ring + 1) - (ring === rings - 1 ? 0 : spec.gutterY / 2);
+    if (r1 - r0 < 1) continue;
+
+    /**
+     * The angular gutter, measured where the eye reads it.
+     *
+     * At the mid radius, so the gap is `gutterX` wide across the middle of the
+     * sector's face. Measured at `r0` the outer ends would splay apart; at `r1`
+     * the inner ends would collide. Capped below half the step, because a
+     * gutter wider than the sector is not a wide gutter -- it is no sector.
+     */
+    const mid = (r0 + r1) / 2;
+    const gapAngle = Math.min(spec.gutterX / Math.max(mid, 1), step * 0.6);
+
+    /**
+     * Merged: one band per ring, with a real hole in it.
+     *
+     * ## Why this is not "the same sectors with no gutter"
+     *
+     * Zero gutter puts the sectors edge to edge, and at a glance that is a
+     * continuous ring -- until you give them different colours, or a stroke, or
+     * a corner radius, and it becomes nine pieces again with seams down every
+     * join. What the shape actually wants to be is one closed band, and only
+     * one module can be that.
+     *
+     * ## The hole, without a second contour
+     *
+     * An annulus needs two loops: the outside and the hole. `outline` carries a
+     * single polygon, and widening it to a list of contours would cost a branch
+     * in the renderer, the exporter, the panel preview and break-apart -- four
+     * files, for one shape.
+     *
+     * The keyhole does it with one. Run the outer circle, cut straight in to
+     * the inner circle, run that the *opposite* way round, and cut back out
+     * along the same line. The two cuts lie exactly on top of each other, so the
+     * seam is invisible, and the reversed winding makes the middle unfilled
+     * under either fill rule. A trick as old as vector fonts, and the reason the
+     * letter O has never needed a special case.
+     */
+    if (spec.merged) {
+      const steps = Math.max(24, Math.ceil(Math.PI * 2 * ARC_SAMPLES_PER_RADIAN));
+      const points: Point[] = [];
+      const start = -Math.PI / 2;
+      for (let k = 0; k <= steps; k += 1) {
+        const a = start + (Math.PI * 2 * k) / steps;
+        points.push({ x: cx + Math.cos(a) * r1, y: cy + Math.sin(a) * r1 });
+      }
+      for (let k = steps; k >= 0; k -= 1) {
+        const a = start + (Math.PI * 2 * k) / steps;
+        points.push({ x: cx + Math.cos(a) * r0, y: cy + Math.sin(a) * r0 });
+      }
+
+      const minX = cx - r1;
+      const minY = cy - r1;
+      out.push({
+        x: minX,
+        y: minY,
+        width: r1 * 2,
+        height: r1 * 2,
+        row: ring,
+        // One module, so one column. A merged ring answers "how many modules"
+        // with its ring count, and the spoke count stops meaning anything --
+        // which is why the panel hides that stepper when this is on.
+        col: 0,
+        outline: points.map((pt) => ({ x: pt.x - minX, y: pt.y - minY })),
+      });
+      continue;
+    }
+
+    // Ring zero is the reference, so the innermost ring always starts at twelve
+    // o'clock and the offset accumulates outward. Turning every ring including
+    // the first would rotate the whole dial, which is a different control.
+    const twist = step * (spec.stagger ?? 0) * ring;
+
+    for (let spoke = 0; spoke < spokes; spoke += 1) {
+      // Centred on twelve o'clock, like every dial anyone has ever read, and
+      // like the kind's own icon.
+      const centre = spoke * step - Math.PI / 2 - step / 2 + twist;
+      const a0 = centre + gapAngle / 2;
+      const a1 = centre + step - gapAngle / 2;
+      if (a1 <= a0) continue;
+
+      const steps = Math.max(2, Math.ceil((a1 - a0) * ARC_SAMPLES_PER_RADIAN));
+      const points: Point[] = [];
+      // Out along the far edge, back along the near one: one closed loop, wound
+      // consistently so a fill rule never has to guess.
+      for (let k = 0; k <= steps; k += 1) {
+        const a = a0 + ((a1 - a0) * k) / steps;
+        points.push({ x: cx + Math.cos(a) * r1, y: cy + Math.sin(a) * r1 });
+      }
+      for (let k = steps; k >= 0; k -= 1) {
+        const a = a0 + ((a1 - a0) * k) / steps;
+        points.push({ x: cx + Math.cos(a) * r0, y: cy + Math.sin(a) * r0 });
+      }
+
+      const minX = Math.min(...points.map((pt) => pt.x));
+      const minY = Math.min(...points.map((pt) => pt.y));
+      const maxX = Math.max(...points.map((pt) => pt.x));
+      const maxY = Math.max(...points.map((pt) => pt.y));
+
+      out.push({
+        x: minX,
+        y: minY,
+        width: maxX - minX,
+        height: maxY - minY,
+        row: ring,
+        col: spoke,
+        // Relative to the cell's own box, so the cell can be moved, measured
+        // and drawn by code that knows nothing about rings.
+        outline: points.map((pt) => ({ x: pt.x - minX, y: pt.y - minY })),
+      });
+    }
+  }
+
   return out;
 }
 
@@ -957,7 +1287,7 @@ function diagonal(spec: GridSpec): Omit<GridCell, 'weight'>[] {
 }
 
 const LAYOUTS: Record<GridKind, (spec: GridSpec) => Omit<GridCell, 'weight'>[]> = {
-  columns, modular, bento, masonry, hierarchical, manuscript, baseline, golden, radial, diagonal,
+  columns, modular, bento, masonry, hierarchical, manuscript, baseline, golden, orbit, radial, diagonal,
 };
 
 /**

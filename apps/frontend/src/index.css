@@ -9605,10 +9605,117 @@ body[data-zen='physics'] .forces-handle { bottom: 32px; }
  * the rest. Fifteen fit in eight rows, with nothing to scroll and every option
  * in one glance.
  */
+/**
+ * A toggle that reads as on or off from across the panel.
+ *
+ * Laid out as a field so it sits on the same left rail as the steppers above
+ * it: a control that indented itself differently would read as belonging to a
+ * different group, which for a setting that changes what the shape *is* would
+ * be exactly the wrong signal.
+ */
+.grid-toggle-field {
+  flex-direction: row;
+  align-items: center;
+  justify-content: space-between;
+}
+
+.grid-switch {
+  flex: none;
+  width: 30px;
+  height: 17px;
+  padding: 2px;
+  border: 1px solid var(--border-divider);
+  border-radius: 999px;
+  background: var(--surface-sunken, var(--surface-secondary));
+  cursor: pointer;
+  transition: background-color var(--motion-hover), border-color var(--motion-hover);
+}
+
+.grid-switch__dot {
+  display: block;
+  width: 11px;
+  height: 11px;
+  border-radius: 50%;
+  background: var(--text-tertiary);
+  /* Moved by `translate` rather than by a margin so the transition runs on the
+     compositor and the dot cannot nudge the track's own size mid-slide. */
+  translate: 0;
+  transition: translate var(--motion-hover), background-color var(--motion-hover);
+}
+
+.grid-switch[data-active] {
+  border-color: var(--accent-strong, var(--brand-orange));
+  background: var(--accent-strong, var(--brand-orange));
+}
+
+.grid-switch[data-active] .grid-switch__dot {
+  translate: 13px 0;
+  background: var(--surface-primary);
+}
+
+.grid-switch:focus-visible {
+  outline: 2px solid var(--accent-strong, var(--brand-orange));
+  outline-offset: 1px;
+}
+
 .grid-section__palettes {
   display: grid;
   grid-template-columns: 1fr 1fr;
   gap: 4px;
+}
+
+/**
+ * One palette: a ramp of its colours, and nothing else.
+ *
+ * These rules went missing when the list was rebuilt from a scrolling column
+ * into a two-column grid -- the edit removed the block wholesale and only the
+ * container survived, so every tile rendered as a button with no height and the
+ * whole picker read as empty space. The height belongs on the ramp rather than
+ * on the tile, because the ramp is the content; a tile sized independently of
+ * what it contains is how the two got separated in the first place.
+ */
+.grid-palette {
+  display: flex;
+  padding: 2px;
+  border: 1px solid transparent;
+  border-radius: var(--radius-md);
+  background: transparent;
+  cursor: pointer;
+  transition: border-color var(--motion-hover), box-shadow var(--motion-hover);
+}
+
+.grid-palette:hover { border-color: var(--border-strong); }
+
+.grid-palette:focus-visible {
+  outline: 2px solid var(--accent-strong, var(--brand-orange));
+  outline-offset: 1px;
+}
+
+/* The chosen one wears a ring rather than a tint: a background behind a row of
+   colours changes the colours, which is the one thing this control must not
+   do. */
+.grid-palette[data-active] {
+  border-color: var(--accent-strong, var(--brand-orange));
+  box-shadow: 0 0 0 1px var(--accent-strong, var(--brand-orange));
+}
+
+.grid-palette__ramp {
+  display: flex;
+  flex: 1;
+  overflow: hidden;
+  /* An explicit height, because the chips inside are `flex: 1` in the other
+     axis and would otherwise collapse to nothing -- which is exactly what they
+     did. */
+  height: 16px;
+  border-radius: var(--radius-sm);
+  /* A hairline inset so a palette ending in white still has an edge against the
+     panel. */
+  box-shadow: inset 0 0 0 1px rgb(0 0 0 / 0.06);
+}
+
+.grid-palette__chip {
+  flex: 1;
+  min-width: 0;
 }
 
 .grid-section__swatches {

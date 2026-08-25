@@ -308,3 +308,48 @@ export function syncConnectedConnectors(
   return patches;
 }
 
+/**
+ * What a drag does to a connector.
+ *
+ * ## Why translating one is not a move
+ *
+ * A connector's `x`/`y` are **derived**: `ConnectorRenderer` computes the route
+ * in world space and draws it at `world - node.x`, so the stored origin cancels
+ * out and the line lands where its two ends are, whatever the box says.
+ *
+ * Translating it therefore does not move it -- it moves the *frame* the route
+ * is drawn relative to, and the route compensates by shifting the opposite way.
+ * Include a connector in a multi-selection drag and you get exactly that: the
+ * arrow lags, jitters, or slides away from the objects it joins for the length
+ * of the gesture, and then jumps back into place on release when
+ * `syncConnectedConnectors` recomputes the box. That is the "connector lines
+ * misbehave when I move a group" report, and it is not a rounding error -- it
+ * is the box being written by two things that disagree.
+ *
+ * ## What a drag should do instead
+ *
+ * A **bound** end is not the drag's business: it belongs to the object it is
+ * attached to, and follows when that object moves. A **loose** end holds its
+ * own coordinates and is the only part of a connector a drag can meaningfully
+ * carry.
+ *
+ * So a connector with both ends bound returns `null` -- there is nothing to
+ * move, and the caller should leave it alone entirely rather than write a box
+ * that the next frame recomputes. A connector with a loose end moves that end,
+ * which is what dragging a half-attached arrow visibly does.
+ *
+ * @returns the fields to patch, or `null` when the drag does not apply.
+ */
+export function connectorDragPatch(
+  connector: Pick<ConnectorNode, 'from' | 'to'>,
+  dx: number,
+  dy: number
+): { from: ConnectorEnd; to: ConnectorEnd } | null {
+  const loose = (end: ConnectorEnd) => !end.nodeId;
+  if (!loose(connector.from) && !loose(connector.to)) return null;
+
+  const moved = (end: ConnectorEnd): ConnectorEnd =>
+    loose(end) ? { ...end, x: (end.x ?? 0) + dx, y: (end.y ?? 0) + dy } : end;
+
+  return { from: moved(connector.from), to: moved(connector.to) };
+}

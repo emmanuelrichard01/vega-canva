@@ -1,3 +1,4 @@
+import { GRID_LABELS } from '../grid/gridLayout';
 import { hasText, type AnyNode, type NodeType } from './schema';
 
 /**
@@ -19,6 +20,14 @@ export function nodeLabel(node: AnyNode): string {
   // A connector's label is the word riding its middle — "yes", "no", "retry".
   // On a flowchart that is the only thing telling one arrow from the next.
   if (node.type === 'connector' && node.label) return node.label.slice(0, 24);
+  /**
+   * A grid is named by its system, because that is what distinguishes one.
+   *
+   * "Grid" for all of them would be the connector problem again: a board with a
+   * bento wall, a golden section and a dial reads as three identical rows, and
+   * the panel's whole job is telling them apart.
+   */
+  if (node.type === 'grid') return `${GRID_LABELS[node.grid.spec.kind]} grid`;
   const specific = specificName(node);
   if (specific) return specific;
   return `${node.type.charAt(0).toUpperCase()}${node.type.slice(1)}`;
@@ -122,6 +131,7 @@ export const TYPE_LABEL: Record<NodeType, string> = {
   sticky: 'Notes',
   audio: 'Audio',
   comment: 'Comments',
+  grid: 'Grids',
 };
 
 /**
@@ -129,5 +139,7 @@ export const TYPE_LABEL: Record<NodeType, string> = {
  * things they join rather than at the end with the media.
  */
 export const TYPE_ORDER: NodeType[] = [
-  'frame', 'text', 'shape', 'path', 'connector', 'image', 'sticky', 'audio', 'comment',
+  // Grids sit beside frames: both are scaffolding you arrange other work
+  // against, and neither is content in its own right.
+  'frame', 'grid', 'text', 'shape', 'path', 'connector', 'image', 'sticky', 'audio', 'comment',
 ];

@@ -1,5 +1,6 @@
 import { SCHEMA_VERSION } from '../model/schema';
-import { doc, metadataMap, objectsMap } from './doc';
+import { doc, groupsMap, metadataMap, objectsMap } from './doc';
+import { migrateGridGroups } from '../grid/gridMigrate';
 import { migrateDoc } from './migrateDoc';
 
 export { migrateDoc } from './migrateDoc';
@@ -31,6 +32,21 @@ export function scheduleMigration(provider: {
   const run = () => {
     if (done) return;
     done = true;
+
+    /**
+     * Grids first, and unconditionally.
+     *
+     * Outside the `schemaVersion` gate below on purpose: that gate skips the
+     * whole migration when a peer has already stamped the current version,
+     * which is right for field-level normalisation and wrong here. A board
+     * carrying grids-as-groups is already at the current schema version --
+     * the group model was never a different *version*, it was a different
+     * *shape* -- so a gated conversion would never run on the boards that need
+     * it. It is cheap when there is nothing to do: one pass over a map that is
+     * usually empty.
+     */
+    const grids = migrateGridGroups(doc, objectsMap, groupsMap as never);
+    if (grids > 0) console.info(`[schema] folded ${grids} grid group(s) into grid nodes`);
 
     const storedVersion = Number(metadataMap.get('schemaVersion') ?? 0);
     // A newer peer may already have migrated this document.

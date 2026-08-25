@@ -130,3 +130,24 @@ objectRegistry.register({
   },
   defaultProperties: () => ({ width: 32, height: 32 }),
 });
+
+objectRegistry.register({
+  type: 'grid',
+  capabilities: {
+    /**
+     * Opacity, and nothing else from the generic appearance stack.
+     *
+     * Not a limitation to route around later — it is the trade the type makes.
+     * A grid's fill is a *palette* and its corner radius is a rule applied to
+     * forty modules, and both already have controls in the Grid section that
+     * understand that. Declaring `supportsFill` here would put a single colour
+     * swatch beside them offering to answer the same question with one value,
+     * and whichever one you used last would look broken.
+     *
+     * Opacity is the exception because it genuinely is one number for the whole
+     * object, and the renderer applies it to the group.
+     */
+    supportsOpacity: true,
+  },
+  defaultProperties: () => ({ width: 480, height: 360 }),
+});

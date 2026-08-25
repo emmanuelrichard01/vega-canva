@@ -4,9 +4,6 @@ import { Group, Line, Rect, Text, Transformer } from 'react-konva';
 import { applyNodePatches } from '../../engine/document';
 import { EXPORT_CHROME } from '../../engine/export/chrome';
 import { useStore } from '../../hooks/useStore';
-import { resizeGridTo } from '../../engine/grid/gridApply';
-import { gridGroupOf } from '../../engine/grid/gridGroupUtils';
-import type { Box } from '../../engine/grid/gridBuild';
 import { cursorForAnchor } from '../../engine/interaction/resizeCursor';
 import { scalePathGeometry } from '../../engine/model/pathGeometry';
 import { isLineLike } from '../../engine/model/lineEnds';
@@ -163,14 +160,6 @@ export const SelectionTransformer: React.FC<Props> = ({ selectedIds, stageRef })
     };
   }, [selectedIds, selectionGeometry, stageRef]);
 
-  /**
-   * The selection's bounds when the gesture began.
-   *
-   * Read from the store before anything moves, so it is a *measurement* rather
-   * than a prediction — see `resizeGridTo` for why that distinction is the
-   * whole bug. A ref, because it must survive the renders a live transform
-   * causes and is never read during one.
-   */
 function rotatePoint(x: number, y: number, rad: number): { x: number; y: number } {
   const cos = Math.cos(rad);
   const sin = Math.sin(rad);
@@ -287,10 +276,7 @@ function computePinnedBox(
   };
 }
 
-  /**
-   * The selection's bounds and per-node snapshot when the gesture began.
-   */
-  const gestureStart = useRef<{ ids: string[]; box: Box } | null>(null);
+  /** Every selected node exactly as it was when the gesture began. */
   const initialNodesMap = useRef<Record<string, AnyNode>>({});
 
   const handleTransformStart = () => {
@@ -306,16 +292,6 @@ function computePinnedBox(
       startMap[n.id] = { ...n };
     });
     initialNodesMap.current = startMap;
-
-    gestureStart.current = boxes.length === 0 ? null : {
-      ids,
-      box: {
-        x: Math.min(...boxes.map((n: AnyNode) => n.x)),
-        y: Math.min(...boxes.map((n: AnyNode) => n.y)),
-        width: Math.max(...boxes.map((n: AnyNode) => n.x + n.width)) - Math.min(...boxes.map((n: AnyNode) => n.x)),
-        height: Math.max(...boxes.map((n: AnyNode) => n.y + n.height)) - Math.min(...boxes.map((n: AnyNode) => n.y)),
-      },
-    };
   };
 
   const handleTransform = () => {
@@ -439,8 +415,6 @@ function computePinnedBox(
     liveTransformStore.deleteBatch(tr.nodes().map((n: Konva.Node) => n.id()));
 
     const store = useStore.getState().objects;
-    /** Where the selection lands, accumulated from the values being written. */
-    const landing = { minX: Infinity, minY: Infinity, maxX: -Infinity, maxY: -Infinity };
     /**
      * Which handle was dragged, so a corner and an edge can mean different
      * things — which for text they must.
@@ -527,14 +501,45 @@ function computePinnedBox(
 
       const pinned = computePinnedBox(anchor, startNode, finalW, finalH);
 
+      /**
+       * The rotation comes off the Konva node, not off the node we started with.
+       *
+       * This read `startNode.rotation ?? node.rotation` — the angle from
+       * *before* the gesture — so every rotation was computed, drawn live, and
+       * then thrown away on release. The handle turned the object, the commit
+       * wrote the old angle back, and the next render put it upright: the
+       * "snaps back on its own" that grids show and every other type shares.
+       *
+       * Konva's own value is the right source because the Transformer is what
+       * performed the rotation, including its 45-degree snaps — deriving the
+       * angle again from pointer positions would be a second answer to a
+       * question the widget has already answered exactly.
+       */
+      const rotation = konvaNode.rotation();
+
+      /**
+       * A rotation moves the node; a resize pins an edge. They cannot share a
+       * box.
+       *
+       * `computePinnedBox` answers "where does the top-left go so the opposite
+       * edge stays put", which is the resize question. Rotating about the
+       * selection's pivot moves the node's centre along an arc, and the only
+       * thing that knows where it ended up is the Konva node — so for the
+       * rotater the position is read back rather than derived.
+       */
+      const rotating = anchor === 'rotater';
+      const box = rotating
+        ? { x: konvaNode.x() - finalW / 2, y: konvaNode.y() - finalH / 2 }
+        : { x: pinned.x, y: pinned.y };
+
       const changes = {
         ...textMode,
         ...pathMode,
-        x: pinned.x,
-        y: pinned.y,
+        x: box.x,
+        y: box.y,
         width: finalW,
         height: finalH,
-        rotation: startNode.rotation ?? node.rotation,
+        rotation,
         scaleX: 1,
         scaleY: 1,
       };
@@ -543,10 +548,6 @@ function computePinnedBox(
       updatedObjects[id] = { ...node, ...changes } as AnyNode;
       modifiedIds.push(id);
 
-      landing.minX = Math.min(landing.minX, pinned.x);
-      landing.minY = Math.min(landing.minY, pinned.y);
-      landing.maxX = Math.max(landing.maxX, pinned.x + finalW);
-      landing.maxY = Math.max(landing.maxY, pinned.y + finalH);
     });
 
     initialNodesMap.current = {};
@@ -554,39 +555,21 @@ function computePinnedBox(
     applyNodePatches([...nodePatches, ...connectorPatches]);
 
     /**
-     * A grid re-lays itself rather than staying scaled.
+     * Nothing here special-cases a grid any more.
      *
-     * The loop above folds the scale into each node, which is right for a
-     * rectangle and wrong for a grid: gutters and corner radii are absolute
-     * measurements chosen against the page, not proportions of the modules, so
-     * a drag to 1.6x takes a 16px gutter to 26px. The one property the person
-     * actually set is the one the gesture would destroy, a little more on every
-     * resize.
+     * The loop above folds the scale into `width`/`height` and resets
+     * `scaleX`/`scaleY` to one, which is exactly what a grid node wants: its
+     * modules are derived from its own box, so re-laying at the new size falls
+     * out of the ordinary resize with no extra write. Gutters and corner radii
+     * stay the absolute measurements they were chosen as, and a grid dragged
+     * wider gains room rather than a 26px gutter.
      *
-     * Both boxes are **measured**: one from the store before anything moved,
-     * one from the values this loop has just written. Two earlier versions took
-     * the box the recipe *predicted* its cells would occupy as the "before",
-     * and that only matches the document when the recipe is exactly in step
-     * with it -- never true after a drag, and never true at all for a layout
-     * whose cells do not fill their box. The gap between a prediction and a
-     * measurement came out as a scale nobody had applied.
+     * What stood here measured the selection before the gesture, accumulated
+     * where it landed, divided one box by the other to recover a scale the
+     * transformer had already applied, and pushed the result into a recipe held
+     * on a group. Three versions of it shipped and none held, because the
+     * arithmetic was never the problem -- the second copy of the box was.
      */
-    const started = gestureStart.current;
-    gestureStart.current = null;
-    if (started && Number.isFinite(landing.minX)) {
-      const group = gridGroupOf(
-        started.ids.map((id) => store[id]).filter(Boolean),
-        useStore.getState().groups
-      );
-      if (group) {
-        resizeGridTo(group, started.box, {
-          x: landing.minX,
-          y: landing.minY,
-          width: landing.maxX - landing.minX,
-          height: landing.maxY - landing.minY,
-        });
-      }
-    }
   };
 
   /**

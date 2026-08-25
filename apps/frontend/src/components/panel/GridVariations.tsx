@@ -13,7 +13,7 @@ import type { StyledCell } from '../../engine/grid/gridStyle';
 import { pointsAttribute, shapeOutline } from '../../engine/model/shapeOutline';
 import { contourData } from '../../engine/model/pathGeometry';
 import type { ShapeNode } from '../../engine/model/schema';
-import { gridBounds } from '../../engine/grid/gridLayout';
+import { gridBounds, roundPolygon } from '../../engine/grid/gridLayout';
 
 /**
  * Choosing a grid by looking at it.
@@ -73,6 +73,13 @@ const CellPreview: React.FC<{
   });
 
   const inner = (() => {
+    // A sector carries its own silhouette, and a thumbnail that fell back to
+    // the bounding box would show a ring of rectangles -- offering an
+    // arrangement the canvas then declines to produce, which is the exact
+    // failure this preview was rebuilt to stop making.
+    if (cell.outline) {
+      return <polygon points={pointsAttribute(roundPolygon(cell.outline, cell.radius))} fill={cell.fill} />;
+    }
     switch (outline.kind) {
       case 'rect':
         return <rect x={0} y={0} width={outline.width} height={outline.height} rx={outline.radius} fill={cell.fill} />;
