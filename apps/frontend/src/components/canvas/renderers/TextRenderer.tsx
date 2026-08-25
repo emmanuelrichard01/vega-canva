@@ -9,6 +9,7 @@ import { layoutText, type TextLayout } from '../../../engine/text/layout';
 import { measurerFor, textFontEpoch, ensureFontLoaded } from '../../../engine/text/measure';
 import { cycleColor, cycleRuns, cycleTotal, piecesBefore } from '../../../engine/text/colorCycle';
 import { highlightPath } from '../../../engine/text/highlight';
+import { useLiveTransform } from '../../../engine/model/liveTransformStore';
 import { canvasFontFamily, konvaFontStyle, konvaTextDecoration, shadowProps } from './shared';
 
 interface Props {
@@ -36,7 +37,11 @@ interface Props {
  * that React reconciles anyway.
  */
 export const TextRenderer: React.FC<Props> = React.memo(({ node, visible }) => {
-  const t = node.typography;
+  const live = useLiveTransform(node.id);
+  const t = live?.typography ?? node.typography;
+  const width = live?.width ?? node.width;
+  const height = live?.height ?? node.height;
+  const resize = live?.resize ?? node.resize;
 
   // Re-run the layout when the real font lands. Everything measured against a
   // fallback face wrapped in the wrong place; see `textFontEpoch`.
@@ -48,23 +53,23 @@ export const TextRenderer: React.FC<Props> = React.memo(({ node, visible }) => {
       text: body,
       // Auto width means no wrapping at all: the box is as wide as the longest
       // line, which is what a label wants.
-      wrap: node.resize === 'width' ? 'none' : 'word',
-      width: node.width,
+      wrap: resize === 'width' ? 'none' : 'word',
+      width: width,
       // Only `fixed` imposes a height — the other two grow downward, and
       // handing them one would truncate text the box was meant to follow.
-      height: node.resize === 'fixed' ? node.height : undefined,
+      height: resize === 'fixed' ? height : undefined,
       fontSize: t.fontSize,
       lineHeight: t.lineHeight,
       letterSpacing: t.letterSpacing,
       paragraphSpacing: t.paragraphSpacing,
       align: t.align,
       verticalAlign: t.verticalAlign,
-      ellipsis: node.resize === 'fixed',
+      ellipsis: resize === 'fixed',
       list: t.list,
       measure: measurerFor(t),
     });
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [node.text, node.resize, node.width, node.height, t, fontEpoch]);
+  }, [node.text, resize, width, height, t, fontEpoch]);
 
   /**
    * Keep the stored box in step with the text that is actually drawn.

@@ -323,11 +323,12 @@ function computePinnedBox(
     if (!tr) return;
     const anchor = (tr.getActiveAnchor() || '').split(' ')[0];
     const isRotating = anchor === 'rotater';
-    const w = Math.round(tr.width());
-    const h = Math.round(tr.height());
     const deg = Math.round(((tr.rotation() % 360) + 360) % 360);
 
     const store = useStore.getState().objects;
+    let singleBadgeW = 0;
+    let singleBadgeH = 0;
+
     tr.nodes().forEach((konvaNode: Konva.Node) => {
       const id = konvaNode.id();
       const node = store[id];
@@ -335,8 +336,77 @@ function computePinnedBox(
       if (!node || !startNode) return;
       const scaleX = konvaNode.scaleX();
       const scaleY = konvaNode.scaleY();
+
+      if (node.type === 'text' && startNode.type === 'text') {
+        // Reset scale immediately on the Konva Group so glyphs are NEVER stretched or squished!
+        konvaNode.scaleX(1);
+        konvaNode.scaleY(1);
+
+        let width = startNode.width;
+        let height = startNode.height;
+        let typo = startNode.typography;
+        const draggedCorner = CORNERS.has(anchor);
+
+        if (draggedCorner && uniformDrag(scaleX, scaleY)) {
+          // Corner scaling: scales font size proportionally and reflows box
+          const factor = Math.abs(scaleX);
+          const newFontSize = Math.round(Math.max(4, Math.min(400, startNode.typography.fontSize * factor)));
+          typo = { ...startNode.typography, fontSize: newFontSize };
+          const layout = layoutText({
+            text: applyTextCase(node.text, typo.textCase),
+            wrap: startNode.resize === 'width' ? 'none' : 'word',
+            width: startNode.width * factor,
+            fontSize: newFontSize,
+            lineHeight: typo.lineHeight,
+            letterSpacing: typo.letterSpacing,
+            paragraphSpacing: typo.paragraphSpacing,
+            align: typo.align,
+            verticalAlign: typo.verticalAlign,
+            measure: measurerFor(typo),
+          });
+          width = Math.max(MIN_SIZE, Math.ceil(layout.width));
+          height = Math.max(MIN_SIZE, Math.ceil(layout.height));
+        } else if (!draggedCorner && VERTICAL_EDGES.has(anchor)) {
+          // Vertical edge drag (top-center, bottom-center)
+          width = startNode.width;
+          height = Math.max(MIN_SIZE, startNode.height * Math.abs(scaleY));
+        } else {
+          // Horizontal edge drag (middle-left, middle-right): width changes and text wraps live!
+          width = Math.max(MIN_SIZE, startNode.width * Math.abs(scaleX));
+          const layout = layoutText({
+            text: applyTextCase(node.text, startNode.typography.textCase),
+            wrap: 'word',
+            width,
+            fontSize: startNode.typography.fontSize,
+            lineHeight: startNode.typography.lineHeight,
+            letterSpacing: startNode.typography.letterSpacing,
+            paragraphSpacing: startNode.typography.paragraphSpacing,
+            align: startNode.typography.align,
+            verticalAlign: startNode.typography.verticalAlign,
+            measure: measurerFor(startNode.typography),
+          });
+          height = Math.max(MIN_SIZE, Math.ceil(layout.height));
+        }
+
+        const pinned = computePinnedBox(anchor, startNode, width, height);
+        singleBadgeW = width;
+        singleBadgeH = height;
+        liveTransformStore.set(id, {
+          x: pinned.x,
+          y: pinned.y,
+          width,
+          height,
+          rotation: konvaNode.rotation(),
+          typography: typo,
+          resize: 'height',
+        });
+        return;
+      }
+
       const width = Math.max(MIN_SIZE, startNode.width * Math.abs(scaleX));
       const height = Math.max(MIN_SIZE, startNode.height * Math.abs(scaleY));
+      singleBadgeW = width;
+      singleBadgeH = height;
       const pinned = computePinnedBox(anchor, startNode, width, height);
       liveTransformStore.set(id, {
         x: pinned.x,
@@ -347,7 +417,9 @@ function computePinnedBox(
       });
     });
 
-    const text = isRotating ? `${deg}°` : `${w} × ${h}`;
+    const w = singleBadgeW || Math.round(tr.width());
+    const h = singleBadgeH || Math.round(tr.height());
+    const text = isRotating ? `${deg}°` : `${Math.round(w)} × ${Math.round(h)}`;
     setLiveBadge({
       text,
       x: tr.x() + tr.width() / 2,

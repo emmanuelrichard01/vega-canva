@@ -30,7 +30,7 @@ import { TextRenderer } from './canvas/renderers/TextRenderer';
 import { caretAt, layoutText } from '../engine/text/layout';
 import { measurerFor } from '../engine/text/measure';
 import { applyTextCase } from '../engine/model/textCase';
-import { liveTransformStore } from '../engine/model/liveTransformStore';
+import { liveTransformStore, useLiveTransform } from '../engine/model/liveTransformStore';
 import { syncConnectedConnectors } from '../engine/model/connectorTargets';
 
 /**
@@ -167,6 +167,7 @@ export const ObjectRenderer = React.memo(
     canDuplicate = true,
   }: ObjectRendererProps) => {
     const node = useStore((state) => state.objects[objId]);
+    const live = useLiveTransform(objId);
     const isAltDuplicating = useSyncExternalStore(
       altDragState.subscribe,
       altDragState.getSnapshot,
@@ -673,16 +674,18 @@ export const ObjectRenderer = React.memo(
 
     // A node in flight renders at the owner's broadcast position rather than
     // its (stale) committed one.
-    const x = flight?.x ?? node.x;
-    const y = flight?.y ?? node.y;
-    const rotation = flight?.rotation ?? node.rotation;
+    const x = flight?.x ?? live?.x ?? node.x;
+    const y = flight?.y ?? live?.y ?? node.y;
+    const width = live?.width ?? node.width;
+    const height = live?.height ?? node.height;
+    const rotation = flight?.rotation ?? live?.rotation ?? node.rotation;
 
     // Rotate and scale about the centre, the way every design tool does, by
     // placing the group at the centre and pulling its contents back by the
     // same offset. The node's stored x/y therefore remain its top-left corner
     // while `e.target.x()` during a drag reports the centre.
-    const cx = node.width / 2;
-    const cy = node.height / 2;
+    const cx = width / 2;
+    const cy = height / 2;
 
     return (
       <>

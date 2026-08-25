@@ -84,6 +84,26 @@ export const PathEditor: React.FC<Props> = ({ stageScale }) => {
   const shiftHeld = React.useRef(false);
   const marqueeAdditive = React.useRef(false);
 
+  /** Global modifier key tracker to prevent Windows menu hooking on Alt press */
+  React.useEffect(() => {
+    if (!selection) return;
+    const handleGlobalKey = (e: KeyboardEvent) => {
+      if (e.key === 'Alt') {
+        e.preventDefault();
+        altHeld.current = e.type === 'keydown';
+      }
+      if (e.key === 'Shift') {
+        shiftHeld.current = e.type === 'keydown';
+      }
+    };
+    window.addEventListener('keydown', handleGlobalKey);
+    window.addEventListener('keyup', handleGlobalKey);
+    return () => {
+      window.removeEventListener('keydown', handleGlobalKey);
+      window.removeEventListener('keyup', handleGlobalKey);
+    };
+  }, [selection]);
+
   if (!selection || !node || node.type !== 'path') return null;
   if (node.geometry.kind === 'freehand') return null;
 
@@ -146,6 +166,24 @@ export const PathEditor: React.FC<Props> = ({ stageScale }) => {
       anchors: extra.anchors ?? [],
       ref: extra.ref,
       side: extra.side,
+    };
+
+    let rafId: number | null = null;
+    let pendingGeo: ContourGeometry | null = null;
+
+    const flushTransientCommit = () => {
+      if (pendingGeo) {
+        commit(pendingGeo, false);
+        pendingGeo = null;
+      }
+      rafId = null;
+    };
+
+    const scheduleTransientCommit = (geo: ContourGeometry) => {
+      pendingGeo = geo;
+      if (rafId === null) {
+        rafId = requestAnimationFrame(flushTransientCommit);
+      }
     };
 
     const onMove = (evt?: any) => {
@@ -223,32 +261,46 @@ export const PathEditor: React.FC<Props> = ({ stageScale }) => {
       }
 
       s.last = p;
-      commit(s.working, false);
+      scheduleTransientCommit(s.working);
     };
 
     const onKeyDown = (e: KeyboardEvent) => {
       if (e.key === 'Alt') {
-        altHeld.current = true;
-        onMove();
+        e.preventDefault();
+        if (!e.repeat && !altHeld.current) {
+          altHeld.current = true;
+          onMove();
+        }
       }
       if (e.key === 'Shift') {
-        shiftHeld.current = true;
-        onMove();
+        if (!e.repeat && !shiftHeld.current) {
+          shiftHeld.current = true;
+          onMove();
+        }
       }
     };
 
     const onKeyUp = (e: KeyboardEvent) => {
       if (e.key === 'Alt') {
-        altHeld.current = false;
-        onMove();
+        e.preventDefault();
+        if (altHeld.current) {
+          altHeld.current = false;
+          onMove();
+        }
       }
       if (e.key === 'Shift') {
-        shiftHeld.current = false;
-        onMove();
+        if (shiftHeld.current) {
+          shiftHeld.current = false;
+          onMove();
+        }
       }
     };
 
     const onUp = () => {
+      if (rafId !== null) {
+        cancelAnimationFrame(rafId);
+        rafId = null;
+      }
       const s = session.current;
       session.current = null;
       setDragBadge(null);
@@ -328,8 +380,8 @@ export const PathEditor: React.FC<Props> = ({ stageScale }) => {
           shadowOffsetY={1 * scale}
           onMouseDown={(e) => {
             e.cancelBubble = true;
-            altHeld.current = Boolean((e.evt as MouseEvent).altKey);
-            shiftHeld.current = Boolean((e.evt as MouseEvent).shiftKey);
+            altHeld.current = Boolean((e.evt as MouseEvent).altKey || altHeld.current);
+            shiftHeld.current = Boolean((e.evt as MouseEvent).shiftKey || shiftHeld.current);
             const p = worldPointer(e.target.getStage());
             if (p) {
               pathEdit.select([ref]);
@@ -453,8 +505,8 @@ export const PathEditor: React.FC<Props> = ({ stageScale }) => {
                 shadowOffsetY={isPicked ? 1 * scale : 0.5 * scale}
                 onMouseDown={(e) => {
                   e.cancelBubble = true;
-                  const isAlt = Boolean((e.evt as MouseEvent).altKey);
-                  const isShift = Boolean((e.evt as MouseEvent).shiftKey);
+                  const isAlt = Boolean((e.evt as MouseEvent).altKey || altHeld.current);
+                  const isShift = Boolean((e.evt as MouseEvent).shiftKey || shiftHeld.current);
                   const isCtrlOrCmd = Boolean((e.evt as MouseEvent).ctrlKey || (e.evt as MouseEvent).metaKey);
                   const isAdditive = isShift || isCtrlOrCmd;
                   altHeld.current = isAlt;
