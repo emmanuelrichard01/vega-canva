@@ -17,7 +17,7 @@ import {
 import { gridDefaults } from '../../engine/grid/gridDefaults';
 import { switchKind } from '../../engine/grid/gridBuild';
 import { MousePointer2, MousePointerClick, LayoutGrid, Hand, Pen, PenTool as PenToolIcon, Type, Square, StickyNote, MessageSquare, ImageIcon, Mic, Sparkles, Frame, Eraser, Workflow, MoreVertical, TextQuote } from 'lucide-react';
-import { Check, Minus, RotateCcw, SeparatorVertical, SlidersHorizontal, Spline } from 'lucide-react';
+import { Check, Minus, RotateCcw, SeparatorVertical, SlidersHorizontal, Spline, Undo2 } from 'lucide-react';
 import { SegmentedControl } from '../ui/SegmentedControl';
 import { SketchLevelIcon } from '../panel/sketchIcons';
 import type { PencilNib } from '../../engine/model/rough';
@@ -85,7 +85,13 @@ const DockButton = React.forwardRef<
      * the dock lays out -- see `seatChrome`. Optional so the overflow seat,
      * which is not part of the arrangement, can leave it off.
      */
-    seat?: { style?: React.CSSProperties; hidden?: boolean; 'data-seat'?: string };
+    seat?: {
+      style?: React.CSSProperties;
+      hidden?: boolean;
+      'data-seat'?: string;
+      /** Its place in the arrangement, read back by a drag -- see `dropIndexAt`. */
+      'data-dock-index'?: number;
+    };
     /** Put this seat away. Present only while the dock is being edited. */
     onRemove?: () => void;
     onPointerDown?: (e: React.PointerEvent) => void;
@@ -294,11 +300,13 @@ const SEAT_LABEL: Record<DockSeat, string> = {
 /**
  * The tool a seat arms, where arming it is a single act.
  *
- * Read only by the overflow drawer, so a seat that has been put away still
- * *works* from there rather than merely being restorable. Partial on purpose:
- * `draw`, `shape`, `line`, `frame`, `grid` and `block` are menus rather than
- * tools -- their button opens a choice -- and the drawer offers the one they
- * would arm by default instead of trying to nest a flyout inside a flyout.
+ * Read only by the overflow drawer: taking a put-away seat from there restores
+ * it *and* arms it, so it is ready to use rather than merely back.
+ *
+ * Partial on purpose. `block` is the one seat that arms nothing -- it is five
+ * paragraph lengths behind a button, not a tool -- so restoring it opens that
+ * choice on its own seat, which is exactly where the choice belongs. The other
+ * flyout seats do have a sensible default to arm on arrival.
  */
 const SEAT_TOOL: Partial<Record<DockSeat, string>> = {
   select: 'select',
@@ -389,10 +397,33 @@ export const ToolWorkspace: React.FC<Props> = ({ activeToolId, onOpenDiagram, on
     () => gridDefaults.getSnapshot().spec.kind
   );
 
+  /** Editing the dock is a mode, and a loud one -- see `dock-editing`. */
+  const [editing, setEditing] = useState(false);
+
   type DockMenu = 'pen' | 'shape' | 'line' | 'frame' | 'grid' | 'eraser' | 'block' | 'more';
   const [pinnedMenu, setPinnedMenu] = useState<DockMenu | null>(null);
   const [hoveredMenu, setHoveredMenu] = useState<DockMenu | null>(null);
-  const openMenu = pinnedMenu ?? hoveredMenu;
+
+  /**
+   * While the dock is being edited, only the drawer opens.
+   *
+   * Every other flyout belongs to a *tool* -- which pen, which shape, which
+   * grid system -- and in edit mode the seats are not tools, they are furniture
+   * being moved. So the menus are noise at best: a panel unfolding over the
+   * dock the instant the pointer crosses a button, covering the very gaps the
+   * drag is aiming at, and offering choices that do not apply to what you are
+   * doing.
+   *
+   * The drawer is the exception because it *is* the editor -- it holds Done,
+   * Add a divider, Reset, and the seats waiting to come back.
+   *
+   * Suppressed here, at the one place that decides what is open, rather than in
+   * each of the seven `hoverProps` call sites. One rule cannot be forgotten by
+   * the eighth menu somebody adds.
+   */
+  const openMenu = editing
+    ? (pinnedMenu === 'more' ? 'more' : null)
+    : (pinnedMenu ?? hoveredMenu);
 
   const toggleMenu = (menu: DockMenu) => setPinnedMenu(current => (current === menu ? null : menu));
   const hoverProps = (menu: DockMenu) => ({
@@ -530,20 +561,46 @@ export const ToolWorkspace: React.FC<Props> = ({ activeToolId, onOpenDiagram, on
    * question and nothing more, which is the whole premise of an editable dock.
    */
   const drawerTools = useMemo(() => {
+    /**
+     * A put-away seat, offered as "put it back and use it".
+     *
+     * ## Why picking one restores it rather than arming it in place
+     *
+     * Arming it in place is what this did, and it half-works: it is fine for a
+     * tool that is a single act -- the eraser, the hand -- and broken for the
+     * seven whose button opens a flyout. Draw is pencil *or* pen at four sizes;
+     * Shape is a grid of presets; Grid is ten systems. From a menu row there is
+     * nowhere for any of that to go, so the drawer silently armed the default
+     * and the rest of the tool was unreachable. A tool you can only half-use is
+     * worse than one you have to fetch.
+     *
+     * Temporarily adding the seat and taking it away again -- the obvious
+     * repair -- has no defensible revert moment. After one stroke? After
+     * switching tools? After the flyout closes? Every answer is wrong for some
+     * tool. And it makes the dock's geometry unstable: buttons that come and go
+     * mid-session shift every other seat under the pointer, so muscle memory
+     * never forms. That is a worse fault than the one it fixes.
+     *
+     * So: reaching for a tool in the drawer *is* the signal that it belongs on
+     * your dock. It goes back, next to the drawer you clicked -- so it arrives
+     * under the pointer rather than somewhere you have to hunt for -- and it
+     * arms. Full flyout, full behaviour, no special case. Putting it away again
+     * is one drag, and the drawer is where you just were.
+     */
     const fromSeats = layout.hidden.map((seat) => {
       const toolId = SEAT_TOOL[seat];
       return {
         id: seat,
         icon: SEAT_GLYPH[seat],
         label: SEAT_LABEL[seat],
-        description: toolId ? shortcutFor(toolId) ?? 'not on the toolbar' : 'drop in a paragraph',
-        isActive: (tool: string) => Boolean(toolId) && tool === toolId,
+        description: 'add to the toolbar',
+        // Never "active": it is not the tool, it is the offer to have the tool.
+        // Once taken, the seat is on the dock and shows its own state.
+        isActive: () => false,
         run: () => {
+          // Back on the dock, at the end -- beside the drawer that offered it.
+          dockDefaults.set(showSeat(layoutRef.current, seat));
           if (toolId) setTool(toolId);
-          // The text block is a length, not a tool. From the drawer it drops
-          // the middle one rather than nesting a second menu inside this one --
-          // the five lengths stay on its own button for anyone who puts it back.
-          else onAddTextBlock?.(DEMO_LENGTHS[Math.floor(DEMO_LENGTHS.length / 2)]);
         },
       };
     });
@@ -553,8 +610,6 @@ export const ToolWorkspace: React.FC<Props> = ({ activeToolId, onOpenDiagram, on
 
   const activeExtra = drawerTools.find((entry) => entry.isActive(activeToolId));
 
-  /** Editing the dock is a mode, and a loud one -- see `dock-editing`. */
-  const [editing, setEditing] = useState(false);
 
   /**
    * Escape leaves the mode.
@@ -626,11 +681,17 @@ export const ToolWorkspace: React.FC<Props> = ({ activeToolId, onOpenDiagram, on
    * the markup stays in the order a reader would want it in, and the dock lays
    * it out in the order its owner asked for.
    */
-  const seatChrome = (id: DockSeat) => ({
-    style: { order: seatIndex.get(id) ?? DOCK_SEATS.length },
-    hidden: hiddenSeats.has(id),
-    'data-seat': id,
-  });
+  const seatChrome = (id: DockSeat) => {
+    const index = seatIndex.get(id);
+    return {
+      style: { order: index ?? DOCK_SEATS.length },
+      hidden: hiddenSeats.has(id),
+      'data-seat': id,
+      // Stated on the element so a drag reads it back rather than looking it up
+      // in a map captured at render time -- see `dropIndexAt`.
+      ...(index === undefined ? null : { 'data-dock-index': index }),
+    };
+  };
 
   /**
    * A seat's keyboard registration, and its place in the dock.
@@ -670,20 +731,44 @@ export const ToolWorkspace: React.FC<Props> = ({ activeToolId, onOpenDiagram, on
    * The midpoint test is what makes a drag feel like it is going where you are
    * pointing: past half of a seat's width, you have passed it.
    */
+  /**
+   * Where a pointer at (`clientX`, `clientY`) would drop what it is carrying.
+   *
+   * ## Read from the DOM, and from the ref
+   *
+   * Measured from the items as laid out rather than computed from the order
+   * array, because `order` means the browser has already decided where
+   * everything is -- and a wrapped dock makes that arithmetic unguessable.
+   * Reading the boxes back is both simpler and exactly right.
+   *
+   * Every position comes off `data-dock-index`, which each item carries. The
+   * first version looked its seats up in a `seatIndex` map captured from the
+   * render that started the drag, so after the first move it was answering
+   * against an arrangement that no longer existed and the item jittered between
+   * two places. An index the element states about itself cannot go stale,
+   * because the element is re-rendered by the same change that moves it.
+   *
+   * Separators are targets too. They were skipped -- only `[data-seat]` was
+   * queried -- so a gap next to a divider could not be aimed at, and dropping
+   * there silently landed somewhere else.
+   */
   const dropIndexAt = (clientX: number, clientY: number): number => {
     const dock = dockRef.current;
-    if (!dock) return layout.order.length;
-    const slots = Array.from(dock.querySelectorAll<HTMLElement>('[data-seat]'))
-      .filter((el) => !el.hidden)
-      .map((el) => ({ id: el.dataset.seat!, box: el.getBoundingClientRect() }));
+    if (!dock) return layoutRef.current.order.length;
 
-    let best = layout.order.length;
+    const items = Array.from(dock.querySelectorAll<HTMLElement>('[data-dock-index]'))
+      .filter((el) => !el.hidden && el.offsetParent !== null);
+
+    let best = layoutRef.current.order.length;
     let bestDistance = Infinity;
-    for (const { id, box } of slots) {
-      const index = seatIndex.get(id);
-      if (index === undefined) continue;
-      // Rows first: on a wrapped dock the nearest seat by x alone can be on a
-      // different line entirely.
+
+    for (const el of items) {
+      const index = Number(el.dataset.dockIndex);
+      if (!Number.isFinite(index)) continue;
+      const box = el.getBoundingClientRect();
+      // Rows first: on a wrapped dock the nearest item by x alone can be on a
+      // different line entirely, so vertical distance is weighted heavily and
+      // measured to the row's edge rather than its centre.
       const dy = Math.max(0, Math.abs(clientY - (box.top + box.height / 2)) - box.height / 2);
       const after = clientX > box.left + box.width / 2;
       const dx = Math.abs(clientX - (after ? box.right : box.left));
@@ -696,45 +781,107 @@ export const ToolWorkspace: React.FC<Props> = ({ activeToolId, onOpenDiagram, on
     return best;
   };
 
+  /** Past this many pixels a press is a drag, and never a click. */
+  const DRAG_SLOP = 4;
+
   /**
-   * Pick an item up. Only in edit mode: a plain click still selects the tool.
+   * Pick an item up.
    *
-   * Takes a *finder* rather than an index, because the two callers know their
-   * item differently and both change under the drag. A seat is found by id --
-   * it keeps that through any number of moves. A separator has no id, so it is
-   * found by position, and the position is re-read on every move because the
-   * previous move is what changed it.
+   * ## Why a finder rather than an index
+   *
+   * Both callers' items move *while the drag is running*, and they know where
+   * they are differently. A seat keeps its id through any number of moves, so it
+   * is found by id. A separator has no id at all, so it is found by ordinal --
+   * "the second divider" -- and re-found on every move, because the previous
+   * move is what changed its position.
+   *
+   * ## Why a press that does not move is not a drag
+   *
+   * A separator is a three-pixel target that has to support both moving and
+   * removing, and it cannot spend a modifier or a second click on the
+   * difference. So the gesture decides: past `DRAG_SLOP` it is a move, and a
+   * press released without travelling that far is a tap. That is the same rule
+   * a canvas uses to tell a click from a marquee, and it means the divider
+   * never vanishes when you meant to nudge it -- the failure that made the
+   * previous double-click version feel like the dock was falling apart.
    */
-  const beginDrag = (find: () => number, label: DockSeat | null) => (e: React.PointerEvent) => {
+  const beginDrag = (
+    find: () => number,
+    label: DockItem,
+    onTap?: () => void
+  ) => (e: React.PointerEvent) => {
     if (!editing) return;
     e.preventDefault();
     e.stopPropagation();
-    setDragging(label ?? '|');
 
-    // Where the item is *now*, which for a separator is not where it started.
+    const originX = e.clientX;
+    const originY = e.clientY;
+    let moved = false;
+    // Where the item is *now*, which after the first move is not where it
+    // started.
     let at = find();
 
     const move = (ev: PointerEvent) => {
+      if (!moved) {
+        if (Math.hypot(ev.clientX - originX, ev.clientY - originY) < DRAG_SLOP) return;
+        moved = true;
+        setDragging(label);
+      }
       const from = at;
       if (from < 0) return;
       const to = dropIndexAt(ev.clientX, ev.clientY);
+      // A drop into either side of the item's own slot is where it already is.
       if (to === from || to === from + 1) return;
       dockDefaults.set({ ...layoutRef.current, order: moveItem(layoutRef.current.order, from, to) });
-      // Landing index: one earlier when the item travelled rightwards, because
-      // removing it first shifted everything after the source down by one.
+      // Its landing index: one earlier when it travelled rightwards, because
+      // `moveItem` removes before it inserts and everything after the source
+      // shifted down by one.
       at = to > from ? to - 1 : to;
     };
+
     const up = () => {
-      setDragging(null);
       window.removeEventListener('pointermove', move);
       window.removeEventListener('pointerup', up);
+      setDragging(null);
+      if (!moved) onTap?.();
     };
+
     window.addEventListener('pointermove', move);
     window.addEventListener('pointerup', up);
   };
 
   /** A seat, found by id so it survives its own reordering. */
   const beginSeatDrag = (id: DockSeat) => beginDrag(() => seatIndexRef.current.get(id) ?? -1, id);
+
+  /** The nth divider's position in the order as it stands right now. */
+  const separatorAt = (nth: number) => {
+    const marks: number[] = [];
+    layoutRef.current.order.forEach((item, at) => {
+      if (item === SEPARATOR) marks.push(at);
+    });
+    return marks[nth] ?? -1;
+  };
+
+  /**
+   * Put a divider on the dock.
+   *
+   * ## Why it lands second-to-last rather than at the end
+   *
+   * `tidy` strips a trailing separator, because a rule with nothing after it is
+   * a stray line rather than a division — a rule the arrangement genuinely
+   * needs. Appending one therefore *created and immediately destroyed it*, so
+   * the menu item did nothing at all and looked broken.
+   *
+   * One place in from the end is the nearest position that survives, and it is
+   * also visible without scrolling and adjacent to the button that made it, so
+   * the new divider is under the pointer and ready to be dragged wherever it is
+   * actually wanted.
+   */
+  const addDivider = () => {
+    const order = layoutRef.current.order;
+    dockDefaults.set(addSeparator(layoutRef.current, Math.max(0, order.length - 1)));
+  };
+
 
   return (
     <div
@@ -771,23 +918,22 @@ export const ToolWorkspace: React.FC<Props> = ({ activeToolId, onOpenDiagram, on
             style={{ order: i }}
             role={editing ? undefined : 'separator'}
             aria-hidden={!editing}
-            /**
-             * Draggable like any other item, because it is one.
-             *
-             * Removal moved to a double-click for the same reason: a single
-             * click cannot both start a drag and delete, and a divider that
-             * vanished the moment you tried to move it would make the dock feel
-             * like it was falling apart. Found by position rather than by id --
-             * a separator has none -- and re-found on every move.
-             */
-            onPointerDown={editing ? beginDrag(() => {
-              const marks = layoutRef.current.order
-                .map((it, at) => (it === SEPARATOR ? at : -1))
-                .filter((at) => at >= 0);
-              return marks[nth] ?? -1;
-            }, null) : undefined}
-            onDoubleClick={editing ? () => dockDefaults.set(removeAt(layoutRef.current, i)) : undefined}
-            title={editing ? 'Drag to move, double-click to remove' : undefined}
+            data-dock-index={i}
+            /* Drag to move, tap to remove -- see `beginDrag`. Found by ordinal
+               because a separator has no id, and re-found on every move. */
+            onPointerDown={
+              editing
+                ? beginDrag(
+                    () => separatorAt(nth),
+                    SEPARATOR,
+                    () => {
+                      const at = separatorAt(nth);
+                      if (at >= 0) dockDefaults.set(removeAt(layoutRef.current, at));
+                    }
+                  )
+                : undefined
+            }
+            title={editing ? 'Drag to move, click to remove' : undefined}
           />
         );
       })}
@@ -1355,10 +1501,28 @@ export const ToolWorkspace: React.FC<Props> = ({ activeToolId, onOpenDiagram, on
                     label="Add a divider"
                     description="group the tools your way"
                     active={false}
-                    onClick={() => dockDefaults.set(addSeparator(layout, layout.order.length))}
+                    onClick={addDivider}
                   />
                 )}
-                {!isDefaultLayout(layout) && (
+                {/**
+                  * Reset, and the way back from it.
+                  *
+                  * The row becomes its own undo rather than gaining a
+                  * confirmation. A confirmation taxes every deliberate reset to
+                  * guard against the rare accidental one, and it sits directly
+                  * under "Edit toolbar" where a misclick is most likely -- so
+                  * the fix is to make the mistake cheap, not to make the action
+                  * expensive. See `dockDefaults.undoReset`.
+                  */}
+                {dockDefaults.canUndo() ? (
+                  <FlyoutItem
+                    icon={<Undo2 size={16} />}
+                    label="Undo reset"
+                    description="put your arrangement back"
+                    active={false}
+                    onClick={() => dockDefaults.undoReset()}
+                  />
+                ) : !isDefaultLayout(layout) && (
                   <FlyoutItem
                     icon={<RotateCcw size={16} />}
                     label="Reset toolbar"
