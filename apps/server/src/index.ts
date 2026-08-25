@@ -15,6 +15,28 @@ import { pool, initDb, startRetentionSweep, MAX_UPDATES_PER_ROOM } from "./db";
 initDb().then(startRetentionSweep);
 
 const app = express();
+
+/**
+ * Believe the proxy about who the client is, when there is one.
+ *
+ * `req.ip` reads the socket's peer address unless Express is told otherwise,
+ * and behind a reverse proxy — which is every deployment that terminates TLS —
+ * that address is the proxy's. The rate limiters below key on it, so all of
+ * them would share one bucket: a single busy client could lock everybody out,
+ * and a malicious one would be throttled alongside the people it is attacking.
+ *
+ * Off by default and enabled explicitly, because the opposite mistake is worse.
+ * `trust proxy` makes Express believe `X-Forwarded-For`, which any client can
+ * send — so switching it on without a proxy in front lets anyone claim a fresh
+ * IP per request and opt out of rate limiting entirely. It is a deployment
+ * fact, so it comes from the deployment.
+ */
+if (process.env.TRUST_PROXY) {
+  // A number is a hop count, which is what you want behind n known proxies;
+  // anything else (an IP, a subnet, "loopback") is passed through as-is.
+  const hops = Number(process.env.TRUST_PROXY);
+  app.set('trust proxy', Number.isFinite(hops) ? hops : process.env.TRUST_PROXY);
+}
 // Configurable CORS support (wildcard default in dev, or comma-separated list of origins)
 const allowedOrigins = process.env.ALLOWED_ORIGINS
   ? process.env.ALLOWED_ORIGINS.split(',').map((o) => o.trim())
@@ -123,14 +145,33 @@ const initS3 = async (retries = 10, delayMs = 2000) => {
 };
 initS3();
 
-// Supported media MIME types and corresponding allowed extensions
+/**
+ * What may be uploaded.
+ *
+ * ## Why SVG is not on this list
+ *
+ * An SVG is a document, not an image. It can carry `<script>`, `<foreignObject>`
+ * and event handlers, and a browser that navigates directly to one served as
+ * `image/svg+xml` executes all of it **on the origin that served it** — which
+ * here is the API, same-origin with the media proxy and anything else it ever
+ * hosts. Uploading a file is not supposed to be a way to run code on the
+ * server's origin, and for SVG it silently was.
+ *
+ * The proxy below now also sends `nosniff` and a `default-src 'none'` policy,
+ * so this is the second of two locks rather than the only one. Both are here
+ * because either alone fails to a mistake: a future route that serves media
+ * without the headers, or a future entry added back to this list.
+ *
+ * Nothing else needs to change to keep vector work: the board's own SVG import
+ * parses the file in the browser and creates real nodes, and the exporter
+ * writes SVG out. Neither round-trips through object storage.
+ */
 const ALLOWED_MIME_TYPES = new Set([
   // Images
   'image/png',
   'image/jpeg',
   'image/webp',
   'image/gif',
-  'image/svg+xml',
   // Audio
   'audio/webm',
   'audio/mp4',
@@ -141,9 +182,37 @@ const ALLOWED_MIME_TYPES = new Set([
 ]);
 
 const ALLOWED_EXTENSIONS = new Set([
-  '.png', '.jpg', '.jpeg', '.webp', '.gif', '.svg',
+  '.png', '.jpg', '.jpeg', '.webp', '.gif',
   '.webm', '.mp4', '.ogg', '.wav', '.mp3', '.m4a', '.aac'
 ]);
+
+/**
+ * The Content-Type a stored object is served as, decided by **us**.
+ *
+ * `file.mimetype` is whatever the client's multipart body claimed, and the
+ * filter below checks it — but a check is not a guarantee: a request may
+ * declare `image/png`, carry an SVG, and be stored with a `.png` key and a
+ * `image/png` type it does not deserve. The filter's job is to refuse obvious
+ * junk; it cannot vouch for the bytes.
+ *
+ * So the proxy never echoes the stored type back. It maps the extension —
+ * which the upload path sanitised into a known set — to a type from this table,
+ * and anything it cannot place is served as a download rather than as content.
+ */
+const EXTENSION_TYPES: Record<string, string> = {
+  '.png': 'image/png',
+  '.jpg': 'image/jpeg',
+  '.jpeg': 'image/jpeg',
+  '.webp': 'image/webp',
+  '.gif': 'image/gif',
+  '.webm': 'audio/webm',
+  '.mp4': 'audio/mp4',
+  '.ogg': 'audio/ogg',
+  '.wav': 'audio/wav',
+  '.mp3': 'audio/mpeg',
+  '.m4a': 'audio/mp4',
+  '.aac': 'audio/aac',
+};
 
 // Set up Multer-S3 for direct object storage uploads with strict security filters
 const upload = multer({
@@ -234,8 +303,28 @@ app.get("/rooms/:roomId/media/:mediaKey", async (req: any, res: any) => {
       })
     );
 
-    if (s3Res.ContentType) {
-      res.setHeader("Content-Type", s3Res.ContentType);
+    /**
+     * Headers that make this route incapable of serving an active document.
+     *
+     * It used to send `s3Res.ContentType` — a value that originated in the
+     * client's own upload request — with nothing else. So a file uploaded as
+     * `image/svg+xml` came back as `image/svg+xml`, and a browser navigating to
+     * it ran whatever script was inside, on this origin.
+     *
+     *  - The type comes from our own extension table, never from the object.
+     *  - `nosniff` stops the browser second-guessing that type and finding
+     *    markup in a file we called an image.
+     *  - `default-src 'none'` neutralises anything that does get parsed as a
+     *    document: no scripts, no subresources, no network.
+     *  - Anything whose extension we cannot place is offered as a download
+     *    rather than rendered, which is the safe default for an unknown file.
+     */
+    const type = EXTENSION_TYPES[path.extname(mediaKey).toLowerCase()];
+    res.setHeader("Content-Type", type ?? "application/octet-stream");
+    res.setHeader("X-Content-Type-Options", "nosniff");
+    res.setHeader("Content-Security-Policy", "default-src 'none'; sandbox");
+    if (!type) {
+      res.setHeader("Content-Disposition", `attachment; filename="${mediaKey}"`);
     }
     if (s3Res.ContentLength) {
       res.setHeader("Content-Length", s3Res.ContentLength);
@@ -516,8 +605,20 @@ const gracefulShutdown = async (signal: string) => {
     console.log("WebSocket server closed.");
   });
 
+  /**
+   * Ask the clients to leave, rather than cutting them off.
+   *
+   * `terminate()` destroys the socket immediately: a Yjs client mid-sync loses
+   * whatever it had not yet flushed, and — worse for a deploy — sees an abrupt
+   * transport failure rather than a close frame, so its reconnect backoff
+   * treats a routine restart like a network fault.
+   *
+   * 1001 "going away" is the code for exactly this. The clients flush, close
+   * cleanly, and reconnect promptly to whichever instance replaces this one.
+   * The forced-shutdown timer below is still the backstop for any that do not.
+   */
   for (const client of wss.clients) {
-    client.terminate();
+    client.close(1001, "Server shutting down");
   }
 
   // 2. Stop accepting new HTTP requests

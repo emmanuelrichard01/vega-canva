@@ -3220,6 +3220,138 @@ textarea:focus-visible {
 .dock-slot { position: relative; }
 .dock-slot-wrap { display: flex; }
 
+/**
+ * The dock's groups draw nothing, so their children can be rearranged.
+ *
+ * `order` only sorts siblings within one flex container, and the seats are
+ * written in five `dock-group` divs -- so with the groups as real boxes a seat
+ * could only ever move within the group it was written in.
+ *
+ * `display: contents` removes the boxes and leaves the children, which become
+ * direct flex children of the dock and can therefore be sorted against each
+ * other. The divs survive because they carry the comments explaining what each
+ * run of tools is *for*, and a future reader loses more from a flat list of
+ * sixteen than the browser loses from five boxes it does not draw.
+ *
+ * The `gap` they used to supply is the dock's own `gap`, at the same 4px, so
+ * nothing moves.
+ */
+.dock-group { display: contents; }
+
+/* The divider, now an item in the arrangement rather than a border between two
+   groups. Sized in the same rhythm as the seats so a dock with several still
+   reads as one row. */
+.dock-rule {
+  align-self: center;
+  width: 1px;
+  height: 22px;
+  margin: 0 2px;
+  border-radius: 1px;
+  background: var(--border-divider);
+  flex: none;
+}
+
+/* ---------------------------------------------------------- editing the dock */
+
+/**
+ * Edit mode has to look like a mode.
+ *
+ * A dock that can be dragged apart but looks exactly like one that cannot is a
+ * dock people take apart by accident -- and every seat here is also a button
+ * whose ordinary job is to select a tool. So the mode is stated three ways at
+ * once: the whole dock lifts and tints, every seat grows a grab cursor and a
+ * remove badge, and the tools stop responding to a plain click as tools.
+ */
+.tool-dock[data-editing] {
+  outline: 1.5px dashed var(--text-accent);
+  outline-offset: 3px;
+  /* Tinted rather than merely outlined: an outline alone reads as a focus ring,
+     which is a thing that happens *to* a control, not a state it is in. */
+  background-image: linear-gradient(var(--accent-quiet, transparent), var(--accent-quiet, transparent));
+  /* Loosened, for two reasons that happen to agree. The remove badges hang off
+     each seat's shoulder and at the normal 4px they sit on the neighbour; and a
+     row that spreads when you start editing says the seats have come unstuck
+     from each other, which is exactly what has happened. */
+  gap: 9px;
+}
+
+.tool-dock[data-editing] .dock-btn {
+  cursor: grab;
+}
+
+.tool-dock[data-editing] .dock-rule {
+  cursor: pointer;
+  background: var(--text-accent);
+  /* Wider while editing, because it is a target now and a 1px target is not
+     one. The extra width is padding-box, so the drawn rule stays a hairline. */
+  width: 3px;
+  border: 1px solid var(--surface-elevated);
+  border-width: 0 1px;
+  background-clip: content-box;
+  box-sizing: content-box;
+}
+
+.tool-dock[data-editing] .dock-rule:hover {
+  background: var(--danger, #EF4444);
+}
+
+/* The seat being carried. Lifted and dimmed, so the gap it leaves reads as a
+   space it is going back into rather than as a seat that has vanished. */
+.tool-dock[data-dragging] .dock-btn { cursor: grabbing; }
+
+.tool-dock[data-editing] .dock-slot {
+  /* A slow, small tilt. Enough to say "these are loose"; far short of the
+     jiggle a phone home screen does, which is charming once and tiring by the
+     second use. */
+  animation: dock-loosen 1.8s ease-in-out infinite;
+}
+
+/* Offset so sixteen seats do not tilt in unison, which reads as the whole dock
+   rocking rather than as the seats being individually loose. */
+.tool-dock[data-editing] .dock-slot:nth-child(even) { animation-delay: -0.9s; }
+
+@keyframes dock-loosen {
+  0%, 100% { rotate: -0.9deg; }
+  50%      { rotate: 0.9deg; }
+}
+
+/**
+ * The badge that puts a seat away.
+ *
+ * Top-left rather than top-right, and not for symmetry: the flyout seats carry
+ * a menu dot at the bottom-right and the tooltip rises from the top-centre, so
+ * the left shoulder is the one corner of a dock button with nothing already in
+ * it.
+ */
+.dock-slot__remove {
+  position: absolute;
+  top: -4px;
+  left: -4px;
+  z-index: 2;
+  display: none;
+  place-items: center;
+  width: 14px;
+  height: 14px;
+  padding: 0;
+  border: 1.5px solid var(--surface-elevated);
+  border-radius: 50%;
+  background: var(--danger, #EF4444);
+  color: #fff;
+  cursor: pointer;
+  box-shadow: var(--shadow-sm);
+}
+
+/* Shown by the mode, not by a prop, so the button is never a tab stop or a
+   pointer target while the dock is behaving normally. */
+.tool-dock[data-editing] .dock-slot__remove { display: grid; }
+
+.dock-slot__remove:hover { scale: 1.15; }
+
+@media (prefers-reduced-motion: reduce) {
+  .tool-dock[data-editing] .dock-slot { animation: none; }
+  .dock-slot__remove:hover { scale: 1; }
+}
+
 /* Above its button, centred on it. The gap is padding rather than margin so
    the pointer can travel from button to menu without crossing dead space and
    closing it on the way. */

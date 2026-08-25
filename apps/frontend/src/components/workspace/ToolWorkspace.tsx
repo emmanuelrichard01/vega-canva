@@ -1,10 +1,22 @@
-import React, { useCallback, useEffect, useRef, useState, useSyncExternalStore } from 'react';
+import React, { useCallback, useEffect, useRef, useState, useSyncExternalStore, useMemo } from 'react';
 import { GridKindIcon } from './gridIcons';
 import { GRID_HINTS, GRID_KINDS, GRID_LABELS } from '../../engine/grid/gridLayout';
+import { dockDefaults } from '../../engine/workspace/dockDefaults';
+import {
+  addSeparator,
+  DOCK_SEATS,
+  isDefaultLayout,
+  moveItem,
+  hideSeat,
+  removeAt,
+  SEPARATOR,
+  showSeat,
+  type DockSeat,
+} from '../../engine/workspace/dockLayout';
 import { gridDefaults } from '../../engine/grid/gridDefaults';
 import { switchKind } from '../../engine/grid/gridBuild';
 import { MousePointer2, MousePointerClick, LayoutGrid, Hand, Pen, PenTool as PenToolIcon, Type, Square, StickyNote, MessageSquare, ImageIcon, Mic, Sparkles, Frame, Eraser, Workflow, MoreVertical, TextQuote } from 'lucide-react';
-import { Minus, Spline } from 'lucide-react';
+import { Check, Minus, RotateCcw, SeparatorVertical, SlidersHorizontal, Spline } from 'lucide-react';
 import { SegmentedControl } from '../ui/SegmentedControl';
 import { SketchLevelIcon } from '../panel/sketchIcons';
 import type { PencilNib } from '../../engine/model/rough';
@@ -65,8 +77,29 @@ const DockButton = React.forwardRef<
     menuOpen?: boolean;
     tabIndex: number;
     children?: React.ReactNode;
+    /**
+     * Where this seat sits, and whether it is on the dock at all.
+     *
+     * Applied to the slot rather than to the button, because the slot is what
+     * the dock lays out -- see `seatChrome`. Optional so the overflow seat,
+     * which is not part of the arrangement, can leave it off.
+     */
+    seat?: { style?: React.CSSProperties; hidden?: boolean; 'data-seat'?: string };
+    /** Put this seat away. Present only while the dock is being edited. */
+    onRemove?: () => void;
+    onPointerDown?: (e: React.PointerEvent) => void;
+    /**
+     * The dock is being rearranged, so this button is furniture rather than a
+     * tool.
+     *
+     * Without it a seat picked up and put down without moving far enough to
+     * reorder still fires its `onClick` -- so tidying the toolbar would switch
+     * you to the eraser, which is the kind of thing that makes a mode feel
+     * unsafe and stops people using it.
+     */
+    editing?: boolean;
   }
->(({ icon, label, description, toolId, active, onClick, hasMenu, menuOpen, tabIndex, children }, ref) => {
+>(({ icon, label, description, toolId, active, onClick, hasMenu, menuOpen, tabIndex, children, seat, onRemove, onPointerDown, editing }, ref) => {
   const key = toolId ? shortcutFor(toolId) : undefined;
   // Rendered from the shortcut map rather than typed into the string, so the
   // hint and the binding are the same fact.
@@ -75,7 +108,23 @@ const DockButton = React.forwardRef<
     .join(' ');
 
   return (
-    <div className={hasMenu ? 'dock-slot dock-slot--menu' : 'dock-slot'}>
+    <div className={hasMenu ? 'dock-slot dock-slot--menu' : 'dock-slot'} {...seat}>
+      {/* The way out of the dock, drawn by the slot so all sixteen seats get
+          one from one place. Only rendered while editing -- see the `hidden`
+          attribute below, which is set by CSS rather than by a prop so the
+          button never exists as a tab stop outside the mode. */}
+      {onRemove && (
+        <button
+          type="button"
+          className="dock-slot__remove"
+          onClick={(e) => { e.stopPropagation(); onRemove(); }}
+          aria-label={`Put ${label} away`}
+          title={`Put ${label} away`}
+          tabIndex={-1}
+        >
+          <Minus size={10} />
+        </button>
+      )}
       <button
         ref={ref}
         type="button"
@@ -83,7 +132,8 @@ const DockButton = React.forwardRef<
         aria-pressed={active}
         aria-haspopup={hasMenu ? 'menu' : undefined}
         aria-expanded={hasMenu ? menuOpen : undefined}
-        onClick={onClick}
+        onClick={editing ? undefined : onClick}
+        onPointerDown={onPointerDown}
         // Suppressed while the menu is open: a tooltip and the flyout it
         // belongs to occupy the same space above the button, and the tooltip
         // wins the paint.
@@ -211,14 +261,42 @@ interface Props {
   onAddTextBlock?: (words: number) => void;
 }
 
-/** Left-to-right order of the dock, and so the order the arrow keys walk it. */
-const SEAT = {
-  select: 0, directSelect: 1, hand: 2,
-  draw: 3, eraser: 4,
-  text: 5, block: 6, shape: 7, line: 8, frame: 9, grid: 10, connector: 11, sticky: 12,
-  image: 13, audio: 14, forces: 15,
-  more: 16,
-} as const;
+/**
+ * The overflow seat's index for the roving tabindex.
+ *
+ * Every other seat's index now comes from the layout -- see `dockLayout` -- and
+ * the drawer is the one that is never part of it, so it takes the position
+ * after the last of them. It used to be one entry in a hand-written `SEAT`
+ * table that also *was* the dock's order, which is the arrangement that had to
+ * become data before anyone could rearrange it.
+ */
+const MORE_SEAT = DOCK_SEATS.length;
+
+/**
+ * A seat's name and glyph, for the drawer's list of put-away tools.
+ *
+ * The dock's own buttons carry these inline, and a seat that has been put away
+ * has no button to read them off -- so the drawer needs its own copy. Kept
+ * beside the layout rather than inside the render so the two lists are one
+ * screen apart, and typed as a full `Record` so putting a new tool on the dock
+ * without giving it a name here fails the build rather than showing an
+ * unlabelled row nobody can identify.
+ */
+const SEAT_LABEL: Record<DockSeat, string> = {
+  select: 'Select', directSelect: 'Direct select', hand: 'Hand',
+  draw: 'Draw', eraser: 'Eraser',
+  text: 'Text', block: 'Text block', shape: 'Shape', line: 'Line',
+  frame: 'Frame', grid: 'Grid', connector: 'Connector', sticky: 'Note',
+  image: 'Image', audio: 'Audio', forces: 'Forces',
+};
+
+const SEAT_GLYPH: Record<DockSeat, React.ReactNode> = {
+  select: <MousePointer2 size={16} />, directSelect: <MousePointerClick size={16} />, hand: <Hand size={16} />,
+  draw: <Pen size={16} />, eraser: <Eraser size={16} />,
+  text: <Type size={16} />, block: <TextQuote size={16} />, shape: <Square size={16} />, line: <Minus size={16} />,
+  frame: <Frame size={16} />, grid: <LayoutGrid size={16} />, connector: <Spline size={16} />, sticky: <StickyNote size={16} />,
+  image: <ImageIcon size={16} />, audio: <Mic size={16} />, forces: <Sparkles size={16} />,
+};
 
 
 export const ToolWorkspace: React.FC<Props> = ({ activeToolId, onOpenDiagram, onAddTextBlock }) => {
@@ -393,24 +471,222 @@ export const ToolWorkspace: React.FC<Props> = ({ activeToolId, onOpenDiagram, on
    * walk is a thing you can read and check against the layout instead of an
    * emergent property of which JSX happens to come first.
    */
-  const seatProps = (index: number) => ({
-    ref: registerButton(index),
-    tabIndex: focusIndex === index ? 0 : -1,
+  /**
+   * The person's own arrangement of the dock.
+   *
+   * Read through `useSyncExternalStore` rather than held here, so the editor's
+   * drag, the drawer's restore button and a second dock (there is one on a
+   * narrow layout) all read one value -- and so a rearrangement survives a
+   * remount, which a `useState` here would not.
+   */
+  const layout = useSyncExternalStore(
+    dockDefaults.subscribe,
+    dockDefaults.getSnapshot,
+    dockDefaults.getSnapshot
+  );
+
+  /** Editing the dock is a mode, and a loud one -- see `dock-editing`. */
+  const [editing, setEditing] = useState(false);
+
+  /**
+   * Escape leaves the mode.
+   *
+   * Every other mode on this canvas ends on Escape, and one that could only be
+   * left through the menu it was entered from would be the exception people
+   * find by getting stuck in it. Registered in the capture phase, ahead of the
+   * canvas's own Escape handling, so it clears the mode rather than the
+   * selection underneath -- and only while the mode is on, so it costs nothing
+   * the rest of the time.
+   */
+  useEffect(() => {
+    if (!editing) return;
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key !== 'Escape') return;
+      e.stopPropagation();
+      setEditing(false);
+    };
+    window.addEventListener('keydown', onKey, true);
+    return () => window.removeEventListener('keydown', onKey, true);
+  }, [editing]);
+  /** Which seat is under the pointer's grip, or null. */
+  const [dragging, setDragging] = useState<DockSeat | null>(null);
+  const dockRef = useRef<HTMLDivElement>(null);
+  /**
+   * The live layout, for the drag's window listeners.
+   *
+   * The `pointermove` closure is created once per drag and would otherwise
+   * capture the layout as it was when the seat was picked up -- so every move
+   * after the first would compute its new order from a stale array and undo the
+   * previous one. A ref is read at call time, which is what a long-lived
+   * listener needs.
+   */
+  const layoutRef = useRef(layout);
+  layoutRef.current = layout;
+
+  /**
+   * Where each seat sits, as a lookup.
+   *
+   * Built once per layout rather than calling `indexOf` per seat: sixteen
+   * linear scans of a nineteen-item array is nothing, and a map is what the
+   * drop calculation wants anyway.
+   */
+  const seatIndex = useMemo(() => {
+    const map = new Map<string, number>();
+    layout.order.forEach((item, i) => {
+      if (item !== SEPARATOR) map.set(item, i);
+    });
+    return map;
+  }, [layout]);
+
+  const hiddenSeats = useMemo(() => new Set<string>(layout.hidden), [layout]);
+
+  /**
+   * Everything the dock's layout does to one seat.
+   *
+   * `order` on the slot, and `hidden` when the seat has been put away. Both go
+   * on the *slot* rather than the button because the slot is the flex child --
+   * `.dock-group` is `display: contents`, so every slot is a direct child of
+   * the dock however the JSX nests them, and CSS `order` can reach across the
+   * groups the source still writes them in.
+   *
+   * Using `order` rather than reordering the JSX is what keeps this a
+   * fifty-line change instead of a rewrite of five hundred lines of flyouts:
+   * the markup stays in the order a reader would want it in, and the dock lays
+   * it out in the order its owner asked for.
+   */
+  const seatChrome = (id: DockSeat) => ({
+    style: { order: seatIndex.get(id) ?? DOCK_SEATS.length },
+    hidden: hiddenSeats.has(id),
+    'data-seat': id,
   });
+
+  /**
+   * A seat's keyboard registration, and its place in the dock.
+   *
+   * `wrapped` is for the seven seats whose button lives inside a
+   * `.dock-slot-wrap` -- the ones with flyouts. There the *wrapper* is the flex
+   * child, so it carries the order and the button's own slot must not, or two
+   * elements in one `display: contents` chain would both claim a position and
+   * the browser would honour the inner one.
+   */
+  const seatProps = (id: DockSeat, wrapped = false) => {
+    const index = DOCK_SEATS.indexOf(id);
+    return {
+      ref: registerButton(index),
+      tabIndex: focusIndex === index ? 0 : -1,
+      ...(wrapped ? null : { seat: seatChrome(id) }),
+      onPointerDown: editing ? beginSeatDrag(id) : undefined,
+      onRemove: editing ? () => dockDefaults.set(hideSeat(layoutRef.current, id)) : undefined,
+      editing,
+    };
+  };
+
+  /** The drawer, which is never part of the arrangement. */
+  const moreSeatProps = () => ({
+    ref: registerButton(MORE_SEAT),
+    tabIndex: focusIndex === MORE_SEAT ? 0 : -1,
+  });
+
+  /**
+   * Where a pointer at `clientX` would drop a seat.
+   *
+   * Measured from the slots as laid out, not computed from the order array,
+   * because `order` means the browser has already decided where everything is
+   * and the wrapped rows on a narrow viewport make that arithmetic unguessable.
+   * Reading the boxes back is both simpler and exactly right.
+   *
+   * The midpoint test is what makes a drag feel like it is going where you are
+   * pointing: past half of a seat's width, you have passed it.
+   */
+  const dropIndexAt = (clientX: number, clientY: number): number => {
+    const dock = dockRef.current;
+    if (!dock) return layout.order.length;
+    const slots = Array.from(dock.querySelectorAll<HTMLElement>('[data-seat]'))
+      .filter((el) => !el.hidden)
+      .map((el) => ({ id: el.dataset.seat!, box: el.getBoundingClientRect() }));
+
+    let best = layout.order.length;
+    let bestDistance = Infinity;
+    for (const { id, box } of slots) {
+      const index = seatIndex.get(id);
+      if (index === undefined) continue;
+      // Rows first: on a wrapped dock the nearest seat by x alone can be on a
+      // different line entirely.
+      const dy = Math.max(0, Math.abs(clientY - (box.top + box.height / 2)) - box.height / 2);
+      const after = clientX > box.left + box.width / 2;
+      const dx = Math.abs(clientX - (after ? box.right : box.left));
+      const distance = dy * 4 + dx;
+      if (distance < bestDistance) {
+        bestDistance = distance;
+        best = after ? index + 1 : index;
+      }
+    }
+    return best;
+  };
+
+  /** Pick a seat up. Only in edit mode: a plain click still selects the tool. */
+  const beginSeatDrag = (id: DockSeat) => (e: React.PointerEvent) => {
+    if (!editing) return;
+    e.preventDefault();
+    e.stopPropagation();
+    setDragging(id);
+
+    const move = (ev: PointerEvent) => {
+      const from = seatIndex.get(id);
+      if (from === undefined) return;
+      const to = dropIndexAt(ev.clientX, ev.clientY);
+      if (to === from || to === from + 1) return;
+      dockDefaults.set({ ...layoutRef.current, order: moveItem(layoutRef.current.order, from, to) });
+    };
+    const up = () => {
+      setDragging(null);
+      window.removeEventListener('pointermove', move);
+      window.removeEventListener('pointerup', up);
+    };
+    window.addEventListener('pointermove', move);
+    window.addEventListener('pointerup', up);
+  };
 
   return (
     <div
+      ref={dockRef}
       className="tool-dock panel-surface"
+      data-editing={editing || undefined}
+      data-dragging={dragging || undefined}
       role="toolbar"
       aria-label="Canvas tools"
       aria-orientation="horizontal"
       onKeyDown={onToolbarKeyDown}
     >
+      {/**
+        * The separators, rendered from the layout rather than written between
+        * the groups.
+        *
+        * They are items in the order like any seat, so they take an `order` of
+        * their own and land wherever their owner put them. The groups in the
+        * markup below are `display: contents` and draw nothing -- they survive
+        * only because they are the comments that explain what the tools are
+        * *for*, and losing that to a flat list would cost a future reader more
+        * than the divs cost the browser.
+        */}
+      {layout.order.map((item, i) =>
+        item === SEPARATOR ? (
+          <span
+            key={`sep-${i}`}
+            className="dock-rule"
+            style={{ order: i }}
+            role={editing ? undefined : 'separator'}
+            aria-hidden={!editing}
+            onClick={editing ? () => dockDefaults.set(removeAt(layout, i)) : undefined}
+            title={editing ? 'Remove this divider' : undefined}
+          />
+        ) : null
+      )}
       {/* Navigate. Two tools that move you rather than change the board, so
           they lead and are separated from everything that creates. */}
       <div className="dock-group">
         <DockButton
-          {...seatProps(SEAT.select)}
+          {...seatProps('select')}
           icon={<MousePointer2 size={18} />} label="Select" toolId="select"
           active={activeToolId === 'select'} onClick={() => setTool('select')}
         />
@@ -419,13 +695,13 @@ export const ToolWorkspace: React.FC<Props> = ({ activeToolId, onOpenDiagram, on
             Every vector editor pairs them, and putting it in a drawer would
             make the only way to reshape a curve a thing you have to find. */}
         <DockButton
-          {...seatProps(SEAT.directSelect)}
+          {...seatProps('directSelect')}
           icon={<MousePointerClick size={18} />} label="Direct select" toolId="direct-select"
           description="anchors and handles"
           active={activeToolId === 'direct-select'} onClick={() => setTool('direct-select')}
         />
         <DockButton
-          {...seatProps(SEAT.hand)}
+          {...seatProps('hand')}
           icon={<Hand size={17} />} label="Hand" toolId="hand"
           description="pan the board"
           active={activeToolId === 'hand'} onClick={() => setTool('hand')}
@@ -435,9 +711,9 @@ export const ToolWorkspace: React.FC<Props> = ({ activeToolId, onOpenDiagram, on
       {/* Draw. Freehand and bezier live behind one button because they are the
           same act with different precision; the eraser belongs with them. */}
       <div className="dock-group">
-        <div {...hoverProps('pen')} className="dock-slot-wrap">
+        <div {...hoverProps('pen')} className="dock-slot-wrap" {...seatChrome('draw')}>
             <DockButton
-              {...seatProps(SEAT.draw)}
+              {...seatProps('draw', true)}
               icon={activeToolId === 'bezier-pen' ? <PenToolIcon size={18} /> : <Pen size={18} />}
               label="Draw" active={isPen} hasMenu menuOpen={openMenu === 'pen'}
               onClick={() => toggleMenu('pen')}
@@ -513,9 +789,9 @@ export const ToolWorkspace: React.FC<Props> = ({ activeToolId, onOpenDiagram, on
             </DockButton>
         </div>
 
-        <div {...hoverProps('eraser')} className="dock-slot-wrap">
+        <div {...hoverProps('eraser')} className="dock-slot-wrap" {...seatChrome('eraser')}>
             <DockButton
-              {...seatProps(SEAT.eraser)}
+              {...seatProps('eraser', true)}
               icon={<Eraser size={17} />} label="Eraser" toolId="eraser"
               description="[ and ] resize it"
               active={activeToolId === 'eraser'} hasMenu menuOpen={openMenu === 'eraser'}
@@ -535,7 +811,7 @@ export const ToolWorkspace: React.FC<Props> = ({ activeToolId, onOpenDiagram, on
           scanned rather than read, so nothing in it is found quickly. */}
       <div className="dock-group">
         <DockButton
-          {...seatProps(SEAT.text)}
+          {...seatProps('text')}
           icon={<Type size={17} />} label="Text" toolId="text"
           active={activeToolId === 'text'} onClick={() => setTool('text')}
         />
@@ -550,9 +826,9 @@ export const ToolWorkspace: React.FC<Props> = ({ activeToolId, onOpenDiagram, on
 
             The copy is readable English rather than lorem ipsum — see
             `engine/text/demoText.ts` for why that matters here. */}
-        <div {...hoverProps('block')} className="dock-slot-wrap">
+        <div {...hoverProps('block')} className="dock-slot-wrap" {...seatChrome('block')}>
           <DockButton
-            {...seatProps(SEAT.block)}
+            {...seatProps('block', true)}
             icon={<TextQuote size={17} />} label="Text block"
             description="drop a paragraph of placeholder copy"
             active={false}
@@ -577,9 +853,9 @@ export const ToolWorkspace: React.FC<Props> = ({ activeToolId, onOpenDiagram, on
           </DockButton>
         </div>
 
-        <div {...hoverProps('shape')} className="dock-slot-wrap">
+        <div {...hoverProps('shape')} className="dock-slot-wrap" {...seatChrome('shape')}>
             <DockButton
-              {...seatProps(SEAT.shape)}
+              {...seatProps('shape', true)}
               icon={armedBoxShape ? <ShapeIcon kind={armedBoxShape} size={18} /> : <Square size={18} />}
               label="Shape" toolId="shape" active={isShape}
               hasMenu menuOpen={openMenu === 'shape'} onClick={() => toggleMenu('shape')}
@@ -621,9 +897,9 @@ export const ToolWorkspace: React.FC<Props> = ({ activeToolId, onOpenDiagram, on
 
             The seat wears whichever of the two was used last, so switching
             between them costs one click rather than a trip through a menu. */}
-        <div {...hoverProps('line')} className="dock-slot-wrap">
+        <div {...hoverProps('line')} className="dock-slot-wrap" {...seatChrome('line')}>
           <DockButton
-            {...seatProps(SEAT.line)}
+            {...seatProps('line', true)}
             /* The line it will draw — profile *and* head — not a generic
                dash. The seat already changed glyph for line versus arrow, and
                the profile is the same kind of fact about the same gesture; a
@@ -743,9 +1019,9 @@ export const ToolWorkspace: React.FC<Props> = ({ activeToolId, onOpenDiagram, on
         {/* Frames. The flyout is a size picker rather than a tool switcher:
             every entry draws a frame, and the one you pick decides what a
             *click* produces. Dragging always sizes it by hand. */}
-        <div {...hoverProps('frame')} className="dock-slot-wrap">
+        <div {...hoverProps('frame')} className="dock-slot-wrap" {...seatChrome('frame')}>
             <DockButton
-              {...seatProps(SEAT.frame)}
+              {...seatProps('frame', true)}
               icon={<Frame size={17} />} label="Frame" toolId="frame"
               description="a bounded region with a size"
               active={isFrame} hasMenu menuOpen={openMenu === 'frame'}
@@ -786,9 +1062,9 @@ export const ToolWorkspace: React.FC<Props> = ({ activeToolId, onOpenDiagram, on
             drawing a grid inside a frame you have just drawn is the sequence
             people actually perform. The flyout picks the system before the
             drag, so the preview under the pointer is already the right one. */}
-        <div {...hoverProps('grid')} className="dock-slot-wrap">
+        <div {...hoverProps('grid')} className="dock-slot-wrap" {...seatChrome('grid')}>
           <DockButton
-            {...seatProps(SEAT.grid)}
+            {...seatProps('grid', true)}
             icon={<LayoutGrid size={17} />} label="Grid" toolId="grid"
             description="lay out a composition"
             active={activeToolId === 'grid'} hasMenu menuOpen={openMenu === 'grid'}
@@ -830,13 +1106,13 @@ export const ToolWorkspace: React.FC<Props> = ({ activeToolId, onOpenDiagram, on
             because what it makes is a *relationship* — it needs two objects to
             already exist and adds nothing on its own. */}
         <DockButton
-          {...seatProps(SEAT.connector)}
+          {...seatProps('connector')}
           icon={<Spline size={17} />} label="Connect" toolId="connector"
           description="join two objects"
           active={activeToolId === 'connector'} onClick={() => setTool('connector')}
         />
         <DockButton
-          {...seatProps(SEAT.sticky)}
+          {...seatProps('sticky')}
           icon={<StickyNote size={17} />} label="Sticky" toolId="sticky"
           active={activeToolId === 'sticky'} onClick={() => setTool('sticky')}
         />
@@ -852,12 +1128,12 @@ export const ToolWorkspace: React.FC<Props> = ({ activeToolId, onOpenDiagram, on
           into view. */}
       <div className="dock-group">
         <DockButton
-          {...seatProps(SEAT.image)}
+          {...seatProps('image')}
           icon={<ImageIcon size={17} />} label="Image" toolId="image"
           active={activeToolId === 'image'} onClick={() => setTool('image')}
         />
         <DockButton
-          {...seatProps(SEAT.audio)}
+          {...seatProps('audio')}
           icon={<Mic size={17} />} label="Voice" toolId="audio"
           description="record a spoken note"
           active={activeToolId === 'audio'} onClick={() => setTool('audio')}
@@ -869,7 +1145,7 @@ export const ToolWorkspace: React.FC<Props> = ({ activeToolId, onOpenDiagram, on
             board" rather than "draw on it", which is the split the eye is
             actually reading. */}
         <DockButton
-          {...seatProps(SEAT.forces)}
+          {...seatProps('forces')}
           icon={<Sparkles size={17} />} label="Forces"
           description="push, pull and drop objects"
           active={isForceTool(activeToolId)}
@@ -891,7 +1167,7 @@ export const ToolWorkspace: React.FC<Props> = ({ activeToolId, onOpenDiagram, on
       <div className="dock-group">
         <div {...hoverProps('more')} className="dock-slot-wrap">
           <DockButton
-            {...seatProps(SEAT.more)}
+            {...moreSeatProps()}
             icon={activeExtra ? activeExtra.icon : <MoreVertical size={18} />}
             label={activeExtra ? activeExtra.label : 'More'}
             description={activeExtra ? activeExtra.description : 'comments and diagrams'}
@@ -901,8 +1177,8 @@ export const ToolWorkspace: React.FC<Props> = ({ activeToolId, onOpenDiagram, on
             onClick={() => toggleMenu('more')}
           >
             {openMenu === 'more' && (
-              <Flyout title="More" wide>
-                {EXTRA_TOOLS.map((entry) => (
+              <Flyout title={editing ? 'Editing the toolbar' : 'More'} wide>
+                {!editing && EXTRA_TOOLS.map((entry) => (
                   <FlyoutItem
                     key={entry.id}
                     icon={entry.icon}
@@ -912,6 +1188,64 @@ export const ToolWorkspace: React.FC<Props> = ({ activeToolId, onOpenDiagram, on
                     onClick={() => { setPinnedMenu(null); entry.run(); }}
                   />
                 ))}
+
+                {/**
+                  * Tools that have been put away.
+                  *
+                  * The drawer is where a hidden seat goes, so the drawer is
+                  * where it has to be reachable from -- a tool you can remove
+                  * and not restore is a tool you have deleted. Listed outside
+                  * edit mode too, and usable there, because someone who tidied
+                  * the dock last week should not have to remember that this is
+                  * a mode before they can reach the eraser.
+                  */}
+                {layout.hidden.length > 0 && (
+                  <>
+                    <div className="dock-flyout__group" role="presentation">Put away</div>
+                    {layout.hidden.map((seat) => (
+                      <FlyoutItem
+                        key={seat}
+                        icon={SEAT_GLYPH[seat]}
+                        label={SEAT_LABEL[seat]}
+                        description="back onto the dock"
+                        active={false}
+                        onClick={() => dockDefaults.set(showSeat(layout, seat))}
+                      />
+                    ))}
+                  </>
+                )}
+
+                <div className="dock-flyout__group" role="presentation">Toolbar</div>
+                <FlyoutItem
+                  icon={editing ? <Check size={16} /> : <SlidersHorizontal size={16} />}
+                  label={editing ? 'Done editing' : 'Edit toolbar'}
+                  description={editing ? 'stop rearranging' : 'drag tools to rearrange or put away'}
+                  active={editing}
+                  onClick={() => {
+                    setEditing((v) => !v);
+                    // Pinned open: entering the mode from a menu that then shut
+                    // would hide the drawer you are about to drag things into.
+                    setPinnedMenu('more');
+                  }}
+                />
+                {editing && (
+                  <FlyoutItem
+                    icon={<SeparatorVertical size={16} />}
+                    label="Add a divider"
+                    description="group the tools your way"
+                    active={false}
+                    onClick={() => dockDefaults.set(addSeparator(layout, layout.order.length))}
+                  />
+                )}
+                {!isDefaultLayout(layout) && (
+                  <FlyoutItem
+                    icon={<RotateCcw size={16} />}
+                    label="Reset toolbar"
+                    description="back to the arrangement it shipped with"
+                    active={false}
+                    onClick={() => dockDefaults.reset()}
+                  />
+                )}
               </Flyout>
             )}
           </DockButton>
