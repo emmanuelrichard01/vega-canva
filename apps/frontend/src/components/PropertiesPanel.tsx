@@ -7,8 +7,8 @@ import {
   LayoutGrid,
   LayoutTemplate,
   PanelRightClose,
+  Frame,
   SendToBack,
-  Sliders,
   StickyNote,
 } from 'lucide-react';
 import { applyNodePatches, localAuthorId, lowestZIndex, nextZIndex, provider, updateNodes } from '../engine/document';
@@ -16,6 +16,7 @@ import { useStore } from '../hooks/useStore';
 import { APPEARANCE_TYPES } from '../engine/objects/appearanceTypes';
 import { resolveAffordances, type AffordanceId } from '../engine/selection/affordances';
 import { GridSection } from './panel/GridSection';
+import { BoardSection } from './panel/BoardSection';
 import { gridNodeOf } from '../engine/grid/gridApply';
 import { objectRegistry } from '../engine/objects';
 import {
@@ -118,11 +119,32 @@ export const PropertiesPanel: React.FC<PropertiesPanelProps> = ({ selectedIds, o
 
   const shared = <T,>(read: (n: AnyNode) => T): Shared<T> => sharedValue(nodes, read);
 
+  /**
+   * Nothing selected is not nothing to show.
+   *
+   * This was a grey icon and the words "Nothing selected" at 70% opacity,
+   * filling a 260px column that is dead for as long as you are not holding
+   * something -- which on a canvas is most of the time, because you deselect to
+   * *look* at your work, and that is exactly when the panel is in your eyeline.
+   *
+   * An empty selection is really a selection of the board, so the panel keeps
+   * doing its one job on a different subject. See `BoardSection`.
+   *
+   * The shell below is a deliberate copy of the populated panel's, down to the
+   * sticky header and the same paddings, so switching between the two reads as
+   * one panel changing subject rather than as two screens. It is inline because
+   * the panel it has to match is inline; the new content underneath uses
+   * classes.
+   */
   if (!node) {
     return (
-      <div style={{ display: 'flex', flexDirection: 'column', height: '100%', background: 'var(--surface-primary)' }}>
-        {onCollapse && (
-          <div style={{ display: 'flex', justifyContent: 'flex-end', padding: '10px 12px' }}>
+      <div className="custom-scrollbar" style={{ display: 'flex', flexDirection: 'column', height: '100%', overflowY: 'auto', overflowX: 'hidden', userSelect: 'none', background: 'var(--surface-primary)', paddingBottom: '24px' }}>
+        <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: '12px', padding: '16px', borderBottom: '1px solid var(--border-divider)', background: 'var(--surface-elevated)', position: 'sticky', top: 0, zIndex: 10 }}>
+          <div style={{ display: 'flex', alignItems: 'center', gap: '8px', color: 'var(--text-primary)', fontWeight: 500 }}>
+            <Frame size={16} color="var(--text-secondary)" />
+            <span>Board</span>
+          </div>
+          {onCollapse && (
             <button
               className="btn-icon"
               style={{ padding: '4px' }}
@@ -132,12 +154,10 @@ export const PropertiesPanel: React.FC<PropertiesPanelProps> = ({ selectedIds, o
             >
               <PanelRightClose size={15} />
             </button>
-          </div>
-        )}
-        <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', flex: 1, color: 'var(--text-secondary)', gap: '12px', opacity: 0.7 }}>
-          <Sliders size={28} />
-          <span style={{ fontSize: 'var(--text-lg)', fontWeight: 600 }}>Nothing selected</span>
+          )}
         </div>
+
+        <BoardSection overrideObjects={overrideObjects} />
       </div>
     );
   }

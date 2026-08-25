@@ -8995,6 +8995,156 @@ body[data-zen='physics'] .forces-handle { bottom: 32px; }
  * between constantly should cost one click each, not two, and the labels are
  * short enough to sit side by side at this width.
  */
+/**
+ * The board panel: what the inspector shows with nothing selected.
+ *
+ * Every rule here is content *inside* the panel's existing sections, not a
+ * second panel chrome -- the shell, the sticky header and the accordions are
+ * the same ones a selected object gets, so switching between the two reads as
+ * one panel changing subject.
+ */
+
+/* The one case where a message is the right answer: an empty board genuinely
+   has nothing to describe, and the useful thing to say is where to start. */
+.board-empty {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 6px;
+  padding: 40px 20px;
+  color: var(--text-tertiary);
+  text-align: center;
+}
+
+.board-empty__title {
+  margin: 4px 0 0;
+  color: var(--text-secondary);
+  font-size: var(--text-sm);
+  font-weight: var(--weight-semibold);
+}
+
+.board-empty__hint {
+  margin: 0;
+  font-size: var(--text-xs);
+  line-height: 1.5;
+  /* Narrower than the panel, so the lines break somewhere deliberate instead
+     of wherever 260px happens to fall. Wide enough that the two keycaps do not
+     get stranded on lines of their own. */
+  max-width: 26ch;
+}
+
+.board-empty kbd {
+  padding: 1px 5px;
+  border: 1px solid var(--border-divider);
+  border-bottom-width: 2px;
+  border-radius: var(--radius-sm);
+  background: var(--surface-hover);
+  color: var(--text-secondary);
+  font-family: var(--font-mono);
+  font-size: var(--text-2xs);
+}
+
+/**
+ * A count per type, each row a way back into the document.
+ *
+ * Rows rather than a chart or a set of chips: the numbers want to be compared
+ * down a column, and every row is also a button, which chips at three different
+ * widths would make ambiguous -- a thing you can click should look like the
+ * other things you can click.
+ */
+.board-census {
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
+}
+
+.board-census__row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  width: 100%;
+  padding: 5px 8px;
+  border: none;
+  border-radius: var(--radius-md);
+  background: transparent;
+  color: var(--text-secondary);
+  font-size: var(--text-xs);
+  text-align: left;
+  cursor: pointer;
+  transition: background-color var(--motion-hover), color var(--motion-hover);
+}
+
+.board-census__row:hover {
+  background: var(--surface-hover);
+  color: var(--text-primary);
+}
+
+.board-census__row:focus-visible {
+  outline: 2px solid var(--text-accent);
+  outline-offset: -2px;
+}
+
+.board-census__label {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
+}
+
+.board-census__count {
+  /* Tabular figures, so a column of counts lines up on the unit digit rather
+     than wandering with the glyph widths -- the whole reason these are a column
+     and not a sentence. */
+  font-family: var(--font-mono);
+  font-size: var(--text-2xs);
+  font-variant-numeric: tabular-nums;
+  color: var(--text-tertiary);
+}
+
+.board-census__row:hover .board-census__label {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
+}
+
+.board-census__count { color: var(--text-secondary); }
+
+/* A label and a switch, on the panel's own rail. */
+.board-setting {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  min-height: 26px;
+}
+
+.board-setting__label {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  color: var(--text-secondary);
+  font-size: var(--text-xs);
+}
+
+/* The value a setting operates on, said quietly beside its name. A snap
+   setting that does not say what it snaps *to* is a toggle you have to test
+   before you can understand it. */
+.board-setting__hint {
+  padding: 1px 5px;
+  border-radius: var(--radius-sm);
+  background: var(--surface-hover);
+  color: var(--text-tertiary);
+  font-family: var(--font-mono);
+  font-size: var(--text-2xs);
+  font-variant-numeric: tabular-nums;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .board-census__row { transition: none; }
+}
+
 .cp-tabs {
   display: flex;
   gap: 2px;
