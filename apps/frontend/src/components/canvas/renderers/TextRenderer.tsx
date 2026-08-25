@@ -91,6 +91,30 @@ export const TextRenderer: React.FC<Props> = React.memo(({ node, visible }) => {
    */
   React.useEffect(() => {
     if (!visible || node.resize === 'fixed') return;
+
+    /**
+     * Never while the box is being dragged or resized.
+     *
+     * ## The fight this ends
+     *
+     * This effect measures the text and writes the box back to the document.
+     * A gesture is doing the same thing from the other side: the transformer
+     * writes a width, this measures it, disagrees by a pixel or two, and writes
+     * its own -- and the write lands in the CRDT, so `ObjectRenderer`
+     * re-renders the Konva group from the **stored** geometry, which mid-drag
+     * is still where the object started. The box snaps back under the pointer
+     * and the gesture appears to be refused.
+     *
+     * It is the same defect for a move as for a resize, because the write does
+     * not have to touch `x`/`y` to cause it -- any store write re-renders the
+     * group, and the group's position comes from the store.
+     *
+     * `live` is present exactly while this node is under a gesture, and is
+     * cleared on release -- at which point this effect runs again against the
+     * committed geometry and settles the box properly. So the measurement is
+     * deferred, not skipped.
+     */
+    if (live) return;
     // An empty box has nothing to measure and must not be measured: collapsing
     // a brand-new node to a hairline takes the editor overlay with it, since
     // the overlay is sized from the node.
@@ -122,7 +146,7 @@ export const TextRenderer: React.FC<Props> = React.memo(({ node, visible }) => {
       updateNode(node.id, { width: Math.max(1, width), height: Math.max(1, height) });
     }, 180);
     return () => window.clearTimeout(timer);
-  }, [node.id, node.resize, node.width, node.height, node.text, layout, visible]);
+  }, [node.id, node.resize, node.width, node.height, node.text, layout, visible, live]);
 
   /**
    * Above the early return, because they are hooks.

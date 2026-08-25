@@ -19,6 +19,8 @@ import { doc, provider, metadataMap, deleteNode, applyNodePatches, nextZIndex, l
 import { useRoomState } from './hooks/useSync';
 import { initSyncBridge, useStore } from './hooks/useStore';
 import { breakApartGrid } from './engine/grid/gridApply';
+import { flattenToPath } from './engine/document/vectorOps';
+import { pathEdit } from './engine/interaction/pathEdit';
 import { editor } from './engine/api/EditorAPI';
 import { alignSelection, distributeSelection, type AlignEdge, type DistributeAxis } from './engine/model/align';
 import { emptyGroups } from './engine/model/groupTree';
@@ -630,6 +632,18 @@ export default function Room() {
      */
     group: () => { if (selectedIds.length > 1) editor.groupNodes(selectedIds); },
     ungroup: () => { if (selectedIds.length > 0) editor.ungroupNodes(selectedIds); },
+    'to-path': () => {
+      if (selectedIds.length !== 1) return;
+      const newId = flattenToPath(selectedIds[0]);
+      // Selected and opened for editing, because converting is something you do
+      // in order to edit -- landing on the old selection would make the command
+      // look like it did nothing.
+      if (newId) {
+        setSelectedIds([newId]);
+        pathEdit.enter(newId);
+        window.dispatchEvent(new CustomEvent('legacy_tool_change', { detail: 'direct-select' }));
+      }
+    },
     'break-apart': () => {
       if (selectedIds.length !== 1) return;
       const ids = breakApartGrid(selectedIds[0]);

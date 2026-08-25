@@ -12,7 +12,7 @@ import { syncConnectedConnectors } from '../../engine/model/connectorTargets';
 import { layoutText } from '../../engine/text/layout';
 import { measurerFor } from '../../engine/text/measure';
 import { applyTextCase } from '../../engine/model/textCase';
-import type { AnyNode } from '../../engine/model/schema';
+import type { AnyNode, TextNode } from '../../engine/model/schema';
 
 interface Props {
   selectedIds: string[];
@@ -279,6 +279,32 @@ function computePinnedBox(
   /** Every selected node exactly as it was when the gesture began. */
   const initialNodesMap = useRef<Record<string, AnyNode>>({});
 
+  /**
+   * The geometry the live pass computed for each text node, for the commit.
+   *
+   * ## Why the commit cannot re-derive it
+   *
+   * A text box must never carry a scale -- scaling glyphs stretches them, which
+   * is the one thing type may not do -- so `handleTransform` folds the scale
+   * into a re-layout and immediately resets the Konva node to `scaleX = 1`.
+   *
+   * `handleTransformEnd` then read that same scale back to work out the final
+   * size, and read the **1** the live pass had just written. So every text
+   * resize committed `startNode.width * 1`: the box reflowed correctly under
+   * the pointer for the whole drag and snapped back to its original width the
+   * instant you let go.
+   *
+   * The two halves have to be connected rather than each deriving the answer
+   * independently, because after the reset the scale is no longer a record of
+   * anything. The live pass already did the work; the commit uses it.
+   */
+  const liveTextGeometry = useRef<Record<string, {
+    width: number;
+    height: number;
+    typography: TextNode['typography'];
+    resize: TextNode['resize'];
+  }>>({});
+
   const handleTransformStart = () => {
     window.dispatchEvent(new CustomEvent('canvas-drag-start'));
     setTransforming(true);
@@ -292,6 +318,7 @@ function computePinnedBox(
       startMap[n.id] = { ...n };
     });
     initialNodesMap.current = startMap;
+    liveTextGeometry.current = {};
   };
 
   const handleTransform = () => {
@@ -365,6 +392,15 @@ function computePinnedBox(
         }
 
         const pinned = computePinnedBox(anchor, startNode, width, height);
+        // Handed to the commit -- see `liveTextGeometry`. Recorded for every
+        // branch above, because each one is a different answer and the commit
+        // must not have to work out which ran.
+        liveTextGeometry.current[id] = {
+          width,
+          height,
+          typography: typo,
+          resize: !draggedCorner && VERTICAL_EDGES.has(anchor) ? 'fixed' : 'height',
+        };
         singleBadgeW = width;
         singleBadgeH = height;
         liveTransformStore.set(id, {
@@ -376,6 +412,9 @@ function computePinnedBox(
           typography: typo,
           resize: 'height',
         });
+        // Handed to the commit, which cannot recover it from a scale this pass
+        // has just zeroed -- see `liveTextGeometry`.
+        liveTextGeometry.current[id] = { width, height, typography: typo, resize: 'height' };
         return;
       }
 
@@ -439,14 +478,29 @@ function computePinnedBox(
       konvaNode.scaleX(1);
       konvaNode.scaleY(1);
 
-      let finalW = Math.max(MIN_SIZE, startNode.width * Math.abs(scaleX));
-      let finalH = Math.max(MIN_SIZE, startNode.height * Math.abs(scaleY));
+      /**
+       * A text box commits what the live pass measured, not a scale.
+       *
+       * See `liveTextGeometry`. The branches below re-derive the same three
+       * answers from `scaleX`/`scaleY`, which the live pass zeroes the instant
+       * it runs -- so they were computing `startNode.width * 1` and every text
+       * resize snapped back on release. They are kept only for the case where
+       * no live pass ran at all, which is a transform so short it produced no
+       * `transform` event.
+       */
+      const live = node.type === 'text' ? liveTextGeometry.current[id] : undefined;
+      let finalW = live ? live.width : Math.max(MIN_SIZE, startNode.width * Math.abs(scaleX));
+      let finalH = live ? live.height : Math.max(MIN_SIZE, startNode.height * Math.abs(scaleY));
 
       /**
        * Resizing a text box changes what kind of box it is.
        */
       const textMode: Record<string, unknown> = {};
-      if (node.type === 'text' && startNode.type === 'text') {
+      if (live) {
+        textMode.typography = live.typography;
+        textMode.resize = live.resize;
+      }
+      if (!live && node.type === 'text' && startNode.type === 'text') {
         if (draggedCorner && uniformDrag(scaleX, scaleY)) {
           const factor = Math.abs(scaleX);
           const newFontSize = Math.round(Math.max(4, Math.min(400, startNode.typography.fontSize * factor)));
@@ -551,6 +605,7 @@ function computePinnedBox(
     });
 
     initialNodesMap.current = {};
+    liveTextGeometry.current = {};
     const connectorPatches = syncConnectedConnectors(modifiedIds, updatedObjects);
     applyNodePatches([...nodePatches, ...connectorPatches]);
 

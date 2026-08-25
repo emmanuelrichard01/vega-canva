@@ -482,17 +482,60 @@ export const ObjectContextToolbar: React.FC<Props> = ({ selectedId, selectedIds,
       const screenW = (maxX - minX) * cameraSystem.zoom;
       const screenH = (maxY - minY) * cameraSystem.zoom;
 
-      // Above by preference, below when there is no room above. The rail must
-      // never cover the thing it edits, which is why it flips rather than
-      // simply clamping into the object's own box.
-      let y = screenY - STANDOFF;
-      let currentPlacement: 'top' | 'bottom' = 'top';
-      if (y - RAIL_HEIGHT < EDGE_MARGIN + 48) {
-        y = screenY + screenH + STANDOFF;
-        currentPlacement = 'bottom';
+      /**
+       * Above by preference, below when there is no room above, and never
+       * clamped back over the object.
+       *
+       * ## The bug this replaces
+       *
+       * The old version flipped correctly and then undid it:
+       *
+       *     if (currentPlacement === 'bottom' && y > dockLimit) y = dockLimit;
+       *
+       * `dockLimit` is the lowest the rail may sit before it fouls the tool
+       * dock, so for any object near the bottom of the viewport that line
+       * dragged the rail *up* — straight back over the artwork it had just
+       * flipped below to avoid. Two lines under a comment promising the rail
+       * "must never cover the thing it edits".
+       *
+       * ## The rule now
+       *
+       * Both gaps are measured against the same free strip of canvas, and the
+       * rail takes whichever side it actually fits in. When neither side fits —
+       * an object taller than the viewport, or one straddling the dock — it
+       * takes the *larger* gap and is clamped to the viewport edge rather than
+       * into the object. Overlapping the edge of the screen is a cosmetic
+       * fault; overlapping the artwork is a functional one, because the rail
+       * covers what you are trying to look at while you edit it.
+       */
+      const topBound = EDGE_MARGIN + 48;
+      const bottomBound = window.innerHeight - (sidebarsVisible ? BOTTOM_DOCK_HEIGHT : EDGE_MARGIN);
+      const needed = RAIL_HEIGHT + STANDOFF;
+
+      const roomAbove = screenY - topBound;
+      const roomBelow = bottomBound - (screenY + screenH);
+
+      let currentPlacement: 'top' | 'bottom' =
+        roomAbove >= needed ? 'top'
+        : roomBelow >= needed ? 'bottom'
+        // Neither fits: take the side with more room, and accept the viewport
+        // edge rather than the object.
+        : roomAbove >= roomBelow ? 'top'
+        : 'bottom';
+
+      // `y` is the rail's *bottom* edge above the object and its *top* edge
+      // below it -- see the `translate(-50%, -100% | 0%)` on `Rail`.
+      let y = currentPlacement === 'top'
+        ? screenY - STANDOFF
+        : screenY + screenH + STANDOFF;
+
+      // Kept on screen, but only in the direction that moves it away from the
+      // object. Clamping the other way is the bug above.
+      if (currentPlacement === 'top') {
+        y = Math.max(y, topBound + RAIL_HEIGHT);
+      } else {
+        y = Math.min(y, bottomBound - RAIL_HEIGHT);
       }
-      const dockLimit = window.innerHeight - (sidebarsVisible ? BOTTOM_DOCK_HEIGHT : EDGE_MARGIN) - RAIL_HEIGHT;
-      if (currentPlacement === 'bottom' && y > dockLimit) y = dockLimit;
 
       // Half the rail, so the clamp keeps its *edges* inside the free canvas
       // rather than its midpoint.

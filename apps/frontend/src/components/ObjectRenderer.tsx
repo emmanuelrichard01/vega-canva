@@ -1,8 +1,9 @@
 import React, { useCallback, useEffect, useRef, useState, useSyncExternalStore } from 'react';
 import { Circle, Group, Rect, Text } from 'react-konva';
 import Konva from 'konva';
-import { applyNodePatches, createNode, deleteNode, localAuthorId, toggleReaction, updateNode } from '../engine/document';
-import { nanoid } from 'nanoid';
+import { applyGroupPlan, applyNodePatches, deleteNode, doc, localAuthorId, toggleReaction, updateNode } from '../engine/document';
+import { editor } from '../engine/api/EditorAPI';
+import { pasteNodes, writeClipboard } from '../engine/clipboard/clipboard';
 import { consumePendingEdit, requestCaretOnMount } from '../engine/interaction/pendingEdit';
 import { cropMode } from '../engine/interaction/cropMode';
 import { pathEdit } from '../engine/interaction/pathEdit';
@@ -133,6 +134,73 @@ interface SiblingDragState {
  * Tracks which node IDs are currently being duplicated via Alt-drag
  * so their origin ghost twins remain anchored and visible during drag gestures.
  */
+/**
+ * How far an Alt-drag must travel before it duplicates.
+ *
+ * It was one pixel, which is inside the wobble of a click: holding Alt and
+ * clicking an object -- a thing people do constantly, because Alt is also the
+ * modifier for several other gestures -- left a copy sitting exactly on top of
+ * the original, where the only evidence is the layers panel growing a row. Four
+ * pixels is the same threshold the dock editor uses to tell a tap from a drag,
+ * and it is well inside the distance anyone would call "I dragged it".
+ */
+const ALT_DUPLICATE_SLOP = 4;
+
+/**
+ * Duplicate a selection, offset by a drag.
+ *
+ * ## Why this goes through the clipboard rather than calling `createNode`
+ *
+ * Alt-drag had its own duplication written out by hand: a loop spreading each
+ * node into `createNode` with a new id. Every property that makes a *correct*
+ * copy was missing from it, and each one is a bug somebody would eventually
+ * report separately:
+ *
+ *  - **Connectors kept pointing at the originals.** `from.nodeId` was copied
+ *    verbatim, so duplicating a flowchart gave you a second set of boxes with
+ *    every arrow still bound to the first set.
+ *  - **Grouped objects joined the original's group** rather than forming their
+ *    own, because `parentId` was copied verbatim too. Alt-dragging a group gave
+ *    you one group of twice the size.
+ *  - **`zIndex`, `createdAt`, `createdBy` were copied**, which `EditorAPI`'s own
+ *    contract says callers must never supply -- so the copy shared a stacking
+ *    position with its original and claimed its authorship and timestamp.
+ *  - **One transaction per node**, so a nine-object duplicate was nine updates
+ *    a peer received separately and nine steps to undo.
+ *
+ * `writeClipboard` / `pasteNodes` is the implementation that already gets all
+ * of that right, and it is the one Copy-Paste and the Duplicate command use.
+ * There is no version of this worth maintaining twice; the only thing Alt-drag
+ * needs that a paste does not is *where* to put the result, and that is a
+ * parameter.
+ */
+function duplicateAt(ids: readonly string[], dx: number, dy: number): void {
+  const objects = useStore.getState().objects;
+  const nodes = ids.map((id) => objects[id]).filter(Boolean) as AnyNode[];
+  const payload = writeClipboard(nodes);
+  if (!payload) return;
+
+  const { nodes: made, ids: newIds, groups } = pasteNodes(
+    payload,
+    // The selection's own top-left plus the distance travelled, so the copy
+    // lands exactly under the pointer rather than at a fixed paste offset.
+    { x: payload.origin.x + dx, y: payload.origin.y + dy },
+    useStore.getState().groups
+  );
+  if (made.length === 0) return;
+
+  doc.transact(() => {
+    // Folders first: the nodes about to be created point at them, and a peer
+    // observing the transaction should never see a node whose group is missing.
+    for (const record of groups) applyGroupPlan({ nodes: [], groups: [], create: record, remove: [] });
+    made.forEach((node: unknown) => editor.createNode(node as never));
+  });
+
+  if (newIds.length > 0) {
+    window.dispatchEvent(new CustomEvent('requestSelectNodes', { detail: { ids: newIds } }));
+  }
+}
+
 const altDragState = {
   activeIds: new Set<string>(),
   listeners: new Set<() => void>(),
@@ -462,57 +530,26 @@ export const ObjectRenderer = React.memo(
           const dx = e.target.x() - groupDragRef.current.startX;
           const dy = e.target.y() - groupDragRef.current.startY;
 
-          if (isAlt && (Math.abs(dx) > 1 || Math.abs(dy) > 1)) {
-            // Restore original nodes back to start positions
+          if (isAlt && Math.hypot(dx, dy) > ALT_DUPLICATE_SLOP) {
+            // Everything goes back where it was: an Alt-drag leaves the
+            // originals untouched and hands you the copies.
             const stage = e.target.getStage();
-            if (current) {
-              e.target.x(groupDragRef.current.startX);
-              e.target.y(groupDragRef.current.startY);
-            }
-            Object.entries(groupDragRef.current.siblings).forEach(([sid, s]) => {
-              if (s.nodeStartX !== null && s.nodeStartY !== null) {
-                const kn = stage?.findOne('#' + sid);
-                if (kn) {
-                  kn.x(s.nodeStartX);
-                  kn.y(s.nodeStartY);
-                }
+            e.target.x(groupDragRef.current.startX);
+            e.target.y(groupDragRef.current.startY);
+            Object.entries(groupDragRef.current.siblings).forEach(([sid, sib]) => {
+              if (sib.nodeStartX === null || sib.nodeStartY === null) return;
+              const kn = stage?.findOne('#' + sid);
+              if (kn) {
+                kn.x(sib.nodeStartX);
+                kn.y(sib.nodeStartY);
               }
             });
             stage?.batchDraw();
 
-            // Create new duplicated clones for all items in selection
-            const all = useStore.getState().objects;
-            const newIds: string[] = [];
-
-            Object.entries(groupDragRef.current.siblings).forEach(([sid, s]) => {
-              const sibling = all[sid];
-              if (sibling) {
-                const cloneId = nanoid();
-                newIds.push(cloneId);
-                createNode({
-                  ...sibling,
-                  id: cloneId,
-                  x: s.rawX + dx,
-                  y: s.rawY + dy,
-                } as any);
-              }
-            });
-
-            if (current) {
-              const cloneId = nanoid();
-              newIds.push(cloneId);
-              createNode({
-                ...current,
-                id: cloneId,
-                x: current.x + dx,
-                y: current.y + dy,
-              } as any);
-            }
-
+            const ids = [objId, ...Object.keys(groupDragRef.current.siblings)];
             groupDragRef.current = null;
-            if (newIds.length > 0) {
-              window.dispatchEvent(new CustomEvent('requestSelectNodes', { detail: { ids: newIds } }));
-            }
+            connectorDragRef.current = [];
+            duplicateAt(ids, dx, dy);
             return;
           }
 
@@ -565,28 +602,12 @@ export const ObjectRenderer = React.memo(
         const dx = nextX - (current?.x ?? 0);
         const dy = nextY - (current?.y ?? 0);
 
-        if (isAlt && current && (Math.abs(dx) > 1 || Math.abs(dy) > 1)) {
-          // Snap original node back to start
+        if (isAlt && current && Math.hypot(dx, dy) > ALT_DUPLICATE_SLOP) {
+          // Back where it was; the copy is what moved.
           e.target.x(current.x + halfW);
           e.target.y(current.y + halfH);
           e.target.getStage()?.batchDraw();
-
-          // Create duplicate node at drop position
-          const cloneId = nanoid();
-          createNode({
-            ...current,
-            id: cloneId,
-            x: nextX,
-            y: nextY,
-          } as any);
-
-          if (current.type === 'frame') {
-            moveFrameWithChildren(cloneId, dx, dy);
-          }
-          reassignFrame(cloneId);
-          if (onSelect) {
-            onSelect(cloneId);
-          }
+          duplicateAt([objId], dx, dy);
           return;
         }
 
@@ -639,7 +660,7 @@ export const ObjectRenderer = React.memo(
           reassignFrame(objId);
         }
       },
-      [objId, onThrow, onSelect, canDuplicate]
+      [objId, onThrow, canDuplicate]
     );
 
     const handleDblClick = useCallback((e?: Konva.KonvaEventObject<MouseEvent | TouchEvent>) => {

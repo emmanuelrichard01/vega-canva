@@ -2,7 +2,7 @@ import React, { useEffect, useLayoutEffect, useRef, useState } from 'react';
 import {
   Circle, Copy, ClipboardPaste, FileCode2, ImageDown, Minus, MousePointerSquareDashed,
   MoveRight, Square, Star, Trash2, Triangle, BringToFront, SendToBack, Shapes, Workflow, Code2,
-  Group, Ungroup, Lock, Unlock, Eye, EyeOff,
+  Group, Ungroup, Lock, Unlock, Eye, EyeOff, PenTool,
   AlignStartVertical, AlignCenterVertical, AlignEndVertical,
   AlignStartHorizontal, AlignCenterHorizontal, AlignEndHorizontal,
   AlignHorizontalSpaceAround, AlignVerticalSpaceAround,
@@ -37,6 +37,7 @@ export interface CanvasContextMenuActions {
   group: () => void;
   ungroup: () => void;
   'break-apart': () => void;
+  'to-path': () => void;
   align: (edge: AlignEdge) => void;
   distribute: (axis: DistributeAxis) => void;
   toggleLock: () => void;
@@ -93,6 +94,9 @@ const MENU_COMMANDS: Partial<Record<AffordanceId, {
   // No shortcut of its own: it is rare enough that a key would be a key spent,
   // and it reads clearly from the menu where its one word says what it does.
   'break-apart': { icon: () => <Ungroup size={15} />, label: () => 'Break apart', run: (a) => a['break-apart'] },
+  // The pen, because what you get back is a path you edit with anchors — the
+  // same thing the Pen tool makes.
+  'to-path': { icon: () => <PenTool size={15} />, label: () => 'Convert to path', run: (a) => a['to-path'] },
   order: { icon: () => <BringToFront size={15} />, label: () => 'Bring to front', run: (a) => a.bringToFront },
   lock: {
     // Says which way it will go. A toggle labelled with its own name rather

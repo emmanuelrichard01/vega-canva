@@ -28,9 +28,10 @@ describe('DEFAULT_LAYOUT', () => {
     expect(seats.length).toBe(DOCK_SEATS.length);
   });
 
-  it('starts with the text block put away, to keep the dock on one row', () => {
-    expect(DEFAULT_LAYOUT.hidden).toEqual(['block']);
-    expect(DEFAULT_LAYOUT.order).not.toContain('block');
+  it('starts with every tool on the dock', () => {
+    // The text block used to start put away purely for width. Folding it and
+    // the Text tool into one `type` seat removed a seat instead of hiding one.
+    expect(DEFAULT_LAYOUT.hidden).toEqual([]);
   });
 
   it('survives its own normalizer unchanged', () => {
@@ -90,6 +91,27 @@ describe('normalizeLayout', () => {
     for (let i = 1; i < order.length; i += 1) {
       expect(order[i] === SEPARATOR && order[i - 1] === SEPARATOR).toBe(false);
     }
+  });
+
+  /**
+   * A merged seat keeps its old position rather than being dropped.
+   *
+   * The normalizer's ordinary rule for an unrecognised id is to drop it --
+   * right for a tool that was deleted, wrong for one that was *merged*. Without
+   * the rename map, everyone who had rearranged their dock would find Text gone
+   * from where they put it and `type` appended at the far end.
+   */
+  it('maps a merged seat onto its replacement, in place', () => {
+    const { order } = normalizeLayout({ order: ['hand', 'text', 'shape'], hidden: [] });
+    expect(order.indexOf('type')).toBe(1);
+    expect(order).not.toContain('text');
+  });
+
+  it('absorbs both halves of a merge into one seat', () => {
+    // `text` and `block` both became `type`; the duplicate rule keeps the first.
+    const { order } = normalizeLayout({ order: ['text', 'hand', 'block'], hidden: [] });
+    expect(order.filter((i) => i === 'type')).toHaveLength(1);
+    expect(order[0]).toBe('type');
   });
 
   it('will not let a seat be visible and hidden at once', () => {
@@ -184,8 +206,7 @@ describe('isDefaultLayout', () => {
   });
 
   it('sees a different hidden set, even with the order untouched', () => {
-    expect(isDefaultLayout({ ...DEFAULT_LAYOUT, hidden: [] })).toBe(false);
-    expect(isDefaultLayout({ ...DEFAULT_LAYOUT, hidden: ['block', 'hand'] })).toBe(false);
+    expect(isDefaultLayout({ ...DEFAULT_LAYOUT, hidden: ['hand'] })).toBe(false);
   });
 
   it('sees a reorder', () => {

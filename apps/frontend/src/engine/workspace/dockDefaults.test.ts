@@ -5,7 +5,7 @@ import { DEFAULT_LAYOUT, SEPARATOR, type DockLayout } from './dockLayout';
 /** An arrangement somebody put work into, for reset to destroy. */
 const custom: DockLayout = {
   order: ['forces', 'select', SEPARATOR, 'hand', 'draw'],
-  hidden: ['block', 'eraser'],
+  hidden: ['type', 'eraser'],
 };
 
 beforeEach(() => {

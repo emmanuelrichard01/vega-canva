@@ -292,7 +292,7 @@ const MORE_SEAT = DOCK_SEATS.length;
 const SEAT_LABEL: Record<DockSeat, string> = {
   select: 'Select', directSelect: 'Direct select', hand: 'Hand',
   draw: 'Draw', eraser: 'Eraser',
-  text: 'Text', block: 'Text block', shape: 'Shape', line: 'Line',
+  type: 'Type', shape: 'Shape', line: 'Line',
   frame: 'Frame', grid: 'Grid', connector: 'Connector', sticky: 'Note',
   image: 'Image', audio: 'Audio', forces: 'Forces',
 };
@@ -314,7 +314,7 @@ const SEAT_TOOL: Partial<Record<DockSeat, string>> = {
   hand: 'hand',
   draw: 'pen',
   eraser: 'eraser',
-  text: 'text',
+  type: 'text',
   shape: 'shape',
   line: 'line',
   frame: 'frame',
@@ -329,7 +329,7 @@ const SEAT_TOOL: Partial<Record<DockSeat, string>> = {
 const SEAT_GLYPH: Record<DockSeat, React.ReactNode> = {
   select: <MousePointer2 size={16} />, directSelect: <MousePointerClick size={16} />, hand: <Hand size={16} />,
   draw: <Pen size={16} />, eraser: <Eraser size={16} />,
-  text: <Type size={16} />, block: <TextQuote size={16} />, shape: <Square size={16} />, line: <Minus size={16} />,
+  type: <Type size={16} />, shape: <Square size={16} />, line: <Minus size={16} />,
   frame: <Frame size={16} />, grid: <LayoutGrid size={16} />, connector: <Spline size={16} />, sticky: <StickyNote size={16} />,
   image: <ImageIcon size={16} />, audio: <Mic size={16} />, forces: <Sparkles size={16} />,
 };
@@ -1065,34 +1065,55 @@ export const ToolWorkspace: React.FC<Props> = ({ activeToolId, onOpenDiagram, on
           here, which is the density problem in one line: a row that long is
           scanned rather than read, so nothing in it is found quickly. */}
       <div className="dock-group">
-        <DockButton
-          {...seatProps('text')}
-          icon={<Type size={17} />} label="Text" toolId="text"
-          active={activeToolId === 'text'} onClick={() => setTool('text')}
-        />
-
-        {/* A block of placeholder prose, at a length you pick.
-
-            Separate from the Text tool rather than a mode of it, because it is
-            a different action: Text arms a tool and waits for a click, this
-            drops a finished object. Folding them together would mean one seat
-            that sometimes arms and sometimes creates, which is the kind of
-            button people stop trusting.
-
-            The copy is readable English rather than lorem ipsum — see
-            `engine/text/demoText.ts` for why that matters here. */}
-        <div {...hoverProps('block')} className="dock-slot-wrap" {...seatChrome('block')}>
+        {/**
+          * Type: the text tool, and the paragraph blocks, on one seat.
+          *
+          * ## Why these are now grouped, when a note here argued they should not be
+          *
+          * That note said folding them together would make "one seat that
+          * sometimes arms and sometimes creates, which is the kind of button
+          * people stop trusting". The observation is right and the conclusion
+          * was wrong, because the seat does not have to do both: **clicking it
+          * always arms the Text tool**, and the blocks live in the flyout,
+          * which is the same shape as Draw -- click arms the pencil, the flyout
+          * offers the pen. What made the old pairing untrustworthy would have
+          * been a button whose *primary* click changed meaning, and that is not
+          * what this is.
+          *
+          * The flyout labels the two groups with different verbs, so the arm /
+          * insert distinction is stated rather than inferred.
+          *
+          * It also buys back a seat, which is what let the text block come off
+          * the hidden list -- it was only ever put there because the dock
+          * overflowed a laptop by one button.
+          */}
+        <div {...hoverProps('block')} className="dock-slot-wrap" {...seatChrome('type')}>
           <DockButton
-            {...seatProps('block', true)}
-            icon={<TextQuote size={17} />} label="Text block"
-            description="drop a paragraph of placeholder copy"
-            active={false}
+            {...seatProps('type', true)}
+            icon={<Type size={17} />} label="Type" toolId="text"
+            description="text and paragraph blocks"
+            active={activeToolId === 'text'}
             hasMenu
             menuOpen={openMenu === 'block'}
-            onClick={() => toggleMenu('block')}
+            // The seat arms the tool; the caret is what opens the choices. A
+            // menu that stole the click would make the commonest act -- place
+            // some text -- cost two.
+            onClick={() => setTool('text')}
           >
             {openMenu === 'block' && (
-              <Flyout title="Text block" wide>
+              <Flyout title="Type" wide>
+                <div className="dock-flyout__group" role="presentation">Draw a box</div>
+                <FlyoutItem
+                  icon={<Type size={15} />}
+                  label="Text"
+                  detail={shortcutFor('text') ?? undefined}
+                  description="click or drag on the board"
+                  active={activeToolId === 'text'}
+                  onClick={() => { setPinnedMenu(null); setTool('text'); }}
+                />
+                {/* Readable English rather than lorem ipsum -- see
+                    `engine/text/demoText.ts` for why that matters here. */}
+                <div className="dock-flyout__group" role="presentation">Drop a paragraph</div>
                 {DEMO_LENGTHS.map((words) => (
                   <FlyoutItem
                     key={words}

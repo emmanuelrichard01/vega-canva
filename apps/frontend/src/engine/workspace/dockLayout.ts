@@ -34,8 +34,7 @@ export const DOCK_SEATS = [
   'hand',
   'draw',
   'eraser',
-  'text',
-  'block',
+  'type',
   'shape',
   'line',
   'frame',
@@ -80,34 +79,48 @@ export const DEFAULT_LAYOUT: DockLayout = {
     SEPARATOR,
     'draw', 'eraser',
     SEPARATOR,
-    'text', 'shape', 'line', 'frame', 'grid', 'connector', 'sticky',
+    'type', 'shape', 'line', 'frame', 'grid', 'connector', 'sticky',
     SEPARATOR,
     'image', 'audio', 'forces',
   ],
   /**
-   * The text block starts in the drawer.
+   * Nothing starts put away.
    *
-   * Not because it is unimportant -- it drops a paragraph of placeholder prose,
-   * which is a real thing people want -- but because sixteen seats plus three
-   * dividers plus the drawer is wider than the dock can hold on a laptop, and a
-   * toolbar that wraps onto a second row is worse for every tool on it than one
-   * missing tool is for the people who want that one.
-   *
-   * It is the right one to move because it is the only seat here that
-   * duplicates something already easy: Text is beside it, and a block is a text
-   * object with words already in it. Everything else on the dock is the only
-   * way to do what it does.
-   *
-   * One drag in the toolbar editor puts it back, and that arrangement then
-   * persists.
+   * The text block did, purely for width -- sixteen seats plus three dividers
+   * plus the drawer overflowed a laptop dock. Folding it and the Text tool into
+   * one `type` seat removed a seat instead of hiding one, so the compromise is
+   * no longer needed and the block is reachable again from a seat that is
+   * always there.
    */
-  hidden: ['block'],
+  hidden: [],
+};
+
+/**
+ * Seats that used to exist, and what they became.
+ *
+ * A stored layout is somebody's arrangement, and the normalizer's ordinary rule
+ * for an id it does not recognise is to drop it -- correct for a tool that was
+ * deleted, and wrong for one that was *merged*. Without this, everyone who had
+ * ever rearranged their dock would find Text gone from where they put it and
+ * `type` appended at the far end by rule 3.
+ *
+ * Mapping the old ids onto the new one keeps the position: whichever of `text`
+ * or `block` came first is where `type` lands, and the second is absorbed by
+ * the duplicate rule that already runs.
+ */
+const RENAMED: Record<string, DockSeat> = {
+  text: 'type',
+  block: 'type',
 };
 
 const KNOWN = new Set<string>(DOCK_SEATS);
 
-const isSeat = (value: unknown): value is DockSeat =>
-  typeof value === 'string' && KNOWN.has(value);
+/** A stored id, mapped through any rename. `null` when it is not a seat at all. */
+function readSeat(value: unknown): DockSeat | null {
+  if (typeof value !== 'string') return null;
+  if (KNOWN.has(value)) return value as DockSeat;
+  return RENAMED[value] ?? null;
+}
 
 /**
  * A stored layout, made safe to render.
@@ -149,8 +162,8 @@ export function normalizeLayout(raw: unknown): DockLayout {
    * default over the top of it would throw away a deliberate choice.
    */
   const mentionsSomething =
-    (Array.isArray(source.order) && source.order.some((i) => isSeat(i))) ||
-    (Array.isArray(source.hidden) && source.hidden.some((i) => isSeat(i)));
+    (Array.isArray(source.order) && source.order.some((i) => readSeat(i))) ||
+    (Array.isArray(source.hidden) && source.hidden.some((i) => readSeat(i)));
   if (!mentionsSomething) {
     return { order: [...DEFAULT_LAYOUT.order], hidden: [...DEFAULT_LAYOUT.hidden] };
   }
@@ -165,17 +178,19 @@ export function normalizeLayout(raw: unknown): DockLayout {
       if (order.length > 0 && order[order.length - 1] !== SEPARATOR) order.push(SEPARATOR);
       continue;
     }
-    if (isSeat(item) && !seen.has(item)) {
-      seen.add(item);
-      order.push(item);
+    const seat = readSeat(item);
+    if (seat && !seen.has(seat)) {
+      seen.add(seat);
+      order.push(seat);
     }
   }
 
   const hidden: DockSeat[] = [];
   for (const item of Array.isArray(source.hidden) ? source.hidden : []) {
-    if (isSeat(item) && !seen.has(item)) {
-      seen.add(item);
-      hidden.push(item);
+    const seat = readSeat(item);
+    if (seat && !seen.has(seat)) {
+      seen.add(seat);
+      hidden.push(seat);
     }
   }
 

@@ -57,6 +57,7 @@ export type AffordanceId =
   | 'ungroup'
   | 'break-apart'
   | 'boolean'
+  | 'to-path'
   | 'align'
   | 'distribute'
   | 'order'
@@ -298,6 +299,26 @@ const RULES: readonly (Affordance & { when: (f: SelectionFacts) => boolean })[] 
      */
     id: 'break-apart', label: 'Break apart', weight: 18, surfaces: ['toolbar', 'menu'],
     when: (f) => f.uniformType === 'grid' && f.count === 1,
+  },
+  {
+    /**
+     * Turn a shape's outline into an editable path.
+     *
+     * ## Why a menu entry and not just the double-click it already had
+     *
+     * `flattenToPath` has existed and been reachable exactly one way: double
+     * click a shape with the Direct Selection tool armed, and confirm a banner.
+     * That is a discoverable path only for somebody who already knows the
+     * feature exists -- which is to say, not a path at all. Every vector editor
+     * puts this on the object menu, because "make this editable" is a thing you
+     * decide about an object rather than a mode you enter.
+     *
+     * Shapes only. A path is already one, and text is not convertible without
+     * reading glyph outlines out of the font binary -- see the note in
+     * `vectorOps`.
+     */
+    id: 'to-path', label: 'Convert to path', weight: 17, surfaces: ['menu'],
+    when: (f) => f.count === 1 && f.uniformType === 'shape' && !f.locked,
   },
   {
     id: 'align', label: 'Align', weight: 17, surfaces: ['toolbar', 'menu'],
