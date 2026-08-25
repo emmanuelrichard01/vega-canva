@@ -1,7 +1,8 @@
-import React, { useCallback, useEffect, useLayoutEffect, useRef, useState } from 'react';
+import React, { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
 import { EyedropperButton } from './EyedropperButton';
 import { contrastInk, hexToHsv, hsvToHex, normalizeHex, type HSV } from '../../engine/model/color';
+import { CURATED_PALETTES, paletteOf, tintsAndShades } from '../../engine/model/colorRamp';
 import { PORTAL_SURFACE_ATTR } from './portalSurface';
 
 interface Props {
@@ -92,6 +93,31 @@ export const ColorPickerPopover: React.FC<Props> = ({
   onOpacityChange,
 }) => {
   const [isOpen, setIsOpen] = useState(false);
+  /**
+   * Which source of ready-made colours is showing.
+   *
+   * ## Why tabs rather than a scrolling list
+   *
+   * Four stacked sources -- a derived ramp, neutrals, hues, fourteen curated
+   * palettes and your recents -- came to about five hundred pixels, which is
+   * most of a laptop's height for a popover attached to a 24px swatch.
+   *
+   * The obvious fix is to cap the tall one and let it scroll, and this project
+   * has already tried that twice on the identical control in the grid panel:
+   * three rows visible, then six, and neither was enough to *compare* in --
+   * which is the entire reason the ramps are shown side by side instead of
+   * hidden behind a dropdown. A picker you have to scroll to see the options in
+   * is a dropdown with extra steps. It would also be a scroll region nested
+   * inside a popover that already scrolls, where the wheel does whichever of
+   * the two you did not mean.
+   *
+   * Tabs solve the height without taking the comparison away: each source is
+   * whole when you are looking at it, and none of them costs height when you
+   * are not. The one thing that stays pinned is the shade ramp, because it is
+   * derived from the colour currently in hand and is the row people reach for
+   * most -- putting it behind a click would hide the picker's best answer.
+   */
+  const [source, setSource] = useState<'palettes' | 'swatches' | 'recent'>('palettes');
   const [hexDraft, setHexDraft] = useState('');
   const [recents, setRecents] = useState<string[]>([]);
   const triggerRef = useRef<HTMLButtonElement>(null);
@@ -151,16 +177,27 @@ export const ColorPickerPopover: React.FC<Props> = ({
     const place = () => {
       const trigger = triggerRef.current?.getBoundingClientRect();
       if (!trigger) return;
-      const width = 248;
-      const height = popoverRef.current?.offsetHeight ?? 340;
+      const width = 268;
+      const height = popoverRef.current?.offsetHeight ?? 480;
       const margin = 8;
 
       // Prefer below-and-left-aligned, then flip above, then clamp — a picker
       // pinned to the right-hand panel opens past the window edge otherwise.
+      /**
+       * Below, then above, then clamped to the viewport.
+       *
+       * The clamp is the part that matters now the picker is taller: with
+       * palettes and a shade ramp it can exceed the window on a short display,
+       * and both preferred placements then run off an edge. `max-height` on the
+       * popover lets it scroll inside itself rather than being cut off, and
+       * pinning the top to the margin is what keeps its own scrollbar reachable.
+       */
       let top = trigger.bottom + margin;
       if (top + height > window.innerHeight - margin) {
-        top = Math.max(margin, trigger.top - height - margin);
+        top = trigger.top - height - margin;
       }
+      top = Math.min(top, Math.max(margin, window.innerHeight - height - margin));
+      top = Math.max(margin, top);
       let left = trigger.left + trigger.width / 2 - width / 2;
       left = Math.min(left, window.innerWidth - width - margin);
       left = Math.max(margin, left);
@@ -252,6 +289,15 @@ export const ColorPickerPopover: React.FC<Props> = ({
     }
   };
 
+  /**
+   * Recomputed only when the colour changes, not on every drag frame.
+   *
+   * Nine `hexToHsv` / `hsvToHex` round trips is nothing on its own and is
+   * something at sixty a second while a saturation drag is live -- and the
+   * answer is identical for every frame that lands on the same hex.
+   */
+  const shades = useMemo(() => tintsAndShades(displayColor, 9), [displayColor]);
+
   const handlePick = (c: string) => {
     if (c === 'transparent') {
       commit('transparent');
@@ -299,18 +345,21 @@ export const ColorPickerPopover: React.FC<Props> = ({
             {...trackHandlers((fx, fy) => setHsv({ s: fx, v: 1 - fy }))}
             role="application"
             aria-label="Saturation and brightness"
+            className="cp-field"
             style={{
-              position: 'relative', height: 132, borderRadius: 8, cursor: 'crosshair',
-              touchAction: 'none',
               background: `linear-gradient(to top, #000, transparent), linear-gradient(to right, #fff, ${hsvToHex({ h: hsv.h, s: 1, v: 1 })})`,
             }}
           >
+            {/* The handle takes a ring in whichever of black or white will show
+                against the colour under it. A fixed white ring vanishes on a
+                pale fill, which is exactly where precision matters most. */}
             <div
+              className="cp-field__handle"
               style={{
-                position: 'absolute', width: 12, height: 12, borderRadius: '50%',
-                left: `calc(${hsv.s * 100}% - 6px)`, top: `calc(${(1 - hsv.v) * 100}% - 6px)`,
-                border: `2px solid ${contrastInk(displayColor)}`,
-                boxShadow: '0 1px 3px rgba(0,0,0,0.4)', pointerEvents: 'none',
+                left: `${hsv.s * 100}%`,
+                top: `${(1 - hsv.v) * 100}%`,
+                borderColor: contrastInk(displayColor),
+                background: displayColor,
               }}
             />
           </div>
@@ -359,11 +408,113 @@ export const ColorPickerPopover: React.FC<Props> = ({
             <EyedropperButton onPick={(picked) => handlePick(picked)} />
           </div>
 
-          <Swatches label="Neutrals" colors={NEUTRALS} current={displayColor} isNone={isNone} onPick={handlePick} />
-          <Swatches label="Colours" colors={HUES} current={displayColor} isNone={isNone} onPick={handlePick} />
-          {recents.length > 0 && (
-            <Swatches label="Recent" colors={recents} current={displayColor} isNone={isNone} onPick={handlePick} />
-          )}
+          {/**
+            * This colour's own family, before anybody else's.
+            *
+            * The question people arrive at a picker with is almost never "what
+            * colours exist" -- it is *this one, but lighter*, and neither a
+            * fixed swatch set nor a saturation-value field answers it. The
+            * swatches are somebody else's colours; the field asks you to hold a
+            * hue steady by eye while moving one axis, which is the one thing a
+            * two-axis drag is worst at.
+            *
+            * Derived, so it is always this colour's ramp, and consistent across
+            * hues -- the third step of a blue and the third step of a red sit
+            * the same distance from their parents. That is what makes a set of
+            * tints picked here hold together as a set.
+            */}
+          <div className="cp-group">
+            <span className="cp-group__label">Shades</span>
+            <div className="cp-ramp" role="group" aria-label="Tints and shades of the current colour">
+              {shades.map((c) => (
+                <button
+                  key={c}
+                  type="button"
+                  className="cp-ramp__step"
+                  aria-label={c}
+                  data-tooltip={c.toUpperCase()}
+                  data-active={(!isNone && c.toUpperCase() === displayColor.toUpperCase()) || undefined}
+                  style={{ background: c }}
+                  onClick={() => handlePick(c)}
+                />
+              ))}
+            </div>
+          </div>
+
+          <div className="cp-tabs" role="tablist" aria-label="Colour sources">
+            {([
+              ['palettes', 'Palettes'],
+              ['swatches', 'Swatches'],
+              ['recent', 'Recent'],
+            ] as const).map(([id, label]) => (
+              <button
+                key={id}
+                type="button"
+                role="tab"
+                aria-selected={source === id}
+                className="cp-tab"
+                data-active={source === id || undefined}
+                // Empty is still worth showing, greyed: a tab that appeared
+                // only once you had used a colour would move the other two
+                // under the pointer the first time you picked one.
+                disabled={id === 'recent' && recents.length === 0}
+                onClick={() => setSource(id)}
+              >
+                {label}
+              </button>
+            ))}
+          </div>
+
+          <div className="cp-panel" role="tabpanel">
+            {source === 'palettes' && (
+              /**
+               * The curated ramps, the same ones the grid generator offers.
+               *
+               * They were the best colour affordance in the app and reachable
+               * from exactly one panel, while every stroke and every piece of
+               * text went through a row of nine flat hues. Two standards for one
+               * decision, with the good one hidden.
+               *
+               * Presented as whole ramps rather than as a wall of eighty-four
+               * swatches, because the ramp is the unit worth choosing from: the
+               * colours in a row are related, and shown together they say so.
+               * Every chip is still its own target.
+               */
+              <div className="cp-palettes">
+                {CURATED_PALETTES.map((palette) => (
+                  <div
+                    key={palette.id}
+                    className="cp-palette"
+                    data-active={(!isNone && paletteOf(displayColor) === palette.id) || undefined}
+                  >
+                    {palette.colors.map((c) => (
+                      <button
+                        key={c}
+                        type="button"
+                        className="cp-palette__chip"
+                        aria-label={`${palette.name} ${c}`}
+                        data-tooltip={`${palette.name} · ${c.toUpperCase()}`}
+                        data-active={(!isNone && c.toUpperCase() === displayColor.toUpperCase()) || undefined}
+                        style={{ background: c }}
+                        onClick={() => handlePick(c)}
+                      />
+                    ))}
+                  </div>
+                ))}
+              </div>
+            )}
+
+            {source === 'swatches' && (
+              <>
+                <Swatches label="Neutrals" colors={NEUTRALS} current={displayColor} isNone={isNone} onPick={handlePick} />
+                <Swatches label="Colours" colors={HUES} current={displayColor} isNone={isNone} onPick={handlePick} />
+              </>
+            )}
+
+            {source === 'recent' && (
+              <Swatches label="On this board" colors={recents} current={displayColor} isNone={isNone} onPick={handlePick} />
+            )}
+          </div>
         </div>,
         document.body
       )}
@@ -401,19 +552,10 @@ const Track: React.FC<{
       if (e.key === 'Home') { e.preventDefault(); onChange(0); }
       if (e.key === 'End') { e.preventDefault(); onChange(1); }
     }}
-    style={{
-      position: 'relative', height: 12, borderRadius: 999, background,
-      cursor: 'ew-resize', touchAction: 'none',
-    }}
+    className="cp-track"
+    style={{ background }}
   >
-    <div
-      style={{
-        position: 'absolute', top: '50%', left: `${value * 100}%`,
-        transform: 'translate(-50%, -50%)', width: 14, height: 14, borderRadius: '50%',
-        background: handleColor, border: '2px solid #fff',
-        boxShadow: '0 1px 4px rgba(0,0,0,0.45)', pointerEvents: 'none',
-      }}
-    />
+    <div className="cp-track__handle" style={{ left: `${value * 100}%`, background: handleColor }} />
   </div>
 );
 

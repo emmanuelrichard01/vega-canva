@@ -91,41 +91,17 @@ export interface StyledCell extends GridCell {
 }
 
 /**
- * Palettes worth shipping.
+ * The curated ramps, under the name the grid has always used for them.
  *
- * A generator whose default output is six greys is a generator nobody uses
- * twice, and "pick your own colours" as the only option is a blank page at the
- * exact moment someone wanted a shortcut. These are ordered light-to-dark
- * within each set so the `gradient` and `weight` modes ramp rather than
- * jitter — which is the property that makes a palette usable as a ramp at all,
- * and the one a random assortment of nice colours does not have.
+ * The list itself moved to `model/colorRamp`, because the general colour picker
+ * now offers the same ramps and two copies of a palette set is two palette sets
+ * that will drift. Re-exported rather than renamed at every call site: the grid
+ * recipes, the panel and the variations picker all say `GRID_PALETTES`, and
+ * making them all say something else would be churn in return for nothing.
  */
-export const GRID_PALETTES: { id: string; name: string; colors: string[] }[] = [
-  { id: 'ember', name: 'Ember', colors: ['#FFF1E0', '#FFD9A8', '#FFAE5C', '#F97316', '#C2410C', '#7C2D12'] },
-  { id: 'tide', name: 'Tide', colors: ['#E0F2FE', '#BAE6FD', '#7DD3FC', '#38BDF8', '#0284C7', '#075985'] },
-  { id: 'moss', name: 'Moss', colors: ['#ECFDF5', '#BBF7D0', '#86EFAC', '#34D399', '#059669', '#065F46'] },
-  { id: 'orchid', name: 'Orchid', colors: ['#FAF5FF', '#E9D5FF', '#D8B4FE', '#A855F7', '#7E22CE', '#581C87'] },
-  { id: 'clay', name: 'Clay', colors: ['#FAF7F2', '#EADDC8', '#D6BFA0', '#B79268', '#8A6642', '#5B4028'] },
-  { id: 'graphite', name: 'Graphite', colors: ['#F8FAFC', '#E2E8F0', '#CBD5E1', '#94A3B8', '#475569', '#1E293B'] },
-  { id: 'punch', name: 'Punch', colors: ['#FDE68A', '#FCA5A5', '#F472B6', '#818CF8', '#22D3EE', '#4ADE80'] },
-  { id: 'dusk', name: 'Dusk', colors: ['#FEF3C7', '#FDBA74', '#FB7185', '#C026D3', '#6D28D9', '#312E81'] },
-  { id: 'lagoon', name: 'Lagoon', colors: ['#ECFEFF', '#A5F3FC', '#5EEAD4', '#2DD4BF', '#0D9488', '#134E4A'] },
-  { id: 'bloom', name: 'Bloom', colors: ['#FFF1F2', '#FECDD3', '#FDA4AF', '#FB7185', '#E11D48', '#881337'] },
-  { id: 'citrus', name: 'Citrus', colors: ['#FEFCE8', '#FEF08A', '#FDE047', '#FACC15', '#CA8A04', '#713F12'] },
-  { id: 'slate', name: 'Slate', colors: ['#F0F9FF', '#DBEAFE', '#BFDBFE', '#60A5FA', '#2563EB', '#1E3A8A'] },
-  { id: 'terra', name: 'Terra', colors: ['#FDF4E3', '#F5D5A8', '#E0A96D', '#C1743C', '#8C4A21', '#4A2410'] },
-  /**
-   * The one that does not ramp, and says so by being last.
-   *
-   * Every set above runs light to dark so `gradient` and `weight` have
-   * something to ramp along -- the property that makes a palette usable as a
-   * scale rather than an assortment. This one is deliberately equal-weight:
-   * six colours that hold their own against each other, for the grids where
-   * the modules are peers and a ramp would invent a hierarchy that is not
-   * there. It reads badly under `weight` and that is the honest trade.
-   */
-  { id: 'flags', name: 'Flags', colors: ['#EF4444', '#F97316', '#EAB308', '#22C55E', '#3B82F6', '#8B5CF6'] },
-];
+export { CURATED_PALETTES as GRID_PALETTES } from '../model/colorRamp';
+import { CURATED_PALETTES } from '../model/colorRamp';
+const GRID_PALETTES = CURATED_PALETTES;
 
 /**
  * Which colour each cell takes.

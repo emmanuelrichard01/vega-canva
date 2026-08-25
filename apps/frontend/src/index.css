@@ -3450,6 +3450,11 @@ textarea:focus-visible {
   display: block;
   width: 100%;
   height: 100%;
+  /* The button itself already draws a chequerboard behind this, so the only
+     layer here is the paint -- but `No fill` composes its red sash over a
+     chequerboard of its own, and that second layer needs a weave. Sized here
+     because the inline value is a bare `background-image`; see `BAR_CHECKER`. */
+  background-size: cover, 8px 8px;
 }
 
 .fill-editor {
@@ -3484,6 +3489,10 @@ textarea:focus-visible {
   cursor: pointer;
   line-height: 0;
 }
+
+/* The chequerboard's weave, for the `none` swatch. Sized here because the
+   inline value is a bare `background-image` -- see `BAR_CHECKER`. */
+.fill-editor__type span { background-size: cover, 8px 8px; }
 
 .fill-editor__type span {
   display: block;
@@ -3547,6 +3556,194 @@ textarea:focus-visible {
 
 /* Room below the bar for the handles, which hang off its bottom edge so they
    never cover the colours they are positioned against. */
+/**
+ * The result, beside the axis it is built from.
+ *
+ * The bar below shows the gradient along its **own** axis, which is what the
+ * stops are positioned on and is therefore the only honest thing to drag them
+ * against. It also says nothing whatsoever about the outcome for the three
+ * kinds that are not linear: a conic and a diamond built from identical stops
+ * draw an identical bar and land on the shape as completely different artwork.
+ *
+ * Short and wide rather than square, so it sits in the panel's rhythm instead
+ * of becoming the thing the panel is about -- it is a confirmation, not the
+ * control.
+ */
+.fill-editor__preview {
+  height: 44px;
+  border-radius: var(--radius-md);
+  border: 1px solid var(--border-divider);
+  /* The paint fills the tile; the chequerboard behind it stays an 8px weave
+     whatever size the tile is. Sized here rather than in the inline value
+     because `background-image` cannot carry a size -- see `BAR_CHECKER`. */
+  background-size: cover, 8px 8px;
+}
+
+/**
+ * Operations on the whole paint, kept apart from the per-stop row above.
+ *
+ * Full-width buttons rather than icons on the same row as the stop controls:
+ * these act on the gradient, those act on one stop, and putting them shoulder
+ * to shoulder would say the two are the same kind of thing. A word costs a few
+ * pixels and removes the question.
+ */
+.fill-editor__actions {
+  gap: var(--space-2);
+}
+
+.fill-editor__action {
+  display: inline-flex;
+  flex: 1;
+  align-items: center;
+  justify-content: center;
+  gap: 5px;
+  padding: 5px 8px;
+  border: 1px solid var(--border-divider);
+  border-radius: var(--radius-md);
+  background: var(--surface-hover);
+  color: var(--text-secondary);
+  font-size: var(--text-2xs);
+  font-weight: var(--weight-medium);
+  cursor: pointer;
+  transition: background-color var(--motion-hover), border-color var(--motion-hover), color var(--motion-hover);
+}
+
+.fill-editor__action:hover:not(:disabled) {
+  border-color: var(--border-strong);
+  background: var(--surface-primary);
+  color: var(--text-primary);
+}
+
+.fill-editor__action:disabled {
+  opacity: 0.4;
+  cursor: default;
+}
+
+/* The empty state: a label and the one action that leaves it. */
+.fill-editor__row--empty {
+  justify-content: space-between;
+}
+
+.fill-editor__row--empty .fill-editor__label {
+  flex: 0 1 auto;
+  color: var(--text-tertiary);
+}
+
+.fill-editor__add {
+  padding: 4px 10px;
+  border: 1px solid var(--accent-line, var(--border-divider));
+  border-radius: var(--radius-md);
+  background: var(--accent-quiet, var(--surface-hover));
+  color: var(--accent-strong, var(--text-accent));
+  font-size: var(--text-2xs);
+  font-weight: var(--weight-semibold);
+  cursor: pointer;
+  transition: background-color var(--motion-hover);
+}
+
+.fill-editor__add:hover { background: var(--surface-hover); }
+
+/**
+ * The angle dial.
+ *
+ * A circle, because the quantity is a direction and a direction has a picture.
+ * The needle runs from the centre to the rim rather than a dot riding the edge:
+ * a dot says "here", and what an angle control has to say is "this way".
+ */
+.angle-dial {
+  position: relative;
+  flex: none;
+  width: 32px;
+  height: 32px;
+  /* A rim you can actually see. `--border-divider` on `--surface-hover` is two
+     neighbouring greys, and a dial whose edge is invisible is a dot floating in
+     the row -- there is nothing to read the needle *against*. */
+  border: 1px solid var(--border-strong);
+  border-radius: 50%;
+  background: var(--surface-primary);
+  cursor: grab;
+  touch-action: none;
+  transition: border-color var(--motion-hover), box-shadow var(--motion-hover);
+}
+
+.angle-dial:hover {
+  border-color: var(--text-accent);
+  box-shadow: 0 0 0 3px var(--accent-quiet, transparent);
+}
+
+/* A tick at twelve, so which way is zero is readable without turning it. An
+   angle control that does not say where it measures from is a control you have
+   to experiment with before you can use it. */
+.angle-dial::before {
+  content: '';
+  position: absolute;
+  left: 50%;
+  top: -1px;
+  width: 1px;
+  height: 4px;
+  translate: -50%;
+  border-radius: 1px;
+  background: var(--border-strong);
+}
+.angle-dial:active { cursor: grabbing; }
+
+.angle-dial:focus-visible {
+  outline: 2px solid var(--text-accent);
+  outline-offset: 2px;
+}
+
+/* The whole needle rotates, so the line from centre to rim stays a line at
+   every angle and there is no handle position to keep in step with it. */
+.angle-dial__needle {
+  position: absolute;
+  inset: 0;
+  border-radius: inherit;
+}
+
+.angle-dial__needle::before {
+  content: '';
+  position: absolute;
+  left: 50%;
+  top: 6px;
+  bottom: 50%;
+  /* Thinner than the grip it carries. A 2px needle under a 6px dot reads as a
+     lollipop -- the eye lands on the dot and the direction is a detail. Hairline
+     needle, small grip, and the *line* is what you see. */
+  width: 1.5px;
+  translate: -50%;
+  border-radius: 1px;
+  background: var(--text-accent);
+}
+
+.angle-dial__grip {
+  position: absolute;
+  left: 50%;
+  top: 3px;
+  width: 5px;
+  height: 5px;
+  translate: -50%;
+  border-radius: 50%;
+  background: var(--text-accent);
+  box-shadow: 0 0 0 1.5px var(--surface-primary);
+}
+
+/* The pivot, drawn last so the needle appears to turn about it. */
+.angle-dial::after {
+  content: '';
+  position: absolute;
+  left: 50%;
+  top: 50%;
+  width: 3px;
+  height: 3px;
+  translate: -50% -50%;
+  border-radius: 50%;
+  background: var(--text-accent);
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .angle-dial, .fill-editor__action { transition: none; }
+}
+
 .fill-editor__bar-wrap {
   position: relative;
   height: 34px;
@@ -3557,6 +3754,9 @@ textarea:focus-visible {
   border-radius: var(--radius-md);
   border: 1px solid var(--border-divider);
   cursor: pointer;
+  /* See `.fill-editor__preview` and `BAR_CHECKER`: the gradient is set inline,
+     the chequerboard's weave is set here. */
+  background-size: cover, 8px 8px;
 }
 
 .fill-editor__stop {
@@ -3564,6 +3764,9 @@ textarea:focus-visible {
   top: 14px;
   width: 13px;
   height: 13px;
+  /* A 13px dot needs a finer weave than the 20px bar, or a half-transparent
+     stop shows one grey square and reads as a solid grey stop. */
+  background-size: cover, 5px 5px;
   margin-left: -6.5px;
   padding: 0;
   border-radius: 50%;
@@ -8637,13 +8840,265 @@ body[data-zen='physics'] .forces-handle { bottom: 32px; }
   display: flex;
   flex-direction: column;
   gap: 10px;
-  width: 248px;
+  width: 268px;
+  /* A ceiling rather than a fixed height: the picker is shorter without a
+     recents row and without an opacity track, and reserving space for sections
+     that are not there would open a hole under the swatches. */
+  max-height: min(560px, calc(100vh - 32px));
+  overflow-y: auto;
+  overscroll-behavior: contain;
   padding: 12px;
   border: 1px solid var(--border-divider);
   border-radius: var(--radius-xl);
   background: var(--surface-elevated);
   box-shadow: var(--shadow-float);
   animation: popIn 140ms var(--ease-settle);
+}
+
+/**
+ * The saturation-and-value field.
+ *
+ * ## Why the rounding and the inset ring are not decoration
+ *
+ * The field is the only element in the picker whose *edges* carry meaning:
+ * pure white sits in one corner, black along a whole side, and full saturation
+ * in another corner. Without an inset hairline the white corner dissolves into
+ * a light panel and the black edge into a dark one, so on either theme a
+ * quarter of the gamut has no visible boundary and the handle can be dragged
+ * out of the control without anything saying where the control ended.
+ */
+.cp-field {
+  position: relative;
+  height: 148px;
+  border-radius: var(--radius-lg);
+  cursor: crosshair;
+  touch-action: none;
+  /* Inside the element rather than a border, so it does not eat a pixel of the
+     gradient at the exact corners the gradient is about.
+
+     A mid grey rather than `--border-divider`: this hairline sits on the
+     gradient itself, not on the panel, and it has to survive both a white
+     corner and a black edge in either theme. A token that tracks the surface
+     would vanish against whichever end of the gamut it happens to match. */
+  box-shadow: inset 0 0 0 1px rgb(128 128 128 / 0.4);
+}
+
+.cp-field__handle {
+  position: absolute;
+  width: 14px;
+  height: 14px;
+  border: 2px solid;
+  border-radius: 50%;
+  /* Centred on its coordinate by translation rather than by a negative margin,
+     so the handle stays centred whatever size it is given. */
+  translate: -50% -50%;
+  box-shadow: 0 1px 4px rgb(0 0 0 / 0.35), 0 0 0 1px rgb(255 255 255 / 0.25);
+  pointer-events: none;
+}
+
+/**
+ * A one-dimensional slider drawn as the thing it selects.
+ *
+ * Taller than it looks: the visible bar is 12px and the target is 20, because a
+ * 12px pointer target is a miss waiting to happen and a hue you cannot grab is
+ * a hue you cannot reach. The padding is transparent, so the bar reads at its
+ * drawn size while the control behaves at its real one.
+ */
+.cp-track {
+  position: relative;
+  height: 12px;
+  border-radius: 999px;
+  cursor: ew-resize;
+  touch-action: none;
+  /* Mid grey for the same reason as the field: the hue track runs through
+     every colour there is, and no theme-tracking token reads against all of
+     them. */
+  box-shadow: inset 0 0 0 1px rgb(128 128 128 / 0.4);
+}
+
+.cp-track:focus-visible {
+  outline: 2px solid var(--text-accent);
+  outline-offset: 2px;
+}
+
+.cp-track__handle {
+  position: absolute;
+  top: 50%;
+  width: 16px;
+  height: 16px;
+  border: 2px solid #fff;
+  border-radius: 50%;
+  translate: -50% -50%;
+  box-shadow: 0 1px 4px rgb(0 0 0 / 0.4);
+  pointer-events: none;
+}
+
+/**
+ * The derived ramp: one continuous bar, not nine separate swatches.
+ *
+ * Butted together with no gaps because the steps *are* continuous — they are
+ * one colour walked from light to dark — and gaps between them would say the
+ * opposite, reading as nine unrelated choices. It is the same argument the
+ * palette rows below make, and the reason both look like ramps rather than
+ * like grids of chips.
+ */
+.cp-ramp {
+  display: flex;
+  overflow: hidden;
+  height: 26px;
+  border-radius: var(--radius-md);
+  box-shadow: inset 0 0 0 1px var(--border-divider);
+}
+
+.cp-ramp__step {
+  flex: 1;
+  min-width: 0;
+  padding: 0;
+  border: none;
+  cursor: pointer;
+  transition: flex-grow var(--motion-hover);
+}
+
+/* The hovered step widens rather than lifting or outlining: inside a butted
+   ramp there is no room for a ring, and growing is the one emphasis that
+   cannot cover a neighbour. */
+.cp-ramp__step:hover { flex-grow: 1.6; }
+
+.cp-ramp__step[data-active] {
+  flex-grow: 1.6;
+  box-shadow: inset 0 0 0 2px var(--surface-elevated), inset 0 0 0 3px var(--text-accent);
+}
+
+.cp-ramp__step:focus-visible {
+  outline: 2px solid var(--text-accent);
+  outline-offset: -2px;
+}
+
+/**
+ * The curated ramps.
+ *
+ * Two columns of whole rows rather than one wall of ninety chips, because the
+ * ramp is the unit worth recognising: the colours in a row are related, and
+ * shown as a bar they say so. Every chip is still its own target, so a row is
+ * both a set to identify and six colours to pick from.
+ */
+/* A row gap wider than the column gap, and not for symmetry's sake.
+   Fourteen ramps stacked at an even 4px read as one slab of colour with no
+   telling where a palette ends -- the rows blur into each other exactly where
+   two neighbours share a tone. Separating them vertically more than
+   horizontally is what lets the eye find the row boundaries first and the
+   column boundary second, which is the order they matter in. */
+/**
+ * Three sources, one at a time.
+ *
+ * A segmented row rather than a dropdown: three options that are switched
+ * between constantly should cost one click each, not two, and the labels are
+ * short enough to sit side by side at this width.
+ */
+.cp-tabs {
+  display: flex;
+  gap: 2px;
+  padding: 2px;
+  border-radius: var(--radius-md);
+  background: var(--surface-hover);
+}
+
+.cp-tab {
+  flex: 1;
+  padding: 4px 6px;
+  border: none;
+  border-radius: calc(var(--radius-md) - 2px);
+  background: transparent;
+  color: var(--text-tertiary);
+  font-size: var(--text-2xs);
+  font-weight: var(--weight-medium);
+  cursor: pointer;
+  transition: background-color var(--motion-hover), color var(--motion-hover);
+}
+
+.cp-tab:hover:not(:disabled):not([data-active]) { color: var(--text-secondary); }
+
+.cp-tab[data-active] {
+  background: var(--surface-elevated);
+  color: var(--text-primary);
+  box-shadow: var(--shadow-sm);
+}
+
+.cp-tab:disabled { opacity: 0.4; cursor: default; }
+
+.cp-tab:focus-visible {
+  outline: 2px solid var(--text-accent);
+  outline-offset: -1px;
+}
+
+/**
+ * A floor under the panel, so switching tabs does not resize the popover.
+ *
+ * Palettes is the tallest and sets the ceiling on its own; the floor stops the
+ * other two collapsing to a single row and yanking the whole popover -- and its
+ * bottom edge -- up under the pointer mid-click.
+ */
+.cp-panel {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  min-height: 108px;
+}
+
+.cp-palettes {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 7px 5px;
+}
+
+.cp-palette {
+  display: flex;
+  overflow: hidden;
+  height: 18px;
+  border-radius: var(--radius-sm);
+  box-shadow: inset 0 0 0 1px var(--border-divider);
+  transition: box-shadow var(--motion-hover);
+}
+
+/* The row a colour came from, marked so reopening the picker shows where you
+   are rather than fourteen equally plausible rows.
+
+   Drawn **inside** the row. An outset ring on a tight grid overlaps whatever
+   sits to its left, so the mark for one palette landed on top of another and
+   read as damage rather than as selection. */
+.cp-palette[data-active] {
+  box-shadow:
+    inset 0 0 0 1px var(--surface-elevated),
+    inset 0 0 0 2px var(--text-accent);
+}
+
+.cp-palette__chip {
+  flex: 1;
+  min-width: 0;
+  padding: 0;
+  border: none;
+  cursor: pointer;
+  transition: flex-grow var(--motion-hover);
+}
+
+.cp-palette__chip:hover { flex-grow: 2; }
+
+.cp-palette__chip[data-active] {
+  flex-grow: 2;
+  box-shadow: inset 0 0 0 2px var(--surface-elevated);
+}
+
+.cp-palette__chip:focus-visible {
+  outline: 2px solid var(--text-accent);
+  outline-offset: -2px;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .cp-ramp__step,
+  .cp-palette,
+  .cp-palette__chip { transition: none; }
+  .cp-ramp__step:hover,
+  .cp-palette__chip:hover { flex-grow: 1; }
 }
 
 .cp-hex {

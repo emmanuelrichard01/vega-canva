@@ -7,7 +7,9 @@ import {
   linearAngle,
   needsPattern,
   paintColor,
+  distributeStops,
   paintToCss,
+  reverseStops,
   sortedStops,
   withAlpha,
   withLinearAngle,
@@ -284,5 +286,101 @@ describe('paintToCss', () => {
 
   it('falls back when there is no paint', () => {
     expect(paintToCss(undefined, '#ABCDEF')).toBe('#ABCDEF');
+  });
+});
+
+describe('reverseStops', () => {
+  it('mirrors the offsets rather than reassigning the colours', () => {
+    /**
+     * The distinction only shows on uneven stops, and it is the whole design.
+     * A stop bunched at 10% should end up bunched at 90% carrying its own
+     * colour and opacity, not handing them to whichever stop sits opposite --
+     * which for three stops at 0, 0.1 and 1 is a completely different gradient.
+     */
+    const flipped = reverseStops(linear({
+      stops: [
+        { offset: 0, color: '#FF0000' },
+        { offset: 0.1, color: '#00FF00', opacity: 0.5 },
+        { offset: 1, color: '#0000FF' },
+      ],
+    }));
+
+    expect(flipped.stops).toEqual([
+      { offset: 0, color: '#0000FF' },
+      { offset: 0.9, color: '#00FF00', opacity: 0.5 },
+      { offset: 1, color: '#FF0000' },
+    ]);
+  });
+
+  it('comes back to where it started when applied twice', () => {
+    const start = linear({
+      stops: [
+        { offset: 0, color: '#FF0000' },
+        { offset: 0.3, color: '#00FF00' },
+        { offset: 1, color: '#0000FF' },
+      ],
+    });
+    const round = reverseStops(reverseStops(start)).stops;
+    // Compared to a tolerance, not exactly: `1 - (1 - 0.3)` is
+    // `0.30000000000000004`. Rounding inside `reverseStops` to make an equality
+    // check pass would be inventing a precision the value does not have -- an
+    // offset is a continuous position, and nothing downstream cares about the
+    // sixteenth decimal place.
+    expect(round.map((s) => s.color)).toEqual(start.stops.map((s) => s.color));
+    round.forEach((s, i) => expect(s.offset).toBeCloseTo(start.stops[i].offset, 10));
+  });
+
+  it('leaves the gradient\'s geometry alone', () => {
+    // Reversing is about the colours along the axis, not about the axis. Turning
+    // the gradient round *and* flipping the stops would be a no-op dressed up as
+    // a command.
+    const start = linear();
+    const flipped = reverseStops(start);
+    expect(flipped.from).toEqual(start.from);
+    expect(flipped.to).toEqual(start.to);
+  });
+});
+
+describe('distributeStops', () => {
+  it('spaces the stops evenly and pins both ends', () => {
+    const even = distributeStops(linear({
+      stops: [
+        { offset: 0.2, color: '#FF0000' },
+        { offset: 0.25, color: '#00FF00' },
+        { offset: 0.9, color: '#0000FF' },
+      ],
+    }));
+    expect(even.stops.map((s) => s.offset)).toEqual([0, 0.5, 1]);
+  });
+
+  it('takes its order from where the stops sit, not from the array', () => {
+    // The gradient somebody can see is the one that gets evened out. An array
+    // that has drifted out of order mid-drag must not reshuffle the colours.
+    const even = distributeStops(linear({
+      stops: [
+        { offset: 0.8, color: '#0000FF' },
+        { offset: 0.1, color: '#FF0000' },
+      ],
+    }));
+    expect(even.stops.map((s) => s.color)).toEqual(['#FF0000', '#0000FF']);
+    expect(even.stops.map((s) => s.offset)).toEqual([0, 1]);
+  });
+
+  it('does not divide by zero on a single stop', () => {
+    // CSS drops a stop whose offset is NaN, so the gradient would silently lose
+    // it rather than fail loudly.
+    const even = distributeStops(linear({ stops: [{ offset: 0.4, color: '#FF0000' }] }));
+    expect(even.stops[0].offset).toBe(0);
+  });
+
+  it('keeps each stop\'s own colour and opacity', () => {
+    const even = distributeStops(linear({
+      stops: [
+        { offset: 0.9, color: '#00FF00', opacity: 0.25 },
+        { offset: 0.1, color: '#FF0000' },
+      ],
+    }));
+    expect(even.stops[0]).toMatchObject({ color: '#FF0000' });
+    expect(even.stops[1]).toMatchObject({ color: '#00FF00', opacity: 0.25 });
   });
 });

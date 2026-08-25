@@ -393,3 +393,55 @@ export function paintToCss(paint: Paint | undefined, fallback = '#4F46E5'): stri
       return `radial-gradient(ellipse ${round(paint.radius * 100)}% ${round(paint.radius * 100)}% at ${round(paint.center.x * 100)}% ${round(paint.center.y * 100)}%, ${stops})`;
   }
 }
+
+/**
+ * Flip a gradient end for end.
+ *
+ * ## Why this is a button and not something you do by hand
+ *
+ * Reversing a two-stop gradient by hand is two colour picks and two drags, and
+ * it is the single most common thing anyone does to a gradient after making
+ * one — you build it, look at it on the shape, and want it the other way round.
+ * At five stops with per-stop opacities it is a dozen operations with no way
+ * back if you lose your place.
+ *
+ * The offsets are mirrored rather than the colours reassigned. Those are the
+ * same result for evenly spaced stops and very different results for uneven
+ * ones: a stop bunched at 10% should end up bunched at 90%, carrying its own
+ * colour and opacity with it, not handing them to whichever stop happens to
+ * sit opposite.
+ */
+export function reverseStops<T extends GradientPaint>(paint: T): T {
+  // Generic rather than returning `GradientPaint`: reversing a linear gradient
+  // gives a linear gradient, and widening the return would make every caller
+  // narrow it again to reach `from`/`to` -- for an operation that provably does
+  // not change the kind.
+  return {
+    ...paint,
+    stops: paint.stops
+      .map((stop) => ({ ...stop, offset: 1 - stop.offset }))
+      .sort((a, b) => a.offset - b.offset),
+  };
+}
+
+/**
+ * Space a gradient's stops evenly from end to end.
+ *
+ * The tidy-up for a gradient built by adding stops wherever the pointer
+ * happened to be. Endpoints are pinned to 0 and 1 rather than merely spaced,
+ * because a gradient that stops short of its own extent has a flat band at each
+ * end that reads as a rendering fault.
+ *
+ * Order is taken from where the stops currently sit, not from the array, so the
+ * gradient people can see is the one that gets evened out.
+ */
+export function distributeStops<T extends GradientPaint>(paint: T): T {
+  const ordered = [...paint.stops].sort((a, b) => a.offset - b.offset);
+  const last = ordered.length - 1;
+  return {
+    ...paint,
+    // One stop has nowhere to be spaced to, and dividing by zero would put it
+    // at `NaN` -- which CSS drops, so the gradient would silently lose it.
+    stops: ordered.map((stop, i) => ({ ...stop, offset: last <= 0 ? 0 : i / last })),
+  };
+}

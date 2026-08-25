@@ -1,13 +1,17 @@
 import React, { useEffect, useRef, useState } from 'react';
-import { Minus, Plus } from 'lucide-react';
+import { ArrowLeftRight, AlignHorizontalSpaceAround, Minus, Plus } from 'lucide-react';
 import { EyedropperButton } from './EyedropperButton';
+import { AngleDial } from './AngleDial';
+import { Slider } from './Slider';
 import { ColorPickerPopover } from './ColorPickerPopover';
 import { isInsidePortalSurface } from './portalSurface';
 import {
   convertPaint,
+  distributeStops,
   isGradient,
   linearAngle,
   paintToCss,
+  reverseStops,
   withAlpha,
   withLinearAngle,
   type GradientStop,
@@ -38,8 +42,26 @@ interface Props {
  * picker you read instead of recognise, and these five are trivially
  * distinguishable at 20px when they are simply drawn.
  */
-/** Behind every gradient preview, so transparency reads as transparency. */
-const BAR_CHECKER = 'repeating-conic-gradient(#c8c8c8 0% 25%, #ffffff 0% 50%) 50% / 8px 8px';
+/**
+ * Behind every gradient preview, so transparency reads as transparency.
+ *
+ * ## Why the size is not in this string
+ *
+ * It was: `... 50% / 8px 8px`, which is `background` **shorthand** syntax --
+ * position and size -- and is not valid inside `background-image`. A browser
+ * that meets an invalid value drops the whole declaration, so appending this to
+ * a gradient in a `backgroundImage` style silently discarded *the gradient too*.
+ *
+ * That is what the gradient bar and every stop dot were doing. The one control
+ * whose entire job is showing you the gradient you are building was painting
+ * nothing at all, and so was every handle on it -- a blank white strip with
+ * blank white dots, which reads as a control that has not loaded rather than as
+ * a bug, which is presumably how it survived.
+ *
+ * The size now lives in a CSS rule beside each use, where it belongs, and this
+ * string is a bare image that can be composed into `background-image` safely.
+ */
+const BAR_CHECKER = 'repeating-conic-gradient(#c8c8c8 0% 25%, #ffffff 0% 50%)';
 
 /** The standard diagonal red sash over checkerboard representing None / Transparent. */
 const NO_FILL_SWATCH =
@@ -254,7 +276,13 @@ export const FillEditor: React.FC<Props> = ({ paint, onChange, mixed = false }) 
         {/* The paint sits on a chequerboard the button itself draws. A
             semi-transparent fill shown over a flat panel is indistinguishable
             from an opaque paler one. */}
-        <span style={{ background: swatchBg }} />
+        {/* `backgroundImage`, never the `background` shorthand: the shorthand
+            resets `background-size` to `auto`, and an inline reset beats the
+            stylesheet -- so the chequerboard behind a translucent paint would
+            stretch to one enormous square instead of weaving at 8px. Every
+            composed background in this file follows the same rule, with the
+            size owned by CSS. */}
+        <span style={{ backgroundImage: swatchBg }} />
       </button>
 
       {open && (
@@ -271,27 +299,22 @@ export const FillEditor: React.FC<Props> = ({ paint, onChange, mixed = false }) 
                 className={`fill-editor__type ${activeTypeId === t.id ? 'is-active' : ''}`}
                 onClick={() => handleSelectType(t.id)}
               >
-                <span style={{ background: t.swatch }} />
+                <span style={{ backgroundImage: t.swatch }} />
               </button>
             ))}
           </div>
 
           {current.type === 'solid' ? (
             isNoFill ? (
-              <div className="fill-editor__row" style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', padding: '4px 0' }}>
-                <span className="fill-editor__label" style={{ fontStyle: 'italic', color: 'var(--text-tertiary)' }}>No fill (Transparent)</span>
+              <div className="fill-editor__row fill-editor__row--empty">
+                {/* Hardcoded `#2563EB` on a hardcoded 8%-alpha wash, which is
+                    neither the accent nor anything else in the system and went
+                    grey-on-grey in dark mode. It is an ordinary quiet button;
+                    the system already has one. */}
+                <span className="fill-editor__label">No fill</span>
                 <button
                   type="button"
-                  style={{
-                    fontSize: '11px',
-                    fontWeight: 600,
-                    color: '#2563EB',
-                    background: 'rgba(37, 99, 235, 0.08)',
-                    border: 'none',
-                    borderRadius: '4px',
-                    padding: '4px 8px',
-                    cursor: 'pointer',
-                  }}
+                  className="fill-editor__add"
                   onClick={() => onChange({ type: 'solid', color: '#4F46E5', opacity: 1 })}
                 >
                   Add colour
@@ -325,6 +348,20 @@ export const FillEditor: React.FC<Props> = ({ paint, onChange, mixed = false }) 
                   appear on the shape — the stops are positioned on that axis,
                   and a bar that showed the rotated result would put them
                   somewhere other than where they are. */}
+              {/**
+                * What the fill will actually look like, beside the axis it is
+                * built on.
+                *
+                * The bar below shows the gradient along its **own** axis, which
+                * is right for placing stops and says nothing at all about the
+                * result for the three kinds that are not linear: a conic and a
+                * diamond built from the same stops draw the same bar and land
+                * as completely different artwork. A 44px tile carrying
+                * `paintToCss` closes that, and closes it with the same string
+                * the canvas renders from rather than an impression of it.
+                */}
+              <div className="fill-editor__preview" style={{ backgroundImage: `${css}, ${BAR_CHECKER}` }} aria-hidden />
+
               <div className="fill-editor__bar-wrap">
                 <div
                   ref={barRef}
@@ -361,7 +398,7 @@ export const FillEditor: React.FC<Props> = ({ paint, onChange, mixed = false }) 
                     className={`fill-editor__stop ${i === selected ? 'is-active' : ''}`}
                     style={{
                       left: `${stop.offset * 100}%`,
-                      background: `linear-gradient(${withAlpha(stop.color, stop.opacity)}, ${withAlpha(stop.color, stop.opacity)}), ${BAR_CHECKER}`,
+                      backgroundImage: `linear-gradient(${withAlpha(stop.color, stop.opacity)}, ${withAlpha(stop.color, stop.opacity)}), ${BAR_CHECKER}`,
                     }}
                     onMouseDown={(e) => {
                       e.stopPropagation();
@@ -430,46 +467,90 @@ export const FillEditor: React.FC<Props> = ({ paint, onChange, mixed = false }) 
                 </button>
               </div>
 
+              {/**
+                * The two operations on a gradient as a whole.
+                *
+                * Reversing is the single most common thing anyone does after
+                * building one -- you look at it on the shape and want it the
+                * other way round -- and by hand it is two colour picks and two
+                * drags at two stops, worse at five. Evening out the spacing is
+                * the tidy-up for a gradient built by adding stops wherever the
+                * pointer happened to be.
+                *
+                * Both are one word and one icon, on their own row, because they
+                * act on the whole paint rather than on the selected stop and
+                * sitting them beside the per-stop controls would say otherwise.
+                */}
+              <div className="fill-editor__row fill-editor__actions">
+                <button
+                  type="button"
+                  className="fill-editor__action"
+                  onClick={() => onChange(reverseStops(current))}
+                  data-tooltip="Flip the gradient end for end"
+                >
+                  <ArrowLeftRight size={12} />
+                  Reverse
+                </button>
+                <button
+                  type="button"
+                  className="fill-editor__action"
+                  onClick={() => onChange(distributeStops(current))}
+                  disabled={stops.length < 3}
+                  data-tooltip="Space the stops evenly"
+                >
+                  <AlignHorizontalSpaceAround size={12} />
+                  Even
+                </button>
+              </div>
+
+              {/**
+                * An angle gets a dial; a length gets a slider.
+                *
+                * All three of these were bare `input type="range"` elements --
+                * the browser's own control, unstyled, sitting in a panel where
+                * nothing else looks like that. Worse for the two angles than
+                * for the size, because an angle **wraps**: on a slider the trip
+                * from 350 to 10 is the full width of the control, backwards,
+                * through every angle you did not want, and the two values two
+                * degrees apart are the two furthest apart on screen.
+                */}
               {current.type === 'linear' && (
-                <label className="fill-editor__row">
+                <div className="fill-editor__row">
                   <span className="fill-editor__label">Angle</span>
-                  <input
-                    type="range"
-                    min={0}
-                    max={359}
-                    value={Math.round(linearAngle(current))}
-                    onChange={(e) => onChange(withLinearAngle(current, Number(e.target.value)))}
+                  <AngleDial
+                    label="Gradient angle"
+                    value={linearAngle(current)}
+                    onChange={(deg) => onChange(withLinearAngle(current, deg))}
                   />
                   <span className="fill-editor__value">{Math.round(linearAngle(current))}°</span>
-                </label>
+                </div>
               )}
 
               {current.type === 'conic' && (
-                <label className="fill-editor__row">
+                <div className="fill-editor__row">
                   <span className="fill-editor__label">Start</span>
-                  <input
-                    type="range"
-                    min={0}
-                    max={359}
-                    value={Math.round(current.angle)}
-                    onChange={(e) => onChange({ ...current, angle: Number(e.target.value) })}
+                  <AngleDial
+                    label="Sweep start angle"
+                    value={current.angle}
+                    onChange={(angle) => onChange({ ...current, angle })}
                   />
                   <span className="fill-editor__value">{Math.round(current.angle)}°</span>
-                </label>
+                </div>
               )}
 
               {(current.type === 'radial' || current.type === 'diamond') && (
-                <label className="fill-editor__row">
+                <div className="fill-editor__row">
                   <span className="fill-editor__label">Size</span>
-                  <input
-                    type="range"
+                  <Slider
+                    label="Gradient size"
+                    labelHidden
+                    unit="%"
                     min={5}
                     max={150}
                     value={Math.round(current.radius * 100)}
-                    onChange={(e) => onChange({ ...current, radius: Number(e.target.value) / 100 })}
+                    onChange={(v) => onChange({ ...current, radius: v / 100 })}
                   />
-                  <span className="fill-editor__value">{Math.round(current.radius * 100)}%</span>
-                </label>
+                </div>
               )}
             </>
           )}
