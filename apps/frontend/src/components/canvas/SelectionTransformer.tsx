@@ -1,6 +1,6 @@
 import React, { useEffect, useRef, useState } from 'react';
 import type Konva from 'konva';
-import { Circle, Group, Rect, Text, Transformer } from 'react-konva';
+import { Group, Rect, Text, Transformer } from 'react-konva';
 import { applyNodePatches } from '../../engine/document';
 import { EXPORT_CHROME } from '../../engine/export/chrome';
 import { useStore } from '../../hooks/useStore';
@@ -12,7 +12,14 @@ import { syncConnectedConnectors } from '../../engine/model/connectorTargets';
 import { layoutText } from '../../engine/text/layout';
 import { measurerFor } from '../../engine/text/measure';
 import { applyTextCase } from '../../engine/model/textCase';
-import type { AnyNode, TextNode } from '../../engine/model/schema';
+import type { AnyNode } from '../../engine/model/schema';
+import {
+  placeInBox,
+  placeParagraph,
+  selectionBox,
+  type Box,
+  type Placed,
+} from '../../engine/interaction/selectionTransform';
 
 interface Props {
   selectedIds: string[];
@@ -55,44 +62,9 @@ const VERTICAL_EDGES = new Set(['top-center', 'bottom-center']);
 const uniformDrag = (sx: number, sy: number): boolean =>
   Math.abs(Math.abs(sx) - Math.abs(sy)) < 0.001;
 
-/** The two edge handles that set the measure a paragraph wraps inside. */
-const HORIZONTAL_EDGES = new Set(['middle-left', 'middle-right', 'left-center', 'right-center']);
-
-/**
- * Where a text box goes when a side handle changes how wide it is.
- *
- * ## Why this cannot use `computePinnedBox`
- *
- * That function pins the edge opposite the one you grabbed, which is right for
- * every object whose height you are also setting. Text's height is not set by
- * the drag -- it *falls out* of the re-wrap, and a narrower measure means more
- * lines. `computePinnedBox` pins the vertical **centre** for a side handle, so
- * that extra height was split between the top and the bottom and the paragraph
- * grew upwards into the layout above it as well as down.
- *
- * A paragraph grows downwards. The first line stays where it was put, which is
- * what every text engine does and what anyone dragging the right edge of a
- * column expects -- the top of the column is a decision they already made.
- *
- * The horizontal edge is still pinned the ordinary way: dragging the left
- * handle must keep the right edge still.
- */
-function pinTextBox(
-  anchor: string,
-  start: { x: number; y: number; width: number },
-  newW: number
-): { x: number; y: number } {
-  const keepsRightEdge = anchor === 'middle-left' || anchor === 'left-center';
-  return {
-    x: keepsRightEdge ? start.x + start.width - newW : start.x,
-    y: start.y,
-  };
-}
-
 /** Ink and paper for the handles, matching the hover ring the canvas already draws. */
 const ACCENT = '#3B82F6';
 const HANDLE_FILL = '#FFFFFF';
-
 
 /**
  * The canvas' single resize/rotate handle set.
@@ -104,12 +76,12 @@ const HANDLE_FILL = '#FFFFFF';
  */
 export const SelectionTransformer: React.FC<Props> = ({ selectedIds, stageRef }) => {
   const trRef = useRef<Konva.Transformer>(null);
+  /** The invisible rectangle the handles actually drive -- see the attach effect. */
+  const proxyRef = useRef<Konva.Rect>(null);
   /** True only while a handle is actually being dragged. */
   const [transforming, setTransforming] = useState(false);
   /** Live dimensions (e.g. 240 × 180) or angle (e.g. 45°) HUD badge while transforming. */
   const [liveBadge, setLiveBadge] = useState<{ text: string; x: number; y: number } | null>(null);
-  /** Whether the gesture in flight is a rotation, so the pivot can be shown. */
-  const [isRotatingNow, setIsRotatingNow] = useState(false);
 
   // The handles must re-fit when a *selected* node's geometry changes from
   // elsewhere (the Properties panel, a remote peer). Subscribing to the whole
@@ -154,13 +126,39 @@ export const SelectionTransformer: React.FC<Props> = ({ selectedIds, stageRef })
     const soloLine =
       Boolean(solo) && (isLineLike(solo ?? { type: '' }) || solo!.type === 'connector');
 
-    const nodes = soloLine
-      ? []
-      : selectedIds
-          .map((id) => stage.findOne('#' + id))
-          .filter((n): n is Konva.Node => Boolean(n));
+    /**
+     * The handles drive a proxy, never the objects themselves.
+     *
+     * Konva resizes by putting a scale on whatever it is attached to, and a
+     * scale is exactly what a document object must not carry: it stretches
+     * glyphs, thickens strokes and swells corner radii. Undoing that scale each
+     * frame fights the widget, because it computes the next frame *from* the
+     * scale it finds -- and leaving it alone is the distortion. There is no
+     * third option while the widget holds the real node.
+     *
+     * So it holds an invisible rectangle instead. The proxy may scale as freely
+     * as Konva likes, because nobody sees it, which is what lets the handles
+     * track the pointer exactly. `selectionTransform` turns the proxy's box back
+     * into a size for each object every frame, and the objects render at that
+     * size with `scaleX`/`scaleY` permanently 1.
+     */
+    const proxy = proxyRef.current;
+    const boxes = selectedIds.map((id) => store[id]).filter(Boolean) as AnyNode[];
+    const bounds = soloLine ? null : selectionBox(boxes);
 
-    tr.nodes(nodes);
+    if (proxy && bounds) {
+      // Positioned by its centre, so Konva turns it about its middle -- which
+      // is what makes a selection rotate as one rigid thing.
+      proxy.position({ x: bounds.x + bounds.width / 2, y: bounds.y + bounds.height / 2 });
+      proxy.offset({ x: bounds.width / 2, y: bounds.height / 2 });
+      proxy.size({ width: bounds.width, height: bounds.height });
+      proxy.scale({ x: 1, y: 1 });
+      // The angle of a single rotated object, so its handles sit square to it
+      // rather than to the world. A mixed selection has no one angle to take.
+      proxy.rotation(boxes.length === 1 ? boxes[0].rotation || 0 : 0);
+    }
+
+    tr.nodes(proxy && bounds ? [proxy] : []);
     tr.update();
     tr.getLayer()?.batchDraw();
 
@@ -196,121 +194,21 @@ export const SelectionTransformer: React.FC<Props> = ({ selectedIds, stageRef })
     };
   }, [selectedIds, selectionGeometry, stageRef]);
 
-function rotatePoint(x: number, y: number, rad: number): { x: number; y: number } {
-  const cos = Math.cos(rad);
-  const sin = Math.sin(rad);
-  return {
-    x: x * cos - y * sin,
-    y: x * sin + y * cos,
-  };
-}
-
 /**
- * Given the handle being dragged, the starting node geometry, and new width/height,
- * computes the new top-left coordinates so that the opposite edge/corner stays strictly pinned in world space.
+ * `rotatePoint` and `computePinnedBox` stood here -- about a hundred and thirty
+ * lines working out where a box's top-left goes so the edge opposite the handle
+ * stays still, per anchor, with a separate rule for text.
+ *
+ * The proxy answers all of it for free. Konva already pins the opposite edge
+ * while it resizes the proxy, so the proxy's box *is* the pinned result and
+ * `placeInBox` maps each object into it. The one case that genuinely differs --
+ * a paragraph, whose height comes from the re-wrap rather than from the drag --
+ * is `placeParagraph`, which is four lines.
+ *
+ * This arithmetic was also the source of several bugs it existed to prevent: it
+ * centred a text box's growth, and it had to be told that a rotation was not a
+ * resize. Deleting it is most of the value of this change.
  */
-function computePinnedBox(
-  anchor: string,
-  start: { x: number; y: number; width: number; height: number; rotation?: number },
-  newW: number,
-  newH: number
-): { x: number; y: number; cx: number; cy: number } {
-  const rad = ((start.rotation ?? 0) * Math.PI) / 180;
-  const w0 = start.width;
-  const h0 = start.height;
-  const cx0 = start.x + w0 / 2;
-  const cy0 = start.y + h0 / 2;
-
-  let localPinnedX = 0;
-  let localPinnedY = 0;
-  let newLocalPinnedX = 0;
-  let newLocalPinnedY = 0;
-
-  switch (anchor) {
-    case 'middle-right':
-    case 'right-center':
-      localPinnedX = -w0 / 2;
-      localPinnedY = 0;
-      newLocalPinnedX = -newW / 2;
-      newLocalPinnedY = 0;
-      break;
-
-    case 'middle-left':
-    case 'left-center':
-      localPinnedX = w0 / 2;
-      localPinnedY = 0;
-      newLocalPinnedX = newW / 2;
-      newLocalPinnedY = 0;
-      break;
-
-    case 'top-center':
-    case 'top-middle':
-      localPinnedX = 0;
-      localPinnedY = h0 / 2;
-      newLocalPinnedX = 0;
-      newLocalPinnedY = newH / 2;
-      break;
-
-    case 'bottom-center':
-    case 'bottom-middle':
-      localPinnedX = 0;
-      localPinnedY = -h0 / 2;
-      newLocalPinnedX = 0;
-      newLocalPinnedY = -newH / 2;
-      break;
-
-    case 'top-left':
-      localPinnedX = w0 / 2;
-      localPinnedY = h0 / 2;
-      newLocalPinnedX = newW / 2;
-      newLocalPinnedY = newH / 2;
-      break;
-
-    case 'top-right':
-      localPinnedX = -w0 / 2;
-      localPinnedY = h0 / 2;
-      newLocalPinnedX = -newW / 2;
-      newLocalPinnedY = newH / 2;
-      break;
-
-    case 'bottom-left':
-      localPinnedX = w0 / 2;
-      localPinnedY = -h0 / 2;
-      newLocalPinnedX = newW / 2;
-      newLocalPinnedY = -newH / 2;
-      break;
-
-    case 'bottom-right':
-      localPinnedX = -w0 / 2;
-      localPinnedY = -h0 / 2;
-      newLocalPinnedX = -newW / 2;
-      newLocalPinnedY = -newH / 2;
-      break;
-
-    default:
-      return {
-        x: cx0 - newW / 2,
-        y: cy0 - newH / 2,
-        cx: cx0,
-        cy: cy0,
-      };
-  }
-
-  const pinnedWorldRotated = rotatePoint(localPinnedX, localPinnedY, rad);
-  const pinnedWorldX = cx0 + pinnedWorldRotated.x;
-  const pinnedWorldY = cy0 + pinnedWorldRotated.y;
-
-  const newPinnedWorldRotated = rotatePoint(newLocalPinnedX, newLocalPinnedY, rad);
-  const cxNew = pinnedWorldX - newPinnedWorldRotated.x;
-  const cyNew = pinnedWorldY - newPinnedWorldRotated.y;
-
-  return {
-    x: cxNew - newW / 2,
-    y: cyNew - newH / 2,
-    cx: cxNew,
-    cy: cyNew,
-  };
-}
 
   /** Every selected node exactly as it was when the gesture began. */
   const initialNodesMap = useRef<Record<string, AnyNode>>({});
@@ -334,116 +232,148 @@ function computePinnedBox(
   const activeAnchor = useRef('');
 
   /**
-   * The geometry the live pass computed for each text node, for the commit.
+   * `liveTextGeometry` stood here.
    *
-   * ## Why the commit cannot re-derive it
-   *
-   * A text box must never carry a scale -- scaling glyphs stretches them, which
-   * is the one thing type may not do -- so `handleTransform` folds the scale
-   * into a re-layout and immediately resets the Konva node to `scaleX = 1`.
-   *
-   * `handleTransformEnd` then read that same scale back to work out the final
-   * size, and read the **1** the live pass had just written. So every text
-   * resize committed `startNode.width * 1`: the box reflowed correctly under
-   * the pointer for the whole drag and snapped back to its original width the
-   * instant you let go.
-   *
-   * The two halves have to be connected rather than each deriving the answer
-   * independently, because after the reset the scale is no longer a record of
-   * anything. The live pass already did the work; the commit uses it.
+   * It was a hand-off: the live pass measured a paragraph and stashed the result
+   * for the commit, because the commit could no longer recover it from a scale
+   * the live pass had zeroed. `placeAll` makes it unnecessary -- both halves
+   * call the same function and get the same answer, so there is nothing to pass
+   * between them.
    */
-  const liveTextGeometry = useRef<Record<string, {
-    width: number;
-    height: number;
-    x: number;
-    y: number;
-    typography: TextNode['typography'];
-    resize: TextNode['resize'];
-  }>>({});
+
+
+  /**
+   * The selection's box when the gesture began, and each object inside it.
+   *
+   * Both are snapshots, because the proxy's transform is expressed *relative to
+   * where it started* -- see `selectionTransform`. Reading them back off the
+   * document mid-gesture would be reading values the gesture is in the middle
+   * of changing, which is the mistake that produced most of the bugs this
+   * rewrite replaces.
+   */
+  const startBox = useRef<Box | null>(null);
+  /** The proxy's angle when the gesture began, so `spin` is a delta. */
+  const startSpin = useRef(0);
 
   const handleTransformStart = () => {
     window.dispatchEvent(new CustomEvent('canvas-drag-start'));
     setTransforming(true);
 
     const before = useStore.getState().objects;
-    const ids = (trRef.current?.nodes() ?? []).map((n: Konva.Node) => n.id());
-    const boxes = ids.map((id: string) => before[id]).filter(Boolean) as AnyNode[];
+    const nodes = selectedIds.map((id) => before[id]).filter(Boolean) as AnyNode[];
 
     const startMap: Record<string, AnyNode> = {};
-    boxes.forEach((n: AnyNode) => {
-      startMap[n.id] = { ...n };
-    });
+    nodes.forEach((n) => { startMap[n.id] = { ...n }; });
     initialNodesMap.current = startMap;
-    liveTextGeometry.current = {};
+
+    /**
+     * The reference box is read off the **proxy**, not recomputed from the
+     * document.
+     *
+     * They have to be the same box, and they are not always: the proxy is
+     * fitted by an effect, and anything that changes a node between that effect
+     * and the gesture -- a text box settling its own height, a peer's edit --
+     * leaves the two disagreeing. Measured live, the proxy read 389 wide while
+     * the store said 209, so `to.width / from.width` came out at 1.86 and a
+     * *pure rotation* scaled everything by nearly double.
+     *
+     * The proxy is what the handles move, so the proxy is the frame the gesture
+     * is expressed in. Deriving `from` from anything else is the same "two
+     * copies of one fact" mistake that this whole rewrite exists to remove.
+     */
+    const proxy = proxyRef.current;
+    startBox.current = proxy
+      ? {
+          x: proxy.x() - proxy.width() / 2,
+          y: proxy.y() - proxy.height() / 2,
+          width: proxy.width(),
+          height: proxy.height(),
+        }
+      : selectionBox(nodes);
+    // The proxy starts turned to the object's own angle, so its rotation is
+    // only meaningful as a difference.
+    startSpin.current = proxy ? proxy.rotation() : 0;
   };
 
-  const handleTransform = () => {
-    const tr = trRef.current;
-    if (!tr) return;
-    const anchor = (tr.getActiveAnchor() || '').split(' ')[0];
-    // Recorded for the commit, which runs after Konva has forgotten it.
-    if (anchor) activeAnchor.current = anchor;
-    const isRotating = anchor === 'rotater';
-    const deg = Math.round(((tr.rotation() % 360) + 360) % 360);
+  /**
+   * What the gesture has done to the selection's box, read off the proxy.
+   *
+   * The proxy is the only thing Konva touches, so this is the one place its
+   * scale is consulted -- and the last. Everything downstream works in sizes.
+   */
+  const readProxy = (): { to: Box; spin: number } | null => {
+    const proxy = proxyRef.current;
+    const from = startBox.current;
+    if (!proxy || !from) return null;
+
+    // Konva reports a negative dimension when a handle is pulled through the
+    // far side. The box is still real, it is just described backwards.
+    const width = Math.abs(proxy.width() * proxy.scaleX());
+    const height = Math.abs(proxy.height() * proxy.scaleY());
+    return {
+      to: { x: proxy.x() - width / 2, y: proxy.y() - height / 2, width, height },
+      // A delta, not an absolute: the proxy was already turned to the object's
+      // own angle before the gesture started, and `placeInBox` adds this to
+      // each object's existing rotation.
+      spin: proxy.rotation() - startSpin.current,
+    };
+  };
+
+  /**
+   * Where every selected object lands, given the gesture so far.
+   *
+   * One function, called by the live preview and by the commit. They used to
+   * work this out separately -- from a scale one of them had already modified --
+   * and disagreed constantly: resizes that previewed correctly committed the
+   * original width, rotations re-wrapped the paragraph they were turning. Two
+   * derivations of one answer is the shape of that whole family of bugs.
+   */
+  const placeAll = (): Array<{ id: string; node: AnyNode; start: AnyNode; placed: Placed; extra: Record<string, unknown> }> => {
+    const moved = readProxy();
+    const from = startBox.current;
+    if (!moved || !from) return [];
 
     const store = useStore.getState().objects;
-    let singleBadgeW = 0;
-    let singleBadgeH = 0;
+    const anchor = activeAnchor.current;
+    const rotating = anchor === 'rotater';
+    const out: Array<{ id: string; node: AnyNode; start: AnyNode; placed: Placed; extra: Record<string, unknown> }> = [];
 
-    tr.nodes().forEach((konvaNode: Konva.Node) => {
-      const id = konvaNode.id();
+    for (const id of selectedIds) {
       const node = store[id];
-      const startNode = initialNodesMap.current[id] || node;
-      if (!node || !startNode) return;
-      const scaleX = konvaNode.scaleX();
-      const scaleY = konvaNode.scaleY();
+      const start = initialNodesMap.current[id];
+      if (!node || !start) continue;
+
+      let placed = placeInBox(start, from, moved.to, moved.spin);
+      placed = {
+        ...placed,
+        width: Math.max(MIN_SIZE, placed.width),
+        height: Math.max(MIN_SIZE, placed.height),
+      };
+      const extra: Record<string, unknown> = {};
 
       /**
-       * Turning a paragraph is not resizing it.
+       * A paragraph is re-wrapped, not stretched.
        *
-       * The branch below sorts the eight resize handles into corner, vertical
-       * edge and "everything else" -- and `rotater` is none of the first two, so
-       * it fell into the horizontal-edge case and **re-wrapped the text on every
-       * frame of a rotation**. The box came out of a rotate gesture at a
-       * completely different size from the one it went in at: 389 x 120 became
-       * 335 x 380 on a single turn.
-       *
-       * A rotation changes one number and no others. Excluding it here lets the
-       * generic path below carry the angle through, which is all it has ever
-       * needed to do.
+       * The whole reason the objects no longer carry a scale: type has to be
+       * laid out at its real size to be undistorted, and the box the drag drew
+       * is the *measure*, not the height. Excluded for a rotation, which sorts
+       * into none of the resize cases and used to fall through to the
+       * horizontal-edge branch -- so turning a paragraph re-wrapped it.
        */
-      if (node.type === 'text' && startNode.type === 'text' && anchor !== 'rotater') {
-        /**
-         * The scale is **not** reset here any more.
-         *
-         * It used to be, to keep glyphs from stretching -- and it was the other
-         * half of the feedback loop described in `ObjectRenderer`. Konva's
-         * `Transformer` derives each frame's transform from the scale it finds
-         * on the node, so zeroing it mid-gesture left the widget solving
-         * against a node that had been changed underneath it, every frame.
-         *
-         * Glyphs stay unstretched by a different route now: `TextRenderer` reads
-         * the live width out of the store and re-wraps at it, so the text is
-         * laid out at the size the drag is asking for rather than drawn small
-         * and scaled up. The scale is folded into `width`/`height` once, at the
-         * commit, where nothing is competing for the node.
-         */
+      if (node.type === 'text' && start.type === 'text' && !rotating) {
+        const scale = from.width > 0 ? moved.to.width / from.width : 1;
+        const scaleY = from.height > 0 ? moved.to.height / from.height : 1;
 
-        let width = startNode.width;
-        let height = startNode.height;
-        let typo = startNode.typography;
-        const draggedCorner = CORNERS.has(anchor);
-
-        if (draggedCorner && uniformDrag(scaleX, scaleY)) {
-          // Corner scaling: scales font size proportionally and reflows box
-          const factor = Math.abs(scaleX);
-          const newFontSize = Math.round(Math.max(4, Math.min(400, startNode.typography.fontSize * factor)));
-          typo = { ...startNode.typography, fontSize: newFontSize };
-          const layout = layoutText({
+        if (CORNERS.has(anchor) && uniformDrag(scale, scaleY)) {
+          // A corner scales the type itself, which is the one gesture where the
+          // font size is meant to change.
+          const size = Math.round(Math.max(4, Math.min(400, start.typography.fontSize * Math.abs(scale))));
+          const typo = { ...start.typography, fontSize: size };
+          const laid = layoutText({
             text: applyTextCase(node.text, typo.textCase),
-            wrap: startNode.resize === 'width' ? 'none' : 'word',
-            width: startNode.width * factor,
-            fontSize: newFontSize,
+            wrap: start.resize === 'width' ? 'none' : 'word',
+            width: Math.max(MIN_SIZE, start.width * Math.abs(scale)),
+            fontSize: size,
             lineHeight: typo.lineHeight,
             letterSpacing: typo.letterSpacing,
             paragraphSpacing: typo.paragraphSpacing,
@@ -451,281 +381,113 @@ function computePinnedBox(
             verticalAlign: typo.verticalAlign,
             measure: measurerFor(typo),
           });
-          width = Math.max(MIN_SIZE, Math.ceil(layout.width));
-          height = Math.max(MIN_SIZE, Math.ceil(layout.height));
-        } else if (!draggedCorner && VERTICAL_EDGES.has(anchor)) {
-          // Vertical edge drag (top-center, bottom-center)
-          width = startNode.width;
-          height = Math.max(MIN_SIZE, startNode.height * Math.abs(scaleY));
-        } else {
-          // Horizontal edge drag (middle-left, middle-right): width changes and text wraps live!
-          width = Math.max(MIN_SIZE, startNode.width * Math.abs(scaleX));
-          const layout = layoutText({
-            text: applyTextCase(node.text, startNode.typography.textCase),
-            wrap: 'word',
-            width,
-            fontSize: startNode.typography.fontSize,
-            lineHeight: startNode.typography.lineHeight,
-            letterSpacing: startNode.typography.letterSpacing,
-            paragraphSpacing: startNode.typography.paragraphSpacing,
-            align: startNode.typography.align,
-            verticalAlign: startNode.typography.verticalAlign,
-            measure: measurerFor(startNode.typography),
+          extra.typography = typo;
+          placed = placeParagraph(placed, {
+            width: Math.max(MIN_SIZE, Math.ceil(laid.width)),
+            height: Math.max(MIN_SIZE, Math.ceil(laid.height)),
           });
-          height = Math.max(MIN_SIZE, Math.ceil(layout.height));
+        } else if (VERTICAL_EDGES.has(anchor)) {
+          // A top or bottom handle states a height, which makes the box fixed.
+          extra.resize = 'fixed';
+          placed = { ...placed, width: start.width };
+        } else {
+          const laid = layoutText({
+            text: applyTextCase(node.text, start.typography.textCase),
+            wrap: 'word',
+            width: placed.width,
+            fontSize: start.typography.fontSize,
+            lineHeight: start.typography.lineHeight,
+            letterSpacing: start.typography.letterSpacing,
+            paragraphSpacing: start.typography.paragraphSpacing,
+            align: start.typography.align,
+            verticalAlign: start.typography.verticalAlign,
+            measure: measurerFor(start.typography),
+          });
+          extra.resize = 'height';
+          placed = placeParagraph(placed, {
+            width: placed.width,
+            height: Math.max(MIN_SIZE, Math.ceil(laid.height)),
+          });
         }
-
-        // A side handle sets the measure and the height follows, so the top
-        // stays put -- see `pinTextBox`. Any other handle is an ordinary resize.
-        const pinned = HORIZONTAL_EDGES.has(anchor)
-          ? pinTextBox(anchor, startNode, width)
-          : computePinnedBox(anchor, startNode, width, height);
-        // Handed to the commit -- see `liveTextGeometry`. Recorded for every
-        // branch above, because each one is a different answer and the commit
-        // must not have to work out which ran.
-        liveTextGeometry.current[id] = {
-          width,
-          height,
-          x: pinned.x,
-          y: pinned.y,
-          typography: typo,
-          resize: !draggedCorner && VERTICAL_EDGES.has(anchor) ? 'fixed' : 'height',
-        };
-
-        /**
-         * Nothing here writes to the Konva node's own box, and it must not.
-         *
-         * A previous version set `width`/`height` on the group and called
-         * `forceUpdate` to make the selection frame follow the re-wrap live
-         * instead of snapping on release. It made **every** gesture on **every**
-         * object type throw the object off the screen.
-         *
-         * The group is positioned as `x + cx` with `offsetX: cx`, where `cx` is
-         * half the width React last rendered. Writing a new width straight onto
-         * the Konva node changes what the transformer measures while `offsetX`
-         * still holds the old half-width, so the next `_fitNodesInto` solves for
-         * a position against a box that no longer matches its own origin. The
-         * error is re-fed on the following frame and compounds -- which is
-         * exactly what flying off screen looks like. `forceUpdate` inside the
-         * `transform` handler made it worse by forcing that measurement to
-         * happen again mid-event.
-         *
-         * The frame lagging the re-wrap by one commit is a cosmetic fault. This
-         * was a functional one, and the trade is not close.
-         */
-        singleBadgeW = width;
-        singleBadgeH = height;
-        liveTransformStore.set(id, {
-          fromTransform: true,
-          x: pinned.x,
-          y: pinned.y,
-          width,
-          height,
-          rotation: konvaNode.rotation(),
-          typography: typo,
-          resize: 'height',
-        });
-        // Handed to the commit, which cannot recover it from a scale this pass
-        // has just zeroed -- see `liveTextGeometry`.
-        liveTextGeometry.current[id] = {
-          width, height, x: pinned.x, y: pinned.y, typography: typo, resize: 'height',
-        };
-        return;
       }
 
-      const width = Math.max(MIN_SIZE, startNode.width * Math.abs(scaleX));
-      const height = Math.max(MIN_SIZE, startNode.height * Math.abs(scaleY));
-      singleBadgeW = width;
-      singleBadgeH = height;
-      const pinned = computePinnedBox(anchor, startNode, width, height);
-      liveTransformStore.set(id, {
-        fromTransform: true,
-        x: pinned.x,
-        y: pinned.y,
-        width,
-        height,
-        rotation: konvaNode.rotation(),
-      });
-    });
+      out.push({ id, node, start, placed, extra });
+    }
+    return out;
+  };
 
-    const w = singleBadgeW || Math.round(tr.width());
-    const h = singleBadgeH || Math.round(tr.height());
-    const text = isRotating ? `${deg}°` : `${Math.round(w)} × ${Math.round(h)}`;
-    setIsRotatingNow(isRotating);
-    setLiveBadge({
-      text,
-      x: tr.x() + tr.width() / 2,
-      y: tr.y() + tr.height() + 18,
-    });
+  const handleTransform = () => {
+    const tr = trRef.current;
+    const proxy = proxyRef.current;
+    if (!tr || !proxy) return;
+
+    const anchor = (tr.getActiveAnchor() || '').split(' ')[0];
+    // Captured while Konva still knows it: by `transformend` it has been
+    // cleared, and every check there was silently comparing against ''.
+    if (anchor) activeAnchor.current = anchor;
+    const rotating = anchor === 'rotater';
+
+    const placements = placeAll();
+    for (const { id, placed, extra } of placements) {
+      liveTransformStore.set(id, {
+        x: placed.x,
+        y: placed.y,
+        width: placed.width,
+        height: placed.height,
+        rotation: placed.rotation,
+        ...(extra as { typography?: never; resize?: never }),
+      });
+    }
+
+    const box = readProxy();
+    if (box) {
+      const deg = Math.round(((proxy.rotation() % 360) + 360) % 360);
+      setLiveBadge({
+        text: rotating
+          ? `${deg}°`
+          : `${Math.round(box.to.width)} × ${Math.round(box.to.height)}`,
+        x: box.to.x + box.to.width / 2,
+        y: box.to.y + box.to.height + 22,
+      });
+    }
   };
 
   const handleTransformEnd = () => {
     window.dispatchEvent(new CustomEvent('canvas-drag-end'));
     setTransforming(false);
     setLiveBadge(null);
-    setIsRotatingNow(false);
-    const tr = trRef.current;
-    if (!tr) return;
 
-    // Batch-clear all live transforms before CRDT commit so the connector
-    // writeback effect doesn't see stale transient data.
-    liveTransformStore.deleteBatch(tr.nodes().map((n: Konva.Node) => n.id()));
+    const placements = placeAll();
+    liveTransformStore.deleteBatch(selectedIds);
+    activeAnchor.current = '';
 
     const store = useStore.getState().objects;
-    /**
-     * Which handle was dragged, so a corner and an edge can mean different
-     * things — which for text they must.
-     */
-    // From the ref, not from Konva: see `activeAnchor`. Asking the transformer
-    // here returns an empty string, which silently reclassified every gesture.
-    const anchor = activeAnchor.current;
-    activeAnchor.current = '';
-    const draggedCorner = CORNERS.has(anchor);
-
-    const nodePatches: Array<{ id: string; changes: Record<string, unknown> }> = [];
     const updatedObjects: Record<string, AnyNode> = { ...store };
+    const nodePatches: Array<{ id: string; changes: Record<string, unknown> }> = [];
     const modifiedIds: string[] = [];
 
-    tr.nodes().forEach((konvaNode: Konva.Node) => {
-      const id = konvaNode.id();
-      const node = store[id];
-      const startNode = initialNodesMap.current[id] || node;
-      if (!node || !startNode) return;
-
-      const scaleX = konvaNode.scaleX();
-      const scaleY = konvaNode.scaleY();
-
-      // Reset scale on Konva node
-      konvaNode.scaleX(1);
-      konvaNode.scaleY(1);
-
-      /**
-       * A text box commits what the live pass measured, not a scale.
-       *
-       * See `liveTextGeometry`. The branches below re-derive the same three
-       * answers from `scaleX`/`scaleY`, which the live pass zeroes the instant
-       * it runs -- so they were computing `startNode.width * 1` and every text
-       * resize snapped back on release. They are kept only for the case where
-       * no live pass ran at all, which is a transform so short it produced no
-       * `transform` event.
-       */
-      // A rotation never records live geometry -- see the guard in the live
-      // pass -- so this is `undefined` for one and the generic path runs.
-      const live = node.type === 'text' ? liveTextGeometry.current[id] : undefined;
-      let finalW = live ? live.width : Math.max(MIN_SIZE, startNode.width * Math.abs(scaleX));
-      let finalH = live ? live.height : Math.max(MIN_SIZE, startNode.height * Math.abs(scaleY));
-
-      /**
-       * Resizing a text box changes what kind of box it is.
-       */
-      const textMode: Record<string, unknown> = {};
-      if (live) {
-        textMode.typography = live.typography;
-        textMode.resize = live.resize;
-      }
-      // `rotater` excluded here for the same reason as in the live pass: this
-      // branch sorts handles into corner / vertical edge / everything else, and
-      // a rotation is none of them -- so it fell into the horizontal-edge case
-      // and re-wrapped the paragraph as part of turning it.
-      if (!live && node.type === 'text' && startNode.type === 'text' && anchor !== 'rotater') {
-        if (draggedCorner && uniformDrag(scaleX, scaleY)) {
-          const factor = Math.abs(scaleX);
-          const newFontSize = Math.round(Math.max(4, Math.min(400, startNode.typography.fontSize * factor)));
-          const tempTypo = { ...startNode.typography, fontSize: newFontSize };
-          const layout = layoutText({
-            text: applyTextCase(node.text, tempTypo.textCase),
-            wrap: startNode.resize === 'width' ? 'none' : 'word',
-            width: startNode.width * factor,
-            fontSize: newFontSize,
-            lineHeight: tempTypo.lineHeight,
-            letterSpacing: tempTypo.letterSpacing,
-            paragraphSpacing: tempTypo.paragraphSpacing,
-            align: tempTypo.align,
-            verticalAlign: tempTypo.verticalAlign,
-            measure: measurerFor(tempTypo),
-          });
-          textMode.typography = tempTypo;
-          finalW = Math.max(MIN_SIZE, Math.ceil(layout.width));
-          finalH = Math.max(MIN_SIZE, Math.ceil(layout.height));
-        } else if (!draggedCorner && VERTICAL_EDGES.has(anchor)) {
-          textMode.resize = 'fixed';
-          finalW = startNode.width;
-          finalH = Math.max(MIN_SIZE, startNode.height * Math.abs(scaleY));
-        } else {
-          // Horizontal resize or box stretch: auto-wrap paragraph text
-          finalW = Math.max(MIN_SIZE, startNode.width * Math.abs(scaleX));
-          const layout = layoutText({
-            text: applyTextCase(node.text, startNode.typography.textCase),
-            wrap: 'word',
-            width: finalW,
-            fontSize: startNode.typography.fontSize,
-            lineHeight: startNode.typography.lineHeight,
-            letterSpacing: startNode.typography.letterSpacing,
-            paragraphSpacing: startNode.typography.paragraphSpacing,
-            align: startNode.typography.align,
-            verticalAlign: startNode.typography.verticalAlign,
-            measure: measurerFor(startNode.typography),
-          });
-          textMode.resize = 'height';
-          finalH = Math.max(MIN_SIZE, Math.ceil(layout.height));
-        }
-      }
-
+    for (const { id, node, placed, extra } of placements) {
       /**
        * A path has to resize its own outline; nothing else describes its size.
        */
       const pathMode: Record<string, unknown> = {};
-      if (node.type === 'path') {
-        const scaled = scalePathGeometry(node.geometry, Math.abs(scaleX), Math.abs(scaleY));
+      if (node.type === 'path' && startBox.current) {
+        const sx = startBox.current.width > 0 ? placed.width / (initialNodesMap.current[id]?.width || 1) : 1;
+        const sy = startBox.current.height > 0 ? placed.height / (initialNodesMap.current[id]?.height || 1) : 1;
+        const scaled = scalePathGeometry(node.geometry, Math.abs(sx), Math.abs(sy));
         if (scaled !== node.geometry) pathMode.geometry = scaled;
       }
 
-      const pinned = computePinnedBox(anchor, startNode, finalW, finalH);
-
-      /**
-       * The rotation comes off the Konva node, not off the node we started with.
-       *
-       * This read `startNode.rotation ?? node.rotation` — the angle from
-       * *before* the gesture — so every rotation was computed, drawn live, and
-       * then thrown away on release. The handle turned the object, the commit
-       * wrote the old angle back, and the next render put it upright: the
-       * "snaps back on its own" that grids show and every other type shares.
-       *
-       * Konva's own value is the right source because the Transformer is what
-       * performed the rotation, including its 45-degree snaps — deriving the
-       * angle again from pointer positions would be a second answer to a
-       * question the widget has already answered exactly.
-       */
-      const rotation = konvaNode.rotation();
-
-      /**
-       * A rotation moves the node; a resize pins an edge. They cannot share a
-       * box.
-       *
-       * `computePinnedBox` answers "where does the top-left go so the opposite
-       * edge stays put", which is the resize question. Rotating about the
-       * selection's pivot moves the node's centre along an arc, and the only
-       * thing that knows where it ended up is the Konva node — so for the
-       * rotater the position is read back rather than derived.
-       */
-      const rotating = anchor === 'rotater';
-      const box = rotating
-        ? { x: konvaNode.x() - finalW / 2, y: konvaNode.y() - finalH / 2 }
-        // Text commits the position the live pass pinned, for the reason
-        // `pinTextBox` gives: a paragraph grows downwards, and re-deriving it
-        // here would centre the growth again.
-        : live
-          ? { x: live.x, y: live.y }
-          : { x: pinned.x, y: pinned.y };
-
       const changes = {
-        ...textMode,
+        ...extra,
         ...pathMode,
-        x: box.x,
-        y: box.y,
-        width: finalW,
-        height: finalH,
-        rotation,
+        x: placed.x,
+        y: placed.y,
+        width: placed.width,
+        height: placed.height,
+        rotation: placed.rotation,
+        // Always one. The objects never carry a scale now -- that is the entire
+        // point of the proxy.
         scaleX: 1,
         scaleY: 1,
       };
@@ -733,11 +495,18 @@ function computePinnedBox(
       nodePatches.push({ id, changes });
       updatedObjects[id] = { ...node, ...changes } as AnyNode;
       modifiedIds.push(id);
+    }
 
-    });
+    // The proxy goes back to being a plain box, ready to be re-fitted to
+    // whatever the selection now is.
+    const proxy = proxyRef.current;
+    if (proxy) {
+      proxy.scaleX(1);
+      proxy.scaleY(1);
+      proxy.rotation(0);
+    }
 
     initialNodesMap.current = {};
-    liveTextGeometry.current = {};
     const connectorPatches = syncConnectedConnectors(modifiedIds, updatedObjects);
     applyNodePatches([...nodePatches, ...connectorPatches]);
 
@@ -760,104 +529,20 @@ function computePinnedBox(
   };
 
   /**
-   * Drawn from the transformer's own box, so it follows the live drag rather
-   * than the committed geometry — which does not update until the drag ends.
+   * There is no pivot marker any more.
+   *
+   * It began as a blue cross drawn on every selection, permanently, over the
+   * artwork. Scoping it to the rotate gesture and redrawing it as a ring around
+   * a dot made it quieter but did not make it *useful*, which is the test it
+   * kept failing: the pivot cannot be moved here, so the mark reports a fact
+   * nobody can act on. Figma draws nothing; Illustrator draws one only once the
+   * pivot becomes draggable.
+   *
+   * The angle badge already answers the question a rotation actually raises --
+   * how far have I turned -- so the marker was decoration on top of an answer.
+   * Restyling a control twice without it earning its place is the signal to
+   * remove it.
    */
-  // Konva's Transformer keeps its own x/y/width/height in the layer's space,
-  // which is exactly the frame the mark is drawn in — no client-rect
-  // conversion needed, and no shadow inflation to compensate for.
-  const tr = trRef.current;
-  const box = tr && tr.nodes().length > 0
-    ? { x: tr.x(), y: tr.y(), width: tr.width(), height: tr.height() }
-    : null;
-  /**
-   * The pivot, shown only while turning something.
-   *
-   * ## Why it used to be noise
-   *
-   * It was drawn on **every selection** — a small blue cross sitting in the
-   * middle of whatever you had clicked, permanently, over the artwork. A mark
-   * that is always present says nothing, and this one had a real job it was
-   * being prevented from doing: it is the point a rotation turns about, which
-   * is worth knowing at exactly one moment and is clutter at every other.
-   *
-   * Scoped to the rotate gesture, it becomes an answer to a question you are
-   * actually asking. Drawn as a ring with a gap rather than a solid cross, so
-   * it reads as a *centre* rather than as a small object someone has added to
-   * the board.
-   */
-  const centre = isRotatingNow && box ? (
-    <Group
-      x={box.x + box.width / 2}
-      y={box.y + box.height / 2}
-      listening={false}
-      name={EXPORT_CHROME}
-    >
-      <Circle radius={7} stroke={ACCENT} strokeWidth={1} opacity={0.55} />
-      <Circle radius={1.5} fill={ACCENT} />
-    </Group>
-  ) : null;
-
-  const transformer = (
-    <Transformer
-      ref={trRef}
-      // Interface, not document: PNG export captures the live stage, so
-      // without this the blue handles are baked into the image.
-      name={EXPORT_CHROME}
-      onTransform={handleTransform}
-      onTransformStart={handleTransformStart}
-      onTransformEnd={handleTransformEnd}
-      boundBoxFunc={(oldBox, newBox) => (newBox.width < MIN_SIZE || newBox.height < MIN_SIZE ? oldBox : newBox)}
-      /**
-       * Eight vertices: four corners and four edge midpoints.
-       *
-       * The rotate handle above them stays — it is the ninth *control* but not
-       * a ninth vertex, and removing it would take rotation away entirely.
-       */
-      enabledAnchors={ANCHORS}
-      // A hairline, and the same blue the hover ring uses, so selecting
-      // something is a continuation of hovering it rather than a new colour
-      // appearing. The old 2px sky was heavier than the objects it framed.
-      borderStroke={ACCENT}
-      borderStrokeWidth={1}
-      anchorStroke={ACCENT}
-      anchorStrokeWidth={1}
-      anchorFill={HANDLE_FILL}
-      anchorSize={9}
-      /**
-       * Corners and edges are drawn differently, because they *do* different
-       * things: a corner scales both axes, an edge scales one. Making them
-       * identical asks the user to remember which is which; shaping each one
-       * like its job means they do not have to.
-       */
-      anchorStyleFunc={(anchor) => {
-        const name = anchor.name().split(' ')[0];
-        if (name === 'rotater') {
-          // Round, because rotation is continuous and has no axis — and a
-          // little further out, so it is never confused with the corner it
-          // sits above.
-          anchor.cornerRadius(anchor.width() / 2);
-          return;
-        }
-        if (CORNERS.has(name)) {
-          anchor.cornerRadius(2.5);
-          return;
-        }
-        // Edge midpoints: a short bar lying along the edge it belongs to, so
-        // its shape states the one axis it will move.
-        const horizontal = name === 'top-center' || name === 'bottom-center';
-        anchor.width(horizontal ? 16 : 6);
-        anchor.height(horizontal ? 6 : 16);
-        anchor.offsetX(anchor.width() / 2);
-        anchor.offsetY(anchor.height() / 2);
-        anchor.cornerRadius(3);
-      }}
-      padding={4}
-      rotationSnaps={[0, 45, 90, 135, 180, 225, 270, 315]}
-      ignoreStroke
-    />
-  );
-
 
   /**
    * The readout, while a handle is being dragged.
@@ -923,10 +608,79 @@ function computePinnedBox(
     );
   })() : null;
 
+  const transformerEl = (
+    <Transformer
+      ref={trRef}
+      // Interface, not document: PNG export captures the live stage, so
+      // without this the blue handles are baked into the image.
+      name={EXPORT_CHROME}
+      onTransform={handleTransform}
+      onTransformStart={handleTransformStart}
+      onTransformEnd={handleTransformEnd}
+      boundBoxFunc={(oldBox, newBox) => (newBox.width < MIN_SIZE || newBox.height < MIN_SIZE ? oldBox : newBox)}
+      /**
+       * Eight vertices: four corners and four edge midpoints.
+       *
+       * The rotate handle above them stays â€” it is the ninth *control* but not
+       * a ninth vertex, and removing it would take rotation away entirely.
+       */
+      enabledAnchors={ANCHORS}
+      // A hairline, and the same blue the hover ring uses, so selecting
+      // something is a continuation of hovering it rather than a new colour
+      // appearing. The old 2px sky was heavier than the objects it framed.
+      borderStroke={ACCENT}
+      borderStrokeWidth={1}
+      anchorStroke={ACCENT}
+      anchorStrokeWidth={1}
+      anchorFill={HANDLE_FILL}
+      anchorSize={9}
+      /**
+       * Corners and edges are drawn differently, because they *do* different
+       * things: a corner scales both axes, an edge scales one. Making them
+       * identical asks the user to remember which is which; shaping each one
+       * like its job means they do not have to.
+       */
+      anchorStyleFunc={(anchor) => {
+        const name = anchor.name().split(' ')[0];
+        if (name === 'rotater') {
+          // Round, because rotation is continuous and has no axis â€” and a
+          // little further out, so it is never confused with the corner it
+          // sits above.
+          anchor.cornerRadius(anchor.width() / 2);
+          return;
+        }
+        if (CORNERS.has(name)) {
+          anchor.cornerRadius(2.5);
+          return;
+        }
+        // Edge midpoints: a short bar lying along the edge it belongs to, so
+        // its shape states the one axis it will move.
+        const horizontal = name === 'top-center' || name === 'bottom-center';
+        anchor.width(horizontal ? 16 : 6);
+        anchor.height(horizontal ? 6 : 16);
+        anchor.offsetX(anchor.width() / 2);
+        anchor.offsetY(anchor.height() / 2);
+        anchor.cornerRadius(3);
+      }}
+      padding={4}
+      rotationSnaps={[0, 45, 90, 135, 180, 225, 270, 315]}
+      ignoreStroke
+    />
+  );
+
+  /**
+   * The proxy: sized to the selection, drawn as nothing.
+   *
+   * `listening={false}` because it must never take a click -- it sits over the
+   * artwork and would otherwise swallow every selection attempt inside the
+   * bounding box. Konva's handles are their own shapes and do not need it.
+   */
+  const proxy = <Rect ref={proxyRef} listening={false} name={EXPORT_CHROME} />;
+
   return (
     <>
-      {transformer}
-      {centre}
+      {proxy}
+      {transformerEl}
       {hudBadge}
     </>
   );
