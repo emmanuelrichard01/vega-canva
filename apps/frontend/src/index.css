@@ -2141,8 +2141,24 @@ textarea:focus-visible {
 .tool-dock {
   position: absolute;
   bottom: 24px;
-  left: 50%;
-  transform: translateX(-50%);
+  /**
+   * Centred by auto margins, not by a half-width translate.
+   *
+   * `left: 50%` with no `right` gives an absolutely positioned box a
+   * shrink-to-fit width measured from the midpoint to the container's right
+   * edge -- so the dock could never be wider than **half** the viewport,
+   * whatever `max-width` said. At 1366px that is a 683px ceiling, and a row of
+   * sixteen tools with its dividers is wider than that, so the last seat wrapped
+   * onto a line of its own and the dock grew a second row nobody asked for.
+   *
+   * Pinning both edges and letting `margin-inline: auto` do the centring gives
+   * the box the whole width to fit in, which is what `max-width` below was
+   * always written against.
+   */
+  left: 0;
+  right: 0;
+  width: fit-content;
+  margin-inline: auto;
   display: flex;
   align-items: center;
   gap: 4px;
@@ -2164,17 +2180,11 @@ textarea:focus-visible {
   max-width: calc(100vw - 2 * var(--gutter));
 }
 
-/* Separates the dock into what the tools are *for* — navigate, create, place
-   media, apply force — rather than presenting eleven glyphs as one
-   undifferentiated row. */
-.dock-divider {
-  width: 1px;
-  height: 18px;
-  align-self: center;
-  margin: 0 4px;
-  background: var(--border-divider);
-  flex-shrink: 0;
-}
+/* `.dock-divider` lived here: a fixed rule the dock drew between its groups.
+   The dock's divisions are items in its arrangement now -- see `.dock-rule` --
+   so anyone can move or remove one, and nothing renders this class. Removed
+   rather than left as a spare: a rule nothing uses is a rule the next reader
+   has to check for callers before they can touch anything near it. */
 
 /* Where there is no hover there are no tooltips (see the `hover: none` rule
    further down), which left touch users with a row of unlabelled glyphs and no
@@ -3238,6 +3248,22 @@ textarea:focus-visible {
  */
 .dock-group { display: contents; }
 
+/**
+ * A put-away seat is actually gone.
+ *
+ * The `hidden` attribute works by applying `display: none` in the UA
+ * stylesheet, and **any** author `display` declaration beats it. Seven of the
+ * sixteen seats are wrapped in `.dock-slot-wrap`, which sets `display: flex` --
+ * so hiding one of those did nothing at all. The text block is one of them, and
+ * it kept its place on the dock while the menu listed it as put away, landing
+ * at the fallback order between Image and Audio.
+ *
+ * Scoped to the dock and written as a selector rather than `!important`,
+ * because two class-level selectors is enough specificity to win and leaves the
+ * rule overridable by anything that genuinely needs to.
+ */
+.tool-dock [hidden] { display: none; }
+
 /* The divider, now an item in the arrangement rather than a border between two
    groups. Sized in the same rhythm as the seats so a dock with several still
    reads as one row. */
@@ -3262,12 +3288,34 @@ textarea:focus-visible {
  * once: the whole dock lifts and tints, every seat grows a grab cursor and a
  * remove badge, and the tools stop responding to a plain click as tools.
  */
+/**
+ * The mode says itself from outside the dock, not by tinting the inside.
+ *
+ * ## Why the interior wash was wrong on a dark board
+ *
+ * It filled the dock with `--accent-quiet`, which is the brand orange at 16%
+ * over a light surface and 22% over a dark one. On light that is a pale amber
+ * wash and reads exactly as intended; on dark, orange over near-black
+ * composites to a muddy brown that reads as dirt rather than as an accent — and
+ * worse, it lifts the background luminance toward the glyph colour, so every
+ * tool in the dock lost contrast at the moment the dock filled up with small
+ * new controls to aim at.
+ *
+ * Both problems come from putting the signal *behind the content*. A halo and a
+ * dashed rule sit outside the box, so the interior is untouched on either
+ * ground and the tools stay exactly as legible as they were. The mode is still
+ * stated four ways — the rule, the halo, the loosened gaps, and a remove badge
+ * on every seat — so none of them is carrying it alone, which was the original
+ * argument against an outline by itself.
+ */
 .tool-dock[data-editing] {
   outline: 1.5px dashed var(--text-accent);
   outline-offset: 3px;
-  /* Tinted rather than merely outlined: an outline alone reads as a focus ring,
-     which is a thing that happens *to* a control, not a state it is in. */
-  background-image: linear-gradient(var(--accent-quiet, transparent), var(--accent-quiet, transparent));
+  /* The panel's own elevation is kept and a halo added outside it. Listed
+     first so it sits under the float shadow rather than over it. */
+  box-shadow:
+    0 0 0 9px color-mix(in srgb, var(--brand-orange) 12%, transparent),
+    var(--shadow-float);
   /* Loosened, for two reasons that happen to agree. The remove badges hang off
      each seat's shoulder and at the normal 4px they sit on the neighbour; and a
      row that spreads when you start editing says the seats have come unstuck
@@ -4553,30 +4601,27 @@ textarea:focus-visible {
    faint lines in it rather than four runs of related tools. */
 .tool-dock { gap: 8px; }
 
-.dock-group {
-  display: flex;
-  align-items: center;
-  /* Enough that two buttons are distinct objects, tight enough that they
-     still read as one group. */
-  gap: 4px;
-}
-
 /* Was `style={{ padding: '6px' }}` repeated on all twelve buttons. One number
    in one place, so the dock cannot end up with two button sizes in it. */
 .tool-dock .dock-btn { padding: 7px; }
 
-/* The overflow seat is a peer of the tools, not a menu affordance bolted on
-   the end, so it gets no special treatment beyond a hairline that says the
-   run has finished. A chevron or a plus here would claim it does something
-   different from the buttons beside it, and it does not — it arms a tool. */
-.dock-group + .dock-group::before {
-  content: '';
-  align-self: center;
-  width: 1px;
-  height: 20px;
-  margin-right: 8px;
-  background: var(--border-divider);
-}
+/* `.dock-group { display: flex }` and a `.dock-group + .dock-group::before`
+   hairline lived here.
+ *
+ * Both had to go when the dock's divisions became items in its arrangement.
+ * The flex box was the more serious of the two: it beat the `display: contents`
+ * rule further up purely by coming later in the file, so the groups stayed real
+ * boxes at `order: 0` -- which pinned every seat inside the group it was
+ * written in, and pushed all three separators past the groups to the end, where
+ * they wrapped onto a second row on their own. That is what "three rogue
+ * dividers under the dock" was.
+ *
+ * The pseudo-element drew a rule before every group after the first, including
+ * the one holding the overflow seat -- so the dock had a divider before the
+ * three-dots button that nothing could move or remove, sitting alongside the
+ * ones that could. Two mechanisms for one thing, and only one of them editable.
+ *
+ * See `.dock-group` and `.dock-rule` above; there is one of each now. */
 
 /* The active tool carries real weight. A tint that matches hover means the
    dock cannot answer "what am I holding?" without moving the mouse away.

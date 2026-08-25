@@ -20,10 +20,17 @@ const layout = (over: Partial<DockLayout> = {}): DockLayout => ({
 });
 
 describe('DEFAULT_LAYOUT', () => {
-  it('seats every tool exactly once', () => {
-    const seats = DEFAULT_LAYOUT.order.filter((i) => i !== SEPARATOR);
+  it('accounts for every tool exactly once, on the dock or in the drawer', () => {
+    // Counted across both lists: one seat starts put away, and a tool that
+    // appeared in neither would be unreachable rather than merely absent.
+    const seats = [...DEFAULT_LAYOUT.order.filter((i) => i !== SEPARATOR), ...DEFAULT_LAYOUT.hidden];
     expect(new Set(seats).size).toBe(seats.length);
     expect(seats.length).toBe(DOCK_SEATS.length);
+  });
+
+  it('starts with the text block put away, to keep the dock on one row', () => {
+    expect(DEFAULT_LAYOUT.hidden).toEqual(['block']);
+    expect(DEFAULT_LAYOUT.order).not.toContain('block');
   });
 
   it('survives its own normalizer unchanged', () => {
@@ -176,8 +183,9 @@ describe('isDefaultLayout', () => {
     expect(isDefaultLayout(DEFAULT_LAYOUT)).toBe(true);
   });
 
-  it('sees a hidden seat, even with the order untouched', () => {
-    expect(isDefaultLayout({ ...DEFAULT_LAYOUT, hidden: ['hand'] })).toBe(false);
+  it('sees a different hidden set, even with the order untouched', () => {
+    expect(isDefaultLayout({ ...DEFAULT_LAYOUT, hidden: [] })).toBe(false);
+    expect(isDefaultLayout({ ...DEFAULT_LAYOUT, hidden: ['block', 'hand'] })).toBe(false);
   });
 
   it('sees a reorder', () => {

@@ -80,11 +80,28 @@ export const DEFAULT_LAYOUT: DockLayout = {
     SEPARATOR,
     'draw', 'eraser',
     SEPARATOR,
-    'text', 'block', 'shape', 'line', 'frame', 'grid', 'connector', 'sticky',
+    'text', 'shape', 'line', 'frame', 'grid', 'connector', 'sticky',
     SEPARATOR,
     'image', 'audio', 'forces',
   ],
-  hidden: [],
+  /**
+   * The text block starts in the drawer.
+   *
+   * Not because it is unimportant -- it drops a paragraph of placeholder prose,
+   * which is a real thing people want -- but because sixteen seats plus three
+   * dividers plus the drawer is wider than the dock can hold on a laptop, and a
+   * toolbar that wraps onto a second row is worse for every tool on it than one
+   * missing tool is for the people who want that one.
+   *
+   * It is the right one to move because it is the only seat here that
+   * duplicates something already easy: Text is beside it, and a block is a text
+   * object with words already in it. Everything else on the dock is the only
+   * way to do what it does.
+   *
+   * One drag in the toolbar editor puts it back, and that arrangement then
+   * persists.
+   */
+  hidden: ['block'],
 };
 
 const KNOWN = new Set<string>(DOCK_SEATS);
@@ -135,7 +152,7 @@ export function normalizeLayout(raw: unknown): DockLayout {
     (Array.isArray(source.order) && source.order.some((i) => isSeat(i))) ||
     (Array.isArray(source.hidden) && source.hidden.some((i) => isSeat(i)));
   if (!mentionsSomething) {
-    return { order: [...DEFAULT_LAYOUT.order], hidden: [] };
+    return { order: [...DEFAULT_LAYOUT.order], hidden: [...DEFAULT_LAYOUT.hidden] };
   }
 
   const seen = new Set<DockSeat>();
@@ -243,7 +260,8 @@ function tidy(order: readonly DockItem[]): DockItem[] {
 /** Whether a layout is the one everybody starts with. */
 export function isDefaultLayout(layout: DockLayout): boolean {
   return (
-    layout.hidden.length === 0 &&
+    layout.hidden.length === DEFAULT_LAYOUT.hidden.length &&
+    layout.hidden.every((seat, i) => seat === DEFAULT_LAYOUT.hidden[i]) &&
     layout.order.length === DEFAULT_LAYOUT.order.length &&
     layout.order.every((item, i) => item === DEFAULT_LAYOUT.order[i])
   );
