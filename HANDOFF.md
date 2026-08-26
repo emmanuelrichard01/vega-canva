@@ -11,54 +11,48 @@ time, where the work stopped, and what is next.
 
 > ## Read this first
 >
-> **The last session was a long feature pass, driven by the user reporting bugs
-> faster than they could be verified.** The standing instruction is "minimise
-> testing and calling claude in chrome, focus on building faster". Take it
-> seriously — it is the working agreement — but know what it cost here: the
-> user found **six** defects the work did not, and every one was the same
-> shape.
+> **The last session was a long bug-and-feature pass with no working browser.**
+> The Chrome extension would not connect at all, so nothing was watched: every
+> claim below is held up by a test or by arithmetic, and none of it by eye. The
+> standing instruction is still "minimise testing and calling claude in chrome,
+> focus on building faster" — take it seriously, it is the working agreement —
+> but know what shape the misses take.
 >
-> **All six were a second list that had fallen out of step with the first.**
+> **Almost everything found was one of three mistakes, and each has a rule.**
 >
-> 1. Line and arrow moved to their own dock seat, and `SHAPE_KINDS` — the list
->    `Canvas` registers tools from — lost them. The tools stopped being
->    *registered at all*: the dock lit up, the cursor changed, clicking did
->    nothing. The comment above that loop warns about exactly this.
-> 2. The same split left `shapeKindFromToolId` resolving against the seat's
->    list, so `shape-line` resolved to null and the **Shape** seat claimed it.
-> 3. Fixing that made the resolver answer for *every* preset, so the Shape seat
->    then wore a **line icon** whenever the line tool was armed.
-> 4. The line preview and the line commit each drew the box's diagonal rather
->    than the run, so a line drawn up-and-left rendered as the opposite
->    diagonal — "always stuck at an angle".
-> 5. The sketch branch of `ShapeRenderer` returns before the crisp branch's cap
->    code, so a **sketched arrow silently lost its head**. It had also grown its
->    own copy of the label, so a sketched line's label sat in empty space.
-> 6. `CommandPalette` carried a private `objectLabel` — `nodeLabel` as it stood
->    before shapes learned to name themselves — so the Layers panel said
->    "Rectangle" and the palette said "Shape" for the same object.
+> **1. Two derivations of one answer.** The oldest lesson here (invariant 7) and
+> still the most productive. This session it was: a sticky's text box computed
+> in three places, so reacting to a note resized its handwriting and clicking
+> into a tagged one resized it again; the pen tool's preview and its commit each
+> building segments from the same anchors with different code; the reaction tray
+> being a second popover implementation that had none of the flipping the shared
+> one has had all along; and `hasFooter` derived from `Object.keys(reactions)`
+> while the thing it gated was derived from the filtered list.
 >
-> The lesson, and it is invariant 7 again: **when you split a list, grep for
-> every reader of it before you finish.** Each of these was one call site that
-> still pointed at the old half.
+> **2. A quantity in the wrong unit or the wrong space.** Newly promoted to an
+> invariant (see 9 and 10) because it happened four times in one session:
+> - The contextual rail converted world → *stage* coordinates and then placed a
+>   DOM element in *window* coordinates. It was drawn a ruler's width up and to
+>   the left of its object. Three separate rounds of raising the standoff were
+>   spent compensating for it, and the asymmetry was the clue nobody read — the
+>   gap above looked right precisely because it had 28px added, and the gap
+>   below was short by the same 28px.
+> - Alt-drag's duplicate threshold was compared in world units, so a wobble
+>   duplicated at 10% zoom and a real drag refused at 500%.
+> - The pen's handle-drag threshold, the same.
+> - The rail's standoff was measured to the rail's box while the thing that
+>   lands on the artwork is its *shadow*, which reaches ~20px past it.
 >
-> **A seventh turned up since, and this one was found by auditing rather than
-> by the user.** The Keyboard & help modal — the screen people open precisely
-> when they are lost — advertised four shortcuts that nothing listened for:
-> `Cmd+A`, `Arrows`, `Shift+Arrows`, and `Cmd+0` for a reset bound to bare `0`.
-> Roughly as many real bindings went undocumented. The file's own header
-> comment warns that *a hint which lies is worse than no hint*, and holds the
-> tool rows to that by deriving them from `TOOL_SHORTCUTS` — but that guarantee
-> only ever covered one section, and everything written by hand below it
-> drifted exactly as the comment predicted. Fixed in `260bcab`: three of the
-> four are now **bound** rather than deleted, because they are keys a canvas
-> should have. **If you write a list of shortcuts, derive it or bind it — do
-> not type it.**
+> **3. A field the renderer draws and nothing honours.** Invariant 6, again.
+> `pinned` was drawn on every pinned sticky, offered in two places, described in
+> the properties panel as "stays put" — and read by nothing. The pin itself was
+> `listening={false}`, so it was also a control you could not press.
 >
-> **What the browser did catch that tests did not**: the Mermaid layout put a
-> retry loop's decision diamond *below* both of its branches, because ranking
-> included the back edge. The cycle test only asserted termination. Cycles are
-> broken by DFS first now, with the failing diagram pinned as a test.
+> **What the absence of a browser cost, specifically:** the rail bug above is
+> visual and would have taken one screenshot to see. It took three rounds of the
+> user saying "more clearance" and a hard look at `NodeEditor` — which has
+> always added the stage origin — to find. When a report is about *position* and
+> the fix does not hold, stop tuning the number and check the coordinate space.
 
 ---
 
@@ -176,6 +170,14 @@ move faster, minimise testing and calling claude in chrome, let's focus on
 building faster" — and the extension has been reliably unreliable since. Treat
 that as the working agreement.
 
+**In the most recent session it did not connect at all**: `tabs_context_mcp`
+returned "Browser extension is not connected" for the whole session, so nothing
+was observed. That is survivable for arithmetic and expensive for anything
+positional — the rail was drawn a ruler's width off for three rounds of user
+reports because the only evidence available was the user's description. **When a
+report is about where something is and the fix does not hold, stop tuning the
+number and check the coordinate space** (invariant 10).
+
 **So prefer writing a failing test to trying to watch the bug.** Every piece of
 arithmetic in this codebase lives in a pure module for that reason —
 `smartGuides`, `pathGeometry`, `pathBoolean`, `strokeOutline`, `imageCrop`,
@@ -247,6 +249,29 @@ Each was learned from a real defect here and is documented at its source.
    into `localStorage` and only rewritten when a board is opened, so a fix to
    the *renderer* cannot reach a board nobody has opened since. Bump
    `PREVIEW_VERSION` whenever `PreviewItem` changes meaning.
+9. **A gesture threshold belongs in screen pixels; geometry belongs in world
+   units.** A threshold is a statement about a hand on a screen, so judging it
+   in world units makes it mean something different at every zoom: Alt-drag
+   duplicated on a half-pixel wobble at 10% and refused a twenty-pixel drag at
+   500%, and the pen's handle-drag did the same. Multiply by `camera.zoom`
+   before comparing. `altDuplicate.travelledEnough` and
+   `penSession.isHandleDrag` both take the zoom for exactly this reason, and
+   both have a test that pins it.
+10. **Know which space a coordinate is in, and convert once.** There are three
+    here and they are not interchangeable: **world** (what the document
+    stores), **stage** (`world * zoom + camera.x`, an offset inside the Konva
+    stage), and **window** (what a DOM overlay is positioned in). The stage does
+    not start at the window's corner — it is inset by the rulers — so a DOM
+    element placed from a stage coordinate is wrong by that inset. `NodeEditor`
+    adds `getBoundingClientRect()` of `.konvajs-content`; `ObjectContextToolbar`
+    did not, and was drawn a ruler's width off for as long as it existed. If you
+    are positioning DOM against canvas content, add the stage origin.
+11. **During a gesture, the document is stale on purpose.** A drag writes to
+    `liveTransformStore`, not the CRDT — that is what keeps a sixty-frame drag
+    from being sixty updates. Anything that needs to *follow* the gesture must
+    read the live store with the document as the fallback, which is the rule
+    every renderer already follows. The selection handles did not, and sat where
+    the object had been until the drop.
 
 Konva specifics that have each cost a bug: `fillPriority` must be set on every
 branch (Konva leaves stale fill props in place, and React does not unset props
@@ -494,6 +519,95 @@ more than transcribing it once.
   it was reclassified as a curve and lost the corners that are its whole
   character.
 
+## 4a-v. The transform rewrite, and what it uncovered
+
+The single largest change in the recent work, and the root of a long run of
+user-reported bugs about text stretching, glyph distortion, objects "flying off
+the screen" and gestures that reverted on release.
+
+**Konva's `Transformer` resizes by putting a `scaleX`/`scaleY` on the node it
+holds.** That is exactly what a document object must not carry: a scale
+stretches glyphs, thickens strokes and swells corner radii. Resetting it each
+frame fights the widget, because it computes the next frame *from* the scale it
+finds; leaving it alone is the distortion. There is no third option while the
+widget holds the real node.
+
+**So it holds an invisible `Rect` instead.** The proxy may scale as freely as
+Konva likes, because nobody sees it — which is what lets the handles track the
+pointer exactly, with none of the correction that made the gesture feel broken.
+`engine/interaction/selectionTransform.ts` turns the proxy's box back into a
+*size* for each object every frame, and objects render with `scaleX`/`scaleY`
+permanently 1. It has 14 tests and no Konva in it.
+
+Things that only became visible once nothing scaled:
+
+- **Renderers read `node.width`** — the committed size — while the group was
+  positioned and sized from the live store. The scale had been growing the
+  drawing whether the renderer knew about the resize or not, so the omission was
+  invisible *and* was the distortion. `ObjectRenderer` merges the live **size**
+  into the node it hands to `NodeContent`, once, for every type. Size only:
+  `x`, `y` and `rotation` are the group's to apply and a renderer that read them
+  would apply them twice.
+- **A path's size is not in its box**, it is in its outline, so the outline is
+  refitted live through `fitPathToBox` — which measures rather than multiplying
+  a ratio, so the preview and the commit make the same call and land in the same
+  place whether it runs once or sixty times a second.
+- **The selection box stopped following a drag**, because the proxy was fitted
+  from the document and a drag does not write there. See invariant 11.
+
+## 4a-vi. What the last session added
+
+**Text becomes a path, with the real letterforms.** No web API returns a glyph
+outline, so the font file is fetched a second time (the browser cache makes that
+nearly free) and parsed with `fontkit`, which unpacks the Brotli inside a
+`.woff2` and does real shaping. **The line breaks stay ours**: the app's own
+layout already decided where the text wraps and where each baseline sits, and
+that is what is on the canvas — only the advances within a line come from the
+font. Taking the breaks from the font's shaper too would give outlines that were
+correct and did not match the object they replaced. `engine/text/glyphOutline.ts`
+holds the three conversions worth testing (quadratic → cubic by the two-thirds
+rule, the y axis turning over, units-per-em from the file) and
+`engine/text/fontBinary.ts` holds the fetch. `fontkit` is ~150 kB gzipped and is
+imported dynamically into its own `vendor-fontkit` chunk.
+
+**The pen can draw a cusp.** Its anchors were points with one forward handle and
+the backward one taken as the exact mirror, so every anchor was smooth *by
+construction* — a cusp was not refused, it was unrepresentable. It uses
+`pathGeometry`'s own `Anchor` now, the same one the path editor has always used,
+so Alt-while-dragging breaks the pair and clicking the last anchor retracts its
+outgoing handle. `engine/tools/penSession.ts` (20 tests) also fixed the box,
+which was the *control hull* rather than the ink — a handle lies outside the
+curve it bends, so every curved path was stored bigger than its own shape.
+
+**The four booleans work on turned shapes.** They refused any rotated or scaled
+operand, which had nothing to do with the clipper: there was no way here to
+express a node's transform. `mapPath` is that way, and it is exact — a cubic is
+affine-invariant, so putting its four control points through the transform gives
+the curve on the screen. Also: **subtract went the wrong way** (it kept the
+front shape while its own label and every other tool say the opposite);
+**every failure looked like nothing happening**, so `previewBoolean` now answers
+without changing anything and the buttons are off with a reason; **hovering one
+draws it** over the objects it would replace, from the geometry the click will
+commit; and a union of three shapes was **four undo steps**.
+
+**Alt-drag.** The origin twin was positioned from the *live* coordinates, i.e.
+drawn on top of the object it was a twin of — invisible since it was written.
+Holding Alt *before* pressing showed nothing, because the start handler set the
+flag the move handler tested for being unset.
+
+**The contextual rail** got a real placement module,
+`engine/interaction/railPlacement.ts` (23 tests): the rotated hull rather than
+the unrotated box, handles counted as part of the object, per-side clearance
+that widens as the subject gets thin, no clamp that can push it back over the
+artwork, sideways placement for a tall object, hysteresis so a slow pan does not
+flick it between sides, and a quieter resting state when the selection leaves it
+nowhere to stand. And the coordinate-space fix in invariant 10.
+
+**Stickies.** The footer band is always reserved (see invariant 7 — three
+derivations of the text box), the band is one row on one centreline, the pin is
+a control that means something, `+3` shows the three, and the properties panel
+offers the eight papers instead of a full RGB picker it then snapped to eight.
+
 ## 4b. What the recent sessions changed
 
 Grouped by area. Everything here is committed; the reasoning is in the code
@@ -688,6 +802,15 @@ have been it:
 If it recurs, the next thing to check is `useStore.getState().isReplaying` —
 stuck `true`, the store ignores *all* live document traffic, which produces
 exactly this signature and has nothing to do with stickies.
+
+**A separate, long-running sticky complaint — "the text shifts and glitches" —
+was reproduced and fixed.** It was not timing at all: three places derived the
+note's text box from the same fields and disagreed. The renderer reserved the
+footer band only when a note *had* reactions, so the first person to react made
+the handwriting smaller; and the editor overlay had a third version with no
+footer band and no tag strip, directly under a comment promising it asked
+`stickyFit` the same question the renderer did. `stickyFooter.textBox` owns it
+and all three read it.
 
 ### 5d. The two panels — a build phase
 

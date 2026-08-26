@@ -32,6 +32,15 @@ Two rules govern the whole model:
 2. **`geometry` describes form; `appearance` describes paint.** No field appears
    in both.
 
+Rule 1 has a consequence worth stating, because it reaches all the way into the
+renderer: **resizing changes `width`/`height`, never `scaleX`/`scaleY`.** Scale
+is for flips and nothing else. Konva's `Transformer` only knows how to write
+scale, so it is pointed at an invisible proxy rectangle and the gesture's result
+is converted to a size before it is committed — see §"Rendering" in the README.
+A node that stored its size as a scale would have scaled padding, scaled stroke
+widths and resampled type, and `width`/`height` would no longer be the answer to
+"how big is this".
+
 `SCHEMA_VERSION` is **3**. Version 2 removed the `content` carrier described in
 the note above; version 3 removed `TextNode.autoHeight` in favour of `resize`.
 
@@ -173,6 +182,14 @@ hit-test like every other node.
 rule. It is what a boolean operation produces and the only thing that can hold
 the result: subtracting a disc from the middle of a square gives a square with a
 hole, and no single run of anchors describes a hole.
+
+Two things write it: the boolean operations (`engine/document/vectorOps.ts`,
+via the Martinez clipper) and converting text to path, where a counter is a
+contour inside a contour. Both bake the node's rotation and scale into the
+coordinates they produce, since the result is a new node with an identity
+transform — which is why `mapPath` transforms control points as well as anchors:
+a cubic is affine-invariant, so moving the anchors and leaving the handles would
+bend the curve between them.
 
 `connector` is the one type whose geometry is **derived rather than stored**.
 `from` and `to` hold node ids and a side; the points are recomputed on every

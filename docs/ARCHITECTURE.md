@@ -72,6 +72,31 @@ of their decisions are *scale-driven* (skip at our size) versus
 - **Persistence** — A periodic compacted snapshot is saved to **PostgreSQL** as the canonical source of truth.
 - **Media store** — **MinIO (S3 Object Storage)**. The CRDT document only holds a URL reference, keeping the sync loop incredibly fast while binary media is piped natively to the cloud.
 
+### Three tiers of state, and the test for which one a thing belongs in
+
+Not everything the client knows is document state, and putting it there is the
+most common way to make a feature that works alone and misbehaves with two
+people in the room.
+
+| Tier | Lives in | For | Examples |
+| --- | --- | --- | --- |
+| Document | Yjs `objectsMap` | What the board *is*. Persisted, synced, undoable. | positions, text, reactions, `pinned` |
+| Awareness | Yjs awareness | What someone is *doing*, right now, that others should see. Ephemeral, never persisted. | cursors, selection outlines, in-flight physics bodies |
+| Transient | plain module stores under `engine/interaction/`, read with `useSyncExternalStore` | What *this* client is doing that nobody else needs to see. | crop mode, path editing, `liveTransformStore`, `booleanPreview` |
+
+The test is two questions. Would a second person want to see it? If no, it is
+transient. If yes — would you want it in the undo history and in the file a year
+from now? If no, it is awareness.
+
+The transient tier is the one that has to be argued for, so: an in-progress
+resize writes a size sixty times a second, and every one of those would be a
+document update, a network frame and an undo entry. `liveTransformStore` keeps
+the gesture out of all three and publishes it to whoever needs it — which means
+**during a gesture the document is deliberately stale**, and anything drawing
+current geometry has to read the live store first. Which button you happen to be
+hovering (`booleanPreview`) fails the first question outright: written to the
+document it would flicker on everyone's screen and land in their undo stack.
+
 ## 5. Known bottlenecks and mitigations
 
 **1. Single sync-server instance is a scaling ceiling, not a hackathon

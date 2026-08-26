@@ -150,6 +150,38 @@ drag reports the centre, exactly what the physics body expects.
   It positions itself in screen space from the camera rather than through Konva's
   transform tree, which is what keeps the caret glued to the object through pan
   and zoom.
+- **The transformer drives a proxy, not the object.** Konva resizes by writing
+  `scaleX`/`scaleY`, which is the wrong verb for nearly every node here: a scaled
+  sticky has scaled padding and blurred type, a scaled path has a scaled stroke.
+  So the `Transformer` is attached to an invisible `Rect` and the real objects
+  render at a *size*, never a scale. The gesture writes to `liveTransformStore`,
+  a transient per-node store outside React, and each renderer merges that live
+  size into the node it draws — which is what makes a shape fill its box as you
+  drag any vertex, instead of sticking to the top-left until you let go. During a
+  gesture **the document is stale on purpose**; anything that needs current
+  geometry (the selection box, the contextual rail) reads the live store first
+  and the document second.
+
+### Where a floating panel goes — `engine/interaction/railPlacement.ts`
+
+The contextual rail over a selection is placed by a pure function of the
+selection's rotated hull, the rail's measured size, the window, a per-side
+standoff, and where it sat last time. It prefers above, then below, then the
+sides, then the wall. It inflates the hull by the reach of the resize handles so
+it never lands on one. It ramps the clearance up for a thin subject, because a
+single-line text object is shorter than the rail is tall and "below" would
+otherwise mean "across". And it keeps its last side through 24px of movement, so
+the rail does not flap while an object is nudged.
+
+All of which is testable without a browser, and 23 tests cover it — which is
+what made the actual bug embarrassing. Three rounds of "more clearance below,
+please" went into tuning the standoff. The tell was the user's: *the top has
+enough room, so why is the bottom having these issues?* Symmetric geometry
+cannot produce an asymmetric error. The rail was converting world coordinates to
+**stage** coordinates and then positioning a DOM element in **window**
+coordinates, omitting the stage's own origin — which is inset by the 28px ruler.
+Exactly 28px of surplus air above, and 28px of deficit below. Three named
+spaces; convert once, at a boundary you can point at.
 
 ### Performance
 
@@ -229,6 +261,26 @@ every rule in it runs under test without a canvas. The line boxes are what made
 four separate features possible at once: paragraph spacing, the per-line
 highlight ribbon, honest vertical alignment, and putting the caret where you
 clicked.
+
+**Convert to path traces the real letterforms.** Right-click a text object and
+"Convert to path" replaces it with a vector outline whose points you can push
+around — what Figma and Illustrator call outlining type. That runs down a
+*second* font path, deliberately separate from the first: layout measures with a
+Konva probe, because the only thing that knows how Konva wraps a line is Konva,
+while outlining needs glyph contours, which only the font file has.
+`fontBinary.ts` fetches the woff2 Google is already serving and parses it with
+`fontkit` — imported lazily, and given its own Vite chunk, because it drags a
+brotli decoder in with it. `glyphOutline.ts` turns pen commands into our bezier
+geometry, flipping the y axis and promoting quadratics by the two-thirds rule.
+
+The division of labour is the load-bearing part: **the app decides where the
+lines break, the font decides how wide each glyph is.** Handing the paragraph to
+the font would move the words at the moment of conversion, and outlining is
+meant to change the representation, not the appearance — so `layoutText` still
+produces the lines and `font.layout` is asked only for advances within one.
+Decorations that are not letterforms — underline, highlight, glow, list bullets
+— cannot survive as contours. They are dropped, and the toast names which ones,
+because silently losing a highlight is worse than refusing to.
 
 ### Export — `engine/export/`
 
@@ -476,6 +528,27 @@ the words reflow under the caret. Height alone is not a sufficient test —
 a lone long word fits by height at a large size because the renderer
 hard-breaks it, so "Onboarding" rendered as "Onboar / ding".
 
+**One derivation of the text box.** `stickyFooter.textBox` is the only thing
+that decides where a note's words go. It exists because the fitter and the
+`<Text>` that draws the result used to compute that box separately, from the
+same fields, and disagreed about whether there was a footer at all. The footer
+band is now reserved *always*, not only on a note somebody has reacted to —
+otherwise the first reaction made the handwriting smaller: the box lost eight
+pixels, the fitter found a size a step down, and every line re-wrapped and
+re-centred. A note's text must not resize because somebody liked it.
+
+Everything in that band shares one height and therefore one centreline. The
+author's dot and initials had their own offsets and rode about five pixels above
+the row they belonged to — close enough to read as a mistake rather than a
+decision, which is what it was. The author's width is measured from the initials
+rather than fixed at "a dot and two letters", so `MWM` does not get the first
+reaction chip parked on top of it.
+
+**Pinning holds the note still.** The pin had been a drawn icon with nothing
+behind it. It is now a control: a hit target larger than the glyph, a tooltip
+that counter-rotates with the note, and the one thing its name promises — a
+pinned note is not draggable.
+
 ### Voice notes — `AudioTool`, `AudioRenderer`, `engine/model/audioPlayback.ts`
 
 Record by picking the mic and clicking the board; the note lands where you
@@ -534,6 +607,15 @@ that merges.
 
 Because reactions record *who*, a reaction is a toggle: clicking your own emoji
 again removes it, and nobody can clear anyone else's.
+
+Along the bottom of the note, `layoutFooter` decides which chips fit: left to
+right, in the order they were made, and a chip is placed only if the overflow
+badge that may follow it also fits — otherwise the last chip takes the badge's
+room and the badge lands off the note. The final chip is the exception, since
+nothing can overflow behind it. Chips that do not fit are never reordered around
+ones that do; the same note showing its reactions in a different order at a
+different width is worse than a `+2`. That badge opens, so what overflowed is
+reachable rather than merely counted.
 
 ### Comments — `engine/comments/`, `components/comments/`
 
@@ -601,10 +683,13 @@ apps/
         presence/    awareness state: one writer, one reader, one frame loop
                      + the radar's projection and painter
         diagram/     Mermaid in and out — parser, layered layout, builder
-        text/        layout, measurement, the highlight ribbon, demo copy
+        text/        layout, measurement, the highlight ribbon, demo copy,
+                     and the second font path: glyph outlines for convert-to-path
         physics/     the simulation, force specs, shared in-flight state
         history/     session timeline for Time Travel
-        interaction/ grid snapping
+        interaction/ snapping and guides, alt-duplicate, floating-panel
+                     placement, and the transient stores (crop, path edit,
+                     boolean preview) that must not reach the document
         cursor/      tool cursor modes, remote cursor rendering
       components/
         canvas/      renderers, node editor, shared transformer
@@ -620,7 +705,7 @@ docs/                architecture notes, data model, PRD, build plan
 ## Tech stack
 
 **Frontend** — React 19, Vite, react-konva, Yjs, Matter.js, zustand, rbush,
-perfect-freehand, framer-motion, Vitest
+perfect-freehand, polygon-clipping, fontkit, framer-motion, Vitest
 **Backend** — Node, Express, Hocuspocus, `ws`
 **Infrastructure** — PostgreSQL, MinIO, Redis (opt-in), Docker Compose
 
