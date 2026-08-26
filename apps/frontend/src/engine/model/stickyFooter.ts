@@ -24,6 +24,42 @@
 /** The band along the bottom, holding the author chip and any reactions. */
 export const FOOTER_BAND = 26;
 
+/**
+ * The height every pill in that band shares, and therefore its centreline.
+ *
+ * ## Why one number
+ *
+ * The author's mark and the reaction chips are drawn by different code and sat
+ * on different baselines: the chips are twenty-pixel pills centred on ten, and
+ * the author's dot and initials were placed at five and zero from the top of
+ * the band, so the name rode about five pixels above the row it belonged to.
+ * Close enough to look like a mistake rather than a decision, which is exactly
+ * what it was.
+ *
+ * A row of controls has one centreline. Everything in the band is
+ * `FOOTER_ROW` tall and vertically centred inside it, so nothing has an offset
+ * of its own to get wrong.
+ */
+export const FOOTER_ROW = 20;
+
+/**
+ * How wide the author's mark is, so the reactions know where to start.
+ *
+ * It was the constant `52` — a guess at "a dot and two letters", which is right
+ * for `AB` and wrong for `MWM`, where the first reaction chip landed on top of
+ * the initials. Derived from what is actually drawn instead: the dot, the gap,
+ * and the letters at the weight and size the renderer uses.
+ */
+export function authorWidth(initials: string): number {
+  const DOT = 7;
+  const GAP = 5;
+  // Inter 600 at 10px runs a shade over six units per capital, tracking
+  // included. Two letters is the common case and three is the widest the
+  // initialiser produces.
+  const letters = Math.max(1, initials.length) * 6.2;
+  return Math.ceil(DOT + GAP + letters + 10);
+}
+
 /** The strip along the top that tags occupy, when a note has any. */
 export const TAG_BAND = 16;
 

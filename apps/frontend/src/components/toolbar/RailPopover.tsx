@@ -1,25 +1,35 @@
-import React, { useState, useRef, useLayoutEffect, useEffect } from 'react';
+import React, { useState, useRef, useLayoutEffect, useEffect, useContext } from 'react';
 import { isInsidePortalSurface } from '../ui/portalSurface';
+import { RailSideContext } from './railSide';
 
 export interface RailPopoverProps {
   label: string;
   trigger: React.ReactNode;
-  children: React.ReactNode;
+  /**
+   * The panel's contents, or a function given a `close` for a control that
+   * finishes the interaction — picking a reaction, choosing a preset.
+   */
+  children: React.ReactNode | ((close: () => void) => React.ReactNode);
+  /** Overrides the side the rail is on. Rarely wanted. */
   placement?: 'top' | 'bottom';
   align?: 'start' | 'center' | 'end';
 }
 
 /**
  * Floating popover for the Object Context Toolbar.
- * Adapts vertically based on available viewport space.
+ *
+ * Opens away from the artwork by default — see `RailSideContext` — and flips
+ * again if the viewport edge would cut it off.
  */
 export const RailPopover: React.FC<RailPopoverProps> = ({
   label,
   trigger,
   children,
-  placement = 'bottom',
+  placement: placementProp,
   align = 'center',
 }) => {
+  const railSide = useContext(RailSideContext);
+  const placement = placementProp ?? railSide;
   const [open, setOpen] = useState(false);
   const ref = useRef<HTMLDivElement>(null);
   const panelRef = useRef<HTMLDivElement>(null);
@@ -95,7 +105,7 @@ export const RailPopover: React.FC<RailPopoverProps> = ({
                 : { left: 0 }),
           } as React.CSSProperties}
         >
-          {children}
+          {typeof children === 'function' ? children(() => setOpen(false)) : children}
         </div>
       )}
     </div>

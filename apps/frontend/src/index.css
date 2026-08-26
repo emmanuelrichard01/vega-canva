@@ -4354,6 +4354,28 @@ textarea:focus-visible {
   display: block;
 }
 
+/* An emoji in the rail's reaction tray. The glyph is the whole control, so it
+   carries no border of its own — the pressed state is a ground behind it, which
+   is what says "you already reacted with this one" without a second shape. */
+.ctx-reaction {
+  background: transparent;
+  border: none;
+  cursor: pointer;
+  font-size: 17px;
+  line-height: 1;
+  padding: 4px 6px;
+  border-radius: var(--radius-sm);
+  transition: background var(--motion-hover);
+}
+
+.ctx-reaction:hover { background: var(--surface-hover); }
+.ctx-reaction[data-mine] { background: var(--surface-active); }
+
+.ctx-reaction:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 1px;
+}
+
 .ctx-sticky-grid {
   display: grid;
   grid-template-columns: repeat(4, 1fr);

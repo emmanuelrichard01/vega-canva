@@ -42,6 +42,7 @@ import { FillEditor } from './ui/FillEditor';
 import { SegmentedControl } from './ui/SegmentedControl';
 import { FontSelector } from './ui/FontSelector';
 import { RailPopover } from './toolbar/RailPopover';
+import { RailSideContext } from './toolbar/railSide';
 import { StickyPalette } from './toolbar/StickyToolbar';
 
 /** The hand-drawn faces, so the toggle knows which state it is in. */
@@ -117,17 +118,21 @@ const RAIL_HEIGHT = 40;
  * a single line of text there is not enough object for it to miss. Measuring
  * the gap to the rail's box was measuring to the wrong edge.
  *
- * Below it casts almost nothing, and yet it needs the *most* room of the four.
- * A gap is not read symmetrically: above an object the rail sits between the
- * work and the top of the screen, where the eye already expects chrome, while
- * below it lands between the work and the empty canvas and reads as a caption
- * attached to it. Thirty was plainly clear above and plainly tight below at the
- * same number, so the numbers are different.
+ * Below it casts almost nothing, and still wants the most room of the four. A
+ * gap is not read symmetrically: above an object the rail sits between the work
+ * and the top of the screen, where the eye already expects chrome, while below
+ * it lands between the work and empty canvas and reads as a caption attached to
+ * it. So the two numbers differ on purpose.
+ *
+ * They are smaller than they were, because they had been inflated to
+ * compensate for a coordinate error -- the rail was being drawn a ruler's width
+ * above where it was computed, which quietly added to every gap above and took
+ * the same amount off every gap below. See the note in the frame loop.
  *
  * The size-aware ramp in `placeRail` widens all four as the subject gets thin,
  * on top of these.
  */
-const STANDOFF = { top: 30, bottom: 36, left: 18, right: 18 };
+const STANDOFF = { top: 26, bottom: 34, left: 20, right: 20 };
 /**
  * How far the selection's chrome reaches past the object's own box.
  *
@@ -357,7 +362,13 @@ const Rail = React.forwardRef<
           data-side={placement}
           style={{ position: 'relative', pointerEvents: 'auto' }}
         >
-          {children}
+          {/* Every popover on the rail opens away from the artwork, because the
+              rail is the only thing that knows which way that is. A tray that
+              always dropped downward landed on the object whenever the rail was
+              sitting above it -- which is most of the time. */}
+          <RailSideContext.Provider value={placement === 'top' ? 'top' : 'bottom'}>
+            {children}
+          </RailSideContext.Provider>
         </div>
       </motion.div>
     </div>
@@ -514,6 +525,14 @@ export const ObjectContextToolbar: React.FC<Props> = ({ selectedId, selectedIds,
   /** How many anchors are picked, which is what the anchor rail is gated on. */
   const pickedAnchors = pathSelection?.anchors.length ?? 0;
   const isDraggingRef = useRef(false);
+  /**
+   * Where the Konva stage begins, in window coordinates.
+   *
+   * Not a constant: the rulers can be switched off, the window can be resized,
+   * and the panels can be hidden. Re-read each frame, at the top of the loop,
+   * which is one rect on one element and the only cheap moment to ask.
+   */
+  const stageOriginRef = useRef({ left: 0, top: 0 });
   const reactionsRef = useRef<HTMLDivElement>(null);
   // Mirrors state, read inside the rAF loop so it can skip setState on frames
   // where nothing moved. The loop has to run unconditionally — it is the only
@@ -555,6 +574,14 @@ export const ObjectContextToolbar: React.FC<Props> = ({ selectedId, selectedIds,
     lastRef.current = { x: -9999, y: -9999, placement: lastRef.current.placement, clear: lastRef.current.clear, visible: false };
 
     const updatePosition = () => {
+      // Read before anything is written this frame. Taking a rect after writing
+      // a transform forces the browser to lay out again to answer.
+      const canvas = document.querySelector('.konvajs-content');
+      if (canvas) {
+        const rect = canvas.getBoundingClientRect();
+        stageOriginRef.current = { left: rect.left, top: rect.top };
+      }
+
       if (isDraggingRef.current) {
         if (lastRef.current.visible) { lastRef.current.visible = false; setIsVisible(false); }
         return;
@@ -579,10 +606,26 @@ export const ObjectContextToolbar: React.FC<Props> = ({ selectedId, selectedIds,
         return;
       }
 
+      /**
+       * World to *window*, which needs the stage's own origin.
+       *
+       * `cameraSystem.x/y` are an offset within the Konva stage, and the stage
+       * does not start at the window's corner: it is inset by the rulers, and
+       * by whatever chrome sits above it. The rail is a DOM element positioned
+       * against the app container, so leaving the origin out drew it up and to
+       * the left of the object by exactly the ruler's width.
+       *
+       * That is why the two sides behaved differently. Twenty-eight pixels up
+       * is twenty-eight pixels of extra air above the object -- which read as
+       * correct -- and twenty-eight pixels *off* the gap below it, which is why
+       * no amount of raising the standoff below ever quite fixed it. The
+       * editor overlay has always added this; the rail never did.
+       */
+      const stage = stageOriginRef.current;
       const zoom = cameraSystem.zoom;
       const onScreen = inflate({
-        x: hull.x * zoom + cameraSystem.x,
-        y: hull.y * zoom + cameraSystem.y,
+        x: stage.left + hull.x * zoom + cameraSystem.x,
+        y: stage.top + hull.y * zoom + cameraSystem.y,
         width: hull.width * zoom,
         height: hull.height * zoom,
       }, HANDLE_REACH);
@@ -1870,62 +1913,47 @@ export const ObjectContextToolbar: React.FC<Props> = ({ selectedId, selectedIds,
               <RailButton label={node.pinned ? 'Unpin' : 'Pin'} pressed={node.pinned} onClick={() => updateProp({ pinned: !node.pinned })}>
                 <Pin size={16} fill={node.pinned ? 'currentColor' : 'none'} />
               </RailButton>
-              <div style={{ position: 'relative', display: 'flex' }} ref={reactionsRef}>
-                <button type="button" className="ctx-btn" data-tooltip="React" aria-label="React" aria-expanded={showReactions} onClick={() => setShowReactions((v) => !v)}>
-                  <SmilePlus size={16} />
-                </button>
-                <AnimatePresence>
-                  {showReactions && (
-                    <motion.div
-                      initial={{ scale: 0.75, opacity: 0, y: 6 }}
-                      animate={{ scale: 1, opacity: 1, y: 0 }}
-                      exit={{ scale: 0.75, opacity: 0, y: 6 }}
-                      transition={{ type: 'spring', stiffness: 500, damping: 28 }}
-                      className="ctx-popover"
-                      style={{
-                        top: 'calc(100% + 8px)',
-                        left: '50%',
-                        transform: 'translateX(-50%)',
-                        flexDirection: 'row',
-                        gap: 4,
-                        minWidth: 0,
-                        padding: '4px 6px',
-                        borderRadius: 10,
-                      }}
-                    >
-                      {REACTION_SET.map((emoji) => {
-                        const mine = (node.reactions[emoji] ?? []).includes(myAuthorId);
-                        return (
-                          <motion.button
-                            key={emoji}
-                            type="button"
-                            whileHover={{ scale: 1.25, y: -2 }}
-                            whileTap={{ scale: 0.88 }}
-                            onClick={() => {
-                              toggleReaction(node.id, emoji, myAuthorId);
-                              setShowReactions(false);
-                            }}
-                            aria-pressed={mine}
-                            title={mine ? `Remove ${emoji}` : `React ${emoji}`}
-                            style={{
-                              background: mine ? 'var(--surface-active)' : 'transparent',
-                              border: 'none',
-                              cursor: 'pointer',
-                              fontSize: 17,
-                              lineHeight: 1,
-                              padding: '4px 6px',
-                              borderRadius: 6,
-                              transition: 'background 0.15s ease',
-                            }}
-                          >
-                            {emoji}
-                          </motion.button>
-                        );
-                      })}
-                    </motion.div>
-                  )}
-                </AnimatePresence>
-              </div>
+              {/*
+                One popover implementation, not two.
+
+                This was hand-rolled: its own open state, its own outside-click
+                listener, and `top: calc(100% + 8px)` hard-coded -- so it always
+                dropped downward, onto the object whenever the rail was above
+                it, and off the bottom of the window when the rail was low. It
+                had no Escape, and none of the flipping every other control on
+                this rail has had all along.
+              */}
+              <RailPopover
+                label="React"
+                align="center"
+                trigger={<SmilePlus size={16} />}
+              >
+                {(close) => (
+                  <div style={{ display: 'flex', flexDirection: 'row', gap: 4 }}>
+                    {REACTION_SET.map((emoji) => {
+                      const mine = (node.reactions[emoji] ?? []).includes(myAuthorId);
+                      return (
+                        <motion.button
+                          key={emoji}
+                          type="button"
+                          whileHover={{ scale: 1.25, y: -2 }}
+                          whileTap={{ scale: 0.88 }}
+                          onClick={() => {
+                            toggleReaction(node.id, emoji, myAuthorId);
+                            close();
+                          }}
+                          aria-pressed={mine}
+                          title={mine ? `Remove ${emoji}` : `React ${emoji}`}
+                          className="ctx-reaction"
+                          data-mine={mine || undefined}
+                        >
+                          {emoji}
+                        </motion.button>
+                      );
+                    })}
+                  </div>
+                )}
+              </RailPopover>
             </div>
             <Divider />
           </>

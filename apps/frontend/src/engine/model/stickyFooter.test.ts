@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { FOOTER_BAND, layoutFooter, TAG_BAND, textBox } from './stickyFooter';
+import { authorWidth, FOOTER_BAND, layoutFooter, TAG_BAND, textBox } from './stickyFooter';
 
 const solo = (emoji: string) => [emoji, ['a']] as const;
 const counted = (emoji: string) => [emoji, ['a', 'b', 'c']] as const;
@@ -72,6 +72,21 @@ describe('layoutFooter', () => {
     const out = layoutFooter([['👍', ids]], 200);
     ids.push('c');
     expect(out.visible[0].ids).toEqual(['a', 'b']);
+  });
+});
+
+describe('authorWidth', () => {
+  it('grows with the initials, so the first chip never lands on the name', () => {
+    /**
+     * It was the constant 52 — right for `AB`, wrong for `MWM`, where the
+     * reaction chips started on top of the initials.
+     */
+    expect(authorWidth('MWM')).toBeGreaterThan(authorWidth('AB'));
+  });
+
+  it('leaves room for a single letter rather than collapsing', () => {
+    expect(authorWidth('A')).toBeGreaterThan(20);
+    expect(authorWidth('')).toBe(authorWidth('A'));
   });
 });
 

@@ -6,7 +6,7 @@ import { STICKY_LINE_HEIGHT } from '../../../engine/model/stickyText';
 import { stickyFit, stickyFontEpoch, STICKY_FONT_FAMILY, STICKY_FONT_WEIGHT } from './stickyFit';
 import { formatVoterSummary } from '../../../engine/model/voters';
 import { THEMES, STICKY_PADDING, STICKY_RADIUS } from '../../../engine/model/stickyThemes';
-import { FOOTER_BAND, layoutFooter, PIN_INSET, textBox } from '../../../engine/model/stickyFooter';
+import { authorWidth, FOOTER_BAND, FOOTER_ROW, layoutFooter, PIN_INSET, textBox } from '../../../engine/model/stickyFooter';
 import { rectRing, roughPolyline, roughSilhouette, seedFrom } from '../../../engine/model/rough';
 
 interface Props {
@@ -61,7 +61,7 @@ export const StickyRenderer: React.FC<Props> = React.memo(({ node, showText, myA
   // add button. No floor: on a note too narrow for even one chip everything
   // belongs in the overflow badge, and forcing room for a chip that cannot fit
   // is what put them outside the paper.
-  const startX = 52;
+  const startX = STICKY_PADDING + authorWidth(initials);
   const availWidth = Math.max(0, node.width - startX - 10 - 24);
   const footer = layoutFooter(reactions, availWidth);
 
@@ -210,20 +210,65 @@ export const StickyRenderer: React.FC<Props> = React.memo(({ node, showText, myA
         />
       )}
 
-      {/* Author initials */}
-      <Group x={STICKY_PADDING} y={node.height - FOOTER_BAND} listening={false}>
-        <Circle x={3} y={5} radius={3} fill={node.author.color} />
+      {/*
+        Who wrote it — a pill on the same centreline as the reactions.
+
+        The band is a row of controls, and a row has one centreline. The dot sat
+        at five from the top of the band and the initials at zero, while the
+        reaction chips are twenty-pixel pills centred on ten, so the name rode
+        about five pixels above the row it belonged to. Close enough to read as
+        a mistake rather than a decision, which is what it was.
+
+        Nothing here carries an offset of its own now: the dot is centred on
+        `FOOTER_ROW / 2` and the initials are a `Text` given the row's height
+        and told to centre in it, so Konva does the arithmetic and there is no
+        magic number left to be wrong at a different font size.
+      */}
+      <Group
+        x={STICKY_PADDING}
+        y={node.height - FOOTER_BAND}
+        onMouseEnter={() => setHoveredEmoji('__author__')}
+        onMouseLeave={() => setHoveredEmoji((prev) => (prev === '__author__' ? null : prev))}
+      >
+        <Circle x={3.5} y={FOOTER_ROW / 2} radius={3.5} fill={node.author.color} />
         <Text
           text={initials}
           x={12}
           y={0}
+          height={FOOTER_ROW}
+          verticalAlign="middle"
           fill={theme.text}
           opacity={0.62}
           fontSize={10}
           fontFamily="Inter"
           fontStyle="600"
           letterSpacing={0.3}
+          listening={false}
         />
+        {hoveredEmoji === '__author__' && (
+          // The initials are an abbreviation; the name behind them is the point.
+          <Label y={-4} x={14} listening={false}>
+            <Tag
+              fill="rgba(15, 23, 42, 0.94)"
+              cornerRadius={5}
+              pointerDirection="down"
+              pointerWidth={6}
+              pointerHeight={4}
+              lineJoin="round"
+              shadowColor="rgba(0, 0, 0, 0.28)"
+              shadowBlur={4}
+              shadowOffsetY={2}
+            />
+            <Text
+              text={node.author.name}
+              fontSize={10}
+              fontFamily="Inter"
+              fontStyle="500"
+              padding={4}
+              fill="#F8FAFC"
+            />
+          </Label>
+        )}
       </Group>
 
       {/*
@@ -297,8 +342,8 @@ export const StickyRenderer: React.FC<Props> = React.memo(({ node, showText, myA
               >
                 <Rect
                   width={width}
-                  height={20}
-                  cornerRadius={10}
+                  height={FOOTER_ROW}
+                  cornerRadius={FOOTER_ROW / 2}
                   fill={mine ? theme.text : theme.bg}
                   stroke={mine ? theme.text : theme.edge}
                   strokeWidth={1}
@@ -309,7 +354,8 @@ export const StickyRenderer: React.FC<Props> = React.memo(({ node, showText, myA
                 <Text
                   text={ids.length > 1 ? `${emoji} ${ids.length}` : emoji}
                   width={width}
-                  y={4.5}
+                  height={FOOTER_ROW}
+                  verticalAlign="middle"
                   align="center"
                   fontSize={11}
                   fontFamily="Inter"
@@ -372,8 +418,8 @@ export const StickyRenderer: React.FC<Props> = React.memo(({ node, showText, myA
             >
               <Rect
                 width={24}
-                height={20}
-                cornerRadius={10}
+                height={FOOTER_ROW}
+                cornerRadius={FOOTER_ROW / 2}
                 fill={isOverflowOpen ? theme.text : theme.bg}
                 stroke={isOverflowOpen ? theme.text : theme.edge}
                 strokeWidth={1}
@@ -381,7 +427,8 @@ export const StickyRenderer: React.FC<Props> = React.memo(({ node, showText, myA
               <Text
                 text={`+${footer.overflow.length}`}
                 width={24}
-                y={4.5}
+                height={FOOTER_ROW}
+                verticalAlign="middle"
                 align="center"
                 fontSize={10}
                 fontFamily="Inter"
@@ -430,8 +477,8 @@ export const StickyRenderer: React.FC<Props> = React.memo(({ node, showText, myA
           >
             <Rect
               width={20}
-              height={20}
-              cornerRadius={10}
+              height={FOOTER_ROW}
+              cornerRadius={FOOTER_ROW / 2}
               fill={isPickerOpen ? theme.text : 'transparent'}
               stroke={isPickerOpen ? theme.text : theme.edge}
               strokeWidth={1}
@@ -441,7 +488,8 @@ export const StickyRenderer: React.FC<Props> = React.memo(({ node, showText, myA
             <Text
               text={isPickerOpen ? '×' : '+'}
               width={20}
-              y={isPickerOpen ? 2.5 : 3.5}
+              height={FOOTER_ROW}
+              verticalAlign="middle"
               align="center"
               fontSize={isPickerOpen ? 14 : 12}
               fontFamily="Inter"
