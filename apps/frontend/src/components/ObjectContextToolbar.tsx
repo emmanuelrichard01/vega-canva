@@ -19,6 +19,8 @@ import { cameraSystem } from '../engine/CameraSystem';
 import { engineEvents } from '../engine/EventBus';
 import { cropMode } from '../engine/interaction/cropMode';
 import { pathEdit } from '../engine/interaction/pathEdit';
+import { railVeil } from '../engine/interaction/railVeil';
+import { textEditing } from '../engine/interaction/textEditing';
 import { Palette, Shuffle } from 'lucide-react';
 import { GridKindIcon } from './workspace/gridIcons';
 import { breakApartGrid, gridNodeOf, gridRecipe as gridRecipeFor, setGridRecipe } from '../engine/grid/gridApply';
@@ -524,7 +526,16 @@ export const ObjectContextToolbar: React.FC<Props> = ({ selectedId, selectedIds,
   const editingPath = pathSelection?.nodeId ?? null;
   /** How many anchors are picked, which is what the anchor rail is gated on. */
   const pickedAnchors = pathSelection?.anchors.length ?? 0;
-  const isDraggingRef = useRef(false);
+  /**
+   * Whether a gesture is hiding the rail.
+   *
+   * A module singleton rather than a ref, because the events that raise it are
+   * global and because a ref would be re-created if this component ever
+   * remounted mid-gesture. See `engine/interaction/railVeil.ts` for why it is
+   * falsifiable rather than merely paired.
+   */
+  /** The element the last transform was written to — see the write guard. */
+  const wroteToRef = useRef<HTMLElement | null>(null);
   /**
    * Where the Konva stage begins, in window coordinates.
    *
@@ -582,7 +593,7 @@ export const ObjectContextToolbar: React.FC<Props> = ({ selectedId, selectedIds,
         stageOriginRef.current = { left: rect.left, top: rect.top };
       }
 
-      if (isDraggingRef.current) {
+      if (railVeil.held) {
         if (lastRef.current.visible) { lastRef.current.visible = false; setIsVisible(false); }
         return;
       }
@@ -662,15 +673,27 @@ export const ObjectContextToolbar: React.FC<Props> = ({ selectedId, selectedIds,
       const rx = Math.round(x), ry = Math.round(y);
       const last = lastRef.current;
 
-      // Position: straight to the DOM, every frame, no React involved.
-      //
-      // The guard is on the *node*, not just the coordinate. On the first pass
-      // the rail has not rendered yet, so there is nothing to write to — and
-      // recording the coordinate anyway would mark it as done, so the next
-      // frame would see no change and skip the write forever. The toolbar then
-      // sat untransformed at the canvas origin, translated up out of view by
-      // its own centring, and never appeared at all.
-      if (anchorRef.current && (last.x !== rx || last.y !== ry)) {
+      /**
+       * Position: straight to the DOM, every frame, no React involved.
+       *
+       * The guard is on the *node*, not just the coordinate. On the first pass
+       * the rail has not rendered yet, so there is nothing to write to — and
+       * recording the coordinate anyway would mark it as done, so the next
+       * frame would see no change and skip the write forever. The toolbar then
+       * sat untransformed at the canvas origin, translated up out of view by
+       * its own centring, and never appeared at all.
+       *
+       * And the guard remembers **which** node it wrote to, not merely that it
+       * wrote. The rail unmounts whenever a gesture veils it and mounts again
+       * afterwards, and the replacement element has no transform of its own —
+       * so a rail hidden and shown at the *same* coordinates was skipped as
+       * "no change" and left at the origin, off screen. Editing a text object
+       * does exactly that: the veil goes up, the object does not move, and the
+       * rail comes back invisible. Comparing the node makes every mount write
+       * its first frame, whatever the arithmetic says.
+       */
+      if (anchorRef.current && (wroteToRef.current !== anchorRef.current || last.x !== rx || last.y !== ry)) {
+        wroteToRef.current = anchorRef.current;
         lastRef.current.x = rx;
         lastRef.current.y = ry;
         anchorRef.current.style.transform = `translate3d(${rx}px, ${ry}px, 0)`;
@@ -693,19 +716,44 @@ export const ObjectContextToolbar: React.FC<Props> = ({ selectedId, selectedIds,
       }
     };
 
-    const handleDragStart = () => { isDraggingRef.current = true; lastRef.current.visible = false; setIsVisible(false); };
-    const handleDragEnd = () => { isDraggingRef.current = false; updatePosition(); };
+    const handleDragStart = () => { railVeil.begin(); lastRef.current.visible = false; setIsVisible(false); };
+    const handleDragEnd = () => { railVeil.end(); updatePosition(); };
+    /**
+     * The floor under a gesture that never announced its end.
+     *
+     * Six components dispatch `canvas-drag-start`, and Konva does not fire
+     * `dragend` for a node destroyed mid-drag — so a handle unmounted by a
+     * selection change, or an object deleted by a collaborator, left the rail
+     * hidden for the life of the page. A pointer release with nothing being
+     * typed into cannot have a gesture behind it.
+     *
+     * Capture phase, so a handler that stops propagation on its way up cannot
+     * take the recovery with it.
+     */
+    const handlePointerRelease = () => {
+      if (railVeil.settle(textEditing.getSnapshot())) updatePosition();
+    };
 
     engineEvents.on('CameraChanged', updatePosition);
     engineEvents.on('ObjectMoved', updatePosition);
     engineEvents.on('ObjectModified', updatePosition);
     window.addEventListener('canvas-drag-start', handleDragStart);
     window.addEventListener('canvas-drag-end', handleDragEnd);
+    window.addEventListener('pointerup', handlePointerRelease, true);
+    window.addEventListener('pointercancel', handlePointerRelease, true);
     updatePosition();
 
+    /**
+     * The next frame is booked *before* the work, not after.
+     *
+     * Written the other way round, a single throw inside `updatePosition` ends
+     * the loop permanently — and this loop is the only thing that can bring the
+     * rail back, so one bad frame meant a reload. Scheduling first costs
+     * nothing and makes the loop survive its own mistakes.
+     */
     let frame = requestAnimationFrame(function loop() {
-      updatePosition();
       frame = requestAnimationFrame(loop);
+      updatePosition();
     });
 
     return () => {
@@ -714,6 +762,8 @@ export const ObjectContextToolbar: React.FC<Props> = ({ selectedId, selectedIds,
       engineEvents.off('ObjectModified', updatePosition);
       window.removeEventListener('canvas-drag-start', handleDragStart);
       window.removeEventListener('canvas-drag-end', handleDragEnd);
+      window.removeEventListener('pointerup', handlePointerRelease, true);
+      window.removeEventListener('pointercancel', handlePointerRelease, true);
       cancelAnimationFrame(frame);
     };
   }, [activeId, isBulk, sidebarsVisible]);

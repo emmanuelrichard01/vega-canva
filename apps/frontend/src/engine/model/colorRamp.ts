@@ -34,12 +34,32 @@ import { hexToHsv, hsvToHex } from './color';
  * Hue is held exactly. A ramp that drifts hue is not a ramp of this colour, and
  * the whole point is that every step is recognisably the same colour.
  *
+ * ## Where the colour sits in its own ramp
+ *
+ * Wherever its lightness puts it — near the top for a pale colour, near the
+ * bottom for a dark one. This paragraph was here before the code was, which is
+ * the interesting part: the ramp **always placed the input dead centre**, four
+ * tints above and four shades below, whatever colour it was.
+ *
+ * For most colours that is invisible. At the ends it is not. White has no room
+ * above it, so its four tints were four more whites; black has no room below,
+ * so its four shades were four more blacks. Picking `#FFFFFF` produced
+ * `[white × 5, four greys]` — and the row keyed its swatches by colour, so
+ * React collapsed the five duplicates into one and the ramp visibly lost half
+ * its steps. Approaching either end compressed the same way, a little less each
+ * time, which is what "begins to look broken" looks like.
+ *
+ * So the base's index is derived from its **HSL lightness**, `v · (1 − s/2)`,
+ * rather than fixed at the middle. Lightness rather than value because value
+ * alone calls a saturated blue "light" — `#2563EB` has a value of 0.92 and is
+ * plainly a mid-tone; its lightness is 0.54, which is where it belongs.
+ *
+ * Each half is then spread across the room that actually exists on its side, so
+ * every step differs from its neighbours by construction, at any input.
+ *
  * @param hex   the colour to build around.
  * @param count how many steps, including the colour itself.
- * @returns hex strings, lightest first. The input's own position in the ramp is
- *   wherever its value places it, so a colour that is already very dark yields
- *   mostly tints and one that is very light yields mostly shades — which is the
- *   useful behaviour, not a compromise.
+ * @returns hex strings, lightest first, no two the same.
  */
 export function tintsAndShades(hex: string, count = 9): string[] {
   const hsv = hexToHsv(hex);
@@ -47,17 +67,27 @@ export function tintsAndShades(hex: string, count = 9): string[] {
   // not a colour at all — still deserves a ramp, and a grey ramp is the honest
   // one. Falling back to an arbitrary hue would invent a colour nobody picked.
   const base = hsv ?? { h: 0, s: 0, v: 0.5 };
+  if (count <= 1) return [hsvToHex(base)];
+
+  /**
+   * Where the colour sits, from its own lightness.
+   *
+   * `v · (1 − s/2)` is HSL's lightness in HSV's terms. White lands at 0, black
+   * at `count - 1`, and everything else in between — so the number of tints and
+   * the number of shades are each the room genuinely available.
+   */
+  const lightness = base.v * (1 - base.s / 2);
+  const anchor = Math.round((1 - lightness) * (count - 1));
 
   const out: string[] = [];
   for (let i = 0; i < count; i += 1) {
-    // -1 at the light end, +1 at the dark end, 0 in the middle.
-    const t = count === 1 ? 0 : (i / (count - 1)) * 2 - 1;
-
-    if (t <= 0) {
-      // Towards white: value climbs to 1, saturation falls away. Neither
-      // reaches its limit until the very last step, so the lightest tint is a
-      // tint rather than white.
-      const k = -t;
+    if (i === anchor) {
+      out.push(hsvToHex(base));
+    } else if (i < anchor) {
+      // Towards white: value climbs, saturation falls away. `k` reaches 1 only
+      // at index 0, and neither axis reaches its limit even there, so the
+      // lightest tint is a tint rather than white.
+      const k = (anchor - i) / anchor;
       out.push(hsvToHex({
         h: base.h,
         s: base.s * (1 - k * 0.88),
@@ -67,6 +97,7 @@ export function tintsAndShades(hex: string, count = 9): string[] {
       // Towards black, with a small lift in saturation. Dropping value alone
       // greys a colour out as it darkens; a deep red is *more* saturated than
       // the red it came from, not less.
+      const t = (i - anchor) / (count - 1 - anchor);
       out.push(hsvToHex({
         h: base.h,
         s: Math.min(1, base.s * (1 + t * 0.25)),

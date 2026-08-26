@@ -426,9 +426,19 @@ export const ColorPickerPopover: React.FC<Props> = ({
           <div className="cp-group">
             <span className="cp-group__label">Shades</span>
             <div className="cp-ramp" role="group" aria-label="Tints and shades of the current colour">
-              {shades.map((c) => (
+              {shades.map((c, i) => (
                 <button
-                  key={c}
+                  /**
+                   * Keyed by position, not by colour.
+                   *
+                   * A ramp is a list of slots, and two slots holding the same
+                   * hex is a rendering question, not an identity one. Keying by
+                   * value meant a ramp with a repeat -- which `tintsAndShades`
+                   * used to produce for anything near white or black -- had
+                   * React collapse the duplicates, so the row silently lost
+                   * steps and looked broken rather than merely dull.
+                   */
+                  key={i}
                   type="button"
                   className="cp-ramp__step"
                   aria-label={c}
@@ -487,9 +497,12 @@ export const ColorPickerPopover: React.FC<Props> = ({
                     className="cp-palette"
                     data-active={(!isNone && paletteOf(displayColor) === palette.id) || undefined}
                   >
-                    {palette.colors.map((c) => (
+                    {palette.colors.map((c, i) => (
                       <button
-                        key={c}
+                        // Positional, for the same reason the ramp is: a row is
+                        // a list of slots, and nothing forbids a palette from
+                        // repeating a colour.
+                        key={i}
                         type="button"
                         className="cp-palette__chip"
                         aria-label={`${palette.name} ${c}`}

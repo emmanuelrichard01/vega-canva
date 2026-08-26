@@ -1,9 +1,11 @@
-import React, { useEffect, useState, useRef } from 'react';
+import React, { useEffect, useState, useRef, useSyncExternalStore } from 'react';
 import { useRoomState } from '../../hooks/useSync';
 import { CollaborationLayer } from './CollaborationLayer';
 import { Moon, Sun, Undo2, Redo2, Share2, Download, EyeOff, History, PanelLeft, MessageSquare, SlidersHorizontal, HelpCircle } from 'lucide-react';
 import { editor } from '../../engine/api/EditorAPI';
 import { useStore } from '../../hooks/useStore';
+import { railVeil } from '../../engine/interaction/railVeil';
+import { textEditing } from '../../engine/interaction/textEditing';
 import { Switch } from '../ui/Switch';
 import { Logo } from '../ui/Logo';
 
@@ -62,15 +64,26 @@ export const WorkspaceShell: React.FC<Props> = ({ localTitle, setLocalTitle, onT
    * hidden or moved — only contrast changes — so a control remains clickable
    * throughout, which is the whole difference between this and hiding the bar.
    */
-  const [receded, setReceded] = useState(false);
+  const receded = useSyncExternalStore(railVeil.subscribe, railVeil.getSnapshot, railVeil.getSnapshot);
+
+  /**
+   * The floor under a gesture that never announced its end.
+   *
+   * This used to hold its own boolean fed by the same two events, which meant
+   * it also inherited their failure: Konva does not fire `dragend` for a node
+   * destroyed mid-drag, so one interrupted handle drag left the bar dimmed for
+   * the life of the page. Reading `railVeil` puts both surfaces behind one
+   * definition — which is what the paragraph above always claimed — and this
+   * listener is the same release rule the rail applies, registered here too so
+   * the recovery does not depend on the rail happening to be on screen.
+   */
   useEffect(() => {
-    const down = () => setReceded(true);
-    const up = () => setReceded(false);
-    window.addEventListener('canvas-drag-start', down);
-    window.addEventListener('canvas-drag-end', up);
+    const settle = () => { railVeil.settle(textEditing.getSnapshot()); };
+    window.addEventListener('pointerup', settle, true);
+    window.addEventListener('pointercancel', settle, true);
     return () => {
-      window.removeEventListener('canvas-drag-start', down);
-      window.removeEventListener('canvas-drag-end', up);
+      window.removeEventListener('pointerup', settle, true);
+      window.removeEventListener('pointercancel', settle, true);
     };
   }, []);
 

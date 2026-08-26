@@ -101,3 +101,52 @@ describe('paletteOf', () => {
     expect(paletteOf('#123456')).toBeNull();
   });
 });
+
+describe('tintsAndShades at the ends of the scale', () => {
+  /**
+   * The bug: the base was always placed dead centre, four tints above and four
+   * shades below, whatever colour it was. White has no room above it and black
+   * none below, so half of each ramp was the same colour repeated -- and the
+   * picker keyed its swatches by colour, so React collapsed the duplicates and
+   * the row visibly lost steps.
+   */
+  const distinct = (hex: string) => new Set(tintsAndShades(hex, 9)).size;
+
+  it('gives white nine different steps', () => {
+    expect(distinct('#FFFFFF')).toBe(9);
+  });
+
+  it('gives black nine different steps', () => {
+    expect(distinct('#000000')).toBe(9);
+  });
+
+  it('gives every step of every ramp its own colour', () => {
+    // Including the approach to each end, which compressed a little more with
+    // every step closer -- "begins to look broken" rather than a clean break.
+    for (const hex of ['#FAFAFA', '#F5F5F5', '#111111', '#050505', '#2563EB', '#EF4444', '#808080']) {
+      expect(distinct(hex)).toBe(9);
+    }
+  });
+
+  it('puts white at the top of its own ramp and black at the bottom', () => {
+    // Not centred: a colour with no room above it should spend its steps below.
+    expect(tintsAndShades('#FFFFFF', 9)[0].toUpperCase()).toBe('#FFFFFF');
+    expect(tintsAndShades('#000000', 9)[8].toUpperCase()).toBe('#000000');
+  });
+
+  it('places a colour by lightness rather than by value', () => {
+    /**
+     * `#2563EB` has a *value* of 0.92, which would call a plainly mid-tone blue
+     * a light colour and leave it one tint. Its HSL lightness is 0.54, which is
+     * the middle, which is where it belongs.
+     */
+    const ramp = tintsAndShades('#2563EB', 9);
+    expect(ramp.findIndex((c) => c.toUpperCase() === '#2563EB')).toBe(4);
+  });
+
+  it('still contains the colour it was asked about', () => {
+    for (const hex of ['#FFFFFF', '#000000', '#EF4444', '#111111']) {
+      expect(tintsAndShades(hex, 9).map((c) => c.toUpperCase())).toContain(hex);
+    }
+  });
+});
