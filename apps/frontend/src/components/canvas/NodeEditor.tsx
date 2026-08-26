@@ -6,6 +6,7 @@ import { consumePendingCaret } from '../../engine/interaction/pendingEdit';
 import { textEditing } from '../../engine/interaction/textEditing';
 import { DEFAULT_TYPOGRAPHY, type TextBearingNode } from '../../engine/model/schema';
 import { STICKY_PADDING, THEMES } from '../../engine/model/stickyThemes';
+import { textBox } from '../../engine/model/stickyFooter';
 import { measureStickyHeight, stickyFit, STICKY_FONT_FAMILY } from './renderers/stickyFit';
 import { STICKY_LINE_HEIGHT } from '../../engine/model/stickyText';
 import { chainSticky } from '../../engine/tools/stickyChain';
@@ -213,20 +214,33 @@ export const NodeEditor: React.FC<Props> = ({ node, onCommit, onCancel }) => {
    * It goes through the same `stickyFit` the renderer uses; two independent
    * "close enough" implementations would make the words jump on commit.
    */
-  const stickyBox = isSticky
-    ? {
-        width: node.width - STICKY_PADDING * 2,
-        height: node.height - STICKY_PADDING * 2 - 18,
-      }
-    : null;
+  const stickyBox =
+    isSticky && node.type === 'sticky'
+      ? textBox(node.width, node.height, STICKY_PADDING, node.tags.length > 0)
+      : null;
   const stickySize = stickyBox
     ? stickyFit(value, stickyBox.width, stickyBox.height).fontSize
     : 0;
 
-  // How far down to push the first line so the block sits centred, in screen
-  // pixels. Measured with the same Konva probe the renderer uses.
+  /**
+   * How far down to push the first line so the block sits where it is drawn.
+   *
+   * Two parts, and the first was missing. The **band above** — the tag strip,
+   * and the padding — is where the renderer's text box begins; the editor was
+   * starting at the plain padding, so a note with tags typed one strip higher
+   * than it drew. The **centring** is the rest, measured with the same Konva
+   * probe the renderer uses.
+   *
+   * That `stickyBox` now comes from `textBox` is the point of the whole
+   * exercise: the comment above has always claimed the editor and the renderer
+   * ask the same question, and until now it handed `stickyFit` a *different
+   * box* — no footer band, no tag strip. Same function, different arguments,
+   * so the words jumped the moment you clicked into a note anybody had reacted
+   * to or tagged.
+   */
   const stickyTopPad = stickyBox
-    ? Math.max(
+    ? (stickyBox.y - STICKY_PADDING) * zoom +
+      Math.max(
         0,
         ((stickyBox.height - measureStickyHeight(value, stickySize, stickyBox.width)) / 2) * zoom
       )

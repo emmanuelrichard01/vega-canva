@@ -6,6 +6,7 @@ import { STICKY_LINE_HEIGHT } from '../../../engine/model/stickyText';
 import { stickyFit, stickyFontEpoch, STICKY_FONT_FAMILY, STICKY_FONT_WEIGHT } from './stickyFit';
 import { formatVoterSummary } from '../../../engine/model/voters';
 import { THEMES, STICKY_PADDING, STICKY_RADIUS } from '../../../engine/model/stickyThemes';
+import { FOOTER_BAND, layoutFooter, PIN_INSET, textBox } from '../../../engine/model/stickyFooter';
 import { rectRing, roughPolyline, roughSilhouette, seedFrom } from '../../../engine/model/rough';
 
 interface Props {
@@ -13,15 +14,19 @@ interface Props {
   showText: boolean;
   myAuthorId: string;
   onToggleReaction?: (emoji: string) => void;
+  onTogglePin?: () => void;
 }
 
 const QUICK_EMOJIS = ['👍', '❤️', '🎉', '🔥', '🚀', '👀', '💡', '💯'];
 
-export const StickyRenderer: React.FC<Props> = React.memo(({ node, showText, myAuthorId, onToggleReaction }) => {
+export const StickyRenderer: React.FC<Props> = React.memo(({ node, showText, myAuthorId, onToggleReaction, onTogglePin }) => {
   const [hoveredEmoji, setHoveredEmoji] = useState<string | null>(null);
   const [hoveredPickerEmoji, setHoveredPickerEmoji] = useState<string | null>(null);
   const [isPickerOpen, setIsPickerOpen] = useState(false);
+  /** The overflowed reactions, shown as themselves rather than as a count. */
+  const [isOverflowOpen, setIsOverflowOpen] = useState(false);
   const [isNoteHovered, setIsNoteHovered] = useState(false);
+  const [isPinHovered, setIsPinHovered] = useState(false);
 
   const theme = THEMES[node.theme] ?? THEMES.yellow;
   const sketchLevel = node.appearance?.sketch;
@@ -36,53 +41,36 @@ export const StickyRenderer: React.FC<Props> = React.memo(({ node, showText, myA
     };
   }, [node.id, node.width, node.height, sketchLevel]);
 
-  // Room for footer badges and tags
-  const hasFooter = Object.keys(node.reactions).length > 0;
-  const textWidth = node.width - STICKY_PADDING * 2;
-  const headerRoom = node.tags.length > 0 ? 16 : 0;
-  const textHeight = node.height - STICKY_PADDING * 2 - (hasFooter ? 26 : 18) - headerRoom;
+  /**
+   * The text's box, reserved the same way whether or not anybody has reacted.
+   *
+   * `textBox` owns this now, and both the fitter and the `<Text>` below read it
+   * -- they used to derive it separately from the same fields and ended up with
+   * two different ideas of whether a footer existed, which is what made the
+   * handwriting shrink the first time someone reacted to a note.
+   */
+  const box = textBox(node.width, node.height, STICKY_PADDING, node.tags.length > 0);
 
   useSyncExternalStore(stickyFontEpoch.subscribe, stickyFontEpoch.get, stickyFontEpoch.get);
-  const fit = stickyFit(node.text, textWidth, textHeight);
+  const fit = stickyFit(node.text, box.width, box.height);
 
   const initials = initialsFor(node.author.name);
   const reactions = Object.entries(node.reactions).filter(([, ids]) => ids.length > 0);
 
-  // Bounded footer layout: compute visible vs overflow reactions to guarantee
-  // that chips never spill outside the sticky note boundary.
+  // The run of chips starts after the author's own chip and stops short of the
+  // add button. No floor: on a note too narrow for even one chip everything
+  // belongs in the overflow badge, and forcing room for a chip that cannot fit
+  // is what put them outside the paper.
   const startX = 52;
-  const rightMargin = 10;
-  const addBtnWidth = 24;
-  const availWidth = Math.max(36, node.width - startX - rightMargin - addBtnWidth);
+  const availWidth = Math.max(0, node.width - startX - 10 - 24);
+  const footer = layoutFooter(reactions, availWidth);
 
-  let usedWidth = 0;
-  const visibleReactions: Array<{ emoji: string; ids: string[]; width: number; offset: number }> = [];
-  const overflowReactions: Array<[string, string[]]> = [];
-
-  for (let i = 0; i < reactions.length; i++) {
-    const [emoji, ids] = reactions[i];
-    const width = ids.length > 1 ? 40 : 28;
-    const itemFullWidth = width + 4;
-    const isLast = i === reactions.length - 1;
-    const needed = isLast ? itemFullWidth : itemFullWidth + 28;
-
-    if (usedWidth + (isLast ? itemFullWidth : needed) <= availWidth) {
-      visibleReactions.push({ emoji, ids, width, offset: usedWidth });
-      usedWidth += itemFullWidth;
-    } else {
-      overflowReactions.push(...reactions.slice(i));
-      break;
-    }
-  }
-
-  const overflowOffset = usedWidth;
-  const overflowWidth = overflowReactions.length > 0 ? 24 : 0;
-  const addBtnOffset = usedWidth + (overflowReactions.length > 0 ? overflowWidth + 4 : 0);
-
-  // Quick reaction picker geometry (clamped within sticky bounds)
+  // The trays hang above the footer, and are kept inside the paper on a note
+  // too short to hold them below the text.
   const pickerWidth = Math.min(node.width - 16, QUICK_EMOJIS.length * 25 + 10);
   const pickerX = Math.max(8, Math.min(node.width - pickerWidth - 8, startX));
   const emojiSlotWidth = (pickerWidth - 10) / QUICK_EMOJIS.length;
+  const trayY = Math.max(STICKY_PADDING, node.height - 62);
 
   return (
     <Group
@@ -90,6 +78,10 @@ export const StickyRenderer: React.FC<Props> = React.memo(({ node, showText, myA
       onMouseLeave={() => {
         setIsNoteHovered(false);
         setHoveredEmoji(null);
+        // Both trays are hover affordances. Leaving one open over a note nobody
+        // is pointing at covers the note's own text with a black bar.
+        setIsOverflowOpen(false);
+        setIsPickerOpen(false);
       }}
     >
       {sketchPaper ? (
@@ -129,10 +121,10 @@ export const StickyRenderer: React.FC<Props> = React.memo(({ node, showText, myA
       {showText && (
         <Text
           text={node.text}
-          x={STICKY_PADDING}
-          y={STICKY_PADDING + headerRoom}
-          width={textWidth}
-          height={textHeight}
+          x={box.x}
+          y={box.y}
+          width={box.width}
+          height={box.height}
           fontSize={fit.fontSize}
           fontFamily={STICKY_FONT_FAMILY}
           fontStyle={STICKY_FONT_WEIGHT}
@@ -146,7 +138,23 @@ export const StickyRenderer: React.FC<Props> = React.memo(({ node, showText, myA
       )}
 
       {node.tags.length > 0 && (
-        <Group x={STICKY_PADDING} y={10} listening={false}>
+        /**
+         * Clipped to leave the pin's corner alone.
+         *
+         * The pin sits at `width - PIN_INSET` and the tag row started at the
+         * padding and ran as far as its chips wanted -- two long tags on a
+         * narrow note reached straight under it. The room is reserved whether
+         * or not the note is pinned, so pinning one does not shuffle its tags.
+         */
+        <Group
+          x={STICKY_PADDING}
+          y={10}
+          listening={false}
+          clipX={0}
+          clipY={-4}
+          clipWidth={Math.max(0, node.width - STICKY_PADDING - PIN_INSET)}
+          clipHeight={24}
+        >
           {node.tags.slice(0, 2).map((tag, i) => {
             const width = Math.min(74, 12 + tag.length * 5.4);
             const offset = node.tags
@@ -191,7 +199,7 @@ export const StickyRenderer: React.FC<Props> = React.memo(({ node, showText, myA
           text="…"
           x={STICKY_PADDING}
           y={node.height - STICKY_PADDING - 14}
-          width={textWidth}
+          width={box.width}
           align="right"
           fontSize={18}
           fontFamily="Inter"
@@ -203,7 +211,7 @@ export const StickyRenderer: React.FC<Props> = React.memo(({ node, showText, myA
       )}
 
       {/* Author initials */}
-      <Group x={STICKY_PADDING} y={node.height - 26} listening={false}>
+      <Group x={STICKY_PADDING} y={node.height - FOOTER_BAND} listening={false}>
         <Circle x={3} y={5} radius={3} fill={node.author.color} />
         <Text
           text={initials}
@@ -218,19 +226,59 @@ export const StickyRenderer: React.FC<Props> = React.memo(({ node, showText, myA
         />
       </Group>
 
+      {/*
+        The pin: a control, and one that means something.
+
+        It was drawn `listening={false}` -- a badge you could look at and not
+        touch, so the only way to unpin a note was to find the button on the
+        contextual rail or the properties panel. A pin drawn *on* the note is
+        the obvious place to press to take it out, and it now is one.
+
+        `pinned` also does something now. It was a field the renderer drew and
+        nothing else honoured, while the properties panel's own hint promised a
+        pinned note "stays put" -- so the promise was simply untrue. A pinned
+        note is held where it is and cannot be dragged; everything else about it
+        stays live, which is what separates it from `locked`.
+      */}
       {node.pinned && (
-        <Group x={node.width - 24} y={16} listening={false} rotation={32}>
+        <Group
+          x={node.width - PIN_INSET}
+          y={16}
+          rotation={32}
+          onMouseEnter={() => setIsPinHovered(true)}
+          onMouseLeave={() => setIsPinHovered(false)}
+          onClick={(e) => { e.cancelBubble = true; onTogglePin?.(); }}
+          onTap={(e) => { e.cancelBubble = true; onTogglePin?.(); }}
+        >
+          {/* The press target, larger than the drawing and invisible: a five
+              pixel pinhead is not something anyone can hit. */}
+          <Circle radius={13} fill="transparent" />
           <Circle x={2} y={3} radius={5} fill="rgba(0,0,0,0.18)" opacity={0.6} />
           <Line points={[0, 2, 0, 13]} stroke="#94A3B8" strokeWidth={1.8} lineCap="round" />
-          <Circle radius={5.2} fill={theme.text} opacity={0.92} />
+          <Circle radius={isPinHovered ? 6.4 : 5.2} fill={theme.text} opacity={isPinHovered ? 1 : 0.92} />
           <Circle x={-1.6} y={-1.6} radius={1.8} fill="#FFFFFF" opacity={0.45} />
+          {isPinHovered && (
+            // Counter-rotated, because the pin is drawn at 32° and a tooltip
+            // that leaned with it would be the only tilted text on the canvas.
+            <Label y={-22} x={0} rotation={-32} listening={false}>
+              <Tag
+                fill="rgba(15, 23, 42, 0.94)"
+                cornerRadius={5}
+                pointerDirection="down"
+                pointerWidth={6}
+                pointerHeight={4}
+                lineJoin="round"
+              />
+              <Text text="Unpin" fontSize={10} fontFamily="Inter" fontStyle="500" padding={4} fill="#F8FAFC" />
+            </Label>
+          )}
         </Group>
       )}
 
       {/* Reactions container (bounded to avoid any spill-out) */}
       {(reactions.length > 0 || isNoteHovered || isPickerOpen) && (
-        <Group x={startX} y={node.height - 26}>
-          {visibleReactions.map(({ emoji, ids, width, offset }) => {
+        <Group x={startX} y={node.height - FOOTER_BAND}>
+          {footer.visible.map(({ emoji, ids, width, offset }) => {
             const mine = ids.includes(myAuthorId);
             return (
               <Group
@@ -297,40 +345,51 @@ export const StickyRenderer: React.FC<Props> = React.memo(({ node, showText, myA
           })}
 
           {/* Compact overflow badge when reactions exceed available width */}
-          {overflowReactions.length > 0 && (
+          {footer.overflow.length > 0 && (
             <Group
-              x={overflowOffset}
+              x={footer.overflowOffset}
               onMouseEnter={() => setHoveredEmoji('__overflow__')}
               onMouseLeave={() => setHoveredEmoji((prev) => (prev === '__overflow__' ? null : prev))}
+              /**
+               * It shows what it counted.
+               *
+               * "+3" is a promise that there are three more of the thing beside
+               * it. Clicking it opened the *emoji picker* -- a different tray,
+               * offering a different action, on a control whose label said
+               * "see the rest". Now it opens the rest, as real chips you can
+               * click to add or remove your own reaction.
+               */
               onClick={(e) => {
                 e.cancelBubble = true;
-                setIsPickerOpen(!isPickerOpen);
+                setIsOverflowOpen((open) => !open);
+                setIsPickerOpen(false);
               }}
               onTap={(e) => {
                 e.cancelBubble = true;
-                setIsPickerOpen(!isPickerOpen);
+                setIsOverflowOpen((open) => !open);
+                setIsPickerOpen(false);
               }}
             >
               <Rect
                 width={24}
                 height={20}
                 cornerRadius={10}
-                fill={theme.bg}
-                stroke={theme.edge}
+                fill={isOverflowOpen ? theme.text : theme.bg}
+                stroke={isOverflowOpen ? theme.text : theme.edge}
                 strokeWidth={1}
               />
               <Text
-                text={`+${overflowReactions.length}`}
+                text={`+${footer.overflow.length}`}
                 width={24}
                 y={4.5}
                 align="center"
                 fontSize={10}
                 fontFamily="Inter"
                 fontStyle="600"
-                fill={theme.text}
+                fill={isOverflowOpen ? theme.bg : theme.text}
                 listening={false}
               />
-              {hoveredEmoji === '__overflow__' && (
+              {hoveredEmoji === '__overflow__' && !isOverflowOpen && (
                 <Label y={-24} x={12} listening={false}>
                   <Tag
                     fill="rgba(15, 23, 42, 0.94)"
@@ -344,7 +403,7 @@ export const StickyRenderer: React.FC<Props> = React.memo(({ node, showText, myA
                     shadowOffsetY={2}
                   />
                   <Text
-                    text={overflowReactions.map(([e, ids]) => `${e} ${ids.length}`).join('  ')}
+                    text={footer.overflow.map(([e, ids]) => `${e} ${ids.length}`).join('  ')}
                     fontSize={11}
                     fontFamily="Inter"
                     padding={4}
@@ -357,14 +416,16 @@ export const StickyRenderer: React.FC<Props> = React.memo(({ node, showText, myA
 
           {/* '+' Button: Toggles the in-place quick reaction picker tray */}
           <Group
-            x={addBtnOffset}
+            x={footer.addOffset}
             onClick={(e) => {
               e.cancelBubble = true;
               setIsPickerOpen(!isPickerOpen);
+              setIsOverflowOpen(false);
             }}
             onTap={(e) => {
               e.cancelBubble = true;
               setIsPickerOpen(!isPickerOpen);
+              setIsOverflowOpen(false);
             }}
           >
             <Rect
@@ -393,9 +454,62 @@ export const StickyRenderer: React.FC<Props> = React.memo(({ node, showText, myA
         </Group>
       )}
 
+      {/* The reactions the footer had no room for, as themselves. */}
+      {isOverflowOpen && footer.overflow.length > 0 && (
+        <Group x={pickerX} y={trayY}>
+          <Rect
+            width={pickerWidth}
+            height={32}
+            cornerRadius={16}
+            fill="rgba(15, 23, 42, 0.96)"
+            stroke="rgba(255, 255, 255, 0.12)"
+            strokeWidth={1}
+            shadowColor="rgba(0, 0, 0, 0.35)"
+            shadowBlur={12}
+            shadowOffsetY={4}
+          />
+          {footer.overflow.slice(0, 6).map(([emoji, ids], index) => {
+            const mine = ids.includes(myAuthorId);
+            const slot = (pickerWidth - 10) / Math.min(6, footer.overflow.length);
+            return (
+              <Group
+                key={emoji}
+                x={5 + index * slot}
+                y={4}
+                onClick={(e) => {
+                  e.cancelBubble = true;
+                  onToggleReaction?.(emoji);
+                }}
+                onTap={(e) => {
+                  e.cancelBubble = true;
+                  onToggleReaction?.(emoji);
+                }}
+              >
+                <Rect
+                  width={slot - 2}
+                  height={24}
+                  cornerRadius={12}
+                  fill={mine ? 'rgba(59, 130, 246, 0.45)' : 'rgba(255, 255, 255, 0.10)'}
+                />
+                <Text
+                  text={`${emoji} ${ids.length}`}
+                  width={slot - 2}
+                  y={5}
+                  align="center"
+                  fontSize={11}
+                  fontFamily="Inter"
+                  fill="#F8FAFC"
+                  listening={false}
+                />
+              </Group>
+            );
+          })}
+        </Group>
+      )}
+
       {/* Floating In-Place Quick Reaction Palette */}
       {isPickerOpen && (
-        <Group x={pickerX} y={node.height - 62}>
+        <Group x={pickerX} y={trayY}>
           <Rect
             width={pickerWidth}
             height={32}

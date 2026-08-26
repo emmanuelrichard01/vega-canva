@@ -46,9 +46,9 @@ import {
   restyleForWidth,
   type StrokeStyleId,
 } from '../engine/model/strokeStyle';
-import { ColorPickerPopover } from './ui/ColorPickerPopover';
 import { TagEditor } from './ui/TagEditor';
-import { THEMES, nearestTheme } from '../engine/model/stickyThemes';
+import { THEMES } from '../engine/model/stickyThemes';
+import { STICKY_THEMES } from '../engine/model/schema';
 import { getColorForUser } from '../engine/presence/ColorPalette';
 import { CYCLE_PRESETS } from '../engine/text/colorCycle';
 import { packAdjustments, readAdjustments, type AdjustmentId } from '../engine/model/imageAdjustments';
@@ -211,6 +211,8 @@ export const PropertiesPanel: React.FC<PropertiesPanelProps> = ({ selectedIds, o
   const flipX = shared((n) => n.scaleX < 0);
   const flipY = shared((n) => n.scaleY < 0);
   const flipped = { x: Boolean(flipX.value), mixedX: flipX.mixed, y: Boolean(flipY.value), mixedY: flipY.mixed };
+  /** The paper every selected note is on, or nothing when they disagree. */
+  const pickedTheme = shared((n) => (n.type === 'sticky' ? n.theme : null));
 
   const hasCorners = nodes.every((n) => {
     const paint = appearanceOf(n);
@@ -512,17 +514,50 @@ export const PropertiesPanel: React.FC<PropertiesPanelProps> = ({ selectedIds, o
 
       {affords('sticky-theme') && node.type === 'sticky' && (
         <Accordion title="Note" icon={<StickyNote size={13} />}>
-          <Row label="Color">
-            <ColorPickerPopover
-              color={THEMES[node.theme]?.bg ?? '#FDE047'}
-              onChange={(color) => {
-                const theme = nearestTheme(color);
-                set({ theme });
-                useStore.getState().setStickyTheme(theme);
-              }}
-            />
+          {/*
+            The eight papers, offered as themselves.
+
+            This was a full RGB picker with `nearestTheme` run over whatever
+            came back — sixteen million colours offered and eight honoured,
+            silently snapping every choice to something nobody picked. A sticky
+            has no free fill: the palette is eight paper-and-ink pairs, each ink
+            a deep version of its own paper so the note reads as one material,
+            and a control that shows a spectrum to make a one-of-eight decision
+            is lying about what it does. The contextual rail has offered the
+            papers directly for a while; the panel does now too.
+          */}
+          <Row label="Paper">
+            <div className="sticky-papers" role="radiogroup" aria-label="Note colour">
+              {STICKY_THEMES.map((id) => {
+                const paper = THEMES[id];
+                // Nothing reads as chosen across a mixed selection: two notes on
+                // different papers have no one answer, and showing the first
+                // one's as selected would claim they agreed.
+                const active = !pickedTheme.mixed && pickedTheme.value === id;
+                return (
+                  <button
+                    key={id}
+                    type="button"
+                    role="radio"
+                    aria-checked={active}
+                    aria-label={id}
+                    data-tooltip={id[0].toUpperCase() + id.slice(1)}
+                    className={`sticky-paper${active ? ' is-active' : ''}`}
+                    style={{ background: paper.bg, borderColor: paper.edge, color: paper.text }}
+                    onClick={() => {
+                      set({ theme: id });
+                      // The next note drawn takes the colour just chosen, which
+                      // is what makes picking one feel like setting a default.
+                      useStore.getState().setStickyTheme(id);
+                    }}
+                  >
+                    Aa
+                  </button>
+                );
+              })}
+            </div>
           </Row>
-          <Row label="Pinned" hint="A pinned note stays put when a layout is rearranged.">
+          <Row label="Pinned" hint="A pinned note is held where it is and cannot be dragged. Everything else about it stays editable.">
             <input type="checkbox" checked={node.pinned} onChange={(e) => set({ pinned: e.target.checked })} />
           </Row>
           {!isMulti && <TagEditor tags={node.tags} onChange={(tags: string[]) => set({ tags })} />}

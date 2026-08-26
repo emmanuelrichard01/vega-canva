@@ -4378,6 +4378,51 @@ textarea:focus-visible {
   box-shadow: 0 0 0 2px var(--surface-primary), 0 0 0 4px var(--text-primary);
 }
 
+/* The same eight papers in the properties panel, laid out inline rather than
+   behind a popover. The panel already is the disclosure — putting a second one
+   inside it would mean two clicks to see a choice that fits in the space
+   available, and the row is the only place a paper can be compared against the
+   others at a glance. */
+.sticky-papers {
+  display: grid;
+  grid-template-columns: repeat(4, 1fr);
+  gap: 5px;
+  width: 100%;
+}
+
+.sticky-paper {
+  height: 26px;
+  display: grid;
+  place-items: center;
+  border: 1px solid;
+  border-radius: var(--radius-md);
+  font-family: var(--font-sans);
+  font-size: 11px;
+  font-weight: 650;
+  cursor: pointer;
+  transition: transform var(--motion-hover), box-shadow var(--motion-hover);
+}
+
+.sticky-paper:hover { transform: translateY(-1px); }
+
+/* Ringed in the app's ink rather than tinted, so the mark reads the same on the
+   dark paper as on the pale ones. */
+.sticky-paper.is-active {
+  box-shadow: 0 0 0 2px var(--surface-elevated), 0 0 0 3.5px var(--text-primary);
+}
+
+.sticky-paper:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .sticky-paper,
+  .ctx-sticky-chip { transition: none; }
+  .sticky-paper:hover,
+  .ctx-sticky-chip:hover { transform: none; }
+}
+
 .ctx-popover__row {
   display: flex;
   align-items: center;

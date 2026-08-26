@@ -1149,3 +1149,16 @@ export type TextBearingNode = TextNode | ShapeNode | StickyNode | CommentNode;
 
 export const hasText = (n: AnyNode): n is TextBearingNode =>
   n.type === 'text' || n.type === 'shape' || n.type === 'sticky' || n.type === 'comment';
+
+/**
+ * Whether this object is held where it is.
+ *
+ * Only a sticky can be pinned, so the check is a type guard rather than a
+ * property read that would be `undefined` on every other node — the shape of
+ * mistake that makes a gate silently pass for everything it was meant to catch.
+ *
+ * Distinct from `locked`, which refuses every edit. A pinned note stays put and
+ * is otherwise entirely live: you can still write in it, recolour it, react to
+ * it. It is the difference between "don't move this" and "don't touch this".
+ */
+export const isPinned = (n: AnyNode): boolean => n.type === 'sticky' && n.pinned === true;

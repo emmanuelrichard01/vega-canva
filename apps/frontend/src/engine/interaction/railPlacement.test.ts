@@ -82,7 +82,8 @@ describe('placeRail', () => {
     const p = placeRail(subject, RAIL, BOUNDS, STANDOFF);
     expect(p.side).toBe('top');
     expect(p.clear).toBe(true);
-    // Its bottom edge is exactly the standoff clear of the subject's top.
+    // Its bottom edge is the standoff clear of the subject's top. The subject
+    // is 90 tall against a 40 rail, so the thin-subject ramp adds nothing.
     expect(p.y).toBe(300 - STANDOFF);
     expect(p.x).toBe(460);
   });
@@ -92,6 +93,29 @@ describe('placeRail', () => {
     const p = placeRail(subject, RAIL, BOUNDS, STANDOFF);
     expect(p.side).toBe('bottom');
     expect(p.y).toBe(70 + 90 + STANDOFF);
+  });
+
+  it('stands further off a subject thinner than the rail itself', () => {
+    /**
+     * A fixed gap is not a fixed impression. Forty pixels of solid surface
+     * fourteen under a single line of text reads as attached to it, because the
+     * rail is nearly twice the height of the thing it is standing clear of.
+     */
+    const line = { x: 700, y: 300, width: 220, height: 24 };
+    const poster = { x: 700, y: 300, width: 220, height: 400 };
+
+    const thin = placeRail(line, RAIL, BOUNDS, STANDOFF);
+    const thick = placeRail(poster, RAIL, BOUNDS, STANDOFF);
+
+    // (40 - 24) / 2 = 8 more than the base.
+    expect(line.y - thin.y).toBe(STANDOFF + 8);
+    // The poster is thicker than the rail, so nothing is added.
+    expect(poster.y - thick.y).toBe(STANDOFF);
+  });
+
+  it('adds at most half a rail, even to a subject with no thickness', () => {
+    const hairline = { x: 700, y: 300, width: 220, height: 0 };
+    expect(300 - placeRail(hairline, RAIL, BOUNDS, STANDOFF).y).toBe(STANDOFF + RAIL.height / 2);
   });
 
   it('never clamps back over the object it flipped below to avoid', () => {

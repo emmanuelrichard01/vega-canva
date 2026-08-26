@@ -17,7 +17,7 @@ import { gridSnap } from '../engine/interaction/gridSnap';
 import { clearSnapGuides, snapDraggedBox } from '../engine/interaction/objectSnap';
 import { presenceManager } from '../engine/presence/PresenceManager';
 import { useFlight } from '../engine/physics/flightState';
-import { hasText, type AnyNode, type TextBearingNode } from '../engine/model/schema';
+import { hasText, isPinned, type AnyNode, type TextBearingNode } from '../engine/model/schema';
 import { NodeEditor } from './canvas/NodeEditor';
 import { AudioRenderer } from './canvas/renderers/AudioRenderer';
 import { ImageRenderer } from './canvas/renderers/ImageRenderer';
@@ -928,7 +928,17 @@ export const ObjectRenderer = React.memo(
           // And not draggable under a tool that cannot select — see
           // `selectable`, and `canSelectWith` for why one predicate answers
           // both questions.
-          draggable={selectable && !flight && !node.locked && !forceToolActive && !filteredOut}
+          /**
+           * A pinned note is held where it is.
+           *
+           * `pinned` used to be drawn and honoured by nothing, while the
+           * properties panel's hint promised the note "stays put" -- a field
+           * the renderer showed and the document ignored. It is the lighter
+           * half of `locked`: the note cannot be dragged, and everything else
+           * about it stays live. Its own pin is the way out, and so are the
+           * rail and the panel.
+           */
+          draggable={selectable && !flight && !node.locked && !isPinned(node) && !forceToolActive && !filteredOut}
           /**
            * Selection happens on **press**, not on click.
            *
@@ -1135,6 +1145,7 @@ const NodeContent: React.FC<{ node: AnyNode; isEditing: boolean; stageScale?: nu
           showText={!isEditing}
           myAuthorId={localAuthorId()}
           onToggleReaction={(emoji) => toggleReaction(node.id, emoji, localAuthorId())}
+          onTogglePin={() => updateNode(node.id, { pinned: !node.pinned })}
         />
       );
     case 'image':

@@ -205,8 +205,33 @@ export function placeRail(
       ? { top: standoff, bottom: standoff, left: standoff, right: standoff }
       : standoff;
 
-  const needV = { top: rail.height + clearance.top, bottom: rail.height + clearance.bottom };
-  const needH = { left: rail.width + clearance.left, right: rail.width + clearance.right };
+  /**
+   * A rail taller than the object it describes needs more air than one beside a
+   * poster.
+   *
+   * A fixed gap is not a fixed *impression*. Forty pixels of solid surface
+   * fourteen pixels under a single line of text reads as attached to it — the
+   * rail is nearly twice the height of the thing it is meant to be standing
+   * clear of, so the eye groups them. The same fourteen pixels under a photograph
+   * reads as a comfortable float, because the photograph dominates.
+   *
+   * So the gap grows as the subject shrinks, by half the difference: unchanged
+   * for anything at least as thick as the rail, and half a rail's worth extra
+   * for something with no thickness at all. It is the smallest rule that makes
+   * the *look* constant rather than the number.
+   */
+  const air = (base: number, railExtent: number, subjectExtent: number) =>
+    base + Math.max(0, railExtent - Math.max(0, subjectExtent)) / 2;
+
+  const gapFor: Record<RailSide, number> = {
+    top: air(clearance.top, rail.height, subject.height),
+    bottom: air(clearance.bottom, rail.height, subject.height),
+    left: air(clearance.left, rail.width, subject.width),
+    right: air(clearance.right, rail.width, subject.width),
+  };
+
+  const needV = { top: rail.height + gapFor.top, bottom: rail.height + gapFor.bottom };
+  const needH = { left: rail.width + gapFor.left, right: rail.width + gapFor.right };
 
   const gap: Record<RailSide, number> = {
     top: subject.y - bounds.top,
@@ -268,13 +293,13 @@ export function placeRail(
   if (clearSide) {
     switch (clearSide) {
       case 'top':
-        return { x: midX, y: subject.y - clearance.top, side: 'top', clear: true };
+        return { x: midX, y: subject.y - gapFor.top, side: 'top', clear: true };
       case 'bottom':
-        return { x: midX, y: subject.y + subject.height + clearance.bottom, side: 'bottom', clear: true };
+        return { x: midX, y: subject.y + subject.height + gapFor.bottom, side: 'bottom', clear: true };
       case 'right':
-        return { x: subject.x + subject.width + clearance.right, y: midY, side: 'right', clear: true };
+        return { x: subject.x + subject.width + gapFor.right, y: midY, side: 'right', clear: true };
       default:
-        return { x: subject.x - clearance.left, y: midY, side: 'left', clear: true };
+        return { x: subject.x - gapFor.left, y: midY, side: 'left', clear: true };
     }
   }
 

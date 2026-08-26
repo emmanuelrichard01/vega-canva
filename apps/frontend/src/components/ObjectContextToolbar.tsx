@@ -116,10 +116,17 @@ const RAIL_HEIGHT = 40;
  * a single line of text there is not enough object for it to miss. Measuring
  * the gap to the rail's box was measuring to the wrong edge.
  *
- * Below and to the sides the rail casts almost nothing, so those keep the
- * fourteen the surface was designed with.
+ * Below it casts almost nothing, and yet it needs the *most* room of the four.
+ * A gap is not read symmetrically: above an object the rail sits between the
+ * work and the top of the screen, where the eye already expects chrome, while
+ * below it lands between the work and the empty canvas and reads as a caption
+ * attached to it. Thirty was plainly clear above and plainly tight below at the
+ * same number, so the numbers are different.
+ *
+ * The size-aware ramp in `placeRail` widens all four as the subject gets thin,
+ * on top of these.
  */
-const STANDOFF = { top: 30, bottom: 14, left: 18, right: 18 };
+const STANDOFF = { top: 30, bottom: 36, left: 18, right: 18 };
 /**
  * How far the selection's chrome reaches past the object's own box.
  *
