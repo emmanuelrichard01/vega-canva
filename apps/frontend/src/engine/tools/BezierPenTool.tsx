@@ -5,71 +5,65 @@ import { gridSnap } from '../interaction/gridSnap';
 import * as React from 'react';
 import { Path, Circle, Line } from 'react-konva';
 import { ThemeService } from '../ThemeService';
+import { pathData, type Anchor } from '../model/pathGeometry';
+import {
+  commitPath,
+  constrainToAngle,
+  isClosable,
+  isHandleDrag,
+  previewGeometry,
+  pullHandle,
+  retractOutgoing,
+  withinTarget,
+} from './penSession';
 
-interface Anchor {
-  x: number;
-  y: number;
-  /** Forward-facing control point, set only when the anchor was placed with a drag. */
-  handleOut: { x: number; y: number } | null;
-}
+/** Ink for the drawing chrome, matching the selection accent the canvas uses elsewhere. */
+const ACCENT = '#3B82F6';
+const HANDLE_ARM = '#93C5FD';
 
-/** The backward-facing control point is always the mirror of handleOut around the anchor itself. */
-function incomingHandle(a: Anchor): { x: number; y: number } | null {
-  if (!a.handleOut) return null;
-  return { x: 2 * a.x - a.handleOut.x, y: 2 * a.y - a.handleOut.y };
-}
-
-function buildPathData(anchors: Anchor[], closed: boolean, previewPos: { x: number; y: number } | null): string {
-  if (anchors.length === 0) return '';
-  let d = `M ${anchors[0].x} ${anchors[0].y}`;
-  for (let i = 1; i < anchors.length; i++) {
-    const prev = anchors[i - 1];
-    const cur = anchors[i];
-    const c1 = prev.handleOut || { x: prev.x, y: prev.y };
-    const c2 = incomingHandle(cur) || { x: cur.x, y: cur.y };
-    d += ` C ${c1.x} ${c1.y} ${c2.x} ${c2.y} ${cur.x} ${cur.y}`;
-  }
-  if (closed && anchors.length > 1) {
-    const last = anchors[anchors.length - 1];
-    const first = anchors[0];
-    const c1 = last.handleOut || { x: last.x, y: last.y };
-    const c2 = incomingHandle(first) || { x: first.x, y: first.y };
-    d += ` C ${c1.x} ${c1.y} ${c2.x} ${c2.y} ${first.x} ${first.y} Z`;
-  } else if (previewPos && anchors.length > 0) {
-    // Rubber-band preview of the segment that would be created by the next click.
-    const last = anchors[anchors.length - 1];
-    const c1 = last.handleOut || { x: last.x, y: last.y };
-    d += ` C ${c1.x} ${c1.y} ${previewPos.x} ${previewPos.y} ${previewPos.x} ${previewPos.y}`;
-  }
-  return d;
-}
-
-/** Bounding box of the raw anchor/handle positions, so tiny or huge paths get a correct width/height instead of every hand-drawn path silently reporting as 100x100 (which broke marquee-select, the eraser, and the minimap for anything freehand). */
-function boundsOf(anchors: Anchor[]) {
-  let minX = Infinity, minY = Infinity, maxX = -Infinity, maxY = -Infinity;
-  for (const a of anchors) {
-    minX = Math.min(minX, a.x); maxX = Math.max(maxX, a.x);
-    minY = Math.min(minY, a.y); maxY = Math.max(maxY, a.y);
-    if (a.handleOut) {
-      minX = Math.min(minX, a.handleOut.x); maxX = Math.max(maxX, a.handleOut.x);
-      minY = Math.min(minY, a.handleOut.y); maxY = Math.max(maxY, a.handleOut.y);
-    }
-  }
-  return { minX, minY, maxX, maxY };
-}
-
-const CLOSE_RADIUS_SCREEN = 9; // px, constant regardless of zoom — matches how every pro vector tool snaps to close a path
-const DRAG_THRESHOLD = 3; // world px of movement before a click-drag counts as pulling a curve handle
-
+/**
+ * The bezier pen.
+ *
+ * ## What it owns and what it does not
+ *
+ * The gesture: which anchor is being placed, whether the pointer is over the
+ * start, whether Alt is down. Every question with a *right answer* — where a
+ * pulled handle goes, what the path looks like so far, what box it occupies —
+ * lives in `penSession`, where it can be tested without a stage.
+ *
+ * That split is not tidiness. The three defects this rewrite fixes were all in
+ * arithmetic that had nowhere to be tested: an incoming handle defined as the
+ * mirror of the outgoing one, so a cusp could not be drawn; a preview built by
+ * a different function from the commit, so the two could disagree; and a box
+ * measured over the control handles rather than the curve, so every path was
+ * stored bigger than its own ink.
+ *
+ * ## The gestures
+ *
+ * | gesture                     | result                                    |
+ * |-----------------------------|-------------------------------------------|
+ * | click                       | a corner anchor                           |
+ * | click and drag              | a smooth anchor, handles either side      |
+ * | **Alt** while dragging      | a cusp: the incoming handle is left alone |
+ * | click the last anchor       | retract its outgoing handle                |
+ * | click the first anchor      | close the path                            |
+ * | Shift                       | the segment locks to 45°                  |
+ * | Backspace                   | undo the last anchor                      |
+ * | Enter                       | finish, open                              |
+ * | Escape                      | discard                                   |
+ */
 export class BezierPenTool implements Tool {
   id = 'bezier-pen';
   cursor = 'crosshair';
 
   private anchors: Anchor[] = [];
   private isActive = false;
-  private isMouseDown = false;
+  /** Where the press landed, so a drag can be measured from it. */
+  private pressAt: { x: number; y: number } | null = null;
   private previewPos: { x: number; y: number } | null = null;
   private hoverStart = false;
+  /** True once the press has travelled far enough to be shaping a curve. */
+  private pulling = false;
 
   onActivate() {
     this.reset();
@@ -85,56 +79,78 @@ export class BezierPenTool implements Tool {
   private reset() {
     this.anchors = [];
     this.isActive = false;
-    this.isMouseDown = false;
+    this.pressAt = null;
     this.previewPos = null;
     this.hoverStart = false;
+    this.pulling = false;
   }
 
   onPointerDown(ctx: ToolContext, e: any) {
     const raw = this.getPointerPos(ctx, e);
     if (!raw) return;
-    const pos = this.constrain(ctx, raw, Boolean(e.evt?.shiftKey));
-    this.isMouseDown = true;
+    const pos = this.place(ctx, raw, Boolean(e.evt?.shiftKey));
+    this.pressAt = pos;
+    this.pulling = false;
 
     if (!this.isActive) {
-      this.anchors = [{ x: pos.x, y: pos.y, handleOut: null }];
+      this.anchors = [{ x: pos.x, y: pos.y }];
       this.isActive = true;
       this.updateOverlay(ctx);
       return;
     }
 
-    if (this.anchors.length >= 2 && this.isNearFirstAnchor(ctx, pos)) {
+    if (isClosable(this.anchors, pos, ctx.camera.zoom)) {
       this.finalize(ctx, true);
       return;
     }
 
-    this.anchors.push({ x: pos.x, y: pos.y, handleOut: null });
+    /**
+     * Clicking the anchor you just placed retracts its outgoing handle.
+     *
+     * The other half of drawing a shape that is part arc and part edge: the
+     * curve arrives bent and leaves straight. Without it, one curved anchor
+     * forces every segment after it to curve out of the same handle.
+     */
+    const last = this.anchors[this.anchors.length - 1];
+    if (last.outX !== undefined && withinTarget(last, pos, ctx.camera.zoom)) {
+      this.anchors[this.anchors.length - 1] = retractOutgoing(last);
+      this.pressAt = null;
+      this.updateOverlay(ctx);
+      return;
+    }
+
+    this.anchors.push({ x: pos.x, y: pos.y });
     this.updateOverlay(ctx);
   }
 
   onPointerMove(ctx: ToolContext, e: any) {
     const raw = this.getPointerPos(ctx, e);
     if (!raw) return;
+    const down = Boolean(this.pressAt) && e.evt?.buttons === 1;
     // The preview has to show the constrained point, or the line you are
-    // aiming with is not the line you will get.
-    const pos = this.constrain(ctx, raw, Boolean(e.evt?.shiftKey) && !this.isMouseDown);
+    // aiming with is not the line you will get. A drag is shaping a handle
+    // rather than aiming a segment, so it is not angle-locked.
+    const pos = this.place(ctx, raw, Boolean(e.evt?.shiftKey) && !down);
     this.previewPos = pos;
 
-    if (this.isActive && this.isMouseDown && e.evt?.buttons === 1) {
+    if (this.isActive && down && this.pressAt) {
       const last = this.anchors[this.anchors.length - 1];
-      const dx = pos.x - last.x;
-      const dy = pos.y - last.y;
-      if (Math.sqrt(dx * dx + dy * dy) > DRAG_THRESHOLD) {
-        last.handleOut = { x: pos.x, y: pos.y };
+      if (this.pulling || isHandleDrag(this.pressAt, pos, ctx.camera.zoom)) {
+        this.pulling = true;
+        // Alt breaks the pair, which is how a cusp is drawn. Read every frame
+        // rather than at the press, so the key can be taken and released
+        // part-way through shaping the curve.
+        this.anchors[this.anchors.length - 1] = pullHandle(last, pos, Boolean(e.evt?.altKey));
       }
     }
 
-    this.hoverStart = this.anchors.length >= 2 && this.isNearFirstAnchor(ctx, pos);
+    this.hoverStart = isClosable(this.anchors, pos, ctx.camera.zoom);
     this.updateOverlay(ctx);
   }
 
   onPointerUp() {
-    this.isMouseDown = false;
+    this.pressAt = null;
+    this.pulling = false;
   }
 
   onKeyDown(ctx: ToolContext, e: KeyboardEvent) {
@@ -152,6 +168,12 @@ export class BezierPenTool implements Tool {
       // the difference between a tool you draw with and one you fight.
       e.preventDefault();
       this.anchors.pop();
+      // The handle that reached forward to the anchor just removed is now
+      // reaching at nothing, and would bend the rubber band towards a point
+      // that is no longer on the path.
+      const last = this.anchors[this.anchors.length - 1];
+      if (last) this.anchors[this.anchors.length - 1] = retractOutgoing(last);
+
       if (this.anchors.length === 0) {
         this.reset();
         ctx.setOverlayState?.(null);
@@ -162,48 +184,21 @@ export class BezierPenTool implements Tool {
   }
 
   private finalize(ctx: ToolContext, closed: boolean) {
-    if (this.anchors.length < 2) {
+    const path = commitPath(this.anchors, closed);
+    if (!path) {
       this.reset();
       ctx.setOverlayState?.(null);
       return;
     }
 
-    const { minX, minY, maxX, maxY } = boundsOf(this.anchors);
-    // Store segments relative to the bounding box's top-left, matching every
-    // other object type's (x, y) + relative-content convention — an absolute-
-    // coordinate path made resizing and hit-testing silently wrong (see
-    // boundsOf's doc comment).
-    const segments = this.anchors.map((a, i) => {
-      if (i === 0) return { x: a.x - minX, y: a.y - minY };
-      const prev = this.anchors[i - 1];
-      const c1 = prev.handleOut || { x: prev.x, y: prev.y };
-      const c2 = incomingHandle(a) || { x: a.x, y: a.y };
-      return {
-        x: a.x - minX, y: a.y - minY,
-        cp1x: c1.x - minX, cp1y: c1.y - minY,
-        cp2x: c2.x - minX, cp2y: c2.y - minY,
-      };
-    });
-    if (closed) {
-      const last = this.anchors[this.anchors.length - 1];
-      const first = this.anchors[0];
-      const c1 = last.handleOut || { x: last.x, y: last.y };
-      const c2 = incomingHandle(first) || { x: first.x, y: first.y };
-      segments.push({
-        x: first.x - minX, y: first.y - minY,
-        cp1x: c1.x - minX, cp1y: c1.y - minY,
-        cp2x: c2.x - minX, cp2y: c2.y - minY,
-      });
-    }
-
     ctx.editor.createNode({
       id: nanoid(),
       type: 'path',
-      x: minX,
-      y: minY,
-      width: Math.max(1, maxX - minX),
-      height: Math.max(1, maxY - minY),
-      geometry: { kind: 'bezier', segments, closed },
+      x: path.x,
+      y: path.y,
+      width: path.width,
+      height: path.height,
+      geometry: path.geometry,
       appearance: {
         fill: closed ? [{ type: 'solid', color: 'transparent', opacity: 1 }] : undefined,
         // The pen's own weight, not a fixed 2 — see `penStrokeWidth`.
@@ -215,16 +210,10 @@ export class BezierPenTool implements Tool {
     ctx.setOverlayState?.(null);
   }
 
-  private isNearFirstAnchor(ctx: ToolContext, pos: { x: number; y: number }) {
-    const first = this.anchors[0];
-    const screenDist = Math.hypot(pos.x - first.x, pos.y - first.y) * ctx.camera.zoom;
-    return screenDist <= CLOSE_RADIUS_SCREEN;
-  }
-
   private updateOverlay(ctx: ToolContext) {
     ctx.setOverlayState?.({
       type: 'bezier-pen',
-      anchors: this.anchors.map(a => ({ ...a })),
+      anchors: this.anchors.map((a) => ({ ...a })),
       previewPos: this.previewPos,
       hoverStart: this.hoverStart,
     });
@@ -236,35 +225,42 @@ export class BezierPenTool implements Tool {
     if (anchors.length === 0) return null;
 
     const zoom = ctx.camera.zoom || 1;
-    const pathData = buildPathData(anchors, false, overlayState.previewPos);
+    // The same function that will build the committed path, so what you aim
+    // with and what you get cannot disagree.
+    const d = pathData(previewGeometry(anchors, overlayState.previewPos, overlayState.hoverStart));
 
     return (
       <>
-        <Path data={pathData} stroke="#3B82F6" strokeWidth={1.5 / zoom} listening={false} />
-        {anchors.map((a, i) => (
-          <React.Fragment key={i}>
-            {/* Handle arms + control-point dots, shown only for anchors that have a curve handle */}
-            {a.handleOut && (
-              <>
-                <Line
-                  points={[incomingHandle(a)!.x, incomingHandle(a)!.y, a.handleOut.x, a.handleOut.y]}
-                  stroke="#93C5FD" strokeWidth={1 / zoom} listening={false}
-                />
-                <Circle x={a.handleOut.x} y={a.handleOut.y} radius={3 / zoom} fill="#3B82F6" listening={false} />
-                <Circle x={incomingHandle(a)!.x} y={incomingHandle(a)!.y} radius={3 / zoom} fill="#3B82F6" listening={false} />
-              </>
-            )}
-            {/* Anchor point itself — the first anchor grows a highlight ring once a close-click is in range */}
-            <Circle
-              x={a.x} y={a.y}
-              radius={(i === 0 && overlayState.hoverStart ? 7 : 4) / zoom}
-              fill={i === 0 ? '#FFFFFF' : '#3B82F6'}
-              stroke="#3B82F6"
-              strokeWidth={1.5 / zoom}
-              listening={false}
-            />
-          </React.Fragment>
-        ))}
+        <Path data={d} stroke={ACCENT} strokeWidth={1.5 / zoom} listening={false} />
+        {anchors.map((a, i) => {
+          // Drawn from the anchor's own handles rather than from a mirror, so a
+          // cusp is shown as the cusp it is: two arms at different angles, and
+          // the curve visibly leaving in a direction it did not arrive from.
+          const arms: Array<[number, number]> = [];
+          if (a.inX !== undefined && a.inY !== undefined) arms.push([a.inX, a.inY]);
+          if (a.outX !== undefined && a.outY !== undefined) arms.push([a.outX, a.outY]);
+
+          return (
+            <React.Fragment key={i}>
+              {arms.map(([hx, hy], k) => (
+                <React.Fragment key={k}>
+                  <Line points={[a.x, a.y, hx, hy]} stroke={HANDLE_ARM} strokeWidth={1 / zoom} listening={false} />
+                  <Circle x={hx} y={hy} radius={3 / zoom} fill={ACCENT} listening={false} />
+                </React.Fragment>
+              ))}
+              {/* The first anchor grows a ring once a click there would close the path. */}
+              <Circle
+                x={a.x}
+                y={a.y}
+                radius={(i === 0 && overlayState.hoverStart ? 7 : 4) / zoom}
+                fill={i === 0 ? '#FFFFFF' : ACCENT}
+                stroke={ACCENT}
+                strokeWidth={1.5 / zoom}
+                listening={false}
+              />
+            </React.Fragment>
+          );
+        })}
       </>
     );
   }
@@ -279,36 +275,20 @@ export class BezierPenTool implements Tool {
     if (!pos) return null;
     return {
       x: (pos.x - ctx.camera.x) / ctx.camera.zoom,
-      y: (pos.y - ctx.camera.y) / ctx.camera.zoom
+      y: (pos.y - ctx.camera.y) / ctx.camera.zoom,
     };
   }
 
   /**
    * Where the next anchor actually lands.
    *
-   * Shift locks the segment to 45 degrees from the previous anchor, which is
-   * how every pen tool draws a clean horizontal, vertical or diagonal run —
-   * and the reason people can lay out a flowchart outline by hand at all. Grid
-   * snapping applies afterwards, matching the shape and text tools.
+   * Shift locks the segment to 45° from the previous anchor; grid snapping
+   * applies afterwards, matching the shape and text tools.
    */
-  private constrain(ctx: ToolContext, pos: { x: number; y: number }, shift: boolean) {
-    let { x, y } = pos;
+  private place(ctx: ToolContext, pos: { x: number; y: number }, shift: boolean) {
     const last = this.anchors[this.anchors.length - 1];
-
-    if (shift && last) {
-      const dx = x - last.x;
-      const dy = y - last.y;
-      const angle = Math.round(Math.atan2(dy, dx) / (Math.PI / 4)) * (Math.PI / 4);
-      const distance = Math.hypot(dx, dy);
-      x = last.x + Math.cos(angle) * distance;
-      y = last.y + Math.sin(angle) * distance;
-    }
-
-    if (gridSnap.shouldSnap()) {
-      const snapped = gridSnap.snapPoint(x, y);
-      x = snapped.x;
-      y = snapped.y;
-    }
-    return { x, y };
+    let point = shift && last ? constrainToAngle(last, pos) : pos;
+    if (gridSnap.shouldSnap()) point = gridSnap.snapPoint(point.x, point.y);
+    return point;
   }
 }
