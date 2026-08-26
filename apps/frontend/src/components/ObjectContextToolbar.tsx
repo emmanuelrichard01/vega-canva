@@ -61,6 +61,7 @@ import { ShapeIcon } from './workspace/shapeIcons';
 import { END_CAP_KINDS, END_CAP_LABELS, MAX_END_SCALE, MIN_END_SCALE, type EndCapKind } from '../engine/model/connectorEnds';
 import type { Routing } from '../engine/model/connector';
 import { resolveAffordances, type AffordanceId } from '../engine/selection/affordances';
+import { inflate, placeRail, selectionHull, type RailSide } from '../engine/interaction/railPlacement';
 import { alignSelection, distributeSelection, type AlignEdge } from '../engine/model/align';
 import { sharedValue } from '../engine/model/selection';
 
@@ -101,9 +102,21 @@ import { sharedValue } from '../engine/model/selection';
 const SIDEBAR_WIDTH = 288;
 const BOTTOM_DOCK_HEIGHT = 76;
 const EDGE_MARGIN = 16;
-/** Clearance between the rail and the selection box it describes. */
+const TOP_BAR_HEIGHT = 48;
+/** Clearance between the rail and the selection it describes. */
 const STANDOFF = 14;
 const RAIL_HEIGHT = 40;
+/**
+ * How far the selection's chrome reaches past the object's own box.
+ *
+ * `anchorSize={9}` on the transformer, centred on the edge, plus its 1px
+ * stroke: the handles stand about six pixels proud on every side. Measuring the
+ * standoff from the raw box therefore left the rail sitting on the bottom
+ * handles -- the "obstructs a bit of the object" that no amount of adjusting
+ * `STANDOFF` would have explained, because the number was being measured from
+ * the wrong edge.
+ */
+const HANDLE_REACH = 6;
 
 /** Refined, high-intent reaction set for collaborative brainstorming. */
 const REACTION_SET = ['👍', '❤️', '🎉', '🔥', '🚀', '👀', '💡', '💯'];
@@ -242,15 +255,46 @@ const SHAPE_CHOICES: Array<{ kind: ShapeKind; points?: number; label: string; ic
  * margin resolves against the parent's width, and the parent here shrink-wraps
  * its child, which makes `-50%` circular.
  */
+/**
+ * Which of the rail's own edges hangs on the anchor point, per side.
+ *
+ * The anchor is a point on the *selection*, so the rail has to present whichever
+ * of its edges faces it. Cross-axis centring stays a percentage of the rail's
+ * own box, which is what keeps the first frame -- before `offsetWidth` has a
+ * value to clamp with -- centred rather than half a rail out.
+ */
+const HANG: Record<RailSide, string> = {
+  top: 'translate(-50%, -100%)',
+  bottom: 'translate(-50%, 0%)',
+  left: 'translate(-100%, -50%)',
+  right: 'translate(0%, -50%)',
+};
+
+/**
+ * The direction the rail arrives from: outward, away from the selection.
+ *
+ * Six pixels of travel along the axis it is placed on, so the entrance reads as
+ * the rail stepping back off the artwork rather than sliding in from nowhere.
+ * A sideways rail animating on `y` -- which is what a fixed `y: 6` gave --
+ * moved across its own placement axis and looked like a glitch.
+ */
+const ENTRY: Record<RailSide, { x: number; y: number }> = {
+  top: { x: 0, y: 6 },
+  bottom: { x: 0, y: -6 },
+  left: { x: 6, y: 0 },
+  right: { x: -6, y: 0 },
+};
+
 const Rail = React.forwardRef<
   HTMLDivElement,
   {
     id: string;
-    placement: 'top' | 'bottom';
+    placement: RailSide;
+    clear?: boolean;
     anchorRef: React.RefObject<HTMLDivElement | null>;
     children: React.ReactNode;
   }
->(({ id, placement, anchorRef, children }, railRef) => (
+>(({ id, placement, clear = true, anchorRef, children }, railRef) => (
   <div
     ref={anchorRef}
     // The anchor only ever translates, and only from the frame loop. It is
@@ -264,21 +308,35 @@ const Rail = React.forwardRef<
     <div
       style={{
         position: 'absolute',
-        transform: `translate(-50%, ${placement === 'top' ? '-100%' : '0%'})`,
+        transform: HANG[placement],
         width: 'max-content',
       }}
     >
+      {/*
+        The entrance and the resting translucency are separate elements on
+        purpose. Framer-motion writes `opacity` inline, and an inline value beats
+        a stylesheet -- so while the entrance animated to 0.94 the rail's own
+        `:hover { opacity: 1 }` could never fire, and the "solid on approach"
+        the CSS promises had silently never happened. The wrapper fades in and
+        stops at 1; the rail underneath keeps its resting opacity in CSS, where
+        hover and focus-within can still reach it.
+      */}
       <motion.div
         key={id}
-        ref={railRef}
-        className="ctx-toolbar"
-        initial={{ opacity: 0, y: placement === 'top' ? 6 : -6 }}
-        animate={{ opacity: 0.94, y: 0 }}
-        exit={{ opacity: 0, y: placement === 'top' ? 4 : -4 }}
+        initial={{ opacity: 0, ...ENTRY[placement] }}
+        animate={{ opacity: 1, x: 0, y: 0 }}
+        exit={{ opacity: 0, ...ENTRY[placement] }}
         transition={{ duration: 0.2, ease: [0.16, 1, 0.3, 1] }}
-        style={{ position: 'relative', pointerEvents: 'auto' }}
+        style={{ pointerEvents: 'none' }}
       >
-        {children}
+        <div
+          ref={railRef}
+          className={`ctx-toolbar${clear ? '' : ' ctx-toolbar--veiled'}`}
+          data-side={placement}
+          style={{ position: 'relative', pointerEvents: 'auto' }}
+        >
+          {children}
+        </div>
       </motion.div>
     </div>
   </div>
@@ -393,17 +451,24 @@ export const ObjectContextToolbar: React.FC<Props> = ({ selectedId, selectedIds,
    */
   const anchorRef = useRef<HTMLDivElement>(null);
   /**
-   * The rail itself, so the clamp can account for how wide it actually is.
+   * The rail itself, because its size is an input to where it goes.
    *
-   * The bounds below were applied to the rail's *centre*, but the rail is
-   * centred on that point — so a 370px rail whose centre was clamped to the
-   * sidebar's edge still reached 185px past it, and sat on top of the layers
-   * panel. Measured rather than estimated because the width changes with the
-   * selection: a union rail carrying four booleans and eight alignment buttons
-   * is more than twice the width of a sticky's.
+   * Estimating it does not work: the union rail carrying four booleans and
+   * eight alignment buttons is more than twice the width of a sticky's, and the
+   * width decides both how far the rail may slide along the selection and
+   * whether there is room to stand beside it at all.
    */
   const railRef = useRef<HTMLDivElement>(null);
-  const [placement, setPlacement] = useState<'top' | 'bottom'>('top');
+  const [placement, setPlacement] = useState<RailSide>('top');
+  /**
+   * False when the selection left the rail nowhere to stand.
+   *
+   * Drives nothing but the rail's resting opacity -- see `.ctx-toolbar--veiled`.
+   * When the artwork fills the screen there is no honest way to stay off it, so
+   * the rail stops competing instead: it rests quieter and comes fully solid the
+   * moment it is reached for.
+   */
+  const [clear, setClear] = useState(true);
   const [isVisible, setIsVisible] = useState(false);
   const [showReactions, setShowReactions] = useState(false);
   const myAuthorId = localAuthorId();
@@ -420,7 +485,7 @@ export const ObjectContextToolbar: React.FC<Props> = ({ selectedId, selectedIds,
   // where nothing moved. The loop has to run unconditionally — it is the only
   // thing tracking the rail during a live drag — but 60 renders a second of an
   // unchanged toolbar was pure waste.
-  const lastRef = useRef({ x: -9999, y: -9999, placement: 'top' as 'top' | 'bottom', visible: false });
+  const lastRef = useRef({ x: -9999, y: -9999, placement: 'top' as RailSide, clear: true, visible: false });
 
   const isBulk = (selectedIds?.length || 0) > 1;
   const bulkIds = selectedIds || [];
@@ -453,7 +518,7 @@ export const ObjectContextToolbar: React.FC<Props> = ({ selectedId, selectedIds,
      * it was there, at 0,0, off screen. Resetting the bookkeeping whenever the
      * tree can change guarantees the first frame after a mount always writes.
      */
-    lastRef.current = { x: -9999, y: -9999, placement: lastRef.current.placement, visible: false };
+    lastRef.current = { x: -9999, y: -9999, placement: lastRef.current.placement, clear: lastRef.current.clear, visible: false };
 
     const updatePosition = () => {
       if (isDraggingRef.current) {
@@ -461,93 +526,61 @@ export const ObjectContextToolbar: React.FC<Props> = ({ selectedId, selectedIds,
         return;
       }
 
-      let minX = Infinity, minY = Infinity, maxX = -Infinity, maxY = -Infinity;
       const ids = isBulk ? bulkIdsRef.current : (activeId ? [activeId] : []);
       const store = useStore.getState().objects;
-      for (const id of ids) {
-        const node = store[id];
-        if (!node) continue;
-        minX = Math.min(minX, node.x);
-        minY = Math.min(minY, node.y);
-        maxX = Math.max(maxX, node.x + node.width);
-        maxY = Math.max(maxY, node.y + node.height);
-      }
-      if (minX === Infinity) {
+      const nodes = ids.map((id) => store[id]).filter(Boolean);
+
+      /**
+       * What the selection actually covers, turns and handles included.
+       *
+       * The loop used to take `x, y, width, height` straight off the nodes,
+       * which is the box *before* rotation -- so a turned shape reached past
+       * the rectangle the rail was being kept out of, and the rail sat inside
+       * the artwork. `selectionHull` swings the corners; `inflate` then adds the
+       * handles, which are part of what the rail must not cover.
+       */
+      const hull = selectionHull(nodes);
+      if (!hull) {
         if (lastRef.current.visible) { lastRef.current.visible = false; setIsVisible(false); }
         return;
       }
 
-      const screenX = minX * cameraSystem.zoom + cameraSystem.x;
-      const screenY = minY * cameraSystem.zoom + cameraSystem.y;
-      const screenW = (maxX - minX) * cameraSystem.zoom;
-      const screenH = (maxY - minY) * cameraSystem.zoom;
+      const zoom = cameraSystem.zoom;
+      const onScreen = inflate({
+        x: hull.x * zoom + cameraSystem.x,
+        y: hull.y * zoom + cameraSystem.y,
+        width: hull.width * zoom,
+        height: hull.height * zoom,
+      }, HANDLE_REACH);
 
       /**
-       * Above by preference, below when there is no room above, and never
-       * clamped back over the object.
+       * The free strip: inside the panels, under the top bar, above the dock.
        *
-       * ## The bug this replaces
-       *
-       * The old version flipped correctly and then undid it:
-       *
-       *     if (currentPlacement === 'bottom' && y > dockLimit) y = dockLimit;
-       *
-       * `dockLimit` is the lowest the rail may sit before it fouls the tool
-       * dock, so for any object near the bottom of the viewport that line
-       * dragged the rail *up* — straight back over the artwork it had just
-       * flipped below to avoid. Two lines under a comment promising the rail
-       * "must never cover the thing it edits".
-       *
-       * ## The rule now
-       *
-       * Both gaps are measured against the same free strip of canvas, and the
-       * rail takes whichever side it actually fits in. When neither side fits —
-       * an object taller than the viewport, or one straddling the dock — it
-       * takes the *larger* gap and is clamped to the viewport edge rather than
-       * into the object. Overlapping the edge of the screen is a cosmetic
-       * fault; overlapping the artwork is a functional one, because the rail
-       * covers what you are trying to look at while you edit it.
+       * Both insets collapse to a plain margin in presentation mode, where none
+       * of that chrome is on screen to be avoided.
        */
-      const topBound = EDGE_MARGIN + 48;
-      const bottomBound = window.innerHeight - (sidebarsVisible ? BOTTOM_DOCK_HEIGHT : EDGE_MARGIN);
-      const needed = RAIL_HEIGHT + STANDOFF;
+      const inset = sidebarsVisible ? SIDEBAR_WIDTH : EDGE_MARGIN;
+      const bounds = {
+        top: EDGE_MARGIN + TOP_BAR_HEIGHT,
+        bottom: window.innerHeight - (sidebarsVisible ? BOTTOM_DOCK_HEIGHT : EDGE_MARGIN),
+        left: inset + 4,
+        right: window.innerWidth - inset - 4,
+      };
 
-      const roomAbove = screenY - topBound;
-      const roomBelow = bottomBound - (screenY + screenH);
+      // Measured, not estimated: the union rail carrying four booleans and eight
+      // alignment buttons is more than twice the width of a sticky's, and a
+      // guess would decide "it fits beside the object" wrongly in both
+      // directions. `offsetWidth` is 0 for one frame before the first paint,
+      // which the centring transform covers.
+      const rail = {
+        width: railRef.current?.offsetWidth || 0,
+        height: railRef.current?.offsetHeight || RAIL_HEIGHT,
+      };
 
-      let currentPlacement: 'top' | 'bottom' =
-        roomAbove >= needed ? 'top'
-        : roomBelow >= needed ? 'bottom'
-        // Neither fits: take the side with more room, and accept the viewport
-        // edge rather than the object.
-        : roomAbove >= roomBelow ? 'top'
-        : 'bottom';
-
-      // `y` is the rail's *bottom* edge above the object and its *top* edge
-      // below it -- see the `translate(-50%, -100% | 0%)` on `Rail`.
-      let y = currentPlacement === 'top'
-        ? screenY - STANDOFF
-        : screenY + screenH + STANDOFF;
-
-      // Kept on screen, but only in the direction that moves it away from the
-      // object. Clamping the other way is the bug above.
-      if (currentPlacement === 'top') {
-        y = Math.max(y, topBound + RAIL_HEIGHT);
-      } else {
-        y = Math.min(y, bottomBound - RAIL_HEIGHT);
-      }
-
-      // Half the rail, so the clamp keeps its *edges* inside the free canvas
-      // rather than its midpoint.
-      const half = (railRef.current?.offsetWidth ?? 0) / 2;
-      const leftBound = (sidebarsVisible ? SIDEBAR_WIDTH : EDGE_MARGIN) + 4 + half;
-      const rightBound = window.innerWidth - (sidebarsVisible ? SIDEBAR_WIDTH : EDGE_MARGIN) - 4 - half;
-      // When the free width is narrower than the rail there is no position that
-      // satisfies both edges; centring it in what space there is beats pinning
-      // it to one side and letting it run off the other.
-      const x = rightBound < leftBound
-        ? (leftBound + rightBound) / 2
-        : Math.max(leftBound, Math.min(rightBound, screenX + screenW / 2));
+      const spot = placeRail(onScreen, rail, bounds, STANDOFF, lastRef.current.placement);
+      const currentPlacement = spot.side;
+      const x = spot.x;
+      const y = spot.y;
 
       const rx = Math.round(x), ry = Math.round(y);
       const last = lastRef.current;
@@ -572,6 +605,10 @@ export const ObjectContextToolbar: React.FC<Props> = ({ selectedId, selectedIds,
       if (last.placement !== currentPlacement) {
         lastRef.current.placement = currentPlacement;
         setPlacement(currentPlacement);
+      }
+      if (last.clear !== spot.clear) {
+        lastRef.current.clear = spot.clear;
+        setClear(spot.clear);
       }
       if (!last.visible) {
         lastRef.current.visible = true;
@@ -666,7 +703,7 @@ export const ObjectContextToolbar: React.FC<Props> = ({ selectedId, selectedIds,
 
     return (
       <AnimatePresence>
-        <Rail id="union" placement={placement} anchorRef={anchorRef} ref={railRef}>
+        <Rail id="union" placement={placement} clear={clear} anchorRef={anchorRef} ref={railRef}>
           <span className="ctx-kind"><Layers size={15} />{bulkNodes.length}</span>
           <Divider />
 
@@ -1052,7 +1089,7 @@ export const ObjectContextToolbar: React.FC<Props> = ({ selectedId, selectedIds,
 
   return (
     <AnimatePresence>
-      <Rail id={node.id} placement={placement} anchorRef={anchorRef} ref={railRef}>
+      <Rail id={node.id} placement={placement} clear={clear} anchorRef={anchorRef} ref={railRef}>
         <span className="ctx-kind">{kind.icon}{kind.name}</span>
         <Divider />
 

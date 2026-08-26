@@ -4200,6 +4200,31 @@ textarea:focus-visible {
   opacity: 1;
 }
 
+/* The rail could not find room beside the selection and is standing on it.
+   That happens when the artwork fills the screen, where there is no honest
+   placement left -- so it stops competing instead. It rests quieter and lets a
+   little of the work through, and comes fully solid and opaque the moment it is
+   reached for, which is the same bargain the resting state already makes, taken
+   one step further because the cost of sitting there is higher. */
+.ctx-toolbar--veiled {
+  opacity: 0.72;
+  backdrop-filter: blur(12px) saturate(1.4);
+  -webkit-backdrop-filter: blur(12px) saturate(1.4);
+  background: color-mix(in srgb, var(--surface-elevated) 82%, transparent);
+}
+
+.ctx-toolbar--veiled:hover,
+.ctx-toolbar--veiled:focus-within {
+  opacity: 1;
+  background: var(--surface-elevated);
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .ctx-toolbar {
+    transition: none;
+  }
+}
+
 /* A group is a run of related controls. The gap inside a group is tighter than
    the gap between groups, which is what lets the eye parse the rail without a
    divider between every single button. */
