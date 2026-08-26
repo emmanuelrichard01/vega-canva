@@ -5,7 +5,7 @@ import { applyNodePatches } from '../../engine/document';
 import { EXPORT_CHROME } from '../../engine/export/chrome';
 import { useStore } from '../../hooks/useStore';
 import { cursorForAnchor } from '../../engine/interaction/resizeCursor';
-import { scalePathGeometry } from '../../engine/model/pathGeometry';
+import { fitPathToBox } from '../../engine/model/pathGeometry';
 import { isLineLike } from '../../engine/model/lineEnds';
 import { liveTransformStore } from '../../engine/model/liveTransformStore';
 import { syncConnectedConnectors } from '../../engine/model/connectorTargets';
@@ -243,6 +243,40 @@ export const SelectionTransformer: React.FC<Props> = ({ selectedIds, stageRef })
 
 
   /**
+   * The proxy's box, derived through its own transform.
+   *
+   * ## Why not `proxy.x() - width / 2`
+   *
+   * That was the first version, and it assumed `x()` is the centre of the
+   * scaled box -- true only because the proxy's offset happens to be half its
+   * size. Konva is free to describe the same rectangle with a different
+   * combination of position, offset and scale, and while resizing from a
+   * top-left handle it does exactly that: the box grew from its bottom-right
+   * corner whichever handle you dragged, because the origin the arithmetic
+   * assumed was not the one Konva had moved.
+   *
+   * Asking the node to map its own local centre removes the assumption. The
+   * transform already contains the offset, the position and the scale, however
+   * Konva chose to split them, so this is right for every anchor by
+   * construction rather than by coincidence.
+   *
+   * The box returned is **unrotated**: the size, around the true centre. Any
+   * turn is carried separately as `spin`, because `placeInBox` applies it about
+   * that centre -- which is what makes a selection rotate as one rigid thing.
+   */
+  const proxyBox = (proxy: Konva.Rect): Box => {
+    const centre = proxy.getTransform().point({
+      x: proxy.width() / 2,
+      y: proxy.height() / 2,
+    });
+    // Konva reports a negative dimension when a handle is pulled through the
+    // far side. The box is still real, it is just described backwards.
+    const width = Math.abs(proxy.width() * proxy.scaleX());
+    const height = Math.abs(proxy.height() * proxy.scaleY());
+    return { x: centre.x - width / 2, y: centre.y - height / 2, width, height };
+  };
+
+  /**
    * The selection's box when the gesture began, and each object inside it.
    *
    * Both are snapshots, because the proxy's transform is expressed *relative to
@@ -282,14 +316,9 @@ export const SelectionTransformer: React.FC<Props> = ({ selectedIds, stageRef })
      * copies of one fact" mistake that this whole rewrite exists to remove.
      */
     const proxy = proxyRef.current;
-    startBox.current = proxy
-      ? {
-          x: proxy.x() - proxy.width() / 2,
-          y: proxy.y() - proxy.height() / 2,
-          width: proxy.width(),
-          height: proxy.height(),
-        }
-      : selectionBox(nodes);
+    // The same derivation the live pass uses, so `from` and `to` cannot be
+    // measured two different ways.
+    startBox.current = proxy ? proxyBox(proxy) : selectionBox(nodes);
     // The proxy starts turned to the object's own angle, so its rotation is
     // only meaningful as a difference.
     startSpin.current = proxy ? proxy.rotation() : 0;
@@ -305,18 +334,7 @@ export const SelectionTransformer: React.FC<Props> = ({ selectedIds, stageRef })
     const proxy = proxyRef.current;
     const from = startBox.current;
     if (!proxy || !from) return null;
-
-    // Konva reports a negative dimension when a handle is pulled through the
-    // far side. The box is still real, it is just described backwards.
-    const width = Math.abs(proxy.width() * proxy.scaleX());
-    const height = Math.abs(proxy.height() * proxy.scaleY());
-    return {
-      to: { x: proxy.x() - width / 2, y: proxy.y() - height / 2, width, height },
-      // A delta, not an absolute: the proxy was already turned to the object's
-      // own angle before the gesture started, and `placeInBox` adds this to
-      // each object's existing rotation.
-      spin: proxy.rotation() - startSpin.current,
-    };
+    return { to: proxyBox(proxy), spin: proxy.rotation() - startSpin.current };
   };
 
   /**
@@ -469,13 +487,17 @@ export const SelectionTransformer: React.FC<Props> = ({ selectedIds, stageRef })
     for (const { id, node, placed, extra } of placements) {
       /**
        * A path has to resize its own outline; nothing else describes its size.
+       *
+       * Measured against the box rather than multiplied by the gesture's ratio,
+       * so this is the same call the live preview makes in `ObjectRenderer` --
+       * and it lands in the same place whether it runs once or every frame. A
+       * ratio would have to be accumulated, which drifts, and would disagree
+       * with a preview that had already been applied.
        */
       const pathMode: Record<string, unknown> = {};
-      if (node.type === 'path' && startBox.current) {
-        const sx = startBox.current.width > 0 ? placed.width / (initialNodesMap.current[id]?.width || 1) : 1;
-        const sy = startBox.current.height > 0 ? placed.height / (initialNodesMap.current[id]?.height || 1) : 1;
-        const scaled = scalePathGeometry(node.geometry, Math.abs(sx), Math.abs(sy));
-        if (scaled !== node.geometry) pathMode.geometry = scaled;
+      if (node.type === 'path') {
+        const fitted = fitPathToBox(node.geometry, placed.width, placed.height);
+        if (fitted) pathMode.geometry = fitted;
       }
 
       const changes = {

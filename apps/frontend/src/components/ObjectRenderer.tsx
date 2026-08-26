@@ -34,6 +34,7 @@ import { measurerFor } from '../engine/text/measure';
 import { applyTextCase } from '../engine/model/textCase';
 import { liveTransformStore, useLiveTransform } from '../engine/model/liveTransformStore';
 import { connectorDragPatch, syncConnectedConnectors } from '../engine/model/connectorTargets';
+import { fitPathToBox } from '../engine/model/pathGeometry';
 
 /**
  * Which character a click inside a text node landed on.
@@ -790,6 +791,40 @@ export const ObjectRenderer = React.memo(
     const cx = width / 2;
     const cy = height / 2;
 
+    /**
+     * The node the *content* is drawn from, carrying the gesture's live size.
+     *
+     * ## Why the shape stuck to the top-left
+     *
+     * The group is positioned and sized from the live store, but the renderers
+     * inside it read `node.width` -- the committed size. That was invisible
+     * while Konva scaled the group, because the scale grew the drawing whether
+     * it knew about the resize or not; it was also the distortion. With nothing
+     * scaling any more, the group grew and the artwork inside it did not, so a
+     * shape sat at its old size against the box's top-left corner and only
+     * snapped to fit on release.
+     *
+     * Merging the live size into the node fixes every type at once, rather than
+     * each renderer having to remember to ask. Only the size: `x`, `y` and
+     * `rotation` are the group's to apply, and a renderer that read them would
+     * apply them a second time.
+     *
+     * A path is the one type whose size does not live in `width`/`height`: it
+     * lives in the outline, so the outline has to be refitted too or the stroke
+     * would sit unchanged inside a box that had already grown. `fitPathToBox`
+     * measures rather than accumulates, so calling it sixty times a second from
+     * the committed geometry lands in the same place as calling it once.
+     */
+    const resizing = Boolean(live) && (live?.width !== undefined || live?.height !== undefined);
+    let liveNode: AnyNode = node;
+    if (resizing) {
+      liveNode = { ...node, width, height } as AnyNode;
+      if (liveNode.type === 'path') {
+        const fitted = fitPathToBox(liveNode.geometry, width, height);
+        if (fitted) liveNode = { ...liveNode, geometry: fitted };
+      }
+    }
+
     return (
       <>
         {/* Live Drag-Duplication Ghost: Origin Anchor Twin */}
@@ -977,7 +1012,7 @@ export const ObjectRenderer = React.memo(
             };
           }}
         >
-          <NodeContent node={node} isEditing={isEditing} stageScale={stageScale} />
+          <NodeContent node={liveNode} isEditing={isEditing} stageScale={stageScale} />
 
           {isHovered && selectable && !isSelected && (
             // Sized from the node's real bounds. This used to read
