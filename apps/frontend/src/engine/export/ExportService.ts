@@ -3,6 +3,9 @@ import { frameExportBounds } from './bounds';
 import { descendantsOfFrame } from '../model/frames';
 import { useStore } from '../../hooks/useStore';
 import { FORMAT_SPECS, type ExportFormat, type ExportOptions } from './ExportTypes';
+import { canCopyImage, copyImage, copyVector, type ClipboardResult } from './clipboard';
+import { computeContentBounds } from './bounds';
+import { clipboardScale } from './rasterLimits';
 
 // Filenames live in their own module so they can be asserted without the
 // document store this one depends on. Re-exported to keep one import site.
@@ -88,29 +91,67 @@ class ExportServiceClass {
    * into a message, a doc or a ticket — and every one of those journeys used to
    * go via the downloads folder and a file picker.
    *
-   * PNG only, and not because of us: the async clipboard API accepts a narrow
-   * set of types and `image/png` is the one with universal support. The caller
-   * checks `canCopy` rather than finding out by failing.
+   * Throws on failure, because the export dialog's Copy button has a place to
+   * put an error message. The menu items go through {@link copy}, which returns
+   * the outcome instead — a right-click menu closes on click and has nowhere to
+   * fail into.
    */
   async copyToClipboard(options: ExportOptions = {}): Promise<void> {
-    /**
-     * The blob is handed over as a **promise**, not awaited first.
-     *
-     * Safari ties clipboard writes to the user gesture that started them, and
-     * an `await` before `clipboard.write` ends that gesture — so rendering the
-     * PNG and then writing it failed there with a bare NotAllowedError while
-     * working perfectly in Chrome. `ClipboardItem` accepts a `Promise<Blob>`
-     * for exactly this: the item is constructed synchronously inside the
-     * gesture and resolves afterwards. Chrome and Firefox accept the same
-     * form, so this is one path rather than a branch per engine.
-     */
-    await navigator.clipboard.write([
-      new ClipboardItem({ 'image/png': this.render('png', options) }),
-    ]);
+    const result = await copyImage(() => this.render('png', options));
+    if (!result.ok) throw new Error(result.message);
+  }
+
+  /**
+   * Copy in a chosen format, at a density chosen for the subject.
+   *
+   * ## What this replaces
+   *
+   * Two call sites, each with its own idea of the same three decisions: what
+   * the copy covers (`selectedIds.length ? … : {}`, written out twice), how
+   * densely to render it (the exporter's default 2×, whatever the subject),
+   * and what to do when it fails (nothing, in both).
+   *
+   * The density is the interesting one. 2× is right for exactly one subject
+   * size: it put a 180-unit sticky note on the clipboard as a 360px image and
+   * asked for 8000px of a large board. `clipboardScale` holds the *result*
+   * steady instead of the multiplier — see its own note.
+   *
+   * A caller that has already decided on a scale keeps it; this only fills in
+   * the blank.
+   */
+  async copy(format: 'png' | 'svg', options: ExportOptions = {}): Promise<ClipboardResult> {
+    const resolved = resolveExportTarget(options);
+
+    if (format === 'svg') {
+      try {
+        const blob = await this.render('svg', resolved);
+        // SVG goes on as vector *and* as text: see `clipboard.ts`. It used to
+        // go on as text alone, so pasting into Illustrator gave a paragraph
+        // beginning `<svg` rather than shapes.
+        return await copyVector(await blob.text());
+      } catch (error) {
+        return { ok: false, message: error instanceof Error ? error.message : 'Could not copy the SVG.' };
+      }
+    }
+
+    const scaled = { ...resolved, scale: resolved.scale ?? this.copyScale(resolved) };
+    return copyImage(() => this.render('png', scaled));
+  }
+
+  /** The density {@link copy} will use, so a caller can say so before it runs. */
+  copyScale(options: ExportOptions): number {
+    const bounds =
+      options.bounds ??
+      computeContentBounds(
+        useStore.getState().objects,
+        options.selectedOnly ? options.selectedIds : undefined,
+        options.padding
+      );
+    return clipboardScale(bounds.width, bounds.height);
   }
 
   get canCopy(): boolean {
-    return typeof ClipboardItem !== 'undefined' && Boolean(navigator.clipboard?.write);
+    return canCopyImage();
   }
 }
 

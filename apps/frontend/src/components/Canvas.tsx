@@ -15,6 +15,7 @@ import { PathEditor } from './canvas/PathEditor';
 import { deletePickedAnchor, nudgePickedAnchors, selectAllAnchors } from '../engine/interaction/pathAnchorActions';
 import { pathEdit } from '../engine/interaction/pathEdit';
 import { booleanPreview } from '../engine/interaction/booleanPreview';
+import { mountedSet, renderScope } from '../engine/export/renderScope';
 import { contourData } from '../engine/model/pathGeometry';
 import { RULER_SIZE, Rulers } from './canvas/Rulers';
 import { tickStep } from '../engine/interaction/rulerTicks';
@@ -615,19 +616,35 @@ export const Canvas: React.FC<CanvasProps> = ({ activeTool, selectedIds, setSele
     return Object.values(objects).sort((a: any, b: any) => (a.zIndex || 0) - (b.zIndex || 0));
   }, [objects]);
 
+  /**
+   * Objects an export needs mounted regardless of where the camera is.
+   *
+   * Culling is a viewport optimisation, and an export is not looking through
+   * the viewport: it reframes the stage imperatively and captures, which gives
+   * React no chance to mount anything. So a board wider than the window used to
+   * export at the right dimensions with the off-screen half blank -- while the
+   * SVG of the same board, built from the document, had all of it.
+   *
+   * The mechanism is the one already here for selection, generalised. See
+   * `engine/export/renderScope.ts`.
+   */
+  const requiredIds = useSyncExternalStore(renderScope.subscribe, renderScope.getSnapshot, renderScope.getSnapshot);
+
   const visibleObjects = useMemo(() => {
     const storeObjects = Object.values(objects);
     if (storeObjects.length === 0) return [];
 
-    // Spatial culling: render visible items (plus selected items), in canonical z-index order
-    if (visibleIds.length > 0) {
-      const visibleSet = new Set(visibleIds);
-      selectedIds.forEach((id) => visibleSet.add(id));
-      return sortedObjects.filter((o: any) => visibleSet.has(o.id));
-    }
-
-    return sortedObjects;
-  }, [sortedObjects, visibleIds, selectedIds, objects]);
+    // Spatial culling: render visible items (plus selected and export-required
+    // items), in canonical z-index order.
+    const mounted = mountedSet(
+      sortedObjects.map((o: any) => o.id),
+      visibleIds,
+      selectedIds,
+      requiredIds
+    );
+    if (!mounted) return sortedObjects;
+    return sortedObjects.filter((o: any) => mounted.has(o.id));
+  }, [sortedObjects, visibleIds, selectedIds, objects, requiredIds]);
 
   // The engine pushes RenderTick every frame. We apply camera to Konva and Grid directly bypassing React!
   useEffect(() => {

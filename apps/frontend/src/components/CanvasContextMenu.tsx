@@ -2,7 +2,7 @@ import React, { useEffect, useLayoutEffect, useRef, useState } from 'react';
 import {
   Circle, Copy, ClipboardPaste, FileCode2, ImageDown, Minus, MousePointerSquareDashed,
   MoveRight, Square, Star, Trash2, Triangle, BringToFront, SendToBack, Shapes, Workflow, Code2,
-  Group, Ungroup, Lock, Unlock, Eye, EyeOff, PenTool,
+  Group, Ungroup, Lock, Unlock, Eye, EyeOff, PenTool, Download,
   AlignStartVertical, AlignCenterVertical, AlignEndVertical,
   AlignStartHorizontal, AlignCenterHorizontal, AlignEndHorizontal,
   AlignHorizontalSpaceAround, AlignVerticalSpaceAround,
@@ -10,6 +10,7 @@ import {
 import type { AnyNode, ShapeKind } from '../engine/model/schema';
 import { ShapeIcon } from './workspace/shapeIcons';
 import { resolveAffordances, type AffordanceId } from '../engine/selection/affordances';
+import { copyLabel, exportLabel, exportScope } from '../engine/export/exportScope';
 import type { AlignEdge, DistributeAxis } from '../engine/model/align';
 
 export interface ContextTarget {
@@ -29,8 +30,18 @@ export interface CanvasContextMenuActions {
   sendToBack: () => void;
   selectAll: () => void;
   selectAllOfType: () => void;
-  copyPng: () => void;
-  copySvg: () => void;
+  /**
+   * Copy, and export, take the ids the *menu* is about.
+   *
+   * They used to take none and read `selectedIds` at the other end, which is a
+   * different variable: right-clicking bare board leaves the selection intact,
+   * so the menu offered "Copy board as PNG" and the handler copied the three
+   * objects that were still selected somewhere off to the left. Passing the
+   * scope through means the label and the file cannot disagree.
+   */
+  copyPng: (ids: string[]) => void;
+  copySvg: (ids: string[]) => void;
+  exportSelection: (ids: string[]) => void;
   copyMermaid: () => void;
   editMermaid: () => void;
   swapShape: (kind: ShapeKind, points?: number) => void;
@@ -198,6 +209,16 @@ export const CanvasContextMenu: React.FC<Props> = ({
 
   const selected = target.ids.map((id) => objects[id]).filter(Boolean);
   const hasSelection = selected.length > 0;
+  /**
+   * What a copy or an export from here would actually cover.
+   *
+   * `target.ids` rather than the live selection: right-clicking bare board does
+   * not clear what is selected, so the two are routinely different and the menu
+   * is about the former. The board title is not needed for a label, only for a
+   * filename, which is settled at the other end.
+   */
+  const ids = target.ids;
+  const scope = exportScope(allObjects ?? objects, ids, '');
   // Swapping is offered when *everything* selected is a shape — a mixed
   // selection has no single form to change, and silently swapping only the
   // shapes in it would be a different, unasked-for operation.
@@ -406,9 +427,15 @@ export const CanvasContextMenu: React.FC<Props> = ({
           <div className="ctxmenu__rule" role="separator" />
 
           {/* Both of these were already built and neither was reachable
-              without opening the export modal and picking a format. */}
-          <Item icon={<ImageDown size={15} />} label="Copy as PNG" onClick={actions.copyPng} />
-          <Item icon={<FileCode2 size={15} />} label="Copy as SVG" onClick={actions.copySvg} />
+              without opening the export modal and picking a format. The words
+              are computed from the same scope the copy will use — see
+              `engine/export/exportScope.ts`. */}
+          <Item icon={<ImageDown size={15} />} label={copyLabel(scope, 'PNG')} onClick={() => actions.copyPng(ids)} />
+          <Item icon={<FileCode2 size={15} />} label={copyLabel(scope, 'SVG')} onClick={() => actions.copySvg(ids)} />
+          {/* Six formats, four densities, a background and a live preview all
+              worked on a selection already; there was no way to say "this"
+              from the canvas. */}
+          <Item icon={<Download size={15} />} label={exportLabel(scope)} shortcut="Ctrl ⇧ E" onClick={() => actions.exportSelection(ids)} />
 
           {/* Offered only when the selection reads as a diagram.
               Mermaid describes boxes joined by arrows, so a photograph and a
@@ -461,8 +488,9 @@ export const CanvasContextMenu: React.FC<Props> = ({
             onClick={actions.selectAll}
           />
           <div className="ctxmenu__rule" role="separator" />
-          <Item icon={<ImageDown size={15} />} label="Copy board as PNG" onClick={actions.copyPng} />
-          <Item icon={<FileCode2 size={15} />} label="Copy board as SVG" onClick={actions.copySvg} />
+          <Item icon={<ImageDown size={15} />} label={copyLabel(scope, 'PNG')} onClick={() => actions.copyPng(ids)} />
+          <Item icon={<FileCode2 size={15} />} label={copyLabel(scope, 'SVG')} onClick={() => actions.copySvg(ids)} />
+          <Item icon={<Download size={15} />} label={exportLabel(scope)} shortcut="Ctrl ⇧ E" onClick={() => actions.exportSelection(ids)} />
         </>
       )}
     </div>

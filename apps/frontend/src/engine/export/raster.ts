@@ -1,6 +1,9 @@
 import { computeContentBounds, type ExportBounds } from './bounds';
 import { useStore } from '../../hooks/useStore';
 import { hideExportChrome } from './chrome';
+import { isolateObjects } from './isolate';
+import { nextCommit, renderScope } from './renderScope';
+import { expectedImages, waitForImages } from './imagesReady';
 import { resolveBackground, type ExportOptions, type FormatSpec } from './ExportTypes';
 import { fitScale } from './rasterLimits';
 
@@ -40,6 +43,23 @@ export interface RasterCapture {
  * The reframe and restore are synchronous with no `await` between them, so the
  * engine's `requestAnimationFrame` loop cannot re-apply the live camera
  * mid-capture and leave the user looking at a stage that is the wrong size.
+ * Anything that needs to happen *before* the capture and needs to wait —
+ * mounting culled objects — is `mountForCapture`'s job, not this one's.
+ *
+ * ## What is on the stage, and what should be
+ *
+ * Two things were wrong with capturing "the stage" and had the same shape: the
+ * stage is not the document.
+ *
+ * It holds **too little**, because the canvas culls to the viewport, so a board
+ * wider than the window exported an image of the right dimensions with the
+ * off-screen half blank. `mountForCapture` settles that before this runs.
+ *
+ * And it holds **too much**, because a selection-scoped export framed to the
+ * selection and then captured everything inside that frame — so the PNG of one
+ * sticky note also contained the frame behind it and the notes overlapping its
+ * corners, while the SVG of the same selection contained the note alone.
+ * `isolateObjects` settles that, here, for the length of the capture.
  */
 export function captureRaster(options: ExportOptions, spec: FormatSpec): RasterCapture {
   const stage = options.stage;
@@ -72,6 +92,12 @@ export function captureRaster(options: ExportOptions, spec: FormatSpec): RasterC
   // Selection handles, hover outlines, the crop overlay, the tool preview and
   // the frames' name labels are all on the stage and would all be captured.
   const restoreChrome = hideExportChrome(stage);
+  // And everything the export is *not* of. `null` for a whole-board export,
+  // which is the common case and does not walk the tree.
+  const restoreIsolation = isolateObjects(
+    stage,
+    options.selectedOnly && options.selectedIds?.length ? new Set(options.selectedIds) : null
+  );
 
   const width = Math.max(1, Math.round(bounds.width * scale));
   const height = Math.max(1, Math.round(bounds.height * scale));
@@ -84,6 +110,7 @@ export function captureRaster(options: ExportOptions, spec: FormatSpec): RasterC
     stage.draw();
     source = stage.toCanvas({ pixelRatio: 1 });
   } finally {
+    restoreIsolation();
     restoreChrome();
     stage.size({ width: previous.width, height: previous.height });
     stage.position({ x: previous.x, y: previous.y });
@@ -139,4 +166,55 @@ export function canvasToBlob(canvas: HTMLCanvasElement, mime: string, quality?: 
       quality
     );
   });
+}
+
+
+/**
+ * Put everything this export needs on the stage, and wait for it to arrive.
+ *
+ * Returns the release, to be called once the pixels have been read. Await it
+ * *before* `captureRaster`, never inside it — see the note about the rAF loop
+ * above.
+ *
+ * The whole board is required for a whole-board export rather than only the
+ * objects inside the bounds, because the bounds *are* the objects: there is no
+ * cheaper set that is still correct, and the cost is one React commit that is
+ * immediately given back.
+ */
+export async function mountForCapture(options: ExportOptions): Promise<() => void> {
+  const objects = useStore.getState().objects;
+  const ids =
+    options.selectedOnly && options.selectedIds?.length
+      ? options.selectedIds
+      : Object.keys(objects);
+
+  const release = renderScope.require(ids);
+  try {
+    await nextCommit();
+    /**
+     * And then for the pictures.
+     *
+     * Mounting an image node does not make it drawable: `use-image` builds an
+     * element, sets `src`, and the picture lands on a `load` event later. So
+     * the fix for one silent omission — an off-screen half of the board — would
+     * otherwise open a quieter one, where the photograph is on the stage as an
+     * empty rectangle rather than missing from it.
+     *
+     * The result is deliberately not checked. A picture that never loads is a
+     * gap in the file, which is visible; refusing the export over it would not
+     * be. See `imagesReady.ts`.
+     */
+    if (options.stage) {
+      await waitForImages(
+        options.stage,
+        expectedImages(ids.map((id) => objects[id]).filter(Boolean))
+      );
+    }
+  } catch {
+    // A browser with no rAF is a browser with no canvas either; the capture
+    // will report that itself, and holding the scope open would be worse.
+    release();
+    throw new Error('This browser cannot render an image export.');
+  }
+  return release;
 }

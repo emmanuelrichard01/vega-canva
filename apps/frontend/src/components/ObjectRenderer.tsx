@@ -8,6 +8,7 @@ import { consumePendingEdit, requestCaretOnMount } from '../engine/interaction/p
 import { cropMode } from '../engine/interaction/cropMode';
 import { pathEdit } from '../engine/interaction/pathEdit';
 import { EXPORT_CHROME } from '../engine/export/chrome';
+import { OBJECT_NODE } from '../engine/export/isolate';
 import { moveFrameWithChildren, reassignFrame } from '../engine/interaction/frameMembership';
 import { tagFilter } from '../engine/model/tagFilter';
 import { matchesTagFilter } from '../engine/model/tags';
@@ -893,6 +894,17 @@ export const ObjectRenderer = React.memo(
 
         <Group
           id={objId}
+          /**
+           * Named so an export can find every object in one traversal.
+           *
+           * A selection-scoped raster capture has to hide everything outside
+           * the selection -- otherwise the PNG of one sticky note also contains
+           * the frame behind it, while the SVG of the same selection does not.
+           * Konva's `findOne('#id')` walks the whole tree per call in this
+           * version; one `find('.canvas-object')` collects them all. See
+           * `engine/export/isolate.ts`.
+           */
+          name={OBJECT_NODE}
           ref={shapeRef}
           x={x + cx}
           y={y + cy}

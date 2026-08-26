@@ -56,3 +56,47 @@ export function fitScale(width: number, height: number, requested: number): numb
    */
   return Math.max(fitted, Math.min(requested, 1));
 }
+
+/**
+ * The long edge a copied image aims for.
+ *
+ * Roughly a full-width figure on a retina screen, and comfortably inside every
+ * engine's canvas ceiling — so a pasted image is sharp where it lands without
+ * putting a 60-megapixel bitmap on the clipboard.
+ */
+export const CLIPBOARD_TARGET_EDGE = 1600;
+
+/**
+ * How densely to rasterise something that is going on the clipboard.
+ *
+ * ## Why not just 2×
+ *
+ * Copy-to-clipboard used to take the exporter's default of 2× whatever the
+ * subject was, and 2× is only ever right for one subject size. A 180-unit
+ * sticky note arrived in a document as a **360px** image and went soft the
+ * moment anyone dragged its corner out; a board four thousand units wide asked
+ * for 8000px, hit the area cap, and came back at whatever `fitScale` allowed —
+ * so the one number produced a thumbnail at one end and a clamp at the other.
+ *
+ * The thing being held constant should be the *result*, not the multiplier.
+ * This aims the long edge at {@link CLIPBOARD_TARGET_EDGE} and clamps the
+ * density to a sane band either side of it, so a small selection is copied at
+ * high density and a large one at low, and both arrive at a usable size.
+ *
+ * The result still goes through `fitScale`, which is the browser's answer
+ * rather than ours — this decides what to ask for, and that decides what is
+ * possible.
+ */
+export function clipboardScale(
+  width: number,
+  height: number,
+  /** Never below 1:1: a copy is not the place to throw detail away. */
+  min = 1,
+  /** Above 4× the file grows faster than the image improves. */
+  max = 4
+): number {
+  const edge = Math.max(width, height, 1);
+  const wanted = CLIPBOARD_TARGET_EDGE / edge;
+  const banded = Math.min(max, Math.max(min, wanted));
+  return fitScale(width, height, banded);
+}

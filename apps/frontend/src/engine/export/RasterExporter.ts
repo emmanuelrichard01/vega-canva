@@ -1,4 +1,4 @@
-import { captureRaster, canvasToBlob } from './raster';
+import { captureRaster, canvasToBlob, mountForCapture } from './raster';
 import { FORMAT_SPECS, type Exporter, type ExportFormat, type ExportOptions } from './ExportTypes';
 
 /**
@@ -21,7 +21,21 @@ export class RasterExporter implements Exporter {
 
   async export(options: ExportOptions): Promise<Blob> {
     const spec = FORMAT_SPECS[this.type];
-    const { canvas } = captureRaster(options, spec);
+    /**
+     * Mounted first, awaited, and only then captured.
+     *
+     * The canvas culls to the viewport, so the stage holds what is on screen
+     * rather than what is in the document — and the capture is deliberately
+     * synchronous, so it cannot wait for a commit itself. Splitting the two
+     * keeps the asynchronous half out of the half that must not yield.
+     */
+    const release = await mountForCapture(options);
+    let canvas: HTMLCanvasElement;
+    try {
+      ({ canvas } = captureRaster(options, spec));
+    } finally {
+      release();
+    }
     // Passing a quality to a lossless encoder is not harmless — Chrome ignores
     // it for PNG but the argument is meaningless, and being explicit keeps the
     // control and the format honest about each other.

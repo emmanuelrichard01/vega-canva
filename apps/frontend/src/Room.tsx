@@ -27,7 +27,7 @@ import { emptyGroups } from './engine/model/groupTree';
 import { ActivityFeed } from './components/ActivityFeed';
 import { PresenceEdgeMarkers } from './components/PresenceEdgeMarkers';
 import { FollowIndicator } from './components/FollowIndicator';
-import { ExportService } from './engine/export';
+import { ExportService, exportScope, scopeOptions } from './engine/export';
 import { isForceTool, type ForceId } from './engine/physics/forces';
 import { calculateLayout, animateToLayout, type LayoutMode } from './utils/spatialLayout';
 import { Mic, TriangleAlert } from 'lucide-react';
@@ -341,6 +341,8 @@ export default function Room() {
   // shipped feature.
     const [localTitle, setLocalTitle] = useState("Untitled Workspace");
   const [showExportMenu, setShowExportMenu] = useState(false);
+  /** Whether the dialog was opened *about* the selection, or about the board. */
+  const [exportFromSelection, setExportFromSelection] = useState(false);
   const [showHelp, setShowHelp] = useState(false);
   const [diagramOpen, setDiagramOpen] = useState(false);
   /**
@@ -577,20 +579,52 @@ export default function Room() {
       if (!type) return;
       setSelectedIds(Object.values(diagramObjects).filter((n) => n.type === type).map((n) => n.id));
     },
-    copyPng: () => {
-      void ExportService.copyToClipboard(
-        selectedIds.length ? { selectedOnly: true, selectedIds } : {}
-      );
+    /**
+     * Copy what is selected — or the board, when nothing is.
+     *
+     * ## What these two lost
+     *
+     * Each of them used to work out its own scope inline, with the same
+     * ternary written twice, and neither said anything afterwards. A clipboard
+     * write fails for four ordinary reasons — an insecure context, a browser
+     * with no `ClipboardItem`, a denied permission, a render that threw — and
+     * in every one of them the menu closed, nothing was copied, and the next
+     * paste produced whatever had been on the clipboard beforehand. A copy that
+     * silently does nothing is worse than one that refuses, because the failure
+     * surfaces somewhere else entirely.
+     *
+     * `exportScope` now answers "what does this cover, and what is it called"
+     * once, for the label as well as for the copy, so the menu item and the
+     * toast cannot describe different things from what the file contains.
+     */
+    copyPng: async (ids: string[]) => {
+      const scope = exportScope(diagramObjects, ids, localTitle);
+      const result = await ExportService.copy('png', {
+        ...scopeOptions(scope),
+        stage: (window as any)._konva_stage,
+      });
+      showToast(result.ok ? `Copied ${scope.subject} as PNG` : result.message!);
     },
-    copySvg: async () => {
-      const blob = await ExportService.render(
-        'svg',
-        selectedIds.length ? { selectedOnly: true, selectedIds } : {}
-      );
-      // SVG is text, so it goes on the clipboard as text — an `image/svg+xml`
-      // clipboard item is refused by most targets, and what people want to do
-      // with it is paste it into an editor anyway.
-      await navigator.clipboard.writeText(await blob.text());
+    copySvg: async (ids: string[]) => {
+      const scope = exportScope(diagramObjects, ids, localTitle);
+      const result = await ExportService.copy('svg', scopeOptions(scope));
+      showToast(result.ok ? `Copied ${scope.subject} as SVG` : result.message!);
+    },
+    /**
+     * The export dialog, opened already pointing at the selection.
+     *
+     * Everything it offers — six formats, four densities, a background, a live
+     * preview — already worked on a selection; there was simply no way to say
+     * "this" from the canvas. The dialog's Region control had `Whole canvas`
+     * and a list of frames, so exporting three chosen objects meant framing
+     * them by hand first.
+     */
+    exportSelection: (ids: string[]) => {
+      // The dialog opens pointing at whatever the menu was about, which is not
+      // always the live selection -- right-clicking bare board leaves a
+      // selection standing and means "the board".
+      setExportFromSelection(ids.length > 0);
+      setShowExportMenu(true);
     },
     /**
      * The selection as Mermaid, on the clipboard.
@@ -1134,6 +1168,10 @@ export default function Room() {
     setPanelsOpen,
     activeTool,
     setActiveTool,
+    openExport: (fromSelection: boolean) => {
+      setExportFromSelection(fromSelection);
+      setShowExportMenu(true);
+    },
   });
 
   useEffect(() => {
@@ -1448,6 +1486,8 @@ export default function Room() {
         setShowShareModal={setShowShareModal}
         showExportMenu={showExportMenu}
         setShowExportMenu={setShowExportMenu}
+        exportSelectionIds={selectedIds}
+        exportFromSelection={exportFromSelection}
         localTitle={localTitle}
         contextTarget={contextTarget}
         setContextTarget={setContextTarget}
@@ -1533,7 +1573,7 @@ export default function Room() {
           isDarkTheme={isDarkTheme}
           setIsDarkTheme={setIsDarkTheme}
           onShareClick={() => setShowShareModal(true)}
-          onExportClick={() => setShowExportMenu(true)}
+          onExportClick={() => { setExportFromSelection(false); setShowExportMenu(true); }}
           onHelpClick={() => setShowHelp(true)}
           onHideUi={() => setIsUiVisible(false)}
           onToggleTimeline={() => setShowTimeTravel(v => !v)}

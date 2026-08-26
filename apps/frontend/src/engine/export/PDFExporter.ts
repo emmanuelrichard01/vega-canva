@@ -1,4 +1,4 @@
-import { captureRaster, canvasToBlob } from './raster';
+import { captureRaster, canvasToBlob, mountForCapture } from './raster';
 import { buildPdf, type PdfPage } from './pdfWriter';
 import { frameExportBounds } from './bounds';
 import { descendantsOfFrame } from '../model/frames';
@@ -94,7 +94,17 @@ export class PDFExporter implements Exporter {
     spec: typeof FORMAT_SPECS.pdf,
     quality: number | undefined
   ): Promise<PdfPage> {
-    const { canvas, bounds } = captureRaster(options, spec);
+    // Same split as `RasterExporter`: mount and wait, then capture without
+    // yielding. A multi-page PDF pays for it once per page, which is right --
+    // each page is a different set of objects.
+    const release = await mountForCapture(options);
+    let canvas: HTMLCanvasElement;
+    let bounds: { x: number; y: number; width: number; height: number };
+    try {
+      ({ canvas, bounds } = captureRaster(options, spec));
+    } finally {
+      release();
+    }
     const jpeg = await canvasToBlob(canvas, 'image/jpeg', quality ?? 0.92);
     const bytes = new Uint8Array(await jpeg.arrayBuffer());
 

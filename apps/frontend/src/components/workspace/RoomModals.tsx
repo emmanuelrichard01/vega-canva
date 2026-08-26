@@ -16,6 +16,10 @@ export interface RoomModalsProps {
 
   showExportMenu: boolean;
   setShowExportMenu: (open: boolean) => void;
+  /** The live selection, so the dialog can offer it as a region. */
+  exportSelectionIds: string[];
+  /** Whether the dialog was opened *about* that selection or about the board. */
+  exportFromSelection: boolean;
   localTitle: string;
 
   contextTarget: ContextTarget | null;
@@ -43,6 +47,8 @@ export const RoomModals: React.FC<RoomModalsProps> = ({
   setShowShareModal,
   showExportMenu,
   setShowExportMenu,
+  exportSelectionIds,
+  exportFromSelection,
   localTitle,
   contextTarget,
   setContextTarget,
@@ -67,7 +73,14 @@ export const RoomModals: React.FC<RoomModalsProps> = ({
       </Suspense>
 
       <Suspense fallback={null}>
-        {showExportMenu && <ExportModal onClose={() => setShowExportMenu(false)} title={localTitle} />}
+        {showExportMenu && (
+          <ExportModal
+            onClose={() => setShowExportMenu(false)}
+            title={localTitle}
+            selectionIds={exportSelectionIds}
+            startWithSelection={exportFromSelection}
+          />
+        )}
       </Suspense>
 
       <CanvasContextMenu

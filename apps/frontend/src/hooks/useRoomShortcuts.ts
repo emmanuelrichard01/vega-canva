@@ -18,6 +18,14 @@ export interface RoomShortcutsOptions {
   setPanelsOpen: (open: boolean) => void;
   activeTool: string;
   setActiveTool: (tool: string) => void;
+  /**
+   * Open the export dialog pointed at the selection.
+   *
+   * Optional so the hook stays usable from a test that is not exercising it,
+   * and so the shortcut is simply absent rather than throwing where no dialog
+   * exists to open.
+   */
+  openExport?: (fromSelection: boolean) => void;
 }
 
 /**
@@ -27,6 +35,7 @@ export interface RoomShortcutsOptions {
  * - Command Palette (Cmd+K, Cmd+P)
  * - Zoom in / out / fit / reset (Cmd/Ctrl + +/-, bare +/-, 0, !)
  * - Tool hotkeys (from TOOL_FOR_KEY map)
+ * - Export the selection (Cmd/Ctrl + Shift + E)
  * - Help (?), Toggle UI (\)
  * - Panel dismissals on Escape
  */
@@ -42,6 +51,7 @@ export function useRoomShortcuts({
   setPanelsOpen,
   activeTool,
   setActiveTool,
+  openExport,
 }: RoomShortcutsOptions) {
   // Escape closes overlay panels in compact mode
   useEffect(() => {
@@ -90,6 +100,23 @@ export function useRoomShortcuts({
         if (e.defaultPrevented) return;
         e.preventDefault();
         setSelectedIds(Object.keys(useStore.getState().objects));
+        return;
+      }
+
+      /**
+       * Export the selection.
+       *
+       * Cmd/Ctrl + Shift + E because that is the shortcut Figma, Illustrator
+       * and Sketch all use for it — a person arriving from any of the three
+       * already has this in their hands, and a canvas app that assigns it to
+       * something else is a canvas app that surprises them once per session.
+       *
+       * With nothing selected it opens on the board, which is what the same
+       * key does in all three.
+       */
+      if (hasModifier && e.shiftKey && e.key.toLowerCase() === 'e' && openExport) {
+        e.preventDefault();
+        openExport(selectedIds.length > 0);
         return;
       }
 
@@ -231,5 +258,5 @@ export function useRoomShortcuts({
         window.removeEventListener('legacy_tool_change', handleToolChange);
       }
     };
-  }, [selectTool, setSelectedIds, setShowCommandPalette, setShowHelp, setIsUiVisible, selectedIds]);
+  }, [selectTool, setSelectedIds, setShowCommandPalette, setShowHelp, setIsUiVisible, selectedIds, openExport]);
 }

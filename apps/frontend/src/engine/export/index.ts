@@ -23,3 +23,5 @@ export {
   type ExportOptions,
   type FormatSpec,
 } from './ExportTypes';
+export { exportScope, scopeOptions, expandForExport, type ExportScope } from './exportScope';
+export { type ClipboardResult } from './clipboard';

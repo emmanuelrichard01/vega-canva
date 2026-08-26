@@ -13,6 +13,7 @@ import {
 import { parseDocumentExport, describeImport } from '../../engine/export/DocumentImport';
 import { restoreDocument } from '../../engine/export/restoreDocument';
 import { computeContentBounds } from '../../engine/export/bounds';
+import { exportScope, scopeOptions } from '../../engine/export/exportScope';
 import { fitScale } from '../../engine/export/rasterLimits';
 import { useFocusTrap } from '../../hooks/useFocusTrap';
 import { useStore } from '../../hooks/useStore';
@@ -20,12 +21,35 @@ import { useStore } from '../../hooks/useStore';
 interface Props {
   onClose: () => void;
   title: string;
+  /**
+   * What is selected on the canvas, offered as a region.
+   *
+   * Everything this dialog does — six formats, four densities, a background, a
+   * live preview — already worked on a subset of the document; `ExportOptions`
+   * has carried `selectedIds` since the beginning and both vector exporters
+   * honour it. There was simply no way to *say* "these three objects" from
+   * here: the Region control offered the whole canvas and a list of frames, so
+   * exporting a selection meant drawing a frame round it first.
+   */
+  selectionIds?: string[];
+  /**
+   * Whether to open pointed at that selection.
+   *
+   * The right-click entry and Ctrl+Shift+E are asking about the selection and
+   * start there. The header's Export button is asking about the board and does
+   * not, even when something happens to be selected — an export dialog that
+   * silently scopes itself to whatever you last clicked is how you end up
+   * sharing one sticky note instead of the workshop.
+   */
+  startWithSelection?: boolean;
 }
 
 /** Sentinel for "not a frame". An empty string would collide with a real id. */
 const WHOLE_DOCUMENT = '__document__';
 /** Sentinel for "each frame, as its own file". */
 const EVERY_FRAME = '__frames__';
+/** Sentinel for "whatever is selected on the canvas". */
+const SELECTION = '__selection__';
 
 const SCALES = [1, 2, 3, 4];
 
@@ -64,12 +88,19 @@ function formatBytes(bytes: number): string {
  * does with an exported image is paste it somewhere, and every one of those
  * journeys used to detour through the downloads folder.
  */
-export const ExportModal: React.FC<Props> = ({ onClose, title }) => {
+export const ExportModal: React.FC<Props> = ({
+  onClose,
+  title,
+  selectionIds = [],
+  startWithSelection = false,
+}) => {
   const [format, setFormat] = useState<ExportFormat>('png');
   const [isExporting, setIsExporting] = useState(false);
   const [status, setStatus] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
-  const [target, setTarget] = useState<string>(WHOLE_DOCUMENT);
+  const [target, setTarget] = useState<string>(
+    startWithSelection && selectionIds.length > 0 ? SELECTION : WHOLE_DOCUMENT
+  );
   const [scale, setScale] = useState(2);
   const [quality, setQuality] = useState(0.92);
   const [background, setBackground] = useState<ExportBackground>('transparent');
@@ -115,6 +146,32 @@ export const ExportModal: React.FC<Props> = ({ onClose, title }) => {
   const activeFrame = frameList.find((f) => f.id === target);
   const isBatch = target === EVERY_FRAME;
 
+  /**
+   * The selection, resolved the same way the right-click copy resolves it.
+   *
+   * Through `exportScope` rather than `selectionIds` directly, so selecting a
+   * frame and exporting it from here contains the frame's *contents* — which is
+   * what `resolveExportTarget` already does for the per-frame option, and what
+   * "Copy as PNG" on the same frame now does. Three routes to one file must not
+   * be three opinions about what is in it.
+   */
+  const scope = React.useMemo(
+    () => exportScope(objects, selectionIds, title),
+    [objects, selectionIds, title]
+  );
+  const isSelection = target === SELECTION && !scope.wholeBoard;
+
+  /**
+   * A selection that empties while the dialog is open falls back to the board.
+   *
+   * Someone else can delete the objects, and pressing Export against a region
+   * that no longer exists would produce the 800×600 empty box
+   * `computeContentBounds` returns for nothing at all.
+   */
+  useEffect(() => {
+    if (target === SELECTION && scope.wholeBoard) setTarget(WHOLE_DOCUMENT);
+  }, [target, scope.wholeBoard]);
+
   /** The document's own extent, for the size readout and the clamp warning. */
   const contentBounds = React.useMemo(() => computeContentBounds(objects), [objects]);
 
@@ -123,6 +180,10 @@ export const ExportModal: React.FC<Props> = ({ onClose, title }) => {
     quality,
     background,
     frameId: activeFrame ? target : undefined,
+    // Both halves together or neither: `selectedOnly` without `selectedIds` is
+    // the shape that let the raster path frame to a selection and capture
+    // everything else inside the frame.
+    ...(isSelection ? scopeOptions(scope) : {}),
     stage: (window as any)._konva_stage,
   });
 
@@ -161,8 +222,10 @@ export const ExportModal: React.FC<Props> = ({ onClose, title }) => {
       cancelled = true;
       window.clearTimeout(timer);
     };
+    // `scope.ids` joins the deps because the selection can change underneath an
+    // open dialog — someone else moves an object, or the user selects more.
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [format, target, quality, background, previewable, isBatch]);
+  }, [format, target, quality, background, previewable, isBatch, isSelection, scope.ids?.join(',')]);
 
   // The object URL outlives React's own cleanup unless it is revoked by hand.
   useEffect(() => () => { if (preview) URL.revokeObjectURL(preview.url); }, [preview]);
@@ -186,9 +249,19 @@ export const ExportModal: React.FC<Props> = ({ onClose, title }) => {
    * function the export asks means the warning cannot disagree with what is
    * about to happen.
    */
+  /**
+   * The box the readout and the clamp warning describe.
+   *
+   * Measured through the same `computeContentBounds` the exporter will use, on
+   * the same ids — a dimension line that came from anywhere else would be a
+   * second answer to "how big is this export", and it is the answer people read
+   * before deciding whether 4× is sensible.
+   */
   const exportBox = activeFrame
     ? { width: activeFrame.width, height: activeFrame.height }
-    : contentBounds;
+    : isSelection
+      ? computeContentBounds(objects, scope.ids ?? undefined)
+      : contentBounds;
   const effectiveScale = spec.raster
     ? fitScale(exportBox.width, exportBox.height, scale)
     : scale;
@@ -225,7 +298,9 @@ export const ExportModal: React.FC<Props> = ({ onClose, title }) => {
         }
         setStatus(`Saved ${frameList.length} files`);
       } else {
-        const base = activeFrame?.label ?? title;
+        // A selection's file is named after the selection, not the board: a
+        // folder of `roadmap-2x.png` files is a folder you cannot search.
+        const base = activeFrame?.label ?? (isSelection ? scope.filenameBase : title);
         await ExportService.export(format, {
           ...baseOptions(),
           filename: exportFilename(base, format, scale),
@@ -242,14 +317,21 @@ export const ExportModal: React.FC<Props> = ({ onClose, title }) => {
     }
   };
 
+  /**
+   * Copy, in whichever of the two clipboard-able formats is selected.
+   *
+   * The button was gated on `spec.raster`, so with SVG chosen it disappeared —
+   * and copying an SVG is the more useful of the two, because what people do
+   * with a vector is paste it into a drawing tool. Both go through
+   * `ExportService.copy`, which is what the right-click items use, so the
+   * dialog and the menu cannot produce different clipboards from the same
+   * selection.
+   */
   const handleCopy = async () => {
     setError(null);
-    try {
-      await ExportService.copyToClipboard(baseOptions());
-      setStatus('Copied to clipboard');
-    } catch (e) {
-      setError(e instanceof Error ? e.message : 'Could not copy to the clipboard.');
-    }
+    const result = await ExportService.copy(format === 'svg' ? 'svg' : 'png', baseOptions());
+    if (result.ok) setStatus(format === 'svg' ? 'SVG copied' : 'Image copied');
+    else setError(result.message ?? 'Could not copy to the clipboard.');
   };
 
   const handleFile = async (file: File) => {
@@ -362,16 +444,28 @@ export const ExportModal: React.FC<Props> = ({ onClose, title }) => {
               <p className="export__hint">{spec.blurb}</p>
             </div>
 
-            {frameList.length > 0 && (
+            {/* Shown whenever there is more than one region to choose between,
+                which now includes a board with no frames but a selection on it.
+                Gated on `frameList.length` alone before, so the selection
+                option would have been unreachable on exactly the boards most
+                likely to want it. */}
+            {(frameList.length > 0 || !scope.wholeBoard) && (
               <label className="export__field">
                 <span className="export__label">Region</span>
                 <select className="export__select" value={target} onChange={(e) => setTarget(e.target.value)}>
                   <option value={WHOLE_DOCUMENT}>Whole canvas</option>
-                  <option value={EVERY_FRAME}>
-                    {format === 'pdf'
-                      ? `Every frame — ${frameList.length} pages, one document`
-                      : `Every frame — ${frameList.length} files`}
-                  </option>
+                  {!scope.wholeBoard && (
+                    <option value={SELECTION}>
+                      {scope.count === 1 ? 'Selection — 1 object' : `Selection — ${scope.count} objects`}
+                    </option>
+                  )}
+                  {frameList.length > 0 && (
+                    <option value={EVERY_FRAME}>
+                      {format === 'pdf'
+                        ? `Every frame — ${frameList.length} pages, one document`
+                        : `Every frame — ${frameList.length} files`}
+                    </option>
+                  )}
                   {frameList.map((f) => (
                     <option key={f.id} value={f.id}>
                       {f.label} — {Math.round(f.width)} × {Math.round(f.height)}
@@ -475,9 +569,9 @@ export const ExportModal: React.FC<Props> = ({ onClose, title }) => {
 
           <span className="export__spacer" />
 
-          {spec.raster && !isBatch && ExportService.canCopy && (
+          {(spec.raster || format === 'svg') && !isBatch && ExportService.canCopy && (
             <button type="button" className="export__ghost" onClick={handleCopy}>
-              <Copy size={15} /> Copy
+              <Copy size={15} /> {format === 'svg' ? 'Copy SVG' : 'Copy image'}
             </button>
           )}
           <button type="button" className="export__primary" onClick={handleExport} disabled={isExporting}>
