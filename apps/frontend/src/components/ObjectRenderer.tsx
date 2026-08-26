@@ -35,6 +35,7 @@ import { applyTextCase } from '../engine/model/textCase';
 import { liveTransformStore, useLiveTransform } from '../engine/model/liveTransformStore';
 import { connectorDragPatch, syncConnectedConnectors } from '../engine/model/connectorTargets';
 import { fitPathToBox } from '../engine/model/pathGeometry';
+import { duplicationSet, travelledEnough } from '../engine/interaction/altDuplicate';
 
 /**
  * Which character a click inside a text node landed on.
@@ -136,18 +137,6 @@ interface SiblingDragState {
  * so their origin ghost twins remain anchored and visible during drag gestures.
  */
 /**
- * How far an Alt-drag must travel before it duplicates.
- *
- * It was one pixel, which is inside the wobble of a click: holding Alt and
- * clicking an object -- a thing people do constantly, because Alt is also the
- * modifier for several other gestures -- left a copy sitting exactly on top of
- * the original, where the only evidence is the layers panel growing a row. Four
- * pixels is the same threshold the dock editor uses to tell a tap from a drag,
- * and it is well inside the distance anyone would call "I dragged it".
- */
-const ALT_DUPLICATE_SLOP = 4;
-
-/**
  * Duplicate a selection, offset by a drag.
  *
  * ## Why this goes through the clipboard rather than calling `createNode`
@@ -199,6 +188,29 @@ function duplicateAt(ids: readonly string[], dx: number, dy: number): void {
 
   if (newIds.length > 0) {
     window.dispatchEvent(new CustomEvent('requestSelectNodes', { detail: { ids: newIds } }));
+  }
+}
+
+/**
+ * The system's own "you are copying this" cursor, while the gesture will copy.
+ *
+ * The signal every desktop application uses for this, and it costs the canvas
+ * nothing: no extra chrome to draw, nothing to place, nothing that can end up
+ * on top of the artwork. It is set on the stage's container rather than the
+ * body so it disappears the moment the pointer leaves the canvas, and cleared
+ * to '' rather than 'default' so whatever the active tool had set comes back.
+ */
+function setDuplicateCursor(stage: Konva.Stage | null | undefined, on: boolean) {
+  const container = stage?.container();
+  if (!container) return;
+  if (on) {
+    if (container.dataset.cursorBeforeCopy === undefined) {
+      container.dataset.cursorBeforeCopy = container.style.cursor;
+    }
+    container.style.cursor = 'copy';
+  } else if (container.dataset.cursorBeforeCopy !== undefined) {
+    container.style.cursor = container.dataset.cursorBeforeCopy;
+    delete container.dataset.cursorBeforeCopy;
   }
 }
 
@@ -358,6 +370,17 @@ export const ObjectRenderer = React.memo(
         velocity.current = { x: 0, y: 0 };
         const isAlt = Boolean((e.evt as MouseEvent)?.altKey) && canDuplicate;
         altDragRef.current = isAlt;
+        /**
+         * Raise the twin here, not only on the first move.
+         *
+         * Holding Alt *before* pressing is how the gesture is normally started,
+         * and it was the one way that never showed anything: this handler set
+         * the flag, and the move handler's test is "Alt is down and the flag is
+         * not" -- already false. So the ghost appeared only if you began the
+         * drag first and reached for Alt afterwards.
+         */
+        if (isAlt) altDragState.set(duplicationSet(objId, isSelected, selectedIdsRef?.current));
+        setDuplicateCursor(e.target.getStage(), isAlt);
 
         const currentObj = useStore.getState().objects[objId];
         const halfW = currentObj ? currentObj.width / 2 : 0;
@@ -438,13 +461,11 @@ export const ObjectRenderer = React.memo(
           lastPos.current = { x: e.target.x(), y: e.target.y(), time: now };
         }
         const isAlt = Boolean((e.evt as MouseEvent)?.altKey) && canDuplicate;
-        if (isAlt && !altDragRef.current) {
-          altDragRef.current = true;
-          const selection = selectedIdsRef?.current;
-          altDragState.set(isSelected && selection && selection.length > 1 ? selection : [objId]);
-        } else if (!isAlt && altDragRef.current) {
-          altDragRef.current = false;
-          altDragState.clear();
+        if (isAlt !== altDragRef.current) {
+          altDragRef.current = isAlt;
+          if (isAlt) altDragState.set(duplicationSet(objId, isSelected, selectedIdsRef?.current));
+          else altDragState.clear();
+          setDuplicateCursor(e.target.getStage(), isAlt);
         }
 
         const currentObj = useStore.getState().objects[objId];
@@ -487,8 +508,8 @@ export const ObjectRenderer = React.memo(
         if (e.key === 'Alt' && canDuplicate) {
           if (shapeRef.current?.isDragging()) {
             altDragRef.current = true;
-            const selection = selectedIdsRef?.current;
-            altDragState.set(isSelected && selection && selection.length > 1 ? selection : [objId]);
+            altDragState.set(duplicationSet(objId, isSelected, selectedIdsRef?.current));
+            setDuplicateCursor(shapeRef.current.getStage(), true);
           }
         }
       };
@@ -497,6 +518,7 @@ export const ObjectRenderer = React.memo(
           if (shapeRef.current?.isDragging()) {
             altDragRef.current = false;
             altDragState.clear();
+            setDuplicateCursor(shapeRef.current.getStage(), false);
           }
         }
       };
@@ -526,12 +548,13 @@ export const ObjectRenderer = React.memo(
         const isAlt = Boolean((e.evt as MouseEvent)?.altKey || altDragRef.current) && canDuplicate;
         altDragRef.current = false;
         altDragState.clear();
+        setDuplicateCursor(e.target.getStage(), false);
 
         if (groupDragRef.current) {
           const dx = e.target.x() - groupDragRef.current.startX;
           const dy = e.target.y() - groupDragRef.current.startY;
 
-          if (isAlt && Math.hypot(dx, dy) > ALT_DUPLICATE_SLOP) {
+          if (isAlt && travelledEnough(dx, dy, cameraSystem.zoom)) {
             // Everything goes back where it was: an Alt-drag leaves the
             // originals untouched and hands you the copies.
             const stage = e.target.getStage();
@@ -603,7 +626,7 @@ export const ObjectRenderer = React.memo(
         const dx = nextX - (current?.x ?? 0);
         const dy = nextY - (current?.y ?? 0);
 
-        if (isAlt && current && Math.hypot(dx, dy) > ALT_DUPLICATE_SLOP) {
+        if (isAlt && current && travelledEnough(dx, dy, cameraSystem.zoom)) {
           // Back where it was; the copy is what moved.
           e.target.x(current.x + halfW);
           e.target.y(current.y + halfH);
@@ -827,34 +850,44 @@ export const ObjectRenderer = React.memo(
 
     return (
       <>
-        {/* Live Drag-Duplication Ghost: Origin Anchor Twin */}
+        {/*
+          The original, left standing where it was.
+
+          ## What this is, and what it was
+
+          An Alt-drag makes a copy: the original does not move. But the thing
+          Konva is dragging *is* the original -- it is put back at the drop and
+          the copy is created at the pointer -- so for the length of the gesture
+          there is nothing at the place the object came from. This draws it.
+
+          It was positioned at `x, y`: the **live** coordinates, which the drag
+          is updating sixty times a second. So the "origin anchor twin" was
+          pinned to the pointer, exactly on top of the object it was a twin of,
+          and the feature was invisible for as long as it has existed. It reads
+          from `node` -- the document, which an Alt-drag never changes.
+
+          Drawn solid, with no dashed box round it. It is not a ghost or a
+          preview; it is what the original will look like when the gesture ends,
+          which is exactly what it looked like before the gesture began.
+          Fading it, or ringing it in chrome, would say the original was in
+          question -- and the one promise of this gesture is that it is not.
+        */}
         {isAltDuplicating && (
           <Group
-            x={x + cx}
-            y={y + cy}
-            offsetX={cx}
-            offsetY={cy}
-            rotation={rotation}
+            x={node.x + node.width / 2}
+            y={node.y + node.height / 2}
+            offsetX={node.width / 2}
+            offsetY={node.height / 2}
+            rotation={node.rotation}
             scaleX={node.scaleX}
             scaleY={node.scaleY}
             skewX={node.skewX ? Math.tan((node.skewX * Math.PI) / 180) : 0}
             skewY={node.skewY ? Math.tan((node.skewY * Math.PI) / 180) : 0}
-            opacity={0.45}
+            opacity={node.opacity ?? 1}
             listening={false}
             name={EXPORT_CHROME}
           >
             <NodeContent node={node} isEditing={false} stageScale={stageScale} />
-            <Rect
-              x={-2}
-              y={-2}
-              width={node.width + 4}
-              height={node.height + 4}
-              stroke="#2563EB"
-              strokeWidth={1.5 / stageScale}
-              dash={[5 / stageScale, 4 / stageScale]}
-              listening={false}
-              name={EXPORT_CHROME}
-            />
           </Group>
         )}
 

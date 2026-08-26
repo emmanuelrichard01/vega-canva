@@ -1,4 +1,4 @@
-import React, { useEffect, useRef, useState } from 'react';
+import React, { useCallback, useEffect, useRef, useState } from 'react';
 import type Konva from 'konva';
 import { Group, Rect, Text, Transformer } from 'react-konva';
 import { applyNodePatches } from '../../engine/document';
@@ -98,55 +98,83 @@ export const SelectionTransformer: React.FC<Props> = ({ selectedIds, stageRef })
       .join('|')
   );
 
-  useEffect(() => {
+  /**
+   * True while the handles are driving, mirrored into a ref.
+   *
+   * The live subscription below runs outside React, so it cannot read the state
+   * variable without closing over a stale copy of it.
+   */
+  const transformingRef = useRef(false);
+
+  /**
+   * Put the proxy round whatever the selection is *right now*.
+   *
+   * ## Why it reads the live store as well as the document
+   *
+   * Dragging an object does not write to the document until the drop -- the
+   * frames in between go to `liveTransformStore`, which is the whole reason a
+   * sixty-frame drag is not sixty CRDT updates. The proxy was fitted from the
+   * document alone, so while the transformer was attached to the real Konva
+   * nodes the box followed the drag for free, and the moment it was attached to
+   * a proxy instead it stopped: the handles sat where the object *had* been and
+   * jumped to it on release.
+   *
+   * So the fit takes the live value where there is one and the stored value
+   * otherwise, which is the same rule every renderer on the canvas follows.
+   */
+  /**
+   * A single selected line is edited at its ends, not by its box.
+   *
+   * `LineEditor` takes over for that case, so the transformer must not also
+   * attach — two sets of handles on one object is ambiguous, and the box's
+   * handles are the ones that do the wrong thing. A line in a *multi* selection
+   * keeps the box, because moving several objects together is a box operation
+   * and there is no single pair of ends to offer.
+   *
+   * A connector is the same case and a worse one: its `width`/`height` are
+   * *derived* from whatever its two ends resolve to, so the eight handles were
+   * not just the wrong affordance, they were inert. A drag wrote a box the next
+   * render recomputed from the bindings and discarded, which made an arrow look
+   * adjustable and refuse to be adjusted. `ConnectorEditor` owns it.
+   *
+   * ## And why the widget holds a proxy at all
+   *
+   * Konva resizes by putting a scale on the node it is attached to, and a scale
+   * is exactly what a document object must not carry: it stretches glyphs,
+   * thickens strokes and swells corner radii. Undoing it each frame fights the
+   * widget, which computes the next frame *from* the scale it finds; leaving it
+   * alone is the distortion. There is no third option while the widget holds the
+   * real node — so it holds an invisible rectangle, which may scale as freely as
+   * Konva likes because nobody ever sees it.
+   */
+  const fitProxy = useCallback(() => {
     const tr = trRef.current;
-    const stage = stageRef.current;
-    if (!tr || !stage) return;
-
-    /**
-     * A single selected line is edited at its ends, not by its box.
-     *
-     * `LineEditor` takes over for that case, so the transformer must not also
-     * attach — two sets of handles on one object is ambiguous, and the box's
-     * handles are the ones that do the wrong thing. A line in a *multi*
-     * selection keeps the box, because moving several objects together is a
-     * box operation and there is no single pair of ends to offer.
-     */
-    const store = useStore.getState().objects;
-    const solo = selectedIds.length === 1 ? store[selectedIds[0]] : undefined;
-    /**
-     * A connector is the same case, and a worse one.
-     *
-     * Its `width`/`height` are *derived* from whatever its two ends resolve
-     * to, so the eight handles here were not just the wrong affordance — they
-     * were inert. A drag wrote a box that the next render recomputed from the
-     * bindings and discarded, which made an arrow look adjustable and refuse
-     * to be adjusted. `ConnectorEditor` owns it now.
-     */
-    const soloLine =
-      Boolean(solo) && (isLineLike(solo ?? { type: '' }) || solo!.type === 'connector');
-
-    /**
-     * The handles drive a proxy, never the objects themselves.
-     *
-     * Konva resizes by putting a scale on whatever it is attached to, and a
-     * scale is exactly what a document object must not carry: it stretches
-     * glyphs, thickens strokes and swells corner radii. Undoing that scale each
-     * frame fights the widget, because it computes the next frame *from* the
-     * scale it finds -- and leaving it alone is the distortion. There is no
-     * third option while the widget holds the real node.
-     *
-     * So it holds an invisible rectangle instead. The proxy may scale as freely
-     * as Konva likes, because nobody sees it, which is what lets the handles
-     * track the pointer exactly. `selectionTransform` turns the proxy's box back
-     * into a size for each object every frame, and the objects render at that
-     * size with `scaleX`/`scaleY` permanently 1.
-     */
     const proxy = proxyRef.current;
-    const boxes = selectedIds.map((id) => store[id]).filter(Boolean) as AnyNode[];
+    if (!tr || !proxy) return;
+
+    const store = useStore.getState().objects;
+    const boxes = selectedIds
+      .map((id) => {
+        const node = store[id];
+        if (!node) return null;
+        const live = liveTransformStore.get(id);
+        if (!live) return node;
+        return {
+          ...node,
+          x: live.x ?? node.x,
+          y: live.y ?? node.y,
+          width: live.width ?? node.width,
+          height: live.height ?? node.height,
+          rotation: live.rotation ?? node.rotation,
+        } as AnyNode;
+      })
+      .filter(Boolean) as AnyNode[];
+
+    const solo = boxes.length === 1 ? boxes[0] : undefined;
+    const soloLine = Boolean(solo) && (isLineLike(solo!) || solo!.type === 'connector');
     const bounds = soloLine ? null : selectionBox(boxes);
 
-    if (proxy && bounds) {
+    if (bounds) {
       // Positioned by its centre, so Konva turns it about its middle -- which
       // is what makes a selection rotate as one rigid thing.
       proxy.position({ x: bounds.x + bounds.width / 2, y: bounds.y + bounds.height / 2 });
@@ -158,9 +186,31 @@ export const SelectionTransformer: React.FC<Props> = ({ selectedIds, stageRef })
       proxy.rotation(boxes.length === 1 ? boxes[0].rotation || 0 : 0);
     }
 
-    tr.nodes(proxy && bounds ? [proxy] : []);
-    tr.update();
+    tr.nodes(bounds ? [proxy] : []);
+    tr.forceUpdate();
     tr.getLayer()?.batchDraw();
+  }, [selectedIds]);
+
+  /**
+   * Follow a drag, without a React render per frame.
+   *
+   * Straight to the Konva node from the store's own notification: re-rendering
+   * this component sixty times a second to move eight handles is the cost the
+   * live store exists to avoid. Skipped while the handles themselves are
+   * driving -- there the proxy is the *source* of the live values, and re-fitting
+   * it from them would be a feedback loop.
+   */
+  useEffect(() => liveTransformStore.subscribeGlobal(() => {
+    if (transformingRef.current) return;
+    fitProxy();
+  }), [fitProxy]);
+
+  useEffect(() => {
+    const tr = trRef.current;
+    const stage = stageRef.current;
+    if (!tr || !stage) return;
+
+    fitProxy();
 
     /**
      * Rotation-aware cursors on every handle.
@@ -192,7 +242,7 @@ export const SelectionTransformer: React.FC<Props> = ({ selectedIds, stageRef })
         node.off('mouseleave', leave);
       });
     };
-  }, [selectedIds, selectionGeometry, stageRef]);
+  }, [selectedIds, selectionGeometry, stageRef, fitProxy]);
 
 /**
  * `rotatePoint` and `computePinnedBox` stood here -- about a hundred and thirty
@@ -291,6 +341,7 @@ export const SelectionTransformer: React.FC<Props> = ({ selectedIds, stageRef })
 
   const handleTransformStart = () => {
     window.dispatchEvent(new CustomEvent('canvas-drag-start'));
+    transformingRef.current = true;
     setTransforming(true);
 
     const before = useStore.getState().objects;
@@ -472,6 +523,7 @@ export const SelectionTransformer: React.FC<Props> = ({ selectedIds, stageRef })
 
   const handleTransformEnd = () => {
     window.dispatchEvent(new CustomEvent('canvas-drag-end'));
+    transformingRef.current = false;
     setTransforming(false);
     setLiveBadge(null);
 

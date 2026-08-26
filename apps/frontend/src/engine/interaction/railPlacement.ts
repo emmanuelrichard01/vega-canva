@@ -179,18 +179,34 @@ const clamp = (v: number, lo: number, hi: number) => (hi < lo ? (lo + hi) / 2 : 
  * @param subject   the selection's screen rect, handles and all.
  * @param rail      how big the rail measures right now.
  * @param bounds    the free strip: inside the panels, under the top bar, above the dock.
- * @param standoff  clearance between the rail and the subject.
+ * @param standoff  clearance between the rail and the subject: one number, or
+ *                  one per side when the rail is not equally thick all round.
  * @param previous  the side the rail is on, if it is already somewhere.
  */
 export function placeRail(
   subject: Rect,
   rail: { width: number; height: number },
   bounds: Bounds,
-  standoff: number,
+  standoff: number | Record<RailSide, number>,
   previous?: RailSide
 ): RailPlacement {
-  const needV = rail.height + standoff;
-  const needH = rail.width + standoff;
+  /**
+   * The clearance is per side, because the rail is not equally thick all round.
+   *
+   * Its drop shadow falls *downward* — `0 12px 32px -12px`, and further in dark
+   * mode — so a rail sitting above an object reaches about twenty pixels past
+   * its own bottom edge, straight through the standoff and the handles and onto
+   * the artwork. Measuring the gap to the rail's box was measuring to the wrong
+   * edge: it is the shadow that lands on the object, and on a single line of
+   * text there is not enough object for it to miss.
+   */
+  const clearance: Record<RailSide, number> =
+    typeof standoff === 'number'
+      ? { top: standoff, bottom: standoff, left: standoff, right: standoff }
+      : standoff;
+
+  const needV = { top: rail.height + clearance.top, bottom: rail.height + clearance.bottom };
+  const needH = { left: rail.width + clearance.left, right: rail.width + clearance.right };
 
   const gap: Record<RailSide, number> = {
     top: subject.y - bounds.top,
@@ -211,11 +227,15 @@ export function placeRail(
    */
   const measured = rail.width > 0;
 
+  const need: Record<RailSide, number> = {
+    top: needV.top, bottom: needV.bottom, left: needH.left, right: needH.right,
+  };
+
   const fits: Record<RailSide, boolean> = {
-    top: gap.top >= needV,
-    bottom: gap.bottom >= needV,
-    left: measured && gap.left >= needH,
-    right: measured && gap.right >= needH,
+    top: gap.top >= need.top,
+    bottom: gap.bottom >= need.bottom,
+    left: measured && gap.left >= need.left,
+    right: measured && gap.right >= need.right,
   };
 
   const order: RailSide[] = ['top', 'bottom', 'right', 'left'];
@@ -233,7 +253,7 @@ export function placeRail(
     preferred && previous && preferred !== previous && fits[previous]
       // The rail is somewhere that still works. Only move it once the side it
       // would rather be on is comfortably clear, not merely clear.
-      && gap[preferred] < (preferred === 'top' || preferred === 'bottom' ? needV : needH) + HYSTERESIS
+      && gap[preferred] < need[preferred] + HYSTERESIS
       ? previous
       : preferred;
 
@@ -248,13 +268,13 @@ export function placeRail(
   if (clearSide) {
     switch (clearSide) {
       case 'top':
-        return { x: midX, y: subject.y - standoff, side: 'top', clear: true };
+        return { x: midX, y: subject.y - clearance.top, side: 'top', clear: true };
       case 'bottom':
-        return { x: midX, y: subject.y + subject.height + standoff, side: 'bottom', clear: true };
+        return { x: midX, y: subject.y + subject.height + clearance.bottom, side: 'bottom', clear: true };
       case 'right':
-        return { x: subject.x + subject.width + standoff, y: midY, side: 'right', clear: true };
+        return { x: subject.x + subject.width + clearance.right, y: midY, side: 'right', clear: true };
       default:
-        return { x: subject.x - standoff, y: midY, side: 'left', clear: true };
+        return { x: subject.x - clearance.left, y: midY, side: 'left', clear: true };
     }
   }
 

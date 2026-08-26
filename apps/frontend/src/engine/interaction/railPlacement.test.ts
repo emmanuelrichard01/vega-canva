@@ -174,6 +174,21 @@ describe('placeRail', () => {
     expect(placeRail(subject, RAIL, BOUNDS, STANDOFF, 'top').side).toBe('bottom');
   });
 
+  it('takes a different clearance on each side', () => {
+    /**
+     * The rail's shadow falls downward, so a rail above an object needs more
+     * room than one below it. One number for both put the smear on the artwork.
+     */
+    const perSide = { top: 30, bottom: 14, left: 18, right: 18 };
+    const subject = { x: 400, y: 300, width: 120, height: 90 };
+    expect(placeRail(subject, RAIL, BOUNDS, perSide).y).toBe(300 - 30);
+
+    // And a gap that would have fitted a symmetric standoff no longer fits above.
+    const tight = { x: 400, y: BOUNDS.top + 60, width: 120, height: 90 };
+    expect(placeRail(tight, RAIL, BOUNDS, 14).side).toBe('top');
+    expect(placeRail(tight, RAIL, BOUNDS, perSide).side).toBe('bottom');
+  });
+
   it('is stable: the same input gives the same answer', () => {
     const subject = { x: 400, y: 300, width: 120, height: 90 };
     expect(placeRail(subject, RAIL, BOUNDS, STANDOFF)).toEqual(

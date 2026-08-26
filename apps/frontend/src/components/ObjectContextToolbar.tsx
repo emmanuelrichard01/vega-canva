@@ -103,9 +103,23 @@ const SIDEBAR_WIDTH = 288;
 const BOTTOM_DOCK_HEIGHT = 76;
 const EDGE_MARGIN = 16;
 const TOP_BAR_HEIGHT = 48;
-/** Clearance between the rail and the selection it describes. */
-const STANDOFF = 14;
 const RAIL_HEIGHT = 40;
+
+/**
+ * Clearance between the rail and the selection it describes, per side.
+ *
+ * Not one number, because the rail is not equally thick all round.
+ * `--shadow-float` is `0 12px 32px -12px`, and `0 16px 32px -12px` in dark mode
+ * — a shadow that falls *downward*, reaching about twenty pixels past the
+ * rail's own bottom edge. A rail above an object therefore laid that smear
+ * straight through the standoff, over the handles and onto the artwork, and on
+ * a single line of text there is not enough object for it to miss. Measuring
+ * the gap to the rail's box was measuring to the wrong edge.
+ *
+ * Below and to the sides the rail casts almost nothing, so those keep the
+ * fourteen the surface was designed with.
+ */
+const STANDOFF = { top: 30, bottom: 14, left: 18, right: 18 };
 /**
  * How far the selection's chrome reaches past the object's own box.
  *
