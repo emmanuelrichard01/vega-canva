@@ -272,6 +272,33 @@ Each was learned from a real defect here and is documented at its source.
     read the live store with the document as the fallback, which is the rule
     every renderer already follows. The selection handles did not, and sat where
     the object had been until the drop.
+12. **A state that only its owner can revoke will eventually get stuck.** Six
+    components dispatch `canvas-drag-start` / `canvas-drag-end`, and one boolean
+    listened. Konva does not fire `dragend` for a node destroyed mid-drag, and
+    every handle that sends these events is conditionally rendered — so one
+    interrupted gesture hid the contextual rail *for the life of the page*. A
+    missing `end` is a shape, not a bug you can finish finding: there is always
+    one more path that skips it. Give the state something that can falsify it
+    from outside — `railVeil.settle` uses "the pointer came up and nothing is
+    being typed into", which is a fact about the world rather than a promise
+    from a sender. If you add a new begin/end pair, ask what clears it when the
+    sender dies.
+13. **The Konva stage is not the document.** It holds *less*, because the canvas
+    culls to the viewport — so a synchronous capture of a board wider than the
+    window produced an image of the right size with the off-screen half blank.
+    And it holds *more*, because it carries every object regardless of what the
+    export was scoped to — so a selection-scoped PNG contained the neighbours
+    the SVG of the same selection did not. Anything reading pixels off the stage
+    must declare what it needs mounted (`renderScope`), wait for the commit, and
+    hide what it does not want (`isolateObjects`). And mounting is not drawing:
+    an image node is an empty rectangle until it loads, which is why
+    `imagesReady` counts the document's images against the stage's.
+14. **A comment describing behaviour is not the behaviour.** `tintsAndShades`
+    said the colour sits "wherever its value places it" and had always placed it
+    dead centre. `frameExportBounds`, `autoHeight` and `SvgPaintDefs.markup()`
+    were all the same shape. When a docstring makes a claim about output, the
+    cheapest thing you can do is write the assertion it implies — that is how
+    this one was found, and it was one line.
 
 Konva specifics that have each cost a bug: `fillPriority` must be set on every
 branch (Konva leaves stale fill props in place, and React does not unset props
@@ -608,6 +635,35 @@ derivations of the text box), the band is one row on one centreline, the pin is
 a control that means something, `+3` shows the three, and the properties panel
 offers the eight papers instead of a full RGB picker it then snapped to eight.
 
+## 4a-vii. What this session added
+
+**Export and copy** — the whole area, and it was three bugs of the same family.
+`Copy as PNG` and `Copy as SVG` on one selection produced different pictures
+(the raster path framed to the selection and captured everything inside that
+frame); a whole-board PNG omitted whatever was off screen; and mounting the
+missing objects then exposed images that had not loaded yet. All three are
+invariant 13. Copy density now follows the subject instead of sitting at 2×,
+both copies report their four ordinary failures instead of silently doing
+nothing, SVG goes on the clipboard as vector as well as text, and a **selection
+can be exported** — right-click, Ctrl+Shift+E, or the dialog's Region list.
+`engine/export/exportScope.ts` decides what a copy covers *and* what to call it,
+so the label, the toast, the filename and the file cannot disagree.
+
+New modules, all pure and tested: `exportScope`, `isolate`, `renderScope`,
+`imagesReady`, `clipboard`, and `clipboardScale` in `rasterLimits`.
+
+**The rail stopped vanishing.** Two independent causes, one symptom, and the
+user's own clue was that it took a full page reload to recover — which rules out
+anything a re-render would fix. See invariant 12 for the stuck veil, and
+`ObjectContextToolbar`'s write guard for the other: the rail unmounts while
+veiled, and the replacement element has no transform, so hiding and showing it
+at the *same* coordinates was skipped as "no change" and left it at the origin.
+Editing a text object does exactly that.
+
+**The shades ramp.** Invariant 14: the docstring described behaviour the code
+never had, and the picker keyed swatches by colour so the duplicate steps at
+white and black collapsed rather than merely repeating.
+
 ## 4b. What the recent sessions changed
 
 Grouped by area. Everything here is committed; the reasoning is in the code
@@ -718,6 +774,17 @@ broken; all of it is unwatched.
   `#828282`).
 - **Two real browsers with two real mice** — still the check automation cannot
   stand in for.
+- **Everything the last two sessions built is unwatched.** The Chrome extension
+  did not connect on a single attempt across either of them. In priority order,
+  because these are the ones where a wrong answer is invisible from the code:
+  a selection-scoped **PNG next to the SVG of the same selection** (they must
+  contain the same objects — the whole point of `isolate.ts`); a **whole-board
+  PNG on a board larger than the window**, which is the `renderScope` fix and
+  the one most likely to still be wrong; an **export of a selection containing a
+  photograph**, for `imagesReady`; the **rail after a handle drag is interrupted
+  by a selection change**, and after **finishing a text edit without moving the
+  object** — the two ways it used to disappear; and the **shades row with
+  `#FFFFFF` and `#000000` picked**, which should now show nine distinct steps.
 
 ### 5a-ii. The walkthrough project (still what the user originally asked for)
 

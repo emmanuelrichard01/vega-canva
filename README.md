@@ -183,6 +183,37 @@ coordinates, omitting the stage's own origin — which is inset by the 28px rule
 Exactly 28px of surplus air above, and 28px of deficit below. Three named
 spaces; convert once, at a boundary you can point at.
 
+**Staying visible is a separate problem from being placed well**, and it had two
+causes with one symptom: the rail disappears, and only a page reload brings it
+back.
+
+A gesture hides the rail, because it anchors to committed bounds and nobody
+reaches for a toolbar mid-drag. That was a single boolean flipped by two `window`
+events dispatched from six places — object drags, the transformer, the line and
+connector handle editors, the corner-radius handle, and the text editor's mount
+and unmount. Six senders and one boolean means the rail stays hidden forever if
+any one of them sends a start without its end, and they can: **Konva does not
+fire `dragend` for a node destroyed mid-drag**, and every one of those handles is
+conditionally rendered, so a selection change during a handle drag ends the
+gesture with no event. A missing `end` is not a bug you can finish finding — it
+is a shape, and there is always one more path that skips it. So `railVeil` makes
+the state *falsifiable* rather than merely paired: a pointer release, with
+nothing being typed into, cannot have a gesture behind it. That is a fact about
+the world rather than a promise from a sender, and it cannot be forgotten by a
+component that unmounted.
+
+The second cause needs no missing event at all. The rail writes its position
+straight to the DOM each frame and skips the write when the rounded coordinate
+has not changed — but it unmounts whenever it is veiled, and **the replacement
+element has no transform of its own**. Hiding and showing it at the *same*
+coordinates was therefore skipped as "no change" and left it at the origin,
+translated off screen by its own centring. Editing a text object does exactly
+that: the veil goes up, the object does not move, and the rail comes back
+invisible. The guard now remembers which element it wrote to, so every mount
+writes its first frame whatever the arithmetic says — and the rAF loop books its
+next frame before doing the work, so one throw cannot end the only thing that
+brings the rail back.
+
 ### Performance
 
 Built around the assumption that the document is large and the viewport is small.
@@ -295,6 +326,58 @@ regardless of where the camera happens to be.
   Audio becomes a labelled placeholder; comment pins are excluded, as in Figma
   and Illustrator.
 - **JSON** — canonical node data plus comment threads.
+
+**A copy contains what the menu says it contains.** `Copy as PNG` and `Copy as
+SVG`, run on the same selection, used to produce different pictures. Both vector
+exporters filter the document by `selectedIds`; the raster path passed the same
+ids to `computeContentBounds` — so it *framed* to the selection — and then
+captured the live stage inside that frame, with everything else still on it. The
+SVG had the one sticky note; the PNG had the note, the frame behind it, and the
+corners of the two notes overlapping it. One request, two answers, and the only
+way to find out which you had was to open the file. `isolate.ts` hides everything
+outside the set for the length of the capture.
+
+The whole-board PNG had the same disagreement from the other end. **The canvas
+culls to the viewport**, and a capture reframes the stage imperatively, which
+gives React no chance to mount anything — so a board wider than the window
+exported at the right dimensions with the off-screen half blank, while its SVG
+had all of it. `renderScope` lets an export declare what it needs mounted and
+`Canvas` unions that in, which is the rule already there for the selection,
+generalised. Mounting is the asynchronous half and capturing stays the
+synchronous one, so the engine's own rAF loop still cannot re-apply the live
+camera mid-capture.
+
+That opens a quieter gap in turn: a freshly mounted image is an empty rectangle
+until it loads, which reads far more like a deliberate blank than a missing
+object does. `imagesReady` counts what the document says should be drawable
+against what the stage can draw — the only way to see the gap *before*
+`use-image` has produced an element to listen to — and waits, with a deadline,
+because a hung export button is less visible than a missing picture.
+
+**Density follows the subject.** A copy used to take the exporter's default of
+2×, which is right for exactly one subject size: a 180-unit sticky note arrived
+in a document as a 360px image, and a large board asked for 8000px and was
+silently clamped. `clipboardScale` holds the *result* steady instead, aiming the
+long edge at 1600px within a 1×–4× band, and still defers to `fitScale` for what
+the browser will actually render.
+
+**And a copy now reports.** Four ordinary failures — an insecure context, a
+browser with no `ClipboardItem`, a denied permission, a render that threw — used
+to close the menu having done nothing, so the next Ctrl+V produced whatever had
+been on the clipboard beforehand: a failure that surfaces somewhere else
+entirely, as the wrong thing in someone's document. SVG also goes on as vector
+*and* text rather than text alone, so pasting into Illustrator gives shapes
+rather than a paragraph beginning `<svg`.
+
+**Exporting a selection.** Six formats, four densities, a background and a live
+preview already worked on a subset of the document; there was no way to say
+"this" from the canvas. Right-click, Ctrl+Shift+E, or the dialog's own Region
+list. `exportScope` answers "what does this cover, and what is it called" once —
+for the menu label, the toast and the filename as well as for the file — so
+"Copy board as PNG" cannot appear over a copy of three objects. It expands a
+selected frame to its contents, the same reading `resolveExportTarget` already
+took for the per-frame option, and drops ids whose objects a collaborator has
+deleted.
 
 ### Collaboration surfaces
 
@@ -656,6 +739,33 @@ inside the canvas beneath both side panels and clips to its own bounds, so a
 thread near either edge rendered underneath a panel and could not be read or
 typed into. Pins stay in the overlay; only the focused surface floats.
 
+### Colour — `engine/model/colorRamp.ts`
+
+Every picker offered two things: a fixed set of swatches, and a saturation-value
+field. Between them sits the question people actually arrive with — *this
+colour, but lighter* — and neither answers it. A derived ramp does, and does it
+consistently: the third step of a blue and the third step of a red are the same
+distance from their parents, which is the difference between a palette and a
+pile. The ramp walks value and saturation together, because lightening by value
+alone runs to white through a chalky middle, and holds hue exactly, because a
+ramp that drifts hue is not a ramp of *this* colour.
+
+Where the colour sits in its own ramp is the part that was wrong. The docstring
+had always said "wherever its lightness puts it"; the code placed it dead
+centre, four tints above and four shades below, whatever colour it was — a
+declared behaviour nothing implemented. For most colours that is invisible.
+White has no room above it, so its four tints were four more whites, and the
+picker keyed its swatches by colour, so React collapsed the duplicates and the
+row visibly lost half its steps. Approaching either end compressed the same way
+a little more each time, which is what "starts to look broken" looks like.
+
+The base index now comes from **HSL lightness**, `v · (1 − s/2)` — value alone
+calls `#2563EB` light at 0.92, and it is plainly a mid-tone — and each half
+spreads across the room that actually exists on its side, so no two steps are
+the same at any input. The swatches are keyed by position, because a ramp is a
+list of slots and two slots holding one hex is a rendering question, not an
+identity one.
+
 ### Design system — `index.css`
 
 Two token layers, and only two: **primitives** (raw values, no meaning) and
@@ -723,6 +833,14 @@ perfect-freehand, polygon-clipping, fontkit, framer-motion, Vitest
 - **Groups are flat.** Members share a synthetic `parentId`; there is no
   enter-group editing and no nesting.
 - **PNG export omits audio players**, as noted above.
+- **A raster export mounts every object it needs**, so exporting a very large
+  board costs one React commit of the whole document before the capture and
+  gives it straight back. That is the price of the file containing the board
+  rather than the viewport; it is momentary, and `fitScale` caps the bitmap
+  regardless.
+- **An image that never loads is exported as a gap**, after a six-second wait.
+  Refusing the export over a dead `src` would be the worse trade: a missing
+  picture is visible in the file, and a button that never returns is not.
 - **Tests cover pure logic, CRDT behaviour and the physics simulation** (schema
   normalization, migration convergence, geometry, session timeline, camera zoom,
   cursor modes, remote-cursor colour/placement/smoothing, presence normalization

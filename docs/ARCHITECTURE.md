@@ -82,7 +82,7 @@ people in the room.
 | --- | --- | --- | --- |
 | Document | Yjs `objectsMap` | What the board *is*. Persisted, synced, undoable. | positions, text, reactions, `pinned` |
 | Awareness | Yjs awareness | What someone is *doing*, right now, that others should see. Ephemeral, never persisted. | cursors, selection outlines, in-flight physics bodies |
-| Transient | plain module stores under `engine/interaction/`, read with `useSyncExternalStore` | What *this* client is doing that nobody else needs to see. | crop mode, path editing, `liveTransformStore`, `booleanPreview` |
+| Transient | plain module stores under `engine/interaction/` and `engine/export/`, read with `useSyncExternalStore` | What *this* client is doing that nobody else needs to see. | crop mode, path editing, `liveTransformStore`, `booleanPreview`, `railVeil`, `renderScope` |
 
 The test is two questions. Would a second person want to see it? If no, it is
 transient. If yes — would you want it in the undo history and in the file a year
@@ -96,6 +96,26 @@ the gesture out of all three and publishes it to whoever needs it — which mean
 current geometry has to read the live store first. Which button you happen to be
 hovering (`booleanPreview`) fails the first question outright: written to the
 document it would flicker on everyone's screen and land in their undo stack.
+
+Two of those are worth a second look, because they are the tier's failure modes
+rather than its successes.
+
+`railVeil` holds "a gesture is in progress", which six components raise and
+lower through a pair of `window` events. Transient was the right tier; a plain
+boolean was not, because Konva does not fire `dragend` for a node destroyed
+mid-drag and a state only its owner can revoke will eventually get stuck — in
+this case hiding the contextual rail until the page was reloaded. Transient
+state that outlives the thing it describes needs something that can *falsify* it
+from outside, not merely a matching call. Here that is "the pointer came up and
+nothing is being typed into".
+
+`renderScope` is the tier used as a lever on the render tree: an export declares
+which objects it needs mounted regardless of culling, and releases when it has
+its pixels. It is reference-counted rather than last-writer-wins, because the
+export dialog's debounced preview and its Export button overlap routinely and
+the first to finish would otherwise un-mount the board out from under the
+second. Any transient store that more than one caller can hold at once has that
+problem; most of them cannot, which is why it is the only one counted.
 
 ## 5. Known bottlenecks and mitigations
 
