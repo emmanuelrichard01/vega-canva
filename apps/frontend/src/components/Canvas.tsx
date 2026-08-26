@@ -16,6 +16,8 @@ import { deletePickedAnchor, nudgePickedAnchors, selectAllAnchors } from '../eng
 import { pathEdit } from '../engine/interaction/pathEdit';
 import { booleanPreview } from '../engine/interaction/booleanPreview';
 import { mountedSet, renderScope } from '../engine/export/renderScope';
+import { lineEdit } from '../engine/interaction/lineEdit';
+import { deletePickedVertex } from '../engine/interaction/lineVertexActions';
 import { contourData } from '../engine/model/pathGeometry';
 import { RULER_SIZE, Rulers } from './canvas/Rulers';
 import { tickStep } from '../engine/interaction/rulerTicks';
@@ -289,6 +291,28 @@ export const Canvas: React.FC<CanvasProps> = ({ activeTool, selectedIds, setSele
     if (croppingId && !selectedIds.includes(croppingId)) cropMode.commit();
   }, [selectedIds, croppingId]);
 
+  /**
+   * And leaving the line ends its editor.
+   *
+   * Same rule as the crop above, and it covers the two ways out that are not a
+   * keypress: selecting something else, and the object being deleted by a
+   * collaborator. Without it the editor would keep drawing handles for a line
+   * nobody has selected — or, in the delete case, for a line that is gone.
+   */
+  const editingLineId = useSyncExternalStore(
+    lineEdit.subscribe,
+    lineEdit.getSnapshot,
+    lineEdit.getSnapshot
+  )?.nodeId ?? null;
+  useEffect(() => {
+    if (!editingLineId) return;
+    // Read at effect time rather than subscribed: this asks a question about
+    // the moment the selection changed, and depending on the whole object map
+    // would re-run it on every keystroke anyone in the room types.
+    const stillThere = Boolean(useStore.getState().objects[editingLineId]);
+    if (!selectedIds.includes(editingLineId) || !stillThere) lineEdit.end(editingLineId);
+  }, [selectedIds, editingLineId]);
+
   // Keyboard Shortcuts
   useEffect(() => {
     const handleKeyDown = (e: KeyboardEvent) => {
@@ -301,6 +325,52 @@ export const Canvas: React.FC<CanvasProps> = ({ activeTool, selectedIds, setSele
       // a dependency would re-register the listener on every replay frame.
       if (useStore.getState().isReplaying) return;
       if (selectedIds.length === 0) return;
+
+      /**
+       * The line editor takes the keys that mean something to it, first.
+       *
+       * All three of these already meant something on the canvas, and in the
+       * editor they mean the narrower thing — which is the rule every modal
+       * surface here follows. `Escape` leaves the editor rather than clearing
+       * the selection, so backing out of a mode does not also lose the object
+       * you were working on. `Delete` removes the picked *vertex* rather than
+       * the whole line, and falls through when there is no vertex picked or
+       * when the line is down to its last two, so the key never silently does
+       * nothing.
+       */
+      const editingLine = lineEdit.getSnapshot();
+      if (editingLine) {
+        const line = useStore.getState().objects[editingLine.nodeId] as ShapeNode | undefined;
+        if (e.key === 'Escape') {
+          e.preventDefault();
+          lineEdit.end();
+          return;
+        }
+        if ((e.key === 'Backspace' || e.key === 'Delete') && line) {
+          if (deletePickedVertex(line, editingLine.vertex)) {
+            e.preventDefault();
+            return;
+          }
+        }
+      }
+
+      /**
+       * Enter, or Ctrl/Cmd+Enter, opens a line for editing.
+       *
+       * Both, because both are in people's hands: Excalidraw uses
+       * Ctrl+Enter and plain Enter is what "open the selected thing" means
+       * nearly everywhere else. Only for a solo line-like selection — with two
+       * objects selected there is no single run to edit, and Enter has no other
+       * meaning there to displace.
+       */
+      if (e.key === 'Enter' && selectedIds.length === 1) {
+        const only = useStore.getState().objects[selectedIds[0]];
+        if (only && isLineLike(only) && !only.locked) {
+          e.preventDefault();
+          lineEdit.begin(only.id);
+          return;
+        }
+      }
 
       if (e.key === 'Escape') {
         setSelectedIds([]);

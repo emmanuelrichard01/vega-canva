@@ -6,8 +6,8 @@ import { useFillProps } from './useFillProps';
 import { AlignedStroke, BackdropBlur, InnerShadow } from './ShapeEffects';
 import { shapePath2D } from './shapePath2D';
 import { shapeToPath } from '../../../engine/model/shapeToPath';
-import { defaultEndAlign, linePoints } from '../../../engine/model/linePath';
-import { localRunEnds } from '../../../engine/model/lineEnds';
+import { defaultEndAlign } from '../../../engine/model/linePath';
+import { runPoints } from '../../../engine/model/lineEnds';
 import { terminateRun } from '../../../engine/model/connectorEnds';
 import { pathData } from '../../../engine/model/pathGeometry';
 import { roughShape } from '../../../engine/model/roughShape';
@@ -145,15 +145,12 @@ export const ShapeRenderer: React.FC<Props> = React.memo(({ node, showLabel }) =
    * Straight gives back exactly `[0, 0, w, h]`, so the ordinary line is
    * unchanged and everything below — the caps, the trim, the sketcher —
    * carries on working on a two-point list without knowing profiles exist.
+   *
+   * `runPoints` is also where a *multi-point* line resolves into the same flat
+   * list, bends sampled, so none of that machinery had to learn about vertices
+   * either. One reader, one shape — see `lineEnds.localVertices`.
    */
-  const runEnds = localRunEnds(node);
-  const profile = linePoints(
-    runEnds.a,
-    runEnds.b,
-    node.geometry.lineProfile,
-    node.geometry.lineWaves,
-    node.geometry.lineAmplitude
-  );
+  const profile = runPoints(node);
   const points = profile.flatMap((p) => [p.x, p.y]);
 
   /**

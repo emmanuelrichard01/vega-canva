@@ -6,7 +6,7 @@ import {
   AlignVerticalJustifyStart, AlignVerticalSpaceAround, Bold, BringToFront, Copy, Crop, Download,
   Droplet, FlipHorizontal, FlipVertical, Group, ImageIcon, Italic, List, ListOrdered, Layers, Lock, Menu, MessageSquare,
   MessageSquarePlus, Mic, Minus, PenLine, Pin, Scissors, SendToBack, SmilePlus,
-  SquaresExclude, SquaresIntersect, SquaresSubtract, SquaresUnite, Square, StickyNote,
+  SquaresExclude, SquaresIntersect, SquaresSubtract, SquaresUnite, Square, StickyNote, Spline,
   Strikethrough, Trash2, Type, Underline, Ungroup, Unlock, Sparkles,
 } from 'lucide-react';
 import { TEXT_PRESETS, isTextPresetActive } from './panel/textEffectPresets';
@@ -20,6 +20,10 @@ import { engineEvents } from '../engine/EventBus';
 import { cropMode } from '../engine/interaction/cropMode';
 import { pathEdit } from '../engine/interaction/pathEdit';
 import { railVeil } from '../engine/interaction/railVeil';
+import { lineEdit } from '../engine/interaction/lineEdit';
+import { hasBend, isMultiPoint } from '../engine/model/polyline';
+import { swapShapeKind } from '../engine/model/shapeSwap';
+import { requestEditOnMount } from '../engine/interaction/pendingEdit';
 import { textEditing } from '../engine/interaction/textEditing';
 import { Palette, Shuffle } from 'lucide-react';
 import { GridKindIcon } from './workspace/gridIcons';
@@ -520,6 +524,8 @@ export const ObjectContextToolbar: React.FC<Props> = ({ selectedId, selectedIds,
   const [showReactions, setShowReactions] = useState(false);
   const myAuthorId = localAuthorId();
   const cropping = useSyncExternalStore(cropMode.subscribe, cropMode.getSnapshot, cropMode.getSnapshot);
+  /** Which line, if any, is open for point editing — so the rail can say so. */
+  const lineSelection = useSyncExternalStore(lineEdit.subscribe, lineEdit.getSnapshot, lineEdit.getSnapshot);
   // So the button reads as pressed while the anchors are on screen, and can
   // close what it opened.
   const pathSelection = useSyncExternalStore(pathEdit.subscribe, pathEdit.getSnapshot, pathEdit.getSnapshot);
@@ -1238,6 +1244,13 @@ export const ObjectContextToolbar: React.FC<Props> = ({ selectedId, selectedIds,
   const openShape = node.type === 'shape' && isOpenShape(node.geometry.kind);
   const strokeWidth = appearance.stroke?.width ?? 0;
 
+  /** Whether this line's own points describe its shape, rather than a profile. */
+  const multiPointLine =
+    node.type === 'shape' &&
+    (isMultiPoint(node.geometry.vertices) || hasBend(node.geometry.bends));
+  /** Whether this line's point editor is open, so the button can close it. */
+  const editingLine = lineSelection?.nodeId === node.id;
+
   /**
    * Whether there is any type here to style.
    *
@@ -1381,7 +1394,20 @@ export const ObjectContextToolbar: React.FC<Props> = ({ selectedId, selectedIds,
                       in the inspector. Changing a coil from five loops to two
                       is something you do while looking at the line, and the
                       walk to the panel is what stops people doing it. */}
-                  {isOpenShape(node.geometry.kind) && (
+                  {/*
+                    A profile is defined along *one* run from A to B, and a line
+                    with corners has several — so the control is withdrawn for
+                    those rather than left to do nothing. Saying why is the
+                    point: an option that vanishes with no explanation reads as
+                    a bug, and the honest sentence is short.
+                  */}
+                  {isOpenShape(node.geometry.kind) && multiPointLine && (
+                    <p className="ctx-popover__note">
+                      A line with corners takes its shape from its points. Bend a
+                      segment with its curve handle instead.
+                    </p>
+                  )}
+                  {isOpenShape(node.geometry.kind) && !multiPointLine && (
                     <>
                       <span className="ctx-popover__label">Style</span>
                       <SegmentedControl
@@ -1414,8 +1440,11 @@ export const ObjectContextToolbar: React.FC<Props> = ({ selectedId, selectedIds,
                           aria-pressed={active}
                           aria-label={choice.label}
                           data-tooltip={choice.label}
+                          // See `swapShapeKind`: the new kind keeps only what it can
+                          // express, so a rectangle made from an arrow does not
+                          // quietly carry the arrow's endpoints and caps.
                           onClick={() => updateProp({
-                            geometry: { ...node.geometry, kind: choice.kind },
+                            geometry: swapShapeKind(node.geometry, choice.kind),
                           })}
                         >
                           {/* Under the object's own profile, so switching
@@ -1898,6 +1927,39 @@ export const ObjectContextToolbar: React.FC<Props> = ({ selectedId, selectedIds,
                 )}
               </RailPopover>
               <ColorPickerPopover color={typography.color} onChange={(color) => setTypography({ color })} />
+            </div>
+            <Divider />
+          </>
+        )}
+
+        {/* ------------------------------------------------------------- line */}
+        {node.type === 'shape' && isOpenShape(node.geometry.kind) && (
+          <>
+            <div className="ctx-group">
+              {/*
+                Editing the points is on double-click and on Ctrl+Enter, which
+                is the convention — and a gesture with no visible affordance is
+                a feature most people never find. The old tool made two-point
+                lines only, so nobody has any reason to suspect this one can do
+                more; a button is how they find out.
+              */}
+              <RailButton
+                label={editingLine ? 'Done editing points' : 'Edit points'}
+                hint={editingLine ? 'Done editing points (Esc)' : 'Edit points — add corners and curves (⏎)'}
+                pressed={editingLine}
+                onClick={() => (editingLine ? lineEdit.end(node.id) : lineEdit.begin(node.id))}
+              ><Spline size={16} /></RailButton>
+              {/*
+                A line's label used to be reachable only by double-clicking the
+                line — the gesture that now opens the point editor. It was a
+                poor home for it anyway: undiscoverable, and a label is an
+                annotation *on* a line rather than something inside it.
+              */}
+              <RailButton
+                label={node.text ? 'Edit label' : 'Add label'}
+                hint={node.text ? 'Edit label' : 'Add a label to this line'}
+                onClick={() => requestEditOnMount(node.id)}
+              ><Type size={15} /></RailButton>
             </div>
             <Divider />
           </>

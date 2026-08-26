@@ -44,6 +44,7 @@ import {
 } from '../model/schema';
 import { END_CAP_KINDS, MAX_END_SCALE, MIN_END_SCALE, type EndCapKind } from '../model/connectorEnds';
 import { FILL_STYLES, SKETCH_LEVELS } from '../model/rough';
+import { normalizeBends, normalizeVertices } from '../model/polyline';
 import { getColorForUser } from '../presence/ColorPalette';
 import { MATERIAL_IDS, type MaterialId } from '../../utils/behaviorSystem';
 
@@ -578,6 +579,30 @@ function normalizeShapeGeometry(raw: any): ShapeGeometry {
     if (a && b) {
       geometry.a = a;
       geometry.b = b;
+    }
+    /**
+     * The run of vertices, when the line has more than two.
+     *
+     * Validated here rather than trusted, because `geometry` is one
+     * last-write-wins value in the CRDT: a client that adds a vertex and one
+     * that removes another write whole objects, so a `bends` list of the wrong
+     * length for its `vertices` is reachable without either client doing
+     * anything wrong. `normalizeBends` pads or trims rather than throwing — the
+     * alternative to a slightly wrong curve is a line that does not render at
+     * all, on somebody else's screen, for a write they cannot see.
+     *
+     * A run of fewer than two points is dropped entirely, which falls back to
+     * `a`/`b` and then to the legacy box. Every form below this one is still a
+     * line; a one-point run is not.
+     */
+    const run = normalizeVertices(raw?.geometry?.vertices);
+    if (run) {
+      geometry.vertices = run;
+      const bends = normalizeBends(run.length, raw?.geometry?.bends);
+      // Stored only when it says something. An all-straight list is what the
+      // reader assumes anyway, and writing it would put a field on every
+      // multi-point line that nothing ever reads.
+      if (bends.some((bend) => bend !== null)) geometry.bends = bends;
     }
   }
 

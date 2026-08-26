@@ -798,6 +798,32 @@ export interface ShapeGeometry {
   a?: Point;
   b?: Point;
   /**
+   * A line's run of vertices, when it has more than two.
+   *
+   * Node-local, like `a`/`b`, and the **general form**: a two-point line keeps
+   * storing `a`/`b`, this supersedes them when present, and `localVertices` is
+   * the one reader that answers all three forms including the legacy box. Three
+   * spellings of "where does this line go" behind one reader is the arrangement
+   * that lets a line drawn before any of this existed still open; three
+   * spellings read in three places is the bug this model keeps finding.
+   *
+   * A **profile is a two-point feature** and this is why: a wave is defined
+   * along one run from A to B, and a run of vertices has several. See
+   * `polyline.ts` — the control is hidden for a multi-point line rather than
+   * ignored by the renderer.
+   */
+  vertices?: Point[];
+  /**
+   * How each segment bows, one slot per segment, `null` for straight.
+   *
+   * Stored in the **chord's own frame** — `u` along it, `v` across it, both as
+   * fractions of its length — so a bend survives its segment being moved,
+   * rotated, scaled or flipped. Absolute coordinates would leave the curve
+   * behind when either endpoint was dragged. Same reasoning as gradient stops
+   * being kept in unit space.
+   */
+  bends?: Array<{ u: number; v: number } | null>;
+  /**
    * Star only: inner radius as a fraction of the outer radius, clamped to
    * `MIN_STAR_RATIO`..`MAX_STAR_RATIO`. At 1 the points vanish and the shape
    * becomes a regular polygon of twice the point count, which is a legitimate

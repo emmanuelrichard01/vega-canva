@@ -39,6 +39,7 @@ export type AffordanceId =
   | 'routing'
   | 'ends'
   | 'line-profile'
+  | 'line-vertices'
   | 'corner-radius'
   | 'typography'
   | 'crop'
@@ -99,6 +100,16 @@ export interface SelectionFacts {
   shapeKinds: ReadonlySet<string>;
   /** Path kinds present. Freehand, pen and boolean paths afford different things. */
   pathKinds: ReadonlySet<string>;
+  /**
+   * At least one line in the selection has corners or curves of its own.
+   *
+   * Which changes what a line affords: a profile — wavy, zigzag, coil — is
+   * defined along *one* run from A to B, and a run of corners has several. See
+   * `model/polyline.ts` for why that is a real exclusion rather than an
+   * unfinished feature. Offering the control anyway and having the renderer
+   * ignore it is the failure this file was written to stop.
+   */
+  hasMultiPointLine: boolean;
   locked: boolean;
 }
 
@@ -124,6 +135,7 @@ export function selectionFacts(
   const pathKinds = new Set<string>();
   let hasUngrouped = false;
   let locked = nodes.length > 0;
+  let hasMultiPointLine = false;
 
   for (const n of nodes) {
     types.add(n.type);
@@ -132,6 +144,11 @@ export function selectionFacts(
     const kind = (n as { geometry?: { kind?: string } }).geometry?.kind;
     if (n.type === 'shape' && kind) shapeKinds.add(kind);
     if (n.type === 'path' && kind) pathKinds.add(kind);
+    if (n.type === 'shape' && (kind === 'line' || kind === 'arrow')) {
+      const geometry = (n as { geometry?: { vertices?: unknown[]; bends?: unknown[] } }).geometry;
+      if ((geometry?.vertices?.length ?? 0) > 2) hasMultiPointLine = true;
+      if (geometry?.bends?.some?.((bend) => bend != null)) hasMultiPointLine = true;
+    }
   }
 
   /**
@@ -154,6 +171,7 @@ export function selectionFacts(
     hasUngrouped,
     shapeKinds,
     pathKinds,
+    hasMultiPointLine,
     locked,
   };
 }
@@ -192,7 +210,27 @@ const RULES: readonly (Affordance & { when: (f: SelectionFacts) => boolean })[] 
     when: (f) =>
       f.uniformType === 'shape' &&
       f.shapeKinds.size > 0 &&
-      [...f.shapeKinds].every((k) => k === 'line' || k === 'arrow'),
+      [...f.shapeKinds].every((k) => k === 'line' || k === 'arrow') &&
+      // A run of corners takes its shape from its vertices and bends. See
+      // `hasMultiPointLine`.
+      !f.hasMultiPointLine,
+  },
+  {
+    /**
+     * The vertex editor, as a command rather than a gesture people have to know.
+     *
+     * Double-click and Ctrl+Enter both open it, and both are invisible. A line
+     * that can be reshaped and gives no sign of it is a line most people will
+     * redraw instead — which is what the old two-point tool trained everyone to
+     * do.
+     */
+    id: 'line-vertices', label: 'Edit points', weight: 96, surfaces: ['toolbar', 'menu'],
+    when: (f) =>
+      f.count === 1 &&
+      f.uniformType === 'shape' &&
+      [...f.shapeKinds].every((k) => k === 'line' || k === 'arrow') &&
+      f.shapeKinds.size > 0 &&
+      !f.locked,
   },
   {
     id: 'typography', label: 'Type', weight: 96, surfaces: ['toolbar', 'panel'],

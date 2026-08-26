@@ -28,6 +28,9 @@ import { ActivityFeed } from './components/ActivityFeed';
 import { PresenceEdgeMarkers } from './components/PresenceEdgeMarkers';
 import { FollowIndicator } from './components/FollowIndicator';
 import { ExportService, exportScope, scopeOptions } from './engine/export';
+import { lineEdit } from './engine/interaction/lineEdit';
+import { swapShapeKind } from './engine/model/shapeSwap';
+import { isLineLike } from './engine/model/lineEnds';
 import { isForceTool, type ForceId } from './engine/physics/forces';
 import { calculateLayout, animateToLayout, type LayoutMode } from './utils/spatialLayout';
 import { Mic, TriangleAlert } from 'lucide-react';
@@ -53,7 +56,7 @@ import {
 } from './engine/clipboard/clipboard';
 import { importSvg, looksLikeSvg } from './engine/clipboard/svgImport';
 import { createPastedTextNode } from './engine/clipboard/externalText';
-import { DEFAULT_TYPOGRAPHY, type AnyNode } from './engine/model/schema';
+import { DEFAULT_TYPOGRAPHY, type AnyNode, type ShapeGeometry, type ShapeKind } from './engine/model/schema';
 import { cameraSystem } from './engine/CameraSystem';
 import { useBreakpoint } from './hooks/useBreakpoint';
 import { CanvasEmptyState } from './components/CanvasEmptyState';
@@ -666,6 +669,17 @@ export default function Room() {
      */
     group: () => { if (selectedIds.length > 1) editor.groupNodes(selectedIds); },
     ungroup: () => { if (selectedIds.length > 0) editor.ungroupNodes(selectedIds); },
+    /**
+     * Open the selected line for point editing.
+     *
+     * The same entry point as double-click and Enter — three ways in, because
+     * the two gestures are invisible and this is the one place someone looking
+     * for the feature will actually look.
+     */
+    editLinePoints: () => {
+      const only = selectedIds.length === 1 ? diagramObjects[selectedIds[0]] : null;
+      if (only && isLineLike(only) && !only.locked) lineEdit.begin(only.id);
+    },
     'to-path': () => {
       if (selectedIds.length !== 1) return;
       const target = diagramObjects[selectedIds[0]];
@@ -745,11 +759,16 @@ export default function Room() {
             // Size, paint, position and rotation all survive: only the form
             // changes, which is what makes this a swap and not a redraw.
             changes: {
-              geometry: {
-                ...(n as unknown as { geometry: Record<string, unknown> }).geometry,
-                kind,
-                ...(points !== undefined ? { points } : {}),
-              },
+              // Through `swapShapeKind`, which says what the new kind keeps.
+              // Spreading the old geometry carried line-only fields onto a
+              // rectangle -- invisible, and waiting to reappear the next time
+              // the shape was swapped back. Shared with the rail's picker, so
+              // the two surfaces cannot disagree about what survives.
+              geometry: swapShapeKind(
+                (n as unknown as { geometry: ShapeGeometry }).geometry,
+                kind as ShapeKind,
+                points
+              ),
             },
           }))
       );

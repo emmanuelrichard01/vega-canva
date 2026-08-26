@@ -17,13 +17,44 @@
  * A latch inverts it. The tool sets the id before the node exists; the
  * renderer asks, once, during its first render. There is no window to miss
  * because the question is asked by the thing that was waiting to be asked.
+ *
+ * ## And a nudge, for the node that is already there
+ *
+ * The latch alone only serves nodes that are *about* to mount, which is why
+ * asking an existing object to open for editing had exactly one route: a
+ * double-click on the object itself. That is fine for a sticky and poor for a
+ * line, where double-click is now how you open the vertex editor and where a
+ * label was the one thing you could never find. So a mounted renderer can
+ * subscribe, and a caller that sets the latch for a node already on screen
+ * wakes it.
+ *
+ * The latch is still the mechanism; the subscription only says "look again".
+ * Making it an event instead would put the race back for the case the latch
+ * was written for.
  */
 
+type Listener = () => void;
+
 let pendingId: string | null = null;
+const listeners = new Set<Listener>();
 
 /** Ask for the node with this id to open in edit mode as soon as it mounts. */
 export function requestEditOnMount(id: string): void {
   pendingId = id;
+  listeners.forEach((fn) => fn());
+}
+
+/**
+ * Be told when a request is made, for a node that has already mounted.
+ *
+ * The listener still has to `consumePendingEdit` with its own id — being woken
+ * is not being chosen, and every mounted renderer is woken by every request.
+ */
+export function onPendingEdit(listener: Listener): () => void {
+  listeners.add(listener);
+  return () => {
+    listeners.delete(listener);
+  };
 }
 
 /**

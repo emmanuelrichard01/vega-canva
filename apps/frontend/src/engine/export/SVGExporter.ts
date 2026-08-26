@@ -12,8 +12,8 @@ import { assembleSvg } from './svgDocument';
 import { fetchBlob, inlineImageSources } from './inlineImages';
 import { pointsAttribute, regularPolygonPoints, shapeOutline, starPoints } from '../model/shapeOutline';
 import { shapeToPath } from '../model/shapeToPath';
-import { defaultEndAlign, linePoints } from '../model/linePath';
-import { localRunEnds } from '../model/lineEnds';
+import { defaultEndAlign } from '../model/linePath';
+import { runPoints } from '../model/lineEnds';
 import { endCapShape, terminateRun } from '../model/connectorEnds';
 import { pathData } from '../model/pathGeometry';
 import { contourData, translatePath } from '../model/pathGeometry';
@@ -383,16 +383,17 @@ function openShapeMarkup(node: ShapeNode): string {
    * still a `<line>` — the smaller, more readable markup, and what every
    * previously exported document contains.
    */
-  // The stored endpoints, in world space. `localRunEnds` answers the legacy
-  // box form too, so an old document exports exactly as it always did.
-  const ends = localRunEnds(node);
-  const run = linePoints(
-    { x: node.x + ends.a.x, y: node.y + ends.a.y },
-    { x: node.x + ends.b.x, y: node.y + ends.b.y },
-    node.geometry.lineProfile,
-    node.geometry.lineWaves,
-    node.geometry.lineAmplitude
-  );
+  /**
+   * The run in world space, from the one reader the canvas draws through.
+   *
+   * `runPoints` answers all three storage forms — a run of vertices with its
+   * bends, the two-point pair, and the legacy box — so a multi-point line
+   * exports as the shape on screen and an old document exports exactly as it
+   * always did. Building the run here from `a`/`b` instead is how the exporter
+   * came to draw a wrapped text node as one long line: a second derivation of
+   * something the renderer had already decided.
+   */
+  const run = runPoints(node).map((p) => ({ x: node.x + p.x, y: node.y + p.y }));
   /**
    * The heads, and the run pulled back under them.
    *

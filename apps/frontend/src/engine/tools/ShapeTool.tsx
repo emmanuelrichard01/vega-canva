@@ -6,7 +6,17 @@ import type { Tool, ToolContext } from './Tool';
 import type { ShapeGeometry } from '../model/schema';
 import { PRESET_GEOMETRY, type ShapePreset } from '../../components/workspace/shapePresetTypes';
 import { gridSnap } from '../interaction/gridSnap';
-import { constrainToAngle, lineNodeFromEndpoints } from '../model/lineEnds';
+import { constrainToAngle, lineNodeFromEndpoints, lineNodeFromVertices } from '../model/lineEnds';
+import {
+  addVertex,
+  beginSession,
+  commitPoints,
+  endsRun,
+  nextVertex,
+  previewPoints,
+  undoVertex,
+  type PolylineSession,
+} from './polylineSession';
 import { bindCandidates } from '../model/connectorTargets';
 import { snapLineEndpoint } from '../interaction/lineMagneticSnap';
 import * as React from 'react';
@@ -32,6 +42,26 @@ export class ShapeTool implements Tool {
    * result are the same shape.
    */
   private pending = false;
+  /**
+   * A run of corners being placed, click by click.
+   *
+   * ## Two gestures, and how the tool tells them apart
+   *
+   * A line can now be drawn either way, and neither needs a mode or a modifier
+   * because the pointer has already said which one it is: a **drag** is a press
+   * and a move, a **click** is a press and a release in the same place. Drag
+   * gives the two-point line — the common case, and the one this tool is
+   * fastest at. Click starts a run, and each further click adds a corner.
+   *
+   * The old gesture was click–move–click, always, committing on the second
+   * click. That is what this replaces: it made the two-point line cost two
+   * separate clicks, and it left no click free to mean "another corner".
+   */
+  private session: PolylineSession | null = null;
+  /** Where the pointer went down, so a click can be told from a drag. */
+  private pressX = 0;
+  private pressY = 0;
+  private pressed = false;
   /** The raw pointer anchor, before any modifier reinterprets it. */
   private startX = 0;
   private startY = 0;
@@ -188,25 +218,20 @@ export class ShapeTool implements Tool {
     this.alt = Boolean(e.evt?.altKey);
 
     if (this.isOpen()) {
-      if (!this.pending) {
-        // First click: anchor the start and begin following the pointer.
-        this.pending = true;
-        this.startX = pos.x;
-        this.startY = pos.y;
-        this.currentX = pos.x;
-        this.currentY = pos.y;
-        this.pushOverlay(ctx);
-        return;
-      }
-      // Second click ends it — unless it landed essentially on the first, which
-      // is a double-click rather than a line, and would otherwise commit a run
-      // of no length in an arbitrary direction.
+      // Nothing is decided on the way down: whether this is a drag or a click
+      // is not known until the pointer either moves or comes back up. The press
+      // is recorded so both answers are available when it does.
+      this.pressed = true;
+      this.pressX = pos.x;
+      this.pressY = pos.y;
       this.currentX = pos.x;
       this.currentY = pos.y;
-      const { width, height } = this.box();
-      if (Math.hypot(width, height) < MIN_DRAG) return;
-      this.pending = false;
-      this.commit(ctx);
+      if (!this.session) {
+        this.startX = pos.x;
+        this.startY = pos.y;
+        this.pending = true;
+      }
+      this.pushOverlay(ctx);
       return;
     }
 
@@ -229,17 +254,103 @@ export class ShapeTool implements Tool {
     this.currentY = pos.y;
     this.shift = Boolean(e.evt?.shiftKey);
     this.alt = Boolean(e.evt?.altKey);
+
+    /**
+     * The moment a press becomes a drag.
+     *
+     * Measured in **screen pixels** — invariant 9. In world units the same
+     * hand movement is a drag at 25% zoom and a click at 400%, so the tool
+     * would draw a two-point line or start a run depending on how far in the
+     * board happened to be. Only before the first vertex is placed: once a run
+     * has started, moving the pointer is aiming, not dragging.
+     */
+    if (this.isOpen() && this.pressed && !this.session && !this.isDragging) {
+      const zoom = ctx.camera?.zoom || 1;
+      const travelled = Math.hypot(pos.x - this.pressX, pos.y - this.pressY) * zoom;
+      if (travelled > MIN_DRAG) this.isDragging = true;
+    }
+
     this.pushOverlay(ctx);
   }
 
   onPointerUp(ctx: ToolContext) {
-    // A line is committed by its second *click*, not by releasing the first —
-    // otherwise letting go of the anchoring press would end the line instantly
-    // and the whole gesture would collapse back into a drag.
-    if (this.isOpen()) return;
+    if (this.isOpen()) {
+      const wasPressed = this.pressed;
+      this.pressed = false;
+      if (this.isDragging) {
+        // A drag: the two-point line, committed on release like every other
+        // shape. This is the gesture the tool did not have.
+        this.isDragging = false;
+        this.pending = false;
+        this.commit(ctx);
+        return;
+      }
+      if (!wasPressed) return;
+      this.click(ctx, { x: this.currentX, y: this.currentY });
+      return;
+    }
     if (!this.isDragging) return;
     this.isDragging = false;
     this.commit(ctx);
+  }
+
+  /**
+   * A click that did not turn into a drag: start a run, extend it, or end it.
+   *
+   * Ending by clicking the last vertex again is what makes a **double-click**
+   * finish the line without any special handling — the second click of one
+   * lands within the same few pixels as the first, which is exactly the test
+   * `endsRun` applies.
+   */
+  private click(ctx: ToolContext, pos: { x: number; y: number }) {
+    const zoom = ctx.camera?.zoom || 1;
+
+    if (!this.session) {
+      this.session = beginSession(this.snapVertex(pos));
+      this.pending = true;
+      this.pushOverlay(ctx);
+      return;
+    }
+    if (endsRun(this.session, pos, zoom)) {
+      this.finish(ctx);
+      return;
+    }
+    this.session = addVertex(this.session, this.snapVertex(nextVertex(this.session, pos, this.shift)));
+    this.pushOverlay(ctx);
+  }
+
+  /**
+   * A vertex, snapped to the grid if the grid is on.
+   *
+   * Grid only — **not** the magnetic binding to shape ports that the two-point
+   * drag applies. Binding means "this line runs from that box to this one", a
+   * statement about two ends; a corner in the middle of a route has no such
+   * meaning, and having a corner jump onto a nearby shape's edge while you are
+   * drawing past it is the opposite of helpful. See `endpoints`.
+   */
+  private snapVertex(p: { x: number; y: number }): { x: number; y: number } {
+    return gridSnap.shouldSnap() ? gridSnap.snapPoint(p.x, p.y) : { x: p.x, y: p.y };
+  }
+
+  /** End the run and store it — or drop it, if there is no line there. */
+  private finish(ctx: ToolContext) {
+    const session = this.session;
+    const zoom = ctx.camera?.zoom || 1;
+    this.session = null;
+    this.pending = false;
+    this.pressed = false;
+    if (!session) {
+      ctx.setOverlayState?.({ active: false });
+      return;
+    }
+    const points = commitPoints(session, zoom);
+    if (!points) {
+      // One click and a change of mind. Nothing to store, and inventing a
+      // default-length line in an arbitrary direction is worse than nothing.
+      ctx.setOverlayState?.({ active: false });
+      return;
+    }
+    this.commitRun(ctx, points);
   }
 
   /** Create the node the current gesture describes, and hand back to Select. */
@@ -279,9 +390,8 @@ export class ShapeTool implements Tool {
      * extent of the line and its markers.
      */
     const openGeometry = this.geometry();
-    const run = this.isOpen()
-      ? lineNodeFromEndpoints(this.endpoints().a, this.endpoints().b, openGeometry)
-      : null;
+    const ends = this.isOpen() ? this.endpoints() : null;
+    const run = ends ? lineNodeFromEndpoints(ends.a, ends.b, openGeometry) : null;
     if (run) {
       x = run.x;
       y = run.y;
@@ -311,11 +421,80 @@ export class ShapeTool implements Tool {
     window.dispatchEvent(new CustomEvent('legacy_tool_change', { detail: 'select' }));
   }
 
+  /**
+   * Store a run of vertices as a line.
+   *
+   * Shares nothing with `commit` above except `geometry()` and the appearance,
+   * because a run has no box to negotiate: `lineNodeFromVertices` derives the
+   * box from what the line draws, which is the same function `commit` reaches
+   * through `lineNodeFromEndpoints`. Two ways *in*, one derivation.
+   */
+  private commitRun(ctx: ToolContext, points: Array<{ x: number; y: number }>) {
+    ctx.setOverlayState?.({ active: false });
+
+    const geometry = this.geometry();
+    const run = lineNodeFromVertices(points, undefined, geometry);
+    const nodeId = nanoid();
+    ctx.editor.createNode({
+      id: nodeId,
+      type: 'shape',
+      x: run.x,
+      y: run.y,
+      width: run.width,
+      height: run.height,
+      geometry: run.geometry,
+      appearance: {
+        fill: [{ type: 'solid', color: ThemeService.getDefaultShapeFill(), opacity: 1 }],
+        stroke: { color: ThemeService.getDefaultStrokeColor(), width: 2 },
+        cornerRadius: 0,
+      },
+    });
+
+    ctx.editor.select(nodeId);
+    window.dispatchEvent(new CustomEvent('legacy_tool_change', { detail: 'select' }));
+  }
+
   onKeyDown(ctx: ToolContext, e: KeyboardEvent) {
+    if (this.session) {
+      /**
+       * Enter and Escape both **finish** the run.
+       *
+       * Which is what the user asked for and what Excalidraw does, and it
+       * differs from the pen tool on purpose — there, Escape discards. The
+       * difference is what is in progress. A half-drawn bezier has handles
+       * mid-drag and no meaning until it is closed off, so abandoning it is the
+       * likely intent; a run of placed corners is already a line, and every
+       * click that made it was deliberate. Throwing five of them away on the
+       * key people press to mean "I am done" would be the surprising reading.
+       *
+       * A run with only one point has nothing to finish, so `finish` drops it
+       * — which is the same key doing the same thing, seen from the other end.
+       */
+      if (e.key === 'Enter' || e.key === 'Escape') {
+        e.preventDefault();
+        this.finish(ctx);
+        return;
+      }
+      // Backspace takes the last corner back. A misplaced corner is the
+      // likeliest thing to happen while drawing one, and starting over is a
+      // punishment for a two-pixel slip.
+      if (e.key === 'Backspace' || e.key === 'Delete') {
+        e.preventDefault();
+        const undone = undoVertex(this.session);
+        if (undone === this.session) {
+          this.finish(ctx);
+          return;
+        }
+        this.session = undone;
+        this.pushOverlay(ctx);
+        return;
+      }
+    }
     // Escape cancels an in-progress drag, matching every other tool.
     if (e.key === 'Escape' && (this.isDragging || this.pending)) {
       this.isDragging = false;
       this.pending = false;
+      this.pressed = false;
       ctx.setOverlayState?.({ active: false });
       return;
     }
@@ -341,11 +520,42 @@ export class ShapeTool implements Tool {
     // A keyboard tool-switch mid-drag never fires onPointerUp, which would
     // otherwise leave the ghost size preview stuck on screen forever.
     this.isDragging = false;
-    ctx.setOverlayState?.({ active: false });
+    this.pressed = false;
+    /**
+     * A run in progress is **kept**, not dropped, when the tool goes away.
+     *
+     * Switching tools mid-run is how somebody reaches for the hand tool to pan
+     * to where the next corner goes — on a board wider than the window, that is
+     * the ordinary way to draw a long route. Discarding here would make the
+     * feature unusable at exactly the scale it is most for. `finish` is
+     * reachable from the keyboard, and re-selecting the line tool picks the run
+     * back up where it was left.
+     */
+    this.pending = Boolean(this.session);
+    ctx.setOverlayState?.(this.session ? { active: true, box: this.box(), kind: this.preset, run: this.runPreview() } : { active: false });
   }
 
   private pushOverlay(ctx: ToolContext) {
-    ctx.setOverlayState?.({ active: true, box: this.box(), kind: this.preset });
+    ctx.setOverlayState?.({
+      active: true,
+      box: this.box(),
+      kind: this.preset,
+      // Only for a run: the two-point gesture is drawn from `endpoints()` in
+      // `renderOverlay`, which also applies the magnetic snapping this does not.
+      run: this.runPreview(),
+    });
+  }
+
+  /**
+   * The run as it stands, pointer included, flattened for Konva.
+   *
+   * From `previewPoints`, which is what `commitPoints` reads — so the line that
+   * is drawn and the line that is stored come from one list and cannot differ.
+   */
+  private runPreview(): number[] | null {
+    if (!this.session) return null;
+    const pointer = nextVertex(this.session, { x: this.currentX, y: this.currentY }, this.shift);
+    return previewPoints(this.session, this.snapVertex(pointer)).flatMap((p) => [p.x, p.y]);
   }
 
   renderOverlay(ctx: ToolContext, overlayState: any) {
@@ -425,6 +635,41 @@ export class ShapeTool implements Tool {
      * the wrong preview rather than the gesture.
      */
     if (kind === 'line' || kind === 'arrow') {
+      /**
+       * A run in progress draws itself; a two-point gesture draws its ends.
+       *
+       * The run comes from `previewPoints`, the same list `commitPoints` reads,
+       * so what is on screen is what will be stored. The placed corners are
+       * marked so it is clear which points are committed and which one is still
+       * following the pointer — without that, a run reads as a rubber band and
+       * there is no sign that clicking again will add to it.
+       */
+      const run: number[] | null = overlayState.run ?? null;
+      if (run && run.length >= 4) {
+        const placed: React.ReactNode[] = [];
+        for (let i = 0; i + 1 < run.length - 2; i += 2) {
+          placed.push(
+            <Ellipse
+              key={i}
+              x={run[i]}
+              y={run[i + 1]}
+              radiusX={3 / zoom}
+              radiusY={3 / zoom}
+              fill="#FFFFFF"
+              stroke={stroke}
+              strokeWidth={1.5 / zoom}
+              listening={false}
+            />
+          );
+        }
+        return (
+          <Group listening={false}>
+            <Line points={run} stroke={stroke} strokeWidth={2 / zoom} lineCap="round" lineJoin="round" listening={false} />
+            {placed}
+          </Group>
+        );
+      }
+
       const ends = this.endpoints();
       return withReadout(
         <Line

@@ -6,7 +6,7 @@ import { EXPORT_CHROME } from '../../engine/export/chrome';
 import { useStore } from '../../hooks/useStore';
 import { cursorForAnchor } from '../../engine/interaction/resizeCursor';
 import { fitPathToBox } from '../../engine/model/pathGeometry';
-import { isLineLike } from '../../engine/model/lineEnds';
+import { fitLineToBox, isLineLike } from '../../engine/model/lineEnds';
 import { liveTransformStore } from '../../engine/model/liveTransformStore';
 import { syncConnectedConnectors } from '../../engine/model/connectorTargets';
 import { layoutText } from '../../engine/text/layout';
@@ -549,6 +549,23 @@ export const SelectionTransformer: React.FC<Props> = ({ selectedIds, stageRef })
       const pathMode: Record<string, unknown> = {};
       if (node.type === 'path') {
         const fitted = fitPathToBox(node.geometry, placed.width, placed.height);
+        if (fitted) pathMode.geometry = fitted;
+      }
+      /**
+       * A line stores its own shape too, and had been left out of this.
+       *
+       * The transformer stands down for a *solo* line — it is edited at its
+       * points instead — so nobody saw it. A line caught in a multi-object
+       * selection got a new box and kept its old endpoints: everything else in
+       * the selection grew and the line stayed exactly as long as it was,
+       * inside a bounding box that no longer described it.
+       */
+      if (isLineLike(node)) {
+        const fitted = fitLineToBox(
+          (node as { geometry: import('../../engine/model/schema').ShapeGeometry }).geometry,
+          { width: node.width, height: node.height },
+          { width: placed.width, height: placed.height }
+        );
         if (fitted) pathMode.geometry = fitted;
       }
 

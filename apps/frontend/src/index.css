@@ -4342,6 +4342,20 @@ textarea:focus-visible {
   color: var(--text-tertiary);
 }
 
+/* Why a control that used to be here is not.
+ *
+ * Sentence case, not the uppercase of a section label -- this is a remark, and
+ * setting it like a heading would make the popover look as though it had two
+ * sections where it has one and an explanation. Kept narrow so it wraps into a
+ * short paragraph rather than widening the rail. */
+.ctx-popover__note {
+  margin: 0;
+  max-width: 22ch;
+  font-size: var(--text-2xs);
+  line-height: 1.45;
+  color: var(--text-tertiary);
+}
+
 /* ---------------------------------------------------------- sticky palette */
 
 /* The trigger is the note's own paper, so the button shows the current answer

@@ -272,3 +272,57 @@ describe('surface declarations', () => {
     }
   });
 });
+
+describe('a line with corners of its own', () => {
+  const straight = shape('line');
+  const cornered = shape('line', { geometry: { kind: 'line', vertices: [{ x: 0, y: 0 }, { x: 5, y: 0 }, { x: 5, y: 5 }] } });
+  const bent = shape('line', { geometry: { kind: 'line', bends: [{ u: 0.5, v: 0.3 }] } });
+
+  it('offers the profile for a plain two-point line', () => {
+    expect(ids([straight])).toContain('line-profile');
+  });
+
+  it('withdraws the profile once the line has corners', () => {
+    /**
+     * A wave is defined along *one* run from A to B, and a run of corners has
+     * several -- so the renderer cannot honour a profile there. Leaving the
+     * control on screen to do nothing is the exact failure this file exists to
+     * prevent.
+     */
+    expect(ids([cornered])).not.toContain('line-profile');
+  });
+
+  it('withdraws it for a two-point line that has been bent', () => {
+    // Still two points, still not a straight run. The vertex count alone is
+    // not the question.
+    expect(ids([bent])).not.toContain('line-profile');
+  });
+
+  it('withdraws it for a mixed selection containing one', () => {
+    // The control writes to every selected line, so one line that cannot
+    // honour it is enough to make the control dishonest.
+    expect(ids([straight, cornered])).not.toContain('line-profile');
+  });
+
+  it('still offers end caps, which a run of corners does have', () => {
+    // A cap terminates the run; how many corners it turned on the way does not
+    // come into it.
+    expect(ids([cornered])).toContain('ends');
+  });
+
+  it('offers the point editor for one unlocked line', () => {
+    // Double-click and Enter both open it, and both are invisible.
+    expect(ids([straight], 'toolbar')).toContain('line-vertices');
+    expect(ids([straight], 'menu')).toContain('line-vertices');
+  });
+
+  it('does not offer it for two lines, or for a locked one', () => {
+    // There is no single run to edit, and a locked line is not editable at all.
+    expect(ids([straight, cornered])).not.toContain('line-vertices');
+    expect(ids([shape('line', { locked: true })])).not.toContain('line-vertices');
+  });
+
+  it('does not offer it for a closed shape', () => {
+    expect(ids([shape('rect')])).not.toContain('line-vertices');
+  });
+});

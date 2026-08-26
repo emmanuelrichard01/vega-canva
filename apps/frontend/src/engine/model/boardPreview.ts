@@ -1,6 +1,5 @@
 import type { AnyNode } from './schema';
-import { linePoints } from './linePath';
-import { localRunEnds } from './lineEnds';
+import { runPoints } from './lineEnds';
 
 /**
  * How many points of a line's run a summary keeps.
@@ -303,19 +302,13 @@ export function buildPreview(
          * profile. A board of loops had a thumbnail of plain rules, which is a
          * confidently wrong picture rather than a simplified one.
          *
-         * Through `linePoints`, so the card and the canvas draw from one
-         * description. The point list is normalised into the same 0..1 space
+         * Through `runPoints`, so the card and the canvas draw from one
+         * description -- a multi-point line included, which would otherwise
+         * appear on the card as a rule between its first and last corner. The point list is normalised into the same 0..1 space
          * `x`/`y` use, reusing the `l` polyline field connectors already added
          * for exactly this reason.
          */
-        const ends = localRunEnds(n);
-        const run = linePoints(
-          { x: n.x + ends.a.x, y: n.y + ends.a.y },
-          { x: n.x + ends.b.x, y: n.y + ends.b.y },
-          geo.lineProfile,
-          geo.lineWaves,
-          geo.lineAmplitude
-        );
+        const run = runPoints(n).map((p) => ({ x: n.x + p.x, y: n.y + p.y }));
         if (run.length >= 2) {
           /**
            * Sampled down before it is stored.

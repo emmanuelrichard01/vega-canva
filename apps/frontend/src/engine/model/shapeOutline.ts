@@ -31,8 +31,7 @@
 import type { BezierGeometry, Point, ShapeNode } from './schema';
 import { fromAnchors, type Anchor } from './pathGeometry';
 import { roundPathCorners } from './roundCorners';
-import { linePoints } from './linePath';
-import { localRunEnds } from './lineEnds';
+import { runPoints } from './lineEnds';
 
 export function regularPolygonPoints(
   cx: number,
@@ -208,11 +207,10 @@ export function shapeOutline(node: Pick<ShapeNode, 'geometry' | 'width' | 'heigh
     // Between the *stored* endpoints, which for a legacy line are still the
     // box corners — `localRunEnds` answers both forms, so nothing here has to
     // know which one it is looking at.
-    const ends = localRunEnds(node);
-    return {
-      kind: 'open',
-      points: linePoints(ends.a, ends.b, node.geometry.lineProfile, node.geometry.lineWaves, node.geometry.lineAmplitude),
-    };
+    // `runPoints` answers every storage form -- a run of vertices with bends,
+    // the two-point pair, and the legacy box -- so the marquee, the hit test
+    // and the exporter frame the shape that is actually drawn.
+    return { kind: 'open', points: runPoints(node) };
   }
 
   const points = regularPolygonPoints(cx, cy, node.geometry.points ?? 3, w / 2, h / 2);

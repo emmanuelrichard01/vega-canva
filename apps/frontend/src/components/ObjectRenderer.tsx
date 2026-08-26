@@ -4,9 +4,11 @@ import Konva from 'konva';
 import { applyGroupPlan, applyNodePatches, deleteNode, doc, localAuthorId, toggleReaction, updateNode } from '../engine/document';
 import { editor } from '../engine/api/EditorAPI';
 import { pasteNodes, writeClipboard } from '../engine/clipboard/clipboard';
-import { consumePendingEdit, requestCaretOnMount } from '../engine/interaction/pendingEdit';
+import { consumePendingEdit, onPendingEdit, requestCaretOnMount } from '../engine/interaction/pendingEdit';
 import { cropMode } from '../engine/interaction/cropMode';
 import { pathEdit } from '../engine/interaction/pathEdit';
+import { lineEdit } from '../engine/interaction/lineEdit';
+import { fitLineToBox, isLineLike } from '../engine/model/lineEnds';
 import { EXPORT_CHROME } from '../engine/export/chrome';
 import { OBJECT_NODE } from '../engine/export/isolate';
 import { moveFrameWithChildren, reassignFrame } from '../engine/interaction/frameMembership';
@@ -307,6 +309,19 @@ export const ObjectRenderer = React.memo(
     // through. See `engine/interaction/pendingEdit.ts`.
     const [isEditing, setIsEditing] = useState(() => consumePendingEdit(objId));
     const [isHovered, setIsHovered] = useState(false);
+
+    /**
+     * And the same claim again, for a request aimed at a node already on screen.
+     *
+     * The mount-time claim serves a node being created. A rail button asking an
+     * existing object to open for editing has nothing to hook into — which is
+     * why a line's label used to be reachable only by double-clicking the line,
+     * the gesture that now opens its vertex editor. Every mounted renderer is
+     * woken; `consumePendingEdit` is what picks one.
+     */
+    useEffect(() => onPendingEdit(() => {
+      if (consumePendingEdit(objId)) setIsEditing(true);
+    }), [objId]);
 
     // Layer blur, and the Konva cache it requires. The dependency list is
     // everything the cached bitmap depends on: the object's size, and the
@@ -691,6 +706,20 @@ export const ObjectRenderer = React.memo(
     const handleDblClick = useCallback((e?: Konva.KonvaEventObject<MouseEvent | TouchEvent>) => {
       if (!node) return;
       if (!isSelected) onSelect(objId);
+      /**
+       * The inside of a line is its vertices.
+       *
+       * Double-click already meant "go inside this object" — the editor for
+       * text, the framing for an image, the anchors for a path — and a line's
+       * vertices are the same answer for the same question. It used to open the
+       * line's *label*, which was the only way to reach one; that moved to the
+       * contextual rail, which is where it should have been, since a label is
+       * an annotation on a line rather than something inside it.
+       */
+      if (isLineLike(node)) {
+        lineEdit.begin(objId);
+        return;
+      }
       if (hasText(node)) {
         /**
          * The caret lands where you clicked.
@@ -846,6 +875,18 @@ export const ObjectRenderer = React.memo(
       if (liveNode.type === 'path') {
         const fitted = fitPathToBox(liveNode.geometry, width, height);
         if (fitted) liveNode = { ...liveNode, geometry: fitted };
+      }
+      // The same refit the commit does — see `SelectionTransformer`. Without
+      // it a line in a multi-object resize sits still through the whole drag
+      // and then jumps into place on release, which reads as a glitch rather
+      // than as the correction it is.
+      if (liveNode.type === 'shape' && isLineLike(liveNode)) {
+        const fitted = fitLineToBox(
+          liveNode.geometry,
+          { width: node.width, height: node.height },
+          { width, height }
+        );
+        if (fitted) liveNode = { ...liveNode, geometry: fitted } as AnyNode;
       }
     }
 
