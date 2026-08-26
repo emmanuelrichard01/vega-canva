@@ -31,7 +31,8 @@ import {
   setMultiplePathsAnchorMode,
   setPickedAnchorMode,
 } from '../engine/interaction/pathAnchorActions';
-import { applyBoolean, canVectorize, flattenToPath, outlineStrokeOf } from '../engine/document/vectorOps';
+import { applyBoolean, booleanPlans as plansFor, canVectorize, flattenToPath, outlineStrokeOf } from '../engine/document/vectorOps';
+import { booleanPreview } from '../engine/interaction/booleanPreview';
 import { BOOLEAN_OPS, type BooleanOp } from '../engine/model/pathBoolean';
 import { deleteNodesWithFrames } from '../engine/interaction/frameMembership';
 import { editor } from '../engine/api/EditorAPI';
@@ -373,7 +374,15 @@ const RailButton: React.FC<{
   disabled?: boolean;
   danger?: boolean;
   hint?: string;
-}> = ({ label, onClick, children, pressed, disabled, danger, hint }) => (
+  /**
+   * Pointer or keyboard focus entering and leaving.
+   *
+   * Focus counts, not just hover: a preview only a mouse can see is a preview
+   * half the people using this cannot. `disabled` buttons take neither, which
+   * is correct — there is nothing to show for an operation that will not run.
+   */
+  onHover?: (over: boolean) => void;
+}> = ({ label, onClick, children, pressed, disabled, danger, hint, onHover }) => (
   <button
     type="button"
     className={`ctx-btn${danger ? ' ctx-btn--danger' : ''}`}
@@ -382,6 +391,10 @@ const RailButton: React.FC<{
     aria-pressed={pressed}
     disabled={disabled}
     onClick={onClick}
+    onPointerEnter={onHover ? () => onHover(true) : undefined}
+    onPointerLeave={onHover ? () => onHover(false) : undefined}
+    onFocus={onHover ? () => onHover(true) : undefined}
+    onBlur={onHover ? () => onHover(false) : undefined}
   >
     {children}
   </button>
@@ -673,6 +686,17 @@ export const ObjectContextToolbar: React.FC<Props> = ({ selectedId, selectedIds,
 
   useEffect(() => { setShowReactions(false); }, [activeId, isBulk]);
 
+  /**
+   * Take the combine ghost away when the rail stops being the rail it was.
+   *
+   * `pointerleave` cannot be relied on to clear it: pressing a shortcut that
+   * changes the selection, or dismissing the rail, unmounts the button under
+   * the pointer without it ever firing — and a stranded blue outline of a shape
+   * that is no longer being considered is worse than no preview at all.
+   */
+  useEffect(() => () => booleanPreview.set(null), []);
+  useEffect(() => { booleanPreview.set(null); }, [activeId, isBulk, selectedIds]);
+
   if ((!activeId && !isBulk) || !isVisible) return null;
 
   // ---------------------------------------------------------------- union rail
@@ -705,6 +729,20 @@ export const ObjectContextToolbar: React.FC<Props> = ({ selectedId, selectedIds,
     /** The grid this selection names, when it names exactly one. */
     const gridGroup = gridNodeOf(bulkNodes)?.id ?? null;
     const bulkAffords = (id: AffordanceId) => bulkOffers.has(id);
+
+    /**
+     * What each of the four combines would produce for this selection.
+     *
+     * Worked out once, because the same answer drives three things: whether the
+     * button is live, the sentence it gives when it is not, and the outline
+     * drawn on the canvas while the pointer is on it. Computing the result in
+     * order to decide whether to offer the result is not waste -- it is the only
+     * honest way to know whether "intersect" has anything to intersect.
+     *
+     * Memoised inside `booleanPlans` rather than with a hook: this block sits
+     * behind `if (isBulk)`, so a `useMemo` here would be a conditional hook.
+     */
+    const booleanPlans = plansFor(bulkIds);
 
     /**
      * Six predicates used to live here, each one a second copy of a question
@@ -908,15 +946,38 @@ export const ObjectContextToolbar: React.FC<Props> = ({ selectedId, selectedIds,
             ) : (
               <RailButton label="Group" hint="Group (Cmd+G)" onClick={() => editor.groupNodes(bulkIds)}><Group size={16} /></RailButton>
             )}
-            {bulkAffords('boolean') && BOOLEAN_OPS.map((op) => (
-              <RailButton
-                key={op}
-                label={BOOLEAN_BUTTONS[op].label}
-                onClick={() => { const id = applyBoolean(op, bulkIds); if (id) editor.select(id); }}
-              >
-                {BOOLEAN_BUTTONS[op].icon}
-              </RailButton>
-            ))}
+            {bulkAffords('boolean') && BOOLEAN_OPS.map((op) => {
+              const plan = booleanPlans[op];
+              const blocked = 'refusal' in plan;
+              return (
+                <RailButton
+                  key={op}
+                  label={BOOLEAN_BUTTONS[op].label}
+                  /**
+                   * Off when it would do nothing, and saying why.
+                   *
+                   * All four used to be live all the time, and every failure
+                   * looked the same from outside: the click ran, the operation
+                   * returned nothing, the caller's `if (id)` quietly did not
+                   * fire. Two shapes that do not touch, a locked object in the
+                   * selection and geometry the clipper could not resolve were
+                   * indistinguishable, which is to say the button was broken.
+                   */
+                  disabled={blocked}
+                  hint={blocked ? plan.refusal : BOOLEAN_BUTTONS[op].label}
+                  // Hovering draws the answer over the objects it would replace,
+                  // from the geometry this same button will commit.
+                  onHover={(over) => booleanPreview.set(over && !blocked ? plan.geometry : null)}
+                  onClick={() => {
+                    booleanPreview.set(null);
+                    const id = applyBoolean(op, bulkIds);
+                    if (id) editor.select(id);
+                  }}
+                >
+                  {BOOLEAN_BUTTONS[op].icon}
+                </RailButton>
+              );
+            })}
           </div>
           <Divider />
 

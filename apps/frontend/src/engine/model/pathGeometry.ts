@@ -601,6 +601,49 @@ export function setAnchorMode(geo: BezierGeometry, index: number, mode: 'corner'
  * other way to keep it where it was drawn. `reframe` is the second half of
  * that pair.
  */
+/**
+ * Every point of a path through one function: anchors and control points alike.
+ *
+ * ## Why control points go through the same map
+ *
+ * A cubic is *affine-invariant*: transforming its four control points and
+ * drawing the curve through them gives exactly the curve you would get by
+ * transforming every point along the original. So a rotate, a scale, a shear or
+ * any combination of them is applied here, to four numbers per segment, and is
+ * exact — no flattening, no tolerance, no resampling.
+ *
+ * That is what lets a boolean operate on a rotated object at all. Refusing them
+ * — which is what the vector operations used to do — was never about the maths
+ * being hard; it was that nothing here could express the transform.
+ *
+ * The mapper must be affine. A perspective or a bend would move the curve
+ * *between* its control points, and transforming the four would silently give
+ * the wrong shape rather than an error.
+ */
+export function mapPath<T extends ContourGeometry>(geo: T, fn: (p: Point) => Point): T {
+  if (geo.kind === 'compound') {
+    return { ...geo, subpaths: geo.subpaths.map((s) => mapPath(s, fn)) } as T;
+  }
+  return {
+    ...geo,
+    segments: geo.segments.map((s) => {
+      const a = fn({ x: s.x, y: s.y });
+      const seg: BezierSegment = { x: a.x, y: a.y };
+      if (s.cp1x !== undefined) {
+        const c = fn({ x: s.cp1x, y: s.cp1y ?? 0 });
+        seg.cp1x = c.x;
+        seg.cp1y = c.y;
+      }
+      if (s.cp2x !== undefined) {
+        const c = fn({ x: s.cp2x, y: s.cp2y ?? 0 });
+        seg.cp2x = c.x;
+        seg.cp2y = c.y;
+      }
+      return seg;
+    }),
+  } as T;
+}
+
 export function translatePath<T extends ContourGeometry>(geo: T, dx: number, dy: number): T {
   if (dx === 0 && dy === 0) return geo;
   if (geo.kind === 'compound') {

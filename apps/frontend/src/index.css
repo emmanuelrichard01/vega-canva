@@ -4280,6 +4280,14 @@ textarea:focus-visible {
   cursor: default;
 }
 
+/* A disabled button still has to be *pointable*, or the sentence explaining why
+   it is off can never be read: `pointer-events: none` on a disabled control is
+   the usual reflex and it takes the tooltip with it. `cursor: default` above
+   already says the press will not land. */
+.ctx-btn:disabled[data-tooltip] {
+  pointer-events: auto;
+}
+
 .ctx-btn--danger:hover:not(:disabled) {
   background: color-mix(in srgb, var(--status-danger) 14%, transparent);
   color: var(--status-danger);

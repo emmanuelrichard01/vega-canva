@@ -1,6 +1,6 @@
 import { usePhysics } from '../hooks/usePhysics';
 import React, { useRef, useState, useEffect, useCallback, useMemo, useSyncExternalStore } from "react";
-import { Stage, Layer, Circle, Group } from "react-konva";
+import { Stage, Layer, Circle, Group, Path } from "react-konva";
 import Konva from "konva";
 import { selectionWithin } from '../engine/model/groupTree';
 import { updateNode, applyNodePatches, nextZIndex, lowestZIndex } from '../engine/document';
@@ -14,6 +14,8 @@ import { RulerGuides } from './canvas/RulerGuides';
 import { PathEditor } from './canvas/PathEditor';
 import { deletePickedAnchor, nudgePickedAnchors, selectAllAnchors } from '../engine/interaction/pathAnchorActions';
 import { pathEdit } from '../engine/interaction/pathEdit';
+import { booleanPreview } from '../engine/interaction/booleanPreview';
+import { contourData } from '../engine/model/pathGeometry';
 import { RULER_SIZE, Rulers } from './canvas/Rulers';
 import { tickStep } from '../engine/interaction/rulerTicks';
 import { ALL_SHAPE_PRESETS } from './workspace/shapePresetTypes';
@@ -154,6 +156,11 @@ export const Canvas: React.FC<CanvasProps> = ({ activeTool, selectedIds, setSele
     pathEdit.subscribe,
     pathEdit.getSnapshot,
     pathEdit.getSnapshot
+  );
+  const booleanGhost = useSyncExternalStore(
+    booleanPreview.subscribe,
+    booleanPreview.getSnapshot,
+    booleanPreview.getSnapshot
   );
   const editingPathId = pathSelection?.nodeId ?? null;
 
@@ -1260,6 +1267,25 @@ export const Canvas: React.FC<CanvasProps> = ({ activeTool, selectedIds, setSele
               would otherwise have to remember, and forgetting means its
               preview lands in someone's export. */}
           <Group name={EXPORT_CHROME}>{toolManager.renderOverlay(overlayState)}</Group>
+
+          {/* The shape a combine would produce, while the pointer is on its
+              button. Four icons of two overlapping squares cannot say which of
+              union, subtract, intersect and exclude you want — the answer
+              depends on which shape is in front and what the overlap actually
+              is, neither of which an icon can show. Drawn from the same
+              geometry the button will commit, so the outline is the result. */}
+          {booleanGhost && (
+            <Group name={EXPORT_CHROME} listening={false}>
+              <Path
+                data={contourData(booleanGhost)}
+                fill="rgba(59, 130, 246, 0.14)"
+                fillRule="evenodd"
+                stroke="#3B82F6"
+                strokeWidth={1.5 / cameraSystem.zoom}
+                dash={[6 / cameraSystem.zoom, 4 / cameraSystem.zoom]}
+              />
+            </Group>
+          )}
         </Layer>
       </Stage>
       {/* Canvas-space DOM overlays: positioned to match the Stage's exact coordinate origin (including rulerInset). */}
