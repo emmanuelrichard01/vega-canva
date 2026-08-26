@@ -25,6 +25,14 @@ export default defineConfig({
             if (id.includes('perfect-freehand') || id.includes('polygon-clipping')) return 'vendor-drawing';
             if (id.includes('lodash')) return 'vendor-lodash';
             if (id.includes('rbush')) return 'vendor-spatial';
+            /**
+             * The font parser, and the Brotli decompressor it carries to read
+             * a `.woff2`. Only "Convert to path" on a text object ever needs
+             * it, so it is imported dynamically and named here — otherwise it
+             * shows up in the build as `browser-module`, which says nothing
+             * about what it is or why the bundle grew by 150 kB.
+             */
+            if (id.includes('fontkit') || id.includes('brotli') || id.includes('unicode-trie') || id.includes('unicode-properties') || id.includes('restructure') || id.includes('/dfa/')) return 'vendor-fontkit';
           }
 
           // --- Application-level splits for subsystems that are lazily

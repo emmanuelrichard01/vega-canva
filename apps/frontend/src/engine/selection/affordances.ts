@@ -313,12 +313,16 @@ const RULES: readonly (Affordance & { when: (f: SelectionFacts) => boolean })[] 
      * puts this on the object menu, because "make this editable" is a thing you
      * decide about an object rather than a mode you enter.
      *
-     * Shapes only. A path is already one, and text is not convertible without
-     * reading glyph outlines out of the font binary -- see the note in
-     * `vectorOps`.
+     * Shapes and text. A path is already one; everything else has no outline
+     * to give. Text takes a different route -- its letterforms are read out of
+     * the font binary rather than derived from the node, so `textToPath` is
+     * asynchronous where `flattenToPath` is not -- but from here it is the same
+     * decision about the same object, and splitting it into two menu entries
+     * would make the user learn which kind of thing they had selected.
      */
     id: 'to-path', label: 'Convert to path', weight: 17, surfaces: ['menu'],
-    when: (f) => f.count === 1 && f.uniformType === 'shape' && !f.locked,
+    when: (f) =>
+      f.count === 1 && (f.uniformType === 'shape' || f.uniformType === 'text') && !f.locked,
   },
   {
     id: 'align', label: 'Align', weight: 17, surfaces: ['toolbar', 'menu'],

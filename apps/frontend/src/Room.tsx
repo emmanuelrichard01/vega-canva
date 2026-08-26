@@ -19,7 +19,7 @@ import { doc, provider, metadataMap, deleteNode, applyNodePatches, nextZIndex, l
 import { useRoomState } from './hooks/useSync';
 import { initSyncBridge, useStore } from './hooks/useStore';
 import { breakApartGrid } from './engine/grid/gridApply';
-import { flattenToPath } from './engine/document/vectorOps';
+import { flattenToPath, textToPath } from './engine/document/vectorOps';
 import { pathEdit } from './engine/interaction/pathEdit';
 import { editor } from './engine/api/EditorAPI';
 import { alignSelection, distributeSelection, type AlignEdge, type DistributeAxis } from './engine/model/align';
@@ -634,15 +634,45 @@ export default function Room() {
     ungroup: () => { if (selectedIds.length > 0) editor.ungroupNodes(selectedIds); },
     'to-path': () => {
       if (selectedIds.length !== 1) return;
-      const newId = flattenToPath(selectedIds[0]);
+      const target = diagramObjects[selectedIds[0]];
+
       // Selected and opened for editing, because converting is something you do
       // in order to edit -- landing on the old selection would make the command
       // look like it did nothing.
-      if (newId) {
+      const land = (newId: string) => {
         setSelectedIds([newId]);
         pathEdit.enter(newId);
         window.dispatchEvent(new CustomEvent('legacy_tool_change', { detail: 'direct-select' }));
+      };
+
+      /**
+       * Text takes the long way round: its letterforms live in the font file,
+       * which has to be fetched and parsed, so the command is asynchronous and
+       * can fail for reasons worth telling somebody about.
+       */
+      if (target?.type === 'text') {
+        textToPath(selectedIds[0])
+          .then((result) => {
+            if (!result) {
+              showToast('There are no letters in that box to outline');
+              return;
+            }
+            land(result.id);
+            // Named rather than silently lost: an underline is drawn by the
+            // renderer, not by the font, and inventing bars for it here would
+            // be a second implementation of the same decoration.
+            if (result.dropped.length > 0) {
+              showToast(`Outlined — ${result.dropped.join(', ')} could not come along`);
+            }
+          })
+          .catch((error: unknown) => {
+            showToast(error instanceof Error ? error.message : 'That text could not be outlined');
+          });
+        return;
       }
+
+      const newId = flattenToPath(selectedIds[0]);
+      if (newId) land(newId);
     },
     'break-apart': () => {
       if (selectedIds.length !== 1) return;

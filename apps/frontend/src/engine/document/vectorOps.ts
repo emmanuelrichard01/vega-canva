@@ -19,6 +19,7 @@ import { useStore } from '../../hooks/useStore';
 import { booleanPaths, type BooleanOp, type BooleanOperand } from '../model/pathBoolean';
 import { reframePath, translatePath, type ContourGeometry } from '../model/pathGeometry';
 import { shapeToPath } from '../model/shapeToPath';
+import { outlineText } from '../text/textOutline';
 import { outlineStroke } from '../model/strokeOutline';
 import type { AnyNode, Appearance } from '../model/schema';
 
@@ -121,6 +122,9 @@ export function applyBoolean(op: BooleanOp, ids: readonly string[]): string | nu
  * The old node is replaced rather than mutated, because a shape and a path are
  * different node types and `type` is not something `updateNode` should be
  * rewriting underneath a subscribed renderer.
+ *
+ * Shapes only. Text goes through `textToPath`, which has to read the font
+ * binary and so cannot be synchronous.
  */
 export function flattenToPath(id: string): string | null {
   const node = useStore.getState().objects[id];
@@ -145,6 +149,69 @@ export function flattenToPath(id: string): string | null {
   });
   deleteNode(id);
   return newId;
+}
+
+/**
+ * Turn a text object into its own letterforms.
+ *
+ * ## Why this is not `flattenToPath` with another branch
+ *
+ * A shape's outline is arithmetic — `shapeToPath` derives a rectangle's corners
+ * from its own fields, synchronously, from data already in the document. A
+ * letterform is not derivable from anything the document holds: the curves live
+ * in the font file, which has to be fetched and parsed. So this one is
+ * asynchronous, can fail for reasons a person can act on, and belongs beside
+ * `flattenToPath` rather than inside it.
+ *
+ * ## What the result is
+ *
+ * One path node carrying every glyph as a compound geometry, filled even-odd so
+ * the counter of an `o` is a hole rather than a disc sitting on a ring. The
+ * text's colour becomes the path's fill, because that is the paint that was
+ * describing the letters. The box is re-measured from the outline: a
+ * paragraph's box includes its leading and its descender space, and the glyphs
+ * do not fill it — keeping the old box would leave the path floating inside
+ * empty margins that every later resize would then stretch.
+ *
+ * Decoration the font cannot express — an underline, a highlight, list markers
+ * — is not invented here. `outlineText` names what it dropped so the caller can
+ * say so.
+ *
+ * @returns the new node's id and what was dropped, or null when there was
+ *   nothing to draw. Throws `FontUnavailableError` for a face that cannot be
+ *   read.
+ */
+export async function textToPath(
+  id: string
+): Promise<{ id: string; dropped: string[] } | null> {
+  const node = useStore.getState().objects[id];
+  if (!node || node.type !== 'text' || node.locked) return null;
+
+  const outlined = await outlineText(node);
+  if (!outlined) return null;
+
+  // The document may have moved on while the font was in flight -- somebody
+  // deleted the text, or a peer edited it. Re-read rather than trusting the
+  // snapshot the outline was built from.
+  const current = useStore.getState().objects[id];
+  if (!current || current.type !== 'text') return null;
+
+  const framed = reframePath(outlined.geometry);
+  const newId = createNode({
+    type: 'path',
+    // `framed.dx/dy` is where the glyphs sat inside the text's box, which is
+    // what keeps the outline exactly where the words were.
+    x: current.x + framed.dx,
+    y: current.y + framed.dy,
+    width: framed.width,
+    height: framed.height,
+    geometry: framed.geometry,
+    appearance: { fill: [{ type: 'solid', color: current.typography.color }] },
+    opacity: current.opacity ?? 1,
+    rotation: current.rotation ?? 0,
+  });
+  deleteNode(id);
+  return { id: newId, dropped: outlined.dropped };
 }
 
 /**
