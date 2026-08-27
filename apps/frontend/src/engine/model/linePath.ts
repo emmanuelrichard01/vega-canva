@@ -344,6 +344,44 @@ export function linePoints(
  * projects instead and the run keeps every crest and corner. One rule, stated
  * once, read by the canvas, the exporter and the specimen alike.
  */
+/**
+ * Whether this profile's end caps should point along the run's axis.
+ *
+ * ## The measurement that settled it
+ *
+ * A run of 400 units, its last segment's angle against the axis:
+ *
+ * | profile | angle |
+ * | --- | --- |
+ * | curved | ±20.6° |
+ * | wavy | 55.2° |
+ * | zigzag | 43.8° |
+ * | coil | 0° |
+ *
+ * A sine crosses its own axis at the *steepest* part of the wave, so a wavy
+ * line arrives at its endpoint travelling fifty-five degrees away from the
+ * direction it is actually going — and an arrowhead drawn along that reads as
+ * cocked off the line it terminates. The head states where the line *goes*,
+ * which is A to B; the wave is a texture on the way.
+ *
+ * ## Why only two of the four
+ *
+ * `curved` is a genuine arc, and an arc's head should follow its tangent —
+ * ±20.6° is the arc leaving and arriving, symmetrically, which is what an arc
+ * looks like. Forcing it to the axis would make the head ignore the curve it
+ * sits on.
+ *
+ * `coil` needs nothing: it enters and leaves on flat leads, so its heads are
+ * already at 0°. Which is the argument that settles the other two — the
+ * profiles disagreed with each other about the same question, and the coil had
+ * the better answer.
+ *
+ * `straight` has no distinction to make.
+ */
+export function capsFollowAxis(profile: LineProfile | undefined): boolean {
+  return profile === 'wavy' || profile === 'zigzag';
+}
+
 export function defaultEndAlign(profile: LineProfile | undefined): 'inside' | 'extend' {
   return !profile || profile === 'straight' ? 'inside' : 'extend';
 }

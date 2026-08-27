@@ -349,6 +349,27 @@ export function terminateRun(
     strokeWidth: number;
     scale?: number;
     align?: EndAlign;
+    /**
+     * Point the caps along the run's **axis** rather than its last segment.
+     *
+     * For a straight or gently curved run the two are the same thing, and the
+     * last segment is the better answer — it follows the curve. For a *profile*
+     * they are not: a sine crosses its own axis at the steepest part of the
+     * wave, so a wavy line arrives at its endpoint travelling **55° off** the
+     * direction it is actually going, and a zigzag 44°. An arrowhead cocked
+     * fifty-five degrees away from the line it terminates is the "the arrow
+     * looks broken" complaint, and it is not a matter of taste: the head states
+     * where the line *goes*, which is A to B, and the wave is a texture on the
+     * way.
+     *
+     * The coil has always done this by accident — it enters and leaves on flat
+     * leads, so its heads sit at 0°. So the profiles disagreed with each other,
+     * which is the argument that settles it.
+     *
+     * Off by default, so connectors and paths keep following their own last
+     * segment, which is right for them.
+     */
+    axis?: boolean;
   }
 ): { run: number[]; start: EndCapShape | null; end: EndCapShape | null; size: number } {
   const { size } = connectorCaps(points, spec);
@@ -358,8 +379,8 @@ export function terminateRun(
 
   const a = { x: points[0], y: points[1] };
   const b = { x: points[points.length - 2], y: points[points.length - 1] };
-  const outAt = { x: points[2], y: points[3] };
-  const inAt = { x: points[points.length - 4], y: points[points.length - 3] };
+  const outAt = spec.axis ? b : { x: points[2], y: points[3] };
+  const inAt = spec.axis ? a : { x: points[points.length - 4], y: points[points.length - 3] };
   const startAngle = Math.atan2(a.y - outAt.y, a.x - outAt.x);
   const endAngle = Math.atan2(b.y - inAt.y, b.x - inAt.x);
 

@@ -21,7 +21,7 @@
  */
 
 import type { Point, ShapeGeometry, ShapeNode } from './schema';
-import { defaultEndAlign, linePoints } from './linePath';
+import { capsFollowAxis, defaultEndAlign, linePoints } from './linePath';
 import { capExtentPoints, terminateRun } from './connectorEnds';
 import {
   isMultiPoint,
@@ -374,6 +374,9 @@ export function lineNodeFromVertices(
     strokeWidth,
     scale: geometry.endScale,
     align: geometry.endAlign ?? defaultEndAlign(geometry.lineProfile),
+    // The box has to contain the caps where they are actually drawn, so this
+    // has to agree with the renderer. See `capsFollowAxis`.
+    axis: capsFollowAxis(geometry.lineProfile),
   });
 
   const xs: number[] = [];

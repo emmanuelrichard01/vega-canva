@@ -1,5 +1,6 @@
 import { describe, it, expect } from 'vitest';
 import {
+  capsFollowAxis,
   LINE_PROFILES,
   LINE_PROFILE_LABELS,
   MAX_AMPLITUDE_SCALE,
@@ -412,3 +413,48 @@ describe('smart and dynamic loop / wave count', () => {
   });
 });
 
+describe('capsFollowAxis', () => {
+  /** The angle the run's last segment makes with its own axis, in degrees. */
+  const arrivalAngle = (profile: Parameters<typeof linePoints>[2]) => {
+    const pts = linePoints({ x: 0, y: 0 }, { x: 400, y: 0 }, profile, undefined, 1);
+    const n = pts.length;
+    return Math.abs(
+      (Math.atan2(pts[n - 1].y - pts[n - 2].y, pts[n - 1].x - pts[n - 2].x) * 180) / Math.PI
+    );
+  };
+
+  it('is on for the profiles that cross their own axis steeply', () => {
+    /**
+     * A sine crosses its axis at the *steepest* part of the wave, so a wavy
+     * line arrives travelling fifty-five degrees away from the direction it is
+     * actually going. An arrowhead drawn along that reads as cocked off the
+     * line it terminates.
+     */
+    expect(arrivalAngle('wavy')).toBeGreaterThan(40);
+    expect(arrivalAngle('zigzag')).toBeGreaterThan(40);
+    expect(capsFollowAxis('wavy')).toBe(true);
+    expect(capsFollowAxis('zigzag')).toBe(true);
+  });
+
+  it('is off for an arc, whose tangent is the right answer', () => {
+    // ±20.6°: the arc leaving and arriving, symmetrically. Forcing the head to
+    // the axis would make it ignore the curve it sits on.
+    expect(arrivalAngle('curved')).toBeLessThan(25);
+    expect(capsFollowAxis('curved')).toBe(false);
+  });
+
+  it('is off for a coil, which already arrives flat', () => {
+    /**
+     * It enters and leaves on flat leads, so its heads are at 0° with no help.
+     * Which is the argument that settled the other two: the four profiles
+     * disagreed about the same question and the coil had the better answer.
+     */
+    expect(arrivalAngle('coil')).toBeLessThan(1);
+    expect(capsFollowAxis('coil')).toBe(false);
+  });
+
+  it('is off for a straight line, which has no distinction to make', () => {
+    expect(capsFollowAxis('straight')).toBe(false);
+    expect(capsFollowAxis(undefined)).toBe(false);
+  });
+});
