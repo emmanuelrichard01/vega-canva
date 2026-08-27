@@ -178,6 +178,21 @@ export function pasteNodes(
     // dropped rather than remapped: carrying it would put a pasted object
     // inside a frame it is no longer over.
     delete next.frameId;
+    /**
+     * And a grid module, for a sharper version of the same reason.
+     *
+     * A `gridSlot` names a grid *and an index within it*, so a copied picture
+     * arrives claiming the exact module the original is still sitting in. Two
+     * nodes then hold one module: the reflow computes the same box for both and
+     * stacks them perfectly, so the copy is invisible, and which of them the
+     * module "contains" depends on iteration order.
+     *
+     * Dropped rather than reassigned to a free module — a paste is not a
+     * placement, and quietly filing the copy into some other part of the grid
+     * is a decision the gesture did not make. It lands beside the original as
+     * an ordinary picture, and dropping it onto a module puts it in one.
+     */
+    delete next.gridSlot;
 
     for (const end of ['from', 'to'] as const) {
       const value = next[end];
@@ -227,4 +242,98 @@ export const PASTE_OFFSET = 20;
 
 export function offsetOrigin(payload: ClipboardPayload): { x: number; y: number } {
   return { x: payload.origin.x + PASTE_OFFSET, y: payload.origin.y + PASTE_OFFSET };
+}
+
+export interface Bounds {
+  x: number;
+  y: number;
+  width: number;
+  height: number;
+}
+
+/**
+ * How much room the copied set takes up.
+ *
+ * Needed because "will this paste be visible" is a question about the whole
+ * fragment, not about its corner: a wide diagram whose top-left is just off the
+ * left edge is mostly on screen, and treating its origin as the answer would
+ * send it to the middle for no reason.
+ *
+ * Sizes are read defensively, because a payload can arrive from another tab, an
+ * older version of this app, or somebody editing JSON.
+ */
+export function payloadBounds(payload: ClipboardPayload): Bounds {
+  let minX = Infinity;
+  let minY = Infinity;
+  let maxX = -Infinity;
+  let maxY = -Infinity;
+
+  for (const raw of payload.nodes) {
+    if (!Number.isFinite(raw.x) || !Number.isFinite(raw.y)) continue;
+    const x = raw.x as number;
+    const y = raw.y as number;
+    const w = Number.isFinite(raw.width) ? (raw.width as number) : 0;
+    const h = Number.isFinite(raw.height) ? (raw.height as number) : 0;
+    minX = Math.min(minX, x);
+    minY = Math.min(minY, y);
+    maxX = Math.max(maxX, x + w);
+    maxY = Math.max(maxY, y + h);
+  }
+
+  if (!Number.isFinite(minX)) {
+    return { x: payload.origin.x, y: payload.origin.y, width: 0, height: 0 };
+  }
+  return { x: minX, y: minY, width: maxX - minX, height: maxY - minY };
+}
+
+/**
+ * Where a paste with no pointer behind it should go.
+ *
+ * ## The bug this replaces
+ *
+ * A paste landed at the original's position plus twenty units, always. Copy
+ * something, pan across the board, paste — and it arrived back where you copied
+ * it from, off screen, with the selection now pointing at objects you cannot
+ * see. Nothing appeared to happen, and whatever you did next happened to a
+ * selection somewhere else entirely.
+ *
+ * ## Why not simply always paste into the middle
+ *
+ * Because the offset paste is *right* when you can see the original: it is what
+ * makes repeated pastes step a copy down and to the right, and it is what
+ * duplicate does. Always centring would move something you were watching.
+ *
+ * So the rule keeps both: **stay beside the original if any of it would be on
+ * screen, otherwise come to the middle of what I am looking at.** The test is
+ * against the pasted fragment's own box, not against its corner.
+ */
+export function pasteOrigin(payload: ClipboardPayload, viewport: Bounds): { x: number; y: number } {
+  const offset = offsetOrigin(payload);
+  const bounds = payloadBounds(payload);
+
+  // Where the fragment's box would sit if it landed at the offset origin.
+  const landed = {
+    x: bounds.x + (offset.x - payload.origin.x),
+    y: bounds.y + (offset.y - payload.origin.y),
+  };
+
+  const visible =
+    landed.x < viewport.x + viewport.width &&
+    landed.x + bounds.width > viewport.x &&
+    landed.y < viewport.y + viewport.height &&
+    landed.y + bounds.height > viewport.y;
+
+  if (visible) return offset;
+
+  /**
+   * Centred on the viewport — and returned as the *origin* the caller wants,
+   * which is the payload's own reference point rather than the fragment's
+   * middle. The two differ whenever the copied set's bounding box does not
+   * start at its origin, and conflating them puts a wide fragment off to one
+   * side of the screen.
+   */
+  return {
+    x: viewport.x + viewport.width / 2 - bounds.width / 2 + (payload.origin.x - bounds.x),
+    y: viewport.y + viewport.height / 2 - bounds.height / 2 + (payload.origin.y - bounds.y),
+  };
 }

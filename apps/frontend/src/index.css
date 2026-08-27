@@ -11722,14 +11722,123 @@ body[data-zen='physics'] .forces-handle { bottom: 32px; }
 }
 
 /* The heading and the specimen it describes, on one line. */
-.grid-section__cells-head {
+/**
+ * A labelled band of controls.
+ *
+ * Fourteen controls used to run down this panel in one column with two headings
+ * between them, so the eight above the first heading belonged to nothing and
+ * the two questions they answer were told apart only by reading every label.
+ * Four bands with one header treatment replaces that, and the two bespoke
+ * header rows that existed — a "Tracks" row carrying the module count and a
+ * "Cells" row carrying a specimen — become the header's `aside`, which is where
+ * both were always trying to be. Two rows back, and one pattern instead of
+ * three.
+ *
+ * The rule is a hairline above rather than a box around: a boxed group in a
+ * 260px column spends horizontal space on borders that the controls need, and
+ * four boxes stacked read as four panels rather than one.
+ */
+.grid-band {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+.grid-band + .grid-band {
+  margin-top: 4px;
+  padding-top: 12px;
+  border-top: 1px solid var(--border-divider);
+}
+
+.grid-band__head {
   display: flex;
   align-items: center;
   justify-content: space-between;
   gap: 8px;
+  /* The label's own top margin is for a heading standing loose in a column;
+     inside a band header the band's rule already provides the separation. */
+  min-height: 20px;
 }
 
-.grid-section__cells-head .grid-section__label { margin-top: 0; }
+.grid-band__head .grid-section__label { margin-top: 0; }
+
+/**
+ * The module count, in the Layout band's header.
+ *
+ * Tabular for the same reason `.panel-head__count` is: it changes in place as
+ * the steppers move, and proportional digits make the header twitch sideways
+ * while it does. It had no rule of its own before — it sat in a bespoke row and
+ * inherited the panel's body size, which in a band header beside a 10px
+ * uppercase label would read as the heading rather than as its footnote.
+ */
+.grid-section__count {
+  color: var(--text-secondary);
+  font-size: var(--text-2xs);
+  font-weight: var(--weight-semibold);
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+}
+
+/**
+ * What is in the grid, under the band that arranges it.
+ *
+ * The waiting count is the half that earns its place: content with no module in
+ * the current arrangement sits in a strip below the grid, and the strip cannot
+ * explain itself.
+ */
+.grid-section__content {
+  margin: 0;
+  color: var(--text-tertiary);
+  font-size: var(--text-2xs);
+}
+
+.grid-section__content strong {
+  color: var(--status-syncing);
+  font-weight: var(--weight-semibold);
+  /* It carries a tooltip, so it has to look like it will answer. */
+  cursor: help;
+}
+
+/**
+ * The six ways a palette can be spent, each one drawn.
+ *
+ * Three across rather than two: at two the tiles are wide enough to read as
+ * cards and the group starts competing with the palette ramps above it, which
+ * are the same shape. Three keeps them reading as swatches of an arrangement.
+ */
+.grid-section__modes {
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+  gap: 4px;
+}
+
+.grid-mode {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 3px;
+  border: 1px solid var(--border-divider);
+  border-radius: var(--radius-md);
+  background: var(--surface-primary);
+  cursor: pointer;
+  overflow: hidden;
+  transition: border-color var(--motion-hover), box-shadow var(--motion-hover);
+}
+
+.grid-mode svg { display: block; width: 100%; height: auto; }
+
+.grid-mode:hover { border-color: var(--border-strong); }
+
+/* Ringed rather than filled: the tile's whole content is colour, and a tinted
+   ground behind it would change the thing being judged. */
+.grid-mode[data-active] {
+  border-color: var(--accent-line);
+  box-shadow: 0 0 0 1px var(--accent-line);
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .grid-mode { transition: none; }
+}
 
 /* Checkered, so an opacity below one reads as transparency rather than as a
    paler colour -- the only way a flat swatch can tell those two apart. */
@@ -11913,17 +12022,6 @@ body[data-zen='physics'] .forces-handle { bottom: 32px; }
   display: flex;
   flex-wrap: wrap;
   gap: 4px;
-}
-
-.grid-select {
-  width: 100%;
-  padding: 6px 8px;
-  border: 1px solid var(--border-divider);
-  border-radius: var(--radius-md);
-  background: var(--surface-primary);
-  color: var(--text-primary);
-  font-family: inherit;
-  font-size: var(--text-xs);
 }
 
 /**

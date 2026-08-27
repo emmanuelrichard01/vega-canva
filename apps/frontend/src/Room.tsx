@@ -995,17 +995,28 @@ export default function Room() {
      */
     const onCopy = (e: ClipboardEvent) => {
       if (inTextField()) return;
-      const written = copySelection();
-      if (written) e.preventDefault();
+      // The event is handed down so the payload is written *through* it,
+      // synchronously, rather than by an async call racing the
+      // `preventDefault` below. See `copySelection`.
+      if (copySelection(e).written) e.preventDefault();
     };
 
+    /**
+     * Cut removes exactly what it copied, and nothing else.
+     *
+     * It used to copy the selection and then delete `selectionRef.current` —
+     * two different sets, because `writeClipboard` refuses comment pins. Cutting
+     * a selection that contained one therefore put everything *else* on the
+     * clipboard and destroyed the pin along with it: silent data loss,
+     * discovered only when the paste came back short.
+     */
     const onCut = (e: ClipboardEvent) => {
       if (inTextField()) return;
-      const written = copySelection();
-      if (!written) return;
+      const { written, ids } = copySelection(e);
+      if (!written || ids.length === 0) return;
       e.preventDefault();
-      deleteNodesWithFrames(selectionRef.current);
-      setSelectedIds([]);
+      deleteNodesWithFrames(ids);
+      setSelectedIds((current) => current.filter((id) => !ids.includes(id)));
     };
 
     window.addEventListener('copy', onCopy);

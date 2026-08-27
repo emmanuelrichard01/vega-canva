@@ -31,7 +31,7 @@ import { GridKindIcon } from './workspace/gridIcons';
 import { breakApartGrid, gridNodeOf, gridRecipe as gridRecipeFor, setGridRecipe } from '../engine/grid/gridApply';
 import {
   fillGridWithImages,
-  parkedCount,
+  gridContent,
   recentreSlot,
   releaseSlots,
   setSlotZoom,
@@ -604,7 +604,7 @@ export const ObjectContextToolbar: React.FC<Props> = ({ selectedId, selectedIds,
     /** The grid this selection names, when it names exactly one. */
     const gridGroup = gridNodeOf(bulkNodes)?.id ?? null;
     /** How much of its content has no module in the current arrangement. */
-    const parked = gridGroup ? parkedCount(gridGroup) : 0;
+    const parked = gridGroup ? gridContent(allObjects, gridGroup).parked : 0;
     const bulkAffords = (id: AffordanceId) => bulkOffers.has(id);
 
     /** The slotted *pictures*, which are the only ones with a source to reframe. */

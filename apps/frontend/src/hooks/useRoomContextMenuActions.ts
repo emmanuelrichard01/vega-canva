@@ -20,6 +20,7 @@ import { pathEdit } from '../engine/interaction/pathEdit';
 import { textToPath, flattenToPath } from '../engine/document/vectorOps';
 import { breakApartGrid } from '../engine/grid/gridApply';
 import { fillGridWithImages, releaseSlots } from '../engine/grid/gridSlotApply';
+import type { CopyResult } from './useRoomClipboard';
 import { alignSelection, distributeSelection } from '../engine/model/align';
 import { swapShapeKind } from '../engine/model/shapeSwap';
 import { cameraSystem } from '../engine/CameraSystem';
@@ -31,7 +32,7 @@ export interface UseRoomContextMenuActionsOptions {
   contextTarget: ContextTarget | null;
   localTitle: string;
   clipboardRef: React.MutableRefObject<ClipboardPayload | null>;
-  copySelection: () => boolean;
+  copySelection: (event?: ClipboardEvent) => CopyResult;
   pasteObjects: (payload: ClipboardPayload, at?: { x: number; y: number }) => void;
   pasteSvg: (text: string) => void;
   pasteText: (rawText: string, at?: { x: number; y: number }) => void;
@@ -67,33 +68,52 @@ export function useRoomContextMenuActions({
     void copySelection();
   }, [copySelection]);
 
+  /**
+   * Paste, from the menu rather than from a keystroke.
+   *
+   * ## Why the system clipboard is asked first
+   *
+   * This used to prefer `clipboardRef` — the last copy made *in this tab* — and
+   * only fall back to the real clipboard when there had been none. So copying
+   * in one tab and right-click-pasting in another gave you that tab's older
+   * copy instead of what you had just taken, while Ctrl+V in the same spot gave
+   * the right thing. Two paths, two answers, and the wrong one silently winning
+   * whenever both had something to say.
+   *
+   * The system clipboard is the shared truth; the ref is a cache for when it
+   * cannot be read, which is a real case — Firefox gates `readText` behind a
+   * permission prompt and Safari refuses it outside a user gesture in some
+   * contexts. Asking it first and falling back keeps the menu working there
+   * without letting it disagree with the keyboard anywhere else.
+   */
   const handlePaste = useCallback(async () => {
     const at = contextTarget
       ? cameraSystem.screenToWorld(contextTarget.x, contextTarget.y)
       : cameraSystem.screenToWorld(window.innerWidth / 2, window.innerHeight / 2);
-    const payload = clipboardRef.current;
-    if (payload) {
-      pasteObjects(payload, at);
-      return;
-    }
+
     try {
       const text = await navigator.clipboard?.readText?.();
-      if (!text) return;
-      const externalPayload = parseClipboard(text);
-      if (externalPayload) {
-        pasteObjects(externalPayload, at);
-        return;
-      }
-      if (looksLikeSvg(text)) {
-        pasteSvg(text);
-        return;
-      }
-      if (text.trim()) {
-        pasteText(text, at);
+      if (text) {
+        const external = parseClipboard(text);
+        if (external) {
+          pasteObjects(external, at);
+          return;
+        }
+        if (looksLikeSvg(text)) {
+          pasteSvg(text);
+          return;
+        }
+        if (text.trim()) {
+          pasteText(text, at);
+          return;
+        }
       }
     } catch {
-      // Clipboard read permission might be denied
+      // Read permission denied, or no clipboard API. The cache below is
+      // exactly what that case is for.
     }
+
+    if (clipboardRef.current) pasteObjects(clipboardRef.current, at);
   }, [contextTarget, clipboardRef, pasteObjects, pasteSvg, pasteText]);
 
   const handleDuplicate = useCallback(() => {

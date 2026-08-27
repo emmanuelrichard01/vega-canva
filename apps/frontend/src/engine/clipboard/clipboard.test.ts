@@ -4,6 +4,8 @@ import {
   offsetOrigin,
   parseClipboard,
   pasteNodes,
+  pasteOrigin,
+  payloadBounds,
   writeClipboard,
 } from './clipboard';
 import type { AnyNode } from '../model/schema';
@@ -189,5 +191,83 @@ describe('pasteNodes', () => {
     const { nodes } = pasteNodes(parsed, { x: 0, y: 0 });
     expect(nodes[0].x).toBe(0);
     expect(nodes[0].type).toBe('shape');
+  });
+});
+
+describe('pasteNodes drops bindings that name a place', () => {
+  it('drops a grid slot, so a copy does not claim the original’s module', () => {
+    /**
+     * A `gridSlot` names a grid *and an index in it*. Carried across, the copy
+     * claims the module the original is still in: the reflow computes the same
+     * box for both and stacks them exactly, so the copy is invisible and the
+     * module's occupancy depends on iteration order. Same trap as `frameId`.
+     */
+    const payload = writeClipboard([
+      node({ id: 'a', type: 'image', gridSlot: { gridId: 'g1', cell: 2 } } as never),
+    ])!;
+    const { nodes } = pasteNodes(payload, { x: 0, y: 0 });
+    expect(nodes[0]).not.toHaveProperty('gridSlot');
+  });
+
+  it('still drops frame membership, which is re-derived from geometry', () => {
+    const payload = writeClipboard([node({ id: 'a', frameId: 'f1' } as never)])!;
+    const { nodes } = pasteNodes(payload, { x: 0, y: 0 });
+    expect(nodes[0]).not.toHaveProperty('frameId');
+  });
+});
+
+describe('payloadBounds', () => {
+  it('measures the whole fragment, not just its corner', () => {
+    const payload = writeClipboard([
+      node({ id: 'a', x: 10, y: 20, width: 100, height: 50 }),
+      node({ id: 'b', x: 200, y: 20, width: 100, height: 50 }),
+    ])!;
+    expect(payloadBounds(payload)).toEqual({ x: 10, y: 20, width: 290, height: 50 });
+  });
+
+  it('falls back to the origin when nothing has a usable position', () => {
+    const payload = { ...writeClipboard([node({ id: 'a' })])!, nodes: [{ id: 'x' }] };
+    expect(payloadBounds(payload)).toMatchObject({ width: 0, height: 0 });
+  });
+});
+
+describe('pasteOrigin', () => {
+  const viewport = { x: 0, y: 0, width: 1000, height: 800 };
+
+  it('stays beside the original when the original is on screen', () => {
+    // The behaviour that makes repeated pastes step down and to the right.
+    const payload = writeClipboard([node({ id: 'a', x: 100, y: 100 })])!;
+    expect(pasteOrigin(payload, viewport)).toEqual(offsetOrigin(payload));
+  });
+
+  it('comes to the middle when the paste would land off screen', () => {
+    /**
+     * The bug this exists to stop: copy, pan away, paste, and the objects
+     * arrive where you copied them from — invisible, and selected, so the next
+     * thing you do happens somewhere you cannot see.
+     */
+    const payload = writeClipboard([node({ id: 'a', x: 90_000, y: 90_000 })])!;
+    const at = pasteOrigin(payload, viewport);
+    expect(at.x).toBeGreaterThan(viewport.x);
+    expect(at.x).toBeLessThan(viewport.x + viewport.width);
+    expect(at.y).toBeGreaterThan(viewport.y);
+    expect(at.y).toBeLessThan(viewport.y + viewport.height);
+  });
+
+  it('centres the fragment, not its corner', () => {
+    const payload = writeClipboard([
+      node({ id: 'a', x: 90_000, y: 90_000, width: 400, height: 200 }),
+    ])!;
+    const at = pasteOrigin(payload, viewport);
+    // Origin and bounds coincide for a single node, so the box lands centred.
+    expect(at.x + 200).toBeCloseTo(viewport.x + viewport.width / 2, 6);
+    expect(at.y + 100).toBeCloseTo(viewport.y + viewport.height / 2, 6);
+  });
+
+  it('keeps a fragment beside the original when it merely overlaps the edge', () => {
+    // Mostly off screen is still on screen: sending this to the middle would
+    // move something the person can see.
+    const payload = writeClipboard([node({ id: 'a', x: -80, y: 100, width: 200, height: 100 })])!;
+    expect(pasteOrigin(payload, viewport)).toEqual(offsetOrigin(payload));
   });
 });

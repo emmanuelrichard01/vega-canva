@@ -64,7 +64,7 @@ describe('useRoomClipboard', () => {
     };
   });
 
-  it('initializes with null notice and writes to clipboard on copySelection', () => {
+  it('writes to the clipboard on copySelection and reports what it took', () => {
     const selectionRef = { current: ['node1'] };
     const setSelectedIds = vi.fn();
     const diagramObjects: Record<string, AnyNode> = {
@@ -86,9 +86,53 @@ describe('useRoomClipboard', () => {
     });
 
     const copied = clipboard.copySelection();
-    expect(copied).toBe(true);
+    expect(copied.written).toBe(true);
     expect(clipboard.clipboardRef.current).not.toBeNull();
     expect(clipboard.clipboardRef.current?.nodes.length).toBe(1);
+    // The ids are what cut deletes, so they must be what was *taken* rather
+    // than what was selected.
+    expect(copied.ids).toEqual(['node1']);
+  });
+
+  it('reports only the copyable ids, so a cut cannot destroy what it skipped', () => {
+    /**
+     * `writeClipboard` refuses comment pins. Cut used to copy the selection and
+     * then delete `selectionRef.current` — two different sets — so cutting a
+     * selection containing a pin put everything else on the clipboard and
+     * destroyed the pin with it. Silent, and only discovered when the paste
+     * came back short.
+     */
+    const selectionRef = { current: ['shape1', 'pin1'] };
+    const diagramObjects: Record<string, AnyNode> = {
+      shape1: {
+        id: 'shape1', type: 'shape', x: 0, y: 0, width: 10, height: 10,
+        geometry: { kind: 'rect' },
+      } as AnyNode,
+      pin1: { id: 'pin1', type: 'comment', x: 0, y: 0, width: 10, height: 10 } as AnyNode,
+    };
+
+    const clipboard = useRoomClipboard({
+      diagramObjects,
+      selectionRef,
+      setSelectedIds: vi.fn(),
+    });
+
+    const copied = clipboard.copySelection();
+    expect(copied.written).toBe(true);
+    expect(copied.ids).toEqual(['shape1']);
+    expect(copied.ids).not.toContain('pin1');
+  });
+
+  it('says nothing was taken when the selection holds nothing copyable', () => {
+    const clipboard = useRoomClipboard({
+      diagramObjects: {
+        pin1: { id: 'pin1', type: 'comment', x: 0, y: 0, width: 10, height: 10 } as AnyNode,
+      },
+      selectionRef: { current: ['pin1'] },
+      setSelectedIds: vi.fn(),
+    });
+    // `written: false` is what stops cut deleting anything at all here.
+    expect(clipboard.copySelection()).toEqual({ written: false, ids: [] });
   });
 
   it('pastes clipboard payload with remapped ids and updates selection', () => {

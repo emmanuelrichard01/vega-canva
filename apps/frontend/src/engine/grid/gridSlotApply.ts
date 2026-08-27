@@ -132,21 +132,40 @@ export function isCellFree(gridId: string, cell: number): boolean {
 }
 
 /**
- * How much of this grid's content is waiting for a module.
+ * What is in this grid, for a panel to state plainly.
  *
- * Surfaced so the rail can say so. Parked content is real, visible and on the
- * board, but *why* it is sitting in a strip below the grid is not something the
- * strip itself can explain — and a state nobody can name is the "invisible
- * state" objection that parking has to answer for.
+ * The properties panel owns grids and said nothing about their contents, so a
+ * grid holding six photographs and three captions looked, from the panel, like
+ * an empty scaffold. `modules` comes from the layout rather than from rows
+ * times columns, because most kinds do not multiply — bento merges
+ * compartments, masonry derives a count per column.
  */
-export function parkedCount(gridId: string): number {
-  const objects = useStore.getState().objects;
+export function gridContent(
+  objects: Record<string, AnyNode>,
+  gridId: string
+): GridContent {
   const grid = objects[gridId];
-  if (!isGrid(grid)) return 0;
+  if (!isGrid(grid)) return { modules: 0, filled: 0, parked: 0 };
+
   const cells = gridCellsOf(grid);
-  return imagesInGrid(objects, gridId).filter(
-    (n) => !cells.some((c) => c.index === n.gridSlot!.cell)
-  ).length;
+  const content = imagesInGrid(objects, gridId);
+  const filled = content.filter((n) => cells.some((c) => c.index === n.gridSlot!.cell)).length;
+  return { modules: cells.length, filled, parked: content.length - filled };
+}
+
+export interface GridContent {
+  modules: number;
+  filled: number;
+  /**
+   * How much has no module in the current arrangement.
+   *
+   * Parked content is real, visible and on the board, but *why* it is sitting in
+   * a strip below the grid is not something the strip itself can explain — and a
+   * state nobody can name is the "invisible state" objection that parking has to
+   * answer for. Both the rail and the properties panel say it, from this one
+   * count rather than from two that could disagree.
+   */
+  parked: number;
 }
 
 /** The module of this grid a world point lands on. */

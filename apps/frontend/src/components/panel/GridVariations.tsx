@@ -105,7 +105,15 @@ const CellPreview: React.FC<{
 };
 
 /** One candidate, drawn small. */
-const GridThumb: React.FC<{ recipe: GridRecipe }> = ({ recipe }) => {
+/**
+ * A recipe, drawn small.
+ *
+ * Exported because the colour-mode picker needs exactly this and must not grow
+ * a second one: a preview that draws cells its own way is a preview that can
+ * disagree with the board, which is the failure this component's own header
+ * records having already made once with hexagons.
+ */
+export const GridThumb: React.FC<{ recipe: GridRecipe }> = ({ recipe }) => {
   const cells = React.useMemo(() => recipeCells(recipe), [recipe]);
   const box = React.useMemo(() => gridBounds(cells), [cells]);
   if (!box || box.width <= 0 || box.height <= 0) return null;

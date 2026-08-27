@@ -7,8 +7,9 @@ import { SegmentedControl } from '../ui/SegmentedControl';
 import { Slider } from '../ui/Slider';
 import { ColorPickerPopover } from '../ui/ColorPickerPopover';
 import { setGridRecipe } from '../../engine/grid/gridApply';
+import { gridContent } from '../../engine/grid/gridSlotApply';
 import { recipeCells, switchKind, withSpec, withStyle, type GridRecipe } from '../../engine/grid/gridBuild';
-import { GridVariations } from './GridVariations';
+import { GridThumb, GridVariations } from './GridVariations';
 import { CellFace } from './CellFace';
 import {
   GRID_HINTS,
@@ -52,6 +53,37 @@ import {
  * liked while trying colours against it, which is most of what anyone does with
  * a generator.
  */
+
+/**
+ * One labelled band of controls.
+ *
+ * ## Why the section needed banding at all
+ *
+ * Fourteen controls ran down this panel in one column with two headings
+ * between them — "Cells" and "Colour" — so the eight controls above the first
+ * heading belonged to nothing, and the two questions they actually answer
+ * (which system, and how big are its parts) were told apart only by reading
+ * every label. In a 260px column that is a scroll you navigate by memory.
+ *
+ * Four bands, one header treatment, and each header carries the one fact that
+ * band is judged by: the module count for Layout, a specimen module for Cells.
+ * Those two facts were already on screen, each in its own bespoke row — this
+ * puts them where they were always trying to be, and takes two rows back.
+ */
+const Band: React.FC<{
+  title: string;
+  /** The one thing this band is judged by, shown in its header. */
+  aside?: React.ReactNode;
+  children: React.ReactNode;
+}> = ({ title, aside, children }) => (
+  <section className="grid-band">
+    <header className="grid-band__head">
+      <span className="grid-section__label">{title}</span>
+      {aside}
+    </header>
+    {children}
+  </section>
+);
 
 interface Props {
   /** The selected grid node. */
@@ -101,6 +133,19 @@ export const GridSection: React.FC<Props> = ({ nodeId }) => {
    * asking it is cheaper than any guess would be wrong.
    */
   const cellCount = React.useMemo(() => (recipe ? recipeCells(recipe).length : 0), [recipe]);
+  /**
+   * What is in the grid.
+   *
+   * Read from the objects table rather than from the grid node, because content
+   * lives in *other* nodes: a picture dropped into a module changes the
+   * picture, not the grid, so subscribing to the grid alone would leave this
+   * showing a stale count until something happened to touch the grid itself.
+   *
+   * `gridContent` takes the table rather than reaching into the store, which is
+   * what makes the dependency here a real one instead of a hint to the linter.
+   */
+  const objects = useStore((s) => s.objects);
+  const content = React.useMemo(() => gridContent(objects, nodeId), [objects, nodeId]);
   /**
    * How big a module actually is, so a 22px swatch can round in proportion.
    *
@@ -165,6 +210,7 @@ export const GridSection: React.FC<Props> = ({ nodeId }) => {
 
   return (
     <div className="grid-section">
+      <Band title="System">
       {/* The system. Ten miniatures rather than a dropdown of ten words,
           because a grid system is a picture and the words mean nothing until
           you have seen one. */}
@@ -203,9 +249,11 @@ export const GridSection: React.FC<Props> = ({ nodeId }) => {
         {' '}
         {GRID_HINTS[recipe.spec.kind]}
       </p>
+      </Band>
 
       {/**
-        * How many modules this makes, said as you set it.
+        * How many modules this makes, said in the header of the band that sets
+        * it — the one fact this whole group is judged by.
         *
         * Rows and columns multiply, and most kinds do not multiply them the way
         * you would guess: bento merges compartments, masonry derives its own
@@ -213,12 +261,38 @@ export const GridSection: React.FC<Props> = ({ nodeId }) => {
         * a number anyone can compute from the two steppers, and the count is
         * exactly what decides whether a grid is a layout or a texture.
         */}
-      <div className="grid-section__tracks">
-        <span className="grid-section__caption">Tracks</span>
-        <span className="grid-section__count">
-          {cellCount} {cellCount === 1 ? 'module' : 'modules'}
-        </span>
-      </div>
+      <Band
+        title="Layout"
+        aside={
+          <span className="grid-section__count">
+            {cellCount} {cellCount === 1 ? 'module' : 'modules'}
+          </span>
+        }
+      >
+      {/**
+        * And what is *in* those modules.
+        *
+        * The panel that owns grids said nothing about their contents, so a grid
+        * holding six photographs read from here as an empty scaffold. The
+        * waiting count is the important half: content with no module in the
+        * current arrangement is sitting in a strip below the grid, and the
+        * strip cannot explain itself.
+        */}
+      {content.filled + content.parked > 0 && (
+        <p className="grid-section__content">
+          {content.filled} of {content.modules} filled
+          {content.parked > 0 && (
+            <>
+              {' · '}
+              <strong
+                data-tooltip={`${content.parked} ${content.parked === 1 ? 'item has' : 'items have'} no module in this arrangement. They are waiting below the grid and will return when there is room.`}
+              >
+                {content.parked} waiting
+              </strong>
+            </>
+          )}
+        </p>
+      )}
       <div className="grid-section__row">
         {usesRows && (
           <label className="grid-field">
@@ -338,7 +412,7 @@ export const GridSection: React.FC<Props> = ({ nodeId }) => {
          * change of spoke count: half a module is half a module at six spokes
          * and at twenty.
          */
-        <label className="grid-field grid-field--wide">
+        <div className="grid-field grid-field--wide">
           <span>Ring offset</span>
           <Slider
             label="Ring offset"
@@ -348,11 +422,11 @@ export const GridSection: React.FC<Props> = ({ nodeId }) => {
             max={100}
             onChange={(v) => patchSpec({ stagger: v / 100 })}
           />
-        </label>
+        </div>
       )}
 
       {variationLabel && (
-        <label className="grid-field grid-field--wide">
+        <div className="grid-field grid-field--wide">
           <span>{variationLabel}</span>
           <Slider
             label={variationLabel}
@@ -362,32 +436,38 @@ export const GridSection: React.FC<Props> = ({ nodeId }) => {
             max={100}
             onChange={(v) => patchSpec({ variation: v / 100 })}
           />
-        </label>
+        </div>
       )}
 
+      </Band>
+
       {/**
-        * The heading carries a specimen of the module itself.
+        * The header carries a specimen of the module itself.
         *
         * Shape, corner radius, stroke and opacity are four controls whose only
         * meaningful output is one picture, and that picture was only available
         * on the board -- so setting a radius meant adjusting, looking away,
-        * and coming back. One 30px tile answers all four at once.
+        * and coming back. One 30px tile answers all four at once, and it sits
+        * in the band header for the same reason the module count does: it is
+        * the thing this group is judged by.
         */}
-      <div className="grid-section__cells-head">
-        <span className="grid-section__label">Cells</span>
-        <span className="grid-section__specimen" data-tooltip="One module, as it will be drawn">
-          <CellFace
-            shape={recipe.style.shapes[0] ?? 'rect'}
-            size={30}
-            fill={recipe.style.palette[Math.floor(recipe.style.palette.length / 2)] ?? '#94A3B8'}
-            radius={recipe.style.radius}
-            cellSize={sampleCell}
-            strokeColor={recipe.style.strokeColor}
-            strokeWidth={recipe.style.strokeWidth}
-            opacity={recipe.style.opacity}
-          />
-        </span>
-      </div>
+      <Band
+        title="Cells"
+        aside={
+          <span className="grid-section__specimen" data-tooltip="One module, as it will be drawn">
+            <CellFace
+              shape={recipe.style.shapes[0] ?? 'rect'}
+              size={30}
+              fill={recipe.style.palette[Math.floor(recipe.style.palette.length / 2)] ?? '#94A3B8'}
+              radius={recipe.style.radius}
+              cellSize={sampleCell}
+              strokeColor={recipe.style.strokeColor}
+              strokeWidth={recipe.style.strokeWidth}
+              opacity={recipe.style.opacity}
+            />
+          </span>
+        }
+      >
       <SegmentedControl
         ariaLabel="Shape mode"
         value={recipe.style.shapeMode}
@@ -472,7 +552,7 @@ export const GridSection: React.FC<Props> = ({ nodeId }) => {
         </label>
       )}
 
-      <label className="grid-field grid-field--wide">
+      <div className="grid-field grid-field--wide">
         <span>Opacity</span>
         <Slider
           label="Opacity"
@@ -482,10 +562,11 @@ export const GridSection: React.FC<Props> = ({ nodeId }) => {
           max={100}
           onChange={(v) => patchStyle({ opacity: v / 100 })}
         />
-      </label>
+      </div>
 
-      {/* Colour. */}
-      <div className="grid-section__label">Colour</div>
+      </Band>
+
+      <Band title="Colour">
       {/* Two rows of swatches sat here with nothing to tell them apart: a
           column of ramps to pick from, then a row of the current ramp's own
           colours to edit. Identical shapes, opposite meanings. */}
@@ -537,18 +618,50 @@ export const GridSection: React.FC<Props> = ({ nodeId }) => {
         ))}
       </div>
 
-      <label className="grid-field grid-field--wide">
-        <span>How colours are used</span>
-        <select
-          className="grid-select"
-          value={recipe.style.colorMode}
-          onChange={(e) => patchStyle({ colorMode: e.target.value as ColorMode })}
-        >
-          {COLOR_MODES.map((mode) => (
-            <option key={mode} value={mode}>{COLOR_MODE_LABELS[mode]}</option>
-          ))}
-        </select>
-      </label>
+      {/**
+        * How the palette is spent, shown rather than named.
+        *
+        * This was a native `<select>` of six sentences — the only raw select in
+        * the section, in a panel whose every other visual choice is a picture.
+        * `gridStyle.ts` renamed these options from how they work to what you
+        * get ("Biggest cells darkest" rather than "By size") precisely because
+        * *"a menu is read once, at the moment of choosing, with no way to try
+        * each option but to try each option."* Renaming was the best a menu
+        * could do; it does not fix the problem, it apologises for it.
+        *
+        * Six tiles fix it. Each is the **current grid** with only this one
+        * field changed, drawn by the same `GridThumb` the variations picker
+        * uses — so a tile cannot promise a composition the board would decline
+        * to produce, and what differs between the tiles is exactly what the
+        * control changes. The caption names the chosen one in full, which is
+        * the same arrangement the system picker above already uses.
+        */}
+      <span className="grid-section__caption">
+        How colours are used
+        <strong>{COLOR_MODE_LABELS[recipe.style.colorMode]}</strong>
+      </span>
+      <div className="grid-section__modes" role="radiogroup" aria-label="How colours are used">
+        {COLOR_MODES.map((mode: ColorMode) => {
+          const on = recipe.style.colorMode === mode;
+          return (
+            <button
+              key={mode}
+              type="button"
+              role="radio"
+              aria-checked={on}
+              className="grid-mode"
+              data-active={on || undefined}
+              data-tooltip={COLOR_MODE_LABELS[mode]}
+              aria-label={COLOR_MODE_LABELS[mode]}
+              onClick={() => patchStyle({ colorMode: mode })}
+            >
+              <GridThumb recipe={withStyle(recipe, { colorMode: mode })} />
+            </button>
+          );
+        })}
+      </div>
+
+      </Band>
 
       {/**
         * Picking a grid by looking at it, rather than rolling for one.
