@@ -5,16 +5,13 @@ import { ColorPickerPopover } from '../../ui/ColorPickerPopover';
 import { EyedropperButton } from '../../ui/EyedropperButton';
 import { NumberStepper } from '../../ui/NumberStepper';
 import { SegmentedControl } from '../../ui/SegmentedControl';
-import { FillStyleIcon, SketchLevelIcon } from '../sketchIcons';
 import {
   DEFAULT_MITER_LIMIT,
   MAX_MITER_LIMIT,
   MIN_MITER_LIMIT,
   type Appearance,
-  type FillStyle,
   type LineCap,
   type LineJoin,
-  type SketchLevel,
   type Stroke,
   type StrokeAlign,
 } from '../../../engine/model/schema';
@@ -78,29 +75,23 @@ interface StrokeSectionProps {
     supportsEdgeEffects?: boolean;
   };
   appearance: Appearance | undefined;
-  sketchable: boolean;
-  allClosed: boolean;
   openShape: boolean;
   hasCorners: boolean;
   hasEnds: boolean;
   sharedPaint: <T>(read: (a: Appearance) => T) => Shared<T>;
   setStroke: (patch: Partial<Pick<Stroke, 'color' | 'width' | 'align' | 'join' | 'miterLimit' | 'cap'>>) => void;
   setStrokeStyle: (style: StrokeStyleId) => void;
-  setAppearance: (patch: Partial<Appearance>) => void;
 }
 
 export const StrokeSection: React.FC<StrokeSectionProps> = ({
   capabilities,
   appearance,
-  sketchable,
-  allClosed,
   openShape,
   hasCorners,
   hasEnds,
   sharedPaint,
   setStroke,
   setStrokeStyle,
-  setAppearance,
 }) => {
   if (!capabilities.supportsStroke || !appearance) return null;
 
@@ -154,55 +145,6 @@ export const StrokeSection: React.FC<StrokeSectionProps> = ({
           }))}
         />
       </Row>
-
-      {sketchable && appearance && (
-        <Row stack label="Sketch" hint="Draw this by hand. The result is stable and never re-randomises.">
-          {(() => {
-            const sketch = sharedPaint((a) => a.sketch ?? 'off');
-            return (
-              <SegmentedControl
-                ariaLabel="Hand-drawn sketch"
-                mixed={sketch.mixed}
-                value={String(sketch.value ?? 'off')}
-                onChange={(v) =>
-                  setAppearance({ sketch: v === 'off' ? undefined : (v as SketchLevel) })
-                }
-                segments={[
-                  { value: 'off', label: 'Off — a ruled shape', icon: <SketchLevelIcon level="off" /> },
-                  { value: 'light', label: 'Light — one confident pass', icon: <SketchLevelIcon level="light" /> },
-                  { value: 'medium', label: 'Medium — drawn twice', icon: <SketchLevelIcon level="medium" /> },
-                  { value: 'heavy', label: 'Heavy — twice, and past every corner', icon: <SketchLevelIcon level="heavy" /> },
-                ]}
-              />
-            );
-          })()}
-        </Row>
-      )}
-
-      {sketchable && capabilities.supportsFill && appearance?.sketch && allClosed && (
-        <Row label="Shading" hint="How the inside is filled: flat colour, or pen strokes laid across it.">
-          {(() => {
-            const style = sharedPaint((a) => a.fillStyle ?? 'solid');
-            return (
-              <SegmentedControl
-                ariaLabel="Sketch fill style"
-                mixed={style.mixed}
-                value={String(style.value ?? 'solid')}
-                onChange={(v) =>
-                  setAppearance({ fillStyle: v === 'solid' ? undefined : (v as FillStyle) })
-                }
-                segments={[
-                  { value: 'solid', label: 'Solid — a flat fill', icon: <FillStyleIcon style="solid" /> },
-                  { value: 'hachure', label: 'Hachure — parallel pen strokes', icon: <FillStyleIcon style="hachure" /> },
-                  { value: 'crosshatch', label: 'Cross-hatch — two sets, crossed', icon: <FillStyleIcon style="crosshatch" /> },
-                  { value: 'zigzag', label: 'Scribble — continuous back-and-forth pen marks', icon: <FillStyleIcon style="zigzag" /> },
-                  { value: 'dots', label: 'Stipple — hand-drawn dots', icon: <FillStyleIcon style="dots" /> },
-                ]}
-              />
-            );
-          })()}
-        </Row>
-      )}
 
       <Details label="Line detail">
         {capabilities.supportsEdgeEffects && !openShape && (

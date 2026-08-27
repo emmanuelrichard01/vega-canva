@@ -57,6 +57,7 @@ import { TYPE_ICONS } from './panel/panelIcons';
 import { TransformSection } from './panel/sections/TransformSection';
 import { FillAppearanceSection } from './panel/sections/FillAppearanceSection';
 import { StrokeSection } from './panel/sections/StrokeSection';
+import { SketchSection } from './panel/sections/SketchSection';
 import { EffectsSection } from './panel/sections/EffectsSection';
 import { TypographySection } from './panel/sections/TypographySection';
 import { ShapeGeometrySection } from './panel/sections/ShapeGeometrySection';
@@ -619,14 +620,22 @@ export const PropertiesPanel: React.FC<PropertiesPanelProps> = ({ selectedIds, o
       <StrokeSection
         capabilities={capabilities}
         appearance={appearance ?? undefined}
-        sketchable={sketchable}
-        allClosed={allClosed}
         openShape={openShape}
         hasCorners={hasCorners}
         hasEnds={hasEnds}
         sharedPaint={sharedPaint}
         setStroke={setStroke}
         setStrokeStyle={setStrokeStyle}
+      />
+
+      {/* Between the paint and the effects, which is where it belongs: how the
+          marks are made is a property of the drawing, not of the light on it. */}
+      <SketchSection
+        capabilities={capabilities}
+        appearance={appearance ?? undefined}
+        sketchable={sketchable}
+        allClosed={allClosed}
+        sharedPaint={sharedPaint}
         setAppearance={setAppearance}
       />
 

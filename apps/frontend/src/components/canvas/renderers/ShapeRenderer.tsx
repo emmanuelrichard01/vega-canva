@@ -131,6 +131,19 @@ export const ShapeRenderer: React.FC<Props> = React.memo(({ node, showLabel }) =
   );
 
   /**
+   * The sketched silhouette as a `Path2D`, for the effects that need to clip.
+   *
+   * Built from the same string the solid fill paints, so an inner shadow falls
+   * across the *drawn* edge rather than the ruled one underneath it. Only when
+   * there is a silhouette at all — a pen-shaded shape has no interior for an
+   * effect to sit inside.
+   */
+  const sketchPath = React.useMemo(
+    () => (innerShadow && sketch?.silhouette ? new Path2D(sketch.silhouette) : null),
+    [innerShadow, sketch?.silhouette]
+  );
+
+  /**
    * The label, however this shape is drawn.
    *
    * Declared once and used by both branches. The sketch branch returns before
@@ -417,6 +430,31 @@ export const ShapeRenderer: React.FC<Props> = React.memo(({ node, showLabel }) =
             listening={false}
             perfectDrawEnabled={false}
           />
+        )}
+        {/*
+          An inner shadow on a sketched shape, which used to be offered and
+          then dropped.
+
+          This branch returns before the crisp renderer's effects, so a
+          sketched shape with an inner shadow set showed **nothing** — the
+          control was in the panel, the value was in the document, and the one
+          thing that had to honour it never ran. Exactly the failure the object
+          registry exists to prevent, arrived at from the other direction.
+
+          It is clipped to the **sketched silhouette**, not to the geometric
+          outline. That distinction is the whole difficulty and it is the same
+          one the solid fill already ran into: clip an inner shadow to the true
+          rectangle and its edge is a ruled edge, so the shadow quietly redraws
+          the crisp shape the sketch was drawn to replace, and the effect gives
+          the game away from any normal distance.
+
+          Only where there *is* an interior. Hachure, cross-hatch, zigzag and
+          dots leave the shape open — there is no inside for a shadow to fall
+          across — so the panel withdraws the control rather than letting it do
+          nothing. See `supportsInnerShadow` in the appearance rules.
+        */}
+        {innerShadow && sketchPath && (
+          <InnerShadow path={sketchPath} width={w} height={h} shadow={innerShadow} />
         )}
         {sketch.fill && hachureColor && (
           <Path

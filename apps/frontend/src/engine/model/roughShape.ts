@@ -158,7 +158,18 @@ export function roughShape(
 
   return {
     outline: sketched,
-    fill: wantsFill ? shapeFill(ring, { seed, style, level }) : '',
+    fill: wantsFill
+      ? shapeFill(ring, {
+          seed,
+          style,
+          level,
+          // Read off the node rather than passed in: density and angle are
+          // properties of *this shape's* shading, and every caller reaching
+          // for them would be a caller that could forget one.
+          density: node.appearance?.shadingDensity,
+          angle: node.appearance?.shadingAngle,
+        })
+      : '',
     silhouette: wantsFill && style === 'solid' ? roughSilhouette(ring, { seed, level }) : '',
   };
 }

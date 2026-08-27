@@ -145,8 +145,8 @@ export const BLEND_MODES: BlendMode[] = [
 ];
 
 /** How hand-drawn a sketched shape is. Defined with the generator that reads it. */
-export type { SketchLevel, FillStyle } from './rough';
-import type { SketchLevel, FillStyle } from './rough';
+export type { SketchLevel, FillStyle, ShadingDensity } from './rough';
+import type { SketchLevel, FillStyle, ShadingDensity } from './rough';
 
 export type LineCap = 'butt' | 'round' | 'square';
 
@@ -324,6 +324,25 @@ export interface Appearance {
    * why it lives here beside it rather than in the fill block.
    */
   fillStyle?: FillStyle;
+  /**
+   * How closely pen shading is laid, which is how it says *tone*.
+   *
+   * The gap was a single constant, so every hachured shape on a board carried
+   * the same weight of grey — and distinguishing a light surface from a dark
+   * one by how densely it is hatched is the thing pen shading exists to do.
+   * Absent is `medium`. Only meaningful alongside a non-solid `fillStyle`.
+   */
+  shadingDensity?: ShadingDensity;
+  /**
+   * The angle the shading runs at, in degrees. Absent is the shared default.
+   *
+   * Which is off the diagonal on purpose — see `HACHURE_ANGLE` — and which
+   * *every* shape used to share without exception, so two hachured shapes laid
+   * over each other shaded in lockstep and the pair read as one continuous
+   * field rather than as two objects. Turning one of them is how a drawing
+   * separates them.
+   */
+  shadingAngle?: number;
 }
 
 export type TextAlign = 'left' | 'center' | 'right' | 'justify';

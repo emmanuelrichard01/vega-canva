@@ -9,11 +9,22 @@ export const Accordion: React.FC<{
   defaultOpen?: boolean;
   badge?: string;
   icon?: React.ReactNode;
-}> = ({ title, children, defaultOpen = true, badge, icon }) => {
+  /**
+   * One level in, inside another accordion.
+   *
+   * Drop shadow and inner shadow are two answers to one question — which way
+   * does the light fall — and sat as siblings of Blur and of Typography, so the
+   * panel offered "shadow" twice at the top level and never said the two were
+   * related. Nesting says it, and it costs a quieter header rather than a
+   * second component: a sub-section that looked like a section would defeat the
+   * grouping it exists to express.
+   */
+  nested?: boolean;
+}> = ({ title, children, defaultOpen = true, badge, icon, nested }) => {
   const [isOpen, setIsOpen] = useState(defaultOpen);
   const id = React.useId();
   return (
-    <section className="prop-section" data-open={isOpen || undefined}>
+    <section className="prop-section" data-open={isOpen || undefined} data-nested={nested || undefined}>
       <button
         type="button"
         className="prop-section__header"

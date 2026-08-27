@@ -840,6 +840,39 @@ coil at 0.00°, wavy at 6°, and the special case in the cap code deleted, becau
 the last segment is now the right answer for every run. An arc keeps its ±20.6°,
 because that *is* the arc.
 
+### The hand-drawn look — `engine/model/rough.ts`
+
+Seeded, pure, and shared between the canvas and the exporter, so the strokes in
+an exported file are *the same strokes* rather than another draw from the same
+distribution. Three levels that differ in **character** — how many passes, how
+far an edge bellies, how far a stroke runs past its corner — because scaling one
+displacement is the axis that does not produce three usable looks.
+
+**Shading gained the two things a hand varies and this could not.** The gap
+between strokes and the angle they run at were both single constants, so every
+hachured shape on a board carried the same weight of grey and ran the same way.
+Density is what pen shading is *for*: a drawing tells a light surface from a dark
+one by how densely it is hatched, and with one gap the style could draw the
+texture and not the value. And a shared angle means two hatched shapes laid over
+each other shade in lockstep, so the pair reads as one continuous field rather
+than two objects — turning one of them is how a drawing separates them.
+
+Three density steps rather than a slider, for the same reason the levels are
+three: below about four units the strokes merge into a flat tone and the drawn
+quality is lost, above about sixteen they read as stripes. Stipple had to be
+fixed to take part at all — it computed its own spacing from the shape's
+diagonal and discarded the gap it was handed, which made the one style whose
+whole language is density the one style that had none.
+
+**An inner shadow works on a sketch now**, and did not before: the renderer's
+sketch branch returns before its effects, so the control was offered on every
+sketched shape and honoured on none of them. It clips to the **drawn
+silhouette**, not the geometric outline — clip it to the true rectangle and the
+shadow's edge is a ruled edge, quietly redrawing the crisp shape the sketch was
+there to replace. Where there is no interior — hachure, cross-hatch, scribble,
+stipple — the control is withdrawn with the reason, because the marks *are* the
+fill and there is nothing for a shadow to fall across.
+
 ### Colour — `engine/model/colorRamp.ts`
 
 Every picker offered two things: a fixed set of swatches, and a saturation-value

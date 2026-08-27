@@ -6308,6 +6308,80 @@ body[data-rulers='off'] {
   border-top: none;
 }
 
+/* A control and the small button that assists it, on one line. */
+.prop-inline {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+}
+
+/* Four toggles in one well, the way every other grouped control in this panel
+   sits. Was four inline style properties on the container, which meant the
+   group could not be adjusted by anything that used it. */
+.prop-toggle-group {
+  display: flex;
+  padding: 2px;
+  border-radius: var(--radius-md);
+  background: var(--surface-hover);
+}
+
+/* The case tiles show the case they set, which is the only specimen that can:
+   a glyph for "upper case" is the words in upper case. */
+.prop-case-glyph {
+  font-size: 11px;
+  font-weight: var(--weight-semibold);
+}
+
+/* Two numbers that mean one thing -- a shadow's X and Y, a pair of insets --
+   sharing a row rather than stacking. Was an inline grid repeated at four call
+   sites, which is four places to change a gap. */
+.prop-pair {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 8px;
+}
+
+/* Why a control that would be here is not.
+ *
+ * Sentence case and a real measure, because it is a sentence. An option that
+ * disappears with no explanation reads as a bug, and the honest reason is
+ * usually one line. */
+.prop-note {
+  margin: 0;
+  padding: 2px 0 4px;
+  font-size: var(--text-2xs);
+  line-height: 1.5;
+  color: var(--text-tertiary);
+}
+
+/* One level in.
+ *
+ * A sub-section that looked like a section would defeat the grouping it exists
+ * to express, so it gives up the rule, indents to sit under its parent's title,
+ * and takes a quieter header. It is still a real disclosure — Drop and Inner
+ * are long enough that having both open at once is worse than choosing. */
+.prop-section[data-nested] { border-bottom: none; }
+.prop-section[data-open][data-nested] { border-bottom: none; }
+
+.prop-section[data-nested] > .prop-section__header {
+  padding: 6px 16px 6px 22px;
+}
+
+.prop-section[data-nested] > .prop-section__header .prop-section__title {
+  font-size: var(--text-2xs);
+  letter-spacing: 0.04em;
+  color: var(--text-secondary);
+}
+
+.prop-section[data-nested] > .prop-section__body {
+  padding-left: 22px;
+}
+
+/* Says which of the two is on without opening either. */
+.prop-section[data-nested] .prop-section__badge {
+  font-size: 9px;
+}
+
 .prop-section__header {
   display: flex;
   align-items: center;

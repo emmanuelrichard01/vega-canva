@@ -631,7 +631,7 @@ function dotsPass(
   points: readonly Point[],
   options: { seed: number; gap: number; angle: number; level?: SketchLevel }
 ): string {
-  const { seed, angle, level } = options;
+  const { seed, angle, level, gap } = options;
   if (points.length < 3) return '';
 
   const rand = rng(seed ^ 0x9e3779b9);
@@ -644,10 +644,23 @@ function dotsPass(
   const minX = Math.min(...rot.map((p) => p.x));
   const maxX = Math.max(...rot.map((p) => p.x));
 
-  // Adaptive spacing based on shape diagonal so dot count stays optimal (30-150 dots max)
+  /**
+   * The spacing, from the gap it was handed — and adapted, not overridden.
+   *
+   * This used to compute its own step from the shape's diagonal and *discard*
+   * the `gap` parameter entirely, which made stipple the one shading style with
+   * no density: the control was offered on four styles and worked on three, and
+   * on the fourth it was the one style whose whole language is density. Nothing
+   * about a dot pattern argues for that.
+   *
+   * The adaptive part is kept, because it is doing real work: a very large
+   * shape at a fixed spacing is thousands of dots, and this is drawn as a path
+   * every frame. So the gap sets the intent and the diagonal sets a floor
+   * beneath it, rather than replacing it.
+   */
   const diag = Math.hypot(maxX - minX, maxY - minY);
-  const baseSpacing = level === 'heavy' ? 12 : level === 'light' ? 18 : 15;
-  const step = Math.max(baseSpacing, Math.min(40, diag / 16));
+  const nib = level === 'heavy' ? 1.35 : level === 'light' ? 2 : 1.65;
+  const step = Math.max(gap * nib, Math.min(40, diag / 16));
 
   const paths: string[] = [];
   const back = (x: number, y: number) => ({ x: x * cos + y * sin, y: -x * sin + y * cos });
@@ -723,51 +736,90 @@ export const FILL_STYLES: FillStyle[] = ['solid', 'hachure', 'crosshatch', 'zigz
  * shading laid over it. Forty-one degrees is close enough to look natural and
  * far enough to stay separate.
  */
-const HACHURE_ANGLE = -41;
+export const HACHURE_ANGLE = -41;
 
-/** The gap between strokes, in world units. */
+/** The gap between strokes at the middle density, in world units. */
 const HACHURE_GAP = 9;
 
 /**
+ * How close the strokes are laid, which is how pen shading says *tone*.
+ *
+ * ## Why this had to become a control
+ *
+ * The gap was one constant, so every hachured shape on a board carried exactly
+ * the same weight of grey. That is the one thing pen shading is *for*: a
+ * drawing distinguishes a light surface from a dark one by how densely it is
+ * hatched, and with a fixed gap the style could draw the texture and not the
+ * value. Two shapes that ought to read as foreground and background read as
+ * the same material.
+ *
+ * Three steps rather than a slider, for the reason the sketch levels are three:
+ * the useful range is narrow — below about four units the strokes merge into a
+ * flat tone and the drawn quality is lost, above about sixteen they read as
+ * stripes rather than shading — and a continuous control over that range mostly
+ * offers ways to get it wrong.
+ */
+export type ShadingDensity = 'light' | 'medium' | 'dense';
+export const SHADING_DENSITIES: ShadingDensity[] = ['light', 'medium', 'dense'];
+
+const DENSITY_GAP: Record<ShadingDensity, number> = {
+  light: 14,
+  medium: HACHURE_GAP,
+  dense: 5.5,
+};
+
+export function gapFor(density: ShadingDensity | undefined): number {
+  return DENSITY_GAP[density ?? 'medium'] ?? HACHURE_GAP;
+}
+
+/**
  * Pen shading for a shape's interior.
+ *
+ * `angle` overrides the shared default, which every shape used to share
+ * without exception — so two hachured shapes laid over each other shaded in
+ * lockstep and the pair read as one continuous field rather than two objects.
+ * Turning one of them is how a drawing separates them, and it is the same
+ * thing a hand does without thinking about it.
  */
 export function shapeFill(
   points: readonly Point[],
-  options: { seed: number; style: FillStyle; level?: SketchLevel }
+  options: {
+    seed: number;
+    style: FillStyle;
+    level?: SketchLevel;
+    density?: ShadingDensity;
+    angle?: number;
+  }
 ): string {
-  const { seed, style, level } = options;
+  const { seed, style, level, density } = options;
   if (style === 'solid') return '';
 
+  const gap = gapFor(density);
+  const angle = Number.isFinite(options.angle) ? (options.angle as number) : HACHURE_ANGLE;
+
   if (style === 'zigzag') {
-    return zigzagPass(points, {
-      seed,
-      gap: HACHURE_GAP * 1.2,
-      angle: HACHURE_ANGLE,
-      level,
-    });
+    return zigzagPass(points, { seed, gap: gap * 1.2, angle, level });
   }
 
   if (style === 'dots') {
-    return dotsPass(points, {
-      seed,
-      gap: HACHURE_GAP * 1.3,
-      angle: HACHURE_ANGLE,
-      level,
-    });
+    return dotsPass(points, { seed, gap: gap * 1.3, angle, level });
   }
 
-  const first = hachurePass(points, {
-    seed,
-    gap: HACHURE_GAP,
-    angle: HACHURE_ANGLE,
-    level,
-  });
+  const first = hachurePass(points, { seed, gap, angle, level });
   if (style === 'hachure') return first;
 
+  /**
+   * The second pass is not exactly perpendicular, and not exactly the same gap.
+   *
+   * Both are deliberate: a true right angle at an even spacing produces graph
+   * paper, which is a printed texture rather than a drawn one. Fifteen per cent
+   * wider and a right angle off a line that is already off the diagonal keeps
+   * the crossings irregular.
+   */
   const second = hachurePass(points, {
     seed: seed ^ 0x5bf03635,
-    gap: HACHURE_GAP * 1.15,
-    angle: HACHURE_ANGLE + 90,
+    gap: gap * 1.15,
+    angle: angle + 90,
     level,
   });
   return `${first} ${second}`;

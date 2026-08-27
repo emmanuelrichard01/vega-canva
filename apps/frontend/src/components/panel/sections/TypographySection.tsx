@@ -109,8 +109,10 @@ export const TypographySection: React.FC<TypographySectionProps> = ({
             );
           })()}
         </Row>
-        <Row label="Color">
-          <div style={{ display: 'flex', alignItems: 'center', gap: 4 }}>
+        {/* "Colour" — the rest of this panel, and the effects below it, all
+            spell it that way; this row was the only "Color" in the inspector. */}
+        <Row label="Colour">
+          <div className="prop-inline">
             <ColorPickerPopover
               color={typography.color}
               mixed={sharedType((t) => t.color).mixed}
@@ -123,7 +125,10 @@ export const TypographySection: React.FC<TypographySectionProps> = ({
           </div>
         </Row>
         <Row label="Style">
-          <div style={{ display: 'flex', background: 'var(--surface-hover)', padding: '2px', borderRadius: '6px' }}>
+          {/* Was four inline style properties describing a segmented group that
+              the app already has a look for. A class means the four toggles sit
+              in the same well as every other grouped control. */}
+          <div className="prop-toggle-group">
             <ToggleButton
               active={isBold}
               mixed={sharedType((t) => (t.fontWeight ?? 400) >= 600).mixed}
@@ -165,76 +170,31 @@ export const TypographySection: React.FC<TypographySectionProps> = ({
             value={typography.textCase ?? 'none'}
             onChange={(v) => setTypography({ textCase: v === 'none' ? undefined : (v as TextCase) })}
             segments={[
-              { value: 'none', label: 'As typed', icon: <span style={{ fontSize: 11, fontWeight: 600 }}>Ag</span> },
-              { value: 'upper', label: 'Upper case', icon: <span style={{ fontSize: 11, fontWeight: 600 }}>AG</span> },
-              { value: 'lower', label: 'Lower case', icon: <span style={{ fontSize: 11, fontWeight: 600 }}>ag</span> },
+              { value: 'none', label: 'As typed', icon: <span className="prop-case-glyph">Ag</span> },
+              { value: 'upper', label: 'Upper case', icon: <span className="prop-case-glyph">AG</span> },
+              { value: 'lower', label: 'Lower case', icon: <span className="prop-case-glyph">ag</span> },
               { value: 'title', label: 'Title Case', icon: <CaseSensitive size={14} /> },
             ]}
           />
         </Row>
-        <Row stack label="Colour cycle" hint="Spreads a ramp of colours across the whole block. Editing the text re-spaces it.">
-          <SegmentedControl
-            ariaLabel="Colour ramp"
-            mixed={sharedType((t) => t.colorCycle?.colors.join(',') ?? 'none').mixed}
-            value={cycleKey}
-            onChange={(key) => setTypography({
-              colorCycle: key === 'none'
-                ? undefined
-                : {
-                    unit: typography.colorCycle?.unit ?? 'character',
-                    colors: CYCLE_PRESETS[key].colors,
-                  },
-            })}
-            segments={[
-              { value: 'none', label: 'None', hint: 'One flat colour', icon: <Minus size={14} /> },
-              ...Object.entries(CYCLE_PRESETS).map(([key, preset]) => ({
-                value: key,
-                label: preset.label,
-                hint: preset.label,
-                icon: (
-                  <span
-                    aria-hidden
-                    style={{
-                      display: 'block', width: 16, height: 10, borderRadius: 2,
-                      background: `linear-gradient(90deg, ${preset.colors.join(', ')})`,
-                    }}
-                  />
-                ),
-              })),
-            ]}
-          />
-        </Row>
-        {typography.colorCycle && (
-          <Row stack label="Cycle by" hint="A colour per letter reads as a gradient; a colour per word stays legible at small sizes.">
-            <SegmentedControl
-              ariaLabel="Colour cycle unit"
-              value={typography.colorCycle.unit}
-              onChange={(unit) => setTypography({
-                colorCycle: { ...typography.colorCycle!, unit: unit as CycleUnit },
-              })}
-              segments={[
-                { value: 'character', label: 'Letter', hint: 'Every character', icon: <span style={{ fontSize: 11, fontWeight: 600 }}>A</span> },
-                { value: 'word', label: 'Word', hint: 'Every word', icon: <Type size={13} /> },
-              ]}
-            />
-          </Row>
-        )}
-        <Row stack label="List" hint="Marks every paragraph in this block. An empty line is a spacer and takes no marker.">
-          <SegmentedControl
-            ariaLabel="List style"
-            mixed={sharedType((t) => t.list ?? 'none').mixed}
-            value={typography.list ?? 'none'}
-            onChange={(v) => setTypography({ list: v === 'none' ? undefined : (v as ListStyle) })}
-            segments={[
-              { value: 'none', label: 'None', hint: 'No list', icon: <Minus size={14} /> },
-              { value: 'bullet', label: 'Bullet', hint: 'A round dot', icon: <List size={14} /> },
-              { value: 'dash', label: 'Dash', hint: 'An en dash', icon: <span style={{ fontSize: 12, fontWeight: 700 }}>&#8211;</span> },
-              { value: 'circle', label: 'Hollow', hint: 'An open circle', icon: <span style={{ fontSize: 12 }}>&#9702;</span> },
-              { value: 'number', label: 'Numbered', hint: '1. 2. 3.', icon: <ListOrdered size={14} /> },
-              { value: 'letter', label: 'Lettered', hint: 'a. b. c.', icon: <span style={{ fontSize: 11, fontWeight: 600 }}>a.</span> },
-            ]}
-          />
-        </Row>
+      </Accordion>
+
+      {/*
+        Two accordions, because they answer two questions.
+
+        This was one "Typography" section of thirteen rows: the face, the size,
+        the colour and the weight sat in the same undifferentiated stack as the
+        leading, the alignment and the paragraph spacing — so finding the one
+        you wanted meant reading all of them. The split is the one every type
+        tool makes and it is not arbitrary: the first group is *what the letters
+        are*, the second is *what the block does with them*, and almost nobody
+        reaches into both in the same breath.
+      */}
+      <Accordion
+        title="Paragraph"
+        icon={<AlignLeft size={13} />}
+        defaultOpen={node.type === 'text'}
+      >
         <Row label="Alignment">
           <SegmentedControl
             ariaLabel="Text alignment"
@@ -294,6 +254,22 @@ export const TypographySection: React.FC<TypographySectionProps> = ({
             );
           })()}
         </Row>
+        <Row stack label="List" hint="Marks every paragraph in this block. An empty line is a spacer and takes no marker.">
+          <SegmentedControl
+            ariaLabel="List style"
+            mixed={sharedType((t) => t.list ?? 'none').mixed}
+            value={typography.list ?? 'none'}
+            onChange={(v) => setTypography({ list: v === 'none' ? undefined : (v as ListStyle) })}
+            segments={[
+              { value: 'none', label: 'None', hint: 'No list', icon: <Minus size={14} /> },
+              { value: 'bullet', label: 'Bullet', hint: 'A round dot', icon: <List size={14} /> },
+              { value: 'dash', label: 'Dash', hint: 'An en dash', icon: <span style={{ fontSize: 12, fontWeight: 700 }}>&#8211;</span> },
+              { value: 'circle', label: 'Hollow', hint: 'An open circle', icon: <span style={{ fontSize: 12 }}>&#9702;</span> },
+              { value: 'number', label: 'Numbered', hint: '1. 2. 3.', icon: <ListOrdered size={14} /> },
+              { value: 'letter', label: 'Lettered', hint: 'a. b. c.', icon: <span style={{ fontSize: 11, fontWeight: 600 }}>a.</span> },
+            ]}
+          />
+        </Row>
         {uniformType && node.type === 'text' && (
           <Row stack label="Resize" hint="Auto width grows sideways. Auto height wraps and grows down. Fixed imposes both, so dragging an edge stretches the letters.">
             <SegmentedControl
@@ -329,6 +305,59 @@ export const TypographySection: React.FC<TypographySectionProps> = ({
         badge={activeTextEffects(typography)}
         defaultOpen={Boolean(typography.highlight || typography.outline || typography.glow)}
       >
+        {/*
+          The colour cycle sat between Case and List, in the middle of the type
+          section — a ramp across a whole block is an *effect* on the type, in
+          the same family as a highlight or a glow, and nothing about it belongs
+          beside a font size.
+        */}
+        <Row stack label="Colour cycle" hint="Spreads a ramp of colours across the whole block. Editing the text re-spaces it.">
+          <SegmentedControl
+            ariaLabel="Colour ramp"
+            mixed={sharedType((t) => t.colorCycle?.colors.join(',') ?? 'none').mixed}
+            value={cycleKey}
+            onChange={(key) => setTypography({
+              colorCycle: key === 'none'
+                ? undefined
+                : {
+                    unit: typography.colorCycle?.unit ?? 'character',
+                    colors: CYCLE_PRESETS[key].colors,
+                  },
+            })}
+            segments={[
+              { value: 'none', label: 'None', hint: 'One flat colour', icon: <Minus size={14} /> },
+              ...Object.entries(CYCLE_PRESETS).map(([key, preset]) => ({
+                value: key,
+                label: preset.label,
+                hint: preset.label,
+                icon: (
+                  <span
+                    aria-hidden
+                    style={{
+                      display: 'block', width: 16, height: 10, borderRadius: 2,
+                      background: `linear-gradient(90deg, ${preset.colors.join(', ')})`,
+                    }}
+                  />
+                ),
+              })),
+            ]}
+          />
+        </Row>
+        {typography.colorCycle && (
+          <Row stack label="Cycle by" hint="A colour per letter reads as a gradient; a colour per word stays legible at small sizes.">
+            <SegmentedControl
+              ariaLabel="Colour cycle unit"
+              value={typography.colorCycle.unit}
+              onChange={(unit) => setTypography({
+                colorCycle: { ...typography.colorCycle!, unit: unit as CycleUnit },
+              })}
+              segments={[
+                { value: 'character', label: 'Letter', hint: 'Every character', icon: <span style={{ fontSize: 11, fontWeight: 600 }}>A</span> },
+                { value: 'word', label: 'Word', hint: 'Every word', icon: <Type size={13} /> },
+              ]}
+            />
+          </Row>
+        )}
         <div className="prop-presets" role="group" aria-label="Text effect presets">
           {TEXT_PRESETS.map((preset) => {
             const active = isTextPresetActive(preset, typography);

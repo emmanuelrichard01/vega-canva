@@ -1,4 +1,5 @@
 import React from 'react';
+import type { ShadingDensity } from '../../engine/model/rough';
 import { rectRing, roughPolyline, shapeFill, type FillStyle, type SketchLevel } from '../../engine/model/rough';
 
 /**
@@ -196,6 +197,53 @@ export const FillStyleIcon: React.FC<{ style: FillStyle }> = ({ style }) => {
           stroke="currentColor"
           strokeWidth="1.1"
           strokeLinecap="round"
+        />
+      </g>
+      <defs>
+        <clipPath id={clipId}>
+          <rect x="-1" y="-1" width={inner + 2} height={inner + 2} />
+        </clipPath>
+      </defs>
+    </svg>
+  );
+};
+
+/**
+ * How closely the strokes are laid, drawn as itself.
+ *
+ * Through the same `shapeFill` the canvas uses, at the same three densities, so
+ * a tile cannot promise a tone the shape will not produce. The alternative — a
+ * hand-drawn glyph of "sparse", "medium", "dense" — is three pictures somebody
+ * has to keep in step with three numbers, and the numbers are the thing that
+ * changed the last time this was wrong.
+ */
+export const ShadingDensityIcon: React.FC<{ density: ShadingDensity }> = ({ density }) => {
+  const inner = BOX - PAD * 2;
+  const clipId = `density-specimen-${React.useId()}`;
+  const shading = React.useMemo(
+    () => shapeFill(ring, { seed: SPECIMEN_SEED, style: 'hachure', level: 'light', density }),
+    [density]
+  );
+
+  return (
+    <svg width={BOX} height={BOX} viewBox={`0 0 ${BOX} ${BOX}`} aria-hidden="true" focusable="false">
+      <g transform={`translate(${PAD} ${PAD})`}>
+        <path
+          d={shading}
+          fill="none"
+          stroke="currentColor"
+          strokeWidth="0.9"
+          strokeLinecap="round"
+          opacity="0.95"
+          clipPath={`url(#${clipId})`}
+        />
+        <path
+          d={roughPolyline(ring, { seed: SPECIMEN_SEED, level: 'light' })}
+          fill="none"
+          stroke="currentColor"
+          strokeWidth="1.1"
+          strokeLinecap="round"
+          opacity="0.5"
         />
       </g>
       <defs>

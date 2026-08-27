@@ -43,7 +43,7 @@ import {
   type TextOutline,
 } from '../model/schema';
 import { END_CAP_KINDS, MAX_END_SCALE, MIN_END_SCALE, type EndCapKind } from '../model/connectorEnds';
-import { FILL_STYLES, SKETCH_LEVELS } from '../model/rough';
+import { FILL_STYLES, HACHURE_ANGLE, SHADING_DENSITIES, SKETCH_LEVELS } from '../model/rough';
 import { normalizeBends, normalizeVertices } from '../model/polyline';
 import { getColorForUser } from '../presence/ColorPalette';
 import { MATERIAL_IDS, type MaterialId } from '../../utils/behaviorSystem';
@@ -390,6 +390,27 @@ function normalizeAppearance(raw: any): Appearance {
   // hachure on a crisp shape is a setting with no effect.
   if (appearance.sketch && FILL_STYLES.includes(source.fillStyle) && source.fillStyle !== 'solid') {
     appearance.fillStyle = source.fillStyle;
+
+    /**
+     * How the shading is laid, only where there is shading to lay.
+     *
+     * Both are stored only when they disagree with the default, so a shape
+     * that never touched them carries nothing — and both live inside the
+     * `fillStyle` branch, because a density on a solid fill is a number
+     * nothing reads and that would reappear if the shape were ever hatched.
+     */
+    if (SHADING_DENSITIES.includes(source.shadingDensity) && source.shadingDensity !== 'medium') {
+      appearance.shadingDensity = source.shadingDensity;
+    }
+    // Wrapped into a half turn: shading is a set of parallel lines, so 200° and
+    // 20° are the same picture, and storing the difference would make two
+    // identical shapes compare as different.
+    if (Number.isFinite(source.shadingAngle)) {
+      const wrapped = ((source.shadingAngle % 180) + 180) % 180;
+      if (Math.round(wrapped) !== ((HACHURE_ANGLE % 180) + 180) % 180) {
+        appearance.shadingAngle = Math.round(wrapped);
+      }
+    }
   }
 
   return appearance;
