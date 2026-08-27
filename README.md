@@ -878,6 +878,25 @@ already sampled by arc length at a density taken from the shape's size and
 drifted along the normal with a low-pass filtered offset, so an ellipse is now a
 closed loop like any other and a circle and a heart are made of the same marks.
 
+That left one thing, and it turned out to be a **frequency** problem rather than
+an amplitude one. The wander wavelength was 58 world units, *absolute*, so the
+number of undulations was the perimeter divided by 58 — a 240px circle got
+thirteen of them. Thirteen deviations round a ring is not a drawn circle, it is
+a noisy one: the eye reads the individual wobbles instead of the stroke, which
+is what "small rough lines that make up the curve" means. The corner sketcher,
+which nobody complains about, gives a rectangle four edges and *one bow each*.
+So the wavelength is a fraction of the run now — about three and a half bows
+whatever the size — and the two passes separate over long arcs and re-cross a
+few times, which is the continuous imperfect stroke an artist actually makes.
+
+Making that work needed the amplitude to stop depending on the frequency. An
+AR(1) process's spread is `b·σ / √(1 − a²)`, and the old `b = (1 − a)·k` meant
+raising the retention — the whole of the fix — would silently have flattened the
+wobble to nothing and made it look as though nothing had happened. `b = √(1 − a²)`
+cancels the denominator exactly. That is the third time this file has had to
+separate density from amplitude, which is the tell that they were never one
+parameter.
+
 **An inner shadow works on a sketch now**, and did not before: the renderer's
 sketch branch returns before its effects, so the control was offered on every
 sketched shape and honoured on none of them. It clips to the **drawn

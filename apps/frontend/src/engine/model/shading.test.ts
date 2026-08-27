@@ -189,3 +189,73 @@ describe('a curve drawn by hand', () => {
     expect(roughEllipse(0, 0, 90, 60, { seed: 11 })).not.toBe(roughEllipse(0, 0, 90, 60, { seed: 12 }));
   });
 });
+
+describe('how many times a drawn curve wanders', () => {
+  /**
+   * The on-curve points of one lap, and how far each sits off the true radius.
+   *
+   * The lap is a run of cubics, so every sixth number after the move is an
+   * endpoint. Measuring the *radial* deviation is the only measurement that
+   * says anything here: a tangential displacement slides a sample along the
+   * ring and changes nothing about the shape.
+   */
+  const deviations = (radius: number, level: 'light' | 'medium' | 'heavy') => {
+    const lap = roughEllipse(0, 0, radius, radius, { seed: 9, level }).split('M ').filter(Boolean)[0];
+    const n = lap.match(/-?\d+(\.\d+)?/g)!.map(Number);
+    const points: Array<[number, number]> = [[n[0], n[1]]];
+    for (let i = 2; i + 5 < n.length; i += 6) points.push([n[i + 4], n[i + 5]]);
+    return points.map(([x, y]) => Math.hypot(x, y) - radius);
+  };
+
+  /** One bow is a wander out and back, so two sign changes. */
+  const bows = (dev: number[]) => {
+    let crossings = 0;
+    for (let i = 1; i < dev.length; i += 1) if (dev[i] > 0 !== dev[i - 1] > 0) crossings += 1;
+    return crossings / 2;
+  };
+
+  it('wanders a few times per lap, not a dozen', () => {
+    /**
+     * The bug, and it was a *frequency* problem rather than an amplitude one.
+     * The wander wavelength was 58 world units, absolute — so the number of
+     * undulations was the perimeter divided by 58, and a 240px circle got
+     * thirteen of them. Thirteen deviations round a ring is not a drawn circle,
+     * it is a noisy one: the eye reads the individual wobbles rather than the
+     * stroke.
+     *
+     * The corner sketcher, which nobody complains about, gives a rectangle four
+     * edges and one bow each. This is that, for a curve.
+     */
+    for (const radius of [40, 120, 260]) {
+      const count = bows(deviations(radius, 'medium'));
+      expect(count).toBeGreaterThanOrEqual(1);
+      expect(count).toBeLessThanOrEqual(6);
+    }
+  });
+
+  it('keeps that count as the shape grows', () => {
+    // A fixed wavelength ties the count to the size; a fraction of the run does
+    // not, which is what makes a small circle and a large one the same *hand*.
+    const small = bows(deviations(40, 'medium'));
+    const large = bows(deviations(260, 'medium'));
+    expect(Math.abs(large - small)).toBeLessThanOrEqual(3);
+  });
+
+  it('still wanders further for a heavier hand', () => {
+    /**
+     * The amplitude had to be made independent of the frequency for this to
+     * survive the fix above: an AR(1) process's spread is `b·σ/√(1−a²)`, and
+     * the old `b = (1−a)·k` meant raising the retention silently flattened the
+     * wobble to nothing.
+     */
+    const peak = (level: 'light' | 'medium' | 'heavy') =>
+      Math.max(...deviations(120, level).map(Math.abs));
+    expect(peak('heavy')).toBeGreaterThan(peak('light'));
+  });
+
+  it('does not wander so far the circle stops being one', () => {
+    for (const level of ['light', 'medium', 'heavy'] as const) {
+      expect(Math.max(...deviations(120, level).map(Math.abs))).toBeLessThan(120 * 0.12);
+    }
+  });
+});

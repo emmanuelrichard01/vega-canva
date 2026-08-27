@@ -433,10 +433,46 @@ export function roughLoop(
    * count, and raising the density to make the shape faithful — which is
    * exactly what the note above does — would silently make the line shakier.
    */
-  const WANDER = 58;
-  const retention = Math.exp(-step / WANDER);
+  /**
+   * How many slow bows a lap makes, rather than how long each one is.
+   *
+   * ## The bug: a fixed wavelength
+   *
+   * This was 58 world units, absolute. So the number of undulations was the
+   * shape's perimeter divided by 58 — a 240px circle got **thirteen** of them,
+   * and a small one got three. Thirteen deviations round a ring is not a
+   * drawn circle, it is a noisy one: the eye reads the individual wobbles
+   * rather than the stroke, which is exactly "small rough lines that make up
+   * the curve".
+   *
+   * Look at what the corner sketcher does, which nobody complains about: a
+   * rectangle is four edges and each edge gets **one** bow. Four slow
+   * deviations per lap. A circle should be the same — an artist's ring wanders
+   * wide two or three times and comes back, and the second pass separates and
+   * re-crosses it a few times over its length. That is the "continuous
+   * imperfect stroke" this was missing, and it is a *frequency* problem, not
+   * an amplitude one.
+   *
+   * So the wavelength is a fraction of the run: about three and a half bows,
+   * whatever the shape's size, with a floor so a very small shape does not go
+   * rigid.
+   */
+  const wander = Math.max(70, total / 3.5);
+  const retention = Math.exp(-step / wander);
+  /**
+   * Amplitude that does not move when the frequency does.
+   *
+   * An AR(1) process `x = a·x₋₁ + b·e` has a stationary spread of
+   * `b·σ / √(1 − a²)`. The old form used `b = (1 − a)·2.4`, so raising the
+   * retention — which is the whole of the fix above — would silently have
+   * flattened the wobble to nothing, and the fix would have looked like it did
+   * not work. Taking `b = √(1 − a²)` cancels the denominator exactly: the
+   * spread is then `2·σ` at any retention, and the two parameters are finally
+   * independent, which is the same separation of density from amplitude that
+   * this file has already had to make twice.
+   */
   const drift = (previous: number, amount: number): number =>
-    previous * retention + jitter(amount, rand) * (1 - retention) * 2.4;
+    previous * retention + jitter(amount, rand) * Math.sqrt(1 - retention * retention) * 2;
 
   const laps: string[] = [];
   for (let pass = 0; pass < prof.passes; pass += 1) {
