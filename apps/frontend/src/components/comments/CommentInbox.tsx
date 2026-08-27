@@ -1,4 +1,5 @@
 import React, { useMemo, useState } from 'react';
+import { initialsFor } from '../../engine/presence/collaborators';
 import { Check, CheckCheck, Inbox, X } from 'lucide-react';
 import {
   anchorPoint,
@@ -163,7 +164,7 @@ export const CommentInbox: React.FC<CommentInboxProps> = ({
                 style={{ background: opener?.authorColor ?? 'var(--gray-500)' }}
                 aria-hidden="true"
               >
-                {(opener?.authorName ?? '?').charAt(0).toUpperCase()}
+                {initialsFor(opener?.authorName ?? '')}
               </span>
 
               <span className="comment-row-body">

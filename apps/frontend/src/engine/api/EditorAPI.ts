@@ -163,6 +163,18 @@ export class EditorAPI {
    * `setPose` rather than three field writes: it clamps, and it emits one
    * `CameraChanged` instead of leaving the emit to be remembered separately.
    */
+  /**
+   * The world box every visible node occupies, or `null` on an empty board.
+   *
+   * Exposed because "is there anything to look at yet" is the question the
+   * opening fit has to answer before it can frame anything, and asking it by
+   * calling `zoomToFit` and seeing whether the camera moved is not an answer —
+   * a board already framed correctly would look identical to an empty one.
+   */
+  contentBounds(): FitBounds | null {
+    return sceneBounds();
+  }
+
   zoomToFit() {
     const bounds = sceneBounds();
     if (!bounds) return; // Empty scene

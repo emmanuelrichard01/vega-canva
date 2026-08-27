@@ -28,6 +28,7 @@ export const TOOL_NAMES: Record<string, string> = {
   eraser: 'Eraser',
   text: 'Text',
   shape: 'Shape',
+  'shape-line': 'Line / Arrow — press again to switch',
   frame: 'Frame',
   grid: 'Grid — lay out a composition',
   connector: 'Connector',

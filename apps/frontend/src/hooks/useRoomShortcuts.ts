@@ -1,7 +1,7 @@
 import { useEffect } from 'react';
 import { undoManager } from '../engine/document';
 import { useStore } from './useStore';
-import { TOOL_FOR_KEY } from '../engine/tools/shortcuts';
+import { LINE_SEAT, TOOL_FOR_KEY, lineSeatFor } from '../engine/tools/shortcuts';
 import { editor } from '../engine/api/EditorAPI';
 import { cameraSystem } from '../engine/CameraSystem';
 import { isForceTool } from '../engine/physics/forces';
@@ -174,7 +174,11 @@ export function useRoomShortcuts({
 
       const tool = TOOL_FOR_KEY[key];
       if (tool) {
-        selectTool(tool);
+        // The line key arms a *seat*, and pressing it again switches within
+        // it — line and arrow differ only by which end carries a head, share
+        // one dock button, and there is no second mnemonic letter free. See
+        // `lineSeatFor`.
+        selectTool(LINE_SEAT.includes(tool) ? lineSeatFor(activeTool) : tool);
         return;
       }
 
@@ -258,5 +262,5 @@ export function useRoomShortcuts({
         window.removeEventListener('legacy_tool_change', handleToolChange);
       }
     };
-  }, [selectTool, setSelectedIds, setShowCommandPalette, setShowHelp, setIsUiVisible, selectedIds, openExport]);
+  }, [selectTool, setSelectedIds, setShowCommandPalette, setShowHelp, setIsUiVisible, selectedIds, openExport, activeTool]);
 }

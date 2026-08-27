@@ -17,6 +17,8 @@ import { LayersPanel } from './components/LayersPanel';
 import { useAuth } from './hooks/useAuth';
 import { doc, provider, metadataMap, deleteNode, applyNodePatches, nextZIndex, lowestZIndex, localAuthorId, publishLocalIdentity, applyGroupPlan } from './engine/document';
 import { useRoomState } from './hooks/useSync';
+import { useOpeningFrame } from './hooks/useOpeningFrame';
+import { resolvePresenceColor, type ColorClaim } from './engine/presence/ColorPalette';
 import { initSyncBridge, useStore } from './hooks/useStore';
 import { breakApartGrid } from './engine/grid/gridApply';
 import { flattenToPath, textToPath } from './engine/document/vectorOps';
@@ -1066,7 +1068,15 @@ export default function Room() {
       fileInputRef.current.click();
     }
   };
-  const { roomId, status, metadata } = useRoomState();
+  const { roomId, status, metadata, awarenessUsers } = useRoomState();
+
+  /**
+   * Frame the board when it opens, rather than inheriting the last one's view.
+   *
+   * `cameraSystem` is a module singleton and outlives a route change, so
+   * without this, board B opened at board A's camera. See `useOpeningFrame`.
+   */
+  useOpeningFrame(roomId);
 
   /**
    * Keep a small picture of this board for the dashboard.
@@ -1145,26 +1155,73 @@ export default function Room() {
   // loop, because a viewport change never reaches React: `collaboratorStore`
   // mutates positions in place and publishes only roster changes.
 
-  const hasJoined = useRef(false);
+  /**
+   * Publish who I am, in a colour nobody else in this room is already using.
+   *
+   * ## Why this is not just `user.color`
+   *
+   * The stored colour is a hash of the user id, so two people collided at
+   * exactly the rate the birthday problem says they would — with the old ten
+   * colours, four people in a room made it likelier than not. And colour is
+   * the *only* thing that says who somebody is on this board: a cursor, a
+   * selection ring, an avatar, the layer panel's editing pill and the radar's
+   * pings all carry the colour and no name. Two people sharing one is two
+   * people merged into one on every surface at once.
+   *
+   * Nothing could have caught it, because a hash is a function of one person
+   * and uniqueness is a property of a group — there was no code anywhere that
+   * could see the group. Awareness can. `resolvePresenceColor` takes the
+   * roster and returns a colour that converges without a coordinator; the
+   * reasoning for why it converges is there rather than here.
+   *
+   * It re-runs on every roster change rather than only on join, which is the
+   * point: a collision is created by somebody *else* arriving, and the person
+   * who has to move is the one who was not there first.
+   */
+  const published = useRef<string | null>(null);
   useEffect(() => {
-    if (user && !hasJoined.current) {
-      provider.awareness?.setLocalStateField('user', {
-        // The persisted identity, not the per-session client id — this is what
-        // `localAuthorId()` stamps on comments and nodes, and it has to survive
-        // a reload or "your own" comment stops being yours. See mutations.ts.
-        id: user.id,
-        name: user.name,
-        color: user.color,
-      });
-      // Awareness is ephemeral and never reaches the update log, so the same
-      // identity is recorded in the document too. That is what lets Time Travel
-      // name someone who joined and only edited — attribution used to require
-      // having created a node.
-      publishLocalIdentity(user.name, user.color);
-      // pushActivity('join', user.name, user.color, 'joined the workspace'); // Removed to stop spam
-      hasJoined.current = true;
-    }
-  }, [user]);
+    if (!user) return;
+
+    const mine = provider.awareness?.clientID ?? 0;
+    const peers: ColorClaim[] = [];
+    awarenessUsers.forEach((state: any, clientId: number) => {
+      if (clientId === mine || !state?.user?.color) return;
+      peers.push({ clientId, color: state.user.color });
+    });
+
+    const color = resolvePresenceColor(user.id, mine, peers);
+
+    const identity = {
+      // The persisted identity, not the per-session client id — this is what
+      // `localAuthorId()` stamps on comments and nodes, and it has to survive
+      // a reload or "your own" comment stops being yours. See mutations.ts.
+      id: user.id,
+      name: user.name,
+      color,
+      avatar: user.avatar,
+    };
+
+    /**
+     * Compared as a whole, not by colour alone.
+     *
+     * The first version guarded on the resolved colour, because avoiding a
+     * republish on every roster tick was the point — and that silently made
+     * the profile editor do nothing. Saving a new face changes `user.avatar`
+     * and leaves the colour exactly where it was, so the guard swallowed the
+     * publish and the face never left this browser. A cache key has to cover
+     * everything the value depends on.
+     */
+    const signature = JSON.stringify(identity);
+    if (published.current === signature) return;
+    published.current = signature;
+
+    provider.awareness?.setLocalStateField('user', identity);
+    // Awareness is ephemeral and never reaches the update log, so the same
+    // identity is recorded in the document too. That is what lets Time Travel
+    // name someone who joined and only edited — attribution used to require
+    // having created a node.
+    publishLocalIdentity(user.name, color);
+  }, [user, awarenessUsers]);
 
   const handleSaveTitle = (t: string) => {
     // Blurring or hitting Enter with the field cleared saved an empty

@@ -31,6 +31,35 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
     setUser(newGuest);
   };
 
+  /**
+   * Change name, colour or face without becoming somebody else.
+   *
+   * The `id` is deliberately untouched. It is what `localAuthorId()` stamps on
+   * every node and comment, so minting a new one would orphan everything this
+   * person has already made — their own comments would stop being theirs. A
+   * profile edit is a change of *appearance*, and the identity behind it is
+   * the thing that must not move.
+   *
+   * Written back to whichever store this identity came from: a guest who edits
+   * their profile stays a guest, rather than being quietly promoted to a
+   * remembered identity by the act of picking a face.
+   */
+  const updateProfile = (patch: Partial<Pick<User, 'name' | 'color' | 'avatar'>>) => {
+    setUser((current) => {
+      if (!current) return current;
+      const next = { ...current, ...patch };
+      const key = current.isGuest ? 'vega_guest' : 'vega_user';
+      const store = current.isGuest ? sessionStorage : localStorage;
+      try {
+        store.setItem(key, JSON.stringify(next));
+      } catch {
+        // A full or blocked store must not lose the edit for this session —
+        // the in-memory identity is what the room actually reads.
+      }
+      return next;
+    });
+  };
+
   const logout = () => {
     localStorage.removeItem('vega_user');
     sessionStorage.removeItem('vega_guest');
@@ -38,7 +67,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
   };
 
   return (
-    <AuthContext.Provider value={{ user, login, joinAsGuest, logout }}>
+    <AuthContext.Provider value={{ user, login, joinAsGuest, updateProfile, logout }}>
       {children}
     </AuthContext.Provider>
   );

@@ -1,4 +1,5 @@
 import React, { useState, useEffect, useMemo, useRef, useSyncExternalStore } from 'react';
+import { initialsFor } from '../engine/presence/collaborators';
 import ReactDOM from 'react-dom';
 import { Check, X, Send, Pencil, Trash2, CornerDownLeft } from 'lucide-react';
 import { cameraSystem } from '../engine/CameraSystem';
@@ -34,15 +35,6 @@ const THREAD_WIDTH = 320;
 const THREAD_MAX_HEIGHT = 420;
 /** Keep-out band at the viewport edge. */
 const EDGE_GAP = 16;
-
-/** Initials for an avatar chip, e.g. "Dev E" -> "DE". */
-const initialsOf = (name?: string) =>
-  (name || 'U')
-    .split(' ')
-    .map(p => p[0])
-    .slice(0, 2)
-    .join('')
-    .toUpperCase();
 
 export const CommentsOverlay: React.FC<CommentsOverlayProps> = ({
   comments,
@@ -420,7 +412,7 @@ export const CommentsOverlay: React.FC<CommentsOverlayProps> = ({
                   flexShrink: 0,
                 }}
               >
-                {initialsOf(threadAuthor)}
+                {initialsFor(threadAuthor)}
               </span>
               <span>{comment.messages?.length || 0}</span>
             </button>
@@ -577,7 +569,7 @@ export const CommentsOverlay: React.FC<CommentsOverlayProps> = ({
                                 flexShrink: 0,
                               }}
                             >
-                              {initialsOf(msg.authorName)}
+                              {initialsFor(msg.authorName)}
                             </div>
                             <span style={{ color: msg.authorColor, fontWeight: 600 }}>
                               {msg.authorName}

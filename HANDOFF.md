@@ -575,6 +575,46 @@ more than transcribing it once.
   second pass by a constant amount (a constant normal offset is a parallel
   curve, and two strokes at a constant gap read as a ruled double line).
 
+## 4a-vi. Identity, and the shortcuts that were never bound
+
+**Presence colour is an allocation, not a preference.** It was a hash of the
+user id into a ten-colour palette, so two people collided at exactly the rate
+the birthday problem dictates — four people in a room made it likelier than
+not. And colour is the *only* thing that says who somebody is on a cursor, a
+selection ring, an avatar, the layer panel's editing pill or a radar ping, so a
+collision merges two people into one on every surface at once. Nothing could
+have caught it: a hash is a function of one person and uniqueness is a property
+of a group, and no code could see the group. `resolvePresenceColor` takes the
+roster and converges without a coordinator — only *lower* client ids block a
+colour, which is a strict total order and therefore cannot cycle. The palette is
+sixteen now; ten was inside the size of a real session.
+
+**"Initials in a circle" had five implementations**, giving the same person
+"M", "MA" and "ME" depending on the corner of the product. One `initialsFor`
+now, and `components/ui/Avatar.tsx` is the single component every surface
+renders a person through — which is what made adding a face a change in one
+place rather than a hunt for five.
+
+**An avatar is eleven characters, not a picture.** It travels on *awareness*,
+which is rebroadcast at pointer frequency to every peer, so a data URL there is
+a photograph on the wire many times a second. `engine/presence/avatar.ts` stores
+six indices and the drawing is a pure function of them — which also makes it
+crisp at the 20px comment pin and the 112px picker tile.
+
+**A help screen that hard-codes a shortcut will be wrong.** `toolNames.ts` opens
+by saying so, and it happened anyway three sections below the generated list:
+`L / R` for "Line tool / Arrow tool", where `R` is Shape and `L` was bound to
+nothing. `L` arms the line seat now and pressing it again switches within it —
+one key for two tools that already share one dock button, because there is no
+second mnemonic letter free and reclaiming `R` would break a key people use.
+
+**The camera is a module singleton and outlives a route change.** So board B
+opened at board A's pose. `useOpeningFrame` frames the content once per room —
+and the thing that made it hard is that `setPose` emits `CameraChanged`
+*synchronously* into the listener that called it, so the first version recursed
+until the stack blew and the camera ended up not moving at all. Stand down
+before doing the work, not after.
+
 ## 4a-v. The transform rewrite, and what it uncovered
 
 The single largest change in the recent work, and the root of a long run of

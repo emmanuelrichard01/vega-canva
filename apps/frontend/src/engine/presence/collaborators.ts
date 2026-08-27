@@ -69,6 +69,15 @@ export interface Collaborator {
   /** One or two letters for an avatar. */
   initials: string;
   /**
+   * Their built face, as `avatar.ts`'s wire form, or `null` for initials.
+   *
+   * Carried as the eleven characters rather than anything drawn: this is
+   * awareness, which is rebroadcast at pointer frequency to every peer, and a
+   * picture on that channel would be a photograph on the wire many times a
+   * second. See `engine/presence/avatar.ts`.
+   */
+  avatar: string | null;
+  /**
    * Their pointer in **world** coordinates, or `null` when it is not over a
    * canvas. Cursor is the "right now" signal and is meant to disappear.
    */
@@ -188,6 +197,7 @@ export function readCollaborators(
       name,
       color: typeof state.user.color === 'string' ? state.user.color : FALLBACK_COLOR,
       initials: initialsFor(name),
+      avatar: typeof state.user.avatar === 'string' ? state.user.avatar : null,
       cursor: readCursor(state.cursor),
       smoothed: null,
       viewport: readViewport(state.viewport),

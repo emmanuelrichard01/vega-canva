@@ -8,6 +8,17 @@ export class CameraSystem {
   width: number = 800;
   height: number = 600;
 
+  /**
+   * Whether the canvas has ever reported its real size.
+   *
+   * `width`/`height` start at 800x600, which is a plausible viewport rather
+   * than an obviously-absent one — so anything that frames content has no way
+   * to tell "not measured yet" from "a small window", and framing against the
+   * placeholder puts the board somewhere nobody chose. The opening fit waits
+   * on this.
+   */
+  measured: boolean = false;
+
   private minZoom = 0.05;
   private maxZoom = 5;
 
@@ -46,8 +57,12 @@ export class CameraSystem {
     if (this.width !== safeW || this.height !== safeH) {
       this.width = safeW;
       this.height = safeH;
+      this.measured = true;
       this.emitChange();
     }
+    // Set even when the size is unchanged: a window that happens to be exactly
+    // 800x600 would otherwise never be reported as measured at all.
+    this.measured = true;
   }
 
   pan(dx: number, dy: number) {

@@ -25,6 +25,7 @@ export const TOOL_SHORTCUTS: Record<string, string> = {
   eraser: 'E',
   text: 'T',
   shape: 'R',
+  'shape-line': 'L',
   frame: 'F',
   grid: 'G',
   connector: 'X',
@@ -33,6 +34,45 @@ export const TOOL_SHORTCUTS: Record<string, string> = {
   image: 'I',
   audio: 'M',
 };
+
+/**
+ * The two tools that share the dock's line seat.
+ *
+ * Written here rather than imported from `shapePresetTypes`, which lives under
+ * `components/`: the engine does not depend on the UI, and a shortcut map that
+ * reached upward for two string literals would be the first crack in that.
+ * `shortcuts.test.ts` checks the pair against the dock's own list, so the
+ * duplication cannot drift silently — which is the only thing that made the
+ * duplication acceptable.
+ */
+export const LINE_SEAT: readonly string[] = ['shape-line', 'shape-arrow'];
+
+/**
+ * What pressing the line key does, given what is already armed.
+ *
+ * ## Why one key drives two tools
+ *
+ * The help screen advertised `L / R` for "Line tool / Arrow tool" and **neither
+ * was ever bound** — `R` arms the generic Shape seat and `L` did nothing at
+ * all. That is precisely the failure `toolNames.ts` opens by describing: a help
+ * screen holding its own copy of the shortcuts, read by someone who is already
+ * unsure, and wrong. The Tools section is generated from this map and was
+ * correct; one hand-written row three sections further down was not.
+ *
+ * Binding both letters was the obvious repair and it is the wrong one, because
+ * `R` is Shape and taking it back would break a key people already use to fix
+ * a key nobody could. Nor is there a second mnemonic letter free — `A` is
+ * Direct Select.
+ *
+ * Line and arrow already *share a seat* in the dock and already switch between
+ * each other there; they differ by which end carries a head. So one key arms
+ * that seat, and pressing it again switches within it. Mnemonic, no collision,
+ * and it matches the control the key is a shortcut for — which is the property
+ * that stops a keyboard map and a toolbar becoming two different products.
+ */
+export function lineSeatFor(activeTool: string): string {
+  return activeTool === LINE_SEAT[0] ? LINE_SEAT[1] : LINE_SEAT[0];
+}
 
 /**
  * Which tool a bare keypress selects.

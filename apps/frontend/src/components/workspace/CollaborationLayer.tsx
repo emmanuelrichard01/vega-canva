@@ -1,5 +1,7 @@
 import React, { useState, useSyncExternalStore } from 'react';
 import { provider } from '../../engine/document';
+import { Avatar } from '../ui/Avatar';
+import { ProfileEditor } from '../ProfileEditor';
 import { useRoomState } from '../../hooks/useSync';
 import { followMode } from '../../engine/presence/followMode';
 import type { ActivityKind } from '../../engine/presence/collaborators';
@@ -15,6 +17,15 @@ const ROSTER_ACTIVITY: Record<ActivityKind, string> = {
 export const CollaborationLayer: React.FC = () => {
   const { awarenessUsers } = useRoomState();
   const [hoveredUser, setHoveredUser] = useState<number | null>(null);
+  /**
+   * Your own disc opens your profile.
+   *
+   * It was the one avatar in the row that did nothing — every other one
+   * follows that person, and yours sat there inert with no way in to the name
+   * you typed once on the way in. This is where you already look to check how
+   * you appear to everyone else, which makes it the place to change it.
+   */
+  const [editingProfile, setEditingProfile] = useState(false);
   const followingId = useSyncExternalStore(
     followMode.subscribe,
     followMode.getSnapshot,
@@ -52,15 +63,17 @@ export const CollaborationLayer: React.FC = () => {
             /* This is a control, so it has to be reachable and announced as
                one. It was a bare `div` with an onClick: no tab stop, no role,
                no keyboard path to a feature whose only entry point it is. */
-            role={isMe ? undefined : 'button'}
-            tabIndex={isMe ? undefined : 0}
+            role="button"
+            tabIndex={0}
             aria-pressed={isMe ? undefined : isFollowed}
-            aria-label={isMe ? undefined : `${isFollowed ? 'Stop following' : 'Follow'} ${u.user.name}`}
+            aria-label={
+              isMe ? 'Edit your profile' : `${isFollowed ? 'Stop following' : 'Follow'} ${u.user.name}`
+            }
             onKeyDown={(e) => {
-              if (isMe) return;
               if (e.key !== 'Enter' && e.key !== ' ') return;
               e.preventDefault();
-              followMode.toggle(clientId);
+              if (isMe) setEditingProfile(true);
+              else followMode.toggle(clientId);
             }}
             onClick={() => {
               // Follow, rather than jump once. The tooltip has always said
@@ -68,20 +81,17 @@ export const CollaborationLayer: React.FC = () => {
               // the state behind the feature was declared without a setter and
               // was permanently null — so the control that named the feature
               // did something else instead.
-              if (!isMe) followMode.toggle(clientId);
+              if (isMe) setEditingProfile(true);
+              else followMode.toggle(clientId);
             }}
             style={{
               position: 'relative',
               width: 32,
               height: 32,
               borderRadius: '50%',
-              backgroundColor: u.user.color,
-              color: 'white',
               display: 'flex',
               alignItems: 'center',
               justifyContent: 'center',
-              fontSize: 14,
-              fontWeight: 600,
               marginLeft: i === 0 ? 0 : -10,
               /* The followed avatar is ringed in the page surface it sits on,
                  one step thicker. Elevation is already spoken for by hover, and
@@ -90,13 +100,18 @@ export const CollaborationLayer: React.FC = () => {
               border: `${isFollowed ? 3 : 2}px solid var(--surface-elevated)`,
               outline: isFollowed ? `2px solid ${u.user.color}` : 'none',
               zIndex: isHovered || isFollowed ? 50 : 10 - i,
-              cursor: isMe ? 'default' : 'pointer',
+              cursor: 'pointer',
               transition: 'transform var(--motion-settle), box-shadow var(--motion-hover)',
               transform: isHovered ? 'translateY(-4px)' : 'none',
               boxShadow: isHovered ? 'var(--shadow-md)' : 'var(--shadow-sm)'
             }}
           >
-            {u.user.name.charAt(0).toUpperCase()}
+            <Avatar
+              name={u.user.name}
+              color={u.user.color}
+              avatar={u.user.avatar}
+              size={28}
+            />
 
             {/* Ambient Popover (Shows when hovered) */}
             {isHovered && (
@@ -118,11 +133,13 @@ export const CollaborationLayer: React.FC = () => {
               >
                 <div style={{ fontSize: 13, fontWeight: 600, color: 'var(--text-primary)' }}>{u.user.name}{isMe ? ' (You)' : ''}</div>
                 <div style={{ fontSize: 12, color: 'var(--text-secondary)' }}>{statusText}</div>
-                {!isMe && (
-                  <div style={{ fontSize: 11, color: 'var(--text-tertiary)', marginTop: 2 }}>
-                    {isFollowed ? 'Click to stop following' : 'Click to follow'}
-                  </div>
-                )}
+                <div style={{ fontSize: 11, color: 'var(--text-tertiary)', marginTop: 2 }}>
+                  {isMe
+                    ? 'Click to edit your profile'
+                    : isFollowed
+                      ? 'Click to stop following'
+                      : 'Click to follow'}
+                </div>
               </div>
             )}
           </div>
@@ -138,6 +155,8 @@ export const CollaborationLayer: React.FC = () => {
           +{users.length - 4}
         </div>
       )}
+
+      <ProfileEditor open={editingProfile} onClose={() => setEditingProfile(false)} />
     </div>
   );
 };

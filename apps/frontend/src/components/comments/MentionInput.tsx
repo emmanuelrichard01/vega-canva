@@ -1,4 +1,5 @@
 import React, { useCallback, useMemo, useRef, useState } from 'react';
+import { initialsFor } from '../../engine/presence/collaborators';
 import {
   activeMentionQuery,
   encodeMention,
@@ -179,7 +180,7 @@ export const MentionInput: React.FC<MentionInputProps> = ({
               onMouseEnter={() => setHighlight(index)}
             >
               <span className="mention-avatar" style={{ background: candidate.color }}>
-                {candidate.name.charAt(0).toUpperCase()}
+                {initialsFor(candidate.name)}
               </span>
               {candidate.name}
             </button>
