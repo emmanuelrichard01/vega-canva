@@ -1,5 +1,5 @@
 import React from 'react';
-import { capsFollowAxis, defaultEndAlign, linePoints, type LineProfile } from '../../engine/model/linePath';
+import { defaultEndAlign, linePoints, type LineProfile } from '../../engine/model/linePath';
 import { endCapShape, endCapSize, terminateRun, type EndCapKind } from '../../engine/model/connectorEnds';
 import { polylinePoints } from '../../engine/model/polyline';
 
@@ -93,7 +93,6 @@ export const LineSpecimen: React.FC<{
       // The glyph's own head size, not one derived from a 1.5px stroke.
       scale: capSize / endCapSize(1.5, 1),
       align: defaultEndAlign(profile),
-      axis: capsFollowAxis(profile),
     }
   );
   const run: Array<{ x: number; y: number }> = [];

@@ -12,7 +12,7 @@ import { assembleSvg } from './svgDocument';
 import { fetchBlob, inlineImageSources } from './inlineImages';
 import { pointsAttribute, regularPolygonPoints, shapeOutline, starPoints } from '../model/shapeOutline';
 import { shapeToPath } from '../model/shapeToPath';
-import { capsFollowAxis, defaultEndAlign } from '../model/linePath';
+import { defaultEndAlign } from '../model/linePath';
 import { runPoints } from '../model/lineEnds';
 import { endCapShape, terminateRun } from '../model/connectorEnds';
 import { pathData } from '../model/pathGeometry';
@@ -424,7 +424,6 @@ function openShapeMarkup(node: ShapeNode): string {
       strokeWidth: sw,
       scale: node.geometry.endScale,
       align: node.geometry.endAlign ?? defaultEndAlign(node.geometry.lineProfile),
-      axis: capsFollowAxis(node.geometry.lineProfile),
     }
   );
 

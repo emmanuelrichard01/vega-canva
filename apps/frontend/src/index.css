@@ -6637,7 +6637,17 @@ html.dark-theme,
 
 .layer-row {
   display: grid;
-  grid-template-columns: 14px 18px minmax(0, 1fr) auto;
+  /**
+   * Five tracks, because the row has five children.
+   *
+   * It had four, and the fifth — the "someone is editing this" badge — wrapped
+   * onto a second line and took the visibility and lock toggles with it, so any
+   * row a collaborator was working on became two rows tall and the panel looked
+   * broken. The badge's own track is `minmax(0, auto)`: it gets what it needs
+   * and gives it back before the name does, which is the order that keeps a
+   * long name readable next to a long one.
+   */
+  grid-template-columns: 14px 18px minmax(0, 1fr) minmax(0, auto) auto;
   align-items: center;
   gap: 8px;
   box-sizing: border-box;
@@ -6784,6 +6794,42 @@ html.dark-theme,
   height: 18px;
   flex-shrink: 0;
   border-radius: var(--radius-sm);
+}
+
+/* Who is in this object, at a glance.
+ *
+ * Capped rather than left to the name's own length: presence names are whatever
+ * anyone typed, and one long one used to stretch the badge until it crowded the
+ * layer's name off the row. Seven characters or so is enough to tell two people
+ * apart, and the full sentence is in the tooltip for when it is not. */
+.layer-row__editing {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  min-width: 0;
+  max-width: 88px;
+  padding: 2px 6px;
+  border-radius: var(--radius-pill);
+  font-size: var(--text-2xs);
+  font-weight: var(--weight-semibold);
+  line-height: 1.4;
+}
+
+.layer-row__editing-dot {
+  flex: none;
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  /* The dot is the ink, so it stays legible on a pale presence colour for the
+     same reason the label does. */
+  background: currentColor;
+  opacity: 0.85;
+}
+
+.layer-row__editing-name {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 .layer-row__actions {

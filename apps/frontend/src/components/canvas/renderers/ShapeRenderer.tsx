@@ -6,7 +6,7 @@ import { useFillProps } from './useFillProps';
 import { AlignedStroke, BackdropBlur, InnerShadow } from './ShapeEffects';
 import { shapePath2D } from './shapePath2D';
 import { shapeToPath } from '../../../engine/model/shapeToPath';
-import { capsFollowAxis, defaultEndAlign } from '../../../engine/model/linePath';
+import { defaultEndAlign } from '../../../engine/model/linePath';
 import { runPoints } from '../../../engine/model/lineEnds';
 import { terminateRun } from '../../../engine/model/connectorEnds';
 import { pathData } from '../../../engine/model/pathGeometry';
@@ -344,9 +344,6 @@ export const ShapeRenderer: React.FC<Props> = React.memo(({ node, showLabel }) =
     strokeWidth: sw || 2,
     scale: node.geometry.endScale,
     align: node.geometry.endAlign ?? defaultEndAlign(node.geometry.lineProfile),
-    // A wave crosses its own axis at its steepest point, so its last segment is
-    // not the direction the line goes. See `capsFollowAxis`.
-    axis: capsFollowAxis(node.geometry.lineProfile),
   });
 
   if (sketch) {

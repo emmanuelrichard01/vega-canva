@@ -50,6 +50,17 @@ export const LINE_PROFILE_LABELS: Record<LineProfile, string> = {
  */
 export const TARGET_PERIOD = 72;
 
+/**
+ * How much of a run at each end enters and leaves along the axis.
+ *
+ * The coil has always had this and was the only profile whose arrowheads
+ * looked right; the wave and the zigzag now do too. Small enough to be a
+ * *finish* on the mark rather than part of it — at five per cent a 500-unit
+ * line gets a twenty-five-unit entry, which reads as the line arriving rather
+ * than as a gap before the pattern starts.
+ */
+export const PROFILE_LEAD = 0.05;
+
 export const MIN_WAVES = 1;
 export const MAX_WAVES = 40;
 
@@ -195,13 +206,38 @@ export function linePoints(
   }
 
   if (profile === 'zigzag') {
-    // Corners, not samples: a zigzag is defined entirely by where it turns, and
-    // sampling it would round the turns that are the whole point.
-    const out: Point[] = [at(0, 0)];
+    /**
+     * Corners, not samples: a zigzag is defined entirely by where it turns, and
+     * sampling it would round the turns that are the whole point.
+     *
+     * ## The flat leads, and why they are not decoration
+     *
+     * Without them the run's first and last strokes rise straight off the
+     * baseline, so the line *arrives at its own endpoint travelling at 44°* —
+     * and an end cap has nowhere good to go. Point it along the run and it sits
+     * crooked against the stroke that reaches it; point it along the stroke and
+     * it aims 44° away from where the line is going. Both readings are wrong,
+     * which is the sign that the marker was never the problem.
+     *
+     * A short horizontal entry at each end settles it: the line now arrives
+     * *along its own axis*, the cap follows the last segment the way it does
+     * for every other run in this codebase, and neither of the two bad choices
+     * has to be made. The coil has always been drawn this way — it enters and
+     * leaves on flat leads — which is why it was the only profile whose
+     * arrowheads looked right.
+     *
+     * A zigzag is all corners already, so a lead costs nothing here: there is
+     * no smoothness to break at the join.
+     */
+    const lead = length * PROFILE_LEAD;
+    const span = length - lead * 2;
+    const step = span / count;
+    const out: Point[] = [at(0, 0), at(lead, 0)];
     for (let i = 0; i < count; i += 1) {
-      out.push(at((i + 0.25) * period, amplitude));
-      out.push(at((i + 0.75) * period, -amplitude));
+      out.push(at(lead + (i + 0.25) * step, amplitude));
+      out.push(at(lead + (i + 0.75) * step, -amplitude));
     }
+    out.push(at(length - lead, 0));
     out.push(at(length, 0));
     return out;
   }
@@ -209,22 +245,39 @@ export function linePoints(
   if (profile === 'wavy') {
     const steps = count * stepsFor(period);
     /**
-     * No fade at the ends.
+     * The wave grows out of the line and settles back into it.
      *
-     * A sine over a whole number of periods already *starts and finishes on
-     * the line* — both ends are zero crossings — so a fade buys nothing and
-     * costs the thing it was meant to protect: it flattened the last stretch,
-     * so the run went straight for a moment and then began to wave, and the
-     * head looked stuck on rather than grown out of the line.
+     * ## Why an envelope, and why a *short* one
      *
-     * The head takes the true tangent instead, which at a zero crossing is the
-     * steepest part of the wave. That is what a wavy arrow looks like when it
-     * is drawn properly — the amplitude is what keeps the angle reasonable,
-     * which is why it came down rather than the ends being bent flat.
+     * A sine over a whole number of periods starts and finishes on the line —
+     * both ends are zero crossings — but a zero crossing is the **steepest**
+     * part of a wave, so the run left and arrived at 55° to its own axis. That
+     * left an end cap with two bad options and no good one: along the run it
+     * sits crooked against the stroke reaching it, along the stroke it aims 55°
+     * away from where the line goes. The marker was never the problem.
+     *
+     * Because the amplitude is zero at each end, the *tangent* there is exactly
+     * the axis — `y' = A'·sin + A·ω·cos`, and both terms vanish when `A` and
+     * `sin` do. So the cap follows the last segment, the way it does for every
+     * other run here, and it is right.
+     *
+     * An earlier version of this had a fade and it was removed, for a reason
+     * that still stands: it ran long enough that the line went straight for a
+     * while and only then began to wave. The fix was the *length*, not the
+     * idea. This ramps over **half a period** at each end — one rise, which is
+     * how a hand drawing a squiggle starts one — and `smoothstep` rather than a
+     * straight ramp so the approach flattens quadratically instead of linearly.
      */
+    const ramp = 0.5 / count;
+    const ease = (u: number) => {
+      const c = Math.min(1, Math.max(0, u));
+      return c * c * (3 - 2 * c);
+    };
     return Array.from({ length: steps + 1 }, (_, i) => {
-      const along = (i / steps) * length;
-      return at(along, Math.sin((along / period) * Math.PI * 2) * amplitude);
+      const t = i / steps;
+      const along = t * length;
+      const envelope = ease(t / ramp) * ease((1 - t) / ramp);
+      return at(along, Math.sin((along / period) * Math.PI * 2) * amplitude * envelope);
     });
   }
 
@@ -380,44 +433,6 @@ export function linePoints(
  * projects instead and the run keeps every crest and corner. One rule, stated
  * once, read by the canvas, the exporter and the specimen alike.
  */
-/**
- * Whether this profile's end caps should point along the run's axis.
- *
- * ## The measurement that settled it
- *
- * A run of 400 units, its last segment's angle against the axis:
- *
- * | profile | angle |
- * | --- | --- |
- * | curved | ±20.6° |
- * | wavy | 55.2° |
- * | zigzag | 43.8° |
- * | coil | 0° |
- *
- * A sine crosses its own axis at the *steepest* part of the wave, so a wavy
- * line arrives at its endpoint travelling fifty-five degrees away from the
- * direction it is actually going — and an arrowhead drawn along that reads as
- * cocked off the line it terminates. The head states where the line *goes*,
- * which is A to B; the wave is a texture on the way.
- *
- * ## Why only two of the four
- *
- * `curved` is a genuine arc, and an arc's head should follow its tangent —
- * ±20.6° is the arc leaving and arriving, symmetrically, which is what an arc
- * looks like. Forcing it to the axis would make the head ignore the curve it
- * sits on.
- *
- * `coil` needs nothing: it enters and leaves on flat leads, so its heads are
- * already at 0°. Which is the argument that settles the other two — the
- * profiles disagreed with each other about the same question, and the coil had
- * the better answer.
- *
- * `straight` has no distinction to make.
- */
-export function capsFollowAxis(profile: LineProfile | undefined): boolean {
-  return profile === 'wavy' || profile === 'zigzag';
-}
-
 export function defaultEndAlign(profile: LineProfile | undefined): 'inside' | 'extend' {
   return !profile || profile === 'straight' ? 'inside' : 'extend';
 }

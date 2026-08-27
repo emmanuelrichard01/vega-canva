@@ -1,6 +1,5 @@
 import { describe, it, expect } from 'vitest';
 import {
-  capsFollowAxis,
   LINE_PROFILES,
   LINE_PROFILE_LABELS,
   MAX_AMPLITUDE_SCALE,
@@ -158,10 +157,11 @@ describe('the wave count', () => {
   });
 
   // A zigzag is defined by where it turns, not by sampling: two corners per
-  // wave, plus the two endpoints.
+  // wave, plus the two endpoints -- and the two points that end the flat lead
+  // at each end, which is what brings the run in along its own axis.
   it('gives a zigzag two corners per wave', () => {
     for (const count of [1, 3, 6, 12]) {
-      expect(linePoints(A, B, 'zigzag', count), `count=${count}`).toHaveLength(2 * count + 2);
+      expect(linePoints(A, B, 'zigzag', count), `count=${count}`).toHaveLength(2 * count + 4);
     }
   });
 });
@@ -448,48 +448,76 @@ describe('smart and dynamic loop / wave count', () => {
   });
 });
 
-describe('capsFollowAxis', () => {
-  /** The angle the run's last segment makes with its own axis, in degrees. */
-  const arrivalAngle = (profile: Parameters<typeof linePoints>[2]) => {
-    const pts = linePoints({ x: 0, y: 0 }, { x: 400, y: 0 }, profile, undefined, 1);
+describe('where a run leaves and arrives', () => {
+  /** The angle the run's first and last segments make with its own axis. */
+  const angles = (profile: Parameters<typeof linePoints>[2], length = 400) => {
+    const pts = linePoints(A, { x: length, y: 0 }, profile, undefined, 1);
     const n = pts.length;
-    return Math.abs(
-      (Math.atan2(pts[n - 1].y - pts[n - 2].y, pts[n - 1].x - pts[n - 2].x) * 180) / Math.PI
-    );
+    const deg = (r: number) => Math.abs((r * 180) / Math.PI);
+    return {
+      start: deg(Math.atan2(pts[1].y - pts[0].y, pts[1].x - pts[0].x)),
+      end: deg(Math.atan2(pts[n - 1].y - pts[n - 2].y, pts[n - 1].x - pts[n - 2].x)),
+    };
   };
 
-  it('is on for the profiles that cross their own axis steeply', () => {
+  it('brings a zigzag in and out along its own axis', () => {
     /**
-     * A sine crosses its axis at the *steepest* part of the wave, so a wavy
-     * line arrives travelling fifty-five degrees away from the direction it is
-     * actually going. An arrowhead drawn along that reads as cocked off the
-     * line it terminates.
+     * The bug this closes. Without a flat lead the first and last strokes rise
+     * straight off the baseline, so the line arrived at 44° to the direction it
+     * was going -- and an end cap had two bad options and no good one: along
+     * the run it sits crooked against the stroke reaching it, along the stroke
+     * it aims 44° away from where the line goes. Both readings are wrong, which
+     * is how you know the marker was never the problem.
      */
-    expect(arrivalAngle('wavy')).toBeGreaterThan(40);
-    expect(arrivalAngle('zigzag')).toBeGreaterThan(40);
-    expect(capsFollowAxis('wavy')).toBe(true);
-    expect(capsFollowAxis('zigzag')).toBe(true);
+    const { start, end } = angles('zigzag');
+    expect(start).toBeCloseTo(0, 6);
+    expect(end).toBeCloseTo(0, 6);
   });
 
-  it('is off for an arc, whose tangent is the right answer', () => {
-    // ±20.6°: the arc leaving and arriving, symmetrically. Forcing the head to
-    // the axis would make it ignore the curve it sits on.
-    expect(arrivalAngle('curved')).toBeLessThan(25);
-    expect(capsFollowAxis('curved')).toBe(false);
-  });
-
-  it('is off for a coil, which already arrives flat', () => {
+  it('grows a wave out of the line rather than crossing it steeply', () => {
     /**
-     * It enters and leaves on flat leads, so its heads are at 0° with no help.
-     * Which is the argument that settled the other two: the four profiles
-     * disagreed about the same question and the coil had the better answer.
+     * A zero crossing is the *steepest* part of a sine, so a whole number of
+     * periods left and arrived at 55°. The envelope takes the amplitude to zero
+     * at each end, and with `A` and `sin` both zero the tangent there is
+     * exactly the axis -- what is left is the sampling step.
      */
-    expect(arrivalAngle('coil')).toBeLessThan(1);
-    expect(capsFollowAxis('coil')).toBe(false);
+    const { start, end } = angles('wavy');
+    expect(start).toBeLessThan(8);
+    expect(end).toBeLessThan(8);
   });
 
-  it('is off for a straight line, which has no distinction to make', () => {
-    expect(capsFollowAxis('straight')).toBe(false);
-    expect(capsFollowAxis(undefined)).toBe(false);
+  it('holds at every length, which is what makes it a rule', () => {
+    for (const length of [160, 400, 900]) {
+      expect(angles('zigzag', length).end).toBeCloseTo(0, 6);
+      expect(angles('wavy', length).end).toBeLessThan(8);
+    }
+  });
+
+  it('leaves the coil alone, which always did this', () => {
+    // It enters and leaves on flat leads, and was the only profile whose
+    // arrowheads looked right. The other two now follow it.
+    expect(angles('coil').end).toBeCloseTo(0, 6);
+  });
+
+  it('leaves an arc on its tangent, because that is what an arc is', () => {
+    /**
+     * ±20.6°, symmetrically -- the arc leaving and arriving. Flattening this
+     * would make the head ignore the curve it sits on, which is the opposite
+     * of the fix.
+     */
+    const { start, end } = angles('curved');
+    expect(start).toBeGreaterThan(15);
+    expect(end).toBeGreaterThan(15);
+  });
+
+  it('still starts and finishes exactly on its endpoints', () => {
+    // The leads and the envelope shape the approach; they must not shorten the
+    // line, which is the one thing its two endpoints mean.
+    for (const profile of ['wavy', 'zigzag'] as const) {
+      const pts = linePoints(A, { x: 400, y: 0 }, profile);
+      expect(pts[0]).toEqual({ x: 0, y: 0 });
+      expect(pts[pts.length - 1].x).toBeCloseTo(400, 6);
+      expect(pts[pts.length - 1].y).toBeCloseTo(0, 6);
+    }
   });
 });

@@ -1165,28 +1165,23 @@ export const LayersPanel: React.FC<LayersPanelProps> = ({ selectedIds, overrideO
 
         {/* Live Collaborator Presence Indicator Badge */}
         {activeEditor && (
-          <div
-            style={{
-              display: 'flex', alignItems: 'center', gap: '4px', background: activeEditor.color,
-              /**
-               * Ink chosen against the badge, not assumed to be white.
-               *
-               * Presence colours span the whole palette, so a fixed white label
-               * sat at roughly 1.4:1 on the lighter half of it — the amber and
-               * the lime were effectively unreadable. `readableOn` is already
-               * imported here for the type icons and answers the same question.
-               */
-              color: readableOn(activeEditor.color, darkTheme),
-              padding: '2px 6px',
-              borderRadius: 'var(--radius-pill)',
-              fontSize: 'var(--text-2xs)',
-              fontWeight: 600,
-            }}
+          <span
+            className="layer-row__editing"
+            /**
+             * Only the two colours are inline, because only they are data.
+             *
+             * The ink is chosen against the badge rather than assumed white:
+             * presence colours span the whole palette, so a fixed white label
+             * sat at roughly 1.4:1 on the lighter half of it and the amber and
+             * the lime were effectively unreadable. `readableOn` is already
+             * imported here for the type icons and answers the same question.
+             */
+            style={{ background: activeEditor.color, color: readableOn(activeEditor.color, darkTheme) }}
             title={`${activeEditor.name} is currently editing this item`}
           >
-            <div style={{ width: '6px', height: '6px', borderRadius: '50%', background: 'white' }} />
-            {activeEditor.name}
-          </div>
+            <span className="layer-row__editing-dot" aria-hidden="true" />
+            <span className="layer-row__editing-name">{activeEditor.name}</span>
+          </span>
         )}
 
         {!isEditingThisTitle && (

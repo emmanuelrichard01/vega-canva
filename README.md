@@ -803,14 +803,24 @@ moved onto the same figure — ten loops read as a row of small curls competing
 with each other, seven are large enough to be a coil — which also gives the
 three a shared rhythm.
 
-And their **end caps now point along the run**. Measured on a 400-unit line, the
-angle each profile's last segment makes with its own axis: curved ±20.6°, wavy
-55.2°, zigzag 43.8°, coil 0°. A sine crosses its axis at the steepest part of
-the wave, so a wavy arrow's head was drawn fifty-five degrees off the direction
-the line goes. The coil was already right, by accident, because it enters and
-leaves on flat leads — so the four profiles disagreed with each other about the
-same question, which is what settled it. `capsFollowAxis` names the two that
-need it; an arc keeps its tangent, because that *is* the arc.
+**And they arrive along their own axis now.** Measured on a 400-unit line, the
+angle each profile's last segment made with its axis: curved ±20.6°, wavy 55.2°,
+zigzag 43.8°, coil 0°. A sine crosses its axis at the *steepest* part of the
+wave, so a wavy line left and arrived fifty-five degrees off the direction it
+was going — which gave an end cap two bad options and no good one. Point it
+along the run and it sits crooked against the stroke reaching it; point it along
+the stroke and it aims fifty-five degrees away from where the line goes. Both
+readings are wrong, which is how you know the marker was never the problem.
+
+The first attempt *was* to fix the marker, and it produced the second of those
+two faults. The fix is the geometry: a zigzag gets a short flat lead at each
+end, and a wave's amplitude is taken to zero over half a period, so the tangent
+at each endpoint is the axis — `y' = A'·sin + A·ω·cos`, and both terms vanish
+when `A` and `sin` do. The coil has always been drawn this way, which is why it
+was the only profile whose arrowheads looked right. Measured after: zigzag and
+coil at 0.00°, wavy at 6°, and the special case in the cap code deleted, because
+the last segment is now the right answer for every run. An arc keeps its ±20.6°,
+because that *is* the arc.
 
 ### Colour — `engine/model/colorRamp.ts`
 
