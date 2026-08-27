@@ -739,8 +739,20 @@ textarea:focus-visible {
   /* The Radar's expanded height. The Layers panel shares this corner and ends
      above it, so the two are kept in step by one number rather than by two
      magic constants that drift apart the first time the Radar changes size. */
-  --radar-h: 214px;
-  --radar-w: 264px;
+  /**
+   * At 214 the people list starved the map.
+   *
+   * The panel is a fixed height with the map on `flex: 1`, so every row of
+   * collaborators came straight out of the map's share — three people and the
+   * map was a sliver, while the rows themselves were 20px avatars with 11px
+   * names. Both halves were unreadable at once, which is what "too small" meant.
+   *
+   * The extra 74px goes to the list, and the map now has a floor it cannot be
+   * pushed below. The Layers panel reads the same number to know where to end,
+   * so the two stay in step without a second constant.
+   */
+  --radar-h: 288px;
+  --radar-w: 272px;
 }
 
 /* ---------------------------------------------------------------------------
@@ -8785,25 +8797,44 @@ body[data-zen='physics'] .forces-handle { bottom: 32px; }
    once and leaves you free, follow ties your camera to theirs until you stop.
    --------------------------------------------------------------------------- */
 
+/* The map keeps a floor. Every row of people used to come out of its share,
+   so a busy room left a sliver of board and a list too cramped to read. */
+.radar-canvas { min-height: 108px; }
+
+.radar-people-wrap {
+  flex: 0 1 auto;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+  border-top: 1px solid var(--border-divider);
+}
+
 .radar-people {
+  flex: 0 1 auto;
+  min-height: 0;
   display: flex;
   flex-direction: column;
   gap: 1px;
-  padding: var(--space-2) var(--space-2) 0;
-  /* A room can be large. Four rows is enough to read at a glance; past that
-     it scrolls rather than pushing the zoom controls off the panel. */
+  padding: var(--space-2) 6px;
+  /* Past three rows it scrolls rather than pushing the zoom controls off the
+     panel or eating any more of the map. */
   max-height: 132px;
   overflow-y: auto;
-  border-top: 1px solid var(--border-divider);
+  scrollbar-width: thin;
 }
 
 .radar-person {
   display: flex;
   align-items: center;
   gap: 2px;
+  border-radius: var(--radius-md);
 }
 
-/* The row itself is the jump target — the whole thing, not a small icon,
+/* Following is a mode you are *in*, so the row it is on stays marked whether
+   or not the pointer is near it. */
+.radar-person.is-followed { background: var(--accent-quiet); }
+
+/* The row itself is the jump target -- the whole thing, not a small icon,
    because "go to where they are" is the common action. */
 .radar-person__jump {
   flex: 1;
@@ -8811,7 +8842,7 @@ body[data-zen='physics'] .forces-handle { bottom: 32px; }
   display: flex;
   align-items: center;
   gap: var(--space-2);
-  padding: 4px 6px;
+  padding: 5px 6px;
   border: none;
   border-radius: var(--radius-md);
   background: transparent;
@@ -8828,7 +8859,7 @@ body[data-zen='physics'] .forces-handle { bottom: 32px; }
   color: var(--text-primary);
 }
 
-/* Disabled when we have neither a cursor nor a viewport for them — there is
+/* Disabled when we have neither a cursor nor a viewport for them -- there is
    nowhere to jump to. Saying so beats a button that does nothing. */
 .radar-person__jump:disabled { opacity: 0.5; cursor: default; }
 
@@ -8836,33 +8867,41 @@ body[data-zen='physics'] .forces-handle { bottom: 32px; }
   flex: 0 0 auto;
   display: grid;
   place-items: center;
-  width: 20px;
-  height: 20px;
+  width: 26px;
+  height: 26px;
   border-radius: 50%;
   /* White on the identity colour, which is how the same person is drawn in the
      header, the cursors and the comment rows. */
   color: #FFFFFF;
-  font-size: 9px;
+  font-size: 10px;
   font-weight: var(--weight-bold);
   letter-spacing: 0.02em;
 }
 
-/* Away is drawn as absence of vigour rather than a badge: a second marker per
-   row would compete with the activity label, which carries real information. */
+/* Away is drawn as absence of vigour *and* said in words. A faded avatar on
+   its own is a difference nobody can name. */
 .radar-person__face[data-away] { opacity: 0.45; }
 
-.radar-person__name {
+/* Name over status, rather than the two competing for one line. At this width
+   a name and a label side by side left about six characters for the name. */
+.radar-person__label {
   flex: 1;
   min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
+  line-height: 1.25;
+}
+
+.radar-person__name {
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
+  font-weight: var(--weight-medium);
 }
 
-/* What they are doing, when they are doing something. Quiet, because it
-   changes often and must not pull the eye off the board. */
+/* Quiet, because it changes often and must not pull the eye off the board. */
 .radar-person__doing {
-  flex: 0 0 auto;
   font-size: var(--text-2xs);
   font-weight: var(--weight-semibold);
   letter-spacing: 0.04em;
@@ -8870,30 +8909,43 @@ body[data-zen='physics'] .forces-handle { bottom: 32px; }
   color: var(--text-tertiary);
 }
 
+/* Revealed on hover, or when it is on.
+ *
+ * It used to sit on every row wearing a crossed-out eye, which is this app's
+ * glyph for *hidden* -- so a room of four showed four "hidden" marks and the
+ * one row that mattered had to be found among them. */
 .radar-person__follow {
   flex: 0 0 auto;
   display: grid;
   place-items: center;
-  width: 26px;
-  height: 26px;
+  width: 28px;
+  height: 28px;
   border: none;
   border-radius: var(--radius-md);
   background: transparent;
   color: var(--text-tertiary);
   cursor: pointer;
-  transition: var(--motion-hover);
+  opacity: 0;
+  transition: opacity var(--motion-hover), background var(--motion-hover), color var(--motion-hover);
 }
+
+.radar-person:hover .radar-person__follow,
+.radar-person__follow:focus-visible,
+.radar-person__follow.is-on { opacity: 1; }
 
 .radar-person__follow:hover {
   background: var(--surface-hover);
   color: var(--text-primary);
 }
 
-/* Following is a mode you are *in*, so it latches visibly rather than looking
-   like a button that was pressed a moment ago. */
-.radar-person__follow.is-on {
-  background: var(--accent-quiet);
-  color: var(--text-primary);
+/* `--text-accent` is the token this palette uses for an active mark; there is
+   no `--accent-strong`, and a fallback to `--text-primary` would have made the
+   on state look identical to a hover. */
+.radar-person__follow.is-on { color: var(--text-accent); }
+
+@media (prefers-reduced-motion: reduce) {
+  .radar-person__follow,
+  .radar-person__jump { transition: none; }
 }
 
 /* ---------------------------------------------------------------------------

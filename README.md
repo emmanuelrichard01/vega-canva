@@ -589,6 +589,24 @@ to the new one. Re-fitting every frame — which the previous implementation did
 — means that panning, since your own viewport is part of the bounds, rescales
 the map continuously and objects that have not moved appear to swim.
 
+**The people list was starving the map.** The panel is a fixed height with the
+map on `flex: 1`, so every row of collaborators came straight out of the map's
+share — three people and the board was a sliver, while the rows themselves were
+20px avatars with 11px names. Both halves were illegible at once. The panel is
+taller now, the map has a floor it cannot be pushed below, and a row is 26px
+avatar with the name and what they are doing on **two lines** rather than
+competing for one — at this width a name and a status side by side left about
+six characters for the name.
+
+The follow control also stopped shouting. It sat on every row wearing a
+crossed-out eye — this app's glyph for *hidden* — so a room of four showed four
+"hidden" marks and the one row that mattered had to be found among them. It is
+revealed on hover now, and stays lit on the row it is on, because "which of
+these am I tied to" is a question only the row can answer. That the mode exists
+at all is already said by `FollowIndicator` at the top of the screen; a second
+copy in the radar was written and then deleted, because two statements of one
+fact four inches apart have to be kept in step and one of them will not be.
+
 ### Sticky notes
 
 **A new note opens ready to type in**, and Escape backs out of it — an empty

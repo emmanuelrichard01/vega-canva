@@ -1,5 +1,5 @@
 import React, { useCallback, useEffect, useRef, useState, useSyncExternalStore } from 'react';
-import { Radar as RadarIcon, Minus, Plus, Maximize2, ChevronDown, Eye, EyeOff } from 'lucide-react';
+import { Radar as RadarIcon, Minus, Plus, Maximize2, ChevronDown, ScanEye } from 'lucide-react';
 import { RadarEngine } from '../engine/presence/RadarEngine';
 import { useCollaborators } from '../engine/presence/useCollaborators';
 import { ACTIVITY_LABEL } from '../engine/presence/collaborators';
@@ -304,49 +304,87 @@ export const Minimap: React.FC<MinimapProps> = ({ onCollapse }) => {
             camera tied to theirs until you stop. Conflating them is why a
             single click on a radar dot was never enough. */}
         {collaborators.length > 0 && (
-          <div className="radar-people" role="list" aria-label="People in this workspace">
-            {collaborators.map((person) => {
-              const isFollowed = followingId === person.clientId;
-              const where = person.cursor ?? (person.viewport ? viewportCenter(person.viewport) : null);
-              return (
-                <div className="radar-person" role="listitem" key={person.clientId}>
-                  <button
-                    type="button"
-                    className="radar-person__jump"
-                    disabled={!where}
-                    onClick={() => where && navigate(where.x, where.y)}
-                    data-tooltip={where ? `Jump to ${person.name}` : `${person.name} is not on the board`}
-                    aria-label={where ? `Jump to ${person.name}` : `${person.name}, position unknown`}
-                  >
-                    <span
-                      className="radar-person__face"
-                      style={{ background: person.color }}
-                      data-away={person.away || undefined}
-                    >
-                      {person.initials}
-                    </span>
-                    <span className="radar-person__name">{person.name}</span>
-                    {/* What they are doing, when they are doing something.
-                        Absent rather than "idle": a row of "idle" labels is
-                        noise that makes the one real signal harder to see. */}
-                    {person.activity && ACTIVITY_LABEL[person.activity] && (
-                      <span className="radar-person__doing">{ACTIVITY_LABEL[person.activity]}</span>
-                    )}
-                  </button>
+          <div className="radar-people-wrap">
+            {/*
+              No "you are following X" strip here, though one was written and
+              then removed.
 
-                  <button
-                    type="button"
-                    className={`radar-person__follow ${isFollowed ? 'is-on' : ''}`}
-                    aria-pressed={isFollowed}
-                    onClick={() => followMode.toggle(person.clientId)}
-                    data-tooltip={isFollowed ? `Stop following ${person.name}` : `Follow ${person.name}`}
-                    aria-label={isFollowed ? `Stop following ${person.name}` : `Follow ${person.name}`}
+              The argument for it was that a latched row scrolls out of view and
+              takes the only sign of the mode with it. That argument was wrong:
+              `FollowIndicator` already states it at the top of the screen, with
+              Stop and Esc, and it is visible whether or not the radar is even
+              open. A second copy in here said the same thing twice, four
+              inches apart, and would have had to be kept in step with it.
+
+              The row keeps its own latched state, because that answers a
+              different question — *which* of these people am I tied to — and
+              the banner cannot.
+            */}
+            <div className="radar-people" role="list" aria-label="People in this workspace">
+              {collaborators.map((person) => {
+                const isFollowed = followingId === person.clientId;
+                const where = person.cursor ?? (person.viewport ? viewportCenter(person.viewport) : null);
+                return (
+                  <div
+                    className={`radar-person ${isFollowed ? 'is-followed' : ''}`}
+                    role="listitem"
+                    key={person.clientId}
                   >
-                    {isFollowed ? <Eye size={13} /> : <EyeOff size={13} />}
-                  </button>
-                </div>
-              );
-            })}
+                    <button
+                      type="button"
+                      className="radar-person__jump"
+                      disabled={!where}
+                      onClick={() => where && navigate(where.x, where.y)}
+                      data-tooltip={where ? `Jump to ${person.name}` : `${person.name} is not on the board`}
+                      aria-label={where ? `Jump to ${person.name}` : `${person.name}, position unknown`}
+                    >
+                      <span
+                        className="radar-person__face"
+                        style={{ background: person.color }}
+                        data-away={person.away || undefined}
+                      >
+                        {person.initials}
+                      </span>
+                      <span className="radar-person__label">
+                        <span className="radar-person__name">{person.name}</span>
+                        {/* What they are doing, on its own line rather than
+                            fighting the name for one. Absent rather than
+                            "idle": a column of "idle" is noise that hides the
+                            one row carrying a real signal. "Away" is the
+                            exception worth saying outright — a faded avatar
+                            alone is a difference nobody can name. */}
+                        {(person.away || (person.activity && ACTIVITY_LABEL[person.activity])) && (
+                          <span className="radar-person__doing">
+                            {person.away ? 'Away' : ACTIVITY_LABEL[person.activity!]}
+                          </span>
+                        )}
+                      </span>
+                    </button>
+
+                    {/*
+                      Revealed on hover, or when it is on.
+
+                      It used to sit on every row wearing a crossed-out eye,
+                      which is the glyph this app uses for *hidden* — so a room
+                      of four people showed four "hidden" marks and the one row
+                      that mattered had to be found among them. A control that
+                      is off does not need to announce itself on every row; the
+                      row it is *on* does, and that one stays.
+                    */}
+                    <button
+                      type="button"
+                      className={`radar-person__follow ${isFollowed ? 'is-on' : ''}`}
+                      aria-pressed={isFollowed}
+                      onClick={() => followMode.toggle(person.clientId)}
+                      data-tooltip={isFollowed ? `Stop following ${person.name}` : `Follow ${person.name}`}
+                      aria-label={isFollowed ? `Stop following ${person.name}` : `Follow ${person.name}`}
+                    >
+                      <ScanEye size={15} />
+                    </button>
+                  </div>
+                );
+              })}
+            </div>
           </div>
         )}
 
