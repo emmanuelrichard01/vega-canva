@@ -98,7 +98,7 @@ it.
 | Grouping | **Partial** | Foldable in the Layers panel, and right-clicking one member targets the whole group — which is what makes "copy this as Mermaid" answerable, since grouping is the only signal a person can give that a set of objects is one diagram. Still flat otherwise: a shared synthetic `parentId`, no nesting, no enter-group editing, no group bounds as a first-class object. |
 | Lock / unlock | **Shipped** | |
 | Visibility / hide | **Shipped** | `hidden` on the base node; renderer and Layers panel both gate on it, and there is deliberately no second `visible` field. |
-| Auto layout / flexbox | **Dead** | `FrameNode.layout` declares `direction`, `padding` and `gap` in the schema. Nothing reads it, and no frame can be created in the first place. |
+| Auto layout / flexbox | **Dead** | `FrameNode.layout` declares `direction`, `padding` and `gap` in the schema and nothing reads it. It has been the file's only dead entry since 2026-08-11, and it is Phase 6's to either implement or delete. The second half of this row used to read "and no frame can be created in the first place", which stopped being true when the frame tool shipped in Phase 1 — the declaration is dead on its own merits, not for want of a frame to put it on. |
 | Constraints / resizing rules | **Absent** | No pinning, stretching, hug or fill. Requires frames. |
 | Absolute positioning | **Absent** | Only meaningful once auto-layout exists. |
 
@@ -195,7 +195,8 @@ overridable per instance. They share a word and nothing else.
 | Item | Status | Notes |
 | --- | --- | --- |
 | Image cropping | **Shipped** | Double-click an image, or the Crop button on its toolbar. Eight handles trim the frame, dragging the picture slides it under the window, thirds guides, and what is being cut away is shown at low opacity rather than hidden — you cannot judge a crop without seeing what is just outside it. The arithmetic is pure and tested (`engine/model/imageCrop.ts`): it clamps in natural pixels and derives the node's box from the result, never the reverse. Escape restores the framing you started with, which undo cannot do because one drag is many writes. |
-| Masking / clipping path | **Absent** | Cropping is a rectangular special case of this; masking to an arbitrary vector shape is still Phase 8. |
+| Masking / clipping path | **Absent** | Cropping is a rectangular special case of this; masking to an arbitrary vector shape is still Phase 8. Grid slots (below) clip a picture to a module's silhouette, which is a *fixed* set of shapes chosen by the grid rather than a mask you draw — it does not close this row. |
+| Content in grid modules | **Shipped** | Select pictures and a grid and place them, or drop files straight onto a module. Each one is covered — scaled to fill and centre-cropped through the existing `crop` field, never stretched — and clipped to the module, natively by corner radius for a rectangular one and by a clip path for a ring sector. A slotted picture stays an ordinary `ImageNode` carrying a `gridSlot` binding, so it keeps Adjust, crop and the Layers panel and needs no new code in any exporter. It re-flows when the grid is moved, resized or re-specced, driven by an observer rather than by call sites — `engine/grid/gridReflow.ts` says why undo and a remote edit make that the only workable shape. Captions work the same way (a `TextNode` pinned to `resize: 'fixed'`, added by double-clicking an empty module), and a picture's framing inside its module is adjustable — arrow keys pan it, the rail zooms and recentres it. The framing is stored as a **focal point plus a zoom rather than as a crop**, because a crop carries the module's aspect and cannot survive the module changing shape. Cycling arrangements is non-destructive: content with no module in the current kind **waits in a strip below the grid**, still bound, and returns when there is room. Whether a module can hold anything is derived from its size (`MIN_SLOT_SIZE`), not from a list of grid kinds. |
 | Non-destructive adjustments | **Partial** | Brightness, contrast, saturation and blur are wired end to end, in document units of -100..100 rather than Konva's disagreeing native scales. Exposure, temperature/tint and highlights/shadows need custom filters and are deliberately **not** declared on the schema until they work. |
 | Background removal | **Absent** | Needs a model or a service. This is a product decision before it is an engineering one — flagging rather than assuming. |
 
@@ -273,15 +274,36 @@ shipped surfaces that a reader of this document would otherwise assume absent.
 
 ## The tally
 
-Counted from the status column of sections 1-14, which hold 109 rows. These
+Counted from the status column of sections 1-14, which hold **118** rows. These
 counts are a second record of what the tables already say, so they drift: they
-read ~66/~10/1/~26 for several sessions after the tables had moved past them.
-Recount before quoting them.
+read ~66/~10/1/~26 for several sessions after the tables had moved past them,
+and then 72/8/1/28 for several more. **Recount before quoting them.** This does it,
+and takes a second:
 
-- **Shipped: 72** — the canvas core, collaboration, frames, the whole paint model, the precision tools, the vector engine, and the parts of the transform/typography blocks that a whiteboard needs.
-- **Partial: 8**
+```bash
+awk '
+  /^## / { s = ($2 ~ /^[0-9]+\.?$/) ? $2+0 : 0 }
+  s>=1 && s<=14 && /^\|/ {
+    if (match($0, /\*\*(Shipped|Partial|Dead|Absent)\*\*/)) {
+      k = substr($0, RSTART+2, RLENGTH-4); n[k]++; rows++
+    }
+  }
+  END { for (k in n) printf "%-8s %d\n", k, n[k]; print "rows    " rows }
+' docs/CANVAS-SPEC.md
+```
+
+**Do not use a plain `grep -c` for this.** It counts the whole file — the four
+legend rows under "How to read the status column", the three in 14b, the eleven
+in 15, and every mention in prose, *including the ones in this paragraph* — and
+it counts the Drop shadow row in §8 twice, because that row says **Shipped**
+and then says it was **Dead** until 2026-08-11. The awk above is scoped to
+table rows in sections 1-14 and takes the first marker in each, so none of that
+reaches it. Last recounted 2026-08-27, in the commit that added the grid-slot row.
+
+- **Shipped: 83** — the canvas core, collaboration, frames, the whole paint model, the precision tools, the vector engine, and the parts of the transform/typography blocks that a whiteboard needs.
+- **Partial: 7**
 - **Dead: 1** — `FrameNode.layout`, the auto-layout declaration, which Phase 6 owns. `Appearance.shadow` was the second entry here until 2026-08-11.
-- **Absent: 28** — design systems and prototyping. Vector manipulation left this list on 2026-08-12; **the export pipeline left it on 2026-08-18** — six formats with a live preview, a hand-rolled PDF writer, batch export of every frame, and a JSON export that can now actually be read back.
+- **Absent: 27** — design systems and prototyping. Vector manipulation left this list on 2026-08-12; **the export pipeline left it on 2026-08-18** — six formats with a live preview, a hand-rolled PDF writer, batch export of every frame, and a JSON export that can now actually be read back.
 
 Section 15 is counted separately: it audits the product *around* the canvas
 (templates, physics, thumbnails, sharing, the help screen, the design system),

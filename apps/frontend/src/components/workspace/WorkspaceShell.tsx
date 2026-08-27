@@ -9,6 +9,17 @@ import { textEditing } from '../../engine/interaction/textEditing';
 import { Switch } from '../ui/Switch';
 import { Logo } from '../ui/Logo';
 
+/**
+ * One glyph size for the whole bar.
+ *
+ * There were three — 18, 17 and 15 — and mixed sizes in a single row of icons
+ * is visible long before anyone can say why: the 15px glyphs read as slightly
+ * further away than the 17px ones, so the row appears to bow. 16 is the size
+ * the rest of the app's chrome already uses, and at a 2px stroke it is the
+ * step where Lucide's geometry lands on whole pixels.
+ */
+const ICON = 16;
+
 interface Props {
   localTitle: string;
   setLocalTitle: (title: string) => void;
@@ -45,10 +56,30 @@ export const WorkspaceShell: React.FC<Props> = ({ localTitle, setLocalTitle, onT
   const showGrid = useStore(state => state.showGrid);
   const setShowGrid = useStore(state => state.setShowGrid);
   
+  /**
+   * The three states this dot can be in, and what each one is worth saying.
+   *
+   * The colours were literal hex — `#EF4444` and `#F59E0B` — which is the one
+   * thing the token header asks components never to do: they are primitives,
+   * they bypass the status roles that exist for exactly this, and they do not
+   * move when the theme does. `--status-offline` and `--status-syncing` are
+   * the same two colours with a name and a dark-mode value.
+   *
+   * "Syncing..." also became "Saving", because the ellipsis was doing the work
+   * a word should do and "sync" is the machine's word for it. What a person
+   * wants to know is whether their work is safe.
+   */
   const getSyncStatus = () => {
-    if (status !== 'connected') return { text: 'Offline', color: '#EF4444' };
-    if (!synced) return { text: 'Syncing...', color: '#F59E0B' };
-    return { text: 'Saved', color: 'var(--text-secondary)' };
+    if (status !== 'connected') {
+      return {
+        /** The word beside the dot. Absent for the state that needs no word. */
+        label: 'Offline',
+        text: 'Offline. Your changes are saved on this device and will sync when you reconnect',
+        tone: 'offline' as const,
+      };
+    }
+    if (!synced) return { label: 'Saving', text: 'Saving your changes', tone: 'syncing' as const };
+    return { label: null, text: 'All changes saved', tone: 'idle' as const };
   };
 
   const syncStatus = getSyncStatus();
@@ -116,7 +147,7 @@ export const WorkspaceShell: React.FC<Props> = ({ localTitle, setLocalTitle, onT
   }, [viewOpen]);
 
   return (
-    <div className="workspace-header panel-surface" style={{ opacity: receded ? 0.6 : 1 }}>
+    <div className="workspace-header" style={{ opacity: receded ? 0.6 : 1 }}>
       {/* ------------------------------------------------- the document */}
       <div className="hdr-zone hdr-zone--start">
         {onTogglePanels && (
@@ -126,9 +157,8 @@ export const WorkspaceShell: React.FC<Props> = ({ localTitle, setLocalTitle, onT
             data-tooltip="Panels"
             data-tooltip-pos="bottom"
             aria-label="Toggle panels"
-            style={{ padding: 6, flexShrink: 0 }}
           >
-            <PanelLeft size={18} />
+            <PanelLeft size={ICON} />
           </button>
         )}
         {/* The real mark. This was `/favicon.svg` — a 762KB file, shipped on
@@ -152,32 +182,56 @@ export const WorkspaceShell: React.FC<Props> = ({ localTitle, setLocalTitle, onT
                 setIsEditingTitle(false);
               }
             }}
-            style={{ fontWeight: 600, fontSize: 13, border: '1px solid var(--border-focus)', borderRadius: 4, padding: '2px 6px', outline: 'none', background: 'transparent', color: 'var(--text-primary)', width: 200 }}
+            className="hdr-title hdr-title--editing"
           />
         ) : (
-          <span
-            className="hover-surface hdr-title"
-            style={{ fontWeight: 600, color: 'var(--text-primary)', cursor: 'pointer', padding: '4px 8px', borderRadius: 6, fontSize: 14, maxWidth: 240, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}
+          <button
+            type="button"
+            className="hdr-title hdr-title--button"
             onClick={() => { titleBeforeEditRef.current = localTitle; setIsEditingTitle(true); }}
-            data-tooltip="Click to rename"
+            data-tooltip="Rename this board"
             data-tooltip-pos="bottom"
           >
             {localTitle}
-          </span>
+          </button>
         )}
 
-        {/* Sync state is a property of this document, so it sits with its
-            name. It is a dot with a tooltip rather than a dot plus a word:
-            "Saved" is the state 99% of the time, and a label that is almost
-            always the same word is a label nobody reads. */}
+        {/**
+          * The one place this application says whether your work is safe.
+          *
+          * Sync state is a property of this document, so it sits with its name.
+          * It was a bare dot with a tooltip on the reasoning that "Saved" is
+          * the state 99% of the time and a label that is almost always the same
+          * word is a label nobody reads — which is right about *that* word, and
+          * was being used to justify silence about the other two.
+          *
+          * So the dot **grows a word only when there is one worth reading**.
+          * Saved stays a dot: it is the resting state, it is what you assume,
+          * and a permanent "Saved" is chrome. Saving and Offline get the word,
+          * because those are the moments the assumption is wrong.
+          *
+          * This also absorbed a separate offline banner that sat over the
+          * canvas in fifteen inline style properties, saying the same thing in
+          * different words four inches away. Two statements of one fact have to
+          * be kept in step and one of them will not be — the radar section of
+          * the handoff records this project making the identical call once
+          * before, and deleting the second copy then too.
+          *
+          * `aria-live` is on the element rather than on a hidden twin: a
+          * visually-hidden live region announcing the connection used to live
+          * in `Room`, which meant the state was written down twice for two
+          * audiences and could drift for one of them.
+          */}
         <span
-          style={{ display: 'flex', alignItems: 'center', flexShrink: 0, paddingLeft: 2 }}
+          className={`sync-pip sync-pip--${syncStatus.tone}`}
           data-tooltip={syncStatus.text}
           data-tooltip-pos="bottom"
-          aria-label={syncStatus.text}
           role="status"
+          aria-live="polite"
+          aria-label={syncStatus.text}
         >
-          <span style={{ width: 7, height: 7, borderRadius: '50%', background: syncStatus.color }} />
+          <span className="sync-pip__dot" aria-hidden />
+          {syncStatus.label && <span className="sync-pip__label">{syncStatus.label}</span>}
         </span>
       </div>
 
@@ -193,22 +247,22 @@ export const WorkspaceShell: React.FC<Props> = ({ localTitle, setLocalTitle, onT
       {/* --------------------------------------- the room, and what leaves it */}
       <div className="hdr-zone hdr-zone--end">
         {/* Working controls, always present. */}
-        <div style={{ display: 'flex', gap: 2 }}>
-          <button className="btn-icon" style={{ padding: '6px 8px' }} onClick={() => editor.undo()} data-tooltip="Undo (Ctrl+Z)" data-tooltip-pos="bottom" aria-label="Undo">
-            <Undo2 size={17} />
+        <div className="hdr-cluster">
+          <button className="btn-icon" onClick={() => editor.undo()} data-tooltip="Undo (Ctrl+Z)" data-tooltip-pos="bottom" aria-label="Undo">
+            <Undo2 size={ICON} />
           </button>
-          <button className="btn-icon" style={{ padding: '6px 8px' }} onClick={() => editor.redo()} data-tooltip="Redo (Ctrl+Shift+Z)" data-tooltip-pos="bottom" aria-label="Redo">
-            <Redo2 size={17} />
+          <button className="btn-icon" onClick={() => editor.redo()} data-tooltip="Redo (Ctrl+Shift+Z)" data-tooltip-pos="bottom" aria-label="Redo">
+            <Redo2 size={ICON} />
           </button>
           <button
             className="btn-icon"
-            style={{ padding: '6px 8px', color: 'var(--history-accent)' }}
+            style={{ color: 'var(--history-accent)' }}
             onClick={onToggleTimeline}
-            data-tooltip="History — replay everything that happened in this room"
+            data-tooltip="Replay everything that happened in this room"
             data-tooltip-pos="bottom"
-            aria-label="History — replay this session"
+            aria-label="History. Replay this session"
           >
-            <History size={17} />
+            <History size={ICON} />
           </button>
         </div>
 
@@ -228,15 +282,14 @@ export const WorkspaceShell: React.FC<Props> = ({ localTitle, setLocalTitle, onT
         <div style={{ position: 'relative' }} ref={viewRef}>
           <button
             className={`btn-icon${viewOpen ? ' is-on' : ''}`}
-            style={{ padding: '7px 9px' }}
             onClick={() => setViewOpen((v) => !v)}
-            data-tooltip="View — snapping, throwing and focus mode"
+            data-tooltip="Snapping, throwing and focus mode"
             data-tooltip-pos="bottom"
             aria-label="View settings"
             aria-haspopup="menu"
             aria-expanded={viewOpen}
           >
-            <SlidersHorizontal size={17} />
+            <SlidersHorizontal size={ICON} />
           </button>
           {viewOpen && (
             <div className="ctx-popover" role="menu" style={{ top: 'calc(100% + 8px)', right: 0, minWidth: 248 }}>
@@ -246,7 +299,7 @@ export const WorkspaceShell: React.FC<Props> = ({ localTitle, setLocalTitle, onT
                   checked={snapToGrid}
                   onChange={setSnapToGrid}
                   label="Snap to grid"
-                  tooltip={snapToGrid ? 'Snapping to the grid — hold Ctrl while dragging for free placement' : 'Free placement — hold Ctrl while dragging to snap to the grid'}
+                  tooltip={snapToGrid ? 'Snapping to the grid. Hold Ctrl while dragging for free placement' : 'Free placement. Hold Ctrl while dragging to snap to the grid'}
                 />
               </div>
               <div className="hdr-view-row">
@@ -321,13 +374,13 @@ export const WorkspaceShell: React.FC<Props> = ({ localTitle, setLocalTitle, onT
 
         <button
           className="btn-icon"
-          style={{ padding: '7px 9px', position: 'relative', flexShrink: 0 }}
+          style={{ position: 'relative' }}
           onClick={onToggleComments}
-          data-tooltip={commentUnread > 0 ? `${commentUnread} unread` : 'Comments'}
+          data-tooltip={commentUnread > 0 ? `${commentUnread} unread ${commentUnread === 1 ? 'comment' : 'comments'}` : 'Comments'}
           data-tooltip-pos="bottom"
           aria-label={commentUnread > 0 ? `Comments, ${commentUnread} unread` : 'Comments'}
         >
-          <MessageSquare size={17} />
+          <MessageSquare size={ICON} />
           {commentUnread > 0 && (
             <span className="hdr-badge" aria-hidden="true">
               {commentUnread > 9 ? '9+' : commentUnread}
@@ -348,16 +401,20 @@ export const WorkspaceShell: React.FC<Props> = ({ localTitle, setLocalTitle, onT
             Kept as an icon with no label: it is the one control here nobody
             needs to read to recognise. */}
         <button
-          className="hdr-export"
+          className="btn-icon"
           onClick={() => onHelpClick?.()}
           aria-label="Keyboard shortcuts and help"
-          data-tooltip="Shortcuts & help"
+          data-tooltip="Shortcuts and help (?)"
           data-tooltip-pos="bottom"
         >
-          <HelpCircle size={15} />
+          <HelpCircle size={ICON} />
         </button>
 
-        <span className="hdr-divider" style={{ width: 1, height: 22, background: 'var(--border-divider)' }} />
+        {/* The one rule in the bar, and it earns its place: it is the line
+            between what you are doing to the board and what leaves the room.
+            Sized and coloured in the stylesheet rather than here, so it
+            matches the other hairlines instead of being its own grey. */}
+        <span className="hdr-divider" role="separator" aria-orientation="vertical" />
 
         {/* Export, out of the drawer.
 
@@ -367,17 +424,16 @@ export const WorkspaceShell: React.FC<Props> = ({ localTitle, setLocalTitle, onT
             export and copy-to-clipboard, and getting work *out* of a design
             tool is not a footnote. Quieter than Share, because sharing a link
             is still the more common way work leaves this room. */}
-        <button className="hdr-export" onClick={() => onExportClick?.()} aria-label="Export">
-          <Download size={15} /> <span className="hdr-share-text">Export</span>
+        <button className="hdr-btn hdr-btn--quiet" onClick={() => onExportClick?.()} aria-label="Export">
+          <Download size={ICON} aria-hidden /> <span className="hdr-share-text">Export</span>
         </button>
 
-        <button
-          style={{ padding: '7px 14px', fontSize: 13, fontWeight: 600, display: 'flex', alignItems: 'center', gap: 7, cursor: 'pointer', background: 'var(--text-primary)', color: 'var(--surface-primary)', border: 'none', borderRadius: 7, boxShadow: 'var(--shadow-sm)', flexShrink: 0 }}
-          className="hover-fade"
-          onClick={onShareClick}
-          aria-label="Share workspace"
-        >
-          <Share2 size={15} /> <span className="hdr-share-text">Share</span>
+        {/* The room's front door. Inked rather than accent-filled, per the
+            system's own reading: this is the primary action *in this bar*, but
+            the board is the primary thing on the screen, and an orange control
+            in permanent chrome stops being an accent by the second minute. */}
+        <button className="hdr-btn hdr-btn--strong" onClick={onShareClick} aria-label="Share workspace">
+          <Share2 size={ICON} aria-hidden /> <span className="hdr-share-text">Share</span>
         </button>
 
       </div>

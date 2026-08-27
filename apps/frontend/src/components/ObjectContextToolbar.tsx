@@ -1,12 +1,12 @@
 import React, { useEffect, useRef, useState, useSyncExternalStore } from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
 import {
-  AlignCenter, AlignHorizontalJustifyCenter, AlignHorizontalJustifyEnd, AlignHorizontalJustifyStart,
-  AlignHorizontalSpaceAround, AlignJustify, AlignLeft, AlignRight, AlignVerticalJustifyCenter, AlignVerticalJustifyEnd,
-  AlignVerticalJustifyStart, AlignVerticalSpaceAround, Bold, BringToFront, Copy, Crop, Download,
-  Droplet, FlipHorizontal, FlipVertical, Group, ImageIcon, Italic, List, ListOrdered, Layers, Lock, Menu, MessageSquare,
-  MessageSquarePlus, Mic, Minus, PenLine, Pin, Scissors, SendToBack, SmilePlus,
-  SquaresExclude, SquaresIntersect, SquaresSubtract, SquaresUnite, Square, StickyNote, Waypoints, Radius, WandSparkles, ChevronRight,
+  AlignCenter,
+  AlignHorizontalSpaceAround, AlignJustify, AlignLeft, AlignRight,
+  AlignVerticalSpaceAround, Bold, BringToFront, Copy, Crop, Download,
+  Droplet, FlipHorizontal, FlipVertical, Group, Italic, List, ListOrdered, Layers, Lock, Menu,
+  MessageSquarePlus, Minus, PenLine, Pin, Scissors, SendToBack, SmilePlus,
+  Square, Waypoints, Radius, WandSparkles, ChevronRight,
   Strikethrough, Trash2, Type, Underline, Ungroup, Unlock,
 } from 'lucide-react';
 import { TEXT_PRESETS, isTextPresetActive } from './panel/textEffectPresets';
@@ -26,9 +26,17 @@ import { swapShapeKind } from '../engine/model/shapeSwap';
 import { setLineCurved } from '../engine/interaction/lineVertexActions';
 import { requestEditOnMount } from '../engine/interaction/pendingEdit';
 import { textEditing } from '../engine/interaction/textEditing';
-import { Palette, Shuffle } from 'lucide-react';
+import { Clock, ImageOff, ImagePlus, Palette, Shuffle } from 'lucide-react';
 import { GridKindIcon } from './workspace/gridIcons';
 import { breakApartGrid, gridNodeOf, gridRecipe as gridRecipeFor, setGridRecipe } from '../engine/grid/gridApply';
+import {
+  fillGridWithImages,
+  parkedCount,
+  recentreSlot,
+  releaseSlots,
+  setSlotZoom,
+} from '../engine/grid/gridSlotApply';
+import { clampZoom, SLOT_MAX_ZOOM, SLOT_MIN_ZOOM } from '../engine/grid/gridSlot';
 import { switchKind } from '../engine/grid/gridBuild';
 import { GRID_HINTS, GRID_KINDS, GRID_LABELS } from '../engine/grid/gridLayout';
 import { GRID_PALETTES } from '../engine/grid/gridStyle';
@@ -40,7 +48,6 @@ import {
 } from '../engine/interaction/pathAnchorActions';
 import { applyBoolean, booleanPlans as plansFor, canVectorize, flattenToPath, outlineStrokeOf } from '../engine/document/vectorOps';
 import { booleanPreview } from '../engine/interaction/booleanPreview';
-import { BOOLEAN_OPS, type BooleanOp } from '../engine/model/pathBoolean';
 import { deleteNodesWithFrames } from '../engine/interaction/frameMembership';
 import { editor } from '../engine/api/EditorAPI';
 import { nanoid } from 'nanoid';
@@ -49,7 +56,6 @@ import { FillEditor } from './ui/FillEditor';
 import { SegmentedControl } from './ui/SegmentedControl';
 import { FontSelector } from './ui/FontSelector';
 import { RailPopover } from './toolbar/RailPopover';
-import { RailSideContext } from './toolbar/railSide';
 import { StickyPalette } from './toolbar/StickyToolbar';
 
 /** The hand-drawn faces, so the toggle knows which state it is in. */
@@ -57,7 +63,7 @@ const HANDWRITTEN = ['Caveat', 'Architects Daughter'];
 import type { StickyTheme } from '../engine/model/schema';
 import {
   DEFAULT_INK, DEFAULT_TYPOGRAPHY, MAX_POLYGON_SIDES, MIN_POLYGON_SIDES, isOpenShape,
-  type AnyNode, type Appearance, type ConnectorNode, type FillStyle, type ShapeKind, type SketchLevel,
+  type AnyNode, type Appearance, type ConnectorNode, type FillStyle, type ImageNode, type SketchLevel,
   type ListStyle, type TextAlign, type Typography,
 } from '../engine/model/schema';
 import { FillStyleIcon, ShadingDensityIcon, SketchLevelIcon } from './panel/sketchIcons';
@@ -71,12 +77,11 @@ import { StrokeWeightIcon } from './panel/strokeWeightIcon';
 import { LineSpecimen } from './panel/lineSpecimen';
 import { LineProfileIcon } from './panel/lineProfileIcons';
 import { LINE_PROFILES, LINE_PROFILE_LABELS, type LineProfile } from '../engine/model/linePath';
-import { ShapeIcon } from './workspace/shapeIcons';
 import { END_CAP_KINDS, END_CAP_LABELS, MAX_END_SCALE, MIN_END_SCALE, type EndCapKind } from '../engine/model/connectorEnds';
 import type { Routing } from '../engine/model/connector';
 import { resolveAffordances, type AffordanceId } from '../engine/selection/affordances';
 import { inflate, placeRail, selectionHull, type RailSide } from '../engine/interaction/railPlacement';
-import { alignSelection, distributeSelection, type AlignEdge } from '../engine/model/align';
+import { alignSelection, distributeSelection } from '../engine/model/align';
 import { sharedValue } from '../engine/model/selection';
 
 /**
@@ -198,262 +203,19 @@ const CornerIcon: React.FC<{ rounded: boolean }> = ({ rounded }) => (
   </svg>
 );
 
-/**
- * Dedicated vector edit icon representing an anchor point with control handles.
- * Distinct from connector/spline icons.
- */
-const VectorEditIcon: React.FC<{ size?: number }> = ({ size = 15 }) => (
-  <svg width={size} height={size} viewBox="0 0 16 16" fill="none" aria-hidden style={{ display: 'block', flexShrink: 0 }}>
-    <path d="M3 13 C 3 7, 9 9, 13 3" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" />
-    <rect x="1.5" y="11.5" width="3" height="3" rx="0.5" fill="currentColor" stroke="currentColor" strokeWidth="0.5" />
-    <rect x="11.5" y="1.5" width="3" height="3" rx="0.5" fill="currentColor" stroke="currentColor" strokeWidth="0.5" />
-    <line x1="3" y1="11.5" x2="3" y2="6.5" stroke="currentColor" strokeWidth="1.2" strokeDasharray="1.2 1.2" />
-    <circle cx="3" cy="6.5" r="1.3" fill="currentColor" />
-  </svg>
-);
-
-const TYPE_LABEL: Record<string, { icon: React.ReactNode; name: string }> = {
-  shape: { icon: <Square size={15} />, name: 'Shape' },
-  text: { icon: <Type size={15} />, name: 'Text' },
-  image: { icon: <ImageIcon size={15} />, name: 'Image' },
-  sticky: { icon: <StickyNote size={15} />, name: 'Note' },
-  audio: { icon: <Mic size={15} />, name: 'Voice' },
-  comment: { icon: <MessageSquare size={15} />, name: 'Comment' },
-  path: { icon: <PenLine size={15} />, name: 'Path' },
-  frame: { icon: <Layers size={15} />, name: 'Frame' },
-};
-
-const BOOLEAN_BUTTONS: Record<BooleanOp, { icon: React.ReactNode; label: string }> = {
-  union: { icon: <SquaresUnite size={16} />, label: 'Union' },
-  subtract: { icon: <SquaresSubtract size={16} />, label: 'Subtract front from back' },
-  intersect: { icon: <SquaresIntersect size={16} />, label: 'Intersect' },
-  exclude: { icon: <SquaresExclude size={16} />, label: 'Exclude overlap' },
-};
-
-const ALIGN_BUTTONS: Array<{ edge: AlignEdge; label: string; icon: React.ReactNode }> = [
-  { edge: 'left', label: 'Align left', icon: <AlignHorizontalJustifyStart size={16} /> },
-  { edge: 'centerX', label: 'Align horizontal centres', icon: <AlignHorizontalJustifyCenter size={16} /> },
-  { edge: 'right', label: 'Align right', icon: <AlignHorizontalJustifyEnd size={16} /> },
-  { edge: 'top', label: 'Align top', icon: <AlignVerticalJustifyStart size={16} /> },
-  { edge: 'middleY', label: 'Align vertical centres', icon: <AlignVerticalJustifyCenter size={16} /> },
-  { edge: 'bottom', label: 'Align bottom', icon: <AlignVerticalJustifyEnd size={16} /> },
-];
-
-/**
- * The shapes a shape can become, drawn rather than named.
- *
- * `points` travels with the choice because a polygon and a star are the same
- * `kind` field plus a count — switching to "triangle" is `polygon` at 3, and
- * leaving the previous shape's count in place would turn a hexagon into a
- * three-sided "triangle" that still said six.
- */
-/**
- * The shapes this swapper offers, wearing the dock's own glyphs.
- *
- * They were lucide icons, which is where a **hexagon drawn as a spline** came
- * from — lucide has no hexagon, so a curve stood in for one, and the tile that
- * turns a shape into a six-sided polygon showed a wiggle. `ShapeIcon` already
- * generates the whole set from side counts for the tool dock, so the swapper
- * and the dock now show the same mark for the same shape and no glyph is a
- * stand-in for a shape the library happened not to have.
- */
-const SHAPE_CHOICES: Array<{ kind: ShapeKind; points?: number; label: string; icon: React.ReactNode }> = [
-  { kind: 'rect', label: 'Rectangle', icon: <ShapeIcon kind="rect" size={16} /> },
-  { kind: 'ellipse', label: 'Ellipse', icon: <ShapeIcon kind="ellipse" size={16} /> },
-  { kind: 'squircle', label: 'Squircle', icon: <ShapeIcon kind="squircle" size={16} /> },
-  { kind: 'polygon', points: 3, label: 'Triangle', icon: <ShapeIcon kind="triangle" size={16} /> },
-  { kind: 'polygon', points: 5, label: 'Pentagon', icon: <ShapeIcon kind="pentagon" size={16} /> },
-  { kind: 'polygon', points: 6, label: 'Hexagon', icon: <ShapeIcon kind="hexagon" size={16} /> },
-  { kind: 'polygon', points: 8, label: 'Octagon', icon: <ShapeIcon kind="octagon" size={16} /> },
-  { kind: 'star', points: 5, label: 'Star', icon: <ShapeIcon kind="star" size={16} /> },
-  { kind: 'heart', label: 'Heart', icon: <ShapeIcon kind="heart" size={16} /> },
-  { kind: 'line', label: 'Line', icon: <ShapeIcon kind="line" size={16} /> },
-  { kind: 'arrow', label: 'Arrow', icon: <ShapeIcon kind="arrow" size={16} /> },
-];
-
-/**
- * The rail's shell.
- *
- * **Defined at module scope, and that is load-bearing.** It used to be declared
- * inside `ObjectContextToolbar`'s body, which creates a brand-new component
- * *type* on every render — so React could not match it against the previous
- * tree and unmounted and remounted the entire rail each time anything changed.
- * The visible symptom was the toolbar disappearing the moment you tried to use
- * it: opening the stroke or opacity popover re-rendered the parent, the remount
- * destroyed that popover's `open` state, and `AnimatePresence` replayed the
- * entrance on what looked like a new element. It also meant a fresh mount on
- * every frame the position changed.
- *
- * Three layers, because three different things want to write a transform and
- * none of them may share one:
- *   anchor   — where the selection is, written from the frame loop
- *   centring — static, so the rail hangs off that point correctly
- *   motion   — the entrance, owned entirely by framer-motion
- *
- * Centring is its own element rather than a margin on the rail: a percentage
- * margin resolves against the parent's width, and the parent here shrink-wraps
- * its child, which makes `-50%` circular.
- */
-/**
- * Which of the rail's own edges hangs on the anchor point, per side.
- *
- * The anchor is a point on the *selection*, so the rail has to present whichever
- * of its edges faces it. Cross-axis centring stays a percentage of the rail's
- * own box, which is what keeps the first frame -- before `offsetWidth` has a
- * value to clamp with -- centred rather than half a rail out.
- */
-const HANG: Record<RailSide, string> = {
-  top: 'translate(-50%, -100%)',
-  bottom: 'translate(-50%, 0%)',
-  left: 'translate(-100%, -50%)',
-  right: 'translate(0%, -50%)',
-};
-
-/**
- * The direction the rail arrives from: outward, away from the selection.
- *
- * Six pixels of travel along the axis it is placed on, so the entrance reads as
- * the rail stepping back off the artwork rather than sliding in from nowhere.
- * A sideways rail animating on `y` -- which is what a fixed `y: 6` gave --
- * moved across its own placement axis and looked like a glitch.
- */
-const ENTRY: Record<RailSide, { x: number; y: number }> = {
-  top: { x: 0, y: 6 },
-  bottom: { x: 0, y: -6 },
-  left: { x: 6, y: 0 },
-  right: { x: -6, y: 0 },
-};
-
-const Rail = React.forwardRef<
-  HTMLDivElement,
-  {
-    id: string;
-    placement: RailSide;
-    clear?: boolean;
-    anchorRef: React.RefObject<HTMLDivElement | null>;
-    children: React.ReactNode;
-  }
->(({ id, placement, clear = true, anchorRef, children }, railRef) => (
-  <div
-    ref={anchorRef}
-    // The anchor only ever translates, and only from the frame loop. It is
-    // `pointer-events: none` so the empty space either side of the rail never
-    // swallows a click meant for the canvas.
-    style={{
-      position: 'absolute', left: 0, top: 0, zIndex: 200,
-      pointerEvents: 'none', willChange: 'transform',
-    }}
-  >
-    <div
-      style={{
-        position: 'absolute',
-        transform: HANG[placement],
-        width: 'max-content',
-      }}
-    >
-      {/*
-        The entrance and the resting translucency are separate elements on
-        purpose. Framer-motion writes `opacity` inline, and an inline value beats
-        a stylesheet -- so while the entrance animated to 0.94 the rail's own
-        `:hover { opacity: 1 }` could never fire, and the "solid on approach"
-        the CSS promises had silently never happened. The wrapper fades in and
-        stops at 1; the rail underneath keeps its resting opacity in CSS, where
-        hover and focus-within can still reach it.
-      */}
-      <motion.div
-        key={id}
-        initial={{ opacity: 0, ...ENTRY[placement] }}
-        animate={{ opacity: 1, x: 0, y: 0 }}
-        exit={{ opacity: 0, ...ENTRY[placement] }}
-        transition={{ duration: 0.2, ease: [0.16, 1, 0.3, 1] }}
-        style={{ pointerEvents: 'none' }}
-      >
-        <div
-          ref={railRef}
-          className={`ctx-toolbar${clear ? '' : ' ctx-toolbar--veiled'}`}
-          data-side={placement}
-          style={{ position: 'relative', pointerEvents: 'auto' }}
-        >
-          {/* Every popover on the rail opens away from the artwork, because the
-              rail is the only thing that knows which way that is. A tray that
-              always dropped downward landed on the object whenever the rail was
-              sitting above it -- which is most of the time. */}
-          <RailSideContext.Provider value={placement === 'top' ? 'top' : 'bottom'}>
-            {children}
-          </RailSideContext.Provider>
-        </div>
-      </motion.div>
-    </div>
-  </div>
-));
-Rail.displayName = 'Rail';
-
-/** An icon button on the rail. */
-const RailButton: React.FC<{
-  label: string;
-  onClick: () => void;
-  children: React.ReactNode;
-  pressed?: boolean;
-  disabled?: boolean;
-  danger?: boolean;
-  hint?: string;
-  /**
-   * Pointer or keyboard focus entering and leaving.
-   *
-   * Focus counts, not just hover: a preview only a mouse can see is a preview
-   * half the people using this cannot. `disabled` buttons take neither, which
-   * is correct — there is nothing to show for an operation that will not run.
-   */
-  onHover?: (over: boolean) => void;
-}> = ({ label, onClick, children, pressed, disabled, danger, hint, onHover }) => (
-  <button
-    type="button"
-    className={`ctx-btn${danger ? ' ctx-btn--danger' : ''}`}
-    data-tooltip={hint ?? label}
-    aria-label={label}
-    aria-pressed={pressed}
-    disabled={disabled}
-    onClick={onClick}
-    onPointerEnter={onHover ? () => onHover(true) : undefined}
-    onPointerLeave={onHover ? () => onHover(false) : undefined}
-    onFocus={onHover ? () => onHover(true) : undefined}
-    onBlur={onHover ? () => onHover(false) : undefined}
-  >
-    {children}
-  </button>
-);
-
-const Divider = () => <span className="ctx-divider" aria-hidden="true" />;
-
-/**
- * A button on the rail with a panel hanging off it.
-
-
-/**
- * A labelled slider for a value the rail shows but does not have room to edit.
- *
- * A real `range` rather than a drawn track: it is keyboard-operable, it honours
- * the OS pointer size, and `accent-color` already themes it. Reimplementing it
- * would cost all three to gain nothing.
- */
-const PopoverSlider: React.FC<{
-  label: string; value: number; min: number; max: number; step?: number; suffix?: string;
-  onChange: (value: number) => void;
-}> = ({ label, value, min, max, step = 1, suffix = '', onChange }) => (
-  <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
-    <div className="ctx-popover__row">
-      <span className="ctx-popover__label">{label}</span>
-      <span className="ctx-value">{Math.round(value)}{suffix}</span>
-    </div>
-    <input
-      type="range"
-      aria-label={label}
-      min={min} max={max} step={step} value={value}
-      onChange={(e) => onChange(Number(e.target.value))}
-      style={{ width: '100%', cursor: 'pointer', accentColor: 'var(--text-primary)' }}
-    />
-  </div>
-);
+import {
+  VectorEditIcon,
+  Rail,
+  RailButton,
+  Divider,
+  PopoverSlider,
+} from './toolbar/RailBase';
+import {
+  TYPE_LABEL,
+  ALIGN_BUTTONS,
+  SHAPE_CHOICES,
+} from './toolbar/railConstants';
+import { VectorBooleanSection } from './toolbar/VectorBooleanSection';
 
 /**
  * What each sketch level and shading style is called.
@@ -841,7 +603,27 @@ export const ObjectContextToolbar: React.FC<Props> = ({ selectedId, selectedIds,
     );
     /** The grid this selection names, when it names exactly one. */
     const gridGroup = gridNodeOf(bulkNodes)?.id ?? null;
+    /** How much of its content has no module in the current arrangement. */
+    const parked = gridGroup ? parkedCount(gridGroup) : 0;
     const bulkAffords = (id: AffordanceId) => bulkOffers.has(id);
+
+    /** The slotted *pictures*, which are the only ones with a source to reframe. */
+    const slottedImageIds = bulkNodes
+      .filter((n) => n.type === 'image' && n.gridSlot)
+      .map((n) => n.id);
+    /**
+     * The zoom the slider shows for a mixed selection: the first one's.
+     *
+     * A shared-value readout would be the careful answer and it is the wrong
+     * one here, because `Slider` has no mixed state to render — it would have
+     * to pick a number anyway, and picking the minimum or the mean would both
+     * move every picture on the first touch. The first picture's zoom is at
+     * least a value that is true of something in the selection.
+     */
+    const slotZoom = clampZoom(
+      (bulkNodes.find((n) => n.type === 'image' && n.gridSlot) as ImageNode | undefined)?.gridSlot
+        ?.zoom
+    );
 
     /**
      * What each of the four combines would produce for this selection.
@@ -1032,6 +814,27 @@ export const ObjectContextToolbar: React.FC<Props> = ({ selectedId, selectedIds,
                   <Palette size={16} />
                 </RailButton>
 
+                {/**
+                  * Why some of this grid's content is sitting in a strip below
+                  * it rather than in the composition.
+                  *
+                  * Parking is the right behaviour — cycling arrangements must
+                  * not destroy anything — but a person who has just switched
+                  * from a 3x3 to a manuscript grid sees six photographs jump
+                  * out of the board with no explanation. This is that
+                  * explanation, and it is the answer to the objection parking
+                  * has to carry: a state you cannot name is an invisible one.
+                  *
+                  * Shown only when there is something waiting, so it costs
+                  * nothing the rest of the time.
+                  */}
+                {parked > 0 && (
+                  <span className="ctx-kind" data-tooltip={`${parked} ${parked === 1 ? 'item has' : 'items have'} no module in this arrangement. They are waiting below the grid and will return when there is room.`} data-tooltip-pos="top">
+                    <Clock size={14} />
+                    {parked}
+                  </span>
+                )}
+
                 {/* The escape hatch, on the rail rather than buried, because
                     the moment you want it is the moment you are looking at one
                     module and wishing it were somewhere else. */}
@@ -1052,6 +855,114 @@ export const ObjectContextToolbar: React.FC<Props> = ({ selectedId, selectedIds,
             </>
           )}
 
+          {/**
+            * Pictures and the grid to put them in.
+            *
+            * Its own block rather than part of the grid group above, because
+            * that group is gated on the selection being *only* a grid — with
+            * pictures selected too, `gridNodeOf` correctly declines to name
+            * one, and this is the case where it should.
+            *
+            * The resolver has already guaranteed exactly one grid and at least
+            * one picture, so the button cannot be pressed into doing nothing.
+            */}
+          {/**
+            * What you can do to content that is already in a module.
+            *
+            * Leads the rail because it is the most specific thing true of the
+            * selection, and because the first question anyone has about a
+            * picture that will not move is *why won't it move* — a control
+            * saying "In a grid · Reframe · Remove" answers that before it is
+            * asked.
+            *
+            * The reframe popover is offered only for pictures: a caption has no
+            * source to pan or zoom, and a slider that did nothing for half the
+            * selection would be worse than its absence.
+            */}
+          {bulkAffords('grid-slot') && (
+            <>
+              <div className="ctx-group">
+                {slottedImageIds.length > 0 && (
+                  <RailPopover label="Reframe" trigger={<Crop size={16} />} align="start">
+                    <span className="ctx-popover__label">
+                      Reframe · {slottedImageIds.length}{' '}
+                      {slottedImageIds.length === 1 ? 'image' : 'images'}
+                    </span>
+                    {/* As a percentage, not a multiplier: `PopoverSlider`
+                        rounds its readout, so 1.00×–8.00× would show as five
+                        identical "1×" steps. The star's Depth control right
+                        below takes the same shape for the same reason. */}
+                    <PopoverSlider
+                      label="Zoom"
+                      value={Math.round(slotZoom * 100)}
+                      min={SLOT_MIN_ZOOM * 100}
+                      max={SLOT_MAX_ZOOM * 100}
+                      step={5}
+                      suffix="%"
+                      onChange={(pct) =>
+                        slottedImageIds.forEach((id) => setSlotZoom(id, pct / 100))
+                      }
+                    />
+                    {/* The keys are bound and completely silent otherwise —
+                        a control nobody can discover is a control nobody has. */}
+                    <span className="ctx-popover__note">
+                      Arrow keys move the picture inside its module.
+                    </span>
+                    <button
+                      type="button"
+                      className="ctx-popover__action"
+                      onClick={() => recentreSlot(slottedImageIds)}
+                    >
+                      Recentre
+                    </button>
+                  </RailPopover>
+                )}
+
+                <RailButton
+                  label="Remove from grid"
+                  hint="Take it out of the module and leave it on the board"
+                  onClick={() => releaseSlots(bulkIds)}
+                >
+                  <ImageOff size={16} />
+                </RailButton>
+              </div>
+              <Divider />
+            </>
+          )}
+
+          {bulkAffords('grid-fill') && (
+            <>
+              <div className="ctx-group">
+                <RailButton
+                  label="Place in grid"
+                  hint="Fit each image into a module, cropped to fill"
+                  onClick={() => {
+                    const grid = bulkNodes.find((n) => n.type === 'grid');
+                    if (!grid) return;
+                    // Stacking order, not selection order: it is what the
+                    // Layers panel shows and what the board looks like, so two
+                    // people making the same selection two different ways get
+                    // the same arrangement.
+                    const images = bulkNodes
+                      .filter((n) => n.type === 'image')
+                      .sort((a, b) => a.zIndex - b.zIndex)
+                      .map((n) => n.id);
+                    const { overflow } = fillGridWithImages(grid.id, images);
+                    const landed = images.filter((id) => !overflow.includes(id));
+                    if (landed.length > 0) {
+                      window.dispatchEvent(
+                        new CustomEvent('requestSelectNodes', { detail: { ids: landed } })
+                      );
+                    }
+                  }}
+                >
+                  <ImagePlus size={16} />
+                </RailButton>
+              </div>
+              <Divider />
+            </>
+          )}
+
           {/* Zone A — structure. */}
           <div className="ctx-group">
             {bulkAffords('ungroup') ? (
@@ -1059,38 +970,15 @@ export const ObjectContextToolbar: React.FC<Props> = ({ selectedId, selectedIds,
             ) : (
               <RailButton label="Group" hint="Group (Cmd+G)" onClick={() => editor.groupNodes(bulkIds)}><Group size={16} /></RailButton>
             )}
-            {bulkAffords('boolean') && BOOLEAN_OPS.map((op) => {
-              const plan = booleanPlans[op];
-              const blocked = 'refusal' in plan;
-              return (
-                <RailButton
-                  key={op}
-                  label={BOOLEAN_BUTTONS[op].label}
-                  /**
-                   * Off when it would do nothing, and saying why.
-                   *
-                   * All four used to be live all the time, and every failure
-                   * looked the same from outside: the click ran, the operation
-                   * returned nothing, the caller's `if (id)` quietly did not
-                   * fire. Two shapes that do not touch, a locked object in the
-                   * selection and geometry the clipper could not resolve were
-                   * indistinguishable, which is to say the button was broken.
-                   */
-                  disabled={blocked}
-                  hint={blocked ? plan.refusal : BOOLEAN_BUTTONS[op].label}
-                  // Hovering draws the answer over the objects it would replace,
-                  // from the geometry this same button will commit.
-                  onHover={(over) => booleanPreview.set(over && !blocked ? plan.geometry : null)}
-                  onClick={() => {
-                    booleanPreview.set(null);
-                    const id = applyBoolean(op, bulkIds);
-                    if (id) editor.select(id);
-                  }}
-                >
-                  {BOOLEAN_BUTTONS[op].icon}
-                </RailButton>
-              );
-            })}
+            {bulkAffords('boolean') && (
+              <VectorBooleanSection
+                booleanPlans={booleanPlans}
+                onApplyBoolean={(op) => {
+                  const id = applyBoolean(op, bulkIds);
+                  if (id) editor.select(id);
+                }}
+              />
+            )}
           </div>
           <Divider />
 

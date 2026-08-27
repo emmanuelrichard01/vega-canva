@@ -468,7 +468,7 @@ export const PropertiesPanel: React.FC<PropertiesPanelProps> = ({ selectedIds, o
 
         <div style={{ display: 'flex', background: 'var(--surface-hover)', padding: '2px', borderRadius: '6px', width: '100%', marginTop: '8px' }}>
           <button
-            className="btn-icon" style={{ flex: 1, padding: '6px' }}
+            className="btn-icon btn-icon--sm" style={{ flex: 1 }}
             onClick={() => {
               const base = nextZIndex();
               const ordered = [...nodes].sort((a, b) => a.zIndex - b.zIndex);
@@ -478,7 +478,7 @@ export const PropertiesPanel: React.FC<PropertiesPanelProps> = ({ selectedIds, o
             aria-label="Bring to front"
           ><BringToFront size={14} /></button>
           <button
-            className="btn-icon" style={{ flex: 1, padding: '6px' }}
+            className="btn-icon btn-icon--sm" style={{ flex: 1 }}
             onClick={() => {
               const base = lowestZIndex() - nodes.length;
               const ordered = [...nodes].sort((a, b) => a.zIndex - b.zIndex);
@@ -490,7 +490,7 @@ export const PropertiesPanel: React.FC<PropertiesPanelProps> = ({ selectedIds, o
           <div style={{ width: '1px', height: '20px', margin: 'auto 4px', background: 'var(--border-divider)' }} />
           <button
             className="btn-icon"
-            style={{ flex: 1, padding: '6px' }}
+            style={{ flex: 1 }}
             onClick={() => patchEach((n) => ({ scaleX: -n.scaleX }))}
             data-tooltip="Flip horizontally"
             aria-label="Flip horizontally"
@@ -498,7 +498,7 @@ export const PropertiesPanel: React.FC<PropertiesPanelProps> = ({ selectedIds, o
           ><FlipHorizontal size={14} /></button>
           <button
             className="btn-icon"
-            style={{ flex: 1, padding: '6px' }}
+            style={{ flex: 1 }}
             onClick={() => patchEach((n) => ({ scaleY: -n.scaleY }))}
             data-tooltip="Flip vertically"
             aria-label="Flip vertically"

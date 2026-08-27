@@ -5,7 +5,7 @@ import {
   Group, Ungroup, Lock, Unlock, Eye, EyeOff, PenTool, Download, Spline,
   AlignStartVertical, AlignCenterVertical, AlignEndVertical,
   AlignStartHorizontal, AlignCenterHorizontal, AlignEndHorizontal,
-  AlignHorizontalSpaceAround, AlignVerticalSpaceAround,
+  AlignHorizontalSpaceAround, AlignVerticalSpaceAround, ImagePlus, ImageOff,
 } from 'lucide-react';
 import type { AnyNode, ShapeKind } from '../engine/model/schema';
 import { ShapeIcon } from './workspace/shapeIcons';
@@ -48,6 +48,8 @@ export interface CanvasContextMenuActions {
   group: () => void;
   ungroup: () => void;
   'break-apart': () => void;
+  fillGrid: () => void;
+  releaseFromGrid: () => void;
   'to-path': () => void;
   editLinePoints: () => void;
   align: (edge: AlignEdge) => void;
@@ -106,6 +108,35 @@ const MENU_COMMANDS: Partial<Record<AffordanceId, {
   // No shortcut of its own: it is rare enough that a key would be a key spent,
   // and it reads clearly from the menu where its one word says what it does.
   'break-apart': { icon: () => <Ungroup size={15} />, label: () => 'Break apart', run: (a) => a['break-apart'] },
+  /**
+   * The label names the *pictures* rather than the grid, because they are what
+   * moves. "Fill grid" would read as something happening to the grid, which is
+   * the one object in the selection this leaves exactly as it was.
+   */
+  'grid-slot': {
+    /**
+     * Named for what it does to the object, not for where the object is.
+     * "In a grid" is the affordance's label because that is the *state*; the
+     * command has to say what pressing it will change.
+     */
+    icon: () => <ImageOff size={15} />,
+    label: (nodes) => (nodes.length === 1 ? 'Remove from grid' : `Remove ${nodes.length} from grid`),
+    run: (a) => a.releaseFromGrid,
+  },
+  'grid-fill': {
+    /**
+     * `ImagePlus`, not `LayoutGrid`. The grid glyph is the **grid tool's**, in
+     * the dock and on every grid row in the Layers panel, and a second meaning
+     * for it here would teach the wrong thing about one of them — invariant 16.
+     * What this command does is add pictures, so it wears the picture glyph.
+     */
+    icon: () => <ImagePlus size={15} />,
+    label: (nodes) => {
+      const count = nodes.filter((n) => n.type === 'image').length;
+      return count === 1 ? 'Place image in grid' : `Place ${count} images in grid`;
+    },
+    run: (a) => a.fillGrid,
+  },
   // The pen, because what you get back is a path you edit with anchors — the
   // same thing the Pen tool makes.
   'to-path': { icon: () => <PenTool size={15} />, label: () => 'Convert to path', run: (a) => a['to-path'] },

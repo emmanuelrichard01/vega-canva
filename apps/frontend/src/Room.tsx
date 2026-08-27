@@ -10,29 +10,22 @@ import { parseDocumentExport } from './engine/export/DocumentImport';
 import { restoreDocument } from './engine/export/restoreDocument';
 import { Minimap } from './components/Minimap';
 import { PanelRail } from './components/workspace/PanelRail';
-import { Eye, Radar, X } from 'lucide-react';
+import { Eye, Radar } from 'lucide-react';
 import { ObjectContextToolbar } from './components/ObjectContextToolbar';
 import { PropertiesPanel } from './components/PropertiesPanel';
 import { LayersPanel } from './components/LayersPanel';
 import { useAuth } from './hooks/useAuth';
-import { doc, provider, metadataMap, deleteNode, applyNodePatches, nextZIndex, lowestZIndex, localAuthorId, publishLocalIdentity, applyGroupPlan } from './engine/document';
+import { doc, provider, metadataMap, deleteNode, localAuthorId, publishLocalIdentity, applyGroupPlan } from './engine/document';
 import { useRoomState } from './hooks/useSync';
 import { useOpeningFrame } from './hooks/useOpeningFrame';
 import { resolvePresenceColor, type ColorClaim } from './engine/presence/ColorPalette';
 import { initSyncBridge, useStore } from './hooks/useStore';
-import { breakApartGrid } from './engine/grid/gridApply';
-import { flattenToPath, textToPath } from './engine/document/vectorOps';
-import { pathEdit } from './engine/interaction/pathEdit';
 import { editor } from './engine/api/EditorAPI';
-import { alignSelection, distributeSelection, type AlignEdge, type DistributeAxis } from './engine/model/align';
 import { emptyGroups } from './engine/model/groupTree';
 import { ActivityFeed } from './components/ActivityFeed';
 import { PresenceEdgeMarkers } from './components/PresenceEdgeMarkers';
 import { FollowIndicator } from './components/FollowIndicator';
-import { ExportService, exportScope, scopeOptions } from './engine/export';
-import { lineEdit } from './engine/interaction/lineEdit';
-import { swapShapeKind } from './engine/model/shapeSwap';
-import { isLineLike } from './engine/model/lineEnds';
+import { ExportService } from './engine/export';
 import { isForceTool, type ForceId } from './engine/physics/forces';
 import { calculateLayout, animateToLayout, type LayoutMode } from './utils/spatialLayout';
 import { Mic, TriangleAlert } from 'lucide-react';
@@ -42,6 +35,11 @@ import { RoomModals } from './components/workspace/RoomModals';
 import { useRoomShortcuts } from './hooks/useRoomShortcuts';
 import { useCanvasAudioRecording } from './hooks/useCanvasAudioRecording';
 import { useCanvasDropZone } from './hooks/useCanvasDropZone';
+import { startGridSlotSync } from './engine/grid/gridSlotApply';
+import { notify } from './engine/ui/notices';
+import { NoticeLayer } from './components/ui/NoticeLayer';
+import { useRoomClipboard } from './hooks/useRoomClipboard';
+import { useRoomContextMenuActions } from './hooks/useRoomContextMenuActions';
 
 const TimeTravelBar = lazy(() => import('./components/TimeTravelBar').then((m) => ({ default: m.TimeTravelBar })));
 const ForcesBar = lazy(() => import('./components/ForcesBar').then((m) => ({ default: m.ForcesBar })));
@@ -49,16 +47,9 @@ import { parseMermaid } from './engine/diagram/mermaid';
 import { buildDiagram, canEmitDiagram, diagramIdOf, diagramToMermaid } from './engine/diagram/build';
 import { demoBox, demoText } from './engine/text/demoText';
 import { deleteNodesWithFrames } from './engine/interaction/frameMembership';
-import {
-  offsetOrigin,
-  parseClipboard,
-  pasteNodes,
-  writeClipboard,
-  type ClipboardPayload,
-} from './engine/clipboard/clipboard';
-import { importSvg, looksLikeSvg } from './engine/clipboard/svgImport';
-import { createPastedTextNode } from './engine/clipboard/externalText';
-import { DEFAULT_TYPOGRAPHY, type AnyNode, type ShapeGeometry, type ShapeKind } from './engine/model/schema';
+import { parseClipboard } from './engine/clipboard/clipboard';
+import { looksLikeSvg } from './engine/clipboard/svgImport';
+import { DEFAULT_TYPOGRAPHY } from './engine/model/schema';
 import { cameraSystem } from './engine/CameraSystem';
 import { useBreakpoint } from './hooks/useBreakpoint';
 import { CanvasEmptyState } from './components/CanvasEmptyState';
@@ -188,25 +179,18 @@ export default function Room() {
     initSyncBridge();
   }, []);
 
-  /** Result of a restore-on-open, shown once and dismissible. */
   /**
-   * `transient` separates a greeting from a confirmation.
+   * Keep pictures on the grid modules they were placed in.
    *
-   * The notice used to be dismiss-only for every case, on the reasoning that
-   * a restore confirmation must not vanish while you are still checking the
-   * board against what you remember. That is right — for a *restore*. A
-   * template notice is a greeting: it names the board you just opened and
-   * tells you it is editable, and it has nothing to confirm. Leaving it
-   * pinned over the canvas makes the first thing you see on a new board a
-   * piece of chrome you have to close.
-   *
-   * So greetings fade and confirmations stay. Errors always stay, because an
-   * error you did not finish reading is an error you did not read.
+   * Started here, once, rather than being called from the places a grid
+   * changes — a grid's box moves under a drag, the transformer, a nudge, an
+   * align, a panel edit, an **undo**, and a **collaborator on another
+   * machine**, and the last two have no local call site to add a line to. See
+   * `startGridSlotSync` for why that makes a subscription the only correct
+   * shape, and why it cannot feed itself.
    */
-  const [restoreNotice, setRestoreNotice] = useState<
-    { ok: boolean; message: string; transient?: boolean } | null
-  >(null);
-  const [noticeLeaving, setNoticeLeaving] = useState(false);
+  useEffect(() => startGridSlotSync(), []);
+
 
   /**
    * Pour in a backup, if this room was opened to receive one.
@@ -274,10 +258,20 @@ export default function Room() {
           // And one short fade, so the board resolves into place rather than
           // being stamped onto the screen in a single frame.
           window.dispatchEvent(new CustomEvent('boardArriving'));
-          setRestoreNotice({
-            ok: true,
-            transient: true,
+          /**
+           * A greeting, not a confirmation, which is why it is the one notice
+           * here that leaves by itself.
+           *
+           * It names the board you just opened and tells you it is editable,
+           * and it has nothing to confirm — so leaving it pinned makes the
+           * first thing you see on a new board a piece of chrome you have to
+           * close. Six seconds is long enough to read a board's name twice at
+           * a glance and short enough to be gone before anyone reaches for it.
+           */
+          notify({
             message: `${template.name} — click anything to edit it.`,
+            tone: 'info',
+            duration: 6000,
           });
         }, 400);
       }
@@ -293,36 +287,22 @@ export default function Room() {
     window.setTimeout(() => {
       const result = parseDocumentExport(text);
       if (!result.ok) {
-        setRestoreNotice({ ok: false, message: result.error });
+        notify({ message: result.error, tone: 'error' });
         return;
       }
       const summary = restoreDocument(result.document, 'replace');
-      setRestoreNotice({
-        ok: true,
+      /**
+       * Pinned, unlike an ordinary confirmation: a restore replaces the whole
+       * board, and the receipt must not vanish while you are still checking
+       * what arrived against what you remember.
+       */
+      notify({
         message: `Restored ${summary.added} object${summary.added === 1 ? '' : 's'} from your backup.`,
+        tone: 'success',
+        duration: null,
       });
     }, 400);
   }, []);
-  /**
-   * A greeting shows its welcome, then leaves.
-   *
-   * Two stages rather than one: the leaving class runs the exit animation,
-   * and the node is removed only once it has finished. Unmounting straight
-   * away would make it disappear rather than fade, which on a board that has
-   * just filled with objects reads as a glitch.
-   *
-   * Six seconds — long enough to read a board's name twice at a glance, short
-   * enough that it is gone before anyone reaches for the close button.
-   */
-  useEffect(() => {
-    if (!restoreNotice?.transient) return;
-    const fade = window.setTimeout(() => setNoticeLeaving(true), 6000);
-    const drop = window.setTimeout(() => {
-      setRestoreNotice(null);
-      setNoticeLeaving(false);
-    }, 6000 + 420);
-    return () => { window.clearTimeout(fade); window.clearTimeout(drop); };
-  }, [restoreNotice]);
 
   const [activeTool, setActiveTool] = useState('select');
   const [selectedIds, setSelectedIds] = useState<string[]>([]);
@@ -372,412 +352,41 @@ export default function Room() {
   const [diagramReplaceIds, setDiagramReplaceIds] = useState<string[]>([]);
   const [contextTarget, setContextTarget] = useState<ContextTarget | null>(null);
 
-  /**
-   * Objects copied for an in-app paste.
-   *
-   * Held in a ref rather than state: nothing renders from it, and putting it in
-   * state would re-render the whole room on a copy — which is the one moment
-   * the user is expecting nothing to happen at all.
-   */
-  /**
-   * A short, self-clearing confirmation.
-   *
-   * Paste is the one gesture in this app whose result can be off screen — an
-   * SVG converts to twelve objects, or to nine with the text left out, and
-   * without a word about it the difference between "worked" and "partly
-   * worked" is something you have to go and check. `role="status"` so it is
-   * announced as well as shown.
-   */
-  const [notice, setNotice] = useState<string | null>(null);
-  const noticeTimer = useRef<number | undefined>(undefined);
-  const showToast = React.useCallback((message: string) => {
-    window.clearTimeout(noticeTimer.current);
-    setNotice(message);
-    noticeTimer.current = window.setTimeout(() => setNotice(null), 3200);
-  }, []);
-  useEffect(() => () => window.clearTimeout(noticeTimer.current), []);
-
-  /** The last copy, so the menu can say whether there is anything to paste. */
-  const clipboardRef = useRef<ClipboardPayload | null>(null);
-
-  /**
-   * What the right-click menu can do.
-   *
-   * Built here rather than inside the menu because every one of these already
-   * exists somewhere in this room — the menu is a second *route* to them, not a
-   * second implementation, and a menu that re-implemented copy would be a copy
-   * that could drift from the keyboard's.
-   */
-  /**
-   * Copy, paste and SVG paste — one implementation, reached three ways.
-   *
-   * The keyboard, the right-click menu and the object toolbar all end up here.
-   * The menu used to carry its own copy that kept nodes in a ref: it could not
-   * cross a tab, did not survive a reload, and — the real defect — regenerated
-   * ids without rewriting the references between them, so a pasted flowchart's
-   * arrows stayed attached to the *originals*. Dragging the copy left its
-   * arrows behind.
-   */
-  const copySelection = (): boolean => {
-    const nodes = selectionRef.current
-      .map((id) => diagramObjects[id])
-      .filter(Boolean) as AnyNode[];
-    const payload = writeClipboard(nodes);
-    if (!payload) return false;
-
-    clipboardRef.current = payload;
-    /**
-     * Written to the real clipboard as well as remembered here.
-     *
-     * The in-memory copy is what makes the context menu's "Paste" able to say
-     * whether there is anything to paste without asking for clipboard read
-     * permission; the system write is what makes the paste work in another tab
-     * at all. Failure is ignored on purpose — a denied clipboard permission
-     * should degrade to same-tab copy, not report an error for a gesture that
-     * visibly worked.
-     */
-    void navigator.clipboard?.writeText?.(JSON.stringify(payload)).catch(() => {});
-    return true;
-  };
-
-  /** Where a paste lands when nothing more specific says otherwise. */
-  const viewportCentre = () =>
-    cameraSystem.screenToWorld(window.innerWidth / 2, window.innerHeight / 2);
-
-  const pasteObjects = (payload: ClipboardPayload, at?: { x: number; y: number }) => {
-    // No explicit point means the same board, so it offsets from the originals
-    // rather than landing on top of them and looking like nothing happened.
-    const target = at ?? offsetOrigin(payload);
-    const { nodes, ids, groups } = pasteNodes(payload, target, useStore.getState().groups);
-    if (nodes.length === 0) return;
-    doc.transact(() => {
-      // Folders first: the nodes about to be created point at them, and a
-      // peer observing the transaction should never see a node whose group
-      // has not arrived.
-      for (const record of groups) applyGroupPlan({ nodes: [], groups: [], create: record, remove: [] });
-      nodes.forEach((node) => editor.createNode(node as never));
-    });
-    setSelectedIds(ids);
-    showToast(`Pasted ${ids.length} object${ids.length === 1 ? '' : 's'}`);
-  };
-
-  const pasteSvg = (text: string) => {
-    const art = importSvg(text);
-    if (!art) {
-      showToast('That SVG could not be read');
-      return;
-    }
-    // Centred on the view, so pasted artwork arrives where you are looking
-    // rather than at whatever coordinates the exporting tool used.
-    const centre = viewportCentre();
-    const originX = centre.x - art.width / 2;
-    const originY = centre.y - art.height / 2;
-
-    const made: string[] = [];
-    doc.transact(() => {
-      art.nodes.forEach((node) => {
-        const id = nanoid();
-        made.push(id);
-        editor.createNode({
-          ...node,
-          id,
-          x: (node.x as number) + originX,
-          y: (node.y as number) + originY,
-        } as never);
-      });
-    });
-    setSelectedIds(made);
-
-    /**
-     * What arrived, and what did not.
-     *
-     * Naming the skipped elements is the whole difference between a converter
-     * and a black box: text and embedded images are the two people notice
-     * missing, and being told beats comparing two pictures by eye.
-     */
-    const noun = `${made.length} object${made.length === 1 ? '' : 's'}`;
-    showToast(
-      art.skipped.length > 0
-        ? `Pasted ${noun}. Not converted: ${art.skipped.join(', ')}`
-        : `Pasted ${noun} from SVG`
-    );
-  };
-
-  const pasteText = (rawText: string, at?: { x: number; y: number }) => {
-    const centre = at ?? viewportCentre();
-    const node = createPastedTextNode(rawText, centre);
-    if (!node) return;
-    editor.createNode(node as never);
-    setSelectedIds([node.id]);
-    showToast('Pasted text');
-  };
-
-  const contextActions = {
-    copy: () => { void copySelection(); },
-    paste: async () => {
-      const at = contextTarget
-        ? cameraSystem.screenToWorld(contextTarget.x, contextTarget.y)
-        : cameraSystem.screenToWorld(window.innerWidth / 2, window.innerHeight / 2);
-      const payload = clipboardRef.current;
-      if (payload) {
-        // Pasted relative to the click, keeping the group's own arrangement —
-        // stacking them all on the pointer would destroy the thing that made
-        // them worth copying together.
-        pasteObjects(payload, at);
-        return;
-      }
-      try {
-        const text = await navigator.clipboard?.readText?.();
-        if (!text) return;
-        const externalPayload = parseClipboard(text);
-        if (externalPayload) {
-          pasteObjects(externalPayload, at);
-          return;
-        }
-        if (looksLikeSvg(text)) {
-          pasteSvg(text);
-          return;
-        }
-        if (text.trim()) {
-          pasteText(text, at);
-        }
-      } catch {
-        // Clipboard read permission might be denied
-      }
-    },
-    /**
-     * Duplicate is a copy and a paste that never touch the clipboard.
-     *
-     * It used to spread `...node` and change only the id, which carried
-     * **`parentId`** through unchanged — and `parentId` is the synthetic id
-     * that *is* the group. So duplicating a group's members produced members of
-     * the same group: the copy landed inside the original, and the two moved
-     * together from then on. The same spread kept `frameId`, so a duplicate
-     * also claimed membership of a frame it had just been offset out of, and
-     * left connector ends pointing at the originals.
-     *
-     * Going through the clipboard's own remapping fixes all three at once and
-     * means duplicate, paste and cross-tab paste cannot drift apart — which is
-     * exactly how they came to disagree in the first place.
-     */
-    duplicate: () => {
-      const nodes = selectedIds.map((id) => diagramObjects[id]).filter(Boolean) as AnyNode[];
-      const payload = writeClipboard(nodes);
-      if (!payload) return;
-      pasteObjects(payload, offsetOrigin(payload));
-    },
-    remove: () => {
-      deleteNodesWithFrames(selectedIds);
-      setSelectedIds([]);
-    },
-    bringToFront: () => {
-      const top = nextZIndex();
-      applyNodePatches(selectedIds.map((id, i) => ({ id, changes: { zIndex: top + i } })));
-    },
-    sendToBack: () => {
-      const bottom = lowestZIndex();
-      applyNodePatches(selectedIds.map((id, i) => ({ id, changes: { zIndex: bottom - selectedIds.length + i } })));
-    },
-    selectAll: () => setSelectedIds(Object.keys(diagramObjects)),
-    selectAllOfType: () => {
-      const type = diagramObjects[selectedIds[0]]?.type;
-      if (!type) return;
-      setSelectedIds(Object.values(diagramObjects).filter((n) => n.type === type).map((n) => n.id));
-    },
-    /**
-     * Copy what is selected — or the board, when nothing is.
-     *
-     * ## What these two lost
-     *
-     * Each of them used to work out its own scope inline, with the same
-     * ternary written twice, and neither said anything afterwards. A clipboard
-     * write fails for four ordinary reasons — an insecure context, a browser
-     * with no `ClipboardItem`, a denied permission, a render that threw — and
-     * in every one of them the menu closed, nothing was copied, and the next
-     * paste produced whatever had been on the clipboard beforehand. A copy that
-     * silently does nothing is worse than one that refuses, because the failure
-     * surfaces somewhere else entirely.
-     *
-     * `exportScope` now answers "what does this cover, and what is it called"
-     * once, for the label as well as for the copy, so the menu item and the
-     * toast cannot describe different things from what the file contains.
-     */
-    copyPng: async (ids: string[]) => {
-      const scope = exportScope(diagramObjects, ids, localTitle);
-      const result = await ExportService.copy('png', {
-        ...scopeOptions(scope),
-        stage: (window as any)._konva_stage,
-      });
-      showToast(result.ok ? `Copied ${scope.subject} as PNG` : result.message!);
-    },
-    copySvg: async (ids: string[]) => {
-      const scope = exportScope(diagramObjects, ids, localTitle);
-      const result = await ExportService.copy('svg', scopeOptions(scope));
-      showToast(result.ok ? `Copied ${scope.subject} as SVG` : result.message!);
-    },
-    /**
-     * The export dialog, opened already pointing at the selection.
-     *
-     * Everything it offers — six formats, four densities, a background, a live
-     * preview — already worked on a selection; there was simply no way to say
-     * "this" from the canvas. The dialog's Region control had `Whole canvas`
-     * and a list of frames, so exporting three chosen objects meant framing
-     * them by hand first.
-     */
-    exportSelection: (ids: string[]) => {
-      // The dialog opens pointing at whatever the menu was about, which is not
-      // always the live selection -- right-clicking bare board leaves a
-      // selection standing and means "the board".
-      setExportFromSelection(ids.length > 0);
-      setShowExportMenu(true);
-    },
-    /**
-     * The selection as Mermaid, on the clipboard.
-     *
-     * Reads whatever is selected rather than only what this feature generated —
-     * a flowchart drawn box by box is exactly the case where getting code out
-     * is worth the most, and it is the case a "regenerate from source" check
-     * would have excluded.
-     */
-    copyMermaid: () => {
-      const selected = selectedIds.map((id) => diagramObjects[id]).filter(Boolean);
-      if (!canEmitDiagram(selected)) return;
-      void navigator.clipboard.writeText(diagramToMermaid(selected));
-    },
-    /**
-     * The same source, in the editor instead of the clipboard.
-     *
-     * Applying replaces the objects it came from rather than adding a second
-     * copy beside them, which is what makes this "edit" — the diagram id is
-     * seeded from the selection so `applyDiagram` knows what to clear.
-     */
-    editMermaid: () => {
-      const selected = selectedIds.map((id) => diagramObjects[id]).filter(Boolean);
-      if (!canEmitDiagram(selected)) return;
-      setDiagramSource(diagramToMermaid(selected));
-      setDiagramReplacing(diagramIdOf(selected.find((n) => diagramIdOf(n)) ?? selected[0]) ?? null);
-      setDiagramReplaceIds(selected.map((n) => n.id));
-      setDiagramOpen(true);
-    },
-    /**
-     * The four structural commands the menu was missing entirely.
-     *
-     * They existed on the floating toolbar and nowhere else, so the menu was
-     * not a smaller version of it but a differently-shaped one — and which
-     * commands you could reach depended on where you asked. `resolveAffordances`
-     * now decides *whether* each belongs on a given selection; these decide
-     * what it does. One transaction each, so a lock across nine objects is one
-     * undo step rather than nine.
-     */
-    group: () => { if (selectedIds.length > 1) editor.groupNodes(selectedIds); },
-    ungroup: () => { if (selectedIds.length > 0) editor.ungroupNodes(selectedIds); },
-    /**
-     * Open the selected line for point editing.
-     *
-     * The same entry point as double-click and Enter — three ways in, because
-     * the two gestures are invisible and this is the one place someone looking
-     * for the feature will actually look.
-     */
-    editLinePoints: () => {
-      const only = selectedIds.length === 1 ? diagramObjects[selectedIds[0]] : null;
-      if (only && isLineLike(only) && !only.locked) lineEdit.begin(only.id);
-    },
-    'to-path': () => {
-      if (selectedIds.length !== 1) return;
-      const target = diagramObjects[selectedIds[0]];
-
-      // Selected and opened for editing, because converting is something you do
-      // in order to edit -- landing on the old selection would make the command
-      // look like it did nothing.
-      const land = (newId: string) => {
-        setSelectedIds([newId]);
-        pathEdit.enter(newId);
-        window.dispatchEvent(new CustomEvent('legacy_tool_change', { detail: 'direct-select' }));
-      };
-
-      /**
-       * Text takes the long way round: its letterforms live in the font file,
-       * which has to be fetched and parsed, so the command is asynchronous and
-       * can fail for reasons worth telling somebody about.
-       */
-      if (target?.type === 'text') {
-        textToPath(selectedIds[0])
-          .then((result) => {
-            if (!result) {
-              showToast('There are no letters in that box to outline');
-              return;
-            }
-            land(result.id);
-            // Named rather than silently lost: an underline is drawn by the
-            // renderer, not by the font, and inventing bars for it here would
-            // be a second implementation of the same decoration.
-            if (result.dropped.length > 0) {
-              showToast(`Outlined — ${result.dropped.join(', ')} could not come along`);
-            }
-          })
-          .catch((error: unknown) => {
-            showToast(error instanceof Error ? error.message : 'That text could not be outlined');
-          });
-        return;
-      }
-
-      const newId = flattenToPath(selectedIds[0]);
-      if (newId) land(newId);
-    },
-    'break-apart': () => {
-      if (selectedIds.length !== 1) return;
-      const ids = breakApartGrid(selectedIds[0]);
-      // Selected, because the point of converting is to edit what comes out,
-      // and landing on an empty selection means finding it again first.
-      if (ids.length > 0) setSelectedIds(ids);
-    },
-    align: (edge: AlignEdge) => {
-      const nodes = selectedIds.map((id) => diagramObjects[id]).filter(Boolean) as AnyNode[];
-      applyNodePatches(alignSelection(nodes, edge));
-    },
-    distribute: (axis: DistributeAxis) => {
-      const nodes = selectedIds.map((id) => diagramObjects[id]).filter(Boolean) as AnyNode[];
-      applyNodePatches(distributeSelection(nodes, axis));
-    },
-    toggleLock: () => {
-      const nodes = selectedIds.map((id) => diagramObjects[id]).filter(Boolean) as AnyNode[];
-      // Unlock only when *all* of them are locked, so a mixed selection locks
-      // rather than half-unlocking — the same rule the group eye follows.
-      const locked = nodes.length > 0 && nodes.every((n) => n.locked);
-      applyNodePatches(nodes.map((n) => ({ id: n.id, changes: { locked: !locked } })));
-    },
-    hide: () => {
-      const nodes = selectedIds.map((id) => diagramObjects[id]).filter(Boolean) as AnyNode[];
-      const hidden = nodes.length > 0 && nodes.every((n) => n.hidden);
-      applyNodePatches(nodes.map((n) => ({ id: n.id, changes: { hidden: !hidden } })));
-    },
-    swapShape: (kind: string, points?: number) => {
-      applyNodePatches(
-        selectedIds
-          .map((id) => diagramObjects[id])
-          .filter((n): n is AnyNode => Boolean(n) && n.type === 'shape')
-          .map((n) => ({
-            id: n.id,
-            // Size, paint, position and rotation all survive: only the form
-            // changes, which is what makes this a swap and not a redraw.
-            changes: {
-              // Through `swapShapeKind`, which says what the new kind keeps.
-              // Spreading the old geometry carried line-only fields onto a
-              // rectangle -- invisible, and waiting to reappear the next time
-              // the shape was swapped back. Shared with the rail's picker, so
-              // the two surfaces cannot disagree about what survives.
-              geometry: swapShapeKind(
-                (n as unknown as { geometry: ShapeGeometry }).geometry,
-                kind as ShapeKind,
-                points
-              ),
-            },
-          }))
-      );
-    },
-  };
   /** The live document, for the diagram round trip. Same source every other consumer here reads. */
   const diagramObjects = useStore((s) => s.objects);
+
+  const {
+    showToast,
+    clipboardRef,
+    copySelection,
+    pasteObjects,
+    pasteSvg,
+    pasteText,
+  } = useRoomClipboard({
+    diagramObjects,
+    selectionRef,
+    setSelectedIds,
+  });
+
+  const contextActions = useRoomContextMenuActions({
+    selectedIds,
+    setSelectedIds,
+    diagramObjects,
+    contextTarget,
+    localTitle,
+    clipboardRef,
+    copySelection,
+    pasteObjects,
+    pasteSvg,
+    pasteText,
+    showToast,
+    setExportFromSelection,
+    setShowExportMenu,
+    setDiagramSource,
+    setDiagramReplacing,
+    setDiagramReplaceIds,
+    setDiagramOpen,
+  });
 
   /**
    * Sweep folders that no longer hold anything.
@@ -1617,28 +1226,28 @@ export default function Room() {
           traversing the entire header and tool dock. */}
       <a href="#canvas-surface" className="skip-link">Skip to canvas</a>
 
-      {/* Connection state is announced, not just coloured — a status conveyed
-          only by a red dot is invisible to a screen reader. `polite` so it
-          waits for a pause rather than interrupting. */}
-      <div className="sr-only" role="status" aria-live="polite">
-        {status === 'connected' ? 'Connected. Changes are syncing.' : 'Offline. Changes are saved locally and will sync when you reconnect.'}
-      </div>
+      {/* Connection state is announced by the header's own indicator, which
+          carries `role="status"` and `aria-live` itself. A hidden twin here
+          was a second wording of the same fact for a second audience — and the
+          two had already drifted, one saying "saved locally" and the other
+          "saved on this device". */}
 
-      {/* What a paste actually produced. Above the dock, out of the way of the
-          canvas, and gone by itself — this confirms, it does not ask. */}
-      {notice && (
-        <div className="canvas-notice" role="status" aria-live="polite">
-          {notice}
-        </div>
-      )}
-
-      {/* OFFLINE BANNER */}
-      {status !== 'connected' && (
-        <div style={{ position: 'absolute', bottom: 84, left: '50%', transform: 'translateX(-50%)', background: 'var(--surface-elevated)', color: 'var(--text-primary)', padding: '8px 16px', borderRadius: 'var(--radius-pill)', zIndex: 1000, display: 'flex', alignItems: 'center', gap: 10, fontSize: 'var(--text-base)', fontWeight: 500, boxShadow: 'var(--shadow-md)', border: '1px solid var(--border-divider)', backdropFilter: 'blur(8px)', WebkitBackdropFilter: 'blur(8px)' }}>
-          <div style={{ width: 8, height: 8, borderRadius: '50%', background: 'var(--status-offline)' }} />
-          Working Offline. Changes will sync automatically.
-        </div>
-      )}
+      {/**
+       * Everything the application says, in one place.
+       *
+       * This replaced three surfaces. Two of them were here: a transient toast
+       * for what a paste produced, and an **offline banner in fifteen inline
+       * style properties** that said, in different words, what the header's
+       * sync dot was already saying four inches away.
+       *
+       * The banner is gone rather than restyled, because being offline is a
+       * *state* and not an event: it does not happen at a moment you want to be
+       * told about, it persists, and a notification that cannot be dismissed
+       * and must not be missed is not a notification — it is a status light in
+       * the wrong place. The header indicator owns it now and says more when
+       * there is more to say.
+       */}
+      <NoticeLayer />
 
       {/* WORKSPACE SHELL (Header & Navigation) */}
       {isUiVisible && (
@@ -1659,25 +1268,6 @@ export default function Room() {
         />
       )}
 
-      {/* RESTORE / TEMPLATE RECEIPT NOTICE */}
-      {restoreNotice && (
-        <div
-          className={`restore-notice ${restoreNotice.ok ? 'is-ok' : 'is-error'}${
-            noticeLeaving ? ' is-leaving' : ''
-          }`}
-          role="status"
-        >
-          <span>{restoreNotice.message}</span>
-          <button
-            type="button"
-            className="restore-notice__close"
-            onClick={() => setRestoreNotice(null)}
-            aria-label="Dismiss notice"
-          >
-            <X size={14} />
-          </button>
-        </div>
-      )}
 
       {/* TIMELINE / SESSION REPLAY OVERLAY */}
 
@@ -1733,7 +1323,7 @@ export default function Room() {
             style={{ position: 'absolute', left: 16, bottom: 24, zIndex: 90 }}
             onClick={() => setRadarOpen(true)}
             aria-label="Show the radar"
-            data-tooltip="Radar — the whole board, and everyone on it"
+            data-tooltip="The whole board, and everyone on it"
             data-tooltip-pos="right"
           >
             <Radar size={15} />

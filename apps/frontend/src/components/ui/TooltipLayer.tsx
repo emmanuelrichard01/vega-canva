@@ -1,4 +1,5 @@
 import React, { useEffect, useRef, useState } from 'react';
+import { splitShortcut } from './tooltipShortcut';
 
 /**
  * Every tooltip in the app, drawn once at the document root.
@@ -35,8 +36,22 @@ import React, { useEffect, useRef, useState } from 'react';
  * mouse user does. The pseudo-element version was hover-only.
  */
 
-/** How long the pointer must rest before a tip appears. */
+/** How long the pointer must rest before a tip appears, from cold. */
 const OPEN_DELAY = 380;
+/**
+ * How long after a tip closes that the next one opens immediately.
+ *
+ * Without this, every control in a toolbar costs the full delay again, so
+ * running along a row of eight buttons means waiting eight times to read eight
+ * labels — which is precisely the moment someone is scanning a toolbar because
+ * they do not yet know what the icons mean. Once the first tip has been earned,
+ * the group is warm and the rest follow the pointer. Going quiet for longer
+ * than this means the next tip is deliberate again and pays the full wait.
+ *
+ * This is the behaviour every desktop toolbar has had for thirty years, and
+ * its absence is most of why tooltips here felt sluggish.
+ */
+const WARM_WINDOW = 900;
 /** Gap between the control and the tip. */
 const OFFSET = 8;
 /** Keep-away margin from the viewport edge. */
@@ -46,26 +61,49 @@ type Side = 'top' | 'bottom' | 'left' | 'right';
 
 interface Tip {
   text: string;
+  /** A trailing accelerator, lifted out of the label and set as a key. */
+  shortcut?: string;
+  /**
+   * The second line: what the tool does, when its name does not say.
+   *
+   * Read from `data-tooltip-desc` rather than parsed out of the label, because
+   * the two are different kinds of thing and joining them into one string is
+   * what produced "Direct select. anchors and handles (A)" — a name, a
+   * sentence fragment and an accelerator run together with a full stop doing
+   * the work of a line break.
+   */
+  desc?: string;
   x: number;
   y: number;
   side: Side;
+  /** The control this tip belongs to, kept so the tip can check it is still wanted. */
+  anchor: HTMLElement;
 }
+
 
 export const TooltipLayer: React.FC = () => {
   const [tip, setTip] = useState<Tip | null>(null);
   const timerRef = useRef<number | null>(null);
   const tipRef = useRef<HTMLDivElement>(null);
+  /** When the last tip closed, for the warm-window rule above. */
+  const lastClosedRef = useRef(0);
+  /** Whether a tip is currently up, tracked outside state so listeners see it. */
+  const openRef = useRef(false);
 
   useEffect(() => {
     const clear = () => {
       if (timerRef.current) window.clearTimeout(timerRef.current);
       timerRef.current = null;
+      if (openRef.current) {
+        lastClosedRef.current = Date.now();
+        openRef.current = false;
+      }
       setTip(null);
     };
 
     const show = (el: HTMLElement) => {
-      const text = el.getAttribute('data-tooltip');
-      if (!text) return;
+      const raw = el.getAttribute('data-tooltip');
+      if (!raw) return;
 
       const rect = el.getBoundingClientRect();
       // Zero-sized means the control is not laid out — a collapsed panel, or a
@@ -73,9 +111,14 @@ export const TooltipLayer: React.FC = () => {
       if (rect.width === 0 && rect.height === 0) return;
 
       const requested = (el.getAttribute('data-tooltip-pos') as Side) || 'top';
+      const { text, shortcut } = splitShortcut(raw);
+      openRef.current = true;
       setTip({
         text,
+        shortcut,
+        desc: el.getAttribute('data-tooltip-desc') || undefined,
         side: requested,
+        anchor: el,
         x: requested === 'left' ? rect.left : requested === 'right' ? rect.right : rect.left + rect.width / 2,
         y: requested === 'bottom' ? rect.bottom : requested === 'top' ? rect.top : rect.top + rect.height / 2,
       });
@@ -85,6 +128,28 @@ export const TooltipLayer: React.FC = () => {
       const target = (e.target as HTMLElement)?.closest?.('[data-tooltip]') as HTMLElement | null;
       if (!target) return;
       if (timerRef.current) window.clearTimeout(timerRef.current);
+      /**
+       * A control that opens a menu never takes the instant path.
+       *
+       * Those controls revoke their own tooltip by dropping `data-tooltip`
+       * when their flyout opens, and that revocation is a React re-render —
+       * which cannot beat a synchronous `show()` in the same event. Hovering a
+       * dock button while the layer was warm therefore painted the tip
+       * *directly on top of* the flyout it belongs to, in the same space above
+       * the same button. Measured: tip at 192,551 over a flyout at 128,471.
+       *
+       * Waiting the full delay gives the menu time to open and the attribute
+       * time to go, after which `show` reads no tooltip and does nothing. The
+       * flyout is a better label than the tip was.
+       */
+      const opensMenu = target.getAttribute('aria-haspopup') === 'menu';
+      // Warm: a tip is up, or one has just come down. Follow the pointer with
+      // no wait, so scanning a toolbar reads as one continuous gesture.
+      const warm = openRef.current || Date.now() - lastClosedRef.current < WARM_WINDOW;
+      if (warm && !opensMenu) {
+        show(target);
+        return;
+      }
       timerRef.current = window.setTimeout(() => show(target), OPEN_DELAY);
     };
 
@@ -146,6 +211,51 @@ export const TooltipLayer: React.FC = () => {
      * usually half off screen.
      */
     el.style.transform = `${transformFor(flip ? 'bottom' : tip.side)} translateX(${dx}px)`;
+
+    /**
+     * One frame later, check the tip is still wanted.
+     *
+     * Several controls revoke their tooltip by dropping `data-tooltip` when
+     * something better takes over the same space — the dock's buttons do it the
+     * moment their flyout opens. That revocation is a React re-render, and a
+     * re-render cannot beat a `show()` that ran synchronously in the same
+     * event: the tip was already on screen, and nothing looked at the attribute
+     * again.
+     *
+     * Asking the anchor rather than trusting the sender is the difference
+     * between a tip that can be taken down and one that merely should have
+     * been. It is the same reasoning as `railVeil.settle` — the state has to be
+     * falsifiable from outside, because the component that would have revoked
+     * it may already have unmounted.
+     *
+     * One frame is enough: React has committed by then. This is a single
+     * scheduled check, not a loop, so a tip that stays wanted costs nothing
+     * after it.
+     */
+    const stillWanted = () => tip.anchor.isConnected && !!tip.anchor.getAttribute('data-tooltip');
+    const raf = requestAnimationFrame(() => { if (!stillWanted()) setTip(null); });
+
+    /**
+     * And keep asking, for as long as this tip is up.
+     *
+     * The single frame above closes the synchronous race, but not the case
+     * where the tooltip is revoked *later* than that — a flyout opened from the
+     * keyboard, a control that becomes disabled, a menu pinned by a click that
+     * arrives while the tip is already on screen. In all of those the tip is
+     * showing, its anchor has withdrawn it, and nothing was watching.
+     *
+     * An observer rather than a frame loop: this fires exactly when the
+     * attribute changes and costs nothing while it does not, and it unhooks
+     * with the tip. Polling would have to run at 60Hz for the whole time a
+     * tooltip is visible to catch an event the DOM will simply tell us about.
+     */
+    const observer = new MutationObserver(() => { if (!stillWanted()) setTip(null); });
+    observer.observe(tip.anchor, { attributes: true, attributeFilter: ['data-tooltip'] });
+
+    return () => {
+      cancelAnimationFrame(raf);
+      observer.disconnect();
+    };
   }, [tip]);
 
   if (!tip) return null;
@@ -155,13 +265,21 @@ export const TooltipLayer: React.FC = () => {
       ref={tipRef}
       className="tip"
       role="tooltip"
+      /* Drives the entrance direction. Keyed on the *requested* side rather
+         than the flipped one, because the animation is re-run by the class
+         change and re-running it after the flip would replay the tip. */
+      data-side={tip.side}
       style={{
         left: tip.x,
         top: tip.y,
         transform: transformFor(tip.side),
       }}
     >
-      {tip.text}
+      <span className="tip__head">
+        <span className="tip__text">{tip.text}</span>
+        {tip.shortcut && <kbd className="tip__key">{tip.shortcut}</kbd>}
+      </span>
+      {tip.desc && <span className="tip__desc">{tip.desc}</span>}
     </div>
   );
 };

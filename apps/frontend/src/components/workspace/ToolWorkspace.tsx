@@ -108,11 +108,34 @@ const DockButton = React.forwardRef<
   }
 >(({ icon, label, description, toolId, active, onClick, hasMenu, menuOpen, tabIndex, children, seat, onRemove, onPointerDown, editing }, ref) => {
   const key = toolId ? shortcutFor(toolId) : undefined;
-  // Rendered from the shortcut map rather than typed into the string, so the
-  // hint and the binding are the same fact.
-  const tooltip = [label, key ? `(${key})` : null, description ? `— ${description}` : null]
-    .filter(Boolean)
-    .join(' ');
+  /**
+   * Three separate things, kept separate.
+   *
+   * Every seat used to build one string out of a name, an accelerator and a
+   * description — "Direct select (A) — anchors and handles" — and it went wrong
+   * in three ways at once. The em-dash made a label look like a sentence with
+   * an aside. The accelerator sat in bare brackets mid-string, so it read as
+   * punctuation rather than as a key, and the tooltip layer could not lift it
+   * into a real chip because it only recognises a *trailing* parenthetical.
+   * And since some seats carry a description and others do not, no two tips
+   * along the row had the same shape.
+   *
+   * Now the name and its key go in `data-tooltip`, where the layer splits them
+   * and sets the key as a `<kbd>`; the description goes in its own attribute
+   * and becomes a quieter second line. Every seat renders the same way whether
+   * it has one part, two or three.
+   *
+   * Still read from the shortcut map rather than typed into a string, so the
+   * hint and the binding remain the same fact.
+   */
+  const tooltip = key ? `${label} (${key})` : label;
+  /* Capitalised here rather than at ten call sites: these were written as
+     fragments to follow a dash, and they now open a line. */
+  const tooltipDesc = description
+    ? description.charAt(0).toUpperCase() + description.slice(1)
+    : undefined;
+  /* A screen reader has no second line to put it on, so it gets one phrase. */
+  const ariaLabel = description ? `${label}, ${description}` : label;
 
   return (
     <div className={hasMenu ? 'dock-slot dock-slot--menu' : 'dock-slot'} {...seat}>
@@ -143,9 +166,12 @@ const DockButton = React.forwardRef<
         onPointerDown={onPointerDown}
         // Suppressed while the menu is open: a tooltip and the flyout it
         // belongs to occupy the same space above the button, and the tooltip
-        // wins the paint.
+        // wins the paint. `TooltipLayer` also watches this attribute, so a tip
+        // already on screen when the menu opens is taken down rather than left
+        // sitting on top of it.
         data-tooltip={menuOpen ? undefined : tooltip}
-        aria-label={tooltip}
+        data-tooltip-desc={menuOpen ? undefined : tooltipDesc}
+        aria-label={ariaLabel}
         data-label={label}
         tabIndex={tabIndex}
       >
@@ -277,6 +303,14 @@ interface Props {
  * table that also *was* the dock's order, which is the arrangement that had to
  * become data before anyone could rearrange it.
  */
+/**
+ * How long the pointer must rest on a dock seat before its flyout opens.
+ *
+ * Short enough that resting on a button feels immediate, long enough that
+ * crossing the dock on the way elsewhere opens nothing.
+ */
+const HOVER_INTENT = 170;
+
 const MORE_SEAT = DOCK_SEATS.length;
 
 /**
@@ -424,9 +458,45 @@ export const ToolWorkspace: React.FC<Props> = ({ activeToolId, onOpenDiagram, on
     : (pinnedMenu ?? hoveredMenu);
 
   const toggleMenu = (menu: DockMenu) => setPinnedMenu(current => (current === menu ? null : menu));
+
+  /**
+   * Hover intent, rather than hover.
+   *
+   * These opened on `mouseenter` with no delay, so crossing the dock on the way
+   * somewhere else unfolded every menu the pointer passed under: three panels
+   * bloom and collapse behind it, over the very gaps a drag might be aiming at.
+   * The dock's own comment already describes this as "a panel unfolding over
+   * the dock the instant the pointer crosses a button", while suppressing it
+   * for a different reason.
+   *
+   * A short wait is the whole difference between passing over a control and
+   * resting on one, which is why every desktop menu bar has had one. It is
+   * deliberately shorter than the tooltip's delay: for a seat with a menu the
+   * flyout is the answer to hovering it, and the tooltip stands down.
+   */
+  const hoverTimer = useRef<number | null>(null);
+  const cancelHoverOpen = () => {
+    if (hoverTimer.current !== null) {
+      window.clearTimeout(hoverTimer.current);
+      hoverTimer.current = null;
+    }
+  };
+  useEffect(() => cancelHoverOpen, []);
   const hoverProps = (menu: DockMenu) => ({
-    onMouseEnter: () => setHoveredMenu(menu),
-    onMouseLeave: () => setHoveredMenu(current => (current === menu ? null : current)),
+    onMouseEnter: () => {
+      cancelHoverOpen();
+      // Already showing a menu: move between seats with no wait, the way a
+      // menu bar hands off once one of its menus is open.
+      if (hoveredMenu !== null || pinnedMenu !== null) {
+        setHoveredMenu(menu);
+        return;
+      }
+      hoverTimer.current = window.setTimeout(() => setHoveredMenu(menu), HOVER_INTENT);
+    },
+    onMouseLeave: () => {
+      cancelHoverOpen();
+      setHoveredMenu(current => (current === menu ? null : current));
+    },
     // Keep presses inside a menu away from the close-on-outside-press listener,
     // which would otherwise cancel the button's own toggle.
     onPointerDown: (e: React.PointerEvent) => e.stopPropagation(),

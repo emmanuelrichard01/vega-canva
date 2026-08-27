@@ -53,6 +53,7 @@ function isMaterialId(value: unknown): value is MaterialId {
   return typeof value === 'string' && (MATERIAL_IDS as readonly string[]).includes(value);
 }
 import { packAdjustments, readAdjustments } from '../model/imageAdjustments';
+import { normalizeSlot } from '../grid/gridSlot';
 
 /**
  * Legacy -> canonical mapping.
@@ -932,6 +933,12 @@ export function normalizeNode(raw: any, id?: string): AnyNode {
         // throw, it turns every channel it touches into transparent black —
         // so a bad value would present as "the image failed to load".
         filters: packAdjustments(readAdjustments(raw?.filters)),
+        // A slot naming a grid that no longer exists is *kept* here and
+        // released by `gridReflow`. This boundary cannot see the document, so
+        // it cannot tell a deleted grid from one that has not loaded yet — and
+        // dropping the binding on the second would silently orphan every
+        // picture in every grid for as long as the document was still arriving.
+        gridSlot: normalizeSlot(raw?.gridSlot),
       };
 
     case 'audio':

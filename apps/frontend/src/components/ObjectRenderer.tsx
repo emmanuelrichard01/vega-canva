@@ -1,4 +1,4 @@
-import React, { useCallback, useEffect, useRef, useState, useSyncExternalStore } from 'react';
+import React, { useCallback, useEffect, useMemo, useRef, useState, useSyncExternalStore } from 'react';
 import { Circle, Group, Rect, Text } from 'react-konva';
 import Konva from 'konva';
 import { applyGroupPlan, applyNodePatches, deleteNode, doc, localAuthorId, toggleReaction, updateNode } from '../engine/document';
@@ -12,6 +12,9 @@ import { fitLineToBox, isLineLike } from '../engine/model/lineEnds';
 import { EXPORT_CHROME } from '../engine/export/chrome';
 import { OBJECT_NODE } from '../engine/export/isolate';
 import { moveFrameWithChildren, reassignFrame } from '../engine/interaction/frameMembership';
+import { gridCellsOf } from '../engine/grid/gridNode';
+import { addTextToCell, cellAtPoint, isCellFree, reassignGridSlot } from '../engine/grid/gridSlotApply';
+import { roundPolygon } from '../engine/grid/gridLayout';
 import { tagFilter } from '../engine/model/tagFilter';
 import { matchesTagFilter } from '../engine/model/tags';
 import { useStore } from '../hooks/useStore';
@@ -273,6 +276,48 @@ export const ObjectRenderer = React.memo(
       ownerFrame && ownerFrame.type === 'frame'
         ? { x: ownerFrame.x, y: ownerFrame.y, width: ownerFrame.width, height: ownerFrame.height }
         : null;
+
+    /**
+     * The grid module a picture is sitting in, when it is in one.
+     *
+     * Selected as the grid *node* for the same reason `ownerFrame` above is:
+     * the store hands back a stable reference between changes, and returning a
+     * freshly computed cell from the selector would be a new object on every
+     * read and would re-render this component forever.
+     */
+    const slotGrid = useStore((state) => {
+      const slot = node && 'gridSlot' in node ? node.gridSlot : undefined;
+      return slot ? state.objects[slot.gridId] : undefined;
+    });
+
+    /**
+     * A picture in a non-rectangular module is cut to that module's silhouette.
+     *
+     * Only for the shapes a rectangle cannot express. A rectangular module —
+     * every kind but `radial`, which draws ring sectors — needs no clipping at
+     * all: `gridReflow` gives the picture the module's exact box and its corner
+     * radius, and `ImageRenderer` hands that radius to Konva, which clips to it
+     * natively. Drawing a clip path for those would be a second implementation
+     * of rounding that could disagree with the first.
+     *
+     * Expressed in the picture's own local space, which is offset to its
+     * centre — the group is positioned at the centre and its contents drawn
+     * back from there. No transform inversion is needed here, unlike the frame
+     * clip below: the picture's box *is* the module's box and it carries the
+     * grid's own rotation, so the two spaces differ by that offset and nothing
+     * else. `roundPolygon` is the same rounder the grid drew the module with,
+     * so the picture's edge and the module's edge are the same curve.
+     */
+    const slotClip = useMemo(() => {
+      const slot = node && 'gridSlot' in node ? node.gridSlot : undefined;
+      if (!slot || !slotGrid || slotGrid.type !== 'grid') return null;
+      const cell = gridCellsOf(slotGrid).find((c) => c.index === slot.cell);
+      if (!cell?.outline) return null;
+      return roundPolygon(cell.outline, cell.radius).map((p) => ({
+        x: p.x - cell.width / 2,
+        y: p.y - cell.height / 2,
+      }));
+    }, [node, slotGrid]);
     const forceToolActive = useStore((state) => state.forceToolActive);
 
     /**
@@ -698,6 +743,9 @@ export const ObjectRenderer = React.memo(
             moveFrameWithChildren(objId, nextX - current.x, nextY - current.y);
           }
           reassignFrame(objId);
+          // Where a picture came to rest decides whether it is in a grid
+          // module, on the same geometric-membership rule as frames above.
+          if (current?.type === 'image') reassignGridSlot(objId);
         }
       },
       [objId, onThrow, canDuplicate]
@@ -763,6 +811,32 @@ export const ObjectRenderer = React.memo(
       // so double-clicking one has nothing to open.
       if (node.type === 'path' && node.geometry.kind === 'bezier') {
         pathEdit.enter(objId);
+      }
+      /**
+       * The inside of a grid is the module you aimed at, and what a module can
+       * hold that nothing else provides is a caption.
+       *
+       * Double-click has meant "go inside this object" for every other type on
+       * this canvas — the editor for text, the framing for an image, the
+       * anchors for a path, the vertices for a line — and a grid was the one
+       * type where it meant nothing at all. Typing into a module is the thing
+       * you want often enough to deserve the gesture everything else uses,
+       * rather than a button that has to be found first.
+       *
+       * A module that already holds something is left alone: the double-click
+       * would land on that object rather than on the grid anyway, and stacking
+       * a caption on top of a picture is a composition the person can build
+       * deliberately if they want it.
+       */
+      if (node.type === 'grid') {
+        const stage = e?.target?.getStage?.();
+        const pointer = stage?.getPointerPosition?.();
+        if (!pointer) return;
+        const world = cameraSystem.screenToWorld(pointer.x, pointer.y);
+        const cell = cellAtPoint(node, world);
+        if (cell === null || !isCellFree(node.id, cell)) return;
+        const id = addTextToCell(node.id, cell);
+        if (id) onSelect(id);
       }
     }, [isSelected, node, objId, onSelect]);
 
@@ -1047,7 +1121,25 @@ export const ObjectRenderer = React.memo(
            * a tilted window instead of by the frame's actual edge.
            */
           clipFunc={
-            clipRect
+            slotClip
+              ? /**
+                 * The module wins over the frame when a picture is in both.
+                 *
+                 * Konva takes one clip path per node and two subpaths would
+                 * *union* rather than intersect, so these cannot simply be
+                 * combined. The module is chosen because it is the tighter
+                 * constraint in every arrangement that actually occurs — the
+                 * picture is inside the module, which is inside the grid, which
+                 * is inside the frame — and because it is the one the reader
+                 * can see. The frame still clips the grid itself.
+                 */
+                (ctx: Konva.Context) => {
+                  ctx.beginPath();
+                  ctx.moveTo(slotClip[0].x, slotClip[0].y);
+                  for (let i = 1; i < slotClip.length; i++) ctx.lineTo(slotClip[i].x, slotClip[i].y);
+                  ctx.closePath();
+                }
+              : clipRect
               ? (ctx: Konva.Context) => {
                   const group = shapeRef.current;
                   const stage = group?.getStage();

@@ -456,7 +456,7 @@ export const ExportModal: React.FC<Props> = ({
                   <option value={WHOLE_DOCUMENT}>Whole canvas</option>
                   {!scope.wholeBoard && (
                     <option value={SELECTION}>
-                      {scope.count === 1 ? 'Selection — 1 object' : `Selection — ${scope.count} objects`}
+                      {scope.count === 1 ? 'Selection, 1 object' : `Selection, ${scope.count} objects`}
                     </option>
                   )}
                   {frameList.length > 0 && (

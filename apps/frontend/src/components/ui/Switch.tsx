@@ -46,7 +46,7 @@ export const Switch: React.FC<SwitchProps> = ({ checked, onChange, label, toolti
         // Hidden by CSS on narrow viewports; the tooltip and aria-label carry
         // the meaning there, so the control stays usable rather than being
         // dropped from the header entirely.
-        <span className="hdr-switch-label ui-switch__label">{label}</span>
+        <span className="ui-switch__label">{label}</span>
       )}
       <span className="ui-switch__track" aria-hidden="true">
         <span className="ui-switch__thumb" />

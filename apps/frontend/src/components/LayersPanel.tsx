@@ -31,6 +31,15 @@ import { TYPE_LABEL, TYPE_ORDER } from '../engine/model/nodeLabel';
 const ROW_HEIGHT = 36;
 const ROW_GAP = 4;
 
+/**
+ * One glyph size for this panel's chrome.
+ *
+ * There were five in here — 16, 15, 14, 14 and 13 — which in a 260px column
+ * is enough to make the header, the search field and the rows look like three
+ * different products stacked on top of each other.
+ */
+const PANEL_ICON = 14;
+
 interface LayersPanelProps {
   selectedIds: string[];
   overrideObjects?: Record<string, any> | null;
@@ -1069,7 +1078,7 @@ export const LayersPanel: React.FC<LayersPanelProps> = ({ selectedIds, overrideO
         onClick={(e) => handleRowClick(e, obj.id)}
         className={`layer-row${isSelected ? ' is-selected' : ''}${obj.id === cursorId ? ' is-cursor' : ''}`}
         style={{
-          padding: '0 8px 0 ' + (12 + indent) + 'px',
+          padding: '0 12px 0 ' + (12 + indent) + 'px',
           // Fixed height is what makes virtualization possible — see the
           // flattening above and useVirtualRows.
           height: ROW_HEIGHT - ROW_GAP,
@@ -1129,7 +1138,7 @@ export const LayersPanel: React.FC<LayersPanelProps> = ({ selectedIds, overrideO
               }
             }}
             autoFocus
-            style={{ flex: 1, background: 'var(--surface-primary)', border: '1px solid var(--border-focus)', borderRadius: 'var(--radius-sm)', padding: '2px 6px', color: 'var(--text-primary)', fontSize: 'var(--text-xs)', outline: 'none' }}
+            className="layer-rename"
           />
         ) : (
           <span
@@ -1222,30 +1231,29 @@ export const LayersPanel: React.FC<LayersPanelProps> = ({ selectedIds, overrideO
   };
 
   return (
-    <div style={{ display: 'flex', flexDirection: 'column', height: '100%', userSelect: 'none', background: 'var(--surface-primary)' }}>
+    <div style={{ display: 'flex', flexDirection: 'column', height: '100%', userSelect: 'none', background: 'transparent' }}>
       {/* HEADER */}
-      <div style={{ display: 'flex', alignItems: 'center', gap: '8px', padding: '16px', borderBottom: '1px solid var(--border-divider)', background: 'var(--surface-elevated)', position: 'sticky', top: 0, zIndex: 10 }}>
-        <Layers size={16} color="var(--text-secondary)" />
-        <span style={{ color: 'var(--text-primary)', fontWeight: 600, fontSize: 'var(--text-sm)', flex: 1 }}>Layers</span>
+      <div className="panel-head">
+        <Layers size={PANEL_ICON} className="panel-head__mark" aria-hidden />
+        <span className="panel-head__title">Layers</span>
         {onCollapse && selectedIds.length <= 1 && (
           <button
-            className="btn-icon"
-            style={{ padding: '4px' }}
+            className="btn-icon btn-icon--sm"
             onClick={onCollapse}
             data-tooltip="Collapse panel"
             aria-label="Collapse the layers panel"
           >
-            <PanelLeftClose size={15} />
+            <PanelLeftClose size={PANEL_ICON} />
           </button>
         )}
         {selectedIds.length > 1 && (
-          <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
-            <span style={{ fontSize: 'var(--text-2xs)', color: 'var(--text-secondary)', fontWeight: 600 }}>{selectedIds.length} selected</span>
-            <button className="btn-icon" style={{ padding: '4px' }} onClick={handleBulkDuplicate} data-tooltip="Duplicate selected (Cmd+D)">
-              <Copy size={14} />
+          <div className="panel-head__actions">
+            <span className="panel-head__count">{selectedIds.length} selected</span>
+            <button className="btn-icon btn-icon--sm" onClick={handleBulkDuplicate} data-tooltip="Duplicate selected (Cmd+D)" aria-label="Duplicate selected">
+              <Copy size={PANEL_ICON} />
             </button>
-            <button className="btn-icon" style={{ padding: '4px', color: 'var(--status-danger)' }} onClick={handleBulkDelete} data-tooltip="Delete selected (Del)">
-              <Trash2 size={14} />
+            <button className="btn-icon btn-icon--sm" style={{ color: 'var(--status-danger)' }} onClick={handleBulkDelete} data-tooltip="Delete selected (Del)" aria-label="Delete selected">
+              <Trash2 size={PANEL_ICON} />
             </button>
           </div>
         )}
@@ -1257,7 +1265,7 @@ export const LayersPanel: React.FC<LayersPanelProps> = ({ selectedIds, overrideO
           type chips beside it answer the other half of the question the brief
           asks: "show me only the text layers". */}
       <div className="layer-search">
-        <Search size={13} className="layer-search__icon" aria-hidden />
+        <Search size={PANEL_ICON} className="layer-search__icon" aria-hidden />
         <input
           ref={searchRef}
           type="search"
@@ -1385,7 +1393,7 @@ export const LayersPanel: React.FC<LayersPanelProps> = ({ selectedIds, overrideO
         }}
         onDrop={handleDrop}
         onDragEnd={handleDragEnd}
-        style={{ padding: '8px', overflowY: 'auto', overflowX: 'hidden', flex: 1 }}
+        style={{ padding: 'var(--space-1)', overflowY: 'auto', overflowX: 'hidden', flex: 1 }}
         className="custom-scrollbar layers-tree"
       >
         {sortedObjects.length === 0 ? (
@@ -1546,7 +1554,7 @@ export const LayersPanel: React.FC<LayersPanelProps> = ({ selectedIds, overrideO
                           if (e.key === 'Escape') setEditingTitleId(null);
                         }}
                         autoFocus
-                        style={{ flex: 1, minWidth: 0, background: 'var(--surface-primary)', border: '1px solid var(--border-focus)', borderRadius: 'var(--radius-sm)', padding: '2px 6px', color: 'var(--text-primary)', fontSize: 'var(--text-xs)', outline: 'none' }}
+                        className="layer-rename"
                       />
                     ) : (
                       <span

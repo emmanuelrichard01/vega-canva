@@ -137,22 +137,15 @@ export const NumberStepper: React.FC<Props> = ({
       style={{ display: 'flex', alignItems: 'center', gap: '4px', opacity: disabled ? 0.45 : 1 }}
       data-tooltip={disabledReason}
     >
-      {/* The axis letter — X, Y, W, H, R. Tabular so a two-character label
-          does not shift the field beside it, and on the type scale rather than
-          a literal 10px bold, which was heavier than the value it labels. */}
-      {label && (
-        <span
-          style={{
-            fontSize: 'var(--text-2xs)',
-            fontWeight: 600,
-            color: 'var(--text-tertiary)',
-            marginRight: '4px',
-            fontVariantNumeric: 'tabular-nums',
-          }}
-        >
-          {label}
-        </span>
-      )}
+      {/* The axis letter: X, Y, W, H, R.
+
+          It carries a fixed width in the stylesheet, which is what actually
+          keeps the field beside it on a shared left edge. This used to rely on
+          `tabular-nums` and a comment saying that stopped a wider label from
+          shifting the field — but these labels are letters, and
+          `font-variant-numeric` only ever selects between digit glyphs. The
+          declaration was inert and the columns were measurably ragged. */}
+      {label && <span className="stepper-label">{label}</span>}
       {/* `stepper` carries the focus ring for the input inside it, which sets
           `outline: none` so the browser's own ring does not cut across this
           border. See `.stepper:focus-within`. */}
@@ -186,13 +179,23 @@ export const NumberStepper: React.FC<Props> = ({
           onBlur={handleBlur}
           onKeyDown={handleKeyDown}
           style={{
-            width: mixed ? '44px' : '32px',
-            // Never shrink. Flex will happily compress an input below its
-            // width to make a row fit, and a *number field* that does that
-            // does not wrap or ellipsize — it silently renders 200 as "20".
-            // A control that shows the wrong value is worse than one that
-            // overflows, because nothing about it looks wrong.
-            flexShrink: 0,
+            // Takes the room the field has left over, down to a floor.
+            //
+            // This was a fixed 32px that never shrank, on the reasoning that a
+            // compressed number field silently renders 200 as "20" — which is
+            // true, and was solving the problem one level too low. A rigid
+            // input inside a field that is *itself* narrower than its contents
+            // does not prevent the clipping, it relocates it: the field's
+            // `overflow: hidden` took the difference out of the increase
+            // button instead, so the digits stayed perfect and the control
+            // beside them lost a third of its width.
+            //
+            // The floor is what protects the value. It fits four digits at
+            // this size, so nothing legible is ever cut; above it the input
+            // simply absorbs whatever width the column happens to give.
+            flex: '1 1 auto',
+            width: 'auto',
+            minWidth: mixed ? '44px' : '28px',
             background: 'transparent', border: 'none', outline: 'none',
             textAlign: 'center', fontSize: 'var(--text-sm)', fontFamily: 'var(--font-mono, monospace)',
             fontVariantNumeric: 'tabular-nums',

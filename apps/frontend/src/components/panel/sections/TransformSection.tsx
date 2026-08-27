@@ -39,12 +39,12 @@ export const TransformSection: React.FC<TransformSectionProps> = ({
 }) => {
   return (
     <Accordion title="Transform" icon={<Move size={13} />}>
-      <div style={{ display: 'grid', gridTemplateColumns: 'minmax(0, 1fr) 26px minmax(0, 1fr)', gap: '6px', alignItems: 'center' }}>
+      <div style={{ display: 'grid', gridTemplateColumns: 'minmax(0, 1fr) 28px minmax(0, 1fr)', gap: 'var(--space-2)', alignItems: 'center' }}>
         <NumberStepper value={Math.round(bounds?.x ?? node.x)} onChange={(v: number) => setOrigin('x', v)} label="X" />
         <span aria-hidden />
         <NumberStepper value={Math.round(bounds?.y ?? node.y)} onChange={(v: number) => setOrigin('y', v)} label="Y" />
       </div>
-      <div style={{ display: 'grid', gridTemplateColumns: 'minmax(0, 1fr) 26px minmax(0, 1fr)', gap: '6px', alignItems: 'center' }}>
+      <div style={{ display: 'grid', gridTemplateColumns: 'minmax(0, 1fr) 28px minmax(0, 1fr)', gap: 'var(--space-2)', alignItems: 'center' }}>
         <div style={{ minWidth: 0 }}>
           <NumberStepper
             value={Math.round(bounds?.width ?? node.width)}
@@ -54,18 +54,21 @@ export const TransformSection: React.FC<TransformSectionProps> = ({
             disabledReason={resizeBlockedReason}
           />
         </div>
+        {/* Sized to the column it sits in. It was a default 32px `.btn-icon`
+            inside a 26px track, so it overhung its own column by six pixels
+            and crowded the height field beside it. */}
         <button
-          className="btn-icon"
+          className="btn-icon btn-icon--sm"
           onClick={() => setAspectLocked((v) => !v)}
           data-tooltip={aspectLocked ? 'Unlock aspect ratio' : 'Lock aspect ratio'}
           aria-pressed={aspectLocked}
           style={{
-            padding: '6px', borderRadius: '4px', flexShrink: 0, alignSelf: 'center',
+            alignSelf: 'center',
             color: aspectLocked ? 'var(--text-primary)' : 'var(--text-tertiary)',
             background: aspectLocked ? 'var(--surface-hover)' : 'transparent',
           }}
         >
-          {aspectLocked ? <Lock size={13} /> : <Unlock size={13} />}
+          {aspectLocked ? <Lock size={14} /> : <Unlock size={14} />}
         </button>
         <div style={{ minWidth: 0 }}>
           <NumberStepper

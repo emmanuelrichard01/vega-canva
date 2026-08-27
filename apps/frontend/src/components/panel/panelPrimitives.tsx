@@ -119,7 +119,7 @@ export const ToggleButton: React.FC<{
     aria-label={label}
     onClick={onClick}
     style={{
-      padding: '6px', borderRadius: '4px',
+      padding: '4px 6px', borderRadius: '4px',
       background: !mixed && active ? 'var(--surface-primary)' : 'transparent',
       color: mixed || active ? 'var(--text-primary)' : 'var(--text-secondary)',
       boxShadow: !mixed && active ? 'var(--shadow-sm)' : 'none',

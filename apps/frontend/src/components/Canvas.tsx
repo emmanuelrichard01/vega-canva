@@ -69,6 +69,7 @@ const NUDGE_KEYS: Record<string, [number, number]> = {
   ArrowDown: [0, 1],
 };
 import { nudgeDelta } from '../engine/tools/nudge';
+import { nudgeSlotFocus } from '../engine/grid/gridSlotApply';
 import { CommentsOverlay } from "./CommentsOverlay";
 import { AudioRecordingHUD } from "./AudioRecordingHUD";
 import { useComments } from "../hooks/useComments";
@@ -135,6 +136,40 @@ export const Canvas: React.FC<CanvasProps> = ({ activeTool, selectedIds, setSele
   useEffect(() => {
     canvasEngine.start();
     return () => canvasEngine.stop();
+  }, []);
+
+  // WebGL / Canvas Context Loss & Restore handling
+  useEffect(() => {
+    const container = containerRef.current;
+    if (!container) return;
+
+    const handleContextLost = (e: Event) => {
+      // Must prevent default to allow the browser to restore the canvas context
+      e.preventDefault();
+      console.warn('Canvas context lost. Awaiting GPU restoration...');
+    };
+
+    const handleContextRestored = () => {
+      console.log('Canvas context restored. Re-rendering stage layers...');
+      stageRef.current?.batchDraw();
+      engineEvents.emit('CameraChanged', {
+        x: cameraSystem.x,
+        y: cameraSystem.y,
+        zoom: cameraSystem.zoom,
+      });
+    };
+
+    container.addEventListener('contextlost', handleContextLost, { capture: true });
+    container.addEventListener('webglcontextlost', handleContextLost, { capture: true });
+    container.addEventListener('contextrestored', handleContextRestored, { capture: true });
+    container.addEventListener('webglcontextrestored', handleContextRestored, { capture: true });
+
+    return () => {
+      container.removeEventListener('contextlost', handleContextLost, { capture: true });
+      container.removeEventListener('webglcontextlost', handleContextLost, { capture: true });
+      container.removeEventListener('contextrestored', handleContextRestored, { capture: true });
+      container.removeEventListener('webglcontextrestored', handleContextRestored, { capture: true });
+    };
   }, []);
 
   // -- crop mode ------------------------------------------------------------
@@ -474,11 +509,40 @@ export const Canvas: React.FC<CanvasProps> = ({ activeTool, selectedIds, setSele
         );
         if (isEditingField) return;
         const objects = useStore.getState().objects;
-        const patches = selectedIds
+        const movable = selectedIds
           .map((id) => objects[id])
-          .filter((o): o is NonNullable<typeof o> => Boolean(o) && !(o as any).locked)
-          .map((o) => ({ id: o.id, changes: { x: o.x + delta.dx, y: o.y + delta.dy } }));
-        if (patches.length === 0) return;
+          .filter((o): o is NonNullable<typeof o> => Boolean(o) && !(o as any).locked);
+
+        /**
+         * A picture in a grid module is nudged *inside* its module.
+         *
+         * Its box belongs to the grid, so moving it is not something an arrow
+         * key can do — the reflow would put it straight back and the press
+         * would appear to be swallowed, which is the dead-capability shape this
+         * codebase keeps finding. What the gesture plainly means for a picture
+         * in a frame is "move the picture within the frame", so that is what it
+         * does: the object stays put and the content slides under it.
+         *
+         * Split rather than branched per object so a mixed selection still does
+         * the right thing for each half in one transaction and one undo step.
+         * `nudgeSlotFocus` returns nothing for a picture with no room to travel
+         * — a module its source already fits exactly — which is why an empty
+         * result here is not the same as "no slotted pictures were selected".
+         */
+        const slotted = movable.filter((o) => 'gridSlot' in o && o.gridSlot);
+        const loose = movable.filter((o) => !('gridSlot' in o && o.gridSlot));
+
+        const patches = [
+          ...loose.map((o) => ({ id: o.id, changes: { x: o.x + delta.dx, y: o.y + delta.dy } })),
+          ...nudgeSlotFocus(slotted.map((o) => o.id), delta.dx, delta.dy),
+        ];
+        // Still swallow the press when the only thing selected is content that
+        // cannot travel any further: the alternative is the arrow escaping to
+        // the page and scrolling the board out from under a pinned picture.
+        if (patches.length === 0) {
+          if (slotted.length > 0) e.preventDefault();
+          return;
+        }
         e.preventDefault();
         // One transaction, so a nudge is one press to undo however many
         // objects moved.

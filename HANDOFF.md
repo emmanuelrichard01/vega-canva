@@ -68,8 +68,9 @@ Verify in ~30 seconds:
 
 ```bash
 npx tsc --noEmit -p apps/frontend/tsconfig.app.json   # must be silent
-npx vitest run --root apps/frontend                   # 1084 tests, 61 files
-npx oxlint apps/frontend/src                          # 16 cosmetic warnings, exit 0
+npx vitest run --root apps/frontend                   # 1912 tests, 106 files
+npx vitest run --root apps/server                     # 10 tests, 1 file
+npx oxlint apps/frontend/src                          # 0 warnings, 0 errors, exit 0
 npm run build -w apps/frontend                        # must succeed
 ```
 
@@ -79,13 +80,23 @@ npm run build -w apps/frontend                        # must succeed
 history were vacuous for exactly that reason. Use `tsconfig.app.json`, or
 `npm run build`, which runs `tsc -b`.
 
+Last verified 2026-08-27, by running the five commands above. Every figure in
+it is a second record of something the tools will tell you in 30 seconds — when
+it disagrees with them, they are right and this is stale.
+
 | | |
 | --- | --- |
-| Branch | `rebuild/time-travel-and-physics`, nothing pushed, nothing merged |
+| Branch | `main`, 41 ahead of `origin/main`. `rebuild/time-travel-and-physics` and `session-2` are both merged into it and are history, not workspaces |
 | Typecheck | clean |
-| Tests | **1084** across 61 files |
-| Lint | exits 0; 16 `only-export-components` warnings, all cosmetic |
-| Build | clean, 1.55MB JS (gzip 488KB) + 128KB CSS (gzip 21KB) — still no code splitting |
+| Tests | **1912** across 106 files (frontend); **10** across 1 file (server) |
+| Lint | exits 0; 0 warnings, 0 errors across 441 files |
+| Build | clean. **32 JS chunks**, 2.1MB raw / 720KB gzip, plus 172KB CSS (gzip 27KB). Largest: `Room` 517KB, `app-export` 439KB, `vendor-fontkit` 357KB, `vendor-konva` 310KB |
+
+**The build is code-split now**, by hand: `vite.config.ts` names the vendor and
+subsystem chunks rather than leaving Rollup to produce a `browser-module` that
+says nothing about why the bundle grew. The row above used to end "still no
+code splitting" and §5e used to carry it as an outstanding task; both were
+true, and both stopped being true without either being struck.
 
 **Read the failing-suite line, not the test count.** Vitest reports a suite
 that failed to *load* separately from tests that failed, so a file that throws
@@ -108,10 +119,22 @@ was `TextNode.autoHeight` (Phase 5). The rule that follows from it: **never
 declare a capability the renderer ignores**, and **a feature ships with the
 control that gives it a purpose**.
 
-Recent commits, newest first:
+Recent commits, newest first. **This table is a copy of `git log` and it goes
+stale between every session — check the log before trusting a "newest".** As of
+2026-08-27 the newest is `925d179`, and the twelve above `e531549` are all
+newer than anything listed here:
 
 | | |
 | --- | --- |
+| `925d179` | identity: a face, a colour of one's own, and a working L key |
+| `3131634`… | the pen and sketch arc — five commits, through `cabbd13` |
+| `9172b53` | the radar's people list given room to be read |
+| `803826a`… | the line-profile and arrowhead arc — five commits, through `383e2b8` |
+| `e531549` | the export rewrite and the two disappearances, written down |
+| `595497a` | the rail stops vanishing; white gets a ramp |
+| `b11b3e7` | a copy contains what it says it contains |
+| `f7780b0` | the four combines work on turned shapes, and subtract turns the right way round |
+| `d2d61a3` | the rail drawn where the object actually is |
 | `54a9ad4`… | the line-profile arc — see §4a-iv. Twelve commits; read that section rather than the log |
 | `f047011` | a line's box becomes what it draws; endpoints move into `geometry` |
 | `a605dec` | the hooks-order bug that emptied the canvas on double-click |
@@ -321,6 +344,145 @@ padded by three sigma or the blur clips flat against the node's edge; Konva has
 no stroke alignment, no inner shadow, no shadow spread and no conic or diamond
 gradient — all four are drawn by hand in `ShapeEffects.tsx` and
 `paintPattern.ts`.
+
+## 4a-0. Pictures in grid modules
+
+Select pictures and a grid and press **Place in grid** (the rail, or the
+right-click menu), or drop image files straight onto a module. Each picture is
+covered — scaled to fill, centre-cropped through the existing `crop` field,
+never stretched — and clipped to the module.
+
+Four files, and the split is the point:
+
+| File | What it owns |
+| --- | --- |
+| `engine/grid/gridSlot.ts` | the arithmetic — cover crop, module box under rotation, world→grid-local, hit test, fill order. Pure, 35 tests |
+| `engine/grid/gridReflow.ts` | what has to change, as patches. Pure, 15 tests |
+| `engine/grid/gridSlotApply.ts` | the store reads, the writes, and the subscription |
+| `ObjectRenderer.tsx` | the clip path, for modules a rectangle cannot express |
+
+Three decisions worth not relitigating:
+
+- **A slotted picture is an ordinary `ImageNode` with a `gridSlot` binding**,
+  not a source on the grid's recipe. It therefore keeps Adjust, crop, the
+  Layers panel and every exporter *for free*; the recipe version would have
+  needed a second image path in all three exporters and would have put the
+  pictures out of reach of every control that already exists.
+- **The box is written through, not derived on read.** A connector recomputes
+  its points on every read and stores nothing, and the reason a picture does
+  not is that a connector is special-cased in every consumer that needed to
+  know: the spatial index, culling, the selection outline, the transformer,
+  smart guides and `computeContentBounds` all read `x`/`y`/`width`/`height`
+  straight off the node. Writing through teaches none of them anything.
+- **The reflow observes the document rather than being called.** A grid's box
+  moves under a drag, the transformer, a nudge, an align, a distribute, a panel
+  edit — *and* an undo, *and* a collaborator on another machine. The last two
+  have no local call site to add a line to, which is what settles it. It cannot
+  loop because only differences are written, and that same property is why
+  every client can run it: they all compute the same answer, the first writes
+  it, the rest find it already true.
+
+### Modules hold captions too
+
+Double-click an empty module and type. A caption is a `TextNode` with the same
+`gridSlot`, pinned to `resize: 'fixed'` because the module decides the box —
+the other two resize modes let the box follow the text, so a caption would grow
+out of its module on the third line and be dragged back by the next reflow, the
+box fighting the typing. `GridSlot` is declared **once** in `schema.ts` and
+shared by both node types; `focus`/`zoom` are simply never written for text.
+
+### Reframing a picture inside its module
+
+Arrow keys move the picture *within* the module, because its box belongs to the
+grid and the ordinary nudge would be a keypress the reflow silently undid.
+Zoom and Recentre are on the rail under **Reframe**.
+
+The framing is stored as a **focal point and a zoom, not as a crop** — that is
+the load-bearing decision. A crop has the module's aspect ratio baked in, so
+when the module changes shape there is no way to recover which part of the
+picture the person cared about: re-covering re-centres and throws their framing
+away, keeping it stretches the picture. A focal point is aspect-free, which is
+why every image CMS stores one.
+
+### What happens when you cycle through arrangements
+
+**This was got wrong the first time and the fix is the interesting part.**
+
+Module counts across the kinds run from **one** (manuscript) to **thirty-six**
+(orbit), so cycling arrangements repeatedly asks nine pictures to fit into four
+and then into thirty-six. The first implementation **released** whatever did not
+fit — dropped the binding, left it where it was. That is defensible for a
+deliberate "make this 2x2" and badly wrong for the gesture people actually
+perform: try five arrangements and the fifth has permanently loosened your
+photographs into a pile on top of the grid, and going back does not bring them
+home. **A gesture for exploring must not destroy anything.**
+
+Nothing is released by changing a grid now. Content with no module **waits** in
+a strip below the grid, still bound, ordered by the module it came from, and
+walks back into place the moment an arrangement with enough modules comes round
+again. `gridReflow.test.ts` pins the round trip. Releasing is only ever
+something a person asks for — the rail's **Remove from grid**, which also puts
+the picture back to its own proportions, because the cover crop was the
+module's framing and not the picture's.
+
+The strip says what it is: the rail shows a count of what is waiting, because a
+state nobody can name is the "invisible state" objection parking has to answer.
+
+### Which grids this works for
+
+All of them, and the rule is **derived rather than listed**. A module can hold
+content if it is at least `MIN_SLOT_SIZE` (32) across its smaller side —
+`canHoldContent`. At the default 600x400 that excludes exactly one kind, orbit,
+whose modules are 22-unit dots, and admits a baseline grid's shallow strips,
+which hold a letterboxed photograph perfectly well. A *large* orbit grid's
+modules pass, which a hardcoded list of kinds could never get right. The list
+would also have been a second record of a fact the geometry already carries.
+
+### Still not built
+
+A file-picker button in the grid panel (today you drag files in or place
+pictures already on the board), and `contain` as an alternative to `cover`.
+`gridSlotApply.ts` has no tests of its own — the arithmetic and the planning
+under it do, which is the same division `gridApply.ts` already has, but the
+**swap** in `reassignGridSlot` is decision logic that nothing pins.
+
+## 4a-1. Notices, and the five surfaces that became two
+
+There were five ways this application said something, and two of them said the
+same sentence in different words: the header's sync dot read *"Offline. Changes
+are saved on this device"* while a banner four inches away read *"Working
+Offline. Changes will sync automatically."* The banner was **fifteen inline
+style properties**, which `DESIGN.md` forbids for the reason it forbids all of
+them.
+
+The distinction that collapses them:
+
+> **An event is something that happened. A state is something that is true.**
+
+Being offline is a state — it persists, it does not want reading twice, and it
+was already visible in the header. A banner parked over the canvas for its
+whole duration is not a notification, it is a badly-placed status light. A paste
+producing nine objects is an event.
+
+So states live in the header indicator (`sync-pip`), which is a bare dot for
+*Saved* and grows a word for *Saving* and *Offline* — the two moments the
+assumption behind the silence is wrong. Only the syncing dot pulses: a pulse
+means "wait, something is happening", which is false when the connection is
+gone.
+
+Events live in `engine/ui/notices.ts` and are drawn once by `NoticeLayer`, the
+same arrangement `TooltipLayer` uses. What is worth knowing:
+
+- **Severity decides lifetime, and the caller does not.** The old `showToast`
+  gave everything 3200ms, so *"That SVG could not be read"* — the only message
+  worth reading — vanished in the same three seconds as *"Copied"*. Errors now
+  stay until dismissed.
+- **A repeat folds into a count**, so four bad pastes are one row with a ×4
+  rather than four identical rows.
+- **The cap never evicts an error.** It is in the list because it is waiting for
+  a person; a burst of "Copied" must not carry it away.
+- One timer for the whole stack, re-aimed on every change, because a timer per
+  notice leaks one whenever a notice is folded or evicted.
 
 ## 4a. What this session added
 
@@ -899,8 +1061,17 @@ Agreed scope, in order. Two of five are done:
    matching template rather than an empty canvas. The user chose "scripted
    real mutations" over a recorded video when asked.
 3. ~~**Visual refinement** of existing surfaces~~ — largely done; see §4b.
-4. **New surfaces** — the canvas empty state and the rooms page are done. A
-   **first-run onboarding** and a **marketing-grade first run** are not.
+4. **New surfaces** — the canvas empty state and the rooms page are done, and
+   ~~**first-run onboarding**~~ is **done** as well: four surfaces, each one
+   deliberately not a tour, and each carrying the reasoning for its own scope.
+   `WelcomeSequence` answers *what is this for* in three beats, once ever;
+   `CanvasEmptyState` gets the first object onto the board in place;
+   `FirstRunGuide` says what the screen cannot — that other people can be here,
+   that a link is the whole invitation; `DockCoach` asks the one question the
+   dock cannot, which is whether this board is an endless surface or holds a
+   frame. Note the position they all take, because item 2 has to live with it:
+   **the furniture teaches itself, at the moment each piece becomes relevant.**
+   A **marketing-grade first run** is still not done.
 5. **A product page.** Not started.
 
 **Session creation is the loose thread.** The share *sheet* was rebuilt, but
@@ -983,7 +1154,7 @@ The user's brief for this is long and specific; the short version is that both
 panels exist, both are functional, and both are thin against what the brief
 asks for. What follows is an audit, not a wish list.
 
-**`components/LayersPanel.tsx` (971 lines) already does:** a virtualized
+**`components/LayersPanel.tsx` (1609 lines) already does:** a virtualized
 uniform-row tree (frames and group clusters, indented), inline rename, drag
 reorder, per-row visibility and lock toggles, Shift-range and Cmd-toggle
 multi-select, per-frame collapse held outside the CRDT, tag filtering, type
@@ -1008,12 +1179,27 @@ document change with 500 objects, which was ~88% of the cost of moving one.
   eye toggle. **This entry stayed listed as missing for two commits after it
   shipped**, including one that edited this file; see the note under
   §"Suggested order" below.
-- **Frame wrapping** — turn a selection into a frame.
-- **Reparenting by drag**, not just reordering.
+- **Frame wrapping** — turn a selection into a frame. Still the one thing on
+  this list that does not exist; nothing in `engine/` or `components/` names it.
+- ~~**Reparenting by drag**, not just reordering.~~ **Done.**
+  `engine/model/layerDrop.ts` gives every row three targets rather than one —
+  top edge, bottom edge, and the middle of a container — so *position* and
+  *parent* stopped being one answer and "put this at the top level, between two
+  grouped rows" became reachable. `planLayerDrop` writes `parentId`, refuses a
+  drop that would close a loop (`wouldCycle`), and reparents a folder record
+  rather than its members. Wired through `applyGroupPlan` in the panel, and
+  covered by `layerDrop.test.ts`.
+
+  **Frames are deliberately not containers here**, and that is not an omission
+  to be fixed: `frameId` is maintained *geometrically*, from what an object
+  sits inside on the board, so writing it from a layer row would claim
+  membership of a frame the object is nowhere near and the next geometry pass
+  would disagree. A frame row takes `before` and `after` like any other node.
+  You put something in a frame by dragging it into the frame.
 - Section, Component, Instance and Mask node types. These are **blocked**:
   sections and masks are their own features, components are Phase 7.
 
-**`components/PropertiesPanel.tsx` (2614 lines) already does:** Transform
+**`components/PropertiesPanel.tsx` (683 lines, and ~4700 across `components/panel/**` once the sections are counted — it was one 2614-line file and the per-block sections have since moved out to `panel/sections/*`) already does:** Transform
 (X/Y/W/H with aspect lock, rotation, flip), Appearance (fill with all five
 paint types, opacity, corner radius, blend), Stroke (colour, weight, dash
 preset, alignment, join, miter limit), Shadow, Inner Shadow, Blur (layer and
@@ -1031,16 +1217,33 @@ largest item this section used to list as missing.
   selection rather than the union, and a field where two objects disagree
   reads *Mixed* and writes to all of them when edited. `sharedPaint` /
   `shared` are the helpers; there are ~49 mixed-state call sites.
-- **It shows nothing when nothing is selected.** The brief wants global canvas
-  state there: background colour, measurement units, ruler/grid visibility
-  toggles, and the document's styles.
-- **Independent corner radii and corner smoothing.** One uniform radius today;
-  the brief wants four corners and a squircle parameter.
+- ~~**It shows nothing when nothing is selected.**~~ **Closed, and not by
+  building it.** The brief's version — board properties in the empty panel:
+  background colour, units, ruler and grid toggles, a count per node type —
+  **was built, and then deliberately taken out again.** Every part of it
+  already had an owner: the Layers panel lists and filters by type, and snap,
+  theme and the ruler/grid toggles live in the View menu. A panel that repeats
+  two other surfaces is not richer, it is a third place to keep in step, and
+  the reader has to work out which one is authoritative. What is there now is a
+  marquee mark and two lines of type saying there is nothing to inspect.
+
+  **Do not rebuild it.** The full reasoning is in the comment above the
+  `if (!node)` branch in `PropertiesPanel.tsx`, which is where it belongs — an
+  entry on a to-do list cannot say *why not*, and this one read as an omission
+  for as long as it sat here.
+- **Independent corner radii and corner smoothing.** Still one uniform
+  `cornerRadius?: number` on the appearance block, driven by one drag handle.
+  The brief wants four independent corners and a smoothing parameter, and
+  neither exists. **The squircle is not that** and does not close this: it
+  shipped as its own `ShapeKind`, drawn from continuous-curvature anchors, so
+  it is a *shape you choose*, not a parameter you turn up on a rectangle.
 - Constraints/pinning grid and Auto Layout are **Phase 6**; component link,
   variants and exposed properties are **Phase 7**. Do not start those here.
 
-**Suggested order from here**: global canvas state when nothing is selected →
-independent corner radii → frame wrapping and drag-reparenting.
+**Suggested order from here**: frame wrapping → independent corner radii and
+corner smoothing. That is the whole list now — drag-reparenting shipped, and
+the empty panel was answered by deciding against it. Both were struck on
+2026-08-27, by reading the code rather than by anyone remembering.
 
 > This list used to lead with panel keyboard navigation, which had already
 > shipped in `16b7858` — **the same commit that edited this file**. A whole
@@ -1061,36 +1264,78 @@ a type a capability it never had, walk every control that capability unlocks.**
 
 ### 5e. Still logged, from earlier phases
 
-- **Real nested groups + deep select.** Groups are flat: members share a
-  synthetic `parentId` and there is nothing to select *into*. This is a model
-  change, and it is the same one auto-layout needs — so it belongs with
-  **Phase 6**, not with selection or with the layers panel.
+- ~~**Real nested groups + deep select.**~~ **Done, and it was the model change
+  this entry said it would be.** A group is no longer only a synthetic id its
+  members share: `groupsMap` is a Y.Map of `GroupRecord`s in the document, each
+  with its own optional `parentId`, so a group can hold a group. Membership of
+  a *node* is unchanged — still one `parentId` — which is why everything that
+  already read it kept working. `engine/model/groupTree.ts` owns the graph
+  questions (which unit a selection really names, where a new group belongs,
+  what ungrouping puts back) and is pure and tested; double-click steps one
+  level in (`groupToEnter` in `hooks/useCanvasSelection.ts`); `undoManager`
+  tracks `groupsMap` alongside the objects.
+
+  What this cost before it landed is worth keeping: grouping two groups
+  **silently dissolved the inner one**, both member sets rewritten to one new
+  id with no way back, while the layers panel drew a tree exactly one level
+  deep and called it a hierarchy.
 - **The scale tool** — distinct from the transformer, which resizes geometry;
   a scale tool multiplies strokes, radii, shadows and type along with the box.
   Only now well-defined, since all four of those became real.
 - **Layout grid overlays**, which want a per-frame grid definition and belong
   with the frame work.
-- **A compound path cannot be edited anchor by anchor** — the editor walks one
-  run of anchors and a compound path is several.
-- **Booleans decline on a rotated or scaled operand.** The geometry would need
-  to go through the node's full transform first. The buttons disappear rather
-  than producing a result that ignores the rotation.
-- **Paragraph spacing, kerning and OpenType are one decision, not three.** All
-  three want text off Konva's `Text` and off the `<textarea>` overlay. Worth
-  making once, deliberately.
+- ~~**A compound path cannot be edited anchor by anchor.**~~ **Done.** The
+  selection was `anchor: number | null` — one index, on the assumption of one
+  contour, and a bare index cannot name an anchor on a boolean result or a
+  glyph with a hole. `PathSelection` names the subpath as well as the anchor,
+  and `pathEditing.ts` rebuilds the one contour it belongs to and leaves the
+  rest alone.
+- ~~**Booleans decline on a rotated or scaled operand.**~~ **Done** (`f7780b0`).
+  The transform is applied through `mapPath` — a cubic is affine-invariant, so
+  putting its four control points through the node's own transform gives
+  exactly the curve on the screen, with no flattening and nothing lost. The
+  same commit turned **subtract** the right way round: it kept the front shape
+  and cut the ones behind out of it, while its own button said the opposite and
+  while every comparable tool removes the front from the back.
+- **Kerning and OpenType are one decision, not two** — both want text off
+  Konva's `Text` and off the `<textarea>` overlay, and neither exists.
+  **Paragraph spacing was the third of these and has shipped**: `layoutText`
+  produces positioned line boxes, so `paragraphSpacing` is a field on the
+  typography block that the layout honours, and it needed none of the rewrite
+  the other two do. That is the useful shape of this entry now — the item that
+  fell out of the line-box work went, and what is left is the part that really
+  does need Konva's text replaced.
 - **The shell around the canvas.** No router — every navigation is a full page
   reload rebuilding the Y.Doc. No workspace deletion. The dashboard reads
   `localStorage` only. No landing page.
-- **Bundle splitting.** 1.55MB in one chunk (gzip 488KB). Trust the table at
-  the top of this file; this line sat at a stale 1.33MB for several sessions.
+- ~~**Bundle splitting.**~~ **Done.** `vite.config.ts` names the vendor and
+  subsystem chunks; the build is 32 of them. Trust the table at the top of this
+  file rather than any figure written here — this line sat at a stale 1.33MB
+  for several sessions, then at a stale "one chunk" after the splitting had
+  landed, which is invariant 7 in prose twice over.
 - **Two real browsers with two real mice** — still the one check automation
   cannot stand in for.
 
 ### 5f. Not started from the brief
 
-Excalidraw-style ideas, mermaid diagrams, wireframe-to-code, and the laser
-pointer. The laser pointer is small and independent (it is ephemeral presence
-state — see invariant 5) and could be slotted in any time.
+**Wireframe-to-code** and the **laser pointer**. The laser pointer is small and
+independent (it is ephemeral presence state — see invariant 5) and could be
+slotted in any time.
+
+Two entries left this list and were still sitting on it on 2026-08-27:
+
+- **Mermaid diagrams shipped**, in both directions — `engine/diagram/` parses
+  `flowchart`/`graph` into real shapes and connectors rather than handing the
+  text to the `mermaid` package and dropping an SVG on a canvas whose whole
+  point is that everything on it is editable, and any selection goes back out
+  as source. Marked **Shipped** twice in `docs/CANVAS-SPEC.md` §14b, described
+  in `README.md`, and carrying 26 tests, while this line still called it not
+  started.
+- **The Excalidraw-style hand-drawn rendering shipped** — `engine/model/rough.ts`
+  with `SketchLevel`, `FillStyle` and `ShadingDensity` on the appearance block,
+  a Sketch section in the properties panel, and the pen honouring it. The
+  vaguer half of "Excalidraw-style ideas" is not a scoped item and never was;
+  if something specific is still wanted from it, write down which thing.
 
 ## 6. Environment notes
 

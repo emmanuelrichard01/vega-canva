@@ -946,6 +946,36 @@ export type PathGeometry = FreehandGeometry | BezierGeometry | CompoundGeometry;
 // Node variants
 // ---------------------------------------------------------------------------
 
+/**
+ * The grid module a node is sitting in, and how its content is framed there.
+ *
+ * ## Why this is one type on two node types, and not one field on `BaseNode`
+ *
+ * A module holds a picture or a caption — those are the two things a grid of
+ * photographs and labels is made of — and both are ordinary nodes carrying a
+ * binding rather than a new node type. Putting the field on `BaseNode` instead
+ * would have every node claim it while only two honour it, which is invariant
+ * 6 and the dead-field shape this project has paid for ten times. Declaring it
+ * twice with two shapes would be invariant 7's version of the same mistake, so
+ * it is declared once, here, and referenced by both.
+ *
+ * `focus` and `zoom` are meaningless for text — a caption has no source to pan
+ * — and are simply never written for it. That is deliberate rather than sloppy:
+ * a second, narrower slot type for text would double every function that takes
+ * one, to express a distinction that only the fitting step in `gridReflow.ts`
+ * cares about.
+ *
+ * `engine/grid/gridSlot.ts` owns the arithmetic and the reasoning.
+ */
+export interface GridSlot {
+  gridId: string;
+  cell: number;
+  /** Which point of the source sits under the module's centre, 0..1. Images only. */
+  focus?: Point;
+  /** How far in past a plain cover. 1 is cover. Images only. */
+  zoom?: number;
+}
+
 export interface TextNode extends BaseNode {
   type: 'text';
   text: string;
@@ -963,6 +993,14 @@ export interface TextNode extends BaseNode {
    * layer blur reach a text node for free.
    */
   appearance?: Appearance;
+  /**
+   * The grid module this caption is sitting in, when it is in one.
+   *
+   * A caption in a module is `resize: 'fixed'` by construction — the module
+   * decides the box — which is what `TextResize`'s third state exists for and
+   * why this needed no new resize mode.
+   */
+  gridSlot?: GridSlot;
 }
 
 export interface ShapeNode extends BaseNode {
@@ -1046,6 +1084,18 @@ export interface ImageNode extends BaseNode {
     saturation?: number;
     blur?: number;
   };
+  /**
+   * The grid module this picture is sitting in, when it is in one.
+   *
+   * A *binding*, not a position: the box above stays real and authoritative,
+   * and this says where it came from so it can be recomputed. `gridReflow.ts`
+   * is the one owner that recomputes it, and `engine/grid/gridSlot.ts` holds
+   * the arithmetic and explains why the relationship is stored this way round.
+   *
+   * See `GridSlot` for why this is declared once and shared with `TextNode`
+   * rather than living on `BaseNode`.
+   */
+  gridSlot?: GridSlot;
 }
 
 export interface AudioNode extends BaseNode {

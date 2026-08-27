@@ -165,13 +165,13 @@ export const ProfileEditor: React.FC<Props> = ({ open, onClose }) => {
               className="profile-editor__shuffle"
               onClick={() => setSpec(randomAvatar())}
             >
-              <Shuffle size={13} aria-hidden /> Surprise me
+              <Shuffle size={14} aria-hidden /> Surprise me
             </button>
           </div>
 
           <div className="profile-editor__fields">
             <label className="profile-editor__field">
-              <span>Name</span>
+              <span>Display Name</span>
               <input
                 value={name}
                 onChange={(e) => setName(e.target.value)}
@@ -215,8 +215,8 @@ export const ProfileEditor: React.FC<Props> = ({ open, onClose }) => {
             <div className="profile-editor__colour">
               <span className="profile-editor__swatch" style={{ background: liveColor }} />
               <p>
-                Your colour is picked per board so no two people in a room share
-                one — it is how everyone tells your cursor from theirs.
+                Each board gives you a colour no one else in the room is using.
+                It is how people tell your cursor from everyone else's.
               </p>
             </div>
           </div>
@@ -227,7 +227,7 @@ export const ProfileEditor: React.FC<Props> = ({ open, onClose }) => {
             Cancel
           </button>
           <button className="export__primary" onClick={save}>
-            <Check size={14} aria-hidden /> Save
+            <Check size={14} aria-hidden /> Save changes
           </button>
         </footer>
       </div>

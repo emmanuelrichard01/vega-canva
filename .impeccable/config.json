@@ -1,0 +1,17 @@
+{
+  "detector": {
+    "ignoreRules": [],
+    "ignoreFiles": [],
+    "ignoreValues": [
+      {
+        "rule": "design-system-color",
+        "value": "*",
+        "files": [
+          "apps/frontend/src/engine/grid/gridSlot.test.ts"
+        ],
+        "createdAt": "2026-08-27T17:49:43.707Z",
+        "reason": "Pure-arithmetic test fixture: StyledCell requires a fill, nothing in the file renders, and the value is never read by any function under test"
+      }
+    ]
+  }
+}

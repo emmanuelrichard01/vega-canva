@@ -246,9 +246,31 @@ export function createNode(input: NewNodeInput): string {
   return id;
 }
 
+function revokeIfBlobUrl(url: unknown): void {
+  if (
+    typeof url === 'string' &&
+    url.startsWith('blob:') &&
+    typeof URL !== 'undefined' &&
+    typeof URL.revokeObjectURL === 'function'
+  ) {
+    try {
+      URL.revokeObjectURL(url);
+    } catch {
+      /* ignore already revoked URLs */
+    }
+  }
+}
+
 export function updateNode(id: string, updates: Record<string, unknown>): void {
   const ymap = objectsMap.get(id);
   if (!ymap) return;
+
+  if ('src' in updates) {
+    const oldSrc = ymap.get('src');
+    if (oldSrc && oldSrc !== updates.src) {
+      revokeIfBlobUrl(oldSrc);
+    }
+  }
 
   doc.transact(() => {
     Object.entries(updates).forEach(([key, value]) => {
@@ -448,6 +470,10 @@ export function toggleReaction(nodeId: string, emoji: string, authorId: string):
 }
 
 export function deleteNode(id: string): void {
+  const ymap = objectsMap.get(id);
+  if (ymap) {
+    revokeIfBlobUrl(ymap.get('src'));
+  }
   objectsMap.delete(id);
 }
 

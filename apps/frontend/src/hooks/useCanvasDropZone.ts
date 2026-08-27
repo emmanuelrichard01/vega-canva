@@ -6,6 +6,7 @@ import { localAuthor, updateNode } from '../engine/document';
 import { calculateOptimalAudioWidth } from '../engine/model/audioPlayback';
 import { mediaUploadUrl } from '../utils/endpoints';
 import { processOfflineMediaQueue, queueOfflineMedia } from '../utils/offlineMediaQueue';
+import { cellAtPoint, freeCellsFrom, gridAtPoint, placeImageInCell } from '../engine/grid/gridSlotApply';
 
 const IMAGE_PLACE_MAX = 800;
 const MULTI_PLACE_STEP = 24;
@@ -34,7 +35,21 @@ export function useCanvasDropZone({ roomId, status, setSelectedIds }: UseCanvasD
   }, [status]);
 
   const placeFile = useCallback(
-    async (file: File, at?: { x: number; y: number }, index = 0) => {
+    async (
+      file: File,
+      at?: { x: number; y: number },
+      index = 0,
+      /**
+       * The grid module this file was dropped on, when it was dropped on one.
+       *
+       * Passed down rather than worked out here so that a drop of six
+       * photographs onto one grid resolves the target **once**, from the
+       * pointer, instead of six times from six different node positions — the
+       * first picture placed would otherwise change what the second one found
+       * underneath it.
+       */
+      slot?: { gridId: string; cell: number }
+    ) => {
       const localUrl = URL.createObjectURL(file);
       const type = file.type.startsWith('image/') ? 'image' : 'audio';
       const measured = type === 'image' ? await measureImage(localUrl) : null;
@@ -62,6 +77,16 @@ export function useCanvasDropZone({ roomId, status, setSelectedIds }: UseCanvasD
           ? { durationMs: 0, waveform: [], author }
           : { appearance: {} }),
       });
+
+      /**
+       * Land it on the module before anything else looks at it.
+       *
+       * `editor.createNode` writes through Yjs, whose observers fire
+       * synchronously, so the store already holds this node — and the natural
+       * size was measured above, which means the cover crop is right on the
+       * first paint rather than one reflow later.
+       */
+      if (slot && type === 'image') placeImageInCell(slot.gridId, slot.cell, objId);
 
       setSelectedIds((current) =>
         index === 0 ? [objId] : current.includes(objId) ? current : [...current, objId]
@@ -100,8 +125,36 @@ export function useCanvasDropZone({ roomId, status, setSelectedIds }: UseCanvasD
       const list = Array.from(files);
       const usable = list.filter((f) => f.type.startsWith('image/') || f.type.startsWith('audio/'));
       if (usable.length === 0) return;
+
+      /**
+       * Dropping onto a grid fills it from the module you aimed at.
+       *
+       * Resolved once, before anything is created, for the reason given on
+       * `placeFile`'s `slot` argument. Free modules are taken in reading order
+       * from the target onwards and wrap round to the start, so dropping a
+       * folder of photographs onto the middle of an empty grid fills it
+       * completely rather than filling only the half below the pointer.
+       *
+       * Audio is excluded on purpose: a module is a picture frame, and a voice
+       * note in one would be a player squashed to whatever shape the grid
+       * happened to make. Dropped audio lands on the board as it always did.
+       */
+      const grid = at ? gridAtPoint(at) : null;
+      const startCell = grid ? cellAtPoint(grid, at!) : null;
+      const freeCells =
+        grid && startCell !== null ? freeCellsFrom(grid.id, startCell) : [];
+
+      let slotted = 0;
       for (let i = 0; i < usable.length; i++) {
-        await placeFile(usable[i], at, i);
+        const isImage = usable[i].type.startsWith('image/');
+        const cell = isImage ? freeCells[slotted] : undefined;
+        if (cell !== undefined) slotted += 1;
+        await placeFile(
+          usable[i],
+          at,
+          i,
+          grid && cell !== undefined ? { gridId: grid.id, cell } : undefined
+        );
       }
     },
     [placeFile]

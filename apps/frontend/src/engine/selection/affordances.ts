@@ -57,6 +57,8 @@ export type AffordanceId =
   | 'group'
   | 'ungroup'
   | 'break-apart'
+  | 'grid-fill'
+  | 'grid-slot'
   | 'boolean'
   | 'to-path'
   | 'align'
@@ -110,6 +112,21 @@ export interface SelectionFacts {
    * ignore it is the failure this file was written to stop.
    */
   hasMultiPointLine: boolean;
+  /**
+   * How many grids are in the selection, and how many pictures.
+   *
+   * Counts rather than a `types` lookup, because the rule that needs them —
+   * placing pictures into a grid's modules — is only meaningful for **exactly
+   * one** grid. `types` is a set, so it can say a grid is present and cannot
+   * say there is one; offering the command for two grids would mean either
+   * picking one arbitrarily or doing nothing, which is a menu entry that lies.
+   */
+  gridCount: number;
+  imageCount: number;
+  /** Every member sits in a grid module. The framing controls only mean anything then. */
+  allSlotted: boolean;
+  /** How many of those are pictures, which are the only ones with a source to pan. */
+  slottedImages: number;
   locked: boolean;
 }
 
@@ -136,9 +153,20 @@ export function selectionFacts(
   let hasUngrouped = false;
   let locked = nodes.length > 0;
   let hasMultiPointLine = false;
+  let gridCount = 0;
+  let imageCount = 0;
+  let slottedCount = 0;
+  let slottedImages = 0;
 
   for (const n of nodes) {
     types.add(n.type);
+    if (n.type === 'grid') gridCount += 1;
+    if (n.type === 'image') imageCount += 1;
+    const slot = (n as { gridSlot?: unknown }).gridSlot;
+    if (slot) {
+      slottedCount += 1;
+      if (n.type === 'image') slottedImages += 1;
+    }
     if (!n.parentId) hasUngrouped = true;
     if (!n.locked) locked = false;
     const kind = (n as { geometry?: { kind?: string } }).geometry?.kind;
@@ -175,6 +203,10 @@ export function selectionFacts(
     shapeKinds,
     pathKinds,
     hasMultiPointLine,
+    gridCount,
+    imageCount,
+    allSlotted: nodes.length > 0 && slottedCount === nodes.length,
+    slottedImages,
     locked,
   };
 }
@@ -340,6 +372,36 @@ const RULES: readonly (Affordance & { when: (f: SelectionFacts) => boolean })[] 
      */
     id: 'break-apart', label: 'Break apart', weight: 18, surfaces: ['toolbar', 'menu'],
     when: (f) => f.uniformType === 'grid' && f.count === 1,
+  },
+  {
+    /**
+     * Drop a set of pictures into a grid's modules.
+     *
+     * Weighted above `break-apart` because it is the constructive thing you do
+     * *to* a grid and break-apart is the one that ends it, and because a
+     * selection holding both a grid and pictures has said quite specifically
+     * what it is for.
+     *
+     * Exactly one grid and at least one picture, and nothing else: a mixed
+     * selection carrying a sticky and a connector as well has not said that at
+     * all, and quietly ignoring the parts it cannot use is how a command
+     * becomes something you have to test before you trust.
+     */
+    /**
+     * What you can do to something that is *in* a module.
+     *
+     * Weighted into the top band because it is the most specific thing true of
+     * the selection: a picture in a grid is a picture whose box is not yours to
+     * move, and the controls that follow from that — reframe it, take it out —
+     * are the ones you actually reached for it to use.
+     */
+    id: 'grid-slot', label: 'In a grid', weight: 92, surfaces: ['toolbar', 'menu'],
+    when: (f) => f.allSlotted,
+  },
+  {
+    id: 'grid-fill', label: 'Place in grid', weight: 19, surfaces: ['toolbar', 'menu'],
+    when: (f) =>
+      f.gridCount === 1 && f.imageCount > 0 && f.count === f.gridCount + f.imageCount,
   },
   {
     /**
