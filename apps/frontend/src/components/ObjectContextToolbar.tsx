@@ -6,7 +6,7 @@ import {
   AlignVerticalJustifyStart, AlignVerticalSpaceAround, Bold, BringToFront, Copy, Crop, Download,
   Droplet, FlipHorizontal, FlipVertical, Group, ImageIcon, Italic, List, ListOrdered, Layers, Lock, Menu, MessageSquare,
   MessageSquarePlus, Mic, Minus, PenLine, Pin, Scissors, SendToBack, SmilePlus,
-  SquaresExclude, SquaresIntersect, SquaresSubtract, SquaresUnite, Square, StickyNote, Waypoints, Radius, WandSparkles,
+  SquaresExclude, SquaresIntersect, SquaresSubtract, SquaresUnite, Square, StickyNote, Waypoints, Radius, WandSparkles, ChevronRight,
   Strikethrough, Trash2, Type, Underline, Ungroup, Unlock,
 } from 'lucide-react';
 import { TEXT_PRESETS, isTextPresetActive } from './panel/textEffectPresets';
@@ -527,6 +527,14 @@ export const ObjectContextToolbar: React.FC<Props> = ({ selectedId, selectedIds,
   const cropping = useSyncExternalStore(cropMode.subscribe, cropMode.getSnapshot, cropMode.getSnapshot);
   /** Which line, if any, is open for point editing — so the rail can say so. */
   const lineSelection = useSyncExternalStore(lineEdit.subscribe, lineEdit.getSnapshot, lineEdit.getSnapshot);
+  /**
+   * Whether the shape swapper has the other family revealed.
+   *
+   * Up here with the rest of the hooks, not beside the JSX that reads it: the
+   * single-object rail returns early for a bulk selection, and a `useState`
+   * below that runs on some renders and not others.
+   */
+  const [otherShapesOpen, setOtherShapesOpen] = useState(false);
   // So the button reads as pressed while the anchors are on screen, and can
   // close what it opened.
   const pathSelection = useSyncExternalStore(pathEdit.subscribe, pathEdit.getSnapshot, pathEdit.getSnapshot);
@@ -1248,7 +1256,9 @@ export const ObjectContextToolbar: React.FC<Props> = ({ selectedId, selectedIds,
   /** Whether this line's own points describe its shape, rather than a profile. */
   const multiPointLine =
     node.type === 'shape' &&
-    (isMultiPoint(node.geometry.vertices) || hasBend(node.geometry.bends));
+    (isMultiPoint(node.geometry.vertices) ||
+      hasBend(node.geometry.bends) ||
+      node.geometry.smooth === true);
   /** Whether this line's point editor is open, so the button can close it. */
   const editingLine = lineSelection?.nodeId === node.id;
   /** Whether the run is drawn as a curve, so the toggle reads correctly. */
@@ -1273,6 +1283,163 @@ export const ObjectContextToolbar: React.FC<Props> = ({ selectedId, selectedIds,
    * colour ramp for it is a dozen controls that change nothing, which is worse
    * than none: every one of them looks like it works.
    */
+  /**
+   * The two halves of the shape swapper, built once and placed by the popover.
+   *
+   * Defined here rather than inline so the popover's body reads as the two
+   * decisions it offers — this family, then the other one behind a disclosure —
+   * instead of two hundred lines in which the order is the only thing that says
+   * which matters.
+   */
+  const closedTiles = node.type === 'shape' ? (
+    <div className="ctx-shape-grid">
+      {SHAPE_CHOICES.filter((c) => !isOpenShape(c.kind)).map((choice) => {
+        const active = node.geometry.kind === choice.kind
+          && (choice.points === undefined || node.geometry.points === choice.points);
+        return (
+          <button
+            key={`${choice.kind}-${choice.points ?? 0}`}
+            type="button"
+            className="ctx-shape-btn"
+            aria-pressed={active}
+            aria-label={choice.label}
+            data-tooltip={choice.label}
+            // Size, paint and position all survive: only the form changes,
+            // which is the whole point of a swapper rather than a
+            // delete-and-redraw. Through `swapShapeKind`, so the new kind
+            // keeps only what it can express.
+            onClick={() => updateProp({
+              geometry: swapShapeKind(node.geometry, choice.kind, choice.points),
+            })}
+          >
+            {choice.icon}
+          </button>
+        );
+      })}
+    </div>
+  ) : null;
+
+  const lineTiles = node.type === 'shape' ? (
+    <div className="ctx-shape-grid">
+      {SHAPE_CHOICES.filter((c) => isOpenShape(c.kind)).map((choice) => (
+        <button
+          key={choice.kind}
+          type="button"
+          className="ctx-shape-btn"
+          aria-pressed={node.geometry.kind === choice.kind}
+          aria-label={choice.label}
+          data-tooltip={choice.label}
+          onClick={() => updateProp({ geometry: swapShapeKind(node.geometry, choice.kind) })}
+        >
+          {/* Under the object's own profile and run, so switching between line
+              and arrow shows the one thing that actually differs between them. */}
+          <LineSpecimen
+            profile={node.geometry.lineProfile}
+            endEnd={choice.kind === 'arrow' ? (node.geometry.endEnd ?? 'arrow') : 'none'}
+            run={multiPointLine ? (node.geometry.smooth ? 'rounded' : 'corners') : 'two-point'}
+          />
+        </button>
+      ))}
+    </div>
+  ) : null;
+
+  /**
+   * The side count and the star's depth, where the shape has one.
+   *
+   * They lived only in the properties panel, so changing a hexagon to a
+   * heptagon meant leaving the object you were looking at — while the grid
+   * beside it offered a *fixed* triangle and hexagon, implying those were the
+   * only counts. The presets are shortcuts to common answers; this is the
+   * answer itself.
+   */
+  const shapeCounts = node.type === 'shape' ? (
+    <>
+      {(node.geometry.kind === 'polygon' || node.geometry.kind === 'star') && (
+        <PopoverSlider
+          label={node.geometry.kind === 'star' ? 'Points' : 'Sides'}
+          value={node.geometry.points ?? 3}
+          min={MIN_POLYGON_SIDES}
+          max={MAX_POLYGON_SIDES}
+          onChange={(points) => updateProp({ geometry: { ...node.geometry, points } })}
+        />
+      )}
+      {/* Star only, and next to its point count for the same reason: the two
+          together are what a star *is*. */}
+      {node.geometry.kind === 'star' && (
+        <PopoverSlider
+          label="Depth"
+          value={Math.round((node.geometry.innerRatio ?? 0.5) * 100)}
+          min={10}
+          max={90}
+          suffix="%"
+          onChange={(v) => updateProp({ geometry: { ...node.geometry, innerRatio: v / 100 } })}
+        />
+      )}
+    </>
+  ) : null;
+
+  /**
+   * The profile, and how much of it — for the lines that can have one.
+   *
+   * A profile is defined along *one* run from A to B, and a line with corners
+   * has several, so it is withdrawn for those rather than left to do nothing.
+   * The replacement says why: an option that vanishes with no explanation reads
+   * as a bug, and the honest sentence is one line.
+   */
+  const lineStyle = node.type === 'shape' && openShape ? (
+    multiPointLine ? (
+      <p className="ctx-popover__note">
+        This line takes its shape from its points. Round its corners from the
+        toolbar, or open the point editor to bend one segment.
+      </p>
+    ) : (
+      <>
+        <span className="ctx-popover__label">Style</span>
+        <SegmentedControl
+          ariaLabel="Line style"
+          value={node.geometry.lineProfile ?? 'straight'}
+          onChange={(v) => updateProp({
+            geometry: {
+              ...node.geometry,
+              lineProfile: v === 'straight' ? undefined : (v as LineProfile),
+            },
+          })}
+          segments={LINE_PROFILES.map((profile) => ({
+            value: profile,
+            label: LINE_PROFILE_LABELS[profile],
+            hint: LINE_PROFILE_LABELS[profile],
+            icon: <LineProfileIcon profile={profile} />,
+          }))}
+        />
+      </>
+    )
+  ) : null;
+
+  /**
+   * The family this object is not in, one press away.
+   *
+   * A disclosure rather than a hidden command: crossing families throws work
+   * away — a line becoming a rectangle loses its run, a rectangle becoming a
+   * line loses its fill, its radius and its interior — and one press is the
+   * right price for that. The label says which direction it goes, so the
+   * consequence is legible before it is opened.
+   */
+  const otherFamily = (label: string, tiles: React.ReactNode) => (
+    <>
+      <div className="ctx-popover__rule" role="presentation" />
+      <button
+        type="button"
+        className="ctx-popover__disclosure"
+        aria-expanded={otherShapesOpen}
+        onClick={() => setOtherShapesOpen((open) => !open)}
+      >
+        <ChevronRight size={13} className={otherShapesOpen ? 'is-open' : undefined} aria-hidden="true" />
+        {label}
+      </button>
+      {otherShapesOpen && tiles}
+    </>
+  );
+
   const showTypography =
     node.type === 'text'
     || (node.type === 'shape' && !isOpenShape(node.geometry.kind)
@@ -1331,161 +1498,57 @@ export const ObjectContextToolbar: React.FC<Props> = ({ selectedId, selectedIds,
                     shape swapper wants. Two labelled groups do not forbid it;
                     they just stop it being one slip away from a hexagon.
                   */}
-                  <span className="ctx-popover__label">Shape</span>
-                  <div className="ctx-shape-grid">
-                    {SHAPE_CHOICES.filter((c) => !isOpenShape(c.kind)).map((choice) => {
-                      const active = node.geometry.kind === choice.kind
-                        && (choice.points === undefined || node.geometry.points === choice.points);
-                      return (
-                        <button
-                          key={`${choice.kind}-${choice.points ?? 0}`}
-                          type="button"
-                          className="ctx-shape-btn"
-                          aria-pressed={active}
-                          aria-label={choice.label}
-                          data-tooltip={choice.label}
-                          // Size, paint and position all survive: only `kind`
-                          // and its side count change, which is the whole
-                          // point of a swapper rather than a delete-and-redraw.
-                          onClick={() => updateProp({
-                            geometry: {
-                              ...node.geometry,
-                              kind: choice.kind,
-                              ...(choice.points !== undefined
-                                ? { points: Math.max(MIN_POLYGON_SIDES, Math.min(MAX_POLYGON_SIDES, choice.points)) }
-                                : {}),
-                            },
-                          })}
-                        >
-                          {choice.icon}
-                        </button>
-                      );
-                    })}
-                  </div>
-
-                  {/* The side count, where the shape has one.
-                      It lived only in the properties panel, so changing a
-                      hexagon to a heptagon meant leaving the object you were
-                      looking at — while the grid beside it offered a *fixed*
-                      triangle and hexagon, implying those were the only
-                      counts. The presets are shortcuts to common answers; this
-                      is the answer itself. */}
-                  {(node.geometry.kind === 'polygon' || node.geometry.kind === 'star') && (
-                    <PopoverSlider
-                      label={node.geometry.kind === 'star' ? 'Points' : 'Sides'}
-                      value={node.geometry.points ?? 3}
-                      min={MIN_POLYGON_SIDES}
-                      max={MAX_POLYGON_SIDES}
-                      onChange={(points) => updateProp({ geometry: { ...node.geometry, points } })}
-                    />
-                  )}
-
-                  {/* Star only, and next to its point count for the same
-                      reason: the two together are what a star *is*. */}
-                  {node.geometry.kind === 'star' && (
-                    <PopoverSlider
-                      label="Depth"
-                      value={Math.round((node.geometry.innerRatio ?? 0.5) * 100)}
-                      min={10}
-                      max={90}
-                      suffix="%"
-                      onChange={(v) => updateProp({ geometry: { ...node.geometry, innerRatio: v / 100 } })}
-                    />
-                  )}
-
-                  {/* The profile and how much of it, on the rail as well as
-                      in the inspector. Changing a coil from five loops to two
-                      is something you do while looking at the line, and the
-                      walk to the panel is what stops people doing it. */}
                   {/*
-                    A profile is defined along *one* run from A to B, and a line
-                    with corners has several — so the control is withdrawn for
-                    those rather than left to do nothing. Saying why is the
-                    point: an option that vanishes with no explanation reads as
-                    a bug, and the honest sentence is short.
+                    What the object *is*, first — and the other family behind a
+                    disclosure.
+
+                    Both grids used to render in a fixed order with the ten
+                    closed shapes on top, so swapping a line to an arrow meant
+                    scrolling past a rectangle, an ellipse, a triangle, a
+                    pentagon, a hexagon, a star, a heart and a squircle to reach
+                    the two tiles that were the whole reason the popover was
+                    open. The popover was three times as tall as the decision
+                    inside it.
+
+                    Leading with the object's own family is not just shorter, it
+                    is the right order: the likely swap is within a family — line
+                    to arrow, hexagon to pentagon — and crossing families is a
+                    *conversion* that throws work away. A line becoming a
+                    rectangle loses its run; a rectangle becoming a line loses
+                    its fill, its radius and its interior. One press to reveal is
+                    the right price for that, and it is the same reasoning that
+                    put the two in separate labelled groups to begin with.
                   */}
-                  {isOpenShape(node.geometry.kind) && multiPointLine && (
-                    <p className="ctx-popover__note">
-                      A line with corners takes its shape from its points. Bend a
-                      segment with its curve handle instead.
-                    </p>
-                  )}
-                  {isOpenShape(node.geometry.kind) && !multiPointLine && (
+                  {openShape ? (
                     <>
-                      <span className="ctx-popover__label">Style</span>
-                      <SegmentedControl
-                        ariaLabel="Line style"
-                        value={node.geometry.lineProfile ?? 'straight'}
-                        onChange={(v) => updateProp({
-                          geometry: {
-                            ...node.geometry,
-                            lineProfile: v === 'straight' ? undefined : (v as LineProfile),
-                          },
-                        })}
-                        segments={LINE_PROFILES.map((profile) => ({
-                          value: profile,
-                          label: LINE_PROFILE_LABELS[profile],
-                          hint: LINE_PROFILE_LABELS[profile],
-                          icon: <LineProfileIcon profile={profile} />,
-                        }))}
-                      />
+                      <span className="ctx-popover__label">Line</span>
+                      {lineTiles}
+                      {lineStyle}
+                      {otherFamily('Convert to a shape', closedTiles)}
+                    </>
+                  ) : (
+                    <>
+                      <span className="ctx-popover__label">Shape</span>
+                      {closedTiles}
+                      {shapeCounts}
+                      {otherFamily('Convert to a line', lineTiles)}
                     </>
                   )}
-                  <span className="ctx-popover__label">Line</span>
-                  <div className="ctx-shape-grid">
-                    {SHAPE_CHOICES.filter((c) => isOpenShape(c.kind)).map((choice) => {
-                      const active = node.geometry.kind === choice.kind;
-                      return (
-                        <button
-                          key={choice.kind}
-                          type="button"
-                          className="ctx-shape-btn"
-                          aria-pressed={active}
-                          aria-label={choice.label}
-                          data-tooltip={choice.label}
-                          // See `swapShapeKind`: the new kind keeps only what it can
-                          // express, so a rectangle made from an arrow does not
-                          // quietly carry the arrow's endpoints and caps.
-                          onClick={() => updateProp({
-                            geometry: swapShapeKind(node.geometry, choice.kind),
-                          })}
-                        >
-                          {/* Under the object's own profile, so switching
-                              between line and arrow shows the one thing that
-                              actually differs between them. */}
-                          <LineSpecimen
-                            profile={node.geometry.lineProfile}
-                            endEnd={choice.kind === 'arrow' ? (node.geometry.endEnd ?? 'arrow') : 'none'}
-                          />
-                        </button>
-                      );
-                    })}
-                  </div>
-                  <div style={{ marginTop: 8, paddingTop: 8, borderTop: '1px solid var(--border-subtle, rgba(255,255,255,0.08))' }}>
-                    <button
-                      type="button"
-                      style={{
-                        width: '100%',
-                        display: 'flex',
-                        alignItems: 'center',
-                        justifyContent: 'center',
-                        gap: 6,
-                        padding: '6px 8px',
-                        fontSize: 12,
-                        borderRadius: 6,
-                        background: 'var(--bg-active, rgba(255,255,255,0.06))',
-                        border: '1px solid var(--border-subtle, rgba(255,255,255,0.1))',
-                        color: 'inherit',
-                        cursor: 'pointer',
-                      }}
-                      onClick={() => {
-                        flattenToPath(node.id);
-                      }}
-                    >
-                      <VectorEditIcon size={14} />
-                      Convert to Vector Path
-                    </button>
-                  </div>
+
+                  <div className="ctx-popover__rule" role="presentation" />
+                  {/*
+                    Was six inline style properties with hard-coded rgba
+                    fallbacks beside every token — which meant it did not follow
+                    the theme, and read as pasted-in rather than built.
+                  */}
+                  <button
+                    type="button"
+                    className="ctx-popover__action"
+                    onClick={() => flattenToPath(node.id)}
+                  >
+                    <VectorEditIcon size={14} />
+                    Convert to vector path
+                  </button>
                 </RailPopover>
               )}
               {/* The same editor the Properties panel uses, not a colour-only

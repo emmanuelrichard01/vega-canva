@@ -1,6 +1,7 @@
 import React from 'react';
 import { defaultEndAlign, linePoints, type LineProfile } from '../../engine/model/linePath';
 import { endCapShape, endCapSize, terminateRun, type EndCapKind } from '../../engine/model/connectorEnds';
+import { polylinePoints } from '../../engine/model/polyline';
 
 /**
  * A whole line, drawn as it would be: profile, and both ends.
@@ -31,12 +32,36 @@ export const LineSpecimen: React.FC<{
   profile?: LineProfile;
   endStart?: EndCapKind;
   endEnd?: EndCapKind;
-}> = ({ profile = 'straight', endStart = 'none', endEnd = 'none' }) => {
+  /**
+   * Which of the two things a line can be, drawn as itself.
+   *
+   * `two-point` is the profiled run this has always shown. The other two are a
+   * *run of corners* — sharp or rounded — which no profile can describe and
+   * which is therefore the only honest way to put "a line with corners" on a
+   * button. Through `polylinePoints`, the same function the canvas draws with,
+   * so the tile and the result cannot disagree about what rounding looks like.
+   */
+  run?: 'two-point' | 'corners' | 'rounded';
+}> = ({ profile = 'straight', endStart = 'none', endEnd = 'none', run: shape = 'two-point' }) => {
   const a = { x: 2, y: H / 2 };
   const b = { x: W - 2, y: H / 2 };
-  // Two repeats, not the default six: at this size six is a blur, and the
-  // glyph's job is to say *what shape* the run makes, not how often.
-  const pts = linePoints(a, b, profile, 2);
+  /**
+   * A step, not a zigzag: two corners turning the same way read as *corners*
+   * at sixteen pixels, where a symmetric zigzag reads as a wave and collides
+   * with the profile glyph sitting next to it.
+   */
+  const corners = [
+    { x: 2, y: H - 3 },
+    { x: W / 2 - 2, y: H - 3 },
+    { x: W / 2 + 2, y: 3 },
+    { x: W - 2, y: 3 },
+  ];
+  const pts =
+    shape === 'two-point'
+      // Two repeats, not the default six: at this size six is a blur, and the
+      // glyph's job is to say *what shape* the run makes, not how often.
+      ? linePoints(a, b, profile, 2)
+      : polylinePoints(corners, undefined, shape === 'rounded');
 
   /**
    * The direction the run *arrives* at each end, from its last segment.

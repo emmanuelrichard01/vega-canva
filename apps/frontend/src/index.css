@@ -4342,6 +4342,83 @@ textarea:focus-visible {
   color: var(--text-tertiary);
 }
 
+/* Separates the two families in the shape swapper, and the swapper from the
+   one command that leaves it. Matches the flyout's rule so the two floating
+   surfaces are visibly the same system. */
+.ctx-popover__rule {
+  height: 1px;
+  margin: 8px 0 6px;
+  background: var(--border-divider);
+}
+
+/* The other family, one press away.
+ *
+ * Reads as a row rather than a button: crossing families is a conversion that
+ * throws work away, so it should look like a door rather than an option sitting
+ * beside the ones you actually came for. The chevron turns, which is the only
+ * cue anyone needs that there is more behind it. */
+.ctx-popover__disclosure {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  width: 100%;
+  padding: 4px 2px;
+  border: none;
+  border-radius: var(--radius-sm);
+  background: transparent;
+  font-size: var(--text-2xs);
+  font-weight: var(--weight-medium);
+  color: var(--text-tertiary);
+  cursor: pointer;
+  transition: color 0.12s ease, background 0.12s ease;
+}
+
+.ctx-popover__disclosure:hover {
+  background: var(--surface-hover);
+  color: var(--text-secondary);
+}
+
+.ctx-popover__disclosure svg {
+  transition: transform 0.15s ease;
+}
+
+.ctx-popover__disclosure svg.is-open {
+  transform: rotate(90deg);
+}
+
+/* The one command that leaves this popover for a different kind of object.
+ *
+ * Was six inline style properties with a hard-coded rgba beside every token,
+ * so it did not follow the theme and read as pasted in. */
+.ctx-popover__action {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  width: 100%;
+  padding: 6px 8px;
+  border: 1px solid var(--border-divider);
+  border-radius: var(--radius-sm);
+  background: var(--surface-secondary);
+  font-size: var(--text-2xs);
+  font-weight: var(--weight-medium);
+  color: var(--text-secondary);
+  cursor: pointer;
+  transition: background 0.12s ease, color 0.12s ease, border-color 0.12s ease;
+}
+
+.ctx-popover__action:hover {
+  background: var(--surface-hover);
+  border-color: var(--border-strong);
+  color: var(--text-primary);
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .ctx-popover__disclosure,
+  .ctx-popover__disclosure svg,
+  .ctx-popover__action { transition: none; }
+}
+
 /* Why a control that used to be here is not.
  *
  * Sentence case, not the uppercase of a section label -- this is a remark, and
@@ -10036,6 +10113,41 @@ body[data-zen='physics'] .forces-handle { bottom: 32px; }
   letter-spacing: 0.08em;
   text-transform: uppercase;
   color: var(--text-tertiary);
+}
+
+/* A label and its qualifier share one line: the label says what the control
+   is, the aside says what it applies to. Set apart by case and weight rather
+   than by a second row, which would put a whole line of chrome between a
+   heading and the thing it heads. */
+.flyout-field:has(.flyout-field__aside) > .flyout-field__label {
+  display: inline-flex;
+  align-items: baseline;
+  gap: 6px;
+}
+
+.flyout-field__aside {
+  font-weight: var(--weight-normal);
+  letter-spacing: 0.01em;
+  text-transform: none;
+  opacity: 0.72;
+}
+
+/* The one sentence that teaches the gesture.
+ *
+ * Sentence case and a readable measure, because it is a sentence — setting it
+ * like the labels above would make it look like another control's heading and
+ * be skipped by everyone. Two bold words carry it for anyone scanning. */
+.flyout-note {
+  margin: 2px 8px 0;
+  max-width: 30ch;
+  font-size: var(--text-2xs);
+  line-height: 1.5;
+  color: var(--text-tertiary);
+}
+
+.flyout-note strong {
+  font-weight: var(--weight-semibold);
+  color: var(--text-secondary);
 }
 
 /* Separates the tools a seat holds from the settings of the armed one. Without

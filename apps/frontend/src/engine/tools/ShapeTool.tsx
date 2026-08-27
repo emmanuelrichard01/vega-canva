@@ -433,6 +433,15 @@ export class ShapeTool implements Tool {
     ctx.setOverlayState?.({ active: false });
 
     const geometry = this.geometry();
+    /**
+     * The rounding armed on the dock, applied to the run that was just drawn.
+     *
+     * Only to a run — a two-point line has no corner to round, and writing the
+     * flag anyway would put a field on it that nothing reads. Same rule as the
+     * profile above it: the dock decides what the *next* line comes out as, and
+     * the line owns it from then on.
+     */
+    if (points.length > 2 && useStore.getState().lineSmooth) geometry.smooth = true;
     const run = lineNodeFromVertices(points, undefined, geometry);
     const nodeId = nanoid();
     ctx.editor.createNode({

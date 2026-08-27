@@ -21,7 +21,7 @@ import { Check, Minus, RotateCcw, SeparatorVertical, SlidersHorizontal, Spline, 
 import { SegmentedControl } from '../ui/SegmentedControl';
 import { SketchLevelIcon } from '../panel/sketchIcons';
 import type { PencilNib } from '../../engine/model/rough';
-import { LINE_PROFILES, LINE_PROFILE_LABELS, MIN_WAVES, type LineProfile } from '../../engine/model/linePath';
+import { LINE_PROFILES, LINE_PROFILE_LABELS, type LineProfile } from '../../engine/model/linePath';
 import { LineProfileIcon } from '../panel/lineProfileIcons';
 import { LineSpecimen } from '../panel/lineSpecimen';
 import { isForceTool } from '../../engine/physics/forces';
@@ -367,10 +367,8 @@ export const ToolWorkspace: React.FC<Props> = ({ activeToolId, onOpenDiagram, on
   const setPenStrokeWidth = useStore((s) => s.setPenStrokeWidth);
   const lineProfile = useStore((s) => s.lineProfile);
   const setLineProfile = useStore((s) => s.setLineProfile);
-  const lineWaves = useStore((s) => s.lineWaves);
-  const setLineWaves = useStore((s) => s.setLineWaves);
-  const lineAmplitude = useStore((s) => s.lineAmplitude);
-  const setLineAmplitude = useStore((s) => s.setLineAmplitude);
+  const lineSmooth = useStore((s) => s.lineSmooth);
+  const setLineSmooth = useStore((s) => s.setLineSmooth);
   const lastForce = useStore((s) => s.lastForce);
   const eraserSize = useStore((s) => s.eraserSize);
   const setEraserSize = useStore((s) => s.setEraserSize);
@@ -1231,14 +1229,70 @@ export const ToolWorkspace: React.FC<Props> = ({ activeToolId, onOpenDiagram, on
                     );
                   })}
                 </div>
+                {/*
+                  The second decision, and the one nobody could find.
+
+                  A line can be two points or a **run of corners**, and which
+                  you get is decided by the gesture — drag, or click once per
+                  corner. That is the right way for it to work and a hopeless
+                  way for it to be discovered: the tool made two-point lines for
+                  the whole life of this project, so nobody has any reason to
+                  try clicking. A tile is how they find out.
+
+                  It is a real choice as well as a signpost. Picking Rounded
+                  decides what the *next* run comes out as, the same way the
+                  profile beside it decides the next line's shape — and the
+                  caption under it says the gesture outright, which is the part
+                  that actually teaches.
+                */}
+                <div className="flyout-rule" role="presentation" />
+                <div className="flyout-field">
+                  <span className="flyout-field__label">Path</span>
+                  <SegmentedControl
+                    ariaLabel="Line path"
+                    value={lineSmooth ? 'rounded' : 'corners'}
+                    onChange={(v) => {
+                      setLineSmooth(v === 'rounded');
+                      pick(shapeToolId(armedLine ?? lastLine));
+                    }}
+                    segments={[
+                      {
+                        value: 'corners',
+                        label: 'Corners',
+                        hint: 'Sharp turns',
+                        icon: <LineSpecimen run="corners" />,
+                      },
+                      {
+                        value: 'rounded',
+                        label: 'Rounded',
+                        hint: 'The corners are curved away',
+                        icon: <LineSpecimen run="rounded" />,
+                      },
+                    ]}
+                  />
+                </div>
+                <p className="flyout-note">
+                  <strong>Drag</strong> for a straight line, or <strong>click once per
+                  corner</strong> and press Enter to finish.
+                </p>
+
                 {/* What the run does between its two ends.
                     Here rather than only in the inspector for the same reason
                     the nib is: you decide what kind of line you are drawing
                     before you draw it, and the two questions — does it have a
-                    head, and what shape does it make — belong side by side. */}
+                    head, and what shape does it make — belong side by side.
+
+                    A profile is defined along *one* run from A to B, so it has
+                    nothing to say about a line with corners. Rather than gate
+                    it — the gesture decides which you get, and the flyout is
+                    open before the gesture happens — the whole group stays and
+                    the note above says which one it applies to. Hiding a
+                    control on a guess about what you are *about* to draw would
+                    be worse than a caption. */}
                 <div className="flyout-rule" role="presentation" />
                 <div className="flyout-field">
                   <span className="flyout-field__label">Style</span>
+                  <span className="flyout-field__aside">two-point lines</span>
                   <SegmentedControl
                     ariaLabel="Line style"
                     value={lineProfile}
@@ -1264,29 +1318,24 @@ export const ToolWorkspace: React.FC<Props> = ({ activeToolId, onOpenDiagram, on
                     }))}
                   />
                 </div>
-                {/* How much of the shape. A profile without a count is half a
-                    choice: "a coil" and "a coil with two loops" are the same
-                    decision, and splitting them means drawing the wrong one
-                    and editing it every time. Curved has a single arc and
-                    nothing to count. */}
-                {lineProfile !== 'straight' && lineProfile !== 'curved' && (
-                  <NibSize
-                    label={lineProfile === 'coil' ? 'Loops' : 'Repeats'}
-                    value={lineWaves}
-                    min={MIN_WAVES}
-                    max={20}
-                    onChange={setLineWaves}
-                  />
-                )}
-                {lineProfile !== 'straight' && (
-                  <NibSize
-                    label={lineProfile === 'coil' ? 'Loop size' : lineProfile === 'curved' ? 'Bow depth' : 'Wave height'}
-                    value={Math.round(lineAmplitude * 100)}
-                    min={25}
-                    max={300}
-                    onChange={(v) => setLineAmplitude(v / 100)}
-                  />
-                )}
+                {/*
+                  The counts are not here, and that is a change.
+
+                  "Repeats" and "Wave height" were sliders in this flyout, on
+                  the reasoning that a profile without a count is half a choice.
+                  True, and the wrong place to spend it: a flyout that opens
+                  under the pointer while you are *about to draw* should hold
+                  the decisions that change what the next gesture makes, and
+                  nothing else. Two sliders whose effect you cannot see yet made
+                  a four-item menu into a small control panel — busy at the
+                  moment of least attention, and offering precision about a line
+                  that does not exist.
+
+                  They live in the properties panel and on the rail, where the
+                  line is on screen and the number moves something you can see.
+                  Which is the general rule this flyout should have followed
+                  from the start: **arm here, adjust there**.
+                */}
               </Flyout>
             )}
           </DockButton>

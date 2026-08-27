@@ -164,6 +164,16 @@ interface StoreState {
   setLineWaves: (val: number) => void;
   lineAmplitude: number;
   setLineAmplitude: (val: number) => void;
+  /**
+   * Whether the next run of corners should be drawn rounded.
+   *
+   * A remembered default beside `lineProfile`, not a property of any object:
+   * it decides what the *next* line comes out as, and every line keeps its own
+   * `geometry.smooth` afterwards. Same tier and same lifetime as the profile
+   * and the wave count sitting above it.
+   */
+  lineSmooth: boolean;
+  setLineSmooth: (val: boolean) => void;
   setConnectorColor: (val: string) => void;
 
   showRulers: boolean;
@@ -502,6 +512,12 @@ export const useStore = create<StoreState>((set) => ({
   setLineProfile: (val) => {
     setStoragePref('vega_line_profile', val);
     set({ lineProfile: val });
+  },
+
+  lineSmooth: loadStringPref('vega_line_smooth') === '1',
+  setLineSmooth: (val) => {
+    setStoragePref('vega_line_smooth', val ? '1' : '0');
+    set({ lineSmooth: val });
   },
 
   penStrokeWidth: Number(loadStringPref('vega_pen_stroke')) || 2,
