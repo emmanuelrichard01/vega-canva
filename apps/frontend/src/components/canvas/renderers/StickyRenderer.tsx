@@ -19,6 +19,14 @@ interface Props {
 
 const QUICK_EMOJIS = ['👍', '❤️', '🎉', '🔥', '🚀', '👀', '💡', '💯'];
 
+/**
+ * The hairline a sticky's paper edge is drawn with.
+ *
+ * Named because the sketcher is told it too: the wander is scaled to the pen
+ * that will draw it, and a number in two places drifts.
+ */
+const EDGE_WIDTH = 1.2;
+
 export const StickyRenderer: React.FC<Props> = React.memo(({ node, showText, myAuthorId, onToggleReaction, onTogglePin }) => {
   const [hoveredEmoji, setHoveredEmoji] = useState<string | null>(null);
   const [hoveredPickerEmoji, setHoveredPickerEmoji] = useState<string | null>(null);
@@ -36,8 +44,8 @@ export const StickyRenderer: React.FC<Props> = React.memo(({ node, showText, myA
     const ring = rectRing(node.width, node.height);
     const seed = seedFrom(node.id);
     return {
-      silhouette: roughSilhouette(ring, { seed, level: sketchLevel }),
-      outline: roughPolyline(ring, { seed, level: sketchLevel }),
+      silhouette: roughSilhouette(ring, { seed, level: sketchLevel, width: EDGE_WIDTH }),
+      outline: roughPolyline(ring, { seed, level: sketchLevel, width: EDGE_WIDTH }),
     };
   }, [node.id, node.width, node.height, sketchLevel]);
 
@@ -98,7 +106,7 @@ export const StickyRenderer: React.FC<Props> = React.memo(({ node, showText, myA
             data={sketchPaper.outline}
             fill="none"
             stroke={theme.edge}
-            strokeWidth={1.2}
+            strokeWidth={EDGE_WIDTH}
             lineCap="round"
             lineJoin="round"
           />

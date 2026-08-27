@@ -553,12 +553,27 @@ more than transcribing it once.
 - **Label ink is lifted against the plate**, not the board. `readableOn`
   assumes a near-white or near-black surface; a plate is a mid-tone, and a
   colour clearing 3:1 on white can be invisible on it.
-- **Sketchers are chosen by profile, not by counting points.** Straight and
-  zigzag have real corners and keep the polyline sketcher's overshoot; curved,
-  wavy and coil are samples and take the drift sampler. A point-count proxy got
-  the one case wrong that mattered — a six-repeat zigzag is fourteen points, so
-  it was reclassified as a curve and lost the corners that are its whole
-  character.
+- **Sketchers are chosen by what the run *is*, not by counting points.** A
+  point-count proxy got the one case wrong that mattered — a six-repeat zigzag
+  is fourteen points, so it was reclassified as a curve and lost the corners
+  that are its whole character. The profile is not the whole answer either: a
+  multi-point line can bend one segment or smooth the whole run with no profile
+  set at all, so `roughShape` routes anything bent, smoothed or sampled to the
+  drift sampler and only a genuinely straight run to the polyline sketcher.
+  `roughLoop` then finds real corners itself (a 40° turn on the input outline)
+  and doubles the sample there, which makes a Catmull-Rom cusp — so one
+  continuous stroke holds both a curve and a corner, and the mixed case has a
+  correct answer for the first time.
+- **The sketch is scaled to the stroke it will be drawn with.** Every
+  displacement was in world units and blind to the pen, so the visible
+  roughness was the wander over the stroke width and a thick stroke covered its
+  own wander. `nibScale` in `rough.ts` is the one place that decides this, and
+  `roughShape` reads the width off the node so the canvas and the SVG exporter
+  cannot disagree — a sketch is seeded, so a disagreement is two drawings, not
+  two styles. Two things it must *not* scale: the belly of an edge (that is the
+  shape's fidelity, not the pen's character — see `penFor`), and the lean of a
+  second pass by a constant amount (a constant normal offset is a parallel
+  curve, and two strokes at a constant gap read as a ruled double line).
 
 ## 4a-v. The transform rewrite, and what it uncovered
 

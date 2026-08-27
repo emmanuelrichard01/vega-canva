@@ -392,6 +392,7 @@ export const ShapeRenderer: React.FC<Props> = React.memo(({ node, showLabel }) =
             roughEllipse(cap.circle.x, cap.circle.y, cap.circle.radius, cap.circle.radius, {
               seed: capSeed,
               level: node.appearance?.sketch,
+              width: nib,
             })
           );
           return;
@@ -407,6 +408,7 @@ export const ShapeRenderer: React.FC<Props> = React.memo(({ node, showLabel }) =
             // open run and must not have its two ends joined.
             closed: Boolean(cap.filled),
             level: node.appearance?.sketch,
+            width: nib,
           })
         );
       });

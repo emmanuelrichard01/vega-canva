@@ -886,8 +886,8 @@ a noisy one: the eye reads the individual wobbles instead of the stroke, which
 is what "small rough lines that make up the curve" means. The corner sketcher,
 which nobody complains about, gives a rectangle four edges and *one bow each*.
 So the wavelength is a fraction of the run now — about three and a half bows
-whatever the size — and the two passes separate over long arcs and re-cross a
-few times, which is the continuous imperfect stroke an artist actually makes.
+whatever the size — which is the continuous imperfect stroke an artist actually
+makes rather than a nervous one.
 
 Making that work needed the amplitude to stop depending on the frequency. An
 AR(1) process's spread is `b·σ / √(1 − a²)`, and the old `b = (1 − a)·k` meant
@@ -896,6 +896,67 @@ wobble to nothing and made it look as though nothing had happened. `b = √(1 �
 cancels the denominator exactly. That is the third time this file has had to
 separate density from amplitude, which is the tell that they were never one
 parameter.
+
+**A corner in a curve.** Once a multi-point line could bend one segment and
+smooth the whole run, a line arrived at the sketcher as a hundred samples with
+no profile set — so it went to the polyline sketcher, which overshoots at every
+sample, and bristled exactly the way a heart did before the loop sketcher
+existed. The mixed case is worse and is now the common one: three sharp turns
+and one bent segment has no correct answer under either sketcher alone. So
+`roughLoop` finds the real corners itself — a forty-degree turn on the input
+outline, measured rather than plumbed down from a caller who would have to keep
+it in step — and places a **doubled sample** at each. In a Catmull-Rom a
+repeated point makes the tangent on one side the incoming direction and on the
+other the outgoing one, so the curve arrives, stops, and leaves in a new
+direction. One continuous stroke can then hold both a curve and a corner, which
+is what a hand-drawn zigzag with one rounded bend actually is. It also finds the
+cusp between a heart's two lobes, which this function had always rounded off.
+
+**The sketch is drawn with the pen that will draw it.** Every displacement in
+the file was in world units and blind to the stroke about to be applied, so the
+*visible* roughness was the wander over the stroke width and only the numerator
+was ever tuned. At two pixels a medium hand strays about a unit and a half and
+it reads; at eight the stroke covers its own wander and a sketched shape is a
+clean shape with a faintly furry edge. So the wander is proportional to the nib,
+with two limits: it does not thin below the reference width, because a hairline
+should still be visibly drawn rather than silently switching the feature off,
+and it stops growing at three times it, because past that the drawing's
+*silhouette* is what is being damaged rather than its edge quality.
+
+That immediately exposed the density-versus-amplitude confusion once again. An
+edge's belly is
+`bow × offset × length`, so scaling `offset` for a wide pen scaled the belly
+with it and a rectangle's bottom edge sagged into a visible arc at eight pixels.
+How far an edge departs from straight is *fidelity*; how far the pen strays from
+where it meant to be is *character*. The product is held invariant, so a wide
+pen wanders further at the ends and bellies exactly as much in the middle.
+
+**Two passes that go over the line, not beside it.** The gone-over look was
+left entirely to chance — each pass started at a random offset and drifted
+independently, so on a good seed the laps parted and on a bad one they sat on
+top of each other. At a two-pixel stroke the typical drift is about one unit, so
+*most* seeds were bad ones and the single most recognisable thing about a
+hand-drawn shape was invisible. Turning the drift up fixes the doubling and
+breaks the shape; they are genuinely two knobs. Straying is how far the pen is
+from where it meant to be, and too much of it looks unsteady. Separation is how
+far the second attempt is from the first, and it costs the shape nothing —
+both laps stay equally faithful, they simply straddle the true outline instead
+of hiding one another.
+
+The first version of that leaned each pass a *fixed* distance along the normal,
+and a fixed normal offset is the definition of a parallel curve: the pair never
+met, and two strokes holding a constant gap for a whole lap read as a ruled
+double line rather than as one line drawn twice. So the lean **drifts**, through
+the same low-pass filter the wander uses, around a small per-pass bias — the
+bias decides which side each lap spends most of its time on, and the drift is
+what makes them cross. The corner sketcher gets the same treatment more cheaply:
+its second pass bellies the *other* way, so the pair crosses in the middle and
+parts towards the ends.
+
+The width reaches the sketchers through `roughShape`, which reads it off the
+node rather than being told — the same reasoning as the shading density, and for
+the same reason. A sketch is *seeded*, so a canvas and an exporter that disagree
+about the pen are not two styles of one drawing, they are two drawings.
 
 **An inner shadow works on a sketch now**, and did not before: the renderer's
 sketch branch returns before its effects, so the control was offered on every

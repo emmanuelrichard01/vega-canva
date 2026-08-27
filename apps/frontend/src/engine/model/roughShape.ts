@@ -66,6 +66,15 @@ export function roughShape(
   const level = node.appearance.sketch;
   const style = node.appearance.fillStyle ?? 'solid';
   const seed = seedFrom(node.id);
+  /**
+   * The pen the sketch is drawn with, so the wander is scaled to it.
+   *
+   * Read here rather than in each sketcher because this is the one place that
+   * already knows the node — and passing it from here is what keeps the canvas
+   * and the SVG exporter drawing the same shape, since both come through this
+   * function. See `nibScale`.
+   */
+  const width = node.appearance.stroke?.width;
   const outline = shapeOutline(node);
 
   // The silhouette the shading is clipped against. Always a polygon, even for
@@ -80,7 +89,7 @@ export function roughShape(
       // A curve has no corners to overshoot, so it is one continuous wandering
       // loop rather than a run of bowed chords. Drawing it the other way is
       // what made a circle come out as a broken, spiky ring.
-      sketched = roughEllipse(outline.cx, outline.cy, outline.rx, outline.ry, { seed, level });
+      sketched = roughEllipse(outline.cx, outline.cy, outline.rx, outline.ry, { seed, level, width });
       ring = ellipseRing(outline.cx, outline.cy, outline.rx, outline.ry);
       break;
 
@@ -103,16 +112,16 @@ export function roughShape(
        */
       if (outline.radius > 0) {
         ring = flattenPath(shapeToPath(node));
-        sketched = roughLoop(ring, { seed, level });
+        sketched = roughLoop(ring, { seed, level, width });
       } else {
         ring = rectRing(outline.width, outline.height);
-        sketched = roughPolyline(ring, { seed, level });
+        sketched = roughPolyline(ring, { seed, level, width });
       }
       break;
 
     case 'polygon':
       ring = outline.points;
-      sketched = roughPolyline(ring, { seed, level });
+      sketched = roughPolyline(ring, { seed, level, width });
       break;
 
     case 'bezier':
@@ -122,7 +131,7 @@ export function roughShape(
       // overshot a hundred times and a heart came out bristling. Same reason
       // an ellipse has never gone through it.
       ring = flattenPath(outline.geometry);
-      sketched = roughLoop(ring, { seed, level });
+      sketched = roughLoop(ring, { seed, level, width });
       break;
 
     case 'open':
@@ -150,9 +159,29 @@ export function roughShape(
        * fourteen points, so it was quietly reclassified as a curve and lost
        * its corners. The profile knows the answer; counting was guessing.
        */
-      sketched = SAMPLED_PROFILES.has(node.geometry.lineProfile ?? 'straight')
-        ? roughLoop(ring, { seed, level, closed: false })
-        : roughPolyline(ring, { seed, closed: false, level });
+      /**
+       * And a run can now be curved without having a profile at all.
+       *
+       * A multi-point line's segments can each be bent into an arc, and the
+       * whole run can be drawn as one smooth spline. Both arrive here as a
+       * hundred samples with no profile set — so the test above sent them to
+       * the polyline sketcher, which overshot every one of those samples and
+       * produced the same bristling mess a heart did before `roughLoop`
+       * existed. The profile is no longer the only way a line curves.
+       *
+       * The mixed case — three sharp turns and one bent segment — has no
+       * correct answer under either sketcher alone, and it is now the common
+       * case rather than a curiosity. `roughLoop` finds the real corners
+       * itself and cusps at them, so one continuous stroke can hold both.
+       */
+      const bent = node.geometry.bends?.some((b) => b != null) === true;
+      const curvy =
+        bent
+        || node.geometry.smooth === true
+        || SAMPLED_PROFILES.has(node.geometry.lineProfile ?? 'straight');
+      sketched = curvy
+        ? roughLoop(ring, { seed, level, width, closed: false })
+        : roughPolyline(ring, { seed, closed: false, level, width });
       return { outline: sketched, fill: '', silhouette: '' };
   }
 
@@ -170,6 +199,6 @@ export function roughShape(
           angle: node.appearance?.shadingAngle,
         })
       : '',
-    silhouette: wantsFill && style === 'solid' ? roughSilhouette(ring, { seed, level }) : '',
+    silhouette: wantsFill && style === 'solid' ? roughSilhouette(ring, { seed, level, width }) : '',
   };
 }

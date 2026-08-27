@@ -104,6 +104,62 @@ export function profileFor(level: SketchLevel | undefined): SketchProfile {
 }
 
 /**
+ * How far a pen of a given width wanders, relative to a fine one.
+ *
+ * ## The ratio, not the amount
+ *
+ * Every displacement in this file was in world units and blind to the stroke
+ * it was about to be drawn with — so the *visible* roughness was the wander
+ * divided by the stroke width, and only the numerator was ever tuned. At two
+ * pixels a medium hand strays about one and a half, which reads; at eight the
+ * same stroke covers its own wander and a sketched shape is a clean shape with
+ * a slightly furry edge. The two gone-over passes suffered worst: separated by
+ * less than a nib width, they merge into one thicker line and the doubling —
+ * the single most recognisable thing about a hand-drawn shape — disappears.
+ *
+ * A real pen behaves the way this describes: a broad marker held loosely
+ * strays further than a fineliner, because the hand's error and the tool's
+ * scale go together. So the wander is proportional to the nib.
+ *
+ * Two limits, both from looking at it. Below the reference width the wander is
+ * *not* reduced — a hairline outline should still be visibly drawn, and a
+ * proportional rule would make a 0.5px stroke perfectly smooth. Above three
+ * times it stops growing: a 24px marker straying 30 units is not a confident
+ * hand, it is a different shape, and past that point the drawing's silhouette
+ * is what is being damaged rather than its edge quality.
+ *
+ * The scale is not part of the seed. A stroke width change rescales the same
+ * wander rather than redrawing a different one, so dragging the width slider
+ * thickens the line the user drew instead of animating a new sketch.
+ */
+const NIB_REFERENCE = 2;
+const NIB_MAX = 3;
+
+export function nibScale(width: number | undefined): number {
+  if (!Number.isFinite(width) || width === undefined) return 1;
+  return Math.max(1, Math.min(NIB_MAX, width / NIB_REFERENCE));
+}
+
+/**
+ * The profile for `level`, with its displacements scaled to the pen's width.
+ *
+ * `bow` is divided back out, and that is not a fudge. The belly of an edge is
+ * `bow × offset × length / 200` — so scaling `offset` for a wide pen scaled the
+ * belly with it, and at eight pixels a rectangle's bottom edge sagged into a
+ * visible arc. That is the shape being damaged, not the edge quality: how far
+ * an edge departs from straight is fidelity, and how far the pen strays from
+ * where it meant to be is character. This file has had to separate those before
+ * — for the ellipse's sample count, and for the drift's frequency — and this is
+ * the same mistake in a new place. Keeping the product invariant means a wide
+ * pen wanders further at the ends and bellies exactly as much in the middle.
+ */
+function penFor(level: SketchLevel | undefined, width: number | undefined): SketchProfile {
+  const prof = profileFor(level);
+  const nib = nibScale(width);
+  return nib === 1 ? prof : { ...prof, offset: prof.offset * nib, bow: prof.bow / nib };
+}
+
+/**
  * Deterministic PRNG (mulberry32).
  *
  * Small, fast, and — the only property that actually matters here — identical
@@ -188,8 +244,19 @@ function edge(
 
   // The belly, perpendicular to the run. The /200 is Rough.js's scaling and is
   // what keeps a 2000px edge from bowing twenty times as far as a 100px one.
-  let midX = (prof.bow * prof.offset * dy) / 200;
-  let midY = (prof.bow * prof.offset * -dx) / 200;
+  /**
+   * The belly, perpendicular to the run, leaning the *other* way on the second
+   * pass.
+   *
+   * Same reason `roughLoop` alternates its lean: the two attempts at one edge
+   * were both bowed in the base direction and jittered independently, so how
+   * far apart they ended up was luck, and often they ended up nowhere apart.
+   * Flipping the second one makes the pair cross in the middle and part
+   * towards the ends, which is what two goes at the same line look like.
+   */
+  const side = second ? -1 : 1;
+  let midX = (side * prof.bow * prof.offset * dy) / 200;
+  let midY = (side * prof.bow * prof.offset * -dx) / 200;
   midX = jitter(midX, rand) + midX;
   midY = jitter(midY, rand) + midY;
 
@@ -216,11 +283,11 @@ function edge(
  */
 export function roughPolyline(
   points: readonly Point[],
-  options: { seed: number; closed?: boolean; level?: SketchLevel }
+  options: { seed: number; closed?: boolean; level?: SketchLevel; width?: number }
 ): string {
-  const { seed, closed = true, level } = options;
+  const { seed, closed = true, level, width } = options;
   if (points.length < 2) return '';
-  const prof = profileFor(level);
+  const prof = penFor(level, width);
   const rand = rng(seed);
   const out: string[] = [];
   const count = closed ? points.length : points.length - 1;
@@ -299,7 +366,7 @@ export function roughEllipse(
   cy: number,
   rx: number,
   ry: number,
-  options: { seed: number; level?: SketchLevel }
+  options: { seed: number; level?: SketchLevel; width?: number }
 ): string {
   /**
    * Forty-eight samples of the true ellipse, handed to the loop sketcher.
@@ -334,11 +401,11 @@ export function roughEllipse(
  */
 export function roughLoop(
   outline: readonly Point[],
-  options: { seed: number; level?: SketchLevel; closed?: boolean }
+  options: { seed: number; level?: SketchLevel; closed?: boolean; width?: number }
 ): string {
   const closed = options.closed !== false;
   if (outline.length < (closed ? 3 : 2)) return '';
-  const prof = profileFor(options.level);
+  const prof = penFor(options.level, options.width);
   const rand = rng(options.seed);
 
   // Cumulative arc length around the closed loop, so a position can be asked
@@ -357,7 +424,43 @@ export function roughLoop(
   const total = cum[spans];
   if (total === 0) return '';
 
-  const at = (distance: number): Point => {
+  /**
+   * Where the run genuinely turns, in arc length.
+   *
+   * ## Why this is measured rather than passed in
+   *
+   * The drift sampler draws one continuous stroke through arc-length samples,
+   * which is what a curve wants and what a *corner* does not: a spline through
+   * samples either side of a right angle rounds it off over a sample's width.
+   * So a run that mixes the two — a multi-point line with three sharp turns and
+   * one bent segment — had no correct sketcher. The polyline one bristled every
+   * sample of the arc; this one flattened every corner.
+   *
+   * A corner is a local property of the outline, so it is found here rather
+   * than plumbed down from a caller who would have to compute it from the
+   * geometry and keep it in step. Forty degrees separates them cleanly: a
+   * densely sampled curve turns a few degrees per sample, and a real corner in
+   * a drawn line is nearer ninety. It also finds the cusp between a heart's two
+   * lobes, which this function has always rounded off.
+   */
+  const TURN = Math.cos((40 * Math.PI) / 180);
+  const cornerAt: number[] = [];
+  for (let i = closed ? 0 : 1; i < (closed ? n : n - 1); i += 1) {
+    const before = outline[(i - 1 + n) % n];
+    const here = outline[i];
+    const after = outline[(i + 1) % n];
+    const ax = here.x - before.x;
+    const ay = here.y - before.y;
+    const bx = after.x - here.x;
+    const by = after.y - here.y;
+    const la = Math.hypot(ax, ay);
+    const lb = Math.hypot(bx, by);
+    if (la < 1e-9 || lb < 1e-9) continue;
+    if ((ax * bx + ay * by) / (la * lb) < TURN) cornerAt.push(cum[i]);
+  }
+
+  /** A point on the outline, with the unit normal there. */
+  const at = (distance: number): Point & { nx: number; ny: number } => {
     // Clamped on an open run, wrapped on a closed one: running past the end of
     // a line has to stop at the end, not reappear at its beginning.
     let d = closed ? distance % total : Math.max(0, Math.min(total, distance));
@@ -370,7 +473,15 @@ export function roughLoop(
     const b = outline[i % n];
     const span = cum[i] - cum[i - 1];
     const t = span === 0 ? 0 : (d - cum[i - 1]) / span;
-    return { x: a.x + (b.x - a.x) * t, y: a.y + (b.y - a.y) * t };
+    const len = Math.hypot(b.x - a.x, b.y - a.y) || 1;
+    return {
+      x: a.x + (b.x - a.x) * t,
+      y: a.y + (b.y - a.y) * t,
+      // Perpendicular to the run, which is the only direction a lap can be
+      // moved in without changing where along the shape it is.
+      nx: -(b.y - a.y) / len,
+      ny: (b.x - a.x) / len,
+    };
   };
 
   // The centroid, so each pass can breathe in and out around the shape the way
@@ -458,6 +569,57 @@ export function roughLoop(
    * rigid.
    */
   const wander = Math.max(70, total / 3.5);
+  /**
+   * How far the stroke strays, once the frequency stopped deciding it.
+   *
+   * Halved from the first attempt at this. With thirteen wobbles a lap the
+   * amplitude was doing the work of making a circle read as drawn; with three
+   * slow bows it is doing the work of making it read as *wonky*, which is a
+   * different thing and not the one wanted. A hand is confident and slightly
+   * off, not unsteady — the deviation should be visible when looked for and
+   * invisible when the shape is being read.
+   */
+  const WOBBLE = 0.7;
+  /**
+   * How far the two laps sit apart, which is a different quantity from how far
+   * either of them strays.
+   *
+   * ## Why the drift alone could not do this
+   *
+   * The gone-over look — two strokes that separate, cross, and separate again —
+   * was left entirely to chance: each pass started at a random offset and
+   * drifted independently, so on a good seed the laps parted and on a bad one
+   * they sat on top of each other and the shape read as a single slightly
+   * furry line. At a two-pixel stroke the typical drift is about one unit, so
+   * *most* seeds were bad ones: the second pass was hidden underneath the
+   * first, and the single most recognisable thing about a hand-drawn shape
+   * was invisible.
+   *
+   * Turning the drift up would fix the doubling and break the shape — that is
+   * the same amplitude that was just halved for making curves look wonky
+   * rather than drawn. They are genuinely two knobs. Straying is how far the
+   * pen is from where it meant to be, and too much of it looks unsteady.
+   * Separation is how far the second attempt is from the first, and it costs
+   * the shape nothing: both laps stay equally faithful, they simply straddle
+   * the true outline instead of hiding one another. A hand going over a line
+   * does exactly this — it does not retrace, it leans to one side.
+   *
+   * Tied to the pen because that is what has to be cleared. Two strokes half a
+   * nib apart are one stroke; a nib apart, they are two.
+   *
+   * ## And why it is not a constant offset
+   *
+   * The first version of this leaned each pass a fixed distance off the
+   * normal, and a fixed normal offset is the definition of a parallel curve —
+   * so the pair never met, and two strokes that hold a constant gap for a
+   * whole lap read as a ruled double line rather than as one line drawn twice.
+   * The separation has to *vary*: the laps part, cross, and part the other
+   * way, a few times over the run. So the lean drifts, through the same
+   * low-pass filter the wander uses, around a small per-pass bias — the bias
+   * decides which side each lap spends most of its time on, and the drift is
+   * what makes them cross.
+   */
+  const separation = Math.min(4, Math.max(0.5, options.width ?? NIB_REFERENCE) * 0.5);
   const retention = Math.exp(-step / wander);
   /**
    * Amplitude that does not move when the frequency does.
@@ -472,13 +634,23 @@ export function roughLoop(
    * this file has already had to make twice.
    */
   const drift = (previous: number, amount: number): number =>
-    previous * retention + jitter(amount, rand) * Math.sqrt(1 - retention * retention) * 2;
+    previous * retention + jitter(amount, rand) * Math.sqrt(1 - retention * retention) * WOBBLE;
 
   const laps: string[] = [];
   for (let pass = 0; pass < prof.passes; pass += 1) {
     // A whole-shape swell, from the centroid, so the second pass is a slightly
     // different heart rather than the same one traced twice.
     const swell = swellable ? 1 + jitter(0.008, rand) : 1;
+    /**
+     * Which side of the true outline this lap spends most of its time on.
+     *
+     * Alternating rather than random: two passes that both happen to favour
+     * the same side are the merged pair this exists to prevent, and a coin
+     * flip gets that half the time. Only a bias, though — well under the
+     * lean's own swing below, so the laps still cross.
+     */
+    const bias = prof.passes > 1 ? (pass % 2 === 0 ? -0.5 : 0.5) * separation : 0;
+    let lean = bias;
     // A lap of a closed shape can start anywhere; an open run starts at its
     // start, because that is where the pen was put down.
     const from = closed ? rand() * total : 0;
@@ -495,10 +667,44 @@ export function roughLoop(
       const sy = cy + (p.y - cy) * swell * pull;
       ox = drift(ox, prof.offset);
       oy = drift(oy, prof.offset);
-      pts.push({ x: sx + ox, y: sy + oy });
+      // Around the bias rather than around zero, so a lap returns to its own
+      // side rather than to the true outline.
+      lean = drift(lean - bias, separation) + bias;
+      pts.push({ x: sx + ox + p.nx * lean, y: sy + oy + p.ny * lean });
     };
 
-    for (let i = 0; i < samples; i += 1) place(from + i * step, 1);
+    /**
+     * The sample distances, with the run's real corners forced in among them.
+     *
+     * A corner is placed **twice**. In a Catmull-Rom the tangent at a point
+     * comes from the vector between its neighbours, so a repeated point makes
+     * the tangent on one side the incoming direction and on the other the
+     * outgoing one — the curve arrives, stops, and leaves in a new direction,
+     * which is a corner. Without it the spline cuts the turn over a sample's
+     * width and a hand-drawn zigzag loses the thing that makes it a zigzag.
+     *
+     * Sorted rather than interleaved by construction: a corner can fall
+     * anywhere between two samples, and the lap starts at a random distance on
+     * a closed run, so the two sequences do not line up.
+     */
+    const stops: Array<{ d: number; corner: boolean }> = [];
+    for (let i = 0; i < samples; i += 1) stops.push({ d: from + i * step, corner: false });
+    for (const c of cornerAt) {
+      // Relative to where this lap began, so a corner lands in the right place
+      // whichever point the pen was put down at.
+      const rel = closed ? (((c - from) % total) + total) % total : c - from;
+      if (rel > step * 0.25 && rel < total - step * 0.25) {
+        stops.push({ d: from + rel, corner: true });
+      }
+    }
+    stops.sort((p, q) => p.d - q.d);
+    for (const stop of stops) {
+      place(stop.d, 1);
+      // The second copy takes the same drift the first did -- a corner is one
+      // place, not two a hair apart.
+      if (stop.corner) pts.push({ ...pts[pts.length - 1] });
+    }
+
     if (closed) {
       // Past its own beginning, then pulled very slightly inward, so the
       // crossing reads as a hand closing a loop rather than as a bulge.
@@ -873,11 +1079,14 @@ export function shapeFill(
  */
 export function roughSilhouette(
   points: readonly Point[],
-  options: { seed: number; level?: SketchLevel }
+  options: { seed: number; level?: SketchLevel; width?: number }
 ): string {
-  const { seed, level } = options;
+  const { seed, level, width } = options;
   if (points.length < 3) return '';
-  const prof = profileFor(level);
+  // The same nib as the outline: the fill boundary and the stroke over it have
+  // to stray by the same amount, or a wide pen's wander walks the drawn edge
+  // off its own fill.
+  const prof = penFor(level, width);
   // A different stream from the outline's, so the fill boundary and the drawn
   // edge wander independently — which is what a real pen and a real wash do.
   const rand = rng(seed ^ 0x2545f491);

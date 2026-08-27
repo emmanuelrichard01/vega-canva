@@ -261,6 +261,9 @@ function connectorMarkup(node: ConnectorNode, objects: Record<string, AnyNode>):
         seed: seedFrom(node.id),
         closed: false,
         level: node.appearance.sketch,
+        // The same nib the canvas uses, or the file's strokes are not the
+        // canvas's strokes.
+        width,
       })
     : `M ${(tpts.length >= 2 ? tpts : pts).map((p) => `${p.x} ${p.y}`).join(' L ')}`;
 

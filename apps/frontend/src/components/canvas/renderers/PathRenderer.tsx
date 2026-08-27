@@ -48,18 +48,22 @@ export const PathRenderer: React.FC<Props> = React.memo(({ node }) => {
      * drawing over its own line does not taper either.
      */
     if (node.appearance?.sketch && node.geometry.points.length > 1) {
+      // The width the sketch is actually drawn at, so the wander is scaled to
+      // the nib rather than to the outline weight the pencil no longer uses.
+      const nib = Math.max(1, node.geometry.strokeSize * 0.66);
       return (
         <Path
           data={roughLoop(node.geometry.points, {
             seed: seedFrom(node.id),
             level: node.appearance.sketch,
+            width: nib,
             closed: false,
           })}
           stroke={strokeColor(node.appearance) ?? DEFAULT_INK}
           // The stored stroke size is the *width of the outline*, so a sketched
           // run at that weight would be far heavier than the stroke it
           // replaces. Two thirds lands it about where the pencil looked.
-          strokeWidth={Math.max(1, node.geometry.strokeSize * 0.66)}
+          strokeWidth={nib}
           lineCap="round"
           lineJoin="round"
           {...shadow}

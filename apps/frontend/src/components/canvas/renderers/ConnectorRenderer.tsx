@@ -344,7 +344,7 @@ export const ConnectorRenderer: React.FC<Props> = React.memo(({ node }) => {
         return (
           <Path
             key={key}
-            data={roughLoop(ring, { seed: seedFrom(node.id + key), level: sketchLevel })}
+            data={roughLoop(ring, { seed: seedFrom(node.id + key), level: sketchLevel, width })}
             stroke={stroke}
             strokeWidth={width}
             fill={cap.filled ? stroke : undefined}
@@ -378,6 +378,7 @@ export const ConnectorRenderer: React.FC<Props> = React.memo(({ node }) => {
           data={roughPolyline(pairsOf(cap.points), {
             seed: seedFrom(node.id + key),
             level: sketchLevel,
+            width,
             closed: cap.filled,
           })}
           stroke={stroke}
@@ -435,12 +436,14 @@ export const ConnectorRenderer: React.FC<Props> = React.memo(({ node }) => {
       ? roughLoop(pairsOf(trimmed), {
           seed: seedFrom(node.id),
           level: node.appearance.sketch,
+          width,
           closed: false,
         })
       : roughPolyline(pairsOf(trimmed), {
           seed: seedFrom(node.id),
           closed: false,
           level: node.appearance.sketch,
+          width,
         })
     : '';
 
