@@ -10,6 +10,7 @@ import {
   distributeStops,
   isGradient,
   linearAngle,
+  cssAsImage,
   paintToCss,
   reverseStops,
   withAlpha,
@@ -281,8 +282,13 @@ export const FillEditor: React.FC<Props> = ({ paint, onChange, mixed = false }) 
             stylesheet -- so the chequerboard behind a translucent paint would
             stretch to one enormous square instead of weaving at 8px. Every
             composed background in this file follows the same rule, with the
-            size owned by CSS. */}
-        <span style={{ backgroundImage: swatchBg }} />
+            size owned by CSS.
+
+            Through `cssAsImage`, because that rule alone is what broke this:
+            `background-image` does not take a colour, so a solid fill's swatch
+            was an invalid declaration and the chequerboard behind it was all
+            you saw. See `cssAsImage`. */}
+        <span style={{ backgroundImage: cssAsImage(swatchBg) }} />
       </button>
 
       {open && (
@@ -299,7 +305,7 @@ export const FillEditor: React.FC<Props> = ({ paint, onChange, mixed = false }) 
                 className={`fill-editor__type ${activeTypeId === t.id ? 'is-active' : ''}`}
                 onClick={() => handleSelectType(t.id)}
               >
-                <span style={{ backgroundImage: t.swatch }} />
+                <span style={{ backgroundImage: cssAsImage(t.swatch) }} />
               </button>
             ))}
           </div>
@@ -360,7 +366,7 @@ export const FillEditor: React.FC<Props> = ({ paint, onChange, mixed = false }) 
                 * `paintToCss` closes that, and closes it with the same string
                 * the canvas renders from rather than an impression of it.
                 */}
-              <div className="fill-editor__preview" style={{ backgroundImage: `${css}, ${BAR_CHECKER}` }} aria-hidden />
+              <div className="fill-editor__preview" style={{ backgroundImage: `${cssAsImage(css)}, ${BAR_CHECKER}` }} aria-hidden />
 
               <div className="fill-editor__bar-wrap">
                 <div

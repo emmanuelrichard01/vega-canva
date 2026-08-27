@@ -6308,6 +6308,15 @@ body[data-rulers='off'] {
   border-top: none;
 }
 
+/* A hairline inside a section, where the rows below depend on the rows above.
+   Quieter than the rule between sections, which separates equals. */
+.prop-rule {
+  height: 1px;
+  margin: 8px 0 6px;
+  background: var(--border-divider);
+  opacity: 0.7;
+}
+
 /* A control and the small button that assists it, on one line. */
 .prop-inline {
   display: flex;

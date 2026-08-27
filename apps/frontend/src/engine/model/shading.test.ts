@@ -1,5 +1,12 @@
 import { describe, expect, it } from 'vitest';
-import { gapFor, HACHURE_ANGLE, SHADING_DENSITIES, shapeFill, type FillStyle } from './rough';
+import {
+  gapFor,
+  HACHURE_ANGLE,
+  roughEllipse,
+  SHADING_DENSITIES,
+  shapeFill,
+  type FillStyle,
+} from './rough';
 import { roughShape } from './roughShape';
 import type { ShapeNode } from './schema';
 
@@ -133,5 +140,52 @@ describe('a shape carries its own shading', () => {
     const a = roughShape(shape({ shadingDensity: 'dense', shadingAngle: 20 }), true);
     const b = roughShape(shape({ shadingDensity: 'dense', shadingAngle: 20 }), true);
     expect(a.fill).toBe(b.fill);
+  });
+});
+
+describe('a curve drawn by hand', () => {
+  /** How many cubic segments a drawing is made of. */
+  const segments = (d: string) => (d.match(/C /g) ?? []).length;
+  /** How many times the pen was put down. */
+  const laps = (d: string) => (d.match(/M /g) ?? []).length;
+
+  it('takes its density from the shape, not from the roughness', () => {
+    /**
+     * The bug: an ellipse had a construction of its own that used `prof.steps`
+     * as its sample count -- twelve at Light and **seven** at Heavy. So a
+     * heavier hand did not draw a rougher circle, it drew a lower-resolution
+     * one, and Heavy came out as a blobby seven-point spline. Density decides
+     * how faithfully the lap follows the curve; amplitude decides how far the
+     * pen wanders. Corners always kept those separate; curves did not.
+     */
+    const small = roughEllipse(0, 0, 40, 40, { seed: 5, level: 'medium' });
+    const large = roughEllipse(0, 0, 160, 160, { seed: 5, level: 'medium' });
+    expect(segments(large)).toBeGreaterThan(segments(small));
+
+    const light = roughEllipse(0, 0, 120, 120, { seed: 5, level: 'light' });
+    const heavy = roughEllipse(0, 0, 120, 120, { seed: 5, level: 'heavy' });
+    // Per lap, the two are sampled alike -- heavy simply goes round again.
+    expect(segments(heavy) / laps(heavy)).toBeCloseTo(segments(light) / laps(light), 0);
+  });
+
+  it('is drawn finely enough to read as a curve at all', () => {
+    // Seven control points is a heptagon with opinions. Twenty is a circle.
+    expect(segments(roughEllipse(0, 0, 40, 40, { seed: 5, level: 'heavy' })) / 2)
+      .toBeGreaterThan(15);
+  });
+
+  it('goes round once for a light hand and twice for the others', () => {
+    expect(laps(roughEllipse(0, 0, 80, 80, { seed: 5, level: 'light' }))).toBe(1);
+    expect(laps(roughEllipse(0, 0, 80, 80, { seed: 5, level: 'medium' }))).toBe(2);
+    expect(laps(roughEllipse(0, 0, 80, 80, { seed: 5, level: 'heavy' }))).toBe(2);
+  });
+
+  it('is stable for a seed, which is what makes it exportable', () => {
+    expect(roughEllipse(0, 0, 90, 60, { seed: 11, level: 'medium' }))
+      .toBe(roughEllipse(0, 0, 90, 60, { seed: 11, level: 'medium' }));
+  });
+
+  it('differs between two shapes, so a board is not one repeated circle', () => {
+    expect(roughEllipse(0, 0, 90, 60, { seed: 11 })).not.toBe(roughEllipse(0, 0, 90, 60, { seed: 12 }));
   });
 });

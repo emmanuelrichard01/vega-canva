@@ -60,7 +60,12 @@ import {
   type AnyNode, type Appearance, type ConnectorNode, type FillStyle, type ShapeKind, type SketchLevel,
   type ListStyle, type TextAlign, type Typography,
 } from '../engine/model/schema';
-import { FillStyleIcon, SketchLevelIcon } from './panel/sketchIcons';
+import { FillStyleIcon, ShadingDensityIcon, SketchLevelIcon } from './panel/sketchIcons';
+import { HACHURE_ANGLE, SHADING_DENSITIES } from '../engine/model/rough';
+import {
+  SHADING_DENSITY_HINTS,
+  SHADING_DENSITY_LABELS,
+} from '../engine/model/shadingLabels';
 import { EndCapIcon, RouteIcon } from './panel/connectorIcons';
 import { StrokeWeightIcon } from './panel/strokeWeightIcon';
 import { LineSpecimen } from './panel/lineSpecimen';
@@ -1649,6 +1654,46 @@ export const ObjectContextToolbar: React.FC<Props> = ({ selectedId, selectedIds,
                           </button>
                         ))}
                       </div>
+                    </>
+                  )}
+                  {/*
+                    Density and angle, and only once there is shading to lay.
+
+                    The popover grows by exactly what the current choice makes
+                    meaningful: a solid fill has no strokes to space or turn, so
+                    two controls that could not change anything would be two
+                    rows of noise on the commonest setting. The panel gates them
+                    the same way, from the same two facts.
+                  */}
+                  {appearance.sketch && !openShape && node.type !== 'connector'
+                    && appearance.fillStyle && appearance.fillStyle !== 'solid' && (
+                    <>
+                      <span className="ctx-popover__label">Density</span>
+                      <div className="ctx-shape-grid">
+                        {SHADING_DENSITIES.map((d) => (
+                          <button
+                            key={d}
+                            type="button"
+                            className="ctx-shape-btn"
+                            aria-pressed={(appearance.shadingDensity ?? 'medium') === d}
+                            aria-label={SHADING_DENSITY_LABELS[d]}
+                            data-tooltip={SHADING_DENSITY_HINTS[d]}
+                            onClick={() =>
+                              setAppearance({ shadingDensity: d === 'medium' ? undefined : d })
+                            }
+                          >
+                            <ShadingDensityIcon density={d} />
+                          </button>
+                        ))}
+                      </div>
+                      <PopoverSlider
+                        label="Angle"
+                        value={appearance.shadingAngle ?? HACHURE_ANGLE}
+                        min={-90}
+                        max={90}
+                        suffix="°"
+                        onChange={(shadingAngle) => setAppearance({ shadingAngle })}
+                      />
                     </>
                   )}
                 </RailPopover>

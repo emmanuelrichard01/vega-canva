@@ -365,6 +365,38 @@ export function konvaFillProps(
  * maps onto CSS percentages directly, which is most of why unit space was the
  * right call for storage.
  */
+/**
+ * A CSS paint value, as something `background-image` will actually accept.
+ *
+ * ## The bug this exists for
+ *
+ * `background-image` takes an `<image>` — a URL or a gradient. It does **not**
+ * take a colour. So `backgroundImage: '#3A3F47'` is not a darker swatch, it is
+ * an invalid declaration the browser drops on the floor.
+ *
+ * Every swatch in the fill editor is drawn as a paint layered over a
+ * chequerboard, and the chequerboard is what you see through a paint that is
+ * not there. So a **solid fill's swatch showed the chequerboard** — in the
+ * properties panel, on the contextual rail, on the "Solid" tile in the picker
+ * itself, and in the gradient preview bar. Four controls whose whole job is to
+ * report the current colour reported "transparent" for the commonest colour
+ * there is, and did it consistently enough to look deliberate.
+ *
+ * The rule they were all following is right and stays: never the `background`
+ * shorthand, because it resets `background-size` and the chequer stops weaving.
+ * What was missing is that a colour has to be *made into* an image first, and
+ * a two-stop gradient of one colour is exactly that — the same trick the stop
+ * dots in that file were already using, in one place, where somebody had hit
+ * this and fixed it locally.
+ */
+export function cssAsImage(value: string): string {
+  // A gradient, a URL or anything else with a function call in it is already an
+  // image. Everything else -- hex, rgb(), a named colour -- is a colour.
+  return /(gradient|url|image-set)\(/i.test(value)
+    ? value
+    : `linear-gradient(${value}, ${value})`;
+}
+
 export function paintToCss(paint: Paint | undefined, fallback = '#4F46E5'): string {
   if (!paint) return fallback;
   if (paint.type === 'solid') return withAlpha(paint.color || fallback, paint.opacity);

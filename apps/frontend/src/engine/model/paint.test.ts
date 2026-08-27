@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import {
   colorStopArray,
+  cssAsImage,
   convertPaint,
   hexToRgb,
   konvaFillProps,
@@ -382,5 +383,46 @@ describe('distributeStops', () => {
     }));
     expect(even.stops[0]).toMatchObject({ color: '#FF0000' });
     expect(even.stops[1]).toMatchObject({ color: '#00FF00', opacity: 0.25 });
+  });
+});
+
+describe('cssAsImage', () => {
+  it('wraps a colour so `background-image` will take it', () => {
+    /**
+     * The bug: `background-image` accepts an `<image>`, never a colour, so
+     * `backgroundImage: '#3A3F47'` is a declaration the browser drops. Every
+     * swatch in the fill editor draws its paint over a chequerboard, and the
+     * chequerboard is what you see through a paint that is not there -- so a
+     * *solid* fill's swatch reported "transparent", in the panel, on the rail,
+     * on the picker's own Solid tile and in the preview bar.
+     */
+    expect(cssAsImage('#3A3F47')).toBe('linear-gradient(#3A3F47, #3A3F47)');
+    expect(cssAsImage('rgba(0, 0, 0, 0.5)')).toBe(
+      'linear-gradient(rgba(0, 0, 0, 0.5), rgba(0, 0, 0, 0.5))'
+    );
+  });
+
+  it('leaves an image alone', () => {
+    // Wrapping a gradient in a gradient is not merely wasteful -- it is
+    // invalid, and would break the case that already worked.
+    const linear = 'linear-gradient(180deg, #6366F1, #EC4899)';
+    expect(cssAsImage(linear)).toBe(linear);
+    expect(cssAsImage('conic-gradient(from 0deg, red, blue)')).toContain('conic-gradient');
+    expect(cssAsImage('repeating-conic-gradient(#c8c8c8 0% 25%, #fff 0% 50%)')).toContain('repeating');
+    expect(cssAsImage('url(a.png)')).toBe('url(a.png)');
+  });
+
+  it('keeps a translucent colour translucent, so the chequer still shows', () => {
+    // Which is the whole reason the swatch is layered rather than solid: a
+    // semi-transparent fill over a flat panel is indistinguishable from an
+    // opaque paler one.
+    const wrapped = cssAsImage('rgba(255, 0, 0, 0.25)');
+    expect(wrapped).toContain('0.25');
+  });
+
+  it('turns every solid paint into something usable', () => {
+    for (const colour of ['#fff', 'red', 'hsl(200 50% 40%)']) {
+      expect(cssAsImage(paintToCss({ type: 'solid', color: colour }))).toContain('linear-gradient(');
+    }
   });
 });

@@ -267,16 +267,32 @@ function spline(points: readonly Point[]): string {
 }
 
 /**
- * An ellipse, drawn as one continuous wandering loop — twice.
+ * A circle or an ellipse, drawn by hand.
  *
- * The points are scattered around the true ellipse in both radius and angle,
- * and the loop is closed **past** where it started so the two ends cross
- * instead of meeting. That crossing is the tell that a circle was drawn rather
- * than plotted, and it is the thing the previous implementation could not
- * produce because it lifted the pen at every sample.
+ * ## Why this is four lines and not forty
  *
- * The second pass starts at a different angle and scatters differently, so the
- * two laps diverge the way a real second lap does.
+ * It used to have a construction of its own: `prof.steps` samples around the
+ * ellipse — **seven** of them at Heavy — each displaced by an independent
+ * random amount in x and y, splined together. Both halves of that were wrong,
+ * and `roughLoop` already had both right for hearts and curved lines.
+ *
+ * The sample count fell as the roughness rose, so a heavier hand did not draw a
+ * rougher circle, it drew a *lower-resolution* one: seven control points is a
+ * blobby heptagon-ish spline, not a hurried circle. Density decides how
+ * faithfully the lap follows the true curve and amplitude decides how far the
+ * pen wanders — conflating them is the single reason curves looked worse than
+ * corners, where the two were always separate.
+ *
+ * And the displacement was in x and y, which on a curve is mostly *tangential*:
+ * it slides samples along the outline, bunching and stretching them, rather
+ * than varying the radius. A hand-drawn circle is out of round — the radius
+ * drifts — it is not unevenly paced. `roughLoop` drifts along the normal with a
+ * low-pass filtered offset, which is what "a hand does not shake, it drifts"
+ * means in arithmetic.
+ *
+ * So an ellipse is now a loop like any other closed curve, and the two are
+ * drawn by one function. A circle and a heart on the same board are made of the
+ * same marks, which they visibly were not before.
  */
 export function roughEllipse(
   cx: number,
@@ -285,42 +301,16 @@ export function roughEllipse(
   ry: number,
   options: { seed: number; level?: SketchLevel }
 ): string {
-  const prof = profileFor(options.level);
-  const rand = rng(options.seed);
-  const step = (Math.PI * 2) / prof.steps;
-  const laps: string[] = [];
-
-  for (let pass = 0; pass < prof.passes; pass++) {
-    // Each lap is a slightly different ellipse, not the same one traced twice.
-    const lrx = rx + jitter(rx * 0.04, rand);
-    const lry = ry + jitter(ry * 0.04, rand);
-    const from = rand() * Math.PI * 2;
-    // How far past the start the loop runs before it stops — the curve's
-    // equivalent of an edge's overshoot, and scaled by the same parameter.
-    const overlap = step * (0.25 + prof.overshoot * 0.4) * (0.7 + rand() * 0.6);
-
-    const pts: Point[] = [];
-    for (let a = from; a < from + Math.PI * 2 - 0.01; a += step) {
-      pts.push({
-        x: cx + lrx * Math.cos(a) + jitter(prof.offset, rand),
-        y: cy + lry * Math.sin(a) + jitter(prof.offset, rand),
-      });
-    }
-    // The overshoot: two more samples carrying the stroke past its own
-    // beginning, pulled very slightly inward so the crossing reads as a hand
-    // closing a loop rather than as a bulge.
-    pts.push({
-      x: cx + lrx * Math.cos(from + Math.PI * 2 + overlap * 0.5) + jitter(prof.offset, rand),
-      y: cy + lry * Math.sin(from + Math.PI * 2 + overlap * 0.5) + jitter(prof.offset, rand),
-    });
-    pts.push({
-      x: cx + 0.98 * lrx * Math.cos(from + overlap) + jitter(prof.offset, rand),
-      y: cy + 0.98 * lry * Math.sin(from + overlap) + jitter(prof.offset, rand),
-    });
-
-    laps.push(splineOpen(pts));
-  }
-  return laps.join(' ');
+  /**
+   * Forty-eight samples of the true ellipse, handed to the loop sketcher.
+   *
+   * The ring is the *input outline*, not the drawing: `roughLoop` re-samples it
+   * by arc length at a density it chooses from the shape's size, so this only
+   * has to be fine enough that the polygon it walks is indistinguishable from
+   * the curve. It is the same ring the hachure fills against, which is why the
+   * shading and the outline agree about where the edge is.
+   */
+  return roughLoop(ellipseRing(cx, cy, rx, ry), { ...options, closed: true });
 }
 
 /**

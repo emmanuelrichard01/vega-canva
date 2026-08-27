@@ -864,6 +864,20 @@ fixed to take part at all — it computed its own spacing from the shape's
 diagonal and discarded the gap it was handed, which made the one style whose
 whole language is density the one style that had none.
 
+**Curves are drawn by the same function hearts are.** An ellipse had a
+construction of its own, and both halves of it were wrong in ways the loop
+sketcher had already fixed. Its sample count came from the roughness profile —
+twelve at Light, **seven** at Heavy — so a heavier hand did not draw a rougher
+circle, it drew a *lower-resolution* one, and Heavy came out as a blobby
+seven-point spline. Density decides how faithfully a lap follows the true curve;
+amplitude decides how far the pen wanders. Corners always kept those separate;
+curves did not. And its displacement was in x and y, which on a curve is mostly
+*tangential* — it slid samples along the outline rather than varying the radius.
+A hand-drawn circle is out of round; it is not unevenly paced. `roughLoop`
+already sampled by arc length at a density taken from the shape's size and
+drifted along the normal with a low-pass filtered offset, so an ellipse is now a
+closed loop like any other and a circle and a heart are made of the same marks.
+
 **An inner shadow works on a sketch now**, and did not before: the renderer's
 sketch branch returns before its effects, so the control was offered on every
 sketched shape and honoured on none of them. It clips to the **drawn

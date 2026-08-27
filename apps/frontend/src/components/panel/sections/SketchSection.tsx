@@ -116,8 +116,22 @@ export const SketchSection: React.FC<SketchSectionProps> = ({
           })()}
       </Row>
 
+      {/*
+        The section is two decisions, and the rule says so.
+
+        Above it: how the marks are made — the one choice that changes whether
+        this is a drawing at all. Below it: what happens to the interior, which
+        is a different question and only exists once the first has an answer.
+        Four flat rows read as four unrelated settings; a rule costs a pixel and
+        makes the dependency legible.
+      */}
+      {capabilities.supportsFill && level && allClosed && <div className="prop-rule" role="presentation" />}
+
       {capabilities.supportsFill && level && allClosed && (
-        <Row label="Shading" hint="How the inside is filled: flat colour, or pen strokes laid across it.">
+        /* Stacked, because five tiles do not fit the 84px control column — they
+           wrapped three-and-two, which reads as a mistake next to the four
+           above them that happen to fit. */
+        <Row stack label="Shading" hint="How the inside is filled: flat colour, or pen strokes laid across it.">
           {(() => {
             const picked = sharedPaint((a) => a.fillStyle ?? 'solid');
             return (
