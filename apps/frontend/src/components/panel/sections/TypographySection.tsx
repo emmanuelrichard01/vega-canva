@@ -12,7 +12,7 @@ import {
   Minus,
   MoveHorizontal,
   MoveVertical,
-  Sparkles,
+  WandSparkles,
   Square,
   Strikethrough,
   Type,
@@ -313,7 +313,19 @@ export const TypographySection: React.FC<TypographySectionProps> = ({
 
       <Accordion
         title="Text effects"
-        icon={<Sparkles size={13} />}
+        /**
+         * `WandSparkles`, not `Sparkles`.
+         *
+         * The dock's Forces tool is a bare `Sparkles`, so a text-effects
+         * section and a physics tool were the same mark on the same screen.
+         * Neither is wrong alone; sharing is what makes them wrong.
+         *
+         * The same glyph the contextual rail uses for this — which is the
+         * other half of the rule: one concept, one mark. The rail's "Effects"
+         * popover and this section are the same feature reached two ways, so
+         * they must look like it.
+         */
+        icon={<WandSparkles size={13} />}
         badge={activeTextEffects(typography)}
         defaultOpen={Boolean(typography.highlight || typography.outline || typography.glow)}
       >

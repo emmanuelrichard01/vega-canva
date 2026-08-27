@@ -10118,9 +10118,13 @@ body[data-zen='physics'] .forces-handle { bottom: 32px; }
 /* A label and its qualifier share one line: the label says what the control
    is, the aside says what it applies to. Set apart by case and weight rather
    than by a second row, which would put a whole line of chrome between a
-   heading and the thing it heads. */
-.flyout-field:has(.flyout-field__aside) > .flyout-field__label {
-  display: inline-flex;
+   heading and the thing it heads.
+
+   The aside is nested *inside* the label rather than beside it. As a sibling
+   the two stacked -- the field is a column, and no amount of styling the label
+   moves an element that is not in it. */
+.flyout-field__label:has(.flyout-field__aside) {
+  display: flex;
   align-items: baseline;
   gap: 6px;
 }

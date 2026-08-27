@@ -794,6 +794,24 @@ geometry, so a rectangle made from an arrow carried the arrow's endpoints,
 profile and caps — invisible until you swapped back, when the line reappeared
 somewhere it had never been.
 
+**The profiles were measured rather than eyeballed.** A wavy line's target
+period was 36 units, so a 600-unit line came out with seventeen repeats at an
+amplitude of eight — a texture applied to a straight line. Amplitude is a
+fraction of the period, so a tight period is a shallow one too: one number
+caused both faults, and 72 was chosen by drawing at 600 and comparing. The coil
+moved onto the same figure — ten loops read as a row of small curls competing
+with each other, seven are large enough to be a coil — which also gives the
+three a shared rhythm.
+
+And their **end caps now point along the run**. Measured on a 400-unit line, the
+angle each profile's last segment makes with its own axis: curved ±20.6°, wavy
+55.2°, zigzag 43.8°, coil 0°. A sine crosses its axis at the steepest part of
+the wave, so a wavy arrow's head was drawn fifty-five degrees off the direction
+the line goes. The coil was already right, by accident, because it enters and
+leaves on flat leads — so the four profiles disagreed with each other about the
+same question, which is what settled it. `capsFollowAxis` names the two that
+need it; an arc keeps its tangent, because that *is* the arc.
+
 ### Colour — `engine/model/colorRamp.ts`
 
 Every picker offered two things: a fixed set of swatches, and a saturation-value

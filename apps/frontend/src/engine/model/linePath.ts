@@ -42,6 +42,14 @@ export const LINE_PROFILE_LABELS: Record<LineProfile, string> = {
   coil: 'Coil',
 };
 
+/**
+ * The world units one repeat should occupy, when nobody has said otherwise.
+ *
+ * See {@link dynamicWaves} for how this figure was chosen and why every
+ * repeating profile shares it.
+ */
+export const TARGET_PERIOD = 72;
+
 export const MIN_WAVES = 1;
 export const MAX_WAVES = 40;
 
@@ -51,13 +59,41 @@ export const MAX_AMPLITUDE_SCALE = 2.0;
 export const DEFAULT_AMPLITUDE_SCALE = 1.0;
 
 /**
- * Computes an aesthetically balanced, dynamic loop/wave count based on line length.
- * Keeps loop density consistent and proportional at any line length.
+ * How many repeats a run of this length should have, when nobody has said.
+ *
+ * Density rather than a count, so the mark reads the same at any length —
+ * a fixed six repeats makes a short line a squiggle and a long one a flat
+ * ripple.
+ *
+ * ## The period, and why it moved
+ *
+ * It was 36 units for a wave and a zigzag, which is too tight: a 600-unit line
+ * came out with **seventeen** repeats at an amplitude of eight, which reads as
+ * a texture applied to a straight line rather than as a wavy line. Since
+ * amplitude is a fraction of the period, a tight period is also a *shallow*
+ * one — the two faults are the same fault, and one number fixes both.
+ *
+ * Seventy-two was chosen by drawing at 600 units and comparing: eight repeats
+ * of a seventy-five-unit period, about eighteen deep, is unmistakably a wave at
+ * a glance and still fine at 25% zoom. The amplitude ratio is untouched — at
+ * this period it lands where it should on its own, and moving both would make
+ * neither answerable.
+ *
+ * The coil takes the same figure, which is a change from the 48 it had. Drawn
+ * side by side at 500 units, ten loops read as a row of small curls competing
+ * with each other; seven are large enough to be a coil. Its own span rule then
+ * gives each one about half as much height again, because the same run is
+ * divided among fewer of them. One period for every repeating profile also
+ * means the three share a rhythm, which is what makes them look like one
+ * family rather than three separate marks.
+ *
+ * This changes existing lines that never chose a count — which is the trade,
+ * and it is the right one: they did not choose the old density either, they
+ * inherited it, and it was wrong.
  */
 export function dynamicWaves(length: number, profile: LineProfile = 'wavy'): number {
   if (profile === 'straight' || profile === 'curved') return 1;
-  const targetPeriod = profile === 'coil' ? 48 : 36;
-  const count = Math.round(length / targetPeriod);
+  const count = Math.round(length / TARGET_PERIOD);
   return Math.max(MIN_WAVES, Math.min(MAX_WAVES, count || 1));
 }
 

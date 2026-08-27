@@ -394,16 +394,51 @@ describe('amplitude / loop size scaling', () => {
 
 describe('smart and dynamic loop / wave count', () => {
   it('calculates proportional loop counts for coil based on line length', () => {
-    expect(dynamicWaves(48, 'coil')).toBe(1);
-    expect(dynamicWaves(144, 'coil')).toBe(3);
-    expect(dynamicWaves(300, 'coil')).toBe(6);
-    expect(dynamicWaves(600, 'coil')).toBe(13);
+    /**
+     * The same period as a wave and a zigzag, which is a change from the 48 it
+     * had. Drawn side by side at 500 units, ten loops read as a row of small
+     * curls competing with each other; seven are large enough to be a coil,
+     * because the span rule then gives each one half as much height again.
+     */
+    expect(dynamicWaves(72, 'coil')).toBe(1);
+    expect(dynamicWaves(144, 'coil')).toBe(2);
+    expect(dynamicWaves(300, 'coil')).toBe(4);
+    expect(dynamicWaves(600, 'coil')).toBe(8);
+  });
+
+  it('gives every repeating profile the same rhythm', () => {
+    // One period for all three is what makes them look like one family rather
+    // than three separate marks.
+    for (const length of [180, 400, 900]) {
+      expect(dynamicWaves(length, 'coil')).toBe(dynamicWaves(length, 'wavy'));
+      expect(dynamicWaves(length, 'zigzag')).toBe(dynamicWaves(length, 'wavy'));
+    }
   });
 
   it('calculates proportional wave counts for wavy/zigzag based on line length', () => {
+    /**
+     * A seventy-two-unit period. It was thirty-six, which put seventeen
+     * repeats on a six-hundred-unit line at an amplitude of eight -- a texture
+     * applied to a straight line rather than a wavy line. Amplitude is a
+     * fraction of the period, so a tight period is also a shallow one; the two
+     * faults are the same fault.
+     */
     expect(dynamicWaves(36, 'wavy')).toBe(1);
-    expect(dynamicWaves(180, 'wavy')).toBe(5);
-    expect(dynamicWaves(360, 'zigzag')).toBe(10);
+    expect(dynamicWaves(180, 'wavy')).toBe(3);
+    expect(dynamicWaves(360, 'zigzag')).toBe(5);
+    expect(dynamicWaves(600, 'wavy')).toBe(8);
+  });
+
+  it('keeps a wave deep enough to read at the density it picks', () => {
+    /**
+     * The measurement that chose the period: at 600 units the crest-to-trough
+     * has to be a visible fraction of the run, not a ripple on it. Eight of 75
+     * units, about eighteen deep, is unmistakably a wave at a glance.
+     */
+    const pts = linePoints(A, { x: 600, y: 0 }, 'wavy');
+    const amplitude = Math.max(...pts.map((p) => Math.abs(p.y)));
+    expect(amplitude).toBeGreaterThan(15);
+    expect(amplitude).toBeLessThan(24);
   });
 
   it('uses dynamic waves in linePoints when waves is undefined', () => {

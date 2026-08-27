@@ -1291,8 +1291,10 @@ export const ToolWorkspace: React.FC<Props> = ({ activeToolId, onOpenDiagram, on
                     be worse than a caption. */}
                 <div className="flyout-rule" role="presentation" />
                 <div className="flyout-field">
-                  <span className="flyout-field__label">Style</span>
-                  <span className="flyout-field__aside">two-point lines</span>
+                  <span className="flyout-field__label">
+                    Style
+                    <span className="flyout-field__aside">two-point lines</span>
+                  </span>
                   <SegmentedControl
                     ariaLabel="Line style"
                     value={lineProfile}
