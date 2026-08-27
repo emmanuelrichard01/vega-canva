@@ -603,6 +603,9 @@ function normalizeShapeGeometry(raw: any): ShapeGeometry {
       // reader assumes anyway, and writing it would put a field on every
       // multi-point line that nothing ever reads.
       if (bends.some((bend) => bend !== null)) geometry.bends = bends;
+      // Stored only when true, so a line that was never smoothed does not carry
+      // a field restating the default.
+      if (raw?.geometry?.smooth === true) geometry.smooth = true;
     }
   }
 

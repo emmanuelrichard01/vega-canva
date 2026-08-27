@@ -824,6 +824,21 @@ export interface ShapeGeometry {
    */
   bends?: Array<{ u: number; v: number } | null>;
   /**
+   * Draw the run as one smooth curve through its points, corners rounded.
+   *
+   * A *different way of drawing the same vertices* rather than a shape of its
+   * own — a centripetal Catmull-Rom spline, which is what makes a sharp turn
+   * stop being sharp. Per-segment `bends` cannot do that: bowing a segment
+   * bends its middle and leaves its ends where they were, so the corner
+   * survives. See `polyline.ts`.
+   *
+   * Mutually exclusive with `bends` by construction: the spline decides every
+   * segment's curvature from the neighbouring points, so a bend would be a
+   * second opinion about the same segment. The bends are kept underneath while
+   * this is on, so turning it off restores exactly the shape that was there.
+   */
+  smooth?: boolean;
+  /**
    * Star only: inner radius as a fraction of the outer radius, clamped to
    * `MIN_STAR_RATIO`..`MAX_STAR_RATIO`. At 1 the points vanish and the shape
    * becomes a regular polygon of twice the point count, which is a legitimate

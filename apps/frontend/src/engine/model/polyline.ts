@@ -79,6 +79,15 @@ export const MAX_BEND = 4;
 /** A line keeps at least this many vertices, or it is not a line. */
 export const MIN_VERTICES = 2;
 
+/**
+ * How much a smoothing pass bows each segment.
+ *
+ * Chosen so a right-angled corner reads as clearly rounded without the run
+ * ballooning away from the points it was drawn through — the curve is meant to
+ * be recognisably the same route.
+ */
+export const CURVE_STRENGTH = 0.5;
+
 const clamp = (value: number, low: number, high: number) => Math.min(high, Math.max(low, value));
 
 /**
@@ -192,9 +201,18 @@ export function segmentPoints(a: Point, b: Point, bend: Bend | null | undefined)
  * caps, the sketcher, the outline and the exporter already do for a profiled
  * line, and the reason none of them has to learn that bends exist.
  */
-export function polylinePoints(vertices: readonly Point[], bends?: Bends | null): Point[] {
+export function polylinePoints(
+  vertices: readonly Point[],
+  bends?: Bends | null,
+  /** Draw it as one spline through the points instead — see `catmullRomPoints`. */
+  smooth?: boolean
+): Point[] {
   if (vertices.length === 0) return [];
   if (vertices.length === 1) return [vertices[0]];
+  // Checked before the bends are read, not merged with them: the two describe
+  // the same segments and one of them has to be in charge. See the note on
+  // `catmullRomPoints` for why they are alternatives rather than layers.
+  if (smooth) return catmullRomPoints(vertices);
 
   const out: Point[] = [vertices[0]];
   for (let i = 0; i + 1 < vertices.length; i += 1) {
@@ -411,4 +429,101 @@ export function normalizeVertices(raw: unknown): Point[] | null {
     out.push({ x: p.x, y: p.y });
   }
   return out.length >= MIN_VERTICES ? out : null;
+}
+
+/**
+ * The run as one smooth curve through every point, corners rounded.
+ *
+ * ## Why this is not a set of bends
+ *
+ * The first attempt was: give each segment a bend and let the run come out
+ * curvy. It does come out curvy, and it is the wrong answer — bowing a segment
+ * bends the *middle* of it and leaves the ends where they were, so every corner
+ * stayed a corner with two arcs meeting at an angle. "Make it curvy" means the
+ * sharp turns stop being sharp, and no arrangement of per-segment bends can do
+ * that: a quadratic that leaves `A` along one direction and arrives at `B`
+ * along another is two constraints on two degrees of freedom, and for a run
+ * that turns back on itself there is no solution at all. A symmetric zigzag is
+ * the counterexample — the tangents its two ends demand are parallel.
+ *
+ * So smoothing is not a bend at all. It is a different way of *drawing the same
+ * points*: a **centripetal Catmull-Rom spline**, which passes through every
+ * vertex, leaves and arrives at each one along a single shared tangent — that
+ * is what makes the corner disappear — and is chosen over the uniform variant
+ * because uniform Catmull-Rom loops on itself when the points are unevenly
+ * spaced, which a hand-drawn route always is.
+ *
+ * ## And why the two cannot both apply
+ *
+ * The spline decides each segment's curvature from where the *neighbouring*
+ * points are. A per-segment bend is a second opinion about the same segment,
+ * and the two would have to be reconciled by one of them silently winning. So
+ * `smooth` and `bends` are alternatives, not layers: the editor withdraws the
+ * curve handles while a line is smooth, and the bends are kept untouched
+ * underneath so that turning it off gives back exactly the shape that was there
+ * before.
+ */
+export function catmullRomPoints(vertices: readonly Point[]): Point[] {
+  const n = vertices.length;
+  if (n < 3) return [...vertices];
+
+  const out: Point[] = [vertices[0]];
+  for (let i = 0; i + 1 < n; i += 1) {
+    // The two neighbours, clamped at the ends — which is what makes the first
+    // and last segments leave and arrive along the run rather than flaring off.
+    const p0 = vertices[i - 1] ?? vertices[i];
+    const p1 = vertices[i];
+    const p2 = vertices[i + 1];
+    const p3 = vertices[i + 2] ?? vertices[i + 1];
+    const [c1, c2] = catmullControls(p0, p1, p2, p3);
+
+    const f = frame(p1, p2);
+    const rough = clamp(Math.round((f?.length ?? 0) / UNITS_PER_SAMPLE), MIN_STEPS, MAX_STEPS);
+    for (let step = 1; step <= rough; step += 1) {
+      const t = step / rough;
+      const u = 1 - t;
+      out.push({
+        x: u * u * u * p1.x + 3 * u * u * t * c1.x + 3 * u * t * t * c2.x + t * t * t * p2.x,
+        y: u * u * u * p1.y + 3 * u * u * t * c1.y + 3 * u * t * t * c2.y + t * t * t * p2.y,
+      });
+    }
+  }
+  return out;
+}
+
+/**
+ * The cubic controls for one centripetal Catmull-Rom segment.
+ *
+ * The `alpha = 0.5` exponent on each chord length is the whole difference
+ * between this and the uniform form, and it is the difference between a curve
+ * that rounds a tight corner and one that ties a knot in it.
+ */
+function catmullControls(p0: Point, p1: Point, p2: Point, p3: Point): [Point, Point] {
+  const d = (a: Point, b: Point) => Math.sqrt(Math.hypot(b.x - a.x, b.y - a.y)) || 1e-6;
+  const t01 = d(p0, p1);
+  const t12 = d(p1, p2);
+  const t23 = d(p2, p3);
+
+  const m1 = {
+    x: (p2.x - p1.x + t12 * ((p1.x - p0.x) / t01 - (p2.x - p0.x) / (t01 + t12))) / 3,
+    y: (p2.y - p1.y + t12 * ((p1.y - p0.y) / t01 - (p2.y - p0.y) / (t01 + t12))) / 3,
+  };
+  const m2 = {
+    x: (p2.x - p1.x + t12 * ((p3.x - p2.x) / t23 - (p3.x - p1.x) / (t12 + t23))) / 3,
+    y: (p2.y - p1.y + t12 * ((p3.y - p2.y) / t23 - (p3.y - p1.y) / (t12 + t23))) / 3,
+  };
+  return [
+    { x: p1.x + m1.x, y: p1.y + m1.y },
+    { x: p2.x - m2.x, y: p2.y - m2.y },
+  ];
+}
+
+/**
+ * Every segment straight again.
+ *
+ * Kept for the case where a bend has to be cleared outright — deleting a vertex
+ * merges two segments, and the merged one has no curve either half described.
+ */
+export function straightBends(vertexCount: number): Bends {
+  return new Array(Math.max(0, vertexCount - 1)).fill(null);
 }

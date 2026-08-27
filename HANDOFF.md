@@ -300,6 +300,20 @@ Each was learned from a real defect here and is documented at its source.
     cheapest thing you can do is write the assertion it implies — that is how
     this one was found, and it was one line.
 
+15. **Curving a segment is not rounding a corner.** They sound like the same
+    request and they are different operations: a bend moves the *middle* of a
+    segment and leaves its ends alone, so a run of bent segments still has every
+    one of its corners. Rounding needs the run to arrive at a point and leave it
+    along one shared direction — which, with one quadratic per segment and the
+    vertices fixed, is over-determined and sometimes unsolvable. That is why
+    `smooth` is a flag that changes how the points are *drawn* rather than a
+    pass that writes bends. The general lesson: when a feature cannot be
+    expressed in the representation you have, say so and change the
+    representation, rather than shipping the nearest thing it can express.
+16. **A glyph means one thing.** Two controls sharing an icon is how someone
+    learns the wrong thing about one of them, and it is invisible to every test
+    here. The dock's tools (`ToolWorkspace.tsx`) own their glyphs; grep before
+    you pick one for the rail.
 Konva specifics that have each cost a bug: `fillPriority` must be set on every
 branch (Konva leaves stale fill props in place, and React does not unset props
 it stops passing); filters need an explicit `cache()` and the cache must be
@@ -663,6 +677,35 @@ Editing a text object does exactly that.
 **The shades ramp.** Invariant 14: the docstring described behaviour the code
 never had, and the picker keyed swatches by colour so the duplicate steps at
 white and black collapsed rather than merely repeating.
+
+## 4a-viii. Multi-point lines, and the icons
+
+**A line has a run of vertices now**, not two endpoints. Drag for the straight
+line; click once per corner for a route. Double-click or Enter opens the point
+editor. `engine/model/polyline.ts` is the geometry (51 tests),
+`engine/tools/polylineSession.ts` the drawing gesture,
+`engine/interaction/lineEdit.ts` the mode, `lineVertexActions.ts` the commands.
+
+**Rounding the corners is not bending the segments**, and getting that wrong
+cost a round trip. Bowing each segment gives a curvy line with every corner
+intact — a bend bends the *middle* of a segment. Rounding needs the run to leave
+and arrive at a point along one direction, which per-segment quadratics cannot
+promise, so `geometry.smooth` draws a centripetal Catmull-Rom spline instead.
+See invariant 15.
+
+**Two things were only found by looking at it**, which is worth noting because
+the Chrome extension had not connected for two sessions before this one:
+the first smoothing pass measured how far off the chord each neighbour *sat*,
+scaled by the chord — so a short segment with a distant neighbour threw a bulge
+right off the drawing. And the properties panel still offered line profiles for
+a multi-point line after the toolbar's copy of that gate had been added. Both
+are pinned by tests now; neither would have shown up in one.
+
+**Two icon collisions**, reported by the user and worth the rule: the rail's
+Effects popover wore `Sparkles`, which is the Forces tool's glyph in the dock,
+and the round-corners button wore `Spline`, which is the Connect tool's. Neither
+was wrong alone; sharing is what made them wrong. Before adding a rail icon,
+grep `ToolWorkspace.tsx` for the glyph.
 
 ## 4b. What the recent sessions changed
 

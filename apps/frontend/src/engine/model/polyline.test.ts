@@ -14,6 +14,8 @@ import {
   polylinePoints,
   removeVertex,
   segmentPoints,
+  catmullRomPoints,
+  straightBends,
   type Bends,
 } from './polyline';
 import type { Point } from './schema';
@@ -354,5 +356,107 @@ describe('isMultiPoint / hasBend', () => {
     expect(hasBend([null, null])).toBe(false);
     expect(hasBend([null, { u: 0.5, v: 0.1 }])).toBe(true);
     expect(hasBend(undefined)).toBe(false);
+  });
+});
+
+describe('drawing a run as a curve', () => {
+  const corner: Point[] = [
+    { x: 0, y: 0 },
+    { x: 100, y: 0 },
+    { x: 100, y: 100 },
+  ];
+
+  /** The direction the curve is travelling as it passes sample `i`. */
+  const heading = (points: Point[], i: number) =>
+    Math.atan2(points[i + 1].y - points[i].y, points[i + 1].x - points[i].x);
+
+  it('takes the kink out of the corner', () => {
+    /**
+     * The thing per-segment bends could not do. Bowing a segment bends its
+     * *middle* and leaves its ends where they were, so a sharp turn stayed a
+     * sharp turn between two arcs. Here the run arrives at the corner and
+     * leaves it along one shared direction — the turn is spread across the
+     * curve instead of happening all at one point.
+     *
+     * The corner is still *on* the curve, and should be: a route goes through
+     * the points you placed. What changes is that it no longer stops there to
+     * turn ninety degrees.
+     */
+    const drawn = catmullRomPoints(corner);
+    const at = drawn.findIndex((p) => Math.hypot(p.x - 100, p.y) < 1e-6);
+    expect(at).toBeGreaterThan(0);
+
+    // No single step turns by anything like the ninety degrees the raw corner
+    // does -- which is exactly the difference between a kink and a curve.
+    let sharpest = 0;
+    for (let i = 0; i + 2 < drawn.length; i += 1) {
+      sharpest = Math.max(sharpest, Math.abs(heading(drawn, i + 1) - heading(drawn, i)));
+    }
+    expect(sharpest).toBeLessThan(Math.PI / 8);
+  });
+
+  it('still passes through every point the line was drawn through', () => {
+    const drawn = catmullRomPoints(corner);
+    for (const vertex of corner) {
+      const nearest = Math.min(...drawn.map((p) => Math.hypot(p.x - vertex.x, p.y - vertex.y)));
+      expect(nearest).toBeLessThan(1e-6);
+    }
+  });
+
+  it('starts and finishes exactly on the run’s own ends', () => {
+    // Whatever it does in between, a line still runs from where you put its
+    // first point to where you put its last.
+    const drawn = catmullRomPoints(corner);
+    expect(drawn[0]).toEqual(corner[0]);
+    expect(drawn[drawn.length - 1]).toEqual(corner[corner.length - 1]);
+  });
+
+  it('does not tie a knot at a hairpin', () => {
+    /**
+     * The reason this is *centripetal* Catmull-Rom rather than the uniform
+     * form. Uniform loops on itself the moment the points are unevenly spaced,
+     * which a hand-drawn route always is.
+     */
+    const hairpin: Point[] = [
+      { x: 0, y: 0 },
+      { x: 200, y: 0 },
+      { x: 10, y: 12 },
+      { x: 200, y: 24 },
+    ];
+    const drawn = catmullRomPoints(hairpin);
+    for (const p of drawn) {
+      expect(p.x).toBeGreaterThan(-70);
+      expect(p.x).toBeLessThan(270);
+    }
+  });
+
+  it('leaves a straight run straight', () => {
+    const straight: Point[] = [{ x: 0, y: 0 }, { x: 50, y: 0 }, { x: 100, y: 0 }];
+    for (const p of catmullRomPoints(straight)) expect(p.y).toBeCloseTo(0, 9);
+  });
+
+  it('has nothing to smooth below three points', () => {
+    // Two points make one straight segment; there is no corner to round.
+    expect(catmullRomPoints([{ x: 0, y: 0 }, { x: 10, y: 0 }])).toEqual([
+      { x: 0, y: 0 }, { x: 10, y: 0 },
+    ]);
+  });
+
+  it('is what polylinePoints draws when the run is smooth', () => {
+    /**
+     * Checked before the bends are read, not merged with them: the two describe
+     * the same segments and one of them has to be in charge.
+     */
+    const bends: Bends = [{ u: 0.5, v: 0.4 }, null];
+    expect(polylinePoints(corner, bends, true)).toEqual(catmullRomPoints(corner));
+    expect(polylinePoints(corner, bends, false)).not.toEqual(catmullRomPoints(corner));
+  });
+});
+
+describe('straightBends', () => {
+  it('is a straight slot for every segment', () => {
+    expect(straightBends(4)).toEqual([null, null, null]);
+    expect(straightBends(1)).toEqual([]);
+    expect(straightBends(0)).toEqual([]);
   });
 });

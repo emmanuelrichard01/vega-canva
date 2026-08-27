@@ -9730,6 +9730,11 @@ body[data-zen='physics'] .forces-handle { bottom: 32px; }
   cursor: pointer;
   white-space: nowrap;
   user-select: none;
+  /* The strip is a row of fifteen now that every section has a tab of its own,
+     and a flex row shrinks its children before it scrolls -- so without this
+     the labels compress into each other rather than overflowing the way the
+     `overflow-x: auto` above intends. */
+  flex-shrink: 0;
   transition: all 0.15s ease;
 }
 
@@ -9854,9 +9859,40 @@ body[data-zen='physics'] .forces-handle { bottom: 32px; }
 }
 
 .help-modal__empty {
-  font-size: var(--text-base);
+  /* Spans both columns: it is the answer to the whole panel, not a note in one
+     half of it. */
+  grid-column: 1 / -1;
+  margin: 0;
+  font-size: var(--text-sm);
   color: var(--text-secondary);
 }
+
+.help-modal__empty kbd {
+  font: inherit;
+  font-family: var(--font-mono, ui-monospace, monospace);
+  padding: 1px 5px;
+  border: 1px solid var(--border-divider);
+  border-radius: 4px;
+}
+
+/* The tips column is not always there -- a tab that shows only shortcuts, or a
+   search that matches none of them -- and the reference should have the width
+   back when it is not. */
+.help-modal__body--wide {
+  grid-template-columns: minmax(0, 1fr);
+}
+
+/* Was six inline style properties on the element. A clear button is a button. */
+.help-modal__clear {
+  display: flex;
+  padding: 0;
+  border: none;
+  background: transparent;
+  color: var(--text-tertiary);
+  cursor: pointer;
+}
+
+.help-modal__clear:hover { color: var(--text-secondary); }
 
 /* One column once the tips would be a sliver, and once two columns of keys
    would each be too narrow to hold a description on one line. */

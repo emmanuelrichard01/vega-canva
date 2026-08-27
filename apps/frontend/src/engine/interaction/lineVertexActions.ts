@@ -41,3 +41,41 @@ export function deletePickedVertex(node: ShapeNode, vertex: number | null): bool
   lineEdit.pick(Math.min(vertex, next.vertices.length - 1));
   return true;
 }
+
+/**
+ * Round every corner of a line at once, or give the corners back.
+ *
+ * ## Why this is a flag and not a pass over the bends
+ *
+ * The first version wrote a bend into every segment, which produced a curvy
+ * line with its corners intact — bowing a segment bends the middle of it and
+ * leaves the ends where they were, so every sharp turn was still a sharp turn
+ * between two arcs. Rounding a corner means the run leaves and arrives at that
+ * point along one shared direction, and no arrangement of per-segment
+ * quadratics can promise that; see `catmullRomPoints`.
+ *
+ * So this sets `geometry.smooth` and the renderer draws a spline through the
+ * same points. Nothing is destroyed: any bends the user had dragged sit
+ * underneath untouched, and turning it off gives back exactly the shape that
+ * was there. That is the whole reason it is a flag — a pass that rewrote the
+ * bends could not be undone without remembering what it overwrote.
+ */
+export function setLineCurved(node: ShapeNode, curved: boolean): void {
+  const vertices = worldVertices(node);
+  updateNode(
+    node.id,
+    lineNodeFromVertices(
+      vertices,
+      localBends(node, vertices.length),
+      // `undefined` rather than `false`, so a line that was never smoothed does
+      // not carry a field restating the default.
+      { ...node.geometry, smooth: curved ? true : undefined },
+      node.appearance?.stroke?.width ?? 2
+    )
+  );
+}
+
+/** Whether the run is currently drawn as a curve, so the control can say which. */
+export function isLineCurved(node: ShapeNode): boolean {
+  return node.geometry.smooth === true;
+}

@@ -6,8 +6,8 @@ import {
   AlignVerticalJustifyStart, AlignVerticalSpaceAround, Bold, BringToFront, Copy, Crop, Download,
   Droplet, FlipHorizontal, FlipVertical, Group, ImageIcon, Italic, List, ListOrdered, Layers, Lock, Menu, MessageSquare,
   MessageSquarePlus, Mic, Minus, PenLine, Pin, Scissors, SendToBack, SmilePlus,
-  SquaresExclude, SquaresIntersect, SquaresSubtract, SquaresUnite, Square, StickyNote, Spline,
-  Strikethrough, Trash2, Type, Underline, Ungroup, Unlock, Sparkles,
+  SquaresExclude, SquaresIntersect, SquaresSubtract, SquaresUnite, Square, StickyNote, Waypoints, Radius, WandSparkles,
+  Strikethrough, Trash2, Type, Underline, Ungroup, Unlock,
 } from 'lucide-react';
 import { TEXT_PRESETS, isTextPresetActive } from './panel/textEffectPresets';
 
@@ -23,6 +23,7 @@ import { railVeil } from '../engine/interaction/railVeil';
 import { lineEdit } from '../engine/interaction/lineEdit';
 import { hasBend, isMultiPoint } from '../engine/model/polyline';
 import { swapShapeKind } from '../engine/model/shapeSwap';
+import { setLineCurved } from '../engine/interaction/lineVertexActions';
 import { requestEditOnMount } from '../engine/interaction/pendingEdit';
 import { textEditing } from '../engine/interaction/textEditing';
 import { Palette, Shuffle } from 'lucide-react';
@@ -1250,6 +1251,8 @@ export const ObjectContextToolbar: React.FC<Props> = ({ selectedId, selectedIds,
     (isMultiPoint(node.geometry.vertices) || hasBend(node.geometry.bends));
   /** Whether this line's point editor is open, so the button can close it. */
   const editingLine = lineSelection?.nodeId === node.id;
+  /** Whether the run is drawn as a curve, so the toggle reads correctly. */
+  const lineCurved = node.type === 'shape' && node.geometry.smooth === true;
 
   /**
    * Whether there is any type here to style.
@@ -1870,7 +1873,14 @@ export const ObjectContextToolbar: React.FC<Props> = ({ selectedId, selectedIds,
                   ]}
                 />
               </RailPopover>
-              <RailPopover label="Effects" trigger={<Sparkles size={16} />} align="start">
+              {/*
+                `WandSparkles`, not `Sparkles`: the Forces tool in the dock is a
+                bare `Sparkles`, so a shadow-and-blur menu and a physics tool
+                were the same mark on the same screen. Neither is wrong on its
+                own; sharing is what makes them wrong. The wand keeps the
+                "applied effect" reading and is unmistakably a different glyph.
+              */}
+              <RailPopover label="Effects" trigger={<WandSparkles size={16} />} align="start">
                 <span className="ctx-popover__label">Text Effects</span>
                 <div style={{ display: 'grid', gridTemplateColumns: 'repeat(5, 1fr)', gap: '4px', marginBottom: '8px' }}>
                   {TEXT_PRESETS.map((preset) => {
@@ -1948,7 +1958,32 @@ export const ObjectContextToolbar: React.FC<Props> = ({ selectedId, selectedIds,
                 hint={editingLine ? 'Done editing points (Esc)' : 'Edit points — add corners and curves (⏎)'}
                 pressed={editingLine}
                 onClick={() => (editingLine ? lineEdit.end(node.id) : lineEdit.begin(node.id))}
-              ><Spline size={16} /></RailButton>
+              ><Waypoints size={16} /></RailButton>
+              {/*
+                The answer to "how do I make it curvy", which is the first
+                thing anyone asks after drawing a route: the corners stop being
+                corners and the run is drawn as one curve through the same
+                points.
+
+                Only once there is a corner to round — a two-point line has
+                none, and a control that could not change anything is worse
+                than an absent one.
+
+                `Radius`, deliberately, and not `Spline`: the Connect tool in
+                the dock wears `Spline`, and two different things sharing a
+                glyph is how someone learns the wrong thing about one of them.
+                `Radius` is also the glyph the corner-radius handle already
+                uses, which is right — this is corner rounding, on a run
+                instead of on a box.
+              */}
+              {isMultiPoint(node.geometry.vertices) && (
+                <RailButton
+                  label={lineCurved ? 'Sharpen corners' : 'Round corners'}
+                  hint={lineCurved ? 'Give the corners back' : 'Draw the run as one smooth curve'}
+                  pressed={lineCurved}
+                  onClick={() => setLineCurved(node, !lineCurved)}
+                ><Radius size={16} /></RailButton>
+              )}
               {/*
                 A line's label used to be reachable only by double-clicking the
                 line — the gesture that now opens the point editor. It was a

@@ -94,6 +94,7 @@ export const LineEditor: React.FC<Props> = ({ node, stageScale }) => {
 
   const shape = live ?? stored;
   const { vertices, bends } = shape;
+  const smooth = node.geometry.smooth === true;
   const last = vertices.length - 1;
   const radius = HANDLE / 2 / stageScale;
   const strokeWidth = node.appearance?.stroke?.width ?? 2;
@@ -285,7 +286,7 @@ export const LineEditor: React.FC<Props> = ({ node, stageScale }) => {
    */
   const insertStrip = (
     <Line
-      points={polylinePoints(vertices, bends).flatMap((p) => [p.x, p.y])}
+      points={polylinePoints(vertices, bends, smooth).flatMap((p) => [p.x, p.y])}
       stroke="transparent"
       strokeWidth={1 / stageScale}
       hitStrokeWidth={INSERT_REACH * 2 / stageScale}
@@ -362,7 +363,7 @@ export const LineEditor: React.FC<Props> = ({ node, stageScale }) => {
           node itself does not move until the drag commits. */}
       {live && (
         <Line
-          points={polylinePoints(live.vertices, live.bends).flatMap((p) => [p.x, p.y])}
+          points={polylinePoints(live.vertices, live.bends, smooth).flatMap((p) => [p.x, p.y])}
           stroke={ACCENT}
           strokeWidth={1 / stageScale}
           dash={[4 / stageScale, 4 / stageScale]}
@@ -372,10 +373,18 @@ export const LineEditor: React.FC<Props> = ({ node, stageScale }) => {
       )}
 
       {open && insertStrip}
+      {/*
+        No curve handles while the run is smooth.
+        The spline decides every segment's curvature from where the neighbouring
+        points are, so a per-segment bend would be a second opinion about the
+        same segment — and one of them would have to silently win. The bends are
+        kept underneath untouched, so turning smoothing off gives back exactly
+        the shape that was there. See `polyline.catmullRomPoints`.
+      */}
       {/* Curve handles under the vertices, so a vertex sitting on top of one --
           which happens on a very short segment -- is the one you grab. Moving
           a point is the more common intent and the harder one to undo by eye. */}
-      {open && bends.map((_, i) => (i + 1 <= last ? bendHandle(i) : null))}
+      {open && !smooth && bends.map((_, i) => (i + 1 <= last ? bendHandle(i) : null))}
       {open
         ? vertices.map((_, i) => vertexHandle(i))
         : [vertexHandle(0), last > 0 ? vertexHandle(last) : null]}

@@ -739,6 +739,61 @@ inside the canvas beneath both side panels and clips to its own bounds, so a
 thread near either edge rendered underneath a panel and could not be read or
 typed into. Pins stay in the overlay; only the focused surface floats.
 
+### Lines — `engine/model/polyline.ts`, `lineEnds.ts`
+
+A line was exactly two points with an optional *profile* between them — wavy,
+zigzag, coil. That covers "an arrow from this box to that one" and nothing else:
+the moment a line has to turn a corner or trace a route, two points is not a
+limitation you work around, it is a different tool, and people drew two lines
+and lined them up by eye.
+
+A line now stores a **run of vertices**. Drag the tool for the straight
+two-point line; click once per corner for a route, and Enter or Escape to
+finish. The two gestures need no mode and no modifier because the pointer has
+already said which is which: a drag is a press and a move, a click is a press
+and a release in one place.
+
+Double-click a line, or press Enter, to open its **point editor** — every vertex
+draggable, Alt-click a segment to add one, Delete to remove one, and a curve
+handle on every segment. The handle is the point the curve actually passes
+through, not the Bézier's control point, which sits twice as far out and would
+therefore never be under the pointer dragging it.
+
+**A bend is stored in its chord's own frame** — how far along, how far across,
+both as fractions of the chord's length. Absolute coordinates would leave the
+curve behind when either endpoint moved, and dragging a corner would slew the
+curve sideways instead of carrying it along. It is also why a resize needs to do
+nothing to them at all: a fraction of a chord survives its chord being scaled.
+
+**Rounding the corners is a different thing from bending the segments**, and the
+first attempt got that wrong. Bowing a segment bends its *middle* and leaves its
+ends where they were, so a run came out curvy with every sharp turn intact
+between two arcs. Rounding means the run arrives at a point and leaves it along
+one shared direction — and no arrangement of per-segment quadratics can promise
+that: for a run that turns back on itself there is no solution at all, and a
+symmetric zigzag is the counterexample. So `smooth` is a flag, and the renderer
+draws a **centripetal Catmull-Rom spline** through the same points; centripetal
+rather than uniform because uniform ties a knot at a hairpin, which a hand-drawn
+route reliably contains. The two are alternatives rather than layers — the
+editor withdraws the curve handles while a line is smooth, and the bends sit
+underneath untouched, so turning it off gives back exactly the shape that was
+there.
+
+Three storage forms now exist and all three are legitimate: the run, the
+two-point pair, and the legacy corner-to-corner box that every line drawn before
+any of this still uses. **One reader answers all three** — so the renderer, the
+outline, the exporter, the thumbnail and the editor cannot disagree about where
+a line goes.
+
+Two bugs surfaced while auditing the rest of it. A line caught in a
+multi-object resize kept its old endpoints while its box grew: everything else
+in the selection scaled and the line stayed exactly as long as it was.
+`fitPathToBox` had done this for paths since the transform rewrite, and a line
+stores its shape the same way. And swapping a shape's kind spread the old
+geometry, so a rectangle made from an arrow carried the arrow's endpoints,
+profile and caps — invisible until you swapped back, when the line reappeared
+somewhere it had never been.
+
 ### Colour — `engine/model/colorRamp.ts`
 
 Every picker offered two things: a fixed set of swatches, and a saturation-value

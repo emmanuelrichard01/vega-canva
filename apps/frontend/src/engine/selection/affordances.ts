@@ -145,9 +145,12 @@ export function selectionFacts(
     if (n.type === 'shape' && kind) shapeKinds.add(kind);
     if (n.type === 'path' && kind) pathKinds.add(kind);
     if (n.type === 'shape' && (kind === 'line' || kind === 'arrow')) {
-      const geometry = (n as { geometry?: { vertices?: unknown[]; bends?: unknown[] } }).geometry;
+      const geometry = (n as {
+        geometry?: { vertices?: unknown[]; bends?: unknown[]; smooth?: boolean };
+      }).geometry;
       if ((geometry?.vertices?.length ?? 0) > 2) hasMultiPointLine = true;
       if (geometry?.bends?.some?.((bend) => bend != null)) hasMultiPointLine = true;
+      if (geometry?.smooth === true) hasMultiPointLine = true;
     }
   }
 

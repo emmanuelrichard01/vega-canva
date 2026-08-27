@@ -76,6 +76,7 @@ export function swapShapeKind(
       if (geometry.b) next.b = { ...geometry.b };
       if (geometry.vertices) next.vertices = geometry.vertices.map((p) => ({ ...p }));
       if (geometry.bends) next.bends = geometry.bends.map((bend) => (bend ? { ...bend } : null));
+      if (geometry.smooth) next.smooth = true;
       if (geometry.lineProfile) next.lineProfile = geometry.lineProfile;
       if (geometry.lineWaves !== undefined) next.lineWaves = geometry.lineWaves;
       if (geometry.lineAmplitude !== undefined) next.lineAmplitude = geometry.lineAmplitude;

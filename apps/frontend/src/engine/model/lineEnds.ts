@@ -47,7 +47,13 @@ const MIN_EXTENT = 0;
 
 type LineBox = Pick<ShapeNode, 'x' | 'y' | 'width' | 'height' | 'scaleX' | 'scaleY' | 'rotation'>;
 /** A line box that may also carry stored endpoints. */
-type LineGeometryish = { a?: Point; b?: Point; vertices?: Point[]; bends?: unknown };
+type LineGeometryish = {
+  a?: Point;
+  b?: Point;
+  vertices?: Point[];
+  bends?: unknown;
+  smooth?: boolean;
+};
 type LineNode = LineBox & { geometry?: LineGeometryish };
 
 function rotate(p: Point, about: Point, degrees: number): Point {
@@ -206,8 +212,8 @@ export function runPoints(node: {
   };
 }): Point[] {
   const vertices = localVertices(node);
-  if (isMultiPoint(vertices) || node.geometry?.bends) {
-    return polylinePoints(vertices, localBends(node, vertices.length));
+  if (isMultiPoint(vertices) || node.geometry?.bends || node.geometry?.smooth) {
+    return polylinePoints(vertices, localBends(node, vertices.length), node.geometry?.smooth);
   }
   return linePoints(
     vertices[0],
@@ -351,14 +357,15 @@ export function lineNodeFromVertices(
   const slots = normalizeBends(points.length, bends);
   const bent = slots.some((slot) => slot !== null);
   const multi = isMultiPoint(points);
+  const smooth = geometry.smooth === true;
 
   // The run as drawn, in world space, and the markers that terminate it. A
   // multi-point or bent line takes its shape from its own geometry; only a
   // plain two-point line is handed to the profile. Same rule as `runPoints`,
   // which is what reads the result back.
   const run =
-    multi || bent
-      ? polylinePoints(points, slots)
+    multi || bent || smooth
+      ? polylinePoints(points, slots, smooth)
       : linePoints(a, b, geometry.lineProfile, geometry.lineWaves, geometry.lineAmplitude);
   const flat = run.flatMap((p) => [p.x, p.y]);
   const { run: drawn, start, end } = terminateRun(flat, {
@@ -414,7 +421,7 @@ export function lineNodeFromVertices(
     ...geometry,
     a: { x: a.x - x, y: a.y - y },
     b: { x: b.x - x, y: b.y - y },
-    vertices: multi || bent ? points.map((p) => ({ x: p.x - x, y: p.y - y })) : undefined,
+    vertices: multi || bent || smooth ? points.map((p) => ({ x: p.x - x, y: p.y - y })) : undefined,
     bends: bent ? slots.map((slot) => (slot ? { ...slot } : null)) : undefined,
   };
   if (!store.vertices) delete store.vertices;

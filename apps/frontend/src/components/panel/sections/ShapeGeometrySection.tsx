@@ -13,6 +13,7 @@ import { NumberStepper } from '../../ui/NumberStepper';
 import { SegmentedControl } from '../../ui/SegmentedControl';
 import { EndCapIcon } from '../connectorIcons';
 import { LineProfileIcon } from '../lineProfileIcons';
+import { hasBend, isMultiPoint } from '../../../engine/model/polyline';
 import {
   END_CAP_KINDS,
   END_CAP_LABELS,
@@ -127,8 +128,33 @@ export const ShapeGeometrySection: React.FC<ShapeGeometrySectionProps> = ({
         </Accordion>
       )}
 
-      {uniformKind && node.type === 'shape' && openShape && (
+      {uniformKind && node.type === 'shape' && openShape && (() => {
+        /** Whether this line's own points describe its shape. See `polyline.ts`. */
+        const multiPoint =
+          isMultiPoint(node.geometry.vertices) ||
+          hasBend(node.geometry.bends) ||
+          node.geometry.smooth === true;
+        return (
         <Accordion title="Line" icon={<Minus size={13} />}>
+          {/*
+            A run of corners takes its shape from its own points, so the profile
+            has nothing to apply to and the renderer ignores it. Withdrawn here
+            rather than left inert: this panel is driven by a capability
+            registry precisely so a control cannot outlive what honours it, and
+            the toolbar's copy of this decision was already gated.
+
+            Said out loud rather than left as a gap, because an option that
+            disappears with no explanation reads as a bug.
+          */}
+          {multiPoint ? (
+            <Row stack label="Style">
+              <p className="panel-note">
+                This line takes its shape from its points. Round its corners from
+                the floating toolbar, or open the point editor to bend one segment.
+              </p>
+            </Row>
+          ) : (
+          <>
           <Row stack label="Style" hint="The shape the run makes on its way across. Every style takes the same ends, weight and dash.">
             <SegmentedControl
               ariaLabel="Line style"
@@ -203,8 +229,11 @@ export const ShapeGeometrySection: React.FC<ShapeGeometrySectionProps> = ({
               })()}
             </Row>
           )}
+          </>
+          )}
         </Accordion>
-      )}
+        );
+      })()}
 
       {uniformKind && node.type === 'shape' && node.geometry.kind === 'star' && (
         <Accordion title="Star" icon={<Star size={13} />}>
