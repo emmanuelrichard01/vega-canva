@@ -100,7 +100,7 @@ export const SegmentedControl: React.FC<Props> = ({ segments, value, onChange, a
             type="button"
             role="radio"
             aria-checked={isActive}
-            aria-label={seg.hint ? `${name} — ${seg.hint}` : name}
+            aria-label={seg.hint ? `${name}. ${seg.hint}` : name}
             // Not on the group's own wrapper: that carries `disabledReason`,
             // and one element cannot show two different tooltips.
             data-tooltip={disabled ? undefined : seg.hint}

@@ -75,7 +75,7 @@ export function parseDocumentExport(text: string): ImportResult {
   if (typeof doc.objects !== 'object' || doc.objects === null || Array.isArray(doc.objects)) {
     return {
       ok: false,
-      error: 'That JSON file is not a Vega Studio export — it has no objects in it.',
+      error: 'That JSON file is not a Vega Studio export. It has no objects in it.',
     };
   }
 
@@ -95,7 +95,7 @@ export function parseDocumentExport(text: string): ImportResult {
 
   for (const [id, value] of Object.entries(doc.objects as Record<string, unknown>)) {
     if (!value || typeof value !== 'object' || Array.isArray(value)) {
-      warnings.push(`Skipped "${id}" — not an object.`);
+      warnings.push(`Skipped "${id}": not an object.`);
       continue;
     }
     const node = value as Record<string, unknown>;
@@ -104,7 +104,7 @@ export function parseDocumentExport(text: string): ImportResult {
     if (!type || !(NODE_TYPES as readonly string[]).includes(type)) {
       // Named rather than counted: "3 objects skipped" tells you nothing about
       // whether the thing you cared about survived.
-      warnings.push(`Skipped "${id}" — unknown object type "${type ?? 'none'}".`);
+      warnings.push(`Skipped "${id}": unknown object type "${type ?? 'none'}".`);
       continue;
     }
 
@@ -112,7 +112,7 @@ export function parseDocumentExport(text: string): ImportResult {
     // boundary and is the one place allowed to decide what a malformed node
     // becomes; duplicating its defaults here is how the two drift apart.
     if (!Number.isFinite(node.x) || !Number.isFinite(node.y)) {
-      warnings.push(`Skipped "${id}" — it has no usable position.`);
+      warnings.push(`Skipped "${id}": no usable position.`);
       continue;
     }
 

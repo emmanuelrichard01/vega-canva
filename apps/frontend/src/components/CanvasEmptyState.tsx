@@ -81,7 +81,7 @@ export const CanvasEmptyState: React.FC<{ visible: boolean }> = ({ visible }) =>
           carried was never a heading anyway; it is the first clause of the
           sentence underneath it. */}
       <p className="empty-canvas__body">
-        Start anywhere — there are no edges and no wrong end to begin at.
+        Start anywhere. This canvas has no edges and no wrong place to begin.
         Scroll to move around the board, <kbd>Ctrl</kbd>{'+scroll to zoom.'}
       </p>
 

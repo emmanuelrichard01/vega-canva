@@ -269,7 +269,7 @@ export default function Room() {
            * a glance and short enough to be gone before anyone reaches for it.
            */
           notify({
-            message: `${template.name} — click anything to edit it.`,
+            message: `${template.name} is on the board. Click anything to edit it.`,
             tone: 'info',
             duration: 6000,
           });
@@ -807,7 +807,6 @@ export default function Room() {
       id: user.id,
       name: user.name,
       color,
-      avatar: user.avatar,
     };
 
     /**
@@ -815,9 +814,9 @@ export default function Room() {
      *
      * The first version guarded on the resolved colour, because avoiding a
      * republish on every roster tick was the point — and that silently made
-     * the profile editor do nothing. Saving a new face changes `user.avatar`
-     * and leaves the colour exactly where it was, so the guard swallowed the
-     * publish and the face never left this browser. A cache key has to cover
+     * the profile editor do nothing. A rename changes `user.name` and leaves
+     * the colour exactly where it was, so the guard swallowed the publish and
+     * the new name never left this browser. A cache key has to cover
      * everything the value depends on.
      */
     const signature = JSON.stringify(identity);

@@ -287,7 +287,7 @@ export function parseMermaid(source: string): ParseResult {
         // Named rather than a generic failure: knowing *which* diagram type was
         // recognised and declined is the difference between "this tool is
         // broken" and "this tool does flowcharts".
-        error: `${kind[1]} is not supported yet — this converts flowcharts to editable objects. Start with "flowchart TD".`,
+        error: `${kind[1]} is not supported yet. This converts flowcharts into editable objects, so start with "flowchart TD".`,
       };
     }
     return { graph: null, error: 'Start with "flowchart TD" or "graph LR".' };

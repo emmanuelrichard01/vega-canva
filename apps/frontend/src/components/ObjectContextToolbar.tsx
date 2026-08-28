@@ -18,6 +18,7 @@ import { useStore } from '../hooks/useStore';
 import { cameraSystem } from '../engine/CameraSystem';
 import { engineEvents } from '../engine/EventBus';
 import { cropMode } from '../engine/interaction/cropMode';
+import { slotReframe } from '../engine/interaction/slotReframe';
 import { pathEdit } from '../engine/interaction/pathEdit';
 import { railVeil } from '../engine/interaction/railVeil';
 import { lineEdit } from '../engine/interaction/lineEdit';
@@ -63,7 +64,7 @@ const HANDWRITTEN = ['Caveat', 'Architects Daughter'];
 import type { StickyTheme } from '../engine/model/schema';
 import {
   DEFAULT_INK, DEFAULT_TYPOGRAPHY, MAX_POLYGON_SIDES, MIN_POLYGON_SIDES, isOpenShape,
-  type AnyNode, type Appearance, type ConnectorNode, type FillStyle, type ImageNode, type SketchLevel,
+  type AnyNode, type Appearance, type ConnectorNode, type ImageNode, type SketchLevel,
   type ListStyle, type TextAlign, type Typography,
 } from '../engine/model/schema';
 import { FillStyleIcon, ShadingDensityIcon, SketchLevelIcon } from './panel/sketchIcons';
@@ -71,6 +72,8 @@ import { HACHURE_ANGLE, SHADING_DENSITIES } from '../engine/model/rough';
 import {
   SHADING_DENSITY_HINTS,
   SHADING_DENSITY_LABELS,
+  FILL_STYLE_LABELS,
+  SKETCH_LEVEL_LABELS,
 } from '../engine/model/shadingLabels';
 import { EndCapIcon, RouteIcon } from './panel/connectorIcons';
 import { StrokeWeightIcon } from './panel/strokeWeightIcon';
@@ -218,26 +221,16 @@ import {
 import { VectorBooleanSection } from './toolbar/VectorBooleanSection';
 
 /**
- * What each sketch level and shading style is called.
+ * The names, from the one module that holds them.
  *
- * Written out here rather than inline, because these strings appear twice —
- * as the tooltip and as the accessible name — and a button whose label and
- * whose tooltip disagree is worse than one with neither.
+ * These were written out here as `SKETCH_LABELS` and `FILL_LABELS`, and again
+ * in `SketchSection` as the labels on its two segmented controls: nine strings
+ * each side, identical by hand. The note that used to sit here was right that
+ * a label and a tooltip must not disagree, and was solving that inside one
+ * file while another file held a second copy of the same nine answers.
  */
-const SKETCH_LABELS: Record<'off' | SketchLevel, string> = {
-  off: 'Off — a ruled shape',
-  light: 'Light — one confident pass',
-  medium: 'Medium — drawn twice',
-  heavy: 'Heavy — twice, and past every corner',
-};
-
-const FILL_LABELS: Record<FillStyle, string> = {
-  solid: 'Solid — a flat fill',
-  hachure: 'Hachure — parallel pen strokes',
-  crosshatch: 'Cross-hatch — two sets, crossed',
-  zigzag: 'Scribble — continuous back-and-forth pen marks',
-  dots: 'Stipple — hand-drawn dots',
-};
+const SKETCH_LABELS = SKETCH_LEVEL_LABELS;
+const FILL_LABELS = FILL_STYLE_LABELS;
 
 interface Props {
   selectedId: string | null;
@@ -292,6 +285,11 @@ export const ObjectContextToolbar: React.FC<Props> = ({ selectedId, selectedIds,
   const [showReactions, setShowReactions] = useState(false);
   const myAuthorId = localAuthorId();
   const cropping = useSyncExternalStore(cropMode.subscribe, cropMode.getSnapshot, cropMode.getSnapshot);
+  const reframing = useSyncExternalStore(
+    slotReframe.subscribe,
+    slotReframe.getSnapshot,
+    slotReframe.getSnapshot
+  );
   /** Which line, if any, is open for point editing — so the rail can say so. */
   const lineSelection = useSyncExternalStore(lineEdit.subscribe, lineEdit.getSnapshot, lineEdit.getSnapshot);
   /**
@@ -765,7 +763,7 @@ export const ObjectContextToolbar: React.FC<Props> = ({ selectedId, selectedIds,
                         type="button"
                         className="ctx-shape"
                         data-active={gridRecipeFor(gridGroup)!.spec.kind === kind || undefined}
-                        data-tooltip={`${GRID_LABELS[kind]} — ${GRID_HINTS[kind]}`}
+                        data-tooltip={`${GRID_LABELS[kind]}: ${GRID_HINTS[kind]}`}
                         aria-label={GRID_LABELS[kind]}
                         onClick={() => {
                           const recipe = gridRecipeFor(gridGroup);
@@ -903,10 +901,18 @@ export const ObjectContextToolbar: React.FC<Props> = ({ selectedId, selectedIds,
                         slottedImageIds.forEach((id) => setSlotZoom(id, pct / 100))
                       }
                     />
-                    {/* The keys are bound and completely silent otherwise —
-                        a control nobody can discover is a control nobody has. */}
+                    {/**
+                      * What the slider is the precise version *of*.
+                      *
+                      * Reframing is a drag and a scroll wheel on the canvas,
+                      * and both are silent: a gesture nobody can discover is a
+                      * feature nobody has. This popover is the path that
+                      * survives a multiple selection, where a mode belonging to
+                      * one picture cannot go.
+                      */}
                     <span className="ctx-popover__note">
-                      Arrow keys move the picture inside its module.
+                      Double-click a picture to move and zoom it by hand, or use
+                      the arrow keys.
                     </span>
                     <button
                       type="button"
@@ -1129,6 +1135,7 @@ export const ObjectContextToolbar: React.FC<Props> = ({ selectedId, selectedIds,
   if (!liveNode) return null;
   const node = liveNode;
   const isCropping = cropping?.nodeId === node.id;
+  const isReframing = reframing?.nodeId === node.id;
   const kind = TYPE_LABEL[node.type] ?? { icon: <Square size={15} />, name: node.type };
 
   const updateProp = (updates: Record<string, unknown>) => editor.updateNode(node.id, updates);
@@ -1951,7 +1958,7 @@ export const ObjectContextToolbar: React.FC<Props> = ({ selectedId, selectedIds,
               */}
               <RailButton
                 label={editingLine ? 'Done editing points' : 'Edit points'}
-                hint={editingLine ? 'Done editing points (Esc)' : 'Edit points — add corners and curves (⏎)'}
+                hint={editingLine ? 'Done editing points (Esc)' : 'Edit points: add corners and curves (⏎)'}
                 pressed={editingLine}
                 onClick={() => (editingLine ? lineEdit.end(node.id) : lineEdit.begin(node.id))}
               ><Waypoints size={16} /></RailButton>
@@ -2000,21 +2007,48 @@ export const ObjectContextToolbar: React.FC<Props> = ({ selectedId, selectedIds,
         {node.type === 'image' && (
           <>
             <div className="ctx-group">
-              {/* Cropping is also on double-click, which is the convention —
-                  but a gesture with no visible affordance is a feature most
-                  people never discover. */}
-              <RailButton
-                label={isCropping ? 'Done cropping' : 'Crop image'}
-                hint={isCropping ? 'Done cropping (Enter)' : 'Crop image'}
-                pressed={isCropping}
-                onClick={() => isCropping
-                  ? cropMode.commit()
-                  : cropMode.enter({
-                    nodeId: node.id,
-                    node: { x: node.x, y: node.y, width: node.width, height: node.height },
-                    crop: node.crop,
-                  })}
-              ><Crop size={16} /></RailButton>
+              {/**
+                * Crop, or reframe, depending on who owns the edges.
+                *
+                * Both are on double-click, which is the convention -- but a
+                * gesture with no visible affordance is a feature most people
+                * never find, so it is also a button.
+                *
+                * A picture in a module cannot be cropped the usual way: the
+                * handles would drag a box the grid rewrites on its next pass.
+                * Inside a module the frame holds still and the picture moves,
+                * which is the same idea with the two halves swapped, and it
+                * gets its own verb rather than pretending to be the other one.
+                */}
+              {node.gridSlot ? (
+                <RailButton
+                  label={isReframing ? 'Done reframing' : 'Reframe in module'}
+                  hint={
+                    isReframing
+                      ? 'Done reframing (Enter)'
+                      : 'Drag to move the picture, scroll to zoom'
+                  }
+                  pressed={isReframing}
+                  onClick={() =>
+                    isReframing
+                      ? slotReframe.commit()
+                      : slotReframe.enter({ nodeId: node.id, fit: node.gridSlot })
+                  }
+                ><Crop size={16} /></RailButton>
+              ) : (
+                <RailButton
+                  label={isCropping ? 'Done cropping' : 'Crop image'}
+                  hint={isCropping ? 'Done cropping (Enter)' : 'Crop image'}
+                  pressed={isCropping}
+                  onClick={() => isCropping
+                    ? cropMode.commit()
+                    : cropMode.enter({
+                      nodeId: node.id,
+                      node: { x: node.x, y: node.y, width: node.width, height: node.height },
+                      crop: node.crop,
+                    })}
+                ><Crop size={16} /></RailButton>
+              )}
             </div>
             <Divider />
           </>

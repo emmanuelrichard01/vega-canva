@@ -88,16 +88,23 @@ describe('assignColors', () => {
 });
 
 describe('styleCells', () => {
-  it('gives every cell one shape when uniform', () => {
-    const styled = styleCells(grid(), style({ shapeMode: 'uniform', shapes: ['ellipse', 'star'] }));
-    expect(new Set(styled.map((c) => c.shape))).toEqual(new Set(['ellipse']));
+  it('gives every cell the same shape when only one is chosen', () => {
+    /**
+     * The property that let `shapeMode` go. A seeded draw from a set of one has
+     * one outcome, so "uniform" is not a mode the style has to carry — it is
+     * what a list of length one already means, at every seed.
+     */
+    for (const seed of [1, 8, 99, 4242]) {
+      const styled = styleCells(grid(5, 5), style({ shapes: ['ellipse'], seed }));
+      expect(new Set(styled.map((c) => c.shape))).toEqual(new Set(['ellipse']));
+    }
   });
 
-  it('draws only from the chosen set when mixed', () => {
+  it('draws only from the chosen set when several are', () => {
     // "Mixed" means *these three mixed*, not a lucky dip — which is the
     // difference between a control and a slot machine.
     const chosen = ['rect', 'hexagon'] as const;
-    const styled = styleCells(grid(5, 5), style({ shapeMode: 'mixed', shapes: [...chosen], seed: 8 }));
+    const styled = styleCells(grid(5, 5), style({ shapes: [...chosen], seed: 8 }));
     expect(styled.every((c) => chosen.includes(c.shape as (typeof chosen)[number]))).toBe(true);
     expect(new Set(styled.map((c) => c.shape)).size).toBeGreaterThan(1);
   });

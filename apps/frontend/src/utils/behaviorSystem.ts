@@ -88,7 +88,7 @@ export const MATERIALS: Record<MaterialId, Material> = {
   feather: {
     id: 'feather',
     label: 'Feather',
-    hint: 'Barely any weight — drifts a short way and settles almost at once',
+    hint: 'Barely any weight. Drifts a short way and settles almost at once',
     frictionAir: 0.12,
     restitution: 0.1,
     density: 0.0002,
@@ -112,7 +112,7 @@ export const MATERIALS: Record<MaterialId, Material> = {
   wood: {
     id: 'wood',
     label: 'Wood',
-    hint: 'Solid and predictable — slides and stops',
+    hint: 'Solid and predictable. Slides and stops',
     frictionAir: 0.034,
     restitution: 0.4,
     density: 0.001,
@@ -123,7 +123,7 @@ export const MATERIALS: Record<MaterialId, Material> = {
     // Not "hard to shift": force scales with mass, so it accelerates like
     // anything else. What actually distinguishes stone is that almost nothing
     // slows it down once it is moving.
-    hint: 'Heavy and slick — once it is moving it carries a long way',
+    hint: 'Heavy and slick. Once it is moving it carries a long way',
     frictionAir: 0.013,
     restitution: 0.1,
     density: 0.006,

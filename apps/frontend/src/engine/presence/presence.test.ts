@@ -143,7 +143,6 @@ describe('rosterSignature', () => {
     name: 'Dana',
     color: '#3B82F6',
     initials: 'D',
-    avatar: null,
     cursor: { x: 0, y: 0 },
     smoothed: null,
     viewport: null,

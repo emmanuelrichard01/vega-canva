@@ -368,7 +368,7 @@ export const TimeTravelBar: React.FC<TimeTravelBarProps> = ({ roomId, onClose, o
         <History size={16} className="timetravel__muted-icon" />
         <span className="timetravel__muted">
           {error
-            ? `Time Travel can’t reach the history log — ${error}`
+            ? `Time Travel cannot reach the history log. ${error}`
             : 'Nothing to replay yet. Once people start building here, their edits appear on this timeline.'}
         </span>
         <button type="button" className="timetravel__icon-btn" onClick={onClose} aria-label="Close Time Travel">
@@ -418,7 +418,7 @@ export const TimeTravelBar: React.FC<TimeTravelBarProps> = ({ roomId, onClose, o
         type="button"
         className="panel-surface timetravel-handle"
         onClick={() => setCollapsedPref(false)}
-        data-tooltip="Show the replay controls — Escape leaves Time Travel"
+        data-tooltip="Show the replay controls. Escape leaves Time Travel"
         aria-label={`Replaying, moment ${momentIndex + 1} of ${moments.length}. Show the replay controls`}
       >
         <span

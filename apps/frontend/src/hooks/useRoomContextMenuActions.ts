@@ -233,7 +233,7 @@ export function useRoomContextMenuActions({
           }
           land(result.id);
           if (result.dropped.length > 0) {
-            showToast(`Outlined — ${result.dropped.join(', ')} could not come along`);
+            showToast(`Outlined. ${result.dropped.join(', ')} could not come along.`);
           }
         })
         .catch((error: unknown) => {
@@ -287,7 +287,7 @@ export function useRoomContextMenuActions({
     if (placed === 0) showToast('No free modules in that grid');
     else if (overflow.length > 0) {
       showToast(
-        `Placed ${placed} — ${overflow.length} did not fit`
+        `Placed ${placed}, and ${overflow.length} did not fit`
       );
     } else {
       showToast(`Placed ${placed} image${placed === 1 ? '' : 's'}`);

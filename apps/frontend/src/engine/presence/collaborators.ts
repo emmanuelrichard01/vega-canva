@@ -66,17 +66,16 @@ export interface Collaborator {
   name: string;
   /** Their raw identity colour. Chips derive readable colours from it. */
   color: string;
-  /** One or two letters for an avatar. */
-  initials: string;
   /**
-   * Their built face, as `avatar.ts`'s wire form, or `null` for initials.
+   * One or two letters for an avatar.
    *
-   * Carried as the eleven characters rather than anything drawn: this is
-   * awareness, which is rebroadcast at pointer frequency to every peer, and a
-   * picture on that channel would be a photograph on the wire many times a
-   * second. See `engine/presence/avatar.ts`.
+   * This and `color` are the whole of how somebody looks in the room, and that
+   * is deliberate: awareness is rebroadcast at pointer frequency to every peer,
+   * so anything carried here is on the wire many times a second. A name and a
+   * colour are the two things that have to be, because they are what a cursor
+   * label and a selection ring are made of. See `ui/Avatar.tsx`.
    */
-  avatar: string | null;
+  initials: string;
   /**
    * Their pointer in **world** coordinates, or `null` when it is not over a
    * canvas. Cursor is the "right now" signal and is meant to disappear.
@@ -197,7 +196,6 @@ export function readCollaborators(
       name,
       color: typeof state.user.color === 'string' ? state.user.color : FALLBACK_COLOR,
       initials: initialsFor(name),
-      avatar: typeof state.user.avatar === 'string' ? state.user.avatar : null,
       cursor: readCursor(state.cursor),
       smoothed: null,
       viewport: readViewport(state.viewport),

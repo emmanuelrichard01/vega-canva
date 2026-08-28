@@ -10933,51 +10933,19 @@ body[data-zen='physics'] .forces-handle { bottom: 32px; }
   overflow-y: auto;
 }
 
+/* One disc, centred against the fields beside it.
+
+   This column used to be a face: a 112px tile, the same face again at 32, 24
+   and 20 to check it still read on a comment pin, and a shuffle button. All of
+   that answered a question the product no longer asks -- initials in the room's
+   colour look the same at every size, which is most of the argument for them.
+   What is left is a live preview of the one thing still being edited. */
 .profile-editor__preview {
   display: flex;
   flex-direction: column;
   align-items: center;
+  justify-content: center;
   gap: var(--space-3);
-}
-
-/* The same face at the sizes it will actually be seen at.
-
-   A 112px tile says nothing about whether the glasses still read on a comment
-   pin, and the pin is where most people will meet this face — so the check is
-   on the screen rather than left to be discovered afterwards. */
-.profile-editor__sizes {
-  display: flex;
-  align-items: center;
-  gap: var(--space-2);
-  padding: 6px 10px;
-  border-radius: var(--radius-pill);
-  background: var(--surface-secondary);
-}
-
-.profile-editor__shuffle {
-  box-sizing: border-box;
-  display: inline-flex;
-  align-items: center;
-  gap: var(--space-2);
-  /* On the dense step, where `5px 12px` put it at 26px: a height that exists
-     nowhere else, one pixel off the 24px cyclers right above it and two off
-     the 28px controls everywhere else. */
-  height: var(--control-h-sm);
-  padding: 0 var(--space-3);
-  border: 1px solid var(--border-divider);
-  border-radius: var(--radius-pill);
-  background: transparent;
-  color: var(--text-secondary);
-  font-size: var(--text-xs);
-  font-weight: var(--weight-medium);
-  line-height: 1;
-  cursor: pointer;
-  transition: background-color var(--motion-hover), color var(--motion-hover);
-}
-
-.profile-editor__shuffle:hover {
-  background: var(--surface-hover);
-  color: var(--text-primary);
 }
 
 .profile-editor__fields {
@@ -11015,69 +10983,6 @@ body[data-zen='physics'] .forces-handle { bottom: 32px; }
   outline-offset: 1px;
 }
 
-/* Two columns of six, so the whole face is adjustable without scrolling — a
-   builder you have to scroll is one where you lose track of what you changed. */
-.profile-editor__dims {
-  display: grid;
-  grid-template-columns: repeat(2, minmax(0, 1fr));
-  gap: var(--space-2) var(--space-3);
-}
-
-.profile-dim {
-  display: flex;
-  flex-direction: column;
-  gap: 3px;
-  min-width: 0;
-}
-
-.profile-dim__label {
-  font-size: var(--text-2xs);
-  font-weight: 600;
-  letter-spacing: 0.04em;
-  text-transform: uppercase;
-  color: var(--text-tertiary);
-}
-
-.profile-dim__control {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  padding: 2px;
-  border: 1px solid var(--border-divider);
-  border-radius: var(--radius-md);
-  background: var(--surface-secondary);
-}
-
-.profile-dim__control button {
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  width: 24px;
-  height: 24px;
-  border: none;
-  border-radius: var(--radius-sm);
-  background: transparent;
-  color: var(--text-secondary);
-  cursor: pointer;
-}
-
-.profile-dim__control button:hover {
-  background: var(--surface-hover);
-  color: var(--text-primary);
-}
-
-.profile-dim__control button:focus-visible {
-  outline: 2px solid var(--focus-ring-color);
-  outline-offset: -2px;
-}
-
-/* Tabular, so the digits do not shuffle the arrows sideways as they change. */
-.profile-dim__count {
-  font-size: var(--text-2xs);
-  font-variant-numeric: tabular-nums;
-  color: var(--text-tertiary);
-}
-
 .profile-editor__colour {
   display: flex;
   align-items: flex-start;
@@ -11113,7 +11018,6 @@ body[data-zen='physics'] .forces-handle { bottom: 32px; }
 
 @media (max-width: 560px) {
   .profile-editor__body { grid-template-columns: minmax(0, 1fr); }
-  .profile-editor__dims { grid-template-columns: minmax(0, 1fr); }
 }
 
 /* ================================================== canvas context menu === */
@@ -12025,7 +11929,8 @@ body[data-zen='physics'] .forces-handle { bottom: 32px; }
 }
 
 /**
- * Five candidates, and the one control that decides what varies between them.
+ * Eight candidates, the grid you already have, and the control that decides
+ * what varies between them.
  *
  * Sits at the foot of the section because it is the last question -- everything
  * above says what the grid *is*, and this says "show me that again, differently".
@@ -12099,95 +12004,60 @@ body[data-zen='physics'] .forces-handle { bottom: 32px; }
   box-shadow: var(--shadow-xs, 0 1px 2px rgb(0 0 0 / 0.06));
 }
 
-/* The strip and its edges.
-   Relative, because the fades and the nudge buttons are drawn over the
-   scroller rather than beside it -- beside it, they would take width from the
-   tiles, which are the only thing here worth any. */
-.grid-variations__viewport {
-  position: relative;
-  min-width: 0;
+/**
+ * All nine at once, three by three.
+ *
+ * This was a horizontal scroller with a measured fade at each live edge and a
+ * nudge button sitting on the fade -- about sixty lines of CSS and a
+ * `ResizeObserver` in the component, all of it in service of showing three and
+ * a half tiles in a 260px column.
+ *
+ * Comparing is the whole purpose of the control, and a scroller puts two
+ * candidates on opposite sides of a gesture. The palette list four blocks up
+ * records the same conclusion in the same section: *a picker you have to scroll
+ * to see the options in is a dropdown with extra steps*. Three columns fit the
+ * panel exactly and nothing is hidden, so the answer to "is any of these better
+ * than what I have" is one look.
+ *
+ * The tiles size to the column rather than to a fixed 62px, and each thumbnail
+ * scales with its tile: a fixed drawing in a fluid box would sit off-centre in
+ * a wide panel and clip in a narrow one.
+ */
+.grid-variations__grid {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 5px;
 }
-
-/* Content running under the edge, rather than stopping at it.
-   A hard edge on a scroller says nothing; a fade says the row continues. Only
-   drawn on the side that actually has more, so it never promises content that
-   is not there. */
-.grid-variations__viewport::before,
-.grid-variations__viewport::after {
-  content: "";
-  position: absolute;
-  top: 0;
-  bottom: 0;
-  width: 28px;
-  pointer-events: none;
-  opacity: 0;
-  transition: opacity var(--motion-hover);
-  z-index: 1;
-}
-
-.grid-variations__viewport::before {
-  left: 0;
-  background: linear-gradient(to right, var(--surface-primary), transparent);
-}
-
-.grid-variations__viewport::after {
-  right: 0;
-  background: linear-gradient(to left, var(--surface-primary), transparent);
-}
-
-.grid-variations__viewport[data-more-start]::before,
-.grid-variations__viewport[data-more-end]::after { opacity: 1; }
-
-/* The nudge. Sits on the fade, so the two read as one affordance: the fade
-   says there is more and the button is where you press for it. */
-.grid-variations__nudge {
-  position: absolute;
-  top: 50%;
-  translate: 0 -50%;
-  z-index: 2;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  width: 22px;
-  height: 22px;
-  border: 1px solid var(--border-divider);
-  border-radius: 50%;
-  background: var(--surface-primary);
-  color: var(--text-secondary);
-  box-shadow: var(--shadow-float);
-  cursor: pointer;
-  transition: color var(--motion-hover), background-color var(--motion-hover);
-}
-
-.grid-variations__nudge:hover {
-  background: var(--surface-hover);
-  color: var(--text-primary);
-}
-
-.grid-variations__nudge--start { left: 0; }
-.grid-variations__nudge--end { right: 0; }
-
-/* Scrolls rather than wraps: five tiles at their natural size is worth more
-   than five squeezed onto one line, and a second row of two reads as leftovers. */
-.grid-variations__strip {
-  display: flex;
-  gap: 6px;
-  overflow-x: auto;
-  padding-bottom: 2px;
-  scrollbar-width: none;
-}
-
-.grid-variations__strip::-webkit-scrollbar { display: none; }
 
 .grid-variations__tile {
   display: flex;
-  flex-shrink: 0;
+  align-items: center;
+  justify-content: center;
+  min-width: 0;
   padding: 3px;
   border: 1px solid var(--border-divider);
   border-radius: var(--radius-md);
   background: var(--surface-primary);
   cursor: pointer;
   transition: border-color var(--motion-hover), transform var(--motion-hover), box-shadow var(--motion-hover);
+}
+
+/* Held at the thumbnail's own proportions, so a row of tiles is a row of
+   equals -- a grid whose tiles took their height from their contents would
+   give a manuscript block and a bento wall different-sized frames and make the
+   comparison about the frames. */
+.grid-variations__tile svg {
+  display: block;
+  width: 100%;
+  height: auto;
+}
+
+/* The one you are on, whichever it is.
+   Picking used to leave no trace: the board changed and the tile that did it
+   looked like the other eight. */
+.grid-variations__tile[data-current] {
+  border-color: var(--accent-line);
+  box-shadow: 0 0 0 1px var(--accent-line);
 }
 
 /* The starting point, set apart from the candidates by a rule rather than by
@@ -12203,18 +12073,23 @@ body[data-zen='physics'] .forces-handle { bottom: 32px; }
   border-color: var(--accent-strong, var(--brand-orange));
 }
 
+/* A tag on the frame, not graffiti on the picture.
+   Centred at the foot of the tile it sat over the composition it was labelling,
+   which is the one thing in there worth looking at. In the corner it reads as
+   part of the frame: it tucks into the border radius on two sides and leaves
+   the drawing whole. */
 .grid-variations__badge {
   position: absolute;
-  left: 50%;
-  bottom: 2px;
-  translate: -50%;
-  padding: 0 4px;
-  border-radius: var(--radius-sm);
+  top: -1px;
+  left: -1px;
+  padding: 1px 5px;
+  border-radius: calc(var(--radius-md) - 1px) 0 var(--radius-sm) 0;
   background: var(--surface-inverse);
   color: var(--text-inverse);
   font-size: 8px;
   font-weight: var(--weight-semibold);
-  letter-spacing: 0.02em;
+  letter-spacing: 0.03em;
+  line-height: 1.5;
   pointer-events: none;
 }
 
@@ -12227,35 +12102,12 @@ body[data-zen='physics'] .forces-handle { bottom: 32px; }
 }
 
 @media (prefers-reduced-motion: reduce) {
-  /* The starting point, set apart from the candidates by a rule rather than by
-   a colour: it is the same kind of thing as the tiles beside it, just the one
-   you already have. */
-.grid-variations__tile--baseline {
-  position: relative;
-  border-style: dashed;
-}
-
-.grid-variations__tile--baseline[data-current] {
-  border-style: solid;
-  border-color: var(--accent-strong, var(--brand-orange));
-}
-
-.grid-variations__badge {
-  position: absolute;
-  left: 50%;
-  bottom: 2px;
-  translate: -50%;
-  padding: 0 4px;
-  border-radius: var(--radius-sm);
-  background: var(--surface-inverse);
-  color: var(--text-inverse);
-  font-size: 8px;
-  font-weight: var(--weight-semibold);
-  letter-spacing: 0.02em;
-  pointer-events: none;
-}
-
-.grid-variations__tile:hover { transform: none; }
+  /* Only the movement goes. The three rules that used to be copied in here --
+     the baseline's dashed border, its current state and the badge -- were a
+     paste rather than an override: none of them is a motion rule, and a
+     duplicate inside a media query is a second definition waiting to drift
+     from the first. */
+  .grid-variations__tile:hover { transform: none; }
 }
 
 @keyframes cursorBadgePop {

@@ -376,7 +376,7 @@ export const ExportModal: React.FC<Props> = ({
           <div>
             <h2 id="export-title" className="export__title">Export</h2>
             <p className="export__subtitle">
-              A copy you can share — or a backup you can restore.
+              A copy you can share, or a backup you can restore.
             </p>
           </div>
           <button type="button" className="btn-icon" onClick={onClose} aria-label="Close">
@@ -405,7 +405,7 @@ export const ExportModal: React.FC<Props> = ({
                 {scaleClamped && (
                   <p className="export__hint export__hint--warn">
                     <AlertTriangle size={12} aria-hidden="true" />
-                    {` This board is too large for ${scale}× in a browser — it will export at ${effectiveScale.toFixed(2)}×.`}
+                    {` This board is too large for ${scale}× in a browser. It will export at ${effectiveScale.toFixed(2)}× instead.`}
                   </p>
                 )}
               </>
@@ -414,7 +414,7 @@ export const ExportModal: React.FC<Props> = ({
                 <span className="export__preview-empty">
                   {isBatch
                     ? format === 'pdf'
-                      ? `One document, ${frameList.length} pages — a frame each`
+                      ? `One document, ${frameList.length} pages, a frame each`
                       : `${frameList.length} files, one per frame`
                     : `${spec.label} has no image preview`}
                 </span>
@@ -462,13 +462,13 @@ export const ExportModal: React.FC<Props> = ({
                   {frameList.length > 0 && (
                     <option value={EVERY_FRAME}>
                       {format === 'pdf'
-                        ? `Every frame — ${frameList.length} pages, one document`
-                        : `Every frame — ${frameList.length} files`}
+                        ? `Every frame: ${frameList.length} pages, one document`
+                        : `Every frame: ${frameList.length} files`}
                     </option>
                   )}
                   {frameList.map((f) => (
                     <option key={f.id} value={f.id}>
-                      {f.label} — {Math.round(f.width)} × {Math.round(f.height)}
+                      {f.label} · {Math.round(f.width)} × {Math.round(f.height)}
                     </option>
                   ))}
                 </select>
@@ -538,7 +538,7 @@ export const ExportModal: React.FC<Props> = ({
         {Object.keys(objects).length > 4 && format !== 'json' && (
           <p className="export__advice">
             <AlertTriangle size={13} />
-            Keeping a copy? Export as <button type="button" className="export__link" onClick={() => setFormat('json')}>JSON</button> — it is the only format that can be restored back into a board.
+            Keeping a copy? Export as <button type="button" className="export__link" onClick={() => setFormat('json')}>JSON</button>. It is the only format that can be restored into a board.
           </p>
         )}
 
@@ -548,7 +548,7 @@ export const ExportModal: React.FC<Props> = ({
         {pendingRestore && (
           <div className="export__restore" role="group" aria-label="Restore options">
             <p className="export__restore-text">
-              <strong>{pendingRestore.summary}</strong> — replace everything on this board, or add it alongside?
+              <strong>{pendingRestore.summary}</strong>. Replace everything on this board, or add it alongside?
             </p>
             <div className="export__restore-actions">
               <button type="button" className="export__ghost" onClick={() => { setPendingRestore(null); pendingDocRef.current = null; }}>Cancel</button>

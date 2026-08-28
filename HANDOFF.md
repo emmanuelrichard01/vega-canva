@@ -68,7 +68,7 @@ Verify in ~30 seconds:
 
 ```bash
 npx tsc --noEmit -p apps/frontend/tsconfig.app.json   # must be silent
-npx vitest run --root apps/frontend                   # 1912 tests, 106 files
+npx vitest run --root apps/frontend                   # 2040 tests, 109 files
 npx vitest run --root apps/server                     # 10 tests, 1 file
 npx oxlint apps/frontend/src                          # 0 warnings, 0 errors, exit 0
 npm run build -w apps/frontend                        # must succeed
@@ -80,17 +80,17 @@ npm run build -w apps/frontend                        # must succeed
 history were vacuous for exactly that reason. Use `tsconfig.app.json`, or
 `npm run build`, which runs `tsc -b`.
 
-Last verified 2026-08-27, by running the five commands above. Every figure in
+Last verified 2026-08-28, by running the five commands above. Every figure in
 it is a second record of something the tools will tell you in 30 seconds — when
 it disagrees with them, they are right and this is stale.
 
 | | |
 | --- | --- |
-| Branch | `main`, 41 ahead of `origin/main`. `rebuild/time-travel-and-physics` and `session-2` are both merged into it and are history, not workspaces |
+| Branch | `grid-slots-and-notices`, 43 ahead of `origin/main`. `main` is the default branch and the merge target; `rebuild/time-travel-and-physics` and `session-2` are history, not workspaces |
 | Typecheck | clean |
-| Tests | **1912** across 106 files (frontend); **10** across 1 file (server) |
-| Lint | exits 0; 0 warnings, 0 errors across 441 files |
-| Build | clean. **32 JS chunks**, 2.1MB raw / 720KB gzip, plus 172KB CSS (gzip 27KB). Largest: `Room` 517KB, `app-export` 439KB, `vendor-fontkit` 357KB, `vendor-konva` 310KB |
+| Tests | **2040** across 109 files (frontend); **10** across 1 file (server) |
+| Lint | exits 0; 0 warnings, 0 errors across 448 files |
+| Build | clean. **32 JS chunks**, 2.2MB raw / ~730KB gzip, plus 167KB CSS. Largest: `Room` 519KB, `app-export` 443KB, `vendor-fontkit` 357KB, `vendor-konva` 310KB |
 
 **The build is code-split now**, by hand: `vite.config.ts` names the vendor and
 subsystem chunks rather than leaving Rollup to produce a `browser-module` that
@@ -484,6 +484,93 @@ same arrangement `TooltipLayer` uses. What is worth knowing:
 - One timer for the whole stack, re-aimed on every change, because a timer per
   notice leaks one whenever a notice is folded or evicted.
 
+## 4a-3. Reframing a picture inside its module
+
+Double-click a picture in a grid module and it enters **reframe**: drag to move
+the picture, wheel to zoom under the pointer, Escape to put back what you
+started with, Enter or a click elsewhere to keep it. The whole photograph is
+drawn faintly outside the module so you can see what you are cutting.
+
+**Why it is not `cropMode`.** They answer the same question and cannot share an
+implementation, because they move opposite things. Cropping a loose image drags
+the *frame* and the picture holds still. A picture in a module has no frame of
+its own to drag: `planGridReflow` writes the box back on every pass, so a resize
+handle would be a control the document undoes a frame later, which is exactly
+the dead capability invariant 6 exists to prevent. So the two modes are one
+gesture over different subjects, entered from the same double-click, and
+`ObjectRenderer` picks between them on `node.gridSlot`.
+
+**The arithmetic is pure and tested.** `zoomAtPoint` holds the source pixel
+under the pointer still while the window grows, which is what turns "enlarge,
+pan it back, enlarge again" into one gesture; `sourceBoxForSlot` places the
+whole bitmap in world space so the ghost registers exactly with the part on
+show. Both are pinned by properties rather than by numbers, and the anchor test
+was confirmed non-vacuous by breaking `zoomAtPoint` and watching it fail.
+
+**One setter, not two.** `setSlotFit` writes focus and zoom together, because a
+wheel zoom moves the focal point in the same breath. Two writes would put two
+entries in the history for one turn of the wheel, and rebuild a window from a
+focus and a zoom that were never true at the same moment. `setSlotZoom` is now
+the slider's path on top of it.
+
+The popover's Zoom slider, Recentre, and the arrow keys all still work and are
+still the precise path, and the one that survives a multiple selection.
+
+## 4a-2. The grid panel, and one field that was two
+
+**`GridStyle.shapeMode` is gone; `shapes.length` is the answer.** A `'uniform' |
+'mixed'` flag sat beside the list of shapes and encoded a fact the list already
+carried — invariant 7, in the smallest possible form. It disagreed with itself
+two ways: `uniform` over three shapes drew the first and silently ignored the
+other two, and `randomiseRecipe` rolled the flag and the set from *separate*
+draws against the same threshold, so about a quarter of its grids claimed a mix
+they had one shape for. Deriving it is exact rather than approximate — a seeded
+draw from a set of one has one outcome — so `styleCells` lost a branch and no
+single-shape grid changed. `gridNode.ts` drops a `shapeMode` it finds in an old
+document rather than honouring it.
+
+**The panel followed.** The "One shape / Mixed" `SegmentedControl` is replaced by
+a **Mix shapes** switch below the shape row, built from the same `grid-switch`
+as the continuous-ring toggle. Three things were wrong with the old one: that
+component sizes segments to their content and never stretches, so two words sat
+at the left end of a full-width grey track; it named a mode the shape list
+already implied; and it silently changed what a click on the row below *meant*
+— replace in one mode, toggle in the other. Wanting to mix before there is a
+mix to see is local state (`mixWanted`), the same arrangement `linkWanted` uses
+two bands up and for the same reason.
+
+**"Try another" shows all nine at once.** It was a horizontal scroller with a
+measured fade per live edge and a nudge button on each fade — careful work in
+service of showing 3.5 tiles in a 260px column. Comparing is the entire purpose
+of the control. Three columns of three fit exactly; the overflow hook, both
+nudges, both fades and ~60 lines of CSS went with it. Each tile now carries
+`describeRecipe` as its tooltip and accessible name, because nine grids at 60px
+are distinguishable but not identifiable — and "Use variation 3" was nine
+buttons that differ by an ordinal. The refresh button said "Show five more"
+while drawing eight; it says eight now.
+
+**Nine strings existed twice.** `SketchSection`'s two segmented controls and
+`ObjectContextToolbar`'s `SKETCH_LABELS`/`FILL_LABELS` held identical copies of
+the hand-drawn setting names, kept in step by nobody. Both read
+`shadingLabels.ts` now. The toolbar's own note said these strings appear twice
+and must not disagree, and was solving that inside one file while the other held
+the second copy.
+
+**Every em-dash is out of the user-facing copy.** About 120 strings across
+tooltips, accessible names, help text, notices, export dialogue and the template
+library, rewritten rather than mechanically substituted: a colon where the tail
+defines the head, a full stop where it is a separate thought, a comma for a
+subordinate clause, and `·` for compact metadata rows, which is the separator
+the app already used in grid captions. Comments and doc blocks were left alone;
+the scan that found them (`strip_comments` over every non-test source file) is
+the way to check the copy stays clean.
+
+**The colour popover opens on Swatches.** Palettes opened by default and it was
+the wrong first move: a ramp is a decision about the whole board, taken
+occasionally, while nearly every visit is somebody wanting one particular
+colour for one particular thing. The tab order follows, so the open tab is at
+the left end on the first look.
+
 ## 4a. What this session added
 
 All committed together. The reasoning lives in the code; this is the map.
@@ -753,15 +840,25 @@ sixteen now; ten was inside the size of a real session.
 
 **"Initials in a circle" had five implementations**, giving the same person
 "M", "MA" and "ME" depending on the corner of the product. One `initialsFor`
-now, and `components/ui/Avatar.tsx` is the single component every surface
-renders a person through — which is what made adding a face a change in one
-place rather than a hunt for five.
+now, and `components/ui/Avatar.tsx` is the single component the header roster
+and the profile editor render a person through. (The three comment surfaces
+still call `initialsFor` into spans of their own — same answer, different
+frame. Worth folding in if you are there anyway.)
 
-**An avatar is eleven characters, not a picture.** It travels on *awareness*,
-which is rebroadcast at pointer frequency to every peer, so a data URL there is
-a photograph on the wire many times a second. `engine/presence/avatar.ts` stores
-six indices and the drawing is a pure function of them — which also makes it
-crisp at the 20px comment pin and the 112px picker tile.
+**The built face was removed.** `engine/presence/avatar.ts` encoded six choices
+as eleven characters and drew them as ~300 lines of SVG, with a six-dimension
+builder in the profile editor. The *encoding* was right and the reasoning is
+worth keeping: an avatar travels on **awareness**, which is rebroadcast at
+pointer frequency to every peer, so a data URL there is a photograph on the
+wire many times a second — eleven characters is the only honest shape for that
+channel. The premise was what failed. A cartoon assembled from six lists is not
+who someone is; the presence colour already is, on five surfaces at once. And
+nobody was ever *given* a face — `avatar` was absent until you opened the editor
+and saved one — so the roster carried two appearances for one kind of person.
+Initials in the room's colour say the same thing at every size. If a picture
+returns it should be a real photograph, stored where a photograph belongs and
+referenced from awareness by id; that is a different feature, and this one is
+not in its way. See the note at the top of `ui/Avatar.tsx`.
 
 **A help screen that hard-codes a shortcut will be wrong.** `toolNames.ts` opens
 by saying so, and it happened anyway three sections below the generated list:

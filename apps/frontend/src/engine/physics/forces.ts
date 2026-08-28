@@ -196,7 +196,7 @@ export const FALLOFF_SPECS: Record<FalloffId, FalloffSpec> = {
   smooth: {
     id: 'smooth',
     label: 'Soft',
-    hint: 'Strongest at the centre and fading to nothing — you never feel where the field ends',
+    hint: 'Strongest at the centre and fading to nothing, so you never feel where the field ends',
   },
   linear: {
     id: 'linear',
@@ -206,7 +206,7 @@ export const FALLOFF_SPECS: Record<FalloffId, FalloffSpec> = {
   constant: {
     id: 'constant',
     label: 'Hard',
-    hint: 'Full strength right up to the ring, then nothing — moves a whole cluster without stretching it',
+    hint: 'Full strength right up to the ring, then nothing. Moves a whole cluster without stretching it',
   },
 };
 

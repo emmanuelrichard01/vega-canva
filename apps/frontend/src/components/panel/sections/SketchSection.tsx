@@ -8,6 +8,8 @@ import { HACHURE_ANGLE, SHADING_DENSITIES } from '../../../engine/model/rough';
 import {
   SHADING_DENSITY_HINTS,
   SHADING_DENSITY_LABELS,
+  FILL_STYLE_LABELS,
+  SKETCH_LEVEL_LABELS,
 } from '../../../engine/model/shadingLabels';
 import type {
   Appearance,
@@ -105,12 +107,13 @@ export const SketchSection: React.FC<SketchSectionProps> = ({
                 onChange={(v) =>
                   setAppearance({ sketch: v === 'off' ? undefined : (v as SketchLevel) })
                 }
-                segments={[
-                  { value: 'off', label: 'Off — a ruled shape', icon: <SketchLevelIcon level="off" /> },
-                  { value: 'light', label: 'Light — one confident pass', icon: <SketchLevelIcon level="light" /> },
-                  { value: 'medium', label: 'Medium — drawn twice', icon: <SketchLevelIcon level="medium" /> },
-                  { value: 'heavy', label: 'Heavy — twice, and past every corner', icon: <SketchLevelIcon level="heavy" /> },
-                ]}
+                // Named from `shadingLabels`, which the rail's popover also
+                // reads. The two used to hold a hand copy each.
+                segments={(['off', 'light', 'medium', 'heavy'] as const).map((level) => ({
+                  value: level,
+                  label: SKETCH_LEVEL_LABELS[level],
+                  icon: <SketchLevelIcon level={level} />,
+                }))}
               />
             );
           })()}
@@ -142,13 +145,11 @@ export const SketchSection: React.FC<SketchSectionProps> = ({
                 onChange={(v) =>
                   setAppearance({ fillStyle: v === 'solid' ? undefined : (v as FillStyle) })
                 }
-                segments={[
-                  { value: 'solid', label: 'Solid — a flat fill', icon: <FillStyleIcon style="solid" /> },
-                  { value: 'hachure', label: 'Hachure — parallel pen strokes', icon: <FillStyleIcon style="hachure" /> },
-                  { value: 'crosshatch', label: 'Cross-hatch — two sets, crossed', icon: <FillStyleIcon style="crosshatch" /> },
-                  { value: 'zigzag', label: 'Scribble — continuous back-and-forth pen marks', icon: <FillStyleIcon style="zigzag" /> },
-                  { value: 'dots', label: 'Stipple — hand-drawn dots', icon: <FillStyleIcon style="dots" /> },
-                ]}
+                segments={(['solid', 'hachure', 'crosshatch', 'zigzag', 'dots'] as const).map((style) => ({
+                  value: style,
+                  label: FILL_STYLE_LABELS[style],
+                  icon: <FillStyleIcon style={style} />,
+                }))}
               />
             );
           })()}

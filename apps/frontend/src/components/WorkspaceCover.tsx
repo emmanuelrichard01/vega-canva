@@ -73,7 +73,7 @@ export const WorkspaceCover: React.FC<Props> = ({ workspaceId, name, preview: su
           viewBox={`0 0 ${VIEW_W} ${VIEW_H}`}
           preserveAspectRatio="xMidYMid meet"
           role="img"
-          aria-label={`${name} — ${preview.total} object${preview.total === 1 ? '' : 's'}`}
+          aria-label={`${name}, ${preview.total} object${preview.total === 1 ? '' : 's'}`}
         >
           {preview.items.map((item, i) => {
             const x = offX + item.x * drawW;
@@ -289,7 +289,7 @@ export const WorkspaceCover: React.FC<Props> = ({ workspaceId, name, preview: su
   const seen = preview !== null;
 
   return (
-    <div className="cover cover--empty" role="img" aria-label={seen ? `${name} — empty board` : `${name} — not opened on this device`}>
+    <div className="cover cover--empty" role="img" aria-label={seen ? `${name}, an empty board` : `${name}, not opened on this device`}>
       <span className="cover__hint">
         {seen ? 'Nothing on it yet' : 'Not opened on this device'}
       </span>

@@ -144,7 +144,7 @@ export function previewBoolean(
     const locked = all.some((n) => n.locked);
     if (locked) return { refusal: 'Unlock every object in the selection first.' };
     if (all.some((n) => n.type === 'path' && n.geometry.kind === 'freehand')) {
-      return { refusal: 'A pencil stroke has no outline to combine — convert it to a path first.' };
+      return { refusal: 'A pencil stroke has no outline to combine. Convert it to a path first.' };
     }
     return { refusal: 'Combining needs two or more shapes or paths.' };
   }

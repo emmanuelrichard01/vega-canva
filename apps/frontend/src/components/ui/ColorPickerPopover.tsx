@@ -117,7 +117,23 @@ export const ColorPickerPopover: React.FC<Props> = ({
    * derived from the colour currently in hand and is the row people reach for
    * most -- putting it behind a click would hide the picker's best answer.
    */
-  const [source, setSource] = useState<'palettes' | 'swatches' | 'recent'>('palettes');
+  /**
+   * Swatches first, because it is the tab that answers the question asked.
+   *
+   * Palettes opened by default and it was the wrong opening move. A ramp is a
+   * *scheme* -- six related colours chosen to work together -- and reaching for
+   * one is a decision about the whole board, taken occasionally. Nearly every
+   * visit to this popover is somebody wanting a particular colour for a
+   * particular thing: a red arrow, a grey rule, a yellow highlight. That is the
+   * swatch grid, and it was one click away every single time while the tab that
+   * gets used least was already open.
+   *
+   * It is also the tab that reads as a colour picker. Opening on eight ramps of
+   * six chips each asks you to parse a table before you can point at a colour,
+   * and the shade ramp pinned above it already covers "give me a variant of
+   * this one", which is the neighbouring need.
+   */
+  const [source, setSource] = useState<'palettes' | 'swatches' | 'recent'>('swatches');
   const [hexDraft, setHexDraft] = useState('');
   const [recents, setRecents] = useState<string[]>([]);
   const triggerRef = useRef<HTMLButtonElement>(null);
@@ -317,7 +333,7 @@ export const ColorPickerPopover: React.FC<Props> = ({
         type="button"
         aria-haspopup="dialog"
         aria-expanded={isOpen}
-        aria-label={mixed ? 'Mixed colours — open the colour picker' : isNone ? 'No fill / Transparent' : `Colour ${displayColor}`}
+        aria-label={mixed ? 'Mixed colours. Open the colour picker' : isNone ? 'No fill / Transparent' : `Colour ${displayColor}`}
         onClick={() => setIsOpen((v) => !v)}
         className={`cp-trigger${isOpen ? ' is-open' : ''}`}
         style={{
@@ -453,8 +469,12 @@ export const ColorPickerPopover: React.FC<Props> = ({
 
           <div className="cp-tabs" role="tablist" aria-label="Colour sources">
             {([
-              ['palettes', 'Palettes'],
+              // In the order they are reached for, which is also the order
+              // that puts the open tab at the left end on the first look. An
+              // active tab sitting in the middle of a fresh strip reads as
+              // somewhere you have already navigated to.
               ['swatches', 'Swatches'],
+              ['palettes', 'Palettes'],
               ['recent', 'Recent'],
             ] as const).map(([id, label]) => (
               <button

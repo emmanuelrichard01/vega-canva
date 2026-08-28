@@ -244,6 +244,99 @@ export function nudgeFocus(
 }
 
 /**
+ * Zooming about a point, so what is under the cursor stays under the cursor.
+ *
+ * ## Why the anchor matters
+ *
+ * Zooming about the centre is the easy version and it is the wrong one for a
+ * picture in a frame. The reason anyone zooms in on a photograph is to make a
+ * particular part of it fill the module, and a centre zoom pushes that part
+ * away as it grows: you enlarge, the face drifts off the edge, you pan it
+ * back, you enlarge again. Anchoring the gesture where the pointer is turns
+ * two alternating gestures into one, and it is what every map and every photo
+ * tool does.
+ *
+ * The anchor is given as a fraction of the module, `0..1` on each axis, which
+ * is the one form that does not need to know where the module is on the board
+ * or which way it is turned. The overlay converts the pointer once; this stays
+ * pure arithmetic.
+ *
+ * ## Why the result can still drift
+ *
+ * `coverCrop` clamps the window to the bitmap, so anchoring near an edge of a
+ * picture that is already against that edge cannot hold the point perfectly
+ * still. That is not an error to correct: the alternative is showing
+ * transparent pixels past the edge of the photograph, which `coverCrop`
+ * documents at length as the bug worth never having again. Panning stops at
+ * the edge of the picture, the way it does everywhere else.
+ */
+export function zoomAtPoint(
+  cell: Size,
+  natural: Size,
+  fit: SlotFit | undefined,
+  nextZoom: number,
+  anchor: Point
+): SlotFit | null {
+  const window = coverCrop(cell, natural, fit);
+  if (!window || !usable(natural.width) || !usable(natural.height)) return null;
+
+  const from = clampZoom(fit?.zoom);
+  const to = clampZoom(nextZoom);
+  const ax = clamp(anchor.x, 0, 1);
+  const ay = clamp(anchor.y, 0, 1);
+
+  // The window at the new zoom. Derived from the current one rather than from
+  // the base, so this needs no second opinion about what zoom 1 looks like.
+  const width = (window.width * from) / to;
+  const height = (window.height * from) / to;
+
+  // The source pixel the pointer is over now, which is the one to hold.
+  const held = { x: window.x + ax * window.width, y: window.y + ay * window.height };
+
+  return {
+    zoom: to,
+    focus: {
+      x: clamp((held.x - ax * width + width / 2) / natural.width, 0, 1),
+      y: clamp((held.y - ay * height + height / 2) / natural.height, 0, 1),
+    },
+  };
+}
+
+/**
+ * Where the whole picture sits in world space, given the part of it on show.
+ *
+ * The overlay draws the parts of the photograph the module is *not* showing,
+ * faintly, outside the frame. Without them there is nothing to aim at: you
+ * cannot judge a crop from the surviving rectangle alone, because the question
+ * you are asking is about what sits one step outside it. `imageCrop.ts` calls
+ * the equivalent for a loose image `sourceBoxInWorld` and gives the same
+ * reasoning at more length.
+ *
+ * The two scales are equal by construction -- `coverCrop` returns a window
+ * with the module's own aspect -- so either would do. Both are computed
+ * because reading `box.height / window.height` beside its partner is what
+ * makes the expression check itself.
+ */
+export function sourceBoxForSlot(
+  box: Rect,
+  natural: Size,
+  window: Rect | null
+): Rect | null {
+  if (!window || !usable(window.width) || !usable(window.height)) return null;
+  if (!usable(natural.width) || !usable(natural.height)) return null;
+
+  const scaleX = box.width / window.width;
+  const scaleY = box.height / window.height;
+
+  return {
+    x: box.x - window.x * scaleX,
+    y: box.y - window.y * scaleY,
+    width: natural.width * scaleX,
+    height: natural.height * scaleY,
+  };
+}
+
+/**
  * The smallest module that can usefully hold something, in world units.
  *
  * ## Why a size and not a list of grid kinds

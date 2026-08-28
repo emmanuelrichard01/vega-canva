@@ -138,7 +138,11 @@ export function normalizeRecipe(raw: unknown, width: number, height: number): Gr
       ...(num(spec.stagger, 0) !== 0 ? { stagger: clamp(num(spec.stagger, 0), 0, 1) } : null),
     },
     style: {
-      shapeMode: style.shapeMode === 'mixed' ? 'mixed' : 'uniform',
+      // A document written before shapes carried the mix on their own may still
+      // have a `shapeMode` beside them. It is dropped rather than honoured: the
+      // only case where it disagreed with the list was `uniform` over several
+      // shapes, and reading that as "mix these" is what the person picking them
+      // asked for.
       shapes: shapes.length > 0 ? (shapes as GridRecipe['style']['shapes']) : ['rect'],
       palette: palette.length > 0 ? palette : GRID_PALETTES[0].colors,
       colorMode: (COLOR_MODES as readonly string[]).includes(style.colorMode as string)

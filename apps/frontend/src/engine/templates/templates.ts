@@ -485,7 +485,7 @@ export const TEMPLATES: Template[] = [
     id: 'landing',
     category: 'design',
     name: 'Landing page',
-    blurb: 'A composed desktop page at 1440 — nav, split hero, feature row, footer.',
+    blurb: 'A composed desktop page at 1440: nav, split hero, feature row, footer.',
     teaches: ['Frames', 'Layout', 'Export'],
     objectCount: 74,
     build: () => {
@@ -530,7 +530,7 @@ export const TEMPLATES: Template[] = [
 
       const nodes: NewNodeInput[] = [
         // A frame at a real screen size, so "export this" produces a real asset.
-        frame(0, 0, PAGE, 1980, 'Desktop — 1440'),
+        frame(0, 0, PAGE, 1980, 'Desktop 1440'),
 
         // ---- navigation ------------------------------------------------
         plate(0, 0, PAGE, 88, '#FFFFFF', 0),
@@ -625,7 +625,7 @@ export const TEMPLATES: Template[] = [
       label(0, -180, 'True pixel dimensions, so what you draw is what gets posted.', 17),
 
       // The tall one anchors the left column at full height.
-      frame(0, 0, 1080, 1920, 'Story — 1080 x 1920'),
+      frame(0, 0, 1080, 1920, 'Story 1080 x 1920'),
       box(90, 760, 900, 260, 'Your headline', '#BFDBFE', {
         typography: { fontSize: 64, fontWeight: 700, color: '#161616', align: 'center', verticalAlign: 'middle' },
       }),
@@ -635,7 +635,7 @@ export const TEMPLATES: Template[] = [
 
       // The two landscape formats stack against it, bottom-aligned to the
       // same baseline so the three read as one set rather than three offcuts.
-      frame(1180, 0, 1080, 1080, 'Square post — 1080'),
+      frame(1180, 0, 1080, 1080, 'Square post 1080'),
       box(1270, 320, 900, 220, 'Your headline', '#FDE68A', {
         typography: { fontSize: 64, fontWeight: 700, color: '#161616', align: 'center', verticalAlign: 'middle' },
       }),
@@ -643,7 +643,7 @@ export const TEMPLATES: Template[] = [
         typography: { fontSize: 28, fontWeight: 500, color: '#475569', align: 'center', verticalAlign: 'middle' },
       }),
 
-      frame(1180, 1180, 1500, 500, 'Banner — 1500 x 500'),
+      frame(1180, 1180, 1500, 500, 'Banner 1500 x 500'),
       box(1260, 1350, 1340, 160, 'Your headline', '#FBCFE8', {
         typography: { fontSize: 56, fontWeight: 700, color: '#161616', align: 'center', verticalAlign: 'middle' },
       }),
@@ -948,7 +948,7 @@ export const TEMPLATES: Template[] = [
     id: 'retro',
     category: 'thinking',
     name: 'Retro',
-    blurb: 'Four columns including the one templates always omit — what anyone is actually doing.',
+    blurb: 'Four columns including the one templates always omit: what anyone is actually doing.',
     teaches: ['Frames as columns', 'Reactions', 'Tags'],
     build: () => {
       /**
@@ -999,15 +999,15 @@ export const TEMPLATES: Template[] = [
         {
           title: 'Actions', hint: 'An owner and a date, or it is a wish.', theme: 'yellow',
           cards: [
-            ['Ana — quarantine the suite, Friday', 0, ['owned']],
-            ['Sam — scope freeze in the charter, Weds', 0, ['owned']],
+            ['Ana: quarantine the suite, Friday', 0, ['owned']],
+            ['Sam: scope freeze in the charter, Weds', 0, ['owned']],
           ],
         },
       ];
 
       const nodes: NewNodeInput[] = [
         label(0, -180, 'Sprint retro', 44),
-        label(0, -122, 'One note per point. React to agree — the order that emerges is the agenda.', 18),
+        label(0, -122, 'One note per point. React to agree, and the order that emerges is the agenda.', 18),
       ];
 
       COLUMNS.forEach((column, i) => {
@@ -1124,11 +1124,11 @@ export const TEMPLATES: Template[] = [
 
       const nodes: NewNodeInput[] = [
         label(0, -210, 'Everything, on one sheet', 52),
-        label(0, -140, 'Nine plates. Every object on them is live — select one and change it.', 20),
+        label(0, -140, 'Nine plates. Every object on them is live. Select one and change it.', 20),
       ];
 
       // ---------------------------------------------------- 1. shapes -----
-      nodes.push(plate(0, 0, '1 — Shapes'));
+      nodes.push(plate(0, 0, '1 · Shapes'));
       const SHAPES: Array<[string, Record<string, unknown>]> = [
         ['Rectangle', { kind: 'rect' }],
         ['Ellipse', { kind: 'ellipse' }],
@@ -1151,7 +1151,7 @@ export const TEMPLATES: Template[] = [
       });
 
       // ---------------------------------------------------- 2. fills ------
-      nodes.push(plate(1, 0, '2 — Every kind of fill'));
+      nodes.push(plate(1, 0, '2 · Every kind of fill'));
       const STOPS = [
         { offset: 0, color: '#F3A024' },
         { offset: 1, color: '#6366F1' },
@@ -1171,7 +1171,7 @@ export const TEMPLATES: Template[] = [
       });
 
       // ---------------------------------------------------- 3. type -------
-      nodes.push(plate(2, 0, '3 — Type'));
+      nodes.push(plate(2, 0, '3 · Type'));
       {
         const p = at(2, 0);
         const t = (dy: number, text: string, typography: Record<string, unknown>): NewNodeInput => ({
@@ -1192,7 +1192,7 @@ export const TEMPLATES: Template[] = [
       }
 
       // ---------------------------------------------------- 4. notes ------
-      nodes.push(plate(0, 1, '4 — Sticky notes'));
+      nodes.push(plate(0, 1, '4 · Sticky notes'));
       {
         const p = at(0, 1);
         const THEMES: StickyTheme[] = ['yellow', 'mint', 'sky', 'pink', 'lavender', 'peach', 'white', 'dark'];
@@ -1216,7 +1216,7 @@ export const TEMPLATES: Template[] = [
       }
 
       // ---------------------------------------------------- 5. connectors -
-      nodes.push(plate(1, 1, '5 — Connectors'));
+      nodes.push(plate(1, 1, '5 · Connectors'));
       {
         const p = at(1, 1);
         const pair = (dy: number, routing: string, endEnd: string, name: string) => {
@@ -1236,7 +1236,7 @@ export const TEMPLATES: Template[] = [
       }
 
       // ---------------------------------------------------- 6. strokes ----
-      nodes.push(plate(2, 1, '6 — Strokes'));
+      nodes.push(plate(2, 1, '6 · Strokes'));
       {
         const STROKES: Array<[string, Record<string, unknown>]> = [
           ['Hairline', { color: '#0F172A', width: 1 }],
@@ -1259,7 +1259,7 @@ export const TEMPLATES: Template[] = [
       }
 
       // ---------------------------------------------------- 7. physics ----
-      nodes.push(plate(0, 2, '7 — Materials'));
+      nodes.push(plate(0, 2, '7 · Materials'));
       {
         const MATERIALS: Array<[string, string]> = [
           ['feather', '#DCFCE7'], ['paper', '#DBEAFE'], ['rubber', '#FBD2E1'],
@@ -1277,7 +1277,7 @@ export const TEMPLATES: Template[] = [
       }
 
       // ---------------------------------------------------- 8. depth ------
-      nodes.push(plate(1, 2, '8 — Depth and blending'));
+      nodes.push(plate(1, 2, '8 · Depth and blending'));
       {
         nodes.push(
           swatch(1, 2, 60, 90, 190, 190, { fill: [{ type: 'solid', color: '#F3A024' }], cornerRadius: 20 }),
@@ -1290,7 +1290,7 @@ export const TEMPLATES: Template[] = [
       }
 
       // ---------------------------------------------------- 9. frames -----
-      nodes.push(plate(2, 2, '9 — Frames'));
+      nodes.push(plate(2, 2, '9 · Frames'));
       {
         const p = at(2, 2);
         nodes.push(
@@ -1300,7 +1300,7 @@ export const TEMPLATES: Template[] = [
           // lands inside the plate. At seventy it started thirteen units above
           // the plate's top edge, so the plate clipped its own contents' label.
           {
-            ...frame(p.x + 50, p.y + 120, 340, 210, 'Artboard — 340 x 210'),
+            ...frame(p.x + 50, p.y + 120, 340, 210, 'Artboard 340 x 210'),
             safeArea: { top: 24, right: 24, bottom: 24, left: 24 },
           },
           box(p.x + 100, p.y + 170, 240, 110, 'Clipped to the frame', '#DBEAFE', {
@@ -1560,7 +1560,7 @@ export const TEMPLATES: Template[] = [
         ] },
         { title: 'In progress', theme: 'yellow', cards: [
           ['Multi-select in the inspector', ['design'], 3],
-          ['Connector ends — six kinds', ['build'], 1],
+          ['Connector ends, six kinds', ['build'], 1],
           ['Thumbnail text rendering', ['bug'], 0],
         ] },
         { title: 'In review', theme: 'lavender', cards: [
@@ -1604,7 +1604,7 @@ export const TEMPLATES: Template[] = [
     id: 'spiro',
     category: 'art',
     name: 'Spirograph',
-    blurb: 'Six hundred wedges tracing a hypotrochoid — the curve a gear pen draws.',
+    blurb: 'Six hundred wedges tracing a hypotrochoid, the curve a gear pen draws.',
     teaches: ['Rotation', 'Generative', 'Scale'],
     objectCount: 600,
     build: (limit) => {
@@ -1706,7 +1706,7 @@ export const TEMPLATES: Template[] = [
     id: 'uikit',
     category: 'design',
     name: 'Interface kit',
-    blurb: 'Buttons, fields, swatches and type at real sizes — a page of parts to build from.',
+    blurb: 'Buttons, fields, swatches and type at real sizes: a page of parts to build from.',
     teaches: ['Frames', 'Type scale', 'Colour'],
     objectCount: 96,
     build: () => {
@@ -1968,10 +1968,10 @@ export const TEMPLATES: Template[] = [
 
       /** Quadrant washes: the useful corner reads warm, the wasteful one cold. */
       const QUADRANTS: Array<[number, number, string, string]> = [
-        [0, 0, 'Quick win — do it now', '#F0FDF4'],
-        [Q + COL_GAP, 0, 'Big bet — plan it properly', '#EFF6FF'],
-        [0, Q + ROW_GAP, 'Fill-in — when there is room', '#F8FAFC'],
-        [Q + COL_GAP, Q + ROW_GAP, 'Thankless — say no', '#FEF2F2'],
+        [0, 0, 'Quick win: do it now', '#F0FDF4'],
+        [Q + COL_GAP, 0, 'Big bet: plan it properly', '#EFF6FF'],
+        [0, Q + ROW_GAP, 'Fill-in: when there is room', '#F8FAFC'],
+        [Q + COL_GAP, Q + ROW_GAP, 'Thankless: say no', '#FEF2F2'],
       ];
 
       /** A hairline axis rule. */

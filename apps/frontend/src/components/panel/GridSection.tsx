@@ -3,7 +3,6 @@ import { Link2, Unlink2 } from 'lucide-react';
 import { useStore } from '../../hooks/useStore';
 import { GridKindIcon } from '../workspace/gridIcons';
 import { NumberStepper } from '../ui/NumberStepper';
-import { SegmentedControl } from '../ui/SegmentedControl';
 import { Slider } from '../ui/Slider';
 import { ColorPickerPopover } from '../ui/ColorPickerPopover';
 import { setGridRecipe } from '../../engine/grid/gridApply';
@@ -110,6 +109,19 @@ export const GridSection: React.FC<Props> = ({ nodeId }) => {
    */
   const [linkWanted, setLinkWanted] = React.useState(true);
   /**
+   * Wanting to mix shapes, before there is a mix to see.
+   *
+   * The same arrangement as `linkWanted` and for the same reason. The grid
+   * stores a list of shapes, and how many there are *is* whether they mix, so
+   * there is no mode left to store -- but turning the switch on is something
+   * you do *before* picking the second shape, and a switch derived purely from
+   * the list would spring back off in the moment between the two.
+   *
+   * So it is wanted-or-already-true: the row becomes multi-select the instant
+   * you ask for it, and stays that way for as long as the grid says so.
+   */
+  const [mixWanted, setMixWanted] = React.useState(false);
+  /**
    * Linked only when you want it **and** the two actually agree.
    *
    * Stored preference alone was wrong in both directions. It started on, so a
@@ -207,6 +219,8 @@ export const GridSection: React.FC<Props> = ({ nodeId }) => {
    * notion of it and gets no slider, rather than a slider that does nothing.
    */
   const variationLabel = VARIATION_LABELS[recipe.spec.kind];
+  /** More than one shape chosen, or a request to choose one. */
+  const mixing = mixWanted || recipe.style.shapes.length > 1;
 
   return (
     <div className="grid-section">
@@ -227,7 +241,7 @@ export const GridSection: React.FC<Props> = ({ nodeId }) => {
             aria-checked={recipe.spec.kind === kind}
             className="grid-kind"
             data-active={recipe.spec.kind === kind || undefined}
-            data-tooltip={`${GRID_LABELS[kind]} — ${GRID_HINTS[kind]}`}
+            data-tooltip={`${GRID_LABELS[kind]}: ${GRID_HINTS[kind]}`}
             onClick={() => apply(switchKind(recipe, kind))}
           >
             {/* No label under the tile.
@@ -468,22 +482,52 @@ export const GridSection: React.FC<Props> = ({ nodeId }) => {
           </span>
         }
       >
-      <SegmentedControl
-        ariaLabel="Shape mode"
-        value={recipe.style.shapeMode}
-        onChange={(shapeMode) => patchStyle({ shapeMode: shapeMode as 'uniform' | 'mixed' })}
-        segments={[
-          { value: 'uniform', label: 'One shape', hint: 'Every cell the same' },
-          { value: 'mixed', label: 'Mixed', hint: 'Drawn from the shapes you pick' },
-        ]}
-      />
-
+      {/**
+        * The shape of a module, and whether there is more than one of them.
+        *
+        * ## Why the mode control went
+        *
+        * A two-segment "One shape / Mixed" `SegmentedControl` sat above this
+        * row, and it was wrong three ways at once.
+        *
+        * It looked wrong: that component sizes each segment to its own content
+        * and never stretches -- it is built for a row of 20px specimen icons --
+        * so two short words sat at the left end of a full-width grey track with
+        * most of it empty. Nothing else in the panel has that silhouette.
+        *
+        * It said nothing the row below did not already say. A list of shapes
+        * *is* the answer to "one or several", and keeping both meant they could
+        * disagree; see `GridStyle.shapes` for the two ways they did.
+        *
+        * And it silently changed what a click here *meant* -- replace in one
+        * mode, toggle in the other -- with nothing on screen to say so, which
+        * is the one thing a control must never do quietly.
+        *
+        * What replaces it is a switch that describes its effect on this row in
+        * two words, built from the same `grid-switch` as the continuous-ring
+        * toggle in the band above: a binary choice that looks like the other
+        * binary choice in this panel rather than like a tab strip. It sits
+        * *under* the row it governs for the same reason that one does -- the
+        * picture is the control, and the qualifier follows it.
+        */}
       <span className="grid-section__caption">
-        {recipe.style.shapeMode === 'uniform'
-          ? 'Pick a shape'
-          : `Mixing ${recipe.style.shapes.length} of ${CELL_SHAPES.length}`}
+        Shape
+        {/* Named in full here, which the icon-only row cannot do -- the same
+            arrangement the palette and colour-mode captions already use. */}
+        <strong>
+          {mixing
+            ? `Mixing ${recipe.style.shapes.length} of ${CELL_SHAPES.length}`
+            : SHAPE_LABELS[recipe.style.shapes[0] ?? 'rect']}
+        </strong>
       </span>
-      <div className="grid-section__shapes" role="group" aria-label="Cell shapes">
+      {/* A radio group when one shape is chosen, a set of toggles when several
+          are -- announced as whichever it currently is, rather than as toggles
+          that happen to behave like radios most of the time. */}
+      <div
+        className="grid-section__shapes"
+        role={mixing ? 'group' : 'radiogroup'}
+        aria-label={mixing ? 'Shapes in the mix' : 'Cell shape'}
+      >
         {CELL_SHAPES.map((shape: CellShape) => {
           const on = recipe.style.shapes.includes(shape);
           return (
@@ -491,18 +535,20 @@ export const GridSection: React.FC<Props> = ({ nodeId }) => {
               key={shape}
               type="button"
               className="grid-shape"
+              role={mixing ? undefined : 'radio'}
+              {...(mixing ? { 'aria-pressed': on } : { 'aria-checked': on })}
               data-active={on || undefined}
-              aria-pressed={on}
-              data-tooltip={SHAPE_LABELS[shape]}
+              aria-label={SHAPE_LABELS[shape]}
+              data-tooltip={
+                mixing
+                  ? on
+                    ? `Take ${SHAPE_LABELS[shape].toLowerCase()} out of the mix`
+                    : `Add ${SHAPE_LABELS[shape].toLowerCase()} to the mix`
+                  : SHAPE_LABELS[shape]
+              }
               onClick={() => {
-                /**
-                 * In uniform mode a click *replaces*; in mixed mode it toggles.
-                 *
-                 * One control, two readings, because the mode above already
-                 * said which question is being asked — and a separate picker
-                 * per mode would be two lists to keep in step.
-                 */
-                if (recipe.style.shapeMode === 'uniform') {
+                // The list is the state, so a click either sets it or edits it.
+                if (!mixing) {
                   patchStyle({ shapes: [shape] });
                   return;
                 }
@@ -524,6 +570,35 @@ export const GridSection: React.FC<Props> = ({ nodeId }) => {
           );
         })}
       </div>
+
+      <label className="grid-field grid-field--wide grid-toggle-field">
+        <span>Mix shapes</span>
+        <button
+          type="button"
+          role="switch"
+          aria-checked={mixing}
+          className="grid-switch"
+          data-active={mixing || undefined}
+          data-tooltip={mixing ? 'Use one shape for every module' : 'Draw each module from the shapes you pick'}
+          onClick={() => {
+            if (!mixing) {
+              setMixWanted(true);
+              return;
+            }
+            setMixWanted(false);
+            /**
+             * Turning it off has to write, because the list is the state.
+             * Leaving three shapes selected under a switch that reads "off"
+             * would be the switch telling you something the grid disagrees
+             * with -- and the first one is what this band's header already
+             * shows as the specimen.
+             */
+            if (recipe.style.shapes.length > 1) patchStyle({ shapes: [recipe.style.shapes[0]] });
+          }}
+        >
+          <span className="grid-switch__dot" />
+        </button>
+      </label>
 
       <div className="grid-section__row">
         <label className="grid-field">

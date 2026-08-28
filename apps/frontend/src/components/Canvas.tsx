@@ -69,7 +69,7 @@ const NUDGE_KEYS: Record<string, [number, number]> = {
   ArrowDown: [0, 1],
 };
 import { nudgeDelta } from '../engine/tools/nudge';
-import { nudgeSlotFocus } from '../engine/grid/gridSlotApply';
+import { nudgeSlotFocus, setSlotFit } from '../engine/grid/gridSlotApply';
 import { CommentsOverlay } from "./CommentsOverlay";
 import { AudioRecordingHUD } from "./AudioRecordingHUD";
 import { useComments } from "../hooks/useComments";
@@ -85,7 +85,9 @@ import { CornerRadiusHandle } from './canvas/CornerRadiusHandle';
 import { isLineLike } from '../engine/model/lineEnds';
 import type { ConnectorNode, ShapeNode } from '../engine/model/schema';
 import { CropOverlay } from './canvas/CropOverlay';
+import { SlotReframeOverlay } from './canvas/SlotReframeOverlay';
 import { cropMode } from '../engine/interaction/cropMode';
+import { slotReframe } from '../engine/interaction/slotReframe';
 import { textEditing } from '../engine/interaction/textEditing';
 import { FRAME_PRESETS } from '../engine/model/frames';
 import { deleteNodesWithFrames } from '../engine/interaction/frameMembership';
@@ -180,6 +182,22 @@ export const Canvas: React.FC<CanvasProps> = ({ activeTool, selectedIds, setSele
     cropMode.getSnapshot
   );
   const croppingId = cropSnapshot?.nodeId ?? null;
+
+  // -- reframe mode ---------------------------------------------------------
+
+  /**
+   * The picture being reframed inside its module.
+   *
+   * Its own mode rather than a flag on the crop above, because the two move
+   * opposite things: cropping drags the frame, reframing drags the picture
+   * inside a frame that belongs to the grid. See `slotReframe.ts`.
+   */
+  const reframeSnapshot = useSyncExternalStore(
+    slotReframe.subscribe,
+    slotReframe.getSnapshot,
+    slotReframe.getSnapshot
+  );
+  const reframingId = reframeSnapshot?.nodeId ?? null;
 
   // -- path edit mode -------------------------------------------------------
 
@@ -325,6 +343,52 @@ export const Canvas: React.FC<CanvasProps> = ({ activeTool, selectedIds, setSele
   useEffect(() => {
     if (croppingId && !selectedIds.includes(croppingId)) cropMode.commit();
   }, [selectedIds, croppingId]);
+
+  /**
+   * Put back exactly what the reframe started from.
+   *
+   * The fit, not the crop it produced. The crop is derived from the fit and the
+   * module's size on every reflow, so restoring the fit restores the picture
+   * even if the grid was re-laid underneath the gesture -- restoring the crop
+   * would put back a window cut for a module that may no longer be that shape.
+   */
+  const cancelReframe = useCallback(() => {
+    const restoring = slotReframe.cancel();
+    if (!restoring) return;
+    setSlotFit(restoring.nodeId, restoring.fit ?? {});
+  }, []);
+
+  useEffect(() => {
+    if (!reframingId) return;
+    const onKey = (e: KeyboardEvent) => {
+      const el = document.activeElement?.tagName;
+      if (el === 'INPUT' || el === 'TEXTAREA') return;
+      if (e.key === 'Escape') {
+        e.stopPropagation();
+        cancelReframe();
+      } else if (e.key === 'Enter') {
+        e.stopPropagation();
+        slotReframe.commit();
+      }
+    };
+    // Capture, for the same reason the crop's handler uses it: Escape has to
+    // end the mode rather than clear the selection, and both handlers sit on
+    // the same event.
+    window.addEventListener('keydown', onKey, true);
+    return () => window.removeEventListener('keydown', onKey, true);
+  }, [reframingId, cancelReframe]);
+
+  // Picking a tool, and leaving the picture, both end it keeping what is there.
+  useEffect(() => {
+    if (reframingId) slotReframe.commit();
+    // Keyed on the tool alone: re-running on `reframingId` would commit on the
+    // frame it was entered.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [activeTool]);
+
+  useEffect(() => {
+    if (reframingId && !selectedIds.includes(reframingId)) slotReframe.commit();
+  }, [selectedIds, reframingId]);
 
   /**
    * And leaving the line ends its editor.
@@ -1362,14 +1426,14 @@ export const Canvas: React.FC<CanvasProps> = ({ activeTool, selectedIds, setSele
               provisional seed size, which is why they appeared as a crumpled
               cluster rather than a frame. You cannot resize and type at the
               same time; they come back the moment the caret leaves. */}
-          {!croppingId && !editingPathId && !editingTextId && activeTool !== 'direct-select' && (
+          {!croppingId && !reframingId && !editingPathId && !editingTextId && activeTool !== 'direct-select' && (
             <SelectionTransformer selectedIds={selectedIds} stageRef={stageRef} />
           )}
 
           {/* A line is edited at its two ends. The transformer stands down for
               a solo line — see its own note — so exactly one set of handles is
               ever on screen. */}
-          {!croppingId && !editingPathId && !editingTextId && activeTool !== 'direct-select' && selectedIds.length === 1 && (() => {
+          {!croppingId && !reframingId && !editingPathId && !editingTextId && activeTool !== 'direct-select' && selectedIds.length === 1 && (() => {
             const only = objects[selectedIds[0]];
             if (!only) return null;
             if (isLineLike(only)) {
@@ -1397,6 +1461,10 @@ export const Canvas: React.FC<CanvasProps> = ({ activeTool, selectedIds, setSele
           {/* Above the transformer's slot so its handles are never buried
               under a selection outline drawn afterwards. */}
           <CropOverlay />
+
+          {/* The module holds still and the picture moves inside it. No
+              handles, because the box belongs to the grid. */}
+          <SlotReframeOverlay />
 
           {/* Anchors and handles. Hidden behind the same rule the crop
               overlay hides the transformer with: a resize box drawn around a

@@ -12,8 +12,6 @@ export interface User {
    * which room it is in.
    */
   color: string;
-  /** The built face, as `avatar.ts`'s wire form. Absent means initials. */
-  avatar?: string;
   isGuest: boolean;
 }
 
@@ -21,8 +19,8 @@ export interface AuthContextType {
   user: User | null;
   login: (name: string, color: string) => void;
   joinAsGuest: (name: string, color: string) => void;
-  /** Change name, colour preference or face, keeping the same identity. */
-  updateProfile: (patch: Partial<Pick<User, 'name' | 'color' | 'avatar'>>) => void;
+  /** Change name or colour preference, keeping the same identity. */
+  updateProfile: (patch: Partial<Pick<User, 'name' | 'color'>>) => void;
   logout: () => void;
 }
 

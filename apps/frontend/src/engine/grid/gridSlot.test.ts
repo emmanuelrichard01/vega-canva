@@ -13,6 +13,8 @@ import {
   parkedCell,
   SLOT_MAX_ZOOM,
   slotBox,
+  sourceBoxForSlot,
+  zoomAtPoint,
 } from './gridSlot';
 import type { StyledCell } from './gridStyle';
 
@@ -552,5 +554,104 @@ describe('normalizeSlot', () => {
       focus: { x: 1, y: 0 },
       zoom: SLOT_MAX_ZOOM,
     });
+  });
+});
+
+describe('zoomAtPoint', () => {
+  const SQUARE = { width: 100, height: 100 };
+  const WIDE = { width: 400, height: 200 };
+
+  /** Where a fraction of the module lands in the source, at a given fit. */
+  const sourceUnder = (fit: Parameters<typeof coverCrop>[2], ax: number, ay: number) => {
+    const w = coverCrop(SQUARE, WIDE, fit)!;
+    return { x: w.x + ax * w.width, y: w.y + ay * w.height };
+  };
+
+  it('holds the point under the pointer still', () => {
+    /**
+     * The whole reason the anchor exists. Zooming about the centre pushes the
+     * thing you are zooming towards off the edge, so you enlarge, pan it back,
+     * and enlarge again. One gesture instead of two alternating ones.
+     */
+    const anchor = { x: 0.25, y: 0.75 };
+    const before = sourceUnder(undefined, anchor.x, anchor.y);
+    const next = zoomAtPoint(SQUARE, WIDE, undefined, 2, anchor)!;
+    const after = sourceUnder(next, anchor.x, anchor.y);
+    expect(after.x).toBeCloseTo(before.x, 6);
+    expect(after.y).toBeCloseTo(before.y, 6);
+  });
+
+  it('holds it on the way back out too', () => {
+    const anchor = { x: 0.8, y: 0.2 };
+    const zoomed = zoomAtPoint(SQUARE, WIDE, undefined, 3, anchor)!;
+    const before = sourceUnder(zoomed, anchor.x, anchor.y);
+    const back = zoomAtPoint(SQUARE, WIDE, zoomed, 1.5, anchor)!;
+    expect(sourceUnder(back, anchor.x, anchor.y).x).toBeCloseTo(before.x, 6);
+  });
+
+  it('is a round trip from the centre, which is the one anchor that cannot drift', () => {
+    const centre = { x: 0.5, y: 0.5 };
+    const there = zoomAtPoint(SQUARE, WIDE, undefined, 4, centre)!;
+    const back = zoomAtPoint(SQUARE, WIDE, there, 1, centre)!;
+    expect(back.zoom).toBe(1);
+    expect(back.focus!.x).toBeCloseTo(0.5, 6);
+    expect(back.focus!.y).toBeCloseTo(0.5, 6);
+  });
+
+  it('never asks for a window off the edge of the picture', () => {
+    // An anchor in the corner of a picture already against that corner cannot
+    // hold its point still, and must not try: pixels past the edge of a bitmap
+    // are transparent, which `coverCrop` documents as the bug worth never
+    // having again.
+    for (const anchor of [{ x: 0, y: 0 }, { x: 1, y: 1 }, { x: 0, y: 1 }]) {
+      const fit = zoomAtPoint(SQUARE, WIDE, { focus: anchor, zoom: 1 }, 6, anchor)!;
+      const w = coverCrop(SQUARE, WIDE, fit)!;
+      expect(w.x).toBeGreaterThanOrEqual(-1e-9);
+      expect(w.y).toBeGreaterThanOrEqual(-1e-9);
+      expect(w.x + w.width).toBeLessThanOrEqual(WIDE.width + 1e-9);
+      expect(w.y + w.height).toBeLessThanOrEqual(WIDE.height + 1e-9);
+    }
+  });
+
+  it('clamps the zoom rather than trusting the caller', () => {
+    expect(zoomAtPoint(SQUARE, WIDE, undefined, 9999, { x: 0.5, y: 0.5 })!.zoom).toBe(SLOT_MAX_ZOOM);
+    expect(zoomAtPoint(SQUARE, WIDE, undefined, 0.1, { x: 0.5, y: 0.5 })!.zoom).toBe(1);
+  });
+
+  it('declines a picture with no dimensions rather than dividing by them', () => {
+    expect(zoomAtPoint(SQUARE, { width: 0, height: 0 }, undefined, 2, { x: 0.5, y: 0.5 })).toBeNull();
+  });
+});
+
+describe('sourceBoxForSlot', () => {
+  const BOX = { x: 40, y: 60, width: 100, height: 100 };
+  const WIDE = { width: 400, height: 200 };
+
+  it('places the whole picture so the part on show lands on the module', () => {
+    /**
+     * The property the ghost depends on. If this is off by anything at all the
+     * faint picture visibly fails to line up with the bright one, and the
+     * expression still reads as correct in source, which is why it is pinned
+     * here rather than left to the eye.
+     */
+    const window = coverCrop({ width: 100, height: 100 }, WIDE)!;
+    const source = sourceBoxForSlot(BOX, WIDE, window)!;
+    const scale = source.width / WIDE.width;
+
+    expect(source.x + window.x * scale).toBeCloseTo(BOX.x, 6);
+    expect(source.y + window.y * scale).toBeCloseTo(BOX.y, 6);
+    expect(window.width * scale).toBeCloseTo(BOX.width, 6);
+    expect(window.height * scale).toBeCloseTo(BOX.height, 6);
+  });
+
+  it('grows the ghost as the framing zooms in', () => {
+    const at = (zoom: number) =>
+      sourceBoxForSlot(BOX, WIDE, coverCrop({ width: 100, height: 100 }, WIDE, { zoom }))!;
+    expect(at(4).width).toBeCloseTo(at(1).width * 4, 6);
+  });
+
+  it('is null when there is nothing to place', () => {
+    expect(sourceBoxForSlot(BOX, WIDE, null)).toBeNull();
+    expect(sourceBoxForSlot(BOX, { width: 0, height: 0 }, { x: 0, y: 0, width: 1, height: 1 })).toBeNull();
   });
 });

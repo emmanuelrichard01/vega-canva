@@ -6,6 +6,7 @@ import { editor } from '../engine/api/EditorAPI';
 import { pasteNodes, writeClipboard } from '../engine/clipboard/clipboard';
 import { consumePendingEdit, onPendingEdit, requestCaretOnMount } from '../engine/interaction/pendingEdit';
 import { cropMode } from '../engine/interaction/cropMode';
+import { slotReframe } from '../engine/interaction/slotReframe';
 import { pathEdit } from '../engine/interaction/pathEdit';
 import { lineEdit } from '../engine/interaction/lineEdit';
 import { fitLineToBox, isLineLike } from '../engine/model/lineEnds';
@@ -800,11 +801,31 @@ export const ObjectRenderer = React.memo(
       // anything has changed — the overlay's first render already sees a
       // document that a stray drag could have touched.
       if (node.type === 'image') {
-        cropMode.enter({
-          nodeId: objId,
-          node: { x: node.x, y: node.y, width: node.width, height: node.height },
-          crop: node.crop,
-        });
+        /**
+         * The same gesture, and which mode it opens depends on who owns the
+         * frame.
+         *
+         * A loose picture is cropped: the handles drag its own box and the
+         * photograph holds still behind them. A picture in a module has no box
+         * of its own to drag -- `planGridReflow` writes it back on every pass
+         * -- so the handles would be a control the document undoes a frame
+         * later. Inside a module the picture moves and the frame holds still,
+         * which is the same idea with the two halves swapped.
+         *
+         * Both are reached the same way on purpose. "Double-click to go inside
+         * this object" is the one gesture that already means this everywhere
+         * on the canvas, and a picture should not stop answering it because
+         * something else is holding its edges.
+         */
+        if (node.gridSlot) {
+          slotReframe.enter({ nodeId: objId, fit: node.gridSlot });
+        } else {
+          cropMode.enter({
+            nodeId: objId,
+            node: { x: node.x, y: node.y, width: node.width, height: node.height },
+            crop: node.crop,
+          });
+        }
       }
       // And the inside of a path is its anchors. A freehand blob has none —
       // its "path" is the outline of a stroke, not a run of control points —

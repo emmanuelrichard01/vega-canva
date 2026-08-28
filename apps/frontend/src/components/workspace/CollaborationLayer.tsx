@@ -106,12 +106,7 @@ export const CollaborationLayer: React.FC = () => {
               boxShadow: isHovered ? 'var(--shadow-md)' : 'var(--shadow-sm)'
             }}
           >
-            <Avatar
-              name={u.user.name}
-              color={u.user.color}
-              avatar={u.user.avatar}
-              size={28}
-            />
+            <Avatar name={u.user.name} color={u.user.color} size={28} />
 
             {/* Ambient Popover (Shows when hovered) */}
             {isHovered && (

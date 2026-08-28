@@ -278,9 +278,9 @@ export const TypographySection: React.FC<TypographySectionProps> = ({
               value={node.resize}
               onChange={(v) => set({ resize: v as TextResize } as Partial<AnyNode>)}
               segments={[
-                { value: 'width', label: 'Auto width — the box is as wide as the longest line', icon: <MoveHorizontal size={14} /> },
-                { value: 'height', label: 'Auto height — wraps at this width and grows down', icon: <MoveVertical size={14} /> },
-                { value: 'fixed', label: 'Fixed — both dimensions imposed; drag an edge to stretch the type', icon: <Square size={14} /> },
+                { value: 'width', label: 'Auto width: the box is as wide as the longest line', icon: <MoveHorizontal size={14} /> },
+                { value: 'height', label: 'Auto height: wraps at this width and grows down', icon: <MoveVertical size={14} /> },
+                { value: 'fixed', label: 'Fixed: both dimensions imposed, and dragging an edge stretches the type', icon: <Square size={14} /> },
               ]}
             />
           </Row>

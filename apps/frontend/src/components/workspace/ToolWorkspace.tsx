@@ -230,7 +230,7 @@ const FlyoutItem: React.FC<{
       aria-checked={active}
       className={`btn-icon dock-item ${active ? 'active' : ''}`}
       onClick={onClick}
-      aria-label={description ? `${label} — ${description}` : label}
+      aria-label={description ? `${label}. ${description}` : label}
     >
       <span className="dock-item__icon" aria-hidden="true">{icon}</span>
       <span className="dock-item__label">{label}</span>

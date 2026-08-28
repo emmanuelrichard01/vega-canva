@@ -62,7 +62,7 @@ export const AuthModal: React.FC = () => {
               the name is *for*, which is the only reason the field exists. */}
           <p className="auth__lede">
             Your name and colour are how everyone else sees you on the board.
-            There are no accounts and no password — a room link is the whole
+            There are no accounts and no passwords. A room link is the whole
             invitation.
           </p>
         </div>

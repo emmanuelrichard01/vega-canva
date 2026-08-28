@@ -68,8 +68,21 @@ export const COLOR_MODE_LABELS: Record<ColorMode, string> = {
 };
 
 export interface GridStyle {
-  /** Every shape, or a seeded mix drawn from `shapes`. */
-  shapeMode: 'uniform' | 'mixed';
+  /**
+   * The shapes a module may take -- and, by how many there are, whether they mix.
+   *
+   * One entry means every module is that shape; more than one means a seeded
+   * draw from exactly those. There was a `shapeMode: 'uniform' | 'mixed'` beside
+   * this field and it was a second copy of a fact the list already carries, so
+   * the two could disagree and did: `uniform` over three shapes drew the first
+   * and silently ignored the other two, and `randomiseRecipe` rolled the mode
+   * and the set from separate draws against the same threshold, which produced
+   * a "mixed" grid with one shape in it about a quarter of the time.
+   *
+   * Deriving it cannot disagree with itself, and the two readings coincide
+   * exactly rather than approximately: a seeded draw from a set of one has one
+   * outcome, so removing the special case changed no grid that had one shape.
+   */
   shapes: CellShape[];
   palette: string[];
   colorMode: ColorMode;
@@ -184,11 +197,11 @@ export function styleCells(cells: readonly GridCell[], style: GridStyle): Styled
      * not understand outlines falls back to the box, and a box is the honest
      * approximation of one.
      */
+    // A set of one draws that one every time, so there is no uniform case left
+    // to special-case -- see `GridStyle.shapes`.
     const shape = cell.outline
       ? ('rect' as CellShape)
-      : style.shapeMode === 'uniform'
-        ? shapes[0]
-        : shapes[Math.floor(next() * shapes.length)];
+      : shapes[Math.floor(next() * shapes.length)];
     return {
       ...cell,
       index,
@@ -215,7 +228,6 @@ export function styleCells(cells: readonly GridCell[], style: GridStyle): Styled
 /** A style with everything filled in. */
 export function defaultStyle(): GridStyle {
   return {
-    shapeMode: 'uniform',
     shapes: ['rect'],
     palette: GRID_PALETTES[0].colors,
     colorMode: 'gradient',

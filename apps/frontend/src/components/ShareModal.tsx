@@ -73,7 +73,7 @@ export const ShareModal: React.FC<ShareModalProps> = ({ onClose }) => {
           <div>
             <h2 id="share-title" className="share__title">Invite people to this board</h2>
             <p id="share-desc" className="share__lede">
-              Whoever opens this link is in — no account, nothing to accept.
+              Whoever opens this link is in. No account, nothing to accept.
             </p>
           </div>
           <button className="share__close" onClick={onClose} aria-label="Close">
@@ -115,8 +115,8 @@ export const ShareModal: React.FC<ShareModalProps> = ({ onClose }) => {
             provide. Said here rather than discovered later. */}
         <p className="share__caveat">
           There are no permissions on this board. Anyone holding the link can
-          edit it, rename it, and delete what is on it — so send it the way you
-          would send a key, not a newsletter.
+          edit it, rename it, and delete what is on it, so send it the way you
+          would send a key rather than a newsletter.
         </p>
       </div>
     </div>

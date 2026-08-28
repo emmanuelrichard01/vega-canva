@@ -72,7 +72,7 @@ const BEATS: Beat[] = [
   },
   {
     title: 'Everyone, at the same time',
-    body: 'Send the link and they are in — no account, nothing to accept. You will see their cursor move as they think.',
+    body: 'Send the link and they are in. No account, nothing to accept. You will see their cursor move as they think.',
     art: (
       <svg viewBox="0 0 220 120" aria-hidden="true" className="welcome__svg">
         <rect x="30" y="30" width="70" height="46" rx="8" fill="var(--text-primary)" opacity="0.16" />

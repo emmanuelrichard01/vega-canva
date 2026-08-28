@@ -89,7 +89,7 @@ function buildSections(): Section[] {
         { keys: `${MOD} + K`, what: 'Command palette & search' },
         { keys: `${MOD} + P`, what: 'Command palette alternative' },
         { keys: '?', what: 'Open keyboard shortcuts & help' },
-        { keys: '\\', what: 'Toggle Zen mode — hide or show panels' },
+        { keys: '\\', what: 'Toggle Zen mode: hide or show panels' },
       ],
     },
     {
@@ -100,11 +100,11 @@ function buildSections(): Section[] {
       rows: [
         { keys: 'Click', what: 'Select one object' },
         { keys: 'Shift + Click', what: 'Add to or remove from selection' },
-        { keys: 'Drag on empty board', what: 'Marquee — select everything inside' },
+        { keys: 'Drag on empty board', what: 'Marquee: select everything inside' },
         { keys: `${MOD} + A`, what: 'Select every object on the board' },
         { keys: 'Esc', what: 'Deselect, or exit current edit mode' },
         { keys: 'Double-click', what: 'Go inside: text, line points, path anchors, image crop' },
-        { keys: 'Enter', what: 'Edit selected text or note — or open a line’s points' },
+        { keys: 'Enter', what: 'Edit selected text or note, or open a line’s points' },
         { keys: 'Alt + Drag', what: 'Duplicate the object instead of moving it' },
         { keys: 'Right-click', what: 'Context menu with type-actions & alignment' },
       ],
@@ -118,9 +118,9 @@ function buildSections(): Section[] {
         { keys: `${MOD} + Z`, what: 'Undo previous action' },
         { keys: `${MOD} + Shift + Z`, what: 'Redo previously undone action' },
         { keys: `${MOD} + Y`, what: 'Redo (Windows / Linux standard)' },
-        { keys: `${MOD} + C`, what: 'Copy — works across boards and tabs' },
+        { keys: `${MOD} + C`, what: 'Copy, and it works across boards and tabs' },
         { keys: `${MOD} + X`, what: 'Cut selection to clipboard' },
-        { keys: `${MOD} + V`, what: 'Paste — SVG parses as editable vectors' },
+        { keys: `${MOD} + V`, what: 'Paste. SVG arrives as editable vectors' },
         { keys: `${MOD} + D`, what: 'Duplicate selection, offset slightly' },
         { keys: `${MOD} + G`, what: 'Group selected objects' },
         { keys: `${MOD} + Shift + G`, what: 'Ungroup selected objects' },
@@ -151,11 +151,11 @@ function buildSections(): Section[] {
         // `R` arms the generic Shape seat and `L` did nothing. The Tools
         // section above is generated from `TOOL_SHORTCUTS` and was right; this
         // hand-written row was the exact failure `toolNames.ts` warns about.
-        { keys: 'L', what: 'Line / Arrow — press again to switch between them' },
+        { keys: 'L', what: 'Line / Arrow: press again to switch between them' },
         { keys: 'Drag', what: 'A straight line from where you pressed to where you let go' },
         { keys: 'Click, click, click', what: 'Place a corner with each click' },
         { keys: 'Enter / Esc', what: 'Finish the line you are drawing' },
-        { keys: 'Double-click', what: 'Also finishes it — the last click lands on the last corner' },
+        { keys: 'Double-click', what: 'Also finishes it. The last click lands on the last corner' },
         { keys: 'Backspace', what: 'Take back the corner you just placed' },
         { keys: 'Shift', what: 'Constrain the next corner to 15° steps' },
       ],
@@ -234,7 +234,7 @@ function buildSections(): Section[] {
       title: 'Copying & exporting',
       blurb: 'Everything works on a selection as well as on the whole board.',
       rows: [
-        { keys: `${MOD} + Shift + E`, what: 'Export the selection — six formats, with a preview' },
+        { keys: `${MOD} + Shift + E`, what: 'Export the selection: six formats, with a preview' },
         { keys: 'Right-click', what: 'Copy as PNG or SVG, and Export from the same menu' },
       ],
     },
@@ -254,7 +254,7 @@ function buildSections(): Section[] {
       group: 'Workspace',
       tab: 'Layers',
       title: 'The Layers Panel',
-      blurb: 'Click into the tree first — keyboard arrows navigate from there.',
+      blurb: 'Click into the tree first. Keyboard arrows navigate from there.',
       rows: [
         { keys: '↑ / ↓', what: 'Move cursor; Shift extends selection' },
         { keys: '← / →', what: 'Fold and unfold a frame or group' },
@@ -305,12 +305,12 @@ const TIPS: Tip[] = [
   {
     title: 'A line can turn corners',
     body:
-      'Drag the Line tool for a straight one. Click instead, once per corner, for a route — then Enter to finish. Afterwards, double-click any line to move its points, or drag the small handle on a segment to bend it into an arc.',
+      'Drag the Line tool for a straight one. Click instead, once per corner, for a route, then Enter to finish. Afterwards, double-click any line to move its points, or drag the small handle on a segment to bend it into an arc.',
   },
   {
     title: 'Connectors follow their objects',
     body:
-      'An arrow stores which two objects it joins, never a fixed coordinate — so rearranging a flowchart never breaks it. With the Connector tool (X), click one object and then the other; dragging between them works too.',
+      'An arrow stores which two objects it joins, never a fixed coordinate, so rearranging a flowchart never breaks it. With the Connector tool (X), click one object and then the other; dragging between them works too.',
   },
   {
     title: 'Aim at the middle, or at a spot',
@@ -320,7 +320,7 @@ const TIPS: Tip[] = [
   {
     title: 'Diagrams go both ways',
     body:
-      'Write a flowchart in Mermaid code and get real, editable boxes and arrows — not a picture. Select a diagram on your canvas and read it back out as Mermaid code.',
+      'Write a flowchart in Mermaid code and get real, editable boxes and arrows rather than a picture. Select a diagram on your canvas and read it back out as Mermaid code.',
   },
   {
     title: 'Combine shapes, and see it first',
@@ -330,12 +330,12 @@ const TIPS: Tip[] = [
   {
     title: 'Text can become a shape',
     body:
-      'Right-click a text object and Convert to path to get its real letterforms as editable vectors — counters and all. Decorations a contour cannot express, like a highlight, are named as they are dropped rather than silently lost.',
+      'Right-click a text object and Convert to path to get its real letterforms as editable vectors, counters and all. Decorations a contour cannot express, like a highlight, are named as they are dropped rather than silently lost.',
   },
   {
     title: 'Text boxes have three modes',
     body:
-      'Auto-width grows horizontally, auto-height wraps and grows downward, and Fixed imposes both — in fixed mode dragging a corner handle scales text geometry.',
+      'Auto-width grows horizontally, auto-height wraps and grows downward, and Fixed imposes both. In fixed mode, dragging a corner handle scales the type itself.',
   },
   {
     title: 'Hand-drawn sketch styling',
@@ -345,7 +345,7 @@ const TIPS: Tip[] = [
   {
     title: 'Physics & force fields',
     body:
-      'Play mode runs a 2D physics simulation on the board — shapes collide, fall, and react to force tools (Wind, Vortex, Attract, Repel, Shockwave). Stopping restores the original layout.',
+      'Play mode runs a 2D physics simulation on the board: shapes collide, fall, and react to force tools (Wind, Vortex, Attract, Repel, Shockwave). Stopping restores the original layout.',
   },
   {
     title: 'Nothing is lost offline',
@@ -712,8 +712,8 @@ export const HelpModal: React.FC<Props> = ({ open, onClose }) => {
                           className="help-modal__jump"
                           onClick={() => setActiveTab(ALL_TAB)}
                         >
-                          {elsewhere} {elsewhere === 1 ? 'match' : 'matches'} elsewhere — show
-                          everything
+                          Show all {elsewhere} {elsewhere === 1 ? 'match' : 'matches'}
+                          elsewhere
                         </button>
                       ) : (
                         <p className="help-modal__hint">

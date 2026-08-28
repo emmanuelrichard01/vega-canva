@@ -112,7 +112,7 @@ export function useRoomClipboard({
        */
       void navigator.clipboard?.writeText?.(text).catch(() => {
         notify({
-          message: 'Copied here, but not to the system clipboard — pasting into another tab will not work',
+          message: 'Copied to this board, but not to the system clipboard. Pasting into another tab will not work.',
           tone: 'warning',
         });
       });

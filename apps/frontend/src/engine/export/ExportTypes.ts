@@ -118,7 +118,7 @@ export const FORMAT_SPECS: Record<ExportFormat, FormatSpec> = {
   json: {
     id: 'json',
     label: 'JSON',
-    blurb: 'The document itself — every object, editable and restorable.',
+    blurb: 'The document itself: every object, editable and restorable.',
     extension: 'json',
     mime: 'application/json',
     raster: false,

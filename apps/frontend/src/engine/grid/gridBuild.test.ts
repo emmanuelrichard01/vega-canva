@@ -1,9 +1,12 @@
 import { describe, expect, it } from 'vitest';
 import { defaultSpec } from './gridLayout';
 import { defaultStyle } from './gridStyle';
+import { GRID_PALETTES } from './gridStyle';
 import {
   cellGeometry,
   cellPatch,
+  describeRecipe,
+  randomiseRecipe,
   recipeCells,
   variantsOf,
   VARIANT_MODES,
@@ -193,3 +196,58 @@ describe('variantsOf', () => {
   });
 });
 
+describe('describeRecipe', () => {
+  it('names the system and the module count, so nine thumbnails are identifiable', () => {
+    const said = describeRecipe(recipe({ kind: 'modular', rows: 3, columns: 3 }), 'arrangement');
+    expect(said).toContain('Modular');
+    expect(said).toContain('9 modules');
+  });
+
+  it('counts what the layout produces, not rows times columns', () => {
+    // The whole reason this is laid out rather than multiplied: a merged ring
+    // is one module however many spokes it was asked for.
+    const said = describeRecipe(recipe({ kind: 'radial', rows: 1, columns: 8, merged: true }), 'everything');
+    expect(said).toContain('1 module');
+    expect(said).not.toContain('modules');
+  });
+
+  it('names the palette instead when only colour is varying', () => {
+    // Colour holds the arrangement exactly, so naming the system on every tile
+    // would print the same words nine times.
+    const palette = GRID_PALETTES[2];
+    const said = describeRecipe(recipe({}, { palette: palette.colors, colorMode: 'sequence' }), 'colour');
+    expect(said).toContain(palette.name);
+    expect(said).not.toContain('Modular');
+  });
+
+  it('says Custom for a palette that is nobody’s', () => {
+    expect(describeRecipe(recipe({}, { palette: ['#123456'] }), 'colour')).toContain('Custom');
+  });
+
+  it('describes every variant a mode can produce', () => {
+    // A describer that threw on one kind would take the tooltip and the
+    // accessible name down with it, which is worse than a vague sentence.
+    for (const mode of VARIANT_MODES) {
+      for (const variant of variantsOf(recipe(), mode, 7, 8)) {
+        expect(describeRecipe(variant, mode).length).toBeGreaterThan(0);
+      }
+    }
+  });
+});
+
+describe('randomiseRecipe', () => {
+  it('never claims a mix it has one shape for', () => {
+    /**
+     * The mode and the set used to be rolled from separate draws against the
+     * same threshold, so about a quarter of the time they disagreed. There is
+     * no mode any more — the list is the state — and this pins the other half
+     * of that bug: a two-shape draw that landed on the same shape twice would
+     * be a mix of one wearing the badge of a mix of two.
+     */
+    for (let seed = 0; seed < 60; seed += 1) {
+      const { shapes } = randomiseRecipe(recipe(), seed).style;
+      expect(shapes.length).toBeGreaterThan(0);
+      expect(new Set(shapes).size).toBe(shapes.length);
+    }
+  });
+});

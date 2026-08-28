@@ -102,7 +102,7 @@ export const ConnectorSection: React.FC<ConnectorSectionProps> = ({
       <p style={{ margin: 0, fontSize: 'var(--text-xs)', color: 'var(--text-tertiary)', lineHeight: 1.5 }}>
         {node.from.nodeId && node.to.nodeId
           ? 'Both ends follow the objects they are attached to.'
-          : 'One end is loose — drag it onto an object to attach it.'}
+          : 'One end is loose. Drag it onto an object to attach it.'}
       </p>
     </Accordion>
   );

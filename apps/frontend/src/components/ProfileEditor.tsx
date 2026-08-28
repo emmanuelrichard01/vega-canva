@@ -1,34 +1,10 @@
-import React, { useEffect, useMemo, useRef, useState } from 'react';
+import React, { useEffect, useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
-import { Check, ChevronLeft, ChevronRight, Shuffle, X } from 'lucide-react';
+import { Check, X } from 'lucide-react';
 import { Avatar } from './ui/Avatar';
 import { useAuth } from '../hooks/useAuth';
 import { useRoomState } from '../hooks/useSync';
 import { provider } from '../engine/document';
-import {
-  ACCESSORY_COUNT,
-  BACKDROPS,
-  FACE_COUNT,
-  HAIR_COLORS,
-  HAIR_COUNT,
-  SKINS,
-  avatarFromId,
-  cycle,
-  decodeAvatar,
-  encodeAvatar,
-  randomAvatar,
-  type AvatarSpec,
-} from '../engine/presence/avatar';
-
-/** The six dimensions, in the order they read as a face being built. */
-const DIMENSIONS: Array<{ key: keyof AvatarSpec; label: string; count: number }> = [
-  { key: 'skin', label: 'Skin', count: SKINS.length },
-  { key: 'hair', label: 'Hair', count: HAIR_COUNT },
-  { key: 'hairColor', label: 'Hair colour', count: HAIR_COLORS.length },
-  { key: 'face', label: 'Expression', count: FACE_COUNT },
-  { key: 'accessory', label: 'Details', count: ACCESSORY_COUNT },
-  { key: 'bg', label: 'Backdrop', count: BACKDROPS.length },
-];
 
 interface Props {
   open: boolean;
@@ -36,19 +12,21 @@ interface Props {
 }
 
 /**
- * Your name and your face, edited where you already look to check them.
+ * Your name, edited where you already look to check it.
  *
- * ## Why a face is built rather than uploaded
+ * ## Why there is no picture to build
  *
- * The obvious feature is "upload a photo", and it is the wrong one here for a
- * reason that is structural rather than aesthetic. An avatar has to reach
- * every other person in the room, and the channel it reaches them on is
- * awareness — the ephemeral state that also carries a cursor and is therefore
- * rebroadcast many times a second to every peer. A picture on that channel is
- * a photograph on the wire at pointer frequency. See
- * `engine/presence/avatar.ts`: what travels is eleven characters, and the
- * drawing is a pure function of them, which also means it is crisp at the 20px
- * comment pin and the 96px tile here rather than one bitmap stretched twice.
+ * This used to be a face builder: six dimensions with a cycler each, a shuffle
+ * button, and a preview at four sizes. See the note in `ui/Avatar.tsx` for why
+ * it went — briefly, a cartoon assembled from six lists is not what identifies
+ * anyone on this board, the presence colour already is, and nobody had a face
+ * until they came here and made one, so the roster had two appearances for one
+ * kind of person.
+ *
+ * What is left is the one field that was always doing the work. A name is not
+ * decoration: it is what the cursor label, the comment byline and the mention
+ * list all read, and it is the only thing here that other people have to
+ * recognise you by.
  *
  * ## Why the colour is shown but not chosen
  *
@@ -64,27 +42,12 @@ export const ProfileEditor: React.FC<Props> = ({ open, onClose }) => {
   const { user, updateProfile } = useAuth();
   const { awarenessUsers } = useRoomState();
   const [name, setName] = useState(user?.name ?? '');
-  const [spec, setSpec] = useState<AvatarSpec | null>(null);
   const panelRef = useRef<HTMLDivElement>(null);
-
-  /**
-   * The face to open on: theirs if they have one, otherwise the one seeded
-   * from their id.
-   *
-   * Seeded rather than random, so opening this twice offers the same starting
-   * face and "keep it" is a real answer. A random face on every open means the
-   * only path forward is to build one from scratch. See `avatarFromId`.
-   */
-  const starting = useMemo(
-    () => (user ? (decodeAvatar(user.avatar) ?? avatarFromId(user.id)) : null),
-    [user]
-  );
 
   useEffect(() => {
     if (!open || !user) return;
     setName(user.name);
-    setSpec(starting);
-  }, [open, user, starting]);
+  }, [open, user]);
 
   useEffect(() => {
     if (!open) return;
@@ -95,7 +58,7 @@ export const ProfileEditor: React.FC<Props> = ({ open, onClose }) => {
     return () => window.removeEventListener('keydown', onKey);
   }, [open, onClose]);
 
-  if (!open || !user || !spec) return null;
+  if (!open || !user) return null;
 
   /**
    * The colour actually in use on this board, not the stored preference.
@@ -113,11 +76,8 @@ export const ProfileEditor: React.FC<Props> = ({ open, onClose }) => {
   const trimmed = name.trim();
 
   const save = () => {
-    updateProfile({
-      // An empty field is a slip, not an instruction to become nameless.
-      name: trimmed || user.name,
-      avatar: encodeAvatar(spec),
-    });
+    // An empty field is a slip, not an instruction to become nameless.
+    updateProfile({ name: trimmed || user.name });
     onClose();
   };
 
@@ -151,22 +111,9 @@ export const ProfileEditor: React.FC<Props> = ({ open, onClose }) => {
 
         <div className="profile-editor__body">
           <div className="profile-editor__preview">
-            {/* The face at the size it is being made, and again at the size it
-                will actually be seen — a 96px tile says nothing about whether
-                the glasses read on a cursor chip. */}
-            <Avatar name={trimmed || user.name} color={liveColor} avatar={spec} size={112} />
-            <div className="profile-editor__sizes" aria-hidden="true">
-              <Avatar name={trimmed || user.name} color={liveColor} avatar={spec} size={32} />
-              <Avatar name={trimmed || user.name} color={liveColor} avatar={spec} size={24} />
-              <Avatar name={trimmed || user.name} color={liveColor} avatar={spec} size={20} />
-            </div>
-            <button
-              type="button"
-              className="profile-editor__shuffle"
-              onClick={() => setSpec(randomAvatar())}
-            >
-              <Shuffle size={14} aria-hidden /> Surprise me
-            </button>
+            {/* Live: the disc is initials in the room's colour, so it changes
+                as the field is typed and shows the edit before it is saved. */}
+            <Avatar name={trimmed || user.name} color={liveColor} size={96} />
           </div>
 
           <div className="profile-editor__fields">
@@ -180,36 +127,6 @@ export const ProfileEditor: React.FC<Props> = ({ open, onClose }) => {
                 autoFocus
               />
             </label>
-
-            <div className="profile-editor__dims" role="group" aria-label="Face">
-              {DIMENSIONS.map(({ key, label, count }) => (
-                <div key={key} className="profile-dim">
-                  <span className="profile-dim__label">{label}</span>
-                  <div className="profile-dim__control">
-                    <button
-                      type="button"
-                      onClick={() => setSpec(cycle(spec, key, -1))}
-                      aria-label={`Previous ${label.toLowerCase()}`}
-                    >
-                      <ChevronLeft size={14} />
-                    </button>
-                    {/* The position in the list, so cycling has a sense of
-                        extent — otherwise there is no way to know whether you
-                        have seen them all. */}
-                    <span className="profile-dim__count">
-                      {spec[key] + 1}/{count}
-                    </span>
-                    <button
-                      type="button"
-                      onClick={() => setSpec(cycle(spec, key, 1))}
-                      aria-label={`Next ${label.toLowerCase()}`}
-                    >
-                      <ChevronRight size={14} />
-                    </button>
-                  </div>
-                </div>
-              ))}
-            </div>
 
             {/* Shown and explained rather than offered. See the note above. */}
             <div className="profile-editor__colour">

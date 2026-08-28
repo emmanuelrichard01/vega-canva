@@ -32,7 +32,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
   };
 
   /**
-   * Change name, colour or face without becoming somebody else.
+   * Change name or colour without becoming somebody else.
    *
    * The `id` is deliberately untouched. It is what `localAuthorId()` stamps on
    * every node and comment, so minting a new one would orphan everything this
@@ -42,9 +42,9 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
    *
    * Written back to whichever store this identity came from: a guest who edits
    * their profile stays a guest, rather than being quietly promoted to a
-   * remembered identity by the act of picking a face.
+   * remembered identity by the act of renaming themselves.
    */
-  const updateProfile = (patch: Partial<Pick<User, 'name' | 'color' | 'avatar'>>) => {
+  const updateProfile = (patch: Partial<Pick<User, 'name' | 'color'>>) => {
     setUser((current) => {
       if (!current) return current;
       const next = { ...current, ...patch };

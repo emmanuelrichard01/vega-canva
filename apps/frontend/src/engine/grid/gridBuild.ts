@@ -1,7 +1,15 @@
-import { GRID_KINDS, KIND_DEFAULTS, layoutGrid, rng, type GridSpec } from './gridLayout';
+import {
+  GRID_KINDS,
+  GRID_LABELS,
+  KIND_DEFAULTS,
+  layoutGrid,
+  rng,
+  type GridSpec,
+} from './gridLayout';
 import {
   CELL_SHAPES,
   COLOR_MODES,
+  COLOR_MODE_LABELS,
   GRID_PALETTES,
   styleCells,
   type CellShape,
@@ -192,6 +200,20 @@ export function randomiseRecipe(recipe: GridRecipe, seed: number): GridRecipe {
   const jitter = (n: number, by: number) => Math.max(1, Math.round(n + (next() - 0.5) * 2 * by));
   const gutter = pick([0, 4, 8, 12, 16, 24, 32]);
   const palette = pick(GRID_PALETTES);
+  /**
+   * Mixed shapes are a strong statement, so they turn up sometimes rather than
+   * half the time.
+   *
+   * One roll, and a second shape that is guaranteed to differ. This used to
+   * draw a `shapeMode` and a set of shapes from separate calls against the same
+   * threshold -- so a quarter of the time they disagreed -- and the two-shape
+   * branch could pick the same shape twice, which is a mix of one.
+   */
+  const shapes = ((): CellShape[] => {
+    const first = pick(CELL_SHAPES);
+    if (next() >= 0.25) return [first];
+    return [first, pick(CELL_SHAPES.filter((s) => s !== first))];
+  })();
 
   return {
     spec: {
@@ -210,12 +232,7 @@ export function randomiseRecipe(recipe: GridRecipe, seed: number): GridRecipe {
       ...recipe.style,
       palette: palette.colors,
       colorMode: pick(COLOR_MODES.filter((m) => m !== 'solid')),
-      // Mixed shapes are a strong statement, so they turn up sometimes rather
-      // than half the time.
-      shapeMode: next() < 0.25 ? 'mixed' : 'uniform',
-      shapes: next() < 0.25
-        ? ([pick(CELL_SHAPES), pick(CELL_SHAPES)] as CellShape[])
-        : ([pick(CELL_SHAPES)] as CellShape[]),
+      shapes,
       radius: pick([0, 0, 4, 8, 12, 24, 999]),
       seed: Math.floor(next() * 10000),
     },
@@ -317,6 +334,40 @@ export function variantsOf(
       style: recipe.style,
     };
   });
+}
+
+/**
+ * What a candidate *is*, in the few words a tooltip holds.
+ *
+ * ## Why a thumbnail is not enough on its own
+ *
+ * Nine grids at sixty pixels are distinguishable but not identifiable. You can
+ * see that one is denser and one is rounder; you cannot see that it is a bento
+ * wall rather than a modular grid, or that the palette is Ember rather than
+ * Dusk, and those are the two facts that decide whether you want it. The tile
+ * shows you the composition and this says what you are looking at, which is
+ * the same division of labour the system picker upstairs already uses: ten
+ * miniatures, and a caption naming the one you are on.
+ *
+ * It is also the accessible name. "Use variation 3" told a screen reader
+ * nothing at all -- nine buttons that differ only by an ordinal are nine
+ * buttons you cannot choose between without sight.
+ *
+ * ## Why the mode decides what is said
+ *
+ * Colour holds the arrangement exactly, so naming the system on every tile
+ * would print the same words nine times and say nothing. The useful sentence
+ * is always about what the mode is free to change.
+ */
+export function describeRecipe(recipe: GridRecipe, mode: VariantMode): string {
+  if (mode === 'colour') {
+    const named = GRID_PALETTES.find((p) => p.colors.join() === recipe.style.palette.join());
+    return `${named?.name ?? 'Custom'} \u00b7 ${COLOR_MODE_LABELS[recipe.style.colorMode]}`;
+  }
+  // Laid out rather than multiplied: most kinds do not multiply their tracks.
+  // See `GridSection`'s module count for the same reasoning at more length.
+  const modules = recipeCells(recipe).length;
+  return `${GRID_LABELS[recipe.spec.kind]} \u00b7 ${modules} ${modules === 1 ? 'module' : 'modules'}`;
 }
 
 /**

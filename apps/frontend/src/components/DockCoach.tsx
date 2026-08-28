@@ -76,7 +76,7 @@ export const DockCoach: React.FC<{ visible: boolean; onSettled: () => void }> = 
       <div className="dock-coach__body">
         <p className="dock-coach__title">Want a fixed size to design into?</p>
         <p className="dock-coach__text">
-          A frame is a region with real dimensions — a slide, a post, an A4 page.
+          A frame is a region with real dimensions: a slide, a post, an A4 page.
           It clips what is inside it and exports on its own. Or keep going on the
           open canvas; nothing here needs one.
         </p>

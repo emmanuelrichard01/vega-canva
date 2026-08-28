@@ -57,7 +57,7 @@ export const FirstRunGuide: React.FC<Props> = ({ hasShared, hasReclaimedSpace })
       done: hasShared,
       icon: <Share2 size={15} />,
       title: 'Bring someone in',
-      body: 'Share the link and they are on this board — no account, no invite to accept. Their cursor appears as they move.',
+      body: 'Share the link and they are on this board. No account, no invitation to accept. Their cursor appears as they move.',
     },
     {
       id: 'space',

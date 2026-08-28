@@ -495,7 +495,7 @@ export const CanvasContextMenu: React.FC<Props> = ({
               {dropped > 0 && (
                 <p className="ctxmenu__note">
                   {diagramParts.length} of {selected.length} objects. Mermaid describes boxes and
-                  arrows — {dropped === 1 ? 'the other one is' : `the other ${dropped} are`} left out.
+                  arrows, so {dropped === 1 ? 'the other one is' : `the other ${dropped} are`} left out.
                 </p>
               )}
             </>

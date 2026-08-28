@@ -22,7 +22,10 @@ import {
   gridLocalPoint,
   nudgeFocus,
   slotBox,
+  sourceBoxForSlot,
+  type SlotFit,
 } from './gridSlot';
+import type { Rect } from '../model/imageCrop';
 
 /**
  * Putting pictures into a grid, and keeping them there.
@@ -430,14 +433,66 @@ export function nudgeSlotFocus(ids: readonly string[], dx: number, dy: number): 
 }
 
 /**
- * Set how far into a picture its module looks.
+ * Everything the reframe overlay needs to draw one picture in one module.
  *
- * Separate from the nudge because zooming re-derives the window around the
- * focal point that is already stored, while nudging moves that point — two
- * different edits to the same framing, and collapsing them into one setter
- * would mean every caller had to pass both.
+ * Gathered here rather than in the component because it is four lookups that
+ * have to agree -- the picture, the grid it names, the module the grid derives
+ * at that index, and the source's own dimensions -- and any component that did
+ * them itself would be a second place those four could fall out of step.
+ *
+ * `null` for anything not currently framed by a live module, which covers the
+ * picture whose grid a collaborator has just deleted as naturally as the one
+ * that was never in a grid at all.
  */
-export function setSlotZoom(id: string, zoom: number): void {
+export interface SlotFrame {
+  /** The module in world space, with the grid's rotation. */
+  box: Rect & { rotation: number };
+  /** The module's size, which is what the cover window is cut to. */
+  cell: { width: number; height: number };
+  /** The source bitmap's own dimensions. */
+  natural: { width: number; height: number };
+  /** The window currently on show, in source pixels. */
+  window: Rect | null;
+  /** Where the whole bitmap would sit in world space, for the ghost. */
+  source: Rect | null;
+  fit: SlotFit | undefined;
+}
+
+export function slotFrame(id: string): SlotFrame | null {
+  const objects = useStore.getState().objects;
+  const node = objects[id];
+  if (!isImage(node) || !node.gridSlot) return null;
+
+  const grid = objects[node.gridSlot.gridId];
+  if (!isGrid(grid)) return null;
+  const cell = gridCellsOf(grid).find((c) => c.index === node.gridSlot!.cell);
+  if (!cell) return null;
+
+  const natural = { width: node.naturalWidth ?? 0, height: node.naturalHeight ?? 0 };
+  const box = slotBox(grid, cell);
+  const window = coverCrop(cell, natural, node.gridSlot);
+
+  return {
+    box,
+    cell: { width: cell.width, height: cell.height },
+    natural,
+    window,
+    source: sourceBoxForSlot(box, natural, window),
+    fit: node.gridSlot,
+  };
+}
+
+/**
+ * Set the whole framing at once: where the module looks, and how close.
+ *
+ * One setter rather than one per field, because the gestures that produce a
+ * framing produce both halves together. A wheel zoom moves the focal point in
+ * the same breath -- that is what anchoring it under the pointer *means* -- and
+ * two writes would put two entries in the history for one turn of the wheel and
+ * leave a window rebuilt from a focus and a zoom that were never true at the
+ * same moment.
+ */
+export function setSlotFit(id: string, fit: SlotFit): void {
   const objects = useStore.getState().objects;
   const node = objects[id];
   if (!isImage(node) || !node.gridSlot) return;
@@ -447,13 +502,31 @@ export function setSlotZoom(id: string, zoom: number): void {
   const cell = gridCellsOf(grid).find((c) => c.index === node.gridSlot!.cell);
   if (!cell) return;
 
-  const next = { ...node.gridSlot, zoom: clampZoom(zoom) };
+  const next = {
+    gridId: node.gridSlot.gridId,
+    cell: node.gridSlot.cell,
+    ...(fit.focus ? { focus: fit.focus } : null),
+    ...(clampZoom(fit.zoom) > 1 ? { zoom: clampZoom(fit.zoom) } : null),
+  };
   const crop = coverCrop(
     cell,
     { width: node.naturalWidth ?? 0, height: node.naturalHeight ?? 0 },
     next
   );
   applyNodePatches([{ id, changes: { gridSlot: next, crop: crop ?? undefined } }]);
+}
+
+/**
+ * Set how far into a picture its module looks, holding the focal point.
+ *
+ * The slider's path. The overlay's wheel goes through `setSlotFit` instead,
+ * because zooming under a pointer moves the focal point too -- a slider has no
+ * pointer to anchor to and correctly leaves it alone.
+ */
+export function setSlotZoom(id: string, zoom: number): void {
+  const node = useStore.getState().objects[id];
+  if (!isImage(node) || !node.gridSlot) return;
+  setSlotFit(id, { focus: node.gridSlot.focus, zoom: clampZoom(zoom) });
 }
 
 /**

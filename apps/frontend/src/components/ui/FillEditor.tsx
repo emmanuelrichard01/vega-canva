@@ -271,7 +271,7 @@ export const FillEditor: React.FC<Props> = ({ paint, onChange, mixed = false }) 
         onClick={() => setOpen((v) => !v)}
         aria-haspopup="dialog"
         aria-expanded={open}
-        aria-label={mixed ? 'Edit fill — the selection has several' : isNoFill ? 'No fill / Transparent' : 'Edit fill'}
+        aria-label={mixed ? 'Edit fill. The selection has several' : isNoFill ? 'No fill / Transparent' : 'Edit fill'}
         className="fill-swatch"
       >
         {/* The paint sits on a chequerboard the button itself draws. A

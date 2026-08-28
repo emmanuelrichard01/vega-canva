@@ -169,9 +169,9 @@ export const StrokeSection: React.FC<StrokeSectionProps> = ({
               ariaLabel="Line cap"
               disabledReason={
                 styleOf(appearance.stroke) === 'dotted'
-                  ? 'A dotted line is drawn entirely from round caps — that is what makes the dots. Switch to Solid or Dashed to set a cap.'
+                  ? 'A dotted line is drawn entirely from round caps, which is what makes the dots. Switch to Solid or Dashed to set a cap.'
                   : !hasEnds
-                    ? 'A solid closed outline has no ends. Use a line or an open path, or add a dash — every dash has two ends of its own.'
+                    ? 'A solid closed outline has no ends. Use a line or an open path, or add a dash, since every dash has two ends of its own.'
                     : undefined
               }
               mixed={sharedPaint((a) => a.stroke?.cap ?? 'butt').mixed}
@@ -190,7 +190,7 @@ export const StrokeSection: React.FC<StrokeSectionProps> = ({
           <Row stack label="Join" hint="How two straight edges meet at a corner.">
             <SegmentedControl
               ariaLabel="Line join"
-              disabledReason={hasCorners ? undefined : 'This shape has no straight corners — a rounded or curved edge has no join.'}
+              disabledReason={hasCorners ? undefined : 'This shape has no straight corners, and a rounded or curved edge has no join.'}
               mixed={sharedPaint((a) => a.stroke?.join ?? 'miter').mixed}
               value={appearance.stroke?.join ?? 'miter'}
               onChange={(join) => setStroke({ join: join as LineJoin })}

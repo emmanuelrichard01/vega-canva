@@ -241,7 +241,7 @@ export const ForcesBar: React.FC<ForcesBarProps> = ({
         className="panel-surface forces-handle"
         style={{ ['--force-accent' as string]: spec.colorToken }}
         onClick={() => setCollapsedPref(false)}
-        data-tooltip="Show the force controls — Escape leaves the mode"
+        data-tooltip="Show the force controls. Escape leaves the mode"
         aria-label={`${spec.label} armed. Show the force controls`}
       >
         <span className="forces-handle__dot" aria-hidden="true" />
@@ -283,7 +283,7 @@ export const ForcesBar: React.FC<ForcesBarProps> = ({
               className={`forces__force ${isActive ? 'is-active' : ''}`}
               onClick={() => onPickForce(id)}
               data-tooltip={FORCE_SPECS[id].hint}
-              aria-label={`${FORCE_SPECS[id].label} — ${FORCE_SPECS[id].hint}`}
+              aria-label={`${FORCE_SPECS[id].label}. ${FORCE_SPECS[id].hint}`}
             >
               {ICONS[id]} {FORCE_SPECS[id].label}
             </button>
@@ -300,7 +300,7 @@ export const ForcesBar: React.FC<ForcesBarProps> = ({
           onChange={setForceScale}
         />
         <Dial
-          label="Area" hint="How far the field reaches — the ring on the canvas is exactly this size"
+          label="Area" hint="How far the field reaches. The ring on the canvas is exactly this size"
           value={forceRadiusScale}
           min={MIN_FORCE_RADIUS_SCALE} max={MAX_FORCE_RADIUS_SCALE} step={0.05}
           // Shown in world pixels rather than as a multiplier: the ring is
@@ -339,7 +339,7 @@ export const ForcesBar: React.FC<ForcesBarProps> = ({
             disabled={!canScope}
             data-tooltip={
               canScope
-                ? `Only the ${selectedCount} you selected move — straight through everything else, which stays exactly where it is`
+                ? `Only the ${selectedCount} you selected move, straight through everything else, which stays exactly where it is`
                 : 'Select some objects first, then force can be aimed at just those'
             }
           >
@@ -377,7 +377,7 @@ export const ForcesBar: React.FC<ForcesBarProps> = ({
               disabled={!latchable}
               data-tooltip={
                 latchable
-                  ? `Click once and let go — the field keeps running for ${sec} seconds. Escape stops it`
+                  ? `Click once and let go. The field keeps running for ${sec} seconds, and Escape stops it`
                   : 'Shockwave is a single burst, so there is nothing to leave running'
               }
             >
@@ -399,7 +399,7 @@ export const ForcesBar: React.FC<ForcesBarProps> = ({
               className={`forces__segment ${forceFalloff === id ? 'is-active' : ''}`}
               onClick={() => setForceFalloff(id)}
               data-tooltip={FALLOFF_SPECS[id].hint}
-              aria-label={`${FALLOFF_SPECS[id].label} — ${FALLOFF_SPECS[id].hint}`}
+              aria-label={`${FALLOFF_SPECS[id].label}. ${FALLOFF_SPECS[id].hint}`}
             >
               <FalloffIcon id={id} />
               {FALLOFF_SPECS[id].label}
