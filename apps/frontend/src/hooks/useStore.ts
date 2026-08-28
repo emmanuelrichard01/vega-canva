@@ -522,7 +522,20 @@ export const useStore = create<StoreState>((set) => ({
     set({ penStrokeWidth: val });
   },
 
-  showRulers: loadBoolPref('vega_show_rulers', true),
+  /**
+   * Off until asked for.
+   *
+   * Rulers are a precision instrument and this is a board people mostly think
+   * on. They cost 22px from two edges permanently, they put a second scale
+   * along the top of a surface whose whole promise is that it has no edges,
+   * and the measurement they offer is one almost nobody on a whiteboard wants.
+   * The people who do want them want them badly and will find the switch; the
+   * people who do not were being charged for them on every board.
+   *
+   * `loadBoolPref` returns the stored value whenever there is one, so a browser
+   * that has already been told keeps its answer. Only a first visit changes.
+   */
+  showRulers: loadBoolPref('vega_show_rulers', false),
   setShowRulers: (val) => {
     setStoragePref('vega_show_rulers', String(val));
     set({ showRulers: val });

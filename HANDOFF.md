@@ -484,6 +484,46 @@ same arrangement `TooltipLayer` uses. What is worth knowing:
 - One timer for the whole stack, re-aimed on every change, because a timer per
   notice leaks one whenever a notice is folded or evicted.
 
+## 4a-9. Rulers, the palette, and one glyph per meaning
+
+**Rulers start off.** They cost 22px from two edges permanently, put a second
+scale along a surface whose whole promise is that it has no edges, and offer a
+measurement almost nobody on a whiteboard wants. The people who do want them
+will find the switch. As with the panels, only a browser that has never been
+told changes.
+
+**`SlidersHorizontal` meant three things**: the properties rail's identity, the
+header's view menu, and the dock's rearrange mode. Invariant 16, three ways. The
+rail keeps it, the header menu takes `Settings2`, and the dock's rearrange takes
+`Move`, which is what that mode actually does.
+
+**The view menu has group labels.** Seven controls of three kinds -- what the
+board does when you touch it, what it is drawn on, how you are looking at it --
+were separated by two unlabelled rules, so the grouping existed and could not be
+read.
+
+**The command palette stays, and is worth keeping**: it is the only way to reach
+the canvas text search, and the only place to jump to a collaborator. Three
+things were wrong with it.
+
+Every rule in it was an inline `style` object, about forty of them, and it was
+the only surface in the application styled that way. Inline styles cannot
+express a hover state, a focus ring, a reduced-motion rule or a theme, which are
+exactly the four things this panel needed. They also cannot be read beside the
+rest of the design, which is how a panel drifts from its product without anybody
+deciding it should.
+
+Its shortcut badges were string literals -- `'S'`, `'T'`, `'R'`, `'V'`, `'H'` --
+in the one surface somebody reaches for *because* they cannot remember a key.
+They come from `TOOL_SHORTCUTS` now.
+
+And hovering moved the keyboard cursor, so a pointer resting anywhere over the
+list silently took Enter with it: arrow down three times under a stationary
+mouse and Enter ran whatever the mouse was over. Hover and selection are two
+states now and Enter belongs to the keyboard. Matches are highlighted, which
+fuzzy search needs most of all, because the reason "shp" kept "Add Shape" is
+three letters scattered through it.
+
 ## 4a-8. The library
 
 **The avatar in the app bar was one of the five.** It carried

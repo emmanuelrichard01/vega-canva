@@ -19,6 +19,7 @@ import { provider } from '../engine/document';
 import { nodeLabel } from '../engine/model/nodeLabel';
 import { viewportCenter } from '../engine/presence/PresenceTypes';
 import { useStore } from '../hooks/useStore';
+import { TOOL_SHORTCUTS } from '../engine/tools/shortcuts';
 import { useFocusTrap } from '../hooks/useFocusTrap';
 import type { AnyNode } from '../engine/model/schema';
 
@@ -37,6 +38,44 @@ interface PaletteItem {
   shortcut?: string;
   perform: () => void;
 }
+
+/**
+ * The characters that matched, marked.
+ *
+ * A fuzzy search that filters without saying *why* a row survived makes the
+ * reader re-run the query in their head on every result -- and fuzzy matching
+ * is where that is worst, because the reason "shp" kept "Add Shape" is three
+ * letters scattered through it. The help panel makes the same argument about
+ * its own search; this uses the same subsequence walk the score does, so what
+ * is marked is exactly what was matched on.
+ */
+const Marked: React.FC<{ text: string; query: string }> = ({ text, query }) => {
+  const q = query.trim().toLowerCase();
+  if (!q) return <>{text}</>;
+
+  const out: React.ReactNode[] = [];
+  let qi = 0;
+  let run = '';
+  let hit = '';
+
+  const flush = () => {
+    if (run) { out.push(run); run = ''; }
+    if (hit) { out.push(<mark key={out.length} className="cmdk__mark">{hit}</mark>); hit = ''; }
+  };
+
+  for (const ch of text) {
+    if (qi < q.length && ch.toLowerCase() === q[qi]) {
+      if (run) { out.push(run); run = ''; }
+      hit += ch;
+      qi += 1;
+    } else {
+      if (hit) { out.push(<mark key={out.length} className="cmdk__mark">{hit}</mark>); hit = ''; }
+      run += ch;
+    }
+  }
+  flush();
+  return <>{out}</>;
+};
 
 const TYPE_ICONS: Record<string, React.ReactNode> = {
   sticky: <StickyNote size={16} />,
@@ -94,6 +133,16 @@ function fuzzyScore(haystack: string, needle: string): number | null {
 export const CommandPalette: React.FC<CommandPaletteProps> = ({ onClose, onSelectAction }) => {
   const [query, setQuery] = useState('');
   const [selectedIndex, setSelectedIndex] = useState(0);
+  /**
+   * The row under the pointer, which is not the row the keyboard is on.
+   *
+   * `onMouseEnter` used to move `selectedIndex`, so a pointer resting anywhere
+   * over the list silently took the keyboard's place: you arrow down three
+   * times, the list scrolls under a stationary mouse, and Enter runs whatever
+   * the mouse happened to be over. Two states, one Enter, and Enter belongs to
+   * the keyboard.
+   */
+  const [hovered, setHovered] = useState<number | null>(null);
   const inputRef = useRef<HTMLInputElement>(null);
   const listRef = useRef<HTMLDivElement>(null);
   const dialogRef = useFocusTrap(true, onClose);
@@ -109,14 +158,24 @@ export const CommandPalette: React.FC<CommandPaletteProps> = ({ onClose, onSelec
 
   const commands: PaletteItem[] = useMemo(() => {
     const run = (id: string) => () => onSelectAction(id);
+    /**
+     * The key a tool is actually bound to, asked rather than written.
+     *
+     * These were string literals -- `'S'`, `'T'`, `'R'`, `'V'`, `'H'` -- which
+     * is the failure `toolNames.ts` opens by warning about and then documents
+     * four instances of. A palette is the surface somebody reaches for when
+     * they cannot remember a key, so it is the worst place in the product for
+     * a key to be wrong, and the least likely to be updated when one moves.
+     */
+    const key = (tool: string) => TOOL_SHORTCUTS[tool];
     const base: PaletteItem[] = [
-      { id: 'sticky', label: 'Add sticky note', group: 'Create', icon: <StickyNote size={16} />, shortcut: 'S', perform: run('sticky') },
-      { id: 'text', label: 'Add text', group: 'Create', icon: <Type size={16} />, shortcut: 'T', perform: run('text') },
-      { id: 'shape-rect', label: 'Add rectangle', group: 'Create', icon: <Square size={16} />, shortcut: 'R', perform: run('shape-rect') },
-      { id: 'comment', label: 'Add comment', group: 'Create', icon: <MessageSquare size={16} />, shortcut: 'C', perform: run('comment') },
+      { id: 'sticky', label: 'Add sticky note', group: 'Create', icon: <StickyNote size={16} />, shortcut: key('sticky'), perform: run('sticky') },
+      { id: 'text', label: 'Add text', group: 'Create', icon: <Type size={16} />, shortcut: key('text'), perform: run('text') },
+      { id: 'shape-rect', label: 'Add rectangle', group: 'Create', icon: <Square size={16} />, shortcut: key('shape'), perform: run('shape-rect') },
+      { id: 'comment', label: 'Add comment', group: 'Create', icon: <MessageSquare size={16} />, shortcut: key('comment'), perform: run('comment') },
 
-      { id: 'select', label: 'Select tool', group: 'Tools', icon: <MousePointer2 size={16} />, shortcut: 'V', perform: run('select') },
-      { id: 'hand', label: 'Hand tool', group: 'Tools', icon: <Hand size={16} />, shortcut: 'H', perform: run('hand') },
+      { id: 'select', label: 'Select tool', group: 'Tools', icon: <MousePointer2 size={16} />, shortcut: key('select'), perform: run('select') },
+      { id: 'hand', label: 'Hand tool', group: 'Tools', icon: <Hand size={16} />, shortcut: key('hand'), perform: run('hand') },
       { id: 'tidy', label: 'Tidy up canvas', detail: 'Cluster objects by colour', group: 'Tools', icon: <Sparkles size={16} />, perform: run('tidy') },
       { id: 'diagram', label: 'Diagram from code', detail: 'Write a flowchart in Mermaid, or read a selected one back out', group: 'Tools', icon: <Code2 size={16} />, perform: run('diagram') },
       { id: 'help', label: 'Keyboard shortcuts & help', group: 'Tools', icon: <HelpCircle size={16} />, shortcut: '?', perform: run('help') },
@@ -221,15 +280,17 @@ export const CommandPalette: React.FC<CommandPaletteProps> = ({ onClose, onSelec
   let lastGroup = '';
 
   return (
-    <div
-      style={{
-        position: 'fixed', inset: 0, zIndex: 9999,
-        background: 'rgba(0,0,0,0.35)', backdropFilter: 'blur(4px)',
-        display: 'flex', alignItems: 'flex-start', justifyContent: 'center',
-        paddingTop: '12vh',
-      }}
-      onClick={onClose}
-    >
+    /**
+     * The whole panel, in the stylesheet.
+     *
+     * Every rule here used to be an inline `style` object -- about forty of
+     * them. It was the only surface in this application styled that way, and
+     * inline styles cannot do the four things this panel needs: a hover state,
+     * a focus ring, a reduced-motion rule, or a theme. They also cannot be read
+     * next to the rest of the design, which is how a panel drifts from the
+     * product it is part of without anybody deciding it should.
+     */
+    <div className="cmdk-scrim" onClick={onClose}>
       <motion.div
         ref={dialogRef}
         role="dialog"
@@ -238,49 +299,32 @@ export const CommandPalette: React.FC<CommandPaletteProps> = ({ onClose, onSelec
         initial={{ opacity: 0, scale: 0.97, y: -8 }}
         animate={{ opacity: 1, scale: 1, y: 0 }}
         transition={{ type: 'spring', stiffness: 420, damping: 32 }}
-        className="panel-surface"
+        className="cmdk"
         onClick={(e) => e.stopPropagation()}
-        style={{
-          width: 'min(620px, calc(100vw - 32px))',
-          maxHeight: '64vh',
-          display: 'flex', flexDirection: 'column',
-          borderRadius: 'var(--radius-xl)',
-          boxShadow: 'var(--shadow-overlay)',
-          overflow: 'hidden',
-        }}
       >
-        <div style={{ display: 'flex', alignItems: 'center', gap: 'var(--space-3)', padding: 'var(--space-4)', borderBottom: '1px solid var(--border-divider)' }}>
-          <Search size={18} color="var(--text-tertiary)" />
+        <div className="cmdk__head">
+          <Search size={18} aria-hidden />
           <input
             ref={inputRef}
             value={query}
             onChange={(e) => setQuery(e.target.value)}
             onKeyDown={handleKeyDown}
-            placeholder="Search commands and objects…"
+            placeholder="Search commands and objects"
             aria-label="Search commands and objects"
             aria-controls="command-results"
-            style={{
-              flex: 1, border: 'none', outline: 'none', background: 'transparent',
-              color: 'var(--text-primary)', fontSize: 'var(--text-lg)',
-            }}
           />
-          <kbd style={{
-            fontSize: 'var(--text-2xs)', color: 'var(--text-tertiary)', border: '1px solid var(--border-divider)',
-            borderRadius: 'var(--radius-sm)', padding: '2px 6px', fontFamily: 'var(--font-mono)',
-          }}>ESC</kbd>
+          {/* How many, where the typing is. A fuzzy list that silently shrinks
+              gives no sense of whether a query is narrowing or missing. */}
+          {query.trim() && (
+            <span className="cmdk__tally" role="status">
+              {results.length === 0 ? 'no matches' : `${results.length}`}
+            </span>
+          )}
         </div>
 
-        <div
-          id="command-results"
-          ref={listRef}
-          role="listbox"
-          aria-label="Results"
-          style={{ overflowY: 'auto', padding: 'var(--space-2)' }}
-        >
+        <div id="command-results" ref={listRef} role="listbox" aria-label="Results" className="cmdk__list">
           {results.length === 0 && (
-            <div style={{ padding: 'var(--space-8) var(--space-4)', textAlign: 'center', color: 'var(--text-tertiary)', fontSize: 'var(--text-base)' }}>
-              Nothing matches “{query}”.
-            </div>
+            <p className="cmdk__none">Nothing matches “{query}”.</p>
           )}
 
           {results.map((item, index) => {
@@ -290,62 +334,33 @@ export const CommandPalette: React.FC<CommandPaletteProps> = ({ onClose, onSelec
 
             return (
               <React.Fragment key={item.id}>
-                {showGroup && (
-                  <div style={{
-                    padding: 'var(--space-3) var(--space-3) var(--space-1)',
-                    fontSize: 'var(--text-2xs)', fontWeight: 'var(--weight-bold)',
-                    letterSpacing: '0.08em', textTransform: 'uppercase',
-                    color: 'var(--text-tertiary)',
-                  }}>
-                    {item.group}
-                  </div>
-                )}
+                {showGroup && <p className="cmdk__group">{item.group}</p>}
                 <div
                   role="option"
                   aria-selected={isSelected}
-                  data-selected={isSelected}
-                  onMouseEnter={() => setSelectedIndex(index)}
+                  data-selected={isSelected || undefined}
+                  data-hovered={hovered === index || undefined}
+                  className="cmdk__row"
+                  onMouseEnter={() => setHovered(index)}
+                  onMouseLeave={() => setHovered((h) => (h === index ? null : h))}
                   onClick={() => commit(item)}
-                  style={{
-                    display: 'flex', alignItems: 'center', gap: 'var(--space-3)',
-                    padding: 'var(--space-2) var(--space-3)',
-                    borderRadius: 'var(--radius-lg)', cursor: 'pointer',
-                    background: isSelected ? 'var(--surface-active)' : 'transparent',
-                    color: 'var(--text-primary)',
-                  }}
                 >
-                  <span style={{ color: 'var(--text-secondary)', display: 'flex', flexShrink: 0 }}>{item.icon}</span>
-                  <span style={{ flex: 1, minWidth: 0 }}>
-                    <span style={{ display: 'block', fontSize: 'var(--text-md)', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>
-                      {item.label}
-                    </span>
-                    {item.detail && (
-                      <span style={{ display: 'block', fontSize: 'var(--text-xs)', color: 'var(--text-tertiary)', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>
-                        {item.detail}
-                      </span>
-                    )}
+                  <span className="cmdk__icon">{item.icon}</span>
+                  <span className="cmdk__text">
+                    <span className="cmdk__label"><Marked text={item.label} query={query} /></span>
+                    {item.detail && <span className="cmdk__detail">{item.detail}</span>}
                   </span>
-                  {item.shortcut && (
-                    <kbd style={{
-                      fontSize: 'var(--text-2xs)', color: 'var(--text-tertiary)',
-                      border: '1px solid var(--border-divider)', borderRadius: 'var(--radius-sm)',
-                      padding: '2px 6px', fontFamily: 'var(--font-mono)', flexShrink: 0,
-                    }}>{item.shortcut}</kbd>
-                  )}
+                  {item.shortcut && <kbd className="cmdk__key">{item.shortcut}</kbd>}
                 </div>
               </React.Fragment>
             );
           })}
         </div>
 
-        <div style={{
-          display: 'flex', gap: 'var(--space-4)', padding: 'var(--space-2) var(--space-4)',
-          borderTop: '1px solid var(--border-divider)', background: 'var(--surface-secondary)',
-          fontSize: 'var(--text-2xs)', color: 'var(--text-tertiary)',
-        }}>
-          <span>↑↓ Navigate</span>
-          <span>↵ Run</span>
-          <span>esc Close</span>
+        <div className="cmdk__foot">
+          <span><kbd>↑</kbd><kbd>↓</kbd> move</span>
+          <span><kbd>↵</kbd> run</span>
+          <span><kbd>esc</kbd> close</span>
         </div>
       </motion.div>
     </div>

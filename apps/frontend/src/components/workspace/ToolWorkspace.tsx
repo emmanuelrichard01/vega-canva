@@ -17,7 +17,7 @@ import {
 import { gridDefaults } from '../../engine/grid/gridDefaults';
 import { switchKind } from '../../engine/grid/gridBuild';
 import { MousePointer2, MousePointerClick, LayoutGrid, Hand, Pen, PenTool as PenToolIcon, Type, Square, StickyNote, MessageSquare, ImageIcon, Mic, Sparkles, Frame, Eraser, Workflow, MoreVertical, TextQuote } from 'lucide-react';
-import { Check, Minus, RotateCcw, SeparatorVertical, SlidersHorizontal, Spline, Undo2 } from 'lucide-react';
+import { Check, Minus, Move, RotateCcw, SeparatorVertical, Spline, Undo2 } from 'lucide-react';
 import { SegmentedControl } from '../ui/SegmentedControl';
 import { SketchLevelIcon } from '../panel/sketchIcons';
 import type { PencilNib } from '../../engine/model/rough';
@@ -1630,7 +1630,10 @@ export const ToolWorkspace: React.FC<Props> = ({ activeToolId, onOpenDiagram, on
 
                 <div className="dock-flyout__group" role="presentation">Toolbar</div>
                 <FlyoutItem
-                  icon={editing ? <Check size={16} /> : <SlidersHorizontal size={16} />}
+                  // `Move`, not `SlidersHorizontal`: what this mode does is let
+                  // you drag seats around, and the sliders glyph is the
+                  // properties panel's. See the note in `WorkspaceShell`.
+                  icon={editing ? <Check size={16} /> : <Move size={16} />}
                   label={editing ? 'Done editing' : 'Edit toolbar'}
                   description={editing ? 'stop rearranging' : 'drag tools to rearrange or put away'}
                   active={editing}

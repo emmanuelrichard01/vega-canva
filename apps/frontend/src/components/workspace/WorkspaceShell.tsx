@@ -1,7 +1,7 @@
 import React, { useEffect, useState, useRef, useSyncExternalStore } from 'react';
 import { useRoomState } from '../../hooks/useSync';
 import { CollaborationLayer } from './CollaborationLayer';
-import { Moon, Sun, Undo2, Redo2, Share2, Download, EyeOff, History, PanelLeft, MessageSquare, SlidersHorizontal, HelpCircle } from 'lucide-react';
+import { Moon, Sun, Undo2, Redo2, Share2, Download, EyeOff, History, PanelLeft, MessageSquare, Settings2, HelpCircle } from 'lucide-react';
 import { editor } from '../../engine/api/EditorAPI';
 import { useStore } from '../../hooks/useStore';
 import { railVeil } from '../../engine/interaction/railVeil';
@@ -283,16 +283,26 @@ export const WorkspaceShell: React.FC<Props> = ({ localTitle, setLocalTitle, onT
           <button
             className={`btn-icon${viewOpen ? ' is-on' : ''}`}
             onClick={() => setViewOpen((v) => !v)}
-            data-tooltip="Snapping, throwing and focus mode"
+            data-tooltip="View and board settings"
             data-tooltip-pos="bottom"
             aria-label="View settings"
             aria-haspopup="menu"
             aria-expanded={viewOpen}
           >
-            <SlidersHorizontal size={ICON} />
+            {/* Not `SlidersHorizontal`, which is the properties panel's own
+                glyph on the right-hand rail. One mark meant three things --
+                that panel, this menu, and the dock's rearrange mode -- which
+                is invariant 16 broken three ways. This menu is the board's
+                settings, so it takes the settings glyph. */}
+            <Settings2 size={ICON} />
           </button>
           {viewOpen && (
-            <div className="ctx-popover" role="menu" style={{ top: 'calc(100% + 8px)', right: 0, minWidth: 248 }}>
+            <div className="ctx-popover hdr-view" role="menu" style={{ top: 'calc(100% + 8px)', right: 0, minWidth: 268 }}>
+              {/* Named groups. Seven controls of three different kinds -- what
+                  the board does when you touch it, what it is drawn on, and how
+                  you are looking at it -- were separated by two unlabelled
+                  rules, so the grouping was there and could not be read. */}
+              <p className="hdr-view__legend">When you touch it</p>
               <div className="hdr-view-row">
                 <Switch
                   block
@@ -327,6 +337,7 @@ export const WorkspaceShell: React.FC<Props> = ({ localTitle, setLocalTitle, onT
               <div className="ctx-popover__rule" role="separator" />
               {/* What the board is drawn *on*. Separate from Snap and Throw
                   above, which are about how it behaves when you touch it. */}
+              <p className="hdr-view__legend">What it is drawn on</p>
               <div className="hdr-view-row">
                 <Switch
                   block
@@ -346,6 +357,7 @@ export const WorkspaceShell: React.FC<Props> = ({ localTitle, setLocalTitle, onT
                 />
               </div>
               <div className="ctx-popover__rule" role="separator" />
+              <p className="hdr-view__legend">How you are looking at it</p>
               {/* The theme, up from the overflow menu.
 
                   It sat alone behind an unlabelled "…" on the reasoning that

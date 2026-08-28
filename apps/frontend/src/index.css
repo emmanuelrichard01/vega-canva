@@ -12502,6 +12502,201 @@ body[data-zen='physics'] .forces-handle { bottom: 32px; }
    change that made the promise.
    =========================================================================== */
 
+/* ===========================================================================
+   THE COMMAND PALETTE
+   ---------------------------------------------------------------------------
+   Every rule here used to be an inline `style` object in the component, about
+   forty of them, and it was the only surface in this application styled that
+   way. Inline styles cannot express the four things this panel actually needs:
+   a hover state, a focus ring, a reduced-motion rule, or a theme. They also
+   cannot be read beside the rest of the design, which is how a panel drifts
+   from the product it belongs to without anybody deciding it should.
+   =========================================================================== */
+
+.cmdk-scrim {
+  position: fixed;
+  inset: 0;
+  z-index: var(--z-dialog, 9999);
+  display: flex;
+  align-items: flex-start;
+  justify-content: center;
+  padding: 12vh var(--space-4) var(--space-4);
+  background: color-mix(in srgb, #05070c 34%, transparent);
+  backdrop-filter: blur(5px);
+  -webkit-backdrop-filter: blur(5px);
+}
+
+.cmdk {
+  display: flex;
+  flex-direction: column;
+  width: min(640px, 100%);
+  max-height: min(560px, 66vh);
+  overflow: hidden;
+  border: 1px solid var(--border-divider);
+  border-radius: var(--radius-2xl);
+  background: var(--surface-elevated);
+  box-shadow: var(--shadow-overlay);
+}
+
+.cmdk__head {
+  display: flex;
+  align-items: center;
+  gap: var(--space-3);
+  padding: var(--space-4) var(--space-5);
+  border-bottom: 1px solid var(--border-divider);
+  color: var(--text-tertiary);
+}
+
+.cmdk__head input {
+  flex: 1;
+  min-width: 0;
+  border: none;
+  outline: none;
+  background: transparent;
+  color: var(--text-primary);
+  font-family: inherit;
+  font-size: var(--text-lg);
+}
+
+.cmdk__head input::placeholder { color: var(--text-tertiary); }
+
+/* How many, where the typing is. A fuzzy list that silently shrinks gives no
+   sense of whether a query is narrowing or missing. */
+.cmdk__tally {
+  flex-shrink: 0;
+  color: var(--text-tertiary);
+  font-size: var(--text-xs);
+  font-variant-numeric: tabular-nums;
+}
+
+.cmdk__list {
+  overflow-y: auto;
+  padding: var(--space-2);
+}
+
+.cmdk__none {
+  margin: 0;
+  padding: var(--space-8) var(--space-4);
+  text-align: center;
+  color: var(--text-tertiary);
+  font-size: var(--text-base);
+}
+
+.cmdk__group {
+  margin: var(--space-3) 0 2px;
+  padding: 0 var(--space-3);
+  color: var(--text-tertiary);
+  font-size: var(--text-2xs);
+  font-weight: var(--weight-semibold);
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+}
+
+.cmdk__list > :first-child.cmdk__group { margin-top: 0; }
+
+.cmdk__row {
+  display: flex;
+  align-items: center;
+  gap: var(--space-3);
+  padding: var(--space-2) var(--space-3);
+  border-radius: var(--radius-lg);
+  color: var(--text-primary);
+  cursor: pointer;
+}
+
+/* Hover and keyboard selection are different states and look it. The pointer
+   used to move the keyboard cursor, so a mouse resting anywhere over the list
+   silently took Enter with it. */
+.cmdk__row[data-hovered] { background: var(--surface-hover); }
+
+.cmdk__row[data-selected] {
+  background: var(--surface-active, var(--surface-hover));
+  box-shadow: inset 0 0 0 1px var(--border-divider);
+}
+
+.cmdk__icon {
+  display: flex;
+  flex-shrink: 0;
+  color: var(--text-secondary);
+}
+
+.cmdk__row[data-selected] .cmdk__icon { color: var(--accent-strong, var(--brand-orange)); }
+
+.cmdk__text { flex: 1; min-width: 0; }
+
+.cmdk__label,
+.cmdk__detail {
+  display: block;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.cmdk__label { font-size: var(--text-md); }
+
+.cmdk__detail {
+  font-size: var(--text-xs);
+  color: var(--text-tertiary);
+}
+
+/* The characters that matched. A fuzzy search hides its reasoning worst of
+   all: the reason "shp" kept "Add Shape" is three letters scattered through
+   it, and unmarked that is a list you have to take on trust. */
+.cmdk__mark {
+  border-radius: 2px;
+  background: color-mix(in srgb, var(--accent) 26%, transparent);
+  color: inherit;
+  font-weight: var(--weight-semibold);
+}
+
+.cmdk__key,
+.cmdk__foot kbd {
+  flex-shrink: 0;
+  padding: 2px 6px;
+  border: 1px solid var(--border-divider);
+  border-radius: var(--radius-sm);
+  background: var(--surface-secondary);
+  color: var(--text-tertiary);
+  font-family: var(--font-mono, ui-monospace, monospace);
+  font-size: var(--text-2xs);
+  line-height: 1.5;
+}
+
+.cmdk__foot {
+  display: flex;
+  gap: var(--space-4);
+  padding: var(--space-2) var(--space-5);
+  border-top: 1px solid var(--border-divider);
+  background: var(--surface-secondary);
+  color: var(--text-tertiary);
+  font-size: var(--text-2xs);
+}
+
+.cmdk__foot span {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+}
+
+.cmdk__foot kbd { background: var(--surface-primary); }
+
+@media (prefers-reduced-motion: reduce) {
+  .cmdk-scrim { backdrop-filter: none; -webkit-backdrop-filter: none; }
+}
+
+/* Named groups in the view menu. Seven controls of three kinds were separated
+   by two unlabelled rules, so the grouping existed and could not be read. */
+.hdr-view__legend {
+  margin: var(--space-1) 0 4px 8px;
+  color: var(--text-tertiary);
+  font-size: var(--text-2xs);
+  font-weight: var(--weight-semibold);
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+}
+
+.hdr-view .ctx-popover__rule + .hdr-view__legend { margin-top: var(--space-2); }
+
 .help-modal__foot {
   display: flex;
   align-items: center;
