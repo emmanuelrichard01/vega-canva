@@ -21,6 +21,34 @@ export default defineConfig({
      * slightly silences it without hiding real regressions.
      */
     chunkSizeWarningLimit: 550,
+    modulePreload: {
+      resolveDependencies(_filename, deps, { hostType }) {
+        /**
+         * Filter out heavy canvas/editor chunks from the eager HTML preload set.
+         *
+         * Vite's default behaviour emits modulepreload links in index.html for all
+         * dependency chunks reachable from any dynamic route in App.tsx. This caused
+         * ~919kB of canvas chunks (vendor-konva, app-export, vendor-fontkit, etc.) to be
+         * eagerly downloaded on first visit to the dashboard (`/`).
+         *
+         * Stripping them from index.html ensures the dashboard loads with minimal bytes;
+         * when the user opens `/room/:id`, the browser fetches the canvas chunks on demand.
+         */
+        if (hostType === 'html') {
+          return deps.filter(
+            (dep) =>
+              !dep.includes('vendor-konva') &&
+              !dep.includes('app-export') &&
+              !dep.includes('vendor-fontkit') &&
+              !dep.includes('vendor-motion') &&
+              !dep.includes('app-physics') &&
+              !dep.includes('app-pathEdit') &&
+              !dep.includes('Room')
+          );
+        }
+        return deps;
+      },
+    },
     rollupOptions: {
       output: {
         manualChunks(id) {

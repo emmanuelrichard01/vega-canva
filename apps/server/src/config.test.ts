@@ -14,7 +14,8 @@ const KEYS = [
   'POSTGRES_USER', 'POSTGRES_PASSWORD', 'POSTGRES_HOST', 'POSTGRES_PORT',
   'POSTGRES_DB', 'DB_POOL_MAX', 'S3_ENDPOINT', 'S3_BUCKET', 'S3_ACCESS_KEY',
   'S3_SECRET_KEY', 'REDIS_HOST', 'REDIS_PORT', 'AUTH_SECRET',
-  'MIN_ROOM_ID_LENGTH',
+  'MIN_ROOM_ID_LENGTH', 'MAX_ROOM_STORAGE_BYTES', 'MAX_IP_DAILY_STORAGE_BYTES',
+  'MAX_GLOBAL_STORAGE_BYTES', 'ROOM_TTL_DAYS', 'SENTRY_DSN',
 ];
 
 let saved: Record<string, string | undefined> = {};
@@ -52,6 +53,11 @@ describe('development', () => {
     expect(config.production).toBe(false);
     expect(config.db.password).toBe('canva_password');
     expect(config.allowedOrigins).toBe('*');
+    expect(config.quotas.maxRoomBytes).toBe(200 * 1024 * 1024);
+    expect(config.quotas.maxIpDailyBytes).toBe(500 * 1024 * 1024);
+    expect(config.quotas.maxGlobalBytes).toBe(10 * 1024 * 1024 * 1024);
+    expect(config.roomTtlDays).toBe(90);
+    expect(config.sentryDsn).toBeNull();
   });
 });
 

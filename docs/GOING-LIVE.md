@@ -16,17 +16,13 @@ for nothing.
 
 If you read nothing else, read this section.
 
-Three things block a public launch. None is large. All of them are cheaper to do
-before people arrive than after.
+**Status as of 2026-08-28 (Hardening session completed):**
 
-1. **Upload quotas** (§1.1) — you are currently running an open, anonymous file
-   host with no size cap beyond 50MB per file.
-2. **Error tracking** (§1.4) — there is none, anywhere.
-3. **Database backups** (§1.5) — the canonical state of every board is
-   overwritten in place with no point-in-time recovery.
-
-They are roughly one focused session together. Suggested first move: quotas and
-Sentry as one pass, since neither needs a product decision from you.
+1. **Upload quotas** (§1.1) — **BUILT & TESTED.** Per-room (200MB), per-IP daily (500MB), and global (10GB) storage limits are active and enforced with 413 responses. Failed uploads cleanly delete from S3/DB.
+2. **Error tracking & Observability** (§1.4) — **BUILT.** Structured logging and Sentry initialization hooks are active on server (`apps/server/src/observability.ts`) and client (`apps/frontend/src/utils/observability.ts`).
+3. **Database backups** (§1.5) — Configure PITR on your managed Postgres provider (Neon / RDS) before opening public links.
+4. **Dashboard bundle preload** (§1.2) — **BUILT.** `modulePreload.resolveDependencies` filters heavy editor chunks out of `index.html`, cutting eager first-paint JS by ~850 kB.
+5. **Room & media reaper** (§1.3) — **BUILT.** `apps/server/src/reaper.ts` and `scripts/reap-rooms.ts` provide automated and CLI-driven batch reaping.
 
 Everything after that is genuinely optional until you have users.
 

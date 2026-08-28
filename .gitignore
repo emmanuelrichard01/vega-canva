@@ -34,9 +34,9 @@ pnpm-debug.log*
 uploads/*
 !uploads/.gitkeep
 
-# Claude Code machine-local tool permissions. `.claude/settings.json` (shared,
-# if it ever exists) is intentionally NOT ignored.
-.claude/settings.local.json
+# Claude local configs
+.claude/
+
 
 # Vendored design-skill packs, ~300 files of third-party tooling that is not
 # this project's source. `skills-lock.json` pins them and is tracked, so the

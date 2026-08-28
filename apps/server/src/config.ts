@@ -157,6 +157,18 @@ export interface Config {
    * creating a board that is trivially found.
    */
   minRoomIdLength: number;
+  /**
+   * Storage quotas and ceilings to prevent open anonymous file hosting abuse.
+   */
+  quotas: {
+    maxRoomBytes: number;
+    maxIpDailyBytes: number;
+    maxGlobalBytes: number;
+  };
+  /** Retention for inactive rooms before reaping. */
+  roomTtlDays: number;
+  /** Sentry DSN for server error tracking, or null if disabled. */
+  sentryDsn: string | null;
 }
 
 export function readConfig(): Config {
@@ -202,6 +214,13 @@ export function readConfig(): Config {
     redisPort: env.int('REDIS_PORT', 6379),
     authSecret: process.env.AUTH_SECRET || null,
     minRoomIdLength: env.int('MIN_ROOM_ID_LENGTH', 8),
+    quotas: {
+      maxRoomBytes: env.int('MAX_ROOM_STORAGE_BYTES', 200 * 1024 * 1024), // 200MB
+      maxIpDailyBytes: env.int('MAX_IP_DAILY_STORAGE_BYTES', 500 * 1024 * 1024), // 500MB
+      maxGlobalBytes: env.int('MAX_GLOBAL_STORAGE_BYTES', 10 * 1024 * 1024 * 1024), // 10GB
+    },
+    roomTtlDays: env.int('ROOM_TTL_DAYS', 90),
+    sentryDsn: process.env.SENTRY_DSN || null,
   };
 
   if (process.env.TRUST_PROXY) {

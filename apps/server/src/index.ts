@@ -16,8 +16,17 @@ import { isAllowedUpload, safeExtension, serveAs } from "./media";
 import { checkRoomId, sanitizeRoomId } from "./rooms";
 import { rateLimit } from "./rateLimit";
 import { HistoryBuffer, KnownRooms, type PendingUpdate } from "./historyBuffer";
+import {
+  checkRoomStorageQuota,
+  checkGlobalStorageQuota,
+  ipDailyTracker,
+  formatBytes,
+  cleanupFailedMedia,
+} from "./quota";
+import { logger, initServerObservability } from "./observability";
 
 const config = readConfig();
+initServerObservability(config.sentryDsn);
 
 /**
  * Whether the schema is ready. The readiness probe reads it.
@@ -244,11 +253,27 @@ app.get("/healthz", (_req, res) => {
  */
 app.get("/readyz", async (_req, res) => {
   const database = dbReady && (await pingDb());
+  let storageStats = null;
+  if (database) {
+    try {
+      const statsRes = await pool.query<{ media_count: string; total_bytes: string }>(
+        `SELECT COUNT(*)::text AS media_count, COALESCE(SUM(size_bytes), 0)::text AS total_bytes FROM media_refs`
+      );
+      storageStats = {
+        mediaCount: Number(statsRes.rows[0]?.media_count ?? 0),
+        totalBytes: Number(statsRes.rows[0]?.total_bytes ?? 0),
+      };
+    } catch {
+      /* ignore stats failure on probe */
+    }
+  }
+
   res.status(database ? 200 : 503).json({
     status: database ? "ready" : "not-ready",
     database,
     historyQueue: history.depth,
     historyDropped: history.dropped,
+    storage: storageStats,
   });
 });
 
@@ -270,7 +295,7 @@ const requireRoom = (req: any, res: any, next: any) => {
   next();
 };
 
-// S3 Upload endpoint with rate limiting
+// S3 Upload endpoint with rate limiting and quota enforcement
 app.post("/rooms/:roomId/media", requireRoom, mediaUploadLimiter, (req: any, res: any, next: any) => {
   upload.single("media")(req, res, (err: any) => {
     if (err) {
@@ -290,6 +315,35 @@ app.post("/rooms/:roomId/media", requireRoom, mediaUploadLimiter, (req: any, res
   const storageKey = req.file.key as string;
   const objectName = path.basename(storageKey);
   const mediaId = objectName.split('.')[0];
+  const fileSize = req.file.size;
+  const clientIp = String(req.ip || req.socket?.remoteAddress || 'unknown');
+
+  // 1. Enforce IP Daily Upload Quota
+  const ipCheck = ipDailyTracker.check(clientIp, fileSize, config.quotas.maxIpDailyBytes);
+  if (!ipCheck.allowed) {
+    await cleanupFailedMedia(s3, s3Bucket, storageKey);
+    return res.status(413).json({
+      error: `Daily upload limit of ${formatBytes(config.quotas.maxIpDailyBytes)} exceeded for this IP. Currently used: ${formatBytes(ipCheck.currentBytes)}.`,
+    });
+  }
+
+  // 2. Enforce Room Storage Quota
+  const roomCheck = await checkRoomStorageQuota(pool, roomId, fileSize, config.quotas.maxRoomBytes);
+  if (!roomCheck.allowed) {
+    await cleanupFailedMedia(s3, s3Bucket, storageKey);
+    return res.status(413).json({
+      error: `Room storage limit of ${formatBytes(config.quotas.maxRoomBytes)} exceeded. Currently used: ${formatBytes(roomCheck.currentBytes)}.`,
+    });
+  }
+
+  // 3. Enforce Global Storage Ceiling
+  const globalCheck = await checkGlobalStorageQuota(pool, fileSize, config.quotas.maxGlobalBytes);
+  if (!globalCheck.allowed) {
+    await cleanupFailedMedia(s3, s3Bucket, storageKey);
+    return res.status(413).json({
+      error: `Global storage ceiling reached (${formatBytes(config.quotas.maxGlobalBytes)}). Uploads temporarily paused.`,
+    });
+  }
 
   /**
    * The proxy's address, not the object store's.
@@ -311,12 +365,16 @@ app.post("/rooms/:roomId/media", requireRoom, mediaUploadLimiter, (req: any, res
     await pool.query(
       `INSERT INTO media_refs (id, room_id, url, mime_type, size_bytes, storage_key)
        VALUES ($1, $2, $3, $4, $5, $6)`,
-      [mediaId, roomId, url, req.file.mimetype, req.file.size, storageKey]
+      [mediaId, roomId, url, req.file.mimetype, fileSize, storageKey]
     );
 
-    res.json({ id: mediaId, url, mimeType: req.file.mimetype, sizeBytes: req.file.size });
+    // Record upload for IP rate tracking
+    ipDailyTracker.record(clientIp, fileSize);
+
+    res.json({ id: mediaId, url, mimeType: req.file.mimetype, sizeBytes: fileSize });
   } catch (err) {
     console.error("Error inserting media ref:", err);
+    await cleanupFailedMedia(s3, s3Bucket, storageKey, pool, mediaId);
     res.status(500).json({ error: "Database error processing media upload." });
   }
 });
