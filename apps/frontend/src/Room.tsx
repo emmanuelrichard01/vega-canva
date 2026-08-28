@@ -56,6 +56,7 @@ import { CanvasEmptyState } from './components/CanvasEmptyState';
 import { FirstRunGuide } from './components/FirstRunGuide';
 import { LessonCoach } from './components/learn/LessonCoach';
 import { TourGuide, TourOffer } from './components/learn/TourGuide';
+import { tourState } from './engine/learn/tourState';
 import { learnState } from './engine/learn/learnState';
 import { DockCoach } from './components/DockCoach';
 import { buildPreview, savePreview } from './engine/model/boardPreview';
@@ -595,6 +596,20 @@ export default function Room() {
    * first-run guide and the lesson coach both take over once it has settled,
    * and the lesson coach wins over the guide when both apply.
    */
+  /**
+   * Whether the walkthrough has been settled, one way or the other.
+   *
+   * Everything else that coaches waits for this. See the note on the band above
+   * the dock: the tour is the general orientation and the dock's question is a
+   * specific follow-up, so asking the follow-up first was backwards.
+   */
+  const tour = useSyncExternalStore(
+    tourState.subscribe,
+    tourState.getSnapshot,
+    tourState.getSnapshot
+  );
+  const tourSettled = tour.seen && tour.step === null;
+
   const [dockAnswered, setDockAnswered] = useState(
     () => localStorage.getItem('vega_dock_coach_v1') === 'answered'
   );
@@ -1592,9 +1607,11 @@ export default function Room() {
       {/* The fork the dock cannot present for itself: an endless surface, or a
           frame at a real size. Asked once, both answers recorded the same.
           Shown before the first-run guide so the two never stack. */}
-      {isUiVisible && <DockCoach visible={isUiVisible} onSettled={() => setDockAnswered(true)} />}
+      {isUiVisible && tourSettled && (
+        <DockCoach visible={isUiVisible} onSettled={() => setDockAnswered(true)} />
+      )}
 
-      {isUiVisible && dockAnswered && (
+      {isUiVisible && tourSettled && dockAnswered && (
         <FirstRunGuide
           hasShared={hasShared}
           hasReclaimedSpace={hasUsedZen}
@@ -1619,7 +1636,7 @@ export default function Room() {
         * second question. It is rendered *after* the guide so the stylesheet
         * can say that in one rule -- see `.guide:has(~ .coach)`.
         */}
-      <LessonCoach activeTool={activeTool} visible={isUiVisible && dockAnswered} />
+      <LessonCoach activeTool={activeTool} visible={isUiVisible && tourSettled && dockAnswered} />
 
       {/**
         * Where things live, pointed at rather than described.
@@ -1630,7 +1647,22 @@ export default function Room() {
         * all: it portals to the body and travels the whole screen, which is
         * the point of it.
         */}
-      <TourOffer visible={isUiVisible && dockAnswered && Object.keys(commentObjects).length > 0} />
+      {/**
+        * Offered on arrival, including on a board with nothing on it.
+        *
+        * It used to wait for the dock question *and* for the board to have an
+        * object on it, which made it unreachable on exactly the screen it is
+        * for: the dock coach only appears once something exists, so somebody
+        * who opened a new board and looked around was offered nothing at all
+        * and had no way to find the tour but the reference panel's footer.
+        *
+        * An empty board is the best moment for it, not the worst. There is
+        * nothing to interrupt, nothing to lose, and every question a person has
+        * at that moment is "where is anything". `CanvasEmptyState` sits in the
+        * middle of the canvas and this sits above the dock, so the two do not
+        * collide.
+        */}
+      <TourOffer visible={isUiVisible} />
       <TourGuide />
 
       {/* FOCUS MODE.

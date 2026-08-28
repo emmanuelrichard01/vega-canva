@@ -4,6 +4,7 @@ import { ArrowLeft, ArrowRight, X } from 'lucide-react';
 import { tourState } from '../../engine/learn/tourState';
 import { placeCard, TOUR, type Box, type Placement } from '../../engine/learn/tour';
 import { pointerPath, ringBox, ringPath } from '../../engine/learn/tourSketch';
+import { roughEllipse, roughPolyline, seedFrom } from '../../engine/model/rough';
 
 /**
  * The walk round the screen.
@@ -307,6 +308,32 @@ export const TourGuide: React.FC = () => {
 };
 
 /**
+ * The mark on the offer, drawn by the same pen as the tour it offers.
+ *
+ * A circle with a stroke into it: the two marks the walkthrough is made of, at
+ * badge size. It is the honest way to advertise a hand-drawn tour, and it is
+ * cheaper than the alternative -- a lucide glyph would have been a third
+ * visual language on a card whose whole job is to introduce the second.
+ *
+ * Computed once at module load, because both paths are pure functions of a
+ * seed and rebuilding them per render produces the identical string at a cost.
+ */
+const OFFER_RING = roughEllipse(20, 20, 15, 14, {
+  seed: seedFrom('offer:ring'),
+  level: 'heavy',
+  width: 2,
+});
+
+const OFFER_TICK = roughPolyline(
+  [
+    { x: 13, y: 21 },
+    { x: 18, y: 26 },
+    { x: 28, y: 13 },
+  ],
+  { seed: seedFrom('offer:tick'), closed: false, level: 'medium', width: 2 }
+);
+
+/**
  * The offer, once.
  *
  * ## Why it is offered rather than started
@@ -317,30 +344,59 @@ export const TourGuide: React.FC = () => {
  * this is two buttons and a sentence, and declining is recorded exactly as
  * firmly as accepting: neither is asked twice.
  *
- * It waits for the dock question to settle for the same reason the first-run
- * guide does. All of these share the band above the dock and only one of them
- * may be there at a time.
+ * ## Why it comes before everything else that coaches
+ *
+ * It used to wait for the dock's question about frames, which was backwards:
+ * the tour is where things are and the dock's question is a specific follow-up
+ * about one of them. Worse, the dock coach only appears once the board has an
+ * object on it, so on a *new* board nothing was offered at all and the tour
+ * could only be found in the reference panel's footer. An empty board is the
+ * best moment for it, not a moment to be excluded from.
+ *
+ * ## Why it waits a beat
+ *
+ * Not for effect. A card that is already there when the page finishes painting
+ * reads as part of the page, and this is a question about the page. A second
+ * and a half is long enough for somebody to have looked at the board first,
+ * which is what makes it an offer rather than a toll gate.
  */
+const OFFER_DELAY = 1500;
+
 export const TourOffer: React.FC<{ visible: boolean }> = ({ visible }) => {
   const { seen, step } = useSyncExternalStore(
     tourState.subscribe,
     tourState.getSnapshot,
     tourState.getSnapshot
   );
+  const [ready, setReady] = useState(false);
 
-  if (!visible || seen || step !== null) return null;
+  useEffect(() => {
+    if (!visible || seen) return;
+    const t = window.setTimeout(() => setReady(true), OFFER_DELAY);
+    return () => window.clearTimeout(t);
+  }, [visible, seen]);
+
+  if (!visible || seen || step !== null || !ready) return null;
 
   return (
     <aside className="tour-offer" role="note" aria-label="Take a tour">
+      <span className="tour-offer__mark" aria-hidden="true">
+        <svg viewBox="0 0 40 40">
+          <path className="tour-offer__ring" pathLength={1} d={OFFER_RING} />
+          <path className="tour-offer__tick" pathLength={1} d={OFFER_TICK} />
+        </svg>
+      </span>
+
       <div className="tour-offer__body">
-        <p className="tour-offer__title">New here?</p>
+        <p className="tour-offer__title">First time here?</p>
         <p className="tour-offer__text">
-          Six steps, about twenty seconds, and you will know where everything lives.
+          Twenty seconds, six steps, and you will know where everything is.
         </p>
       </div>
+
       <div className="tour-offer__actions">
         <button type="button" className="tour-offer__ghost" onClick={() => tourState.decline()}>
-          No thanks
+          Not now
         </button>
         <button type="button" className="tour-offer__primary" onClick={() => tourState.start()}>
           Show me round

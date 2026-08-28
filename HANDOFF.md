@@ -484,6 +484,42 @@ same arrangement `TooltipLayer` uses. What is worth knowing:
 - One timer for the whole stack, re-aimed on every change, because a timer per
   notice leaks one whenever a notice is folded or evicted.
 
+## 4a-10. The tour was unreachable on a new board
+
+**It never appeared on the screen it is for.** `TourOffer` waited for the dock
+question *and* for the board to have an object on it, and `DockCoach` only
+appears once something exists. So somebody who opened a new board and looked
+around was offered nothing at all, and the tour could only be found in the
+reference panel's footer, which is the last place a lost person looks.
+
+**The order is inverted.** The tour is the general orientation and the dock's
+question about frames is a specific follow-up about one thing in it, so asking
+the follow-up first was backwards. `TourOffer` now shows as soon as the chrome
+is up, on an empty board included: there is nothing to interrupt, nothing to
+lose, and every question anybody has at that moment is where anything is.
+`CanvasEmptyState` sits mid-canvas and the offer sits above the dock, so they do
+not collide. The dock coach, the first-run guide and the lesson coach all wait
+for `tourSettled`, so nothing fights it.
+
+It also waits a beat before appearing. A card already there when the page
+finishes painting reads as part of the page, and this is a question *about* the
+page.
+
+**The offer is drawn by the same pen as the tour.** A hand-drawn ring and tick,
+made with `rough.ts`, and the handwritten face on its three-word title. A lucide
+glyph there would have been a third visual language on a card whose only job is
+to introduce the second.
+
+**The marks are doubled now.** The shaft and the head were drawn at `light`,
+which is one pass -- `rough.ts` calls that "a neat hand with a straight edge...
+without reading as informal", which is the wrong register for something scrawled
+on your screen, and the same file calls the doubling "the single most
+recognisable thing about a hand-drawn shape". They are `medium` (two passes) and
+the ring is `heavy`, which overshoots its joins the way a fast circle does. The
+arc is sampled at eight points rather than fourteen: the wobble is added per
+segment, so chopping a curve finer produces many tiny deviations and comes out
+smooth, which is the opposite of the intent.
+
 ## 4a-9. Rulers, the palette, and one glyph per meaning
 
 **Rulers start off.** They cost 22px from two edges permanently, put a second

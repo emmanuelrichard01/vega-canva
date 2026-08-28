@@ -61,9 +61,12 @@ const RING_PAD = 10;
 export function ringPath(box: Box, stepId: string): string {
   const rx = box.width / 2 + RING_PAD;
   const ry = box.height / 2 + RING_PAD;
+  // `heavy`: two passes that wander further and cross well past every corner.
+  // A ring is the one mark here somebody would draw fast and without care, and
+  // the overshoot at the join is most of what says a hand made it.
   return roughEllipse(box.x + box.width / 2, box.y + box.height / 2, rx, ry, {
     seed: seedFrom(`ring:${stepId}`),
-    level: 'medium',
+    level: 'heavy',
     width: 2,
   });
 }
@@ -142,8 +145,16 @@ function ends(card: Box, ring: Box, side: TourSide): { from: Point; to: Point; b
   return { from, to, bow };
 }
 
-/** Sample a quadratic curve, which is what the pen is then run along. */
-function arc(from: Point, to: Point, bow: number, steps = 14): Point[] {
+/**
+ * Sample a quadratic curve, which is what the pen is then run along.
+ *
+ * Eight samples, not fourteen. The wobble `roughPolyline` adds is per *segment*,
+ * so a curve chopped into many short pieces gets many tiny deviations and comes
+ * out smooth: the arithmetic is doing its job and the result reads as a clean
+ * bezier. Fewer, longer segments give each one room to bow and to overshoot its
+ * corner, which is what a hand actually does.
+ */
+function arc(from: Point, to: Point, bow: number, steps = 8): Point[] {
   const mx = (from.x + to.x) / 2;
   const my = (from.y + to.y) / 2;
   const dx = to.x - from.x;
@@ -188,9 +199,11 @@ function head(points: readonly Point[], stepId: string): string {
   // Two open strokes rather than a filled triangle: a filled head is a vector
   // arrowhead and reads as a diagram, where two crossing pen strokes read as
   // the same hand that drew the shaft.
+  // Two passes here as well, so the head is made of the same marks as the
+  // shaft. A doubled shaft ending in two single strokes reads as two pens.
   return [
-    roughPolyline([wing(spread), tip], { seed: seedFrom(`hl:${stepId}`), closed: false, level: 'light', width: 2 }),
-    roughPolyline([wing(-spread), tip], { seed: seedFrom(`hr:${stepId}`), closed: false, level: 'light', width: 2 }),
+    roughPolyline([wing(spread), tip], { seed: seedFrom(`hl:${stepId}`), closed: false, level: 'medium', width: 2 }),
+    roughPolyline([wing(-spread), tip], { seed: seedFrom(`hr:${stepId}`), closed: false, level: 'medium', width: 2 }),
   ].join(' ');
 }
 
@@ -223,10 +236,21 @@ export function pointerPath(card: Box, ring: Box, side: TourSide, stepId: string
   if (Math.hypot(to.x - from.x, to.y - from.y) < MIN_RUN) return null;
   const points = arc(from, to, bow);
   return {
+    /**
+     * `medium`, which is two passes.
+     *
+     * It was `light`, and `light` is one pass: `rough.ts` describes that as
+     * "a neat hand with a straight edge... drawn without reading as informal",
+     * which is the wrong register for an annotation somebody has scrawled on
+     * your screen. The same file calls the doubling "the single most
+     * recognisable thing about a hand-drawn shape", and a single-pass stroke
+     * simply does not have it -- which is why the arrow read as a curve rather
+     * than as a pen mark.
+     */
     shaft: roughPolyline(points, {
       seed: seedFrom(`arrow:${stepId}`),
       closed: false,
-      level: 'light',
+      level: 'medium',
       width: 2,
     }),
     head: head(points, stepId),
