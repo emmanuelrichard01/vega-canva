@@ -32,7 +32,7 @@ export interface RoomShortcutsOptions {
  * Handles room-level keyboard shortcuts:
  * - Undo / Redo (Cmd+Z, Cmd+Shift+Z, Ctrl+Y)
  * - Select All (Cmd+A)
- * - Command Palette (Cmd+K, Cmd+P)
+ * - Command Palette (Cmd+K)
  * - Zoom in / out / fit / reset (Cmd/Ctrl + +/-, bare +/-, 0, !)
  * - Tool hotkeys (from TOOL_FOR_KEY map)
  * - Export the selection (Cmd/Ctrl + Shift + E)
@@ -126,11 +126,16 @@ export function useRoomShortcuts({
         return;
       }
 
-      if (hasModifier && e.key.toLowerCase() === 'p') {
-        e.preventDefault();
-        setShowCommandPalette(true);
-        return;
-      }
+      /*
+       * Cmd+P is Print, and it is not ours to take.
+       *
+       * It used to be a second opener for the palette, with a
+       * `preventDefault()` on it, so pressing the shortcut every operating
+       * system and browser agrees means "print this" produced a command list
+       * instead. A shortcut that is wrong everywhere else is not a convenience
+       * however well it reads in a changelog, and there is nothing here Cmd+K
+       * does not already do.
+       */
 
       // Zoom In (Cmd + + / =)
       if (hasModifier && (e.key === '=' || e.key === '+')) {

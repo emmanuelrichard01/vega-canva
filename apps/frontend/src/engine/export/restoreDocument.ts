@@ -1,6 +1,6 @@
 import * as Y from 'yjs';
 import { nanoid } from 'nanoid';
-import { doc, objectsMap, commentsMap, createNode, deleteNode } from '../document';
+import { doc, objectsMap, commentsMap, createNode, deleteNode, metadataMap } from '../document';
 import type { ImportedDocument } from './DocumentImport';
 
 export type RestoreMode = 'replace' | 'merge';
@@ -10,6 +10,8 @@ export interface RestoreSummary {
   removed: number;
   /** Comment threads written back. */
   comments: number;
+  /** The name the board took from the file, when it took one. */
+  title: string | null;
 }
 
 /**
@@ -39,7 +41,7 @@ export function restoreDocument(
   imported: ImportedDocument,
   mode: RestoreMode = 'replace'
 ): RestoreSummary {
-  const summary: RestoreSummary = { added: 0, removed: 0, comments: 0 };
+  const summary: RestoreSummary = { added: 0, removed: 0, comments: 0, title: null };
 
   doc.transact(() => {
     if (mode === 'replace') {
@@ -86,6 +88,24 @@ export function restoreDocument(
     }
 
     summary.comments = restoreComments(imported.comments, idFor, remap.size > 0);
+
+    /**
+     * The board's name comes back with it, but only on a replace.
+     *
+     * A replace is "this board is now that board", and a board that has taken
+     * on every object of a backup while keeping a different name is half
+     * restored -- the one field somebody uses to recognise it is the one field
+     * left behind. A merge is the opposite case: the board is still itself and
+     * has gained some contents, so renaming it out from under whoever is
+     * looking at it would be wrong.
+     *
+     * Inside the transaction with everything else, so the name and the objects
+     * arrive for collaborators in the same update.
+     */
+    if (mode === 'replace' && imported.title) {
+      metadataMap.set('name', imported.title);
+      summary.title = imported.title;
+    }
   });
 
   return summary;

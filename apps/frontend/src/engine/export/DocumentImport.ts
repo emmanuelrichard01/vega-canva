@@ -1,4 +1,5 @@
 import { NODE_TYPES } from '../model/schema';
+import { roomFingerprint } from '../room/roomCode';
 
 /**
  * Reading a JSON export back in.
@@ -24,6 +25,18 @@ export interface ImportedDocument {
   nodes: Record<string, Record<string, unknown>>;
   comments: unknown[];
   exportedAt: string | null;
+  /**
+   * What the board was called when it was exported.
+   *
+   * `null` for files written before the exporter recorded it, which is every
+   * export up to now. A restore should say so rather than invent a name.
+   */
+  title: string | null;
+  /**
+   * A one-way fingerprint of the board it came from, when the file records
+   * one. Never the room id itself -- see the note in `JSONExporter`.
+   */
+  room: { fingerprint: string } | null;
   /** Envelope (file format) version the file was written with. */
   version: number;
   /**
@@ -133,13 +146,23 @@ export function parseDocumentExport(text: string): ImportResult {
       nodes,
       comments: Array.isArray(doc.comments) ? doc.comments : [],
       exportedAt: typeof doc.exportedAt === 'string' ? doc.exportedAt : null,
+      title: typeof doc.title === 'string' && doc.title.trim() ? doc.title.trim() : null,
+      room: readRoom(doc.room),
       version,
       schemaVersion: typeof doc.schemaVersion === 'number' ? doc.schemaVersion : null,
     },
   };
 }
 
-/** A short, human description of what a validated file holds. */
+/** The provenance block, if the file carries one that makes sense. */
+function readRoom(value: unknown): { fingerprint: string } | null {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) return null;
+  const room = value as Record<string, unknown>;
+  if (typeof room.fingerprint !== 'string' || !room.fingerprint) return null;
+  return { fingerprint: room.fingerprint };
+}
+
+/** What the file holds, counted. */
 export function describeImport(document: ImportedDocument): string {
   const count = Object.keys(document.nodes).length;
   // Threads are named because they are now actually restored. While they were
@@ -157,4 +180,31 @@ export function describeImport(document: ImportedDocument): string {
     hour: '2-digit',
     minute: '2-digit',
   })}`;
+}
+
+/**
+ * Which board the file came from, said in one line, or `null` when the file
+ * does not know.
+ *
+ * Separate from `describeImport` because the two answer different questions --
+ * "how much is in here" and "what is this a backup of" -- and a restore
+ * confirmation needs to ask the second one first. Files written before the
+ * exporter recorded any of this return `null`, and the interface should say
+ * nothing rather than guess.
+ */
+export function describeOrigin(document: ImportedDocument): string | null {
+  return document.title ?? null;
+}
+
+/**
+ * Whether the file came from the board it is about to be restored into.
+ *
+ * The two cases read very differently. Restoring a board's own backup over
+ * itself is rolling it back; restoring somebody else's is replacing this one
+ * with a different board, and somebody about to do that by accident should be
+ * told which.
+ */
+export function isSameRoom(document: ImportedDocument, roomId: string): boolean {
+  if (!document.room || !roomId) return false;
+  return document.room.fingerprint === roomFingerprint(roomId);
 }

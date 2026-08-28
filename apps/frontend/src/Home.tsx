@@ -2,10 +2,11 @@ import React, { useEffect, useMemo, useRef, useState } from 'react';
 import { useAuth } from './hooks/useAuth';
 import { nanoid } from 'nanoid';
 import {
-  ArrowRight, Compass, FileText, Layers, Link2, LogOut, Plus, Search, Sparkles,
+  AlertTriangle, ArrowRight, Compass, FileText, Layers, Link2, LogOut, Plus, Search, Sparkles,
   SquarePen, UploadCloud, X,
 } from 'lucide-react';
 import { parseDocumentExport } from './engine/export/DocumentImport';
+import { looksLikeRoomCode, roomIdFromCode } from './engine/room/roomCode';
 import { stashPendingRestore, stashPendingTemplate } from './engine/export/pendingRestore';
 import {
   CATEGORIES, TEMPLATES, templatePreview,
@@ -102,6 +103,8 @@ export const Home: React.FC = () => {
   const [category, setCategory] = useState<TemplateCategory | null>(null);
   const [query, setQuery] = useState('');
   const [joinLink, setJoinLink] = useState('');
+  /** Said when a code does not check out, rather than opening a phantom board. */
+  const [joinError, setJoinError] = useState<string | null>(null);
   const [joinOpen, setJoinOpen] = useState(false);
   const [recentRooms, setRecentRooms] = useState<RecentWorkspace[]>([]);
   const [restoreError, setRestoreError] = useState<string | null>(null);
@@ -254,16 +257,57 @@ export const Home: React.FC = () => {
     openBoard();
   };
 
+  /**
+   * A link, or a code.
+   *
+   * ## Why this refuses things now
+   *
+   * It used to take whatever it was given and navigate. That is right for a
+   * link -- there is nothing to check, and an id we do not recognise may still
+   * be somebody's board -- and it was quietly wrong for everything else,
+   * because *every* string is a valid room id. A code typed with one symbol
+   * wrong did not fail; it opened a different board, which did not exist,
+   * which meant an empty canvas and a person reasonably certain their
+   * colleague's work had been lost.
+   *
+   * A room code carries a check symbol precisely so that this case can be
+   * caught. See `engine/room/roomCode.ts`. So: anything shaped like a code is
+   * verified and refused if it does not hold, and anything else is treated as
+   * a link and passed through as before.
+   */
   const handleJoin = (e: React.FormEvent) => {
     e.preventDefault();
+    setJoinError(null);
+
     // Trimmed before extracting, not after: a pasted link with trailing
     // whitespace — routine when copying out of chat — used to carry that into
     // the room id and land on a different, brand-new empty room.
     const trimmed = joinLink.trim();
     if (!trimmed) return;
-    let roomId = trimmed;
-    if (trimmed.includes('/room/')) roomId = trimmed.split('/room/')[1] || '';
-    roomId = roomId.split(/[/?#]/)[0].trim();
+
+    if (trimmed.includes('/room/')) {
+      const roomId = (trimmed.split('/room/')[1] || '').split(/[/?#]/)[0].trim();
+      if (!roomId) {
+        setJoinError('That link has no board in it. Copy the whole thing, up to and past /room/.');
+        return;
+      }
+      window.location.href = `/room/${roomId}`;
+      return;
+    }
+
+    if (looksLikeRoomCode(trimmed)) {
+      const roomId = roomIdFromCode(trimmed);
+      if (!roomId) {
+        setJoinError('That code is not quite right. Check it against the one you were sent.');
+        return;
+      }
+      window.location.href = `/room/${roomId}`;
+      return;
+    }
+
+    // Neither shape. Most likely a bare id out of somebody's address bar,
+    // which is still a legitimate way in and cannot be checked.
+    const roomId = trimmed.split(/[/?#]/)[0].trim();
     if (!roomId) return;
     window.location.href = `/room/${roomId}`;
   };
@@ -642,16 +686,25 @@ export const Home: React.FC = () => {
               <input
                 type="text"
                 value={joinLink}
-                onChange={(e) => setJoinLink(e.target.value)}
-                placeholder="Paste a board link"
-                aria-label="Paste a board link to join"
+                onChange={(e) => { setJoinLink(e.target.value); setJoinError(null); }}
+                placeholder="Paste a board link, or type a code"
+                aria-label="Paste a board link, or type a room code, to join"
+                aria-invalid={joinError ? true : undefined}
+                aria-describedby={joinError ? 'join-error' : undefined}
                 autoFocus
               />
               <button type="submit" disabled={!joinLink.trim()}>Open</button>
-              <button type="button" className="lstage__join-x" onClick={() => setJoinOpen(false)} aria-label="Cancel">
+              <button type="button" className="lstage__join-x" onClick={() => { setJoinOpen(false); setJoinError(null); }} aria-label="Cancel">
                 <X size={15} />
               </button>
             </form>
+          )}
+
+          {joinOpen && joinError && (
+            <p className="lstage__join-error" id="join-error" role="alert">
+              <AlertTriangle size={14} aria-hidden="true" />
+              {joinError}
+            </p>
           )}
 
           <header className="lstage__head">

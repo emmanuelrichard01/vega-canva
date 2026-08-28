@@ -100,6 +100,9 @@ describe('useRoomShortcuts', () => {
     };
     const cbs = listeners['keydown'] || [];
     cbs.forEach((cb) => cb(event));
+    // Returned so a test can assert on what the handler did to the event
+    // itself, not only on what it called.
+    return event;
   };
 
   it('binds listeners for keydown and legacy_tool_change', () => {
@@ -174,14 +177,22 @@ describe('useRoomShortcuts', () => {
     expect(options.setShowHelp).toHaveBeenCalledWith(true);
   });
 
-  it('toggles command palette on Cmd+K and Cmd+P', () => {
+  it('toggles command palette on Cmd+K', () => {
     useRoomShortcuts(options);
 
     fireKeyDown({ key: 'k', metaKey: true });
     expect(options.setShowCommandPalette).toHaveBeenCalledTimes(1);
+  });
 
-    fireKeyDown({ key: 'p', metaKey: true });
-    expect(options.setShowCommandPalette).toHaveBeenCalledTimes(2);
+  it('leaves Cmd+P to the browser', () => {
+    // Print. Taking it opened a command list on the one shortcut every
+    // operating system agrees about.
+    useRoomShortcuts(options);
+
+    const event = fireKeyDown({ key: 'p', metaKey: true });
+
+    expect(options.setShowCommandPalette).not.toHaveBeenCalled();
+    expect(event.preventDefault).not.toHaveBeenCalled();
   });
 
   it('closes panels on Escape when in compact mode with panels open', () => {

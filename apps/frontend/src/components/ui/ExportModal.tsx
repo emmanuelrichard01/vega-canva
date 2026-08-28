@@ -10,7 +10,7 @@ import {
   type ExportBackground,
   type ExportFormat,
 } from '../../engine/export';
-import { parseDocumentExport, describeImport } from '../../engine/export/DocumentImport';
+import { parseDocumentExport, describeImport, describeOrigin, isSameRoom } from '../../engine/export/DocumentImport';
 import { restoreDocument } from '../../engine/export/restoreDocument';
 import { computeContentBounds } from '../../engine/export/bounds';
 import { exportScope, scopeOptions } from '../../engine/export/exportScope';
@@ -106,8 +106,20 @@ export const ExportModal: React.FC<Props> = ({
   const [background, setBackground] = useState<ExportBackground>('transparent');
   const [preview, setPreview] = useState<{ url: string; bytes: number } | null>(null);
   const [previewing, setPreviewing] = useState(false);
-  /** A validated file waiting for the user to say replace or add. */
-  const [pendingRestore, setPendingRestore] = useState<{ summary: string } | null>(null);
+  /**
+   * A validated file waiting for the user to say replace or add.
+   *
+   * Everything the confirmation needs is settled here, at the moment the file
+   * parsed, rather than recomputed while it is on screen: what it holds, what
+   * board it came from, whether that is *this* board, and what the parser had
+   * to skip to accept it.
+   */
+  const [pendingRestore, setPendingRestore] = useState<{
+    summary: string;
+    origin: string | null;
+    sameRoom: boolean;
+    warnings: string[];
+  } | null>(null);
 
   const fileInputRef = useRef<HTMLInputElement>(null);
   const dialogRef = useFocusTrap(true, onClose);
@@ -343,7 +355,15 @@ export const ExportModal: React.FC<Props> = ({
     }
     // Held rather than applied. Replacing the board is irreversible from the
     // user's side, so it is described first and confirmed second.
-    setPendingRestore({ summary: describeImport(result.document) });
+    const here = typeof window !== 'undefined'
+      ? window.location.pathname.split('/room/')[1]?.split(/[/?#]/)[0] ?? ''
+      : '';
+    setPendingRestore({
+      summary: describeImport(result.document),
+      origin: describeOrigin(result.document),
+      sameRoom: isSameRoom(result.document, here),
+      warnings: result.warnings,
+    });
     pendingDocRef.current = result;
   };
 
@@ -590,10 +610,45 @@ export const ExportModal: React.FC<Props> = ({
         {pendingRestore && (
           <div className="export__confirm" role="alertdialog" aria-modal="true" aria-labelledby="export-confirm-title">
             <div className="export__confirm-card">
-              <h3 id="export-confirm-title" className="export__confirm-title">{pendingRestore.summary}</h3>
+              {/* What this is a backup *of*, first. Choosing between two files
+                  in a downloads folder is the question somebody actually has
+                  here, and "142 objects" does not answer it. */}
+              <h3 id="export-confirm-title" className="export__confirm-title">
+                {pendingRestore.origin ?? 'This backup'}
+              </h3>
+              <p className="export__confirm-meta">
+                {pendingRestore.summary}
+                {pendingRestore.origin && (
+                  pendingRestore.sameRoom
+                    ? ' · a backup of this board'
+                    : ' · from a different board'
+                )}
+              </p>
               <p className="export__confirm-text">
                 Replacing clears this board first. Adding keeps everything already here and places the backup alongside it.
               </p>
+
+              {/* What the file contained that could not be read.
+                  The parser has always named these and the dialog has always
+                  thrown them away, so a restore that quietly dropped a dozen
+                  objects reported only how many it kept. Anything skipped is
+                  data loss, and it is worth saying before the irreversible
+                  button rather than after. */}
+              {pendingRestore.warnings.length > 0 && (
+                <details className="export__skipped">
+                  <summary>
+                    {pendingRestore.warnings.length === 1
+                      ? '1 item in this file cannot be restored'
+                      : `${pendingRestore.warnings.length} items in this file cannot be restored`}
+                  </summary>
+                  <ul>
+                    {pendingRestore.warnings.slice(0, 12).map((w) => <li key={w}>{w}</li>)}
+                    {pendingRestore.warnings.length > 12 && (
+                      <li>and {pendingRestore.warnings.length - 12} more.</li>
+                    )}
+                  </ul>
+                </details>
+              )}
               <div className="export__confirm-actions">
                 <button
                   type="button"

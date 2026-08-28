@@ -6307,6 +6307,25 @@ textarea:focus-visible {
   cursor: default;
 }
 
+/* Why the code was refused, under the field that refused it.
+   Amber rather than red: nothing has broken and nothing has been lost, there
+   is simply a symbol to check. */
+.lstage__join-error {
+  display: flex;
+  align-items: flex-start;
+  gap: var(--space-2);
+  margin: calc(var(--space-5) * -1) 0 var(--space-5);
+  padding: 10px var(--space-4);
+  border-radius: var(--radius-lg);
+  background: color-mix(in srgb, var(--status-warning) 12%, transparent);
+  color: var(--text-secondary);
+  font-size: var(--text-sm);
+  line-height: 1.5;
+  animation: exportSaid 200ms var(--ease-settle) both;
+}
+
+.lstage__join-error svg { flex-shrink: 0; margin-top: 2px; color: var(--status-warning); }
+
 .lstage__join-x {
   display: flex;
   padding: 4px;
@@ -11542,11 +11561,48 @@ body[data-zen='physics'] .forces-handle { bottom: 32px; }
   color: var(--text-primary);
 }
 
+/* Counts and provenance, under the name. Smaller and quieter than the
+   sentence below it, because it is what the file *is* rather than what is
+   about to happen to it. */
+.export__confirm-meta {
+  margin: 0 0 var(--space-3);
+  font-size: var(--text-xs);
+  color: var(--text-tertiary);
+}
+
 .export__confirm-text {
-  margin: 0 0 var(--space-5);
+  margin: 0 0 var(--space-4);
   font-size: var(--text-sm);
   line-height: 1.55;
   color: var(--text-secondary);
+}
+
+/* Folded, not hidden.
+   Anything skipped is data loss, so it has to be reachable before the
+   irreversible button -- but a list of twelve object ids is not what most
+   people need to read, and unfolding it by default would push the buttons off
+   the card. The count is in the summary line, which is the part that matters. */
+.export__skipped {
+  margin: 0 0 var(--space-4);
+  padding: var(--space-2) var(--space-3);
+  border-radius: var(--radius-md);
+  background: color-mix(in srgb, var(--status-warning) 10%, transparent);
+  font-size: var(--text-xs);
+}
+
+.export__skipped summary {
+  color: var(--text-secondary);
+  cursor: pointer;
+  list-style-position: inside;
+}
+
+.export__skipped ul {
+  margin: var(--space-2) 0 0;
+  padding-left: var(--space-4);
+  max-height: 108px;
+  overflow-y: auto;
+  color: var(--text-tertiary);
+  line-height: 1.6;
 }
 
 .export__confirm-actions {
@@ -12155,6 +12211,28 @@ body[data-zen='physics'] .forces-handle { bottom: 32px; }
 }
 
 /* The consequence of sending it, in the sheet that sends it. */
+/* The code row.
+   Same furniture as the link above it, different typography, because the two
+   are read in different ways: a link is scanned and clicked, a code is
+   transcribed a symbol at a time. Tabular figures so the groups line up,
+   letter-spacing so adjacent symbols stay separate, and a size that survives
+   being read off a screen from across a room. */
+.share__field--code input {
+  font-family: var(--font-mono);
+  font-size: 17px;
+  font-weight: var(--weight-medium);
+  font-variant-numeric: tabular-nums;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+}
+
+.share__hint {
+  margin: calc(var(--space-2) * -1) 0 0;
+  font-size: var(--text-xs);
+  line-height: 1.5;
+  color: var(--text-tertiary);
+}
+
 .share__caveat {
   margin: 0;
   padding-top: var(--space-3);
