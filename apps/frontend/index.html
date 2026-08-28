@@ -9,36 +9,105 @@
     <link rel="manifest" href="/site.webmanifest" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     <title>Vega Studio</title>
-    <!-- Caveat only. Inter is self-hosted through `@fontsource-variable/inter`
-         (imported at the top of `index.css`), and asking the CDN for it as
-         well fetched the same family twice — a render-blocking third-party
-         request for bytes already in the bundle, at two static weights where
-         the self-hosted face carries the whole variable axis. -->
+    <!-- Board faces, and only the ones that are not already in the bundle.
+
+         This asked for eleven families. Six of them -- Inter, Roboto, Space
+         Grotesk, Outfit, Caveat and Architects Daughter -- are self-hosted
+         through `@fontsource` and imported at the top of `index.css`, so every
+         one of those was being fetched twice: once from our own origin, and
+         again from a third party on the critical path. An earlier pass caught
+         this for Inter and wrote "Caveat only" in a comment here; the request
+         underneath the comment still named all eleven.
+
+         The five left are the ones nothing in the app bundles, and nothing in
+         the *interface* renders either. They exist so that text on a board can
+         be set in them, which is a choice somebody makes minutes after the
+         page has painted, if ever.
+
+         So it is loaded without blocking the render. `media="print"` does not
+         match, so the browser fetches the stylesheet at a lower priority and
+         does not hold first paint behind it; `onload` then flips it to `all`
+         and the faces apply. Canvas text measured before they arrive is
+         re-measured when they land -- that is what `engine/text/fontEpoch.ts`
+         is for -- so arriving late is a repaint here rather than a wrong
+         layout. -->
     <link rel="preconnect" href="https://fonts.googleapis.com" />
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
-
-    <!-- Caveat on its own, first, and only the one weight the chrome uses.
-
-         It is the only one of these families the *interface* renders: the
-         walkthrough's titles are set in it, and everything else on this line is
-         a face somebody might pick for text on a board. Behind ten other
-         families it arrived late enough that the tour's first card painted in
-         the fallback sans and then jumped, which is a bad moment to be
-         jarring: it is the first thing the walkthrough does.
-
-         A separate request rather than a reordering, because Google returns one
-         stylesheet per link and the browser cannot start fetching a font file
-         until that stylesheet has parsed. Two small requests in parallel beat
-         one large one that gates eleven downloads on its own arrival. -->
     <link
-      href="https://fonts.googleapis.com/css2?family=Caveat:wght@600&display=swap"
       rel="stylesheet"
+      href="https://fonts.googleapis.com/css2?family=DM+Sans:ital,opsz,wght@0,9..40,100..1000;1,9..40,100..1000&family=JetBrains+Mono:ital,wght@0,100..800;1,100..800&family=Lora:ital,wght@0,400..700;1,400..700&family=Playfair+Display:ital,wght@0,400..900;1,400..900&family=Plus+Jakarta+Sans:ital,wght@0,200..800;1,200..800&display=swap"
+      media="print"
+      onload="this.media='all'"
     />
-
-    <link href="https://fonts.googleapis.com/css2?family=Architects+Daughter&family=Caveat:wght@400..700&family=DM+Sans:ital,opsz,wght@0,9..40,100..1000;1,9..40,100..1000&family=Inter:ital,opsz,wght@0,14..32,100..900;1,14..32,100..900&family=JetBrains+Mono:ital,wght@0,100..800;1,100..800&family=Lora:ital,wght@0,400..700;1,400..700&family=Outfit:wght@100..900&family=Playfair+Display:ital,wght@0,400..900;1,400..900&family=Plus+Jakarta+Sans:ital,wght@0,200..800;1,200..800&family=Roboto:ital,wght@0,100..900;1,100..900&family=Space+Grotesk:wght@300..700&display=swap" rel="stylesheet" />
+    <noscript><link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=DM+Sans:ital,opsz,wght@0,9..40,100..1000;1,9..40,100..1000&family=JetBrains+Mono:ital,wght@0,100..800;1,100..800&family=Lora:ital,wght@0,400..700;1,400..700&family=Playfair+Display:ital,wght@0,400..900;1,400..900&family=Plus+Jakarta+Sans:ital,wght@0,200..800;1,200..800&display=swap" /></noscript>
   </head>
   <body>
-    <div id="root"></div>
+    <!-- The boot shell.
+
+         Two problems, both of which happen before a single line of our own
+         JavaScript has run.
+
+         The first is the colour. The theme lives in `localStorage` and is
+         applied by React, which means a person who chose dark spent the whole
+         module download looking at a white page and then had it snap to black
+         under them. The script below is deliberately synchronous and in the
+         `<body>`: it has to paint the right ground the first time, and there
+         is no first paint to be blocked before.
+
+         The second is the wait itself. `#root` was simply empty, so a slow
+         connection showed nothing at all and gave no sign the page was
+         working. What is *not* wanted is a spinner on a fast connection --
+         a loader that flashes for eighty milliseconds reads as jank and makes
+         the app feel slower than showing nothing would have. So the mark below
+         is transparent, and an `animation-delay` fades it in only if boot is
+         still going after 320ms. On a warm load nobody ever sees it, and no
+         JavaScript is involved in deciding that.
+
+         React clears `#root` when it mounts, so this removes itself. -->
+    <script>
+      (function () {
+        try {
+          var dark = localStorage.getItem('vega_dark_theme') === 'true';
+          if (dark) document.body.classList.add('dark-theme');
+          document.documentElement.style.colorScheme = dark ? 'dark' : 'light';
+        } catch (e) {
+          /* Private mode, or storage disabled. Light is the default anyway. */
+        }
+      })();
+    </script>
+    <style>
+      /* Inline, and only these. The stylesheet this page needs is a module
+         import, so it arrives with the bundle -- too late to be what the first
+         frame is painted with. */
+      body { margin: 0; background: #FFFFFF; }
+      body.dark-theme { background: #18181B; }
+      #boot {
+        position: fixed;
+        inset: 0;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+      }
+      #boot i {
+        width: 26px;
+        height: 26px;
+        border-radius: 7px;
+        background: #F3A024;
+        opacity: 0;
+        animation: bootIn 260ms ease-out 320ms forwards, bootPulse 1.6s ease-in-out 580ms infinite;
+      }
+      @keyframes bootIn { to { opacity: 1; } }
+      @keyframes bootPulse {
+        0%, 100% { transform: scale(1); opacity: 1; }
+        50% { transform: scale(0.86); opacity: 0.55; }
+      }
+      @media (prefers-reduced-motion: reduce) {
+        #boot i { animation: bootIn 260ms ease-out 320ms forwards; }
+      }
+    </style>
+    <div id="root">
+      <div id="boot" aria-hidden="true"><i></i></div>
+    </div>
     <script type="module" src="/src/main.tsx"></script>
   </body>
 </html>

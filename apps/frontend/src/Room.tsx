@@ -25,7 +25,6 @@ import { emptyGroups } from './engine/model/groupTree';
 import { ActivityFeed } from './components/ActivityFeed';
 import { PresenceEdgeMarkers } from './components/PresenceEdgeMarkers';
 import { FollowIndicator } from './components/FollowIndicator';
-import { ExportService } from './engine/export';
 import { isForceTool, type ForceId } from './engine/physics/forces';
 import { calculateLayout, animateToLayout, type LayoutMode } from './utils/spatialLayout';
 import { Mic, TriangleAlert } from 'lucide-react';
@@ -897,13 +896,29 @@ export default function Room() {
   });
 
   useEffect(() => {
-    const handleExportPNG = () => {
+    /**
+     * Fetched when somebody exports, not when the board opens.
+     *
+     * `ExportService` reaches the SVG writer, the PDF writer and the raster
+     * path behind them, which is 440kB. Naming it in a static import at the
+     * top of this file put all of that in front of the first frame of every
+     * board, to serve three menu items that most sessions never touch.
+     */
+    const handleExportPNG = async () => {
       // Find the Konva Stage reference. Assuming it's the first Stage created
       const stage = (window as any)._konva_stage;
-      if (stage) ExportService.export('png', { stage });
+      if (!stage) return;
+      const { ExportService } = await import('./engine/export');
+      ExportService.export('png', { stage });
     };
-    const handleExportSVG = () => ExportService.export('svg');
-    const handleExportJSON = () => ExportService.export('json');
+    const handleExportSVG = async () => {
+      const { ExportService } = await import('./engine/export');
+      ExportService.export('svg');
+    };
+    const handleExportJSON = async () => {
+      const { ExportService } = await import('./engine/export');
+      ExportService.export('json');
+    };
 
     window.addEventListener('export-png', handleExportPNG);
     window.addEventListener('export-svg', handleExportSVG);

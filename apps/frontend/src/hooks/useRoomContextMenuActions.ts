@@ -11,7 +11,10 @@ import {
 import { looksLikeSvg } from '../engine/clipboard/svgImport';
 import { deleteNodesWithFrames } from '../engine/interaction/frameMembership';
 import { nextZIndex, lowestZIndex, applyNodePatches } from '../engine/document';
-import { exportScope, scopeOptions, ExportService } from '../engine/export';
+// The scope helpers are pure and tiny and belong with the canvas; the export
+// engine behind `ExportService` is 440kB and is fetched when it is used. See
+// the note in `vite.config.ts` about which of these ship with the board.
+import { exportScope, scopeOptions } from '../engine/export/exportScope';
 import { canEmitDiagram, diagramToMermaid, diagramIdOf } from '../engine/diagram/build';
 import { editor } from '../engine/api/EditorAPI';
 import { isLineLike } from '../engine/model/lineEnds';
@@ -153,6 +156,7 @@ export function useRoomContextMenuActions({
   const handleCopyPng = useCallback(
     async (ids: string[]) => {
       const scope = exportScope(diagramObjects, ids, localTitle);
+      const { ExportService } = await import('../engine/export');
       const result = await ExportService.copy('png', {
         ...scopeOptions(scope),
         stage: (window as any)._konva_stage,
@@ -165,6 +169,7 @@ export function useRoomContextMenuActions({
   const handleCopySvg = useCallback(
     async (ids: string[]) => {
       const scope = exportScope(diagramObjects, ids, localTitle);
+      const { ExportService } = await import('../engine/export');
       const result = await ExportService.copy('svg', scopeOptions(scope));
       showToast(result.ok ? `Copied ${scope.subject} as SVG` : result.message!);
     },

@@ -1577,6 +1577,109 @@ subscriber re-measures and every cache it reads must already be gone.
 Tested in `fontEpoch.test.ts`, including that ordering. If you need a face
 measured on canvas, call `requestFont`; do not infer arrival from `ready`.
 
+## 4d. Loading, and what was on the critical path that should not have been
+
+### Six font families were downloaded twice
+
+`index.css` self-hosts Inter, Roboto, Space Grotesk, Outfit, Caveat and
+Architects Daughter through `@fontsource`. `index.html` also asked Google for
+eleven families, six of them those same six. An earlier pass had caught this
+for Inter and left a comment here saying "Caveat only"; the request underneath
+the comment still named all eleven.
+
+The CDN request now names the five nothing bundles: DM Sans, JetBrains Mono,
+Lora, Playfair Display, Plus Jakarta Sans. Nothing in the *interface* renders
+any of them -- they exist so board text can be set in them -- so it is loaded
+with `media="print"` and flipped to `all` on load, which keeps it off the
+critical path. Text measured before they land is re-measured when they do; see
+`fontEpoch` in §4c.
+
+Caveat needed 600 (notes, the walkthrough) and 700 (board text set bold), and
+the base `@fontsource/caveat` import carries 400 only. Both are imported
+explicitly now. **If you add a face the canvas draws, self-host the weight** --
+a weight that only exists at the CDN is a weight the bundle synthesises badly.
+
+### The boot shell
+
+`#root` was empty until React mounted, so a slow connection showed a blank
+page, and a dark-theme session showed a *white* blank page that snapped to
+black. There is now a synchronous script in `<body>` that reads the same
+`localStorage` key `useStore` does and sets the class before the first paint,
+plus inline CSS for the two ground colours (`#FFFFFF` / `#18181B`, matching
+`--gray-000` and `--zinc-900` -- keep them in step).
+
+The boot mark is transparent with an `animation-delay`, so it fades in only if
+boot is still going after 320ms. On a warm load nobody ever sees it. React
+clears `#root` on mount, so it removes itself.
+
+### Nothing loading appears immediately
+
+`useDelayed(active, ms)` in `hooks/`, and `RouteLoader` / `ModalLoader` in
+`components/ui/Loading.tsx`. A loader that flashes for eighty milliseconds
+reads as jank, so the mark waits out a threshold and most waits never show one.
+The modal scrim is *not* delayed -- the click needs acknowledging on the first
+frame; only the mark waits.
+
+### Three "lazy" modals were not lazy
+
+`HelpModal`, `MermaidModal` and `FlattenShapeModal` were mounted
+unconditionally and told whether they were open by a prop. Each returns `null`
+when closed, so nothing drew -- but `lazy()` resolves when the element is
+*rendered*, not when it decides to draw something, so all three chunks were
+fetched on every board open. Split out of the bundle and then downloaded
+anyway. They are gated on their open state now.
+
+The cheap ones (Share, Help, Palette; ~10kB gzip together) are then warmed on
+`requestIdleCallback` so they are in memory before anybody asks. **`ExportModal`
+is deliberately not warmed** -- it drags 440kB behind it.
+
+### The export chunk was lazy in name only
+
+The worst of these, and the one with a test on it.
+
+`vite.config.ts` routes `engine/export/` into its own chunk. But `chrome.ts`
+lives there -- 47 lines holding the name Konva tags interface nodes with -- and
+twelve canvas components import it. That was enough to make the whole exporter
+a dependency of every board *and* of the dashboard. `Room.tsx` and
+`useRoomContextMenuActions.ts` also named `ExportService` in static imports for
+three menu items.
+
+Both are fixed: the barrel is reached by `await import()` inside the handlers,
+and seven genuinely shared leaf modules are excluded from the chunk.
+`engine/export/exportChunking.test.ts` holds the invariant, because the bundle
+output looks identical whether the split works or not -- it lists a separate
+file either way. The test fails if anything outside `engine/export/` imports a
+module not on the shared list, or names the barrel statically. It caught two
+cases I had missed while I was writing it.
+
+### Smaller
+
+`lodash` → `lodash/throttle` in `usePhysics` (26kB → 1.3kB gzip; the barrel
+import pulled the whole library for one function). `PerformanceOverlay` is a
+Ctrl+Shift+P HUD mounted at the app root on every screen, and it statically
+imported `CanvasEngine`, `CameraSystem`, `SpatialIndex` and rbush -- onto the
+dashboard, which has no canvas. The keystroke stayed; the readout moved to
+`PerformanceHud.tsx` behind a `lazy()`.
+
+### Still open: the entry preloads the editor
+
+Measured, not fixed. The entry's `<link rel="modulepreload">` set is ~877kB
+raw, dominated by `app-export` (432kB), `vendor-konva` (302kB) and
+`vendor-motion` (122kB). There is **no static path from `App.tsx` to any of
+them** -- the entry's own graph is 18 modules reaching only react, zustand,
+nanoid and rbush -- so this is rolldown/Vite preloading the dynamic route
+chunks' dependencies, which makes opening a board instant and makes the
+dashboard pay for it.
+
+It may well be the right trade, since most sessions do open a board. What is
+*not* defensible is `app-export` being in that set at all. Removing the manual
+chunk rule was tried and measured worse (967kB eager: the code redistributes
+into `vendor-konva`, which grows 302 → 480kB, and `app-physics`, 90 → 286kB),
+so the grouping is doing real work and the fix is not a one-line config change.
+This needs a pass with actual network profiling. Do not churn `manualChunks`
+without measuring both ways -- `python /tmp/measure.py` style accounting off
+`dist/index.html` is what the numbers above came from.
+
 ## 5. Next up
 
 ### 5a. Verify what was built fast

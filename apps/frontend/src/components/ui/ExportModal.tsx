@@ -442,6 +442,22 @@ export const ExportModal: React.FC<Props> = ({
                 ))}
               </div>
               <p className="export__hint">{spec.blurb}</p>
+
+              {/* The advisory, where the decision is made.
+                  It sat in a band between the body and the footer, in warning
+                  amber behind a warning triangle -- the same glyph this dialog
+                  uses for the one thing here that *is* a warning, the scale it
+                  cannot honour. Advice dressed as an alarm on almost every
+                  export is how people learn to skip alarms. It is a note now,
+                  in the column where the format is being chosen, next to the
+                  choice it is about. */}
+              {Object.keys(objects).length > 4 && format !== 'json' && (
+                <p className="export__note">
+                  Only{' '}
+                  <button type="button" className="export__link" onClick={() => setFormat('json')}>JSON</button>
+                  {' '}can be restored into a board. Use it if this is a backup rather than a copy to share.
+                </p>
+              )}
             </div>
 
             {/* Shown whenever there is more than one region to choose between,
@@ -533,31 +549,6 @@ export const ExportModal: React.FC<Props> = ({
           </div>
         </div>
 
-        {/* The advisory. Shown once there is enough on the board to be worth
-            losing, and phrased as what to do rather than as a warning. */}
-        {Object.keys(objects).length > 4 && format !== 'json' && (
-          <p className="export__advice">
-            <AlertTriangle size={13} />
-            Keeping a copy? Export as <button type="button" className="export__link" onClick={() => setFormat('json')}>JSON</button>. It is the only format that can be restored into a board.
-          </p>
-        )}
-
-        {error && <div role="alert" className="export__error">{error}</div>}
-        {status && !error && <div className="export__status"><CheckCircle2 size={14} /> {status}</div>}
-
-        {pendingRestore && (
-          <div className="export__restore" role="group" aria-label="Restore options">
-            <p className="export__restore-text">
-              <strong>{pendingRestore.summary}</strong>. Replace everything on this board, or add it alongside?
-            </p>
-            <div className="export__restore-actions">
-              <button type="button" className="export__ghost" onClick={() => { setPendingRestore(null); pendingDocRef.current = null; }}>Cancel</button>
-              <button type="button" className="export__ghost" onClick={() => confirmRestore('merge')}>Add alongside</button>
-              <button type="button" className="export__danger" onClick={() => confirmRestore('replace')}>Replace board</button>
-            </div>
-          </div>
-        )}
-
         <footer className="export__foot">
           <input
             ref={fileInputRef} type="file" accept="application/json,.json" hidden
@@ -567,7 +558,19 @@ export const ExportModal: React.FC<Props> = ({
             <UploadCloud size={15} /> Restore…
           </button>
 
-          <span className="export__spacer" />
+          {/* What just happened, in the footer rather than above it.
+              Errors and confirmations used to be inserted between the body and
+              this row, so the button somebody was reaching for moved down the
+              screen at the moment there was something to react to. This slot
+              is part of the row and takes the space the spacer was taking
+              anyway, so nothing shifts when it fills. */}
+          <span className="export__said" role="status" aria-live={error ? 'assertive' : 'polite'}>
+            {error
+              ? <span className="export__said-bad"><AlertTriangle size={13} aria-hidden="true" /> {error}</span>
+              : status
+                ? <span className="export__said-ok"><CheckCircle2 size={13} aria-hidden="true" /> {status}</span>
+                : null}
+          </span>
 
           {(spec.raster || format === 'svg') && !isBatch && ExportService.canCopy && (
             <button type="button" className="export__ghost" onClick={handleCopy}>
@@ -579,6 +582,33 @@ export const ExportModal: React.FC<Props> = ({
             {isExporting ? 'Exporting…' : isBatch ? `Export ${frameList.length} files` : `Export ${spec.label}`}
           </button>
         </footer>
+
+        {/* Replacing a board cannot be undone from here, so it is asked as its
+            own question rather than as a third row of buttons appearing
+            underneath the ones already on screen. It covers the dialog because
+            there is nothing else worth doing until it is answered. */}
+        {pendingRestore && (
+          <div className="export__confirm" role="alertdialog" aria-modal="true" aria-labelledby="export-confirm-title">
+            <div className="export__confirm-card">
+              <h3 id="export-confirm-title" className="export__confirm-title">{pendingRestore.summary}</h3>
+              <p className="export__confirm-text">
+                Replacing clears this board first. Adding keeps everything already here and places the backup alongside it.
+              </p>
+              <div className="export__confirm-actions">
+                <button
+                  type="button"
+                  className="export__ghost"
+                  onClick={() => { setPendingRestore(null); pendingDocRef.current = null; }}
+                >
+                  Cancel
+                </button>
+                <span className="export__spacer" />
+                <button type="button" className="export__ghost" onClick={() => confirmRestore('merge')}>Add alongside</button>
+                <button type="button" className="export__danger" onClick={() => confirmRestore('replace')}>Replace board</button>
+              </div>
+            </div>
+          </div>
+        )}
       </div>
     </div>
   );

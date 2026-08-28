@@ -8,6 +8,13 @@
 @import '@fontsource-variable/space-grotesk';
 @import '@fontsource-variable/outfit';
 @import '@fontsource/caveat';
+/* 600 for the interface -- notes and the walkthrough are set in it -- and 700
+   because board text set in Caveat and marked bold resolves there. The base
+   import above carries 400 only, so both of these used to arrive from the
+   Google CDN while the same family was already being bundled underneath
+   them. */
+@import '@fontsource/caveat/600.css';
+@import '@fontsource/caveat/700.css';
 @import '@fontsource/architects-daughter';
 
 /* Direct @font-face aliases so canvas 2D and DOM contexts match unadorned names */
@@ -5946,6 +5953,61 @@ textarea:focus-visible {
    =========================================================================== */
 
 /* ===========================================================================
+   LOADING
+   ---------------------------------------------------------------------------
+   See `components/ui/Loading.tsx` for why none of this appears immediately.
+   The mark matches the boot shell in `index.html` exactly -- same tile, same
+   rhythm -- because they stand in for the same wait and the handover between
+   them should not be visible.
+   =========================================================================== */
+
+.loadmark {
+  display: block;
+  background: var(--accent);
+  animation: loadMarkIn 220ms var(--ease-settle) both,
+             loadMarkPulse 1.6s ease-in-out 220ms infinite;
+}
+
+@keyframes loadMarkIn {
+  from { opacity: 0; transform: scale(0.8); }
+  to   { opacity: 1; transform: none; }
+}
+
+@keyframes loadMarkPulse {
+  0%, 100% { transform: scale(1); opacity: 1; }
+  50%      { transform: scale(0.86); opacity: 0.55; }
+}
+
+.routeload {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 100vw;
+  height: 100vh;
+  background: var(--surface-primary);
+}
+
+/* The scrim is the acknowledgement, so it is not delayed and it matches the
+   dialog that is about to replace it -- same ground, same blur. A dialog that
+   fades in over a scrim that was already there reads as one movement; one that
+   brings its own scrim reads as two. */
+.modalload {
+  position: fixed;
+  inset: 0;
+  z-index: var(--z-dialog);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: rgba(0, 0, 0, 0.2);
+  backdrop-filter: blur(8px);
+  -webkit-backdrop-filter: blur(8px);
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .loadmark { animation: loadMarkIn 220ms var(--ease-settle) both; }
+}
+
+/* ===========================================================================
    THE LIBRARY
    ---------------------------------------------------------------------------
    A rail and a stage, and nothing above them.
@@ -11082,6 +11144,7 @@ body[data-zen='physics'] .forces-handle { bottom: 32px; }
 }
 
 .export {
+  position: relative;
   width: 760px;
   max-width: 100%;
   max-height: calc(100vh - 2 * var(--space-4));
@@ -11133,12 +11196,27 @@ body[data-zen='physics'] .forces-handle { bottom: 32px; }
 
 /* ------------------------------------------------------------------ preview */
 
+/* The preview takes the height the settings take.
+   It was a fixed 4:3 box in a column as tall as the controls beside it, which
+   left about 150px of nothing under it and made the dialog look like it had
+   been assembled out of two unrelated halves. Filling the column costs nothing
+   -- the image is `object-fit: contain` and was never touching these edges --
+   and a larger field is a better preview besides. */
+.export__preview {
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+}
+
 .export__canvas {
   position: relative;
   display: flex;
+  flex: 1;
   align-items: center;
   justify-content: center;
-  aspect-ratio: 4 / 3;
+  /* What the 4:3 box came to at this column's width. A floor rather than a
+     ratio now, so a short settings column cannot collapse it. */
+  min-height: 225px;
   border: 1px solid var(--border-divider);
   border-radius: var(--radius-lg);
   overflow: hidden;
@@ -11349,22 +11427,21 @@ body[data-zen='physics'] .forces-handle { bottom: 32px; }
   cursor: pointer;
 }
 
-/* -------------------------------------------------- advice, status, restore */
+/* ---------------------------------------------------- note, said, confirm */
 
-.export__advice {
-  display: flex;
-  align-items: flex-start;
-  gap: var(--space-2);
-  margin: 0 var(--space-5) var(--space-4);
-  padding: 10px 12px;
-  border-radius: var(--radius-lg);
-  background: color-mix(in srgb, var(--status-warning) 10%, transparent);
-  color: var(--text-secondary);
+/* The advisory, demoted.
+   It was amber on an amber ground behind a warning triangle, in a band across
+   the dialog, on almost every export. The same triangle carries the one real
+   warning here -- a scale the browser cannot honour -- and spending it on
+   advice is how a person learns that the triangle means nothing. */
+.export__note {
+  margin: var(--space-2) 0 0;
+  padding-top: var(--space-2);
+  border-top: 1px dashed var(--border-divider);
+  color: var(--text-tertiary);
   font-size: var(--text-xs);
   line-height: 1.5;
 }
-
-.export__advice svg { flex-shrink: 0; margin-top: 1px; color: var(--status-warning); }
 
 .export__link {
   padding: 0;
@@ -11374,52 +11451,107 @@ body[data-zen='physics'] .forces-handle { bottom: 32px; }
   font: inherit;
   font-weight: var(--weight-semibold);
   text-decoration: underline;
+  text-underline-offset: 2px;
   cursor: pointer;
 }
 
-.export__error,
-.export__status {
+.export__link:hover { color: var(--accent); }
+
+/* What just happened, inside the footer row.
+   This takes the space the spacer used to take, so filling it moves nothing.
+   `min-width: 0` and the ellipsis matter: a long failure message from the
+   clipboard or the file system would otherwise push the export button off the
+   end of its own dialog. */
+.export__said {
+  flex: 1;
+  min-width: 0;
   display: flex;
   align-items: center;
-  gap: var(--space-2);
-  margin: 0 var(--space-5) var(--space-4);
-  padding: 10px 12px;
-  border-radius: var(--radius-lg);
   font-size: var(--text-sm);
-  line-height: 1.4;
+  line-height: 1.3;
 }
 
-.export__error {
-  background: color-mix(in srgb, var(--status-danger) 12%, transparent);
-  border: 1px solid color-mix(in srgb, var(--status-danger) 40%, transparent);
-  color: var(--text-primary);
+.export__said > span {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  min-width: 0;
+  animation: exportSaid 200ms var(--ease-settle) both;
 }
 
-.export__status {
-  background: color-mix(in srgb, var(--status-online) 12%, transparent);
-  color: var(--text-primary);
+.export__said span > span,
+.export__said-ok,
+.export__said-bad {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
-/* Restoring replaces the board, so it is described first and confirmed second
-   rather than happening the instant a file is chosen. */
-.export__restore {
-  margin: 0 var(--space-5) var(--space-4);
-  padding: var(--space-3) var(--space-4);
+.export__said svg { flex-shrink: 0; }
+.export__said-ok { color: var(--status-online); }
+.export__said-bad { color: var(--status-danger); }
+
+@keyframes exportSaid {
+  from { opacity: 0; transform: translateY(3px); }
+  to   { opacity: 1; transform: none; }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .export__said > span { animation: none; }
+}
+
+/* Restoring replaces the board and cannot be undone from here, so it is asked
+   as its own question over the dialog rather than as a third row of buttons
+   appearing under the two already on screen. Covering the settings is the
+   point: none of them means anything until this is answered. */
+.export__confirm {
+  position: absolute;
+  inset: 0;
+  z-index: 1;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: var(--space-5);
+  border-radius: inherit;
+  background: color-mix(in srgb, var(--surface-primary) 82%, transparent);
+  backdrop-filter: blur(3px);
+  -webkit-backdrop-filter: blur(3px);
+  animation: exportConfirmIn 160ms var(--ease-settle) both;
+}
+
+@keyframes exportConfirmIn {
+  from { opacity: 0; }
+  to   { opacity: 1; }
+}
+
+.export__confirm-card {
+  width: 100%;
+  max-width: 420px;
+  padding: var(--space-5);
   border: 1px solid var(--border-divider);
-  border-radius: var(--radius-lg);
-  background: var(--surface-secondary);
+  border-radius: var(--radius-xl);
+  background: var(--surface-elevated);
+  box-shadow: var(--shadow-overlay);
 }
 
-.export__restore-text {
-  margin: 0 0 var(--space-3);
+.export__confirm-title {
+  margin: 0 0 var(--space-2);
+  font-size: var(--text-md);
+  font-weight: var(--weight-semibold);
+  line-height: 1.3;
+  color: var(--text-primary);
+}
+
+.export__confirm-text {
+  margin: 0 0 var(--space-5);
   font-size: var(--text-sm);
-  line-height: 1.5;
+  line-height: 1.55;
   color: var(--text-secondary);
 }
 
-.export__restore-actions {
+.export__confirm-actions {
   display: flex;
-  justify-content: flex-end;
+  align-items: center;
   gap: var(--space-2);
 }
 

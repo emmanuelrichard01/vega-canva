@@ -1,6 +1,15 @@
 import { defineConfig } from 'vite';
 import react from '@vitejs/plugin-react';
 
+/**
+ * Modules under `engine/export/` that the live canvas legitimately shares, and
+ * which must therefore stay out of the lazy export chunk.
+ *
+ * Kept in step with the source by `src/engine/export/exportChunking.test.ts`.
+ */
+const EXPORT_SHARED =
+  /\/engine\/export\/(chrome|DocumentImport|restoreDocument|pendingRestore|exportScope|renderScope|isolate)\./;
+
 // https://vite.dev/config/
 export default defineConfig({
   plugins: [react()],
@@ -37,7 +46,28 @@ export default defineConfig({
 
           // --- Application-level splits for subsystems that are lazily
           //     reachable or heavy enough to justify their own chunk ---
-          if (id.includes('/engine/export/')) return 'app-export';
+          /**
+           * The export engine, minus the parts the live canvas shares with it.
+           *
+           * This rule used to be `includes('/engine/export/')` with no
+           * exceptions, and it quietly put the whole 440kB chunk on the
+           * critical path of every board *and* the dashboard. The cause was
+           * `chrome.ts`: 47 lines holding the name Konva tags interface nodes
+           * with, imported by twelve canvas components, and swept into the
+           * lazy chunk along with the PDF writer. One constant was enough to
+           * make the entire exporter a dependency of the first frame.
+           *
+           * These seven modules are shared with the canvas by nature rather
+           * than by accident -- they describe what is document and what is
+           * chrome, what a selection covers, how a restore lands. They are
+           * pure, they total under 900 lines, and none of them reaches an
+           * exporter. They belong wherever they are used.
+           *
+           * `exportChunking.test.ts` holds this: it fails if anything outside
+           * `engine/export/` starts importing a module that is not on this
+           * list, which is exactly how the regression happened the first time.
+           */
+          if (id.includes('/engine/export/') && !EXPORT_SHARED.test(id)) return 'app-export';
           if (id.includes('/engine/diagram/')) return 'app-diagram';
           if (id.includes('/engine/physics/')) return 'app-physics';
           if (

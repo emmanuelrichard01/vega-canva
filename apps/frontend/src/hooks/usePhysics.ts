@@ -1,5 +1,7 @@
 import { useCallback, useEffect, useRef } from 'react';
-import { throttle } from 'lodash';
+// The submodule, not the barrel. `from 'lodash'` reaches the whole library --
+// a 26kB gzipped chunk on the board's critical path -- to get one function.
+import throttle from 'lodash/throttle';
 import Konva from 'konva';
 import { doc, updateNode, provider } from '../engine/document';
 import { PhysicsSimulation, type SimTransform } from '../engine/physics/simulation';

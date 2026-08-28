@@ -3,29 +3,10 @@ import { AuthProvider } from './hooks/AuthContext';
 import { PerformanceOverlay } from './components/PerformanceOverlay';
 import { TooltipLayer } from './components/ui/TooltipLayer';
 import { useStore } from './hooks/useStore';
+import { RouteLoader } from './components/ui/Loading';
 
 const Room = lazy(() => import('./Room'));
 const Home = lazy(() => import('./Home').then((m) => ({ default: m.Home })));
-
-function RouteFallback() {
-  return (
-    <div
-      style={{
-        display: 'flex',
-        alignItems: 'center',
-        justifyContent: 'center',
-        height: '100vh',
-        width: '100vw',
-        background: 'var(--surface-primary)',
-        color: 'var(--text-secondary)',
-        fontFamily: 'var(--font-sans)',
-        fontSize: 'var(--text-sm)',
-      }}
-    >
-      Loading…
-    </div>
-  );
-}
 
 function App() {
   const [path, setPath] = useState(window.location.pathname);
@@ -42,6 +23,11 @@ function App() {
   // set this class, leaving the Home page permanently light whatever the user
   // had chosen. `color-scheme` additionally themes native UI — scrollbars,
   // form controls, the text caret — which stayed light-on-dark without it.
+  //
+  // The boot shell in `index.html` has already done this once, from the same
+  // `localStorage` key, before the first frame was painted; that is what stops
+  // a dark-theme session opening on a white page. This is what keeps it true
+  // afterwards, when the preference changes.
   useEffect(() => {
     document.body.classList.toggle('dark-theme', darkTheme);
     document.documentElement.style.colorScheme = darkTheme ? 'dark' : 'light';
@@ -49,7 +35,7 @@ function App() {
 
   return (
     <AuthProvider>
-      <Suspense fallback={<RouteFallback />}>
+      <Suspense fallback={<RouteLoader />}>
         {path.startsWith('/room/') ? <Room /> : <Home />}
       </Suspense>
       <PerformanceOverlay />
