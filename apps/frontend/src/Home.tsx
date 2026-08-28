@@ -2,7 +2,8 @@ import React, { useEffect, useMemo, useRef, useState } from 'react';
 import { useAuth } from './hooks/useAuth';
 import { nanoid } from 'nanoid';
 import {
-  ArrowRight, Compass, Layers, Link2, LogOut, Plus, Search, Sparkles, UploadCloud, X,
+  ArrowRight, Compass, FileText, Layers, Link2, LogOut, Plus, Search, Sparkles,
+  SquarePen, UploadCloud, X,
 } from 'lucide-react';
 import { parseDocumentExport } from './engine/export/DocumentImport';
 import { stashPendingRestore, stashPendingTemplate } from './engine/export/pendingRestore';
@@ -13,6 +14,7 @@ import {
 import { WorkspaceCover } from './components/WorkspaceCover';
 import { AuthModal } from './components/AuthModal';
 import { Logo } from './components/ui/Logo';
+import { Avatar } from './components/ui/Avatar';
 
 interface RecentWorkspace {
   id: string;
@@ -97,6 +99,7 @@ export const Home: React.FC = () => {
   const [restoreError, setRestoreError] = useState<string | null>(null);
   const [scrolled, setScrolled] = useState(false);
   const restoreInputRef = useRef<HTMLInputElement>(null);
+  const searchRef = useRef<HTMLInputElement>(null);
   const stageRef = useRef<HTMLElement>(null);
 
   useEffect(() => {
@@ -107,6 +110,30 @@ export const Home: React.FC = () => {
   }, []);
 
   useEffect(() => { localStorage.setItem(VIEW_KEY, view); }, [view]);
+
+  /**
+   * `/` puts the caret in the search field.
+   *
+   * The one convention every library screen shares, and the reason it is worth
+   * having here rather than being a nicety: this page is a grid of twenty-one
+   * pictures, and the fastest way through it is to type. The field is centred
+   * in the bar where it can be reached, but reaching for it is still a journey
+   * across the screen with a pointer.
+   *
+   * Ignored while a field already has focus, so typing a slash into the search
+   * or the join box types a slash.
+   */
+  useEffect(() => {
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key !== '/' || e.metaKey || e.ctrlKey || e.altKey) return;
+      const el = document.activeElement?.tagName;
+      if (el === 'INPUT' || el === 'TEXTAREA') return;
+      e.preventDefault();
+      searchRef.current?.focus();
+    };
+    window.addEventListener('keydown', onKey);
+    return () => window.removeEventListener('keydown', onKey);
+  }, []);
 
   // Switching views starts a new screen, so it starts at the top of one.
   useEffect(() => { stageRef.current?.scrollTo({ top: 0 }); }, [view]);
@@ -314,14 +341,49 @@ export const Home: React.FC = () => {
     </>
   );
 
+  /**
+   * Nothing here yet, and three things to do about it.
+   *
+   * It was an icon, a heading and a paragraph that *described* three actions --
+   * start from a template, create a blank board, open a link -- while offering
+   * none of them. An empty state that names the way out and then makes you go
+   * and find it is the least useful screen in a product, because it is the one
+   * shown to somebody who does not yet know where anything is.
+   *
+   * The three are the three real openings, in the order they are worth trying:
+   * a template is the fastest way to something that looks like work, a blank
+   * board is the honest default, and a link is why most people arrive at all.
+   */
   const boardsBody = !hasRooms ? (
-    <div className="stage__empty">
-      <Layers size={22} aria-hidden="true" />
-      <h3>No boards yet</h3>
-      <p>
-        Boards you open will appear here. Start from a template, create a blank
-        board, or open a link someone shared with you.
-      </p>
+    <div className="stage__empty stage__empty--start">
+      <h3>Nothing here yet</h3>
+      <p>Boards you open on this device collect here. Three ways to get the first one.</p>
+      <div className="starts">
+        <button type="button" className="start" onClick={() => goTemplates(null)}>
+          <span className="start__icon"><FileText size={18} aria-hidden="true" /></span>
+          <span className="start__text">
+            <span className="start__name">Start from a template</span>
+            <span className="start__sub">{TEMPLATES.length} boards that open already filled in</span>
+          </span>
+          <ArrowRight size={15} className="start__go" aria-hidden="true" />
+        </button>
+        <button type="button" className="start" onClick={openBoard}>
+          <span className="start__icon"><SquarePen size={18} aria-hidden="true" /></span>
+          <span className="start__text">
+            <span className="start__name">Open a blank board</span>
+            <span className="start__sub">An empty canvas with no edges</span>
+          </span>
+          <ArrowRight size={15} className="start__go" aria-hidden="true" />
+        </button>
+        <button type="button" className="start" onClick={() => setJoinOpen(true)}>
+          <span className="start__icon"><Link2 size={18} aria-hidden="true" /></span>
+          <span className="start__text">
+            <span className="start__name">Open a link</span>
+            <span className="start__sub">Somebody has shared a board with you</span>
+          </span>
+          <ArrowRight size={15} className="start__go" aria-hidden="true" />
+        </button>
+      </div>
     </div>
   ) : matchedRooms.length === 0 ? (
     // A filter matching nothing is a different screen from having no boards,
@@ -403,22 +465,34 @@ export const Home: React.FC = () => {
         <label className="home__search">
           <Search size={16} aria-hidden="true" />
           <input
+            ref={searchRef}
             type="search"
             value={query}
             onChange={(e) => setQuery(e.target.value)}
             placeholder="Search boards and templates"
             aria-label="Search boards and templates"
           />
+          {/* The key that gets you here, on the thing it gets you to. A
+              shortcut nobody can see is a shortcut only its author uses. */}
+          {!query && <kbd className="home__slash" aria-hidden="true">/</kbd>}
         </label>
 
         <div className="home__me">
+          {/**
+            * The shared `Avatar`, not a hand-rolled disc.
+            *
+            * This carried `name.charAt(0).toUpperCase()` in a span of its own,
+            * which is the *exact* pattern `ui/Avatar.tsx` opens by describing as
+            * the bug it was built to fix: the same person read as "A" here and
+            * "AO" in the room, because one surface took a first initial and the
+            * other took `initialsFor`. It was one of the five, and it outlived
+            * the consolidation because nobody was looking at this page.
+            */}
           <span className="home__me-text">
             <span className="home__me-name">{user.name}</span>
             <span className="home__me-sub">{user.isGuest ? 'Guest session' : 'On this device'}</span>
           </span>
-          <span className="home__avatar" style={{ background: user.color }} aria-hidden="true">
-            {user.name.charAt(0).toUpperCase()}
-          </span>
+          <Avatar name={user.name} color={user.color} size={30} />
           <button
             onClick={logout}
             className="home__signout"
@@ -442,6 +516,10 @@ export const Home: React.FC = () => {
           </button>
 
           <div className="rail__group">
+            {/* Named groups. Two destinations and five filters sat as seven
+                rows of one weight, so the shape of the navigation had to be
+                worked out from the indent alone. */}
+            <p className="rail__legend">Library</p>
             <button
               type="button"
               className={`rail__item${view === 'boards' ? ' is-on' : ''}`}
@@ -494,6 +572,7 @@ export const Home: React.FC = () => {
               restoring a backup are both real and both uncommon; they used to
               sit mid-column at the same weight as the gallery. */}
           <div className="rail__foot">
+            <p className="rail__legend">More</p>
             <button
               type="button"
               className="rail__quiet"

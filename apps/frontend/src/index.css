@@ -5887,6 +5887,16 @@ textarea:focus-visible {
    a judgement call.
    =========================================================================== */
 
+/* Flat, deliberately.
+   A soft two-stop wash was tried at the top of this page to give it the
+   material the rest of the product has, and it was the wrong instrument here:
+   the library is a wall of twenty-one pictures, every one of them coloured, and
+   a tinted ground behind them is one more colour competing with the work it is
+   supposed to be presenting. The auth screen can carry a wash because it has
+   nothing else in it.
+
+   What gives this page its character is the cards. The chrome's job is to
+   disappear. */
 .home {
   display: flex;
   flex-direction: column;
@@ -5971,6 +5981,25 @@ textarea:focus-visible {
 
 .home__search input:hover { border-color: var(--border-divider); }
 
+/* The key that gets you here, drawn on the thing it gets you to. A shortcut
+   nobody can see is a shortcut only its author uses. Hidden the moment there is
+   a query, because by then it is advice about reaching a field you are in. */
+.home__slash {
+  position: absolute;
+  right: 10px;
+  top: 50%;
+  translate: 0 -50%;
+  padding: 1px 7px;
+  border: 1px solid var(--border-divider);
+  border-radius: var(--radius-sm);
+  background: var(--surface-primary);
+  color: var(--text-tertiary);
+  font-family: var(--font-mono, ui-monospace, monospace);
+  font-size: var(--text-2xs);
+  line-height: 1.7;
+  pointer-events: none;
+}
+
 .home__search input:focus {
   background: var(--surface-primary);
   border-color: var(--border-divider);
@@ -5993,6 +6022,8 @@ textarea:focus-visible {
 .home__me-name { font-size: var(--text-base); font-weight: var(--weight-semibold); }
 .home__me-sub { font-size: var(--text-xs); color: var(--text-tertiary); }
 
+/* Left for anything still asking for it. The bar uses the shared `Avatar` now,
+   which is the one place in this product initials are derived. */
 .home__avatar {
   display: flex;
   align-items: center;
@@ -6068,6 +6099,18 @@ textarea:focus-visible {
 .rail__new:hover { background: var(--accent-hover); }
 .rail__new:active { transform: translateY(1px); }
 
+/* What a run of rows is. Two destinations and five filters were seven rows of
+   one weight, so the shape of the navigation had to be inferred from an
+   indent. */
+.rail__legend {
+  margin: 0 0 6px 10px;
+  color: var(--text-tertiary);
+  font-size: var(--text-2xs);
+  font-weight: var(--weight-semibold);
+  letter-spacing: 0.1em;
+  text-transform: uppercase;
+}
+
 .rail__group {
   display: flex;
   flex-direction: column;
@@ -6122,6 +6165,8 @@ textarea:focus-visible {
 .rail__item.is-on .rail__count { color: var(--text-secondary); }
 
 /* Pushed to the bottom: both of these are real and both are rare. */
+.rail__foot .rail__legend { margin-bottom: 4px; }
+
 .rail__foot {
   display: flex;
   flex-direction: column;
@@ -6297,6 +6342,107 @@ textarea:focus-visible {
 }
 
 .stage__ghost:hover { background: var(--surface-hover); }
+
+/* ## Nothing here yet, and three ways out of it
+   The empty state named three actions in a paragraph and offered none of them.
+   A screen shown only to somebody who does not yet know where anything is, that
+   describes the way out instead of being it, is the least useful screen in a
+   product. */
+.stage__empty--start {
+  max-width: 540px;
+  padding-top: var(--space-8);
+}
+
+.starts {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+  width: 100%;
+  margin-top: var(--space-6);
+  text-align: left;
+}
+
+.start {
+  display: flex;
+  align-items: center;
+  gap: var(--space-3);
+  padding: var(--space-3) var(--space-4);
+  border: 1px solid var(--border-divider);
+  border-radius: var(--radius-xl);
+  background: var(--surface-primary);
+  font-family: inherit;
+  cursor: pointer;
+  transition:
+    border-color var(--motion-hover),
+    box-shadow var(--motion-hover),
+    transform var(--motion-hover);
+}
+
+.start:hover {
+  border-color: var(--border-strong);
+  box-shadow: var(--shadow-md);
+  transform: translateY(-1px);
+}
+
+.start:focus-visible {
+  outline: 2px solid var(--focus-ring-color);
+  outline-offset: 2px;
+}
+
+.start__icon {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  flex-shrink: 0;
+  width: 38px;
+  height: 38px;
+  border-radius: var(--radius-lg);
+  background: var(--surface-secondary);
+  color: var(--text-secondary);
+}
+
+/* The first of the three is the one worth trying first, so it is the one that
+   carries the accent. Three identical rows is a page that has declined to
+   advise, which on an empty screen is the one thing it is for. */
+.start:first-child .start__icon {
+  background: var(--accent-quiet, color-mix(in srgb, var(--accent) 14%, transparent));
+  color: var(--accent-strong, var(--brand-orange));
+}
+
+/* Explicit, not inherited. `.stage__empty` centres everything in it, which is
+   right for a sentence and wrong for a row whose icon is on one edge and whose
+   arrow is on the other: centred text there floats between the two with a gap
+   on both sides and no edge to scan down. */
+.start__text { flex: 1; min-width: 0; text-align: left; }
+
+.start__name {
+  display: block;
+  font-size: var(--text-md);
+  font-weight: var(--weight-semibold);
+  color: var(--text-primary);
+}
+
+.start__sub {
+  display: block;
+  margin-top: 1px;
+  font-size: var(--text-sm);
+  color: var(--text-tertiary);
+}
+
+.start__go {
+  flex-shrink: 0;
+  color: var(--text-tertiary);
+  transition: transform var(--motion-hover), color var(--motion-hover);
+}
+
+.start:hover .start__go { transform: translateX(3px); color: var(--text-secondary); }
+
+@media (prefers-reduced-motion: reduce) {
+  .start,
+  .start__go { transition: none; }
+  .start:hover { transform: none; }
+  .start:hover .start__go { transform: none; }
+}
 
 /* --------------------------------------------------------------------- seam */
 

@@ -484,6 +484,37 @@ same arrangement `TooltipLayer` uses. What is worth knowing:
 - One timer for the whole stack, re-aimed on every change, because a timer per
   notice leaks one whenever a notice is folded or evicted.
 
+## 4a-8. The library
+
+**The avatar in the app bar was one of the five.** It carried
+`user.name.charAt(0).toUpperCase()` in a span of its own, which is the exact
+pattern `ui/Avatar.tsx` opens by describing as the bug it was built to fix: the
+same person read as "A" here and "AO" in the room. It outlived the
+consolidation because nobody was looking at this page. It uses the shared
+component now.
+
+**The empty state offers the three openings instead of describing them.** It was
+an icon, a heading and a paragraph naming three actions -- start from a
+template, open a blank board, open a link -- and offering none of them. A screen
+shown only to somebody who does not yet know where anything is, that names the
+way out rather than being it, is the least useful screen in a product. The first
+of the three carries the accent, because three identical rows is a page that has
+declined to advise.
+
+**`/` focuses the search**, with the key drawn on the field it reaches. The
+library is a grid of twenty-one pictures and the fastest way through it is to
+type.
+
+**The rail has group labels.** Two destinations and five filters were seven rows
+of one weight, so the shape of the navigation had to be inferred from an indent.
+
+**No wash on this page.** One was tried, to give the library the material the
+rest of the product now has, and it was the wrong instrument: this page is a
+wall of coloured pictures, and a tinted ground is one more colour competing with
+the work it is presenting. The auth screen can carry a wash because it has
+nothing else in it. Here the cards are the character and the chrome's job is to
+disappear.
+
 ## 4a-7. The way in, in both themes
 
 **The showcase belongs to the theme now.** It was a hardcoded near-black with a
