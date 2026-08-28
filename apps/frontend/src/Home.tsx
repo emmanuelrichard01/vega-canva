@@ -97,9 +97,21 @@ export const Home: React.FC = () => {
   const [joinOpen, setJoinOpen] = useState(false);
   const [recentRooms, setRecentRooms] = useState<RecentWorkspace[]>([]);
   const [restoreError, setRestoreError] = useState<string | null>(null);
-  const [scrolled, setScrolled] = useState(false);
+  /**
+   * Whether the search field is showing.
+   *
+   * Revealed rather than permanent. The field is the second thing on this page
+   * and a permanent one sat above the first: a library is a wall of pictures,
+   * and the answer to "which of these" is usually to look rather than to type.
+   * It stays out while there is a query, so a filtered grid never loses the
+   * control that filtered it.
+   */
+  const [seeking, setSeeking] = useState(false);
+  /** The account menu, which also holds the two rare actions. */
+  const [meOpen, setMeOpen] = useState(false);
   const restoreInputRef = useRef<HTMLInputElement>(null);
   const searchRef = useRef<HTMLInputElement>(null);
+  const meRef = useRef<HTMLDivElement>(null);
   const stageRef = useRef<HTMLElement>(null);
 
   useEffect(() => {
@@ -129,29 +141,32 @@ export const Home: React.FC = () => {
       const el = document.activeElement?.tagName;
       if (el === 'INPUT' || el === 'TEXTAREA') return;
       e.preventDefault();
-      searchRef.current?.focus();
+      setSeeking(true);
+      // After the field exists. `setSeeking` renders it; focusing in the same
+      // tick would aim at an element that is not there yet.
+      window.setTimeout(() => searchRef.current?.focus(), 0);
     };
     window.addEventListener('keydown', onKey);
     return () => window.removeEventListener('keydown', onKey);
   }, []);
 
+  /** A menu that outlives a click elsewhere is a menu you have to dismiss. */
+  useEffect(() => {
+    if (!meOpen) return;
+    const onDown = (e: PointerEvent) => {
+      if (!meRef.current?.contains(e.target as Node)) setMeOpen(false);
+    };
+    const onKey = (e: KeyboardEvent) => { if (e.key === 'Escape') setMeOpen(false); };
+    window.addEventListener('pointerdown', onDown);
+    window.addEventListener('keydown', onKey);
+    return () => {
+      window.removeEventListener('pointerdown', onDown);
+      window.removeEventListener('keydown', onKey);
+    };
+  }, [meOpen]);
+
   // Switching views starts a new screen, so it starts at the top of one.
   useEffect(() => { stageRef.current?.scrollTo({ top: 0 }); }, [view]);
-
-  /**
-   * The bar earns its edge only once there is something underneath it.
-   *
-   * A permanent rule under a header is a line drawn whether or not it
-   * separates anything. This one appears when the stage has scrolled, so at
-   * rest the bar and the page read as one surface.
-   */
-  useEffect(() => {
-    const el = stageRef.current;
-    if (!el) return;
-    const onScroll = () => setScrolled(el.scrollTop > 4);
-    el.addEventListener('scroll', onScroll, { passive: true });
-    return () => el.removeEventListener('scroll', onScroll);
-  }, []);
 
   /**
    * Thumbnails, built once.
@@ -293,17 +308,15 @@ export const Home: React.FC = () => {
       <span className="tcard__body">
         <span className="tcard__name">{template.name}</span>
         <span className="tcard__blurb">{template.blurb}</span>
-        <span className="tcard__meta">
-          {template.objectCount && (
+        {/* One fact, and only where there is one. The three word-chips that
+            used to sit here named what a board *teaches*, which was never why
+            anybody picked one, and eleven small boxes a row is a lot of
+            furniture on a page whose job is to show pictures. */}
+        {template.objectCount && (
+          <span className="tcard__meta">
             <span className="tcard__count">{template.objectCount.toLocaleString()} objects</span>
-          )}
-          {/* Capped rather than wrapped. A fourth chip spills onto a second
-              line for some cards and not others, which gives a row ragged
-              feet — and it was never why anyone picked a template. */}
-          {template.teaches.slice(0, template.objectCount ? 2 : 3).map((what) => (
-            <span key={what} className="tcard__chip">{what}</span>
-          ))}
-        </span>
+          </span>
+        )}
       </span>
     </button>
   );
@@ -399,6 +412,32 @@ export const Home: React.FC = () => {
     </div>
   ) : (
     <div className="tgrid">
+      {/**
+        * The way into the other half, as a tile in the grid rather than a band
+        * beneath it.
+        *
+        * It was a full-width button under the boards: a horizontal bar the
+        * width of the page, carrying a heading, a sentence and an arrow, for a
+        * link. That is a lot of furniture to cross a room, and it read as a
+        * banner, which is the one thing on a page people have trained
+        * themselves not to look at.
+        *
+        * As a tile it is the same size and shape as the things beside it, it
+        * sits where the eye is already travelling, and it needs two words
+        * because its neighbours have explained the context. The dashed edge is
+        * the only difference, and it says the one thing that matters: this one
+        * is not a board.
+        */}
+      <button type="button" className="xtile" onClick={() => goTemplates(null)}>
+        <span className="xtile__art" aria-hidden="true">
+          <Compass size={22} />
+        </span>
+        <span className="xtile__body">
+          <span className="xtile__name">Browse templates</span>
+          <span className="xtile__sub">{TEMPLATES.length} boards, already filled in</span>
+        </span>
+      </button>
+
       {matchedRooms.map((room) => (
         <a key={room.id} className="bcard" href={`/room/${room.id}`}>
           <span className="bcard__art">
@@ -421,236 +460,254 @@ export const Home: React.FC = () => {
     </div>
   );
 
-  const boardsSection = (
-    <section className="stage__section" aria-labelledby="boards-heading">
-      <div className="stage__head">
-        <h2 id="boards-heading" className="stage__title">Your boards</h2>
-        <p className="stage__lede">
-          {hasRooms
-            ? 'Boards you have opened on this device. This list is stored in your browser, not in an account.'
-            : 'Boards you open on this device collect here.'}
-        </p>
-      </div>
-      {boardsBody}
-    </section>
-  );
-
-  const templatesSection = (
-    <section className="stage__section" aria-labelledby="templates-heading">
-      <div className="stage__head">
-        <h2 id="templates-heading" className="stage__title">
-          {category ? categoryLabel : 'Templates'}
-        </h2>
-        <p className="stage__lede">
-          {category
-            ? `${matchedTemplates.length} board${matchedTemplates.length === 1 ? '' : 's'} here. Each one opens as a working board you can edit.`
-            : 'Working boards, already filled in. Open one and change anything in it. A few are built at full scale so you can test how the canvas holds up.'}
-        </p>
-      </div>
-      {templatesBody}
-    </section>
-  );
-
   return (
-    <div className="home">
-      {/* ------------------------------------------------------------ app bar */}
-      <header className={`home__bar${scrolled ? ' is-scrolled' : ''}`}>
-        <a className="home__brand" href="/" aria-label="Vega Studio home">
-          <Logo size={26} />
-          <span>Vega Studio</span>
+    /**
+     * A rail and a stage, and nothing above them.
+     *
+     * ## Why the top bar went
+     *
+     * It held four things -- a wordmark, a search field, a name and a sign-out
+     * button -- across the full width of the window, and none of them was worth
+     * a band of its own. A 52px strip spanning 1400px to carry a logo and an
+     * avatar is the layout of an admin console: it is what you build when the
+     * navigation has nowhere else to go.
+     *
+     * The navigation *did* have somewhere else to go. The rail was already
+     * down the left, already permanent, and already the thing people aim at.
+     * Folding the four into its head and foot costs nothing, returns the whole
+     * height of the window to the work, and puts identity, navigation and
+     * account in one column instead of an L.
+     *
+     * ## Why the rail is icons only
+     *
+     * It carried labels and counts as full rows, which is right when the rail
+     * is the page's主 furniture and wrong now that it is the page's *edge*.
+     * Two destinations do not need two hundred pixels; they need to be
+     * unmistakable and out of the way. The names are in tooltips and in the
+     * stage's own heading, which is where somebody actually reads them.
+     *
+     * The categories moved out with the labels. They belong beside the grid
+     * they filter, which is the stage, and as a row rather than a column --
+     * five short words across the top of a wall of pictures reads as a filter,
+     * where five rows down the side read as more navigation.
+     */
+    <div className="lib">
+      <nav className="lrail" aria-label="Library">
+        <a className="lrail__brand" href="/" aria-label="Vega Studio home">
+          <Logo piece="mark" size={24} />
         </a>
 
-        {/* One field, filtering both sections. This page used to carry two
-            inputs in unrelated places, neither beside what it acted on. */}
-        <label className="home__search">
-          <Search size={16} aria-hidden="true" />
-          <input
-            ref={searchRef}
-            type="search"
-            value={query}
-            onChange={(e) => setQuery(e.target.value)}
-            placeholder="Search boards and templates"
-            aria-label="Search boards and templates"
-          />
-          {/* The key that gets you here, on the thing it gets you to. A
-              shortcut nobody can see is a shortcut only its author uses. */}
-          {!query && <kbd className="home__slash" aria-hidden="true">/</kbd>}
-        </label>
+        {/* The one front door, and the only accent on the rail. */}
+        <button
+          type="button"
+          className="lrail__new"
+          onClick={openBoard}
+          data-tooltip="New board"
+          data-tooltip-pos="right"
+          aria-label="New board"
+        >
+          <Plus size={19} aria-hidden="true" />
+        </button>
 
-        <div className="home__me">
-          {/**
-            * The shared `Avatar`, not a hand-rolled disc.
-            *
-            * This carried `name.charAt(0).toUpperCase()` in a span of its own,
-            * which is the *exact* pattern `ui/Avatar.tsx` opens by describing as
-            * the bug it was built to fix: the same person read as "A" here and
-            * "AO" in the room, because one surface took a first initial and the
-            * other took `initialsFor`. It was one of the five, and it outlived
-            * the consolidation because nobody was looking at this page.
-            */}
-          <span className="home__me-text">
-            <span className="home__me-name">{user.name}</span>
-            <span className="home__me-sub">{user.isGuest ? 'Guest session' : 'On this device'}</span>
-          </span>
-          <Avatar name={user.name} color={user.color} size={30} />
+        <div className="lrail__nav">
           <button
-            onClick={logout}
-            className="home__signout"
-            aria-label={user.isGuest ? 'End guest session' : 'Sign out'}
-            data-tooltip={user.isGuest ? 'End guest session' : 'Sign out'}
-            data-tooltip-pos="bottom"
+            type="button"
+            className={`lrail__item${view === 'boards' ? ' is-on' : ''}`}
+            aria-current={view === 'boards' ? 'page' : undefined}
+            onClick={() => setView('boards')}
+            data-tooltip="Your boards"
+            data-tooltip-pos="right"
+            aria-label="Your boards"
           >
-            <LogOut size={16} />
+            <Layers size={19} aria-hidden="true" />
+            {recentRooms.length > 0 && <span className="lrail__dot" aria-hidden="true" />}
+          </button>
+
+          <button
+            type="button"
+            className={`lrail__item${view === 'templates' ? ' is-on' : ''}`}
+            aria-current={view === 'templates' ? 'page' : undefined}
+            onClick={() => goTemplates(null)}
+            data-tooltip="Templates"
+            data-tooltip-pos="right"
+            aria-label="Templates"
+          >
+            <Compass size={19} aria-hidden="true" />
           </button>
         </div>
-      </header>
 
-      <div className="home__body">
-        {/* --------------------------------------------------------------- rail */}
-        <nav className="rail" aria-label="Library">
-          {/* The one front door on the page, and the only accent-filled
-              control. It sits above the navigation because making something
-              new does not depend on where you are. */}
-          <button type="button" className="rail__new" onClick={openBoard}>
-            <Plus size={17} aria-hidden="true" /> New board
+        <span className="lrail__spacer" />
+
+        <button
+          type="button"
+          className={`lrail__item${seeking || query ? ' is-on' : ''}`}
+          onClick={() => { setSeeking(true); window.setTimeout(() => searchRef.current?.focus(), 0); }}
+          data-tooltip="Search  /"
+          data-tooltip-pos="right"
+          aria-label="Search boards and templates"
+        >
+          <Search size={18} aria-hidden="true" />
+        </button>
+
+        {/* Identity and the two rare actions, in one place.
+            Opening a link and restoring a backup are both real and both
+            uncommon, and they used to sit mid-rail at the weight of the
+            gallery. Behind the avatar they are where anybody looks for the
+            things that are about *you* rather than about the board. */}
+        <div className="lrail__me" ref={meRef}>
+          <button
+            type="button"
+            className="lrail__avatar"
+            onClick={() => setMeOpen((o) => !o)}
+            aria-haspopup="menu"
+            aria-expanded={meOpen}
+            aria-label={`${user.name}. Account and more`}
+          >
+            <Avatar name={user.name} color={user.color} size={30} />
           </button>
 
-          <div className="rail__group">
-            {/* Named groups. Two destinations and five filters sat as seven
-                rows of one weight, so the shape of the navigation had to be
-                worked out from the indent alone. */}
-            <p className="rail__legend">Library</p>
-            <button
-              type="button"
-              className={`rail__item${view === 'boards' ? ' is-on' : ''}`}
-              aria-current={view === 'boards' ? 'page' : undefined}
-              onClick={() => setView('boards')}
-            >
-              <Layers size={16} aria-hidden="true" />
-              <span className="rail__label">Your boards</span>
-              <span className="rail__count">{recentRooms.length}</span>
-            </button>
-          </div>
+          {meOpen && (
+            <div className="lrail__menu ctx-popover" role="menu">
+              <p className="lrail__who">
+                <span className="lrail__who-name">{user.name}</span>
+                <span className="lrail__who-sub">{user.isGuest ? 'Guest session' : 'Kept on this device'}</span>
+              </p>
+              <div className="ctx-popover__rule" role="separator" />
+              <button
+                type="button"
+                className="ctx-menu-item"
+                role="menuitem"
+                onClick={() => { setMeOpen(false); setJoinOpen(true); }}
+              >
+                <Link2 size={15} /> Open a link
+              </button>
+              <button
+                type="button"
+                className="ctx-menu-item"
+                role="menuitem"
+                onClick={() => { setMeOpen(false); restoreInputRef.current?.click(); }}
+              >
+                <UploadCloud size={15} /> Restore a backup
+              </button>
+              <div className="ctx-popover__rule" role="separator" />
+              <button type="button" className="ctx-menu-item" role="menuitem" onClick={logout}>
+                <LogOut size={15} /> {user.isGuest ? 'End guest session' : 'Sign out'}
+              </button>
+            </div>
+          )}
+        </div>
 
-          {/* Its own group. These are the two top-level destinations and they
-              were separated by a single pixel, so "Your boards" read as the
-              first of six sibling rows rather than as the peer of Templates —
-              and the categories underneath looked like they belonged to both. */}
-          <div className="rail__group">
-            <button
-              type="button"
-              className={`rail__item${view === 'templates' && !category ? ' is-on' : ''}`}
-              aria-current={view === 'templates' && !category ? 'page' : undefined}
-              onClick={() => goTemplates(null)}
-            >
-              <Compass size={16} aria-hidden="true" />
-              <span className="rail__label">Templates</span>
-              <span className="rail__count">{TEMPLATES.length}</span>
-            </button>
+        <input
+          ref={restoreInputRef}
+          type="file"
+          accept="application/json,.json"
+          hidden
+          onChange={(e) => {
+            const file = e.target.files?.[0];
+            if (file) handleRestoreFile(file);
+            // Cleared so picking the same file twice still fires a change.
+            e.target.value = '';
+          }}
+        />
+      </nav>
 
-            {/* Categories sit under the section they filter, indented, so they
-                read as part of it rather than as a second navigation. */}
-            {CATEGORIES.map((c) => {
-              const count = TEMPLATES.filter((t) => t.category === c.id).length;
-              if (count === 0) return null;
-              return (
-                <button
-                  key={c.id}
-                  type="button"
-                  className={`rail__item rail__item--sub${view === 'templates' && category === c.id ? ' is-on' : ''}`}
-                  aria-current={view === 'templates' && category === c.id ? 'true' : undefined}
-                  onClick={() => goTemplates(c.id)}
-                >
-                  <span className="rail__label">{c.label}</span>
-                  <span className="rail__count">{count}</span>
-                </button>
-              );
-            })}
-          </div>
-
-          {/* The rare actions, at the bottom, quiet. Joining by link and
-              restoring a backup are both real and both uncommon; they used to
-              sit mid-column at the same weight as the gallery. */}
-          <div className="rail__foot">
-            <p className="rail__legend">More</p>
-            <button
-              type="button"
-              className="rail__quiet"
-              aria-expanded={joinOpen}
-              onClick={() => setJoinOpen((o) => !o)}
-            >
-              <Link2 size={15} aria-hidden="true" /> Open a link
-            </button>
-
-            {joinOpen && (
-              // Inline rather than a dialog: pasting a link needs neither
-              // interruption nor protected focus.
-              <form className="rail__join" onSubmit={handleJoin}>
-                <input
-                  type="text"
-                  value={joinLink}
-                  onChange={(e) => setJoinLink(e.target.value)}
-                  placeholder="Paste a board link"
-                  aria-label="Paste a board link to join"
-                  autoFocus
-                />
-                <button type="submit" disabled={!joinLink.trim()}>Open</button>
-              </form>
-            )}
-
-            <input
-              ref={restoreInputRef}
-              type="file"
-              accept="application/json,.json"
-              hidden
-              onChange={(e) => {
-                const file = e.target.files?.[0];
-                if (file) handleRestoreFile(file);
-                // Cleared so picking the same file twice still fires a change.
-                e.target.value = '';
-              }}
-            />
-            <button type="button" className="rail__quiet" onClick={() => restoreInputRef.current?.click()}>
-              <UploadCloud size={15} aria-hidden="true" /> Restore a backup
-            </button>
-          </div>
-        </nav>
-
-        {/* -------------------------------------------------------------- stage */}
-        <main className="stage" ref={stageRef}>
+      <main className="lstage" ref={stageRef}>
+        <div className="lstage__inner">
           {restoreError && <div className="stage__error" role="alert">{restoreError}</div>}
 
-          {view === 'boards' ? (
-            <>
-              {boardsSection}
-
-              {/* The way into the other tab.
-
-                  A tab nobody presses may as well not exist, and "thirteen
-                  boards that arrive already full" is worth saying once, where
-                  it will actually be read — at the end of the view someone is
-                  already looking at.
-
-                  It states what the templates *are* rather than asking
-                  whether you need help: "not sure what to make?" makes an
-                  offer out of an assumed problem and reads as sales copy on a
-                  tool. It also never says "below", because it is not below —
-                  it is a different view, and the arrow carries the rest. */}
-              <button type="button" className="seam" onClick={() => goTemplates(null)}>
-                <span className="seam__text">
-                  <span className="seam__title">Browse templates</span>
-                  <span className="seam__sub">
-                    {TEMPLATES.length} boards that open already filled in, ready to edit.
-                  </span>
-                </span>
-                <span className="seam__go" aria-hidden="true"><ArrowRight size={16} /></span>
+          {joinOpen && (
+            // Inline rather than a dialog: pasting a link needs neither
+            // interruption nor protected focus.
+            <form className="lstage__join" onSubmit={handleJoin}>
+              <Link2 size={16} aria-hidden="true" />
+              <input
+                type="text"
+                value={joinLink}
+                onChange={(e) => setJoinLink(e.target.value)}
+                placeholder="Paste a board link"
+                aria-label="Paste a board link to join"
+                autoFocus
+              />
+              <button type="submit" disabled={!joinLink.trim()}>Open</button>
+              <button type="button" className="lstage__join-x" onClick={() => setJoinOpen(false)} aria-label="Cancel">
+                <X size={15} />
               </button>
-            </>
-          ) : (
-            templatesSection
+            </form>
           )}
-        </main>
-      </div>
+
+          <header className="lstage__head">
+            <div className="lstage__titles">
+              <h1 className="lstage__title">
+                {view === 'boards' ? 'Your boards' : category ? categoryLabel : 'Templates'}
+              </h1>
+              <p className="lstage__lede">
+                {view === 'boards'
+                  ? hasRooms
+                    ? `${recentRooms.length} on this device, kept in your browser rather than in an account.`
+                    : 'Boards you open on this device collect here.'
+                  : category
+                    ? `${matchedTemplates.length} board${matchedTemplates.length === 1 ? '' : 's'}, each one editable the moment it opens.`
+                    : 'Working boards, already filled in. Open one and change anything in it.'}
+              </p>
+            </div>
+
+            {/* Revealed rather than always there. The field is the second thing
+                on this page and it should not sit above the first. */}
+            {(seeking || query) && (
+              <label className="lstage__search">
+                <Search size={15} aria-hidden="true" />
+                <input
+                  ref={searchRef}
+                  type="search"
+                  value={query}
+                  onChange={(e) => setQuery(e.target.value)}
+                  onBlur={() => { if (!query) setSeeking(false); }}
+                  placeholder="Search boards and templates"
+                  aria-label="Search boards and templates"
+                />
+                {query && (
+                  <button type="button" onClick={() => { setQuery(''); searchRef.current?.focus(); }} aria-label="Clear search">
+                    <X size={14} />
+                  </button>
+                )}
+              </label>
+            )}
+          </header>
+
+          {/* The categories, beside the grid they filter. A row across the top
+              of a wall of pictures reads as a filter; the same five as a column
+              down the side read as more navigation. */}
+          {view === 'templates' && (
+            <div className="lchips" role="group" aria-label="Template categories">
+              <button
+                type="button"
+                className={`lchip${!category ? ' is-on' : ''}`}
+                aria-pressed={!category}
+                onClick={() => goTemplates(null)}
+              >
+                All <span>{TEMPLATES.length}</span>
+              </button>
+              {CATEGORIES.map((c) => {
+                const count = TEMPLATES.filter((x) => x.category === c.id).length;
+                if (count === 0) return null;
+                return (
+                  <button
+                    key={c.id}
+                    type="button"
+                    className={`lchip${category === c.id ? ' is-on' : ''}`}
+                    aria-pressed={category === c.id}
+                    onClick={() => goTemplates(c.id)}
+                  >
+                    {c.label} <span>{count}</span>
+                  </button>
+                );
+              })}
+            </div>
+          )}
+
+          {view === 'boards' ? boardsBody : templatesBody}
+        </div>
+      </main>
     </div>
   );
 };

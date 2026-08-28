@@ -484,6 +484,53 @@ same arrangement `TooltipLayer` uses. What is worth knowing:
 - One timer for the whole stack, re-aimed on every change, because a timer per
   notice leaks one whenever a notice is folded or evicted.
 
+## 4a-11. Two cards fewer, a rail instead of a bar, and one continuous stroke
+
+**`DockCoach` and `FirstRunGuide` are deleted.** They were written before there
+was a walkthrough, and once there was one they became the third and fourth card
+to interrupt somebody in their first two minutes, the last two arriving together
+on the single act of putting a shape down. Everything they taught is still
+taught at a better moment: frames by the `frame-page` lesson when the frame tool
+is armed, sharing by step five of the tour, focus mode by the view menu and the
+reference. The rule left behind is that a first run gets **one** offer.
+
+**The library has no top bar.** It held a wordmark, a search field, a name and a
+sign-out button across the full width of the window and none of them was worth a
+band. The rail was already permanent and already where people aim, so identity,
+navigation and account fold into its head and foot, and the stage gets the whole
+height. Icons only: two destinations do not need two hundred pixels, they need
+to be unmistakable and out of the way.
+
+The categories moved out with the labels, to a chip row above the grid they
+filter. Five words across the top of a wall of pictures read as a filter; five
+rows down the side read as a second navigation.
+
+**The cards are not cards.** They were white boxes on a white page: a border, a
+fill and a shadow round a picture that already had an edge. Twenty of them is
+twenty frames competing with twenty compositions. Now the picture sits in a
+rounded well and the words sit on the page beneath it, only the picture lifts on
+hover, and the three word-chips under each one are gone: they named what a board
+*teaches*, which was never why anybody picked one.
+
+**The seam became a tile.** "Browse templates" was a full-width bar carrying a
+heading, a sentence and an arrow, for a link, which is the one shape on a page
+people have trained themselves to skip. As a dashed tile at the head of the
+boards grid it is the size of its neighbours and needs two words.
+
+**Three spacing tokens did not exist.** `--space-7`, `--space-10`: the scale is
+1 2 3 4 5 6 8 12, so those declarations were dropped in silence and two headings
+sat on the text above them. Worth remembering the next time a gap looks wrong
+for no reason.
+
+**The tour's shaft is one stroke now.** It was `roughPolyline`, which bristles
+every *segment*, so eight samples gave seven short strokes with a break at each
+join: rough, but broken rough. `roughLoop` with `closed: false` walks one
+continuous stroke along the arc length and wanders as it goes, which is why the
+ring looked right all along, `roughEllipse` having gone through that sampler
+from the start. The head no longer draws itself on: eleven units of stroke is
+too short a distance to read as drawing, so it stuttered. It arrives whole, at
+the instant the shaft reaches it, which is what a hand does.
+
 ## 4a-10. The tour was unreachable on a new board
 
 **It never appeared on the screen it is for.** `TourOffer` waited for the dock

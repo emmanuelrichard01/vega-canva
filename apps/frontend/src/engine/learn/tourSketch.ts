@@ -1,4 +1,4 @@
-import { roughEllipse, roughPolyline, seedFrom } from '../model/rough';
+import { roughEllipse, roughLoop, roughPolyline, seedFrom } from '../model/rough';
 import type { Box, TourSide } from './tour';
 
 /**
@@ -148,13 +148,17 @@ function ends(card: Box, ring: Box, side: TourSide): { from: Point; to: Point; b
 /**
  * Sample a quadratic curve, which is what the pen is then run along.
  *
- * Eight samples, not fourteen. The wobble `roughPolyline` adds is per *segment*,
- * so a curve chopped into many short pieces gets many tiny deviations and comes
- * out smooth: the arithmetic is doing its job and the result reads as a clean
- * bezier. Fewer, longer segments give each one room to bow and to overshoot its
- * corner, which is what a hand actually does.
+ * Densely, because the stroke is drawn by `roughLoop` rather than by
+ * `roughPolyline`. The polyline sketcher bristles *every segment*, so eight
+ * samples gave seven separate strokes with a visible break at each join: rough,
+ * but broken rough, which is not how a hand draws a curve. `roughLoop`'s drift
+ * sampler walks one continuous stroke along the arc length and wanders as it
+ * goes, so more samples make the *curve* smoother without making the *line*
+ * neater. That is the sloppy-but-continuous quality the board's own sketched
+ * shapes have, and it is why the ring already looked right while the shaft did
+ * not: `roughEllipse` was going through the loop sampler all along.
  */
-function arc(from: Point, to: Point, bow: number, steps = 8): Point[] {
+function arc(from: Point, to: Point, bow: number, steps = 22): Point[] {
   const mx = (from.x + to.x) / 2;
   const my = (from.y + to.y) / 2;
   const dx = to.x - from.x;
@@ -199,8 +203,9 @@ function head(points: readonly Point[], stepId: string): string {
   // Two open strokes rather than a filled triangle: a filled head is a vector
   // arrowhead and reads as a diagram, where two crossing pen strokes read as
   // the same hand that drew the shaft.
-  // Two passes here as well, so the head is made of the same marks as the
-  // shaft. A doubled shaft ending in two single strokes reads as two pens.
+  // Two short strokes, and `roughPolyline` is right for these: they are two
+  // straight flicks rather than a curve, and the loop sampler's continuity has
+  // nothing to be continuous *through* over eleven units.
   return [
     roughPolyline([wing(spread), tip], { seed: seedFrom(`hl:${stepId}`), closed: false, level: 'medium', width: 2 }),
     roughPolyline([wing(-spread), tip], { seed: seedFrom(`hr:${stepId}`), closed: false, level: 'medium', width: 2 }),
@@ -247,7 +252,7 @@ export function pointerPath(card: Box, ring: Box, side: TourSide, stepId: string
      * simply does not have it -- which is why the arrow read as a curve rather
      * than as a pen mark.
      */
-    shaft: roughPolyline(points, {
+    shaft: roughLoop(points, {
       seed: seedFrom(`arrow:${stepId}`),
       closed: false,
       level: 'medium',

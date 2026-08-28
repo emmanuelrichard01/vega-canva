@@ -53,12 +53,10 @@ import { DEFAULT_TYPOGRAPHY } from './engine/model/schema';
 import { cameraSystem } from './engine/CameraSystem';
 import { useBreakpoint } from './hooks/useBreakpoint';
 import { CanvasEmptyState } from './components/CanvasEmptyState';
-import { FirstRunGuide } from './components/FirstRunGuide';
 import { LessonCoach } from './components/learn/LessonCoach';
 import { TourGuide, TourOffer } from './components/learn/TourGuide';
 import { tourState } from './engine/learn/tourState';
 import { learnState } from './engine/learn/learnState';
-import { DockCoach } from './components/DockCoach';
 import { buildPreview, savePreview } from './engine/model/boardPreview';
 import { previewColorOf, previewPointsOf } from './engine/model/previewPaint';
 import { useComments } from './hooks/useComments';
@@ -523,18 +521,7 @@ export default function Room() {
     setDiagramReplaceIds([]);
   };
   const [showShareModal, setShowShareModal] = useState(false);
-  /**
-   * Whether the share sheet has been opened at all this session.
-   *
-   * The guide asks "have you discovered sharing?", which `showShareModal`
-   * cannot answer — it goes false again the moment the sheet closes, so the
-   * step would tick and immediately untick.
-   */
-  const [hasShared, setHasShared] = useState(false);
-  useEffect(() => {
-    if (showShareModal) setHasShared(true);
-  }, [showShareModal]);
-    const [showTimeTravel, setShowTimeTravel] = useState(false);
+  const [showTimeTravel, setShowTimeTravel] = useState(false);
   const [timeTravelSnapshot, setTimeTravelSnapshot] = useState<Record<string, any> | null>(null);
   const [showCommandPalette, setShowCommandPalette] = useState(false);
   const [showInbox, setShowInbox] = useState(false);
@@ -558,19 +545,6 @@ export default function Room() {
   const setIsDarkTheme = useStore((s) => s.setDarkTheme);
   const applyReplaySnapshot = useStore((s) => s.applyReplaySnapshot);
   const [isUiVisible, setIsUiVisible] = useState(true);
-  /**
-   * Whether focus mode has ever been entered.
-   *
-   * A latch rather than a live reading, because the guide asks "have you found
-   * this" and the answer to that does not become false again when the chrome
-   * comes back. Reading `!isUiVisible` directly would tick the step while the
-   * guide was hidden and untick it the moment it could be seen, which is a
-   * checklist that never appears to complete.
-   */
-  const [hasUsedZen, setHasUsedZen] = useState(false);
-  useEffect(() => {
-    if (!isUiVisible) setHasUsedZen(true);
-  }, [isUiVisible]);
   /**
    * Read by the template effect, which runs once on mount and must not list
    * `isUiVisible` as a dependency — doing so would re-seed the board every
@@ -599,9 +573,8 @@ export default function Room() {
   /**
    * Whether the walkthrough has been settled, one way or the other.
    *
-   * Everything else that coaches waits for this. See the note on the band above
-   * the dock: the tour is the general orientation and the dock's question is a
-   * specific follow-up, so asking the follow-up first was backwards.
+   * The lesson coach waits for it. A tour and a coach mark both explaining the
+   * board at once is two voices, and the tour is the one that was asked for.
    */
   const tour = useSyncExternalStore(
     tourState.subscribe,
@@ -609,10 +582,6 @@ export default function Room() {
     tourState.getSnapshot
   );
   const tourSettled = tour.seen && tour.step === null;
-
-  const [dockAnswered, setDockAnswered] = useState(
-    () => localStorage.getItem('vega_dock_coach_v1') === 'answered'
-  );
 
   const [dockRevealed, setDockRevealed] = useState(false);
   const dockHideTimer = useRef<number | null>(null);
@@ -1601,22 +1570,31 @@ export default function Room() {
           which put an interruption on the one surface whose whole promise is
           not being interrupted, and said it twice. See `AuthShowcase`. */}
 
-      {/* What the screen cannot say for itself: that other people can be here,
-          and that the chrome will get out of the way. Everything else a first
-          run needs is already said in place by the empty state. */}
-      {/* The fork the dock cannot present for itself: an endless surface, or a
-          frame at a real size. Asked once, both answers recorded the same.
-          Shown before the first-run guide so the two never stack. */}
-      {isUiVisible && tourSettled && (
-        <DockCoach visible={isUiVisible} onSettled={() => setDockAnswered(true)} />
-      )}
-
-      {isUiVisible && tourSettled && dockAnswered && (
-        <FirstRunGuide
-          hasShared={hasShared}
-          hasReclaimedSpace={hasUsedZen}
-        />
-      )}
+      {/**
+        * Two cards used to sit here and both have gone.
+        *
+        * `DockCoach` asked, the first time anything appeared on a board,
+        * whether you wanted a frame to design into. `FirstRunGuide` then
+        * offered two more things worth knowing. Both were written before there
+        * was a walkthrough, and once there was one they became the third and
+        * fourth card to interrupt somebody in their first two minutes -- the
+        * second and third arriving, annoyingly, on the single act of putting a
+        * shape down.
+        *
+        * Everything they taught is still taught, at a better moment.
+        *
+        * - Frames: the `frame-page` lesson, which arrives when you pick up the
+        *   frame tool. That is the moment the question "should this be a frame"
+        *   is actually being asked, rather than a moment chosen for you.
+        * - Bringing somebody in: step five of the tour, which points at the
+        *   Share button rather than describing where it is.
+        * - Focus mode: the view menu, the reference under Navigation, and the
+        *   key itself, which is the one thing on that list a card was never
+        *   going to make more memorable.
+        *
+        * The rule this leaves behind is worth keeping: a first run gets **one**
+        * offer, it is made once, and declining it is as final as accepting it.
+        */}
 
       {/**
         * The gesture a tool cannot describe, offered when the tool is picked up
@@ -1636,7 +1614,7 @@ export default function Room() {
         * second question. It is rendered *after* the guide so the stylesheet
         * can say that in one rule -- see `.guide:has(~ .coach)`.
         */}
-      <LessonCoach activeTool={activeTool} visible={isUiVisible && tourSettled && dockAnswered} />
+      <LessonCoach activeTool={activeTool} visible={isUiVisible && tourSettled} />
 
       {/**
         * Where things live, pointed at rather than described.
