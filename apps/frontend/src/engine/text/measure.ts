@@ -14,6 +14,7 @@ import Konva from 'konva';
 import type { Typography } from '../model/schema';
 import { canvasFontFamily, konvaFontStyle } from '../../components/canvas/renderers/shared';
 import type { TextMeasurer } from './layout';
+import { onFontsChanged, requestFont } from './fontEpoch';
 
 /**
  * One offscreen text node, reused.
@@ -57,51 +58,25 @@ export function measurerFor(typography: Typography): TextMeasurer {
 }
 
 /**
- * Webfonts arrive after the first paint, and every layout measured before they
- * do is measured against a fallback face.
- *
- * Canvas measurement uses whatever font is resolvable at that moment, so the
- * first render of a board wraps against the wrong metrics and then keeps the
- * result — text looks subtly wrong on a cold load and correct on a warm one,
- * which is the worst way for a bug to present. The epoch is what lets a
- * consumer re-run its layout when the real face lands.
- *
- * Deliberately the same shape as `stickyFontEpoch`, which solved this first.
+ * A measurement taken before a webfont arrives is wrong, and this is how the
+ * layout finds out that it has to be redone. The mechanism lives in
+ * `fontEpoch`; all this module owes it is dropping the probe, whose bound face
+ * is now stale.
  */
-let epochValue = 0;
-const listeners = new Set<() => void>();
+onFontsChanged(() => {
+  probe = null;
+});
 
-export const textFontEpoch = {
-  get: (): number => epochValue,
-  subscribe: (listener: () => void) => {
-    listeners.add(listener);
-    return () => listeners.delete(listener);
-  },
-};
 
-/** Proactively requests loading of a font family and bumps the epoch once ready. */
+/**
+ * Ask for a family so it is actually fetched, rather than hoping something in
+ * the DOM happens to use it.
+ *
+ * Canvas is the only consumer of most of these faces, and a canvas is not
+ * reliable at triggering the load in time. Translating the family to a font
+ * shorthand is the only work here; the deduping and the epoch are `fontEpoch`'s.
+ */
 export function ensureFontLoaded(family: string | undefined): void {
-  if (!family || typeof document === 'undefined' || !document.fonts?.load) return;
-  const stack = canvasFontFamily(family);
-  document.fonts
-    .load(`16px ${stack}`)
-    .then(() => {
-      probe = null;
-      epochValue += 1;
-      listeners.forEach((fn) => fn());
-    })
-    .catch(() => {
-      // Ignore load errors; fallback font is active.
-    });
-}
-
-if (typeof document !== 'undefined' && document.fonts) {
-  const triggerEpochUpdate = () => {
-    probe = null;
-    epochValue += 1;
-    listeners.forEach((fn) => fn());
-  };
-
-  document.fonts.ready.then(triggerEpochUpdate);
-  document.fonts.addEventListener?.('loadingdone', triggerEpochUpdate);
+  if (!family) return;
+  requestFont(`16px ${canvasFontFamily(family)}`);
 }

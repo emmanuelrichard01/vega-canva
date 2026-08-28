@@ -36,14 +36,22 @@ type View = 'boards' | 'templates';
  * view flash before being moved to the gallery.
  */
 function initialView(): View {
+  /**
+   * Your boards, unless you last chose otherwise.
+   *
+   * A first visit used to land on the gallery, on the reasoning that the boards
+   * view would be empty and the gallery is the only half with anything in it.
+   * That was true when the empty state was an icon and a paragraph. It now
+   * offers the three real openings, the first of which is the gallery, so
+   * landing on the boards costs a newcomer nothing and gains them the thing a
+   * library is for: this is where your work is.
+   *
+   * It also stops the front door moving between the first visit and the second,
+   * which is the sort of thing nobody can name and everybody feels.
+   */
   const remembered = localStorage.getItem(VIEW_KEY);
   if (remembered === 'boards' || remembered === 'templates') return remembered;
-  try {
-    const saved = JSON.parse(localStorage.getItem(STORAGE_KEY) || '[]');
-    return Array.isArray(saved) && saved.length > 0 ? 'boards' : 'templates';
-  } catch {
-    return 'templates';
-  }
+  return 'boards';
 }
 
 /**
@@ -428,9 +436,13 @@ export const Home: React.FC = () => {
         * the only difference, and it says the one thing that matters: this one
         * is not a board.
         */}
+      {/* Built like a board card, because it stands in a row of them: a 16:10
+          picture area, then the name and the line under it on the page. It was
+          one block with its words inside the picture, so its title sat where
+          the other cards' pictures were and the row had two baselines. */}
       <button type="button" className="xtile" onClick={() => goTemplates(null)}>
         <span className="xtile__art" aria-hidden="true">
-          <Compass size={22} />
+          <Compass size={23} />
         </span>
         <span className="xtile__body">
           <span className="xtile__name">Browse templates</span>
@@ -532,7 +544,14 @@ export const Home: React.FC = () => {
             data-tooltip-pos="right"
             aria-label="Templates"
           >
-            <Compass size={19} aria-hidden="true" />
+            {/* A compass, sized down a point.
+                It is drawn as a circle filling its whole viewbox, where the
+                layers glyph beside it is a flatter shape with air above and
+                below, so at a matched nominal size the compass carries more
+                ink and sits heavier on the rail. 18 against 19 evens the two
+                optically, which is the actual fix -- the glyph was never off
+                centre, its bounding box is a centred circle. */}
+            <Compass size={18} aria-hidden="true" />
           </button>
         </div>
 

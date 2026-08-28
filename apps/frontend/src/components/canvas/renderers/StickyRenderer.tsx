@@ -3,7 +3,8 @@ import { Circle, Group, Label, Line, Path, Rect, Tag, Text } from 'react-konva';
 import type { StickyNode } from '../../../engine/model/schema';
 import { initialsFor } from '../../../engine/presence/collaborators';
 import { STICKY_LINE_HEIGHT } from '../../../engine/model/stickyText';
-import { stickyFit, stickyFontEpoch, STICKY_FONT_FAMILY, STICKY_FONT_WEIGHT } from './stickyFit';
+import { stickyFit, STICKY_FONT_FAMILY, STICKY_FONT_WEIGHT } from './stickyFit';
+import { fontEpoch } from '../../../engine/text/fontEpoch';
 import { formatVoterSummary } from '../../../engine/model/voters';
 import { THEMES, STICKY_PADDING, STICKY_RADIUS } from '../../../engine/model/stickyThemes';
 import { authorWidth, FOOTER_BAND, FOOTER_ROW, layoutFooter, PIN_INSET, textBox } from '../../../engine/model/stickyFooter';
@@ -59,7 +60,7 @@ export const StickyRenderer: React.FC<Props> = React.memo(({ node, showText, myA
    */
   const box = textBox(node.width, node.height, STICKY_PADDING, node.tags.length > 0);
 
-  useSyncExternalStore(stickyFontEpoch.subscribe, stickyFontEpoch.get, stickyFontEpoch.get);
+  useSyncExternalStore(fontEpoch.subscribe, fontEpoch.get, fontEpoch.get);
   const fit = stickyFit(node.text, box.width, box.height);
 
   const initials = initialsFor(node.author.name);

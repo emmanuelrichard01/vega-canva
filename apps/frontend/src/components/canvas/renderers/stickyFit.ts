@@ -1,4 +1,5 @@
 import Konva from 'konva';
+import { fontEpoch, onFontsChanged, requestFont } from '../../../engine/text/fontEpoch';
 import {
   fitFontSize,
   overflowsAtMinimum,
@@ -100,42 +101,41 @@ const CACHE_LIMIT = 2000;
  * Webfonts arrive after the first paint, and every fitted size measured before
  * they do is wrong.
  *
- * Canvas text measurement uses whatever font is resolvable *at that moment*.
- * Caveat is fetched from Google Fonts, so the first render of a board measures
- * against the fallback cursive — different metrics, different wrap, different
- * answer — and the notes then keep those sizes forever, because the result is
- * cached and nothing re-renders when the font lands. Notes look subtly wrong
- * on a cold load and correct on a warm one, which is the worst way for a bug
- * to present.
+ * The epoch itself lives in `fontEpoch`, along with the reasoning about why
+ * waiting on `document.fonts.ready` is not sufficient. Two things are owed to
+ * it from here.
  *
- * So: throw the cache away when the fonts settle, and let subscribers know so
- * they re-measure.
+ * The first is invalidation: a fitted size measured against fallback cursive
+ * must not survive the arrival of the real face, and neither must the probe
+ * that is bound to it.
  */
-let fontEpochValue = 0;
-const fontEpochListeners = new Set<() => void>();
+onFontsChanged(() => {
+  cache.clear();
+  probe = null;
+});
 
-export const stickyFontEpoch = {
-  get: (): number => fontEpochValue,
-  subscribe: (listener: () => void) => {
-    fontEpochListeners.add(listener);
-    return () => fontEpochListeners.delete(listener);
-  },
-};
+/**
+ * The second is asking for the face at all.
+ *
+ * Nothing in the DOM uses Caveat except the tour, which most people never see,
+ * so on an ordinary board the *only* thing that wants this font is the canvas
+ * -- and a canvas asks for it too late to be waited on reliably. Left to
+ * infer, the whole mechanism above would fire against a font that had not been
+ * requested yet and then never fire again. So we name it.
+ *
+ * 600 because that is the weight notes are drawn at, and `index.html` fetches
+ * it in a request of its own ahead of the rest of the families for this
+ * reason: it is the one face whose lateness is visible as a layout error
+ * rather than as a repaint.
+ */
+requestFont(`${STICKY_FONT_WEIGHT} 16px ${STICKY_FONT_FAMILY}`);
 
-if (typeof document !== 'undefined' && document.fonts?.ready) {
-  document.fonts.ready.then(() => {
-    cache.clear();
-    probe = null;
-    fontEpochValue += 1;
-    fontEpochListeners.forEach((fn) => fn());
-  });
-}
 
 export function stickyFit(text: string, boxWidth: number, boxHeight: number): StickyFit {
   // The font epoch is part of the key, not just a signal to callers: an entry
   // measured against the fallback face must never be served after the real one
   // loads, even if a clear were ever missed.
-  const key = `${fontEpochValue}|${boxWidth}|${boxHeight}|${text}`;
+  const key = `${fontEpoch.get()}|${boxWidth}|${boxHeight}|${text}`;
   const hit = cache.get(key);
   if (hit) return hit;
 

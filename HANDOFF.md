@@ -1484,6 +1484,99 @@ here" and "opened, and empty" into one absence so every empty board read "Not
 opened on this device"; `[hidden]` lost to an author `display` rule and left a
 tuning row on screen.
 
+## 4c. The library's landing, the save indicator, and one font bug
+
+### The pieces of chrome
+
+`Home.tsx` opens on **boards**, not templates. The gallery was the livelier
+screen and so it got the default, which is a designer's reason rather than a
+user's: somebody arriving has a board in mind far more often than a blank to
+fill, and templates are one click away either side.
+
+On the boards view, "Browse templates" is the last tile in the grid rather than
+a band beneath it, and it is built as `__art` + `__body` with the same
+`padding: var(--space-3) 2px 0` as `.tcard__body` and `.bcard__body`. It was
+one block with its words inside the picture area, so its title sat at the
+height of the other cards' *pictures* and the row read as two baselines.
+
+The rail's templates glyph is `Compass` at `size={18}` against `Layers` at 19.
+An earlier pass swapped it for `LayoutTemplate` on the theory that a compass's
+ink sits off-centre; that was simply wrong, lucide draws it as a circle centred
+in its viewbox. What is true is that a circle filling the whole viewbox carries
+more ink than the flatter layers glyph beside it, so at a matched nominal size
+it sits heavier. That is an optical-size problem with an optical-size fix.
+
+### The save indicator
+
+At rest this was a bare grey dot with no word beside it, on the reasoning that
+a state true almost all of the time does not earn standing chrome. The
+reasoning is right and the conclusion was wrong: a featureless grey dot does
+not mean "saved" to anybody who has not been told, so it communicated nothing
+at all for the same seven pixels.
+
+Now the resting mark is a **tick**, which already means "done" to everybody;
+offline is `CloudOff`; and only the in-flight state stays a dot, because a dot
+that pulses is the one thing here that genuinely means "wait". The word "Saved"
+folds in for 2600ms each time a save lands and then folds away -- that is the
+moment the word is worth anything, and the moment somebody learns what the tick
+means. The first paint counts as a landing, so the first thing seen in that
+corner is the word rather than a glyph to guess at.
+
+### One z-index scale
+
+`--z-canvas: 0`, `--z-canvas-overlay: 10`, `--z-chrome: 100`, `--z-flyout: 200`,
+`--z-panel-overlay: 300`, `--z-coach: 1080`, `--z-toast: 1100`,
+`--z-context-menu: 4000`, `--z-tour: 8000`, `--z-dialog: 9000`,
+`--z-tooltip: 9500`, `--z-skip-link: 10000`.
+
+This replaced a set of magic numbers that had been chosen one at a time, each
+one bidding higher than whatever it had lost to last. `.export-scrim` had
+reached `9999999` and `.tip` was on `10000`, which is the reported bug that
+tooltips rendered *behind* the export dialog. Add new layers to the scale, not
+above it.
+
+### The font epoch, and why measurements were wrong on a cold load
+
+**This is the interesting one, and it will come back if the mechanism is
+copied rather than reused.**
+
+Canvas text measurement uses whatever face is resolvable at that moment. Our
+display faces come from Google Fonts, so a board that measures before they
+arrive wraps against fallback metrics, fits the wrong size into a sticky, and
+then *keeps* that answer, because the result is memoised and nothing re-renders
+when the real face turns up. The symptom was sticky text sitting visibly off,
+corrected by a reload -- the worst way for a bug to present, because it does
+not reproduce for the person looking at it.
+
+There were two implementations of the fix. `measure.ts` had a working one:
+explicitly `document.fonts.load(...)` the face, and bump an epoch when *that*
+resolves. `stickyFit.ts` had a broken half of the same idea: it waited on
+`document.fonts.ready` alone.
+
+`document.fonts.ready` resolves when nothing is *currently* pending, which on a
+cold start is true well before a face we care about has been asked for. Canvas
+measurement does trigger a load in Blink, but asynchronously and only at the
+first measurement, so whether `ready` waits for it is a race against how fast
+the board's contents arrive over the network. Losing that race spent the one
+bump on nothing and left the fallback measurement cached for the life of the
+page. A reload finds the face in cache, where it resolves without a pending
+load to lose the race to -- hence "reload fixes it".
+
+Worse for stickies specifically: **nothing in the DOM uses Caveat** except the
+tour, which most people never see. The canvas was the only thing that wanted
+the font, and a canvas asks too late to be waited on.
+
+There is now one `engine/text/fontEpoch.ts`. It owns the epoch, the invalidator
+list, and `requestFont(spec)`, which is deduped -- both because `FontSelector`
+calls it per hover, and because a bump re-renders subscribers, so a renderer
+requesting a font while rendering would otherwise request it again on the
+render its own request caused. `ready` and `loadingdone` stay as backstops for
+faces the DOM pulled in. Invalidators run *before* subscribers, since a
+subscriber re-measures and every cache it reads must already be gone.
+
+Tested in `fontEpoch.test.ts`, including that ordering. If you need a face
+measured on canvas, call `requestFont`; do not infer arrival from `ready`.
+
 ## 5. Next up
 
 ### 5a. Verify what was built fast

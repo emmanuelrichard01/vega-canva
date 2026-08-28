@@ -6,7 +6,8 @@ import { collaboratorStore } from '../../../engine/presence/collaboratorStore';
 import { applyTextCase } from '../../../engine/model/textCase';
 import { contrastInk } from '../../../engine/model/color';
 import { layoutText, type TextLayout } from '../../../engine/text/layout';
-import { measurerFor, textFontEpoch, ensureFontLoaded } from '../../../engine/text/measure';
+import { measurerFor, ensureFontLoaded } from '../../../engine/text/measure';
+import { fontEpoch } from '../../../engine/text/fontEpoch';
 import { cycleColor, cycleRuns, cycleTotal, piecesBefore } from '../../../engine/text/colorCycle';
 import { highlightPath } from '../../../engine/text/highlight';
 import { useLiveTransform } from '../../../engine/model/liveTransformStore';
@@ -44,8 +45,8 @@ export const TextRenderer: React.FC<Props> = React.memo(({ node, visible }) => {
   const resize = live?.resize ?? node.resize;
 
   // Re-run the layout when the real font lands. Everything measured against a
-  // fallback face wrapped in the wrong place; see `textFontEpoch`.
-  const fontEpoch = React.useSyncExternalStore(textFontEpoch.subscribe, textFontEpoch.get);
+  // fallback face wrapped in the wrong place; see `fontEpoch`.
+  const epoch = React.useSyncExternalStore(fontEpoch.subscribe, fontEpoch.get, fontEpoch.get);
 
   const layout: TextLayout = React.useMemo(() => {
     const body = applyTextCase(node.text, t.textCase);
@@ -69,7 +70,7 @@ export const TextRenderer: React.FC<Props> = React.memo(({ node, visible }) => {
       measure: measurerFor(t),
     });
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [node.text, resize, width, height, t, fontEpoch]);
+  }, [node.text, resize, width, height, t, epoch]);
 
   /**
    * Keep the stored box in step with the text that is actually drawn.

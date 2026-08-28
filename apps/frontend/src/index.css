@@ -439,14 +439,32 @@
      stylesheet, which is how the tool dock's inline z-index of 10 silently
      overrode its own class's 100. Layers are named and ordered here, and
      nothing outside this list is allowed a z-index. */
+  /* ## The stack, and why the top of it moved
+     A tooltip inside the export dialog rendered *behind* it. The dialog's scrim
+     carried `z-index: 9999999` and the tooltip layer carried `10000`, which are
+     two numbers somebody picked in two different arguments with two different
+     things -- and this scale, which exists to settle exactly that, was used in
+     three places out of a dozen.
+
+     The order below is the only one that works: a dialog covers the
+     application, and a tooltip has to reach over whatever it is describing,
+     including a dialog. The values are spaced so a surface that has to sit
+     between two of them has somewhere to go without another argument.
+
+     The floating chrome -- notices, coach marks, the walkthrough -- sits under
+     the dialogs on purpose. None of them is modal, and a card explaining the
+     board on top of a dialog is a card explaining something you cannot see. */
   --z-canvas: 0;
   --z-canvas-overlay: 10;
   --z-chrome: 100;
   --z-flyout: 200;
   --z-panel-overlay: 300;
-  --z-dialog: 400;
-  --z-toast: 500;
-  --z-tooltip: 600;
+  --z-coach: 1080;
+  --z-toast: 1100;
+  --z-context-menu: 4000;
+  --z-tour: 8000;
+  --z-dialog: 9000;
+  --z-tooltip: 9500;
   --z-skip-link: 10000;
 }
 
@@ -2786,24 +2804,46 @@ textarea:focus-visible {
   transition: background-color var(--motion-hover), padding var(--motion-hover);
 }
 
+.sync-pip__mark {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  flex-shrink: 0;
+  color: var(--text-tertiary);
+}
+
 .sync-pip__dot {
   width: 7px;
   height: 7px;
   border-radius: 50%;
-  background: var(--text-tertiary);
-  flex-shrink: 0;
+  background: var(--status-syncing);
 }
 
-/* Only the two states that say something take the pill's ground and padding;
-   the resting dot sits on the header itself with nothing around it. */
-.sync-pip--syncing,
-.sync-pip--offline {
-  padding: 0 8px 0 6px;
-  background: var(--surface-hover);
+/* The pill's ground belongs to whatever is currently saying something. At rest
+   with the word folded away, the tick sits on the header with nothing round
+   it, which is the state that has earned the least furniture. */
+.sync-pip[data-said] { padding: 0 9px 0 6px; background: var(--surface-hover); }
+
+.sync-pip--offline .sync-pip__mark { color: var(--status-offline); }
+.sync-pip--offline[data-said] { background: color-mix(in srgb, var(--status-offline) 14%, transparent); }
+
+/* The word folds in and out rather than appearing. The pill is next to the
+   board's title, and a label that pops into a row of type twitches the whole
+   row; a width that opens carries the eye instead. */
+.sync-pip__label {
+  display: inline-block;
+  overflow: hidden;
+  animation: syncSaid 320ms var(--ease-settle) both;
 }
 
-.sync-pip--syncing .sync-pip__dot { background: var(--status-syncing); }
-.sync-pip--offline .sync-pip__dot { background: var(--status-offline); }
+@keyframes syncSaid {
+  from { opacity: 0; max-width: 0; transform: translateX(-4px); }
+  to   { opacity: 1; max-width: 90px; transform: none; }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .sync-pip__label { animation: none; }
+}
 
 /**
  * Saving breathes; offline does not.
@@ -2815,6 +2855,22 @@ textarea:focus-visible {
  */
 .sync-pip--syncing .sync-pip__dot {
   animation: syncPulse 1.4s var(--ease-settle) infinite;
+}
+
+/* The tick arrives with a small settle, once, when a save lands. It is the one
+   moment in this corner worth a movement at all. */
+.sync-pip--idle[data-said] .sync-pip__mark {
+  animation: syncTick 340ms var(--ease-settle) both;
+}
+
+@keyframes syncTick {
+  from { transform: scale(0.5); opacity: 0; }
+  60%  { transform: scale(1.12); opacity: 1; }
+  to   { transform: none; opacity: 1; }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .sync-pip--idle[data-said] .sync-pip__mark { animation: none; }
 }
 
 @keyframes syncPulse {
@@ -2978,7 +3034,9 @@ textarea:focus-visible {
  */
 .tip {
   position: fixed;
-  z-index: 10000;
+  /* Above the dialogs. A tip describes the thing under the pointer, and the
+     thing under the pointer is sometimes inside a modal. */
+  z-index: var(--z-tooltip);
   /* A column now, because a tip can carry a second line. A tip with only a
      name is a single row and measures exactly as it did. */
   display: flex;
@@ -6250,43 +6308,53 @@ textarea:focus-visible {
    As a tile it is the size and shape of its neighbours, it sits where the eye
    is already travelling, and the dashed edge says the only thing that needs
    saying: this one is not a board. */
+/* Built like a board card, because it stands in a row of them: a 16:10 picture
+   area, then the name and its line on the page beneath. It was one block with
+   the words inside the picture, so its title sat where the other cards' art
+   was and the row had two baselines. */
 .xtile {
   display: flex;
   flex-direction: column;
-  align-items: flex-start;
-  justify-content: flex-end;
-  gap: var(--space-3);
-  aspect-ratio: 16 / 10;
-  padding: var(--space-5);
-  border: 1px dashed var(--border-strong);
-  border-radius: var(--radius-xl);
   background: transparent;
+  border: none;
+  padding: 0;
   text-align: left;
   cursor: pointer;
-  transition: border-color var(--motion-hover), background-color var(--motion-hover);
-}
-
-.xtile:hover {
-  border-color: var(--accent);
-  background: color-mix(in srgb, var(--accent) 5%, transparent);
 }
 
 .xtile__art {
   display: flex;
   align-items: center;
   justify-content: center;
-  width: 44px;
-  height: 44px;
-  border-radius: var(--radius-lg);
-  background: var(--surface-secondary);
-  color: var(--text-secondary);
-  transition: background-color var(--motion-hover), color var(--motion-hover);
+  aspect-ratio: 16 / 10;
+  border-radius: var(--radius-xl);
+  border: 1px dashed var(--border-strong);
+  background: transparent;
+  color: var(--text-tertiary);
+  transition:
+    border-color var(--motion-hover),
+    background-color var(--motion-hover),
+    color var(--motion-hover),
+    transform var(--motion-hover);
 }
 
 .xtile:hover .xtile__art {
-  background: var(--accent-quiet, color-mix(in srgb, var(--accent) 14%, transparent));
+  transform: translateY(-3px);
+  border-color: var(--accent);
+  background: color-mix(in srgb, var(--accent) 6%, transparent);
   color: var(--accent-strong, var(--brand-orange));
 }
+
+.xtile:focus-visible { outline: none; }
+
+.xtile:focus-visible .xtile__art {
+  border-color: var(--accent);
+  box-shadow: 0 0 0 3px color-mix(in srgb, var(--accent) 40%, transparent);
+}
+
+/* The same padding as `.tcard__body` and `.bcard__body`, so the three sit on
+   one baseline. */
+.xtile__body { padding: var(--space-3) 2px 0; }
 
 .xtile__name {
   display: block;
@@ -6297,9 +6365,14 @@ textarea:focus-visible {
 
 .xtile__sub {
   display: block;
-  margin-top: 2px;
+  margin-top: 3px;
   font-size: var(--text-sm);
   color: var(--text-tertiary);
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .xtile__art { transition: none; }
+  .xtile:hover .xtile__art { transform: none; }
 }
 
 /* Flat, deliberately.
@@ -8881,7 +8954,9 @@ html.dark-theme,
 .tour {
   position: fixed;
   inset: 0;
-  z-index: 12000;
+  /* Over the application but under a dialog: the walkthrough points at the
+     board, and a modal has replaced the board while it is open. */
+  z-index: var(--z-tour);
   /* The board underneath stays yours. A tour that blocks the thing it is
      describing is a dialog wearing a costume. */
   pointer-events: none;
@@ -8940,8 +9015,17 @@ html.dark-theme,
   animation: tourInk 520ms var(--ease-settle) both;
 }
 
-.tour__ring  { animation-delay: 60ms; }
-.tour__shaft { animation-delay: 280ms; animation-duration: 420ms; }
+/* ## The whole mark in half a second
+   The sequence used to run for nine hundred milliseconds, which is a long time
+   to watch a drawing appear every time you press Next. A tour is six steps: at
+   that length the ink is the pace of the thing, and it should be quick enough
+   that pressing Next feels like turning a page.
+
+   The ring leads, the stroke follows it before it has finished, and the head
+   lands as the stroke arrives. They overlap on purpose -- a hand does not
+   finish one mark before beginning the next. */
+.tour__ring  { animation-delay: 0ms; animation-duration: 400ms; }
+.tour__shaft { animation-delay: 190ms; animation-duration: 300ms; }
 
 /* The head arrives whole, at the instant the shaft reaches it.
    Drawing it on was two strokes creeping outward from the tip, which is not
@@ -8951,7 +9035,7 @@ html.dark-theme,
 .tour__head {
   stroke-dasharray: none;
   stroke-dashoffset: 0;
-  animation: tourHead 160ms var(--ease-settle) 660ms both;
+  animation: tourHead 110ms var(--ease-settle) 450ms both;
 }
 
 @keyframes tourHead {
@@ -9132,7 +9216,7 @@ html.dark-theme,
   top: calc(var(--header-h, 52px) + 16px);
   left: 50%;
   translate: -50%;
-  z-index: 1080;
+  z-index: var(--z-coach);
   display: flex;
   align-items: center;
   gap: var(--space-4);
@@ -9355,7 +9439,7 @@ html.dark-theme,
   /* `translate`, not `transform`: the entrance animates transform, and
      centring with it is the trap DESIGN.md names. */
   translate: -50%;
-  z-index: 1090;
+  z-index: calc(var(--z-coach) + 10);
   display: flex;
   align-items: stretch;
   gap: var(--space-4);
@@ -10987,7 +11071,7 @@ body[data-zen='physics'] .forces-handle { bottom: 32px; }
 .export-scrim {
   position: fixed;
   inset: 0;
-  z-index: 9999999;
+  z-index: var(--z-dialog);
   display: flex;
   align-items: center;
   justify-content: center;
@@ -13417,7 +13501,7 @@ body[data-zen='physics'] .forces-handle { bottom: 32px; }
 
 .ctxmenu {
   position: fixed;
-  z-index: 9998;
+  z-index: var(--z-context-menu);
   min-width: 208px;
   padding: var(--space-2);
   border: 1px solid var(--border-divider);
@@ -13632,7 +13716,7 @@ body[data-zen='physics'] .forces-handle { bottom: 32px; }
   /* `translate`, not `transform` — `popIn` animates transform, and centring
      with it is the trap DESIGN.md names. */
   translate: -50%;
-  z-index: 1100;
+  z-index: var(--z-toast);
   display: flex;
   flex-direction: column;
   align-items: center;

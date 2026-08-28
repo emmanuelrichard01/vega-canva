@@ -1,7 +1,7 @@
 import React, { useEffect, useState, useRef, useSyncExternalStore } from 'react';
 import { useRoomState } from '../../hooks/useSync';
 import { CollaborationLayer } from './CollaborationLayer';
-import { Moon, Sun, Undo2, Redo2, Share2, Download, EyeOff, History, PanelLeft, MessageSquare, Settings2, HelpCircle } from 'lucide-react';
+import { Check, CloudOff, Moon, Sun, Undo2, Redo2, Share2, Download, EyeOff, History, PanelLeft, MessageSquare, Settings2, HelpCircle } from 'lucide-react';
 import { editor } from '../../engine/api/EditorAPI';
 import { useStore } from '../../hooks/useStore';
 import { railVeil } from '../../engine/interaction/railVeil';
@@ -72,17 +72,55 @@ export const WorkspaceShell: React.FC<Props> = ({ localTitle, setLocalTitle, onT
   const getSyncStatus = () => {
     if (status !== 'connected') {
       return {
-        /** The word beside the dot. Absent for the state that needs no word. */
         label: 'Offline',
-        text: 'Offline. Your changes are saved on this device and will sync when you reconnect',
+        text: 'Offline. Your work is safe on this device and will reach everyone else when you reconnect.',
         tone: 'offline' as const,
       };
     }
-    if (!synced) return { label: 'Saving', text: 'Saving your changes', tone: 'syncing' as const };
-    return { label: null, text: 'All changes saved', tone: 'idle' as const };
+    if (!synced) return { label: 'Saving', text: 'Sending your latest changes.', tone: 'syncing' as const };
+    return { label: 'Saved', text: 'Saved. Everyone on this board has your latest changes.', tone: 'idle' as const };
   };
 
   const syncStatus = getSyncStatus();
+
+  /**
+   * "Saved" is said, and then it stops being said.
+   *
+   * ## What was wrong with the dot
+   *
+   * At rest this was a bare grey circle with no word beside it, on the
+   * reasoning that a state which is true almost all of the time does not earn
+   * standing chrome. The reasoning is right and the conclusion was wrong: a
+   * featureless grey dot does not mean "saved" to anybody who has not been
+   * told, so what it actually communicated was nothing at all, which is worse
+   * value for the same seven pixels.
+   *
+   * Two changes. The resting mark is a tick rather than a dot, because a tick
+   * already means "done" to everybody and needs no legend. And the word
+   * appears for a few seconds each time a save lands, then folds away again --
+   * which is the moment the word is worth anything, and the moment somebody
+   * learns what the tick beside it means.
+   *
+   * The first paint counts as a landing, so the very first thing anybody sees
+   * in this corner is the word, not the glyph they would have had to guess.
+   */
+  const [justSaved, setJustSaved] = useState(true);
+  const wasSyncing = useRef(false);
+
+  useEffect(() => {
+    const settled = status === 'connected' && synced;
+    if (settled && wasSyncing.current) setJustSaved(true);
+    wasSyncing.current = !settled;
+  }, [status, synced]);
+
+  useEffect(() => {
+    if (!justSaved) return;
+    const t = window.setTimeout(() => setJustSaved(false), 2600);
+    return () => window.clearTimeout(t);
+  }, [justSaved]);
+
+  /** Anything that is not the resting state always says what it is. */
+  const showLabel = syncStatus.tone !== 'idle' || justSaved;
 
   // The overflow menu. Closes on Escape and on a press outside — a menu that
   // only closes by re-pressing its own button is one people leave open.
@@ -224,14 +262,28 @@ export const WorkspaceShell: React.FC<Props> = ({ localTitle, setLocalTitle, onT
           */}
         <span
           className={`sync-pip sync-pip--${syncStatus.tone}`}
+          data-said={showLabel || undefined}
           data-tooltip={syncStatus.text}
           data-tooltip-pos="bottom"
           role="status"
           aria-live="polite"
           aria-label={syncStatus.text}
         >
-          <span className="sync-pip__dot" aria-hidden />
-          {syncStatus.label && <span className="sync-pip__label">{syncStatus.label}</span>}
+          {/* A tick, not a dot. "Done" is a shape everybody already knows;
+              a grey circle is a shape somebody has to be taught. Offline gets
+              its own glyph for the same reason, and only the in-flight state
+              stays a dot, because a dot that pulses is the one thing here that
+              genuinely means "wait". */}
+          <span className="sync-pip__mark" aria-hidden>
+            {syncStatus.tone === 'idle' ? (
+              <Check size={13} strokeWidth={2.75} />
+            ) : syncStatus.tone === 'offline' ? (
+              <CloudOff size={13} />
+            ) : (
+              <span className="sync-pip__dot" />
+            )}
+          </span>
+          {showLabel && <span className="sync-pip__label">{syncStatus.label}</span>}
         </span>
       </div>
 
