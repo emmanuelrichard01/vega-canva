@@ -288,10 +288,6 @@ const setStoragePref = (key: string, value: string) => {
   }
 };
 
-/** Honour the OS setting until the user makes an explicit choice. */
-const prefersDarkScheme = () =>
-  typeof window !== 'undefined' && typeof window.matchMedia === 'function' && window.matchMedia('(prefers-color-scheme: dark)').matches;
-
 export const useStore = create<StoreState>((set) => ({
   objects: {},
   groups: {},
@@ -608,7 +604,30 @@ export const useStore = create<StoreState>((set) => ({
     setStoragePref('vega_snap_to_grid', String(val));
     set({ snapToGrid: val });
   },
-  darkTheme: loadBoolPref('vega_dark_theme', prefersDarkScheme()),
+  /**
+   * Light until somebody says otherwise.
+   *
+   * This used to follow `prefers-color-scheme`, which is the right default for
+   * a *reading* surface and the wrong one here, for two reasons.
+   *
+   * The artwork is the subject. A board is a light page with colour on it, and
+   * the chrome is a frame around that page: dark chrome around a light canvas
+   * is a deliberate choice some people love, not a thing to be handed to half
+   * the audience by their operating system. Every colour decision in this
+   * product -- the palettes, the sticky themes, the default fills -- was made
+   * against a light ground, and they are what people are judging.
+   *
+   * And the first impression should not be a coin toss. This is a tool people
+   * are shown by a colleague and arrive at through a link; two machines opening
+   * the same board and disagreeing about what the product looks like is a
+   * weaker introduction than either one on its own.
+   *
+   * The cost is real and worth naming: somebody who has set their system to
+   * dark has expressed a preference, and this ignores it for one session. The
+   * toggle is in the workspace menu, it is one click, and the answer persists
+   * for ever after. That is the trade.
+   */
+  darkTheme: loadBoolPref('vega_dark_theme', false),
   setDarkTheme: (val) => {
     setStoragePref('vega_dark_theme', String(val));
     set({ darkTheme: val });

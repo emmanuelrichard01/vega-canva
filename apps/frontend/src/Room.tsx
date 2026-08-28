@@ -1,5 +1,5 @@
 import { nanoid } from 'nanoid';
-import React, { useState, useRef, useEffect, useSyncExternalStore, Suspense, lazy } from 'react';
+import React, { useState, useRef, useEffect, useCallback, useSyncExternalStore, Suspense, lazy } from 'react';
 import { Canvas } from './components/Canvas';
 import { AuthModal } from './components/AuthModal';
 import { WorkspaceShell } from './components/workspace/WorkspaceShell';
@@ -55,6 +55,7 @@ import { useBreakpoint } from './hooks/useBreakpoint';
 import { CanvasEmptyState } from './components/CanvasEmptyState';
 import { FirstRunGuide } from './components/FirstRunGuide';
 import { LessonCoach } from './components/learn/LessonCoach';
+import { learnState } from './engine/learn/learnState';
 import { DockCoach } from './components/DockCoach';
 import { buildPreview, savePreview } from './engine/model/boardPreview';
 import { previewColorOf, previewPointsOf } from './engine/model/previewPaint';
@@ -556,6 +557,19 @@ export default function Room() {
   const applyReplaySnapshot = useStore((s) => s.applyReplaySnapshot);
   const [isUiVisible, setIsUiVisible] = useState(true);
   /**
+   * Whether focus mode has ever been entered.
+   *
+   * A latch rather than a live reading, because the guide asks "have you found
+   * this" and the answer to that does not become false again when the chrome
+   * comes back. Reading `!isUiVisible` directly would tick the step while the
+   * guide was hidden and untick it the moment it could be seen, which is a
+   * checklist that never appears to complete.
+   */
+  const [hasUsedZen, setHasUsedZen] = useState(false);
+  useEffect(() => {
+    if (!isUiVisible) setHasUsedZen(true);
+  }, [isUiVisible]);
+  /**
    * Read by the template effect, which runs once on mount and must not list
    * `isUiVisible` as a dependency — doing so would re-seed the board every
    * time the chrome was toggled.
@@ -624,26 +638,64 @@ export default function Room() {
    * marks make. A collaborator's screen must not change because you collapsed
    * your own inspector.
    *
-   * They start expanded so nothing has moved for anyone who liked the old
-   * layout; the point is that the space can now be *taken back*, not that it
-   * is taken away by default.
+   * ## Why all three now start closed
+   *
+   * They used to start open, on the argument that nothing should move for
+   * anyone who liked the old layout. That was the right call at the time and it
+   * is the wrong default for a first visit: two fixed 260px panels and a radar
+   * spend most of a laptop window before anything is on the board, and what
+   * they spend it on is a layer list with nothing in it and an inspector with
+   * nothing selected. The first thing anybody sees is the canvas at half size,
+   * surrounded by empty controls.
+   *
+   * Closed, the board opens at nearly full width and the three rails still say
+   * what they are. The cost is that a newcomer might not learn what is behind
+   * them, and that is paid for directly: `panel-properties` is offered the
+   * first time something is selected and `panel-layers` once there is enough on
+   * the board to be worth navigating. Teaching at the moment of use beats
+   * showing an empty panel for ever in the hope it is noticed.
+   *
+   * Anybody who has already expressed a preference keeps it: the check is for
+   * the stored value being `expanded`, so only a browser that has never been
+   * told gets the new default.
    */
   const [leftExpanded, setLeftExpanded] = useState(
-    () => localStorage.getItem('vega_panel_left') !== 'collapsed'
+    () => localStorage.getItem('vega_panel_left') === 'expanded'
   );
   const [rightExpanded, setRightExpanded] = useState(
-    () => localStorage.getItem('vega_panel_right') !== 'collapsed'
+    () => localStorage.getItem('vega_panel_right') === 'expanded'
   );
-  // Shown by default. It was briefly opt-in to reclaim its footprint, but the
-  // radar is how you answer "where is everything, and where is everyone" on a
-  // surface with no edges — a question you have continuously, not one you
-  // think to go looking for. Collapsing it stays one click away and persists.
   const [radarOpen, setRadarOpen] = useState(
-    () => localStorage.getItem('vega_radar') !== 'collapsed'
+    () => localStorage.getItem('vega_radar') === 'expanded'
   );
   useEffect(() => {
     localStorage.setItem('vega_panel_left', leftExpanded ? 'expanded' : 'collapsed');
   }, [leftExpanded]);
+
+  /**
+   * Opening a panel is what "learned" means for a panel lesson.
+   *
+   * The coach retires a *tool* lesson by watching for a new object, which is a
+   * loose test that costs nothing when it is wrong. Opening a panel makes
+   * nothing, so that test can never fire, and these three call sites are the
+   * exact answer instead. Three is affordable; sixteen, one per tool, would not
+   * have been.
+   *
+   * The layers lesson covers the radar as well as the list, because both sit on
+   * the left edge and both answer the same question, so either one satisfies it.
+   */
+  const openLayers = useCallback(() => {
+    setLeftExpanded(true);
+    learnState.learn('panel-layers');
+  }, []);
+  const openProperties = useCallback(() => {
+    setRightExpanded(true);
+    learnState.learn('panel-properties');
+  }, []);
+  const openRadar = useCallback(() => {
+    setRadarOpen(true);
+    learnState.learn('panel-layers');
+  }, []);
   useEffect(() => {
     localStorage.setItem('vega_panel_right', rightExpanded ? 'expanded' : 'collapsed');
   }, [rightExpanded]);
@@ -1332,7 +1384,7 @@ export default function Room() {
             type="button"
             className="radar-summon"
             style={{ position: 'absolute', left: 16, bottom: 24, zIndex: 90 }}
-            onClick={() => setRadarOpen(true)}
+            onClick={openRadar}
             aria-label="Show the radar"
             data-tooltip="The whole board, and everyone on it"
             data-tooltip-pos="right"
@@ -1490,7 +1542,8 @@ export default function Room() {
               side="right"
               label="Design"
               count={selectedIds.length}
-              onExpand={() => setRightExpanded(true)}
+              live={selectedIds.length > 0}
+              onExpand={openProperties}
             />
           )}
         </div>
@@ -1517,7 +1570,7 @@ export default function Room() {
               side="left"
               label="Layers"
               count={Object.keys(commentObjects).length}
-              onExpand={() => setLeftExpanded(true)}
+              onExpand={openLayers}
             />
           )}
         </div>
@@ -1540,7 +1593,7 @@ export default function Room() {
       {isUiVisible && dockAnswered && (
         <FirstRunGuide
           hasShared={hasShared}
-          hasReclaimedSpace={!leftExpanded || !rightExpanded}
+          hasReclaimedSpace={hasUsedZen}
         />
       )}
 
@@ -1562,7 +1615,11 @@ export default function Room() {
         * second question. It is rendered *after* the guide so the stylesheet
         * can say that in one rule -- see `.guide:has(~ .coach)`.
         */}
-      <LessonCoach activeTool={activeTool} visible={isUiVisible && dockAnswered} />
+      <LessonCoach
+        activeTool={activeTool}
+        selectionCount={selectedIds.length}
+        visible={isUiVisible && dockAnswered}
+      />
 
       {/* FOCUS MODE.
           It used to be a light switch: every surface dropped at once, leaving

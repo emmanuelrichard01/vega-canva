@@ -1,5 +1,13 @@
-import React, { useEffect, useMemo, useRef, useState, useSyncExternalStore } from 'react';
-import { X, Search } from 'lucide-react';
+import React, {
+  useCallback,
+  useEffect,
+  useLayoutEffect,
+  useMemo,
+  useRef,
+  useState,
+  useSyncExternalStore,
+} from 'react';
+import { Search, Sparkles, X } from 'lucide-react';
 import { useFocusTrap } from '../hooks/useFocusTrap';
 import { TOOL_SHORTCUTS } from '../engine/tools/shortcuts';
 import { TOOL_NAMES } from '../engine/tools/toolNames';
@@ -354,6 +362,31 @@ const LessonCard: React.FC<{ lesson: Lesson }> = ({ lesson }) => {
   );
 };
 
+/**
+ * The part of a string that matched, marked.
+ *
+ * A search that filters but does not say *why* a row survived makes the reader
+ * re-run the query in their head on every result. On a list of a hundred
+ * shortcuts that is the difference between scanning and reading.
+ *
+ * First occurrence only, and case-insensitive against the already-lowercased
+ * query the rest of the panel filters with, so what is highlighted is exactly
+ * what was matched on. A second pass with different rules would be a second
+ * answer to one question.
+ */
+const Highlight: React.FC<{ text: string; q: string }> = ({ text, q }) => {
+  if (!q) return <>{text}</>;
+  const at = text.toLowerCase().indexOf(q);
+  if (at < 0) return <>{text}</>;
+  return (
+    <>
+      {text.slice(0, at)}
+      <mark className="help-mark">{text.slice(at, at + q.length)}</mark>
+      {text.slice(at + q.length)}
+    </>
+  );
+};
+
 const TIPS_TAB = 'tips';
 const ALL_TAB = 'all';
 
@@ -432,8 +465,33 @@ export const HelpModal: React.FC<Props> = ({ open, onClose }) => {
    */
   const paneRef = useRef<HTMLDivElement>(null);
   const railRef = useRef<HTMLDivElement>(null);
+  const searchRef = useRef<HTMLInputElement>(null);
+
+  /**
+   * One indicator that travels, rather than sixteen that light up.
+   *
+   * The difference is not decoration. A background that appears under whichever
+   * item was clicked gives the eye nothing to follow, so a category change is
+   * two separate events -- something went out over there, something came on
+   * over here -- and the reader has to find the new one. A single mark that
+   * moves is one event, and the eye is carried to the answer rather than
+   * sent looking for it.
+   *
+   * Measured rather than computed from an index: the rail has group headings
+   * between its items, of a height set by the stylesheet, so anything derived
+   * from the item's position in the list would be wrong by however many
+   * headings preceded it and would go wronger every time the type scale moved.
+   */
+  const [marker, setMarker] = useState<{ top: number; height: number } | null>(null);
 
   const sections = useMemo(buildSections, []);
+
+  /** Whether coach marks are still being offered, and the control to change it. */
+  const { muted } = useSyncExternalStore(
+    learnState.subscribe,
+    learnState.getSnapshot,
+    learnState.getSnapshot
+  );
 
   const q = query.trim().toLowerCase();
 
@@ -548,6 +606,38 @@ export const HelpModal: React.FC<Props> = ({ open, onClose }) => {
   }, [open]);
 
   /**
+   * Where the indicator goes, measured after layout and before paint.
+   *
+   * `useLayoutEffect` rather than `useEffect`: with the latter the mark is
+   * painted at its old position for one frame and then jumps, which on the
+   * first open means it flies in from wherever it happened to be.
+   */
+  useLayoutEffect(() => {
+    if (!open) return;
+    const el = railRef.current?.querySelector<HTMLElement>(`[data-cat="${activeTab}"]`);
+    setMarker(el ? { top: el.offsetTop, height: el.offsetHeight } : null);
+  }, [open, activeTab, categories.length, q]);
+
+  /**
+   * Typing anywhere in the panel goes to the search field.
+   *
+   * This is the screen people open when they cannot remember something, and
+   * the first thing anyone does with a wall of shortcuts is start typing. Any
+   * printable key with no modifier lands in the field, wherever focus happens
+   * to be, so the search is never something to aim at first.
+   *
+   * Modified keys are left alone, because this is also the screen where
+   * somebody is most likely to be *trying* a shortcut to see what it does.
+   */
+  const onPanelKeyDown = useCallback((e: React.KeyboardEvent) => {
+    if (e.metaKey || e.ctrlKey || e.altKey) return;
+    if (e.key.length !== 1) return;
+    const el = document.activeElement?.tagName;
+    if (el === 'INPUT' || el === 'TEXTAREA') return;
+    searchRef.current?.focus();
+  }, []);
+
+  /**
    * Up and down move through the rail, which a row of pills never offered.
    *
    * `role="tablist"` is a promise about the arrow keys as much as about the
@@ -586,15 +676,52 @@ export const HelpModal: React.FC<Props> = ({ open, onClose }) => {
         aria-modal="true"
         aria-labelledby="help-title"
         onPointerDown={(e) => e.stopPropagation()}
+        onKeyDown={onPanelKeyDown}
       >
         <header className="help-modal__head">
-          <h2 id="help-title">Keyboard &amp; Help</h2>
+          <div className="help-modal__title">
+            <h2 id="help-title">Everything you can do</h2>
+            {/**
+              * The two facts this panel knew and never said.
+              *
+              * `MOD` is worked out at the top of the file from three sources
+              * because getting it wrong tells every Mac user to press the wrong
+              * key -- and then the answer was only ever *used*, never
+              * explained, so a Windows user reading a colleague's screenshot
+              * had no way to translate. And the key that opens this is the one
+              * shortcut that cannot be found by opening this.
+              */}
+            <p className="help-modal__orient">
+              <kbd>{MOD}</kbd> is <kbd>Cmd</kbd> on a Mac and <kbd>Ctrl</kbd> everywhere else.
+              Press <kbd>?</kbd> any time to come back here.
+            </p>
+          </div>
+          <button className="btn-icon" onClick={onClose} aria-label="Close">
+            <X size={16} />
+          </button>
+        </header>
+
+        {/* Its own row, full width. It was wedged between the title and the
+            close button, which is the layout for a field nobody is expected to
+            use -- and this is the primary way anybody finds anything here. */}
+        <div className="help-modal__seek">
           <div className="help-modal__search">
-            <Search size={13} aria-hidden />
+            <Search size={14} aria-hidden />
             <input
+              ref={searchRef}
               value={query}
               onChange={(e) => setQuery(e.target.value)}
-              placeholder="Search shortcuts and tips…"
+              onKeyDown={(e) => {
+                // Down from the field enters the rail, so a search and the
+                // thing it found are one gesture apart.
+                if (e.key === 'ArrowDown') {
+                  e.preventDefault();
+                  railRef.current
+                    ?.querySelector<HTMLButtonElement>(`[data-cat="${activeTab}"]`)
+                    ?.focus();
+                }
+              }}
+              placeholder="Search shortcuts and tips"
               aria-label="Search shortcuts and tips"
               autoFocus
             />
@@ -602,17 +729,31 @@ export const HelpModal: React.FC<Props> = ({ open, onClose }) => {
               <button
                 type="button"
                 className="help-modal__clear"
-                onClick={() => setQuery('')}
+                onClick={() => {
+                  setQuery('');
+                  searchRef.current?.focus();
+                }}
                 aria-label="Clear search"
               >
                 <X size={12} />
               </button>
             )}
           </div>
-          <button className="btn-icon" onClick={onClose} aria-label="Close">
-            <X size={16} />
-          </button>
-        </header>
+
+          {/* The count, said once, where the typing is. The rail breaks it down
+              by category; this is the one number that answers "is it in here
+              at all", which is the question a query with no results leaves
+              hanging. */}
+          {q && (
+            <p className="help-modal__tally" role="status">
+              {totalRows + matchedTips.length === 0
+                ? 'Nothing matches'
+                : `${totalRows + matchedTips.length} ${
+                    totalRows + matchedTips.length === 1 ? 'match' : 'matches'
+                  }`}
+            </p>
+          )}
+        </div>
 
         <div className="help-modal__split">
           <div
@@ -623,6 +764,17 @@ export const HelpModal: React.FC<Props> = ({ open, onClose }) => {
             aria-label="Help categories"
             onKeyDown={onRailKeyDown}
           >
+            {/* The travelling mark. Behind the items and never in the tab
+                order: it is a drawing of which one is selected, and
+                `aria-selected` is what actually says so. */}
+            {marker && (
+              <span
+                className="help-rail__marker"
+                aria-hidden="true"
+                style={{ transform: `translateY(${marker.top}px)`, height: marker.height }}
+              />
+            )}
+
             {categories.map((cat) => {
               const isActive = activeTab === cat.id;
               const heading = cat.group && cat.group !== lastGroup ? cat.group : null;
@@ -639,11 +791,23 @@ export const HelpModal: React.FC<Props> = ({ open, onClose }) => {
                     tabIndex={isActive ? 0 : -1}
                     onClick={() => setActiveTab(cat.id)}
                     className={`help-rail__item ${isActive ? 'is-active' : ''} ${
-                      cat.count === 0 ? 'is-empty' : ''
+                      q && cat.count === 0 ? 'is-empty' : ''
                     }`}
                   >
+                    {cat.id === TIPS_TAB && (
+                      <Sparkles size={12} className="help-rail__mark" aria-hidden />
+                    )}
                     <span className="help-rail__label">{cat.label}</span>
-                    <span className="help-rail__count">{cat.count}</span>
+                    {/**
+                      * The count, only while searching.
+                      *
+                      * It is the search's other half: typing a word and seeing
+                      * eleven under Lines is an answer before you have gone
+                      * looking. At rest it is sixteen numbers nobody asked for,
+                      * and the rail should read as a table of contents rather
+                      * than as a spreadsheet.
+                      */}
+                    {q && <span className="help-rail__count">{cat.count}</span>}
                   </button>
                 </React.Fragment>
               );
@@ -664,22 +828,40 @@ export const HelpModal: React.FC<Props> = ({ open, onClose }) => {
               }`}
               key={activeTab}
             >
-              {visibleSections.map((section) => (
-                <section key={section.id} className="help-section">
+              {visibleSections.map((section, i) => (
+                <section
+                  key={section.id}
+                  className="help-section"
+                  // The stagger index, so a switch arrives as a sequence rather
+                  // than as a page appearing at once. Capped in the stylesheet.
+                  style={{ '--i': i } as React.CSSProperties}
+                >
                   <h3>{section.title}</h3>
                   {section.blurb && !q && <p className="help-section__blurb">{section.blurb}</p>}
                   <dl>
                     {section.rows.map((row) => (
+                      /**
+                       * What it does first, the keys second and right-aligned.
+                       *
+                       * They were the other way round. A shortcut sheet is read
+                       * by intent -- you know what you want and you are looking
+                       * for the key -- so leading with the key makes the reader
+                       * scan a column of symbols they do not yet care about.
+                       * Right-aligning the keys also puts them on a common
+                       * edge, which is what makes a long list scannable at all.
+                       */
                       <div key={row.keys + row.what} className="help-row">
                         <dt>
-                          {row.keys.split(' + ').map((k, i) => (
-                            <React.Fragment key={k + i}>
-                              {i > 0 && <span className="help-plus">+</span>}
+                          <Highlight text={row.what} q={q} />
+                        </dt>
+                        <dd>
+                          {row.keys.split(' + ').map((k, ki) => (
+                            <React.Fragment key={k + ki}>
+                              {ki > 0 && <span className="help-plus">+</span>}
                               <kbd>{k}</kbd>
                             </React.Fragment>
                           ))}
-                        </dt>
-                        <dd>{row.what}</dd>
+                        </dd>
                       </div>
                     ))}
                   </dl>
@@ -689,9 +871,14 @@ export const HelpModal: React.FC<Props> = ({ open, onClose }) => {
               {visibleTips.length > 0 && (
                 <section className="help-section help-section--tips">
                   <h3>Worth knowing</h3>
-                  {visibleTips.map((lesson) => (
-                    <LessonCard key={lesson.id} lesson={lesson} />
-                  ))}
+                  {/* Its own grid, because a lesson is a card and a shortcut
+                      table is a list of short lines. Sharing one measure sliced
+                      the cards in half; see `.help-section--tips`. */}
+                  <div className="help-lessons">
+                    {visibleTips.map((lesson) => (
+                      <LessonCard key={lesson.id} lesson={lesson} />
+                    ))}
+                  </div>
                 </section>
               )}
 
@@ -733,6 +920,49 @@ export const HelpModal: React.FC<Props> = ({ open, onClose }) => {
             </div>
           </div>
         </div>
+
+        {/**
+          * The one control this panel owed somebody.
+          *
+          * `LessonCoach` offers "Stop showing tips", and the note beside that
+          * button says the choice is reversible from the reference library.
+          * It was not: nothing here could turn them back on, which is the
+          * capability-with-no-honouring failure invariant 6 names, committed by
+          * the same change that wrote the promise.
+          *
+          * A switch rather than a button, because it is a state you can see
+          * rather than an action you have to guess the current effect of.
+          */}
+        <footer className="help-modal__foot">
+          <label className="help-modal__tips">
+            <button
+              type="button"
+              role="switch"
+              aria-checked={!muted}
+              className="grid-switch"
+              data-active={!muted || undefined}
+              onClick={() => (muted ? learnState.unmute() : learnState.mute())}
+            >
+              <span className="grid-switch__dot" />
+            </button>
+            <span>
+              Show tips on the canvas
+              <span className="help-modal__tips-hint">
+                {muted
+                  ? 'Off. Nothing will interrupt you.'
+                  : 'A tool you have not used yet explains itself once.'}
+              </span>
+            </span>
+          </label>
+
+          <button
+            type="button"
+            className="help-modal__reset"
+            onClick={() => learnState.reset()}
+          >
+            Show them all again
+          </button>
+        </footer>
       </div>
     </div>
   );

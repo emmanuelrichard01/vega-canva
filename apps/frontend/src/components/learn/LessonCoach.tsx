@@ -2,7 +2,14 @@ import React, { useEffect, useRef, useState, useSyncExternalStore } from 'react'
 import { X } from 'lucide-react';
 import { useStore } from '../../hooks/useStore';
 import { learnState } from '../../engine/learn/learnState';
-import { keyFor, lessonForTool, type Lesson } from '../../engine/learn/lessons';
+import {
+  keyFor,
+  LESSON_MOMENTS,
+  lessonForMoment,
+  lessonForTool,
+  type Lesson,
+  type LessonMoment,
+} from '../../engine/learn/lessons';
 import { LessonDemo } from './LessonDemo';
 
 /**
@@ -52,9 +59,20 @@ import { LessonDemo } from './LessonDemo';
 interface Props {
   /** The armed tool, straight from `Room`. */
   activeTool: string;
+  /** How many objects are selected, which is one of the two moments. */
+  selectionCount: number;
   /** Hidden with the rest of the chrome in focus mode. */
   visible: boolean;
 }
+
+/**
+ * When the board is worth navigating.
+ *
+ * Five is the point at which a layer list stops being a list of things you can
+ * already see. Below it the panel is real and useless, and offering it then
+ * teaches somebody that this product's suggestions are not worth reading.
+ */
+const ENOUGH_TO_NAVIGATE = 5;
 
 /**
  * How long a tool must stay armed before its lesson appears.
@@ -66,7 +84,7 @@ interface Props {
  */
 const SETTLE_MS = 550;
 
-export const LessonCoach: React.FC<Props> = ({ activeTool, visible }) => {
+export const LessonCoach: React.FC<Props> = ({ activeTool, selectionCount, visible }) => {
   const { muted } = useSyncExternalStore(
     learnState.subscribe,
     learnState.getSnapshot,
@@ -86,8 +104,28 @@ export const LessonCoach: React.FC<Props> = ({ activeTool, visible }) => {
    */
   const countAtShow = useRef(0);
 
-  const candidate = lessonForTool(activeTool);
-  const candidateId = candidate && !learnState.isLearned(candidate.id) ? candidate.id : null;
+  /**
+   * The tool wins over the moment.
+   *
+   * Both can apply at once -- select something on a board of twenty and then
+   * reach for the grid tool -- and the tool is the more recent deliberate act.
+   * A moment is something that became true; a tool is something you asked for.
+   *
+   * `learnState` is read during render rather than through the snapshot,
+   * because the component is already subscribed for `muted` and `learn()`
+   * notifies the same listeners. One subscription, both facts.
+   */
+  const moments: Record<LessonMoment, boolean> = {
+    'first-selection': selectionCount > 0,
+    'several-objects': objectCount >= ENOUGH_TO_NAVIGATE,
+  };
+  const unlearned = (lesson: Lesson | undefined) =>
+    lesson && !learnState.isLearned(lesson.id) ? lesson : undefined;
+
+  const candidate =
+    unlearned(lessonForTool(activeTool)) ??
+    LESSON_MOMENTS.map((m) => (moments[m] ? unlearned(lessonForMoment(m)) : undefined)).find(Boolean);
+  const candidateId = candidate?.id ?? null;
 
   useEffect(() => {
     if (muted || !candidateId) {
@@ -96,21 +134,28 @@ export const LessonCoach: React.FC<Props> = ({ activeTool, visible }) => {
     }
     const t = window.setTimeout(() => {
       countAtShow.current = Object.keys(useStore.getState().objects).length;
-      setShown(lessonForTool(activeTool) ?? null);
+      setShown(candidate ?? null);
     }, SETTLE_MS);
     return () => window.clearTimeout(t);
-  }, [candidateId, muted, activeTool]);
+    // `candidate` is derived from `candidateId` and would re-run this on every
+    // render; the id is the thing that actually changes.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [candidateId, muted]);
 
   /**
    * Learned by doing.
    *
-   * One new object while the lesson is up is the proof that the gesture was
-   * performed. It is deliberately loose: the alternative is every tool
-   * reporting its own success, which would be sixteen call sites to keep in
-   * step for a feature whose worst failure is showing a hint one extra time.
+   * One new object while the lesson is up is the proof that a *tool* lesson's
+   * gesture was performed. It is deliberately loose: the alternative is every
+   * tool reporting its own success, which would be sixteen call sites to keep
+   * in step for a feature whose worst failure is showing a hint one extra time.
+   *
+   * A panel lesson cannot use this test -- opening a panel makes nothing -- so
+   * `Room` retires those explicitly when the panel is opened. Two call sites,
+   * and they are exact rather than loose, which is affordable at two.
    */
   useEffect(() => {
-    if (!shown) return;
+    if (!shown || shown.trigger.on !== 'tool') return;
     if (objectCount > countAtShow.current) {
       learnState.learn(shown.id);
       setShown(null);

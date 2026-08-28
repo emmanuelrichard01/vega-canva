@@ -68,7 +68,7 @@ Verify in ~30 seconds:
 
 ```bash
 npx tsc --noEmit -p apps/frontend/tsconfig.app.json   # must be silent
-npx vitest run --root apps/frontend                   # 2051 tests, 110 files
+npx vitest run --root apps/frontend                   # 2053 tests, 110 files
 npx vitest run --root apps/server                     # 10 tests, 1 file
 npx oxlint apps/frontend/src                          # 0 warnings, 0 errors, exit 0
 npm run build -w apps/frontend                        # must succeed
@@ -88,7 +88,7 @@ it disagrees with them, they are right and this is stale.
 | --- | --- |
 | Branch | `grid-slots-and-notices`, 43 ahead of `origin/main`. `main` is the default branch and the merge target; `rebuild/time-travel-and-physics` and `session-2` are history, not workspaces |
 | Typecheck | clean |
-| Tests | **2051** across 110 files (frontend); **10** across 1 file (server) |
+| Tests | **2053** across 110 files (frontend); **10** across 1 file (server) |
 | Lint | exits 0; 0 warnings, 0 errors across 448 files |
 | Build | clean. **32 JS chunks**, 2.2MB raw / ~730KB gzip, plus 167KB CSS. Largest: `Room` 519KB, `app-export` 443KB, `vendor-fontkit` 357KB, `vendor-konva` 310KB |
 
@@ -483,6 +483,65 @@ same arrangement `TooltipLayer` uses. What is worth knowing:
   a person; a burst of "Copied" must not carry it away.
 - One timer for the whole stack, re-aimed on every change, because a timer per
   notice leaks one whenever a notice is folded or evicted.
+
+## 4a-5. Light by default, panels closed, and the reference rebuilt
+
+**The app opens light.** `darkTheme` followed `prefers-color-scheme`, which is
+the right default for a reading surface and the wrong one here: every colour
+decision in this product was made against a light ground, and two machines
+opening the same board and disagreeing about what it looks like is a weaker
+introduction than either alone. The cost is named in the code rather than
+hidden: somebody who set their system to dark has expressed a preference and
+this ignores it for one session. The toggle persists for ever after.
+
+**All three panels start closed.** Two 260px panels and a radar spent most of a
+laptop window before anything was on the board, on a layer list with nothing in
+it and an inspector with nothing selected. Only a browser that has never been
+told gets the new default: the check is now for the stored value being
+`expanded`, so anyone who already chose keeps their choice.
+
+What that costs is discoverability, and it is paid back directly rather than
+hoped away. Lessons gained a second kind of trigger: a **moment** rather than a
+tool. `panel-properties` is offered the first time something is selected, and
+`panel-layers` once there are five objects, which is where a layer list stops
+being a list of things you can already see. Both are retired explicitly by
+`Room` when the panel is opened, because opening a panel makes no object and the
+coach's loose "something appeared" test can never fire for them. Three call
+sites, exact; sixteen, one per tool, would not have been affordable.
+
+`FirstRunGuide`'s second step went with it. "Collapse either panel" was
+satisfied on the first frame once the panels started closed, so it completed
+itself before it could teach anything. It is focus mode now, latched, because
+the question is "have you found this" and that does not become false again.
+
+**The collapsed rail is one button.** It was two stacked controls firing the
+same action, with a note explaining that making one inert would be a trap. That
+note was right about the problem and wrong about the fix: two controls for one
+action are still two, and they spent the rail's best rows on a decision nobody
+has to make. The whole 52px strip is the target now, the chevron appears on
+hover to say which way things will move, and the right-hand rail shows a dot
+rather than a number because on that side the number is the size of a selection
+you can already see.
+
+**The reference panel.** Search moved out of the header onto its own full-width
+row, with a live match count; typing anywhere in the panel goes to it, and Down
+enters the rail. Matches are highlighted, so a filter says *why* a row survived.
+Rows were flipped to description-first with the keys right-aligned on a common
+edge, which is how a sheet read by intent should be scanned. The rail's counts
+appear only while searching, and selection is one mark that travels between
+items rather than sixteen that light up. The header also finally says the two
+things this panel knew and never told anyone: that `Cmd` is `Ctrl` off a Mac,
+and that `?` is the way back in.
+
+Two real faults came out of it. The lesson cards were being sliced by the
+shortcut tables' two-column text flow, with a card's picture at the foot of one
+column and its steps at the head of the next: they take `column-span: all` now
+and lay out as full-width cards, stacking their picture above the text by
+container query when the card is genuinely narrow. And the footer holds the
+control `LessonCoach` had been promising: its "Stop showing tips" note said the
+choice was reversible from the reference library, and nothing there could
+reverse it, which is a capability nothing honoured written by the same change
+that promised it.
 
 ## 4a-4. Onboarding, and one list of lessons
 

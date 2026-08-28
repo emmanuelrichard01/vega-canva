@@ -20,9 +20,15 @@ import { useStore } from '../hooks/useStore';
  *    premise of the product and it is completely invisible when you are alone.
  *    Nothing on a single-player canvas hints that a link is the whole
  *    invitation, or that you will see someone's cursor move as they work.
- * 2. **That the chrome gets out of the way.** Panels collapse and `\` gives
- *    the board the whole screen. Both are worth knowing and neither announces
- *    itself.
+ * 2. **That the chrome gets out of the way entirely.** `\` hands the board the
+ *    whole screen, dock and all, and nothing on screen announces it.
+ *
+ *    This step used to be "collapse a panel", satisfied by either side rail
+ *    being closed. The panels now *start* closed, so that condition is true on
+ *    the first frame and the step completed itself before it could teach
+ *    anything. What is left of the idea is the half the panels do not cover,
+ *    and the panels themselves are taught by `panel-layers` and
+ *    `panel-properties` at the moment each becomes useful.
  *
  * ## How it behaves
  *
@@ -43,7 +49,7 @@ const STORAGE_KEY = 'vega_guide_v1';
 interface Props {
   /** The share sheet has been opened at least once this session. */
   hasShared: boolean;
-  /** A panel has been collapsed, or focus mode entered. */
+  /** Focus mode has been entered at least once this session. */
   hasReclaimedSpace: boolean;
 }
 
@@ -63,8 +69,8 @@ export const FirstRunGuide: React.FC<Props> = ({ hasShared, hasReclaimedSpace })
       id: 'space',
       done: hasReclaimedSpace,
       icon: <Maximize2 size={15} />,
-      title: 'Take the space back',
-      body: 'Collapse either panel to widen the board, or press \\ to hand it the whole screen.',
+      title: 'Give it the whole screen',
+      body: 'Press \\ and every panel, rail and dock steps aside. They come back when you reach for them.',
     },
   ];
 
