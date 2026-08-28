@@ -2,11 +2,13 @@ import React, { useEffect, useMemo, useRef, useState } from 'react';
 import { useAuth } from './hooks/useAuth';
 import { nanoid } from 'nanoid';
 import {
-  AlertTriangle, ArrowRight, Compass, FileText, Layers, Link2, LogOut, Plus, Search, Sparkles,
+  AlertTriangle, ArrowRight, ChevronRight, Compass, FileText, Layers, Link2, LogOut, Plus,
+  Search, Sparkles, Undo2,
   SquarePen, UploadCloud, X,
 } from 'lucide-react';
 import { parseDocumentExport } from './engine/export/DocumentImport';
 import { looksLikeRoomCode, roomIdFromCode } from './engine/room/roomCode';
+import { notices$ } from './engine/ui/notices';
 import { stashPendingRestore, stashPendingTemplate } from './engine/export/pendingRestore';
 import {
   CATEGORIES, TEMPLATES, templatePreview,
@@ -23,7 +25,33 @@ interface RecentWorkspace {
   lastAccessed: number;
 }
 
+interface RemovedWorkspace extends RecentWorkspace {
+  removedAt: number;
+}
+
 const STORAGE_KEY = 'recentWorkspaces';
+
+/**
+ * Boards taken off this device, kept so they can be put back.
+ *
+ * ## Why removing one is the most dangerous click on this screen
+ *
+ * It is not a delete. The board is untouched, it is still on the server, and
+ * the link still opens it -- which is exactly what makes it dangerous, because
+ * it *reads* as the harmless one of the two. There are no accounts here, so
+ * this list is, for almost every board, the only record of its address. Losing
+ * the address is losing the work: the objects are all still there and nobody
+ * can ever reach them again.
+ *
+ * That was a single unconfirmed click on a small X that sits on a card people
+ * are aiming at with a pointer. So: an undo on the notice, for the moment it
+ * happens, and this list for afterwards, because a toast is gone in ten
+ * seconds and the realisation usually is not.
+ */
+const REMOVED_KEY = 'vega_removed_workspaces';
+
+/** Enough to cover a tidying session. Older ones fall off the end. */
+const REMOVED_LIMIT = 24;
 const VIEW_KEY = 'vega_home_view';
 
 /** Which half of the library the stage is showing. */
@@ -102,6 +130,8 @@ export const Home: React.FC = () => {
   const [view, setView] = useState<View>(initialView);
   const [category, setCategory] = useState<TemplateCategory | null>(null);
   const [query, setQuery] = useState('');
+  const [removedRooms, setRemovedRooms] = useState<RemovedWorkspace[]>([]);
+  const [shelfOpen, setShelfOpen] = useState(false);
   const [joinLink, setJoinLink] = useState('');
   /** Said when a code does not check out, rather than opening a phantom board. */
   const [joinError, setJoinError] = useState<string | null>(null);
@@ -130,6 +160,10 @@ export const Home: React.FC = () => {
       const saved = JSON.parse(localStorage.getItem(STORAGE_KEY) || '[]');
       if (Array.isArray(saved)) setRecentRooms(saved);
     } catch { /* corrupt localStorage entry — not worth surfacing */ }
+    try {
+      const gone = JSON.parse(localStorage.getItem(REMOVED_KEY) || '[]');
+      if (Array.isArray(gone)) setRemovedRooms(gone);
+    } catch { /* same */ }
   }, []);
 
   useEffect(() => { localStorage.setItem(VIEW_KEY, view); }, [view]);
@@ -312,14 +346,69 @@ export const Home: React.FC = () => {
     window.location.href = `/room/${roomId}`;
   };
 
-  /** Local only, and the label says so — there is no server-side deletion. */
-  const removeRoom = (e: React.MouseEvent, id: string) => {
+  const writeRecents = (next: RecentWorkspace[]) => {
+    localStorage.setItem(STORAGE_KEY, JSON.stringify(next));
+    setRecentRooms(next);
+  };
+
+  const writeRemoved = (next: RemovedWorkspace[]) => {
+    const capped = next.slice(0, REMOVED_LIMIT);
+    localStorage.setItem(REMOVED_KEY, JSON.stringify(capped));
+    setRemovedRooms(capped);
+  };
+
+  /**
+   * Take a board off this device, recoverably.
+   *
+   * Nothing is deleted -- see the note on `REMOVED_KEY` for why that is the
+   * problem rather than the reassurance. The board keeps existing and this
+   * list is the only thing that knew how to reach it, so the removal is
+   * undoable twice over: from the notice, and afterwards from the shelf under
+   * the grid.
+   *
+   * Restored to its old position rather than to the front. Putting it back
+   * where it was makes undo look like nothing happened, which is the whole
+   * point of an undo; putting it at the top makes the list reorder itself as a
+   * consequence of a mistake being corrected.
+   */
+  const removeRoom = (e: React.MouseEvent, room: RecentWorkspace) => {
     e.preventDefault();
     e.stopPropagation();
-    setRecentRooms((prev) => {
-      const next = prev.filter((r) => r.id !== id);
-      localStorage.setItem(STORAGE_KEY, JSON.stringify(next));
-      return next;
+
+    const index = recentRooms.findIndex((r) => r.id === room.id);
+    if (index < 0) return;
+
+    writeRecents(recentRooms.filter((r) => r.id !== room.id));
+    writeRemoved([{ ...room, removedAt: Date.now() }, ...removedRooms.filter((r) => r.id !== room.id)]);
+
+    notices$.notify({
+      message: `Removed “${room.name}” from this device. The board itself is untouched.`,
+      tone: 'info',
+      // Longer than a confirmation, because this is the one action here whose
+      // consequence is not visible in what is left on screen.
+      duration: 12000,
+      action: { label: 'Undo', run: () => putBack(room.id, index) },
+    });
+  };
+
+  /** Return a removed board to the list, at `index` when we still know it. */
+  const putBack = (id: string, index?: number) => {
+    setRemovedRooms((removed) => {
+      const entry = removed.find((r) => r.id === id);
+      if (!entry) return removed;
+
+      setRecentRooms((current) => {
+        if (current.some((r) => r.id === id)) return current;
+        const { removedAt: _removedAt, ...room } = entry;
+        const next = [...current];
+        next.splice(Math.min(index ?? next.length, next.length), 0, room);
+        localStorage.setItem(STORAGE_KEY, JSON.stringify(next));
+        return next;
+      });
+
+      const nextRemoved = removed.filter((r) => r.id !== id);
+      localStorage.setItem(REMOVED_KEY, JSON.stringify(nextRemoved));
+      return nextRemoved;
     });
   };
 
@@ -505,9 +594,9 @@ export const Home: React.FC = () => {
           </span>
           <button
             className="bcard__remove"
-            onClick={(e) => removeRoom(e, room.id)}
-            aria-label={`Remove ${room.name} from this list`}
-            data-tooltip="Remove from this list"
+            onClick={(e) => removeRoom(e, room)}
+            aria-label={`Remove ${room.name} from this device`}
+            data-tooltip="Remove from this device"
           >
             <X size={15} />
           </button>
@@ -778,6 +867,52 @@ export const Home: React.FC = () => {
           )}
 
           {view === 'boards' ? boardsBody : templatesBody}
+
+          {/**
+            * The shelf: boards taken off this device, and the way back.
+            *
+            * Quiet, and under everything, because on almost every visit it is
+            * empty and irrelevant. It exists for the visit where it is not --
+            * where somebody tidied a list, closed the notice, and then wanted
+            * one of them back. Without this the address is gone and the board
+            * is unreachable forever, which is a lot of consequence for a small
+            * X on a card people are already aiming at.
+            */}
+          {view === 'boards' && removedRooms.length > 0 && (
+            <section className="shelf">
+              <button
+                type="button"
+                className="shelf__toggle"
+                aria-expanded={shelfOpen}
+                onClick={() => setShelfOpen((o) => !o)}
+              >
+                <ChevronRight size={14} aria-hidden="true" className="shelf__chev" />
+                {removedRooms.length === 1
+                  ? '1 board removed from this device'
+                  : `${removedRooms.length} boards removed from this device`}
+              </button>
+
+              {shelfOpen && (
+                <>
+                  <p className="shelf__note">
+                    None of these was deleted. Each one still exists and still opens;
+                    this device simply stopped keeping the address.
+                  </p>
+                  <ul className="shelf__list">
+                    {removedRooms.map((room) => (
+                      <li key={room.id} className="shelf__row">
+                        <span className="shelf__name">{room.name}</span>
+                        <span className="shelf__when">Removed {formatDate(room.removedAt)}</span>
+                        <button type="button" className="shelf__put" onClick={() => putBack(room.id)}>
+                          <Undo2 size={14} aria-hidden="true" /> Put back
+                        </button>
+                      </li>
+                    ))}
+                  </ul>
+                </>
+              )}
+            </section>
+          )}
         </div>
       </main>
     </div>

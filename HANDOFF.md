@@ -1680,6 +1680,96 @@ This needs a pass with actual network profiling. Do not churn `manualChunks`
 without measuring both ways -- `python /tmp/measure.py` style accounting off
 `dist/index.html` is what the numbers above came from.
 
+## 4e. Room codes, backups that know themselves, and the riskiest click
+
+### A board id you can read out
+
+`engine/room/roomCode.ts`. A board is shared by sending its link, which fails
+the moment somebody cannot click one: reading it out on a call, typing it off a
+screen. The id is a `nanoid(10)` whose alphabet contains `l`, `I` and `1`, `O`
+and `0`, and both cases of everything.
+
+**It is not a shortened alias.** There is nowhere to keep a mapping, and a short
+alias would be a *weaker* way into a board than the link it stands for -- the id
+is the capability, so the weakest way in sets the security of the whole thing.
+The code is the id in Crockford's Base32. nanoid's alphabet is exactly 64
+symbols, so an id is exactly 60 bits, and 60 divides by 5: twelve symbols, no
+padding, no loss, and **every board that already exists has a code**.
+
+The thirteenth symbol is a checksum (Crockford's mod-37 scheme, computed by
+Horner so it needs no BigInt). It is the part that earns its place: without it a
+mistyped code is still a valid room id, so the app opened a *different* board,
+which did not exist, which meant an empty canvas and somebody certain their
+colleague's work was gone. Tested: every single-symbol typo is refused.
+
+### `roomFingerprint`, and why a backup must not contain the room id
+
+A JSON export is a file people attach to tickets and commit to repositories.
+The room id is not a name, it is the capability to edit the live board. Writing
+it into the export would mean committing a backup to a public repo hands the
+world edit access, and nothing about saving a backup suggests you are
+publishing a key.
+
+So the file carries a 32-bit FNV-1a fingerprint instead. It answers the only
+question the file has to answer -- "is this a backup of the board I am in?" --
+and identifies no board in particular: 32 bits over a 60-bit id means roughly
+2^28 boards share any value. **Truncation is doing the work here; a longer
+digest would be closer to the id it stands for.** Do not "improve" it to
+SHA-256.
+
+Exports also carry the board's `title` now, and `restoreDocument` puts it back
+on a *replace* (not on a merge -- the board is still itself). And the parser's
+`warnings`, which it has always produced and the dialog has always discarded,
+are listed before the irreversible button.
+
+### Removing a board from the library
+
+**This is the most dangerous click in the app and it does not look like it.**
+It is not a delete: the board is untouched, still on the server, and the link
+still opens it. That is what makes it dangerous. There are no accounts, so the
+recents list is for almost every board the only record of its address, and
+losing the address is losing the work -- every object still there and nobody
+able to reach it. It was one unconfirmed click on a small X sitting on a card
+people are aiming a pointer at.
+
+Two recoveries now. An Undo on the notice, which restores the entry *at its old
+index* so undo looks like nothing happened; and `vega_removed_workspaces`
+(capped at 24) behind a quiet shelf under the grid, because a toast is gone in
+ten seconds and the realisation usually is not.
+
+`NoticeLayer` moved from `Room` to `App` to make that possible -- it always
+documented itself as belonging at the document root, and being mounted inside
+`Room` meant the library had no way to say anything at all. It is
+`position: fixed` now rather than `absolute`, since it no longer hangs off the
+room's shell.
+
+### Two help-modal bugs worth remembering
+
+**A sentence is not a flex container.** `.help-modal__orient` was
+`display: flex; gap: 4px`, which makes every text node and every `<kbd>` a
+separate flex item. A sentence with three keys in it arrived as seven fragments
+stacked down the panel, and the gap put a visible space in front of every full
+stop that followed a key. Ordinary inline flow, `kbd` as `inline-block` with no
+margin. If you see text mysteriously fragmenting, check for a flex parent.
+
+The wording was also circular: the general form "`{MOD}` is `Cmd` on a Mac and
+`Ctrl` everywhere else" renders on Windows as "**Ctrl** is **Cmd** on a Mac and
+**Ctrl** everywhere else". It is written from the reader's machine now, in two
+sentences.
+
+**Opening was slow because it opens on "Everything"**, which builds every lesson
+card, every animated demo and every shortcut section before it can paint.
+`content-visibility: auto` with `contain-intrinsic-size` on `.help-lesson` and
+`.help-section` lets the browser skip what is below the fold -- which also holds
+the demos still, since those are CSS animations and one nobody can see is pure
+cost per frame.
+
+### And Cmd+P is Print
+
+It was a second opener for the command palette, with a `preventDefault()` on it.
+A shortcut that is wrong on every operating system is not a convenience. Held by
+a test.
+
 ## 5. Next up
 
 ### 5a. Verify what was built fast

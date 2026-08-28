@@ -6007,6 +6007,100 @@ textarea:focus-visible {
   .loadmark { animation: loadMarkIn 220ms var(--ease-settle) both; }
 }
 
+/* ------------------------------------------------------------------ shelf --- */
+
+/* Boards taken off this device, and the way back.
+   Under everything and set at the weight of a footnote, because on almost
+   every visit this is empty. It is not an archive and should not look like a
+   second library; it is a safety net for the one click on this screen whose
+   consequence is invisible. */
+.shelf {
+  margin-top: var(--space-8);
+  padding-top: var(--space-5);
+  border-top: 1px solid var(--border-divider);
+}
+
+.shelf__toggle {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 0;
+  border: none;
+  background: none;
+  color: var(--text-tertiary);
+  font-family: inherit;
+  font-size: var(--text-sm);
+  cursor: pointer;
+}
+
+.shelf__toggle:hover { color: var(--text-secondary); }
+
+.shelf__chev { transition: rotate var(--motion-hover); }
+.shelf__toggle[aria-expanded='true'] .shelf__chev { rotate: 90deg; }
+
+.shelf__note {
+  margin: var(--space-3) 0 var(--space-3);
+  max-width: 62ch;
+  color: var(--text-tertiary);
+  font-size: var(--text-xs);
+  line-height: 1.55;
+}
+
+.shelf__list {
+  margin: 0;
+  padding: 0;
+  list-style: none;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.shelf__row {
+  display: flex;
+  align-items: center;
+  gap: var(--space-3);
+  padding: var(--space-2) var(--space-3);
+  border-radius: var(--radius-md);
+}
+
+.shelf__row:hover { background: var(--surface-hover); }
+
+.shelf__name {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  color: var(--text-secondary);
+  font-size: var(--text-base);
+}
+
+.shelf__when {
+  flex-shrink: 0;
+  color: var(--text-tertiary);
+  font-size: var(--text-xs);
+}
+
+.shelf__put {
+  display: flex;
+  align-items: center;
+  gap: 5px;
+  flex-shrink: 0;
+  height: 28px;
+  padding: 0 var(--space-3);
+  border: 1px solid var(--border-divider);
+  border-radius: var(--radius-pill);
+  background: var(--surface-primary);
+  color: var(--text-secondary);
+  font-family: inherit;
+  font-size: var(--text-sm);
+  font-weight: var(--weight-medium);
+  cursor: pointer;
+  transition: border-color var(--motion-hover), color var(--motion-hover);
+}
+
+.shelf__put:hover { border-color: var(--border-strong); color: var(--text-primary); }
+
 /* ===========================================================================
    THE LIBRARY
    ---------------------------------------------------------------------------
@@ -9872,7 +9966,18 @@ html.dark-theme,
    Everything, one under a category, and a rail that narrows at 900px. A
    viewport breakpoint cannot see any of that and would be wrong in both
    directions. */
+/* Opening this used to build every lesson card, every animated demo inside
+   them and every shortcut section before the panel could paint -- and it opens
+   on "Everything", which is all of them at once.
+
+   `content-visibility` lets the browser skip the ones below the fold until
+   they are scrolled to. That also holds their demos still: those are CSS
+   animations, and an animation nobody can see is pure cost on every frame.
+   `contain-intrinsic-size` is the height to assume in the meantime, so the
+   scrollbar does not lurch as each one is reached. */
 .help-lesson {
+  content-visibility: auto;
+  contain-intrinsic-size: auto 360px;
   display: flex;
   flex-direction: column;
   gap: var(--space-4);
@@ -12705,18 +12810,28 @@ body[data-zen='physics'] .forces-handle { bottom: 32px; }
    said to nobody: `MOD` was computed from three sources and only ever used,
    and the key that opens this panel is the one shortcut you cannot look up by
    opening it. */
+/* A sentence, so it flows like one.
+   This was a flex row with a gap, which makes every text node and every <kbd>
+   a separate item that wraps on its own. A sentence with three keys in it
+   therefore arrived as seven fragments stacked down the panel -- "Ctrl", "is",
+   "Cmd", "on a Mac and", and so on, each on its own line -- and the 4px gap
+   put a visible space in front of every full stop that followed a key.
+   Ordinary inline flow was always the right layout here; the keys are
+   inline-block so their boxes do not disturb the line. */
 .help-modal__orient {
-  display: flex;
-  flex-wrap: wrap;
-  align-items: center;
-  gap: 4px;
   margin: 6px 0 0;
+  max-width: 62ch;
   color: var(--text-tertiary);
   font-size: var(--text-xs);
-  line-height: 1.7;
+  line-height: 1.9;
 }
 
 .help-modal__orient kbd {
+  display: inline-block;
+  /* No margin. The spaces either side come from the sentence itself, so a
+     margin here only shows up where the sentence has none -- which is exactly
+     where a key is followed by a full stop. */
+  margin: 0;
   padding: 1px 5px;
   border: 1px solid var(--border-divider);
   border-radius: var(--radius-sm);
@@ -13134,7 +13249,10 @@ body[data-zen='physics'] .forces-handle { bottom: 32px; }
   .help-rail__item { transition: none; }
 }
 
+/* Same reason as `.help-lesson`. */
 .help-section {
+  content-visibility: auto;
+  contain-intrinsic-size: auto 280px;
   break-inside: avoid;
   margin-bottom: var(--space-5);
 }
@@ -13920,7 +14038,10 @@ body[data-zen='physics'] .forces-handle { bottom: 32px; }
        confirmation to save two seconds.
 */
 .notice-layer {
-  position: absolute;
+  /* Fixed, not absolute: this hangs off the document root now rather than off
+     the room's shell, and an absolute layer there resolves against the initial
+     containing block and drifts with the library's scroll. */
+  position: fixed;
   bottom: calc(var(--dock-h, 64px) + 32px);
   left: 50%;
   /* `translate`, not `transform` — `popIn` animates transform, and centring

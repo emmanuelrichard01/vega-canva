@@ -4,6 +4,7 @@ import { PerformanceOverlay } from './components/PerformanceOverlay';
 import { TooltipLayer } from './components/ui/TooltipLayer';
 import { useStore } from './hooks/useStore';
 import { RouteLoader } from './components/ui/Loading';
+import { NoticeLayer } from './components/ui/NoticeLayer';
 
 const Room = lazy(() => import('./Room'));
 const Home = lazy(() => import('./Home').then((m) => ({ default: m.Home })));
@@ -39,6 +40,11 @@ function App() {
         {path.startsWith('/room/') ? <Room /> : <Home />}
       </Suspense>
       <PerformanceOverlay />
+      {/* At the root, which is what it always said it was for. It was mounted
+          inside `Room`, so the library had no way to say anything -- including
+          "removed, undo", which is the one place in this app where a click
+          costs somebody the only copy of a board's address. */}
+      <NoticeLayer />
       {/* At the app root, outside every panel — which is the whole point.
           A tooltip rendered inside a scrolling panel is clipped by it, and no
           z-index can lift it out. See `TooltipLayer`. */}

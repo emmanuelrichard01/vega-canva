@@ -61,6 +61,10 @@ const MOD = ((): string => {
   return /Mac|iPhone|iPad|iPod/i.test(claimed) ? 'Cmd' : 'Ctrl';
 })();
 
+/** The key the *other* sort of machine uses, for the note under the title. */
+const OTHER_MOD = MOD === 'Cmd' ? 'Ctrl' : 'Cmd';
+const OTHER_PLATFORM = MOD === 'Cmd' ? 'On Windows and Linux' : 'On a Mac';
+
 function buildSections(): Section[] {
   const tools: Shortcut[] = Object.entries(TOOL_SHORTCUTS).map(([id, key]) => ({
     keys: key,
@@ -692,10 +696,19 @@ export const HelpModal: React.FC<Props> = ({ open, onClose }) => {
               * explained, so a Windows user reading a colleague's screenshot
               * had no way to translate. And the key that opens this is the one
               * shortcut that cannot be found by opening this.
+              *
+              * The sentence itself has to be written from the reader's machine
+              * rather than about both at once. "`Ctrl` is `Cmd` on a Mac and
+              * `Ctrl` everywhere else" is what the general form rendered as on
+              * Windows: a definition that restates its own subject, with the
+              * one useful half -- what the *other* machine presses -- buried in
+              * a clause that reads as a contradiction. Two short sentences,
+              * one about this machine and one about the other, say the whole
+              * thing without ever needing to be parsed twice.
               */}
             <p className="help-modal__orient">
-              <kbd>{MOD}</kbd> is <kbd>Cmd</kbd> on a Mac and <kbd>Ctrl</kbd> everywhere else.
-              Press <kbd>?</kbd> any time to come back here.
+              Every shortcut below uses <kbd>{MOD}</kbd>. {OTHER_PLATFORM}, press{' '}
+              <kbd>{OTHER_MOD}</kbd> instead. <kbd>?</kbd> reopens this page.
             </p>
           </div>
           <button className="btn-icon" onClick={onClose} aria-label="Close">

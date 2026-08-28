@@ -36,7 +36,6 @@ import { useCanvasAudioRecording } from './hooks/useCanvasAudioRecording';
 import { useCanvasDropZone } from './hooks/useCanvasDropZone';
 import { startGridSlotSync } from './engine/grid/gridSlotApply';
 import { notify } from './engine/ui/notices';
-import { NoticeLayer } from './components/ui/NoticeLayer';
 import { useRoomClipboard } from './hooks/useRoomClipboard';
 import { useRoomContextMenuActions } from './hooks/useRoomContextMenuActions';
 
@@ -1310,7 +1309,6 @@ export default function Room() {
        * the wrong place. The header indicator owns it now and says more when
        * there is more to say.
        */}
-      <NoticeLayer />
 
       {/* WORKSPACE SHELL (Header & Navigation) */}
       {isUiVisible && (
