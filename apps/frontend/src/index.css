@@ -5734,12 +5734,16 @@ textarea:focus-visible {
       that is explicitly a brand moment.
    =========================================================================== */
 
+/* The one question this screen asks, at the size of a question rather than of
+   a form label. It sits under a 30px wordmark, so it has to be the larger of
+   the two or the identity reads as the heading. */
 .auth__title {
   margin: 0 0 8px;
-  font-size: 26px;
+  font-size: clamp(28px, 2.4vw, 34px);
   font-weight: 650;
-  line-height: 1.15;
-  letter-spacing: -0.03em;
+  line-height: 1.1;
+  letter-spacing: -0.035em;
+  text-wrap: balance;
   color: var(--text-primary);
 }
 
@@ -5757,44 +5761,63 @@ textarea:focus-visible {
 }
 
 /* No `outline: none` here, deliberately. The global focus rule owns this. */
+/* The one input on the screen, at the size of the one input on the screen.
+   It was 12px of padding and a 15px face, which is the size of a field in a row
+   of six. Here it is the whole interaction, and a taller box with a larger face
+   is the difference between a form and a question. */
 .auth__field {
-  padding: 12px 14px;
+  height: 52px;
+  padding: 0 16px;
   border: 1px solid var(--border-divider);
   border-radius: var(--radius-lg);
   background: var(--surface-primary);
   color: var(--text-primary);
-  font-size: 15px;
+  font-size: 16px;
   font-family: inherit;
-  transition: border-color var(--motion-hover);
+  transition: border-color var(--motion-hover), box-shadow var(--motion-hover);
 }
 
 .auth__field:hover { border-color: var(--border-strong); }
+
+/* A ring in the accent, not only the global outline. The global focus ring is
+   for controls inside a working surface; this is the field the screen exists
+   for, and it should look aimed at. */
+.auth__field:focus {
+  border-color: var(--accent);
+  box-shadow: 0 0 0 3px color-mix(in srgb, var(--accent) 18%, transparent);
+}
 .auth__field::placeholder { color: var(--text-tertiary); }
 
+/* Label first, control on the right. A row that reads left to right as
+   "this thing / its state" is the arrangement every settings row in this app
+   already uses, and it puts the switch on the same edge as the eye leaves. */
 .auth__remember {
   display: flex;
-  align-items: flex-start;
-  gap: 10px;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--space-4);
+  padding: 12px 14px;
+  border: 1px solid var(--border-divider);
+  border-radius: var(--radius-lg);
   cursor: pointer;
   user-select: none;
+  transition: border-color var(--motion-hover);
 }
 
-/* The browser's own accent, pointed at the product's. */
-.auth__check {
-  margin-top: 2px;
-  accent-color: var(--accent);
-  cursor: pointer;
-}
+.auth__remember:hover { border-color: var(--border-strong); }
 
 .auth__remember-label {
   font-size: var(--text-base);
-  line-height: 1.5;
-  color: var(--text-secondary);
+  font-weight: var(--weight-medium);
+  line-height: 1.4;
+  color: var(--text-primary);
 }
 
 .auth__remember-hint {
   display: block;
+  margin-top: 1px;
   font-size: var(--text-sm);
+  font-weight: var(--weight-regular);
   color: var(--text-tertiary);
 }
 
@@ -5804,7 +5827,8 @@ textarea:focus-visible {
   align-items: center;
   justify-content: center;
   gap: var(--space-2);
-  padding: 12px;
+  height: 52px;
+  margin-top: var(--space-2);
   border: none;
   border-radius: var(--radius-lg);
   background: var(--accent);
@@ -5813,19 +5837,35 @@ textarea:focus-visible {
   font-size: var(--text-md);
   font-weight: var(--weight-semibold);
   cursor: pointer;
-  transition: background-color var(--motion-hover);
+  transition:
+    background-color var(--motion-hover),
+    box-shadow var(--motion-hover),
+    transform var(--motion-hover);
 }
 
-.auth__submit:hover:not(:disabled) { background: var(--accent-hover); }
-.auth__submit:active:not(:disabled) { transform: translateY(1px); }
+/* Lifted on hover, in its own colour. A shadow tinted by the button is what
+   separates a primary action from a coloured rectangle, and it is the one place
+   on this screen where that is worth spending. */
+.auth__submit:hover:not(:disabled) {
+  background: var(--accent-hover);
+  box-shadow: 0 6px 18px -6px color-mix(in srgb, var(--accent) 70%, transparent);
+  transform: translateY(-1px);
+}
+
+.auth__submit:active:not(:disabled) { transform: translateY(0); box-shadow: none; }
 
 /* Disabled is a *quiet* state, not a dimmed accent. A faded orange still
    reads as the brand asking to be pressed; a neutral fill says the control is
-   waiting on you, which is what an empty name field means. */
+   waiting on you, which is what an empty name field means.
+
+   It also says so in words now. `cursor: not-allowed` and a grey fill are the
+   two ways an interface can refuse without explaining, and this one has a
+   reason that fits on the button. */
 .auth__submit:disabled {
   background: var(--surface-secondary);
   color: var(--text-tertiary);
-  cursor: not-allowed;
+  font-weight: var(--weight-medium);
+  cursor: default;
 }
 
 /* ===========================================================================
@@ -7758,8 +7798,8 @@ html.dark-theme,
    THE SHOWCASE — what this is, in the one free moment
    ---------------------------------------------------------------------------
    This absorbed the three-beat welcome card that used to open over the board.
-   Same three ideas, said while somebody types their name instead of one screen
-   later on the surface whose whole promise is not being interrupted.
+   Same ideas, said while somebody types their name instead of one screen later
+   on the surface whose whole promise is not being interrupted.
 
    Everything animated is `transform`, `opacity` and `filter`, so none of it
    causes layout while the app behind is still mounting.
@@ -7771,96 +7811,153 @@ html.dark-theme,
   flex-direction: column;
   justify-content: center;
   gap: var(--space-7);
-  padding: clamp(var(--space-6), 5vw, 72px);
+  padding: clamp(var(--space-6), 5vw, 76px);
   overflow: hidden;
-  /* Its own ink and accent, so the pane can be dark in both themes without
-     every child reaching for a different token than it would elsewhere. A
-     panel that is always dark needs one place where that is decided. */
-  --showcase-ink: #F8FAFC;
-  --showcase-accent: var(--brand-orange, #F0761E);
-  background: #090B11;
-  color: var(--showcase-ink);
   isolation: isolate;
+
+  /* ## The ground, as tokens
+     It was a hardcoded near-black with a light ink, which made the whole left
+     half of the first screen ignore the theme the person had just been asked
+     to choose two hundred pixels to its right. A panel that argues with the
+     setting beside it is worse than one with no setting at all.
+
+     Light is not the dark one inverted. Inverting gives a white panel next to a
+     white form, which is two blank halves and a hairline: the split stops
+     reading as a composition. So light is a *warm tinted page* -- paper with
+     colour blooming through it -- against the cool neutral of the form. The
+     two halves are then different materials, which is the thing that made the
+     dark version work in the first place. */
+  --showcase-bg: #FBF7F2;
+  --showcase-ink: #1A1613;
+  --showcase-accent: var(--brand-orange, #F3A024);
+  /* The three fields. Warm, cool and neutral, so the wash has a temperature
+     range rather than being one colour at three opacities. */
+  --showcase-glow-a: #F3A024;
+  --showcase-glow-b: #6B8CFF;
+  --showcase-glow-c: #FF7A59;
+  --showcase-glow-a-o: 0.2;
+  --showcase-glow-b-o: 0.14;
+  --showcase-glow-c-o: 0.1;
+  --showcase-grain-o: 0.24;
+  --showcase-vignette: 26%;
+  --showcase-hairline: 8%;
+
+  background: var(--showcase-bg);
+  color: var(--showcase-ink);
 }
 
-/* Two soft fields drifting against each other. A single gradient is a coloured
-   rectangle; two moving at different rates is depth, and depth is what stops a
-   flat panel reading as a placeholder. */
+.dark-theme .showcase {
+  --showcase-bg: #0A0C12;
+  --showcase-ink: #F6F7F9;
+  /* Dimmer in the dark, not brighter. A field at the same opacity over a
+     near-black ground has four times the contrast it had over paper, and the
+     whole panel starts to glow like a screensaver. */
+  --showcase-glow-a-o: 0.26;
+  --showcase-glow-b-o: 0.2;
+  --showcase-glow-c-o: 0.12;
+  --showcase-grain-o: 0.3;
+  --showcase-vignette: 52%;
+  --showcase-hairline: 11%;
+}
+
+/* Three soft fields on a slow drift.
+   Two was the first version and it read as a gradient with a wobble. Three at
+   different sizes, rates and directions never quite repeat against each other,
+   which is what makes a still panel feel lit rather than painted -- and none of
+   them is bright enough to be the thing you look at, which is the requirement:
+   this is the room, not the subject. */
 .showcase__wash {
   position: absolute;
-  inset: -20%;
+  inset: -25%;
   z-index: -1;
   pointer-events: none;
 }
 
+.showcase__field {
+  position: absolute;
+  border-radius: 50%;
+  filter: blur(110px);
+  will-change: transform;
+}
+
+.showcase__field--one {
+  width: 64%;
+  aspect-ratio: 1;
+  bottom: -6%;
+  right: -10%;
+  background: var(--showcase-glow-a);
+  opacity: var(--showcase-glow-a-o);
+  animation: showcaseFieldA 26s ease-in-out infinite alternate;
+}
+
+.showcase__field--two {
+  width: 58%;
+  aspect-ratio: 1;
+  top: -14%;
+  left: -12%;
+  background: var(--showcase-glow-b);
+  opacity: var(--showcase-glow-b-o);
+  animation: showcaseFieldB 34s ease-in-out infinite alternate;
+}
+
+.showcase__field--three {
+  width: 42%;
+  aspect-ratio: 1;
+  top: 34%;
+  left: 46%;
+  background: var(--showcase-glow-c);
+  opacity: var(--showcase-glow-c-o);
+  animation: showcaseFieldC 44s ease-in-out infinite alternate;
+}
+
+@keyframes showcaseFieldA {
+  from { transform: translate3d(0, 0, 0) scale(1); }
+  to   { transform: translate3d(-8%, -7%, 0) scale(1.16); }
+}
+
+@keyframes showcaseFieldB {
+  from { transform: translate3d(0, 0, 0) scale(1.1); }
+  to   { transform: translate3d(9%, 8%, 0) scale(0.92); }
+}
+
+@keyframes showcaseFieldC {
+  from { transform: translate3d(0, 0, 0) scale(0.9); }
+  to   { transform: translate3d(-12%, 10%, 0) scale(1.2); }
+}
+
 /* Grain.
-   A flat fill this large shows banding across the gradient behind it, and grain
-   is what breaks it up. Generated rather than fetched: a turbulence filter in a
-   data URI is about two hundred bytes and needs no request, where a noise tile
-   is a file to ship and a round trip to wait for. Very low opacity and blended,
-   so it reads as surface rather than as dirt. */
+   A fill this large bands across the gradient behind it, and grain is what
+   breaks it up. Generated rather than fetched: a turbulence filter in a data
+   URI is a couple of hundred bytes and needs no request, where a noise tile is
+   a file to ship and a round trip to wait for.
+
+   `soft-light` rather than `overlay`, because overlay over a pale ground
+   crushes the highlights into dirt. Soft-light keeps its hand off both ends. */
 .showcase__grain {
   position: absolute;
   inset: 0;
   z-index: -1;
   pointer-events: none;
-  opacity: 0.32;
-  mix-blend-mode: overlay;
+  opacity: var(--showcase-grain-o);
+  mix-blend-mode: soft-light;
   background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='180' height='180'%3E%3Cfilter id='n'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.85' numOctaves='3'/%3E%3C/filter%3E%3Crect width='180' height='180' filter='url(%23n)' opacity='0.5'/%3E%3C/svg%3E");
 }
 
-/* A vignette, so the corners fall away and the type is the brightest thing in
-   the panel. Drawn rather than achieved by dimming the orbs, because the orbs
-   are the light source and darkening a light source to darken its edges is the
-   wrong end of the problem. */
+/* A vignette, so the corners fall away and the type is the brightest thing.
+   In light it darkens; in dark it darkens further. Either way it is the same
+   direction of travel -- towards the ground colour -- so one rule with a token
+   for its strength covers both, and a light panel does not need a white
+   vignette that would wash its own edges out. */
 .showcase__vignette {
   position: absolute;
   inset: 0;
   z-index: -1;
   pointer-events: none;
   background: radial-gradient(
-    120% 90% at 50% 42%,
-    transparent 42%,
-    color-mix(in srgb, #000 55%, transparent) 100%
+    118% 88% at 50% 40%,
+    transparent 44%,
+    color-mix(in srgb, #000 var(--showcase-vignette), transparent) 100%
   );
-}
-
-/* Softer and further out than the first attempt, which put a bright field
-   under the whole left third and read as a colour cast rather than as depth.
-   The two are also placed away from the art and away from the type: a glow
-   behind either is contrast spent on decoration. */
-.showcase__orb {
-  position: absolute;
-  width: 66%;
-  aspect-ratio: 1;
-  border-radius: 50%;
-  filter: blur(120px);
-}
-
-.showcase__orb--one {
-  bottom: -20%;
-  right: -16%;
-  background: var(--showcase-accent);
-  opacity: 0.3;
-  animation: showcaseOrbA 22s ease-in-out infinite alternate;
-}
-
-.showcase__orb--two {
-  top: -16%;
-  left: -14%;
-  background: #3358FF;
-  opacity: 0.24;
-  animation: showcaseOrbB 27s ease-in-out infinite alternate;
-}
-
-@keyframes showcaseOrbA {
-  from { transform: translate3d(0, 0, 0) scale(1); }
-  to   { transform: translate3d(9%, 7%, 0) scale(1.14); }
-}
-
-@keyframes showcaseOrbB {
-  from { transform: translate3d(0, 0, 0) scale(1.08); }
-  to   { transform: translate3d(-8%, -6%, 0) scale(0.94); }
 }
 
 .showcase__stage {
@@ -7931,12 +8028,12 @@ html.dark-theme,
      and a real border would draw a box around a picture whose whole point is
      that it does not end. The wash inside it is a single stop of lift, which
      is what separates the frame from the panel without fencing it. */
-  box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--showcase-ink) 11%, transparent);
+  box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--showcase-ink) var(--showcase-hairline), transparent);
   background:
     linear-gradient(
       to bottom,
-      color-mix(in srgb, var(--showcase-ink) 6%, transparent),
-      color-mix(in srgb, var(--showcase-ink) 2%, transparent)
+      color-mix(in srgb, var(--showcase-ink) 5%, transparent),
+      color-mix(in srgb, var(--showcase-ink) 1.5%, transparent)
     );
   overflow: hidden;
 }
@@ -8003,7 +8100,7 @@ html.dark-theme,
 }
 
 .showcase__tick.is-active .showcase__tick-fill { transform: scaleX(1); }
-.showcase__tick-fill[data-running] { animation: showcaseTick 6800ms linear both; }
+.showcase__tick-fill[data-running] { animation: showcaseTick 7000ms linear both; }
 
 @keyframes showcaseTick {
   from { transform: scaleX(0); }
@@ -8052,18 +8149,32 @@ html.dark-theme,
    `hand--b` and the block it carries share a duration, a curve and an offset,
    which is the only reason the pair reads as one gesture rather than as two
    things that happen to be moving. Change one and change the other. */
+/* Selected, not moving. A ring that drifted would be a third thing in motion
+   and would stop reading as "somebody has this". It breathes instead, which is
+   what the board's own selection does while nobody is dragging it. */
+.showcase__picked { animation: showcasePicked 5.5s var(--ease-settle) infinite; }
+
+@keyframes showcasePicked {
+  0%, 100% { opacity: 0.86; }
+  50%      { opacity: 1; }
+}
+
 .showcase__hand--a { animation: showcaseHandA 9s var(--ease-settle) infinite alternate; }
 .showcase__hand--b { animation: showcaseHandB 10.5s var(--ease-settle) infinite alternate; }
 
+/* Ada holds the card she is dragging: her tip is on its bottom-left corner and
+   her chip hangs below it, in open ground. Same offset and same curve as the
+   card, which is the only reason the pair reads as one gesture. */
 @keyframes showcaseHandA {
-  from { transform: translate(214px, 20px); }
-  to   { transform: translate(250px, 44px); }
+  from { transform: translate(164px, 180px); }
+  to   { transform: translate(186px, 162px); }
 }
 
-/* The block's bottom-left corner, before and after. */
+/* Kai is beside what he has selected rather than on it: his chip needs sixty
+   clear units and the card is already ringed. */
 @keyframes showcaseHandB {
-  from { transform: translate(152px, 166px); }
-  to   { transform: translate(172px, 150px); }
+  from { transform: translate(56px, 122px); }
+  to   { transform: translate(84px, 140px); }
 }
 
 /* Carried. A cursor that only travels is a decoration; one that moves
@@ -8077,7 +8188,7 @@ html.dark-theme,
 
 @keyframes showcaseCarry {
   0%   { transform: translate(0, 0); }
-  100% { transform: translate(20px, -16px); }
+  100% { transform: translate(22px, -18px); }
 }
 
 /* The thread that breaks and rejoins. `stroke-dashoffset` rather than opacity:
@@ -8122,6 +8233,23 @@ html.dark-theme,
   100%    { opacity: 0; transform: scale(0.4); transform-origin: 160px 74px; }
 }
 
+/* The hand-drawn shape, drawing itself. `pathLength` normalises the two marks
+   so one rule covers a rectangle and an ellipse of different real lengths. */
+.showcase__pen path {
+  stroke-dasharray: 1;
+  stroke-dashoffset: 1;
+  animation: showcasePen 7s var(--ease-settle) infinite;
+}
+
+.showcase__pen path:nth-child(2) { animation-delay: 0.5s; }
+
+@keyframes showcasePen {
+  0%       { stroke-dashoffset: 1; }
+  26%      { stroke-dashoffset: 0; }
+  86%      { stroke-dashoffset: 0; }
+  100%     { stroke-dashoffset: 1; }
+}
+
 .showcase__node--a { animation: showcasePulse 5s var(--ease-settle) infinite; }
 .showcase__node--b { animation: showcasePulse 5s var(--ease-settle) 2.5s infinite; }
 
@@ -8134,7 +8262,9 @@ html.dark-theme,
   /* Every loop stops and every beat resolves to its finished state. The panel
      advances on click only in this mode: `AuthShowcase` never starts its timer,
      so there is nothing here that has to freeze mid-transition. */
-  .showcase__orb,
+  .showcase__field,
+  .showcase__picked,
+  .showcase__pen path,
   .showcase__drift,
   .showcase__near,
   .showcase__far,
@@ -8154,6 +8284,7 @@ html.dark-theme,
   .showcase__beat[data-state="leaving"] { opacity: 0; }
   .showcase__thread--live { stroke-dasharray: none; }
   .showcase__pulse { opacity: 0; }
+  .showcase__pen path { stroke-dasharray: none; stroke-dashoffset: 0; }
   .showcase__arrive,
   .showcase__join { opacity: 1; }
 }
@@ -8473,6 +8604,16 @@ html.dark-theme,
 /* Two chips on the auth form. Quiet, because the screen is asking a different
    question and this is a preference formed while looking at the page rather
    than a decision anybody came here to make. */
+/* What the two chips are choosing. */
+.auth__look-label {
+  margin: var(--space-2) 0 -2px;
+  color: var(--text-tertiary);
+  font-size: var(--text-2xs);
+  font-weight: var(--weight-semibold);
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+}
+
 .auth__look {
   display: flex;
   gap: 6px;

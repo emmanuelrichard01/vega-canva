@@ -119,10 +119,13 @@ export const AuthModal: React.FC = () => {
               your team in real-time" — which describes every product in this
               category and tells a first-time visitor nothing. This says what
               the name is *for*, which is the only reason the field exists. */}
+          {/* One sentence. It said three, and the last two were a claim
+              about the product -- no accounts, a link is the invitation --
+              which the panel beside it now spends a whole beat on. Repeating
+              it here made the form argue for the product instead of asking its
+              question. */}
           <p className="auth__lede">
-            Your name and colour are how everyone else sees you on the board.
-            There are no accounts and no passwords. A room link is the whole
-            invitation.
+            Your name and colour are how everyone else on the board sees you.
           </p>
         </div>
 
@@ -143,27 +146,48 @@ export const AuthModal: React.FC = () => {
             autoFocus
           />
 
+          {/**
+            * A switch rather than a native checkbox.
+            *
+            * It was the one control on the first screen anybody sees that
+            * looked like the operating system instead of like this app, next to
+            * a field and a button that had both been drawn by hand. And what it
+            * controls is a *state* that persists -- whether this browser
+            * remembers you -- which is what a switch means and what a checkbox,
+            * which usually means "include this in what I am submitting", does
+            * not.
+            *
+            * The same `grid-switch` the panels use, so there is one switch in
+            * this product rather than one per screen.
+            */}
           <label className="auth__remember">
-            <input
-              type="checkbox"
-              className="auth__check"
-              checked={remember}
-              onChange={(e) => setRemember(e.target.checked)}
-            />
             <span className="auth__remember-label">
               Remember me on this device
               <span className="auth__remember-hint">
                 {remember
-                  ? 'You will come back as the same person on this browser.'
+                  ? 'You come back as the same person on this browser.'
                   : 'This session ends when the tab closes.'}
               </span>
             </span>
+            <button
+              type="button"
+              role="switch"
+              aria-checked={remember}
+              className="grid-switch"
+              data-active={remember || undefined}
+              onClick={() => setRemember(!remember)}
+            >
+              <span className="grid-switch__dot" />
+            </button>
           </label>
 
           {/* Below the field and above the action, which is the order these
               are decided in: the name is what the screen is for, the look is a
               preference you form while looking at the page, and Continue is
               the end of both. */}
+          {/* Named, because two icons in a track is a control whose subject
+              has to be guessed at. */}
+          <p className="auth__look-label">Appearance</p>
           <div className="auth__look" role="radiogroup" aria-label="Appearance">
             {([
               [false, 'Light', <Sun size={14} aria-hidden key="s" />],
@@ -185,7 +209,8 @@ export const AuthModal: React.FC = () => {
           </div>
 
           <button type="submit" className="auth__submit" disabled={!ready}>
-            Continue <ArrowRight size={17} />
+            {ready ? 'Continue' : 'Enter a name to continue'}
+            {ready && <ArrowRight size={17} />}
           </button>
         </form>
       </div>

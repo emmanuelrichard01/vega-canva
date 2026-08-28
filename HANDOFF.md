@@ -484,6 +484,41 @@ same arrangement `TooltipLayer` uses. What is worth knowing:
 - One timer for the whole stack, re-aimed on every change, because a timer per
   notice leaks one whenever a notice is folded or evicted.
 
+## 4a-7. The way in, in both themes
+
+**The showcase belongs to the theme now.** It was a hardcoded near-black with a
+light ink, so the whole left half of the first screen ignored the setting the
+person had just been asked to choose two hundred pixels to its right. Light is
+not the dark one inverted, which would put a white panel next to a white form
+and leave the split with no composition: light is a warm tinted page against the
+form's cool neutral, so the two halves are different materials. Every colour is
+a token, dimmer in the dark because a field at the same opacity over near-black
+has four times the contrast it had over paper.
+
+Three drifting fields rather than two, at different sizes, rates and
+directions, so they never quite repeat; grain at `soft-light` rather than
+`overlay`, which crushed the highlights of a pale ground into dirt; and a
+vignette whose strength is a token, always travelling towards the ground colour.
+
+**A fourth beat, drawn by `rough.ts`.** "Ruled, or drawn by hand" shows the same
+rectangle and ellipse twice, one drafted and one made by the generator the canvas
+actually renders sketched shapes with. It is the one claim on that screen that
+could not be copied off a marketing page without building the feature first. The
+first version compared a rounded ruled rect against a sharp drawn one with no
+ellipse, which read as two different drawings rather than one done two ways.
+
+**The people beat shows what each person is doing.** Two cursors travelling is a
+screensaver. They carry names now, and one is dragging a card while the other has
+something selected with a ring in their own colour, which are the two states the
+board actually shows a collaborator in.
+
+**The form.** One sentence of lede instead of three, because the last two made a
+claim the panel beside it now spends a whole beat on. A 52px field with an
+accent focus ring, since it is the only input on the screen. The native checkbox
+became the app's own switch, which is also the right control for a state that
+persists rather than one that is submitted. The disabled button says why it is
+disabled. The appearance chips got a label.
+
 ## 4a-6. The walkthrough, drawn by the product's own pen
 **Refinements after looking at it.** The arrow's landing point was written out
 per side, which is four approximations of one fact: against a wide flat target
