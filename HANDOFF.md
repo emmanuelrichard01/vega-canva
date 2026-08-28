@@ -68,7 +68,7 @@ Verify in ~30 seconds:
 
 ```bash
 npx tsc --noEmit -p apps/frontend/tsconfig.app.json   # must be silent
-npx vitest run --root apps/frontend                   # 2040 tests, 109 files
+npx vitest run --root apps/frontend                   # 2051 tests, 110 files
 npx vitest run --root apps/server                     # 10 tests, 1 file
 npx oxlint apps/frontend/src                          # 0 warnings, 0 errors, exit 0
 npm run build -w apps/frontend                        # must succeed
@@ -88,7 +88,7 @@ it disagrees with them, they are right and this is stale.
 | --- | --- |
 | Branch | `grid-slots-and-notices`, 43 ahead of `origin/main`. `main` is the default branch and the merge target; `rebuild/time-travel-and-physics` and `session-2` are history, not workspaces |
 | Typecheck | clean |
-| Tests | **2040** across 109 files (frontend); **10** across 1 file (server) |
+| Tests | **2051** across 110 files (frontend); **10** across 1 file (server) |
 | Lint | exits 0; 0 warnings, 0 errors across 448 files |
 | Build | clean. **32 JS chunks**, 2.2MB raw / ~730KB gzip, plus 167KB CSS. Largest: `Room` 519KB, `app-export` 443KB, `vendor-fontkit` 357KB, `vendor-konva` 310KB |
 
@@ -483,6 +483,58 @@ same arrangement `TooltipLayer` uses. What is worth knowing:
   a person; a burst of "Copied" must not carry it away.
 - One timer for the whole stack, re-aimed on every change, because a timer per
   notice leaks one whenever a notice is folded or evicted.
+
+## 4a-4. Onboarding, and one list of lessons
+
+**There is one lesson store and two surfaces read it.** `engine/learn/lessons.ts`
+holds seventeen lessons, each a title, a gist and a run of gesture-and-result
+steps. The reference library renders the whole thing; the canvas coach renders
+one, with two steps, when you arm the tool it is about. `HelpModal`'s old `TIPS`
+array is gone: it taught the line tool, the connector, booleans and the physics
+room in its own words, and in-canvas coaching with a second set of words would
+have been two bodies of teaching text about one set of gestures. Teaching text
+drifts worst of all, because nobody updates the tutorial when they change the
+gesture.
+
+Lessons name tools, never keys. `keyFor` asks `TOOL_SHORTCUTS`, so anything
+advertised is bound by construction, and a test fails if a lesson names a tool
+that does not exist or if two lessons claim one tool.
+
+**Only unguessable gestures get one.** The eraser, the shape tool and the hand
+have none, deliberately: a coach mark on a guessable tool is what teaches people
+to dismiss coach marks unread. A test pins both halves of that.
+
+**It retires by doing.** `LessonCoach` remembers the object count when it
+appears and retires the lesson permanently when something is made while it is
+up. Glancing at one and wandering off brings it back next time, which is right
+for something you did not read. `learnState` keeps that in `localStorage` and
+never in the CRDT: what *you* have been taught is not a property of the board.
+One mute for all of them, reversible from the library.
+
+**Three surfaces share the band above the dock and now resolve in order.** The
+dock coach asks first and settles for good; the first-run guide and the lesson
+coach both wait one answer for it; and the lesson coach wins over the guide when
+both apply, because the guide is about the product and the lesson is about the
+tool in your hand. That last one is `.guide:has(~ .coach)` plus a deliberate
+render order in `Room`, rather than state plumbed through three components.
+
+**The welcome sequence is deleted and its content moved to the auth screen.**
+It was three beats in a card over the board, one screen after signing in. The
+auth screen was a 400px form floating in an empty page, so the screen *before*
+had a whole free half and the moment somebody types their name is the only
+moment in the product where attention is spare. `AuthShowcase` takes that half
+at full height. Saying it in both places would have been the duplication this
+file keeps warning about; saying it over the board interrupted the one surface
+whose promise is not being interrupted.
+
+**The demos are six scenes, not seventeen.** Several lessons are the same
+gesture underneath, and near-duplicate drawings are what drift. Two real bugs
+came out of looking at them rather than trusting them: the connector demo moved
+the box, the line and the arrowhead as one group, so the arrow did not follow
+the box, it *was* the box (it swings about the source's edge now, which is
+geometrically exact and something CSS can actually do); and the tap rings
+animated the SVG `r` attribute, which is not reachable from CSS in every engine,
+so they pulsed in Chrome and sat inert in Firefox.
 
 ## 4a-3. Reframing a picture inside its module
 

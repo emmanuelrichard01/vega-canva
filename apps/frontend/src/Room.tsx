@@ -54,7 +54,7 @@ import { cameraSystem } from './engine/CameraSystem';
 import { useBreakpoint } from './hooks/useBreakpoint';
 import { CanvasEmptyState } from './components/CanvasEmptyState';
 import { FirstRunGuide } from './components/FirstRunGuide';
-import { WelcomeSequence } from './components/WelcomeSequence';
+import { LessonCoach } from './components/learn/LessonCoach';
 import { DockCoach } from './components/DockCoach';
 import { buildPreview, savePreview } from './engine/model/boardPreview';
 import { previewColorOf, previewPointsOf } from './engine/model/previewPaint';
@@ -575,9 +575,10 @@ export default function Room() {
   /**
    * Whether the frame-or-canvas question has been answered.
    *
-   * Held here because two surfaces share one anchor above the dock, and only
-   * one of them may occupy it at a time — the coach asks first, the first-run
-   * guide takes over once it has settled.
+   * Held here because three surfaces share one anchor above the dock, and only
+   * one of them may occupy it at a time. The dock coach asks first; the
+   * first-run guide and the lesson coach both take over once it has settled,
+   * and the lesson coach wins over the guide when both apply.
    */
   const [dockAnswered, setDockAnswered] = useState(
     () => localStorage.getItem('vega_dock_coach_v1') === 'answered'
@@ -1522,10 +1523,11 @@ export default function Room() {
         </div>
       )}
 
-      {/* Once ever: what this is for. Everything that can be discovered by
-          using the product is taught in place instead — see `FirstRunGuide`
-          and `CanvasEmptyState`. */}
-      <WelcomeSequence />
+      {/* What this product is for is said on the way in, on the auth screen's
+          other half, while somebody types their name. There used to be a
+          three-beat card here saying the same three things one screen later,
+          which put an interruption on the one surface whose whole promise is
+          not being interrupted, and said it twice. See `AuthShowcase`. */}
 
       {/* What the screen cannot say for itself: that other people can be here,
           and that the chrome will get out of the way. Everything else a first
@@ -1541,6 +1543,26 @@ export default function Room() {
           hasReclaimedSpace={!leftExpanded || !rightExpanded}
         />
       )}
+
+      {/**
+        * The gesture a tool cannot describe, offered when the tool is picked up
+        * and retired the moment it is used. It reads the same lesson list the
+        * help screen does, so the canvas and the reference cannot teach one
+        * gesture two different ways.
+        *
+        * All three coaching surfaces share the band above the dock, and the
+        * order they resolve in is deliberate rather than incidental.
+        *
+        * The dock question comes first and settles for good, so this and the
+        * first-run guide both simply wait one answer for it.
+        *
+        * This and the guide can then both be true at once, and this one wins:
+        * the guide is about the product, this is about the tool now in your
+        * hand, and somebody who has just armed the grid tool is asking the
+        * second question. It is rendered *after* the guide so the stylesheet
+        * can say that in one rule -- see `.guide:has(~ .coach)`.
+        */}
+      <LessonCoach activeTool={activeTool} visible={isUiVisible && dockAnswered} />
 
       {/* FOCUS MODE.
           It used to be a light switch: every surface dropped at once, leaving

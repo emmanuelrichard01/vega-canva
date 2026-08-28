@@ -1,8 +1,11 @@
-import React, { useEffect, useMemo, useRef, useState } from 'react';
+import React, { useEffect, useMemo, useRef, useState, useSyncExternalStore } from 'react';
 import { X, Search } from 'lucide-react';
 import { useFocusTrap } from '../hooks/useFocusTrap';
 import { TOOL_SHORTCUTS } from '../engine/tools/shortcuts';
 import { TOOL_NAMES } from '../engine/tools/toolNames';
+import { keyFor, LESSONS, type Lesson } from '../engine/learn/lessons';
+import { learnState } from '../engine/learn/learnState';
+import { LessonDemo } from './learn/LessonDemo';
 
 interface Shortcut {
   keys: string;
@@ -29,11 +32,6 @@ interface Section {
 
 /** The order the groups appear in the rail, coarse to specialised. */
 const GROUPS = ['Basics', 'Drawing', 'Content', 'Workspace'] as const;
-
-interface Tip {
-  title: string;
-  body: string;
-}
 
 /**
  * `Cmd` on a Mac, `Ctrl` everywhere else — decided once, at the top.
@@ -301,58 +299,60 @@ function buildSections(): Section[] {
  * over CRDTs" fails both — it is true, it is invisible, and knowing it does not
  * change a single action anyone takes.
  */
-const TIPS: Tip[] = [
-  {
-    title: 'A line can turn corners',
-    body:
-      'Drag the Line tool for a straight one. Click instead, once per corner, for a route, then Enter to finish. Afterwards, double-click any line to move its points, or drag the small handle on a segment to bend it into an arc.',
-  },
-  {
-    title: 'Connectors follow their objects',
-    body:
-      'An arrow stores which two objects it joins, never a fixed coordinate, so rearranging a flowchart never breaks it. With the Connector tool (X), click one object and then the other; dragging between them works too.',
-  },
-  {
-    title: 'Aim at the middle, or at a spot',
-    body:
-      'Dropping an end in the middle of an object binds to the object and lets the route pick a side. Dropping it on an edge binds to that exact anchor. Select a connector and drag either end to re-aim it.',
-  },
-  {
-    title: 'Diagrams go both ways',
-    body:
-      'Write a flowchart in Mermaid code and get real, editable boxes and arrows rather than a picture. Select a diagram on your canvas and read it back out as Mermaid code.',
-  },
-  {
-    title: 'Combine shapes, and see it first',
-    body:
-      'Select two or more shapes and use Union, Subtract, Intersect or Exclude on the floating toolbar. Hovering a button draws the result over the shapes it would replace, so you can tell the four apart before committing to one.',
-  },
-  {
-    title: 'Text can become a shape',
-    body:
-      'Right-click a text object and Convert to path to get its real letterforms as editable vectors, counters and all. Decorations a contour cannot express, like a highlight, are named as they are dropped rather than silently lost.',
-  },
-  {
-    title: 'Text boxes have three modes',
-    body:
-      'Auto-width grows horizontally, auto-height wraps and grows downward, and Fixed imposes both. In fixed mode, dragging a corner handle scales the type itself.',
-  },
-  {
-    title: 'Hand-drawn sketch styling',
-    body:
-      'Any shape, frame, or connector can be rendered in hand-drawn sketch style with 3 roughness levels. The result is deterministic and identical for all collaborators.',
-  },
-  {
-    title: 'Physics & force fields',
-    body:
-      'Play mode runs a 2D physics simulation on the board: shapes collide, fall, and react to force tools (Wind, Vortex, Attract, Repel, Shockwave). Stopping restores the original layout.',
-  },
-  {
-    title: 'Nothing is lost offline',
-    body:
-      'Keep editing with the network down. Your changes merge with everyone else’s when you reconnect, rather than one side overwriting the other.',
-  },
-];
+/**
+ * The tips are the lessons, and there is one list of them.
+ *
+ * There used to be a `TIPS` array here: ten paragraphs teaching the line tool,
+ * the connector, booleans and the physics room. The canvas now coaches those
+ * same gestures when you pick up the tool they belong to, and writing them a
+ * second time for this screen would have made two bodies of teaching text about
+ * one set of gestures. They drift the way every pair in this codebase drifts,
+ * and teaching text drifts worst of all, because nobody thinks to update the
+ * tutorial when they change the gesture.
+ *
+ * `engine/learn/lessons.ts` holds them. This screen shows the whole library
+ * with its steps; the coach mark shows one, with two. Same sentences.
+ */
+
+/**
+ * One lesson, in full.
+ *
+ * The coach mark on the canvas shows the first two steps because it is sitting
+ * over a board somebody is working on. Nothing is competing for this screen, so
+ * this shows all of them, and the gesture drawing beside them.
+ *
+ * The learned state is shown but never used to hide anything. A reference that
+ * withheld what you already knew would be a reference you could not check.
+ */
+const LessonCard: React.FC<{ lesson: Lesson }> = ({ lesson }) => {
+  const { learned } = useSyncExternalStore(
+    learnState.subscribe,
+    learnState.getSnapshot,
+    learnState.getSnapshot
+  );
+  const key = keyFor(lesson);
+
+  return (
+    <article className="help-lesson" data-known={learned.includes(lesson.id) || undefined}>
+      {lesson.demo && <LessonDemo demo={lesson.demo} />}
+      <div className="help-lesson__body">
+        <h4 className="help-lesson__title">
+          {lesson.title}
+          {key && <kbd>{key}</kbd>}
+        </h4>
+        <p className="help-lesson__gist">{lesson.gist}</p>
+        <dl className="help-lesson__steps">
+          {lesson.steps.map((step) => (
+            <div key={step.act}>
+              <dt>{step.act}</dt>
+              <dd>{step.gives}</dd>
+            </div>
+          ))}
+        </dl>
+      </div>
+    </article>
+  );
+};
 
 const TIPS_TAB = 'tips';
 const ALL_TAB = 'all';
@@ -465,9 +465,16 @@ export const HelpModal: React.FC<Props> = ({ open, onClose }) => {
   );
 
   const matchedTips = useMemo(() => {
-    if (!q) return TIPS;
-    return TIPS.filter(
-      (t) => t.title.toLowerCase().includes(q) || t.body.toLowerCase().includes(q)
+    if (!q) return LESSONS;
+    // The steps are searched as well as the title and the gist. Somebody
+    // typing "Tab" is looking for the gesture, and the gesture only appears in
+    // a step -- a search that misses what it is displaying is the fault this
+    // screen's own header records having already had once.
+    return LESSONS.filter((lesson) =>
+      [lesson.title, lesson.gist, ...lesson.steps.flatMap((s) => [s.act, s.gives])]
+        .join(' ')
+        .toLowerCase()
+        .includes(q)
     );
   }, [q]);
 
@@ -682,11 +689,8 @@ export const HelpModal: React.FC<Props> = ({ open, onClose }) => {
               {visibleTips.length > 0 && (
                 <section className="help-section help-section--tips">
                   <h3>Worth knowing</h3>
-                  {visibleTips.map((tip) => (
-                    <div key={tip.title} className="help-tip">
-                      <strong>{tip.title}</strong>
-                      <p>{tip.body}</p>
-                    </div>
+                  {visibleTips.map((lesson) => (
+                    <LessonCard key={lesson.id} lesson={lesson} />
                   ))}
                 </section>
               )}

@@ -5659,27 +5659,6 @@ textarea:focus-visible {
       that is explicitly a brand moment.
    =========================================================================== */
 
-.auth {
-  position: fixed;
-  inset: 0;
-  z-index: var(--z-dialog);
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  padding: var(--space-4);
-  background: var(--surface-canvas);
-  font-family: var(--font-sans);
-}
-
-.auth__card {
-  width: min(100%, 400px);
-  padding: 40px;
-  display: flex;
-  flex-direction: column;
-  gap: var(--space-6);
-  animation: fadeIn 400ms var(--ease-settle);
-}
-
 .auth__title {
   margin: 0 0 8px;
   font-size: 26px;
@@ -7627,236 +7606,789 @@ html.dark-theme,
 }
 
 /* ===========================================================================
-   WELCOME SEQUENCE
+   THE WAY IN — two halves
    ---------------------------------------------------------------------------
-   Once ever, three beats, skippable from the first frame. The motion is one
-   authored moment rather than an effect on every element: the card settles in,
-   and each beat's contents rise in a short stagger so the eye is led from the
-   picture to the claim to the detail — which is the order they should be read
-   in, and the only reason the stagger exists.
+   The form was a 400px card in the middle of an empty page, which is the
+   layout for a dialog interrupting something. Nothing is being interrupted:
+   this is the first thing anyone sees, and the page had no first thing to look
+   at.
 
-   Everything animated here is `transform` and `opacity`, so none of it can
-   cause layout work while the canvas behind is mounting.
+   So the screen is a showcase and a column. The showcase is the half that goes
+   when there is no room for two, because the form is the reason the screen
+   exists and a phone is not where anyone reads a product's argument for
+   itself.
+
+   The breakpoint is here and only here. Written in the component as well it
+   would be two numbers that have to agree.
    =========================================================================== */
 
-.welcome {
+.auth {
   position: fixed;
   inset: 0;
-  z-index: 9000;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  padding: var(--space-4);
-  /* A scrim rather than a solid: the board is visible behind it, so the first
-     thing you learn is that there is already a canvas waiting. */
-  background: color-mix(in srgb, var(--surface-canvas) 82%, transparent);
-  backdrop-filter: blur(6px);
-  animation: welcomeIn 320ms var(--ease-settle);
-}
-
-.welcome.is-leaving {
-  opacity: 0;
-  transition: opacity 300ms var(--ease-settle);
-}
-
-.welcome__card {
-  width: min(100%, 460px);
-  padding: 22px;
-  border-radius: var(--radius-2xl);
-  background: var(--surface-elevated);
-  box-shadow: var(--shadow-float);
-  animation: welcomeCard 420ms var(--ease-settle);
-}
-
-.welcome__head {
-  display: flex;
-  align-items: center;
-  gap: 10px;
-  margin-bottom: 18px;
-}
-
-.welcome__brand {
-  font-size: var(--text-md);
-  font-weight: var(--weight-bold);
-  letter-spacing: -0.02em;
-  color: var(--text-primary);
-}
-
-.welcome__skip {
-  margin-left: auto;
-  border: none;
-  background: transparent;
-  color: var(--text-tertiary);
+  z-index: var(--z-dialog);
+  display: grid;
+  /* The showcase is the larger half and the form is a fixed column, because a
+     form that grows with the window is a form with a 900px input in it. */
+  grid-template-columns: minmax(0, 1fr) minmax(420px, 38vw);
+  background: var(--surface-canvas);
   font-family: var(--font-sans);
-  font-size: var(--text-sm);
-  cursor: pointer;
-  padding: 4px 6px;
-  border-radius: var(--radius-md);
-  transition: color var(--motion-hover);
-}
-
-.welcome__skip:hover { color: var(--text-primary); }
-
-.welcome__art {
-  height: 132px;
-  border-radius: var(--radius-xl);
-  background: var(--surface-hover);
-  display: flex;
-  align-items: center;
-  justify-content: center;
   overflow: hidden;
-  margin-bottom: 18px;
 }
 
-.welcome__svg { width: 100%; height: 100%; }
-
-/* The two cursors drift on a long, offset loop, so the drawing reads as two
-   people working rather than as an animation playing. */
-.welcome__cursor--a { animation: wsDriftA 5.2s var(--ease-settle) infinite alternate; }
-.welcome__cursor--b { animation: wsDriftB 6.1s var(--ease-settle) infinite alternate; }
-
-@keyframes wsDriftA {
-  from { transform: translate(58px, 62px); }
-  to   { transform: translate(96px, 40px); }
-}
-@keyframes wsDriftB {
-  from { transform: translate(150px, 40px); }
-  to   { transform: translate(120px, 74px); }
+/* The column the form sits in. Its padding is the breathing room; the card
+   inside it has none of its own, so there is one number controlling the
+   margin rather than a padding and a gap fighting each other. */
+.auth__pane {
+  display: flex;
+  flex-direction: column;
+  justify-content: center;
+  gap: var(--space-5);
+  padding: var(--space-8) clamp(var(--space-6), 6vw, 72px);
+  overflow-y: auto;
 }
 
-/* The stagger: picture, then claim, then detail.
-
-   There was a fourth step — an uppercase eyebrow reading "The surface" over
-   "A canvas with no edges" — and it is gone. It labelled the heading instead
-   of saying anything the heading did not, and it was the brand orange as
-   small text on a near-white scrim: 2.04:1, a straight AA failure on the
-   product's first screen. A heading that needs a label above it is a heading
-   that has not been written yet. */
-.welcome__title,
-.welcome__body,
-.welcome__art { animation: welcomeRise 420ms var(--ease-settle) both; }
-
-.welcome__art { animation-delay: 0ms; }
-.welcome__title { animation-delay: 90ms; }
-.welcome__body { animation-delay: 150ms; }
-
-.welcome__title {
-  margin: 0 0 8px;
-  font-size: 24px;
-  font-weight: 650;
-  letter-spacing: -0.03em;
-  line-height: 1.15;
-  color: var(--text-primary);
+.auth__card {
+  width: 100%;
+  max-width: 380px;
+  margin: 0 auto;
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-6);
+  animation: authRise 520ms var(--ease-settle) both;
 }
 
-.welcome__body {
+.auth__footnote {
+  max-width: 380px;
+  margin: 0 auto;
+  color: var(--text-tertiary);
+  font-size: var(--text-sm);
+  animation: authRise 520ms var(--ease-settle) 160ms both;
+}
+
+@keyframes authRise {
+  from { opacity: 0; transform: translateY(10px); }
+  to   { opacity: 1; transform: none; }
+}
+
+@media (max-width: 880px) {
+  /* One column, and the showcase is gone rather than squeezed. A 200px-tall
+     version of it would be an ornament, and an ornament above a form is the
+     thing that pushes the field below the fold on a phone. */
+  .auth { grid-template-columns: minmax(0, 1fr); }
+  .showcase { display: none; }
+  .auth__pane { padding: var(--space-6) var(--space-5); }
+}
+
+/* ===========================================================================
+   THE SHOWCASE — what this is, in the one free moment
+   ---------------------------------------------------------------------------
+   This absorbed the three-beat welcome card that used to open over the board.
+   Same three ideas, said while somebody types their name instead of one screen
+   later on the surface whose whole promise is not being interrupted.
+
+   Everything animated is `transform`, `opacity` and `filter`, so none of it
+   causes layout while the app behind is still mounting.
+   =========================================================================== */
+
+.showcase {
+  position: relative;
+  display: flex;
+  flex-direction: column;
+  justify-content: center;
+  gap: var(--space-7);
+  padding: clamp(var(--space-6), 5vw, 72px);
+  overflow: hidden;
+  /* Its own ink and accent, so the pane can be dark in both themes without
+     every child reaching for a different token than it would elsewhere. A
+     panel that is always dark needs one place where that is decided. */
+  --showcase-ink: #F8FAFC;
+  --showcase-accent: var(--brand-orange, #F0761E);
+  background: #090B11;
+  color: var(--showcase-ink);
+  isolation: isolate;
+}
+
+/* Two soft fields drifting against each other. A single gradient is a coloured
+   rectangle; two moving at different rates is depth, and depth is what stops a
+   flat panel reading as a placeholder. */
+.showcase__wash {
+  position: absolute;
+  inset: -20%;
+  z-index: -1;
+  pointer-events: none;
+}
+
+/* Softer and further out than the first attempt, which put a bright field
+   under the whole left third and read as a colour cast rather than as depth.
+   The two are also placed away from the art and away from the type: a glow
+   behind either is contrast spent on decoration. */
+.showcase__orb {
+  position: absolute;
+  width: 66%;
+  aspect-ratio: 1;
+  border-radius: 50%;
+  filter: blur(120px);
+}
+
+.showcase__orb--one {
+  bottom: -20%;
+  right: -16%;
+  background: var(--showcase-accent);
+  opacity: 0.3;
+  animation: showcaseOrbA 22s ease-in-out infinite alternate;
+}
+
+.showcase__orb--two {
+  top: -16%;
+  left: -14%;
+  background: #3358FF;
+  opacity: 0.24;
+  animation: showcaseOrbB 27s ease-in-out infinite alternate;
+}
+
+@keyframes showcaseOrbA {
+  from { transform: translate3d(0, 0, 0) scale(1); }
+  to   { transform: translate3d(9%, 7%, 0) scale(1.14); }
+}
+
+@keyframes showcaseOrbB {
+  from { transform: translate3d(0, 0, 0) scale(1.08); }
+  to   { transform: translate3d(-8%, -6%, 0) scale(0.94); }
+}
+
+.showcase__stage {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-3);
+  max-width: 460px;
+}
+
+/* The stagger is one authored moment, not an effect on every element: the art,
+   then the claim, then the detail, which is the order they should be read in
+   and the only reason it exists. */
+.showcase__frame,
+.showcase__eyebrow,
+.showcase__title,
+.showcase__body { animation: showcaseRise 620ms var(--ease-settle) both; }
+
+.showcase__frame   { animation-delay: 0ms; }
+.showcase__eyebrow { animation-delay: 110ms; }
+.showcase__title   { animation-delay: 170ms; }
+.showcase__body    { animation-delay: 240ms; }
+
+@keyframes showcaseRise {
+  from { opacity: 0; transform: translateY(14px); }
+  to   { opacity: 1; transform: none; }
+}
+
+.showcase__frame {
+  width: 100%;
+  max-width: 400px;
+  margin-bottom: var(--space-4);
+  border-radius: var(--radius-2xl);
+  /* A hairline rather than a border: the art is drawn on the same dark ground,
+     and a real border would draw a box around a picture whose whole point is
+     that it does not end. */
+  box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--showcase-ink) 12%, transparent);
+  background: color-mix(in srgb, var(--showcase-ink) 4%, transparent);
+  overflow: hidden;
+}
+
+.showcase__art { display: block; width: 100%; height: auto; }
+
+.showcase__eyebrow {
   margin: 0;
+  color: var(--showcase-accent);
+  font-size: var(--text-2xs);
+  font-weight: var(--weight-semibold);
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+}
+
+.showcase__title {
+  margin: 0;
+  font-size: clamp(26px, 2.6vw, 34px);
+  font-weight: 650;
+  line-height: 1.12;
+  letter-spacing: -0.03em;
+}
+
+.showcase__body {
+  margin: 0;
+  max-width: 44ch;
+  color: color-mix(in srgb, var(--showcase-ink) 72%, transparent);
   font-size: var(--text-md);
   line-height: 1.6;
-  color: var(--text-secondary);
-  /* Held near the comfortable measure so the third beat does not become a
-     paragraph nobody finishes. */
-  max-width: 42ch;
 }
 
-.welcome__foot {
+/* The progress rail. Each tick fills over the beat's own duration, so the
+   panel never changes without having said it was about to — which is the whole
+   difference between an auto-advancing panel and one that steals the page. */
+.showcase__rail {
   display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: var(--space-4);
-  margin-top: 22px;
+  gap: 8px;
+  margin-top: var(--space-2);
 }
 
-.welcome__dots { display: flex; align-items: center; gap: 6px; }
-
-/**
- * A step indicator that lengthens, without animating a layout property.
- *
- * This transitioned `width` from 7px to 20px, which is layout work on every
- * frame of the tween — and it made the two neighbouring dots shuffle sideways
- * as it grew, because the row is a flex line that has to re-solve.
- *
- * The button is now a **fixed 24px target** and the visible pill is an inner
- * element that scales. `transform` never touches layout, so nothing moves but
- * the mark itself. The fixed size also fixes a real accessibility problem the
- * width animation was hiding: a 7px control is far below any usable pointer
- * target, and these are the only way back to a previous beat.
- */
-.welcome__dot {
-  width: 24px;
-  height: 24px;
+.showcase__tick {
+  width: 44px;
+  height: 3px;
   padding: 0;
   border: none;
-  background: transparent;
+  border-radius: 999px;
+  background: color-mix(in srgb, var(--showcase-ink) 18%, transparent);
   cursor: pointer;
-  display: flex;
-  align-items: center;
-  justify-content: center;
+  overflow: hidden;
 }
 
-.welcome__dot::after {
-  content: '';
-  width: 20px;
-  height: 4px;
-  border-radius: var(--radius-pill);
-  background: var(--surface-active);
-  /* Squashed to a dot at rest, full pill when active. The radius is clamped by
-     the 4px height, so the scaled-down caps stay round enough to read as a dot
-     at this size. */
-  transform: scaleX(0.2);
-  transition: transform var(--motion-expand), background-color var(--motion-hover);
+.showcase__tick-fill {
+  display: block;
+  width: 100%;
+  height: 100%;
+  border-radius: inherit;
+  background: var(--showcase-ink);
+  transform-origin: left center;
+  transform: scaleX(0);
 }
 
-/* The active step lengthens rather than only changing colour, so progress is
-   legible without relying on hue — and stays legible under `forced-colors`. */
-.welcome__dot.is-active::after {
-  transform: scaleX(1);
-  background: var(--text-accent);
+.showcase__tick.is-active .showcase__tick-fill { transform: scaleX(1); }
+.showcase__tick-fill[data-running] { animation: showcaseTick 6400ms linear both; }
+
+@keyframes showcaseTick {
+  from { transform: scaleX(0); }
+  to   { transform: scaleX(1); }
 }
 
-.welcome__next {
-  display: inline-flex;
-  align-items: center;
-  gap: 8px;
-  padding: 10px 16px;
-  border: none;
-  border-radius: var(--radius-lg);
-  background: var(--text-primary);
-  color: var(--surface-primary);
-  font-family: var(--font-sans);
-  font-size: var(--text-md);
-  font-weight: var(--weight-semibold);
-  cursor: pointer;
-  transition: background-color var(--motion-hover);
+/* The art's own motion. Slow, and none of it in a loop short enough to catch
+   the eye twice — a signup screen is read once for thirty seconds, and
+   anything that repeats inside that window reads as a stutter. */
+.showcase__drift { animation: showcaseDrift 30s linear infinite alternate; }
+.showcase__near  { animation: showcaseFloat 9s var(--ease-settle) infinite alternate; }
+.showcase__far   { animation: showcaseFloat 13s var(--ease-settle) infinite alternate-reverse; }
+
+@keyframes showcaseDrift {
+  from { transform: translate3d(-6px, -4px, 0); }
+  to   { transform: translate3d(6px, 4px, 0); }
 }
 
-/* Darkened rather than faded: fading a filled control washes it toward the
-   page behind it, so it weakens exactly as it is pressed. */
-.welcome__next:hover { background: color-mix(in srgb, var(--text-primary) 86%, var(--text-secondary)); }
-
-@keyframes welcomeIn {
-  from { opacity: 0; }
-  to   { opacity: 1; }
+@keyframes showcaseFloat {
+  from { transform: translate3d(0, 0, 0); }
+  to   { transform: translate3d(6px, -9px, 0); }
 }
 
-@keyframes welcomeCard {
-  from { opacity: 0; transform: translateY(14px) scale(0.985); }
-  to   { opacity: 1; transform: translateY(0) scale(1); }
+.showcase__hand--a { animation: showcaseHandA 7.5s var(--ease-settle) infinite alternate; }
+.showcase__hand--b { animation: showcaseHandB 9s var(--ease-settle) infinite alternate; }
+
+@keyframes showcaseHandA {
+  from { transform: translate(96px, 96px); }
+  to   { transform: translate(148px, 60px); }
 }
 
-@keyframes welcomeRise {
-  from { opacity: 0; transform: translateY(8px); }
-  to   { opacity: 1; transform: translateY(0); }
+@keyframes showcaseHandB {
+  from { transform: translate(212px, 82px); }
+  to   { transform: translate(176px, 132px); }
+}
+
+/* The thread that breaks and rejoins. `stroke-dashoffset` rather than opacity:
+   the claim is that the two halves come back together, and a line that fades
+   out and back in is a line that was never severed. */
+.showcase__thread--live {
+  stroke-dasharray: 340;
+  animation: showcaseThread 9s var(--ease-settle) infinite;
+}
+
+@keyframes showcaseThread {
+  0%   { stroke-dashoffset: 340; }
+  38%  { stroke-dashoffset: 0; }
+  56%  { stroke-dashoffset: 0; }
+  72%  { stroke-dashoffset: -170; }
+  100% { stroke-dashoffset: -340; }
+}
+
+.showcase__join { animation: showcaseJoin 9s var(--ease-settle) infinite; }
+
+@keyframes showcaseJoin {
+  0%, 30% { opacity: 0; transform: scale(0.5); transform-origin: 160px 74px; }
+  44%     { opacity: 1; transform: scale(1); transform-origin: 160px 74px; }
+  70%     { opacity: 1; transform: scale(1); transform-origin: 160px 74px; }
+  100%    { opacity: 0; transform: scale(0.5); transform-origin: 160px 74px; }
+}
+
+.showcase__node--a { animation: showcasePulse 4.5s var(--ease-settle) infinite; }
+.showcase__node--b { animation: showcasePulse 4.5s var(--ease-settle) 2.2s infinite; }
+
+@keyframes showcasePulse {
+  0%, 100% { opacity: 0.55; }
+  50%      { opacity: 1; }
 }
 
 @media (prefers-reduced-motion: reduce) {
-  .welcome,
-  .welcome__card,
-  .welcome__art,
-  .welcome__title,
-  .welcome__body { animation: none; }
-  .welcome__cursor--a,
-  .welcome__cursor--b { animation: none; }
+  /* The stage's entrance goes with the rest. It advances on click only in this
+     mode — see `AuthShowcase`, which does not start its timer at all. */
+  .showcase__orb,
+  .showcase__drift,
+  .showcase__near,
+  .showcase__far,
+  .showcase__hand--a,
+  .showcase__hand--b,
+  .showcase__thread--live,
+  .showcase__join,
+  .showcase__node--a,
+  .showcase__node--b,
+  .showcase__tick-fill,
+  .showcase__frame,
+  .showcase__eyebrow,
+  .showcase__title,
+  .showcase__body,
+  .auth__card,
+  .auth__footnote { animation: none; }
+  .showcase__thread--live { stroke-dasharray: none; }
+}
+
+/* ===========================================================================
+   LESSON COACH — the gesture a tool cannot describe
+   ---------------------------------------------------------------------------
+   Above the dock, where the tool you just pressed is and therefore where the
+   eye already is. It shares that band with the notices and the dock coach, and
+   only one of the three is ever up: notices are events, the dock coach settles
+   for good after one answer, and this appears only for an unlearned tool.
+
+   Never a scrim and never centred over the board. It is a note beside the work,
+   which is the difference between coaching and a dialog that has taken the
+   trouble to look friendly.
+   =========================================================================== */
+
+/* The guide steps aside while a lesson is up.
+   Both live on this one band above the dock, and both can apply at once: the
+   first-run guide is about the product, the lesson is about the tool now in
+   your hand, and somebody who has just armed the grid tool is asking the
+   second question. Expressed here rather than plumbed through React state
+   because it is a fact about what is on screen, which is what `:has()` is for
+   — and the render order in `Room` is what makes the sibling combinator able
+   to see it. */
+.guide:has(~ .coach) { display: none; }
+
+.coach {
+  position: absolute;
+  bottom: calc(var(--dock-h, 64px) + 32px);
+  left: 50%;
+  /* `translate`, not `transform`: the entrance animates transform, and
+     centring with it is the trap DESIGN.md names. */
+  translate: -50%;
+  z-index: 1090;
+  display: flex;
+  align-items: stretch;
+  gap: var(--space-4);
+  width: min(560px, calc(100vw - 2 * var(--gutter)));
+  padding: var(--space-4);
+  border: 1px solid var(--border-divider);
+  border-radius: var(--radius-xl);
+  background: var(--surface-elevated);
+  box-shadow: var(--shadow-overlay);
+  animation: coachIn 340ms var(--ease-settle) both;
+}
+
+@keyframes coachIn {
+  from { opacity: 0; transform: translateY(12px) scale(0.985); }
+  to   { opacity: 1; transform: none; }
+}
+
+.coach__body {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  min-width: 0;
+  flex: 1;
+}
+
+.coach__head {
+  display: flex;
+  align-items: baseline;
+  gap: var(--space-2);
+}
+
+.coach__title {
+  margin: 0;
+  font-size: var(--text-md);
+  font-weight: var(--weight-semibold);
+  letter-spacing: -0.01em;
+  color: var(--text-primary);
+}
+
+.coach__key,
+.coach__more kbd {
+  flex-shrink: 0;
+  padding: 1px 6px;
+  border: 1px solid var(--border-divider);
+  border-radius: var(--radius-sm);
+  background: var(--surface-secondary);
+  color: var(--text-secondary);
+  font-family: var(--font-mono, ui-monospace, monospace);
+  font-size: var(--text-2xs);
+  line-height: 1.6;
+}
+
+.coach__gist {
+  margin: 0;
+  color: var(--text-secondary);
+  font-size: var(--text-base);
+  line-height: 1.5;
+}
+
+.coach__steps {
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+  margin: 4px 0 0;
+  padding: 0;
+  list-style: none;
+}
+
+/* The gesture and its result on one line, the gesture carrying the weight.
+   Two stacked lines per step would make a four-line block out of two facts. */
+.coach__step {
+  font-size: var(--text-sm);
+  line-height: 1.5;
+  color: var(--text-tertiary);
+}
+
+.coach__act {
+  color: var(--text-primary);
+  font-weight: var(--weight-medium);
+}
+
+.coach__act::after {
+  content: " · ";
+  color: var(--text-tertiary);
+  font-weight: var(--weight-regular);
+}
+
+.coach__foot {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--space-3);
+  margin-top: var(--space-2);
+}
+
+.coach__mute {
+  padding: 0;
+  border: none;
+  background: none;
+  color: var(--text-tertiary);
+  font-family: inherit;
+  font-size: var(--text-sm);
+  text-decoration: underline;
+  text-underline-offset: 2px;
+  cursor: pointer;
+}
+
+.coach__mute:hover { color: var(--text-secondary); }
+
+.coach__more {
+  display: flex;
+  align-items: center;
+  gap: 5px;
+  color: var(--text-tertiary);
+  font-size: var(--text-sm);
+  white-space: nowrap;
+}
+
+.coach__close {
+  position: absolute;
+  top: 6px;
+  right: 6px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 22px;
+  height: 22px;
+  border: none;
+  border-radius: var(--radius-sm);
+  background: transparent;
+  color: var(--text-tertiary);
+  cursor: pointer;
+  transition: background-color var(--motion-hover), color var(--motion-hover);
+}
+
+.coach__close:hover { background: var(--surface-hover); color: var(--text-primary); }
+
+@media (max-width: 720px) {
+  /* The drawing goes before the words do. */
+  .coach .demo-stage { display: none; }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .coach { animation: none; }
+}
+
+/* ===========================================================================
+   LESSON DEMOS — the gesture, drawn and looping
+   ---------------------------------------------------------------------------
+   Six scenes for the six gestures nobody can guess, shared between the coach
+   mark and the reference library. Every animation here is transform, opacity
+   or a dash offset, so a demo sitting on screen for several minutes costs no
+   layout work on a canvas that needs the frame.
+   =========================================================================== */
+
+.demo-stage {
+  flex-shrink: 0;
+  width: 168px;
+  align-self: center;
+  border-radius: var(--radius-lg);
+  background: var(--surface-secondary);
+  overflow: hidden;
+}
+
+.demo { display: block; width: 100%; height: auto; }
+
+/* --- route: a line built by clicking, one corner at a time --------------- */
+
+/* 153 is the polyline's actual length, to the pixel. A dasharray longer than
+   the path spends the head of every loop drawing nothing, which is a demo that
+   is blank whenever you happen to glance at it. */
+.demo__route {
+  stroke-dasharray: 153;
+  stroke-dashoffset: 153;
+  animation: demoDraw 4.4s var(--ease-settle) infinite;
+}
+
+@keyframes demoDraw {
+  0%       { stroke-dashoffset: 153; }
+  62%      { stroke-dashoffset: 0; }
+  92%      { stroke-dashoffset: 0; }
+  100%     { stroke-dashoffset: 153; }
+}
+
+/* The rings are what the eye counts, because the taught fact is that a click
+   does something a drag does not. */
+/* Scaled about its own centre rather than animating `r`. The SVG geometry
+   properties are only reachable from CSS in some engines, so a keyframe on `r`
+   is a ring that pulses in Chrome and sits inert in Firefox. `transform-box`
+   is what makes `center` mean the circle's centre rather than the viewBox's. */
+.demo__tap {
+  opacity: 0;
+  transform-box: fill-box;
+  transform-origin: center;
+  animation: demoTap 4.4s var(--ease-settle) infinite;
+}
+.demo__tap--0 { animation-delay: 0.1s; }
+.demo__tap--1 { animation-delay: 0.9s; }
+.demo__tap--2 { animation-delay: 1.8s; }
+.demo__tap--3 { animation-delay: 2.7s; }
+
+@keyframes demoTap {
+  0%   { opacity: 0; transform: scale(0.7); }
+  6%   { opacity: 1; transform: scale(1); }
+  16%  { opacity: 0; transform: scale(2.6); }
+  100% { opacity: 0; transform: scale(2.6); }
+}
+
+.demo__cursor--route { animation: demoCursorRoute 4.4s var(--ease-settle) infinite; }
+
+@keyframes demoCursorRoute {
+  0%, 10%  { transform: translate(26px, 70px); }
+  25%, 30% { transform: translate(62px, 32px); }
+  45%, 50% { transform: translate(106px, 58px); }
+  65%, 88% { transform: translate(144px, 26px); }
+  100%     { transform: translate(26px, 70px); }
+}
+
+/* --- fill-grid: pictures landing in modules ----------------------------- */
+
+.demo__tile {
+  transform-box: fill-box;
+  transform-origin: center;
+  animation: demoLand 4.8s var(--ease-settle) infinite;
+}
+
+.demo__tile--0 { animation-delay: 0.15s; }
+.demo__tile--1 { animation-delay: 0.5s; }
+.demo__tile--2 { animation-delay: 0.85s; }
+.demo__tile--3 { animation-delay: 1.2s; }
+
+/* Arriving at the wrong shape and settling into the module's is the whole
+   point: "cropped to fit rather than squashed to fit" only lands once you have
+   watched it happen. */
+@keyframes demoLand {
+  0%       { opacity: 0; transform: translateY(-14px) scale(0.62); }
+  14%      { opacity: 1; transform: translateY(0) scale(1.06); }
+  22%, 82% { opacity: 1; transform: none; }
+  96%,100% { opacity: 0; transform: none; }
+}
+
+/* --- reframe: a picture moving under a frame that does not ------------- */
+
+.demo__pan { animation: demoPan 6s var(--ease-settle) infinite alternate; }
+
+@keyframes demoPan {
+  from { transform: translateX(0); }
+  to   { transform: translateX(-30px); }
+}
+
+/* --- bind: the arrow keeps hold ---------------------------------------- */
+
+/* Swung about the source's edge, so the link re-aims rather than travelling
+   with the thing it is pointing at. `transform-box: view-box` is what makes the
+   origin below mean a point in the drawing rather than a point in the group's
+   own bounding box, which moves as the group turns. */
+.demo__swing {
+  transform-box: view-box;
+  transform-origin: 56px 48px;
+  animation: demoSwing 5.4s var(--ease-settle) infinite alternate;
+}
+
+@keyframes demoSwing {
+  from { transform: rotate(-12deg); }
+  to   { transform: rotate(12deg); }
+}
+
+.demo__link {
+  stroke-dasharray: 4 4;
+  animation: demoCrawl 1.6s linear infinite;
+}
+
+@keyframes demoCrawl {
+  to { stroke-dashoffset: -8; }
+}
+
+/* --- field: the ring is the subject ------------------------------------ */
+
+.demo__cursor--field,
+.demo__field { animation: demoSweep 6s var(--ease-settle) infinite alternate; }
+
+@keyframes demoSweep {
+  from { transform: translate(46px, 34px); }
+  to   { transform: translate(120px, 60px); }
+}
+
+.demo__mote { animation: demoNudge 6s var(--ease-settle) infinite alternate; }
+.demo__mote--0 { animation-delay: 0s; }
+.demo__mote--1 { animation-delay: 0.25s; }
+.demo__mote--2 { animation-delay: 0.5s; }
+
+@keyframes demoNudge {
+  from { transform: translate(0, 0); }
+  to   { transform: translate(11px, -7px); }
+}
+
+/* --- chain: the rate, which is the actual claim about Tab -------------- */
+
+.demo__note {
+  transform-box: fill-box;
+  transform-origin: left center;
+  animation: demoPop 4s var(--ease-settle) infinite;
+}
+
+.demo__note--0 { animation-delay: 0.1s; }
+.demo__note--1 { animation-delay: 0.45s; }
+.demo__note--2 { animation-delay: 0.8s; }
+.demo__note--3 { animation-delay: 1.15s; }
+
+@keyframes demoPop {
+  0%       { opacity: 0; transform: scale(0.3); }
+  12%      { opacity: 1; transform: scale(1.08); }
+  20%, 84% { opacity: 1; transform: none; }
+  98%,100% { opacity: 0; transform: none; }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  /* Every scene resolves to its finished state rather than freezing mid-way:
+     a half-drawn line with the animation stopped is a picture of a bug. */
+  .demo *,
+  .demo { animation: none !important; }
+  .demo__route { stroke-dashoffset: 0; }
+  .demo__tap { opacity: 0; }
+  .demo__tile,
+  .demo__note { opacity: 1; }
+  .demo__cursor--route { transform: translate(144px, 26px); }
+  .demo__cursor--field,
+  .demo__field { transform: translate(84px, 46px); }
+}
+
+/* ===========================================================================
+   LESSON CARDS — the same lessons, in the reference
+   ---------------------------------------------------------------------------
+   The coach shows two steps because it is sitting over somebody's work.
+   Nothing competes for this screen, so it shows all of them.
+   =========================================================================== */
+
+.help-lesson {
+  display: flex;
+  gap: var(--space-4);
+  padding: var(--space-4) 0;
+  border-top: 1px solid var(--border-divider);
+}
+
+.help-lesson:first-of-type { border-top: none; padding-top: 0; }
+
+.help-lesson__body { min-width: 0; }
+
+.help-lesson__title {
+  display: flex;
+  align-items: baseline;
+  gap: var(--space-2);
+  margin: 0 0 4px;
+  font-size: var(--text-base);
+  font-weight: var(--weight-semibold);
+  color: var(--text-primary);
+}
+
+.help-lesson__title kbd {
+  padding: 1px 6px;
+  border: 1px solid var(--border-divider);
+  border-radius: var(--radius-sm);
+  background: var(--surface-secondary);
+  color: var(--text-secondary);
+  font-family: var(--font-mono, ui-monospace, monospace);
+  font-size: var(--text-2xs);
+}
+
+/* A tick, not a fade. Something you already know is still worth being able to
+   check, so nothing here is hidden or dimmed past reading. */
+.help-lesson[data-known] .help-lesson__title::after {
+  content: "✓";
+  color: var(--status-online, var(--accent));
+  font-size: var(--text-sm);
+}
+
+.help-lesson__gist {
+  margin: 0 0 var(--space-2);
+  color: var(--text-secondary);
+  font-size: var(--text-sm);
+  line-height: 1.55;
+}
+
+.help-lesson__steps {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  margin: 0;
+}
+
+.help-lesson__steps > div {
+  display: grid;
+  grid-template-columns: minmax(0, 0.9fr) minmax(0, 1.1fr);
+  gap: var(--space-3);
+  align-items: baseline;
+}
+
+.help-lesson__steps dt {
+  color: var(--text-primary);
+  font-size: var(--text-sm);
+  font-weight: var(--weight-medium);
+}
+
+.help-lesson__steps dd {
+  margin: 0;
+  color: var(--text-tertiary);
+  font-size: var(--text-sm);
+  line-height: 1.5;
+}
+
+@media (max-width: 900px) {
+  .help-lesson { flex-direction: column; }
+  .help-lesson__steps > div { grid-template-columns: minmax(0, 1fr); gap: 0; }
 }
 
 /* ===========================================================================
