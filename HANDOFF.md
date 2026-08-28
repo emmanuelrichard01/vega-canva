@@ -485,6 +485,30 @@ same arrangement `TooltipLayer` uses. What is worth knowing:
   notice leaks one whenever a notice is folded or evicted.
 
 ## 4a-6. The walkthrough, drawn by the product's own pen
+**Refinements after looking at it.** The arrow's landing point was written out
+per side, which is four approximations of one fact: against a wide flat target
+those hand-written points were tens of pixels off the real curve, so the head
+landed on the ring, or inside it, or in the gap. It is solved now, by walking
+out from the ring's centre until the ellipse equation is satisfied. `TOUR_GAP`
+went 56 to 72 because the ring pad, the stand-off and the lift-off eat about
+thirty of it, and thirty pixels of stroke reads as a tick rather than a sweep.
+The `1 OF 6` eyebrow is gone: the dots say the same thing and can be pressed,
+and it was pushing the handwritten title out of first place.
+
+**"Show them all again" is gone from the reference footer.** It called
+`learnState.reset()`, which clears what you have learned *and* unmutes, so
+pressing it while the switch beside it was off silently turned that switch back
+on: two controls where one secretly moves the other. It was also answering a
+question already answered twice on that screen, by the switch and by the library
+below it. `reset()` went with it.
+
+**The lesson steps read as pairs rather than as two lists.** They were a
+two-column definition list, gesture left and result right, so the eye went down
+the left column collecting gestures and had to come back up for what each one
+did. One flowing line each now, gesture emphasised, which is also exactly what
+the coach mark does with the same steps.
+
+
 
 **The theme is asked for rather than assumed.** It followed the operating
 system, which was wrong here, and was then forced to light for one commit, which

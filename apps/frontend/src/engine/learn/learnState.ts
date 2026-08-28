@@ -116,13 +116,14 @@ export const learnState = {
     commit({ ...state, muted: true });
   },
 
+  /**
+   * Back on. There is deliberately no "forget what I have learned" beside it:
+   * that was a button in the reference footer, it quietly unmuted as a side
+   * effect, and what it gave back was a coach mark for a lesson the library
+   * already shows in full with its drawing.
+   */
   unmute() {
     if (!state.muted) return;
     commit({ ...state, muted: false });
-  },
-
-  /** Everything back to unlearned, for the reference library's own control. */
-  reset() {
-    commit({ learned: [], muted: false });
   },
 };

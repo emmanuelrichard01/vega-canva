@@ -131,11 +131,14 @@ export interface Placement {
  * distance the pointer is twenty pixels long, half of it behind the card, and
  * an arrow you cannot see is worse than no arrow because it was drawn anyway.
  *
- * Fifty-six gives the arc room to be a gesture rather than a leader line, and
- * the space reads as deliberate on its own -- annotation sits *near* a thing,
- * not against it.
+ * What the stroke actually gets is less than this: the ring is drawn ten units
+ * outside the target and the head stops nine short of it, and it lifts off the
+ * card by another seven. Fifty-six left about thirty, which reads as a tick
+ * rather than as a sweep. Seventy-two leaves about forty-six, which is a
+ * gesture, and the extra space reads as deliberate on its own -- annotation
+ * sits *near* a thing, not against it.
  */
-export const TOUR_GAP = 56;
+export const TOUR_GAP = 72;
 
 /** How close to the viewport edge the card may come. */
 const MARGIN = 12;

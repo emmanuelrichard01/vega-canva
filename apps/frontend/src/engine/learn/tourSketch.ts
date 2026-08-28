@@ -68,45 +68,78 @@ export function ringPath(box: Box, stepId: string): string {
   });
 }
 
+/** How far clear of the card the stroke begins. */
+const LIFT_OFF = 7;
+/** How far short of the ring the head stops. */
+const STAND_OFF = 9;
+
 /**
- * Where the pointer leaves the card, and where it lands on the ring.
+ * Where the pointer leaves the card, and where it stops short of the ring.
  *
- * Both offset off the centre line, which is what makes the stroke a gesture
- * rather than a leader line. A pen drawn from the middle of one box to the
- * middle of another is a diagram; one that leaves at an angle and curves in is
- * somebody's hand.
+ * ## Why the end is computed rather than written per side
+ *
+ * The first version hardcoded a landing point for each of the four sides --
+ * "the top of the ring, a bit to the right" and so on -- which is four
+ * approximations of one fact and looked it. The ring is an ellipse, so its
+ * boundary in any direction is a specific point, and against a wide flat target
+ * like the dock those hand-written points were tens of pixels off the actual
+ * curve: the head landed on the line, or inside it, or hanging in the gap.
+ *
+ * So the end is solved. Walk out from the ring's centre towards the start until
+ * the ellipse equation is satisfied, then a little further. One expression for
+ * every side, exact against any shape of target, and the head always stops just
+ * outside the mark and points at it.
+ *
+ * ## Why the start is off the card and off centre
+ *
+ * Off the *card* by a few pixels because a stroke touching the edge reads as
+ * leaking out from under it rather than as a separate mark. Off *centre* along
+ * that edge because a line from the middle of one box to the middle of another
+ * is a leader line in a diagram, and this is meant to be a hand.
  */
 function ends(card: Box, ring: Box, side: TourSide): { from: Point; to: Point; bow: number } {
-  const ringMid = { x: ring.x + ring.width / 2, y: ring.y + ring.height / 2 };
-  // A third of the way along the edge rather than the middle of it.
-  const off = 0.22;
+  const c = { x: ring.x + ring.width / 2, y: ring.y + ring.height / 2 };
+  const rx = Math.max(1, ring.width / 2);
+  const ry = Math.max(1, ring.height / 2);
 
-  switch (side) {
-    case 'top':
-      return {
-        from: { x: card.x + card.width * (0.5 + off), y: card.y + card.height },
-        to: { x: ringMid.x + ring.width * 0.12, y: ring.y - RING_PAD },
-        bow: 1,
-      };
-    case 'bottom':
-      return {
-        from: { x: card.x + card.width * (0.5 - off), y: card.y },
-        to: { x: ringMid.x - ring.width * 0.12, y: ring.y + ring.height + RING_PAD },
-        bow: -1,
-      };
-    case 'left':
-      return {
-        from: { x: card.x + card.width, y: card.y + card.height * (0.5 - off) },
-        to: { x: ring.x - RING_PAD, y: ringMid.y - ring.height * 0.12 },
-        bow: -1,
-      };
-    default:
-      return {
-        from: { x: card.x, y: card.y + card.height * (0.5 + off) },
-        to: { x: ring.x + ring.width + RING_PAD, y: ringMid.y + ring.height * 0.12 },
-        bow: 1,
-      };
-  }
+  // A quarter along the edge, on the side the eye leaves the card from.
+  const off = 0.25;
+  const from: Point =
+    side === 'top'
+      ? { x: card.x + card.width * (0.5 + off), y: card.y + card.height + LIFT_OFF }
+      : side === 'bottom'
+        ? { x: card.x + card.width * (0.5 - off), y: card.y - LIFT_OFF }
+        : side === 'left'
+          ? { x: card.x + card.width + LIFT_OFF, y: card.y + card.height * (0.5 - off) }
+          : { x: card.x - LIFT_OFF, y: card.y + card.height * (0.5 + off) };
+
+  /**
+   * The point on the ellipse in the direction of the start, plus a stand-off.
+   *
+   * `s` is how far along that direction the boundary sits: substituting
+   * `(s*dx, s*dy)` into `(x/rx)^2 + (y/ry)^2 = 1` and solving gives exactly
+   * this. Guarded against a start at the centre, which cannot happen with the
+   * gap the placement keeps but would divide by zero if it did.
+   */
+  const dx = from.x - c.x;
+  const dy = from.y - c.y;
+  const len = Math.hypot(dx, dy) || 1;
+  const ux = dx / len;
+  const uy = dy / len;
+  const s = 1 / Math.hypot(ux / rx, uy / ry);
+  const to: Point = { x: c.x + ux * (s + STAND_OFF), y: c.y + uy * (s + STAND_OFF) };
+
+  /**
+   * Which way the stroke bows.
+   *
+   * Away from the card's centre, so the curve arcs *outward* round the gap
+   * rather than cutting back across the card it just left. The sign falls out
+   * of which side the start sits on relative to the run, which is the same
+   * thing said in arithmetic.
+   */
+  const bow = side === 'top' || side === 'right' ? 1 : -1;
+
+  return { from, to, bow };
 }
 
 /** Sample a quadratic curve, which is what the pen is then run along. */
@@ -119,7 +152,11 @@ function arc(from: Point, to: Point, bow: number, steps = 14): Point[] {
   // Perpendicular to the run, so the curve bends across it rather than along.
   // A quarter of the distance is the point at which it reads as a deliberate
   // sweep; much more and it loops back on itself and stops pointing.
-  const lift = Math.min(len * 0.26, 78) * bow;
+  // A third of the run, capped. A quarter was too timid over the short hops
+  // the placement usually produces -- the stroke read as a slightly bent line
+  // rather than as a swept one -- and past a third it starts curling back on
+  // itself and stops pointing.
+  const lift = Math.min(len * 0.34, 74) * bow;
   const cx = mx + (-dy / len) * lift;
   const cy = my + (dx / len) * lift;
 

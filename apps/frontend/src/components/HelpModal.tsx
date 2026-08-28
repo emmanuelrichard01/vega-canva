@@ -957,14 +957,21 @@ export const HelpModal: React.FC<Props> = ({ open, onClose }) => {
             </span>
           </label>
 
+          {/**
+            * One button, and "Show them all again" is not it.
+            *
+            * It called `learnState.reset()`, which clears what you have learned
+            * *and* unmutes -- so pressing it while the switch beside it was off
+            * silently turned that switch back on. Two controls where one
+            * secretly moves the other is worse than either alone.
+            *
+            * It was also answering a question already answered twice on this
+            * screen. "I want tips again" is the switch. "Show me that lesson
+            * again" is the library directly below, which holds every one of
+            * them in full, with its drawing, which is more than a coach mark
+            * would have given back.
+            */}
           <div className="help-modal__foot-actions">
-            <button
-              type="button"
-              className="help-modal__reset"
-              onClick={() => learnState.reset()}
-            >
-              Show them all again
-            </button>
             {/* The tour, replayable. It is offered once on a first run and then
                 never again on its own, which is only bearable if there is an
                 obvious way back to it -- and this is where somebody who has

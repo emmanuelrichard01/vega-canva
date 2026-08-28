@@ -236,9 +236,12 @@ export const TourGuide: React.FC = () => {
             The movement is the continuity here, which is what makes a fade the
             right thing inside it. */}
         <div className="tour__body" key={current.id}>
-          <p className="tour__count">
-            {step + 1} of {TOUR.length}
-          </p>
+          {/* No "3 of 6" above the title. The dots below already say where you
+              are, and they can also be pressed, so a second readout was the
+              same fact twice with the mute half on top -- and it pushed the
+              handwritten title, which is the voice, into second place. The
+              count survives where it is genuinely needed, in the dialog's
+              accessible name. */}
           <h2 className="tour__title">{current.title}</h2>
           <p className="tour__text">{current.body}</p>
         </div>

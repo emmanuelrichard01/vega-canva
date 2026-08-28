@@ -8271,16 +8271,6 @@ html.dark-theme,
   to   { opacity: 1; transform: none; }
 }
 
-.tour__count {
-  margin: 0 0 2px;
-  color: var(--text-tertiary);
-  font-size: var(--text-2xs);
-  font-weight: var(--weight-semibold);
-  font-variant-numeric: tabular-nums;
-  letter-spacing: 0.08em;
-  text-transform: uppercase;
-}
-
 /* The voice, in the hand the product draws in.
    Only the title. It is short, it is large, and it is the one line that is a
    person talking rather than an instruction. Handwriting at fourteen pixels is
@@ -8965,7 +8955,7 @@ html.dark-theme,
   }
 }
 
-.help-lesson__body { min-width: 0; flex: 1; }
+.help-lesson__body { flex: 1; min-width: 0; }
 
 .help-lesson__title {
   display: flex;
@@ -9009,37 +8999,44 @@ html.dark-theme,
   margin: 0;
 }
 
-/* The gesture and its result, side by side only where they fit. Same reasoning
-   as the card itself: the deciding width is the body's, not the window's. */
+/* ## One line each, the gesture leading
+   These were two columns, act on the left and result on the right, and they
+   read as two lists rather than as pairs: the eye goes down the left column
+   collecting gestures, then has to come back up for what each one does. That is
+   the standing fault of a two-column definition list, and it gets worse the
+   more rows there are.
+
+   Inline, the pairing is unambiguous and the order is the order you read in.
+   It is also exactly what the coach mark does with the same steps, so a lesson
+   looks like itself in both places. */
 .help-lesson__steps > div {
-  display: grid;
-  grid-template-columns: minmax(0, 1fr);
-  gap: 0 var(--space-3);
-  align-items: baseline;
+  display: block;
+  font-size: var(--text-sm);
+  line-height: 1.55;
 }
 
-.help-lesson__body {
-  container-type: inline-size;
-  container-name: lessonbody;
-}
+.help-lesson__steps > div + div { margin-top: 5px; }
 
-@container lessonbody (min-width: 400px) {
-  .help-lesson__steps > div {
-    grid-template-columns: minmax(0, 0.85fr) minmax(0, 1.15fr);
-  }
-}
+
 
 .help-lesson__steps dt {
+  display: inline;
   color: var(--text-primary);
-  font-size: var(--text-sm);
   font-weight: var(--weight-medium);
 }
 
+/* The separator belongs to the gesture, not between two blocks: it has to wrap
+   with the words it joins. */
+.help-lesson__steps dt::after {
+  content: " · ";
+  color: var(--text-tertiary);
+  font-weight: var(--weight-regular);
+}
+
 .help-lesson__steps dd {
+  display: inline;
   margin: 0;
   color: var(--text-tertiary);
-  font-size: var(--text-sm);
-  line-height: 1.5;
 }
 
 
@@ -12242,21 +12239,6 @@ body[data-zen='physics'] .forces-handle { bottom: 32px; }
   color: var(--text-tertiary);
   font-size: var(--text-xs);
 }
-
-.help-modal__reset {
-  flex-shrink: 0;
-  padding: 0;
-  border: none;
-  background: none;
-  color: var(--text-tertiary);
-  font-family: inherit;
-  font-size: var(--text-sm);
-  text-decoration: underline;
-  text-underline-offset: 2px;
-  cursor: pointer;
-}
-
-.help-modal__reset:hover { color: var(--text-secondary); }
 
 /* ===========================================================================
    Motion
