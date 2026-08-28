@@ -55,6 +55,7 @@ import { useBreakpoint } from './hooks/useBreakpoint';
 import { CanvasEmptyState } from './components/CanvasEmptyState';
 import { FirstRunGuide } from './components/FirstRunGuide';
 import { LessonCoach } from './components/learn/LessonCoach';
+import { TourGuide, TourOffer } from './components/learn/TourGuide';
 import { learnState } from './engine/learn/learnState';
 import { DockCoach } from './components/DockCoach';
 import { buildPreview, savePreview } from './engine/model/boardPreview';
@@ -1383,6 +1384,7 @@ export default function Room() {
           <button
             type="button"
             className="radar-summon"
+            data-tour="radar"
             style={{ position: 'absolute', left: 16, bottom: 24, zIndex: 90 }}
             onClick={openRadar}
             aria-label="Show the radar"
@@ -1528,6 +1530,7 @@ export default function Room() {
       {isUiVisible && (
         <div
           className={rightExpanded ? 'context-inspector panel-surface' : 'context-inspector'}
+          data-tour="properties"
           data-open={panelsVisible}
           data-collapsed={!rightExpanded}
         >
@@ -1553,6 +1556,7 @@ export default function Room() {
       {isUiVisible && (
         <div
           className={leftExpanded ? 'hierarchy-panel panel-surface' : 'hierarchy-panel'}
+          data-tour="layers"
           data-open={panelsVisible}
           data-collapsed={!leftExpanded}
           data-radar-collapsed={!radarOpen}
@@ -1615,11 +1619,19 @@ export default function Room() {
         * second question. It is rendered *after* the guide so the stylesheet
         * can say that in one rule -- see `.guide:has(~ .coach)`.
         */}
-      <LessonCoach
-        activeTool={activeTool}
-        selectionCount={selectedIds.length}
-        visible={isUiVisible && dockAnswered}
-      />
+      <LessonCoach activeTool={activeTool} visible={isUiVisible && dockAnswered} />
+
+      {/**
+        * Where things live, pointed at rather than described.
+        *
+        * The offer shares the band above the dock with everything else that
+        * coaches, so it waits for the dock question like they do and stands
+        * down once anything else is up. The tour itself is not in that band at
+        * all: it portals to the body and travels the whole screen, which is
+        * the point of it.
+        */}
+      <TourOffer visible={isUiVisible && dockAnswered && Object.keys(commentObjects).length > 0} />
+      <TourGuide />
 
       {/* FOCUS MODE.
           It used to be a light switch: every surface dropped at once, leaving

@@ -1,6 +1,7 @@
 import React, { useState } from 'react';
 import { useAuth } from '../hooks/useAuth';
-import { ArrowRight } from 'lucide-react';
+import { ArrowRight, Moon, Sun } from 'lucide-react';
+import { useStore } from '../hooks/useStore';
 import { Logo } from './ui/Logo';
 import { AuthShowcase } from './auth/AuthShowcase';
 
@@ -54,6 +55,36 @@ import { AuthShowcase } from './auth/AuthShowcase';
 export const AuthModal: React.FC = () => {
   const { login, joinAsGuest } = useAuth();
   const [name, setName] = useState('');
+  /**
+   * The look, asked rather than assumed.
+   *
+   * Every colour decision in this product was made against a light ground, so
+   * light is the fallback in the store -- but somebody who has set their whole
+   * system to dark has told you something, and quietly overriding that is the
+   * same disrespect as quietly obeying it would be for everyone else.
+   *
+   * So it is a question, on the one screen that already exists to ask a
+   * question, pre-selected from `prefers-color-scheme` so the honest answer is
+   * one click rather than none. It applies as you press it: a preview of a
+   * theme is the theme.
+   */
+  const darkTheme = useStore((s) => s.darkTheme);
+  const setDarkTheme = useStore((s) => s.setDarkTheme);
+  /**
+   * Seeded from the system once, and only if nothing was ever stored.
+   *
+   * `loadBoolPref` cannot tell "never chosen" from "chose light", so the check
+   * is against the raw key. Without it, somebody who deliberately picked light
+   * last week would have the system's dark preference re-applied every time
+   * they signed in, which is the setting refusing to stay set.
+   */
+  const seeded = React.useRef(false);
+  React.useEffect(() => {
+    if (seeded.current) return;
+    seeded.current = true;
+    if (localStorage.getItem('vega_dark_theme') !== null) return;
+    if (window.matchMedia?.('(prefers-color-scheme: dark)').matches) setDarkTheme(true);
+  }, [setDarkTheme]);
   // Defaulted on: this is the behaviour someone returning to their own board
   // expects, and it is the one that loses nothing if it is wrong.
   const [remember, setRemember] = useState(true);
@@ -128,6 +159,30 @@ export const AuthModal: React.FC = () => {
               </span>
             </span>
           </label>
+
+          {/* Below the field and above the action, which is the order these
+              are decided in: the name is what the screen is for, the look is a
+              preference you form while looking at the page, and Continue is
+              the end of both. */}
+          <div className="auth__look" role="radiogroup" aria-label="Appearance">
+            {([
+              [false, 'Light', <Sun size={14} aria-hidden key="s" />],
+              [true, 'Dark', <Moon size={14} aria-hidden key="m" />],
+            ] as const).map(([dark, label, icon]) => (
+              <button
+                key={label}
+                type="button"
+                role="radio"
+                aria-checked={darkTheme === dark}
+                className="auth__look-option"
+                data-active={darkTheme === dark || undefined}
+                onClick={() => setDarkTheme(dark)}
+              >
+                {icon}
+                {label}
+              </button>
+            ))}
+          </div>
 
           <button type="submit" className="auth__submit" disabled={!ready}>
             Continue <ArrowRight size={17} />

@@ -62,26 +62,20 @@ export interface LessonStep {
 export type DemoId = 'route' | 'fill-grid' | 'reframe' | 'bind' | 'field' | 'chain';
 
 /**
- * A point in someone's work where a lesson is worth offering.
- *
- * Tools cover most of it: arming one is a clear statement of what you are about
- * to try. Two things worth teaching have no tool to arm, because they are
- * *panels*, and the moment they become useful is a change in the work rather
- * than a press.
- *
- * - `first-selection`: something is selected, so the inspector has an answer.
- *   Before that it is an empty column and opening it teaches nothing.
- * - `several-objects`: the board has enough on it to be worth navigating. A
- *   layer list of two is a list you can see anyway.
- *
- * Kept to two on purpose. A moment is a rule about the whole application rather
- * than about one control, and every one added is another thing that can fire at
- * the wrong time.
- */
-export type LessonMoment = 'first-selection' | 'several-objects';
-
-/**
  * What raises a lesson on the canvas.
+ *
+ * A tool, or nothing.
+ *
+ * There was briefly a third kind -- a *moment*, such as the first selection or
+ * the fifth object -- carrying the two panel lessons. It was the wrong shape
+ * twice. A card floating above the dock saying "click the rail on the right" is
+ * the worst possible version of a spatial instruction, and it arrived at a
+ * moment somebody had chosen to do something else. Both faults are the same
+ * one: where things live is not a thing to teach just in time. It is a thing to
+ * point at, once, when asked. That is `tour.ts`.
+ *
+ * What is left here is verbs, which is what just-in-time teaching is actually
+ * for: you have picked up the tool, so this is the moment the gesture matters.
  *
  * `library` is not a failure to find a trigger. Combining two shapes and
  * reading a diagram back out as code are real capabilities with no moment at
@@ -90,7 +84,6 @@ export type LessonMoment = 'first-selection' | 'several-objects';
  */
 export type LessonTrigger =
   | { on: 'tool'; tools: readonly string[] }
-  | { on: 'moment'; moment: LessonMoment }
   | { on: 'library' };
 
 export interface Lesson {
@@ -315,43 +308,6 @@ export const LESSONS: readonly Lesson[] = [
     ],
   },
 
-  /* -------------------------------------------------------- the two panels */
-
-  {
-    id: 'panel-properties',
-    trigger: { on: 'moment', moment: 'first-selection' },
-    title: 'Everything about what you picked',
-    gist: 'The right edge is the inspector. It is closed until you want it, because an inspector with nothing selected is a column of empty controls.',
-    steps: [
-      {
-        act: 'Click the rail on the right',
-        gives: 'Every property of the selection: fill, stroke, type, effects, and whatever else that kind of object has',
-      },
-      {
-        act: 'Select several things at once',
-        gives: 'One set of controls over all of them. A value they disagree on shows as mixed rather than picking a winner',
-      },
-      { act: 'Click the rail again', gives: 'The width back, and the choice remembered' },
-    ],
-  },
-  {
-    id: 'panel-layers',
-    trigger: { on: 'moment', moment: 'several-objects' },
-    title: 'Finding your way on a board with no edges',
-    gist: 'Two things on the left edge answer the question a canvas without edges keeps raising, which is where everything went. Both start closed and both stay where you put them.',
-    steps: [
-      {
-        act: 'Open the layers rail',
-        gives: 'Everything on the board as a list, in stacking order, with what is hidden or locked said plainly',
-      },
-      {
-        act: 'Open the radar below it',
-        gives: 'The whole board at a glance, your viewport as a box on it, and everyone else as a dot',
-      },
-      { act: 'Click anywhere on the radar', gives: 'The camera, there' },
-    ],
-  },
-
   /* ---------------------------------------------------------- library only */
 
   {
@@ -408,35 +364,19 @@ const BY_ID = new Map(LESSONS.map((lesson) => [lesson.id, lesson]));
 export const lessonById = (id: string): Lesson | undefined => BY_ID.get(id);
 
 /**
- * The lesson a tool or a moment raises, if either has one.
+ * The lesson a tool raises, if it has one.
  *
- * Built as maps at module load rather than searched per call: the tool lookup
- * runs on every tool change, and a linear scan over nineteen lessons on a
+ * Built as a map at module load rather than searched per call: the lookup
+ * runs on every tool change, and a linear scan over fifteen lessons on a
  * keystroke is the kind of thing that is free until the day it is not.
  */
 const BY_TOOL = new Map<string, Lesson>();
-const BY_MOMENT = new Map<LessonMoment, Lesson>();
 for (const lesson of LESSONS) {
-  if (lesson.trigger.on === 'tool') {
-    for (const tool of lesson.trigger.tools) BY_TOOL.set(tool, lesson);
-  } else if (lesson.trigger.on === 'moment') {
-    BY_MOMENT.set(lesson.trigger.moment, lesson);
-  }
+  if (lesson.trigger.on !== 'tool') continue;
+  for (const tool of lesson.trigger.tools) BY_TOOL.set(tool, lesson);
 }
 
 export const lessonForTool = (toolId: string): Lesson | undefined => BY_TOOL.get(toolId);
-
-export const lessonForMoment = (moment: LessonMoment): Lesson | undefined => BY_MOMENT.get(moment);
-
-/**
- * The moments, in the order the coach should consider them.
- *
- * Ordered rather than a set, because two can be true at once -- select
- * something on a board that already has a dozen objects -- and the coach has to
- * pick one. Selection comes first: it is the more recent thing the person did,
- * and recency is the better guess at what they are wondering about.
- */
-export const LESSON_MOMENTS: readonly LessonMoment[] = ['first-selection', 'several-objects'];
 
 /**
  * The key that arms a lesson's tool, or nothing.
@@ -447,8 +387,7 @@ export const LESSON_MOMENTS: readonly LessonMoment[] = ['first-selection', 'seve
  * likely to be updated when a binding changes.
  *
  * A lesson with several tools -- the six force fields share one -- has no
- * single key, and says nothing rather than picking one of six. Nor does a
- * lesson about a panel, which is opened rather than armed.
+ * single key, and says nothing rather than picking one of six.
  */
 export function keyFor(lesson: Lesson): string | undefined {
   if (lesson.trigger.on !== 'tool' || lesson.trigger.tools.length !== 1) return undefined;

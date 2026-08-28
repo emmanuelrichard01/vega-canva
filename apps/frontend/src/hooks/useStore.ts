@@ -605,27 +605,31 @@ export const useStore = create<StoreState>((set) => ({
     set({ snapToGrid: val });
   },
   /**
-   * Light until somebody says otherwise.
+   * Light until somebody says otherwise, and they are asked on the way in.
    *
-   * This used to follow `prefers-color-scheme`, which is the right default for
-   * a *reading* surface and the wrong one here, for two reasons.
+   * ## Why not the operating system's answer
    *
-   * The artwork is the subject. A board is a light page with colour on it, and
-   * the chrome is a frame around that page: dark chrome around a light canvas
-   * is a deliberate choice some people love, not a thing to be handed to half
-   * the audience by their operating system. Every colour decision in this
-   * product -- the palettes, the sticky themes, the default fills -- was made
-   * against a light ground, and they are what people are judging.
+   * This followed `prefers-color-scheme`, which is the right default for a
+   * reading surface and a poor one here. The artwork is the subject: a board is
+   * a light page with colour on it, every palette and sticky theme and default
+   * fill in this product was chosen against that ground, and dark chrome around
+   * a light canvas is a taste some people have rather than a thing to hand half
+   * the audience by accident. A first impression that differs machine to
+   * machine is also a weaker introduction than either version alone.
    *
-   * And the first impression should not be a coin toss. This is a tool people
-   * are shown by a colleague and arrive at through a link; two machines opening
-   * the same board and disagreeing about what the product looks like is a
-   * weaker introduction than either one on its own.
+   * ## Why not simply forcing light either
    *
-   * The cost is real and worth naming: somebody who has set their system to
-   * dark has expressed a preference, and this ignores it for one session. The
-   * toggle is in the workspace menu, it is one click, and the answer persists
-   * for ever after. That is the trade.
+   * Because somebody who has set their whole system to dark has told you
+   * something, and overriding it silently is the same disrespect in the other
+   * direction. It was forced for one commit and that was wrong.
+   *
+   * So this is the fallback, not the policy. `AuthModal` *asks*, once, on the
+   * screen that already exists for exactly this kind of question, with the
+   * system's own preference pre-selected so the honest default is one click
+   * rather than zero. Whatever is chosen is written here and persists. This
+   * value is what somebody sees only if they never pass through that screen,
+   * which means an identity that was already stored -- and in that case they
+   * have used the product before and the toggle is where they left it.
    */
   darkTheme: loadBoolPref('vega_dark_theme', false),
   setDarkTheme: (val) => {

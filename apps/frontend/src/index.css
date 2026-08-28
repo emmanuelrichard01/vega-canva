@@ -8159,6 +8159,390 @@ html.dark-theme,
 }
 
 /* ===========================================================================
+   THE WALKTHROUGH
+   ---------------------------------------------------------------------------
+   One card and one spotlight, both travelling. A tour built as "hide this
+   bubble, show that one" gives the eye nothing to follow: six steps become six
+   small searches. Moving one card is a single continuous event, and the
+   movement itself is the claim that the two things are related.
+
+   The two share a duration and a curve deliberately. Change one and change the
+   other, or the pair stops reading as one object turning its attention.
+   =========================================================================== */
+
+.tour {
+  position: fixed;
+  inset: 0;
+  z-index: 12000;
+  /* The board underneath stays yours. A tour that blocks the thing it is
+     describing is a dialog wearing a costume. */
+  pointer-events: none;
+}
+
+/* The surround, as one shadow.
+   A hole in a dim field is usually four rectangles round the gap, which cannot
+   take a rounded corner and needs four things kept in step while they move. An
+   enormous spread on one element is the whole surround in a single node.
+
+   Size cannot be transitioned on the compositor, so this does layout work per
+   frame: one element, for four hundred milliseconds, six times, on a screen
+   where nothing else is moving. That is the case where it is worth paying. */
+.tour__spot {
+  position: absolute;
+  top: 0;
+  left: 0;
+  border-radius: var(--radius-xl);
+  /* Lighter than a modal scrim. The ring is what points; this only has to
+     quiet what is around it, and a tour you cannot see your own board through
+     is a tour about a screenshot. */
+  box-shadow: 0 0 0 9999px color-mix(in srgb, #05070c 42%, transparent);
+  transition:
+    transform var(--motion-settle),
+    width var(--motion-settle),
+    height var(--motion-settle);
+  pointer-events: none;
+}
+
+/* The marks, over the scrim rather than under it, so the ring reads as being
+   on the glass. Never takes a click. */
+.tour__ink {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  overflow: visible;
+  pointer-events: none;
+  fill: none;
+  stroke: var(--accent);
+  stroke-linecap: round;
+  stroke-linejoin: round;
+}
+
+.tour__ring { stroke-width: 2.4; }
+.tour__shaft,
+.tour__head { stroke-width: 2.2; }
+
+/* Drawn on, in the order a hand does it: the circle, then the stroke towards
+   it, then the head. `pathLength` normalises every path to 1 so one dash rule
+   covers marks of wildly different real lengths. */
+.tour__ring,
+.tour__shaft,
+.tour__head {
+  stroke-dasharray: 1;
+  stroke-dashoffset: 1;
+  animation: tourInk 520ms var(--ease-settle) both;
+}
+
+.tour__ring  { animation-delay: 60ms; }
+.tour__shaft { animation-delay: 280ms; animation-duration: 420ms; }
+.tour__head  { animation-delay: 620ms; animation-duration: 180ms; }
+
+@keyframes tourInk {
+  to { stroke-dashoffset: 0; }
+}
+
+.tour__card {
+  position: absolute;
+  top: 0;
+  left: 0;
+  padding: var(--space-4) var(--space-4) var(--space-3);
+  border: 1px solid var(--border-divider);
+  border-radius: var(--radius-xl);
+  background: var(--surface-elevated);
+  box-shadow: var(--shadow-overlay);
+  pointer-events: auto;
+  transition: transform var(--motion-settle);
+}
+
+/* The card arrives with the tour, then only ever moves. */
+.tour__card { animation: tourIn 300ms var(--ease-settle) both; }
+
+@keyframes tourIn {
+  from { opacity: 0; }
+  to   { opacity: 1; }
+}
+
+/* The words cross-fade while the card travels. The movement is the continuity
+   here, which is exactly what makes a fade the right thing inside it. */
+.tour__body { animation: tourWords 340ms var(--ease-settle) both; }
+
+@keyframes tourWords {
+  from { opacity: 0; transform: translateY(6px); }
+  to   { opacity: 1; transform: none; }
+}
+
+.tour__count {
+  margin: 0 0 2px;
+  color: var(--text-tertiary);
+  font-size: var(--text-2xs);
+  font-weight: var(--weight-semibold);
+  font-variant-numeric: tabular-nums;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+}
+
+/* The voice, in the hand the product draws in.
+   Only the title. It is short, it is large, and it is the one line that is a
+   person talking rather than an instruction. Handwriting at fourteen pixels is
+   worse to read in every language, worse with a fallback, and worse for anybody
+   who already finds reading hard -- and the body is the information, which is
+   the half a tour cannot afford to make harder. */
+.tour__title {
+  margin: 0 0 2px;
+  padding-right: var(--space-4);
+  font-family: 'Caveat', var(--font-sans);
+  font-size: 27px;
+  font-weight: 600;
+  line-height: 1.1;
+  letter-spacing: 0;
+  color: var(--text-primary);
+}
+
+.tour__text {
+  margin: 0;
+  color: var(--text-secondary);
+  font-size: var(--text-base);
+  line-height: 1.55;
+}
+
+.tour__foot {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--space-3);
+  margin-top: var(--space-4);
+}
+
+.tour__dots { display: flex; align-items: center; gap: 5px; }
+
+.tour__dot {
+  width: 6px;
+  height: 6px;
+  padding: 0;
+  border: none;
+  border-radius: 50%;
+  background: var(--border-strong);
+  cursor: pointer;
+  transition: background-color var(--motion-hover), width var(--motion-hover);
+}
+
+/* The current one is a lozenge rather than a brighter dot: a shape difference
+   survives being glanced at, and six dots of two similar tints does not. */
+.tour__dot.is-active {
+  width: 16px;
+  border-radius: 999px;
+  background: var(--accent);
+}
+
+.tour__actions { display: flex; align-items: center; gap: 6px; }
+
+.tour__back {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 28px;
+  height: 28px;
+  border: 1px solid var(--border-divider);
+  border-radius: var(--radius-md);
+  background: transparent;
+  color: var(--text-secondary);
+  cursor: pointer;
+  transition: background-color var(--motion-hover), color var(--motion-hover);
+}
+
+.tour__back:hover { background: var(--surface-hover); color: var(--text-primary); }
+
+.tour__next {
+  display: flex;
+  align-items: center;
+  gap: 5px;
+  height: 28px;
+  padding: 0 var(--space-3);
+  border: none;
+  border-radius: var(--radius-md);
+  background: var(--accent);
+  color: var(--accent-on);
+  font-family: inherit;
+  font-size: var(--text-sm);
+  font-weight: var(--weight-semibold);
+  cursor: pointer;
+  transition: background-color var(--motion-hover);
+}
+
+.tour__next:hover { background: var(--accent-hover); }
+
+.tour__close {
+  position: absolute;
+  top: 6px;
+  right: 6px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 22px;
+  height: 22px;
+  border: none;
+  border-radius: var(--radius-sm);
+  background: transparent;
+  color: var(--text-tertiary);
+  cursor: pointer;
+}
+
+.tour__close:hover { background: var(--surface-hover); color: var(--text-primary); }
+
+@media (prefers-reduced-motion: reduce) {
+  /* The card still moves, because a card that teleports between six places is
+     harder to follow than one that slides, not easier. What goes is the
+     distance-independent decoration: the fades and the spotlight's resize. */
+  .tour__card,
+  .tour__body { animation: none; }
+  .tour__spot { transition: none; }
+  /* The marks appear rather than draw themselves on. A stroke that arrives
+     complete is still a stroke; one frozen half-drawn is a picture of a bug. */
+  .tour__ring,
+  .tour__shaft,
+  .tour__head { animation: none; stroke-dasharray: none; stroke-dashoffset: 0; }
+}
+
+/* --------------------------------------------------------------- the offer */
+
+/* Shares the band above the dock with everything else that coaches, so it
+   inherits that band's rule: only one of them at a time. */
+.tour-offer {
+  position: absolute;
+  bottom: calc(var(--dock-h, 64px) + 32px);
+  left: 50%;
+  translate: -50%;
+  z-index: 1080;
+  display: flex;
+  align-items: center;
+  gap: var(--space-4);
+  width: min(460px, calc(100vw - 2 * var(--gutter)));
+  padding: var(--space-3) var(--space-4);
+  border: 1px solid var(--border-divider);
+  border-radius: var(--radius-xl);
+  background: var(--surface-elevated);
+  box-shadow: var(--shadow-overlay);
+  animation: coachIn 340ms var(--ease-settle) both;
+}
+
+.tour-offer__body { flex: 1; min-width: 0; }
+
+.tour-offer__title {
+  margin: 0;
+  font-size: var(--text-base);
+  font-weight: var(--weight-semibold);
+  color: var(--text-primary);
+}
+
+.tour-offer__text {
+  margin: 2px 0 0;
+  color: var(--text-secondary);
+  font-size: var(--text-sm);
+  line-height: 1.45;
+}
+
+.tour-offer__actions { display: flex; align-items: center; gap: 6px; flex-shrink: 0; }
+
+.tour-offer__ghost,
+.tour-offer__primary {
+  height: 30px;
+  padding: 0 var(--space-3);
+  border-radius: var(--radius-md);
+  font-family: inherit;
+  font-size: var(--text-sm);
+  font-weight: var(--weight-medium);
+  cursor: pointer;
+  transition: background-color var(--motion-hover), color var(--motion-hover);
+}
+
+/* Declining is a real answer and looks like one. A dismissal styled as a
+   whisper next to a bright primary is a question with one allowed reply. */
+.tour-offer__ghost {
+  border: 1px solid var(--border-divider);
+  background: transparent;
+  color: var(--text-secondary);
+}
+
+.tour-offer__ghost:hover { background: var(--surface-hover); color: var(--text-primary); }
+
+.tour-offer__primary {
+  border: none;
+  background: var(--accent);
+  color: var(--accent-on);
+  font-weight: var(--weight-semibold);
+}
+
+.tour-offer__primary:hover { background: var(--accent-hover); }
+
+@media (prefers-reduced-motion: reduce) {
+  .tour-offer { animation: none; }
+}
+
+/* ------------------------------------------------- the look, asked for once */
+
+/* Two chips on the auth form. Quiet, because the screen is asking a different
+   question and this is a preference formed while looking at the page rather
+   than a decision anybody came here to make. */
+.auth__look {
+  display: flex;
+  gap: 6px;
+  padding: 3px;
+  border-radius: var(--radius-lg);
+  background: var(--surface-secondary);
+}
+
+.auth__look-option {
+  display: flex;
+  flex: 1;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  height: 32px;
+  border: none;
+  border-radius: calc(var(--radius-lg) - 3px);
+  background: transparent;
+  color: var(--text-secondary);
+  font-family: inherit;
+  font-size: var(--text-sm);
+  font-weight: var(--weight-medium);
+  cursor: pointer;
+  transition: background-color var(--motion-hover), color var(--motion-hover);
+}
+
+.auth__look-option:hover { color: var(--text-primary); }
+
+.auth__look-option[data-active] {
+  background: var(--surface-primary);
+  color: var(--text-primary);
+  box-shadow: var(--shadow-sm);
+}
+
+/* ---------------------------------------------------- the reference's footer */
+
+.help-modal__foot-actions {
+  display: flex;
+  align-items: center;
+  gap: var(--space-4);
+  flex-shrink: 0;
+}
+
+.help-modal__tour {
+  height: 28px;
+  padding: 0 var(--space-3);
+  border: 1px solid var(--border-divider);
+  border-radius: var(--radius-md);
+  background: var(--surface-primary);
+  color: var(--text-primary);
+  font-family: inherit;
+  font-size: var(--text-sm);
+  font-weight: var(--weight-medium);
+  cursor: pointer;
+  transition: background-color var(--motion-hover);
+}
+
+.help-modal__tour:hover { background: var(--surface-hover); }
+
+/* ===========================================================================
    LESSON COACH — the gesture a tool cannot describe
    ---------------------------------------------------------------------------
    Above the dock, where the tool you just pressed is and therefore where the

@@ -68,7 +68,7 @@ Verify in ~30 seconds:
 
 ```bash
 npx tsc --noEmit -p apps/frontend/tsconfig.app.json   # must be silent
-npx vitest run --root apps/frontend                   # 2053 tests, 110 files
+npx vitest run --root apps/frontend                   # 2059 tests, 111 files
 npx vitest run --root apps/server                     # 10 tests, 1 file
 npx oxlint apps/frontend/src                          # 0 warnings, 0 errors, exit 0
 npm run build -w apps/frontend                        # must succeed
@@ -88,7 +88,7 @@ it disagrees with them, they are right and this is stale.
 | --- | --- |
 | Branch | `grid-slots-and-notices`, 43 ahead of `origin/main`. `main` is the default branch and the merge target; `rebuild/time-travel-and-physics` and `session-2` are history, not workspaces |
 | Typecheck | clean |
-| Tests | **2053** across 110 files (frontend); **10** across 1 file (server) |
+| Tests | **2059** across 111 files (frontend); **10** across 1 file (server) |
 | Lint | exits 0; 0 warnings, 0 errors across 448 files |
 | Build | clean. **32 JS chunks**, 2.2MB raw / ~730KB gzip, plus 167KB CSS. Largest: `Room` 519KB, `app-export` 443KB, `vendor-fontkit` 357KB, `vendor-konva` 310KB |
 
@@ -483,6 +483,54 @@ same arrangement `TooltipLayer` uses. What is worth knowing:
   a person; a burst of "Copied" must not carry it away.
 - One timer for the whole stack, re-aimed on every change, because a timer per
   notice leaks one whenever a notice is folded or evicted.
+
+## 4a-6. The walkthrough, drawn by the product's own pen
+
+**The theme is asked for rather than assumed.** It followed the operating
+system, which was wrong here, and was then forced to light for one commit, which
+was wrong in the other direction: somebody who has set their whole system to
+dark has told you something. `AuthModal` asks, on the screen that already exists
+to ask a question, pre-selected from `prefers-color-scheme` so the honest answer
+is one click. The store's `false` is now a fallback for identities that never
+pass through that screen, not a policy.
+
+**`engine/learn/tour.ts` is a walk round the screen.** Six steps, one sentence
+each, pointing at the dock, both panel edges, the radar, share and help. Offered
+once after the dock question settles, declined as firmly as it is accepted, and
+replayable from the reference panel's footer for ever after.
+
+It takes over the two panel lessons and the `moment` trigger goes with them. A
+coach mark above the dock saying "click the rail on the right" is the worst
+possible version of a spatial instruction, and it arrived at a moment somebody
+had chosen to do something else. Where things live is not taught just in time;
+it is pointed at, once, when asked. Lessons are back to verbs only.
+
+**One card that travels, not a popover per step.** A tour built as hide-this
+show-that gives the eye nothing to follow and turns six steps into six small
+searches. `placeCard` is pure and tested: it tries the asked-for side, then the
+opposite, then the perpendiculars, taking the first whose own axis fits and
+sliding along the other. Testing both axes was the first version and it rejected
+good sides -- the radar in a corner failed "above" only because centring a 312px
+card on a 150px pill put its edge off screen.
+
+**The marks come out of `rough.ts`.** The ring round the target and the curving
+pointer are drawn by the same generator the canvas renders hand-drawn shapes
+with, at the same profiles, seeded from the step id so they sit still while the
+board pans rather than boiling. That is what makes it ours rather than a style:
+the product already draws this way, and a tour is annotation rather than
+interface, so a pen mark is the register that cannot be mistaken for a control.
+
+The hand stops at the pointing. The title takes Caveat because it is short,
+large and it is the voice; the body stays in the interface's type, because
+handwriting at fourteen pixels is worse to read in every language and the body is
+the information. `TOUR_GAP` went from 14 to 56 for the same reason the marks
+exist: at fourteen the pointer was twenty pixels long with half of it behind the
+card, and an arrow you cannot see is worse than none because it was drawn anyway.
+
+**Anchors are `data-tour` strings, kept honest by a test** that reads every
+source file and fails if a step names something nothing carries. At runtime a
+step whose element is genuinely absent -- focus mode, an opened panel -- is
+skipped in whichever direction the reader was already going.
 
 ## 4a-5. Light by default, panels closed, and the reference rebuilt
 

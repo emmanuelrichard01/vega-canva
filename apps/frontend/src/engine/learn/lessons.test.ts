@@ -2,15 +2,7 @@ import { describe, expect, it } from 'vitest';
 import { TOOL_SHORTCUTS } from '../tools/shortcuts';
 import { TOOL_NAMES } from '../tools/toolNames';
 import { FORCE_IDS } from '../physics/forces';
-import {
-  keyFor,
-  LESSON_MOMENTS,
-  LESSONS,
-  lessonById,
-  lessonForMoment,
-  lessonForTool,
-  type Lesson,
-} from './lessons';
+import { keyFor, LESSONS, lessonById, lessonForTool, type Lesson } from './lessons';
 
 const byId = (id: string): Lesson => {
   const lesson = lessonById(id);
@@ -112,8 +104,6 @@ describe('keyFor', () => {
 
   it('says nothing for a lesson with no tool at all', () => {
     expect(keyFor(byId('boolean-shapes'))).toBeUndefined();
-    // A panel is opened, not armed, so there is no key to advertise.
-    expect(keyFor(byId('panel-properties'))).toBeUndefined();
   });
 });
 
@@ -129,31 +119,5 @@ describe('the tools that have lessons', () => {
         expect(TOOL_NAMES[tool], `${tool} has no name`).toBeTruthy();
       }
     }
-  });
-});
-
-describe('the moments', () => {
-  it('gives every moment exactly one lesson', () => {
-    /**
-     * The same rule tools have, and for the same reason: two lessons on one
-     * moment means one of them can never be raised, and which one wins would
-     * depend on the order of a list nobody thinks of as ordered.
-     */
-    for (const moment of LESSON_MOMENTS) {
-      expect(lessonForMoment(moment), moment).toBeDefined();
-    }
-    const claimed = LESSONS.filter((l) => l.trigger.on === 'moment');
-    expect(claimed).toHaveLength(LESSON_MOMENTS.length);
-    expect(new Set(claimed.map((l) => (l.trigger.on === 'moment' ? l.trigger.moment : ''))).size)
-      .toBe(LESSON_MOMENTS.length);
-  });
-
-  it('teaches both panels, because both now start closed', () => {
-    // The panels default to collapsed, which buys back most of the window and
-    // costs a first-time visitor the knowledge that they are there at all.
-    // These two lessons are what pays that back, so their absence should fail
-    // loudly rather than leave two rails nobody opens.
-    expect(lessonForMoment('first-selection')?.id).toBe('panel-properties');
-    expect(lessonForMoment('several-objects')?.id).toBe('panel-layers');
   });
 });

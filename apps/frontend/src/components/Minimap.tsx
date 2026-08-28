@@ -228,7 +228,7 @@ export const Minimap: React.FC<MinimapProps> = ({ onCollapse }) => {
 
   return (
     <div className="radar-dock">
-      <div className="panel-surface radar-panel">
+      <div className="panel-surface radar-panel" data-tour="radar">
         <div className="radar-head">
           <span className="radar-title">
             <RadarIcon size={13} color="var(--text-primary)" aria-hidden="true" />

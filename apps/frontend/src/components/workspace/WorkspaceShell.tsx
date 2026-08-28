@@ -404,6 +404,7 @@ export const WorkspaceShell: React.FC<Props> = ({ localTitle, setLocalTitle, onT
           className="btn-icon"
           onClick={() => onHelpClick?.()}
           aria-label="Keyboard shortcuts and help"
+          data-tour="help"
           data-tooltip="Shortcuts and help (?)"
           data-tooltip-pos="bottom"
         >
@@ -432,7 +433,7 @@ export const WorkspaceShell: React.FC<Props> = ({ localTitle, setLocalTitle, onT
             system's own reading: this is the primary action *in this bar*, but
             the board is the primary thing on the screen, and an orange control
             in permanent chrome stops being an accent by the second minute. */}
-        <button className="hdr-btn hdr-btn--strong" onClick={onShareClick} aria-label="Share workspace">
+        <button className="hdr-btn hdr-btn--strong" onClick={onShareClick} aria-label="Share workspace" data-tour="share">
           <Share2 size={ICON} aria-hidden /> <span className="hdr-share-text">Share</span>
         </button>
 

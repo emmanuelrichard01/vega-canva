@@ -13,6 +13,8 @@ import { TOOL_SHORTCUTS } from '../engine/tools/shortcuts';
 import { TOOL_NAMES } from '../engine/tools/toolNames';
 import { keyFor, LESSONS, type Lesson } from '../engine/learn/lessons';
 import { learnState } from '../engine/learn/learnState';
+import { tourState } from '../engine/learn/tourState';
+import { TOUR } from '../engine/learn/tour';
 import { LessonDemo } from './learn/LessonDemo';
 
 interface Shortcut {
@@ -955,13 +957,29 @@ export const HelpModal: React.FC<Props> = ({ open, onClose }) => {
             </span>
           </label>
 
-          <button
-            type="button"
-            className="help-modal__reset"
-            onClick={() => learnState.reset()}
-          >
-            Show them all again
-          </button>
+          <div className="help-modal__foot-actions">
+            <button
+              type="button"
+              className="help-modal__reset"
+              onClick={() => learnState.reset()}
+            >
+              Show them all again
+            </button>
+            {/* The tour, replayable. It is offered once on a first run and then
+                never again on its own, which is only bearable if there is an
+                obvious way back to it -- and this is where somebody who has
+                forgotten where something lives already comes looking. */}
+            <button
+              type="button"
+              className="help-modal__tour"
+              onClick={() => {
+                onClose();
+                tourState.start();
+              }}
+            >
+              Take the {TOUR.length}-step tour
+            </button>
+          </div>
         </footer>
       </div>
     </div>

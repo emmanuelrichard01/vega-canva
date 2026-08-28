@@ -955,6 +955,10 @@ export const ToolWorkspace: React.FC<Props> = ({ activeToolId, onOpenDiagram, on
     <div
       ref={dockRef}
       className="tool-dock panel-surface"
+      // The walkthrough finds its anchors by this attribute rather than by a
+      // ref threaded down from `Room`. See `engine/learn/tour.ts`; a test fails
+      // if a step names an anchor nothing carries.
+      data-tour="dock"
       data-editing={editing || undefined}
       data-dragging={dragging || undefined}
       role="toolbar"
