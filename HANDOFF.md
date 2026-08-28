@@ -1770,6 +1770,67 @@ It was a second opener for the command palette, with a `preventDefault()` on it.
 A shortcut that is wrong on every operating system is not a convenience. Held by
 a test.
 
+## 4f. The server: what was wrong, and what is still open
+
+Full write-up in `docs/DEPLOYMENT.md`. The short version, because these are the
+ones that would have bitten in production.
+
+### The security work was bypassed
+
+The media proxy had `nosniff`, a `default-src 'none'` policy and a refusal to
+echo back a client-chosen content type. **Nothing used it.** The upload
+response handed back a direct object-store URL and the client wrote that into
+the document, so media was served by a world-readable bucket with whatever type
+it was uploaded with. The bucket is private now and the proxy is the only way
+in. Two bonuses fell out of it: media access follows room access, and images
+now load with CORS so PNG export stops being silently tainted.
+
+**Existing boards hold the old URLs.** `scripts/rewrite-media-urls.ts` fixes
+them; it reports by default and needs `--apply`.
+
+### One-character room ids
+
+`onAuthenticate` validated with `/^[a-zA-Z0-9_-]{1,128}$/`. The entire access
+model is "the room id is the capability", and it accepted an id of length one.
+Now `checkRoomId` with a floor from `MIN_ROOM_ID_LENGTH`.
+
+### Credentials that fell back to a published password
+
+`process.env.X || "canva_password"`. A missing variable in production did not
+fail, it succeeded, on a password committed to this repository. `config.ts`
+reads everything once, and under `NODE_ENV=production` refuses to start on a
+missing value or a known development default -- listing every problem at once
+and exiting 78. Same for a wildcard `ALLOWED_ORIGINS`.
+
+### The write rate
+
+`onChange` fires per Yjs transaction -- during a drag, every few frames -- and
+did two Postgres round trips each time, one of which was an upsert for a fact
+that cannot change once true. `historyBuffer.ts` batches into one multi-row
+insert per second and `KnownRooms` makes the upsert once per room per process.
+A hard kill costs at most one flush of *scrubbable history*; the canonical
+document is `room_snapshots` and a graceful stop drains first.
+
+### Tests that tested a copy of the code
+
+`server.test.ts` opened with its own transcriptions of the mime allow-list, the
+extension table, the room-id regex and the token bucket, and asserted against
+those. Deleting an entry from the server and forgetting the copy leaves a green
+suite describing code that no longer exists -- worse than no test, because it
+reads like coverage. Those now live in `media.ts`, `rooms.ts` and
+`rateLimit.ts`, and the tests import them.
+
+### Still open, in order
+
+1. **Backups.** `room_snapshots` is the canonical state of every board,
+   overwritten in place, no versioning, no PITR configured anywhere. This is the
+   largest single risk in the system.
+2. **Nothing is ever deleted** -- no room TTL, no S3 lifecycle, no orphan
+   reaping. `last_active_at` is written and never read.
+3. **Rate limiting is per-process**, so it stops limiting the moment there is
+   more than one instance. Must move to Redis in the same change as scaling out.
+4. No load testing. The batching is reasoned, not benchmarked.
+
 ## 5. Next up
 
 ### 5a. Verify what was built fast

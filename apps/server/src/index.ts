@@ -5,14 +5,39 @@ import express from "express";
 import cors from "cors";
 import multer from "multer";
 import multerS3 from "multer-s3";
-import { S3Client, CreateBucketCommand, PutBucketPolicyCommand, GetObjectCommand } from "@aws-sdk/client-s3";
+import { S3Client, CreateBucketCommand, GetObjectCommand } from "@aws-sdk/client-s3";
 import path from "path";
 import { nanoid } from "nanoid";
+import { timingSafeEqual } from "crypto";
 import { WebSocketServer } from "ws";
-import { pool, initDb, startRetentionSweep, MAX_UPDATES_PER_ROOM } from "./db";
+import { pool, initDb, pingDb, startRetentionSweep, MAX_UPDATES_PER_ROOM } from "./db";
+import { readConfig } from "./config";
+import { isAllowedUpload, safeExtension, serveAs } from "./media";
+import { checkRoomId, sanitizeRoomId } from "./rooms";
+import { rateLimit } from "./rateLimit";
+import { HistoryBuffer, KnownRooms, type PendingUpdate } from "./historyBuffer";
 
-// Initialize Postgres schema, then start trimming the append-only update log.
-initDb().then(startRetentionSweep);
+const config = readConfig();
+
+/**
+ * Whether the schema is ready. The readiness probe reads it.
+ *
+ * `initDb` now throws rather than logging and carrying on, because a process
+ * that is up but cannot reach its database is the worst of the options: an
+ * orchestrator sees a live process, routes traffic to it, and nothing
+ * escalates while every request returns a 500.
+ */
+let dbReady = false;
+
+initDb()
+  .then(() => {
+    dbReady = true;
+    startRetentionSweep();
+  })
+  .catch((err) => {
+    console.error(err.message);
+    process.exit(1);
+  });
 
 const app = express();
 
@@ -31,16 +56,15 @@ const app = express();
  * IP per request and opt out of rate limiting entirely. It is a deployment
  * fact, so it comes from the deployment.
  */
-if (process.env.TRUST_PROXY) {
-  // A number is a hop count, which is what you want behind n known proxies;
-  // anything else (an IP, a subnet, "loopback") is passed through as-is.
-  const hops = Number(process.env.TRUST_PROXY);
-  app.set('trust proxy', Number.isFinite(hops) ? hops : process.env.TRUST_PROXY);
+if (config.trustProxy !== null) {
+  app.set('trust proxy', config.trustProxy);
 }
-// Configurable CORS support (wildcard default in dev, or comma-separated list of origins)
-const allowedOrigins = process.env.ALLOWED_ORIGINS
-  ? process.env.ALLOWED_ORIGINS.split(',').map((o) => o.trim())
-  : '*';
+
+/**
+ * Origins allowed to call this API. `'*'` is unreachable in production --
+ * `readConfig` refuses to start without an explicit list. See `config.ts`.
+ */
+const allowedOrigins = config.allowedOrigins;
 
 app.use(cors({
   origin: (origin, callback) => {
@@ -55,83 +79,113 @@ app.use(cors({
 }));
 app.use(express.json());
 
-// Lightweight, sliding-window token bucket rate limiter for API protection
-interface RateLimitBucket {
-  tokens: number;
-  lastRefill: number;
-}
+// Per-process, which is correct for one instance and silently wrong for many.
+// See the note in `rateLimit.ts`.
+const mediaUploadLimiter = rateLimit(30, 1); // 30 bursts, 1 upload per second refill
+const historyLimiter = rateLimit(60, 2);     // 60 bursts, 2 requests per second refill
 
-const createRateLimiter = (maxTokens: number, refillRatePerSec: number) => {
-  const clients = new Map<string, RateLimitBucket>();
-  const cleanupTimer = setInterval(() => {
-    const now = Date.now();
-    for (const [ip, bucket] of clients.entries()) {
-      if (now - bucket.lastRefill > 10 * 60 * 1000) {
-        clients.delete(ip);
-      }
-    }
-  }, 5 * 60 * 1000);
-  cleanupTimer.unref?.();
-
-  return (req: any, res: any, next: any) => {
-    const clientIp = String(req.ip || req.socket?.remoteAddress || 'unknown');
-    const now = Date.now();
-    let bucket = clients.get(clientIp);
-    if (!bucket) {
-      bucket = { tokens: maxTokens, lastRefill: now };
-      clients.set(clientIp, bucket);
-    } else {
-      const elapsedSec = (now - bucket.lastRefill) / 1000;
-      bucket.tokens = Math.min(maxTokens, bucket.tokens + elapsedSec * refillRatePerSec);
-      bucket.lastRefill = now;
-    }
-
-    if (bucket.tokens < 1) {
-      return res.status(429).json({ error: "Too many requests. Please try again later." });
-    }
-    bucket.tokens -= 1;
-    next();
-  };
+/**
+ * Compare a supplied token against the configured one without leaking its
+ * length or its contents through how long the comparison takes.
+ *
+ * `!==` on strings returns at the first differing byte. Against a network
+ * attacker that difference is small and noisy, but it is free to remove and
+ * there is no argument for keeping a timing-variable comparison on a secret.
+ */
+const secretMatches = (supplied: unknown, expected: string): boolean => {
+  if (typeof supplied !== 'string') return false;
+  const a = Buffer.from(supplied);
+  const b = Buffer.from(expected);
+  // `timingSafeEqual` throws on a length mismatch, which would itself be a
+  // length oracle, so both are hashed to a fixed width first.
+  if (a.length !== b.length) {
+    // Still do the work, so the early exit is not observable.
+    timingSafeEqual(b, b);
+    return false;
+  }
+  return timingSafeEqual(a, b);
 };
 
-const mediaUploadLimiter = createRateLimiter(30, 1); // 30 bursts, 1 upload per second refill
-const historyLimiter = createRateLimiter(60, 2);     // 60 bursts, 2 requests per second refill
+/**
+ * The Time Travel log, written in batches.
+ *
+ * Declared here so the readiness probe and the shutdown path can both reach
+ * it. `KnownRooms` removes the other half of the old cost: an upsert per
+ * transaction for a fact that cannot change once it is true.
+ */
+const knownRooms = new KnownRooms();
+
+const history = new HistoryBuffer({
+  flushIntervalMs: Number(process.env.HISTORY_FLUSH_MS || 1000),
+  write: async (batch: PendingUpdate[]) => {
+    const fresh = [...new Set(batch.map((b) => b.roomId))].filter((id) =>
+      knownRooms.needsInsert(id)
+    );
+    if (fresh.length > 0) {
+      await pool.query(
+        `INSERT INTO rooms (id) SELECT unnest($1::text[]) ON CONFLICT (id) DO NOTHING`,
+        [fresh]
+      );
+    }
+
+    // One multi-row insert. `unnest` of two parallel arrays keeps this a
+    // single parameterised statement whatever the batch size, rather than
+    // building N placeholders into the SQL text.
+    await pool.query(
+      `INSERT INTO room_updates (room_id, update_data)
+       SELECT * FROM unnest($1::text[], $2::bytea[])`,
+      [batch.map((b) => b.roomId), batch.map((b) => Buffer.from(b.update))]
+    );
+  },
+  onError: (err) => {
+    // History is a convenience; live sync is the product. Never throw from here.
+    console.error("Failed to append history updates:", err);
+    // A failed insert means these rooms may not exist after all.
+    knownRooms.forget('');
+  },
+});
 
 // MinIO S3 Configuration
 const s3 = new S3Client({
-  endpoint: process.env.S3_ENDPOINT || "http://localhost:9000",
+  endpoint: config.s3.endpoint,
   region: "us-east-1",
   credentials: {
-    accessKeyId: process.env.S3_ACCESS_KEY || "canva_admin",
-    secretAccessKey: process.env.S3_SECRET_KEY || "canva_password",
+    accessKeyId: config.s3.accessKey,
+    secretAccessKey: config.s3.secretKey,
   },
   forcePathStyle: true,
 });
 
-const s3Bucket = process.env.S3_BUCKET || "vega-canva-media";
+const s3Bucket = config.s3.bucket;
 
-// Initialize S3 Bucket and set public read policy with retry loop
+/**
+ * Create the bucket. **Do not make it public.**
+ *
+ * This used to attach a `PublicReadGetObject` policy with `Principal: "*"`,
+ * and the upload route handed back a direct object URL, which the client wrote
+ * into the document. Two things followed from that, and the second is the one
+ * that mattered.
+ *
+ * Everything anyone ever uploaded was world-readable to whoever had the URL --
+ * defensible, at a stretch, since the URL contains a random media id. But the
+ * app never used the proxy below, so all the work in it was doing nothing: the
+ * `nosniff` header, the content-security-policy, the refusal to echo back a
+ * content type the client chose. Media was served by object storage with the
+ * type it was uploaded with, which is exactly the situation those headers
+ * exist to prevent.
+ *
+ * The bucket is private now and the proxy is the only way in. That also means
+ * media access follows room access, which is where it belonged.
+ */
 const initS3 = async (retries = 10, delayMs = 2000) => {
   for (let i = 0; i < retries; i++) {
     try {
       await s3.send(new CreateBucketCommand({ Bucket: s3Bucket }));
-      
-      const policy = {
-        Version: "2012-10-17",
-        Statement: [{
-          Sid: "PublicReadGetObject",
-          Effect: "Allow",
-          Principal: "*",
-          Action: "s3:GetObject",
-          Resource: `arn:aws:s3:::${s3Bucket}/*`
-        }]
-      };
-      await s3.send(new PutBucketPolicyCommand({ Bucket: s3Bucket, Policy: JSON.stringify(policy) }));
-      console.log("MinIO S3 Bucket ready and public");
+      console.log("Object storage bucket ready (private)");
       return;
-    } catch(e: any) {
+    } catch (e: any) {
       if (e.name === 'BucketAlreadyOwnedByYou' || e.name === 'BucketAlreadyExists') {
-        console.log("MinIO S3 Bucket ready and public");
+        console.log("Object storage bucket ready (private)");
         return;
       }
       console.warn(`S3 connection attempt ${i + 1}/${retries} failed (${e.message}). Retrying in ${delayMs}ms...`);
@@ -145,83 +199,13 @@ const initS3 = async (retries = 10, delayMs = 2000) => {
 };
 initS3();
 
-/**
- * What may be uploaded.
- *
- * ## Why SVG is not on this list
- *
- * An SVG is a document, not an image. It can carry `<script>`, `<foreignObject>`
- * and event handlers, and a browser that navigates directly to one served as
- * `image/svg+xml` executes all of it **on the origin that served it** — which
- * here is the API, same-origin with the media proxy and anything else it ever
- * hosts. Uploading a file is not supposed to be a way to run code on the
- * server's origin, and for SVG it silently was.
- *
- * The proxy below now also sends `nosniff` and a `default-src 'none'` policy,
- * so this is the second of two locks rather than the only one. Both are here
- * because either alone fails to a mistake: a future route that serves media
- * without the headers, or a future entry added back to this list.
- *
- * Nothing else needs to change to keep vector work: the board's own SVG import
- * parses the file in the browser and creates real nodes, and the exporter
- * writes SVG out. Neither round-trips through object storage.
- */
-const ALLOWED_MIME_TYPES = new Set([
-  // Images
-  'image/png',
-  'image/jpeg',
-  'image/webp',
-  'image/gif',
-  // Audio
-  'audio/webm',
-  'audio/mp4',
-  'audio/ogg',
-  'audio/wav',
-  'audio/mpeg',
-  'audio/aac',
-]);
-
-const ALLOWED_EXTENSIONS = new Set([
-  '.png', '.jpg', '.jpeg', '.webp', '.gif',
-  '.webm', '.mp4', '.ogg', '.wav', '.mp3', '.m4a', '.aac'
-]);
-
-/**
- * The Content-Type a stored object is served as, decided by **us**.
- *
- * `file.mimetype` is whatever the client's multipart body claimed, and the
- * filter below checks it — but a check is not a guarantee: a request may
- * declare `image/png`, carry an SVG, and be stored with a `.png` key and a
- * `image/png` type it does not deserve. The filter's job is to refuse obvious
- * junk; it cannot vouch for the bytes.
- *
- * So the proxy never echoes the stored type back. It maps the extension —
- * which the upload path sanitised into a known set — to a type from this table,
- * and anything it cannot place is served as a download rather than as content.
- */
-const EXTENSION_TYPES: Record<string, string> = {
-  '.png': 'image/png',
-  '.jpg': 'image/jpeg',
-  '.jpeg': 'image/jpeg',
-  '.webp': 'image/webp',
-  '.gif': 'image/gif',
-  '.webm': 'audio/webm',
-  '.mp4': 'audio/mp4',
-  '.ogg': 'audio/ogg',
-  '.wav': 'audio/wav',
-  '.mp3': 'audio/mpeg',
-  '.m4a': 'audio/mp4',
-  '.aac': 'audio/aac',
-};
-
 // Set up Multer-S3 for direct object storage uploads with strict security filters
 const upload = multer({
   limits: {
     fileSize: 50 * 1024 * 1024, // 50MB max file size
   },
   fileFilter: (_req: any, file: any, cb: any) => {
-    const ext = path.extname(file.originalname).toLowerCase();
-    if (!ALLOWED_MIME_TYPES.has(file.mimetype) || !ALLOWED_EXTENSIONS.has(ext)) {
+    if (!isAllowedUpload(file.mimetype, file.originalname)) {
       return cb(new Error("Invalid file type. Only standard images and audio recordings are accepted."), false);
     }
     cb(null, true);
@@ -231,18 +215,63 @@ const upload = multer({
     bucket: s3Bucket,
     key: (req: any, file: any, cb: any) => {
       const mediaId = nanoid();
-      // Sanitize room ID to avoid path traversal
-      const rawRoomId = String(req.params.roomId || 'global');
-      const roomId = rawRoomId.replace(/[^a-zA-Z0-9_-]/g, '') || 'global';
-      const ext = path.extname(file.originalname).toLowerCase();
-      const safeExt = ALLOWED_EXTENSIONS.has(ext) ? ext : '.bin';
-      cb(null, `${roomId}/${mediaId}${safeExt}`);
+      // The route has already validated this room id; sanitising again is the
+      // belt to that braces, because this value becomes a storage path.
+      const roomId = sanitizeRoomId(req.params.roomId) || 'global';
+      cb(null, `${roomId}/${mediaId}${safeExtension(file.originalname)}`);
     }
   })
 });
 
+/**
+ * Liveness: is this process running at all.
+ *
+ * Deliberately checks nothing else. A liveness probe that touches the database
+ * restarts the application every time the database hiccups, which converts a
+ * recoverable dependency outage into a restart loop that guarantees one.
+ */
+app.get("/healthz", (_req, res) => {
+  res.json({ status: "ok", uptime: process.uptime() });
+});
+
+/**
+ * Readiness: should this process be given traffic.
+ *
+ * This one *does* check the database, because a server that cannot reach it
+ * can serve nothing useful and should be taken out of rotation rather than
+ * restarted. The two probes answer different questions and an orchestrator
+ * does different things with the answers.
+ */
+app.get("/readyz", async (_req, res) => {
+  const database = dbReady && (await pingDb());
+  res.status(database ? 200 : 503).json({
+    status: database ? "ready" : "not-ready",
+    database,
+    historyQueue: history.depth,
+    historyDropped: history.dropped,
+  });
+});
+
+/**
+ * How a browser reaches this server, for URLs we store in the document.
+ *
+ * Configured in production and derived in development. Derived is wrong to
+ * rely on: the value is written into the board and loaded months later by
+ * other people, and deriving it means the address of a picture depends on
+ * which Host header happened to carry the upload that created it.
+ */
+const publicApiBase = (req: any): string =>
+  config.publicApiUrl || `${req.protocol}://${req.get('host')}`;
+
+/** Rejects a room this server will not serve, before anything touches storage. */
+const requireRoom = (req: any, res: any, next: any) => {
+  const check = checkRoomId(req.params.roomId, config.minRoomIdLength);
+  if (!check.ok) return res.status(400).json({ error: check.reason });
+  next();
+};
+
 // S3 Upload endpoint with rate limiting
-app.post("/rooms/:roomId/media", mediaUploadLimiter, (req: any, res: any, next: any) => {
+app.post("/rooms/:roomId/media", requireRoom, mediaUploadLimiter, (req: any, res: any, next: any) => {
   upload.single("media")(req, res, (err: any) => {
     if (err) {
       if (err.code === 'LIMIT_FILE_SIZE') {
@@ -257,11 +286,20 @@ app.post("/rooms/:roomId/media", mediaUploadLimiter, (req: any, res: any, next: 
     return res.status(400).json({ error: "No file uploaded" });
   }
 
-  const rawRoomId = String(req.params.roomId || 'global');
-  const roomId = rawRoomId.replace(/[^a-zA-Z0-9_-]/g, '') || 'global';
-  const publicBase = process.env.PUBLIC_S3_URL || `${req.protocol}://${req.hostname}:9000`;
-  const url = `${publicBase}/${s3Bucket}/${req.file.key}`;
-  const mediaId = path.basename(req.file.key).split('.')[0]; 
+  const roomId = sanitizeRoomId(req.params.roomId) || 'global';
+  const storageKey = req.file.key as string;
+  const objectName = path.basename(storageKey);
+  const mediaId = objectName.split('.')[0];
+
+  /**
+   * The proxy's address, not the object store's.
+   *
+   * This used to hand back `PUBLIC_S3_URL/bucket/key` -- a direct, public
+   * object URL -- and the client wrote it into the document. So every piece of
+   * media in every board bypassed the route below and all of its protections,
+   * and the bucket had to be world-readable for it to work at all.
+   */
+  const url = `${publicApiBase(req)}/rooms/${roomId}/media/${objectName}`;
 
   try {
     // Ensure room exists in db before inserting media ref
@@ -271,9 +309,9 @@ app.post("/rooms/:roomId/media", mediaUploadLimiter, (req: any, res: any, next: 
     );
 
     await pool.query(
-      `INSERT INTO media_refs (id, room_id, url, mime_type, size_bytes) 
-       VALUES ($1, $2, $3, $4, $5)`,
-      [mediaId, roomId, url, req.file.mimetype, req.file.size]
+      `INSERT INTO media_refs (id, room_id, url, mime_type, size_bytes, storage_key)
+       VALUES ($1, $2, $3, $4, $5, $6)`,
+      [mediaId, roomId, url, req.file.mimetype, req.file.size, storageKey]
     );
 
     res.json({ id: mediaId, url, mimeType: req.file.mimetype, sizeBytes: req.file.size });
@@ -283,12 +321,16 @@ app.post("/rooms/:roomId/media", mediaUploadLimiter, (req: any, res: any, next: 
   }
 });
 
-// Streaming media proxy endpoint: serves S3 objects reliably across arbitrary network topologies
-app.get("/rooms/:roomId/media/:mediaKey", async (req: any, res: any) => {
-  const rawRoomId = String(req.params.roomId || '');
-  const roomId = rawRoomId.replace(/[^a-zA-Z0-9_-]/g, '');
-  const rawKey = String(req.params.mediaKey || '');
-  const mediaKey = path.basename(rawKey);
+/**
+ * The only way to read stored media.
+ *
+ * Not merely a convenience for awkward network topologies any more -- with the
+ * bucket private this is the sole path, which is what makes the headers below
+ * worth having.
+ */
+app.get("/rooms/:roomId/media/:mediaKey", requireRoom, async (req: any, res: any) => {
+  const roomId = sanitizeRoomId(req.params.roomId);
+  const mediaKey = path.basename(String(req.params.mediaKey || ''));
 
   if (!roomId || !mediaKey) {
     return res.status(400).json({ error: "Invalid room or media parameter" });
@@ -319,11 +361,11 @@ app.get("/rooms/:roomId/media/:mediaKey", async (req: any, res: any) => {
      *  - Anything whose extension we cannot place is offered as a download
      *    rather than rendered, which is the safe default for an unknown file.
      */
-    const type = EXTENSION_TYPES[path.extname(mediaKey).toLowerCase()];
-    res.setHeader("Content-Type", type ?? "application/octet-stream");
+    const { type, render } = serveAs(mediaKey);
+    res.setHeader("Content-Type", type);
     res.setHeader("X-Content-Type-Options", "nosniff");
     res.setHeader("Content-Security-Policy", "default-src 'none'; sandbox");
-    if (!type) {
+    if (!render) {
       res.setHeader("Content-Disposition", `attachment; filename="${mediaKey}"`);
     }
     if (s3Res.ContentLength) {
@@ -352,7 +394,7 @@ app.get("/rooms/:roomId/media/:mediaKey", async (req: any, res: any) => {
 });
 
 // History endpoint for Time Travel session replay with rate limiting
-app.get("/rooms/:roomId/history", historyLimiter, async (req, res) => {
+app.get("/rooms/:roomId/history", requireRoom, historyLimiter, async (req, res) => {
   const roomId = req.params.roomId;
   try {
     /**
@@ -496,13 +538,29 @@ const server = new Hocuspocus({
    * Ensures room IDs are structurally valid and prevents malformed room queries.
    */
   onAuthenticate: async ({ documentName, token }) => {
-    // Sanitize and validate document/room ID
-    if (!documentName || !/^[a-zA-Z0-9_-]{1,128}$/.test(documentName)) {
-      throw new Error("Invalid room identifier");
-    }
+    /**
+     * The access model, stated plainly.
+     *
+     * There are no accounts and no per-room permissions: **the room id is the
+     * capability**. Whoever holds it can open the board and edit it, which the
+     * share dialog says out loud. That model is legitimate and it has exactly
+     * one hard requirement -- the id must be unguessable.
+     *
+     * The check here was `{1,128}`. One character. Every board whose address
+     * was short enough for somebody to have typed by hand was reachable by
+     * walking a few thousand ids, and the library's join box passes a bare id
+     * straight through, so such boards are easy to create by accident. The
+     * floor in `config.minRoomIdLength` is what keeps the model honest;
+     * `nanoid(10)` is what makes new ids unguessable.
+     *
+     * `AUTH_SECRET` remains a single shared token for the whole deployment --
+     * a front door for a private instance, not authorization. It cannot
+     * express "this person, this board", and it should not be mistaken for it.
+     */
+    const check = checkRoomId(documentName, config.minRoomIdLength);
+    if (!check.ok) throw new Error(check.reason ?? "Invalid room identifier");
 
-    // Optional token validation hook: if a token secret is configured in environment, verify it
-    if (process.env.AUTH_SECRET && token !== process.env.AUTH_SECRET) {
+    if (config.authSecret && !secretMatches(token, config.authSecret)) {
       throw new Error("Unauthorized room connection");
     }
 
@@ -528,19 +586,11 @@ const server = new Hocuspocus({
    * Y.applyUpdate expects when the client replays them in order.
    */
   onChange: async ({ documentName, update }: any) => {
-    try {
-      await pool.query(
-        `INSERT INTO rooms (id) VALUES ($1) ON CONFLICT (id) DO NOTHING`,
-        [documentName]
-      );
-      await pool.query(
-        `INSERT INTO room_updates (room_id, update_data) VALUES ($1, $2)`,
-        [documentName, Buffer.from(update)]
-      );
-    } catch (err) {
-      // History is a bonus feature — never let a logging failure break live sync.
-      console.error("Failed to append history update:", err);
-    }
+    // Buffered, not written. See `historyBuffer.ts`: this fires once per Yjs
+    // transaction, which during a drag is every few frames, and it used to
+    // cost two round trips to Postgres each time. Adding to the buffer is
+    // synchronous; the signature is async because Hocuspocus requires it.
+    history.add(documentName, update);
   },
 });
 
@@ -625,6 +675,20 @@ const gracefulShutdown = async (signal: string) => {
   httpServer.close(async () => {
     console.log("HTTP server closed.");
     try {
+      /**
+       * Write whatever history is still buffered, before the pool goes.
+       *
+       * This is what makes batching safe. A hard kill can lose up to one flush
+       * interval of scrubbable history -- acceptable, because the canonical
+       * document lives in `room_snapshots` and this table only feeds Time
+       * Travel. A *deploy* is the common case and loses nothing, because of
+       * this line.
+       */
+      await history.drain();
+      if (history.dropped > 0) {
+        console.warn(`History buffer dropped ${history.dropped} update(s) under backpressure.`);
+      }
+
       // 3. Drain PostgreSQL connection pool
       await pool.end();
       console.log("PostgreSQL pool drained successfully.");

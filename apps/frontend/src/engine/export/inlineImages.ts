@@ -9,7 +9,7 @@
  * a picture *on this machine, while that server is reachable*. Sent to a
  * colleague it renders as empty rectangles; opened next year it renders as
  * empty rectangles; and in the common development case the URL is
- * `http://localhost:9000/...`, which is not merely unreachable for the
+ * `http://localhost:3000/rooms/...`, which is not merely unreachable for the
  * recipient but points at whatever *they* happen to be running.
  *
  * Nothing about that failure is visible to the person exporting. The file is

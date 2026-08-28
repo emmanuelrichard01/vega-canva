@@ -1,0 +1,116 @@
+# A deployable shape. Read this file before using it -- it is a starting point,
+# not a turnkey production stack.
+#
+# What it does provide: no credentials in the file, nothing but the application
+# published to the host, the data stores reachable only on the internal network,
+# and health checks wired to the two probes the server exposes.
+#
+# What it deliberately does not provide, because none of it belongs in a compose
+# file that could be copied without being read:
+#
+#   * TLS. Terminate it in front of this and set TRUST_PROXY to the hop count.
+#   * Backups. `room_snapshots` is the canonical state of every board and is
+#     overwritten in place; without point-in-time recovery on this database, a
+#     bad write is unrecoverable. This is the single largest remaining risk.
+#   * Object storage durability. MinIO on one volume is one disk.
+#   * Anything that scales past one server. See REDIS_HOST below.
+#
+# Every value comes from a `.env` file next to this one. See `.env.example`.
+
+services:
+  server:
+    build:
+      context: .
+      dockerfile: apps/server/Dockerfile
+    restart: always
+    ports:
+      - "${SERVER_BIND:-127.0.0.1}:3000:3000"
+    environment:
+      NODE_ENV: production
+      PORT: 3000
+
+      # Required. The server refuses to start without these, and refuses to
+      # start if any of them is one of the development defaults.
+      POSTGRES_HOST: db
+      POSTGRES_USER: ${POSTGRES_USER:?set POSTGRES_USER}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?set POSTGRES_PASSWORD}
+      POSTGRES_DB: ${POSTGRES_DB:?set POSTGRES_DB}
+
+      S3_ENDPOINT: http://minio:9000
+      S3_BUCKET: ${S3_BUCKET:-vega-canva-media}
+      S3_ACCESS_KEY: ${S3_ACCESS_KEY:?set S3_ACCESS_KEY}
+      S3_SECRET_KEY: ${S3_SECRET_KEY:?set S3_SECRET_KEY}
+
+      # Which sites may call this API with a visitor's browser. No wildcard.
+      ALLOWED_ORIGINS: ${ALLOWED_ORIGINS:?set ALLOWED_ORIGINS}
+
+      # How a browser reaches this server. Written into documents as the
+      # address of uploaded media, so it must be the public URL rather than
+      # whatever Host header carried the upload.
+      PUBLIC_API_URL: ${PUBLIC_API_URL:?set PUBLIC_API_URL}
+
+      # Number of reverse proxies in front of this. Getting it wrong in either
+      # direction breaks rate limiting -- see the note in index.ts.
+      TRUST_PROXY: ${TRUST_PROXY:-1}
+
+      # Uncomment to run more than one instance. Without it, instances do not
+      # share document updates or awareness, so two people on the same board
+      # behind a load balancer will not see each other.
+      # REDIS_HOST: redis
+
+      # Optional shared token for a private deployment. Not authorization:
+      # it is one password for the whole server, not per board.
+      AUTH_SECRET: ${AUTH_SECRET:-}
+    depends_on:
+      db:
+        condition: service_healthy
+      minio:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "node", "-e", "fetch('http://127.0.0.1:3000/readyz').then(r=>process.exit(r.ok?0:1)).catch(()=>process.exit(1))"]
+      interval: 30s
+      timeout: 5s
+      start_period: 20s
+      retries: 3
+
+  db:
+    image: postgres:15-alpine
+    restart: always
+    # No `ports`. The database is reachable on the compose network and nowhere
+    # else; the development file publishes 5432 to the host and that is exactly
+    # the difference between the two.
+    environment:
+      POSTGRES_USER: ${POSTGRES_USER:?}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?}
+      POSTGRES_DB: ${POSTGRES_DB:?}
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U $${POSTGRES_USER} -d $${POSTGRES_DB}"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  minio:
+    image: minio/minio
+    restart: always
+    environment:
+      MINIO_ROOT_USER: ${S3_ACCESS_KEY:?}
+      MINIO_ROOT_PASSWORD: ${S3_SECRET_KEY:?}
+    command: server /data
+    volumes:
+      - miniodata:/data
+    healthcheck:
+      test: ["CMD", "mc", "ready", "local"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  # Only needed to run more than one server instance. Uncomment REDIS_HOST above.
+  # redis:
+  #   image: redis:alpine
+  #   restart: always
+
+volumes:
+  pgdata:
+  miniodata:

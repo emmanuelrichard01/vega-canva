@@ -1,3 +1,11 @@
+# Local development only.
+#
+# Every credential below is published in this repository, the data stores are
+# bound to the host, and there is no TLS anywhere. `docker-compose.prod.yml` is
+# the deployable one; this is for running the thing on a laptop.
+#
+# The server refuses to start with these values when NODE_ENV=production, which
+# is the safety net for the mistake this file makes easy.
 services:
   server:
     build:
@@ -6,13 +14,14 @@ services:
     ports:
       - "3000:3000"
     environment:
+      # Explicitly not production: this is what allows the development defaults.
+      - NODE_ENV=development
       - POSTGRES_HOST=db
       - REDIS_HOST=redis
       - S3_ENDPOINT=http://minio:9000
     depends_on:
       - db
-    volumes:
-      - ./uploads:/app/uploads
+      - minio
 
   db:
     image: postgres:15-alpine

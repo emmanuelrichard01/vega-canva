@@ -42,11 +42,21 @@ export const ImageRenderer: React.FC<Props> = React.memo(({ node }) => {
    *
    * `crossOrigin = 'anonymous'` is not a hint. If the response carries no
    * `Access-Control-Allow-Origin` header the load **fails outright** — no
-   * image, just the grey placeholder. And uploads here are served by MinIO on
-   * its own port, while the `cors()` middleware covers only the Express app on
-   * a different one, so nothing in this project makes the object store send
-   * that header. Every uploaded image would sit as a placeholder forever, with
-   * nothing on screen explaining why.
+   * image, just the grey placeholder.
+   *
+   * That used to be the normal case, not the edge one: uploads were served
+   * directly by the object store on its own port, where the `cors()`
+   * middleware — which covers the Express app on a different port — never
+   * ran. Nothing in the project made the bucket send that header, so the
+   * anonymous attempt failed for every uploaded image and every board fell
+   * through to the plain load, which taints the canvas and silently breaks
+   * PNG export.
+   *
+   * New uploads are served through the API's own media route now, so they
+   * carry the header and the first attempt succeeds. The fallback stays for
+   * the two cases that remain: images pasted in from elsewhere on the web,
+   * and boards written before the change whose `src` still points straight at
+   * the object store.
    *
    * So: try anonymously, and if that fails try again plainly. A picture that
    * displays but cannot be exported is a far better outcome than a grey box,
