@@ -1822,6 +1822,15 @@ reads like coverage. Those now live in `media.ts`, `rooms.ts` and
 
 ### Still open, in order
 
+Full write-up, with the reasoning and the concrete fixes, in
+`docs/GOING-LIVE.md`. That document is where to start a new session: it opens
+with the three things that block a public launch, and closes with the decisions
+that need a product call rather than code.
+
+The single risk not listed in `DEPLOYMENT.md` and worth repeating here: **the
+upload endpoint is an anonymous file host with no quota** beyond 50MB per file.
+That is the one to fix before sharing a link with anybody.
+
 1. **Backups.** `room_snapshots` is the canonical state of every board,
    overwritten in place, no versioning, no PITR configured anywhere. This is the
    largest single risk in the system.

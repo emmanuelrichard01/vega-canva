@@ -4,6 +4,9 @@ This is the operational companion to `ARCHITECTURE.md`. It covers what the
 server needs to run, the decisions that are already made for you, and — the
 part worth reading before you commit to a launch date — what is still open.
 
+**For what to build next, see `GOING-LIVE.md`**: the risks that block a public
+launch, an authentication plan in three stages, and a $0 hosting stack.
+
 ---
 
 ## 1. The access model, stated once
