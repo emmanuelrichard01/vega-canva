@@ -5,7 +5,7 @@ import express from "express";
 import cors from "cors";
 import multer from "multer";
 import multerS3 from "multer-s3";
-import { S3Client, CreateBucketCommand, GetObjectCommand } from "@aws-sdk/client-s3";
+import { S3Client, CreateBucketCommand, GetObjectCommand, HeadBucketCommand } from "@aws-sdk/client-s3";
 import path from "path";
 import { nanoid } from "nanoid";
 import { timingSafeEqual } from "crypto";
@@ -189,17 +189,37 @@ const s3Bucket = config.s3.bucket;
 const initS3 = async (retries = 10, delayMs = 2000) => {
   for (let i = 0; i < retries; i++) {
     try {
-      await s3.send(new CreateBucketCommand({ Bucket: s3Bucket }));
-      console.log("Object storage bucket ready (private)");
-      return;
+      // 1. First check if the bucket exists and is accessible
+      try {
+        await s3.send(new HeadBucketCommand({ Bucket: s3Bucket }));
+        console.log(`Object storage bucket "${s3Bucket}" ready (private)`);
+        return;
+      } catch (headErr: any) {
+        // If 404 / NotFound, attempt to create it (e.g. local MinIO in development)
+        if (headErr.name === 'NotFound' || headErr.$metadata?.httpStatusCode === 404) {
+          await s3.send(new CreateBucketCommand({ Bucket: s3Bucket }));
+          console.log(`Object storage bucket "${s3Bucket}" created and ready`);
+          return;
+        }
+        // If AccessDenied / 403, this is standard for bucket-scoped tokens on Cloudflare R2 / AWS S3
+        if (
+          headErr.name === 'AccessDenied' ||
+          headErr.Code === 'AccessDenied' ||
+          headErr.$metadata?.httpStatusCode === 403
+        ) {
+          console.log(`Object storage bucket "${s3Bucket}" ready (bucket-scoped token)`);
+          return;
+        }
+        throw headErr;
+      }
     } catch (e: any) {
       if (e.name === 'BucketAlreadyOwnedByYou' || e.name === 'BucketAlreadyExists') {
-        console.log("Object storage bucket ready (private)");
+        console.log(`Object storage bucket "${s3Bucket}" ready (private)`);
         return;
       }
       console.warn(`S3 connection attempt ${i + 1}/${retries} failed (${e.message}). Retrying in ${delayMs}ms...`);
       if (i < retries - 1) {
-        await new Promise(res => setTimeout(res, delayMs));
+        await new Promise((res) => setTimeout(res, delayMs));
       } else {
         console.error("S3 Setup failed after maximum retries:", e);
       }

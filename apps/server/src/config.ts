@@ -136,6 +136,7 @@ export interface Config {
     port: number;
     database: string;
     poolMax: number;
+    ssl: boolean;
   };
   s3: {
     endpoint: string;
@@ -203,6 +204,14 @@ export function readConfig(): Config {
       port: env.int('POSTGRES_PORT', 5432),
       database: env.plain('POSTGRES_DB', 'vega_canva'),
       poolMax: env.int('DB_POOL_MAX', 20),
+      ssl:
+        process.env.POSTGRES_SSL === 'false'
+          ? false
+          : process.env.POSTGRES_SSL === 'true' ||
+            production ||
+            (process.env.POSTGRES_HOST !== undefined &&
+              process.env.POSTGRES_HOST !== 'localhost' &&
+              process.env.POSTGRES_HOST !== '127.0.0.1'),
     },
     s3: {
       endpoint: env.plain('S3_ENDPOINT', 'http://localhost:9000'),

@@ -12,6 +12,7 @@ export const pool = new Pool({
   port: config.db.port,
   database: config.db.database,
   max: config.db.poolMax,
+  ssl: config.db.ssl ? { rejectUnauthorized: false } : undefined,
   idleTimeoutMillis: 30000,
   connectionTimeoutMillis: 5000,
 });
