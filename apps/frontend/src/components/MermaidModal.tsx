@@ -18,15 +18,15 @@ import {
 } from 'lucide-react';
 import { useFocusTrap } from '../hooks/useFocusTrap';
 import {
-  parseMermaid,
+  parseMermaidLenient,
   formatMermaid,
   DIAGRAM_THEMES,
-  SHAPE_SPECS,
   type DiagramThemeId,
   type FlowDirection,
   type MermaidNode,
 } from '../engine/diagram/mermaid';
 import { layoutGraph } from '../engine/diagram/layout';
+import { diagramNodeSizes } from '../engine/diagram/build';
 
 const TEMPLATES = [
   {
@@ -207,7 +207,19 @@ export const MermaidModal: React.FC<Props> = ({
     }
   }, [open, initialSource]);
 
-  const { graph, error, errorLine } = useMemo(() => parseMermaid(source), [source]);
+  /**
+   * Lenient for the picture, strict for the message.
+   *
+   * The preview spends most of its life looking at a half-typed document, and
+   * blanking it on every incomplete line is a flicker in exactly the moment
+   * the reader is trying to see the effect of what they just typed. This keeps
+   * drawing the lines that do parse and still reports the ones that do not --
+   * error recovery, not error suppression.
+   */
+  const { graph, error, errorLine, skippedLines } = useMemo(
+    () => parseMermaidLenient(source),
+    [source]
+  );
   const activeTheme = DIAGRAM_THEMES[themeId] || DIAGRAM_THEMES.indigo;
 
   // Change flowchart direction in source
@@ -227,18 +239,19 @@ export const MermaidModal: React.FC<Props> = ({
     setSource((prev) => formatMermaid(prev));
   };
 
-  /** The preview, laid out by the exact geometry the board will use. */
+  /**
+   * The preview, laid out by the geometry the board will use -- from the same
+   * function now, rather than from a second copy of the rule.
+   *
+   * This block used to size its own nodes with the old character-count
+   * estimate and a hard-coded height of 56, under a comment promising exactly
+   * what it was not delivering. Once `build.ts` began measuring text the gap
+   * became plain: a long label previewed 320x56 and built 320x93. A preview
+   * that disagrees with the result is worse than no preview.
+   */
   const preview = useMemo(() => {
     if (!graph) return null;
-    const sizes = new Map(
-      graph.nodes.map((n) => {
-        const longest = n.label.split('\n').reduce((m, l) => Math.max(m, l.length), 0);
-        const square = Boolean(SHAPE_SPECS[n.shape]?.square);
-        const w = Math.max(96, Math.min(320, longest * 8.4 + 36));
-        const h = 56;
-        return [n.key, square ? { width: Math.max(w, h), height: Math.max(w, h) } : { width: w, height: h }];
-      })
-    );
+    const sizes = diagramNodeSizes(graph, renderStyle === 'sketch');
     const { nodes: placedNodes, clusters } = layoutGraph(graph, {
       originX: 20,
       originY: 20,
@@ -269,7 +282,7 @@ export const MermaidModal: React.FC<Props> = ({
     const maxY = Math.max(150, ...allY, ...subgraphs.map((s) => s!.y + s!.height));
 
     return { placed: placedNodes, at, clusterAt, subgraphs, maxX, maxY };
-  }, [graph]);
+  }, [graph, renderStyle]);
 
   if (!open) return null;
 
@@ -807,6 +820,17 @@ export const MermaidModal: React.FC<Props> = ({
                 <AlertTriangle size={14} aria-hidden />
                 {errorLine ? `[Line ${errorLine}] ` : ''}
                 {error}
+                {/* Say what the preview is showing, so a picture built from
+                    less than the whole document never passes for the whole
+                    document. Recovery has to be visible to be trustworthy. */}
+                {graph && skippedLines.length > 0 ? (
+                  <em className="mermaid-modal__status-note">
+                    {' '}— previewing without{' '}
+                    {skippedLines.length === 1
+                      ? `line ${skippedLines[0]}`
+                      : `lines ${skippedLines.join(', ')}`}
+                  </em>
+                ) : null}
               </>
             ) : graph ? (
               <>

@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { emitMermaid, parseMermaid, formatMermaid } from './mermaid';
+import { emitMermaid, parseMermaid, formatMermaid, parseMermaidLenient } from './mermaid';
 import { layoutGraph } from './layout';
 import { buildDiagram, diagramToMermaid } from './build';
 import type { AnyNode } from '../model/schema';
@@ -486,5 +486,65 @@ describe('themes and sketch styling in buildDiagram', () => {
 
     const built = buildDiagram(graph!, { x: 100, y: 100 });
     expect(built.nodes.length).toBeGreaterThan(10);
+  });
+});
+
+describe('parseMermaidLenient', () => {
+  /**
+   * A live preview spends most of its life looking at a half-typed document.
+   * Blanking it on every incomplete line is a flicker in exactly the moment
+   * the reader is trying to see the effect of what they typed.
+   */
+  it('is identical to the strict parse when the source is clean', () => {
+    const src = 'flowchart TD\n  A[Start] --> B[End]';
+    const lenient = parseMermaidLenient(src);
+
+    expect(lenient.graph).toEqual(parseMermaid(src).graph);
+    expect(lenient.skippedLines).toEqual([]);
+    expect(lenient.error).toBeNull();
+  });
+
+  it('draws the lines that parse and skips the one that does not', () => {
+    const src = 'flowchart TD\n  A[Start] --> B[Middle]\n  --> nowhere\n  B --> C[End]';
+
+    expect(parseMermaid(src).graph).toBeNull();
+
+    const lenient = parseMermaidLenient(src);
+    expect(lenient.graph).not.toBeNull();
+    expect(lenient.skippedLines).toEqual([3]);
+    expect(lenient.graph!.nodes.map((n) => n.key).sort()).toEqual(['A', 'B', 'C']);
+  });
+
+  it('keeps reporting the error it recovered from', () => {
+    // Recovery, not suppression: the diagnostic stays exactly as loud.
+    const lenient = parseMermaidLenient('flowchart TD\n  A --> B\n  --> nowhere\n');
+
+    expect(lenient.strictError).not.toBeNull();
+    expect(lenient.error).toBe(lenient.strictError);
+    expect(lenient.strictErrorLine).toBe(3);
+  });
+
+  it('numbers skipped lines against the original document', () => {
+    // Blanked rather than removed: `errorLine` is what the gutter marks, and
+    // renumbering underneath it would point the marker at the wrong row.
+    const src = 'flowchart TD\n  A --> B\n  --> x\n  B --> C\n  (((\n  C --> D';
+    const lenient = parseMermaidLenient(src);
+
+    expect(lenient.skippedLines).toEqual([3, 5]);
+    expect(lenient.graph!.nodes.map((n) => n.key).sort()).toEqual(['A', 'B', 'C', 'D']);
+  });
+
+  it('gives up rather than looping when nothing can be salvaged', () => {
+    const lenient = parseMermaidLenient('not a diagram at all');
+
+    expect(lenient.graph).toBeNull();
+    expect(lenient.skippedLines.length).toBeLessThanOrEqual(12);
+  });
+
+  it('respects the skip budget', () => {
+    const src = ['flowchart TD', '  A --> B', ...Array(30).fill('  --> x')].join('\n');
+    const lenient = parseMermaidLenient(src, 3);
+
+    expect(lenient.skippedLines.length).toBeLessThanOrEqual(3);
   });
 });

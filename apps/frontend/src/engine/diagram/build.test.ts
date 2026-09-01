@@ -1,6 +1,6 @@
 import { describe, it, expect } from 'vitest';
 import { parseMermaid } from './mermaid';
-import { buildDiagram } from './build';
+import { buildDiagram, diagramNodeSizes, diagramTypography } from './build';
 import type { AnyNode } from '../model/schema';
 
 function build(src: string) {
@@ -118,5 +118,45 @@ describe('buildDiagram: connector attachment', () => {
       expect(toCluster.to.port).toBe('auto');
       expect(toCluster.to.anchor).toBeUndefined();
     }
+  });
+});
+
+describe('diagramNodeSizes: one answer, shared by preview and board', () => {
+  it('is what buildDiagram actually uses', () => {
+    /**
+     * The drift guard. `MermaidModal` used to size its preview nodes with its
+     * own copy of the old character-count estimate and a hard-coded height of
+     * 56, under a comment promising "the exact geometry the board will use" --
+     * so a long label previewed 320x56 and built 320x93.
+     *
+     * The fix was to delete the second copy, and this is what stops a third
+     * appearing: the sizes the preview asks for have to be the sizes the board
+     * builds with.
+     */
+    const src =
+      'flowchart TD\n  A[Reject the payload with a long explanatory message] --> B{Ok?}\n  B --> C[No]';
+    const { graph } = parseMermaid(src);
+    const sizes = diagramNodeSizes(graph!, false);
+    const { shapes } = build(src);
+
+    for (const shape of shapes) {
+      const s = shape as unknown as { diagramKey: string; width: number; height: number };
+      const expected = sizes.get(s.diagramKey)!;
+      expect(expected, s.diagramKey).toBeDefined();
+      expect(Math.round(s.width), s.diagramKey).toBe(Math.round(expected.width));
+      expect(Math.round(s.height), s.diagramKey).toBe(Math.round(expected.height));
+    }
+  });
+
+  it('measures in the face the mode actually draws in', () => {
+    /**
+     * Only the typography is asserted, not the resulting width. Sketch mode
+     * swaps Inter for Caveat, which is materially narrower -- but the headless
+     * measurer falls back to `length * fontSize * 0.55` with no DOM canvas to
+     * ask, so both faces measure identically here. Asserting the widths differ
+     * would be asserting a browser, in node.
+     */
+    expect(diagramTypography(false).fontFamily).not.toBe(diagramTypography(true).fontFamily);
+    expect(diagramTypography(true).fontFamily).toBe('Caveat');
   });
 });

@@ -14988,3 +14988,10 @@ body[data-zen='physics'] .forces-handle { bottom: 32px; }
     opacity: 1;
   }
 }
+
+/* What the preview left out, when it recovered from a broken line. Quieter
+   than the error it rides beside -- it is a qualifier, not a second fault. */
+.mermaid-modal__status-note {
+  opacity: 0.75;
+  font-style: normal;
+}

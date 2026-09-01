@@ -714,3 +714,76 @@ export function shapeFromCanvas(kind: ShapeKind, points?: number, cornerRadius?:
   }
   return 'rect';
 }
+
+/** A parse that got *something* on screen, and what it had to ignore to do it. */
+export interface LenientParseResult extends ParseResult {
+  /** 1-indexed lines skipped to reach a graph. Empty when the source is clean. */
+  skippedLines: number[];
+  /** The strict error, kept even when a partial graph was recovered. */
+  strictError: string | null;
+  strictErrorLine?: number;
+}
+
+/**
+ * Parse for a preview, where blanking the canvas is the wrong answer.
+ *
+ * A live preview is bound to spend most of its life looking at a document
+ * somebody is halfway through typing. Strict parsing means the picture
+ * vanishes on every incomplete line and returns when the line is finished,
+ * which is a flicker in exactly the moment the reader is trying to see the
+ * effect of what they typed -- so it reports errors well and helps least when
+ * it matters most.
+ *
+ * This drops the offending line and tries again, up to `maxSkips` times, so a
+ * typo on line nine costs line nine and not the other twenty. The failing
+ * lines are **blanked rather than removed**, because `errorLine` is what the
+ * editor's gutter marks and renumbering the document underneath it would
+ * point the marker at the wrong row.
+ *
+ * The strict error is still returned. This is error *recovery*, not error
+ * suppression: the diagnostic stays exactly as loud, and the preview simply
+ * stops being collateral damage.
+ */
+export function parseMermaidLenient(source: string, maxSkips = 12): LenientParseResult {
+  const strict = parseMermaid(source);
+  if (strict.graph || !strict.errorLine) {
+    return {
+      ...strict,
+      skippedLines: [],
+      strictError: strict.error,
+      strictErrorLine: strict.errorLine,
+    };
+  }
+
+  const lines = source.split('\n');
+  const skippedLines: number[] = [];
+
+  for (let attempt = 0; attempt < maxSkips; attempt++) {
+    const result = parseMermaid(lines.join('\n'));
+    if (result.graph) {
+      return {
+        graph: result.graph,
+        // The recovered graph is shown; the original complaint is what is said.
+        error: strict.error,
+        errorLine: strict.errorLine,
+        skippedLines,
+        strictError: strict.error,
+        strictErrorLine: strict.errorLine,
+      };
+    }
+
+    const bad = result.errorLine;
+    // No line to blame, or one already blanked: nothing further to try.
+    if (!bad || bad < 1 || bad > lines.length || lines[bad - 1] === '') break;
+
+    lines[bad - 1] = '';
+    skippedLines.push(bad);
+  }
+
+  return {
+    ...strict,
+    skippedLines,
+    strictError: strict.error,
+    strictErrorLine: strict.errorLine,
+  };
+}
