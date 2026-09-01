@@ -16,6 +16,8 @@ import { roughEllipse, roughPolyline, seedFrom } from '../../../engine/model/rou
 import { ThemeService } from '../../../engine/ThemeService';
 import { readableOnSurface } from '../../../engine/model/color';
 import { useLiveTransform } from '../../../engine/model/liveTransformStore';
+import { fontEpoch } from '../../../engine/text/fontEpoch';
+import { ensureFontLoaded } from '../../../engine/text/measure';
 
 interface Props {
   node: ShapeNode;
@@ -34,6 +36,34 @@ interface Props {
  */
 export const ShapeRenderer: React.FC<Props> = React.memo(({ node, showLabel }) => {
   const liveTransform = useLiveTransform(node.id);
+
+  /**
+   * Redraw the label when its real font arrives.
+   *
+   * A shape's label is a Konva `<Text>`, and Konva measures the string once
+   * and keeps the result: line breaks, `textWidth`, and the offsets that
+   * `align: 'center'` is computed from. Measure it while the webfont is still
+   * loading and every one of those numbers describes the *fallback* face, so
+   * the words sit slightly off-centre -- and nothing re-measures them when the
+   * real face lands, because none of the props Konva watches has changed.
+   *
+   * That is the "text drifts left, and a reload fixes it" report: after a
+   * reload the font is in the browser cache and wins the race, so the first
+   * measurement is already the right one.
+   *
+   * `StickyRenderer` and `TextRenderer` both already do this; shape labels
+   * were the third caller of the same measurement and the one that never got
+   * the subscription. Diagrams generated from mermaid are made almost entirely
+   * of shape labels, which is why they showed it most.
+   */
+  const epoch = React.useSyncExternalStore(fontEpoch.subscribe, fontEpoch.get, fontEpoch.get);
+  const labelFamily = 'typography' in node ? node.typography?.fontFamily : undefined;
+  React.useEffect(() => {
+    // Ask for the face. Without this nothing requests it, so `document.fonts`
+    // may never load it and the epoch never bumps -- the subscription above
+    // would then be waiting for an event that no one had asked to happen.
+    ensureFontLoaded(labelFamily);
+  }, [labelFamily]);
   const w = node.width;
   const h = node.height;
   // Gradient geometry is unit-space against the shape's *own* box, and the
@@ -268,6 +298,16 @@ export const ShapeRenderer: React.FC<Props> = React.memo(({ node, showLabel }) =
         </Label>
       ) : node.typography ? (
         <Text
+          /**
+           * Keyed on the epoch so the node is rebuilt when the font changes.
+           *
+           * Konva only re-measures when an attribute it watches is set, and on
+           * a font swap none of them has: same string, same family name, same
+           * size. Re-creating the node is what forces the measurement to be
+           * taken again, and it happens once or twice per session rather than
+           * per frame.
+           */
+          key={`label-${epoch}`}
           width={w}
           height={h}
           text={node.text}

@@ -1,4 +1,6 @@
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { ensureFontLoaded } from '../engine/text/measure';
+import { DEFAULT_TYPOGRAPHY } from '../engine/model/schema';
 import { silhouetteFor, clampRadius } from '../engine/diagram/silhouette';
 import {
   X,
@@ -31,130 +33,144 @@ const TEMPLATES = [
   {
     id: 'flowchart',
     name: 'Flowchart',
-    source: `flowchart TD
-    A([Start]) --> B{Is Input Valid?}
-    B -->|Yes| C[Process Request]
-    B -->|No| D[Log Validation Error]
-    C --> E[(Save to Database)]
-    D --> F([Return 400 Bad Request])
-    E --> G([Return 200 OK])`,
+    source: `%% The basics: a shape per role, and a branch that says why.
+flowchart TD
+    Start([Request received]) --> Check{Payload valid?}
+    Check -->|yes| Work[Process it]
+    Check -->|no| Reject[/Log the reason/]
+    Work --> Store[(Write to database)]
+    Store --> Ok([200 OK])
+    Reject --> Bad([400 Bad Request])`,
+  },
+  {
+    id: 'shapes',
+    name: 'Shape Reference',
+    source: `%% Every shape, labelled with the syntax that makes it.
+%% Keep this one open beside your own diagram as a cheat sheet.
+flowchart LR
+    subgraph Blocks ["Blocks"]
+        A[Rectangle] --> B(Rounded)
+        B --> C([Stadium])
+        C --> D[[Subroutine]]
+    end
+
+    subgraph Decisions ["Decisions and data"]
+        E{Diamond} --> F{{Hexagon}}
+        F --> G[(Database)]
+        G --> H((Circle))
+    end
+
+    subgraph Skewed ["Skewed and terminal"]
+        I[/Parallelogram/] --> J[\\Reversed\\]
+        J --> K[/Trapezoid\\]
+        K --> L[\\Inverted/]
+        L --> M>Flag]
+        M --> N(((Double circle)))
+    end
+
+    D --> E
+    H --> I`,
   },
   {
     id: 'architecture',
     name: 'Cloud Architecture',
-    source: `flowchart TD
-    subgraph Client ["Client Tier"]
-        Web([Web App])
-        Mobile([iOS / Android])
+    source: `%% Nested subgraphs, and classDef to colour a tier at a time.
+flowchart TD
+    subgraph Edge ["Edge"]
+        Web([Browser]):::client
+        Mobile([iOS / Android]):::client
     end
 
-    subgraph AWS_VPC ["AWS Cloud VPC"]
-        ALB{{App Load Balancer}}
-        
-        subgraph Mesh ["K8s Microservices"]
-            Gateway[API Gateway]
-            Auth[Auth Service]
-            Catalog[Product Catalog]
-            Orders[Order Processing]
+    subgraph Cloud ["Private network"]
+        LB{{Load balancer}}
+
+        subgraph Services ["Services"]
+            Gateway[API gateway]:::svc
+            Auth[Auth]:::svc
+            Orders[Orders]:::svc
         end
 
-        subgraph Data ["Stateful Data Tier"]
-            Redis[(Redis Cache)]
-            Postgres[(PostgreSQL Cluster)]
-            Kafka[[Kafka Event Stream]]
-        end
+        Cache[(Redis)]:::data
+        Main[(Postgres)]:::data
     end
 
-    Web & Mobile -->|HTTPS / TLS| ALB
-    ALB --> Gateway
+    Web --> LB
+    Mobile --> LB
+    LB --> Gateway
     Gateway --> Auth
-    Gateway --> Catalog & Orders
-    
-    Auth --> Redis
-    Catalog --> Postgres
-    Orders --> Postgres
-    Orders --> Kafka`,
+    Gateway --> Orders
+    Auth --> Cache
+    Orders --> Main
+
+    classDef client fill:#EEF2FF,stroke:#6366F1
+    classDef svc fill:#ECFDF5,stroke:#059669
+    classDef data fill:#FEF3C7,stroke:#D97706`,
   },
   {
-    id: 'oauth2',
+    id: 'oauth',
     name: 'OAuth2 Auth Flow',
-    source: `flowchart LR
-    subgraph Browser ["User Browser"]
-        Client([Single Page App])
-    end
-
-    subgraph AuthServer ["OAuth2 Identity Provider"]
-        LoginUI[Login & Consent Screen]
-        TokenEndpoint[Token Issuer /oauth/token]
-    end
-
-    subgraph ResourceServer ["Protected API"]
-        APIGateway{{API Gateway}}
-        Microservice[Backend Service]
-    end
-
-    Client -->|1. Redirect Authorization Code| LoginUI
-    LoginUI -->|2. Return Auth Code| Client
-    Client -->|3. Exchange Code & Secret| TokenEndpoint
-    TokenEndpoint -->|4. Return JWT Access Token| Client
-    Client -->|5. Bearer Auth Request| APIGateway
-    APIGateway -->|6. Validated Request| Microservice`,
+    source: `%% Solid is a request, dotted is what comes back.
+%% Reading direction alone tells you which half of the round trip you are in.
+flowchart TD
+    User([User]) -->|1 Sign in| App[Your app]
+    App -->|2 Redirect| Provider{{Identity provider}}
+    Provider -.->|3 Authorization code| App
+    App -->|4 Exchange code + secret| Token[/Token endpoint/]
+    Token -.->|5 Access token| App
+    App -->|6 Bearer request| Api[API]
+    Api -.->|7 Protected resource| App`,
   },
   {
     id: 'gitflow',
     name: 'Git Branching Strategy',
-    source: `flowchart LR
-    Main([Main Production]) -->|Branch| Release[[Release Candidate]]
-    Main -->|Branch| Feature1[Feature: Canvas Workers]
-    Main -->|Branch| Feature2[Feature: SVG Paste]
+    source: `%% "&" fans one arrow out to several nodes, and the loop is the point:
+%% a failing check sends the work back rather than forward.
+flowchart LR
+    Main([main]) --> Feat1[feature/canvas]
+    Main --> Feat2[feature/export]
 
-    Feature1 & Feature2 -->|Pull Request & Code Review| PRCheck{CI Tests Pass?}
-    PRCheck -->|Yes| Staging[(Merge to Staging)]
-    PRCheck -->|No| Fix[Fix Tests & Lint]
-    Fix --> PRCheck
+    Feat1 & Feat2 --> Review{Review + CI}
+    Review -->|passes| Staging[(staging)]
+    Review -.->|fails| Fix[Fix and push]
+    Fix --> Review
 
-    Staging -->|Tag Version| Release
-    Release -->|Deploy| Main`,
+    Staging --> Tag[/Tag a version/]
+    Tag ==> Main`,
   },
   {
     id: 'cicd',
     name: 'CI/CD Pipeline',
-    source: `flowchart LR
-    Dev([Developer Push]) --> Git{GitHub Actions Trigger}
-    
-    subgraph CI ["Continuous Integration"]
-        Git -->|Parallel| Lint[ESLint & TypeCheck]
-        Git -->|Parallel| Build[Vite Client Build]
-        Git -->|Parallel| Unit[Vitest Suite]
+    source: `%% Thick arrows are the path a green build takes; dotted is the way out.
+flowchart LR
+    Push([Push]) ==> Install[Install]
+
+    subgraph Checks ["Runs in parallel"]
+        Lint[Typecheck + lint]
+        Test[Unit tests]
+        Build[Build]
     end
-    
-    Lint & Build & Unit --> Wait(((All Tests Passed?)))
-    Wait -->|Yes| Image[[Docker Container Build]]
-    Wait -->|No| Slack>Notify Slack Alerts]
-    
-    subgraph CD ["Continuous Deployment"]
-        Image --> Staging[(Deploy to Staging)]
-        Staging --> E2E{Playwright E2E Tests}
-        E2E -->|Pass| Prod[(Deploy to Production)]
-        E2E -->|Fail| Slack
-    end`,
+
+    Install ==> Lint
+    Install ==> Test
+    Install ==> Build
+
+    Lint & Test & Build ==> Gate{All green?}
+    Gate ==>|yes| Deploy[[Deploy]]
+    Gate -.->|no| Report[/Report the failure/]
+    Deploy ==> Live([Live])`,
   },
   {
     id: 'state',
     name: 'State Machine',
-    source: `flowchart TD
-    Init(((Checkout Started))) ==> Auth{Verify Payment Method}
-    
-    Auth -.->|Timeout| Retry[Retry Connection]
-    Retry -.-> Auth
-    
-    Auth -->|Declined| Failed[/Payment Declined/]
-    Failed -->|Update Card Details| Auth
-    
-    Auth ==>|Approved| Process[Process Ledger Transaction]
-    Process <--> Bank[(Bank Settlement API)]
-    
-    Process --> Success(((Order Confirmed)))`,
+    source: `%% Self-loops for the states that retry, a double circle for the end.
+flowchart LR
+    Start(((Idle))) --> Queued([Queued])
+    Queued --> Running{{Running}}
+    Running -->|retry| Running
+    Running -->|ok| Done(((Done)))
+    Running -->|error| Failed[/Failed/]
+    Failed -->|requeue| Queued
+    Failed -->|give up| Dead((Dead letter))`,
   },
 ];
 
@@ -334,6 +350,27 @@ export const MermaidModal: React.FC<Props> = ({
    * With the viewBox equal to the stage, one viewBox unit is one pixel, the
    * transform is the only scaling, and `scale: 1` means 1:1.
    */
+  /**
+   * Ask for both label faces as soon as the dialog opens.
+   *
+   * `measureSize` in `build.ts` writes the box a label will live in *into the
+   * document*, measured with whatever face is loaded at that moment. Unlike
+   * the renderer, that number cannot be corrected later: it is content, shared
+   * with everyone, and re-measuring it per viewer is exactly what
+   * `DEFAULT_INK` warns against.
+   *
+   * Inter is on screen already by the time anybody opens this. Caveat is not
+   * -- sketch mode is the only thing on the board that uses it -- so a diagram
+   * added in sketch mode could have every box sized for the fallback face and
+   * stay that way. Requesting on open gives the font the seconds somebody
+   * spends typing to arrive before it matters.
+   */
+  useEffect(() => {
+    if (!open) return;
+    ensureFontLoaded(DEFAULT_TYPOGRAPHY.fontFamily);
+    ensureFontLoaded('Caveat');
+  }, [open]);
+
   const [stageSize, setStageSize] = useState({ w: 0, h: 0 });
   const svgRef = useRef<SVGSVGElement | null>(null);
   useEffect(() => {
