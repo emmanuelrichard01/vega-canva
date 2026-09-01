@@ -1,0 +1,74 @@
+name: Database backup
+
+# Neon's Free plan history window is 6 hours, capped at 1 GB of change
+# history. That is a good first line -- restoring from it is instant and needs
+# no tooling -- but a bad write found the next morning is outside it, and so
+# is anything discovered on a Monday. It is also the same account: losing the
+# Neon login loses the database and its history together, because they were
+# never two things.
+#
+# This is the second copy. Different vendor, retention you choose.
+#
+# Runs on GitHub Actions because it is the only free scheduler already
+# attached to this repository, and the job is one minute of one runner a day.
+
+on:
+  schedule:
+    # 03:17 UTC. Off the hour deliberately: every scheduler on the platform is
+    # busiest exactly on it, and GitHub delays cron jobs under load.
+    - cron: '17 3 * * *'
+  workflow_dispatch:
+    inputs:
+      dry_run:
+        description: 'Dump and verify, but do not upload'
+        type: boolean
+        default: false
+
+# Never let two backups overlap; a slow one should delay the next, not race it.
+concurrency:
+  group: db-backup
+  cancel-in-progress: false
+
+jobs:
+  backup:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install the Postgres 17 client
+        # The runner's bundled client trails the server, and pg_dump refuses
+        # to dump a server newer than itself -- which would fail on the day
+        # Neon upgrades, not on the day this was written. Pinned to a major so
+        # that failure is a deliberate edit rather than a surprise.
+        run: |
+          sudo sh -c 'echo "deb http://apt.postgresql.org/pub/repos/apt $(lsb_release -cs)-pgdg main" > /etc/apt/sources.list.d/pgdg.list'
+          curl -fsSL https://www.postgresql.org/media/keys/ACCC4CF8.asc | sudo gpg --dearmor -o /etc/apt/trusted.gpg.d/pgdg.gpg
+          sudo apt-get update -qq
+          sudo apt-get install -y --no-install-recommends postgresql-client-17
+          pg_dump --version
+
+      - name: Back up
+        env:
+          BACKUP_DATABASE_URL: ${{ secrets.BACKUP_DATABASE_URL }}
+          R2_BUCKET: ${{ secrets.R2_BACKUP_BUCKET }}
+          R2_ENDPOINT: ${{ secrets.R2_ENDPOINT }}
+          AWS_ACCESS_KEY_ID: ${{ secrets.R2_ACCESS_KEY_ID }}
+          AWS_SECRET_ACCESS_KEY: ${{ secrets.R2_SECRET_ACCESS_KEY }}
+          # R2 ignores the region but the AWS SDK insists on one.
+          AWS_DEFAULT_REGION: auto
+          # R2 does not implement the integrity headers the v2 CLI now sends
+          # by default; without these, uploads fail on a checksum the other
+          # end never agreed to compute.
+          AWS_REQUEST_CHECKSUM_CALCULATION: WHEN_REQUIRED
+          AWS_RESPONSE_CHECKSUM_VALIDATION: WHEN_REQUIRED
+        run: |
+          ./apps/server/scripts/backup-db.sh --keep 30 \
+            ${{ inputs.dry_run && '--dry-run' || '' }}
+
+      - name: Say so loudly if it failed
+        if: failure()
+        run: |
+          echo "::error title=Database backup failed::The nightly backup did not complete. \
+          Until it does, recovery is limited to Neon's 6-hour history window."

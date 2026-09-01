@@ -28,7 +28,7 @@ That changes the arithmetic below: every item is now carrying real data.
 | 2 | Dashboard bundle preload (§1.2) | **Done.** `modulePreload.resolveDependencies` cut the eager preload set to three chunks; verified in `dist/index.html`. |
 | 3 | Room & media reaper (§1.3) | **Written, deliberately unscheduled.** Read `DEPLOYMENT.md` §7.2 before running it once, let alone on a timer. |
 | 4 | Error tracking (§1.4) | **Done, and it was not before.** See below. |
-| 5 | Database backups (§1.5) | **Still open, and now the top risk.** |
+| 5 | Database backups (§1.5) | **Built, not yet proven.** Nightly dump to R2 (`BACKUP-AND-RESTORE.md`), round-trip verified on PG 17. Needs its secrets and one manual run. |
 
 ### What "error tracking" meant until today
 
@@ -58,9 +58,12 @@ returned, not from whether a DSN was set. **Trust that field, not a log line.**
 
 ### Do this next
 
-**Confirm your Neon history window**, and write the number down. Until there
-is a known-good recovery path, it is the entire backup story for the canonical
-state of every board — and item 3 is a script that hard-deletes.
+**Set the five repository secrets and run the backup workflow once by hand**
+(Actions → Database backup → Run workflow, `dry_run` first). Until that has
+happened, recovery is Neon's 6-hour history window and nothing else — and a
+bad write found the next morning is outside it.
+
+`docs/BACKUP-AND-RESTORE.md` lists the secrets and the restore procedure.
 
 Everything after that is genuinely optional until you have users.
 

@@ -147,16 +147,18 @@ with different schemas and the same version number.
 Ranked. None of this is done, and the first one is the largest single risk in
 the system.
 
-1. **Backups.** `room_snapshots` holds the canonical state of every board and is
-   overwritten in place, with no versioning. A bad write is unrecoverable except
-   partially, from `room_updates` plus `replay_base`. Nothing in this repository
-   configures point-in-time recovery.
+1. **Backups.** Two layers, both documented in `BACKUP-AND-RESTORE.md`:
+   Neon's history window (**6 hours on the Free plan**, capped at 1 GB of
+   change history) and a nightly `pg_dump` to R2 via
+   `.github/workflows/backup.yml`.
 
-   The deployment is on Neon, which keeps its own history and can branch from a
-   past instant — check the retention window on the project and know what it is
-   before you need it, because that window is currently the entire recovery
-   story. **This is the largest single risk in the system, and it is now
-   carrying live data.**
+   The dump has been verified to round-trip on PostgreSQL 17 — including the
+   `bytea` columns and the cascading foreign keys — but **has not yet run
+   against Neon and R2**. It needs its five repository secrets set and one
+   manual run. Until that happens, recovery is still 6 hours.
+
+   `room_snapshots` is overwritten in place with no version history, so read
+   the restore procedure before you need it, not during.
 
 2. **The reaper is written but deliberately not scheduled.**
    `apps/server/scripts/reap-rooms.ts` reports by default and deletes with
