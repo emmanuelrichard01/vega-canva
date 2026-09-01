@@ -2,6 +2,7 @@ import * as Y from 'yjs';
 import { HocuspocusProvider } from '@hocuspocus/provider';
 import { IndexeddbPersistence } from 'y-indexeddb';
 import { WS_URL } from '../../utils/endpoints';
+import { getRoomRole } from '../model/permissions';
 
 /**
  * The collaborative document.
@@ -47,10 +48,35 @@ export const onSyncedChange = (cb: (synced: boolean) => void) => {
   return () => syncCallbacks.delete(cb);
 };
 
+/**
+ * What this tab tells the server about itself.
+ *
+ * Two unrelated things share the one token slot Hocuspocus gives us, so they
+ * travel as one JSON object:
+ *
+ * - `secret` is `AUTH_SECRET`, the deployment-wide front door for a private
+ *   instance. It had no way to reach the server at all before this -- the
+ *   field was simply never sent -- so setting `AUTH_SECRET` locked every
+ *   client out of its own deployment, silently, with a generic
+ *   "Unauthorized room connection". Omitted entirely when unset, because an
+ *   empty string is a value the server would have to special-case.
+ * - `role` is view mode, and it is a *statement of intent, not a credential*.
+ *   The server honours it so a tab that has put its own tools away does not
+ *   sync edits anyway; see `engine/model/permissions.ts` for why that is the
+ *   whole of what it can mean.
+ */
+const AUTH_SECRET = import.meta.env.VITE_AUTH_SECRET as string | undefined;
+
+const connectionToken = JSON.stringify({
+  role: getRoomRole(),
+  ...(AUTH_SECRET ? { secret: AUTH_SECRET } : {}),
+});
+
 export const provider = new HocuspocusProvider({
   url: WS_URL,
   name: roomId,
   document: doc,
+  token: connectionToken,
   onConnect: () => {
     currentStatus = 'connected';
     statusCallbacks.forEach((cb) => cb('connected'));

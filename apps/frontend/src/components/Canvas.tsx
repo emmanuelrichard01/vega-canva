@@ -79,6 +79,7 @@ import { cameraSystem } from '../engine/CameraSystem';
 import { useVisibleSet } from '../engine/useVisibleSet';
 import { DEFAULT_TYPOGRAPHY, isOpenShape } from '../engine/model/schema';
 import { SelectionTransformer } from './canvas/SelectionTransformer';
+import { useRoomPermissions } from '../hooks/useRoomPermissions';
 import { LineEditor } from './canvas/LineEditor';
 import { ConnectorEditor } from './canvas/ConnectorEditor';
 import { CornerRadiusHandle } from './canvas/CornerRadiusHandle';
@@ -124,6 +125,15 @@ export const Canvas: React.FC<CanvasProps> = ({ activeTool, selectedIds, setSele
     document.body.dataset.rulers = showRulers ? 'on' : 'off';
     return () => { delete document.body.dataset.rulers; };
   }, [showRulers]);
+
+  const { canEdit, canTransform } = useRoomPermissions();
+  /**
+   * Read imperatively by the keydown handler below, which is registered once.
+   * A dependency would re-register the listener; a bare `canEdit` would be
+   * captured stale by the closure.
+   */
+  const canEditRef = useRef(canEdit);
+  canEditRef.current = canEdit;
 
   // Stable-identity ref mirroring selectedIds, read imperatively by
   // ObjectRenderer during drags so a move on one selected object carries the
@@ -423,6 +433,17 @@ export const Canvas: React.FC<CanvasProps> = ({ activeTool, selectedIds, setSele
       // getState() rather than subscribing: this is an event-time question, and
       // a dependency would re-register the listener on every replay frame.
       if (useStore.getState().isReplaying) return;
+      /**
+       * View mode is the other read-only canvas, and it stands down here for
+       * the same reason.
+       *
+       * Every key past this point mutates: Delete, Cmd+D, the arrow nudges,
+       * the restack pair. Leaving them bound while the dock is gated would be
+       * the classic half-disabled control -- the button greyed out and the
+       * shortcut still live -- and on a board whose edits do not sync it would
+       * be work thrown away silently.
+       */
+      if (!canEditRef.current) return;
       if (selectedIds.length === 0) return;
 
       /**
@@ -1426,7 +1447,9 @@ export const Canvas: React.FC<CanvasProps> = ({ activeTool, selectedIds, setSele
               provisional seed size, which is why they appeared as a crumpled
               cluster rather than a frame. You cannot resize and type at the
               same time; they come back the moment the caret leaves. */}
-          {!croppingId && !reframingId && !editingPathId && !editingTextId && activeTool !== 'direct-select' && (
+          {/* `canTransform` is view mode: resize handles on a board whose edits
+              cannot sync are an invitation to work that gets thrown away. */}
+          {canTransform && !croppingId && !reframingId && !editingPathId && !editingTextId && activeTool !== 'direct-select' && (
             <SelectionTransformer selectedIds={selectedIds} stageRef={stageRef} />
           )}
 

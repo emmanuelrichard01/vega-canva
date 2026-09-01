@@ -1,5 +1,6 @@
 import type {  Tool, ToolContext  } from './Tool';
 import * as React from 'react';
+import { canUseTool, FALLBACK_TOOL } from '../model/permissions';
 
 export class ToolManager {
   private tools: Map<string, Tool> = new Map();
@@ -16,7 +17,27 @@ export class ToolManager {
 
   setActiveTool(id: string) {
     if (!this.tools.has(id)) return;
-    
+
+    /**
+     * The one gate view mode needs.
+     *
+     * Every route to a tool -- the dock, the keyboard shortcuts, the command
+     * palette, a lesson arming one for you -- ends in this call, so refusing
+     * here is refusing everywhere. Gating the dock buttons instead would have
+     * left the shortcuts working, which is the usual way a disabled control
+     * turns out not to be.
+     *
+     * It falls back to Select rather than doing nothing: a click that leaves
+     * the previous tool armed reads as a broken button, and if the previous
+     * tool was itself refused there would be nothing in hand at all.
+     */
+    if (!canUseTool(id)) {
+      if (this.activeToolId !== FALLBACK_TOOL && this.tools.has(FALLBACK_TOOL)) {
+        this.setActiveTool(FALLBACK_TOOL);
+      }
+      return;
+    }
+
     const prevTool = this.getActiveTool();
     if (prevTool?.onDeactivate) prevTool.onDeactivate(this.context);
     

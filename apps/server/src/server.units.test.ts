@@ -214,3 +214,8 @@ describe('HistoryBuffer', () => {
     release();
   });
 });
+
+// The two tests that stood here decoded a JWT they had just built and
+// asserted against a `checkScope` helper defined three lines above -- neither
+// touched the server. The real parser is now `connection.ts`, tested in
+// `connection.test.ts` against the behaviour `onAuthenticate` actually has.

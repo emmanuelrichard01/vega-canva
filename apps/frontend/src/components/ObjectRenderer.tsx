@@ -19,6 +19,7 @@ import { roundPolygon } from '../engine/grid/gridLayout';
 import { tagFilter } from '../engine/model/tagFilter';
 import { matchesTagFilter } from '../engine/model/tags';
 import { useStore } from '../hooks/useStore';
+import { useRoomPermissions } from '../hooks/useRoomPermissions';
 import { cameraSystem } from '../engine/CameraSystem';
 import { gridSnap } from '../engine/interaction/gridSnap';
 import { clearSnapGuides, snapDraggedBox } from '../engine/interaction/objectSnap';
@@ -256,6 +257,7 @@ export const ObjectRenderer = React.memo(
     canDuplicate = true,
   }: ObjectRendererProps) => {
     const node = useStore((state) => state.objects[objId]);
+    const { canDrag } = useRoomPermissions();
     const live = useLiveTransform(objId);
     const isAltDuplicating = useSyncExternalStore(
       altDragState.subscribe,
@@ -1086,7 +1088,10 @@ export const ObjectRenderer = React.memo(
            * about it stays live. Its own pin is the way out, and so are the
            * rail and the panel.
            */
-          draggable={selectable && !flight && !node.locked && !isPinned(node) && !forceToolActive && !filteredOut}
+          // `canDrag` is view mode. It is last in the chain because it is the
+          // only term that is a property of the *reader* rather than of the
+          // object -- everything before it would be false for an editor too.
+          draggable={selectable && !flight && !node.locked && !isPinned(node) && !forceToolActive && !filteredOut && canDrag}
           /**
            * Selection happens on **press**, not on click.
            *
