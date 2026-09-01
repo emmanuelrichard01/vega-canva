@@ -14,6 +14,8 @@ import { pool, initDb, pingDb, startRetentionSweep, MAX_UPDATES_PER_ROOM } from 
 import { readConfig } from "./config";
 import { isAllowedUpload, safeExtension, serveAs } from "./media";
 import { checkRoomId, sanitizeRoomId } from "./rooms";
+import { readConnectionClaim } from "./connection";
+import { RoomActivity } from "./roomActivity";
 import { rateLimit } from "./rateLimit";
 import { HistoryBuffer, KnownRooms, type PendingUpdate } from "./historyBuffer";
 import {
@@ -23,7 +25,7 @@ import {
   formatBytes,
   cleanupFailedMedia,
 } from "./quota";
-import { logger, initServerObservability } from "./observability";
+import { logger, initServerObservability, isErrorTrackingActive } from "./observability";
 
 const config = readConfig();
 initServerObservability(config.sentryDsn);
@@ -154,15 +156,18 @@ const history = new HistoryBuffer({
   },
 });
 
-// MinIO S3 Configuration
+const roomActivity = new RoomActivity(pool);
+
+// MinIO S3 / Cloudflare R2 Configuration
+const isR2 = config.s3.endpoint.includes("r2.cloudflarestorage.com");
 const s3 = new S3Client({
   endpoint: config.s3.endpoint,
-  region: "us-east-1",
+  region: isR2 ? "auto" : "us-east-1",
   credentials: {
     accessKeyId: config.s3.accessKey,
     secretAccessKey: config.s3.secretKey,
   },
-  forcePathStyle: true,
+  forcePathStyle: !isR2,
 });
 
 const s3Bucket = config.s3.bucket;
@@ -293,6 +298,10 @@ app.get("/readyz", async (_req, res) => {
     database,
     historyQueue: history.depth,
     historyDropped: history.dropped,
+    // Whether error tracking actually came up, not whether a DSN was set.
+    // The previous version logged "enabled" on a stub that reported nothing,
+    // so the one place anybody would look was the place that lied.
+    errorTracking: isErrorTrackingActive(),
     storage: storageStats,
   });
 });
@@ -338,8 +347,8 @@ app.post("/rooms/:roomId/media", requireRoom, mediaUploadLimiter, (req: any, res
   const fileSize = req.file.size;
   const clientIp = String(req.ip || req.socket?.remoteAddress || 'unknown');
 
-  // 1. Enforce IP Daily Upload Quota
-  const ipCheck = ipDailyTracker.check(clientIp, fileSize, config.quotas.maxIpDailyBytes);
+  // 1. Enforce IP Daily Upload Quota (distributed with async Redis support)
+  const ipCheck = await ipDailyTracker.checkAsync(clientIp, fileSize, config.quotas.maxIpDailyBytes);
   if (!ipCheck.allowed) {
     await cleanupFailedMedia(s3, s3Bucket, storageKey);
     return res.status(413).json({
@@ -388,8 +397,8 @@ app.post("/rooms/:roomId/media", requireRoom, mediaUploadLimiter, (req: any, res
       [mediaId, roomId, url, req.file.mimetype, fileSize, storageKey]
     );
 
-    // Record upload for IP rate tracking
-    ipDailyTracker.record(clientIp, fileSize);
+    // Record upload for IP rate tracking (async with Redis clustering support)
+    await ipDailyTracker.recordAsync(clientIp, fileSize);
 
     res.json({ id: mediaId, url, mimeType: req.file.mimetype, sizeBytes: fileSize });
   } catch (err) {
@@ -565,13 +574,15 @@ app.get("/rooms/:roomId/history", requireRoom, historyLimiter, async (req, res) 
 const extensions: any[] = [];
 
 if (process.env.REDIS_HOST) {
-  extensions.push(
-    new Redis({
-      port: parseInt(process.env.REDIS_PORT || "6379"),
-      host: process.env.REDIS_HOST,
-    })
-  );
-  console.log("Redis extension enabled (multi-instance fan-out)");
+  const redisExtension = new Redis({
+    port: parseInt(process.env.REDIS_PORT || "6379"),
+    host: process.env.REDIS_HOST,
+  });
+  extensions.push(redisExtension);
+  if ((redisExtension as any).pub || (redisExtension as any).redis) {
+    ipDailyTracker.setRedis((redisExtension as any).pub || (redisExtension as any).redis);
+  }
+  console.log("Redis extension enabled (multi-instance fan-out and distributed IP quotas)");
 }
 
 extensions.push(
@@ -615,30 +626,56 @@ const server = new Hocuspocus({
    * Validate and authenticate incoming document connection requests.
    * Ensures room IDs are structurally valid and prevents malformed room queries.
    */
-  onAuthenticate: async ({ documentName, token }) => {
+  onAuthenticate: async ({ documentName, token, requestParameters }: any) => {
     /**
      * The access model, stated plainly.
      *
      * There are no accounts and no per-room permissions: **the room id is the
      * capability**. Whoever holds it can open the board and edit it, which the
      * share dialog says out loud. That model is legitimate and it has exactly
-     * one hard requirement -- the id must be unguessable.
-     *
-     * The check here was `{1,128}`. One character. Every board whose address
-     * was short enough for somebody to have typed by hand was reachable by
-     * walking a few thousand ids, and the library's join box passes a bare id
-     * straight through, so such boards are easy to create by accident. The
-     * floor in `config.minRoomIdLength` is what keeps the model honest;
-     * `nanoid(10)` is what makes new ids unguessable.
+     * one hard requirement -- the id must be unguessable. The floor in
+     * `config.minRoomIdLength` is what keeps it honest; `nanoid(10)` is what
+     * makes new ids unguessable.
      *
      * `AUTH_SECRET` remains a single shared token for the whole deployment --
      * a front door for a private instance, not authorization. It cannot
      * express "this person, this board", and it should not be mistaken for it.
+     *
+     * ## Why `role` is read but not trusted
+     *
+     * `readOnly` below is set from a role the *client* declares, and that is
+     * all it can be. This once arrived as a `role` claim inside a JWT whose
+     * signature was never checked, alongside an `exp` enforced from the same
+     * unverified payload -- which is not weak authorization, it is decoration
+     * that reads as authorization, and downstream the share dialog duly
+     * promised "mutation packets are rejected server-side" to anyone who
+     * pressed Can view.
+     *
+     * What it honestly is: the server keeping its half of a bargain the client
+     * proposed, so a tab in view mode does not sync edits its own interface
+     * has already put away. It stops accidents. It stops nobody who does not
+     * want to be stopped, because there is no secret anywhere in the claim.
+     *
+     * Making it real needs accounts, a membership table and a server-signed
+     * token verified here -- `docs/GOING-LIVE.md` section 2, stage 3. Until
+     * that exists, do not add a check here that looks stronger than this one:
+     * a gate that appears locked is worse than one visibly propped open.
      */
     const check = checkRoomId(documentName, config.minRoomIdLength);
     if (!check.ok) throw new Error(check.reason ?? "Invalid room identifier");
 
-    if (config.authSecret && !secretMatches(token, config.authSecret)) {
+    // Opening a board is what "active" was always meant to mean. Writing this
+    // only from `store` meant a board people read daily and never edited went
+    // stale and became the reaper's most likely target. Fire-and-forget: a
+    // database hiccup must not stop anyone opening a board.
+    roomActivity.touch(documentName);
+
+    const { role: declaredRole, secret } = readConnectionClaim(
+      token,
+      requestParameters?.get?.('role') ?? requestParameters?.get?.('permission')
+    );
+
+    if (config.authSecret && !secretMatches(secret, config.authSecret)) {
       throw new Error("Unauthorized room connection");
     }
 
@@ -646,7 +683,9 @@ const server = new Hocuspocus({
       user: {
         id: nanoid(),
         room: documentName,
+        role: declaredRole,
       },
+      readOnly: declaredRole === 'viewer',
     };
   },
 
