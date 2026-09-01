@@ -20,15 +20,15 @@ If you read nothing else, read this section.
 (`vega-canva.onrender.com`) → Neon Postgres → Cloudflare R2 → Sentry.
 That changes the arithmetic below: every item is now carrying real data.
 
-**Status as of 2026-09-01.**
+**Status as of 2026-09-01, end of day.**
 
 | # | Item | State |
 | --- | --- | --- |
-| 1 | Upload quotas (§1.1) | **Done.** Per-room 200 MB, per-IP daily 500 MB, global 10 GB, enforced with 413. A failed upload deletes its object and row. |
-| 2 | Dashboard bundle preload (§1.2) | **Done.** `modulePreload.resolveDependencies` cut the eager preload set to three chunks; verified in `dist/index.html`. |
-| 3 | Room & media reaper (§1.3) | **Written, deliberately unscheduled.** Read `DEPLOYMENT.md` §7.2 before running it once, let alone on a timer. |
-| 4 | Error tracking (§1.4) | **Done, and it was not before.** See below. |
-| 5 | Database backups (§1.5) | **Built, not yet proven.** Nightly dump to R2 (`BACKUP-AND-RESTORE.md`), round-trip verified on PG 17. Needs its secrets and one manual run. |
+| 1 | Upload quotas (§1.1) | **Done.** Per-room 200 MB, per-IP daily 500 MB, global 10 GB, enforced with 413. A rejection is now *reported* too — it used to be silent, and the image stayed on a local blob URL looking like success until the next reload. |
+| 2 | Dashboard bundle preload (§1.2) | **Done.** The eager set is three files: the runtime, the icons and the stylesheet. Verified in `dist/index.html`. |
+| 3 | Room & media reaper (§1.3) | **Written, deliberately unscheduled.** Its clock was also broken — `last_active_at` only moved on *edit*, so a board read daily and never edited was the row most likely to be collected. Fixed; see `DEPLOYMENT.md` §7.2 before running it. |
+| 4 | Error tracking (§1.4) | **Done, and it was a `console.log` before.** See below. |
+| 5 | Database backups (§1.5) | **Built and tested; not yet run.** Secrets are set. One manual run is all that stands between here and a real backup — `SETUP-CHECKLIST.md` §1. |
 
 ### What "error tracking" meant until today
 
@@ -58,12 +58,13 @@ returned, not from whether a DSN was set. **Trust that field, not a log line.**
 
 ### Do this next
 
-**Set the five repository secrets and run the backup workflow once by hand**
-(Actions → Database backup → Run workflow, `dry_run` first). Until that has
-happened, recovery is Neon's 6-hour history window and nothing else — and a
-bad write found the next morning is outside it.
+**Run the backup workflow once by hand** (Actions → Database backup → Run
+workflow, `dry_run` first). Everything else on this page can wait; this is the
+only item whose cost of waiting is unbounded, because `room_snapshots` is
+overwritten in place and Neon's Free-plan window is six hours.
 
-`docs/BACKUP-AND-RESTORE.md` lists the secrets and the restore procedure.
+Then §1a of the checklist: move backups off the media bucket onto their own,
+with a token scoped to it.
 
 Everything after that is genuinely optional until you have users.
 

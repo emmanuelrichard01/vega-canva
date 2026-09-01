@@ -147,15 +147,17 @@ with different schemas and the same version number.
 Ranked. None of this is done, and the first one is the largest single risk in
 the system.
 
-1. **Backups.** Two layers, both documented in `BACKUP-AND-RESTORE.md`:
-   Neon's history window (**6 hours on the Free plan**, capped at 1 GB of
-   change history) and a nightly `pg_dump` to R2 via
-   `.github/workflows/backup.yml`.
+1. **Backups.** Two layers, both in `BACKUP-AND-RESTORE.md`: Neon's history
+   window (**6 hours on the Free plan**, capped at 1 GB of change history) and
+   a nightly `pg_dump` to R2 via `.github/workflows/backup.yml`.
 
-   The dump has been verified to round-trip on PostgreSQL 17 — including the
-   `bytea` columns and the cascading foreign keys — but **has not yet run
-   against Neon and R2**. It needs its five repository secrets set and one
-   manual run. Until that happens, recovery is still 6 hours.
+   The dump round-trips on PostgreSQL 17 — `bytea` columns and cascading
+   foreign keys included — and all five repository secrets are set. **It has
+   still never run.** One manual run is what turns a tested mechanism into a
+   backup; until then recovery is six hours.
+
+   `R2_BACKUP_BUCKET` is currently the media bucket, which is a deliberate
+   shortcut with a real cost — see `SETUP-CHECKLIST.md` §1a.
 
    `room_snapshots` is overwritten in place with no version history, so read
    the restore procedure before you need it, not during.

@@ -1,8 +1,12 @@
 # The diagram engine
 
 How `flowchart TD ...` becomes objects on the board, what was wrong with it,
-and what I would do next. This replaces an earlier plan whose recommendation
-had already shipped — see §6.
+and what is left. This replaces an earlier plan whose recommendation had
+already shipped — see §6.
+
+Last updated 2026-09-01. The engine carries 79 tests across
+`mermaid.test.ts`, `layout.test.ts`, `build.test.ts`, `silhouette.test.ts` and
+`templates.test.ts`.
 
 ---
 
@@ -112,7 +116,32 @@ word.
 - **`extractLayout(g: any)`** in a strict codebase — now a declared structural
   type.
 
-### 3.5 Still open, deliberately
+### 3.5 A node placed outside the frame it was then clipped to
+
+Membership in a subgraph was recorded **twice** and the two could disagree.
+`remember()` pushed to `subgraph.nodeKeys` unconditionally, but the node's own
+`subgraphId` only survived on the branches that *replaced* the stored node — so
+a node mentioned before the block it belongs to:
+
+```text
+B -->|yes| C[Process]
+subgraph S1 [Pipeline]
+  C --> E
+end
+```
+
+ended up in `S1.nodeKeys` with no `subgraphId`. Both records are read, by
+different code, and that is what turned a bookkeeping slip into something
+visibly broken: `layout.ts` parents to dagre by `subgraphId`, so C was laid out
+**outside** the cluster; `build.ts` assigned `frameId` from `nodeKeys`, so C
+was given the frame anyway; and `ObjectRenderer` clips a framed node to its
+frame's rectangle. C was placed outside a box and then cut to fit it.
+
+The stamp now applies to whichever record `remember` keeps, and `build.ts`
+reads `subgraphId` — so the field that decides *where a node is placed* is the
+field that decides *what clips it*.
+
+### 3.6 Still open, deliberately
 
 `resolveLeafKey` redirects an edge touching a subgraph to `nodeKeys[0]` or
 `nodeKeys[len-1]` — *declaration* order. It is an unavoidable guess: dagre's
@@ -142,22 +171,67 @@ parsing" is a different claim and it does not follow.
 
 ---
 
-## 5. What I would do next, in order
+## 5. What was done next, and what is left
 
-1. **A test that the preview cannot lie.** `MermaidModal` renders an SVG
-   preview beside the canvas renderer. Geometry is shared; *drawing* is not,
-   so they will drift — and a preview that disagrees with the result is worse
-   than no preview. Assert both agree on shape kind and box for a fixed source.
-2. **`sequenceDiagram`.** The most-asked-for type by a distance, and a
-   genuinely different layout — lifelines and ordered messages, not a DAG, so
-   dagre does not apply. Tractable because the parser is well-structured with
-   37 tests behind it. One real diagram type beats claiming fourteen.
-3. **Re-layout in place.** Editing the source of an existing diagram rebuilds
-   it; it should diff by `diagramKey` and move what moved, so hand-tweaked
-   positions and anything attached survive an edit.
-4. **Elbow smoothing.** Dagre's polyline has the bend points; we keep only the
-   ends. A rounded corner at each bend is the remaining visual gap against
-   Excalidraw, and it belongs in the connector renderer — derived, not stored.
+Items 1 and 4 below were the roadmap when this document was written; both are
+done. What replaced them at the top of the list is item 3.
+
+### 5.1 The preview cannot lie — done
+
+`MermaidModal` renders SVG and the board renders canvas. They shared geometry
+and sizes but **not** the silhouette: the preview carried its own
+`switch (shape)` ending in `case 'rect': default:`, and three of the fourteen
+shapes had no case. `trapezoid`, `trapezoid_inv` and `flag` fell through, so
+for the same source, side by side, the board drew a polygon and the preview
+drew a rectangle.
+
+`silhouetteFor` derives the base outline from `SHAPE_SPECS` — the table
+`build.ts` already used — so a shape added there cannot silently become a
+rectangle here. Ornament the canvas has no vocabulary for (the double-circle
+ring, subroutine bars, database lid) is drawn *on top of* that base rather
+than instead of it, which is the distinction that keeps an addition from
+becoming a substitution.
+
+### 5.2 Elbow smoothing — done
+
+`roundCorners` inserts sampled points rather than switching to SVG arcs,
+because in this codebase the point list **is** the geometry: `connectorBounds`,
+hit-testing, the radar and the board thumbnail all read it. A corner rounded
+only in the renderer would be a shape the rest of the system could not see —
+clicks would miss it and its bounding box would be wrong.
+
+The radius is clamped to just under half the shorter adjacent segment. Two
+corners on one short segment would otherwise each eat more than half of it,
+cross, and turn the elbow inside out, which is the failure mode of every naive
+corner-rounder.
+
+### 5.3 Sequence diagrams — still the next substantial piece
+
+The most-asked-for type by a distance, and a genuinely different layout —
+lifelines and ordered messages, not a DAG, so dagre does not apply. Tractable
+because the parser is well-structured and now carries 79 tests across the
+engine. One real diagram type beats claiming fourteen.
+
+### 5.4 Re-layout in place — still open
+
+Editing the source of an existing diagram rebuilds it. It should diff by
+`diagramKey` and move what moved, so hand-tweaked positions and anything
+attached survive an edit.
+
+### 5.5 The templates — done, and they are the documentation
+
+There is nowhere else in the product that says what any of this syntax does,
+so the templates are it. All six used to be the same diagram: boxes, arrows,
+subgraphs. Between them they demonstrated none of `classDef`, dotted or thick
+edges, `&` fan-out, or ten of the fourteen shapes.
+
+Each now teaches something the others do not and opens with a `%%` note saying
+what. The new **Shape Reference** shows all fourteen shapes, each labelled
+with the syntax that makes it. `templates.test.ts` holds the set: every one
+parses, none strands a node with no way in or out, and between them they cover
+every shape, every line kind and at least one `classDef`. A template that does
+not parse is a worse first impression than no template, in the feature's own
+words.
 
 ### On the UI
 
@@ -165,14 +239,20 @@ It is better than the old plan credited: live preview on shared geometry, five
 themes, crisp/sketch, direction switch, line-level diagnostics, templates,
 pan/zoom. Refinements I would make, in value order:
 
-- **Error recovery over error reporting.** `errorLine` is good. Better is
-  rendering the largest valid prefix of a broken document, so the preview keeps
-  showing something while you type rather than blanking on every half-finished
-  line.
-- **Preview and result must look identical.** See item 1 — this is correctness
-  wearing a UI hat.
-- **Show the layout cost.** Node and edge counts, and a warning past a few
-  hundred, so pasting something enormous is not a surprise freeze.
+- ~~**Error recovery over error reporting.**~~ Done. `parseMermaidLenient`
+  drops the offending line and retries, so a typo on line nine costs line nine
+  and not the other twenty. Failing lines are *blanked rather than removed*,
+  because `errorLine` is what the gutter marks and renumbering underneath it
+  would point the marker at the wrong row. The strict error is still reported
+  and the status bar names the lines it left out — recovery has to be visible
+  to be trusted.
+- ~~**Preview and result must look identical.**~~ Done; see §5.1.
+- ~~**Show the layout cost.**~~ Partly done: the header carries the node, edge
+  and group counts. A warning past a few hundred is still worth adding.
+- **The parse runs on a 140ms settle**, not on every keystroke. Deliberately
+  not React's `useDeferredValue`, which yields to *rendering* priority — the
+  cost here is synchronous work inside a `useMemo` that the scheduler cannot
+  see.
 - **Keep the source.** Store it on the diagram so reopening the modal edits the
   original text rather than round-tripping through `diagramToMermaid`, which
   necessarily loses comments and formatting.

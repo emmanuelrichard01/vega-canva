@@ -66,6 +66,18 @@ arithmetic. Sorting is chronological by construction, so pruning needs no
 clock, no timezone and no parsing — which is where retention scripts usually
 acquire the bug that deletes everything.
 
+### Current state
+
+**All five secrets are set. The workflow has never run.** See
+`SETUP-CHECKLIST.md` §1 — one manual run is what turns this from a tested
+mechanism into an actual backup.
+
+`R2_BACKUP_BUCKET` is `vega-canva-media`, the same bucket the app uploads to.
+That was chosen deliberately to start backing up without waiting on a console
+visit, and it costs the isolation described below: anything that purges media
+takes the backups with it, and the credentials the *server* holds can delete
+them. §1a of the checklist carries the migration to a scoped bucket.
+
 ### Setting it up
 
 Five repository secrets (**Settings → Secrets and variables → Actions**):

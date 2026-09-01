@@ -67,30 +67,52 @@ npm run dev -w apps/frontend      # :5173
 Verify in ~30 seconds:
 
 ```bash
-npx tsc --noEmit -p apps/frontend/tsconfig.app.json   # must be silent
-npx vitest run --root apps/frontend                   # 2059 tests, 111 files
-npx vitest run --root apps/server                     # 10 tests, 1 file
+npm run build -w apps/frontend                        # tsc -b + vite build
+npx vitest run --root apps/frontend                   # 2244 tests, 129 files
+npx vitest run --root apps/server                     # 75 tests, 9 files
 npx oxlint apps/frontend/src                          # 0 warnings, 0 errors, exit 0
-npm run build -w apps/frontend                        # must succeed
 ```
 
-**Do not typecheck with `tsconfig.json`.** It is a solution file with no
-`files` and no `include`, so `tsc -p apps/frontend/tsconfig.json` typechecks
-*nothing at all* and exits 0. Several "tsc is clean" reports in this project's
-history were vacuous for exactly that reason. Use `tsconfig.app.json`, or
-`npm run build`, which runs `tsc -b`.
+**`npm run build` is the only typecheck that matches CI, and it is first in
+the list for that reason.** Two ways to fool yourself here, one of which cost
+a broken production deploy on 2026-09-01:
 
-Last verified 2026-08-28, by running the five commands above. Every figure in
+- `tsc -p apps/frontend/tsconfig.json` typechecks **nothing at all** and exits
+  0 — it is a solution file with no `files` and no `include`. Several "tsc is
+  clean" reports in this project's history were vacuous for that reason.
+- `npx tsc --noEmit` at the package root checks a *different file set* than
+  the build. It passed on a temporal-dead-zone error in `MermaidModal.tsx`
+  that failed Vercel with TS2448 and blanked the canvas at runtime. Build mode
+  (`tsc -b`) resolves the project references; a bare `--noEmit` does not.
+
+`tsconfig.app.json` is fine for a fast inner-loop check. It is not the check
+to trust before pushing.
+
+Last verified 2026-09-01, by running the four commands above. Every figure in
 it is a second record of something the tools will tell you in 30 seconds — when
 it disagrees with them, they are right and this is stale.
 
 | | |
 | --- | --- |
-| Branch | `grid-slots-and-notices`, 43 ahead of `origin/main`. `main` is the default branch and the merge target; `rebuild/time-travel-and-physics` and `session-2` are history, not workspaces |
-| Typecheck | clean |
-| Tests | **2059** across 111 files (frontend); **10** across 1 file (server) |
-| Lint | exits 0; 0 warnings, 0 errors across 448 files |
-| Build | clean. **32 JS chunks**, 2.2MB raw / ~730KB gzip, plus 167KB CSS. Largest: `Room` 519KB, `app-export` 443KB, `vendor-fontkit` 357KB, `vendor-konva` 310KB |
+| Branch | `main`, level with `origin/main`. `grid-slots-and-notices`, `rebuild/time-travel-and-physics` and `session-2` are history, not workspaces |
+| Deployed | **live**: Vercel (`vscanva.vercel.app`) → Render (`vega-canva.onrender.com`) → Neon → Cloudflare R2 → Sentry |
+| Typecheck | clean via `npm run build` |
+| Tests | **2244** across 129 files (frontend, 1 skipped — see `BENCH` below); **75** across 9 files (server) |
+| Lint | exits 0; 0 warnings, 0 errors |
+| Build | clean. **38 JS chunks**, 2.7MB raw / ~870KB gzip, plus 216KB CSS. Largest: `Room` 527KB, `vendor-sentry` 475KB, `vendor-fontkit` 357KB, `vendor-konva` 310KB, `app-diagram` 259KB, `app-export` 254KB |
+
+The eager first-paint set is *not* that total. `vite.config.ts` filters the
+dashboard's `modulepreload` down to three files — the runtime, the icons and
+the stylesheet — so `vendor-sentry`, `app-diagram`, `Room` and the rest arrive
+only when something asks for them. Check `dist/index.html` if you change that
+filter; it is the only place the effect is visible.
+
+**One test is skipped on purpose.** The 10,000-node spatial benchmark runs
+under `BENCH=1 npx vitest run stressTest` and prints its numbers rather than
+asserting them. It asserted a wall-clock threshold once, failed at 1.47ms
+against a 1.0ms bar, and starved an unrelated source-scanning test past its
+timeout on the way. A benchmark's output is a number to compare against last
+week's, not a boolean.
 
 **The build is code-split now**, by hand: `vite.config.ts` names the vendor and
 subsystem chunks rather than leaving Rollup to produce a `browser-module` that
@@ -1840,7 +1862,143 @@ That is the one to fix before sharing a link with anybody.
    more than one instance. Must move to Redis in the same change as scaling out.
 4. No load testing. The batching is reasoned, not benchmarked.
 
+## 4g. Going live, and the diagram engine
+
+The session that put this on the internet and then found out what that costs.
+
+### The deployment, and one broken build
+
+Live on Vercel → Render → Neon → R2 → Sentry. Two things were true on arrival
+that nobody had noticed:
+
+**Sentry was a `console.log`.** Both `observability.ts` files did
+`if (dsn) logger.info('Sentry error tracking enabled')` next to a comment
+saying the SDK would initialise there, and neither `@sentry/node` nor
+`@sentry/react` was in any `package.json`. The DSNs were set on both hosts, so
+the deployment had been printing a line claiming error tracking was on, and
+reporting nothing, for as long as it had been live. **The log line was the one
+piece of evidence anybody would have checked, and it was the thing that was
+wrong.** `/readyz` now reports `errorTracking` from whether `init` actually
+returned; trust that field, not a log line.
+
+The client imports the SDK by dynamic `import()`. Statically it costs nothing
+while the DSN is unset — the branch folds and the SDK is shaken out — so a
+local build looks free and the cost appears only in the deployment that has it
+configured. With the DSN set the entry chunk went 5.76 kB → 34.09 kB gzipped.
+Listeners register synchronously and errors thrown before the SDK lands are
+buffered and flushed.
+
+**A temporal-dead-zone crash reached production.** `fitToView`'s dependency
+array read `preview` before it was declared. `npx tsc --noEmit` passed; `tsc
+-b` — what the build runs — failed with TS2448, and at runtime it threw during
+render and React unmounted the tree. That is the "whole canvas goes blank"
+report. See §1 for why those two checks differ.
+
+### Backups exist now, and are the last unproven thing
+
+Neon's Free plan history window is **6 hours, capped at 1 GB of change
+history**. That does not cover a bad write found the next morning, and it is
+the same account. `.github/workflows/backup.yml` runs a nightly `pg_dump` to
+R2, keeping 30, refusing to upload a dump that is under 1 KB, unreadable by
+`pg_restore --list`, or missing any of the five tables.
+
+Verified against PostgreSQL 17.11 with the real migration SQL: dumped,
+restored into a fresh database, compared by per-table MD5 of hex-encoded
+contents. All five tables matched, including the three `bytea` columns a
+text-mangling backup would corrupt silently, and the restored schema kept all
+three `ON DELETE CASCADE` foreign keys.
+
+**It has not yet run against Neon and R2.** All five repository secrets are
+set. `R2_BACKUP_BUCKET` is `vega-canva-media` — the same bucket as uploads, a
+deliberate choice to start backing up immediately, and the tradeoff is real:
+anything that purges media takes the backups with it, and the server's own
+credentials can delete them. `docs/SETUP-CHECKLIST.md` carries the migration
+to a scoped bucket as the follow-up.
+
+### The reaper's clock was broken
+
+`rooms.last_active_at` was written only from the Database extension's `store`
+callback, which fires on *change*. A board a team reads daily and never edits
+had a frozen timestamp — and `reaper.ts` hard-deletes by that column, cascading
+to snapshots, updates and media. The reference board everybody consults and
+nobody edits was the row most likely to be collected. `roomActivity.ts`
+refreshes on connection now, throttled, `UPDATE` not `UPSERT` so it cannot be
+used to mint empty rows. Both pre-flight counts were zero when measured, so
+nothing was lost.
+
+### The diagram engine
+
+`docs/DIAGRAM-ENGINE.md` is the full account. The three that matter here:
+
+**Dagre's routing was computed and thrown away.** `LayoutResult` carried only
+nodes and clusters, so every connector attached with `port: 'auto'` and the
+canvas re-derived each path with a router that knew nothing about the channels
+dagre reserved. The polyline is still not stored — `connector.ts` opens by
+saying a connector knows *which objects it joins*, never where its ends are —
+so what is kept is the route's **intent**: an `Anchor`, normalised to the
+node's own box, which survives the node moving and resizing.
+
+**Subgraph membership was recorded twice and could disagree.** A node
+mentioned before the block it belongs to landed in `subgraph.nodeKeys` with no
+`subgraphId`. `layout.ts` parents to dagre by `subgraphId`, so it was placed
+*outside* the cluster; `build.ts` assigned `frameId` from `nodeKeys`, so it
+got the frame anyway; and `ObjectRenderer` clips a framed node to its frame's
+rectangle. The node was placed outside a box and then cut to fit it. Both ends
+read `subgraphId` now.
+
+**Boxes were sized by counting characters** — width capped at 320, height
+counting explicit newlines only, so the cap created wrapping the height never
+heard about. `measureSize` asks the project's own wrapper instead.
+
+### Three silent failures, closed
+
+- **Uploads.** `if (data.url)` had no `else`, so a 413 over the storage quota
+  did nothing at all. The image draws from a local blob URL, so it looked like
+  success and vanished on reload. A queued offline upload is `info`; a
+  rejection is `warning` carrying the server's own words.
+- **Shape labels drifted left.** Konva measures a string once and keeps the
+  result. Measured against a fallback face, `align: 'center'` is computed from
+  the wrong numbers, and nothing re-measures when the real font lands.
+  `StickyRenderer` and `TextRenderer` both already subscribed to `fontEpoch`;
+  `ShapeRenderer` was the third caller and had neither half of the pattern.
+  **Both halves are required** — subscribing without calling `ensureFontLoaded`
+  waits for an event nobody triggered. `shapeLabelFont.test.ts` holds all three
+  to the pair.
+- **Dark text on dark shapes.** `labelInk` derives from the node's *own fill*,
+  which keeps `DEFAULT_INK`'s rule intact: content must not resolve per
+  viewer, and the fill is in the same document, so every viewer computes the
+  same answer. Only the untouched default is overridden — a colour somebody
+  picked is an instruction, including a bad one.
+
+### A control that passed its test and did not work
+
+The mermaid zoom buttons lived *inside* the preview stage, whose `pointerdown`
+calls `setPointerCapture` to start a pan. A press bubbled, the stage captured
+the pointer, and the `pointerup` that completes the click went to the stage.
+`element.click()` dispatches a click directly and never goes near pointer
+capture — so the automated check passed against a control that was broken for
+every human. **When a control works programmatically and not by hand, suspect
+pointer capture first.** The cluster is a sibling of the stage now.
+
 ## 5. Next up
+
+### 5a-0. The three things to do first
+
+1. **Run the backup workflow once by hand.** Actions → *Database backup* → Run
+   workflow, `dry_run` checked, then again unchecked. Until an object lands in
+   the bucket, recovery is Neon's six-hour window and nothing else. Everything
+   else in this list can wait; this is the only one where the cost of waiting
+   is unbounded.
+2. **Look at the mermaid modal.** The dialog was redesigned, the templates were
+   rewritten and the zoom was rebuilt, and the browser tab wedged at a 0x0
+   viewport before the last of it could be seen. Functionally verified — all
+   seven templates parse, the preview renders, the zoom steps 51 → 63 → 79 and
+   fits back — but not *looked at* in its final state.
+3. **Confirm the zoom buttons respond to a real mouse.** They were broken by
+   pointer capture and fixed structurally; the fix could not be verified here
+   because synthetic pointer events do not reach this tab at all. A capture
+   listener on the whole modal recorded nothing from a real click, which is how
+   that limitation announces itself.
 
 ### 5a. Verify what was built fast
 
@@ -1851,8 +2009,10 @@ broken; all of it is unwatched.
 - **The right-click menu targeting an object.** Only the empty-board variant
   has been seen. The object variant needs Konva's hit graph, which an
   automation tab does not populate.
-- **The Mermaid apply path.** Parse, layout and build carry 26 tests; the
-  `Room` wiring — transaction, replace-in-place, selection — has never run.
+- **The Mermaid apply path.** Parse, layout, build, silhouettes and the
+  templates now carry 79 tests, and the frame-clipping bug that made applied
+  diagrams look broken is fixed and covered. The `Room` wiring — transaction,
+  replace-in-place, selection — still has never run.
 - **Sketched caps, midpoint labels, the context menu, dock spacing** were
   confirmed by reading the scene graph rather than by looking. The label
   contrast fix *was* seen working (white ink on a white plate lifted to
@@ -2188,6 +2348,16 @@ Two entries left this list and were still sitting on it on 2026-08-27:
 3. `hooks/useStore.ts` — the one bridge from document to UI
 4. `components/Canvas.tsx` — input, tools, camera, the shared transformer
 5. `docs/CANVAS-SPEC.md` — what exists, what does not, and why
+
+The operational documents, now that this is deployed:
+
+| Document | What it answers |
+| --- | --- |
+| `docs/SETUP-CHECKLIST.md` | **Start here.** What is switched off in somebody's browser, and what stays broken until it is on. |
+| `docs/GOING-LIVE.md` | What blocks a public launch, ranked; the authentication plan; the $0 stack |
+| `docs/DEPLOYMENT.md` | The access model, configuration, media, history, schema, health |
+| `docs/BACKUP-AND-RESTORE.md` | The two layers, and the restore procedure — written before it is needed |
+| `docs/DIAGRAM-ENGINE.md` | How mermaid becomes canvas objects, and why routing is carried as anchors rather than waypoints |
 
 The vector engine (newest, and the densest):
 
