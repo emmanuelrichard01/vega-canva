@@ -309,6 +309,16 @@ export const MermaidModal: React.FC<Props> = ({
     return { placed: placedNodes, at, clusterAt, subgraphs, maxX, maxY };
   }, [graph, renderStyle]);
 
+  /**
+   * Whether the reader has taken the camera over.
+   *
+   * Declared here, above every closure that reads it: a ref used by a
+   * `useCallback` whose dependency array is evaluated on render is exactly
+   * how a temporal-dead-zone crash gets shipped, and this file has already
+   * done that once.
+   */
+  const touchedRef = useRef(false);
+
   const MIN_SCALE = 0.15;
   const MAX_SCALE = 4;
   const clampScale = (n: number) => Math.min(MAX_SCALE, Math.max(MIN_SCALE, n));
@@ -321,6 +331,7 @@ export const MermaidModal: React.FC<Props> = ({
    * every zoom becomes a zoom *and* a pan to find your place again.
    */
   const zoomAt = (nextScale: number, cx: number, cy: number) => {
+    touchedRef.current = true;
     setScale((prev) => {
       const next = clampScale(nextScale);
       if (next === prev) return prev;
@@ -344,6 +355,7 @@ export const MermaidModal: React.FC<Props> = ({
    * than the stage reset to a corner of itself.
    */
   const fitToView = useCallback(() => {
+    touchedRef.current = false;
     const box = stageRef.current?.getBoundingClientRect();
     if (!box || !preview) {
       setScale(1);
@@ -362,6 +374,27 @@ export const MermaidModal: React.FC<Props> = ({
       y: (box.height - contentH * next) / 2,
     });
   }, [preview]);
+
+  /**
+   * Frame the diagram whenever it changes shape.
+   *
+   * The preview opened at 100% and origin, so anything taller than the stage
+   * arrived showing its top-left corner -- the reader's first move was always
+   * to zoom out and find the rest. Fitting on change means the picture is
+   * whole by default, which is what a preview is for.
+   *
+   * Only while the reader has not taken over: once somebody has zoomed or
+   * panned deliberately, re-framing under them on the next keystroke would be
+   * the interface arguing with them.
+   */
+  useEffect(() => {
+    if (!open || !preview || touchedRef.current) return;
+    fitToView();
+  }, [open, preview, fitToView]);
+
+  useEffect(() => {
+    if (!open) touchedRef.current = false;
+  }, [open]);
 
   /**
    * Zoom from the keyboard, but never while the caret is in the editor --
@@ -579,6 +612,7 @@ export const MermaidModal: React.FC<Props> = ({
                 if (!isDragging.current) return;
                 const dx = e.clientX - lastMousePos.current.x;
                 const dy = e.clientY - lastMousePos.current.y;
+                touchedRef.current = true;
                 setPan((p) => ({ x: p.x + dx, y: p.y + dy }));
                 lastMousePos.current = { x: e.clientX, y: e.clientY };
               }}

@@ -79,7 +79,17 @@ export interface LayoutOptions {
   sizeOf?: (key: string) => { width: number; height: number } | undefined;
 }
 
-const DEFAULTS = { nodeWidth: 170, nodeHeight: 72, rankGap: 90, siblingGap: 40 };
+/**
+ * `rankGap` was 90, which put a five-box flowchart at 232x558 -- a 1:2.4
+ * column of small boxes separated by more empty space than box, which is what
+ * reads as sparse and unfinished on a wide canvas.
+ *
+ * 64 is the floor that still works: an edge label reserves a 24px band in the
+ * gap (see `labelBox`), so anything under about 50 puts the word against the
+ * node above or below it. This leaves 20px clear on each side of a label and
+ * takes the same chart to 232x479.
+ */
+const DEFAULTS = { nodeWidth: 170, nodeHeight: 72, rankGap: 64, siblingGap: 36 };
 
 /**
  * Roughly how much room an edge label needs dagre to keep clear.
