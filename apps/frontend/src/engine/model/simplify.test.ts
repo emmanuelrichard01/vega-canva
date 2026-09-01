@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { simplifyPoints } from './simplify';
+import { simplifyPoints, simplifyClosedRing } from './simplify';
 
 describe('simplifyPoints', () => {
   it('collapses a straight run to its two ends', () => {
@@ -58,3 +58,24 @@ describe('simplifyPoints', () => {
     expect(simplifyPoints(pair)).toEqual(pair);
   });
 });
+
+describe('simplifyClosedRing', () => {
+  it('simplifies closed polygon rings while preserving closed loop topology', () => {
+    // 40 points forming a square with collinear points on each side
+    const squareRing = [
+      ...Array.from({ length: 10 }, (_, i) => ({ x: i * 10, y: 0 })),
+      ...Array.from({ length: 10 }, (_, i) => ({ x: 100, y: i * 10 })),
+      ...Array.from({ length: 10 }, (_, i) => ({ x: 100 - i * 10, y: 100 })),
+      ...Array.from({ length: 10 }, (_, i) => ({ x: 0, y: 100 - i * 10 })),
+    ];
+    const simplified = simplifyClosedRing(squareRing, 0.25);
+    expect(simplified.length).toBeLessThan(10);
+    expect(simplified.length).toBeGreaterThanOrEqual(4);
+  });
+
+  it('preserves small triangles and minimal closed rings', () => {
+    const triangle = [{ x: 0, y: 0 }, { x: 50, y: 100 }, { x: 100, y: 0 }];
+    expect(simplifyClosedRing(triangle)).toHaveLength(3);
+  });
+});
+

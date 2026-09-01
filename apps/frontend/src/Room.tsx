@@ -41,8 +41,8 @@ import { useRoomContextMenuActions } from './hooks/useRoomContextMenuActions';
 
 const TimeTravelBar = lazy(() => import('./components/TimeTravelBar').then((m) => ({ default: m.TimeTravelBar })));
 const ForcesBar = lazy(() => import('./components/ForcesBar').then((m) => ({ default: m.ForcesBar })));
-import { parseMermaid } from './engine/diagram/mermaid';
-import { buildDiagram, canEmitDiagram, diagramIdOf, diagramToMermaid } from './engine/diagram/build';
+import { parseMermaid, looksLikeMermaid } from './engine/diagram/mermaid';
+import { buildDiagram, canEmitDiagram, diagramIdOf, diagramToMermaid, type DiagramBuildOptions } from './engine/diagram/build';
 import { demoBox, demoText } from './engine/text/demoText';
 import { deleteNodesWithFrames } from './engine/interaction/frameMembership';
 import { parseClipboard } from './engine/clipboard/clipboard';
@@ -61,6 +61,7 @@ import { useComments } from './hooks/useComments';
 import { CommentInbox } from './components/comments/CommentInbox';
 import { readMarks } from './engine/comments/readMarks';
 import { anchorPoint, unreadCount } from './engine/comments/threads';
+import { GroupIsolationBar } from './components/ui/GroupIsolationBar';
 
 /**
  * Whether this page load has already taken the pending backup.
@@ -479,14 +480,15 @@ export default function Room() {
    * between them, so undo would land on the gap rather than on the diagram —
    * and every collaborator would watch the diagram vanish and reappear.
    */
-  const applyDiagram = (source: string) => {
+  const applyDiagram = (source: string, options?: DiagramBuildOptions) => {
     const { graph } = parseMermaid(source);
     if (!graph) return;
     const origin = cameraSystem.screenToWorld(window.innerWidth / 2, window.innerHeight / 2);
     const built = buildDiagram(
       graph,
       { x: Math.round(origin.x - 200), y: Math.round(origin.y - 140) },
-      diagramReplacing ?? undefined
+      diagramReplacing ?? undefined,
+      options
     );
 
     /**
@@ -1018,6 +1020,16 @@ export default function Room() {
         return;
       }
 
+      if (looksLikeMermaid(text)) {
+        e.preventDefault();
+        setDiagramSource(text);
+        setDiagramReplacing(null);
+        setDiagramReplaceIds([]);
+        setDiagramOpen(true);
+        notify('Opened Diagram from Code with pasted Mermaid');
+        return;
+      }
+
       const files = Array.from(e.clipboardData?.items ?? [])
         .filter((item) => item.kind === 'file')
         .map((item) => item.getAsFile())
@@ -1312,21 +1324,24 @@ export default function Room() {
 
       {/* WORKSPACE SHELL (Header & Navigation) */}
       {isUiVisible && (
-        <WorkspaceShell 
-          localTitle={localTitle}
-          setLocalTitle={setLocalTitle}
-          onTitleSave={handleSaveTitle}
-          isDarkTheme={isDarkTheme}
-          setIsDarkTheme={setIsDarkTheme}
-          onShareClick={() => setShowShareModal(true)}
-          onExportClick={() => { setExportFromSelection(false); setShowExportMenu(true); }}
-          onHelpClick={() => setShowHelp(true)}
-          onHideUi={() => setIsUiVisible(false)}
-          onToggleTimeline={() => setShowTimeTravel(v => !v)}
-          onToggleComments={() => setShowInbox(v => !v)}
-          commentUnread={unreadCount(comments, commentMarks, myAuthorId)}
-          onTogglePanels={() => setPanelsOpen(v => !v)}
-        />
+        <>
+          <WorkspaceShell 
+            localTitle={localTitle}
+            setLocalTitle={setLocalTitle}
+            onTitleSave={handleSaveTitle}
+            isDarkTheme={isDarkTheme}
+            setIsDarkTheme={setIsDarkTheme}
+            onShareClick={() => setShowShareModal(true)}
+            onExportClick={() => { setExportFromSelection(false); setShowExportMenu(true); }}
+            onHelpClick={() => setShowHelp(true)}
+            onHideUi={() => setIsUiVisible(false)}
+            onToggleTimeline={() => setShowTimeTravel(v => !v)}
+            onToggleComments={() => setShowInbox(v => !v)}
+            commentUnread={unreadCount(comments, commentMarks, myAuthorId)}
+            onTogglePanels={() => setPanelsOpen(v => !v)}
+          />
+          <GroupIsolationBar />
+        </>
       )}
 
 

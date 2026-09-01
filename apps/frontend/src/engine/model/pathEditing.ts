@@ -65,6 +65,111 @@ export function constrainDeltaToAxis(dx: number, dy: number): { dx: number; dy: 
   };
 }
 
+/**
+ * Constrain a handle to the nearest multiple of `snapDegrees` around its anchor.
+ *
+ * Illustrator uses 15° increments for handle snapping, which covers isometric
+ * (30°/60°), orthogonal (0°/90°), and diagonal (45°) constructions. The handle's
+ * distance from the anchor is preserved — only its direction changes.
+ *
+ * Returns the snapped destination and the resolved angle in degrees, so the
+ * caller can display the snap readout without recomputing it.
+ */
+export function constrainHandleToAngle(
+  anchor: Point,
+  destination: Point,
+  snapDegrees = 15
+): { x: number; y: number; angleDeg: number } {
+  const dx = destination.x - anchor.x;
+  const dy = destination.y - anchor.y;
+  const dist = Math.hypot(dx, dy);
+  if (dist < 1e-9) return { x: anchor.x, y: anchor.y, angleDeg: 0 };
+
+  const snapRad = (snapDegrees * Math.PI) / 180;
+  const angle = Math.atan2(dy, dx);
+  const snapped = Math.round(angle / snapRad) * snapRad;
+  const angleDeg = ((snapped * 180) / Math.PI + 360) % 360;
+
+  return {
+    x: anchor.x + dist * Math.cos(snapped),
+    y: anchor.y + dist * Math.sin(snapped),
+    angleDeg,
+  };
+}
+
+/**
+ * The three user-facing handle alignment modes, mapped to stored geometry.
+ *
+ * - **symmetric**: both handles are collinear through the anchor and the same
+ *   length. Dragging one mirrors the other exactly. This is `'mirrored'` in
+ *   the geometry's own vocabulary.
+ * - **smooth**: handles are collinear (the tangent is continuous) but each
+ *   keeps its own length, so the curve can be tighter on one side than the
+ *   other. This is `'smooth'` in the geometry.
+ * - **disconnected**: the two handles move independently, allowing a cusp or
+ *   corner. This is `'corner'` in the geometry.
+ *
+ * The mapping is deliberate: the names a designer sees in Illustrator
+ * ("Smooth Point", "Corner Point") differ from the ones the geometry
+ * module uses (`'smooth'`, `'corner'`, `'mirrored'`), and paper-cutting one
+ * onto the other would force the UI code to know which internal word means
+ * which design concept. This function is the adapter.
+ */
+export type HandleAlignment = 'symmetric' | 'smooth' | 'disconnected';
+
+const ALIGNMENT_TO_MODE: Record<HandleAlignment, 'corner' | 'smooth'> = {
+  symmetric: 'smooth',
+  smooth: 'smooth',
+  disconnected: 'corner',
+};
+
+export function setAnchorAlignment(
+  geo: ContourGeometry,
+  refs: readonly AnchorRef[],
+  alignment: HandleAlignment
+): ContourGeometry {
+  // First, apply the base mode change (smooth or corner).
+  let result = setAnchorsMode(geo, refs, ALIGNMENT_TO_MODE[alignment]);
+
+  // For 'symmetric', additionally equalize handle lengths on each anchor.
+  if (alignment === 'symmetric') {
+    const subs = subpathsOf(result).map((s) => s);
+    for (const ref of refs) {
+      const sub = subs[ref.sub];
+      if (!sub) continue;
+      const anchors = toAnchors(sub).map((a) => ({ ...a }));
+      const a = anchors[ref.index];
+      if (!a || a.inX === undefined || a.outX === undefined) continue;
+      const inLen = Math.hypot(a.x - (a.inX ?? a.x), a.y - (a.inY ?? a.y));
+      const outLen = Math.hypot((a.outX ?? a.x) - a.x, (a.outY ?? a.y) - a.y);
+      if (inLen < 1e-6 && outLen < 1e-6) continue;
+
+      // Average the two lengths, then set both handles to that length
+      // in their current (collinear) direction.
+      const avgLen = (inLen + outLen) / 2;
+      const dx = (a.outX ?? a.x) - a.x;
+      const dy = (a.outY ?? a.y) - a.y;
+      const curLen = Math.hypot(dx, dy);
+      if (curLen < 1e-6) continue;
+      const ux = dx / curLen;
+      const uy = dy / curLen;
+      a.outX = a.x + ux * avgLen;
+      a.outY = a.y + uy * avgLen;
+      a.inX = a.x - ux * avgLen;
+      a.inY = a.y - uy * avgLen;
+      anchors[ref.index] = a;
+      subs[ref.sub] = fromAnchors(anchors, sub.closed);
+    }
+    if (result.kind === 'compound') {
+      result = { kind: 'compound', subpaths: subs };
+    } else {
+      result = subs[0] ?? result;
+    }
+  }
+
+  return result;
+}
+
 export interface Contour {
   sub: number;
   anchors: Anchor[];

@@ -111,6 +111,8 @@ export interface Collaborator {
   selection: string[];
   /** Objects of theirs mid-flight, world space. */
   throws: Point[];
+  /** Live cursor reaction emoji */
+  reaction?: { emoji: string; timestamp: number } | null;
 }
 
 const FALLBACK_COLOR = '#6B7280';
@@ -132,7 +134,8 @@ export function initialsFor(name: string): string {
 /** Narrow an awareness `throws` record to the poses that are actually usable. */
 function readThrows(raw: unknown): Point[] {
   if (!raw || typeof raw !== 'object') return [];
-  return Object.values(raw as Record<string, unknown>)
+  const items = Array.isArray(raw) ? raw : Object.values(raw as Record<string, unknown>);
+  return items
     .filter(
       (p): p is Point =>
         !!p &&
@@ -204,6 +207,7 @@ export function readCollaborators(
       away: state.status === 'away',
       selection: Array.isArray(state.selection) ? state.selection : [],
       throws: readThrows(state.throws),
+      reaction: state.reaction && typeof state.reaction.emoji === 'string' ? state.reaction : null,
     });
   });
 
@@ -236,7 +240,7 @@ export function rosterSignature(list: Collaborator[]): string {
       (c) =>
         `${c.clientId}:${c.name}:${c.color}:${c.activity ?? ''}:${c.tool ?? ''}:${
           c.away ? 1 : 0
-        }:${c.cursor ? 1 : 0}:${c.selection.join(',')}`
+        }:${c.cursor ? 1 : 0}:${c.reaction?.emoji ?? ''}:${c.selection.join(',')}`
     )
     .join('|');
 }

@@ -93,3 +93,65 @@ export function simplifyPoints(points: readonly Point[], tolerance = 1.2): Point
   for (let i = 0; i < points.length; i++) if (keep[i]) out.push(points[i]);
   return out;
 }
+
+/**
+ * Simplify a closed polygon ring by eliminating redundant collinear vertices
+ * while strictly preserving closed loop topology and corner accuracy.
+ */
+export function simplifyClosedRing(points: readonly Point[], tolerance = 0.25): Point[] {
+  if (points.length <= 3) return [...points];
+
+  // 1. Deduplicate consecutive duplicate coordinates
+  const deduped: Point[] = [];
+  for (let i = 0; i < points.length; i++) {
+    const curr = points[i];
+    const prev = deduped[deduped.length - 1];
+    if (!prev || Math.hypot(curr.x - prev.x, curr.y - prev.y) > 1e-4) {
+      deduped.push(curr);
+    }
+  }
+
+  // Also check wrap-around duplicate between last and first
+  if (
+    deduped.length > 3 &&
+    Math.hypot(deduped[0].x - deduped[deduped.length - 1].x, deduped[0].y - deduped[deduped.length - 1].y) < 1e-4
+  ) {
+    deduped.pop();
+  }
+
+  if (deduped.length <= 3) return deduped;
+
+  // 2. Find the two furthest points (ring diameter) to split the loop into two open chains
+  let maxDistSq = -1;
+  let splitIndex = 0;
+  const p0 = deduped[0];
+  for (let i = 1; i < deduped.length; i++) {
+    const dx = deduped[i].x - p0.x;
+    const dy = deduped[i].y - p0.y;
+    const distSq = dx * dx + dy * dy;
+    if (distSq > maxDistSq) {
+      maxDistSq = distSq;
+      splitIndex = i;
+    }
+  }
+
+  // If splitIndex is invalid or adjacent, fallback to midpoint
+  if (splitIndex <= 1 || splitIndex >= deduped.length - 1) {
+    splitIndex = Math.floor(deduped.length / 2);
+  }
+
+  const chainA = deduped.slice(0, splitIndex + 1);
+  const chainB = [...deduped.slice(splitIndex), p0];
+
+  const simplifiedA = simplifyPoints(chainA, tolerance);
+  const simplifiedB = simplifyPoints(chainB, tolerance);
+
+  // Combine results (dropping duplicate join points)
+  const result: Point[] = [
+    ...simplifiedA,
+    ...simplifiedB.slice(1, -1), // drop first (shared with end of A) and last (shared with start of A)
+  ];
+
+  return result.length >= 3 ? result : deduped;
+}
+

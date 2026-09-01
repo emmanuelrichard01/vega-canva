@@ -5,6 +5,7 @@ import { TooltipLayer } from './components/ui/TooltipLayer';
 import { useStore } from './hooks/useStore';
 import { RouteLoader } from './components/ui/Loading';
 import { NoticeLayer } from './components/ui/NoticeLayer';
+import { SpeedInsights } from '@vercel/speed-insights/react';
 
 const Room = lazy(() => import('./Room'));
 const Home = lazy(() => import('./Home').then((m) => ({ default: m.Home })));
@@ -49,6 +50,7 @@ function App() {
           A tooltip rendered inside a scrolling panel is clipped by it, and no
           z-index can lift it out. See `TooltipLayer`. */}
       <TooltipLayer />
+      <SpeedInsights />
     </AuthProvider>
   );
 }

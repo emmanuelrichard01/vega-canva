@@ -1,11 +1,12 @@
 import React, { useSyncExternalStore } from 'react';
 import type Konva from 'konva';
-import { Circle, Group, Line, Path, Rect, Text } from 'react-konva';
+import { Arc, Circle, Group, Line, Path, Rect, Text } from 'react-konva';
 import { deleteNode, updateNode } from '../../engine/document';
 import { useStore } from '../../hooks/useStore';
 import { pathEdit } from '../../engine/interaction/pathEdit';
 import { EXPORT_CHROME } from '../../engine/export/chrome';
 import {
+  anchorCurvatureRadius,
   anchorMode,
   contourData,
   insertAnchor,
@@ -20,10 +21,12 @@ import {
   anchorKey,
   anchorsInRect,
   constrainDeltaToAxis,
+  constrainHandleToAngle,
   contours,
   dragHandle,
   mergeAnchors,
   moveAnchors,
+  setAnchorAlignment,
   setAnchorsMode,
   toggleAnchor,
   type AnchorRef,
@@ -43,6 +46,14 @@ const HANDLE_RADIUS = 4.5;
 const INSERT_SLOP = 8;
 /** Pointer travel, in screen px, before a press counts as a drag rather than a click. */
 const DRAG_SLOP = 3;
+/** Curvature arc display: radius below this (in local units) is shown, above is "straight". */
+const CURVATURE_MAX_DISPLAY = 10_000;
+/** Screen-pixel bounds for the curvature arc indicator. */
+const CURVATURE_ARC_MIN_PX = 14;
+const CURVATURE_ARC_MAX_PX = 50;
+/** Mode badge labels: what the user sees for each handle alignment state. */
+const MODE_LABEL: Record<string, string> = { mirrored: '◇', smooth: '○', corner: '□' };
+const MODE_TOOLTIP: Record<string, string> = { mirrored: 'Symmetric', smooth: 'Smooth', corner: 'Corner' };
 
 /**
  * Direct selection: reshaping part of a path rather than all of it.
@@ -103,6 +114,40 @@ export const PathEditor: React.FC<Props> = ({ stageScale }) => {
       window.removeEventListener('keyup', handleGlobalKey);
     };
   }, [selection]);
+
+  /**
+   * Keyboard shortcuts for anchor alignment modes during path editing.
+   * 1 = Symmetric (mirrored), 2 = Smooth, 3 = Disconnected (corner).
+   * Only fires when the path editor is active and anchors are picked.
+   */
+  React.useEffect(() => {
+    if (!selection || !node || node.type !== 'path' || node.geometry.kind === 'freehand') return;
+    const geo: ContourGeometry = node.geometry;
+    const onKey = (e: KeyboardEvent) => {
+      if (e.target instanceof HTMLInputElement || e.target instanceof HTMLTextAreaElement) return;
+      if (selection.anchors.length === 0) return;
+      const map: Record<string, 'symmetric' | 'smooth' | 'disconnected'> = {
+        '1': 'symmetric',
+        '2': 'smooth',
+        '3': 'disconnected',
+      };
+      const alignment = map[e.key];
+      if (!alignment) return;
+      e.preventDefault();
+      e.stopPropagation();
+      const next = setAnchorAlignment(geo, selection.anchors, alignment);
+      const framed = reframePath(next);
+      updateNode(node.id, {
+        geometry: framed.geometry,
+        x: node.x + framed.dx,
+        y: node.y + framed.dy,
+        width: framed.width,
+        height: framed.height,
+      });
+    };
+    window.addEventListener('keydown', onKey);
+    return () => window.removeEventListener('keydown', onKey);
+  }, [selection, node]);
 
   if (!selection || !node || node.type !== 'path') return null;
   if (node.geometry.kind === 'freehand') return null;
@@ -215,13 +260,13 @@ export const PathEditor: React.FC<Props> = ({ stageScale }) => {
 
       if (s.kind === 'handle' && s.ref && s.side) {
         let dest = { x: p.x - s.origin.x, y: p.y - s.origin.y };
+        let snapAngleDeg: number | null = null;
         if (shiftHeld.current && s.ref) {
           const a = anchorAt(s.working, s.ref);
           if (a) {
-            const relDx = dest.x - a.x;
-            const relDy = dest.y - a.y;
-            const snapped = constrainDeltaToAxis(relDx, relDy);
-            dest = { x: a.x + snapped.dx, y: a.y + snapped.dy };
+            const snapped = constrainHandleToAngle(a, dest, 15);
+            dest = { x: snapped.x, y: snapped.y };
+            snapAngleDeg = snapped.angleDeg;
           }
         }
         s.working = dragHandle(
@@ -231,15 +276,26 @@ export const PathEditor: React.FC<Props> = ({ stageScale }) => {
           { break: altHeld.current }
         );
 
-        const dx = p.x - s.start.x;
-        const dy = p.y - s.start.y;
-        const angle = ((Math.atan2(dy, dx) * 180) / Math.PI + 360) % 360;
+        const anchorPt = anchorAt(s.working, s.ref);
+        const hdx = dest.x - (anchorPt?.x ?? 0);
+        const hdy = dest.y - (anchorPt?.y ?? 0);
+        const freeAngle = ((Math.atan2(hdy, hdx) * 180) / Math.PI + 360) % 360;
+        const displayAngle = snapAngleDeg !== null ? snapAngleDeg : freeAngle;
         const isBroken = altHeld.current;
         const isSnapped = shiftHeld.current;
+
+        let modeHint = '';
+        if (isBroken) modeHint = ' (Disconnected)';
+        else if (isSnapped) {
+          const deg = Math.round(displayAngle);
+          if (deg % 90 === 0) modeHint = ' (Cardinal)';
+          else if (deg % 45 === 0) modeHint = ' (Diagonal)';
+          else modeHint = ` (Snap 15°)`;
+        }
         setDragBadge({
           x: p.x - node.x,
           y: p.y - node.y,
-          text: `Handle · ${angle.toFixed(0)}°${isBroken ? ' (Broken Cusp)' : ''}${isSnapped ? ' (Snapped)' : ''}`,
+          text: `Handle · ${Math.round(displayAngle)}°${modeHint}`,
         });
       } else {
         const rawDx = p.x - s.start.x;
@@ -564,6 +620,105 @@ export const PathEditor: React.FC<Props> = ({ stageScale }) => {
             <React.Fragment key={`h-${anchorKey(ref)}`}>
               {a.inX !== undefined && handleLine(a, a.inX, a.inY!, ref, 'in')}
               {a.outX !== undefined && handleLine(a, a.outX, a.outY!, ref, 'out')}
+            </React.Fragment>
+          );
+        })
+      )}
+
+      {/* Handle alignment mode badge on picked anchors */}
+      {rings.map((ring) =>
+        ring.anchors.map((a, index) => {
+          const ref: AnchorRef = { sub: ring.sub, index };
+          if (!picked.has(anchorKey(ref))) return null;
+          const sub = subpathsOf(geometry)[ring.sub];
+          const mode = anchorMode(sub, index);
+          const label = MODE_LABEL[mode] ?? '□';
+          const tooltip = MODE_TOOLTIP[mode] ?? 'Corner';
+          const text = `${label} ${tooltip}`;
+          const badgeWidth = (text.length * 5.5 + 10) * scale;
+          return (
+            <Group key={`mode-${anchorKey(ref)}`} x={a.x} y={a.y + (ANCHOR_SIZE + 6) * scale} listening={false}>
+              <Rect
+                x={-badgeWidth / 2}
+                y={-1 * scale}
+                width={badgeWidth}
+                height={14 * scale}
+                fill="rgba(15, 23, 42, 0.88)"
+                cornerRadius={3 * scale}
+                shadowColor="rgba(0,0,0,0.25)"
+                shadowBlur={3 * scale}
+              />
+              <Text
+                x={-badgeWidth / 2}
+                y={1.5 * scale}
+                width={badgeWidth}
+                align="center"
+                text={text}
+                fill="#FFFFFF"
+                fontSize={8 * scale}
+                fontFamily="monospace"
+              />
+            </Group>
+          );
+        })
+      )}
+
+      {/* Curvature radius arc indicator on picked curved anchors */}
+      {rings.map((ring) =>
+        ring.anchors.map((a, index) => {
+          const ref: AnchorRef = { sub: ring.sub, index };
+          if (!picked.has(anchorKey(ref))) return null;
+          const sub = subpathsOf(geometry)[ring.sub];
+          const radii = anchorCurvatureRadius(sub, index);
+          const bestR = Math.min(radii.in, radii.out);
+          if (!isFinite(bestR) || bestR > CURVATURE_MAX_DISPLAY) return null;
+
+          // Map curvature radius to a screen-pixel arc size via log scale
+          const logMin = Math.log(1);
+          const logMax = Math.log(CURVATURE_MAX_DISPLAY);
+          const logR = Math.log(Math.max(1, bestR));
+          const t = (logR - logMin) / (logMax - logMin);
+          const arcScreenPx = CURVATURE_ARC_MIN_PX + t * (CURVATURE_ARC_MAX_PX - CURVATURE_ARC_MIN_PX);
+          const arcRadius = arcScreenPx * scale;
+
+          // Tangent direction for the arc orientation
+          const dx = (a.outX ?? a.inX ?? a.x) - a.x;
+          const dy = (a.outY ?? a.inY ?? a.y) - a.y;
+          const tangentAngle = Math.atan2(dy, dx) * (180 / Math.PI);
+          const radiusText = `R: ${bestR < 1 ? bestR.toFixed(2) : bestR < 100 ? bestR.toFixed(1) : Math.round(bestR)}`;
+          const radiusWidth = (radiusText.length * 6 + 10) * scale;
+
+          return (
+            <React.Fragment key={`curv-${anchorKey(ref)}`}>
+              <Arc
+                x={a.x}
+                y={a.y}
+                innerRadius={arcRadius - 1 * scale}
+                outerRadius={arcRadius}
+                angle={90}
+                rotation={tangentAngle - 45}
+                fill="rgba(37, 99, 235, 0.35)"
+                listening={false}
+                perfectDrawEnabled={false}
+              />
+              <Group x={a.x + (ANCHOR_SIZE + 12) * scale} y={a.y - (ANCHOR_SIZE + 2) * scale} listening={false}>
+                <Rect
+                  width={radiusWidth}
+                  height={14 * scale}
+                  fill="rgba(15, 23, 42, 0.88)"
+                  cornerRadius={3 * scale}
+                  shadowColor="rgba(0,0,0,0.25)"
+                  shadowBlur={3 * scale}
+                />
+                <Text
+                  x={5 * scale}
+                  y={1.5 * scale}
+                  text={radiusText}
+                  fill="#93C5FD"
+                  fontSize={8.5 * scale}
+                  fontFamily="monospace"
+                />
+              </Group>
             </React.Fragment>
           );
         })

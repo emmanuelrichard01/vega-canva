@@ -29,6 +29,7 @@
 import * as clipping from 'polygon-clipping';
 import type { BezierGeometry, CompoundGeometry, Point } from './schema';
 import { flattenPath } from './pathGeometry';
+import { simplifyClosedRing } from './simplify';
 
 export type BooleanOp = 'union' | 'subtract' | 'intersect' | 'exclude';
 
@@ -66,7 +67,10 @@ function fromMultiPolygon(result: clipping.MultiPolygon): CompoundGeometry {
       // path that declares itself closed would draw that repeat as a
       // zero-length segment, which is a degenerate join at one arbitrary
       // corner of the result.
-      const points: Point[] = ring.slice(0, -1).map(([x, y]) => ({ x, y }));
+      const rawPoints: Point[] = ring.slice(0, -1).map(([x, y]) => ({ x, y }));
+      if (rawPoints.length < 3) continue;
+      // Optimize collinear vertices to prevent micro-segment bloat
+      const points = simplifyClosedRing(rawPoints, 0.25);
       if (points.length < 3) continue;
       subpaths.push({
         kind: 'bezier',

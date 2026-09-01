@@ -54,4 +54,5 @@ export interface PresenceState {
   tool: string;
   activity: import('./collaborators').ActivityKind | null;
   status: 'online' | 'away';
+  reaction?: { emoji: string; timestamp: number } | null;
 }

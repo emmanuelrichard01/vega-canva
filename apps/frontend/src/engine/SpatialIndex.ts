@@ -46,7 +46,10 @@ export class SpatialIndex {
       item.minY = bounds.minY;
       item.maxX = bounds.maxX;
       item.maxY = bounds.maxY;
+      item.node = node;
       this.tree.insert(item);
+    } else {
+      this.handleAdded(node);
     }
   };
 
@@ -63,6 +66,14 @@ export class SpatialIndex {
    */
   query(bounds: { minX: number, minY: number, maxX: number, maxY: number }): AnyNode[] {
     return this.tree.search(bounds).map(item => item.node);
+  }
+
+  /**
+   * Clear all indexed items (useful for test resets).
+   */
+  clear() {
+    this.tree.clear();
+    this.itemMap.clear();
   }
 }
 

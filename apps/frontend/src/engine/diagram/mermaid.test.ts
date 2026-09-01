@@ -1,7 +1,7 @@
 import { describe, it, expect } from 'vitest';
-import { emitMermaid, parseMermaid } from './mermaid';
+import { emitMermaid, parseMermaid, formatMermaid } from './mermaid';
 import { layoutGraph } from './layout';
-import { diagramToMermaid } from './build';
+import { buildDiagram, diagramToMermaid } from './build';
 import type { AnyNode } from '../model/schema';
 
 describe('parsing a flowchart', () => {
@@ -111,7 +111,7 @@ describe('layout', () => {
   const chain = parseMermaid('flowchart TD\n A --> B\n A --> C\n B --> D\n C --> D').graph!;
 
   it('ranks by longest path, so no edge points backwards', () => {
-    const placed = layoutGraph(chain, { originX: 0, originY: 0 });
+    const { nodes: placed } = layoutGraph(chain, { originX: 0, originY: 0 });
     const y = new Map(placed.map((p) => [p.key, p.y]));
     // D is reachable in two hops by either branch and must sit below both.
     expect(y.get('D')!).toBeGreaterThan(y.get('B')!);
@@ -132,7 +132,8 @@ describe('layout', () => {
         '  D --> B',
       ].join(String.fromCharCode(10))
     ).graph!;
-    const y = new Map(layoutGraph(retry, { originX: 0, originY: 0 }).map((p) => [p.key, p.y]));
+    const { nodes: placed } = layoutGraph(retry, { originX: 0, originY: 0 });
+    const y = new Map(placed.map((p) => [p.key, p.y]));
     expect(y.get('B')!).toBeGreaterThan(y.get('A')!);
     expect(y.get('B')!).toBeLessThan(y.get('C')!);
     expect(y.get('B')!).toBeLessThan(y.get('D')!);
@@ -141,14 +142,14 @@ describe('layout', () => {
   it('terminates on a cycle rather than ranking forever', () => {
     const loop = parseMermaid('flowchart TD\n A --> B\n B --> C\n C --> A').graph!;
     expect(() => layoutGraph(loop, { originX: 0, originY: 0 })).not.toThrow();
-    expect(layoutGraph(loop, { originX: 0, originY: 0 })).toHaveLength(3);
+    expect(layoutGraph(loop, { originX: 0, originY: 0 }).nodes).toHaveLength(3);
   });
 
   it('runs across the screen for LR and down it for TD', () => {
     const lr = parseMermaid('graph LR\n A --> B').graph!;
     const td = parseMermaid('graph TD\n A --> B').graph!;
-    const [a1, b1] = layoutGraph(lr, { originX: 0, originY: 0 });
-    const [a2, b2] = layoutGraph(td, { originX: 0, originY: 0 });
+    const { nodes: [a1, b1] } = layoutGraph(lr, { originX: 0, originY: 0 });
+    const { nodes: [a2, b2] } = layoutGraph(td, { originX: 0, originY: 0 });
     expect(b1.x).toBeGreaterThan(a1.x);
     expect(b1.y).toBe(a1.y);
     expect(b2.y).toBeGreaterThan(a2.y);
@@ -156,7 +157,7 @@ describe('layout', () => {
 
   it('reverses BT against TD rather than keeping a second ordering', () => {
     const bt = parseMermaid('graph BT\n A --> B').graph!;
-    const placed = layoutGraph(bt, { originX: 0, originY: 0 });
+    const { nodes: placed } = layoutGraph(bt, { originX: 0, originY: 0 });
     const y = new Map(placed.map((p) => [p.key, p.y]));
     expect(y.get('B')!).toBeLessThan(y.get('A')!);
   });
@@ -276,5 +277,214 @@ describe('styling', () => {
       ['flowchart TD', '  style A fill:#abc', '  A[Later] --> B'].join(String.fromCharCode(10))
     );
     expect(graph?.nodes.find((n) => n.key === 'A')?.style?.fill).toBe('#abc');
+  });
+
+  it('supports inline class syntax (A:::className)', () => {
+    const { graph } = parseMermaid(
+      [
+        'flowchart TD',
+        '  classDef highlight fill:#ff0,stroke:#000',
+        '  A[Start]:::highlight --> B[End]',
+      ].join('\n')
+    );
+    expect(graph?.nodes.find((n) => n.key === 'A')?.style?.fill).toBe('#ff0');
+  });
+});
+
+describe('subgraphs and advanced syntax', () => {
+  it('parses subgraphs and associates child nodes with their cluster', () => {
+    const source = `flowchart TD
+      subgraph client ["Client Side"]
+        A[Browser] --> B[Mobile]
+      end
+      subgraph server ["Server Side"]
+        C[API] --> D[(DB)]
+      end
+      A --> C`;
+
+    const { graph } = parseMermaid(source);
+    expect(graph?.subgraphs).toHaveLength(2);
+    expect(graph?.subgraphs?.[0]).toEqual({
+      id: 'client',
+      title: 'Client Side',
+      nodeKeys: ['A', 'B'],
+    });
+    expect(graph?.subgraphs?.[1]).toEqual({
+      id: 'server',
+      title: 'Server Side',
+      nodeKeys: ['C', 'D'],
+    });
+
+    const dbNode = graph?.nodes.find((n) => n.key === 'D');
+    expect(dbNode?.shape).toBe('database');
+    expect(dbNode?.subgraphId).toBe('server');
+  });
+
+  it('handles multi-node fan-in and fan-out (A & B --> C & D)', () => {
+    const source = `flowchart LR
+      A[Front1] & B[Front2] --> C[Gateway] & D[Auth]`;
+
+    const { graph } = parseMermaid(source);
+    expect(graph?.nodes).toHaveLength(4);
+    // 2 sources * 2 targets = 4 edges
+    expect(graph?.edges).toHaveLength(4);
+    expect(graph?.edges.map((e) => `${e.from}->${e.to}`)).toEqual([
+      'A->C',
+      'A->D',
+      'B->C',
+      'B->D',
+    ]);
+  });
+
+  it('parses bidirectional arrows (<-->)', () => {
+    const source = `flowchart TD
+      A <--> B
+      C <-.-> D
+      E <==> F`;
+
+    const { graph } = parseMermaid(source);
+    expect(graph?.edges).toHaveLength(3);
+    expect(graph?.edges[0]).toMatchObject({ line: 'solid', arrow: true, bidirectional: true });
+    expect(graph?.edges[1]).toMatchObject({ line: 'dotted', arrow: true, bidirectional: true });
+    expect(graph?.edges[2]).toMatchObject({ line: 'thick', arrow: true, bidirectional: true });
+  });
+
+  it('parses extended shapes: database, double circle, parallelogram, trapezoid', () => {
+    const source = `flowchart TD
+      A[(Database)] --> B(((Double Circle))) --> C[/Parallelogram/] --> D[/Trapezoid\\]`;
+
+    const { graph } = parseMermaid(source);
+    expect(graph?.nodes.map((n) => n.shape)).toEqual([
+      'database',
+      'double_circle',
+      'parallelogram',
+      'trapezoid',
+    ]);
+  });
+
+  it('reports exact line number on unrecognized syntax error', () => {
+    const source = `flowchart TD
+      A[Start] --> B[Mid]
+      ??? INVALID SYNTAX ???
+      B --> C[End]`;
+
+    const res = parseMermaid(source);
+    expect(res.graph).toBeNull();
+    expect(res.errorLine).toBe(3);
+    expect(res.error).toContain('Line 3');
+  });
+
+  it('formats and prettifies Mermaid flowchart source code', () => {
+    const unformatted = `flowchart TD
+A[Start]-->B[End]
+B-->|yes|C([Done])`;
+
+    const formatted = formatMermaid(unformatted);
+    expect(formatted).toContain('flowchart TD');
+    expect(formatted).toContain('    A[Start]');
+    expect(formatted).toContain('    A --> B');
+    expect(formatted).toContain('    B -->|yes| C');
+  });
+});
+
+describe('themes and sketch styling in buildDiagram', () => {
+  it('applies selected theme colors to shapes, clusters and connectors', () => {
+    const { graph } = parseMermaid(`flowchart TD
+      subgraph cloud ["Cloud"]
+        A[API] --> B[(DB)]
+      end`);
+    expect(graph).not.toBeNull();
+
+    const built = buildDiagram(graph!, { x: 0, y: 0 }, undefined, {
+      theme: 'emerald',
+      renderStyle: 'crisp',
+    });
+
+    const shapeA: any = built.nodes.find((n: any) => n.diagramKey === 'A');
+    expect(shapeA).toBeDefined();
+    expect(shapeA?.appearance?.stroke?.color).toBe('#059669');
+
+    const frame: any = built.nodes.find((n: any) => n.type === 'frame');
+    expect(frame).toBeDefined();
+    expect(frame?.appearance?.stroke?.color).toBe('#6EE7B7');
+
+    const connector: any = built.nodes.find((n: any) => n.type === 'connector');
+    expect(connector).toBeDefined();
+    expect(connector?.appearance?.stroke?.color).toBe('#047857');
+  });
+
+  it('sets sketch appearance when renderStyle is sketch', () => {
+    const { graph } = parseMermaid(`flowchart TD\n A[Start] --> B[End]`);
+    const built = buildDiagram(graph!, { x: 0, y: 0 }, undefined, {
+      theme: 'pastel',
+      renderStyle: 'sketch',
+    });
+
+    const shapeA: any = built.nodes.find((n: any) => n.diagramKey === 'A');
+    expect(shapeA?.appearance?.sketch).toBe('light');
+    expect(shapeA?.typography?.fontFamily).toBe('Caveat');
+  });
+
+  it('preserves custom node styling when exporting diagramToMermaid', () => {
+    const fakeNodes: AnyNode[] = [
+      {
+        id: 'node-1',
+        type: 'shape',
+        x: 0,
+        y: 0,
+        width: 100,
+        height: 50,
+        geometry: { kind: 'rect' },
+        text: 'Custom Box',
+        appearance: {
+          fill: [{ type: 'solid', color: '#FEF3C7' }],
+          stroke: { color: '#D97706', width: 2 },
+        },
+        typography: { fontSize: 14, align: 'center', color: '#B45309' },
+      } as any,
+    ];
+
+    const source = diagramToMermaid(fakeNodes);
+    expect(source).toContain('style A fill:#FEF3C7,stroke:#D97706,color:#B45309');
+  });
+
+  it('parses and builds complex architecture with subgraphs and cross-subgraph edges without crashing', () => {
+    const code = `flowchart TB
+  subgraph Client["Browser Client (React 19 + Konva + Matter.js)"]
+    Canvas["Canvas Engine (rAF Loop Outside React)"]
+    Spatial["Spatial Index (RBush R-Tree)"]
+    Scene["Scene Graph (AABB Transforms)"]
+    Doc["Yjs Doc (CRDT)"]
+    IDB["IndexedDB Cache (y-indexeddb)"]
+    Zustand["Zustand Store (useStore)"]
+  end
+
+  Client -- "WebSocket (Yjs Binary Frames)" --> Server
+  Client -- "REST (Multipart / Streaming)" --> MediaProxy
+
+  subgraph Backend["Sync & API Server (Node / Express / Hocuspocus v4)"]
+    Hocuspocus["Hocuspocus Server Engine"]
+    History["History Buffer (Batching & Backpressure)"]
+    MediaProxy["Hardened Media Proxy (S3 Streamer)"]
+    Reaper["Retention & Reaper Engine"]
+  end
+
+  subgraph Infra["Infrastructure Layer"]
+    Postgres[("PostgreSQL\\n(Snapshots & Delta Log)")]
+    Redis[("Redis Cluster / PubSub\\n(Cross-node Fanout & Distributed Quotas)")]
+    MinIO[("MinIO / Cloudflare R2\\n(Private S3 Storage)")]
+  end
+
+  Hocuspocus -- "Snapshots & Deltas" --> Postgres
+  Hocuspocus -- "Multi-node Sync" --> Redis
+  History -- "Flushed Delta Batches" --> Postgres
+  MediaProxy -- "Private Bucket Ops" --> MinIO`;
+
+    const { graph, error } = parseMermaid(code);
+    expect(error).toBeNull();
+    expect(graph).not.toBeNull();
+
+    const built = buildDiagram(graph!, { x: 100, y: 100 });
+    expect(built.nodes.length).toBeGreaterThan(10);
   });
 });

@@ -7,6 +7,7 @@ import {
   anchorNear,
   anchorsInRect,
   constrainDeltaToAxis,
+  constrainHandleToAngle,
   contours,
   deleteAnchors,
   dragHandle,
@@ -14,10 +15,12 @@ import {
   handleNear,
   moveAnchors,
   scaleAnchors,
+  setAnchorAlignment,
   setAnchorsMode,
   toggleAnchor,
   type AnchorRef,
 } from './pathEditing';
+import { anchorMode } from './pathGeometry';
 import type { BezierGeometry, CompoundGeometry } from './schema';
 
 /**
@@ -295,6 +298,97 @@ describe('constrainDeltaToAxis', () => {
     const result = constrainDeltaToAxis(50, 48);
     expect(Math.round(result.dx)).toBe(Math.round(result.dy));
     expect(result.dx).toBeGreaterThan(0);
+  });
+});
+
+describe('constrainHandleToAngle', () => {
+  const anchor = { x: 100, y: 100 };
+
+  it('returns the anchor itself for a zero-length handle', () => {
+    const result = constrainHandleToAngle(anchor, anchor);
+    expect(result.x).toBe(anchor.x);
+    expect(result.y).toBe(anchor.y);
+    expect(result.angleDeg).toBe(0);
+  });
+
+  it('snaps 17° to 15° at default 15° increments', () => {
+    // 17° from the anchor
+    const rad17 = (17 * Math.PI) / 180;
+    const dest = { x: anchor.x + 50 * Math.cos(rad17), y: anchor.y + 50 * Math.sin(rad17) };
+    const result = constrainHandleToAngle(anchor, dest);
+    expect(result.angleDeg).toBeCloseTo(15, 5);
+    // Distance preserved
+    expect(Math.hypot(result.x - anchor.x, result.y - anchor.y)).toBeCloseTo(50, 5);
+  });
+
+  it('snaps 38° to 45° at default 15° increments', () => {
+    const rad38 = (38 * Math.PI) / 180;
+    const dest = { x: anchor.x + 80 * Math.cos(rad38), y: anchor.y + 80 * Math.sin(rad38) };
+    const result = constrainHandleToAngle(anchor, dest);
+    expect(result.angleDeg).toBeCloseTo(45, 5);
+  });
+
+  it('snaps to 90° for a mostly-vertical handle', () => {
+    const dest = { x: anchor.x + 2, y: anchor.y + 100 };
+    const result = constrainHandleToAngle(anchor, dest);
+    expect(result.angleDeg).toBeCloseTo(90, 5);
+  });
+
+  it('supports a custom snap increment like 45°', () => {
+    const rad40 = (40 * Math.PI) / 180;
+    const dest = { x: anchor.x + 60 * Math.cos(rad40), y: anchor.y + 60 * Math.sin(rad40) };
+    const result = constrainHandleToAngle(anchor, dest, 45);
+    expect(result.angleDeg).toBeCloseTo(45, 5);
+  });
+
+  it('preserves handle distance from the anchor', () => {
+    const dest = { x: anchor.x + 73, y: anchor.y + 12 };
+    const originalDist = Math.hypot(73, 12);
+    const result = constrainHandleToAngle(anchor, dest);
+    const snappedDist = Math.hypot(result.x - anchor.x, result.y - anchor.y);
+    expect(snappedDist).toBeCloseTo(originalDist, 5);
+  });
+});
+
+describe('setAnchorAlignment', () => {
+  /** A curve with handles, so alignment has something to act on. */
+  const curvedPath = (): BezierGeometry => ({
+    kind: 'bezier',
+    closed: false,
+    segments: [
+      { x: 0, y: 0 },
+      { x: 50, y: 0, cp1x: 15, cp1y: -30, cp2x: 35, cp2y: -20 },
+      { x: 100, y: 0, cp1x: 65, cp1y: 20, cp2x: 85, cp2y: 10 },
+    ],
+  });
+
+  it('disconnected breaks the handle pair into a corner', () => {
+    const result = setAnchorAlignment(curvedPath(), [ref(0, 1)], 'disconnected');
+    const sub = (result as BezierGeometry);
+    expect(anchorMode(sub, 1)).toBe('corner');
+  });
+
+  it('smooth enforces collinearity but preserves individual handle lengths', () => {
+    // Start from a corner so smooth has to construct handles
+    const corner: BezierGeometry = {
+      kind: 'bezier',
+      closed: true,
+      segments: [{ x: 0, y: 0 }, { x: 50, y: 0 }, { x: 50, y: 50 }, { x: 0, y: 50 }],
+    };
+    const result = setAnchorAlignment(corner, [ref(0, 1)], 'smooth');
+    const sub = (result as BezierGeometry);
+    const mode = anchorMode(sub, 1);
+    expect(mode === 'smooth' || mode === 'mirrored').toBe(true);
+  });
+
+  it('symmetric equalizes handle lengths', () => {
+    const result = setAnchorAlignment(curvedPath(), [ref(0, 1)], 'symmetric');
+    const sub = (result as BezierGeometry);
+    const a = contours(sub)[0].anchors[1];
+    const inLen = Math.hypot(a.x - (a.inX ?? a.x), a.y - (a.inY ?? a.y));
+    const outLen = Math.hypot((a.outX ?? a.x) - a.x, (a.outY ?? a.y) - a.y);
+    expect(inLen).toBeCloseTo(outLen, 5);
+    expect(anchorMode(sub, 1)).toBe('mirrored');
   });
 });
 

@@ -340,6 +340,31 @@ export const RemoteCursors: React.FC = () => {
             >
               <Arrow color={colors.outline} colors={colors} tool={person.tool} />
 
+              {person.reaction?.emoji && (
+                <div
+                  style={{
+                    position: 'absolute',
+                    bottom: '100%',
+                    left: '50%',
+                    transform: 'translateX(-50%) translateY(-6px)',
+                    background: 'rgba(15, 23, 42, 0.88)',
+                    backdropFilter: 'blur(12px)',
+                    WebkitBackdropFilter: 'blur(12px)',
+                    border: `1.5px solid ${colors.outline}`,
+                    borderRadius: '20px',
+                    padding: '2px 8px',
+                    fontSize: '18px',
+                    lineHeight: 1.2,
+                    boxShadow: '0 6px 20px rgba(0,0,0,0.35)',
+                    pointerEvents: 'none',
+                    userSelect: 'none',
+                    zIndex: 10,
+                  }}
+                >
+                  {person.reaction.emoji}
+                </div>
+              )}
+
               <div
                 ref={chipRef(person.clientId)}
                 style={{

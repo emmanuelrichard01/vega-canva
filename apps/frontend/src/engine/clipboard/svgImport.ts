@@ -1,4 +1,4 @@
-import type { Point } from '../model/schema';
+import { DEFAULT_INK, DEFAULT_TYPOGRAPHY, type Point } from '../model/schema';
 
 /**
  * Pasted SVG, turned into objects you can edit.
@@ -286,6 +286,7 @@ function pathNode(points: Point[], el: SvgLike): Record<string, unknown> | null 
  */
 export interface SvgLike {
   tagName: string;
+  textContent?: string | null;
   getAttribute(name: string): string | null;
   children: ArrayLike<SvgLike>;
 }
@@ -410,7 +411,41 @@ export function convertSvgTree(root: SvgLike): SvgImportResult | null {
         return;
       }
 
-      case 'text':
+      case 'text': {
+        const text = (el.textContent ?? '').trim();
+        if (text) {
+          const fontSize = Math.max(8, num(el.getAttribute('font-size'), 16));
+          const fontFamily = el.getAttribute('font-family') || 'Inter';
+          const fill = paintOf(el, 'fill') || DEFAULT_INK;
+          const anchor = el.getAttribute('text-anchor');
+          const align = anchor === 'middle' ? 'center' : anchor === 'end' ? 'right' : 'left';
+          const fontWeight = num(el.getAttribute('font-weight'), 400);
+          const x = num(el.getAttribute('x'));
+          const y = num(el.getAttribute('y')) - fontSize;
+          const width = Math.max(20, Math.round(text.length * fontSize * 0.6));
+          const height = Math.max(fontSize * 1.4, 20);
+
+          nodes.push({
+            type: 'text',
+            x,
+            y,
+            width,
+            height,
+            text,
+            resize: 'auto-width',
+            typography: {
+              ...DEFAULT_TYPOGRAPHY,
+              fontFamily,
+              fontSize,
+              fontWeight,
+              color: fill,
+              align,
+            },
+          });
+        }
+        return;
+      }
+
       case 'tspan':
       case 'image':
       case 'use':

@@ -96,6 +96,10 @@ export function useRoomShortcuts({
         return;
       }
 
+      if (e.key === 'Escape') {
+        window.dispatchEvent(new CustomEvent('exitGroupIsolation'));
+      }
+
       if (hasModifier && e.key.toLowerCase() === 'a') {
         if (e.defaultPrevented) return;
         e.preventDefault();

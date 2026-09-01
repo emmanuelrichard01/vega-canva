@@ -1,5 +1,6 @@
-import { captureRaster, canvasToBlob, mountForCapture } from './raster';
-import { buildPdf, type PdfPage } from './pdfWriter';
+import { captureRaster, mountForCapture } from './raster';
+import { type PdfPage } from './pdfWriter';
+import { buildPdfWithWorker, encodeCanvasWithWorker } from './exportWorkerClient';
 import { frameExportBounds } from './bounds';
 import { descendantsOfFrame } from '../model/frames';
 import { useStore } from '../../hooks/useStore';
@@ -83,7 +84,7 @@ export class PDFExporter implements Exporter {
           )
         : [await this.capturePage(options, spec, options.quality)];
 
-    return buildPdf(pages, {
+    return buildPdfWithWorker(pages, {
       title: options.filename ? options.filename.replace(/\.[^.]+$/, '').replace(/[-_]+/g, ' ') : undefined,
     });
   }
@@ -105,7 +106,7 @@ export class PDFExporter implements Exporter {
     } finally {
       release();
     }
-    const jpeg = await canvasToBlob(canvas, 'image/jpeg', quality ?? 0.92);
+    const jpeg = await encodeCanvasWithWorker(canvas, null, 'image/jpeg', quality ?? 0.92);
     const bytes = new Uint8Array(await jpeg.arrayBuffer());
 
     /**

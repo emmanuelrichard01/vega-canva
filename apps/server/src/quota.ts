@@ -14,16 +14,28 @@ interface IpUploadWindow {
 
 const ONE_DAY_MS = 24 * 60 * 60 * 1000;
 
+export interface RedisClientLike {
+  get(key: string): Promise<string | null>;
+  incrby(key: string, increment: number): Promise<number>;
+  expire(key: string, seconds: number): Promise<number>;
+}
+
 export class IpDailyByteTracker {
   private clients = new Map<string, IpUploadWindow>();
   private pruneTimer: NodeJS.Timeout | null = null;
+  private redis: RedisClientLike | null = null;
 
-  constructor() {
+  constructor(redis?: RedisClientLike | null) {
+    this.redis = redis ?? null;
     // Prune entries older than 24 hours every 15 minutes
     this.pruneTimer = setInterval(() => {
       this.prune(Date.now());
     }, 15 * 60 * 1000);
     this.pruneTimer.unref?.();
+  }
+
+  public setRedis(redis: RedisClientLike | null): void {
+    this.redis = redis;
   }
 
   /** Prunes old records and removes inactive IP entries. */
@@ -37,7 +49,7 @@ export class IpDailyByteTracker {
     }
   }
 
-  /** Total bytes uploaded by this IP in the last 24 hours. */
+  /** Total bytes uploaded by this IP in the last 24 hours (in-memory). */
   public getUsage(ip: string, now = Date.now()): number {
     const window = this.clients.get(ip);
     if (!window) return 0;
@@ -48,7 +60,7 @@ export class IpDailyByteTracker {
   }
 
   /**
-   * Check if adding `incomingBytes` would exceed the daily cap.
+   * Check if adding `incomingBytes` would exceed the daily cap (synchronous).
    */
   public check(
     ip: string,
@@ -63,6 +75,33 @@ export class IpDailyByteTracker {
     return { allowed: true, currentBytes, maxBytes: maxDailyBytes };
   }
 
+  /**
+   * Check if adding `incomingBytes` would exceed the daily cap (async with Redis cluster support).
+   */
+  public async checkAsync(
+    ip: string,
+    incomingBytes: number,
+    maxDailyBytes: number,
+    now = Date.now()
+  ): Promise<{ allowed: boolean; currentBytes: number; maxBytes: number }> {
+    if (this.redis) {
+      try {
+        const dateKey = new Date(now).toISOString().slice(0, 10);
+        const key = `quota:ip:${dateKey}:${ip}`;
+        const raw = await this.redis.get(key);
+        const currentBytes = raw ? parseInt(raw, 10) : 0;
+        if (currentBytes + incomingBytes > maxDailyBytes) {
+          return { allowed: false, currentBytes, maxBytes: maxDailyBytes };
+        }
+        return { allowed: true, currentBytes, maxBytes: maxDailyBytes };
+      } catch {
+        // Fall back to local memory if Redis fails
+        return this.check(ip, incomingBytes, maxDailyBytes, now);
+      }
+    }
+    return this.check(ip, incomingBytes, maxDailyBytes, now);
+  }
+
   /** Record an accepted upload. */
   public record(ip: string, bytes: number, now = Date.now()): void {
     let window = this.clients.get(ip);
@@ -71,6 +110,21 @@ export class IpDailyByteTracker {
       this.clients.set(ip, window);
     }
     window.uploads.push({ timestamp: now, bytes });
+  }
+
+  /** Record an accepted upload asynchronously to Redis. */
+  public async recordAsync(ip: string, bytes: number, now = Date.now()): Promise<void> {
+    this.record(ip, bytes, now);
+    if (this.redis) {
+      try {
+        const dateKey = new Date(now).toISOString().slice(0, 10);
+        const key = `quota:ip:${dateKey}:${ip}`;
+        await this.redis.incrby(key, bytes);
+        await this.redis.expire(key, 172800); // 48 hours retention
+      } catch {
+        /* local record succeeded */
+      }
+    }
   }
 
   /** Stop maintenance timer (for tests/shutdown). */

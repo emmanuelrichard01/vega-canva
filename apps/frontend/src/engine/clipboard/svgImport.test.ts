@@ -6,9 +6,10 @@ import { convertSvgTree, looksLikeSvg, parsePathData, type SvgLike } from './svg
  * `DOMParser` does not exist in Node, and `convertSvgTree` takes the minimal
  * shape a real `Element` already satisfies.
  */
-function el(tagName: string, attrs: Record<string, string> = {}, children: SvgLike[] = []): SvgLike {
+function el(tagName: string, attrs: Record<string, string> = {}, children: SvgLike[] = [], textContent?: string): SvgLike {
   return {
     tagName,
+    textContent,
     getAttribute: (name: string) => (name in attrs ? attrs[name] : null),
     children,
   };
@@ -193,14 +194,25 @@ describe('convertSvgTree', () => {
     expect(art.nodes).toHaveLength(2);
   });
 
+  it('converts SVG text into editable text nodes', () => {
+    const art = importSvg([
+      el('text', { x: '20', y: '40', 'font-size': '18', fill: '#FF0000' }, [], 'Vega Studio'),
+    ])!;
+    expect(art).not.toBeNull();
+    expect(art.nodes).toHaveLength(1);
+    const node = art.nodes[0];
+    expect(node.type).toBe('text');
+    expect(node.text).toBe('Vega Studio');
+    expect((node.typography as { fontSize: number }).fontSize).toBe(18);
+    expect((node.typography as { color: string }).color).toBe('#FF0000');
+  });
+
   it('names what it could not convert', () => {
-    // Text and embedded images are the two people notice missing, and being
-    // told beats comparing two pictures by eye.
     const art = importSvg([
       el('rect', { width: '10', height: '10' }),
-      el('text', {}),
+      el('image', {}),
     ])!;
-    expect(art.skipped).toContain('text');
+    expect(art.skipped).toContain('image');
     expect(art.nodes).toHaveLength(1);
   });
 
@@ -226,7 +238,7 @@ describe('convertSvgTree', () => {
   });
 
   it('returns null for markup with nothing convertible in it', () => {
-    expect(importSvg([el('text', {})])).toBeNull();
+    expect(importSvg([el('image', {})])).toBeNull();
     expect(importSvg([])).toBeNull();
   });
 });

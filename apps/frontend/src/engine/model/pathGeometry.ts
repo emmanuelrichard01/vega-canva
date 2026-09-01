@@ -204,6 +204,93 @@ export function cubicAt(c: Cubic, t: number): Point {
 }
 
 /**
+ * First derivative (tangent vector) of a cubic at parameter `t`.
+ *
+ * The derivative of B(t) = (1-t)^3 P0 + 3(1-t)^2 t P1 + 3(1-t) t^2 P2 + t^3 P3 is
+ * B'(t) = 3(1-t)^2 (P1-P0) + 6(1-t)t (P2-P1) + 3t^2 (P3-P2). The direction
+ * of this vector is the tangent at `t`, and its magnitude is proportional
+ * to the parametric speed.
+ */
+export function cubicDerivativeAt(c: Cubic, t: number): Point {
+  const u = 1 - t;
+  const a = 3 * u * u;
+  const b = 6 * u * t;
+  const d = 3 * t * t;
+  return {
+    x: a * (c.c1x - c.x0) + b * (c.c2x - c.c1x) + d * (c.x1 - c.c2x),
+    y: a * (c.c1y - c.y0) + b * (c.c2y - c.c1y) + d * (c.y1 - c.c2y),
+  };
+}
+
+/**
+ * Second derivative of a cubic at parameter `t`.
+ *
+ * B''(t) = 6(1-t)(P2 - 2P1 + P0) + 6t(P3 - 2P2 + P1). Needed for
+ * curvature computation: the osculating circle's radius depends on the
+ * cross product of the first and second derivatives.
+ */
+export function cubicSecondDerivativeAt(c: Cubic, t: number): Point {
+  const u = 1 - t;
+  return {
+    x: 6 * u * (c.c2x - 2 * c.c1x + c.x0) + 6 * t * (c.x1 - 2 * c.c2x + c.c1x),
+    y: 6 * u * (c.c2y - 2 * c.c1y + c.y0) + 6 * t * (c.y1 - 2 * c.c2y + c.c1y),
+  };
+}
+
+/**
+ * Radius of the osculating circle at parameter `t` along a cubic.
+ *
+ * R = |v'|^3 / |v' x v''|, where the cross product in 2D is the scalar
+ * v'x * v''y - v'y * v''x. Returns `Infinity` for straight segments where the
+ * cross product vanishes -- the curve has zero curvature, which the UI
+ * interprets as "no curvature indicator to display".
+ */
+export function curvatureRadiusAt(c: Cubic, t: number): number {
+  const d1 = cubicDerivativeAt(c, t);
+  const d2 = cubicSecondDerivativeAt(c, t);
+  const cross = d1.x * d2.y - d1.y * d2.x;
+  if (Math.abs(cross) < 1e-12) return Infinity;
+  const speed = Math.hypot(d1.x, d1.y);
+  return Math.abs((speed * speed * speed) / cross);
+}
+
+/**
+ * The curvature radius at an anchor, from both the arriving and departing curves.
+ *
+ * `in` is the radius of the curve arriving at the anchor (at t=1 of the previous
+ * cubic), `out` is the radius of the curve departing (at t=0 of the next cubic).
+ * Either is `Infinity` when the corresponding segment is straight or missing.
+ *
+ * This is the number the PathEditor displays as a readout on picked anchors,
+ * and the arc it draws is sized from it.
+ */
+export function anchorCurvatureRadius(
+  geo: BezierGeometry,
+  index: number
+): { in: number; out: number } {
+  const cubics = toCubics(geo);
+  const n = geo.segments.length;
+  if (n < 2) return { in: Infinity, out: Infinity };
+
+  // The curve arriving at anchor `index` is cubic[index-1] (evaluated at t=1),
+  // or for a closed path with index 0 it wraps to the last cubic.
+  let inRadius = Infinity;
+  const inIdx = index > 0 ? index - 1 : geo.closed ? cubics.length - 1 : -1;
+  if (inIdx >= 0 && inIdx < cubics.length) {
+    inRadius = curvatureRadiusAt(cubics[inIdx], 1);
+  }
+
+  // The curve departing from anchor `index` is cubic[index] (evaluated at t=0).
+  let outRadius = Infinity;
+  const outIdx = index < cubics.length ? index : -1;
+  if (outIdx >= 0) {
+    outRadius = curvatureRadiusAt(cubics[outIdx], 0);
+  }
+
+  return { in: inRadius, out: outRadius };
+}
+
+/**
  * How far a cubic's controls stray from the straight line between its ends.
  *
  * The standard flatness measure, kept squared so the subdivision loop never

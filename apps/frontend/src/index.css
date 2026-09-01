@@ -12339,12 +12339,62 @@ body[data-zen='physics'] .forces-handle { bottom: 32px; }
 }
 
 .share__caveat {
+  display: flex;
+  align-items: flex-start;
+  gap: var(--space-2);
   margin: 0;
   padding-top: var(--space-3);
   border-top: 1px solid var(--border-divider);
   font-size: var(--text-base);
   line-height: 1.55;
   color: var(--text-tertiary);
+}
+
+/* The icon sits on the first line's optical centre rather than its box top. */
+.share__caveat > svg {
+  flex-shrink: 0;
+  margin-top: 2px;
+}
+
+/* Which mode the link opens in. A preference, not a permission -- the copy
+   under it says so, and `engine/model/permissions.ts` says why.
+
+   Borrows its whole palette from `.share__copy` a few rules up, which is the
+   point: these three were the one control in the app carrying their own hex
+   fallbacks (#6366f1, #333, #888) for tokens the theme already defines, so
+   they were also the one control that ignored dark mode. */
+.share__modes {
+  display: flex;
+  gap: var(--space-1);
+  margin-bottom: var(--space-4);
+}
+
+.share__mode {
+  flex: 1;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: var(--space-1);
+  height: var(--control-h-md);
+  padding: var(--control-pad-md);
+  border: 1px solid var(--border-divider);
+  border-radius: var(--radius-md);
+  background: var(--surface-primary);
+  color: var(--text-tertiary);
+  font-family: inherit;
+  font-size: var(--text-md);
+  font-weight: var(--weight-semibold);
+  cursor: pointer;
+  transition: background-color var(--motion-hover), border-color var(--motion-hover),
+    color var(--motion-hover);
+}
+
+.share__mode:hover { background: var(--surface-hover); color: var(--text-secondary); }
+
+.share__mode[aria-pressed='true'] {
+  border-color: var(--accent);
+  background: var(--accent-soft, var(--surface-hover));
+  color: var(--text-primary);
 }
 
 /* ---------------------------------------------------------------------------
@@ -12902,7 +12952,7 @@ body[data-zen='physics'] .forces-handle { bottom: 32px; }
   flex: 1;
   min-height: 220px;
   resize: none;
-  padding: var(--space-3);
+  padding: var(--space-4);
   border: 1px solid var(--border-divider);
   border-radius: var(--radius-lg);
   background: var(--surface-secondary);
@@ -12911,25 +12961,35 @@ body[data-zen='physics'] .forces-handle { bottom: 32px; }
   font-size: var(--text-sm);
   line-height: 1.6;
   tab-size: 4;
+  transition: border-color var(--motion-hover), background-color var(--motion-hover);
+}
+
+.mermaid-modal__code:hover {
+  background: var(--surface-hover);
 }
 
 .mermaid-modal__code:focus-visible {
-  outline: 2px solid var(--focus-ring-color);
-  outline-offset: 1px;
-  border-color: transparent;
+  outline: none;
+  background: var(--surface-secondary);
+  border-color: var(--border-strong);
 }
 
 .mermaid-modal__stage {
   flex: 1;
   display: flex;
+  position: relative;
   align-items: center;
   justify-content: center;
   min-height: 220px;
-  padding: var(--space-3);
+  padding: 0;
   border: 1px solid var(--border-divider);
   border-radius: var(--radius-lg);
   background: var(--surface-secondary);
   overflow: hidden;
+  cursor: grab;
+}
+.mermaid-modal__stage:active {
+  cursor: grabbing;
 }
 
 .mermaid-modal__stage svg {
@@ -12969,7 +13029,7 @@ body[data-zen='physics'] .forces-handle { bottom: 32px; }
   gap: var(--space-3);
   padding: var(--space-4) var(--space-5);
   border-top: 1px solid var(--border-divider);
-  background: var(--surface-elevated);
+  background: transparent;
 }
 
 .mermaid-modal__status {

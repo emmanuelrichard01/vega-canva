@@ -57,6 +57,36 @@ describe('IpDailyByteTracker', () => {
     tracker.prune(now);
     expect(tracker.size).toBe(0);
   });
+
+  it('checks and records usage via Redis when configured', async () => {
+    const redisStore: Record<string, string> = {};
+    const mockRedis = {
+      get: vi.fn().mockImplementation(async (key: string) => redisStore[key] || null),
+      incrby: vi.fn().mockImplementation(async (key: string, inc: number) => {
+        const cur = parseInt(redisStore[key] || '0', 10);
+        redisStore[key] = String(cur + inc);
+        return cur + inc;
+      }),
+      expire: vi.fn().mockResolvedValue(1),
+    };
+
+    const redisTracker = new IpDailyByteTracker(mockRedis);
+    const ip = '1.1.1.1';
+    const cap = 100 * 1024 * 1024; // 100MB
+
+    const check1 = await redisTracker.checkAsync(ip, 50 * 1024 * 1024, cap);
+    expect(check1.allowed).toBe(true);
+
+    await redisTracker.recordAsync(ip, 50 * 1024 * 1024);
+    expect(mockRedis.incrby).toHaveBeenCalled();
+    expect(mockRedis.expire).toHaveBeenCalled();
+
+    // 50MB used, trying to upload 60MB (total 110MB > 100MB cap) -> rejected
+    const check2 = await redisTracker.checkAsync(ip, 60 * 1024 * 1024, cap);
+    expect(check2.allowed).toBe(false);
+
+    redisTracker.stop();
+  });
 });
 
 describe('formatBytes', () => {

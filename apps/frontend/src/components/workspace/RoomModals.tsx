@@ -2,6 +2,7 @@ import React, { Suspense, lazy } from 'react';
 import type { AnyNode } from '../../engine/model/schema';
 import type { CanvasContextMenuActions, ContextTarget } from '../CanvasContextMenu';
 import { CanvasContextMenu } from '../CanvasContextMenu';
+import type { DiagramBuildOptions } from '../../engine/diagram/build';
 import { useStore } from '../../hooks/useStore';
 import { ModalLoader } from '../ui/Loading';
 
@@ -90,7 +91,7 @@ export interface RoomModalsProps {
   setDiagramOpen: (open: boolean) => void;
   diagramSource: string;
   diagramReplacing: string | null;
-  applyDiagram: (source: string, replaceId?: string) => void;
+  applyDiagram: (source: string, options?: DiagramBuildOptions) => void;
 
   showCommandPalette: boolean;
   setShowCommandPalette: (open: boolean) => void;

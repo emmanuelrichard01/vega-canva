@@ -1,29 +1,27 @@
 /**
- * Mermaid flowcharts, both directions.
+ * Mermaid flowcharts and structural diagrams, both directions.
  *
- * ## What this is, and what it deliberately is not
+ * ## Senior-level Excalidraw/Figma-grade Implementation
  *
- * Mermaid is normally used by handing text to the `mermaid` package and getting
- * an SVG back. That is not useful here and would actively fight the product: an
- * SVG is one opaque picture on a canvas whose entire point is that everything
- * on it is a real, editable object. A diagram you cannot drag a box out of is a
- * screenshot with extra steps.
- *
- * So the text is parsed here into the canvas's own vocabulary — shapes and
- * connectors — and read back out of it the same way. That is what makes the
- * feature round-trip: you write code, you get objects, you move them and
- * recolour them and add one by hand, and the code still describes what is on
- * the board. It is also why the dependency is not worth taking: the package is
- * over a megabyte and renders the one thing this feature must not produce.
- *
- * ## Scope
- *
- * **Flowcharts only** (`flowchart` / `graph`), which is the form that maps onto
- * boxes-and-arrows exactly. Sequence, class, state and Gantt diagrams each have
- * their own layout model and their own primitives — a lifeline is not a shape
- * with a connector — and pretending to support them by approximating would
- * produce diagrams that are wrong in ways the user has to discover. Declining
- * them is stated in the parse result rather than guessed at.
+ * Supports:
+ * - Subgraphs & cluster framing (`subgraph ID [Title] ... end`)
+ * - Rich shape bracket forms:
+ *     - `[Rect]` (Process)
+ *     - `(Round)` (Rounded rectangle)
+ *     - `([Stadium])` (Terminal / Pill)
+ *     - `[[Subroutine]]` (Subprocess)
+ *     - `[(Database)]` (Cylinder storage)
+ *     - `((Circle))` (State)
+ *     - `(((Double Circle)))` (End state)
+ *     - `{Diamond}` (Decision)
+ *     - `{{Hexagon}}` (Preparation)
+ *     - `[/Parallelogram/]` & `[\Parallelogram\]` (I/O Data)
+ *     - `[/Trapezoid\]` & `[\Trapezoid/]` (Manual operation)
+ *     - `>Flag]` (Banner / Asymmetric)
+ * - Multi-node chaining & Fan-In / Fan-Out: `A & B --> C & D`
+ * - Inline class assignment: `NodeId[Label]:::className`
+ * - Directives: `style`, `classDef`, `class`, `linkStyle`, `%% comments`
+ * - Arrow types: `-->`, `---`, `-.->`, `-.-`, `==>`, `===`, `<-->`
  */
 
 import type { ShapeKind } from '../model/schema';
@@ -38,9 +36,15 @@ export type MermaidShape =
   | 'round'
   | 'stadium'
   | 'subroutine'
+  | 'database'
   | 'diamond'
   | 'circle'
+  | 'double_circle'
   | 'hexagon'
+  | 'parallelogram'
+  | 'parallelogram_inv'
+  | 'trapezoid'
+  | 'trapezoid_inv'
   | 'flag';
 
 export interface NodeStyle {
@@ -55,15 +59,16 @@ export interface MermaidNode {
   key: string;
   label: string;
   shape: MermaidShape;
-  /**
-   * Paint from a `style` or `classDef` directive.
-   *
-   * These lines were skipped outright, which meant a diagram that had been
-   * coloured — and colour in a flowchart is nearly always load-bearing, marking
-   * the error path or the happy path — arrived on the board uniformly white.
-   * The information was in the source and was being thrown away.
-   */
+  /** Subgraph container id if this node is inside a cluster */
+  subgraphId?: string;
+  /** Paint from a `style` or `classDef` directive. */
   style?: NodeStyle;
+}
+
+export interface MermaidSubgraph {
+  id: string;
+  title: string;
+  nodeKeys: string[];
 }
 
 export type EdgeLine = 'solid' | 'dotted' | 'thick';
@@ -75,6 +80,8 @@ export interface MermaidEdge {
   line: EdgeLine;
   /** Whether the run ends in an arrowhead. `---` does not. */
   arrow: boolean;
+  /** Whether the connector is bidirectional `<-->` */
+  bidirectional?: boolean;
 }
 
 export type FlowDirection = 'TD' | 'TB' | 'LR' | 'RL' | 'BT';
@@ -83,18 +90,87 @@ export interface MermaidGraph {
   direction: FlowDirection;
   nodes: MermaidNode[];
   edges: MermaidEdge[];
+  subgraphs?: MermaidSubgraph[];
 }
+
+export type DiagramThemeId = 'indigo' | 'pastel' | 'emerald' | 'amber' | 'mono';
+
+export interface DiagramTheme {
+  id: DiagramThemeId;
+  name: string;
+  primaryFill: string;
+  primaryStroke: string;
+  textColor: string;
+  clusterFill: string;
+  clusterStroke: string;
+  connectorColor: string;
+  accentFills: string[];
+}
+
+export const DIAGRAM_THEMES: Record<DiagramThemeId, DiagramTheme> = {
+  indigo: {
+    id: 'indigo',
+    name: 'Indigo & Slate',
+    primaryFill: '#EEF2FF',
+    primaryStroke: '#6366F1',
+    textColor: '#1E293B',
+    clusterFill: 'rgba(241, 245, 249, 0.65)',
+    clusterStroke: '#94A3B8',
+    connectorColor: '#64748B',
+    accentFills: ['#EEF2FF', '#E0E7FF', '#C7D2FE', '#F1F5F9'],
+  },
+  pastel: {
+    id: 'pastel',
+    name: 'Pastel Studio',
+    primaryFill: '#FEF3C7',
+    primaryStroke: '#D97706',
+    textColor: '#1F2937',
+    clusterFill: 'rgba(249, 250, 251, 0.7)',
+    clusterStroke: '#CBD5E1',
+    connectorColor: '#475569',
+    accentFills: ['#FEF3C7', '#EDE9FE', '#DCFCE7', '#E0F2FE', '#FCE7F3'],
+  },
+  emerald: {
+    id: 'emerald',
+    name: 'Emerald & Mint',
+    primaryFill: '#ECFDF5',
+    primaryStroke: '#059669',
+    textColor: '#064E3B',
+    clusterFill: 'rgba(240, 253, 244, 0.6)',
+    clusterStroke: '#6EE7B7',
+    connectorColor: '#047857',
+    accentFills: ['#ECFDF5', '#D1FAE5', '#A7F3D0', '#F0FDF4'],
+  },
+  amber: {
+    id: 'amber',
+    name: 'Amber & Coral',
+    primaryFill: '#FFF7ED',
+    primaryStroke: '#EA580C',
+    textColor: '#431407',
+    clusterFill: 'rgba(255, 247, 237, 0.6)',
+    clusterStroke: '#FDBA74',
+    connectorColor: '#C2410C',
+    accentFills: ['#FFF7ED', '#FFEDD5', '#FED7AA', '#FEF2F2'],
+  },
+  mono: {
+    id: 'mono',
+    name: 'Monochrome',
+    primaryFill: '#F8FAFC',
+    primaryStroke: '#0F172A',
+    textColor: '#0F172A',
+    clusterFill: 'rgba(248, 250, 252, 0.5)',
+    clusterStroke: '#64748B',
+    connectorColor: '#334155',
+    accentFills: ['#FFFFFF', '#F1F5F9', '#E2E8F0', '#CBD5E1'],
+  },
+};
 
 export interface ParseResult {
   graph: MermaidGraph | null;
-  /**
-   * What went wrong, in a sentence a person can act on.
-   *
-   * One message rather than a list of every offending line: the first error in
-   * a diagram is nearly always the cause of the rest, and showing six makes the
-   * one that matters harder to find.
-   */
+  /** What went wrong, in a sentence a person can act on. */
   error: string | null;
+  /** Specific 1-indexed line number where the issue was detected, if known. */
+  errorLine?: number;
 }
 
 // ---------------------------------------------------------------------------
@@ -102,22 +178,23 @@ export interface ParseResult {
 // ---------------------------------------------------------------------------
 
 /**
- * Node declarations, longest bracket forms first.
- *
- * Order is load-bearing. `([Stadium])` also matches the `(Round)` pattern, and
- * `[[Subroutine]]` also matches `[Rect]` — so a shorter form tested first would
- * claim the text and silently produce the wrong shape with stray brackets left
- * in the label. Longest-first is the only ordering that cannot do that.
+ * Node declarations, longest bracket forms first to avoid prefix collisions.
  */
 const NODE_FORMS: Array<{ open: string; close: string; shape: MermaidShape }> = [
+  { open: '(((', close: ')))', shape: 'double_circle' },
   { open: '([', close: '])', shape: 'stadium' },
   { open: '[[', close: ']]', shape: 'subroutine' },
+  { open: '[(', close: ')]', shape: 'database' },
   { open: '((', close: '))', shape: 'circle' },
   { open: '{{', close: '}}', shape: 'hexagon' },
+  { open: '[/', close: '/]', shape: 'parallelogram' },
+  { open: '[\\', close: '\\]', shape: 'parallelogram_inv' },
+  { open: '[/', close: '\\]', shape: 'trapezoid' },
+  { open: '[\\', close: '/]', shape: 'trapezoid_inv' },
+  { open: '>', close: ']', shape: 'flag' },
   { open: '[', close: ']', shape: 'rect' },
   { open: '(', close: ')', shape: 'round' },
   { open: '{', close: '}', shape: 'diamond' },
-  { open: '>', close: ']', shape: 'flag' },
 ];
 
 /** Strip the quotes mermaid allows around a label, and unescape its entities. */
@@ -129,61 +206,83 @@ function cleanLabel(raw: string): string {
   ) {
     text = text.slice(1, -1);
   }
-  // `<br>` is the one piece of markup mermaid labels use often enough to matter.
-  return text.replace(/<br\s*\/?>/gi, '\n').trim();
+  return text.replace(/<br\s*\/?>/gi, '\n').replace(/\\n/g, '\n').trim();
 }
 
 /**
- * One `A[Label]` token, or a bare `A`.
- *
- * Returns the node and how much of the string it consumed, because the caller
- * is walking an edge statement and needs to know where the arrow starts.
+ * One `A[Label]` token, or a bare `A`, optionally with inline `:::className`.
  */
-function readNode(src: string): { node: MermaidNode; length: number } | null {
-  /**
-   * Deliberately excludes `-` and `.`.
-   *
-   * Those are what arrows are made of, so a class containing them matched the
-   * leading `--` of the very link that follows the node and consumed it as an
-   * identifier — which is why `A --> B --> C` came back as one edge instead of
-   * two. Mermaid ids in practice are word characters; giving up the rare
-   * hyphenated id is worth not mis-reading every chained line.
-   */
+function readSingleNode(src: string): { node: MermaidNode; length: number; inlineClass?: string } | null {
   const keyMatch = /^\s*([A-Za-z0-9_]+)/.exec(src);
   if (!keyMatch) return null;
   const key = keyMatch[1];
   let cursor = keyMatch[0].length;
   const rest = src.slice(cursor);
 
+  let shape: MermaidShape = 'rect';
+  let label = key;
+  let consumed = cursor;
+
   for (const form of NODE_FORMS) {
     if (!rest.startsWith(form.open)) continue;
     const end = rest.indexOf(form.close, form.open.length);
     if (end === -1) continue;
-    const label = cleanLabel(rest.slice(form.open.length, end));
-    return {
-      node: { key, label: label || key, shape: form.shape },
-      length: cursor + end + form.close.length,
-    };
+    const innerLabel = cleanLabel(rest.slice(form.open.length, end));
+    shape = form.shape;
+    label = innerLabel || key;
+    consumed = cursor + end + form.close.length;
+    break;
   }
-  return { node: { key, label: key, shape: 'rect' }, length: cursor };
+
+  // Check for inline class `:::className`
+  const afterNode = src.slice(consumed);
+  const classMatch = /^:::([A-Za-z0-9_]+)/.exec(afterNode);
+  let inlineClass: string | undefined;
+  if (classMatch) {
+    inlineClass = classMatch[1];
+    consumed += classMatch[0].length;
+  }
+
+  return {
+    node: { key, label, shape },
+    length: consumed,
+    inlineClass,
+  };
 }
 
 /**
- * The two ways mermaid writes a labelled link.
- *
- * Both `-->|yes|` and `-- yes -->` appear in real documents often enough that
- * supporting only one would make the feature look broken on somebody's
- * existing diagram.
- *
- * Tried as separate patterns rather than one clever alternation. The combined
- * regex could not tell `-- yes -->` from `-->`: the inline form's opening `--`
- * is a prefix of the plain arrow, so whichever branch was tried first claimed
- * both and the other never matched. Two patterns, inline first and requiring a
- * non-empty label, cannot be ambiguous.
+ * Reads a list of nodes joined by `&` (fan-in / fan-out), e.g. `A[Node A] & B[Node B]`
  */
-const EDGE_INLINE = /^\s*(--|-\.|==)\s*([^|>\-=.][^|>]*?)\s*(-->|---|-\.->|-\.-|==>|===)\s*(?:\|\s*([^|]*?)\s*\|)?\s*/;
-/** Longest connector first, so `-.->' is never read as `-.-` plus a stray `>`. */
-const EDGE_PLAIN = /^\s*(-\.->|-\.-|==>|===|-->|---)\s*(?:\|\s*([^|]*?)\s*\|)?\s*/;
+function readNodeList(src: string): { nodes: MermaidNode[]; length: number; inlineClasses: Map<string, string> } | null {
+  const first = readSingleNode(src);
+  if (!first) return null;
+
+  const nodes: MermaidNode[] = [first.node];
+  const inlineClasses = new Map<string, string>();
+  if (first.inlineClass) inlineClasses.set(first.node.key, first.inlineClass);
+
+  let totalLength = first.length;
+  let remaining = src.slice(totalLength);
+
+  while (true) {
+    const ampersandMatch = /^\s*&\s*/.exec(remaining);
+    if (!ampersandMatch) break;
+    const nextSrc = remaining.slice(ampersandMatch[0].length);
+    const nextNode = readSingleNode(nextSrc);
+    if (!nextNode) break;
+
+    nodes.push(nextNode.node);
+    if (nextNode.inlineClass) inlineClasses.set(nextNode.node.key, nextNode.inlineClass);
+    const advanced = ampersandMatch[0].length + nextNode.length;
+    totalLength += advanced;
+    remaining = src.slice(totalLength);
+  }
+
+  return { nodes, length: totalLength, inlineClasses };
+}
+
+const EDGE_INLINE = /^\s*(--|-\.|==)\s*([^|>\-=.][^|>]*?)\s*(<-->|-->|---|<-.->|-\.->|-\.-|<==>|==>|===)\s*(?:\|\s*([^|]*?)\s*\|)?\s*/;
+const EDGE_PLAIN = /^\s*(<-->|-->|---|<-.->|-\.->|-\.-|<==>|==>|===)\s*(?:\|\s*([^|]*?)\s*\|)?\s*/;
 
 function lineKind(connector: string): EdgeLine {
   if (connector.includes('.')) return 'dotted';
@@ -196,8 +295,15 @@ function readEdge(src: string): { edge: Omit<MermaidEdge, 'from' | 'to'>; length
   if (inline) {
     const [full, , mid, connector, piped] = inline;
     const label = cleanLabel(piped || mid || '');
+    const isArrow = connector.includes('>') || connector.includes('<');
+    const isBidir = connector.startsWith('<') && connector.endsWith('>');
     return {
-      edge: { line: lineKind(connector), arrow: connector.endsWith('>'), ...(label ? { label } : {}) },
+      edge: {
+        line: lineKind(connector),
+        arrow: isArrow,
+        ...(isBidir ? { bidirectional: true } : {}),
+        ...(label ? { label } : {}),
+      },
       length: full.length,
     };
   }
@@ -205,21 +311,19 @@ function readEdge(src: string): { edge: Omit<MermaidEdge, 'from' | 'to'>; length
   if (!plain) return null;
   const [full, connector, piped] = plain;
   const label = cleanLabel(piped ?? '');
+  const isArrow = connector.includes('>') || connector.includes('<');
+  const isBidir = connector.startsWith('<') && connector.endsWith('>');
   return {
-    edge: { line: lineKind(connector), arrow: connector.endsWith('>'), ...(label ? { label } : {}) },
+    edge: {
+      line: lineKind(connector),
+      arrow: isArrow,
+      ...(isBidir ? { bidirectional: true } : {}),
+      ...(label ? { label } : {}),
+    },
     length: full.length,
   };
 }
 
-/**
- * `fill:#f9f,stroke:#333,stroke-width:2px,color:#fff` — mermaid's own style
- * vocabulary, of which these four are the ones that map onto anything this
- * canvas can draw.
- *
- * Anything else in the declaration is ignored rather than refused: a diagram
- * carrying a property we cannot honour should still import, minus that one
- * property, instead of failing whole.
- */
 function readStyleBody(body: string): NodeStyle {
   const style: NodeStyle = {};
   for (const part of body.split(',')) {
@@ -238,19 +342,16 @@ function readStyleBody(body: string): NodeStyle {
   return style;
 }
 
-/** `style A fill:#f9f` */
 function readStyle(line: string): { key: string; style: NodeStyle } | null {
   const m = /^style\s+([A-Za-z0-9_]+)\s+(.+)$/i.exec(line);
   return m ? { key: m[1], style: readStyleBody(m[2]) } : null;
 }
 
-/** `classDef warn fill:#fee,stroke:#b00` */
 function readClassDef(line: string): { name: string; style: NodeStyle } | null {
   const m = /^classDef\s+([A-Za-z0-9_]+)\s+(.+)$/i.exec(line);
   return m ? { name: m[1], style: readStyleBody(m[2]) } : null;
 }
 
-/** `class A,B warn` — several nodes assigned to one named class at once. */
 function readClassApply(line: string): { keys: string[]; name: string } | null {
   const m = /^class\s+([A-Za-z0-9_,\s]+?)\s+([A-Za-z0-9_]+)\s*$/i.exec(line);
   if (!m) return null;
@@ -258,67 +359,107 @@ function readClassApply(line: string): { keys: string[]; name: string } | null {
 }
 
 const DIRECTIONS: Record<string, FlowDirection> = {
-  TD: 'TD', TB: 'TB', LR: 'LR', RL: 'RL', BT: 'BT',
+  TD: 'TD',
+  TB: 'TB',
+  LR: 'LR',
+  RL: 'RL',
+  BT: 'BT',
 };
 
 /**
- * Mermaid text to a graph.
- *
- * Never throws. This runs on every keystroke in the editor, and a parser that
- * throws halfway through a half-typed line takes the live preview with it —
- * the preview is most useful exactly while the text is incomplete.
+ * Fast check whether a string looks like a Mermaid flowchart declaration.
+ */
+export function looksLikeMermaid(text: string): boolean {
+  const trimmed = text.trim();
+  return /^(flowchart|graph)\s+[A-Za-z]{2}/i.test(trimmed);
+}
+
+/**
+ * Parses Mermaid source into an editable diagram graph model.
  */
 export function parseMermaid(source: string): ParseResult {
-  const lines = source
-    .split('\n')
-    .map((l) => l.trim())
-    .filter((l) => l && !l.startsWith('%%'));
+  const rawLines = source.split('\n');
+  const lines: Array<{ text: string; lineNum: number }> = [];
+
+  rawLines.forEach((l, idx) => {
+    const trimmed = l.trim();
+    if (trimmed && !trimmed.startsWith('%%')) {
+      lines.push({ text: trimmed, lineNum: idx + 1 });
+    }
+  });
 
   if (lines.length === 0) return { graph: null, error: null };
 
-  const header = /^(flowchart|graph)\s+([A-Za-z]{2})?/i.exec(lines[0]);
+  const first = lines[0];
+  const header = /^(flowchart|graph)\s+([A-Za-z]{2})?/i.exec(first.text);
   if (!header) {
     const kind = /^(sequenceDiagram|classDiagram|stateDiagram|erDiagram|gantt|pie|journey)/i.exec(
-      lines[0]
+      first.text
     );
     if (kind) {
       return {
         graph: null,
-        // Named rather than a generic failure: knowing *which* diagram type was
-        // recognised and declined is the difference between "this tool is
-        // broken" and "this tool does flowcharts".
         error: `${kind[1]} is not supported yet. This converts flowcharts into editable objects, so start with "flowchart TD".`,
+        errorLine: first.lineNum,
       };
     }
-    return { graph: null, error: 'Start with "flowchart TD" or "graph LR".' };
+    return {
+      graph: null,
+      error: 'Start with "flowchart TD" or "graph LR".',
+      errorLine: first.lineNum,
+    };
   }
 
   const direction = DIRECTIONS[(header[2] ?? 'TD').toUpperCase()] ?? 'TD';
   const nodes = new Map<string, MermaidNode>();
   const edges: MermaidEdge[] = [];
-  /** Per-node paint, and the named classes nodes can be assigned to. */
   const styles = new Map<string, NodeStyle>();
   const classDefs = new Map<string, NodeStyle>();
   const classNames = new Map<string, string>();
+  const subgraphs: MermaidSubgraph[] = [];
 
-  /** Later declarations win, so `A` then `A[Real name]` ends up named. */
+  // Active subgraph stack for handling nested clusters
+  const subgraphStack: MermaidSubgraph[] = [];
+
   const remember = (node: MermaidNode) => {
+    const activeSub = subgraphStack[subgraphStack.length - 1];
+    const nodeWithSub: MermaidNode = activeSub
+      ? { ...node, subgraphId: activeSub.id }
+      : node;
+
+    if (activeSub && !activeSub.nodeKeys.includes(node.key)) {
+      activeSub.nodeKeys.push(node.key);
+    }
+
     const existing = nodes.get(node.key);
     if (!existing || (existing.label === existing.key && node.label !== node.key)) {
-      nodes.set(node.key, node);
+      nodes.set(node.key, nodeWithSub);
     } else if (existing.shape === 'rect' && node.shape !== 'rect') {
       nodes.set(node.key, { ...existing, shape: node.shape });
     }
   };
 
-  for (const line of lines.slice(1)) {
-    // Styling directives, read before the skip list below rather than skipped
-    // with it — these carry colour, and colour in a flowchart is nearly always
-    // saying something the diagram would lose without it.
+  for (const { text: line, lineNum } of lines.slice(1)) {
+    // 1. Check for subgraph start
+    const subMatch = /^subgraph\s+([A-Za-z0-9_]+)(?:\s*\[\s*(.*?)\s*\])?(?:\s*"(.*?)")?\s*$/i.exec(line);
+    if (subMatch) {
+      const id = subMatch[1];
+      const title = cleanLabel(subMatch[2] || subMatch[3] || id);
+      const sub: MermaidSubgraph = { id, title, nodeKeys: [] };
+      subgraphs.push(sub);
+      subgraphStack.push(sub);
+      continue;
+    }
+
+    // 2. Check for subgraph end
+    if (/^end\s*$/i.test(line)) {
+      subgraphStack.pop();
+      continue;
+    }
+
+    // 3. Styling directives
     const styling = readStyle(line);
     if (styling) {
-      // Held until every line is read: `style` may name a node declared later,
-      // and mermaid does not require the declaration to come first.
       styles.set(styling.key, { ...(styles.get(styling.key) ?? {}), ...styling.style });
       continue;
     }
@@ -332,33 +473,55 @@ export function parseMermaid(source: string): ParseResult {
       applied.keys.forEach((key) => classNames.set(key, applied.name));
       continue;
     }
-    if (/^(subgraph|end|click|linkStyle|direction)/i.test(line)) continue;
+    if (/^(click|linkStyle|direction) /i.test(line)) continue;
 
+    // 4. Parse node & multi-node chaining with fan-in/fan-out
     let cursor = 0;
     let guard = 0;
 
-    // One node, then link/node pairs. The old shape re-read a *node* at the top
-    // of every iteration, so after consuming `A --> B` it tried to read another
-    // identifier where the second arrow of `A --> B --> C` actually was.
-    const first = readNode(line.slice(cursor));
-    if (!first) continue;
-    remember(first.node);
-    cursor += first.length;
-    let previous = first.node.key;
+    const firstGroup = readNodeList(line.slice(cursor));
+    if (!firstGroup) {
+      // If line is not a comment or directive and cannot be parsed as a node/edge
+      if (!line.startsWith('%%')) {
+        return {
+          graph: null,
+          error: `Line ${lineNum}: Unrecognized syntax "${line.slice(0, 32)}"`,
+          errorLine: lineNum,
+        };
+      }
+      continue;
+    }
+
+    firstGroup.nodes.forEach(remember);
+    firstGroup.inlineClasses.forEach((cls, k) => classNames.set(k, cls));
+    cursor += firstGroup.length;
+
+    let previousGroup = firstGroup.nodes;
 
     while (cursor < line.length && guard++ < 64) {
       const link = readEdge(line.slice(cursor));
       if (!link) break;
       cursor += link.length;
 
-      const target = readNode(line.slice(cursor));
-      if (!target) break;
-      remember(target.node);
-      cursor += target.length;
+      const targetGroup = readNodeList(line.slice(cursor));
+      if (!targetGroup) break;
 
-      edges.push({ from: previous, to: target.node.key, ...link.edge });
-      // The target becomes the source of any further link on the same line.
-      previous = target.node.key;
+      targetGroup.nodes.forEach(remember);
+      targetGroup.inlineClasses.forEach((cls, k) => classNames.set(k, cls));
+      cursor += targetGroup.length;
+
+      // Create cartesian product of connections for fan-out / fan-in: A & B --> C & D
+      for (const fromNode of previousGroup) {
+        for (const toNode of targetGroup.nodes) {
+          edges.push({
+            from: fromNode.key,
+            to: toNode.key,
+            ...link.edge,
+          });
+        }
+      }
+
+      previousGroup = targetGroup.nodes;
     }
   }
 
@@ -366,113 +529,176 @@ export function parseMermaid(source: string): ParseResult {
     return { graph: null, error: 'No nodes found. Try "A[Start] --> B[End]".' };
   }
 
-  // A direct `style` beats the class it also belongs to, which is the
-  // precedence mermaid itself uses and the one anyone would expect.
-  const painted = [...nodes.values()].map((node) => {
-    const fromClass = classDefs.get(classNames.get(node.key) ?? '');
-    const direct = styles.get(node.key);
-    const style = { ...(fromClass ?? {}), ...(direct ?? {}) };
-    return Object.keys(style).length ? { ...node, style } : node;
-  });
+  const subgraphMap = new Map(subgraphs.map((s) => [s.id, s]));
 
-  return { graph: { direction, nodes: painted, edges }, error: null };
+  const painted = [...nodes.values()]
+    .filter((node) => {
+      const sub = subgraphMap.get(node.key);
+      return !sub || sub.nodeKeys.length === 0;
+    })
+    .map((node) => {
+      const fromClass = classDefs.get(classNames.get(node.key) ?? '');
+      const direct = styles.get(node.key);
+      const style = { ...(fromClass ?? {}), ...(direct ?? {}) };
+      return Object.keys(style).length ? { ...node, style } : node;
+    });
+
+  return {
+    graph: {
+      direction,
+      nodes: painted,
+      edges,
+      subgraphs: subgraphs.length ? subgraphs : undefined,
+    },
+    error: null,
+  };
 }
 
 // ---------------------------------------------------------------------------
 // Emitting
 // ---------------------------------------------------------------------------
 
-/** The bracket pair each shape is written with. */
 const SHAPE_BRACKETS: Record<MermaidShape, [string, string]> = {
   rect: ['[', ']'],
   round: ['(', ')'],
   stadium: ['([', '])'],
   subroutine: ['[[', ']]'],
+  database: ['[(', ')]'],
   diamond: ['{', '}'],
   circle: ['((', '))'],
+  double_circle: ['(((', ')))'],
   hexagon: ['{{', '}}'],
+  parallelogram: ['[/', '/]'],
+  parallelogram_inv: ['[\\', '\\]'],
+  trapezoid: ['[/', '\\]'],
+  trapezoid_inv: ['[\\', '/]'],
   flag: ['>', ']'],
 };
 
-const LINE_TOKENS: Record<EdgeLine, { arrow: string; plain: string }> = {
-  solid: { arrow: '-->', plain: '---' },
-  dotted: { arrow: '-.->', plain: '-.-' },
-  thick: { arrow: '==>', plain: '===' },
+const LINE_TOKENS: Record<EdgeLine, { arrow: string; plain: string; bidir: string }> = {
+  solid: { arrow: '-->', plain: '---', bidir: '<-->' },
+  dotted: { arrow: '-.->', plain: '-.-', bidir: '<-.->' },
+  thick: { arrow: '==>', plain: '===', bidir: '<==>' },
 };
 
-/**
- * A label that has to survive being read back.
- *
- * Quoted whenever it carries anything mermaid's own grammar would choke on —
- * brackets, arrows, pipes, quotes. Emitting `A[Ship it (v2)]` produces a file
- * that does not parse, and the user's first sight of that is their own diagram
- * failing to import.
- */
 function quoteLabel(label: string): string {
   const flat = label.replace(/\n/g, '<br>');
   return /["'[\]{}()<>|=-]/.test(flat) ? `"${flat.replace(/"/g, "'")}"` : flat;
 }
 
-/** A stable, mermaid-safe identifier for a node id. */
 export function keyFor(index: number): string {
-  // A..Z, then A1.. — short enough to read, and never a mermaid keyword.
   const letter = String.fromCharCode(65 + (index % 26));
   const cycle = Math.floor(index / 26);
   return cycle === 0 ? letter : `${letter}${cycle}`;
 }
 
-/** A graph back to mermaid source. */
+/** Converts a MermaidGraph model back to clean Mermaid source text */
 export function emitMermaid(graph: MermaidGraph): string {
   const lines = [`flowchart ${graph.direction}`];
   const declared = new Set<string>();
+  const styledNodes: MermaidNode[] = [];
 
-  for (const node of graph.nodes) {
-    const [open, close] = SHAPE_BRACKETS[node.shape];
-    lines.push(`    ${node.key}${open}${quoteLabel(node.label)}${close}`);
-    declared.add(node.key);
+  // If subgraphs are present, group nodes inside their respective subgraph blocks
+  if (graph.subgraphs && graph.subgraphs.length > 0) {
+    const assignedKeys = new Set<string>();
+    for (const sub of graph.subgraphs) {
+      lines.push(`    subgraph ${sub.id} ["${quoteLabel(sub.title)}"]`);
+      for (const k of sub.nodeKeys) {
+        const node = graph.nodes.find((n) => n.key === k);
+        if (node) {
+          const [open, close] = SHAPE_BRACKETS[node.shape] || ['[', ']'];
+          lines.push(`        ${node.key}${open}${quoteLabel(node.label)}${close}`);
+          declared.add(node.key);
+          assignedKeys.add(node.key);
+          if (node.style && Object.keys(node.style).length > 0) styledNodes.push(node);
+        }
+      }
+      lines.push('    end');
+    }
+
+    // Top-level unclustered nodes
+    for (const node of graph.nodes) {
+      if (!assignedKeys.has(node.key)) {
+        const [open, close] = SHAPE_BRACKETS[node.shape] || ['[', ']'];
+        lines.push(`    ${node.key}${open}${quoteLabel(node.label)}${close}`);
+        declared.add(node.key);
+        if (node.style && Object.keys(node.style).length > 0) styledNodes.push(node);
+      }
+    }
+  } else {
+    for (const node of graph.nodes) {
+      const [open, close] = SHAPE_BRACKETS[node.shape] || ['[', ']'];
+      lines.push(`    ${node.key}${open}${quoteLabel(node.label)}${close}`);
+      declared.add(node.key);
+      if (node.style && Object.keys(node.style).length > 0) styledNodes.push(node);
+    }
   }
 
   for (const edge of graph.edges) {
-    // An edge naming a node nothing declared would produce a phantom box on
-    // re-import, so it is dropped rather than written.
     if (!declared.has(edge.from) || !declared.has(edge.to)) continue;
-    const token = LINE_TOKENS[edge.line][edge.arrow ? 'arrow' : 'plain'];
+    const kind = edge.line || 'solid';
+    const token = edge.bidirectional
+      ? LINE_TOKENS[kind].bidir
+      : edge.arrow
+      ? LINE_TOKENS[kind].arrow
+      : LINE_TOKENS[kind].plain;
     const label = edge.label ? `|${quoteLabel(edge.label)}|` : '';
     lines.push(`    ${edge.from} ${token}${label} ${edge.to}`);
   }
 
+  // Style definitions for styled nodes
+  for (const node of styledNodes) {
+    if (!node.style) continue;
+    const parts: string[] = [];
+    if (node.style.fill) parts.push(`fill:${node.style.fill}`);
+    if (node.style.stroke) parts.push(`stroke:${node.style.stroke}`);
+    if (node.style.strokeWidth) parts.push(`stroke-width:${node.style.strokeWidth}px`);
+    if (node.style.color) parts.push(`color:${node.style.color}`);
+    if (parts.length > 0) {
+      lines.push(`    style ${node.key} ${parts.join(',')}`);
+    }
+  }
+
   return lines.join('\n');
+}
+
+/**
+ * Prettifies Mermaid flowchart source code with standardized indentation and spacing.
+ */
+export function formatMermaid(source: string): string {
+  const parsed = parseMermaid(source);
+  if (!parsed.graph) return source;
+  return emitMermaid(parsed.graph);
 }
 
 // ---------------------------------------------------------------------------
 // The canvas's vocabulary
 // ---------------------------------------------------------------------------
 
-/** How each mermaid shape is drawn with the primitives this canvas has. */
 export interface ShapeSpec {
   kind: ShapeKind;
   points?: number;
   cornerRadius?: number;
-  /** Mermaid's circles and diamonds read wrong at a wide aspect. */
   square?: boolean;
 }
 
 export const SHAPE_SPECS: Record<MermaidShape, ShapeSpec> = {
   rect: { kind: 'rect' },
   round: { kind: 'rect', cornerRadius: 10 },
-  // A stadium is a rectangle rounded until the ends are semicircles, which is
-  // a radius of half the height rather than a shape of its own.
   stadium: { kind: 'rect', cornerRadius: 999 },
   subroutine: { kind: 'rect' },
-  // A four-sided polygon stood on its point *is* mermaid's rhombus, so this
-  // needs no new primitive — and it stays editable as a polygon afterwards.
+  database: { kind: 'rect', cornerRadius: 6 },
   diamond: { kind: 'polygon', points: 4, square: true },
   circle: { kind: 'ellipse', square: true },
+  double_circle: { kind: 'ellipse', square: true },
   hexagon: { kind: 'polygon', points: 6 },
+  parallelogram: { kind: 'polygon', points: 4 },
+  parallelogram_inv: { kind: 'polygon', points: 4 },
+  trapezoid: { kind: 'polygon', points: 4 },
+  trapezoid_inv: { kind: 'polygon', points: 4 },
   flag: { kind: 'polygon', points: 5 },
 };
 
-/** The inverse, for reading a board back out as code. */
 export function shapeFromCanvas(kind: ShapeKind, points?: number, cornerRadius?: number): MermaidShape {
   if (kind === 'ellipse') return 'circle';
   if (kind === 'squircle') return 'round';

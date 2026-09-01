@@ -1,4 +1,5 @@
-import { captureRaster, canvasToBlob, mountForCapture } from './raster';
+import { captureRaster, mountForCapture } from './raster';
+import { encodeCanvasWithWorker } from './exportWorkerClient';
 import { FORMAT_SPECS, type Exporter, type ExportFormat, type ExportOptions } from './ExportTypes';
 
 /**
@@ -40,6 +41,6 @@ export class RasterExporter implements Exporter {
     // it for PNG but the argument is meaningless, and being explicit keeps the
     // control and the format honest about each other.
     const quality = spec.lossy ? (options.quality ?? 0.92) : undefined;
-    return canvasToBlob(canvas, spec.mime, quality);
+    return encodeCanvasWithWorker(canvas, null, spec.mime, quality);
   }
 }

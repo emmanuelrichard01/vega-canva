@@ -1,8 +1,12 @@
 import { describe, it, expect } from 'vitest';
 import type { BezierGeometry, CompoundGeometry, FreehandGeometry } from './schema';
 import {
+  anchorCurvatureRadius,
   anchorMode,
   cubicAt,
+  cubicDerivativeAt,
+  cubicSecondDerivativeAt,
+  curvatureRadiusAt,
   flattenPath,
   fromAnchors,
   insertAnchor,
@@ -20,6 +24,7 @@ import {
   pathNaturalSize,
   fitPathToBox,
   type Anchor,
+  type Cubic,
 } from './pathGeometry';
 
 const line = (): BezierGeometry => ({
@@ -537,3 +542,111 @@ describe('fitPathToBox', () => {
     expect(fitted.svgPath).toBe('M 0 0 A 10 10 0 0 1 20 0 Z');
   });
 });
+
+// ---------------------------------------------------------------------------
+// Derivative & curvature tests
+// ---------------------------------------------------------------------------
+
+/** A quarter-circle of radius R approximated by a cubic Bézier (standard kappa ≈ 0.5522847). */
+const quarterCircleCubic = (R: number): Cubic => ({
+  x0: R, y0: 0,
+  c1x: R, c1y: R * 0.5522847,
+  c2x: R * 0.5522847, c2y: R,
+  x1: 0, y1: R,
+});
+
+/** A dead-straight cubic (controls on the chord). */
+const straightCubic: Cubic = {
+  x0: 0, y0: 0,
+  c1x: 100 / 3, c1y: 0,
+  c2x: 200 / 3, c2y: 0,
+  x1: 100, y1: 0,
+};
+
+describe('cubicDerivativeAt', () => {
+  it('gives the tangent at t=0 pointing from P0 toward P1', () => {
+    const d = cubicDerivativeAt(straightCubic, 0);
+    expect(d.x).toBeGreaterThan(0);
+    expect(Math.abs(d.y)).toBeLessThan(1e-10);
+  });
+
+  it('gives the tangent at t=1 pointing from P2 toward P3', () => {
+    const d = cubicDerivativeAt(straightCubic, 1);
+    expect(d.x).toBeGreaterThan(0);
+    expect(Math.abs(d.y)).toBeLessThan(1e-10);
+  });
+
+  it('has a leftward tangent at t=1 for a quarter-circle ending at (0,R)', () => {
+    const c = quarterCircleCubic(50);
+    const d = cubicDerivativeAt(c, 1);
+    // At (0, R), tangent points left: dx < 0, dy ~ 0
+    expect(d.x).toBeLessThan(0);
+    expect(Math.abs(d.y)).toBeLessThan(1);
+  });
+});
+
+describe('cubicSecondDerivativeAt', () => {
+  it('is zero for a uniformly spaced straight cubic', () => {
+    const d2 = cubicSecondDerivativeAt(straightCubic, 0.5);
+    expect(Math.abs(d2.x)).toBeLessThan(1e-8);
+    expect(Math.abs(d2.y)).toBeLessThan(1e-8);
+  });
+
+  it('is non-zero for a curved cubic', () => {
+    const c = quarterCircleCubic(50);
+    const d2 = cubicSecondDerivativeAt(c, 0.5);
+    expect(Math.hypot(d2.x, d2.y)).toBeGreaterThan(1);
+  });
+});
+
+describe('curvatureRadiusAt', () => {
+  it('reports Infinity for a straight cubic (no curvature)', () => {
+    expect(curvatureRadiusAt(straightCubic, 0.5)).toBe(Infinity);
+  });
+
+  it('approximates R for a quarter-circle of radius R at its midpoint', () => {
+    const R = 50;
+    const c = quarterCircleCubic(R);
+    const radius = curvatureRadiusAt(c, 0.5);
+    expect(radius).toBeGreaterThan(R * 0.97);
+    expect(radius).toBeLessThan(R * 1.03);
+  });
+
+  it('is always positive for a non-degenerate curve', () => {
+    const c = quarterCircleCubic(100);
+    for (const t of [0, 0.25, 0.5, 0.75, 1]) {
+      expect(curvatureRadiusAt(c, t)).toBeGreaterThan(0);
+    }
+  });
+});
+
+describe('anchorCurvatureRadius', () => {
+  it('returns Infinity for every anchor of a straight-edged square', () => {
+    const r = anchorCurvatureRadius(square(), 0);
+    expect(r.in).toBe(Infinity);
+    expect(r.out).toBe(Infinity);
+  });
+
+  it('returns finite radii for a curved path at a curved anchor', () => {
+    const curvedPath: BezierGeometry = {
+      kind: 'bezier',
+      closed: false,
+      segments: [
+        { x: 0, y: 0 },
+        { x: 50, y: 0, cp1x: 15, cp1y: -30, cp2x: 35, cp2y: -20 },
+        { x: 100, y: 0, cp1x: 65, cp1y: 20, cp2x: 85, cp2y: 10 },
+      ],
+    };
+    const r = anchorCurvatureRadius(curvedPath, 1);
+    expect(isFinite(r.in)).toBe(true);
+    expect(isFinite(r.out)).toBe(true);
+    expect(r.in).toBeGreaterThan(0);
+    expect(r.out).toBeGreaterThan(0);
+  });
+
+  it('returns Infinity for the open end of an open path (no arriving curve)', () => {
+    const r = anchorCurvatureRadius(line(), 0);
+    expect(r.in).toBe(Infinity);
+  });
+});
+

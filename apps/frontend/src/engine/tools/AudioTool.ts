@@ -34,14 +34,12 @@ const STORED_PEAKS = 240;
  *
  * `new MediaRecorder(stream)` takes the browser's default, and Chrome's
  * default for Opus is around 128 kbps — a music setting. Speech carries
- * perfectly at a fraction of that, and the difference is not academic here:
- * the encoded audio is base64'd **into the CRDT**, so every kilobyte is
- * replicated to every peer, written into every snapshot, and carried in the
- * update log. A five-minute note at the default is several megabytes of
- * document; at 24 kbps it is a few hundred kilobytes.
+ * perfectly at a fraction of that. Audio recordings are piped out-of-band
+ * directly to the server media proxy and object storage, keeping only a lightweight
+ * URL reference in the CRDT document.
  *
- * 24 kbps mono Opus is above the rate most voice calls run at, so this is a
- * conservative choice rather than an aggressive one.
+ * 24 kbps mono Opus is above the rate most voice calls run at, preserving speech
+ * clarity while minimizing bandwidth and storage overhead.
  */
 const VOICE_BITRATE = 24_000;
 

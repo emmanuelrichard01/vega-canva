@@ -2,11 +2,12 @@ import { useState, useCallback, useEffect } from 'react';
 import { nanoid } from 'nanoid';
 import { editor } from '../engine/api/EditorAPI';
 import { cameraSystem } from '../engine/CameraSystem';
-import { localAuthor, updateNode } from '../engine/document';
+import { doc, localAuthor, updateNode } from '../engine/document';
 import { calculateOptimalAudioWidth } from '../engine/model/audioPlayback';
 import { mediaUploadUrl } from '../utils/endpoints';
 import { processOfflineMediaQueue, queueOfflineMedia } from '../utils/offlineMediaQueue';
 import { cellAtPoint, freeCellsFrom, gridAtPoint, placeImageInCell } from '../engine/grid/gridSlotApply';
+import { importSvg } from '../engine/clipboard/svgImport';
 
 const IMAGE_PLACE_MAX = 800;
 const MULTI_PLACE_STEP = 24;
@@ -50,10 +51,44 @@ export function useCanvasDropZone({ roomId, status, setSelectedIds }: UseCanvasD
        */
       slot?: { gridId: string; cell: number }
     ) => {
+      const viewCenter = at ?? cameraSystem.screenToWorld(window.innerWidth / 2, window.innerHeight / 2);
+
+      // If dropped file is an SVG, import as native vector nodes
+      if (file.name.toLowerCase().endsWith('.svg') || file.type === 'image/svg+xml') {
+        try {
+          const text = await file.text();
+          const art = importSvg(text);
+          if (art && art.nodes.length > 0) {
+            const originX = viewCenter.x - art.width / 2 + index * MULTI_PLACE_STEP;
+            const originY = viewCenter.y - art.height / 2 + index * MULTI_PLACE_STEP;
+            const madeIds: string[] = [];
+
+            doc.transact(() => {
+              for (const node of art.nodes) {
+                const id = nanoid();
+                madeIds.push(id);
+                editor.createNode({
+                  ...node,
+                  id,
+                  x: (node.x as number) + originX,
+                  y: (node.y as number) + originY,
+                } as never);
+              }
+            });
+
+            setSelectedIds((current) =>
+              index === 0 ? madeIds : Array.from(new Set([...current, ...madeIds]))
+            );
+            return;
+          }
+        } catch (e) {
+          console.warn('SVG vector parsing failed, falling back to raster image', e);
+        }
+      }
+
       const localUrl = URL.createObjectURL(file);
       const type = file.type.startsWith('image/') ? 'image' : 'audio';
       const measured = type === 'image' ? await measureImage(localUrl) : null;
-      const viewCenter = at ?? cameraSystem.screenToWorld(window.innerWidth / 2, window.innerHeight / 2);
       const author = localAuthor();
 
       let width = type === 'image' ? 300 : calculateOptimalAudioWidth(author.name);

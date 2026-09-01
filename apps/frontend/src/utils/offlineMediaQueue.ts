@@ -6,6 +6,9 @@ const STORE_NAME = 'pending_uploads';
 
 const openDB = (): Promise<IDBDatabase> => {
   return new Promise((resolve, reject) => {
+    if (typeof indexedDB === 'undefined') {
+      return reject(new Error('IndexedDB is not available in this environment'));
+    }
     const request = indexedDB.open(DB_NAME, 1);
     request.onupgradeneeded = () => {
       const db = request.result;

@@ -70,16 +70,36 @@ export function useCanvasSelection({
       }
     };
 
+    const handleExitGroup = () => {
+      if (enteredGroupRef.current) {
+        const { groups } = useStore.getState();
+        const parent = groups[enteredGroupRef.current]?.parentId ?? null;
+        enteredGroupRef.current = parent;
+        useStore.getState().setEnteredGroupId(parent);
+      }
+    };
+
+    const handleDeselectAll = () => {
+      enteredGroupRef.current = null;
+      useStore.getState().setEnteredGroupId(null);
+    };
+
     document.addEventListener('requestSelectNode', handleSelectNode);
     document.addEventListener('selectNode', handleSelectNode);
     window.addEventListener('requestSelectNodes', handleSelectNodes);
     document.addEventListener('marqueeSelect', handleMarqueeSelect);
+    window.addEventListener('exitGroupIsolation', handleExitGroup);
+    document.addEventListener('exitGroupIsolation', handleExitGroup);
+    document.addEventListener('deselectAll', handleDeselectAll);
 
     return () => {
       document.removeEventListener('requestSelectNode', handleSelectNode);
       document.removeEventListener('selectNode', handleSelectNode);
       window.removeEventListener('requestSelectNodes', handleSelectNodes);
       document.removeEventListener('marqueeSelect', handleMarqueeSelect);
+      window.removeEventListener('exitGroupIsolation', handleExitGroup);
+      document.removeEventListener('exitGroupIsolation', handleExitGroup);
+      document.removeEventListener('deselectAll', handleDeselectAll);
     };
   }, [setSelectedIds]);
 
@@ -130,12 +150,16 @@ export function useCanvasSelection({
       const table = objects as Record<string, { id: string; parentId?: string }>;
       if (e?.evt?.detail === 2) {
         const step = groupToEnter(table, groups, id, enteredGroupRef.current);
-        if (step) enteredGroupRef.current = step;
+        if (step) {
+          enteredGroupRef.current = step;
+          useStore.getState().setEnteredGroupId(step);
+        }
       } else if (
         enteredGroupRef.current &&
         !nodesInGroup(Object.keys(objects), table, groups, enteredGroupRef.current).includes(id)
       ) {
         enteredGroupRef.current = null;
+        useStore.getState().setEnteredGroupId(null);
       }
 
       const groupIds = selectionWithin(

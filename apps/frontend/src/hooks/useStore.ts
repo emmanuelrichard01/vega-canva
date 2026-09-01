@@ -262,6 +262,9 @@ interface StoreState {
    */
   flattenConfirmNodeId: string | null;
   setFlattenConfirmNodeId: (id: string | null) => void;
+  /** Currently entered / isolated group ID for nested group editing. */
+  enteredGroupId: string | null;
+  setEnteredGroupId: (id: string | null) => void;
 }
 
 const loadNumberPref = (key: string, fallback: number, min: number, max: number) => {
@@ -651,6 +654,8 @@ export const useStore = create<StoreState>((set) => ({
   },
   flattenConfirmNodeId: null,
   setFlattenConfirmNodeId: (flattenConfirmNodeId) => set({ flattenConfirmNodeId }),
+  enteredGroupId: null,
+  setEnteredGroupId: (enteredGroupId) => set({ enteredGroupId }),
 }));
 
 let bridgeDisposer: (() => void) | null = null;

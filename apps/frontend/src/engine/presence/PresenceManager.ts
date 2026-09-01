@@ -142,6 +142,26 @@ class PresenceEngine {
     this.resetIdleTimer();
     this.scheduleUpdate();
   }
+
+  /**
+   * Broadcast an ephemeral emoji reaction attached to the user's cursor.
+   * Automatically clears from presence after 3.5 seconds.
+   */
+  public broadcastReaction(emoji: string) {
+    this.localState.reaction = {
+      emoji,
+      timestamp: Date.now(),
+    };
+    this.resetIdleTimer();
+    this.scheduleUpdate();
+
+    setTimeout(() => {
+      if (this.localState.reaction?.emoji === emoji) {
+        this.localState.reaction = null;
+        this.scheduleUpdate();
+      }
+    }, 3500);
+  }
 }
 
 export const presenceManager = new PresenceEngine();
