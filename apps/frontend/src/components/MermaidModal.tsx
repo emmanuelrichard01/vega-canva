@@ -1,4 +1,5 @@
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { silhouetteFor, clampRadius } from '../engine/diagram/silhouette';
 import {
   X,
   Check,
@@ -334,8 +335,12 @@ export const MermaidModal: React.FC<Props> = ({
    * transform is the only scaling, and `scale: 1` means 1:1.
    */
   const [stageSize, setStageSize] = useState({ w: 0, h: 0 });
+  const svgRef = useRef<SVGSVGElement | null>(null);
   useEffect(() => {
-    const el = stageRef.current;
+    // The SVG, not its container: the stage box includes the border, so
+    // measuring it made the viewBox 502x381 for a 500x365 element -- the
+    // units drifted from pixels and 100% was not quite 100%.
+    const el = svgRef.current ?? stageRef.current;
     if (!open || !el) return;
     const measure = () => {
       const r = el.getBoundingClientRect();
@@ -347,7 +352,7 @@ export const MermaidModal: React.FC<Props> = ({
     const ro = new ResizeObserver(measure);
     ro.observe(el);
     return () => ro.disconnect();
-  }, [open]);
+  }, [open, preview]);
 
   const MIN_SCALE = 0.05;
   const MAX_SCALE = 8;
@@ -637,6 +642,13 @@ export const MermaidModal: React.FC<Props> = ({
                 </div>
               </div>
             </div>
+            {/* The cluster is a *sibling* of the stage, not a child of it.
+                Inside, it sat under an element whose `pointerdown` calls
+                `setPointerCapture` to start a pan -- so a press on a zoom
+                button could be captured by the stage and the click never
+                completed. Moving it out removes the interaction entirely
+                rather than patching around it with `stopPropagation`. */}
+            <div className="mm-stagewrap">
             <div
               className="mermaid-modal__stage"
               ref={stageRef}
@@ -687,6 +699,7 @@ export const MermaidModal: React.FC<Props> = ({
               {preview && graph ? (
                 <>
                   <svg
+                    ref={svgRef}
                     /* The stage, not the content: see `stageSize`. */
                     viewBox={`0 0 ${stageSize.w || 1} ${stageSize.h || 1}`}
                     role="img"
@@ -827,52 +840,57 @@ export const MermaidModal: React.FC<Props> = ({
                     </g>
                   </svg>
 
-                  {/* Zoom Controls Overlay */}
-                  <div className="mm-seg mm-zoom" role="group" aria-label="Zoom">
-                    <button
-                      type="button"
-                      className="mm-seg__btn"
-                      onClick={() => zoomByStep(1 / 1.25)}
-                      aria-label="Zoom out"
-                      title="Zoom out  (−)"
-                    >
-                      <ZoomOut size={13} strokeWidth={1.75} aria-hidden />
-                    </button>
-                    {/* The readout is the reset: one control, and its label is
-                        the state it returns you from. */}
-                    <button
-                      type="button"
-                      className="mm-seg__btn mm-zoom__value"
-                      onClick={() => zoomAt(1, 0, 0)}
-                      title="Reset to 100%  (0)"
-                    >
-                      {Math.round(scale * 100)}%
-                    </button>
-                    <button
-                      type="button"
-                      className="mm-seg__btn"
-                      onClick={() => zoomByStep(1.25)}
-                      aria-label="Zoom in"
-                      title="Zoom in  (+)"
-                    >
-                      <ZoomIn size={13} strokeWidth={1.75} aria-hidden />
-                    </button>
-                    <button
-                      type="button"
-                      className="mm-seg__btn"
-                      onClick={fitToView}
-                      aria-label="Fit to view"
-                      title="Fit to view  (F)"
-                    >
-                      <Maximize size={12} strokeWidth={1.75} aria-hidden />
-                    </button>
-                  </div>
                 </>
               ) : (
                 <p className="mermaid-modal__empty">
                   {error ?? 'Write a flowchart on the left to see it live here.'}
                 </p>
               )}
+            </div>
+
+              <div
+                className="mm-seg mm-zoom"
+                role="group"
+                aria-label="Zoom"
+              >
+                <button
+                  type="button"
+                  className="mm-seg__btn"
+                  onClick={() => zoomByStep(1 / 1.25)}
+                  aria-label="Zoom out"
+                  title="Zoom out  (−)"
+                >
+                  <ZoomOut size={13} strokeWidth={1.75} aria-hidden />
+                </button>
+                {/* The readout is the reset: one control, and its label is
+                    the state it returns you from. */}
+                <button
+                  type="button"
+                  className="mm-seg__btn mm-zoom__value"
+                  onClick={() => zoomAt(1, 0, 0)}
+                  title="Reset to 100%  (0)"
+                >
+                  {Math.round(scale * 100)}%
+                </button>
+                <button
+                  type="button"
+                  className="mm-seg__btn"
+                  onClick={() => zoomByStep(1.25)}
+                  aria-label="Zoom in"
+                  title="Zoom in  (+)"
+                >
+                  <ZoomIn size={13} strokeWidth={1.75} aria-hidden />
+                </button>
+                <button
+                  type="button"
+                  className="mm-seg__btn"
+                  onClick={fitToView}
+                  aria-label="Fit to view"
+                  title="Fit to view  (F)"
+                >
+                  <Maximize size={12} strokeWidth={1.75} aria-hidden />
+                </button>
+              </div>
             </div>
           </div>
         </div>
@@ -946,99 +964,63 @@ function renderPreviewShape(
 
   const shape = node.shape;
 
-  switch (shape) {
-    case 'circle':
-      return (
-        <ellipse
-          cx={p.x + p.width / 2}
-          cy={p.y + p.height / 2}
-          rx={p.width / 2}
-          ry={p.height / 2}
-          fill={fill}
-          stroke={stroke}
-          strokeWidth={strokeWidth}
-        />
-      );
-    case 'double_circle':
-      return (
-        <g>
+  /**
+   * The outline comes from `silhouetteFor`, which derives it from
+   * `SHAPE_SPECS` -- the same table `build.ts` uses to make canvas nodes.
+   *
+   * This used to be a `switch (shape)` with `case 'rect': default:` at the
+   * bottom, and three of the fourteen shapes had no case: `trapezoid`,
+   * `trapezoid_inv` and `flag` fell through, so the board drew a polygon and
+   * the preview drew a rectangle for the same source. A preview that
+   * disagrees with the result is worse than no preview.
+   */
+  const sil = silhouetteFor(shape);
+  const cx = p.x + p.width / 2;
+  const cy = p.y + p.height / 2;
+  const paint = { fill, stroke, strokeWidth };
+
+  if (sil.kind === 'ellipse') {
+    return (
+      <g>
+        <ellipse cx={cx} cy={cy} rx={p.width / 2} ry={p.height / 2} {...paint} />
+        {sil.ornament === 'ring' && (
           <ellipse
-            cx={p.x + p.width / 2}
-            cy={p.y + p.height / 2}
-            rx={p.width / 2}
-            ry={p.height / 2}
-            fill={fill}
-            stroke={stroke}
-            strokeWidth={strokeWidth}
-          />
-          <ellipse
-            cx={p.x + p.width / 2}
-            cy={p.y + p.height / 2}
+            cx={cx}
+            cy={cy}
             rx={p.width / 2 - 4}
             ry={p.height / 2 - 4}
             fill="none"
             stroke={stroke}
             strokeWidth={1.25}
           />
-        </g>
-      );
-    case 'stadium':
-      return (
-        <rect
-          x={p.x}
-          y={p.y}
-          width={p.width}
-          height={p.height}
-          rx={p.height / 2}
-          fill={fill}
-          stroke={stroke}
-          strokeWidth={strokeWidth}
+        )}
+      </g>
+    );
+  }
+
+  if (sil.kind === 'polygon') {
+    return <polygon points={polygonPoints(p, sil.points)} {...paint} />;
+  }
+
+  if (sil.ornament === 'cylinder') {
+    return (
+      <g>
+        <path
+          d={`M ${p.x} ${p.y + 10} A ${p.width / 2} 10 0 0 0 ${p.x + p.width} ${p.y + 10} L ${p.x + p.width} ${p.y + p.height - 10} A ${p.width / 2} 10 0 0 1 ${p.x} ${p.y + p.height - 10} Z`}
+          {...paint}
         />
-      );
-    case 'database':
-      return (
-        <g>
-          <path
-            d={`M ${p.x} ${p.y + 10} 
-                A ${p.width / 2} 10 0 0 0 ${p.x + p.width} ${p.y + 10} 
-                L ${p.x + p.width} ${p.y + p.height - 10} 
-                A ${p.width / 2} 10 0 0 1 ${p.x} ${p.y + p.height - 10} Z`}
-            fill={fill}
-            stroke={stroke}
-            strokeWidth={strokeWidth}
-          />
-          <ellipse
-            cx={p.x + p.width / 2}
-            cy={p.y + 10}
-            rx={p.width / 2}
-            ry={9}
-            fill={fill}
-            stroke={stroke}
-            strokeWidth={strokeWidth}
-          />
-        </g>
-      );
-    case 'subroutine':
-      return (
-        <g>
-          <rect
-            x={p.x}
-            y={p.y}
-            width={p.width}
-            height={p.height}
-            rx={4}
-            fill={fill}
-            stroke={stroke}
-            strokeWidth={strokeWidth}
-          />
-          <line
-            x1={p.x + 8}
-            y1={p.y}
-            x2={p.x + 8}
-            y2={p.y + p.height}
-            stroke={stroke}
-            strokeWidth={strokeWidth}
-          />
+        <ellipse cx={cx} cy={p.y + 10} rx={p.width / 2} ry={9} {...paint} />
+      </g>
+    );
+  }
+
+  const rx = clampRadius(sil.cornerRadius, p.width, p.height);
+  return (
+    <g>
+      <rect x={p.x} y={p.y} width={p.width} height={p.height} rx={rx} {...paint} />
+      {sil.ornament === 'bars' && (
+        <>
+          <line x1={p.x + 8} y1={p.y} x2={p.x + 8} y2={p.y + p.height} stroke={stroke} strokeWidth={strokeWidth} />
           <line
             x1={p.x + p.width - 8}
             y1={p.y}
@@ -1047,65 +1029,10 @@ function renderPreviewShape(
             stroke={stroke}
             strokeWidth={strokeWidth}
           />
-        </g>
-      );
-    case 'diamond':
-      return (
-        <polygon
-          points={polygonPoints(p, 4)}
-          fill={fill}
-          stroke={stroke}
-          strokeWidth={strokeWidth}
-        />
-      );
-    case 'hexagon':
-      return (
-        <polygon
-          points={polygonPoints(p, 6)}
-          fill={fill}
-          stroke={stroke}
-          strokeWidth={strokeWidth}
-        />
-      );
-    case 'parallelogram':
-    case 'parallelogram_inv':
-      const skew = shape === 'parallelogram' ? 12 : -12;
-      return (
-        <polygon
-          points={`${p.x + (skew > 0 ? skew : 0)},${p.y} ${p.x + p.width - (skew < 0 ? -skew : 0)},${p.y} ${p.x + p.width - (skew > 0 ? skew : 0)},${p.y + p.height} ${p.x + (skew < 0 ? -skew : 0)},${p.y + p.height}`}
-          fill={fill}
-          stroke={stroke}
-          strokeWidth={strokeWidth}
-        />
-      );
-    case 'round':
-      return (
-        <rect
-          x={p.x}
-          y={p.y}
-          width={p.width}
-          height={p.height}
-          rx={8}
-          fill={fill}
-          stroke={stroke}
-          strokeWidth={strokeWidth}
-        />
-      );
-    case 'rect':
-    default:
-      return (
-        <rect
-          x={p.x}
-          y={p.y}
-          width={p.width}
-          height={p.height}
-          rx={4}
-          fill={fill}
-          stroke={stroke}
-          strokeWidth={strokeWidth}
-        />
-      );
-  }
+        </>
+      )}
+    </g>
+  );
 }
 
 function polygonPoints(

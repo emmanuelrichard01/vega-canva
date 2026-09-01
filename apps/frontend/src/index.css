@@ -15129,12 +15129,24 @@ body[data-zen='physics'] .forces-handle { bottom: 32px; }
   width: 12px;
   height: 12px;
   border-radius: var(--radius-pill);
-  /* Against arbitrary diagram colours, not against a theme token. */
-  box-shadow: inset 0 0 0 1px rgba(0, 0, 0, 0.18);
+  /* Two rings, because the dot has two neighbours: an inset dark edge so a
+     pale swatch reads against the toolbar, and an outer theme-aware ring so a
+     dark one does. The mono palette is #525252, which vanished on the dark
+     toolbar with only the inset. */
+  box-shadow: inset 0 0 0 1px rgba(0, 0, 0, 0.18), 0 0 0 1px var(--border-strong);
 }
 
 /* The zoom cluster floats over the stage, bottom-right, out of the way of a
-   diagram that grows down and right. */
+   diagram that grows down and right -- positioned against a wrapper rather
+   than against the stage itself, because it must not be a descendant of an
+   element that takes pointer capture. See the note in MermaidModal. */
+.mm-stagewrap {
+  position: relative;
+  display: flex;
+  flex-direction: column;
+  flex: 1;
+  min-height: 0;
+}
 .mm-zoom {
   position: absolute;
   right: var(--space-3);

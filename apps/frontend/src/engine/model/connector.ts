@@ -112,6 +112,87 @@ export function autoPorts(from: Box, to: Box): { from: Exclude<Port, 'auto'>; to
 }
 
 /**
+ * How far back from a corner an elbow starts to turn.
+ *
+ * Small on purpose. This is a softened corner, not a curve -- past about 12px
+ * an orthogonal connector stops reading as orthogonal, and the right angles
+ * are what make a flowchart scan as a flowchart.
+ */
+export const ELBOW_RADIUS = 8;
+
+/** How many points each turn is sampled into. Four is smooth at any zoom a
+ *  connector is read at, and keeps the point list short enough that bounds
+ *  and hit-testing stay cheap. */
+const ELBOW_STEPS = 4;
+
+/**
+ * Round the corners of a polyline, by inserting points rather than by
+ * switching to arcs.
+ *
+ * ## Why sampled points and not a `Path`
+ *
+ * The same reason `routeCurved` samples: the point list *is* the geometry
+ * here. `connectorBounds`, hit-testing, the radar and the board thumbnail all
+ * read it, and none of them would know about a `Q` command hidden in an SVG
+ * path string. A rounded corner drawn only in the renderer would be a shape
+ * the rest of the system could not see -- clicks would miss it and its box
+ * would be wrong.
+ *
+ * ## The clamp
+ *
+ * The radius is cut to just under half of the shorter adjacent segment. Two
+ * corners on one short segment would otherwise each eat more than half of it,
+ * cross over, and turn the elbow inside out -- which is the failure mode of
+ * every naive corner-rounder.
+ */
+export function roundCorners(points: Point[], radius = ELBOW_RADIUS): Point[] {
+  if (points.length < 3 || radius <= 0) return points;
+
+  const out: Point[] = [points[0]];
+
+  for (let i = 1; i < points.length - 1; i++) {
+    const prev = points[i - 1];
+    const corner = points[i];
+    const next = points[i + 1];
+
+    const inLen = Math.hypot(corner.x - prev.x, corner.y - prev.y);
+    const outLen = Math.hypot(next.x - corner.x, next.y - corner.y);
+    // 0.49 rather than 0.5: two corners sharing a segment must not meet
+    // exactly at its midpoint, where the arcs would touch and flatten.
+    const r = Math.min(radius, inLen * 0.49, outLen * 0.49);
+    if (!(r > 0.5)) {
+      out.push(corner);
+      continue;
+    }
+
+    const start = {
+      x: corner.x + ((prev.x - corner.x) / inLen) * r,
+      y: corner.y + ((prev.y - corner.y) / inLen) * r,
+    };
+    const end = {
+      x: corner.x + ((next.x - corner.x) / outLen) * r,
+      y: corner.y + ((next.y - corner.y) / outLen) * r,
+    };
+
+    // A quadratic through the corner: the corner is the control point, which
+    // is what makes the turn tangent to both segments without any angle maths.
+    out.push(start);
+    for (let step = 1; step < ELBOW_STEPS; step++) {
+      const t = step / ELBOW_STEPS;
+      const u = 1 - t;
+      out.push({
+        x: u * u * start.x + 2 * u * t * corner.x + t * t * end.x,
+        y: u * u * start.y + 2 * u * t * corner.y + t * t * end.y,
+      });
+    }
+    out.push(end);
+  }
+
+  out.push(points[points.length - 1]);
+  return out;
+}
+
+/**
  * An orthogonal route between two ports.
  *
  * Deliberately simple and predictable rather than a full obstacle-avoiding
@@ -281,7 +362,10 @@ export function connectorPoints(
 
   const path =
     routing === 'orthogonal'
-      ? routeOrthogonal(a.point, b.point, a.port, b.port)
+      ? // Softened at the turns. The rounding inserts points rather than
+        // drawing arcs, so bounds, hit-testing, the radar and export all keep
+        // seeing the same geometry the renderer draws.
+        roundCorners(routeOrthogonal(a.point, b.point, a.port, b.port))
       : routing === 'curved'
         ? routeCurved(a.point, b.point, a.port, b.port)
         : [a.point, b.point];
