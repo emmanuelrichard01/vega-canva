@@ -287,12 +287,21 @@ export function buildDiagram(
         },
       });
 
-      // Associate children with frameId
-      for (const k of sub.nodeKeys) {
-        const childNode = nodes.find((n) => n.id === idFor(k));
-        if (childNode) {
-          childNode.frameId = frameId;
-        }
+      /**
+       * Membership from `subgraphId`, which is the field `layout.ts` parents
+       * by -- not from `sub.nodeKeys`.
+       *
+       * `frameId` is what makes `ObjectRenderer` clip a node to its frame's
+       * rectangle, so reading it from a different record than the one that
+       * decided *where the node was placed* is how a node ends up positioned
+       * outside a box and then cut to fit it. The two records agree now, and
+       * this reads the one that governs position so they cannot come apart
+       * again from this end.
+       */
+      for (const child of graph.nodes) {
+        if (child.subgraphId !== sub.id) continue;
+        const childNode = nodes.find((n) => n.id === idFor(child.key));
+        if (childNode) childNode.frameId = frameId;
       }
     }
   }

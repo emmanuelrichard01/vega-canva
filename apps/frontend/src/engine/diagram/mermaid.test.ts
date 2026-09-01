@@ -548,3 +548,63 @@ describe('parseMermaidLenient', () => {
     expect(lenient.skippedLines.length).toBeLessThanOrEqual(3);
   });
 });
+
+describe('subgraph membership is recorded once', () => {
+  /**
+   * Membership is written to two places -- `subgraph.nodeKeys` and the node's
+   * own `subgraphId` -- and they used to be able to disagree, because the push
+   * to `nodeKeys` was unconditional while `subgraphId` only survived on the
+   * branches that replaced the stored node.
+   *
+   * Both are read, by different code. `layout.ts` parents to dagre by
+   * `subgraphId`, so a node missing the stamp was laid out *outside* the
+   * cluster. `build.ts` assigned `frameId`, and `ObjectRenderer` clips a framed
+   * node to its frame's rectangle. The node was placed outside a box and then
+   * cut to fit it: the clipped, broken diagram.
+   */
+  const agree = (src: string) => {
+    const { graph } = parseMermaid(src);
+    expect(graph, src).not.toBeNull();
+    for (const sub of graph!.subgraphs ?? []) {
+      const byId = graph!.nodes.filter((n) => n.subgraphId === sub.id).map((n) => n.key);
+      expect([...sub.nodeKeys].sort(), `subgraph ${sub.id}`).toEqual([...byId].sort());
+    }
+    return graph!;
+  };
+
+  it('stamps a node first mentioned before the block it belongs to', () => {
+    const graph = agree(
+      'flowchart TD\n  B -->|yes| C[Process]\n  subgraph S1 [Pipeline]\n    C --> E[Transform]\n  end'
+    );
+
+    expect(graph.nodes.find((n) => n.key === 'C')!.subgraphId).toBe('S1');
+    expect(graph.nodes.find((n) => n.key === 'B')!.subgraphId).toBeUndefined();
+  });
+
+  it('does not remove a node from its block when it is mentioned again outside', () => {
+    const graph = agree(
+      'flowchart TD\n  subgraph S1 [Pipeline]\n    C[Process] --> E[Transform]\n  end\n  C --> Z[After]'
+    );
+
+    expect(graph.nodes.find((n) => n.key === 'C')!.subgraphId).toBe('S1');
+    expect(graph.nodes.find((n) => n.key === 'Z')!.subgraphId).toBeUndefined();
+  });
+
+  it('keeps the two records in step across the shapes people actually write', () => {
+    agree('flowchart TD\n  subgraph A [One]\n    X --> Y\n  end\n  subgraph B [Two]\n    P --> Q\n  end\n  Y --> P');
+    agree('flowchart LR\n  S[Start]\n  subgraph G [Group]\n    S --> M[Middle]\n  end\n  M --> S');
+    agree('flowchart TD\n  subgraph N [Outer]\n    a --> b\n    subgraph M [Inner]\n      c --> d\n    end\n  end');
+  });
+
+  it('gives a re-declared node its label without losing its block', () => {
+    // The branch that used to drop the stamp: an existing node being upgraded
+    // from bare key to a real label.
+    const graph = agree(
+      'flowchart TD\n  A --> C\n  subgraph S1 [Pipeline]\n    C[Process it] --> E\n  end'
+    );
+
+    const c = graph.nodes.find((n) => n.key === 'C')!;
+    expect(c.label).toBe('Process it');
+    expect(c.subgraphId).toBe('S1');
+  });
+});

@@ -421,22 +421,53 @@ export function parseMermaid(source: string): ParseResult {
   // Active subgraph stack for handling nested clusters
   const subgraphStack: MermaidSubgraph[] = [];
 
+  /**
+   * Record a node, and where it was mentioned.
+   *
+   * ## The bug this shape prevents
+   *
+   * Membership is written twice -- onto `subgraph.nodeKeys` and onto the
+   * node's own `subgraphId` -- and the two used to be able to disagree. The
+   * push to `nodeKeys` was unconditional, but `subgraphId` only survived on
+   * the branches that *replaced* the stored node. So a node first mentioned
+   * outside a block and used inside it:
+   *
+   *     B --> C[Process]
+   *     subgraph S1 [Pipeline]
+   *       C --> E
+   *     end
+   *
+   * ...ended up in `S1.nodeKeys` and with no `subgraphId`. Both records are
+   * read, by different code: `layout.ts` parents to dagre by `subgraphId`, so
+   * C was laid out *outside* the cluster; `build.ts` assigned `frameId` from
+   * `nodeKeys`, so C was given the frame anyway -- and `ObjectRenderer` clips
+   * a framed node to its frame's rectangle. The node was placed outside a box
+   * it was then cut to fit. That is the clipped, broken diagram.
+   *
+   * The membership stamp is now applied to whichever record is kept, so the
+   * two cannot drift. `mermaid.test.ts` asserts they agree.
+   */
   const remember = (node: MermaidNode) => {
     const activeSub = subgraphStack[subgraphStack.length - 1];
-    const nodeWithSub: MermaidNode = activeSub
-      ? { ...node, subgraphId: activeSub.id }
-      : node;
 
     if (activeSub && !activeSub.nodeKeys.includes(node.key)) {
       activeSub.nodeKeys.push(node.key);
     }
 
     const existing = nodes.get(node.key);
+    let kept: MermaidNode;
     if (!existing || (existing.label === existing.key && node.label !== node.key)) {
-      nodes.set(node.key, nodeWithSub);
+      kept = node;
     } else if (existing.shape === 'rect' && node.shape !== 'rect') {
-      nodes.set(node.key, { ...existing, shape: node.shape });
+      kept = { ...existing, shape: node.shape };
+    } else {
+      kept = existing;
     }
+
+    // Mentioning a node outside a block never *removes* it from one it is
+    // already in -- `kept` carries the earlier stamp when there is no active
+    // subgraph, which is why this is a conditional spread and not an assign.
+    nodes.set(node.key, activeSub ? { ...kept, subgraphId: activeSub.id } : kept);
   };
 
   for (const { text: line, lineNum } of lines.slice(1)) {
