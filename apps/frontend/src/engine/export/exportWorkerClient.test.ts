@@ -14,6 +14,15 @@ vi.mock('./exportWorkerFactory', () => ({
   createExportWorker: () => workerFactory.create(),
 }));
 
+/**
+ * These build a real PDF on the main thread, which is genuine CPU work, and
+ * vitest runs files in parallel -- so the default 5s is not a statement about
+ * this code, it is a statement about what else the machine was doing. The
+ * suite already learned this once from a 10,000-node benchmark starving an
+ * unrelated source scan past its timeout.
+ */
+const SLOW = 20_000;
+
 const PAGE: PdfPage = {
   jpeg: new Uint8Array([0xff, 0xd8, 0xff, 0xe0]),
   pixelW: 100,
@@ -105,7 +114,7 @@ describe('exportWorkerClient without a worker', () => {
     const pdf = await buildPdfWithWorker([PAGE], { title: 'Test Document' });
 
     expect(pdf.type).toBe('application/pdf');
-  });
+  }, SLOW);
 
   it('encodes on the main thread when Workers or OffscreenCanvas are absent', async () => {
     const { encodeCanvasWithWorker } = await freshClient();
@@ -114,7 +123,7 @@ describe('exportWorkerClient without a worker', () => {
 
     expect(blob).toBeInstanceOf(Blob);
     expect(blob.type).toBe('image/png');
-  });
+  }, SLOW);
 
   it('builds a PDF on the main thread', async () => {
     const { buildPdfWithWorker } = await freshClient();
@@ -123,7 +132,7 @@ describe('exportWorkerClient without a worker', () => {
 
     expect(pdf.type).toBe('application/pdf');
     expect(pdf.size).toBeGreaterThan(0);
-  });
+  }, SLOW);
 });
 
 describe('exportWorkerClient when the worker fails', () => {
@@ -145,7 +154,7 @@ describe('exportWorkerClient when the worker fails', () => {
     // on the main thread.
     expect(pdf.type).toBe('application/pdf');
     expect(pdf.size).toBeGreaterThan(0);
-  });
+  }, SLOW);
 
   it('discards the dead worker rather than reusing it', async () => {
     const { terminate } = installWorker('error');
@@ -155,7 +164,7 @@ describe('exportWorkerClient when the worker fails', () => {
 
     // Whatever killed it will likely kill the next request too.
     expect(terminate).toHaveBeenCalled();
-  });
+  }, SLOW);
 
   it('falls back when the worker never answers at all', async () => {
     // A hung or killed worker fires no `onerror`; only the timeout covers it.
@@ -168,7 +177,7 @@ describe('exportWorkerClient when the worker fails', () => {
 
     const pdf = await inFlight;
     expect(pdf.type).toBe('application/pdf');
-  });
+  }, SLOW);
 
   it('falls back when postMessage throws synchronously', async () => {
     // A structured-clone failure throws on the spot, and would otherwise
@@ -179,7 +188,7 @@ describe('exportWorkerClient when the worker fails', () => {
     const pdf = await buildPdfWithWorker([PAGE], { title: 'Test Document' });
 
     expect(pdf.type).toBe('application/pdf');
-  });
+  }, SLOW);
 });
 
 describe('exportWorkerClient when the worker answers', () => {
@@ -192,7 +201,7 @@ describe('exportWorkerClient when the worker answers', () => {
     // Three bytes, from the stub -- not the main thread's much larger PDF.
     expect(pdf.size).toBe(3);
     expect(pdf.type).toBe('application/pdf');
-  });
+  }, SLOW);
 
   it('clears the timeout once a request has settled', async () => {
     vi.useFakeTimers();
@@ -205,5 +214,5 @@ describe('exportWorkerClient when the worker answers', () => {
     // A surviving timeout would fire into an empty map, or worse, settle a
     // later request that had reused the slot.
     expect(vi.getTimerCount()).toBe(before);
-  });
+  }, SLOW);
 });
