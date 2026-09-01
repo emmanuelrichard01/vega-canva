@@ -14995,3 +14995,176 @@ body[data-zen='physics'] .forces-handle { bottom: 32px; }
   opacity: 0.75;
   font-style: normal;
 }
+
+/* ---------------------------------------------------------------------------
+   MERMAID MODAL — chrome
+   ---------------------------------------------------------------------------
+   Rebuilt from 35 inline style blocks carrying their own sizes (11.5px,
+   `3px 8px`, `2px 6px`) and an off-system indigo. The sizes are the real cost:
+   five arbitrary control heights in one strip read as five unrelated widgets,
+   and the system specifies exactly three heights for the reason that they do
+   not.
+
+   Everything here sits at --control-h-sm, because this is dense instrumentation
+   around a picture, and the picture is the only thing allowed to be loud. */
+
+/* A row of related controls: one hairline box, segments inside it. Used by the
+   template row, the palette row and the zoom cluster, so those three read as
+   one family rather than three visiting designers. */
+.mm-seg {
+  display: inline-flex;
+  align-items: center;
+  gap: 1px;
+  height: var(--control-h-sm);
+  padding: 2px;
+  border: 1px solid var(--border-divider);
+  border-radius: var(--radius-lg);
+  background: var(--surface-secondary);
+}
+
+.mm-seg__btn {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-1);
+  height: 22px;
+  padding: 0 var(--space-2);
+  border: 0;
+  border-radius: var(--radius-md);
+  background: transparent;
+  color: var(--text-tertiary);
+  font-family: inherit;
+  font-size: var(--text-xs);
+  font-weight: 500;
+  white-space: nowrap;
+  cursor: pointer;
+  transition: background-color var(--motion-hover), color var(--motion-hover);
+}
+
+.mm-seg__btn:hover { color: var(--text-secondary); background: var(--surface-hover); }
+
+/* Elevation declared once: the raised segment gets the surface, not a surface
+   *and* a border *and* a shadow. */
+.mm-seg__btn[aria-pressed='true'] {
+  background: var(--surface-primary);
+  color: var(--text-primary);
+  font-weight: var(--weight-semibold);
+  box-shadow: var(--shadow-xs);
+}
+
+/* A quiet standalone control — format, fit, copy. */
+.mm-btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: var(--space-1);
+  height: var(--control-h-sm);
+  padding: 0 var(--space-2);
+  border: 1px solid var(--border-divider);
+  border-radius: var(--radius-md);
+  background: var(--surface-primary);
+  color: var(--text-secondary);
+  font-family: inherit;
+  font-size: var(--text-xs);
+  font-weight: 500;
+  white-space: nowrap;
+  cursor: pointer;
+  transition: background-color var(--motion-hover), color var(--motion-hover),
+    border-color var(--motion-hover);
+}
+
+.mm-btn:hover { background: var(--surface-hover); color: var(--text-primary); }
+.mm-btn:disabled { opacity: 0.45; cursor: default; }
+.mm-btn:disabled:hover { background: var(--surface-primary); color: var(--text-secondary); }
+
+/* The bar above each column. Controls live beside the thing they change:
+   templates seed the code, so they sit over the editor; palette and style
+   change the picture, so they sit over the preview. */
+.mm-bar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--space-2);
+  min-height: var(--control-h-sm);
+  margin-bottom: var(--space-2);
+}
+
+.mm-bar__group {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  min-width: 0;
+}
+
+/* Palette swatches. The dot is the whole control; the name is a tooltip,
+   because five names in a row is a sentence nobody reads and the colour is
+   the thing being chosen. */
+.mm-swatch {
+  width: var(--control-h-sm);
+  height: var(--control-h-sm);
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  border: 1px solid transparent;
+  border-radius: var(--radius-md);
+  background: transparent;
+  cursor: pointer;
+  transition: background-color var(--motion-hover), border-color var(--motion-hover);
+}
+
+.mm-swatch:hover { background: var(--surface-hover); }
+.mm-swatch[aria-pressed='true'] { border-color: var(--border-strong); background: var(--surface-active); }
+
+.mm-swatch__dot {
+  width: 12px;
+  height: 12px;
+  border-radius: var(--radius-pill);
+  /* Against arbitrary diagram colours, not against a theme token. */
+  box-shadow: inset 0 0 0 1px rgba(0, 0, 0, 0.18);
+}
+
+/* The zoom cluster floats over the stage, bottom-right, out of the way of a
+   diagram that grows down and right. */
+.mm-zoom {
+  position: absolute;
+  right: var(--space-3);
+  bottom: var(--space-3);
+  z-index: 1;
+  box-shadow: var(--shadow-sm);
+}
+
+/* Fixed width so the row does not jitter between 70% and 100% while zooming --
+   a readout that moves is harder to read than one that is slightly too wide. */
+.mm-zoom__value {
+  min-width: 46px;
+  justify-content: center;
+  font-variant-numeric: tabular-nums;
+}
+
+.mm-hint {
+  font-size: var(--text-xs);
+  color: var(--text-tertiary);
+  white-space: nowrap;
+}
+
+/* The count of what was parsed, beside the label it qualifies. */
+.mm-count {
+  font-size: var(--text-xs);
+  color: var(--text-tertiary);
+  font-variant-numeric: tabular-nums;
+}
+
+.mermaid-modal {
+  max-width: 1060px;
+  width: 94vw;
+  max-height: 90vh;
+}
+
+.mm-templates {
+  margin-bottom: var(--space-2);
+  max-width: 100%;
+  overflow-x: auto;
+}
+
+.mm-palette { display: flex; gap: 2px; }
+
+.mm-stage-svg { width: 100%; height: 100%; min-height: 260px; }

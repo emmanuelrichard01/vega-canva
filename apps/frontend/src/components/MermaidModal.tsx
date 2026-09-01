@@ -1,10 +1,8 @@
-import React, { useEffect, useMemo, useRef, useState } from 'react';
+import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import {
   X,
   Check,
   AlertTriangle,
-  Code2,
-  Sparkles,
   ZoomIn,
   ZoomOut,
   Maximize,
@@ -13,10 +11,10 @@ import {
   ArrowUp,
   ArrowLeft,
   Wand2,
-  Palette,
   PenTool,
 } from 'lucide-react';
 import { useFocusTrap } from '../hooks/useFocusTrap';
+import { useDebouncedValue } from '../hooks/useDeferredValue';
 import {
   parseMermaidLenient,
   formatMermaid,
@@ -177,6 +175,17 @@ interface Props {
  * Senior-level Diagram from Code (Mermaid) Modal.
  * High-fidelity preview with theme presets, crisp/sketch modes, direction quick-switch, line-level diagnostics.
  */
+/**
+ * The four flow directions, in the order they read as a compass rather than as
+ * an alphabet: down, right, up, left.
+ */
+const DIRECTIONS: ReadonlyArray<{ id: FlowDirection; Icon: typeof ArrowDown; label: string }> = [
+  { id: 'TD', Icon: ArrowDown, label: 'Top to bottom' },
+  { id: 'LR', Icon: ArrowRight, label: 'Left to right' },
+  { id: 'BT', Icon: ArrowUp, label: 'Bottom to top' },
+  { id: 'RL', Icon: ArrowLeft, label: 'Right to left' },
+];
+
 export const MermaidModal: React.FC<Props> = ({
   open,
   onClose,
@@ -194,6 +203,7 @@ export const MermaidModal: React.FC<Props> = ({
 
   // Zoom & Pan State
   const [scale, setScale] = useState(1);
+  const stageRef = useRef<HTMLDivElement | null>(null);
   const [pan, setPan] = useState({ x: 0, y: 0 });
   const isDragging = useRef(false);
   const lastMousePos = useRef({ x: 0, y: 0 });
@@ -207,6 +217,60 @@ export const MermaidModal: React.FC<Props> = ({
     }
   }, [open, initialSource]);
 
+  const MIN_SCALE = 0.15;
+  const MAX_SCALE = 4;
+  const clampScale = (n: number) => Math.min(MAX_SCALE, Math.max(MIN_SCALE, n));
+
+  /**
+   * Zoom about a point, so the pixel under the cursor stays under the cursor.
+   *
+   * Zooming about the origin -- which is what `setScale(s => s + d)` does --
+   * makes the thing you were looking at slide away as you approach it, so
+   * every zoom becomes a zoom *and* a pan to find your place again.
+   */
+  const zoomAt = (nextScale: number, cx: number, cy: number) => {
+    setScale((prev) => {
+      const next = clampScale(nextScale);
+      if (next === prev) return prev;
+      setPan((p) => ({
+        x: cx - ((cx - p.x) * next) / prev,
+        y: cy - ((cy - p.y) * next) / prev,
+      }));
+      return next;
+    });
+  };
+
+  /** Zoom by a step about the middle of the stage, for the buttons and keys. */
+  const zoomByStep = (factor: number) => {
+    const box = stageRef.current?.getBoundingClientRect();
+    zoomAt(scale * factor, (box?.width ?? 0) / 2, (box?.height ?? 0) / 2);
+  };
+
+  /**
+   * Fit the whole diagram in view, which is what the reset button was named
+   * for and did not do -- it returned to 100% and origin, so a diagram larger
+   * than the stage reset to a corner of itself.
+   */
+  const fitToView = useCallback(() => {
+    const box = stageRef.current?.getBoundingClientRect();
+    if (!box || !preview) {
+      setScale(1);
+      setPan({ x: 0, y: 0 });
+      return;
+    }
+    const contentW = preview.maxX + 40;
+    const contentH = preview.maxY + 40;
+    if (!(contentW > 0) || !(contentH > 0)) return;
+
+    // A margin, so the diagram is framed rather than wedged against the edge.
+    const next = clampScale(Math.min(box.width / contentW, box.height / contentH) * 0.92);
+    setScale(next);
+    setPan({
+      x: (box.width - contentW * next) / 2,
+      y: (box.height - contentH * next) / 2,
+    });
+  }, [preview]);
+
   /**
    * Lenient for the picture, strict for the message.
    *
@@ -216,11 +280,25 @@ export const MermaidModal: React.FC<Props> = ({
    * drawing the lines that do parse and still reports the ones that do not --
    * error recovery, not error suppression.
    */
+  /**
+   * The parse runs on pauses, not on keystrokes.
+   *
+   * Parsing plus a dagre layout is milliseconds on a small graph and tens of
+   * them on a large one, and it was running synchronously on every character.
+   * The typing itself is what suffers: the textarea cannot paint the next
+   * character until the layout finishes, so the editor gets heavier exactly as
+   * the diagram gets more worth previewing.
+   */
+  const settledSource = useDebouncedValue(source, 140);
   const { graph, error, errorLine, skippedLines } = useMemo(
-    () => parseMermaidLenient(source),
-    [source]
+    () => parseMermaidLenient(settledSource),
+    [settledSource]
   );
+  /** True while the preview is a keystroke or two behind the editor. */
+  const previewPending = settledSource !== source;
   const activeTheme = DIAGRAM_THEMES[themeId] || DIAGRAM_THEMES.indigo;
+  // `TB` is mermaid's synonym for `TD`; one button owns both.
+  const currentDirection = graph?.direction === 'TB' ? 'TD' : graph?.direction;
 
   // Change flowchart direction in source
   const handleSetDirection = (dir: FlowDirection) => {
@@ -284,6 +362,27 @@ export const MermaidModal: React.FC<Props> = ({
     return { placed: placedNodes, at, clusterAt, subgraphs, maxX, maxY };
   }, [graph, renderStyle]);
 
+  /**
+   * Zoom from the keyboard, but never while the caret is in the editor --
+   * `-` and `0` are characters somebody is trying to type, and stealing them
+   * to move a picture is the kind of shortcut that gets a feature disabled.
+   */
+  useEffect(() => {
+    if (!open) return;
+    const onKey = (e: KeyboardEvent) => {
+      const el = document.activeElement?.tagName;
+      if (el === 'TEXTAREA' || el === 'INPUT') return;
+      if (e.metaKey || e.ctrlKey || e.altKey) return;
+
+      if (e.key === '+' || e.key === '=') { e.preventDefault(); zoomByStep(1.25); }
+      else if (e.key === '-' || e.key === '_') { e.preventDefault(); zoomByStep(1 / 1.25); }
+      else if (e.key === '0') { e.preventDefault(); zoomAt(1, 0, 0); }
+      else if (e.key.toLowerCase() === 'f') { e.preventDefault(); fitToView(); }
+    };
+    window.addEventListener('keydown', onKey);
+    return () => window.removeEventListener('keydown', onKey);
+  });
+
   if (!open) return null;
 
   const nodeCount = graph?.nodes.length ?? 0;
@@ -298,260 +397,89 @@ export const MermaidModal: React.FC<Props> = ({
         role="dialog"
         aria-modal="true"
         aria-labelledby="mermaid-title"
-        style={{ maxWidth: '1060px', width: '94vw', maxHeight: '90vh' }}
         onPointerDown={(e) => e.stopPropagation()}
       >
-        <header className="mermaid-modal__head" style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-          <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
-            <Code2 size={18} style={{ color: '#6366F1' }} aria-hidden />
-            <h2 id="mermaid-title" style={{ fontSize: '15px', fontWeight: 600, margin: 0 }}>
-              {replacing ? 'Edit Diagram (Mermaid)' : 'Diagram from Code (Mermaid)'}
+        <header className="mermaid-modal__head">
+          <div>
+            <h2 id="mermaid-title">
+              {replacing ? 'Edit diagram' : 'Diagram from code'}
             </h2>
+            {/* The count belongs with the title, not in a toolbar: it is what
+                was understood, not something to operate. */}
+            <span className="mm-count">
+              {graph
+                ? `${nodeCount} ${nodeCount === 1 ? 'box' : 'boxes'} · ${edgeCount} ${
+                    edgeCount === 1 ? 'connection' : 'connections'
+                  }${subgraphCount ? ` · ${subgraphCount} ${subgraphCount === 1 ? 'group' : 'groups'}` : ''}`
+                : 'Mermaid syntax'}
+            </span>
           </div>
           <button className="btn-icon" onClick={onClose} aria-label="Close">
             <X size={16} />
           </button>
         </header>
 
-        {/* Template & Palette Toolbar */}
-        <div
-          style={{
-            display: 'flex',
-            alignItems: 'center',
-            justifyContent: 'space-between',
-            gap: '12px',
-            padding: '8px 16px',
-            background: 'var(--surface-primary)',
-            borderBottom: '1px solid var(--border-divider)',
-            overflowX: 'auto',
-            flexWrap: 'nowrap',
-          }}
-        >
-          {/* Templates */}
-          <div style={{ display: 'flex', alignItems: 'center', gap: '6px', minWidth: 'max-content' }}>
-            <span style={{ fontSize: '12px', fontWeight: 500, color: 'var(--text-secondary)', display: 'flex', alignItems: 'center', gap: '4px' }}>
-              <Sparkles size={13} /> Templates:
-            </span>
-            {TEMPLATES.map((tmpl) => (
-              <button
-                key={tmpl.id}
-                type="button"
-                onClick={() => {
-                  setSource(tmpl.source);
-                  setActiveTemplate(tmpl.id);
-                }}
-                style={{
-                  fontSize: '11.5px',
-                  padding: '3px 8px',
-                  borderRadius: '6px',
-                  border: activeTemplate === tmpl.id ? '1px solid var(--border-focus)' : '1px solid var(--border-divider)',
-                  background: activeTemplate === tmpl.id ? 'var(--surface-active)' : 'transparent',
-                  color: activeTemplate === tmpl.id ? 'var(--text-primary)' : 'var(--text-secondary)',
-                  cursor: 'pointer',
-                  fontWeight: activeTemplate === tmpl.id ? 600 : 400,
-                  whiteSpace: 'nowrap',
-                  transition: 'all 0.15s ease',
-                }}
-              >
-                {tmpl.name}
-              </button>
-            ))}
-          </div>
-
-          {/* Palette Themes & Style Mode */}
-          <div style={{ display: 'flex', alignItems: 'center', gap: '10px', minWidth: 'max-content' }}>
-            {/* Theme Selector */}
-            <div style={{ display: 'flex', alignItems: 'center', gap: '4px' }}>
-              <Palette size={13} style={{ color: 'var(--text-secondary)' }} />
-              {(Object.keys(DIAGRAM_THEMES) as DiagramThemeId[]).map((tKey) => {
-                const theme = DIAGRAM_THEMES[tKey];
-                const isActive = themeId === tKey;
-                return (
-                  <button
-                    key={tKey}
-                    type="button"
-                    title={theme.name}
-                    onClick={() => setThemeId(tKey)}
-                    style={{
-                      display: 'flex',
-                      alignItems: 'center',
-                      gap: '4px',
-                      padding: '2px 6px',
-                      borderRadius: '4px',
-                      border: isActive ? '1px solid var(--border-focus)' : '1px solid transparent',
-                      background: isActive ? 'var(--surface-active)' : 'transparent',
-                      cursor: 'pointer',
-                    }}
-                  >
-                    <span
-                      style={{
-                        width: '10px',
-                        height: '10px',
-                        borderRadius: '50%',
-                        background: theme.primaryStroke,
-                        boxShadow: '0 0 0 1px rgba(0,0,0,0.1)',
-                      }}
-                    />
-                    <span style={{ fontSize: '11px', color: isActive ? 'var(--text-primary)' : 'var(--text-secondary)', fontWeight: isActive ? 600 : 400 }}>
-                      {theme.name.split(' ')[0]}
-                    </span>
-                  </button>
-                );
-              })}
-            </div>
-
-            <div style={{ width: '1px', height: '16px', background: 'var(--border-divider)' }} />
-
-            {/* Crisp vs Sketch Mode */}
-            <div style={{ display: 'flex', alignItems: 'center', gap: '2px', background: 'var(--surface-subtle)', padding: '2px', borderRadius: '6px' }}>
-              <button
-                type="button"
-                onClick={() => setRenderStyle('crisp')}
-                style={{
-                  fontSize: '11px',
-                  padding: '2px 6px',
-                  borderRadius: '4px',
-                  border: 'none',
-                  background: renderStyle === 'crisp' ? 'var(--surface-primary)' : 'transparent',
-                  color: renderStyle === 'crisp' ? 'var(--text-primary)' : 'var(--text-secondary)',
-                  fontWeight: renderStyle === 'crisp' ? 600 : 400,
-                  cursor: 'pointer',
-                  boxShadow: renderStyle === 'crisp' ? 'var(--shadow-xs)' : 'none',
-                }}
-              >
-                Crisp
-              </button>
-              <button
-                type="button"
-                onClick={() => setRenderStyle('sketch')}
-                style={{
-                  fontSize: '11px',
-                  padding: '2px 6px',
-                  borderRadius: '4px',
-                  border: 'none',
-                  background: renderStyle === 'sketch' ? 'var(--surface-primary)' : 'transparent',
-                  color: renderStyle === 'sketch' ? 'var(--text-primary)' : 'var(--text-secondary)',
-                  fontWeight: renderStyle === 'sketch' ? 600 : 400,
-                  cursor: 'pointer',
-                  boxShadow: renderStyle === 'sketch' ? 'var(--shadow-xs)' : 'none',
-                  display: 'flex',
-                  alignItems: 'center',
-                  gap: '3px',
-                }}
-              >
-                <PenTool size={10} /> Sketch
-              </button>
-            </div>
-          </div>
-        </div>
 
         <div className="mermaid-modal__body">
           {/* Left Editor Column */}
           <div className="mermaid-modal__editor">
-            {/* Editor Sub-toolbar */}
-            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '6px' }}>
-              <div style={{ display: 'flex', alignItems: 'center', gap: '6px' }}>
-                <label className="mermaid-modal__label" htmlFor="mermaid-source" style={{ margin: 0 }}>
-                  Mermaid Code
+            {/* Beside the editor, because both change the source: templates
+                replace it, direction rewrites its first line. */}
+            <div className="mm-bar">
+              <div className="mm-bar__group">
+                <label className="mermaid-modal__label" htmlFor="mermaid-source">
+                  Code
                 </label>
-                {/* Direction switcher buttons */}
-                <div style={{ display: 'flex', gap: '2px', marginLeft: '6px' }}>
-                  <button
-                    type="button"
-                    title="Layout: Top to Bottom (TD)"
-                    onClick={() => handleSetDirection('TD')}
-                    style={{
-                      padding: '2px 4px',
-                      borderRadius: '4px',
-                      fontSize: '10px',
-                      border: '1px solid var(--border-divider)',
-                      background: graph?.direction === 'TD' || graph?.direction === 'TB' ? 'var(--surface-active)' : 'transparent',
-                      cursor: 'pointer',
-                      display: 'flex',
-                      alignItems: 'center',
-                    }}
-                  >
-                    <ArrowDown size={11} /> TD
-                  </button>
-                  <button
-                    type="button"
-                    title="Layout: Left to Right (LR)"
-                    onClick={() => handleSetDirection('LR')}
-                    style={{
-                      padding: '2px 4px',
-                      borderRadius: '4px',
-                      fontSize: '10px',
-                      border: '1px solid var(--border-divider)',
-                      background: graph?.direction === 'LR' ? 'var(--surface-active)' : 'transparent',
-                      cursor: 'pointer',
-                      display: 'flex',
-                      alignItems: 'center',
-                    }}
-                  >
-                    <ArrowRight size={11} /> LR
-                  </button>
-                  <button
-                    type="button"
-                    title="Layout: Bottom to Top (BT)"
-                    onClick={() => handleSetDirection('BT')}
-                    style={{
-                      padding: '2px 4px',
-                      borderRadius: '4px',
-                      fontSize: '10px',
-                      border: '1px solid var(--border-divider)',
-                      background: graph?.direction === 'BT' ? 'var(--surface-active)' : 'transparent',
-                      cursor: 'pointer',
-                      display: 'flex',
-                      alignItems: 'center',
-                    }}
-                  >
-                    <ArrowUp size={11} /> BT
-                  </button>
-                  <button
-                    type="button"
-                    title="Layout: Right to Left (RL)"
-                    onClick={() => handleSetDirection('RL')}
-                    style={{
-                      padding: '2px 4px',
-                      borderRadius: '4px',
-                      fontSize: '10px',
-                      border: '1px solid var(--border-divider)',
-                      background: graph?.direction === 'RL' ? 'var(--surface-active)' : 'transparent',
-                      cursor: 'pointer',
-                      display: 'flex',
-                      alignItems: 'center',
-                    }}
-                  >
-                    <ArrowLeft size={11} /> RL
-                  </button>
+                <div className="mm-seg" role="group" aria-label="Flow direction">
+                  {DIRECTIONS.map(({ id, Icon, label }) => (
+                    <button
+                      key={id}
+                      type="button"
+                      className="mm-seg__btn"
+                      title={label}
+                      aria-label={label}
+                      aria-pressed={currentDirection === id}
+                      onClick={() => handleSetDirection(id)}
+                    >
+                      <Icon size={12} aria-hidden />
+                      {id}
+                    </button>
+                  ))}
                 </div>
               </div>
 
-              <div style={{ display: 'flex', alignItems: 'center', gap: '6px' }}>
+              <div className="mm-bar__group">
                 <button
                   type="button"
+                  className="mm-btn"
                   onClick={handleFormatCode}
-                  title="Auto-format / prettify Mermaid source"
-                  style={{
-                    display: 'flex',
-                    alignItems: 'center',
-                    gap: '3px',
-                    fontSize: '11px',
-                    padding: '2px 6px',
-                    borderRadius: '4px',
-                    border: '1px solid var(--border-divider)',
-                    background: 'transparent',
-                    color: 'var(--text-secondary)',
-                    cursor: 'pointer',
-                  }}
+                  title="Tidy the indentation and spacing"
                 >
-                  <Wand2 size={11} /> Format
+                  <Wand2 size={12} aria-hidden /> Format
                 </button>
-                <span style={{ fontSize: '11px', color: 'var(--text-tertiary)' }}>
-                  Cmd/Ctrl + Enter
-                </span>
               </div>
             </div>
+
+            {/* Templates seed the editor, so they live over it. A row of quiet
+                chips rather than a labelled strip: the label said "Templates:"
+                next to five buttons that are visibly templates. */}
+            <div className="mm-seg mm-templates" role="group" aria-label="Start from a template">
+              {TEMPLATES.map((tmpl) => (
+                <button
+                  key={tmpl.id}
+                  type="button"
+                  className="mm-seg__btn"
+                  aria-pressed={activeTemplate === tmpl.id}
+                  onClick={() => {
+                    setSource(tmpl.source);
+                    setActiveTemplate(tmpl.id);
+                  }}
+                >
+                  {tmpl.name}
+                </button>
+              ))}
+            </div>
+
 
             <textarea
               id="mermaid-source"
@@ -584,9 +512,63 @@ export const MermaidModal: React.FC<Props> = ({
 
           {/* Right Live Preview Column */}
           <div className="mermaid-modal__preview">
-            <span className="mermaid-modal__label">Live Preview</span>
+            {/* Palette and style sit over the preview because that is what they
+                change. They used to share a strip with the templates, which
+                change the code -- one horizontally-scrolling row asking the
+                reader to work out which half of it affected which half of the
+                dialog. */}
+            <div className="mm-bar">
+              <div className="mm-bar__group">
+                <span className="mermaid-modal__label">Preview</span>
+              </div>
+
+              <div className="mm-bar__group">
+                <div className="mm-palette" role="group" aria-label="Palette">
+                  {(Object.keys(DIAGRAM_THEMES) as DiagramThemeId[]).map((tKey) => {
+                    const t = DIAGRAM_THEMES[tKey];
+                    return (
+                      <button
+                        key={tKey}
+                        type="button"
+                        className="mm-swatch"
+                        title={t.name}
+                        aria-label={t.name}
+                        aria-pressed={themeId === tKey}
+                        onClick={() => setThemeId(tKey)}
+                      >
+                        <span
+                          className="mm-swatch__dot"
+                          style={{ background: t.primaryStroke }}
+                        />
+                      </button>
+                    );
+                  })}
+                </div>
+
+                <div className="mm-seg" role="group" aria-label="Drawing style">
+                  <button
+                    type="button"
+                    className="mm-seg__btn"
+                    aria-pressed={renderStyle === 'crisp'}
+                    onClick={() => setRenderStyle('crisp')}
+                  >
+                    Crisp
+                  </button>
+                  <button
+                    type="button"
+                    className="mm-seg__btn"
+                    aria-pressed={renderStyle === 'sketch'}
+                    onClick={() => setRenderStyle('sketch')}
+                  >
+                    <PenTool size={11} aria-hidden /> Sketch
+                  </button>
+                </div>
+              </div>
+            </div>
             <div
               className="mermaid-modal__stage"
+              ref={stageRef}
+              aria-busy={previewPending}
               onPointerDown={(e) => {
                 isDragging.current = true;
                 lastMousePos.current = { x: e.clientX, y: e.clientY };
@@ -607,13 +589,26 @@ export const MermaidModal: React.FC<Props> = ({
                 isDragging.current = false;
                 e.currentTarget.releasePointerCapture(e.pointerId);
               }}
+              /**
+               * The wheel zooms, with no modifier required.
+               *
+               * It needed Cmd/Ctrl before, which is the right rule for a whole
+               * page that also scrolls and the wrong one for a stage that does
+               * not: the gesture did nothing at all on its own, so the obvious
+               * thing to try was the thing that failed silently.
+               *
+               * Multiplicative, not additive: a fixed +0.2 is a 20% change at
+               * 1x and a 200% change at 0.1x, which is why additive zoom feels
+               * unusable at the bottom of its range.
+               */
               onWheel={(e) => {
-                if (e.metaKey || e.ctrlKey) {
-                  e.preventDefault();
-                  const delta = e.deltaY * -0.01;
-                  const newScale = Math.min(Math.max(0.1, scale + delta), 4);
-                  setScale(newScale);
-                }
+                e.preventDefault();
+                const box = e.currentTarget.getBoundingClientRect();
+                zoomAt(
+                  scale * Math.exp(-e.deltaY * 0.0015),
+                  e.clientX - box.left,
+                  e.clientY - box.top
+                );
               }}
             >
               {preview && graph ? (
@@ -622,7 +617,7 @@ export const MermaidModal: React.FC<Props> = ({
                     viewBox={`0 0 ${preview.maxX + 40} ${preview.maxY + 40}`}
                     role="img"
                     aria-label={`${nodeCount} boxes, ${edgeCount} connections`}
-                    style={{ width: '100%', height: '100%', minHeight: '260px' }}
+                    className="mm-stage-svg"
                   >
                     <g transform={`translate(${pan.x}, ${pan.y}) scale(${scale})`}>
                       <defs>
@@ -714,7 +709,7 @@ export const MermaidModal: React.FC<Props> = ({
                                   width={edge.label.length * 6.5 + 12}
                                   height={18}
                                   rx={4}
-                                  fill="#FFFFFF"
+                                  fill={activeTheme.clusterFill}
                                   stroke={activeTheme.clusterStroke}
                                   strokeWidth={1}
                                 />
@@ -759,48 +754,43 @@ export const MermaidModal: React.FC<Props> = ({
                   </svg>
 
                   {/* Zoom Controls Overlay */}
-                  <div
-                    onPointerDown={(e) => e.stopPropagation()}
-                    style={{
-                      position: 'absolute',
-                      bottom: '12px',
-                      right: '12px',
-                      display: 'flex',
-                      gap: '2px',
-                      background: 'var(--surface-primary)',
-                      border: '1px solid var(--border-divider)',
-                      borderRadius: 'var(--radius-md)',
-                      padding: '2px',
-                      boxShadow: 'var(--shadow-sm)',
-                      zIndex: 10,
-                    }}
-                  >
+                  <div className="mm-seg mm-zoom" role="group" aria-label="Zoom">
                     <button
-                      className="btn-icon"
-                      onClick={() => setScale((s) => Math.max(0.1, s - 0.2))}
-                      style={{ width: '24px', height: '24px' }}
-                      aria-label="Zoom Out"
+                      type="button"
+                      className="mm-seg__btn"
+                      onClick={() => zoomByStep(1 / 1.25)}
+                      aria-label="Zoom out"
+                      title="Zoom out  (−)"
                     >
-                      <ZoomOut size={14} strokeWidth={1.5} />
+                      <ZoomOut size={13} strokeWidth={1.75} aria-hidden />
+                    </button>
+                    {/* The readout is the reset: one control, and its label is
+                        the state it returns you from. */}
+                    <button
+                      type="button"
+                      className="mm-seg__btn mm-zoom__value"
+                      onClick={() => zoomAt(1, 0, 0)}
+                      title="Reset to 100%  (0)"
+                    >
+                      {Math.round(scale * 100)}%
                     </button>
                     <button
-                      className="btn-icon"
-                      onClick={() => {
-                        setScale(1);
-                        setPan({ x: 0, y: 0 });
-                      }}
-                      style={{ width: '24px', height: '24px' }}
-                      aria-label="Reset Zoom"
+                      type="button"
+                      className="mm-seg__btn"
+                      onClick={() => zoomByStep(1.25)}
+                      aria-label="Zoom in"
+                      title="Zoom in  (+)"
                     >
-                      <Maximize size={12} strokeWidth={1.5} />
+                      <ZoomIn size={13} strokeWidth={1.75} aria-hidden />
                     </button>
                     <button
-                      className="btn-icon"
-                      onClick={() => setScale((s) => Math.min(4, s + 0.2))}
-                      style={{ width: '24px', height: '24px' }}
-                      aria-label="Zoom In"
+                      type="button"
+                      className="mm-seg__btn"
+                      onClick={fitToView}
+                      aria-label="Fit to view"
+                      title="Fit to view  (F)"
                     >
-                      <ZoomIn size={14} strokeWidth={1.5} />
+                      <Maximize size={12} strokeWidth={1.75} aria-hidden />
                     </button>
                   </div>
                 </>
@@ -833,10 +823,12 @@ export const MermaidModal: React.FC<Props> = ({
                 ) : null}
               </>
             ) : graph ? (
+              /* The count moved to the header, beside the title it describes.
+                 Repeating it here said the same thing twice and got the
+                 plural wrong the second time ("1 clusters"). What the footer
+                 owes the reader is whether it is safe to press the button. */
               <>
-                <Check size={14} aria-hidden /> {nodeCount} {nodeCount === 1 ? 'box' : 'boxes'},{' '}
-                {edgeCount} {edgeCount === 1 ? 'connection' : 'connections'}
-                {subgraphCount > 0 ? `, ${subgraphCount} clusters` : ''}
+                <Check size={14} aria-hidden /> Ready
               </>
             ) : (
               'Nothing yet'
