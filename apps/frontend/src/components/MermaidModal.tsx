@@ -217,59 +217,6 @@ export const MermaidModal: React.FC<Props> = ({
     }
   }, [open, initialSource]);
 
-  const MIN_SCALE = 0.15;
-  const MAX_SCALE = 4;
-  const clampScale = (n: number) => Math.min(MAX_SCALE, Math.max(MIN_SCALE, n));
-
-  /**
-   * Zoom about a point, so the pixel under the cursor stays under the cursor.
-   *
-   * Zooming about the origin -- which is what `setScale(s => s + d)` does --
-   * makes the thing you were looking at slide away as you approach it, so
-   * every zoom becomes a zoom *and* a pan to find your place again.
-   */
-  const zoomAt = (nextScale: number, cx: number, cy: number) => {
-    setScale((prev) => {
-      const next = clampScale(nextScale);
-      if (next === prev) return prev;
-      setPan((p) => ({
-        x: cx - ((cx - p.x) * next) / prev,
-        y: cy - ((cy - p.y) * next) / prev,
-      }));
-      return next;
-    });
-  };
-
-  /** Zoom by a step about the middle of the stage, for the buttons and keys. */
-  const zoomByStep = (factor: number) => {
-    const box = stageRef.current?.getBoundingClientRect();
-    zoomAt(scale * factor, (box?.width ?? 0) / 2, (box?.height ?? 0) / 2);
-  };
-
-  /**
-   * Fit the whole diagram in view, which is what the reset button was named
-   * for and did not do -- it returned to 100% and origin, so a diagram larger
-   * than the stage reset to a corner of itself.
-   */
-  const fitToView = useCallback(() => {
-    const box = stageRef.current?.getBoundingClientRect();
-    if (!box || !preview) {
-      setScale(1);
-      setPan({ x: 0, y: 0 });
-      return;
-    }
-    const contentW = preview.maxX + 40;
-    const contentH = preview.maxY + 40;
-    if (!(contentW > 0) || !(contentH > 0)) return;
-
-    // A margin, so the diagram is framed rather than wedged against the edge.
-    const next = clampScale(Math.min(box.width / contentW, box.height / contentH) * 0.92);
-    setScale(next);
-    setPan({
-      x: (box.width - contentW * next) / 2,
-      y: (box.height - contentH * next) / 2,
-    });
-  }, [preview]);
 
   /**
    * Lenient for the picture, strict for the message.
@@ -361,6 +308,60 @@ export const MermaidModal: React.FC<Props> = ({
 
     return { placed: placedNodes, at, clusterAt, subgraphs, maxX, maxY };
   }, [graph, renderStyle]);
+
+  const MIN_SCALE = 0.15;
+  const MAX_SCALE = 4;
+  const clampScale = (n: number) => Math.min(MAX_SCALE, Math.max(MIN_SCALE, n));
+
+  /**
+   * Zoom about a point, so the pixel under the cursor stays under the cursor.
+   *
+   * Zooming about the origin -- which is what `setScale(s => s + d)` does --
+   * makes the thing you were looking at slide away as you approach it, so
+   * every zoom becomes a zoom *and* a pan to find your place again.
+   */
+  const zoomAt = (nextScale: number, cx: number, cy: number) => {
+    setScale((prev) => {
+      const next = clampScale(nextScale);
+      if (next === prev) return prev;
+      setPan((p) => ({
+        x: cx - ((cx - p.x) * next) / prev,
+        y: cy - ((cy - p.y) * next) / prev,
+      }));
+      return next;
+    });
+  };
+
+  /** Zoom by a step about the middle of the stage, for the buttons and keys. */
+  const zoomByStep = (factor: number) => {
+    const box = stageRef.current?.getBoundingClientRect();
+    zoomAt(scale * factor, (box?.width ?? 0) / 2, (box?.height ?? 0) / 2);
+  };
+
+  /**
+   * Fit the whole diagram in view, which is what the reset button was named
+   * for and did not do -- it returned to 100% and origin, so a diagram larger
+   * than the stage reset to a corner of itself.
+   */
+  const fitToView = useCallback(() => {
+    const box = stageRef.current?.getBoundingClientRect();
+    if (!box || !preview) {
+      setScale(1);
+      setPan({ x: 0, y: 0 });
+      return;
+    }
+    const contentW = preview.maxX + 40;
+    const contentH = preview.maxY + 40;
+    if (!(contentW > 0) || !(contentH > 0)) return;
+
+    // A margin, so the diagram is framed rather than wedged against the edge.
+    const next = clampScale(Math.min(box.width / contentW, box.height / contentH) * 0.92);
+    setScale(next);
+    setPan({
+      x: (box.width - contentW * next) / 2,
+      y: (box.height - contentH * next) / 2,
+    });
+  }, [preview]);
 
   /**
    * Zoom from the keyboard, but never while the caret is in the editor --
