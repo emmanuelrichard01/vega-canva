@@ -12,17 +12,55 @@ for nothing.
 
 ---
 
-## 0. Start here next week
+## 0. Start here
 
 If you read nothing else, read this section.
 
-**Status as of 2026-08-28 (Hardening session completed):**
+**The app is live**: Vercel (`vscanva.vercel.app`) → Render
+(`vega-canva.onrender.com`) → Neon Postgres → Cloudflare R2 → Sentry.
+That changes the arithmetic below: every item is now carrying real data.
 
-1. **Upload quotas** (§1.1) — **BUILT & TESTED.** Per-room (200MB), per-IP daily (500MB), and global (10GB) storage limits are active and enforced with 413 responses. Failed uploads cleanly delete from S3/DB.
-2. **Error tracking & Observability** (§1.4) — **BUILT.** Structured logging and Sentry initialization hooks are active on server (`apps/server/src/observability.ts`) and client (`apps/frontend/src/utils/observability.ts`).
-3. **Database backups** (§1.5) — Configure PITR on your managed Postgres provider (Neon / RDS) before opening public links.
-4. **Dashboard bundle preload** (§1.2) — **BUILT.** `modulePreload.resolveDependencies` filters heavy editor chunks out of `index.html`, cutting eager first-paint JS by ~850 kB.
-5. **Room & media reaper** (§1.3) — **BUILT.** `apps/server/src/reaper.ts` and `scripts/reap-rooms.ts` provide automated and CLI-driven batch reaping.
+**Status as of 2026-09-01.**
+
+| # | Item | State |
+| --- | --- | --- |
+| 1 | Upload quotas (§1.1) | **Done.** Per-room 200 MB, per-IP daily 500 MB, global 10 GB, enforced with 413. A failed upload deletes its object and row. |
+| 2 | Dashboard bundle preload (§1.2) | **Done.** `modulePreload.resolveDependencies` cut the eager preload set to three chunks; verified in `dist/index.html`. |
+| 3 | Room & media reaper (§1.3) | **Written, deliberately unscheduled.** Read `DEPLOYMENT.md` §7.2 before running it once, let alone on a timer. |
+| 4 | Error tracking (§1.4) | **Done, and it was not before.** See below. |
+| 5 | Database backups (§1.5) | **Still open, and now the top risk.** |
+
+### What "error tracking" meant until today
+
+`SENTRY_DSN` was set on Render and `VITE_SENTRY_DSN` on Vercel, and both
+`observability.ts` files did this:
+
+```ts
+if (dsn) {
+  logger.info('Sentry error tracking enabled for server');
+  // If Sentry Node SDK is installed in production, it initializes here.
+}
+```
+
+No SDK was installed in either app — `@sentry/node` and `@sentry/react` were
+absent from both `package.json` files. So the deployment logged a line saying
+error tracking was on, and reported nothing, for as long as it has been live.
+The log line was the one piece of evidence anybody would have checked.
+
+Both are wired properly now. The client loads the SDK by dynamic `import()`
+rather than statically, because statically it put 28 kB gzipped into the entry
+chunk — sixfold growth on the eagerly-loaded entry, undoing much of item 2 —
+and it only showed up in a build that *had* the DSN set, so a local build
+looked free. Errors thrown before the SDK arrives are buffered and flushed.
+
+`/readyz` now reports `errorTracking: true|false` from whether `init` actually
+returned, not from whether a DSN was set. **Trust that field, not a log line.**
+
+### Do this next
+
+**Confirm your Neon history window**, and write the number down. Until there
+is a known-good recovery path, it is the entire backup story for the canonical
+state of every board — and item 3 is a script that hard-deletes.
 
 Everything after that is genuinely optional until you have users.
 

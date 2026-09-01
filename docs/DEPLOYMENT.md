@@ -61,7 +61,8 @@ page somebody fixes in five minutes.
 | `PUBLIC_API_URL` | yes | Written into documents as the address of uploaded media. Changing it later orphans media in boards written before the change. |
 | `TRUST_PROXY` | if behind a proxy | Hop count. Wrong either way breaks rate limiting. |
 | `REDIS_HOST` | only for >1 instance | Without it, instances do not share documents or awareness. |
-| `AUTH_SECRET` | no | One shared token. Not authorization. |
+| `AUTH_SECRET` | no | One shared token. Not authorization. The client sends it as `VITE_AUTH_SECRET`; set both or neither, or every client is refused. |
+| `SENTRY_DSN` | no | Error tracking. `/readyz` reports `errorTracking` — trust that, not the log line. |
 | `MIN_ROOM_ID_LENGTH` | no | Default 8. Lower only to keep older short-id boards reachable. |
 | `HISTORY_FLUSH_MS` | no | Default 1000. See §4. |
 
@@ -149,16 +150,35 @@ the system.
 1. **Backups.** `room_snapshots` holds the canonical state of every board and is
    overwritten in place, with no versioning. A bad write is unrecoverable except
    partially, from `room_updates` plus `replay_base`. Nothing in this repository
-   configures point-in-time recovery. **Do not launch without this.**
+   configures point-in-time recovery.
 
-2. **Nothing is ever deleted.** No room TTL, no S3 lifecycle policy, no
-   orphaned-media reaping. `rooms.last_active_at` is written and never read.
-   Storage grows monotonically for the life of the deployment. Migration 2 adds
-   the indexes a reaper would need; the reaper itself does not exist.
+   The deployment is on Neon, which keeps its own history and can branch from a
+   past instant — check the retention window on the project and know what it is
+   before you need it, because that window is currently the entire recovery
+   story. **This is the largest single risk in the system, and it is now
+   carrying live data.**
+
+2. **The reaper is written but deliberately not scheduled.**
+   `apps/server/scripts/reap-rooms.ts` reports by default and deletes with
+   `--apply`. Two things to settle before it ever runs unattended:
+
+   - `media_refs.storage_key` was added nullable by migration 3 and never
+     backfilled. `reaper.ts` skips rows without one, so any media predating
+     that migration would have its database row cascaded away while the object
+     survives in R2 with its key now unrecoverable. Count them first:
+     `SELECT count(*) FROM media_refs WHERE storage_key IS NULL;`
+   - It hard-deletes, and §7.1 is still open. Turn on a known-good recovery
+     window before you turn on automatic deletion.
+
+   `last_active_at` is now refreshed on connection as well as on change
+   (`roomActivity.ts`), so a board people read and never edit no longer looks
+   dormant. Before that fix it was the row most likely to be collected.
 
 3. **Rate limiting is per-process.** Run two instances and each client gets a
-   full allowance per instance. It needs to move to Redis at the same time as
-   horizontal scaling, not after — see the note in `rateLimit.ts`.
+   full allowance per instance. `rateLimit.ts` contains a correct, tested
+   Redis token bucket, but **no call site passes a client**, so every request
+   takes the in-memory path. Correct for one Render instance; wire it up in
+   the same change as horizontal scaling, not after.
 
 4. **Object storage durability.** MinIO on one volume is one disk.
 
