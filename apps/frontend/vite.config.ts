@@ -41,6 +41,7 @@ export default defineConfig({
               !dep.includes('app-export') &&
               !dep.includes('vendor-fontkit') &&
               !dep.includes('vendor-motion') &&
+              !dep.includes('vendor-sentry') &&
               !dep.includes('app-physics') &&
               !dep.includes('app-pathEdit') &&
               !dep.includes('Room')
@@ -58,6 +59,11 @@ export default defineConfig({
             if (id.includes('yjs') || id.includes('@hocuspocus') || id.includes('lib0')) return 'vendor-yjs';
             if (id.includes('framer-motion')) return 'vendor-motion';
             if (id.includes('lucide-react')) return 'vendor-icons';
+            // Named so it is legible in the bundle report -- rolldown was
+            // calling it `esm-<hash>.js`, which is 463 kB of unattributed
+            // mystery. It is reached only by the dynamic `import()` in
+            // `utils/observability.ts`, so it stays off the critical path.
+            if (id.includes('@sentry')) return 'vendor-sentry';
             if (id.includes('matter-js')) return 'vendor-physics';
             if (id.includes('perfect-freehand') || id.includes('polygon-clipping')) return 'vendor-drawing';
             if (id.includes('lodash')) return 'vendor-lodash';
