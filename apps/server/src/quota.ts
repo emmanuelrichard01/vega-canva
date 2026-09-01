@@ -2,11 +2,39 @@ import type { Pool } from 'pg';
 import { DeleteObjectCommand, type S3Client } from '@aws-sdk/client-s3';
 
 /**
- * In-memory sliding 24-hour byte tracker per client IP.
+ * Per-IP upload volume, tracked over a day.
  *
- * Rate limiting requests per second stops spam bursts, but does nothing against
- * an attacker or heavy user uploading thirty 50MB files spread evenly across a day.
- * This tracks total byte volume within a 24-hour window per IP.
+ * Rate limiting requests per second stops a burst but does nothing against
+ * thirty 50MB files spread evenly across an afternoon, which costs the same
+ * in object storage and rather more in egress. This caps total bytes.
+ *
+ * ## The two backends do not agree, and the difference is visible
+ *
+ * The in-memory path is a genuine **sliding** 24-hour window: it sums the
+ * uploads whose timestamps fall inside the last day, so the allowance recovers
+ * continuously.
+ *
+ * The Redis path keys on `quota:ip:<YYYY-MM-DD>:<ip>` -- a **fixed UTC
+ * calendar day**. Every client's allowance resets at midnight UTC, together,
+ * which is both a different guarantee and a predictable moment to aim a flood
+ * at. It is written this way because `INCRBY` on a dated key is one round trip
+ * and a sliding window across instances is a sorted set with pruning; that is
+ * a reasonable trade, but it is a trade, and the previous version of this
+ * comment described only the sliding one.
+ *
+ * Nothing attaches Redis in the current deployment -- `REDIS_HOST` is unset,
+ * so `setRedis` is never called and every check takes the in-memory path.
+ * Which also means: **quotas reset when the instance restarts**, and on
+ * Render's free tier that happens whenever the service has been idle.
+ *
+ * ## Check-then-record is not atomic
+ *
+ * `checkAsync` and `recordAsync` are separate calls with an upload between
+ * them, so two requests that arrive together can both observe the same
+ * "current" and both pass. The overshoot is bounded by concurrency times file
+ * size, which is acceptable for a storage cap and would not be for anything
+ * that had to be exact. Closing it means deciding on `INCRBY`'s return value
+ * and giving the bytes back when the upload fails.
  */
 interface IpUploadWindow {
   uploads: Array<{ timestamp: number; bytes: number }>;
@@ -49,7 +77,7 @@ export class IpDailyByteTracker {
     }
   }
 
-  /** Total bytes uploaded by this IP in the last 24 hours (in-memory). */
+  /** Bytes uploaded by this IP in the last 24 hours. Sliding, in-memory. */
   public getUsage(ip: string, now = Date.now()): number {
     const window = this.clients.get(ip);
     if (!window) return 0;
@@ -76,7 +104,11 @@ export class IpDailyByteTracker {
   }
 
   /**
-   * Check if adding `incomingBytes` would exceed the daily cap (async with Redis cluster support).
+   * Check the cap against Redis when attached, falling back to memory.
+   *
+   * The fallback is not a degraded copy: `recordAsync` writes to both, so the
+   * in-memory numbers stay warm and a Redis outage narrows the window from
+   * deployment-wide to per-instance rather than dropping the cap entirely.
    */
   public async checkAsync(
     ip: string,

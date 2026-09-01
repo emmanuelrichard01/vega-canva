@@ -42,6 +42,11 @@ export default defineConfig({
               !dep.includes('vendor-fontkit') &&
               !dep.includes('vendor-motion') &&
               !dep.includes('vendor-sentry') &&
+              // The dagre/mermaid diagram engine, 63 kB, reachable only from
+              // a board. It survived the first pass of this filter and was
+              // the largest thing still being preloaded for a dashboard that
+              // cannot draw a diagram.
+              !dep.includes('app-diagram') &&
               !dep.includes('app-physics') &&
               !dep.includes('app-pathEdit') &&
               !dep.includes('Room')
