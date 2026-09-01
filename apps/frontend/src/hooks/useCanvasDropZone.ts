@@ -1,4 +1,5 @@
 import { useState, useCallback, useEffect } from 'react';
+import { notify } from '../engine/ui/notices';
 import { nanoid } from 'nanoid';
 import { editor } from '../engine/api/EditorAPI';
 import { cameraSystem } from '../engine/CameraSystem';
@@ -24,6 +25,19 @@ interface UseCanvasDropZoneOptions {
   roomId: string;
   status: string;
   setSelectedIds: React.Dispatch<React.SetStateAction<string[]>>;
+}
+
+/**
+ * What to call a file in a message.
+ *
+ * The name where there is a usable one, the kind where there is not -- a
+ * 40-character hash in a corner notice is noise, and "Your image" is the part
+ * the reader actually needs to match against what they just dropped.
+ */
+function fileLabel(file: File): string {
+  const name = file.name?.trim();
+  if (name && name.length <= 32) return name;
+  return file.type.startsWith('image/') ? 'That image' : 'That file';
 }
 
 export function useCanvasDropZone({ roomId, status, setSelectedIds }: UseCanvasDropZoneOptions) {
@@ -127,6 +141,22 @@ export function useCanvasDropZone({ roomId, status, setSelectedIds }: UseCanvasD
         index === 0 ? [objId] : current.includes(objId) ? current : [...current, objId]
       );
 
+      /**
+       * Uploading, and saying so when it does not work.
+       *
+       * The object is already on the board, drawn from a local blob URL, so
+       * every failure below *looks* like success until the page is reloaded
+       * and the picture is gone. That is the worst shape a failure can take,
+       * and this had two of them: `if (data.url)` had no `else`, so a server
+       * rejection -- a 413 over the room's storage quota, a refused file type
+       * -- did nothing at all, and the network `catch` queued the file for
+       * later without a word.
+       *
+       * Which of the two matters is the distinction the messages draw. A
+       * queued upload is fine and needs reassurance, not an alarm. A rejection
+       * is permanent for this file and the person has to know now, while they
+       * still remember what they dropped.
+       */
       try {
         const formData = new FormData();
         formData.append('media', file);
@@ -134,11 +164,33 @@ export function useCanvasDropZone({ roomId, status, setSelectedIds }: UseCanvasD
           method: 'POST',
           body: formData,
         });
-        const data = await res.json();
-        if (data.url) {
-          updateNode(objId, { src: data.url });
-          URL.revokeObjectURL(localUrl);
+
+        if (!res.ok) {
+          // The server's own words where it gave any: it knows whether this
+          // was a quota, a file type or a rate limit, and a generic
+          // "upload failed" would throw that away.
+          const reason = await res
+            .json()
+            .then((body) => (typeof body?.error === 'string' ? body.error : null))
+            .catch(() => null);
+          notify({
+            tone: 'warning',
+            message: reason ?? `${fileLabel(file)} could not be uploaded.`,
+          });
+          return;
         }
+
+        const data = await res.json();
+        if (!data?.url) {
+          notify({
+            tone: 'warning',
+            message: `${fileLabel(file)} was not saved. It will disappear when you reload.`,
+          });
+          return;
+        }
+
+        updateNode(objId, { src: data.url });
+        URL.revokeObjectURL(localUrl);
       } catch (err) {
         console.warn('Network upload failed, queuing offline media for sync...', err);
         queueOfflineMedia({
@@ -150,6 +202,10 @@ export function useCanvasDropZone({ roomId, status, setSelectedIds }: UseCanvasD
           fileType: file.type,
           mediaType: type as 'image' | 'audio',
         });
+        // `info`, not `warning`: nothing is lost and nothing is required of
+        // the reader. It is the quietest tone that still answers "did that
+        // work?", which is the question an unexplained pause creates.
+        notify({ tone: 'info', message: `${fileLabel(file)} will upload when you are back online.` });
       }
     },
     [roomId, setSelectedIds]

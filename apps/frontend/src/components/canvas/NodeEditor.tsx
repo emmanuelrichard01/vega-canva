@@ -1,4 +1,5 @@
 import React, { useEffect, useState } from 'react';
+import { labelInk } from '../../engine/model/labelInk';
 import { Html } from 'react-konva-utils';
 import { cameraSystem } from '../../engine/CameraSystem';
 import { engineEvents } from '../../engine/EventBus';
@@ -263,7 +264,11 @@ export const NodeEditor: React.FC<Props> = ({ node, onCommit, onCancel }) => {
         }
       : node.type === 'comment'
         ? { ...DEFAULT_TYPOGRAPHY, fontSize: 13 }
-        : (node.typography ?? DEFAULT_TYPOGRAPHY);
+        : node.typography
+          ? // Match the renderer exactly: an overlay that shows one colour and
+            // commits another makes the text appear to change on blur.
+            { ...node.typography, color: labelInk(node) ?? node.typography.color }
+          : DEFAULT_TYPOGRAPHY;
 
   const handleBlur = () => {
     if (cancelledRef.current) {

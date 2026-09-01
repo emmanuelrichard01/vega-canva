@@ -319,61 +319,98 @@ export const MermaidModal: React.FC<Props> = ({
    */
   const touchedRef = useRef(false);
 
-  const MIN_SCALE = 0.15;
-  const MAX_SCALE = 4;
+  /**
+   * The stage's own size, in CSS pixels.
+   *
+   * This is what makes the zoom mean anything. The SVG's `viewBox` used to be
+   * the *content* box with `width: 100%`, so the browser already scaled the
+   * diagram to fill the stage -- and the `<g transform="scale()">` then
+   * multiplied on top of that, in viewBox units. `scale` was therefore not a
+   * zoom factor at all, it was a second shrink applied to an already-fitted
+   * picture, and the readout was a number with no referent. That is the "stuck
+   * at 48%".
+   *
+   * With the viewBox equal to the stage, one viewBox unit is one pixel, the
+   * transform is the only scaling, and `scale: 1` means 1:1.
+   */
+  const [stageSize, setStageSize] = useState({ w: 0, h: 0 });
+  useEffect(() => {
+    const el = stageRef.current;
+    if (!open || !el) return;
+    const measure = () => {
+      const r = el.getBoundingClientRect();
+      setStageSize((prev) =>
+        prev.w === r.width && prev.h === r.height ? prev : { w: r.width, h: r.height }
+      );
+    };
+    measure();
+    const ro = new ResizeObserver(measure);
+    ro.observe(el);
+    return () => ro.disconnect();
+  }, [open]);
+
+  const MIN_SCALE = 0.05;
+  const MAX_SCALE = 8;
   const clampScale = (n: number) => Math.min(MAX_SCALE, Math.max(MIN_SCALE, n));
+
+  /** What a fitted view of the current diagram looks like. */
+  const fittedView = useMemo(() => {
+    if (!preview || !(stageSize.w > 0) || !(stageSize.h > 0)) return null;
+    const contentW = preview.maxX + 40;
+    const contentH = preview.maxY + 40;
+    if (!(contentW > 0) || !(contentH > 0)) return null;
+
+    // 0.92 leaves a margin, so the diagram is framed rather than wedged
+    // against the edge. Capped at 1: a small diagram is shown at life size
+    // rather than blown up to fill the panel, which would make two boxes look
+    // like a poster and change size as you typed.
+    const scale = clampScale(
+      Math.min(stageSize.w / contentW, stageSize.h / contentH, 1) * 0.92
+    );
+    return {
+      scale,
+      pan: {
+        x: (stageSize.w - contentW * scale) / 2,
+        y: (stageSize.h - contentH * scale) / 2,
+      },
+    };
+  }, [preview, stageSize.w, stageSize.h]);
 
   /**
    * Zoom about a point, so the pixel under the cursor stays under the cursor.
    *
-   * Zooming about the origin -- which is what `setScale(s => s + d)` does --
-   * makes the thing you were looking at slide away as you approach it, so
-   * every zoom becomes a zoom *and* a pan to find your place again.
+   * Both pieces of state are computed from values read here rather than from
+   * a `setPan` nested inside a `setScale` updater. An updater has to be pure:
+   * React calls it twice under StrictMode, so the nested version applied the
+   * pan twice and the view jumped on every wheel tick.
    */
   const zoomAt = (nextScale: number, cx: number, cy: number) => {
+    const next = clampScale(nextScale);
+    if (next === scale) return;
     touchedRef.current = true;
-    setScale((prev) => {
-      const next = clampScale(nextScale);
-      if (next === prev) return prev;
-      setPan((p) => ({
-        x: cx - ((cx - p.x) * next) / prev,
-        y: cy - ((cy - p.y) * next) / prev,
-      }));
-      return next;
+    setPan({
+      x: cx - ((cx - pan.x) * next) / scale,
+      y: cy - ((cy - pan.y) * next) / scale,
     });
+    setScale(next);
   };
 
   /** Zoom by a step about the middle of the stage, for the buttons and keys. */
   const zoomByStep = (factor: number) => {
-    const box = stageRef.current?.getBoundingClientRect();
-    zoomAt(scale * factor, (box?.width ?? 0) / 2, (box?.height ?? 0) / 2);
+    zoomAt(scale * factor, stageSize.w / 2, stageSize.h / 2);
   };
 
-  /**
-   * Fit the whole diagram in view, which is what the reset button was named
-   * for and did not do -- it returned to 100% and origin, so a diagram larger
-   * than the stage reset to a corner of itself.
-   */
+  /** Frame the whole diagram. */
   const fitToView = useCallback(() => {
     touchedRef.current = false;
-    const box = stageRef.current?.getBoundingClientRect();
-    if (!box || !preview) {
+    if (!fittedView) {
       setScale(1);
       setPan({ x: 0, y: 0 });
       return;
     }
-    const contentW = preview.maxX + 40;
-    const contentH = preview.maxY + 40;
-    if (!(contentW > 0) || !(contentH > 0)) return;
-
-    // A margin, so the diagram is framed rather than wedged against the edge.
-    const next = clampScale(Math.min(box.width / contentW, box.height / contentH) * 0.92);
-    setScale(next);
-    setPan({
-      x: (box.width - contentW * next) / 2,
-      y: (box.height - contentH * next) / 2,
-    });
-  }, [preview]);
+    setScale(fittedView.scale);
+    setPan(fittedView.pan);
+  }, [fittedView]);
 
   /**
    * Frame the diagram whenever it changes shape.
@@ -388,9 +425,10 @@ export const MermaidModal: React.FC<Props> = ({
    * the interface arguing with them.
    */
   useEffect(() => {
-    if (!open || !preview || touchedRef.current) return;
-    fitToView();
-  }, [open, preview, fitToView]);
+    if (!open || !fittedView || touchedRef.current) return;
+    setScale(fittedView.scale);
+    setPan(fittedView.pan);
+  }, [open, fittedView]);
 
   useEffect(() => {
     if (!open) touchedRef.current = false;
@@ -649,7 +687,8 @@ export const MermaidModal: React.FC<Props> = ({
               {preview && graph ? (
                 <>
                   <svg
-                    viewBox={`0 0 ${preview.maxX + 40} ${preview.maxY + 40}`}
+                    /* The stage, not the content: see `stageSize`. */
+                    viewBox={`0 0 ${stageSize.w || 1} ${stageSize.h || 1}`}
                     role="img"
                     aria-label={`${nodeCount} boxes, ${edgeCount} connections`}
                     className="mm-stage-svg"

@@ -1,4 +1,5 @@
 import React from 'react';
+import { labelInk } from '../../../engine/model/labelInk';
 import { Circle, Ellipse, Group, Label, Line, Path, Rect, RegularPolygon, Star, Tag, Text } from 'react-konva';
 import { DEFAULT_INK, isOpenShape, type ShapeNode } from '../../../engine/model/schema';
 import { canvasFontFamily, konvaFontStyle, konvaTextDecoration, shadowProps, shadowSpreadProps, strokeColor, strokeDashProps, strokeWidth } from './shared';
@@ -274,7 +275,10 @@ export const ShapeRenderer: React.FC<Props> = React.memo(({ node, showLabel }) =
           fontFamily={canvasFontFamily(node.typography.fontFamily)}
           fontStyle={konvaFontStyle(node.typography)}
           textDecoration={konvaTextDecoration(node.typography)}
-          fill={node.typography.color}
+          /* Derived from the node's own fill when nobody chose a colour, so
+             a label on a dark shape is legible. Same input for every viewer,
+             so this stays a document value -- see `labelInk`. */
+          fill={labelInk(node) ?? node.typography.color}
           align={node.typography.align}
           verticalAlign={node.typography.verticalAlign}
           lineHeight={node.typography.lineHeight}

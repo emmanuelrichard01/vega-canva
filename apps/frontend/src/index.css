@@ -15112,7 +15112,18 @@ body[data-zen='physics'] .forces-handle { bottom: 32px; }
 }
 
 .mm-swatch:hover { background: var(--surface-hover); }
-.mm-swatch[aria-pressed='true'] { border-color: var(--border-strong); background: var(--surface-active); }
+/* At 12px a dot cannot carry a selected state on its own, so the seat does:
+   a filled well plus a ring, which is legible without relying on being able
+   to compare five small colours. */
+.mm-swatch[aria-pressed='true'] {
+  border-color: var(--border-strong);
+  background: var(--surface-active);
+}
+
+.mm-swatch[aria-pressed='true'] .mm-swatch__dot {
+  box-shadow: inset 0 0 0 1px rgba(0, 0, 0, 0.18), 0 0 0 2px var(--surface-primary),
+    0 0 0 3px var(--border-strong);
+}
 
 .mm-swatch__dot {
   width: 12px;
@@ -15159,11 +15170,44 @@ body[data-zen='physics'] .forces-handle { bottom: 32px; }
   max-height: 90vh;
 }
 
+/* Six templates with names as long as "Git Branching Strategy" cannot fit one
+   row of a 480px column, and the first version hid the overflow behind a
+   horizontal scroll -- which is the worst of both: the options are neither
+   visible nor obviously reachable, and a sideways scrollbar inside a dialog
+   reads as a layout fault. They wrap instead. Two rows, everything visible,
+   nothing to discover. */
 .mm-templates {
+  height: auto;
+  flex-wrap: wrap;
   margin-bottom: var(--space-2);
   max-width: 100%;
-  overflow-x: auto;
 }
+
+/* The bars wrap for the same reason: at a narrow width the direction switch
+   and the Format button would otherwise push each other out of the panel.
+   The *groups* wrap too -- without that, hiding the overflow turned a
+   scrolled-away fifth palette swatch into a clipped one, which is worse:
+   a half-drawn circle reads as a rendering fault rather than as more to see. */
+.mm-bar { flex-wrap: wrap; row-gap: var(--space-2); }
+.mm-bar__group { flex-wrap: wrap; row-gap: var(--space-2); }
+
+/* Every swatch stays whole. */
+.mm-palette { flex-wrap: wrap; }
+.mm-swatch { flex: 0 0 auto; }
+
+/* Nothing in this dialog scrolls sideways. A modal that does has a sizing bug
+   somewhere, and the scrollbar hides it rather than reporting it. */
+.mermaid-modal,
+.mermaid-modal__body,
+.mermaid-modal__editor,
+.mermaid-modal__preview,
+.mermaid-modal__head,
+.mermaid-modal__foot {
+  overflow-x: hidden;
+}
+
+/* Long template names must not force the column wider than the panel. */
+.mm-seg__btn { max-width: 100%; overflow: hidden; text-overflow: ellipsis; }
 
 .mm-palette { display: flex; gap: 2px; }
 
