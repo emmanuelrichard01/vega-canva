@@ -1,6 +1,6 @@
 import type { Exporter, ExportOptions, ExportFormat } from './ExportTypes';
 import { useStore } from '../../hooks/useStore';
-import { commentsMap, metadataMap } from '../document';
+import { commentsMap, metadataMap, roomId as currentRoomId } from '../document';
 import { roomFingerprint } from '../room/roomCode';
 import { SCHEMA_VERSION } from '../model/schema';
 import { EXPORT_ENVELOPE_VERSION } from './DocumentImport';
@@ -41,9 +41,10 @@ export class JSONExporter implements Exporter {
      * short one-way fingerprint, which is all that is needed to answer "is
      * this a backup of the board I am in?". See `roomFingerprint`.
      */
-    const roomId = typeof window !== 'undefined'
-      ? window.location.pathname.split('/room/')[1]?.split(/[/?#]/)[0] ?? null
-      : null;
+    // The document layer's answer, not a second parse of the path, which
+    // returned null on an invite route and fingerprinted the export as
+    // belonging to no board at all.
+    const roomId = currentRoomId === 'home' ? null : currentRoomId;
     const title = metadataMap.get('name') ?? null;
 
     const documentData = {

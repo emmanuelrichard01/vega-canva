@@ -4,6 +4,7 @@ import { IndexeddbPersistence } from 'y-indexeddb';
 import { WS_URL } from '../../utils/endpoints';
 import { getRoomRole } from '../model/permissions';
 import { currentInvite } from '../room/invite';
+import { resolveRoomRoute } from '../room/route';
 
 /**
  * The collaborative document.
@@ -27,18 +28,20 @@ import { currentInvite } from '../room/invite';
  */
 const invite = typeof window !== 'undefined' ? currentInvite() : null;
 
-export const roomId =
-  invite?.roomId ??
-  (typeof window !== 'undefined' && window.location
-    ? window.location.pathname.split('/room/')[1] || 'home'
-    : 'home');
+const route = resolveRoomRoute(
+  typeof window !== 'undefined' ? window.location?.pathname : undefined,
+  invite?.roomId ?? null
+);
+
+export const roomId = route.roomId;
 
 export const doc = new Y.Doc();
 
-const isHome =
-  typeof window !== 'undefined' &&
-  window.location &&
-  (!window.location.pathname.startsWith('/room/') || roomId === 'home');
+/**
+ * The landing page, and nothing else. Derived with `roomId`, never beside it
+ * -- see `engine/room/route.ts` for the bug that came of asking twice.
+ */
+const isHome = route.isHome;
 
 export type ConnectionStatus = 'connecting' | 'connected' | 'disconnected';
 

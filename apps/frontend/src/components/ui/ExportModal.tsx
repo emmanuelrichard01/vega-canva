@@ -15,6 +15,7 @@ import { restoreDocument } from '../../engine/export/restoreDocument';
 import { computeContentBounds } from '../../engine/export/bounds';
 import { exportScope, scopeOptions } from '../../engine/export/exportScope';
 import { fitScale } from '../../engine/export/rasterLimits';
+import { roomId } from '../../engine/document';
 import { useFocusTrap } from '../../hooks/useFocusTrap';
 import { useStore } from '../../hooks/useStore';
 
@@ -355,9 +356,10 @@ export const ExportModal: React.FC<Props> = ({
     }
     // Held rather than applied. Replacing the board is irreversible from the
     // user's side, so it is described first and confirmed second.
-    const here = typeof window !== 'undefined'
-      ? window.location.pathname.split('/room/')[1]?.split(/[/?#]/)[0] ?? ''
-      : '';
+    // `roomId` from the document layer, not a second parse of the path: an
+    // invite opens `/i/<token>`, where the path parse yields '' and every
+    // imported file would be reported as coming from a different board.
+    const here = roomId;
     setPendingRestore({
       summary: describeImport(result.document),
       origin: describeOrigin(result.document),
