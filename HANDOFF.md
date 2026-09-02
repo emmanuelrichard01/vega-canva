@@ -2403,6 +2403,47 @@ way out because both are strings. Invariant 7 again — but the two derivations
 were of an *identity*, which is harder to spot than two derivations of a
 number.
 
+## 4n. A sketched shape was clickable only round its edge
+
+Reported as "I select a shape and it deselects and does not move, and cut,
+paste and lock do nothing" — which reads like a permissions fault and is not
+one. The user found the discriminator: it happened on **sketched shapes with a
+hachure or cross-hatch fill**.
+
+Konva takes a shape's hit area from what it *fills*. The crisp branch draws a
+filled primitive, so its interior is a target for free. The sketch branch
+draws every layer by hand and marks all of them `listening={false}` — the
+silhouette fill, the hachure strokes, the caps — leaving the outline path and
+its `hitStrokeWidth` band as the only live region. So a sketched shape was
+live near its edge and dead through the middle.
+
+Hachure and cross-hatch are the worst case because they paint the inside as
+*strokes*: nothing is filled anywhere, so a shape that plainly looks solid has
+no interior at all as far as the hit graph is concerned.
+
+**Why it presented as three unrelated bugs.** A click that misses lands on the
+stage, and a click on the stage clears the selection. So the object did not
+read as *missed*, it read as *refusing to be selected* — and with nothing
+selected, cut, paste and lock have nothing to act on and appear broken too.
+One missed hit test looked like a permissions regression across four features.
+
+The fix is a silhouette path with `fill="transparent"`: Konva paints the scene
+with the declared fill (nothing) and the hit canvas with the shape's own colour
+key, so the interior becomes a target without becoming a mark. Gated on
+`hasFill`, because a hollow sketched shape should stay edge-only — that is what
+a hollow crisp one does.
+
+`sketchHitArea.test.ts` reads the source rather than rendering, in the manner
+of `shapeLabelFont.test.ts` beside it and for the same reason: proving a hit
+region needs a real canvas and real pointer events, and a synthetic click
+passes against a control that is broken for every hand — which this session
+already learned once, on the mermaid zoom buttons.
+
+**The diagnostic worth keeping:** when several unrelated features stop working
+at once, look for one shared precondition before believing in one shared
+cause. Here it was "something is selected", and everything downstream of it
+failed together.
+
 ## 5. Next up
 
 ### 5a-0. The four things to do first

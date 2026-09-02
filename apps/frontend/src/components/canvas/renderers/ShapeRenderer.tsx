@@ -465,6 +465,34 @@ export const ShapeRenderer: React.FC<Props> = React.memo(({ node, showLabel }) =
 
     return (
       <Group>
+        {/**
+          * The hit region: the silhouette, painted in nothing.
+          *
+          * Every visible layer in this branch is `listening={false}` -- the
+          * fill, the hachure strokes, the caps -- so the *only* thing that
+          * could be clicked was the outline path and its `hitStrokeWidth`
+          * band. A sketched shape was therefore live near its edge and dead
+          * through the middle, where the crisp branch is live throughout,
+          * because Konva takes a shape's hit area from what it fills and a
+          * crisp shape fills its interior.
+          *
+          * Hachure and cross-hatch are where it bites hardest: those styles
+          * paint the inside as *strokes*, so there is no filled area anywhere
+          * and clicking the middle of a shape that plainly looks filled hits
+          * the stage instead. The click then lands on empty canvas, which
+          * clears the selection -- so the object appears to refuse selection
+          * and refuse to move, rather than appearing to be missed.
+          *
+          * `fill="transparent"` is the whole trick. Konva paints the scene
+          * with the declared fill (nothing, invisibly) but paints the *hit*
+          * canvas with the shape's own colour key, so the interior becomes a
+          * target without becoming a mark. Gated on `hasFill` so a hollow
+          * sketched shape stays edge-only, which is what a hollow crisp one
+          * does and what anyone would expect of an outline.
+          */}
+        {!open && hasFill && sketch.silhouette && (
+          <Path data={sketch.silhouette} fill="transparent" perfectDrawEnabled={false} />
+        )}
         {/* A solid fill paints the true silhouette, not the sketch: the drawn
             strokes are disjoint by design, so filling them would leave bites
             taken out of the shape wherever two failed to meet. */}
