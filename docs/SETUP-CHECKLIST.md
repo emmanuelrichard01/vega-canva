@@ -53,26 +53,23 @@ Free plan is 6 hours. Knowing the number is the point: it is how long you have
 to *notice* a problem before layer 1 stops being able to help. Raising it is a
 paid-plan change and reasonable to defer — but not to be vague about.
 
-## [ ] 3. Set `SHARE_SECRET` on Render — restricted invite links are off
-
-**Where:** Render → the API service → Environment → Add `SHARE_SECRET`, a long
-random string. `openssl rand -base64 48` is fine. Nothing else needs it; the
-frontend never sees the value.
-
-Until it is set, `POST /rooms/:roomId/invite` answers **501** and the share
-dialog says so plainly rather than pretending: the *View* and *Comment* modes
-are visible but cannot produce a link, and *Edit* — which is the room's own
-address and needs no signing — keeps working. That degradation is deliberate,
-but it means two thirds of the share feature is dark in production right now.
-
-**Rotating it invalidates every invite link already handed out**, which is the
-only revocation the model has. That is a feature, and the reason a board's
-plain room link is not a signed token.
-
 ---
 
 ## Done
 
+- [x] **`SHARE_SECRET` on Render.** Set 2026-09-02, which switches on the
+  restricted share roles. Nothing else needs the value — it stays server-side,
+  and there is no `VITE_` counterpart to add.
+  **Verify once the deploy that carries the invite route is green:**
+
+  ```sh
+  curl -i -X POST https://vega-canva.onrender.com/rooms/checkroom01/invite -H 'Content-Type: application/json' -d '{"role":"viewer","ttlSeconds":86400}'
+  ```
+
+  `200` is the key working. `501` is the key missing. `404` means the deploy
+  has not landed yet — the route shipped in the same commit as this note.
+  *Rotating the key revokes every invite link already handed out, all at once.
+  That is the only revocation a stateless token has.*
 - [x] **`SENTRY_DSN` on Render, `VITE_SENTRY_DSN` on Vercel.** Both verified
   live: `/readyz` reports `errorTracking: true`, and the deployed bundle
   contains the DSN and a lazily-loaded `vendor-sentry` chunk.

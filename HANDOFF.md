@@ -2046,15 +2046,20 @@ next to a view link would hand back everything the view link withheld. The code
 appears for *Edit* and for nothing else. A small piece of UI, and the one place
 in the dialog where an obvious convenience is the whole vulnerability.
 
-### `SHARE_SECRET` is not set in production
+### `SHARE_SECRET`, and the only revocation there is
 
-Without it the mint endpoint answers 501 and the dialog says the deployment
-cannot issue restricted links; *Edit* still works, because an edit link is the
-plain room URL and needs no token. So **two thirds of this feature is dark
-live** until the key is set — `docs/SETUP-CHECKLIST.md` item 3. Rotating the
-key is also the only revocation there is: no server-side list, no per-token
-kill. That is a fair trade for a stateless token and a bad surprise if you did
-not know it.
+Set on Render on 2026-09-02, in the same change that shipped the route it
+feeds. Without it the mint endpoint answers 501 and the dialog says the
+deployment cannot issue restricted links — *Edit* keeps working either way,
+because an edit link is the plain room URL and needs no token. That
+degradation is deliberate: the dialog reports the deployment's real
+capability rather than offering a mode it cannot honour.
+
+**Rotating the key is the only revocation that exists** — no server-side list,
+no per-token kill, no way to withdraw one link without withdrawing all of
+them. That is the price of a stateless token, and it is a fair one at this
+size. It is also a bad surprise if you did not know it, which is why it is
+written here, in `docs/SETUP-CHECKLIST.md`, and in `shareToken.ts` itself.
 
 ### The dialog itself
 
@@ -2099,26 +2104,22 @@ built stylesheet — no shift, and the title sits at the same x either way.
 
 ## 5. Next up
 
-### 5a-0. The four things to do first
+### 5a-0. The three things to do first
 
-Both of the first two are console switches, not code — nothing in the repo
-changes and nothing can be verified from here.
+The first is a console switch, not code — nothing in the repo changes and
+nothing can be verified from here.
 
 1. **Run the backup workflow once by hand.** Actions → *Database backup* → Run
    workflow, `dry_run` checked, then again unchecked. Until an object lands in
    the bucket, recovery is Neon's six-hour window and nothing else. Everything
    else in this list can wait; this is the only one where the cost of waiting
    is unbounded.
-2. **Set `SHARE_SECRET` on Render.** Until it is there, the share dialog can
-   only issue full-access links: *View* and *Comment* both answer 501 and say
-   so. The feature is built, tested and deployed, and two thirds of it is
-   switched off. `docs/SETUP-CHECKLIST.md` item 3 has the command.
-3. **Look at the mermaid modal.** The dialog was redesigned, the templates were
+2. **Look at the mermaid modal.** The dialog was redesigned, the templates were
    rewritten and the zoom was rebuilt, and the browser tab wedged at a 0x0
    viewport before the last of it could be seen. Functionally verified — all
    seven templates parse, the preview renders, the zoom steps 51 → 63 → 79 and
    fits back — but not *looked at* in its final state.
-4. **Confirm the zoom buttons respond to a real mouse.** They were broken by
+3. **Confirm the zoom buttons respond to a real mouse.** They were broken by
    pointer capture and fixed structurally; the fix could not be verified here
    because synthetic pointer events do not reach this tab at all. A capture
    listener on the whole modal recorded nothing from a real click, which is how
