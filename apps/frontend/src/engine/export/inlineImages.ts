@@ -30,6 +30,8 @@
  * dialog can say so rather than implying a self-contained file.
  */
 
+import { isLocalSrc, resolveLocalSrc } from '../../utils/pendingMedia';
+
 /** What `fetch` has to provide. Narrowed so a test can hand over a fake. */
 export type BlobFetcher = (url: string) => Promise<Blob>;
 
@@ -81,7 +83,16 @@ export async function inlineImageSources(
   await Promise.all(
     distinct.map(async (src) => {
       try {
-        embedded.set(src, await toDataUri(await fetchBlob(src)));
+        /**
+         * A `local:` src is not an address, so it must be turned into one
+         * before anybody fetches it. On the device holding the bytes this
+         * makes a not-yet-uploaded picture export correctly; anywhere else
+         * `resolveLocalSrc` returns null, the fetch of an unfetchable string
+         * throws, and it lands in `failed` -- which is the honest answer and
+         * a path this function already reports.
+         */
+        const address = isLocalSrc(src) ? resolveLocalSrc(src) ?? src : src;
+        embedded.set(src, await toDataUri(await fetchBlob(address)));
       } catch {
         // Kept as a reference. The export is then exactly as good as it was
         // before this existed, rather than failing outright.

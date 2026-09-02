@@ -6,7 +6,8 @@ import { cameraSystem } from '../engine/CameraSystem';
 import { doc, localAuthor, updateNode } from '../engine/document';
 import { calculateOptimalAudioWidth } from '../engine/model/audioPlayback';
 import { mediaUploadUrl } from '../utils/endpoints';
-import { processOfflineMediaQueue, queueOfflineMedia } from '../utils/offlineMediaQueue';
+import { hydratePendingMedia, processOfflineMediaQueue, queueOfflineMedia } from '../utils/offlineMediaQueue';
+import { localSrcFor, registerLocalMedia, releaseLocalMedia } from '../utils/pendingMedia';
 import { cellAtPoint, freeCellsFrom, gridAtPoint, placeImageInCell } from '../engine/grid/gridSlotApply';
 import { importSvg } from '../engine/clipboard/svgImport';
 
@@ -42,6 +43,13 @@ function fileLabel(file: File): string {
 
 export function useCanvasDropZone({ roomId, status, setSelectedIds }: UseCanvasDropZoneOptions) {
   const [dropActive, setDropActive] = useState(false);
+
+  // Unconditional, and before anything about the network is known: the bytes
+  // are on this device either way, and the case that hurts is precisely the
+  // one where the connection never comes back.
+  useEffect(() => {
+    hydratePendingMedia();
+  }, []);
 
   useEffect(() => {
     if (status === 'connected') {
@@ -100,7 +108,16 @@ export function useCanvasDropZone({ roomId, status, setSelectedIds }: UseCanvasD
         }
       }
 
-      const localUrl = URL.createObjectURL(file);
+      /**
+       * The id the local bytes hang off, decided before the node exists.
+       *
+       * It is the queue's key *and* the `local:` src the document carries, so
+       * there is one identifier for "this pending upload" rather than two that
+       * have to be kept in step. `queueOfflineMedia` is handed this same id
+       * below on the offline path.
+       */
+      const uploadId = nanoid();
+      const localUrl = registerLocalMedia(uploadId, file);
       const type = file.type.startsWith('image/') ? 'image' : 'audio';
       const measured = type === 'image' ? await measureImage(localUrl) : null;
       const author = localAuthor();
@@ -120,7 +137,16 @@ export function useCanvasDropZone({ roomId, status, setSelectedIds }: UseCanvasD
         y: viewCenter.y - height / 2 + index * MULTI_PLACE_STEP,
         width,
         height,
-        src: localUrl,
+        /**
+         * `local:<id>`, never the blob URL.
+         *
+         * A `blob:` URL resolves only in the tab that minted it, so writing
+         * one here published a picture nobody else could load and left a dead
+         * string in the persisted document for the author to reopen. See
+         * `pendingMedia.ts` -- the document may only hold a URL that means the
+         * same thing to every reader.
+         */
+        src: localSrcFor(uploadId),
         ...(measured ? { naturalWidth: measured.width, naturalHeight: measured.height } : {}),
         ...(type === 'audio'
           ? { durationMs: 0, waveform: [], author }
@@ -190,11 +216,15 @@ export function useCanvasDropZone({ roomId, status, setSelectedIds }: UseCanvasD
         }
 
         updateNode(objId, { src: data.url });
-        URL.revokeObjectURL(localUrl);
+        // After the write, not before: releasing first blanks the picture for
+        // as long as the document takes to come back round.
+        releaseLocalMedia(uploadId);
       } catch (err) {
         console.warn('Network upload failed, queuing offline media for sync...', err);
         queueOfflineMedia({
-          id: nanoid(),
+          // The same id the `local:` src already names, so a reload can find
+          // these bytes from the node alone.
+          id: uploadId,
           objectId: objId,
           roomId,
           fileBlob: file,

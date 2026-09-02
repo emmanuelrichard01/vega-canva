@@ -1,5 +1,6 @@
 import { updateNode } from '../engine/document';
 import { mediaUploadUrl } from './endpoints';
+import { registerLocalMedia, releaseLocalMedia } from './pendingMedia';
 
 const DB_NAME = 'vega_offline_media_db';
 const STORE_NAME = 'pending_uploads';
@@ -42,6 +43,36 @@ export const queueOfflineMedia = async (upload: PendingUpload): Promise<void> =>
   }
 };
 
+/**
+ * Put the queued bytes back within reach, so a board opened offline draws its
+ * pictures instead of a row of empty rectangles.
+ *
+ * This is the half that was missing. The blobs have always been here -- the
+ * queue has stored them since it was written -- but nothing read them back
+ * except the upload retry, so between opening the board and reconnecting the
+ * images were unrecoverable in appearance and perfectly recoverable in fact.
+ *
+ * Runs on board open, ahead of and independent of any network state: having
+ * the file is not conditional on being online, and this is the case where the
+ * person is *not* coming back online any time soon.
+ */
+export const hydratePendingMedia = async (): Promise<void> => {
+  try {
+    const db = await openDB();
+    const store = db.transaction(STORE_NAME, 'readonly').objectStore(STORE_NAME);
+    const req = store.getAll();
+    req.onsuccess = () => {
+      for (const item of (req.result || []) as PendingUpload[]) {
+        if (item.fileBlob) registerLocalMedia(item.id, item.fileBlob);
+      }
+    };
+  } catch (err) {
+    // A board with no pictures back is worse than one with them, and better
+    // than one that does not open. Every caller treats this as best-effort.
+    console.warn('Could not restore pending media from the offline queue', err);
+  }
+};
+
 export const processOfflineMediaQueue = async (): Promise<void> => {
   try {
     const db = await openDB();
@@ -68,6 +99,10 @@ export const processOfflineMediaQueue = async (): Promise<void> => {
             // One canonical field for the asset URL, so there is no second
             // copy that can be left pointing at the dead local blob.
             updateNode(item.objectId, { src: data.url });
+
+            // Only after the document holds the real URL. Releasing first
+            // would blank the picture for however long the write takes.
+            releaseLocalMedia(item.id);
 
             // Remove from queue
             const delTx = db.transaction(STORE_NAME, 'readwrite');

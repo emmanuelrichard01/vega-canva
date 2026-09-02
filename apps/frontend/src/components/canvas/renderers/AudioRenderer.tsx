@@ -4,6 +4,7 @@ import { Html } from 'react-konva-utils';
 import { Download, Pause, Play, TriangleAlert } from 'lucide-react';
 import type { AudioNode } from '../../../engine/model/schema';
 import { updateNode } from '../../../engine/document';
+import { localMediaType, useResolvedSrc } from '../../../utils/pendingMedia';
 import {
   barCountFor,
   clamp01,
@@ -196,6 +197,12 @@ export const AudioRenderer: React.FC<Props> = React.memo(({ node }) => {
     updateNode(node.id, { durationMs: Math.round((elementSeconds as number) * 1000) });
   }, [elementSeconds, node.durationMs, node.id]);
 
+  /**
+   * A `local:` src becomes a playable object URL here, or an empty string on a
+   * device that does not hold the bytes. See `pendingMedia.ts`.
+   */
+  const { src: playableSrc, pendingUpload } = useResolvedSrc(node.src);
+
   // When `node.src` updates (e.g. upload finishes or offline sync resolves), clear failed state
   useEffect(() => {
     setFailed(false);
@@ -240,17 +247,22 @@ export const AudioRenderer: React.FC<Props> = React.memo(({ node }) => {
    * to open.
    */
   const saveNote = useCallback(() => {
-    if (!node.src) return;
-    const declared = node.src.slice(5, node.src.indexOf(';'));
+    if (!playableSrc) return;
+    // Read off the resolved address, never off `node.src`: a `local:` src has
+    // no media type in it, and slicing one produced a filename extension made
+    // of the id's first characters.
+    const declared = playableSrc.startsWith('data:')
+      ? playableSrc.slice(5, playableSrc.indexOf(';'))
+      : localMediaType(node.src) ?? node.src;
     const ext = declared.includes('mp4') ? 'm4a' : declared.includes('ogg') ? 'ogg' : 'webm';
     const stamp = new Date(node.createdAt ?? Date.now()).toISOString().slice(0, 16).replace(/[:T]/g, '-');
     const link = document.createElement('a');
-    link.href = node.src;
+    link.href = playableSrc;
     link.download = `voice-note-${stamp}.${ext}`;
     document.body.appendChild(link);
     link.click();
     document.body.removeChild(link);
-  }, [node.src, node.createdAt]);
+  }, [playableSrc, node.src, node.createdAt]);
 
   const seekTo = useCallback(
     (fraction: number) => {
@@ -329,7 +341,7 @@ export const AudioRenderer: React.FC<Props> = React.memo(({ node }) => {
           data-playing={isPlaying || undefined}
           style={{ width: node.width, ['--vn-accent' as string]: node.author.color }}
         >
-          {node.src && <audio ref={attachAudio} src={node.src} preload="metadata" />}
+          {playableSrc && <audio ref={attachAudio} src={playableSrc} preload="metadata" />}
 
           <button
             type="button"
@@ -359,7 +371,12 @@ export const AudioRenderer: React.FC<Props> = React.memo(({ node }) => {
               </span>
             </div>
 
-            {failed ? (
+            {pendingUpload && !playableSrc ? (
+              /* Not an error. The bytes are on the recorder's device and the
+                 only thing missing is a network, so this must not wear the
+                 same words as a recording that will never load. */
+              <span className="vn-pending">Waiting to upload</span>
+            ) : failed ? (
               <span className="vn-error">Couldn’t load this recording</span>
             ) : (
               <div

@@ -6,6 +6,7 @@ import { meterLevel, rmsLevel, isSilent } from '../model/audioLevel';
 import { calculateOptimalAudioWidth, resampleWaveform } from '../model/audioPlayback';
 import { mediaUploadUrl } from '../../utils/endpoints';
 import { queueOfflineMedia } from '../../utils/offlineMediaQueue';
+import { localSrcFor, registerLocalMedia, releaseLocalMedia } from '../../utils/pendingMedia';
 
 /**
  * Hard stop for a single take.
@@ -391,10 +392,14 @@ export class AudioTool implements Tool {
 
       const { x, y } = this.dropPoint;
       const objId = nanoid();
-      const localUrl = URL.createObjectURL(audioBlob);
+      // One id for the pending upload: the queue's key and the `local:` src
+      // the document carries. See `pendingMedia.ts` for why a blob URL must
+      // not go into a shared document.
+      const uploadId = nanoid();
+      registerLocalMedia(uploadId, audioBlob);
       const ext = recordedType.includes('mp4') ? 'mp4' : 'webm';
 
-      let resolvedUrl = localUrl;
+      let resolvedUrl = localSrcFor(uploadId);
       let uploadSucceeded = false;
 
       try {
@@ -433,10 +438,11 @@ export class AudioTool implements Tool {
       });
 
       if (uploadSucceeded) {
-        URL.revokeObjectURL(localUrl);
+        // After `createNode` above, which has already written the real URL.
+        releaseLocalMedia(uploadId);
       } else {
         queueOfflineMedia({
-          id: nanoid(),
+          id: uploadId,
           objectId: objId,
           roomId,
           fileBlob: audioBlob,

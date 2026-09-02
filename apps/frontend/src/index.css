@@ -1821,6 +1821,15 @@ textarea:focus-visible {
   line-height: 26px;
 }
 
+/* Waiting is not failing. Same slot, same metrics, deliberately not the same
+   colour: `--status-danger` here would tell somebody their voice note was
+   lost when it is sitting on their disk waiting for a network. */
+.vn-pending {
+  font-size: var(--text-sm);
+  color: var(--status-syncing);
+  line-height: 26px;
+}
+
 .vn-speed {
   flex: 0 0 auto;
   min-width: 30px;

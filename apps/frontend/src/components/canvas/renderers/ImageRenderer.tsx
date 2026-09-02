@@ -1,6 +1,6 @@
 import React, { useEffect, useMemo, useRef } from 'react';
 import Konva from 'konva';
-import { Image as KonvaImage, Rect } from 'react-konva';
+import { Group, Image as KonvaImage, Rect, Text } from 'react-konva';
 import useImage from 'use-image';
 import type { ImageNode } from '../../../engine/model/schema';
 import { updateNode } from '../../../engine/document';
@@ -13,6 +13,7 @@ import {
   type AdjustmentId,
 } from '../../../engine/model/imageAdjustments';
 import { shadowProps } from './shared';
+import { useResolvedSrc } from '../../../utils/pendingMedia';
 
 interface Props {
   node: ImageNode;
@@ -63,11 +64,18 @@ export const ImageRenderer: React.FC<Props> = React.memo(({ node }) => {
    * and it is recoverable — the export path can say so, where a missing image
    * says nothing at all.
    */
-  const [corsImage, corsStatus] = useImage(node.src, 'anonymous');
+  /**
+   * A `local:<id>` src becomes an object URL here, or an empty string on a
+   * device that does not hold the bytes. Ordinary URLs pass through untouched.
+   * See `pendingMedia.ts`.
+   */
+  const { src: resolvedSrc, pendingUpload } = useResolvedSrc(node.src);
+
+  const [corsImage, corsStatus] = useImage(resolvedSrc, 'anonymous');
   const needsPlainRetry = corsStatus === 'failed';
   // Skipped entirely unless the first attempt failed: passing a src here
   // unconditionally would fetch every image twice.
-  const [plainImage, plainStatus] = useImage(needsPlainRetry ? node.src : '', undefined);
+  const [plainImage, plainStatus] = useImage(needsPlainRetry ? resolvedSrc : '', undefined);
 
   const image = corsStatus === 'loaded' ? corsImage : plainImage;
   const status = corsStatus === 'loaded' ? corsStatus : needsPlainRetry ? plainStatus : corsStatus;
@@ -172,24 +180,67 @@ export const ImageRenderer: React.FC<Props> = React.memo(({ node }) => {
     konva.blurRadius,
   ]);
 
-  // A broken or still-loading asset previously rendered nothing at all, which
-  // is indistinguishable from the object having been deleted. A placeholder
-  // keeps the object selectable and its bounds visible.
+  /**
+   * Three situations, not two.
+   *
+   * A broken or still-loading asset previously rendered nothing at all, which
+   * is indistinguishable from the object having been deleted. A placeholder
+   * fixed that, and then said the same thing about two states that could not
+   * be more different:
+   *
+   * - **failed** -- this picture is not coming back.
+   * - **waiting to upload** -- the bytes exist, on somebody's device, and the
+   *   only thing missing is a network. Nothing is lost.
+   *
+   * Drawn identically, the second reads as the first, and the person's
+   * reasonable conclusion is that their work was thrown away. It is the same
+   * class of mistake as a silent upload failure, running the other way: a
+   * success that looks like a loss. So a pending upload gets the accent
+   * colour, a calmer dash and a word, rather than the grey-and-dashed shape
+   * this application uses everywhere else to mean "empty".
+   */
   if (status !== 'loaded' || !image) {
+    const waiting = pendingUpload;
+    const radius = node.appearance?.cornerRadius ?? 0;
+
     return (
-      <Rect
-        width={node.width}
-        height={node.height}
-        // A fixed colour, not `var(--surface-secondary)`: Konva paints to a
-        // canvas and never resolves CSS custom properties, so that was an
-        // invalid colour and the placeholder came out unfilled. Translucent
-        // grey reads as an empty slot against both the light and dark board.
-        fill="rgba(148, 163, 184, 0.18)"
-        stroke={status === 'failed' ? '#EF4444' : '#D1D5DB'}
-        strokeWidth={1}
-        dash={[6, 4]}
-        cornerRadius={node.appearance?.cornerRadius ?? 0}
-      />
+      <Group>
+        <Rect
+          width={node.width}
+          height={node.height}
+          // A fixed colour, not `var(--surface-secondary)`: Konva paints to a
+          // canvas and never resolves CSS custom properties, so that was an
+          // invalid colour and the placeholder came out unfilled. Translucent
+          // grey reads as an empty slot against both the light and dark board.
+          fill={waiting ? 'rgba(243, 160, 36, 0.10)' : 'rgba(148, 163, 184, 0.18)'}
+          stroke={waiting ? '#F3A024' : status === 'failed' ? '#EF4444' : '#D1D5DB'}
+          strokeWidth={1}
+          // A longer, more open dash than the "empty slot" pattern, so the two
+          // are told apart at a glance and without reading the label.
+          dash={waiting ? [10, 6] : [6, 4]}
+          cornerRadius={radius}
+        />
+        {waiting && (
+          <Text
+            width={node.width}
+            height={node.height}
+            // Centred in the box rather than positioned, so it stays centred
+            // through every resize without a second calculation to keep in
+            // step with the rect above it.
+            align="center"
+            verticalAlign="middle"
+            padding={8}
+            text="Waiting to upload"
+            fontSize={13}
+            fontFamily="Inter, system-ui, sans-serif"
+            fill="#B4770F"
+            listening={false}
+            // Below roughly two lines of type the words are noise rather than
+            // information, and the amber outline already carries the meaning.
+            visible={node.height >= 56 && node.width >= 120}
+          />
+        )}
+      </Group>
     );
   }
 
