@@ -37,17 +37,56 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
-      - name: Install the Postgres 17 client
-        # The runner's bundled client trails the server, and pg_dump refuses
-        # to dump a server newer than itself -- which would fail on the day
-        # Neon upgrades, not on the day this was written. Pinned to a major so
-        # that failure is a deliberate edit rather than a surprise.
+      - name: Install a Postgres client that matches the server
+        env:
+          BACKUP_DATABASE_URL: ${{ secrets.BACKUP_DATABASE_URL }}
+        # `pg_dump` refuses to dump a server newer than itself, so this has to
+        # track the server rather than a number somebody typed once.
+        #
+        # It was pinned to a major on the reasoning that a mismatch should be a
+        # deliberate edit rather than a surprise. The surprise arrived anyway:
+        # Neon upgraded to 18, the pin said 17, and every nightly run failed --
+        # silently, because a backup nobody is watching only announces itself
+        # when it is needed. Worse, the pin was not even in force: the runner
+        # ships a PGDG client 16 at /usr/bin/pg_dump, and installing 17
+        # alongside it does not move that symlink, so the dump was being
+        # attempted with 16 the whole time.
+        #
+        # So: ask the server what it is, install that major, and put it first
+        # on PATH. `psql` is used for the question because only `pg_dump` is
+        # strict about versions -- psql connects to anything.
         run: |
+          set -euo pipefail
+
           sudo sh -c 'echo "deb http://apt.postgresql.org/pub/repos/apt $(lsb_release -cs)-pgdg main" > /etc/apt/sources.list.d/pgdg.list'
           curl -fsSL https://www.postgresql.org/media/keys/ACCC4CF8.asc | sudo gpg --dearmor -o /etc/apt/trusted.gpg.d/pgdg.gpg
           sudo apt-get update -qq
-          sudo apt-get install -y --no-install-recommends postgresql-client-17
-          pg_dump --version
+
+          if ! command -v psql >/dev/null; then
+            sudo apt-get install -y --no-install-recommends postgresql-client
+          fi
+
+          MAJOR="$(psql "$BACKUP_DATABASE_URL" -tAc 'SHOW server_version' | cut -d. -f1 | tr -dc '0-9')"
+          if [ -z "$MAJOR" ]; then
+            echo "Could not read the server version. Is BACKUP_DATABASE_URL set and reachable?" >&2
+            exit 1
+          fi
+          echo "Server is PostgreSQL $MAJOR; installing the matching client."
+
+          sudo apt-get install -y --no-install-recommends "postgresql-client-${MAJOR}"
+
+          # Ahead of the runner's own client, which is what the old step failed
+          # to do. `$GITHUB_PATH` applies to every later step, including the
+          # dump itself.
+          echo "/usr/lib/postgresql/${MAJOR}/bin" >> "$GITHUB_PATH"
+          export PATH="/usr/lib/postgresql/${MAJOR}/bin:$PATH"
+
+          CLIENT="$(pg_dump --version | tr -dc '0-9. ' | awk '{print $NF}' | cut -d. -f1)"
+          echo "pg_dump is $(pg_dump --version)"
+          if [ "$CLIENT" -lt "$MAJOR" ]; then
+            echo "pg_dump ${CLIENT} cannot dump a PostgreSQL ${MAJOR} server." >&2
+            exit 1
+          fi
 
       - name: Back up
         env:
