@@ -88,6 +88,76 @@ export function encodeMention(name: string, authorId: string): string {
 }
 
 /**
+ * The two forms a message body takes, and why the composer needs both.
+ *
+ * **Stored** is `@[Dana Ito](author_7)`: the name as it was written *and* the
+ * id, because a mention has to survive the person renaming themselves without
+ * silently rewriting what somebody said a year ago.
+ *
+ * **Display** is `@Dana Ito`: what a person reads.
+ *
+ * The composer used to hold the stored form directly in its `<textarea>`, on
+ * the reasoning that rendering the pretty form needs a contenteditable layer
+ * and that is a much larger surface than this feature justifies. The
+ * reasoning is right and the conclusion was wrong -- there is a third option.
+ * Keep the textarea plain, put the *display* form in it, and carry the ids
+ * beside it in a map rather than inline in the text. So picking a name now
+ * writes `@Dana Ito` where it used to write `@[Dana Ito](1873456102)`, which
+ * is what somebody typing a comment was actually confronted with.
+ *
+ * The map is keyed on the display text a pick inserted. A name typed by hand
+ * that was never picked stays plain text, which is correct: nobody was chosen.
+ * Longest name first when re-encoding, so "Dana" cannot claim the opening of
+ * "Dana Ito".
+ */
+export type MentionMap = ReadonlyMap<string, string>;
+
+/** Stored form to what the composer shows, plus the ids to put back. */
+export function toDisplayForm(stored: string): { text: string; mentions: Map<string, string> } {
+  const mentions = new Map<string, string>();
+  let text = '';
+
+  for (const segment of parseMessage(stored)) {
+    if (segment.kind === 'text') {
+      text += segment.text;
+    } else {
+      mentions.set(segment.text, segment.authorId);
+      text += `@${segment.text}`;
+    }
+  }
+
+  return { text, mentions };
+}
+
+/** What the composer shows back to the stored form. */
+export function toStoredForm(display: string, mentions: MentionMap): string {
+  if (mentions.size === 0) return display;
+
+  // Longest first: a shorter name that prefixes a longer one would otherwise
+  // match the start of it and leave the remainder dangling as loose text.
+  const names = [...mentions.keys()].sort((a, b) => b.length - a.length);
+
+  let out = '';
+  let i = 0;
+
+  outer: while (i < display.length) {
+    if (display[i] === '@') {
+      for (const name of names) {
+        if (display.startsWith(name, i + 1)) {
+          out += encodeMention(name, mentions.get(name) as string);
+          i += 1 + name.length;
+          continue outer;
+        }
+      }
+    }
+    out += display[i];
+    i += 1;
+  }
+
+  return out;
+}
+
+/**
  * The `@…` fragment the caret currently sits in, if any.
  *
  * Returns the range to replace when a suggestion is picked. An `@` only opens

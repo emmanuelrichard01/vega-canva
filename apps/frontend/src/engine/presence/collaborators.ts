@@ -63,6 +63,22 @@ export const ACTIVITY_LABEL: Partial<Record<ActivityKind, string>> = {
 /** One other person in the room, normalized from their awareness state. */
 export interface Collaborator {
   clientId: number;
+  /**
+   * Their **durable** author id, the one comments and nodes are stamped with.
+   *
+   * `clientId` is a fresh random number every session, so it can address a
+   * live tab and nothing else. This was simply dropped on the way in, which
+   * left callers reaching for `clientId` when they wanted a person -- and the
+   * mention picker did exactly that. Mentioning somebody who was *online*
+   * stored their session number, so `mentionsMe` (which compares against the
+   * durable id) never matched and "mentioned you" never appeared for the
+   * common case. It also listed one person twice, once per id space, whenever
+   * they had both written a comment and were still in the room.
+   *
+   * Falls back to `clientId` for a peer whose awareness predates this field,
+   * which is no worse than what it replaced.
+   */
+  id: string;
   name: string;
   /** Their raw identity colour. Chips derive readable colours from it. */
   color: string;
@@ -196,6 +212,9 @@ export function readCollaborators(
     const name = typeof state.user.name === 'string' && state.user.name ? state.user.name : 'Guest';
     out.push({
       clientId,
+      id: typeof state.user.id === 'string' && state.user.id
+        ? state.user.id
+        : String(clientId),
       name,
       color: typeof state.user.color === 'string' ? state.user.color : FALLBACK_COLOR,
       initials: initialsFor(name),

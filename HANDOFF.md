@@ -359,6 +359,41 @@ Each was learned from a real defect here and is documented at its source.
     learns the wrong thing about one of them, and it is invisible to every test
     here. The dock's tools (`ToolWorkspace.tsx`) own their glyphs; grep before
     you pick one for the rail.
+17. **The document may only hold a value that means the same thing to every
+    reader.** Invariant 5 says ephemeral state stays out of the document; this
+    is the sharper edge of the same rule, because the offender here *looks*
+    like content. `URL.createObjectURL(file)` produces a syntactically perfect
+    URL that resolves only in the tab that minted it — so a dropped image drew
+    for its author and was a grey placeholder for everybody else, and came back
+    dead after any reload. A `local:` reference goes in the document instead
+    (`pendingMedia.ts`), deliberately not fetchable so nothing loads it and
+    quietly fails. Before you write a string into the CRDT, ask what it means
+    on somebody else's machine tomorrow.
+18. **Enforce a permission on the write path, never on the controls.**
+    `mutations.ts` is invariant 1, so it is the only place a rule can be stated
+    once and be true everywhere. Gating controls had already failed: tools and
+    dragging were gated, the contextual rail was not, and a viewer could
+    recolour shapes — writes that landed locally and were dropped by a
+    read-only server, forking their board from everyone else's while looking
+    like they worked. **A divergence that resembles success is worse than a
+    refusal.** Hiding controls is presentation; it follows the rule rather than
+    being it. See `writeGate.test.ts`, and §4k for why "just use focus mode"
+    is not an answer.
+19. **"Fine on my end" means somebody has a private cache.** Three of them here:
+    the Yjs doc in `y-indexeddb`, the offline media queue, and `localStorage`
+    board covers. Each makes one participant's view survive something everybody
+    else's does not, so a fault that would be obvious becomes a report about
+    *other people's* screens. Every empty-board bug this project has had was
+    this shape (§4j). When a report is one-sided, find the cache before you
+    read any other code.
+20. **A correlation offered with a bug report is evidence about what the
+    reporter did, not about where the fault is.** "Boards that were backed up
+    and restored show nothing to other people" sent a day's suspicion at the
+    restore, which turned out to be correct on both counts that could be
+    checked — production snapshots held real objects, and a two-document sync
+    test agreed. The reporter had simply been sharing restored boards. Take the
+    symptom seriously and the attribution as a hypothesis.
+
 Konva specifics that have each cost a bug: `fillPriority` must be set on every
 branch (Konva leaves stale fill props in place, and React does not unset props
 it stops passing); filters need an explicit `cache()` and the cache must be
@@ -2033,10 +2068,12 @@ mostly because its copy over-promised.
 
 `readOnly` is set for `viewer` only. A commenter has to write to the Y.Doc —
 that is where comments live — so the wire cannot tell a comment from a move.
-The restriction is the toolset in `permissions.ts` and nothing more. It is an
-honest interface, not a gate, and it is the next thing to fix if comments ever
-matter more than they do now; the fix is a document-level write filter, not a
-connection flag.
+The restriction is `permissions.ts` plus the write-path gate added in §4k, so
+a commenter is now refused object edits *by this client* rather than merely
+not offered them. That is a real improvement and still not a gate: the wire
+carries a commenter's updates, and a different client could send anything. The
+fix, if comments ever matter more than they do now, is a document-level write
+filter on the server, not a connection flag.
 
 ### The room code is hidden for restricted roles
 
@@ -2131,24 +2168,263 @@ original problem precisely where finding things is hardest. Two routes and no
 added chrome won. Revisit this if the dashboard ever becomes somewhere people
 go often, rather than somewhere they leave once.
 
+## 4j. Three ways a board looked empty when it was not
+
+All three shipped in one session, all three produce the same report — "fine on
+my end, nothing on theirs" — and they had nothing to do with each other. Worth
+keeping together, because the *next* time somebody says that, this is the list
+to walk.
+
+### 4j-1. Every invite link opened an empty board
+
+`doc.ts` answered one question twice. `roomId` resolved from the invite first
+and the path second; the separate decision "is this the landing page"
+re-derived it by asking whether the path began `/room/`:
+
+```text
+/i/<token>    roomId -> the room in the token    isHome -> true
+```
+
+`isHome` calls `provider.disconnect()` and skips `IndexeddbPersistence`, so an
+invited person opened a board that could never receive a document and had no
+cache to fall back on. **Every shared link, every role**, and nothing logged a
+failure because the socket was closed deliberately.
+
+It is `engine/room/route.ts` now — a pure function, `isHome` derived from
+`roomId` so the two cannot contradict — and `route.test.ts` asserts the
+invariant directly rather than sampling it: `isHome` is exactly "there is no
+board here", across every path and both invite states.
+
+**Why it had no test, which is the part worth carrying forward.** `doc.ts`
+runs its side effects at import: a `Y.Doc`, a WebSocket provider, an IndexedDB
+connection. Nothing in it could be exercised without opening a socket, so a
+four-line decision went unwritten because there was nowhere cheap to write it.
+Extracting the pure part fixed both problems at once, and the same move
+unlocked `writeGate.test.ts` and `restoreSync.test.ts` later the same day —
+**mock `doc.ts` alone and the whole document layer becomes testable.**
+
+Two further callers were re-parsing the path for the same room id and returned
+an empty string and `null` on an invite route: the import dialog reported every
+file as coming from a different board, and a JSON export fingerprinted itself
+as belonging to none.
+
+### 4j-2. The server threw away everything since its last debounced write
+
+`onStoreDocument` is debounced. The shutdown path drained the history buffer,
+ended the Postgres pool and exited **without ever telling Hocuspocus to store
+what it was holding** — so a deploy, a restart or a free-tier spin-down
+discarded every edit since the last write. The comment sitting in that
+function said "the canonical document lives in `room_snapshots`". It does.
+Nothing was making sure it arrived.
+
+Worse, and the reason it was total rather than occasional: the draining lived
+inside `httpServer.close(async () => ...)`. That callback waits for every
+existing connection to end, and **WebSocket connections do not end on their
+own** — so on any instance with a client attached it fired after the 10-second
+forced-exit timer, or never. None of the draining ran.
+
+Shutdown now closes connections, calls `flushPendingStores()`, and waits for
+open documents to reach zero before touching the pool — `pool.end()` first
+would kill the connections mid-write and hand the loss straight back.
+
+**The symptom is one-sided, and that is the diagnostic.** The person editing
+keeps everything, because `y-indexeddb` holds their copy on their own machine;
+their board looks complete and always will. Everyone else reads the server
+snapshot. *"Fine on my end" is the shape of every bug where one side has a
+private cache* — and this project now has three of them (the Yjs doc cache,
+the offline media queue, and `localStorage` board covers). Suspect that class
+first.
+
+### 4j-3. Media that was on disk and looked deleted
+
+A dropped file wrote `URL.createObjectURL(file)` straight into the node's
+`src`, which is to say into the **shared** document. A `blob:` URL resolves
+only in the tab that minted it, so every collaborator received a URL meaning
+nothing — grey placeholder immediately, while the author saw a photograph —
+and the persisted document restored a dead `blob:` string after any reload.
+The bytes were in the upload queue on disk the whole time and nothing looked
+for them.
+
+The rule this establishes, and it generalises past media: **the document may
+only hold a URL that means the same thing to every reader.** It is the content
+invariant (a fact in the document must not resolve per viewer) in a costume
+that gets past review, because a blob URL is a syntactically perfect URL.
+
+`local:` plus an upload id is what goes in the document now — deliberately
+*not* fetchable, so nothing loads it and quietly fails, and any code that has
+not been taught about it cannot mistake it for an address. `pendingMedia.ts`
+resolves it for the one device holding the bytes; `hydratePendingMedia()` reads
+the queue on board open, unconditionally and before any network state, because
+the case that hurts is the one where the connection is not coming back.
+
+And the placeholder told two opposite states apart in no way at all. **Failed**
+means this is not coming back; **waiting** means nothing is lost. Drawn
+identically, the second reads as the first, and the reasonable conclusion is
+that the work was thrown away — a success that looks like a loss, which is the
+silent-upload-failure bug running the other way.
+
+### What restore turned out not to be
+
+Worth recording because it cost the most time. The report named restored
+boards specifically, so the restore was the obvious suspect, and it was
+innocent on both counts checked:
+
+- **Production snapshots decode to real boards** — 33, 19, 80, 146, 360
+  objects. The write path was working.
+- **`restoreSync.test.ts`** drives a real restore into a real `Y.Doc` and
+  replays it into a second document *both* ways a collaborator can arrive:
+  live incremental updates, and the encoded snapshot the server stores. Both
+  agree, including a replace that reuses the ids it is overwriting — the case
+  most likely to encode into something a peer resolves differently.
+
+The lesson is not "check before fixing", which everybody already agrees with.
+It is that **a correlation offered with a bug report is evidence about what the
+reporter did, not about where the fault is.** They had been sharing restored
+boards; the boards being restored was incidental.
+
+## 4k. A permission that was enforced in some places
+
+Tools and dragging were gated. The contextual rail was not, and neither was
+the properties panel — so a viewer could set a fill, embolden a label and
+italicise text. Those writes landed in their local document and were then
+dropped by a server that had marked the connection read-only. **Their copy of
+the board forked from everyone else's and, to them, looked like it had
+worked.** A divergence that resembles success is a worse failure than a
+refusal.
+
+### The gate belongs on the write path
+
+`mutations.ts` is invariant 1 — the only write path into the document — which
+makes it the one place a permission can be enforced once and be true
+everywhere: the rail, the panel, the keyboard, the palette, and whatever gets
+added next year by somebody who never read the file. Same argument
+`ToolManager.setActiveTool` makes for tools, same reason. Reactions stay open
+to a commenter, being nearer a comment than an edit.
+
+`writeGate.test.ts` pins it by mocking **only** `doc.ts`, so the real CRDT and
+the real gate are under test rather than a mock of them.
+
+### "Enforce focus mode for viewers" — asked, and declined
+
+Focus mode is a *viewing preference the person can switch straight back off*,
+and hiding a button has never stopped the shortcut behind it. A permission
+undoable from the View menu is decoration — which is exactly the mistake these
+roles started out making, when the client picked its own role and the server
+believed it. Right instinct (a viewer should not see edit chrome), wrong
+mechanism: hiding is presentation, and it follows the rule rather than being
+it.
+
+### Enforced and never announced
+
+Nothing on screen said any of this was deliberate. Missing tools, objects that
+will not move and a dead keyboard are each indistinguishable from a broken
+application, and that is the conclusion a person reasonably reaches. **This is
+invariant 6 backwards** — the usual failure is a capability declared and never
+honoured; this is one honoured and never declared, which is just as confusing
+and rather more alarming, because the interface is taking things away without
+saying so.
+
+Three layers, answering the question at three different moments:
+
+1. **A chip in the header** — the standing answer. Amber, because a restricted
+   role is a state and not a fault. Opens a panel saying what is and is not
+   allowed, and why. **Nothing at all for an editor**: a permanent "Can edit"
+   badge is standing chrome for the state everybody already assumes.
+2. **At the moment of the attempt.** `ToolManager` refused in silence.
+   Reaching for a tool *is* the question "why can't I draw?" being asked, and
+   it was the moment the interface said least. Throttled, because refusal
+   arrives in bursts and three thwarted clicks are one question.
+3. **No "Request access" button.** There are no accounts, so it would send a
+   request to nobody. The panel says the honest thing instead: access travels
+   as links, and whoever sent this one can send another.
+
+Guarding `notices.ts` against a missing `window` came with layer 2 — only the
+expiry clock needs a DOM, and reaching for one unguarded made every module
+that notifies untestable outside a browser.
+
+## 4l. The activity feed, removed
+
+It announced every edit in the bottom-left corner, and its most common line
+was "made an edit" — which names neither what changed nor where. The case that
+fired most often carried no information, and on a canvas that corner is
+workspace rather than chrome.
+
+The same question is already answered better twice: presence answers "who is
+doing something, and where" spatially, with cursors, selection outlines and
+the avatar row; Time Travel answers "what changed" properly for the far rarer
+moment somebody needs it. A feed sits between the two and beats neither. The
+shared authoring log it read is still written and still feeds replay.
+
+## 4m. Mentions showed an id, and never notified anybody
+
+Two bugs behind one report ("typing @ and picking a name shows a random
+number"), and the second was the expensive one.
+
+### What you were looking at
+
+`MentionInput` put the **stored** form straight into its `<textarea>`, so
+accepting a suggestion replaced what you had typed with
+`@[Dana Ito](1873456102)` and left it there while you finished the sentence.
+Editing an existing message handed the same markup back into the box.
+
+The reasoning on the original was that rendering the pretty form needs a
+contenteditable rich-text layer, which is a far larger and buggier surface
+than the feature justifies. That is true, and it skipped the third option:
+**keep the textarea plain, show the display form in it, and carry the ids in a
+map beside the text rather than inline in it.** `toDisplayForm` /
+`toStoredForm` own the conversion, `value` and `onChange` are still the stored
+form, and nothing outside the component moved.
+
+Two details in the encode worth keeping: names are re-encoded **longest
+first**, or "Dana" claims the opening of "Dana Ito" and strands the rest; and
+an `@name` nobody picked from the list stays plain text, because nobody was
+chosen and `dana@example.com` is not a mention.
+
+### The one that actually mattered
+
+The candidate list keyed live collaborators by `clientId.toString()` and past
+authors by `authorId` — **two different id spaces in one map.** `clientId` is
+a fresh random number per session. So mentioning somebody who was *online*
+stored their session number, and `mentionsMe` compares against the durable
+author id: **"mentioned you" never appeared for anyone mentioned while they
+were in the room**, which is the overwhelmingly common case. The same person
+also appeared twice in the picker whenever they had both written a comment and
+were still connected.
+
+Awareness was carrying the durable id all along (`Room.tsx` publishes
+`{id, name, color}` and the comment there says exactly why). `readCollaborators`
+dropped it, so callers reached for `clientId` because it was the only id on
+offer. `Collaborator.id` exists now, falling back to `clientId` for a peer
+whose awareness predates it.
+
+**The shape to remember:** when a type exposes one identifier and the domain
+has two, every caller silently gets the wrong one, and nothing type-checks its
+way out because both are strings. Invariant 7 again — but the two derivations
+were of an *identity*, which is harder to spot than two derivations of a
+number.
+
 ## 5. Next up
 
-### 5a-0. The three things to do first
+### 5a-0. The four things to do first
 
-The first is a console switch, not code — nothing in the repo changes and
-nothing can be verified from here.
-
-1. **Run the backup workflow once by hand.** Actions → *Database backup* → Run
+1. **Confirm sharing works end to end, on the deploy that carries the shutdown
+   flush.** Three separate faults made a shared board look empty (§4j) and all
+   three are fixed, but only the first was ever reproduced here — the other two
+   were found by reading and by querying production. Open a board, add
+   something, share a **View** link, and check a second browser sees it *and*
+   is refused an edit. Then redeploy the server and check it again: that is the
+   one that proves §4j-2, and it cannot be proven any other way.
+2. **Run the backup workflow once by hand.** Actions → *Database backup* → Run
    workflow, `dry_run` checked, then again unchecked. Until an object lands in
    the bucket, recovery is Neon's six-hour window and nothing else. Everything
    else in this list can wait; this is the only one where the cost of waiting
    is unbounded.
-2. **Look at the mermaid modal.** The dialog was redesigned, the templates were
+3. **Look at the mermaid modal.** The dialog was redesigned, the templates were
    rewritten and the zoom was rebuilt, and the browser tab wedged at a 0x0
    viewport before the last of it could be seen. Functionally verified — all
    seven templates parse, the preview renders, the zoom steps 51 → 63 → 79 and
    fits back — but not *looked at* in its final state.
-3. **Confirm the zoom buttons respond to a real mouse.** They were broken by
+4. **Confirm the zoom buttons respond to a real mouse.** They were broken by
    pointer capture and fixed structurally; the fix could not be verified here
    because synthetic pointer events do not reach this tab at all. A capture
    listener on the whole modal recorded nothing from a real click, which is how

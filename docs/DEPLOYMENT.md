@@ -143,6 +143,36 @@ If the database is unreachable the buffer caps and drops the oldest entries.
 Live sync is the product; history is a convenience, and the convenience is what
 gets dropped rather than the process running out of memory.
 
+### The document, which was not flushed at all
+
+The paragraph above leans on "the canonical state is `room_snapshots`", and
+that was true and unprotected. Hocuspocus's persistence is **debounced**, and
+the shutdown path drained the history buffer, closed the Postgres pool and
+exited without ever asking it to store what it was holding. **A deploy, a
+restart or a free-tier spin-down discarded every edit since the last debounced
+write** — the document, not the scrubber.
+
+Two things made it total rather than occasional:
+
+- The draining ran inside `httpServer.close(async () => ...)`, whose callback
+  waits for every existing connection to end. WebSocket connections do not end
+  on their own, so on any instance with a client attached that callback fired
+  after the ten-second forced-exit timer, or never.
+- Nothing called `flushPendingStores()`.
+
+Shutdown now closes connections first (a client still attached can write during
+the flush), calls `flushPendingStores()`, and waits for the open-document count
+to reach zero before `pool.end()` — closing the pool first kills the
+connections mid-write and hands the loss straight back. There is an eight
+second backstop so one board that refuses to store cannot take the rest with
+it.
+
+**Why nobody reported it as data loss.** The person editing keeps everything:
+`y-indexeddb` holds their copy on their own machine, so their board looks
+complete and always will. Only other people see the gap, which arrives as
+"the board is empty on their end" rather than as anything resembling a server
+fault.
+
 ---
 
 ## 5. Schema

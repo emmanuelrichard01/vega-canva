@@ -67,8 +67,10 @@ export const CommentsOverlay: React.FC<CommentsOverlayProps> = ({
   const mentionCandidates = useMemo<MentionCandidate[]>(() => {
     const byId = new Map<string, MentionCandidate>();
     for (const person of collaborators) {
-      byId.set(person.clientId.toString(), {
-        id: person.clientId.toString(),
+      // The durable author id, never `clientId`. A mention has to still name
+      // the same person tomorrow, and `mentionsMe` compares against this one.
+      byId.set(person.id, {
+        id: person.id,
         name: person.name,
         color: person.color,
       });

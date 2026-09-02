@@ -11,6 +11,15 @@
         ],
         "createdAt": "2026-08-27T17:49:43.707Z",
         "reason": "Pure-arithmetic test fixture: StyledCell requires a fill, nothing in the file renders, and the value is never read by any function under test"
+      },
+      {
+        "rule": "broken-image",
+        "value": "*",
+        "files": [
+          "apps/frontend/src/utils/pendingMedia.ts"
+        ],
+        "createdAt": "2026-09-02T08:50:36.875Z",
+        "reason": "User confirmed: TypeScript module with no JSX; the match is prose in a doc comment mentioning an img element"
       }
     ]
   }

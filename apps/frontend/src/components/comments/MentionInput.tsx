@@ -1,9 +1,10 @@
-import React, { useCallback, useMemo, useRef, useState } from 'react';
+import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { initialsFor } from '../../engine/presence/collaborators';
 import {
   activeMentionQuery,
-  encodeMention,
   rankMentions,
+  toDisplayForm,
+  toStoredForm,
   type MentionCandidate,
 } from '../../engine/comments/threads';
 
@@ -16,13 +17,24 @@ import {
  * when you dismiss a suggestion are both maddening, and the two are one
  * keystroke apart.
  *
- * The value is the **stored** form — `@[Dana Ito](user_7)` — not what is on
- * screen. Rendering the pretty form inside a `<textarea>` is not possible
- * without a contenteditable rich-text layer, and that is a much larger and
- * much buggier surface than this feature justifies. The trade is that a
- * half-typed mention looks like markup for the moment before it is picked;
- * once picked, the token is atomic to backspace because it deletes as a run of
- * characters, which is the same thing every plain-text mention field does.
+ * ## The textarea shows `@Dana Ito`, and the props stay the stored form
+ *
+ * This component used to put the **stored** form straight into the textarea,
+ * so picking a name from the picker replaced what you had typed with
+ * `@[Dana Ito](1873456102)` and left it sitting there while you finished the
+ * sentence. The justification was that rendering the pretty form needs a
+ * contenteditable rich-text layer, which is a far larger and buggier surface
+ * than this feature justifies — true, and it skips the third option: keep the
+ * textarea plain, show the *display* form in it, and carry the ids in a map
+ * beside the text instead of inline in it.
+ *
+ * So the conversion lives here and the boundary does not move. `value` and
+ * `onChange` are still the stored form, which is what the document holds and
+ * what every caller already passes; only what a person looks at changed.
+ *
+ * The map is seeded from `value` on the way in, so **editing an existing
+ * message** shows real names too — that path handed the raw markup back into
+ * the box as well.
  */
 
 interface MentionInputProps {
@@ -55,6 +67,51 @@ export const MentionInput: React.FC<MentionInputProps> = ({
   const ownRef = useRef<HTMLTextAreaElement>(null);
   const ref = inputRef ?? ownRef;
 
+  /**
+   * What is in the box, and the ids for the names in it.
+   *
+   * Held here rather than derived from `value` on every render, because the
+   * mapping is one-way: display text plus ids gives the stored form, and the
+   * stored form gives display text — but a re-derivation on each keystroke
+   * would drop the ids of any mention the person has since typed *around*.
+   */
+  const [display, setDisplay] = useState(() => toDisplayForm(value).text);
+  const mentions = useRef(toDisplayForm(value).mentions);
+
+  /** The last stored string this component sent up. See the effect below. */
+  const lastEmitted = useRef(value);
+
+  /**
+   * Adopt a `value` this component did not produce.
+   *
+   * The parent clears the box after a submit and loads a different message
+   * when an edit starts, and both must replace what is on screen. An ordinary
+   * keystroke must not: it arrives back as the same string that was just sent
+   * up, and re-deriving the display text from it would reset the caret to the
+   * end mid-sentence.
+   *
+   * Comparing against what was last emitted distinguishes the two exactly, and
+   * without reading `display` — so the effect depends on `value` alone and
+   * says what it means, rather than depending on state it must not react to.
+   */
+  useEffect(() => {
+    if (lastEmitted.current === value) return;
+    const next = toDisplayForm(value);
+    mentions.current = next.mentions;
+    lastEmitted.current = value;
+    setDisplay(next.text);
+  }, [value]);
+
+  const emit = useCallback(
+    (nextDisplay: string) => {
+      const stored = toStoredForm(nextDisplay, mentions.current);
+      lastEmitted.current = stored;
+      setDisplay(nextDisplay);
+      onChange(stored);
+    },
+    [onChange]
+  );
+
   const [caret, setCaret] = useState(0);
   const [highlight, setHighlight] = useState(0);
   // Dismissing the picker must not immediately reopen it on the next keystroke
@@ -62,11 +119,11 @@ export const MentionInput: React.FC<MentionInputProps> = ({
   const [dismissedAt, setDismissedAt] = useState<number | null>(null);
 
   const query = useMemo(() => {
-    const found = activeMentionQuery(value, caret);
+    const found = activeMentionQuery(display, caret);
     if (!found) return null;
     if (dismissedAt !== null && found.from === dismissedAt) return null;
     return found;
-  }, [value, caret, dismissedAt]);
+  }, [display, caret, dismissedAt]);
 
   const matches = useMemo(
     () => (query ? rankMentions(candidates, query.query) : []),
@@ -78,9 +135,12 @@ export const MentionInput: React.FC<MentionInputProps> = ({
   const accept = useCallback(
     (candidate: MentionCandidate) => {
       if (!query) return;
-      const token = encodeMention(candidate.name, candidate.id);
-      const next = `${value.slice(0, query.from)}${token} ${value.slice(query.to)}`;
-      onChange(next);
+      // The readable form goes in the box; the id goes in the map. Recorded
+      // before `emit`, because the encode reads it.
+      mentions.current.set(candidate.name, candidate.id);
+      const token = `@${candidate.name}`;
+      const next = `${display.slice(0, query.from)}${token} ${display.slice(query.to)}`;
+      emit(next);
       setDismissedAt(null);
 
       // Put the caret after the inserted token, not at the end of the message —
@@ -94,7 +154,7 @@ export const MentionInput: React.FC<MentionInputProps> = ({
         setCaret(at);
       });
     },
-    [query, value, onChange, ref]
+    [query, display, emit, ref]
   );
 
   const syncCaret = (e: React.SyntheticEvent<HTMLTextAreaElement>) =>
@@ -142,13 +202,13 @@ export const MentionInput: React.FC<MentionInputProps> = ({
     <div style={{ position: 'relative' }}>
       <textarea
         ref={ref}
-        value={value}
+        value={display}
         rows={rows}
         autoFocus={autoFocus}
         placeholder={placeholder}
         aria-label={ariaLabel}
         onChange={(e) => {
-          onChange(e.target.value);
+          emit(e.target.value);
           setCaret(e.target.selectionStart ?? 0);
           setHighlight(0);
           setDismissedAt(null);

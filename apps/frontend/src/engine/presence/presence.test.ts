@@ -140,6 +140,7 @@ describe('readCollaborators', () => {
 describe('rosterSignature', () => {
   const base = (over: Partial<Collaborator> = {}): Collaborator => ({
     clientId: 1,
+    id: 'author_dana',
     name: 'Dana',
     color: '#3B82F6',
     initials: 'D',

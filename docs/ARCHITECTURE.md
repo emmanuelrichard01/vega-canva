@@ -181,6 +181,14 @@ full access. Signing stops a view link being *promoted*; it does not make the
 board private. Closing that gap means refusing unsigned connections
 altogether, which is a product decision and not a patch.
 
+On the client the role is enforced in `engine/document/mutations.ts`, which is
+the only write path into the CRDT and therefore the only place the rule can be
+stated once and hold everywhere -- for the toolbar, the rail, the inspector,
+the keyboard and anything added later. Enforcing on controls instead had
+already failed: an ungated contextual rail let a viewer recolour shapes, whose
+updates the read-only server then dropped, forking that person's board from
+everybody else's while appearing to work.
+
 **8. Reconnection storms.** If the sync server restarts, all connected
 clients attempt to reconnect simultaneously. Mitigation: exponential
 backoff with jitter on reconnect — the y-websocket client provider does
