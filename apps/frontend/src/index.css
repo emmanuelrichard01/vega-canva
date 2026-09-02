@@ -2556,6 +2556,115 @@ textarea:focus-visible {
 
 /* The undo/redo/history run reads as one instrument, so its members sit
    tighter to each other than to their neighbours. */
+/**
+ * The role chip: what this visitor is allowed to do.
+ *
+ * Amber rather than red. A restricted role is not an error and not a warning —
+ * nothing has gone wrong and there is nothing to fix. `--status-syncing` is the
+ * palette's "this is a state, not a fault" colour, and it is already what the
+ * sync pip uses to mean the same kind of thing.
+ *
+ * It sits at the same height as the icon buttons beside it (`--control-h-sm`)
+ * so the header's baseline does not break for one element, and it is the only
+ * labelled control in a run of glyphs — which is the point. It should read as
+ * a statement, not as another button.
+ */
+.role-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-1);
+  flex: none;
+  height: var(--control-h-sm);
+  padding: 0 var(--space-2);
+  border: 1px solid color-mix(in srgb, var(--status-syncing) 38%, transparent);
+  border-radius: var(--radius-md);
+  background: color-mix(in srgb, var(--status-syncing) 10%, transparent);
+  color: var(--status-syncing);
+  font-family: inherit;
+  font-size: var(--text-sm);
+  font-weight: var(--weight-medium);
+  line-height: 1;
+  white-space: nowrap;
+  cursor: pointer;
+  transition: background-color var(--motion-hover), border-color var(--motion-hover);
+}
+
+.role-chip:hover,
+.role-chip.is-open {
+  background: color-mix(in srgb, var(--status-syncing) 18%, transparent);
+  border-color: color-mix(in srgb, var(--status-syncing) 55%, transparent);
+}
+
+@media (max-width: 1000px) {
+  /* The word goes before the chip does. On a narrow header the glyph plus its
+     colour still marks the state and still opens the panel that explains it,
+     where dropping the control entirely would leave the restriction unexplained
+     exactly where the interface is most crowded. */
+  .role-chip span { display: none; }
+  .role-chip { padding: 0 var(--space-2); }
+}
+
+.role-pop__title {
+  margin: 0 0 var(--space-1);
+  font-size: var(--text-md);
+  font-weight: var(--weight-semibold);
+  color: var(--text-primary);
+}
+
+.role-pop__why {
+  margin: 0 0 var(--space-3);
+  font-size: var(--text-sm);
+  line-height: 1.5;
+  color: var(--text-secondary);
+}
+
+.role-pop__list {
+  margin: 0 0 var(--space-3);
+  padding: 0;
+  list-style: none;
+  font-size: var(--text-sm);
+  line-height: 1.5;
+  color: var(--text-secondary);
+}
+
+.role-pop__list li {
+  position: relative;
+  padding-left: 18px;
+}
+
+/* `content: '<glyph>' / ''` gives the mark an empty alternative text, so a
+   screen reader announces the line and not a tick floating in front of it --
+   the "You can" and "You cannot" headings already carry that meaning. A
+   browser too old for the alt syntax ignores it and still draws the glyph. */
+.role-pop__list li::before {
+  position: absolute;
+  left: 2px;
+  top: 0;
+  font-weight: var(--weight-semibold);
+}
+
+.role-pop__list--can li::before {
+  content: '✓' / '';
+  /* `--status-online` is the palette's green and already means "this is fine"
+     in the presence dots. A literal hex here would be the exact mistake the
+     token header calls out, and it would not move when the theme does. */
+  color: var(--status-online);
+}
+
+.role-pop__list--cannot li::before {
+  content: '–' / '';
+  color: var(--text-tertiary);
+}
+
+.role-pop__foot {
+  margin: 0;
+  padding-top: var(--space-3);
+  border-top: 1px solid var(--border-subtle);
+  font-size: var(--text-sm);
+  line-height: 1.5;
+  color: var(--text-tertiary);
+}
+
 .hdr-cluster {
   display: flex;
   align-items: center;

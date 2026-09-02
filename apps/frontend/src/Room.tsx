@@ -14,6 +14,7 @@ import { Eye, Radar } from 'lucide-react';
 import { ObjectContextToolbar } from './components/ObjectContextToolbar';
 import { PropertiesPanel } from './components/PropertiesPanel';
 import { LayersPanel } from './components/LayersPanel';
+import { useRoomPermissions } from './hooks/useRoomPermissions';
 import { useAuth } from './hooks/useAuth';
 import { doc, provider, metadataMap, deleteNode, localAuthorId, publishLocalIdentity, applyGroupPlan } from './engine/document';
 import { useRoomState } from './hooks/useSync';
@@ -307,6 +308,9 @@ export default function Room() {
   const [activeTool, setActiveTool] = useState('select');
   const [selectedIds, setSelectedIds] = useState<string[]>([]);
   const showContextToolbar = useStore((s) => s.showContextToolbar);
+  // What this session is allowed to do. The write path enforces it; this is
+  // what keeps the interface from offering what the write path will refuse.
+  const { canEdit } = useRoomPermissions();
   // Mirrored into a ref on every render, for the window-level copy and cut
   // listeners that live for the room and must not re-register on every click.
   const selectionRef = useRef<string[]>([]);
@@ -1485,8 +1489,13 @@ export default function Room() {
         </Suspense>
       </div>
 
-      {/* FLOATING CONTEXT TOOLBAR — switchable from the View menu. */}
-      {showContextToolbar && (
+      {/* FLOATING CONTEXT TOOLBAR — switchable from the View menu.
+          Gated on `canEdit` as well: every control on it (fill, stroke, bold,
+          italic, the shape swapper) is an edit, so for a viewer it is a rail
+          of buttons that cannot do anything. The write path refuses them
+          regardless -- see `mutations.ts` -- and this is the half that stops
+          somebody pressing them and wondering. */}
+      {showContextToolbar && canEdit && (
         <ObjectContextToolbar
           selectedId={selectedId}
           selectedIds={selectedIds}
@@ -1538,8 +1547,14 @@ export default function Room() {
         />
       )}
 
-      {/* CONTEXT INSPECTOR (Right Sidebar) */}
-      {isUiVisible && (
+      {/* CONTEXT INSPECTOR (Right Sidebar)
+          Editors only. The panel is an inspector *for editing* -- fill,
+          stroke, type, transform, effects -- and with the write path refusing
+          a viewer's changes, every control in it would be one that looks live
+          and does nothing. A viewer keeps the board, the minimap and the
+          comments; they lose a column of dead switches and get the width
+          back. */}
+      {isUiVisible && canEdit && (
         <div
           className={rightExpanded ? 'context-inspector panel-surface' : 'context-inspector'}
           data-tour="properties"

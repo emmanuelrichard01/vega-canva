@@ -217,6 +217,22 @@ function emit() {
  * has nothing to leak, and re-aiming is a subtraction.
  */
 function schedule() {
+  /**
+   * No DOM, no timer — and no throw.
+   *
+   * The store itself is plain data and works anywhere; only the expiry clock
+   * needs a `window`. Reaching for one unguarded meant any module that
+   * notifies became untestable outside a browser environment, which surfaced
+   * the moment `ToolManager` started explaining its refusals: a node-env test
+   * of tool gating died on `window is not defined`, in a function that has
+   * nothing to do with tools.
+   *
+   * Notices still accumulate and still emit without a window; they simply do
+   * not expire on their own, which is the correct behaviour when there is
+   * nobody watching them.
+   */
+  if (typeof window === 'undefined') return;
+
   window.clearTimeout(timer);
   timer = undefined;
   if (!hasExpiring(notices)) return;

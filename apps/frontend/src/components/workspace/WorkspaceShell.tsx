@@ -8,6 +8,7 @@ import { railVeil } from '../../engine/interaction/railVeil';
 import { textEditing } from '../../engine/interaction/textEditing';
 import { Switch } from '../ui/Switch';
 import { Logo } from '../ui/Logo';
+import { RoleBadge } from './RoleBadge';
 
 /**
  * One glyph size for the whole bar.
@@ -351,6 +352,12 @@ export const WorkspaceShell: React.FC<Props> = ({ localTitle, setLocalTitle, onT
       {/* --------------------------------------- the room, and what leaves it */}
       <div className="hdr-zone hdr-zone--end">
         {/* Working controls, always present. */}
+        {/* Ahead of the actions, and ahead of Share in particular.
+            "What am I allowed to do here" is the frame every control to its
+            right is read through, and it is the question a restricted visitor
+            is already asking. Renders nothing for an editor. */}
+        <RoleBadge />
+
         <div className="hdr-cluster">
           <button className="btn-icon" onClick={() => editor.undo()} data-tooltip="Undo (Ctrl+Z)" data-tooltip-pos="bottom" aria-label="Undo">
             <Undo2 size={ICON} />

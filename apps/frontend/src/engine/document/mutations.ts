@@ -5,6 +5,7 @@ import type { GroupPlan, GroupRecord } from '../model/groupTree';
 import { applyReactionToggle, seedReactions } from './reactions';
 import { frameForNode } from '../model/frames';
 import { getColorForUser } from '../presence/ColorPalette';
+import { canEditObjects, canPostComments, getRoomRole } from '../model/permissions';
 
 /**
  * The write path for canvas objects.
@@ -188,7 +189,58 @@ export function publishLocalIdentity(name: string, color: string): void {
   identitiesMap.set(id, { name, color });
 }
 
+/**
+ * The one gate a role actually needs.
+ *
+ * ## Why it is here and not on the controls
+ *
+ * This module is invariant 1: **the only write path into the document.**
+ * Nothing else touches the Y.Map. That makes it the only place a permission
+ * can be enforced once and be true everywhere -- the same argument
+ * `ToolManager.setActiveTool` makes for tools, and for the same reason: every
+ * route ends here, so refusing here refuses the dock, the contextual rail, the
+ * properties panel, the keyboard, the command palette, a lesson driving the
+ * board for you, and whatever gets added next year by somebody who never read
+ * this file.
+ *
+ * Gating the *controls* was the alternative and it had already failed. Tools
+ * and dragging were gated; the contextual rail was not, so a viewer could
+ * still set a colour, embolden a label and italicise text. Every one of those
+ * was a control that looked like it worked, wrote to the local document, and
+ * was then silently dropped by a server that had marked the connection
+ * read-only -- so the viewer saw a change nobody else could see, and their copy
+ * of the board quietly forked from everyone else's.
+ *
+ * That is the worst outcome available: not a refusal, but a divergence that
+ * looks like success. Hiding controls is presentation. This is the rule.
+ *
+ * ## Why not "enforce focus mode"
+ *
+ * Because it enforces nothing. Focus mode is a *viewing preference* the person
+ * can switch straight back off, and hiding a button has never stopped the
+ * keyboard shortcut behind it. A permission that can be undone from the View
+ * menu is decoration -- which is precisely the mistake the share roles started
+ * out making, when the client picked its own role and the server believed it.
+ */
+function refuseWrite(what: string): boolean {
+  if (canEditObjects()) return false;
+
+  // Loud in development, silent in production. A refusal reaching this point
+  // means some control offered an edit it should not have -- a bug to fix at
+  // the control, not a message to show a person who was never told they could.
+  if (import.meta.env.DEV) {
+    console.warn(
+      `[permissions] ${what} refused: this session is "${getRoomRole()}". ` +
+        'The control that called it should not have been offered.'
+    );
+  }
+  return true;
+}
+
 export function createNode(input: NewNodeInput): string {
+  // Returns '' rather than throwing: callers place the node and move on, and a
+  // throw here would take out a drop of nine images on the first one.
+  if (refuseWrite('createNode')) return '';
   const now = Date.now();
   const id = input.id ?? nanoid();
   const author = localAuthor();
@@ -262,6 +314,7 @@ function revokeIfBlobUrl(url: unknown): void {
 }
 
 export function updateNode(id: string, updates: Record<string, unknown>): void {
+  if (refuseWrite('updateNode')) return;
   const ymap = objectsMap.get(id);
   if (!ymap) return;
 
@@ -328,6 +381,7 @@ export function updateNode(id: string, updates: Record<string, unknown>): void {
  * disappear between the render that offered the control and the click on it.
  */
 export function updateNodes(ids: readonly string[], updates: Record<string, unknown>): void {
+  if (refuseWrite('updateNodes')) return;
   if (ids.length === 0) return;
   const now = Date.now();
   doc.transact(() => {
@@ -355,6 +409,7 @@ export function updateNodes(ids: readonly string[], updates: Record<string, unkn
 export function applyNodePatches(
   patches: ReadonlyArray<{ id: string; changes: Record<string, unknown> }>
 ): void {
+  if (refuseWrite('applyNodePatches')) return;
   if (patches.length === 0) return;
   const now = Date.now();
   doc.transact(() => {
@@ -388,6 +443,7 @@ export function applyNodePatches(
  * would put a folder inside itself.
  */
 export function applyGroupPlan(plan: GroupPlan): void {
+  if (refuseWrite('applyGroupPlan')) return;
   const touchesNothing =
     plan.nodes.length === 0 && plan.groups.length === 0 && !plan.create && plan.remove.length === 0;
   if (touchesNothing) return;
@@ -434,6 +490,7 @@ function stripUndefined(record: GroupRecord): GroupRecord {
 
 /** Rename a group. The one field of a group anybody edits directly. */
 export function renameGroup(id: string, name: string): void {
+  if (refuseWrite('renameGroup')) return;
   const existing = groupsMap.get(id);
   if (!existing) return;
   groupsMap.set(id, stripUndefined({ ...existing, name: name.trim() || undefined }));
@@ -462,6 +519,9 @@ export function renameGroup(id: string, name: string): void {
  * of it, reintroducing exactly the lost-update bug this exists to fix.
  */
 export function toggleReaction(nodeId: string, emoji: string, authorId: string): void {
+  // Not `refuseWrite`: a reaction is nearer a comment than an edit, so a
+  // commenter keeps it and only a viewer is turned away.
+  if (!canPostComments()) return;
   const ymap = objectsMap.get(nodeId);
   if (!ymap) return;
   doc.transact(() => {
@@ -470,6 +530,7 @@ export function toggleReaction(nodeId: string, emoji: string, authorId: string):
 }
 
 export function deleteNode(id: string): void {
+  if (refuseWrite('deleteNode')) return;
   const ymap = objectsMap.get(id);
   if (ymap) {
     revokeIfBlobUrl(ymap.get('src'));
