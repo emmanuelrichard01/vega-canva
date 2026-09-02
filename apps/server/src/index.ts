@@ -851,6 +851,79 @@ wss.on("connection", (socket: any, request: any) => {
   }
 });
 
+/**
+ * Write every open board to Postgres before this process exits.
+ *
+ * ## What was lost without it
+ *
+ * `onStoreDocument` is **debounced**. Between a change and its write there is
+ * a window, and this shutdown path closed the pool and exited without ever
+ * telling Hocuspocus to close that window -- so a deploy, a restart or a
+ * free-tier spin-down discarded every edit made since the last debounced
+ * store. The comment above says "the canonical document lives in
+ * `room_snapshots`", and it does; nothing was making sure it got there.
+ *
+ * The symptom is nasty precisely because it is one-sided. The person editing
+ * keeps everything: `y-indexeddb` holds their copy on their own machine, so
+ * their board looks complete and always will. Everybody else reads the
+ * server's snapshot and sees it as of some earlier moment -- or, on a board
+ * whose whole content arrived in that window, sees nothing at all. "Fine on my
+ * end" is the shape of every bug where one side has a private cache.
+ *
+ * ## Why it needs a wait and not just a call
+ *
+ * `flushPendingStores()` starts the writes; it does not await them. Returning
+ * before they land would hand the same loss back via `pool.end()` closing the
+ * connections mid-write. Hocuspocus signals completion by unloading each
+ * document, so the wait is "documents remaining reaches zero" -- the same
+ * condition the library's own `Server.destroy` uses, reproduced here because
+ * this deployment drives `Hocuspocus` directly in order to share one port with
+ * Express.
+ *
+ * The timeout is a backstop, not the plan: one board refusing to store must
+ * not take the other twenty down with it.
+ */
+const FLUSH_TIMEOUT_MS = 8000;
+
+const flushDocuments = async (): Promise<void> => {
+  const open = server.getDocumentsCount();
+  if (open === 0) {
+    console.log("No open documents to flush.");
+    return;
+  }
+  console.log(`Flushing ${open} open document(s) before exit...`);
+
+  await new Promise<void>((resolve) => {
+    let settled = false;
+    const finish = (reason: string) => {
+      if (settled) return;
+      settled = true;
+      console.log(`Document flush finished (${reason}).`);
+      resolve();
+    };
+
+    const timer = setTimeout(() => {
+      finish(`timeout after ${FLUSH_TIMEOUT_MS}ms, ${server.getDocumentsCount()} still open`);
+    }, FLUSH_TIMEOUT_MS);
+
+    // Mutating the live configuration is how the library does this too: the
+    // hook only has to exist for the duration of the shutdown.
+    server.configuration.extensions.push({
+      async afterUnloadDocument({ instance }: any) {
+        if (instance.getDocumentsCount() === 0) {
+          clearTimeout(timer);
+          finish("all documents stored");
+        }
+      },
+    } as any);
+
+    // Closing first is what makes the stores final: a client that is still
+    // connected can write again in the middle of the flush.
+    server.closeConnections();
+    server.flushPendingStores();
+  });
+};
+
 // Graceful shutdown handling for clean termination and resource drainage
 const gracefulShutdown = async (signal: string) => {
   console.log(`\nReceived ${signal}. Starting graceful shutdown...`);
@@ -876,32 +949,35 @@ const gracefulShutdown = async (signal: string) => {
     client.close(1001, "Server shutting down");
   }
 
-  // 2. Stop accepting new HTTP requests
-  httpServer.close(async () => {
-    console.log("HTTP server closed.");
-    try {
-      /**
-       * Write whatever history is still buffered, before the pool goes.
-       *
-       * This is what makes batching safe. A hard kill can lose up to one flush
-       * interval of scrubbable history -- acceptable, because the canonical
-       * document lives in `room_snapshots` and this table only feeds Time
-       * Travel. A *deploy* is the common case and loses nothing, because of
-       * this line.
-       */
-      await history.drain();
-      if (history.dropped > 0) {
-        console.warn(`History buffer dropped ${history.dropped} update(s) under backpressure.`);
-      }
+  // 2. Stop accepting new HTTP requests. Fire-and-forget: the callback waits
+  // for every existing connection to end, which is *after* the work below.
+  httpServer.close(() => console.log("HTTP server closed."));
 
-      // 3. Drain PostgreSQL connection pool
-      await pool.end();
-      console.log("PostgreSQL pool drained successfully.");
-    } catch (err) {
-      console.error("Error closing PostgreSQL pool:", err);
+  try {
+    await flushDocuments();
+
+    /**
+     * Write whatever history is still buffered, before the pool goes.
+     *
+     * This is what makes batching safe. A hard kill can lose up to one flush
+     * interval of scrubbable history -- acceptable, because the canonical
+     * document lives in `room_snapshots` and this table only feeds Time
+     * Travel. A *deploy* is the common case and loses nothing, because of
+     * this line.
+     */
+    await history.drain();
+    if (history.dropped > 0) {
+      console.warn(`History buffer dropped ${history.dropped} update(s) under backpressure.`);
     }
-    process.exit(0);
-  });
+
+    // 3. Drain PostgreSQL connection pool -- last, because everything above
+    // writes through it.
+    await pool.end();
+    console.log("PostgreSQL pool drained successfully.");
+  } catch (err) {
+    console.error("Error during shutdown:", err);
+  }
+  process.exit(0);
 
   // Safety timeout if connections refuse to drain
   setTimeout(() => {
