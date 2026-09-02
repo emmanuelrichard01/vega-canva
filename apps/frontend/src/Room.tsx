@@ -23,7 +23,6 @@ import { resolvePresenceColor, type ColorClaim } from './engine/presence/ColorPa
 import { initSyncBridge, useStore } from './hooks/useStore';
 import { editor } from './engine/api/EditorAPI';
 import { emptyGroups } from './engine/model/groupTree';
-import { ActivityFeed } from './components/ActivityFeed';
 import { PresenceEdgeMarkers } from './components/PresenceEdgeMarkers';
 import { FollowIndicator } from './components/FollowIndicator';
 import { isForceTool, type ForceId } from './engine/physics/forces';
@@ -796,8 +795,14 @@ export default function Room() {
     if (metadata?.name) setLocalTitle(metadata.name);
   }, [metadata?.name]);
 
-  // ActivityFeed now sources itself from the shared authoring log rather than
-  // from a local array here whose only producer had been commented out.
+  // The ambient activity feed used to sit here. It announced every edit as it
+  // happened in the bottom-left corner, and its most common line was "made an
+  // edit" -- which names neither what changed nor where, so the case that
+  // fired most often carried no information at all. Presence answers the same
+  // question better and spatially (cursors, selection outlines, the avatar
+  // row), and Time Travel answers "what changed" properly for anyone who
+  // actually needs it. The shared authoring log it read is still written and
+  // still feeds replay.
   //
   // Follow mode used to live here as `const [followingClientId] =
   // useState(null)` — declared without a setter, so the value was permanently
@@ -1428,8 +1433,6 @@ export default function Room() {
             their cursors vanished. Presenting is usually presenting *to* the
             people whose pointers these are. */}
         <RemoteCursors />
-
-        <ActivityFeed />
 
         {/* Deliberately outside `isUiVisible`, for the same reason the remote
             cursors are: this is not chrome. Following takes control of the
