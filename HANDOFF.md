@@ -2102,6 +2102,35 @@ child: the mark and the arrow are different widths, so a swap would nudge the
 board title for a frame. Verified in both themes and both states against the
 built stylesheet — no shift, and the title sits at the same x either way.
 
+### Discoverability, and the argument that settled it
+
+The obvious objection is that a logo which reveals an arrow on hover confirms
+the action for somebody already reaching for it and teaches nobody else. It is
+a fair hit on the arrow, and it lands only if you think the arrow is what makes
+the control findable. It is not: **the mark is findable because it is a mark**,
+and a logo has linked home on essentially every website for twenty-five years.
+The arrow is confirmation at the moment of intent, which is a different job.
+
+It is also worth being clear about who needs to find it at all. Anyone who
+arrived from the dashboard has real browser history and Back already works.
+The control exists for people who arrived by a shared link or a bookmark — and
+for them, clicking the logo is the most guessable action on the page.
+
+**"Go to Your boards" is in the command palette** as a second route, under
+Session beside Share. It costs no chrome and it is what somebody who feels
+stuck in a board would actually type. It navigates directly rather than
+through `onSelectAction`, because leaving the room is not a canvas action and
+does not belong in the same switch as "add sticky note".
+
+A breadcrumb — `[mark] Your boards / Quarterly planning`, the Figma and Linear
+shape — was considered and **rejected on cost**. It ends the discovery
+question outright, and it spends about 100px of the left zone permanently, in
+a header where the title already truncates to 180px below 1200px. It would
+have to collapse back to the bare mark on small screens, which reinstates the
+original problem precisely where finding things is hardest. Two routes and no
+added chrome won. Revisit this if the dashboard ever becomes somewhere people
+go often, rather than somewhere they leave once.
+
 ## 5. Next up
 
 ### 5a-0. The three things to do first

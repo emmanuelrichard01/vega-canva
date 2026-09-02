@@ -2,7 +2,7 @@ import React, { useEffect, useMemo, useRef, useState } from 'react';
 import {
   Clock, Download, Hand, Layers as LayersIcon, MessageSquare, Mic, MousePointer2,
   PenLine, Play, Search, Share2, Sparkles, Square, StickyNote, Type,
-  Code2, HelpCircle,
+  Code2, HelpCircle, ArrowLeft,
 } from 'lucide-react';
 import { motion } from 'framer-motion';
 import { provider } from '../engine/document';
@@ -185,6 +185,21 @@ export const CommandPalette: React.FC<CommandPaletteProps> = ({ onClose, onSelec
       { id: 'timetravel', label: 'Replay session', detail: 'Scrub the room’s authoring history', group: 'Session', icon: <Clock size={16} />, perform: run('timetravel') },
       { id: 'play', label: 'Toggle physics play mode', group: 'Session', icon: <Play size={16} />, perform: run('play') },
       { id: 'share', label: 'Share workspace link', group: 'Session', icon: <Share2 size={16} />, perform: run('share') },
+      /**
+       * The second route out, for the people the corner mark does not reach.
+       *
+       * The header's mark is the way back to the dashboard, and the objection
+       * to it is fair: a logo that reveals an arrow on hover confirms the
+       * action for somebody already reaching for it and teaches nobody else.
+       * A searchable entry costs no chrome and answers the search anybody
+       * stuck in a board would actually type.
+       *
+       * `perform` navigates directly rather than going through
+       * `onSelectAction`, because leaving the room is not a canvas action and
+       * routing it through the room's action switch would put a page
+       * navigation in the same list as "add sticky note".
+       */
+      { id: 'boards', label: 'Go to Your boards', detail: 'Leave this board and open the dashboard', group: 'Session', icon: <ArrowLeft size={16} />, perform: () => { window.location.href = '/'; } },
 
       { id: 'export-png', label: 'Export as PNG', detail: 'Raster image at 2x', group: 'Export', icon: <Download size={16} />, perform: run('export-png') },
       { id: 'export-svg', label: 'Export as SVG', detail: 'Editable vector', group: 'Export', icon: <Download size={16} />, perform: run('export-svg') },
