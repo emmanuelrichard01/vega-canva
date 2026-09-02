@@ -58,7 +58,37 @@ export const COMMENT_TOOLS: ReadonlySet<string> = new Set(['comment']);
 let activeRole: RoomRole = 'editor';
 const roleListeners = new Set<(role: RoomRole) => void>();
 
-/** Reads the mode out of `?role=` / `?permission=` on the current URL. */
+/**
+ * The role from `/i/<token>`, read without verifying — the server verifies.
+ *
+ * Inlined rather than imported from `engine/room/invite.ts` to keep this
+ * module free of imports: it is loaded at the top of the document layer's
+ * dependency graph, and `invite.ts` refers back to this file for `RoomRole`.
+ * Fourteen lines is a cheaper answer than a cycle.
+ */
+function readInviteRole(): RoomRole | null {
+  if (typeof window === 'undefined' || !window.location) return null;
+  const match = /^\/i\/([A-Za-z0-9_.-]+)\/?$/.exec(window.location.pathname);
+  if (!match) return null;
+  const dot = match[1].indexOf('.');
+  if (dot <= 0) return null;
+  try {
+    const json = atob(match[1].slice(0, dot).replace(/-/g, '+').replace(/_/g, '/'));
+    const role = (JSON.parse(json) as { o?: unknown }).o;
+    return role === 'viewer' || role === 'commenter' || role === 'editor' ? role : null;
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * Reads the mode out of `?role=` / `?permission=` on the current URL.
+ *
+ * Only consulted when this tab did *not* arrive on an invite. An invite
+ * carries a role the server signed and will enforce, so letting a query
+ * parameter override it would put the interface and the connection into
+ * disagreement -- tools offered that produce edits nothing accepts.
+ */
 export function resolveInitialRole(search?: string): RoomRole {
   const query =
     search ?? (typeof window !== 'undefined' && window.location ? window.location.search : '');
@@ -73,7 +103,18 @@ export function resolveInitialRole(search?: string): RoomRole {
   return 'editor';
 }
 
-activeRole = resolveInitialRole();
+/**
+ * An invite wins over the query string.
+ *
+ * The role inside a signed invite is the one the server will enforce, so the
+ * interface has to agree with it. Reading `?role=` over the top would offer
+ * tools whose edits the connection then refuses -- the exact mismatch this
+ * whole rework existed to remove.
+ *
+ * Read lazily via `import()`-free indirection: `invite.ts` imports this
+ * module's `RoomRole` type only, so there is no cycle at runtime.
+ */
+activeRole = readInviteRole() ?? resolveInitialRole();
 
 export function getRoomRole(): RoomRole {
   return activeRole;

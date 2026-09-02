@@ -38,7 +38,10 @@ function App() {
   return (
     <AuthProvider>
       <Suspense fallback={<RouteLoader />}>
-        {path.startsWith('/room/') ? <Room /> : <Home />}
+        {/* An invite opens the same board surface: `doc.ts` reads the room
+            out of the token, so `Room` needs to know nothing about how the
+            reader arrived. */}
+        {path.startsWith('/room/') || path.startsWith('/i/') ? <Room /> : <Home />}
       </Suspense>
       <PerformanceOverlay />
       {/* At the root, which is what it always said it was for. It was mounted

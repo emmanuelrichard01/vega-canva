@@ -300,12 +300,27 @@ Slack, and the room-code work from this session (`engine/room/roomCode.ts`) is
 built for exactly that. Make it a *choice* (`visibility = 'link'`) rather than
 the only behaviour. A board defaults to `private`; sharing a link flips it.
 
-**Read-only must be enforced at the WebSocket layer.** A viewer role checked in
-the client is decorative — the client can send any Yjs update it likes, and the
-CRDT will merge it. Hocuspocus supports marking a connection read-only from
-`onAuthenticate`; that is the only place it can be true. If you take one thing
-from this section, take this one: it is the mistake that looks finished and
-isn't.
+**Read-only must be enforced at the WebSocket layer — done, without accounts.**
+A viewer role checked in the client is decorative: the client can send any Yjs
+update it likes, and the CRDT will merge it. Hocuspocus can mark a connection
+read-only from `onAuthenticate`, and that is the only place it can be true.
+
+This shipped ahead of the schema above, because it did not need it. A share
+link can carry an HMAC-signed token naming the role, `onAuthenticate` verifies
+it and sets `readOnly`, and the role a client *asks* for is now ignored — the
+signature decides. `apps/server/src/shareToken.ts`, and `docs/DEPLOYMENT.md`
+for the key.
+
+Two things that follow, and are easy to get wrong:
+
+- **Verify the signature before reading the expiry.** An unverified `exp` is a
+  number the attacker chose. Checking it first leaks the order of operations
+  and, worse, invites the reverse mistake later.
+- **The token attenuates; it does not authenticate.** It carries the room id in
+  its own payload, so the holder of a view link can always connect normally at
+  full access. It stops promotion, not access. Say that out loud in the share
+  dialog rather than implying a privacy the model does not have — the dialog
+  does.
 
 Also gate the two REST routes on membership, not just on room shape: the history
 endpoint (`index.ts:397`) currently hands the full board history to anybody who
@@ -447,7 +462,7 @@ restarting at each heading.
 | 5 | First week live | The room and media reaper | §1.3 |
 | 6 | First week live | Billing alerts on every account, including the free ones | §3 |
 | 7 | Once people use it | Real accounts: magic link plus OAuth | §2.2 |
-| 8 | Once people use it | Per-board roles, enforced at the WebSocket layer | §2.3 |
+| 8 | ~~Once people use it~~ **done** | Per-board roles, enforced at the WebSocket layer | §2.3 |
 | 9 | Once people use it | The bundle split, measured both ways | §1.2 |
 | 10 | When it hurts | Redis-backed rate limiting, in the same change as a second instance | §3 |
 | 11 | When it hurts | Presigned media URLs instead of proxying bytes | §3 |

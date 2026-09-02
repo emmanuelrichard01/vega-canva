@@ -167,9 +167,19 @@ distances. Mitigation: treat "infinite" as a large but finite bound (e.g.
 ±1,000,000 units) — well beyond anything a demo or realistic usage will
 reach, without the complexity of coordinate re-centering schemes.
 
-**7. Room access model.** Anyone with the link has full read/write access;
-there are no granular permissions. This is a stated MVP limitation to call
-out explicitly in the demo, not a bug to hide.
+**7. Room access model.** The room link is a capability: anyone holding it
+has full read/write access, and there are no accounts to check it against.
+That much is still true and is the stated limitation.
+
+What has since been built on top of it is *attenuation*. A share link can
+carry a signed token naming a lesser role (`viewer`, `commenter`), and the
+server verifies the signature in `onAuthenticate` and marks the connection
+`readOnly`. See `apps/server/src/shareToken.ts`. The important half is what
+this does **not** claim: the token's payload contains the room id in plain
+sight, so a viewer can read it out of their own link and connect normally at
+full access. Signing stops a view link being *promoted*; it does not make the
+board private. Closing that gap means refusing unsigned connections
+altogether, which is a product decision and not a patch.
 
 **8. Reconnection storms.** If the sync server restarts, all connected
 clients attempt to reconnect simultaneously. Mitigation: exponential

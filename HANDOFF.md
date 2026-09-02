@@ -1980,21 +1980,145 @@ capture — so the automated check passed against a control that was broken for
 every human. **When a control works programmatically and not by hand, suspect
 pointer capture first.** The cluster is a sibling of the stage now.
 
+## 4h. Roles that mean something, and the half they still do not
+
+### The bug was that it looked finished
+
+The share dialog offered *Can edit*, *Can comment* and *Can view*, and the role
+travelled to the server as a field in the connection claim. The server read it
+and set `readOnly` from it. Every part of that is present in a screenshot of a
+working feature, and none of it was a permission: **the client chose its own
+role**, so "view only" was a checkbox the viewer ticked for themselves. The
+dialog had at one point promised that "mutation packets are rejected
+server-side", which was true in the narrow sense that they *were* rejected —
+for anybody who asked to be rejected.
+
+This is invariant 6 wearing a different hat. A capability was declared, the
+renderer honoured it, and the thing on the other end had no way to.
+
+### What signing buys, stated narrowly
+
+`apps/server/src/shareToken.ts` mints `<base64url(payload)>.<base64url(hmac)>`
+over `{r: room, o: role, e: expiry, i: issued, n: nonce}` with HMAC-SHA256.
+`onAuthenticate` verifies it, and **a verified role outranks anything the
+client says about itself**. The link shape is `/i/<token>`.
+
+Three properties are worth knowing by name, because each one is a mistake that
+was available here:
+
+- **Signature before expiry.** An unverified `exp` is a number the attacker
+  picked. Read nothing out of a payload you have not authenticated — not even
+  to decide whether to bother authenticating it.
+- **Bound to a room, not just to a role.** `payload.r` is compared against
+  `documentName`, so a view link cannot be replayed sideways into a different
+  board.
+- **Attenuation needs no authority.** A token strictly *reduces* what its
+  bearer can do, which is why `POST /rooms/:roomId/invite` can be open: minting
+  a weaker capability from a capability you already hold gives nothing away.
+  The day it can mint an *equal or greater* one, it needs a caller check.
+
+### The half it does not solve, and why the dialog says so
+
+The payload contains the room id in plain sight. A viewer can read it out of
+their own link and connect on the bare room id at full access. **Signing stops
+a view link being promoted; it does not make the board private.** Closing that
+means refusing unsigned connections entirely, which is a product decision — it
+would break every room link already in the wild.
+
+The dialog states this rather than implying a privacy the model has not got.
+That sentence is load-bearing: the previous version of this feature was wrong
+mostly because its copy over-promised.
+
+### `commenter` is still client-side, on purpose
+
+`readOnly` is set for `viewer` only. A commenter has to write to the Y.Doc —
+that is where comments live — so the wire cannot tell a comment from a move.
+The restriction is the toolset in `permissions.ts` and nothing more. It is an
+honest interface, not a gate, and it is the next thing to fix if comments ever
+matter more than they do now; the fix is a document-level write filter, not a
+connection flag.
+
+### The room code is hidden for restricted roles
+
+`roomCodeFor(roomId)` renders a board id you can read down a phone. It is
+**full access by construction** — it is the room's own address — so showing it
+next to a view link would hand back everything the view link withheld. The code
+appears for *Edit* and for nothing else. A small piece of UI, and the one place
+in the dialog where an obvious convenience is the whole vulnerability.
+
+### `SHARE_SECRET` is not set in production
+
+Without it the mint endpoint answers 501 and the dialog says the deployment
+cannot issue restricted links; *Edit* still works, because an edit link is the
+plain room URL and needs no token. So **two thirds of this feature is dark
+live** until the key is set — `docs/SETUP-CHECKLIST.md` item 3. Rotating the
+key is also the only revocation there is: no server-side list, no per-token
+kill. That is a fair trade for a stateless token and a bad surprise if you did
+not know it.
+
+### The dialog itself
+
+Rewritten alongside: one `.share__choice` group binding each mode to a plain
+sentence about what it grants, an expiry select that only appears when a token
+is actually being minted, and a `MintState` union so *working*, *ready*,
+*unavailable* and *error* are four states rather than one boolean and a guess.
+A new link is minted whenever the terms change, because a stale link sitting
+under a role it no longer matches is the exact failure this whole section is
+about.
+
+## 4i. A board you could not leave
+
+The only way out of a board was the browser's Back button, which is not a way
+out: arrive from a shared link, a bookmark or a new tab and there is nothing
+behind you. Every route into this app that is not the dashboard produced a
+room with the lock on the inside.
+
+The corner mark is the way home now. Three decisions in it are worth keeping:
+
+- **The logo, not a button beside it.** The mark was inert, which spends the
+  most recognisable spot in the application on decoration, and every tool of
+  this shape already puts its way home there. A separate arrow would have put
+  two controls in a corner the convention expects one in. The hover swap to an
+  arrow is what turns the convention into an affordance — identity at rest, an
+  action under the cursor.
+- **An `<a href="/">`.** Cmd-click, middle-click, "open in new tab", "copy link
+  address" and the status-bar preview all come free and all vanish the moment
+  it becomes a `<button>` that assigns `location.href`. They look identical in
+  a screenshot, which is why this is worth writing down.
+- **No "are you sure".** It is a full page load, so the question was fair. The
+  answer is that `doc.ts` attaches `IndexeddbPersistence` to every room, so
+  offline edits are on the device and merge up on reconnect — which is exactly
+  what the sync pip two elements along already promises in words. A confirm
+  here would contradict it, and a gate that guards nothing teaches people to
+  click through gates.
+
+The crossfade is two faces stacked in one grid cell rather than a swapped
+child: the mark and the arrow are different widths, so a swap would nudge the
+board title for a frame. Verified in both themes and both states against the
+built stylesheet — no shift, and the title sits at the same x either way.
+
 ## 5. Next up
 
-### 5a-0. The three things to do first
+### 5a-0. The four things to do first
+
+Both of the first two are console switches, not code — nothing in the repo
+changes and nothing can be verified from here.
 
 1. **Run the backup workflow once by hand.** Actions → *Database backup* → Run
    workflow, `dry_run` checked, then again unchecked. Until an object lands in
    the bucket, recovery is Neon's six-hour window and nothing else. Everything
    else in this list can wait; this is the only one where the cost of waiting
    is unbounded.
-2. **Look at the mermaid modal.** The dialog was redesigned, the templates were
+2. **Set `SHARE_SECRET` on Render.** Until it is there, the share dialog can
+   only issue full-access links: *View* and *Comment* both answer 501 and say
+   so. The feature is built, tested and deployed, and two thirds of it is
+   switched off. `docs/SETUP-CHECKLIST.md` item 3 has the command.
+3. **Look at the mermaid modal.** The dialog was redesigned, the templates were
    rewritten and the zoom was rebuilt, and the browser tab wedged at a 0x0
    viewport before the last of it could be seen. Functionally verified — all
    seven templates parse, the preview renders, the zoom steps 51 → 63 → 79 and
    fits back — but not *looked at* in its final state.
-3. **Confirm the zoom buttons respond to a real mouse.** They were broken by
+4. **Confirm the zoom buttons respond to a real mouse.** They were broken by
    pointer capture and fixed structurally; the fix could not be verified here
    because synthetic pointer events do not reach this tab at all. A capture
    listener on the whole modal recorded nothing from a real click, which is how

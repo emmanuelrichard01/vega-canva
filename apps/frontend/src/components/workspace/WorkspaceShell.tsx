@@ -1,7 +1,7 @@
 import React, { useEffect, useState, useRef, useSyncExternalStore } from 'react';
 import { useRoomState } from '../../hooks/useSync';
 import { CollaborationLayer } from './CollaborationLayer';
-import { Check, CloudOff, Moon, Sun, Undo2, Redo2, Share2, Download, EyeOff, History, PanelLeft, MessageSquare, Settings2, HelpCircle } from 'lucide-react';
+import { Check, CloudOff, Moon, Sun, Undo2, Redo2, Share2, Download, EyeOff, History, PanelLeft, MessageSquare, Settings2, HelpCircle, ArrowLeft } from 'lucide-react';
 import { editor } from '../../engine/api/EditorAPI';
 import { useStore } from '../../hooks/useStore';
 import { railVeil } from '../../engine/interaction/railVeil';
@@ -199,9 +199,61 @@ export const WorkspaceShell: React.FC<Props> = ({ localTitle, setLocalTitle, onT
             <PanelLeft size={ICON} />
           </button>
         )}
-        {/* The real mark. This was `/favicon.svg` — a 762KB file, shipped on
-            every page load to draw a 26px glyph. */}
-        <Logo size={24} />
+        {/**
+          * The way back to Your boards, and the mark is the door.
+          *
+          * There was no way out of a board except the browser's Back button,
+          * which is not a way out at all: arrive from a shared link, a new
+          * tab or a bookmark and there is nothing behind you. The board was a
+          * room with a lock on the inside.
+          *
+          * ## Why the logo rather than a button beside it
+          *
+          * The corner mark is where every tool of this kind puts its way home,
+          * so it is already the first thing a hand reaches for -- and this one
+          * was inert, which spends the most recognisable spot in the
+          * application on decoration. Adding a separate arrow would put two
+          * controls in the corner where the convention expects one, and the
+          * design system's One Front Door rule is against exactly that.
+          *
+          * The swap to an arrow on hover is what turns a convention into an
+          * affordance: at rest it is identity, under the cursor it is an
+          * action, and nobody has to be told which.
+          *
+          * ## It is an anchor, and that is the whole point
+          *
+          * `<a href="/">` gets middle-click, Cmd-click, "open in new tab",
+          * "copy link address" and the status-bar preview for free, and it is
+          * in the tab order without being put there. A `<button>` with an
+          * `onClick` that assigns `location.href` looks identical and quietly
+          * loses all five -- and losing Cmd-click on the way back to a file
+          * browser is the one people notice.
+          *
+          * ## No "are you sure"
+          *
+          * This is a full page load, so the question was worth asking. The
+          * answer is no: `doc.ts` attaches `IndexeddbPersistence` to every
+          * room, so edits made while offline are on the device and merge up on
+          * reconnect -- which is what the sync pip two elements along already
+          * promises in words. A confirmation here would contradict it, and a
+          * gate that guards nothing teaches people to click through gates.
+          */}
+        <a
+          href="/"
+          className="hdr-home"
+          data-tooltip="Your boards"
+          data-tooltip-pos="bottom"
+          aria-label="Your boards"
+        >
+          {/* The real mark. This was `/favicon.svg` — a 762KB file, shipped on
+              every page load to draw a 26px glyph. */}
+          <span className="hdr-home__face hdr-home__face--mark" aria-hidden>
+            <Logo size={24} />
+          </span>
+          <span className="hdr-home__face hdr-home__face--back" aria-hidden>
+            <ArrowLeft size={18} strokeWidth={2.25} />
+          </span>
+        </a>
 
         {isEditingTitle ? (
           <input

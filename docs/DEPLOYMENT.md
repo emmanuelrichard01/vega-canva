@@ -31,6 +31,32 @@ What the model cannot do, and what you are choosing when you ship it:
 - **Leakage is permanent.** Room ids travel in `Referer` headers, browser
   history, screenshots and chat logs, and any one of those is a working key.
 
+### Invite links, and the half of the problem they solve
+
+With `SHARE_SECRET` set, the share dialog can mint `/i/<token>` links carrying
+a **signed** role. `onAuthenticate` verifies the signature, checks the token
+was minted for *this* room, and sets `readOnly` from the role inside it. A
+person holding a view link cannot promote it: the role is covered by the
+signature, and the previous implementation — where `role` was a field the
+client wrote and the server read back — is gone.
+
+**Minting needs no permission, and that is correct.** A token is strictly less
+than the room id it derives from, so anyone who can ask for one already has
+everything it grants. Attenuating a capability you hold never needs authority.
+
+What it does **not** do: a token names its room, because the client needs that
+to open the document. Someone who reads it out of their own URL can connect the
+ordinary way and get an editor session, because a bare room id still opens a
+board. Closing that means **refusing unsigned connections**, which would break
+every link already shared and the room-code join box with it. That is a product
+decision and it has not been taken; until it is, an invite link is enforced
+against the link, not against a determined holder. The share dialog says so in
+those words.
+
+Expiry is real — it is inside the signed payload — and it is the only
+per-link control there is. Rotating `SHARE_SECRET` revokes every outstanding
+invite at once, which is the only other revocation available.
+
 `AUTH_SECRET` is a single shared token for the whole deployment. It is a front
 door for a private instance and **not** authorization: it cannot express "this
 person, this board". Do not mistake it for one.
@@ -61,6 +87,7 @@ page somebody fixes in five minutes.
 | `PUBLIC_API_URL` | yes | Written into documents as the address of uploaded media. Changing it later orphans media in boards written before the change. |
 | `TRUST_PROXY` | if behind a proxy | Hop count. Wrong either way breaks rate limiting. |
 | `REDIS_HOST` | only for >1 instance | Without it, instances do not share documents or awareness. |
+| `SHARE_SECRET` | no | Signs invite links. Without it, only full-access links can be offered. Rotating it revokes every outstanding invite — the only revocation there is. |
 | `AUTH_SECRET` | no | One shared token. Not authorization. The client sends it as `VITE_AUTH_SECRET`; set both or neither, or every client is refused. |
 | `SENTRY_DSN` | no | Error tracking. `/readyz` reports `errorTracking` — trust that, not the log line. |
 | `MIN_ROOM_ID_LENGTH` | no | Default 8. Lower only to keep older short-id boards reachable. |

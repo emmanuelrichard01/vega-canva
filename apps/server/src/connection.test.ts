@@ -83,3 +83,32 @@ describe('readConnectionClaim', () => {
     expect(claim.secret).toBeUndefined();
   });
 });
+
+describe('readConnectionClaim: invite tokens', () => {
+  it('passes a signed invite through without inspecting it', () => {
+    /**
+     * This module parses; it does not decide. Reading a role out of the token
+     * here would be the unverified-JWT mistake wearing a new name --
+     * `verifyShareToken` is the only thing allowed to.
+     */
+    const claim = readConnectionClaim(
+      JSON.stringify({ role: 'editor', invite: 'body.signature' })
+    );
+
+    expect(claim.invite).toBe('body.signature');
+    // The self-declared role survives parsing; the caller overrides it with
+    // the verified one.
+    expect(claim.role).toBe('editor');
+  });
+
+  it('has no invite when none was sent', () => {
+    expect(readConnectionClaim(JSON.stringify({ role: 'viewer' })).invite).toBeUndefined();
+    expect(readConnectionClaim('a-bare-secret').invite).toBeUndefined();
+    expect(readConnectionClaim(undefined).invite).toBeUndefined();
+  });
+
+  it('ignores a non-string invite', () => {
+    expect(readConnectionClaim(JSON.stringify({ invite: { a: 1 } })).invite).toBeUndefined();
+    expect(readConnectionClaim(JSON.stringify({ invite: '' })).invite).toBeUndefined();
+  });
+});

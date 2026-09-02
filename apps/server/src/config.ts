@@ -148,6 +148,8 @@ export interface Config {
   redisPort: number;
   /** A shared token every client must present, or `null` for an open server. */
   authSecret: string | null;
+  /** Signs invite links. Absent means invite links cannot be offered. */
+  shareSecret: string | null;
   /**
    * The shortest room id this server will serve.
    *
@@ -222,6 +224,18 @@ export function readConfig(): Config {
     redisHost: process.env.REDIS_HOST || null,
     redisPort: env.int('REDIS_PORT', 6379),
     authSecret: process.env.AUTH_SECRET || null,
+    /**
+     * Deliberately not defaulted and deliberately not derived from anything
+     * else. A signing key generated at boot would invalidate every invite
+     * link on each deploy; one derived from the database password would make
+     * a credential rotation silently revoke people's access, which is a
+     * surprise nobody would connect to the cause.
+     *
+     * Absent is a supported state: `SHARE_SECRET` unset means the share
+     * dialog offers full-access links only and says why, rather than offering
+     * a restriction it cannot enforce.
+     */
+    shareSecret: process.env.SHARE_SECRET || null,
     minRoomIdLength: env.int('MIN_ROOM_ID_LENGTH', 8),
     quotas: {
       maxRoomBytes: env.int('MAX_ROOM_STORAGE_BYTES', 200 * 1024 * 1024), // 200MB

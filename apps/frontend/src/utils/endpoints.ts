@@ -27,4 +27,7 @@ export const WS_URL: string =
   env.VITE_WS_URL || `${currentProtocol === 'https:' ? 'wss' : 'ws'}://${SERVER_HOST}`;
 
 export const mediaUploadUrl = (roomId: string) => `${API_BASE}/rooms/${roomId}/media`;
+
+/** Where a share link is minted. Only the server can sign one. */
+export const inviteMintUrl = (roomId: string) => `${API_BASE}/rooms/${roomId}/invite`;
 export const roomHistoryUrl = (roomId: string) => `${API_BASE}/rooms/${roomId}/history`;

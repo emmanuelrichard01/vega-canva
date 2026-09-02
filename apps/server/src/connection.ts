@@ -38,6 +38,14 @@ export interface ConnectionClaim {
   role: DeclaredRole;
   /** The shared secret, if one was supplied. Checked by the caller. */
   secret: unknown;
+  /**
+   * A signed invite token, if the client presented one.
+   *
+   * Passed through unverified on purpose: this module parses, it does not
+   * decide. `verifyShareToken` is the only thing that may read a role out of
+   * it, and the caller checks the room binding as well as the signature.
+   */
+  invite?: string;
 }
 
 /** Spellings accepted for each mode, so a hand-typed URL behaves. */
@@ -65,6 +73,7 @@ function toRole(value: unknown): DeclaredRole | null {
 export function readConnectionClaim(token: unknown, queryRole?: unknown): ConnectionClaim {
   let role: DeclaredRole = 'editor';
   let secret: unknown = token;
+  let invite: string | undefined;
 
   if (typeof token === 'string') {
     let parsed: unknown;
@@ -78,6 +87,7 @@ export function readConnectionClaim(token: unknown, queryRole?: unknown): Connec
     if (parsed && typeof parsed === 'object') {
       const body = parsed as Record<string, unknown>;
       role = toRole(body.role) ?? role;
+      if (typeof body.invite === 'string' && body.invite) invite = body.invite;
       // A JSON token that carries no secret leaves `secret` undefined rather
       // than the JSON itself, so a deployment with AUTH_SECRET set rejects it
       // instead of comparing the whole envelope against the secret.
@@ -85,5 +95,5 @@ export function readConnectionClaim(token: unknown, queryRole?: unknown): Connec
     }
   }
 
-  return { role: toRole(queryRole) ?? role, secret };
+  return { role: toRole(queryRole) ?? role, secret, ...(invite ? { invite } : {}) };
 }

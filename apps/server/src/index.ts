@@ -15,6 +15,7 @@ import { readConfig } from "./config";
 import { isAllowedUpload, safeExtension, serveAs } from "./media";
 import { checkRoomId, sanitizeRoomId } from "./rooms";
 import { readConnectionClaim } from "./connection";
+import { mintShareToken, verifyShareToken, explainFailure, MAX_TTL_SECONDS, type ShareRole } from "./shareToken";
 import { RoomActivity } from "./roomActivity";
 import { rateLimit } from "./rateLimit";
 import { HistoryBuffer, KnownRooms, type PendingUpdate } from "./historyBuffer";
@@ -481,6 +482,49 @@ app.get("/rooms/:roomId/media/:mediaKey", requireRoom, async (req: any, res: any
 });
 
 // History endpoint for Time Travel session replay with rate limiting
+/**
+ * Mint an invite link for a role.
+ *
+ * ## Why this needs no permission check
+ *
+ * A token is strictly *less* than the room id it is derived from -- anyone who
+ * can call this already holds the room id, and therefore already has
+ * everything the token could grant. Attenuating a capability you hold never
+ * needs authority. Guarding it would be theatre of the kind this endpoint
+ * exists to replace.
+ *
+ * It is rate limited, because minting is cheap for the caller and involves an
+ * HMAC here.
+ */
+app.post("/rooms/:roomId/invite", requireRoom, historyLimiter, (req: any, res: any) => {
+  if (!config.shareSecret) {
+    // A specific status, so the client can say "this deployment cannot make
+    // restricted links" rather than "something went wrong".
+    return res.status(501).json({
+      error: "This deployment cannot issue invite links. Set SHARE_SECRET to enable them.",
+    });
+  }
+
+  const role = String(req.body?.role ?? "");
+  if (role !== "viewer" && role !== "commenter" && role !== "editor") {
+    return res.status(400).json({ error: "Unknown role." });
+  }
+
+  const requested = Number(req.body?.ttlSeconds ?? 0);
+  const ttlSeconds = Number.isFinite(requested)
+    ? Math.min(Math.max(0, Math.floor(requested)), MAX_TTL_SECONDS)
+    : 0;
+
+  const token = mintShareToken(config.shareSecret, {
+    roomId: req.params.roomId,
+    role: role as ShareRole,
+    ttlSeconds,
+  });
+
+  logger.info("Invite link issued", { room: req.params.roomId, role, ttlSeconds });
+  res.json({ token, role, ttlSeconds });
+});
+
 app.get("/rooms/:roomId/history", requireRoom, historyLimiter, async (req, res) => {
   const roomId = req.params.roomId;
   try {
@@ -641,25 +685,33 @@ const server = new Hocuspocus({
      * a front door for a private instance, not authorization. It cannot
      * express "this person, this board", and it should not be mistaken for it.
      *
-     * ## Why `role` is read but not trusted
+     * ## `role` is trusted exactly as far as it is signed
      *
-     * `readOnly` below is set from a role the *client* declares, and that is
-     * all it can be. This once arrived as a `role` claim inside a JWT whose
-     * signature was never checked, alongside an `exp` enforced from the same
-     * unverified payload -- which is not weak authorization, it is decoration
-     * that reads as authorization, and downstream the share dialog duly
-     * promised "mutation packets are rejected server-side" to anyone who
-     * pressed Can view.
+     * There are two ways a role arrives here, and they are not equal.
      *
-     * What it honestly is: the server keeping its half of a bargain the client
-     * proposed, so a tab in view mode does not sync edits its own interface
-     * has already put away. It stops accidents. It stops nobody who does not
-     * want to be stopped, because there is no secret anywhere in the claim.
+     * **`via: 'invite'`** -- the role came out of an HMAC payload this server
+     * signed, so it cannot be edited without breaking the signature. That is
+     * real, and `readOnly` below means what it says.
      *
-     * Making it real needs accounts, a membership table and a server-signed
-     * token verified here -- `docs/GOING-LIVE.md` section 2, stage 3. Until
-     * that exists, do not add a check here that looks stronger than this one:
-     * a gate that appears locked is worse than one visibly propped open.
+     * **`via: 'room-id'`** -- the client declared its own role and there is no
+     * secret anywhere in the claim. The server is keeping its half of a
+     * bargain the client proposed, so a tab in view mode does not sync edits
+     * its own interface has already put away. It stops accidents. It stops
+     * nobody who does not want to be stopped.
+     *
+     * This once arrived as a `role` claim inside a JWT whose signature was
+     * never checked, with an `exp` enforced from the same unverified payload
+     * -- decoration that read as authorization, and downstream the share
+     * dialog duly promised "mutation packets are rejected server-side" to
+     * anyone who pressed Can view. The lesson survives the fix: **do not add a
+     * check here that looks stronger than it is.** A gate that appears locked
+     * is worse than one visibly propped open.
+     *
+     * The remaining gap is deliberate and documented in `shareToken.ts`: an
+     * invite carries its room id in plain sight, so its holder can always drop
+     * the token and connect on the bare room id instead. Signing prevents
+     * *promotion*, not access. Closing that means refusing unsigned
+     * connections -- `docs/GOING-LIVE.md` section 2.3.
      */
     const check = checkRoomId(documentName, config.minRoomIdLength);
     if (!check.ok) throw new Error(check.reason ?? "Invalid room identifier");
@@ -670,22 +722,58 @@ const server = new Hocuspocus({
     // database hiccup must not stop anyone opening a board.
     roomActivity.touch(documentName);
 
-    const { role: declaredRole, secret } = readConnectionClaim(
+    const claim = readConnectionClaim(
       token,
       requestParameters?.get?.('role') ?? requestParameters?.get?.('permission')
     );
 
-    if (config.authSecret && !secretMatches(secret, config.authSecret)) {
+    if (config.authSecret && !secretMatches(claim.secret, config.authSecret)) {
       throw new Error("Unauthorized room connection");
+    }
+
+    /**
+     * A signed invite outranks anything the client says about itself.
+     *
+     * The role in a verified payload was decided *here* and cannot be edited
+     * without breaking the signature, so a person holding a view link cannot
+     * promote it. That is the difference between this and what it replaced,
+     * where `role` was a field the client wrote and the server read back.
+     *
+     * The token is bound to a room as well as to a role: an invite minted for
+     * one board is refused on another, so a view link cannot be replayed
+     * sideways into a board its holder was never given.
+     */
+    let role = claim.role;
+    let via: 'invite' | 'room-id' = 'room-id';
+
+    if (claim.invite) {
+      const verified = verifyShareToken(claim.invite, config.shareSecret);
+      if (!verified.ok) {
+        throw new Error(explainFailure(verified.reason));
+      }
+      if (verified.payload.r !== documentName) {
+        throw new Error("This invite link is for a different board.");
+      }
+      role = verified.payload.o;
+      via = 'invite';
     }
 
     return {
       user: {
         id: nanoid(),
         room: documentName,
-        role: declaredRole,
+        role,
+        via,
       },
-      readOnly: declaredRole === 'viewer',
+      /**
+       * Enforced, and only meaningfully so for `via: 'invite'`.
+       *
+       * A client that arrived on a bare room id still declares its own role,
+       * because a bare room id is still a full capability in this deployment
+       * -- see `shareToken.ts` for why closing that is a product decision
+       * rather than a cryptographic one.
+       */
+      readOnly: role === 'viewer',
     };
   },
 

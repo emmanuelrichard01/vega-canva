@@ -3,6 +3,7 @@ import { HocuspocusProvider } from '@hocuspocus/provider';
 import { IndexeddbPersistence } from 'y-indexeddb';
 import { WS_URL } from '../../utils/endpoints';
 import { getRoomRole } from '../model/permissions';
+import { currentInvite } from '../room/invite';
 
 /**
  * The collaborative document.
@@ -17,11 +18,20 @@ import { getRoomRole } from '../model/permissions';
  * both feeding the same scene graph).
  */
 
-/** Room id parsed from `/room/:id`. `home` keeps the landing page from opening a real room socket. */
+/**
+ * Which board this tab is for.
+ *
+ * Two ways in. `/room/:id` names the board directly; `/i/<token>` names it
+ * inside a signed invite, which is how a link can carry a role the server
+ * will enforce. `home` keeps the landing page from opening a real socket.
+ */
+const invite = typeof window !== 'undefined' ? currentInvite() : null;
+
 export const roomId =
-  typeof window !== 'undefined' && window.location
+  invite?.roomId ??
+  (typeof window !== 'undefined' && window.location
     ? window.location.pathname.split('/room/')[1] || 'home'
-    : 'home';
+    : 'home');
 
 export const doc = new Y.Doc();
 
@@ -69,6 +79,12 @@ const AUTH_SECRET = import.meta.env.VITE_AUTH_SECRET as string | undefined;
 
 const connectionToken = JSON.stringify({
   role: getRoomRole(),
+  /**
+   * The signed half. `role` above is what this tab says about itself and is
+   * worth nothing; `invite` is what the server signed, and it outranks the
+   * claim -- see `shareToken.ts`.
+   */
+  ...(invite ? { invite: invite.token } : {}),
   ...(AUTH_SECRET ? { secret: AUTH_SECRET } : {}),
 });
 

@@ -2739,6 +2739,65 @@ textarea:focus-visible {
  * Those are two different jobs and this is one of the few places where the
  * same element doing both should not look the same doing them.
  */
+/**
+ * The corner mark, which is also the way back to Your boards.
+ *
+ * Two faces stacked in one box and crossfaded, rather than swapping the child
+ * on hover in JavaScript. A swap would reflow the row for a frame -- the mark
+ * and the arrow are different widths -- and it would need a `mouseenter`
+ * listener on the one element in the header that is on the critical path of
+ * every paint. The box is a fixed square, so neither face can move the title
+ * beside it however they are sized.
+ *
+ * `--motion-hover` rather than a literal duration: the global
+ * `prefers-reduced-motion` block redefines that token, so the crossfade
+ * becomes an instant swap for anyone who asked the OS for one, with no
+ * second rule to remember here.
+ */
+.hdr-home {
+  position: relative;
+  display: grid;
+  place-items: center;
+  flex: none;
+  width: var(--control-h-sm);
+  height: var(--control-h-sm);
+  border-radius: var(--radius-md);
+  color: var(--text-secondary);
+  transition: background-color var(--motion-hover);
+}
+
+.hdr-home:hover { background: var(--surface-hover); }
+
+.hdr-home__face {
+  /* Both faces occupy the same grid cell, so the box is the size of the
+     larger of them and neither one's opacity can shift the other. */
+  grid-area: 1 / 1;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  transition: opacity var(--motion-hover), transform var(--motion-hover);
+}
+
+.hdr-home__face--back {
+  opacity: 0;
+  /* Starting a step to the right and arriving at rest is what makes it read
+     as "back" rather than as an arrow that was simply always there. */
+  transform: translateX(2px);
+}
+
+.hdr-home:hover .hdr-home__face--mark,
+.hdr-home:focus-visible .hdr-home__face--mark {
+  opacity: 0;
+  transform: translateX(-2px);
+}
+
+.hdr-home:hover .hdr-home__face--back,
+.hdr-home:focus-visible .hdr-home__face--back {
+  opacity: 1;
+  transform: translateX(0);
+  color: var(--text-primary);
+}
+
 .hdr-title {
   box-sizing: border-box;
   min-width: 0;
@@ -12206,8 +12265,10 @@ body[data-zen='physics'] .forces-handle { bottom: 32px; }
 .share__panel {
   display: flex;
   flex-direction: column;
-  gap: var(--space-4);
-  width: min(100%, 440px);
+  /* The rhythm between sections. Every direct child is a section, which is
+     why the choice and its blurb are wrapped into one. */
+  gap: var(--space-5);
+  width: min(100%, 460px);
   padding: var(--space-6);
   border-radius: var(--radius-2xl);
   box-shadow: var(--shadow-overlay);
@@ -12332,18 +12393,56 @@ body[data-zen='physics'] .forces-handle { bottom: 32px; }
 }
 
 .share__hint {
-  margin: calc(var(--space-2) * -1) 0 0;
+  margin: 0;
   font-size: var(--text-xs);
   line-height: 1.5;
   color: var(--text-tertiary);
 }
+
+/* One line under the segmented control saying what the chosen role allows.
+   It replaced a three-branch paragraph at the bottom of the dialog: the
+   explanation belongs beside the choice it explains, not two controls away. */
+.share__choice { display: flex; flex-direction: column; gap: var(--space-2); }
+
+.share__blurb {
+  margin: 0;
+  font-size: var(--text-base);
+  line-height: 1.5;
+  color: var(--text-secondary);
+}
+
+/* Only a signed link can carry an expiry, so this sits under the link rather
+   than in the header — it is a property of what was just made, not a setting. */
+.share__expiry {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  margin-top: calc(var(--space-5) * -1 + var(--space-3));
+  font-size: var(--text-sm);
+  color: var(--text-tertiary);
+}
+
+.share__expiry select {
+  height: var(--control-h-sm);
+  padding: 0 var(--space-2);
+  border: 1px solid var(--border-divider);
+  border-radius: var(--radius-md);
+  background: var(--surface-primary);
+  color: var(--text-primary);
+  font-family: inherit;
+  font-size: var(--text-sm);
+  cursor: pointer;
+}
+
+.share__copy:disabled { opacity: 0.45; cursor: default; }
+.share__copy:disabled:hover { background: var(--surface-primary); }
 
 .share__caveat {
   display: flex;
   align-items: flex-start;
   gap: var(--space-2);
   margin: 0;
-  padding-top: var(--space-3);
+  padding-top: var(--space-4);
   border-top: 1px solid var(--border-divider);
   font-size: var(--text-base);
   line-height: 1.55;
@@ -12363,10 +12462,11 @@ body[data-zen='physics'] .forces-handle { bottom: 32px; }
    point: these three were the one control in the app carrying their own hex
    fallbacks (#6366f1, #333, #888) for tokens the theme already defines, so
    they were also the one control that ignored dark mode. */
+/* Full width and equal thirds: the three are alternatives, and a row that
+   hugs its content makes the longest label look like the important one. */
 .share__modes {
   display: flex;
   gap: var(--space-1);
-  margin-bottom: var(--space-4);
 }
 
 .share__mode {
