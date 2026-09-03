@@ -172,9 +172,13 @@ export const TextRenderer: React.FC<Props> = React.memo(({ node, visible }) => {
   const measure = React.useMemo(() => measurerFor(t), [t]);
   const cycleUnits = cycle ? cycleTotal(caseText, cycle.unit) : 0;
 
+  // Weight and slant are dependencies, not just arguments: a static family
+  // ships one file per weight, so changing Regular to Bold is a different face
+  // to fetch. Depending on the family alone left the effect asleep through the
+  // one change that needed it.
   React.useEffect(() => {
-    ensureFontLoaded(t.fontFamily);
-  }, [t.fontFamily]);
+    ensureFontLoaded(t.fontFamily, t.fontWeight, t.italic);
+  }, [t.fontFamily, t.fontWeight, t.italic]);
 
   if (!visible) return null;
 

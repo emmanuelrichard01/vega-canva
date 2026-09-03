@@ -2,6 +2,7 @@ import { paintColor } from '../../../engine/model/paint';
 import { CSS_TEXT_TRANSFORM } from '../../../engine/model/textCase';
 import type { Appearance, LineCap, LineJoin, Typography } from '../../../engine/model/schema';
 import { isDottedPattern } from '../../../engine/model/strokeStyle';
+import { fontStack } from '../../../engine/text/fontCatalogue';
 
 /**
  * Compose Konva's single `fontStyle` string from the orthogonal weight and
@@ -16,9 +17,40 @@ import { isDottedPattern } from '../../../engine/model/strokeStyle';
 export function konvaFontStyle(typography: Typography | undefined): string {
   if (!typography) return 'normal';
   const parts: string[] = [];
-  if (typography.fontWeight >= 600) parts.push('bold');
   if (typography.italic) parts.push('italic');
-  return parts.length ? parts.join(' ') : 'normal';
+  /**
+   * The weight as a number, not as the word "bold".
+   *
+   * ## What this was, and what it cost
+   *
+   * ```ts
+   * if (typography.fontWeight >= 600) parts.push('bold');
+   * ```
+   *
+   * Two outcomes for nine weights. Everything from Thin to Medium drew at 400
+   * and everything from Semi Bold to Black drew at 700, so **seven of the nine
+   * weights did not exist on the canvas** — the model stored them, the panel
+   * (once it could ask for them) offered them, and the board drew one of two
+   * things.
+   *
+   * It was also inconsistent with itself: `domTextStyle` below has always
+   * passed `fontWeight` straight through, and that is what the editing overlay
+   * uses. Text set in Light therefore *changed weight the moment you
+   * double-clicked it* and changed back when you clicked away — a real
+   * on-screen symptom that had nowhere to be reported, because nothing in the
+   * panel could produce a Light in the first place.
+   *
+   * ## Why a number is safe here
+   *
+   * Konva composes its canvas font as `fontStyle + ' ' + fontVariant + ' ' +
+   * size + 'px ' + family`, which lands in the CSS `font` shorthand. That
+   * shorthand takes style, variant and weight **in any order** before the size,
+   * so `600 normal 16px Inter` and `italic 600 normal 16px Inter` are both
+   * valid and both mean what they say. The word "bold" was only ever one legal
+   * value of the same slot.
+   */
+  parts.push(String(typography.fontWeight || 400));
+  return parts.join(' ');
 }
 
 /**
@@ -164,41 +196,16 @@ export function shadowSpreadProps(appearance: Appearance | undefined): Record<st
 }
 
 /**
- * Maps logical font family names to comprehensive CSS font stacks with fallbacks,
- * matching standard, variable, and generic font definitions across all browsers and platforms.
+ * The CSS `font-family` value for a family name.
+ *
+ * A one-line delegation to `fontCatalogue.fontStack`, which is the point. This
+ * was a 26-case `switch` — a second font catalogue, kept in step with the
+ * picker's by hand, and the failure mode was silent: a face added to the picker
+ * and forgotten here rendered in the default with nothing to say it had
+ * happened. One list now, and the renderer reads it.
  */
 export function canvasFontFamily(name: string | undefined): string {
-  if (!name) return "'Inter', 'Inter Variable', -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif";
-  switch (name) {
-    case 'Inter':
-      return "'Inter', 'Inter Variable', -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif";
-    case 'Plus Jakarta Sans':
-      return "'Plus Jakarta Sans', 'Plus Jakarta Sans Variable', -apple-system, BlinkMacSystemFont, sans-serif";
-    case 'DM Sans':
-      return "'DM Sans', 'DM Sans Variable', sans-serif";
-    case 'Outfit':
-      return "'Outfit', 'Outfit Variable', -apple-system, BlinkMacSystemFont, sans-serif";
-    case 'Space Grotesk':
-      return "'Space Grotesk', 'Space Grotesk Variable', sans-serif";
-    case 'Roboto':
-      return "'Roboto', 'Roboto Variable', -apple-system, BlinkMacSystemFont, sans-serif";
-    case 'Playfair Display':
-      return "'Playfair Display', 'Playfair Display Variable', Georgia, 'Times New Roman', serif";
-    case 'Lora':
-      return "'Lora', 'Lora Variable', Georgia, 'Times New Roman', serif";
-    case 'Georgia':
-      return "Georgia, 'Times New Roman', Times, serif";
-    case 'JetBrains Mono':
-      return "'JetBrains Mono', 'JetBrains Mono Variable', 'Fira Code', 'Courier New', monospace";
-    case 'Courier New':
-      return "'Courier New', Courier, monospace";
-    case 'Caveat':
-      return "'Caveat', cursive, sans-serif";
-    case 'Architects Daughter':
-      return "'Architects Daughter', cursive, sans-serif";
-    default:
-      return `${name}, -apple-system, BlinkMacSystemFont, sans-serif`;
-  }
+  return fontStack(name);
 }
 
 /** CSS font shorthand pieces for the DOM textareas used during editing. */

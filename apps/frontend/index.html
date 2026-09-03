@@ -33,13 +33,21 @@
          layout. -->
     <link rel="preconnect" href="https://fonts.googleapis.com" />
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
-    <link
-      rel="stylesheet"
-      href="https://fonts.googleapis.com/css2?family=DM+Sans:ital,opsz,wght@0,9..40,100..1000;1,9..40,100..1000&family=JetBrains+Mono:ital,wght@0,100..800;1,100..800&family=Lora:ital,wght@0,400..700;1,400..700&family=Playfair+Display:ital,wght@0,400..900;1,400..900&family=Plus+Jakarta+Sans:ital,wght@0,200..800;1,200..800&display=swap"
-      media="print"
-      onload="this.media='all'"
-    />
-    <noscript><link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=DM+Sans:ital,opsz,wght@0,9..40,100..1000;1,9..40,100..1000&family=JetBrains+Mono:ital,wght@0,100..800;1,100..800&family=Lora:ital,wght@0,400..700;1,400..700&family=Playfair+Display:ital,wght@0,400..900;1,400..900&family=Plus+Jakarta+Sans:ital,wght@0,200..800;1,200..800&display=swap" /></noscript>
+    <!-- Nothing here any more, deliberately.
+
+         Five board faces used to be fetched by a stylesheet on this line, so
+         every visitor downloaded all five on every visit whether they set a
+         word in them or not. That makes "add more fonts" a straight trade
+         against load time, which is the wrong trade: most people use two, and
+         the fortieth face on the list is the one nobody is waiting for.
+
+         Board faces are fetched on first use now -- see
+         `engine/text/fontCatalogue.ts`. The interface itself is set in Inter
+         and Caveat, both bundled through `@fontsource` and compiled into the
+         app's own CSS, so first paint depends on no network font at all.
+
+         The preconnects stay: they cost two idle sockets and remove a DNS and
+         TLS round trip from the first font a person actually chooses. -->
   </head>
   <body>
     <!-- The boot shell.

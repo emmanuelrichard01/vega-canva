@@ -1,9 +1,12 @@
 import React from 'react';
 import {
   AlignCenter,
+  AlignCenterVertical,
+  AlignEndVertical,
   AlignJustify,
   AlignLeft,
   AlignRight,
+  AlignStartVertical,
   Bold,
   CaseSensitive,
   Italic,
@@ -23,6 +26,8 @@ import { shortFont } from '../panelHelpers';
 import { ColorPickerPopover } from '../../ui/ColorPickerPopover';
 import { EyedropperButton } from '../../ui/EyedropperButton';
 import { FontSelector } from '../../ui/FontSelector';
+import { FontWeightSelect } from '../../ui/FontWeightSelect';
+import { boldWeightFor, canBold, hasTrueItalic, nearestWeight } from '../../../engine/text/fontCatalogue';
 import { NumberStepper } from '../../ui/NumberStepper';
 import { SegmentedControl } from '../../ui/SegmentedControl';
 import { Switch } from '../../ui/Switch';
@@ -43,6 +48,7 @@ import type {
   TextCase,
   TextResize,
   Typography,
+  VerticalAlign,
 } from '../../../engine/model/schema';
 import type { Shared } from '../../../engine/model/selection';
 
@@ -86,13 +92,46 @@ export const TypographySection: React.FC<TypographySectionProps> = ({
         badge={typography ? shortFont(typography.fontFamily) : undefined}
       >
         <Row label="Font">
-          <FontSelector value={typography.fontFamily} onChange={(fontFamily) => setTypography({ fontFamily })} />
+          <FontSelector
+            value={typography.fontFamily}
+            onChange={(fontFamily) => {
+              /**
+               * The weight travels with the face, snapped to something the new
+               * one has.
+               *
+               * Text set in Inter Thin and changed to Libre Baskerville — which
+               * has Regular and Bold and nothing else — would otherwise keep
+               * `fontWeight: 100` and render a *synthesised* thin: the same
+               * board, quietly in a face nobody chose, with nothing to say so.
+               * `nearestWeight` keeps the intention (as light as this face
+               * goes) and drops the fiction.
+               */
+              const fontWeight = nearestWeight(fontFamily, typography.fontWeight ?? 400);
+              setTypography(
+                fontWeight === typography.fontWeight ? { fontFamily } : { fontFamily, fontWeight },
+              );
+            }}
+          />
+        </Row>
+        <Row label="Weight" hint="Only the weights this face actually has. Anything else would be a weight the browser invents.">
+          {(() => {
+            const w = sharedType((t) => t.fontWeight ?? 400);
+            return (
+              <FontWeightSelect
+                family={typography.fontFamily}
+                value={w.value ?? 400}
+                mixed={w.mixed}
+                onChange={(fontWeight) => setTypography({ fontWeight })}
+              />
+            );
+          })()}
         </Row>
         <Row label="Size">
           {(() => {
             const size = sharedType((t) => t.fontSize);
             return (
               <NumberStepper
+                suffix="px"
                 value={Math.round(size.value ?? 16)}
                 mixed={size.mixed}
                 onChange={(fontSize) => setTypography({ fontSize: Math.round(fontSize) })}
@@ -129,19 +168,45 @@ export const TypographySection: React.FC<TypographySectionProps> = ({
               the app already has a look for. A class means the four toggles sit
               in the same well as every other grouped control. */}
           <div className="prop-toggle-group">
+            {/*
+              Bold, sent somewhere the family can actually go.
+
+              This wrote a hard 700. On a face whose range stops at 600 that
+              asked for a weight it did not have and got a synthesised one; on
+              a single-weight display face it lit the button up and changed
+              nothing at all. It goes to 700 where that exists and to the
+              family's heaviest otherwise, and says so on a face with nothing
+              above Regular.
+            */}
             <ToggleButton
               active={isBold}
               mixed={sharedType((t) => (t.fontWeight ?? 400) >= 600).mixed}
-              onClick={() => setTypography({ fontWeight: isBold ? 400 : 700 })}
-              label="Bold"
+              onClick={() =>
+                setTypography({ fontWeight: isBold ? 400 : boldWeightFor(typography.fontFamily) })
+              }
+              label={canBold(typography.fontFamily) ? 'Bold' : `${typography.fontFamily} has no bold`}
             >
               <Bold size={14} />
             </ToggleButton>
+            {/*
+              Italic, saying when it is a shear rather than a face.
+
+              A family without a drawn italic gets one from the browser by
+              slanting the upright, and the two are not the same thing: a real
+              italic's letterforms are drawn, with different shapes for a, e
+              and g. The control still works — a slant is often what somebody
+              wants — but it stops implying the face has an italic when it does
+              not.
+            */}
             <ToggleButton
               active={typography.italic}
               mixed={sharedType((t) => Boolean(t.italic)).mixed}
               onClick={() => setTypography({ italic: !typography.italic })}
-              label="Italic"
+              label={
+                hasTrueItalic(typography.fontFamily)
+                  ? 'Italic'
+                  : `Italic — ${typography.fontFamily} has no true italic, so this slants it`
+              }
             >
               <Italic size={14} />
             </ToggleButton>
@@ -195,32 +260,78 @@ export const TypographySection: React.FC<TypographySectionProps> = ({
         icon={<AlignLeft size={13} />}
         defaultOpen={node.type === 'text'}
       >
-        <Row label="Alignment">
+        <Row label="Align">
           <SegmentedControl
             ariaLabel="Text alignment"
             mixed={sharedType((t) => t.align).mixed}
             value={typography.align}
             onChange={(v) => setTypography({ align: v as TextAlign })}
             segments={[
-              { value: 'left', icon: <AlignLeft size={14} /> },
-              { value: 'center', icon: <AlignCenter size={14} /> },
-              { value: 'right', icon: <AlignRight size={14} /> },
-              { value: 'justify', icon: <AlignJustify size={14} /> },
+              { value: 'left', label: 'Left', icon: <AlignLeft size={14} /> },
+              { value: 'center', label: 'Centre', icon: <AlignCenter size={14} /> },
+              { value: 'right', label: 'Right', icon: <AlignRight size={14} /> },
+              { value: 'justify', label: 'Justify', hint: 'Both edges flush, by stretching the spaces', icon: <AlignJustify size={14} /> },
             ]}
           />
         </Row>
-        <Row label="Leading" hint="Distance between baselines, as a multiple of the font size.">
+        {/*
+          Vertical alignment, which was stored, rendered, and unreachable.
+
+          `Typography.verticalAlign` has been in the schema since the beginning
+          and every renderer forwards it — `TextRenderer`, `ShapeRenderer`, the
+          editing overlay. There has never been a control for it, so the only
+          way a board ever got anything but `top` was a shape whose renderer
+          hard-codes `middle`. A field that exists, works, and cannot be
+          reached is a feature nobody knows was built.
+
+          It matters most where this app is used most: text inside a shape. A
+          label sitting against the top edge of a box it is centred in
+          horizontally is the single most common thing to want to fix, and
+          until now the answer was to nudge the text node by hand.
+        */}
+        <Row label="Vertical" hint="Where the block sits in its box when there is room to spare.">
+          <SegmentedControl
+            ariaLabel="Vertical alignment"
+            mixed={sharedType((t) => t.verticalAlign).mixed}
+            value={typography.verticalAlign ?? 'top'}
+            onChange={(v) => setTypography({ verticalAlign: v as VerticalAlign })}
+            segments={[
+              { value: 'top', label: 'Top', icon: <AlignStartVertical size={14} /> },
+              { value: 'middle', label: 'Middle', icon: <AlignCenterVertical size={14} /> },
+              { value: 'bottom', label: 'Bottom', icon: <AlignEndVertical size={14} /> },
+            ]}
+          />
+        </Row>
+        {/*
+          Leading, with the number it actually comes to.
+
+          A multiplier is the right thing to *store* — it survives a size change,
+          which an absolute value does not — and the wrong thing to read. `1.2`
+          is a ratio to something you have to remember; `1.2 · 19px` is a
+          distance. Illustrator shows points and Figma shows pixels, and both
+          are answering the question this hint answers, which is "how far
+          apart".
+        */}
+        <Row
+          label="Leading"
+          hint={`Distance between baselines, as a multiple of the font size. At ${Math.round(typography.fontSize)}px that is ${Math.round(typography.fontSize * (typography.lineHeight ?? 1.2))}px.`}
+        >
           {(() => {
             const lh = sharedType((t) => t.lineHeight);
             return (
-              <NumberStepper
-                value={lh.value ?? 1.2}
-                mixed={lh.mixed}
-                onChange={(lineHeight) => setTypography({ lineHeight })}
-                min={0.5}
-                max={3}
-                step={0.1}
-              />
+              <div className="prop-pair">
+                <NumberStepper
+                  value={lh.value ?? 1.2}
+                  mixed={lh.mixed}
+                  onChange={(lineHeight) => setTypography({ lineHeight })}
+                  min={0.5}
+                  max={3}
+                  step={0.1}
+                />
+                <span className="prop-derived" aria-hidden="true">
+                  {lh.mixed ? '—' : `${Math.round(typography.fontSize * (lh.value ?? 1.2))}px`}
+                </span>
+              </div>
             );
           })()}
         </Row>
@@ -229,6 +340,7 @@ export const TypographySection: React.FC<TypographySectionProps> = ({
             const ls = sharedType((t) => t.letterSpacing);
             return (
               <NumberStepper
+                suffix="px"
                 value={ls.value ?? 0}
                 mixed={ls.mixed}
                 onChange={(letterSpacing) => setTypography({ letterSpacing })}
@@ -244,6 +356,7 @@ export const TypographySection: React.FC<TypographySectionProps> = ({
             const ps = sharedType((t) => t.paragraphSpacing ?? 0);
             return (
               <NumberStepper
+                suffix="px"
                 value={ps.value ?? 0}
                 mixed={ps.mixed}
                 onChange={(v) => setTypography({ paragraphSpacing: v > 0 ? v : undefined })}

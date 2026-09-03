@@ -59,12 +59,17 @@ export const ShapeRenderer: React.FC<Props> = React.memo(({ node, showLabel }) =
    */
   const epoch = React.useSyncExternalStore(fontEpoch.subscribe, fontEpoch.get, fontEpoch.get);
   const labelFamily = 'typography' in node ? node.typography?.fontFamily : undefined;
+  // The weight travels with the family: a static face ships one file per
+  // weight, so asking for the family alone fetches its Regular and measures a
+  // label that is about to be drawn in Bold. See `ensureFontLoaded`.
+  const labelWeight = 'typography' in node ? node.typography?.fontWeight : undefined;
+  const labelItalic = 'typography' in node ? node.typography?.italic : undefined;
   React.useEffect(() => {
     // Ask for the face. Without this nothing requests it, so `document.fonts`
     // may never load it and the epoch never bumps -- the subscription above
     // would then be waiting for an event that no one had asked to happen.
-    ensureFontLoaded(labelFamily);
-  }, [labelFamily]);
+    ensureFontLoaded(labelFamily, labelWeight, labelItalic);
+  }, [labelFamily, labelWeight, labelItalic]);
   const w = node.width;
   const h = node.height;
   // Gradient geometry is unit-space against the shape's *own* box, and the

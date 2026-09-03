@@ -16018,3 +16018,176 @@ html[data-precise] .canvas-container[data-cursor-mode] .konvajs-content canvas {
 .prop-row__control > .radius-control > .radius-link {
   flex-shrink: 0;
 }
+
+/* ===========================================================================
+   FONT PICKER
+   ---------------------------------------------------------------------------
+   Was styled entirely inline, which is why it drifted: the trigger had a
+   hand-written 6px radius and its own border colour while every other field in
+   the panel had moved to `--radius-sm` and the shared token. It is a field
+   like the rest now, and the menu is a surface like the rest.
+   =========================================================================== */
+
+.font-trigger {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--space-2);
+  width: 100%;
+  height: var(--control-h-sm);
+  padding: 0 6px 0 8px;
+  border: 1px solid transparent;
+  border-radius: var(--radius-sm);
+  background: var(--surface-hover);
+  color: var(--text-primary);
+  cursor: pointer;
+  transition: border-color var(--motion-hover), background var(--motion-hover);
+}
+
+.font-trigger:hover { border-color: var(--border-divider); }
+.font-trigger:focus-visible { outline: 2px solid var(--focus-ring-color); outline-offset: 1px; }
+
+/* The name is set in its own face, so it is the first specimen you see. */
+.font-trigger__name {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: var(--text-sm);
+  font-weight: var(--weight-medium);
+}
+
+.font-trigger__chev { flex-shrink: 0; color: var(--text-tertiary); }
+.font-trigger[aria-expanded='true'] .font-trigger__chev { transform: rotate(180deg); }
+
+.font-menu {
+  position: fixed;
+  z-index: var(--z-popover, 99999);
+  display: flex;
+  flex-direction: column;
+  max-height: min(420px, 70vh);
+  padding: 0;
+  overflow: hidden;
+  border-radius: var(--radius-lg);
+  box-shadow: var(--shadow-float);
+  animation: popIn 120ms var(--ease-settle);
+}
+
+/* Pinned above the list rather than scrolling with it: a search field that
+   scrolls away is one you have to find your way back to, and this list is
+   long enough that you would have to. */
+.font-menu__search {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  flex-shrink: 0;
+  padding: 8px 10px;
+  border-bottom: 1px solid var(--border-divider);
+  color: var(--text-tertiary);
+}
+
+.font-menu__search input {
+  flex: 1;
+  min-width: 0;
+  border: none;
+  background: transparent;
+  outline: none;
+  color: var(--text-primary);
+  font-family: inherit;
+  font-size: var(--text-sm);
+}
+
+.font-menu__list {
+  flex: 1 1 auto;
+  min-height: 0;
+  overflow-y: auto;
+  padding: 4px;
+  overscroll-behavior: contain;
+}
+
+.font-menu__group + .font-menu__group { margin-top: 2px; }
+
+.font-menu__label {
+  display: flex;
+  align-items: baseline;
+  gap: var(--space-2);
+  padding: 8px 8px 4px;
+  font-size: var(--text-2xs);
+  font-weight: var(--weight-bold);
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  color: var(--text-tertiary);
+  user-select: none;
+}
+
+/* What the group is for, in a sentence. A list of nine category names is nine
+   words somebody has to already know the meaning of; "Narrow. For labels in
+   tight boxes." is the reason you would pick one. */
+.font-menu__hint {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: var(--text-2xs);
+  font-weight: var(--weight-regular);
+  letter-spacing: 0;
+  text-transform: none;
+  color: var(--text-quaternary, var(--text-tertiary));
+  opacity: 0.75;
+}
+
+.font-row {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  width: 100%;
+  padding: 7px 8px;
+  border: none;
+  border-radius: var(--radius-sm);
+  background: transparent;
+  color: var(--text-primary);
+  cursor: pointer;
+  text-align: left;
+  transition: background var(--motion-hover);
+}
+
+.font-row__name {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: 14px;
+  line-height: 1.25;
+}
+
+/* Four characters that between them show a capital, a round lower case, an
+   ascender and a figure -- the parts of a face a name does not happen to
+   contain. Quiet, because it is evidence rather than a label. */
+.font-row__spec {
+  flex-shrink: 0;
+  font-size: 14px;
+  line-height: 1.25;
+  color: var(--text-tertiary);
+}
+
+.font-row__tick { flex-shrink: 0; color: var(--accent); }
+
+.font-row:hover,
+.font-row[data-active] { background: var(--surface-hover); }
+
+.font-row[data-on] { color: var(--accent); }
+.font-row[data-on] .font-row__spec { color: var(--accent); opacity: 0.7; }
+
+/* The keyboard's position, which is not the same thing as the selection: one
+   is where you are looking, the other is what the text is set in. A ring
+   rather than a fill, so both can be visible at once. */
+.font-row[data-active] { box-shadow: inset 0 0 0 1px var(--border-strong); }
+
+.font-menu__empty {
+  margin: 0;
+  padding: 16px 10px;
+  font-size: var(--text-xs);
+  line-height: 1.5;
+  color: var(--text-tertiary);
+}
