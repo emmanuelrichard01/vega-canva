@@ -3792,6 +3792,122 @@ recognises arbitrary arrays by shape, so the door is open — but it wants a
 `dashScale` that survives `restyleForWidth`, not an array field, and that is a
 piece of model design rather than a panel change.
 
+## 5a-0-z. A dash you can shape, and it still scales
+
+The note in 5a-0-y said a free-form dash editor wants a scale that survives
+`restyleForWidth` rather than an array field. This is that, and it went one step
+further than the note: **there is no scale field either.**
+
+`dashFor` derives the pattern from the weight on purpose — a fixed `[6, 4]` is
+a clear dashed line at 1px and a nearly solid one at 12px. So what is edited is
+the **ratio** to the weight, and what is stored is still the plain `number[]`
+that SVG and Canvas2D take. A 4:1 pattern authored at 2px is still 4:1 at 8px;
+an absolute array would have become `[8, 2]` on a 12px stroke — a nearly solid
+line, silently, on the one edit most likely to follow shaping a dash.
+
+**The ratio is read back out of the array, not stored beside it.** A
+`dashScale` field is two representations of one fact, and `DATA-MODEL.md` opens
+with what that cost this project. The array is what the document holds; a ratio
+is a *view* of it, and a view is safer computed than kept. `restyleForWidth`
+reads it against the width the array was written for and re-derives at the new
+one — exactly proportional, nothing remembered, and stable under repeated
+restyling.
+
+The panel shows **pixels**, because that is the length being set and what every
+other field in the section is in. Change the weight and both numbers move with
+it, which is the promise being visible rather than merely claimed.
+
+## 5a-0-aa. Line detail is not hidden any more
+
+Four rows behind a "Line detail" toggle is a reasonable instinct — most boards
+never touch align, cap, join or the miter limit. It was the wrong call twice
+over.
+
+**Cap and Join are not obscure.** Rounding the dashes on a rectangle is one of
+the commonest things anybody wants from this section, and it was two clicks and
+a guessable label away.
+
+**A disclosure whose contents are conditional can be empty.** On a shape with
+no corners and no ends, opening it showed a greyed-out list — so the affordance
+promised something it could not deliver. The controls that do not apply are
+still disabled *with a reason*, and that is what makes them safe to show flat:
+a greyed control that explains itself teaches the model, and a hidden one
+teaches nothing.
+
+## 5a-0-ab. The sliders got an instrument
+
+Two things a track cannot do on its own, and both were sending people to other
+controls.
+
+**Shift gives a tenth of a step.** The whole range is the whole track, so on a
+200-point brightness scale one pixel of movement is two points and there was no
+way to ask for one. The native input already routes `step` through both the
+drag and the arrow keys, so swapping it while Shift is held gives fine control
+on both with no second code path. Watched on the window rather than the input,
+because Shift is very often released elsewhere — a fine mode that sticks on is
+worse than none, since the slider would silently stop reaching its own extremes.
+
+**The readout is typable.** The one thing a track cannot express is *exactly
+24*. It looks like the readout it replaced at rest and becomes a field on
+approach.
+
+**Ticks needed the track to become ours.** A native range paints its track as a
+shadow part — under the thumb, over everything else in the element — so a mark
+cannot be layered between the two, because there is nothing to layer into.
+Painting the track in the document and leaving only the thumb native puts the
+ordering back in our hands and keeps every behaviour the input provides.
+
+They are **reference marks, not magnets**, and that was a real decision: these
+are continuous quantities, and a slider you cannot set to 51 because 50 keeps
+grabbing it is worse than one with no marks. Double-click already returns to
+the origin exactly, which is the case a magnet is usually trying to serve.
+
+The origin is always marked. On a bipolar control it is the value the fill is
+measured from and the value a double-click returns to, and it was the one
+position on the track you could not see.
+
+## 5a-0-ac. Which controls are tracks, and which are not
+
+**Opacity, shadow blur, shadow spread and shadow opacity became sliders. The
+shadow offsets did not.**
+
+The distinction is *what you know when you arrive*. An offset is a **position**
+— "eight down and four across" is a thing you can mean exactly, and a number
+field is right for it. Softness and strength are the other kind: nobody wants
+37% opacity, they want "a little lighter", and finding that by pressing an
+arrow while looking at the canvas is the worst version of the control. Every
+design tool makes opacity a track for that reason, and this one had it as a
+stepper.
+
+Nothing is lost by the change, which is what made it safe: the readout is
+typable, so 63% is still one click and three keystrokes away.
+
+`RailBase`'s popover control and the export dialog's quality both came onto the
+shared primitive. Quality shows a percentage and stores the fraction the
+encoder takes, which is what `format` is for — the alternative is a second
+control that converts, and that is how two numbers drift.
+
+## 5a-0-ad. Transform, tidied
+
+Three inline grids declared the same `1fr 28px 1fr`, which is three places to
+change one column and three chances to change two of them. One class now, and
+the empty span above the aspect lock is what keeps X and Y on the same rail as
+W and H.
+
+Rotation sat alone in a two-column grid with an **empty second half** — a row
+deliberately half-blank, which reads as a control that failed to render rather
+than as a layout. It shares a line with the two skews now: all three are angles
+about the centre. The skew fields are labelled `SX`/`SY` rather than `X`/`Y`,
+since `X` beside `R` is the position field's letter on a row about angles.
+
+Every position and size field carries `px`, which they did not — in a panel
+where the next row down may be a multiplier or a degree.
+
+**Not verified visually.** The Chrome extension lost its connection partway
+through, so the reworked Transform, Shadow and Adjust rows are confirmed by
+build, lint and the suite, and by the `.prop-grid` measurements taken earlier
+in the session — but nobody has looked at them.
+
 ## 5. Next up
 
 ### 5a-0. The four things to do first

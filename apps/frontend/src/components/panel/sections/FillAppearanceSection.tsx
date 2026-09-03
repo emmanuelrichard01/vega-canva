@@ -4,7 +4,7 @@ import { Accordion, Row } from '../panelPrimitives';
 import { ColorPickerPopover } from '../../ui/ColorPickerPopover';
 import { EyedropperButton } from '../../ui/EyedropperButton';
 import { FillEditor } from '../../ui/FillEditor';
-import { NumberStepper } from '../../ui/NumberStepper';
+import { Slider } from '../../ui/Slider';
 import {
   BLEND_MODES,
   type AnyNode,
@@ -47,12 +47,12 @@ interface FillAppearanceSectionProps {
   opacityShared: Shared<number | undefined>;
   setAppearance: (patch: Partial<Appearance>) => void;
   set: (updates: Partial<AnyNode>) => void;
-  nudgeEach: (
-    key: 'x' | 'y' | 'rotation' | 'opacity' | 'skewX' | 'skewY',
-    delta: number,
-    min?: number,
-    max?: number
-  ) => void;
+  /*
+    `nudgeEach` was here for the opacity stepper's arrows, which applied a
+    *relative* change so a mixed selection kept its differences. A track has no
+    arrows and sets an absolute value, so the prop went with them rather than
+    staying as an unused parameter somebody would later wire back up.
+  */
   setConnectorLikeColor: (color: string) => void;
 }
 
@@ -65,7 +65,6 @@ export const FillAppearanceSection: React.FC<FillAppearanceSectionProps> = ({
   opacityShared,
   setAppearance,
   set,
-  nudgeEach,
   setConnectorLikeColor,
 }) => {
   if (!capabilities.supportsFill && !capabilities.supportsOpacity && !capabilities.supportsRadius) {
@@ -91,19 +90,32 @@ export const FillAppearanceSection: React.FC<FillAppearanceSectionProps> = ({
         />
       )}
 
+      {/*
+        Opacity is the canonical slider quantity, and it was a stepper.
+
+        A number field is right where the value is a *measurement* — a width, a
+        radius, a font size — because you usually arrive knowing it. Opacity is
+        the other kind: you almost never want 63%, you want "a bit more see-
+        through", and finding that with a stepper means pressing an arrow
+        repeatedly while looking somewhere else. Every design tool makes this
+        one a track for that reason.
+
+        Nothing is lost by the change, which is what makes it safe: the readout
+        is typable, so 63% is still one click and three keystrokes away, and
+        the marks at a quarter, a half and three quarters give the positions
+        people actually reach for.
+      */}
       {capabilities.supportsOpacity && (
-        <Row label="Opacity">
-          <NumberStepper
-            suffix="%"
-            value={Math.round((opacityShared.value ?? 1) * 100)}
-            mixed={opacityShared.mixed}
-            onChange={(v) => set({ opacity: v / 100 })}
-            onNudge={(d) => nudgeEach('opacity', d / 100, 0, 1)}
-            min={0}
-            max={100}
-            step={10}
-          />
-        </Row>
+        <Slider
+          label="Opacity"
+          unit="%"
+          value={Math.round((opacityShared.value ?? 1) * 100)}
+          min={0}
+          max={100}
+          ticks={[25, 50, 75]}
+          onChange={(v) => set({ opacity: v / 100 })}
+          hint="How much of what is behind this object shows through."
+        />
       )}
 
       {!capabilities.supportsFill && capabilities.supportsStroke && appearance && (

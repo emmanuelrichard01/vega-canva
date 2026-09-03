@@ -3,6 +3,7 @@ import { Droplets, Sun } from 'lucide-react';
 import { Accordion, Row } from '../panelPrimitives';
 import { ColorPickerPopover } from '../../ui/ColorPickerPopover';
 import { NumberStepper } from '../../ui/NumberStepper';
+import { Slider } from '../../ui/Slider';
 import { Switch } from '../../ui/Switch';
 import {
   DEFAULT_SHADOW_COLOR,
@@ -145,33 +146,50 @@ export const EffectsSection: React.FC<EffectsSectionProps> = ({
                       label="Y"
                     />
                   </div>
-                  <Row label="Blur">
-                    <NumberStepper
-                      value={Math.round(appearance.shadow.blur)}
-                      onChange={(v) => setShadow({ blur: v })}
-                      min={0}
-                      max={200}
-                    />
-                  </Row>
+                  {/*
+                    Blur, spread and opacity are tracks; the offsets are not.
+
+                    The distinction is what you know when you arrive. An offset
+                    is a *position* — "eight down and four across" is a thing
+                    you can mean exactly, and it is what the two fields above
+                    are for. Softness and strength are the other kind: nobody
+                    wants 37% opacity, they want "a little lighter", and finding
+                    that by pressing an arrow while looking at the canvas is the
+                    worst version of this control.
+
+                    Blur is marked at 8 and 24 — roughly the two shadows a
+                    board actually uses, a contact shadow and a lifted one.
+                  */}
+                  <Slider
+                    label="Blur"
+                    unit="px"
+                    value={Math.round(appearance.shadow.blur)}
+                    min={0}
+                    max={200}
+                    ticks={[8, 24]}
+                    onChange={(v) => setShadow({ blur: v })}
+                    hint="How soft the edge is. Zero is a hard-edged copy of the shape."
+                  />
                   {capabilities.supportsShadowSpread && !openShape && (
-                    <Row label="Spread" hint="Grows the shadow's own silhouette before it is blurred.">
-                      <NumberStepper
-                        value={Math.round(appearance.shadow.spread ?? 0)}
-                        onChange={(v) => setShadow({ spread: v })}
-                        min={0}
-                        max={100}
-                      />
-                    </Row>
-                  )}
-                  <Row label="Opacity">
-                    <NumberStepper
-                      value={Math.round((appearance.shadow.opacity ?? 1) * 100)}
-                      onChange={(v) => setShadow({ opacity: v / 100 })}
+                    <Slider
+                      label="Spread"
+                      unit="px"
+                      value={Math.round(appearance.shadow.spread ?? 0)}
                       min={0}
                       max={100}
-                      step={10}
+                      onChange={(v) => setShadow({ spread: v })}
+                      hint="Grows the shadow's own silhouette before it is blurred."
                     />
-                  </Row>
+                  )}
+                  <Slider
+                    label="Opacity"
+                    unit="%"
+                    value={Math.round((appearance.shadow.opacity ?? 1) * 100)}
+                    min={0}
+                    max={100}
+                    ticks={[25, 50, 75]}
+                    onChange={(v) => setShadow({ opacity: v / 100 })}
+                  />
                 </>
               )}
             </Accordion>
@@ -234,31 +252,38 @@ export const EffectsSection: React.FC<EffectsSectionProps> = ({
                           label="Y"
                         />
                       </div>
-                      <Row label="Blur">
-                        <NumberStepper
-                          value={Math.round(appearance.innerShadow.blur)}
-                          onChange={(v) => setInnerShadow({ blur: v })}
-                          min={0}
-                          max={200}
-                        />
-                      </Row>
-                      <Row label="Spread">
-                        <NumberStepper
-                          value={Math.round(appearance.innerShadow.spread ?? 0)}
-                          onChange={(v) => setInnerShadow({ spread: v })}
-                          min={0}
-                          max={100}
-                        />
-                      </Row>
-                      <Row label="Opacity">
-                        <NumberStepper
-                          value={Math.round((appearance.innerShadow.opacity ?? 1) * 100)}
-                          onChange={(v) => setInnerShadow({ opacity: v / 100 })}
-                          min={0}
-                          max={100}
-                          step={10}
-                        />
-                      </Row>
+                      {/* The same three as the drop shadow, and the same
+                          reasoning — see the note there. Two shadow panels
+                          whose identical controls behaved differently would be
+                          a worse inconsistency than either choice. */}
+                      <Slider
+                        label="Blur"
+                        unit="px"
+                        value={Math.round(appearance.innerShadow.blur)}
+                        min={0}
+                        max={200}
+                        ticks={[8, 24]}
+                        onChange={(v) => setInnerShadow({ blur: v })}
+                        hint="How soft the inner edge is."
+                      />
+                      <Slider
+                        label="Spread"
+                        unit="px"
+                        value={Math.round(appearance.innerShadow.spread ?? 0)}
+                        min={0}
+                        max={100}
+                        onChange={(v) => setInnerShadow({ spread: v })}
+                        hint="How far into the shape the shadow reaches before it is blurred."
+                      />
+                      <Slider
+                        label="Opacity"
+                        unit="%"
+                        value={Math.round((appearance.innerShadow.opacity ?? 1) * 100)}
+                        min={0}
+                        max={100}
+                        ticks={[25, 50, 75]}
+                        onChange={(v) => setInnerShadow({ opacity: v / 100 })}
+                      />
                     </>
                   )}
                 </>

@@ -58,6 +58,30 @@ export const ADJUSTMENT_MIN: Record<AdjustmentId, number> = {
   blur: 0,
 };
 
+/**
+ * What each adjustment is measured in.
+ *
+ * Three of these are a **departure** from as-shot, expressed in points of a
+ * hundred, and one is a **distance** in pixels. A panel that shows all four as
+ * bare numbers is asking somebody to know which is which, and the two are not
+ * the same kind of quantity: `+40` brightness and `40` blur look alike and
+ * behave nothing alike.
+ */
+export const ADJUSTMENT_UNITS: Record<AdjustmentId, string> = {
+  brightness: '',
+  contrast: '',
+  saturation: '',
+  blur: 'px',
+};
+
+/** What moving each one actually does, for the control's tooltip. */
+export const ADJUSTMENT_HINTS: Record<AdjustmentId, string> = {
+  brightness: 'Lifts or drops every tone by the same amount. Highlights clip first.',
+  contrast: 'Pushes tones away from the midpoint, or towards it.',
+  saturation: 'How much colour. All the way down is greyscale.',
+  blur: 'Softens the image. There is no negative half — you cannot un-blur.',
+};
+
 const clamp = (n: number, min: number, max: number) => Math.min(max, Math.max(min, n));
 
 /**

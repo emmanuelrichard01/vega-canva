@@ -44,6 +44,8 @@ import {
   capApplies,
   dashFor,
   restyleForWidth,
+  styleOf,
+  type DashRatio,
   type StrokeStyleId,
 } from '../engine/model/strokeStyle';
 import { TagEditor } from './ui/TagEditor';
@@ -316,7 +318,20 @@ export const PropertiesPanel: React.FC<PropertiesPanelProps> = ({ selectedIds, o
     }
   };
 
-  const setStrokeStyle = (style: StrokeStyleId) =>
+  /**
+   * Set the dash pattern, either by picking a style or by shaping one.
+   *
+   * One writer for both, because they produce the same thing: picking a style
+   * is choosing a ratio from `DASH_PRESET`, and shaping one is supplying it.
+   * Two paths writing `stroke.dash` would be two chances to forget
+   * `buildStroke`, which is the function that keeps a solid stroke from
+   * carrying a stale `dash` key.
+   *
+   * Shaping is applied **per node**, against each node's own weight, so a
+   * multi-selection of different weights all end up with the same *ratio*
+   * rather than the same array — which is the whole point of the ratio.
+   */
+  const applyDash = (style: StrokeStyleId, ratio?: DashRatio) =>
     patchEach((n) => {
       const paint = appearanceOf(n);
       const current = paint?.stroke;
@@ -334,11 +349,15 @@ export const PropertiesPanel: React.FC<PropertiesPanelProps> = ({ selectedIds, o
               miterLimit: current?.miterLimit,
               cap: current?.cap,
             },
-            dashFor(style, width)
+            dashFor(style, width, ratio)
           ),
         },
       };
     });
+
+  const setStrokeStyle = (style: StrokeStyleId) => applyDash(style);
+
+  const setDashRatio = (ratio: DashRatio) => applyDash(styleOf(appearance?.stroke), ratio);
 
   const bounds = selectionBounds(nodes);
   const boxResizable = !isMulti || canResizeAsBox(nodes);
@@ -614,7 +633,6 @@ export const PropertiesPanel: React.FC<PropertiesPanelProps> = ({ selectedIds, o
         opacityShared={opacityShared}
         setAppearance={setAppearance}
         set={set}
-        nudgeEach={nudgeEach}
         setConnectorLikeColor={setConnectorLikeColor}
       />
 
@@ -627,6 +645,7 @@ export const PropertiesPanel: React.FC<PropertiesPanelProps> = ({ selectedIds, o
         sharedPaint={sharedPaint}
         setStroke={setStroke}
         setStrokeStyle={setStrokeStyle}
+        setDashRatio={setDashRatio}
       />
 
       {/* Between the paint and the effects, which is where it belongs: how the

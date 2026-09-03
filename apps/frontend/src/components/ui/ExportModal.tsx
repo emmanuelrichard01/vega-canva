@@ -10,6 +10,7 @@ import {
   type ExportBackground,
   type ExportFormat,
 } from '../../engine/export';
+import { Slider } from './Slider';
 import { parseDocumentExport, describeImport, describeOrigin, isSameRoom } from '../../engine/export/DocumentImport';
 import { restoreDocument } from '../../engine/export/restoreDocument';
 import { computeContentBounds } from '../../engine/export/bounds';
@@ -557,16 +558,30 @@ export const ExportModal: React.FC<Props> = ({
             )}
 
             {spec.lossy && (
-              <label className="export__field">
-                <span className="export__label">
-                  Quality <span className="export__value">{Math.round(quality * 100)}%</span>
-                </span>
-                <input
-                  type="range" min={0.3} max={1} step={0.01} value={quality}
-                  onChange={(e) => setQuality(Number(e.target.value))}
-                  aria-label="Quality"
+              <div className="export__field">
+                {/*
+                  Shown as a percentage, stored as the fraction the encoder
+                  takes. `format` exists for exactly this: the number that
+                  means something to a person and the number the API wants are
+                  not the same, and the alternative is a second control that
+                  converts — which is how the two drift.
+
+                  Marked at 60 and 80, the two thresholds worth knowing: below
+                  60 a photograph starts showing blocks, and above 80 the file
+                  grows faster than the picture improves.
+                */}
+                <Slider
+                  label="Quality"
+                  value={quality}
+                  min={0.3}
+                  max={1}
+                  step={0.01}
+                  ticks={[0.6, 0.8]}
+                  format={(q) => `${Math.round(q * 100)}%`}
+                  onChange={setQuality}
+                  hint="How hard the encoder compresses. Lower is a smaller file and softer detail."
                 />
-              </label>
+              </div>
             )}
           </div>
         </div>

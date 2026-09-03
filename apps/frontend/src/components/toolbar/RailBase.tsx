@@ -3,6 +3,7 @@ import { motion } from 'framer-motion';
 import { RailSideContext } from './railSide';
 import { HANG, ENTRY } from './railConstants';
 import type { RailSide } from '../../engine/interaction/railPlacement';
+import { Slider } from '../ui/Slider';
 
 /**
  * Dedicated vector edit icon representing an anchor point with control handles.
@@ -103,20 +104,23 @@ export const PopoverSlider: React.FC<{
   suffix?: string;
   onChange: (value: number) => void;
 }> = ({ label, value, min, max, step = 1, suffix = '', onChange }) => (
-  <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
-    <div className="ctx-popover__row">
-      <span className="ctx-popover__label">{label}</span>
-      <span className="ctx-value">{Math.round(value)}{suffix}</span>
-    </div>
-    <input
-      type="range"
-      aria-label={label}
-      min={min}
-      max={max}
-      step={step}
-      value={value}
-      onChange={(e) => onChange(Number(e.target.value))}
-      className="ctx-range"
-    />
-  </div>
+  /*
+    The shared slider, rather than a bare range with its own caption row.
+
+    It was a two-part control — a label-and-value row above a native input —
+    which is the same information the primitive lays out in one line, and a
+    native input is the thing that does not follow the theme, the focus ring or
+    the other platforms. Coming through `Slider` also brings the fine-step
+    modifier and the typable readout, which a popover full of numbers wants at
+    least as much as the panel does.
+  */
+  <Slider
+    label={label}
+    value={value}
+    min={min}
+    max={max}
+    step={step}
+    unit={suffix}
+    onChange={onChange}
+  />
 );

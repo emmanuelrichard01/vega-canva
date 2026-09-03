@@ -3874,7 +3874,7 @@ textarea:focus-visible {
 
 .slider {
   display: grid;
-  grid-template-columns: 68px 1fr 38px;
+  grid-template-columns: 68px 1fr 46px;
   align-items: center;
   gap: var(--space-2);
 }
@@ -3902,9 +3902,104 @@ textarea:focus-visible {
   color: var(--text-tertiary);
 }
 
+/**
+ * The readout is typed into.
+ *
+ * Invisible at rest — it has to keep reading as a readout, because that is
+ * what it is most of the time — and becomes a field on approach. The one thing
+ * a track cannot do is *exactly 24*, and until now that sent people looking
+ * for a second control.
+ */
+input.slider__value {
+  width: 100%;
+  min-width: 0;
+  padding: 2px 4px;
+  border: 1px solid transparent;
+  border-radius: var(--radius-sm);
+  background: transparent;
+  cursor: text;
+  transition: background var(--motion-hover), border-color var(--motion-hover);
+}
+
+input.slider__value:hover { background: var(--surface-hover); }
+
+input.slider__value:focus {
+  outline: none;
+  border-color: var(--border-strong);
+  background: var(--surface-hover);
+  color: var(--text-primary);
+}
+
+input.slider__value:focus-visible {
+  outline: 2px solid var(--focus-ring-color);
+  outline-offset: 1px;
+}
+
+/**
+ * The rail, which holds the track we draw and the input that reads it.
+ *
+ * A native range paints its track as a shadow part, under the thumb and over
+ * everything else in the element — so a tick mark cannot be layered between
+ * the two, because there is nothing to layer into. Painting the track here and
+ * leaving only the thumb native puts the ordering back in the document's
+ * hands while keeping every behaviour the input provides.
+ */
+.slider__rail {
+  position: relative;
+  display: flex;
+  align-items: center;
+  height: 16px;
+}
+
+/* The filled segment runs between the origin and the value in either
+   direction, painted as a gradient with hard stops rather than as an extra
+   element — a bipolar fill has no single edge to anchor a second box to. */
+.slider__track {
+  position: absolute;
+  left: 0;
+  right: 0;
+  height: 4px;
+  border-radius: var(--radius-pill);
+  background: linear-gradient(
+    to right,
+    var(--surface-sunken) var(--slider-fill-start),
+    var(--slider-accent, var(--text-primary)) var(--slider-fill-start),
+    var(--slider-accent, var(--text-primary)) var(--slider-fill-end),
+    var(--surface-sunken) var(--slider-fill-end)
+  );
+  pointer-events: none;
+}
+
+/**
+ * A notable value, marked.
+ *
+ * Reference, not magnet. These are continuous quantities, and a slider you
+ * cannot set to 51 because 50 keeps grabbing it is worse than one with no
+ * marks. The origin gets one always: on a bipolar control it is the value the
+ * fill is measured from and the value a double-click returns to, and it was
+ * the one position on the track you could not see.
+ *
+ * Drawn taller than the track and in the page's ground, so it reads as a notch
+ * cut through the rail rather than as a dot sitting on it — and so it stays
+ * visible against both the filled and unfilled halves.
+ */
+.slider__tick {
+  position: absolute;
+  top: 50%;
+  width: 2px;
+  height: 8px;
+  margin-left: -1px;
+  translate: 0 -50%;
+  border-radius: 1px;
+  background: var(--surface-primary);
+  opacity: 0.9;
+  pointer-events: none;
+}
+
 .slider__input {
   -webkit-appearance: none;
   appearance: none;
+  position: relative;
   width: 100%;
   height: 16px;
   margin: 0;
@@ -3912,36 +4007,23 @@ textarea:focus-visible {
   cursor: pointer;
 }
 
-/* The filled segment runs between the origin and the value in either
-   direction, painted as a gradient with hard stops rather than as an extra
-   element — a bipolar fill has no single edge to anchor a second box to. */
+/* Transparent: the visible track is `.slider__track` above. */
 .slider__input::-webkit-slider-runnable-track {
   height: 4px;
-  border-radius: var(--radius-pill);
-  background: linear-gradient(
-    to right,
-    var(--surface-sunken) var(--slider-fill-start),
-    var(--slider-accent, var(--text-primary)) var(--slider-fill-start),
-    var(--slider-accent, var(--text-primary)) var(--slider-fill-end),
-    var(--surface-sunken) var(--slider-fill-end)
-  );
+  background: transparent;
 }
 
 .slider__input::-moz-range-track {
   height: 4px;
-  border-radius: var(--radius-pill);
-  background: linear-gradient(
-    to right,
-    var(--surface-sunken) var(--slider-fill-start),
-    var(--slider-accent, var(--text-primary)) var(--slider-fill-start),
-    var(--slider-accent, var(--text-primary)) var(--slider-fill-end),
-    var(--surface-sunken) var(--slider-fill-end)
-  );
+  background: transparent;
 }
 
-/* Elevation is declared once, as a shadow with an offset and a blur. The
-   border is what separates the thumb from the filled track it sits on, which
-   is the same ink colour. */
+/* Fine mode, while Shift is held. The thumb narrows to say the instrument has
+   got more precise -- the only feedback available for a change that is
+   otherwise invisible until you move. */
+.slider__input[data-fine]::-webkit-slider-thumb { transform: scaleX(0.62); }
+.slider__input[data-fine]::-moz-range-thumb { transform: scaleX(0.62); }
+
 .slider__input::-webkit-slider-thumb {
   -webkit-appearance: none;
   appearance: none;
@@ -16657,3 +16739,31 @@ html[data-precise] .canvas-container[data-cursor-mode] .konvajs-content canvas {
    press. */
 .sketch-redraw:active svg { transform: rotate(-90deg); }
 .sketch-redraw svg { transition: transform 220ms var(--ease-settle); }
+
+/* A note standing in for a control that has nothing to set. Inline, so it
+   occupies the grid cell its sibling field would have had rather than
+   collapsing the row into one column and shifting the field beside it. */
+.prop-note--inline {
+  display: flex;
+  align-items: center;
+  padding: 0;
+  font-size: var(--text-2xs);
+  line-height: 1.3;
+}
+
+/* Two fields with a small control between them — X/Y across the aspect lock's
+   column, and W/H around the lock itself. Declared once rather than inline at
+   three call sites, which was three places to change one column. */
+.prop-grid--linked {
+  grid-template-columns: minmax(0, 1fr) 28px minmax(0, 1fr);
+}
+
+/* Three angles about the centre: rotation and the two skews. */
+.prop-grid--thirds {
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 6px;
+}
+
+/* The axis letter widens for the two-character skew labels, so all three
+   fields on that row still start their digits on one rail. */
+.prop-grid--thirds .stepper-label { width: 15px; }

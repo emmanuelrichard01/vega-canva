@@ -8,14 +8,19 @@ import { DEFAULT_MITER_LIMIT, type Stroke } from './schema';
  * it a purpose — the same judgment `tags` got, where a field with no way to
  * act on it is decoration.
  *
- * ## Why presets rather than a dash-array editor
+ * ## Presets first, then the shape of the dash
  *
  * The stored value is an absolute `number[]`, exactly as SVG and Canvas2D
- * define it, so nothing here invents a private format. But a raw array field
- * is the wrong control: "4,2,1,2" is a thing you tune in Illustrator's stroke
- * panel after you already know what you want, not a thing you pick from. Three
- * named styles cover what a canvas actually needs, and a full pattern editor
- * belongs with cap and join controls when the vector work lands.
+ * define it, so nothing here invents a private format. A raw array field would
+ * still be the wrong control — "4,2,1,2" is a thing you tune after you already
+ * know what you want, not a thing you pick from — so the three named styles
+ * remain the way in, and the dash and gap are editable once one is chosen.
+ *
+ * What is edited is the **ratio** to the stroke weight rather than an absolute
+ * length. That is the reconciliation between "let me shape this" and the rule
+ * below: a hand-shaped pattern scales with the weight exactly as a preset
+ * does, so the panel's promise stays true instead of being quietly false for
+ * any pattern somebody touched.
  *
  * ## Why the geometry is derived from the stroke weight
  *
@@ -76,19 +81,84 @@ const patternWeight = (width: number): number =>
  * stroke is drawn — see `isDottedPattern` — rather than written here, so
  * picking a dash style never overwrites the cap the user chose.
  */
-export function dashFor(style: StrokeStyleId, width: number): DashGeometry {
+/**
+ * A dash pattern expressed as multiples of the stroke weight.
+ *
+ * This is the shape the presets have always had — three-on, two-off — written
+ * down so it can be *edited* rather than only chosen. See `dashFor`.
+ */
+export interface DashRatio {
+  /** Length of the drawn segment. Zero means a dot, which has no length. */
+  on: number;
+  /** Length of the gap after it. */
+  off: number;
+}
+
+export const DASH_PRESET: Record<StrokeStyleId, DashRatio | null> = {
+  // Three-on, two-off reads as deliberate at every weight. Equal on/off reads
+  // as a ladder, and anything sparser stops reading as one line.
+  dashed: { on: 3, off: 2 },
+  dotted: { on: 0, off: 2 },
+  solid: null,
+};
+
+/** The widest a segment may be relative to the weight. Past this a "dash" is a line. */
+export const MAX_DASH_RATIO = 12;
+
+/**
+ * Dash geometry for a style at a given stroke weight, optionally reshaped.
+ *
+ * Dotted is `[0, gap]`, which is how both Canvas2D and SVG spell "dot". The
+ * round cap that gives each zero-length segment its extent is applied when the
+ * stroke is drawn — see `isDottedPattern` — rather than written here, so
+ * picking a dash style never overwrites the cap the user chose.
+ *
+ * ## Why a *ratio* and not a length
+ *
+ * The pattern is still derived from the weight, and that is the whole reason
+ * this module exists: a fixed `[6, 4]` is a clear dashed line on a 1px stroke
+ * and a nearly solid one on a 12px stroke, because gaps stop reading once they
+ * are much smaller than the line is thick.
+ *
+ * So the editor edits the **ratio**, not the absolute array. A person types a
+ * length in pixels and sees a length in pixels; what is stored is that length,
+ * and what is *remembered* is its proportion to the weight, so changing the
+ * weight rescales the pattern exactly as a preset would. The panel's own
+ * promise — "the pattern scales with the weight so it stays legible" — stays
+ * true for a hand-shaped pattern, which is the thing a free-form array field
+ * would have quietly broken.
+ */
+export function dashFor(style: StrokeStyleId, width: number, ratio?: DashRatio): DashGeometry {
   const w = patternWeight(width);
-  switch (style) {
-    case 'dashed':
-      // Three-on, two-off reads as deliberate at every weight. Equal on/off
-      // reads as a ladder, and anything sparser stops reading as one line.
-      return { dash: [w * 3, w * 2] };
-    case 'dotted':
-      return { dash: [0, w * 2] };
-    case 'solid':
-    default:
-      return {};
-  }
+  const shape = ratio ?? DASH_PRESET[style];
+  if (!shape) return {};
+  // A gap of zero is a solid line drawn as a pattern: legal, pointless, and
+  // indistinguishable from solid except that it defeats `styleOf`.
+  if (shape.off <= 0) return {};
+  return { dash: [Math.max(0, shape.on) * w, shape.off * w] };
+}
+
+/**
+ * The ratio a stored pattern represents, read back out of it.
+ *
+ * ## Why this is derived rather than stored beside the array
+ *
+ * The obvious design is a `dashScale` field on `Stroke`. It is also two
+ * representations of one fact, and `DATA-MODEL.md` opens with what that costs
+ * this project — a size in three places, read with different precedence in six
+ * modules. The array is what SVG and Canvas2D take and what the document
+ * holds; a ratio is a *view* of it, and a view is safer computed than kept.
+ *
+ * The stroke's own `width` is the divisor, because that is the weight the
+ * array was written for. On a width change `restyleForWidth` reads the ratio
+ * against the *old* width and re-derives against the new one, which is exactly
+ * proportional scaling and needs nothing remembered.
+ */
+export function dashRatioOf(stroke: Stroke | undefined): DashRatio | null {
+  const dash = stroke?.dash;
+  if (!dash || dash.length < 2) return null;
+  const w = patternWeight(stroke?.width ?? 0);
+  return { on: dash[0] / w, off: dash[1] / w };
 }
 
 /**
@@ -117,7 +187,11 @@ export function styleOf(stroke: Stroke | undefined): StrokeStyleId {
  * this unconditionally on every width change.
  */
 export function restyleForWidth(stroke: Stroke | undefined, width: number): DashGeometry {
-  return dashFor(styleOf(stroke), width);
+  // The shape the stroke currently has, re-derived at the new weight. Reading
+  // the ratio out of the stored array is what lets a hand-shaped pattern
+  // survive a weight change as faithfully as a preset does — without a second
+  // field that could disagree with the array beside it.
+  return dashFor(styleOf(stroke), width, dashRatioOf(stroke) ?? undefined);
 }
 
 /**

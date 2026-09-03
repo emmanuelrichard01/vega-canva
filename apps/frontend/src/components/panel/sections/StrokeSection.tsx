@@ -1,6 +1,6 @@
 import React from 'react';
-import { Minus, PenLine, Spline } from 'lucide-react';
-import { Accordion, Details, Row, StrokeStyleIcon } from '../panelPrimitives';
+import { Minus, PenLine, Spline, UnfoldHorizontal } from 'lucide-react';
+import { Accordion, Row, StrokeStyleIcon } from '../panelPrimitives';
 import { ColorPickerPopover } from '../../ui/ColorPickerPopover';
 import { EyedropperButton } from '../../ui/EyedropperButton';
 import { NumberStepper } from '../../ui/NumberStepper';
@@ -16,9 +16,13 @@ import {
   type StrokeAlign,
 } from '../../../engine/model/schema';
 import {
+  DASH_PRESET,
+  MAX_DASH_RATIO,
   STROKE_STYLE_IDS,
   STROKE_STYLE_LABELS,
+  dashRatioOf,
   styleOf,
+  type DashRatio,
   type StrokeStyleId,
 } from '../../../engine/model/strokeStyle';
 import type { Shared } from '../../../engine/model/selection';
@@ -81,6 +85,7 @@ interface StrokeSectionProps {
   sharedPaint: <T>(read: (a: Appearance) => T) => Shared<T>;
   setStroke: (patch: Partial<Pick<Stroke, 'color' | 'width' | 'align' | 'join' | 'miterLimit' | 'cap'>>) => void;
   setStrokeStyle: (style: StrokeStyleId) => void;
+  setDashRatio: (ratio: DashRatio) => void;
 }
 
 export const StrokeSection: React.FC<StrokeSectionProps> = ({
@@ -92,8 +97,18 @@ export const StrokeSection: React.FC<StrokeSectionProps> = ({
   sharedPaint,
   setStroke,
   setStrokeStyle,
+  setDashRatio,
 }) => {
   if (!capabilities.supportsStroke || !appearance) return null;
+
+  const style = styleOf(appearance.stroke);
+  // The weight the pattern is measured against. Matches `patternWeight` in
+  // `strokeStyle`, because a field showing a length derived from a clamped
+  // weight has to clamp the same way or the number it shows is not the number
+  // that was drawn.
+  const weight = Math.max(1, appearance.stroke?.width ?? 0);
+  const ratio: DashRatio = dashRatioOf(appearance.stroke) ?? DASH_PRESET.dashed!;
+  const clampRatio = (n: number) => Math.min(MAX_DASH_RATIO, Math.max(0, n));
 
   return (
     <Accordion
@@ -156,7 +171,72 @@ export const StrokeSection: React.FC<StrokeSectionProps> = ({
         />
       </div>
 
-      <Details label="Line detail">
+      {/*
+        The dash, once there is one.
+
+        Three presets are the way in — "4,2,1,2" is a thing you tune after you
+        already know what you want, not a thing you pick from — but they were
+        also the way *out*, and a dashed line whose dashes are the wrong length
+        had nowhere to go.
+
+        Shown in pixels, because that is the length you are setting and what
+        every other field in this section is in. What is *kept* is the
+        proportion to the weight, so the section's own promise — the pattern
+        scales with the weight so it stays legible — stays true for a pattern
+        somebody shaped, which is precisely where an absolute array would have
+        quietly repealed it. Change the weight and these two numbers move with
+        it, which is the promise being visible rather than merely claimed.
+
+        A dot has no length, so a dotted line offers only its gap.
+      */}
+      {style !== 'solid' && (
+        <div className="prop-grid">
+          {style === 'dashed' ? (
+            <NumberStepper
+              aria-label="Dash length"
+              glyph={<StrokeStyleIcon style="dashed" />}
+              suffix="px"
+              value={Math.round(ratio.on * weight * 10) / 10}
+              onChange={(px) => setDashRatio({ ...ratio, on: clampRatio(px / weight) })}
+              min={0}
+              max={Math.round(MAX_DASH_RATIO * weight)}
+              step={1}
+            />
+          ) : (
+            <span className="prop-note prop-note--inline">Dots have no length.</span>
+          )}
+          <NumberStepper
+            aria-label="Gap between dashes"
+            glyph={<UnfoldHorizontal size={13} />}
+            suffix="px"
+            value={Math.round(ratio.off * weight * 10) / 10}
+            onChange={(px) => setDashRatio({ ...ratio, off: clampRatio(px / weight) })}
+            min={1}
+            max={Math.round(MAX_DASH_RATIO * weight)}
+            step={1}
+          />
+        </div>
+      )}
+
+      {/*
+        Line detail, out of its disclosure.
+
+        It held align, cap, join and the miter limit behind a "Line detail"
+        toggle, which is a reasonable instinct — four rows for settings most
+        boards never touch. It was the wrong call for two reasons. Cap and Join
+        are not obscure: rounding the dashes on a rectangle is one of the
+        commonest things anybody wants here, and it was two clicks and a
+        guessable label away. And a disclosure whose contents are *conditional*
+        can be empty — on a shape with no corners and no ends, opening it
+        showed a greyed-out list, so the affordance promised something it could
+        not deliver.
+
+        Flat, with a rule to say the group has changed subject. The controls
+        that do not apply are still disabled with a reason, which is what makes
+        them safe to show: a greyed control that explains itself teaches the
+        model, and a hidden one teaches nothing.
+      */}
+      <div className="prop-rule" role="presentation" />
         {capabilities.supportsEdgeEffects && !openShape && (
           <Row label="Align" hint="Where the line sits relative to the shape's edge.">
             <SegmentedControl
@@ -244,7 +324,6 @@ export const StrokeSection: React.FC<StrokeSectionProps> = ({
             })()}
           </Row>
         )}
-      </Details>
     </Accordion>
   );
 };
