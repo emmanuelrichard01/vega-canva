@@ -1,14 +1,14 @@
 import React from 'react';
 import {
   AlignCenter,
-  AlignCenterVertical,
-  AlignEndVertical,
   AlignJustify,
   AlignLeft,
   AlignRight,
-  AlignStartVertical,
   AlignVerticalSpaceBetween,
   ALargeSmall,
+  PenLine,
+  Squircle,
+  Sun,
   UnfoldHorizontal,
   UnfoldVertical,
   Bold,
@@ -27,6 +27,7 @@ import {
 } from 'lucide-react';
 import { Accordion, Row, SubGroup, ToggleButton } from '../panelPrimitives';
 import { shortFont } from '../panelHelpers';
+import { EffectSpecimen, VerticalAlignGlyph } from '../typeGlyphs';
 import { ColorPickerPopover } from '../../ui/ColorPickerPopover';
 import { EyedropperButton } from '../../ui/EyedropperButton';
 import { FontSelector } from '../../ui/FontSelector';
@@ -317,7 +318,18 @@ export const TypographySection: React.FC<TypographySectionProps> = ({
             </ToggleButton>
           </div>
         </Row>
-        <Row stack label="Case" hint="Changes how the text is shown, never what is stored. Switching back returns what you typed.">
+        {/*
+          Beside its label, not under it.
+
+          `stack` is for a control that cannot fit the 136px value column — six
+          list styles, three resize modes with words in them. Four case
+          segments fit in 34px each, which is exactly what the Style toggles
+          directly above are given, and the two rows are the same kind of thing:
+          a small group of marks describing how the letters look. Stacking one
+          and not the other made them read as different orders of setting and
+          cost a row of height for nothing.
+        */}
+        <Row label="Case" hint="Changes how the text is shown, never what is stored. Switching back returns what you typed.">
           <SegmentedControl
             ariaLabel="Text case"
             mixed={sharedType((t) => t.textCase ?? 'none').mixed}
@@ -392,9 +404,19 @@ export const TypographySection: React.FC<TypographySectionProps> = ({
             value={typography.verticalAlign ?? 'top'}
             onChange={(v) => setTypography({ verticalAlign: v as VerticalAlign })}
             segments={[
-              { value: 'top', label: 'Top', hint: 'Sits against the top of the box', icon: <AlignStartVertical size={14} /> },
-              { value: 'middle', label: 'Middle', hint: 'Centred in the box', icon: <AlignCenterVertical size={14} /> },
-              { value: 'bottom', label: 'Bottom', hint: 'Sits against the bottom of the box', icon: <AlignEndVertical size={14} /> },
+              /*
+                Drawn here rather than borrowed. Lucide's `AlignStartVertical`
+                and its siblings show several objects distributed along an
+                axis — they are the marks for aligning a *selection of shapes to
+                each other*, which is a different operation this app also has.
+                Using them here said the wrong thing twice: it failed to depict
+                vertical alignment, and it claimed a meaning already spoken for.
+                A box with type sitting in part of it is what the setting
+                actually is, and what both references draw.
+              */
+              { value: 'top', label: 'Top', hint: 'Sits against the top of the box', icon: <VerticalAlignGlyph where="top" /> },
+              { value: 'middle', label: 'Middle', hint: 'Centred in the box', icon: <VerticalAlignGlyph where="middle" /> },
+              { value: 'bottom', label: 'Bottom', hint: 'Sits against the bottom of the box', icon: <VerticalAlignGlyph where="bottom" /> },
             ]}
           />
         </div>
@@ -475,10 +497,233 @@ export const TypographySection: React.FC<TypographySectionProps> = ({
         defaultOpen={Boolean(typography.highlight || typography.outline || typography.glow)}
       >
         {/*
-          The colour cycle sat between Case and List, in the middle of the type
-          section — a ramp across a whole block is an *effect* on the type, in
-          the same family as a highlight or a glow, and nothing about it belongs
-          beside a font size.
+          The presets come first now.
+
+          They sat below two rows of colour-cycle controls, in the middle of the
+          section, which put the section's *fast path* behind its most
+          specialised setting. A preset is the answer to "give me a look" and
+          the three groups below are the answer to "now change one thing about
+          it" — that is an order, and the section was in the other one.
+
+          And each chip shows itself. A row of words is a list of things you
+          have to try; a row of specimens is a row of answers. They are drawn
+          with the same numbers the preset would write, so a chip is not an
+          illustration of the preset, it is the preset.
+        */}
+        <div className="prop-presets fx-presets" role="group" aria-label="Text effect presets">
+          {TEXT_PRESETS.map((preset) => {
+            const active = isTextPresetActive(preset, typography);
+            // What this chip would produce, applied to the chip itself.
+            const t = preset.patch(typography) as Partial<Typography>;
+            return (
+              <button
+                key={preset.id}
+                type="button"
+                className="prop-preset fx-preset"
+                data-active={active || undefined}
+                aria-pressed={active}
+                onClick={() => setTypography(preset.patch(typography))}
+                data-tooltip={preset.hint}
+                data-tooltip-pos="top"
+              >
+                <EffectSpecimen
+                  color={t.color ?? typography.color}
+                  highlight={t.highlight ?? null}
+                  outline={t.outline ?? null}
+                  glow={t.glow ?? null}
+                />
+                <span className="fx-preset__name">{preset.label}</span>
+              </button>
+            );
+          })}
+        </div>
+
+        <SubGroup
+          label="Highlight"
+          hint="A rounded plate behind each line, sized to that line's own words."
+          on={Boolean(typography.highlight)}
+          onToggle={(on) => setTypography({ highlight: on ? DEFAULT_TEXT_HIGHLIGHT : undefined })}
+        >
+          {typography.highlight && (
+            <>
+              <Row label="Colour">
+                {/*
+                  A pipette here as well as on the type colour.
+
+                  A highlight is chosen *against* something — the board, the
+                  text, an image behind it — which is the exact case a pipette
+                  exists for, and it was offered on the one colour in this panel
+                  least likely to be sampled from the screen and withheld from
+                  the three most likely.
+                */}
+                <div className="prop-inline">
+                  <ColorPickerPopover
+                    color={typography.highlight.color}
+                    onChange={(color) =>
+                      setTypography({ highlight: { ...typography.highlight!, color } })
+                    }
+                  />
+                  <EyedropperButton
+                    label="Pick a highlight colour from the screen"
+                    onPick={(color) =>
+                      setTypography({ highlight: { ...typography.highlight!, color } })
+                    }
+                  />
+                </div>
+              </Row>
+              <Row label="Shape" hint="Ribbon welds the lines into one shape with tucked corners. Plates keeps each line separate.">
+                <SegmentedControl
+                  ariaLabel="Highlight shape"
+                  value={typography.highlight.join}
+                  onChange={(v) =>
+                    setTypography({
+                      highlight: { ...typography.highlight!, join: v as 'ribbon' | 'plates' },
+                    })
+                  }
+                  segments={[
+                    { value: 'ribbon', label: 'Ribbon' },
+                    { value: 'plates', label: 'Plates' },
+                  ]}
+                />
+              </Row>
+              {/*
+                Corner and padding are the plate's two dimensions and were two
+                labelled rows. They are read against each other — a large radius
+                on tight padding is a lozenge, on loose padding a rounded box —
+                so they go on one line with the glyphs doing the naming, the
+                same treatment leading and tracking got above.
+              */}
+              <div className="prop-grid">
+                <NumberStepper
+                  aria-label="Corner radius of the highlight plate"
+                  glyph={<Squircle size={13} />}
+                  value={typography.highlight.radius}
+                  onChange={(radius) =>
+                    setTypography({ highlight: { ...typography.highlight!, radius } })
+                  }
+                  min={0}
+                  max={60}
+                  step={1}
+                  suffix="px"
+                />
+                <NumberStepper
+                  aria-label="Padding either side of each line"
+                  glyph={<UnfoldHorizontal size={13} />}
+                  value={typography.highlight.paddingX}
+                  onChange={(paddingX) =>
+                    setTypography({ highlight: { ...typography.highlight!, paddingX } })
+                  }
+                  min={0}
+                  max={80}
+                  step={1}
+                  suffix="px"
+                />
+              </div>
+              <Row label="Auto ink" hint="Choose the text colour automatically, by contrast against the highlight.">
+                <Switch
+                  checked={Boolean(typography.highlight.autoContrast)}
+                  onChange={(autoContrast) =>
+                    setTypography({
+                      highlight: {
+                        ...typography.highlight!,
+                        autoContrast: autoContrast || undefined,
+                      },
+                    })
+                  }
+                />
+              </Row>
+            </>
+          )}
+        </SubGroup>
+
+        <SubGroup
+          label="Outline"
+          hint="A stroke around the letterforms, drawn wholly outside them."
+          on={Boolean(typography.outline)}
+          onToggle={(on) => setTypography({ outline: on ? DEFAULT_TEXT_OUTLINE : undefined })}
+        >
+          {typography.outline && (
+            <>
+              <Row label="Colour">
+                <div className="prop-inline">
+                  <ColorPickerPopover
+                    color={typography.outline.color}
+                    onChange={(color) =>
+                      setTypography({ outline: { ...typography.outline!, color } })
+                    }
+                  />
+                  <EyedropperButton
+                    label="Pick an outline colour from the screen"
+                    onPick={(color) => setTypography({ outline: { ...typography.outline!, color } })}
+                  />
+                </div>
+              </Row>
+              <Row label="Weight">
+                <NumberStepper
+                  aria-label="Outline weight"
+                  glyph={<PenLine size={13} />}
+                  value={typography.outline.width}
+                  onChange={(width) =>
+                    setTypography({ outline: { ...typography.outline!, width } })
+                  }
+                  min={0.5}
+                  max={20}
+                  step={0.5}
+                  suffix="px"
+                />
+              </Row>
+            </>
+          )}
+        </SubGroup>
+
+        <SubGroup
+          label="Glow"
+          hint="A soft halo behind the words. Takes the place of the layer shadow."
+          on={Boolean(typography.glow)}
+          onToggle={(on) => setTypography({ glow: on ? DEFAULT_TEXT_GLOW : undefined })}
+        >
+          {typography.glow && (
+            <>
+              <Row label="Colour">
+                <div className="prop-inline">
+                  <ColorPickerPopover
+                    color={typography.glow.color}
+                    onChange={(color) => setTypography({ glow: { ...typography.glow!, color } })}
+                  />
+                  <EyedropperButton
+                    label="Pick a glow colour from the screen"
+                    onPick={(color) => setTypography({ glow: { ...typography.glow!, color } })}
+                  />
+                </div>
+              </Row>
+              <Row label="Spread">
+                <NumberStepper
+                  aria-label="Glow spread"
+                  glyph={<Sun size={13} />}
+                  value={typography.glow.blur}
+                  onChange={(blur) => setTypography({ glow: { ...typography.glow!, blur } })}
+                  min={1}
+                  max={100}
+                  step={1}
+                  suffix="px"
+                />
+              </Row>
+            </>
+          )}
+        </SubGroup>
+
+        {/*
+          The colour cycle, last.
+
+          It led this section, and it is the most specialised thing in it — a
+          ramp spread across a whole block, which almost nothing needs and which
+          took two full-width rows to offer. Leading with it put the rare answer
+          where the eye lands and pushed the presets, which are the common one,
+          into the middle.
+
+          It stays in this section rather than up with the type colour: a ramp
+          across a block is an *effect* on the letters, in the same family as a
+          highlight or a glow, and nothing about it belongs beside a font size.
         */}
         <Row stack label="Colour cycle" hint="Spreads a ramp of colours across the whole block. Editing the text re-spaces it.">
           <SegmentedControl
@@ -527,157 +772,6 @@ export const TypographySection: React.FC<TypographySectionProps> = ({
             />
           </Row>
         )}
-        <div className="prop-presets" role="group" aria-label="Text effect presets">
-          {TEXT_PRESETS.map((preset) => {
-            const active = isTextPresetActive(preset, typography);
-            return (
-              <button
-                key={preset.id}
-                type="button"
-                className="prop-preset"
-                data-active={active || undefined}
-                aria-pressed={active}
-                onClick={() => setTypography(preset.patch(typography))}
-                data-tooltip={preset.hint}
-                data-tooltip-pos="top"
-              >
-                {preset.label}
-              </button>
-            );
-          })}
-        </div>
-
-        <SubGroup
-          label="Highlight"
-          hint="A rounded plate behind each line, sized to that line's own words."
-          on={Boolean(typography.highlight)}
-          onToggle={(on) => setTypography({ highlight: on ? DEFAULT_TEXT_HIGHLIGHT : undefined })}
-        >
-          {typography.highlight && (
-            <>
-              <Row label="Colour">
-                <ColorPickerPopover
-                  color={typography.highlight.color}
-                  onChange={(color) =>
-                    setTypography({ highlight: { ...typography.highlight!, color } })
-                  }
-                />
-              </Row>
-              <Row label="Shape" hint="Ribbon welds the lines into one shape with tucked corners. Plates keeps each line separate.">
-                <SegmentedControl
-                  ariaLabel="Highlight shape"
-                  value={typography.highlight.join}
-                  onChange={(v) =>
-                    setTypography({
-                      highlight: { ...typography.highlight!, join: v as 'ribbon' | 'plates' },
-                    })
-                  }
-                  segments={[
-                    { value: 'ribbon', label: 'Ribbon' },
-                    { value: 'plates', label: 'Plates' },
-                  ]}
-                />
-              </Row>
-              <Row label="Corner" hint="How round each corner of the plate is.">
-                <NumberStepper
-                  value={typography.highlight.radius}
-                  onChange={(radius) =>
-                    setTypography({ highlight: { ...typography.highlight!, radius } })
-                  }
-                  min={0}
-                  max={60}
-                  step={1}
-                  suffix="px"
-                />
-              </Row>
-              <Row label="Padding" hint="Breathing room either side of each line's words.">
-                <NumberStepper
-                  value={typography.highlight.paddingX}
-                  onChange={(paddingX) =>
-                    setTypography({ highlight: { ...typography.highlight!, paddingX } })
-                  }
-                  min={0}
-                  max={80}
-                  step={1}
-                  suffix="px"
-                />
-              </Row>
-              <Row label="Auto ink" hint="Choose the text colour automatically, by contrast against the highlight.">
-                <Switch
-                  checked={Boolean(typography.highlight.autoContrast)}
-                  onChange={(autoContrast) =>
-                    setTypography({
-                      highlight: {
-                        ...typography.highlight!,
-                        autoContrast: autoContrast || undefined,
-                      },
-                    })
-                  }
-                />
-              </Row>
-            </>
-          )}
-        </SubGroup>
-
-        <SubGroup
-          label="Outline"
-          hint="A stroke around the letterforms, drawn wholly outside them."
-          on={Boolean(typography.outline)}
-          onToggle={(on) => setTypography({ outline: on ? DEFAULT_TEXT_OUTLINE : undefined })}
-        >
-          {typography.outline && (
-            <>
-              <Row label="Colour">
-                <ColorPickerPopover
-                  color={typography.outline.color}
-                  onChange={(color) =>
-                    setTypography({ outline: { ...typography.outline!, color } })
-                  }
-                />
-              </Row>
-              <Row label="Weight">
-                <NumberStepper
-                  value={typography.outline.width}
-                  onChange={(width) =>
-                    setTypography({ outline: { ...typography.outline!, width } })
-                  }
-                  min={0.5}
-                  max={20}
-                  step={0.5}
-                  suffix="px"
-                />
-              </Row>
-            </>
-          )}
-        </SubGroup>
-
-        <SubGroup
-          label="Glow"
-          hint="A soft halo behind the words. Takes the place of the layer shadow."
-          on={Boolean(typography.glow)}
-          onToggle={(on) => setTypography({ glow: on ? DEFAULT_TEXT_GLOW : undefined })}
-        >
-          {typography.glow && (
-            <>
-              <Row label="Colour">
-                <ColorPickerPopover
-                  color={typography.glow.color}
-                  onChange={(color) => setTypography({ glow: { ...typography.glow!, color } })}
-                />
-              </Row>
-              <Row label="Spread">
-                <NumberStepper
-                  value={typography.glow.blur}
-                  onChange={(blur) => setTypography({ glow: { ...typography.glow!, blur } })}
-                  min={1}
-                  max={100}
-                  step={1}
-                  suffix="px"
-                />
-              </Row>
-            </>
-          )}
-        </SubGroup>
       </Accordion>
     </>
   );

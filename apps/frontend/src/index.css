@@ -16308,3 +16308,110 @@ html[data-precise] .canvas-container[data-cursor-mode] .konvajs-content canvas {
   background: var(--surface-elevated);
   color: var(--text-primary);
 }
+
+/* ===========================================================================
+   FONT WEIGHT
+   ---------------------------------------------------------------------------
+   The trigger is a field like the size box beside it; the list borrows the
+   font picker's popover, because the two sit on adjacent lines and are the
+   same gesture asked twice.
+   =========================================================================== */
+
+.weight-trigger {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--space-2);
+  width: 100%;
+  height: var(--control-h-sm);
+  padding: 0 6px 0 8px;
+  border: 1px solid transparent;
+  border-radius: var(--radius-sm);
+  background: var(--surface-hover);
+  color: var(--text-primary);
+  cursor: pointer;
+  transition: border-color var(--motion-hover);
+}
+
+.weight-trigger:hover:not(:disabled) { border-color: var(--border-divider); }
+.weight-trigger:focus-visible { outline: 2px solid var(--focus-ring-color); outline-offset: 1px; }
+
+/* A face with one weight. Not an error state -- there is nothing to choose
+   between -- so it reads as quiet rather than broken, and keeps its ground
+   instead of going hollow. The chevron is absent rather than dimmed: a
+   disclosure that discloses nothing should not be drawn. */
+.weight-trigger:disabled { color: var(--text-tertiary); cursor: default; }
+
+.weight-trigger__name {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: var(--text-sm);
+}
+
+.weight-trigger__chev { flex-shrink: 0; color: var(--text-tertiary); }
+.weight-trigger[aria-expanded='true'] .weight-trigger__chev { transform: rotate(180deg); }
+
+/* Nine rows at most, so it never scrolls and needs no search. */
+.weight-menu { max-height: none; }
+
+/* The number, beside the name it belongs to. Tabular so the column of them
+   does not jitter, and quiet because the name is what the control is for. */
+.weight-row__num {
+  font-family: var(--font-mono, monospace);
+  font-size: var(--text-2xs);
+  font-variant-numeric: tabular-nums;
+}
+
+/* ===========================================================================
+   TEXT EFFECTS
+   =========================================================================== */
+
+/**
+ * A specimen with the effect on it.
+ *
+ * Sized and centred so the row height does not move when an effect adds a
+ * plate or a stroke: `line-height: 1` plus a fixed box means a highlight's
+ * padding grows inward against the ground rather than pushing the row apart.
+ */
+.fx-specimen {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-width: 22px;
+  height: 17px;
+  font-size: 13px;
+  font-weight: var(--weight-semibold);
+  line-height: 1;
+  white-space: nowrap;
+}
+
+/* Presets are two lines now -- the look, then its name -- so they are tiles
+   rather than pills, and they wrap into a grid instead of a ragged row. */
+.fx-presets {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(64px, 1fr));
+  gap: 6px;
+  margin-bottom: var(--space-2);
+}
+
+.fx-preset {
+  display: grid;
+  justify-items: center;
+  gap: 4px;
+  padding: 8px 6px 6px;
+  border-radius: var(--radius-md);
+  /* A ground the specimen can sit on. A glow or a white outline is invisible
+     against the panel itself, which is the one thing a preview may not be. */
+  background: var(--surface-secondary);
+}
+
+.fx-preset__name {
+  font-size: var(--text-2xs);
+  font-weight: var(--weight-semibold);
+  color: var(--text-tertiary);
+  letter-spacing: 0.01em;
+}
+
+.fx-preset:hover .fx-preset__name { color: var(--text-primary); }
+.fx-preset[data-active] .fx-preset__name { color: var(--text-primary); }

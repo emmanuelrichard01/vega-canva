@@ -3661,6 +3661,75 @@ Smaller things, in the same pass:
   keyboard behaviour, type-ahead and the platform's own overlay, which is
   exactly what a native control gives for free.
 
+## 5a-0-u. The weight list, the case row, the alignment marks, and the effects
+
+Four things, and the first is a correction to my own reasoning.
+
+**The weight control is a popover now, not a `<select>`.** I argued for the
+native control on the grounds that nine short words need keyboard behaviour and
+the platform's overlay more than they need custom drawing. That was wrong about
+what the list is *for*. "Semi Bold" is a name for something you are trying to
+**see**, and the difference between 500 and 600 is genuinely hard to describe
+and instant to look at — so each row is drawn at the weight it names, in the
+family in hand, and the list becomes a specimen sheet. Only Firefox styles
+`<option>` text, so the native control could show that to roughly nobody. It
+borrows the font picker's own popover classes rather than inventing a second
+look, since the two sit on adjacent lines and are the same gesture asked twice.
+The trigger is a specimen too. A single-weight face disables it and drops the
+chevron rather than dimming it: a disclosure that discloses nothing should not
+be drawn.
+
+**Case sits beside its label.** `stack` is for a control that cannot fit the
+136px value column — six list styles, three resize modes with words in them.
+Four case segments measure 109px against the Style toggles' 108px directly
+above, and the two rows are the same kind of thing: a small group of marks
+describing how the letters look. Stacking one and not the other made them read
+as different orders of setting and cost a row of height for nothing.
+
+**The vertical alignment marks are drawn rather than borrowed.** Lucide's
+`AlignStartVertical` and its siblings show several objects distributed along an
+axis — they are the marks for aligning *a selection of shapes to each other*,
+which is a different operation this app also has. Using them here said the
+wrong thing twice: it failed to depict vertical alignment, and it claimed a
+meaning already spoken for. `VerticalAlignGlyph` is a box with two lines of
+type sitting at the top, middle or bottom, which is what the setting is and
+what both references draw. Two bars rather than one, because a single bar
+centred in a box is a hamburger and a single bar at the top is a heading.
+
+### The effects section
+
+**The presets come first.** They sat below two rows of colour-cycle controls,
+which put the section's fast path behind its most specialised setting. A preset
+answers "give me a look"; the three groups below answer "now change one thing
+about it". That is an order, and the section was in the other one. The colour
+cycle moved to the end for the same reason — it led the section and is the
+rarest thing in it.
+
+**Everything shows itself.** Every control here was a name plus a switch, so
+the only way to learn what a setting did was to turn it on, look at the board,
+and turn it off — with the panel covering part of what you were looking at.
+
+The three effects happen to be exactly the ones CSS draws natively:
+`background` for the highlight plate, `-webkit-text-stroke` for the outline,
+`text-shadow` for the glow. So `EffectSpecimen` is not an illustration of the
+effect, it **is** the effect, from the same numbers the canvas uses — change a
+colour and the specimen moves, with no second rendering to keep in step. The
+preset chips render the look the chip would apply, so a row of words became a
+row of answers.
+
+The one judgement in it: the numbers are scaled to a third. A 20px glow around
+a 13px specimen is a coloured square and an 8px stroke is a blob; a third keeps
+the *ratio* recognisable, which is what a preview is for.
+
+**Pipettes on all three effect colours.** An effect colour is chosen *against*
+something — the board, the text, an image behind it — which is the exact case a
+pipette exists for. It was offered on the one colour in this panel least likely
+to be sampled from the screen and withheld from the three most likely.
+
+**Corner and padding share a row.** They are the plate's two dimensions and are
+read against each other: a large radius on tight padding is a lozenge, on loose
+padding a rounded box. Same treatment leading and tracking got.
+
 ## 5. Next up
 
 ### 5a-0. The four things to do first
