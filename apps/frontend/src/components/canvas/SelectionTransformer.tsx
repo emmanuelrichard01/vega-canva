@@ -1,4 +1,4 @@
-import React, { useCallback, useEffect, useRef, useState } from 'react';
+import React, { useCallback, useEffect, useRef, useState, useSyncExternalStore } from 'react';
 import type Konva from 'konva';
 import { Group, Rect, Text, Transformer } from 'react-konva';
 import { applyNodePatches } from '../../engine/document';
@@ -10,6 +10,7 @@ import { resizeVisual } from '../../engine/cursor/cursorVisual';
 import { fitPathToBox } from '../../engine/model/pathGeometry';
 import { fitLineToBox, isLineLike } from '../../engine/model/lineEnds';
 import { liveTransformStore } from '../../engine/model/liveTransformStore';
+import { railVeil } from '../../engine/interaction/railVeil';
 import { syncConnectedConnectors } from '../../engine/model/connectorTargets';
 import { layoutText } from '../../engine/text/layout';
 import { measurerFor } from '../../engine/text/measure';
@@ -79,6 +80,40 @@ const ACCENT = '#3B82F6';
  * expressed as a small hop at the start and end of every gesture.
  */
 const BADGE_DROP = 26;
+
+/**
+ * 1 at rest, 0 while moving, and a ramp back up when the move ends.
+ *
+ * A rAF ramp rather than a Konva tween, because three separate elements need
+ * the same number and a tween would need three of them kept in step — and
+ * rather than CSS, because none of this is a DOM node.
+ *
+ * The ramp is cancelled on a new move, so picking the object straight back up
+ * mid-fade does not leave a half-lit box behind.
+ */
+function useChromeFade(moving: boolean): number {
+  const [opacity, setOpacity] = useState(1);
+
+  useEffect(() => {
+    if (moving) {
+      setOpacity(0);
+      return;
+    }
+    let raf = 0;
+    const started = performance.now();
+    const tick = () => {
+      const t = Math.min(1, (performance.now() - started) / 140);
+      // The same ease-out the app's `--ease-settle` describes: fast away from
+      // the start, gentle into the end, so the box arrives rather than stops.
+      setOpacity(1 - (1 - t) ** 3);
+      if (t < 1) raf = requestAnimationFrame(tick);
+    };
+    raf = requestAnimationFrame(tick);
+    return () => cancelAnimationFrame(raf);
+  }, [moving]);
+
+  return opacity;
+}
 const HANDLE_FILL = '#FFFFFF';
 
 /**
@@ -95,6 +130,45 @@ export const SelectionTransformer: React.FC<Props> = ({ selectedIds, stageRef })
   const proxyRef = useRef<Konva.Rect>(null);
   /** True only while a handle is actually being dragged. */
   const [transforming, setTransforming] = useState(false);
+
+  /**
+   * The selection chrome stands down while the object is being moved.
+   *
+   * ## Why
+   *
+   * Dragging a shape across the board drags a blue box, eight handles, four
+   * rotate zones and a size badge with it — chrome that is *about* a resting
+   * selection, describing an object that is not resting. It is the busiest the
+   * canvas ever looks at the moment there is most to look at, and none of it
+   * can be acted on: the pointer is already committed to the drag.
+   *
+   * Every tool this is measured against takes it away for the length of the
+   * move and puts it back on release. What is left is the object and where it
+   * is going, which is the whole content of the gesture.
+   *
+   * ## Why a move and not every gesture
+   *
+   * A resize is also a gesture and the handles must **stay** — one of them is
+   * what the pointer is holding, and hiding it mid-drag would be hiding the
+   * control being used. The same goes for a rotate zone, a corner-radius
+   * handle and a path anchor. `railVeil` knows the difference now; see
+   * `VeilKind`.
+   *
+   * ## Why it fades back rather than reappearing
+   *
+   * Hiding is instant, and should be: the object is already moving under the
+   * pointer, so a fade out would be a second animation competing with the one
+   * that matters. Coming back is the other way round — the chrome arrives at a
+   * position it has never occupied, and a pop there reads as a glitch where a
+   * short fade reads as the box catching up. 140ms, on the shared settle
+   * curve, which is what everything else in the app uses to arrive.
+   */
+  const moving = useSyncExternalStore(
+    railVeil.subscribe,
+    railVeil.getMoveSnapshot,
+    railVeil.getMoveSnapshot,
+  );
+  const chromeOpacity = useChromeFade(moving);
   /** Live dimensions (e.g. 240 × 180) or angle (e.g. 45°) HUD badge while transforming. */
   const [liveBadge, setLiveBadge] = useState<{ text: string; x: number; y: number } | null>(null);
 
@@ -823,6 +897,7 @@ export const SelectionTransformer: React.FC<Props> = ({ selectedIds, stageRef })
         y={badge.y}
         scaleX={scale}
         scaleY={scale}
+        opacity={chromeOpacity}
         listening={false}
         name={EXPORT_CHROME}
       >
@@ -856,6 +931,11 @@ export const SelectionTransformer: React.FC<Props> = ({ selectedIds, stageRef })
   const transformerEl = (
     <Transformer
       ref={trRef}
+      /* Faded out for the length of a move and eased back on release — see
+         `useChromeFade`. `listening` follows it, so an invisible box cannot
+         take a click that belongs to the board underneath it. */
+      opacity={chromeOpacity}
+      listening={chromeOpacity > 0.01}
       // Interface, not document: PNG export captures the live stage, so
       // without this the blue handles are baked into the image.
       name={EXPORT_CHROME}
@@ -944,7 +1024,7 @@ export const SelectionTransformer: React.FC<Props> = ({ selectedIds, stageRef })
         the ring outside it rotates — which is the arbitration Figma and
         Illustrator have, and it needs no geometry to maintain.
       */}
-      {selectionBounds && (
+      {selectionBounds && !moving && (
         <RotateZones
           box={selectionBounds.bounds}
           rotation={selectionBounds.rotation}

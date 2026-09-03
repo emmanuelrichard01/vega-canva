@@ -55,3 +55,66 @@ describe('railVeil', () => {
     expect(railVeil.held).toBe(false);
   });
 });
+
+describe('the veil knows a move from a resize', () => {
+  beforeEach(() => railVeil.end());
+
+  it('reports moving only for a move', () => {
+    /**
+     * The distinction the selection chrome turns on. A resize is also a
+     * gesture, and its handles must stay: one of them is what the pointer is
+     * holding, so hiding it mid-drag would hide the control being used.
+     */
+    railVeil.begin('move');
+    expect(railVeil.moving).toBe(true);
+
+    railVeil.begin('gesture');
+    expect(railVeil.held).toBe(true);
+    expect(railVeil.moving).toBe(false);
+  });
+
+  it('defaults to the unnamed kind', () => {
+    // Five of the six senders never say what they are, and they are all the
+    // "keep the handles" case.
+    railVeil.begin();
+    expect(railVeil.moving).toBe(false);
+  });
+
+  it('is never moving while nothing is held', () => {
+    // So a reader checks one thing rather than two.
+    expect(railVeil.moving).toBe(false);
+    railVeil.begin('move');
+    railVeil.end();
+    expect(railVeil.moving).toBe(false);
+  });
+
+  it('clears the kind on settle, not just the flag', () => {
+    /**
+     * The reason the kind lives on this state rather than in a flag beside it:
+     * `settle` is the floor under every gesture that ends without saying so,
+     * and a separate `moving` boolean would need its own — which is the bug
+     * this module was written to fix, recreated one field over.
+     */
+    railVeil.begin('move');
+    railVeil.settle(null);
+    expect(railVeil.moving).toBe(false);
+    expect(railVeil.held).toBe(false);
+  });
+
+  it('leaves a move held while something is being typed into', () => {
+    railVeil.begin('move');
+    expect(railVeil.settle('node-1')).toBe(false);
+    expect(railVeil.moving).toBe(true);
+  });
+
+  it('tells subscribers when only the kind changed', () => {
+    // A drag beginning inside an open text edit does not change `held`, and a
+    // subscriber reading the kind still needs waking.
+    railVeil.begin('gesture');
+    let calls = 0;
+    const off = railVeil.subscribe(() => { calls += 1; });
+    railVeil.begin('move');
+    off();
+    expect(calls).toBe(1);
+  });
+});

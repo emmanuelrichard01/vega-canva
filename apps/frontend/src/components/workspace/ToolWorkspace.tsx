@@ -31,6 +31,7 @@ import { LINE_KINDS, SHAPE_KINDS, SHAPE_LABELS, shapeToolId, shapeKindFromToolId
 import { shortcutFor } from '../../engine/tools/shortcuts';
 import { DEMO_LENGTHS } from '../../engine/text/demoText';
 import { useStore } from '../../hooks/useStore';
+import { Slider } from '../ui/Slider';
 
 /**
  * The tool dock.
@@ -258,11 +259,20 @@ const NibSize: React.FC<{
   max: number;
   onChange: (v: number) => void;
 }> = ({ label, value, min, max, onChange }) => (
-  <div className="dock-nib">
-    <div className="dock-nib__head">
-      <span className="dock-nib__label">{label}</span>
-      <span className="dock-nib__value">{Math.round(value)}</span>
-    </div>
+  /*
+    The shared slider, rather than a caption row above a native range.
+
+    It carried its own head — a label and a value on their own line — which is
+    the same information the primitive lays out on one, and a native range is
+    the thing that follows neither the theme nor the focus ring nor the other
+    platforms. Coming through `Slider` also brings the fine-step modifier and
+    the typable readout, and a nib size is exactly the kind of value somebody
+    arrives already knowing.
+
+    The preview stays: a number alone tells you nothing about what a "6" draws,
+    and this is a property whose whole meaning is visual.
+  */
+  <div className="dock-nib" onPointerDown={(e) => e.stopPropagation()}>
     <div className="dock-nib__row">
       <span className="dock-nib__preview" aria-hidden="true">
         <span
@@ -273,15 +283,7 @@ const NibSize: React.FC<{
           }}
         />
       </span>
-      <input
-        type="range"
-        min={min}
-        max={max}
-        value={value}
-        aria-label={label}
-        onChange={(e) => onChange(Number(e.target.value))}
-        onPointerDown={(e) => e.stopPropagation()}
-      />
+      <Slider label={label} value={value} min={min} max={max} unit="px" onChange={onChange} />
     </div>
   </div>
 );

@@ -3908,6 +3908,68 @@ through, so the reworked Transform, Shadow and Adjust rows are confirmed by
 build, lint and the suite, and by the `.prop-grid` measurements taken earlier
 in the session — but nobody has looked at them.
 
+## 5a-0-ae. The selection chrome stands down while an object moves
+
+Dragging a shape dragged a blue box, eight handles, four rotate zones and a
+size badge with it — chrome that is *about* a resting selection, describing an
+object that is not resting. It is the busiest the canvas ever looks at the
+moment there is most to look at, and none of it can be acted on: the pointer is
+already committed to the drag.
+
+**A move is not every gesture, and that is the whole implementation.** A resize
+must keep its handles — one of them is what the pointer is holding, so hiding
+it mid-drag would be hiding the control in use. The same goes for a rotate
+zone, a corner-radius handle and a path anchor.
+
+The tempting shape is a second boolean fed by the same six events. `railVeil`
+exists *because* that shape failed once: six senders, one flag, and any missing
+`end` leaves it stuck for the life of the page. A second flag is a second
+chance at exactly that bug, with its own `settle` to remember to call. So the
+kind rides along with the state that already has a floor under it — one
+machine, one falsifier, and a `move` cannot outlive the gesture that set it,
+because clearing `held` clears the kind with it.
+
+The kind travels on the **event** rather than being written to `railVeil`
+directly, so the listener that owns the state stays its only writer.
+
+**Hiding is instant; the return is a fade.** The object is already moving under
+the pointer, so a fade *out* would be a second animation competing with the one
+that matters. Coming back is the other way round: the chrome arrives at a
+position it has never occupied, and a pop there reads as a glitch where 140ms
+on the settle curve reads as the box catching up. A rAF ramp rather than a
+Konva tween, because three separate elements need the same number and three
+tweens would need keeping in step.
+
+`listening` follows the opacity, so an invisible box cannot take a click that
+belongs to the board underneath it.
+
+## 5a-0-af. Shadow lost a layer of chrome
+
+Drop and Inner were **nested accordions, each containing a row labelled
+"Enabled" with a switch in it**. So turning on a drop shadow meant opening a
+section to find a control whose only job was to reveal the rest of that
+section: three affordances for one fact, two of them redundant, and two states
+— open but off, closed but on — that mean nothing and that the panel could get
+into.
+
+A `SubGroup` is the switch *as* the disclosure, which is what the text effects
+section already uses for this exact shape. One control, one fact, no state that
+can disagree with itself.
+
+Both shadows also gained what the rest of the panel already had: a pipette on
+the colour (a shadow's colour is the one most often sampled *from the scene* —
+it is usually a darker relative of the surface it falls on, and it was the last
+colour here offered without one), glyphs on the offsets, and the sliders from
+5a-0-ac.
+
+The offsets stay Cartesian rather than becoming angle-and-distance. Illustrator
+offers the polar pair and Figma offers this one; the reason to follow Figma is
+that everything else on this canvas is already X and Y — the Transform block,
+nudging, the alignment guides — so an offset that reads "8 down" composes with
+them. An angle would be the better control for matching several objects to one
+light, which is a feature this does not have and which wants a document-level
+setting rather than a second spelling of the same field.
+
 ## 5. Next up
 
 ### 5a-0. The four things to do first

@@ -20,7 +20,7 @@ import { engineEvents } from '../engine/EventBus';
 import { cropMode } from '../engine/interaction/cropMode';
 import { slotReframe } from '../engine/interaction/slotReframe';
 import { pathEdit } from '../engine/interaction/pathEdit';
-import { railVeil } from '../engine/interaction/railVeil';
+import { railVeil, type VeilKind } from '../engine/interaction/railVeil';
 import { lineEdit } from '../engine/interaction/lineEdit';
 import { hasBend, isMultiPoint } from '../engine/model/polyline';
 import { swapShapeKind } from '../engine/model/shapeSwap';
@@ -592,7 +592,13 @@ export const ObjectContextToolbar: React.FC<Props> = ({ selectedId, selectedIds,
       }
     };
 
-    const handleDragStart = () => { railVeil.begin(); lastRef.current.visible = false; setIsVisible(false); };
+    const handleDragStart = (e: Event) => {
+      // The kind travels on the event; see `ObjectRenderer`'s drag start.
+      const kind = (e as CustomEvent<{ kind?: VeilKind }>).detail?.kind ?? 'gesture';
+      railVeil.begin(kind);
+      lastRef.current.visible = false;
+      setIsVisible(false);
+    };
     const handleDragEnd = () => { railVeil.end(); updatePosition(); };
     /**
      * The floor under a gesture that never announced its end.

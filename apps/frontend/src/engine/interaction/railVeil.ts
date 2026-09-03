@@ -45,14 +45,45 @@
  * one element, and which gesture hid it is not interesting to it.
  */
 
+/**
+ * What kind of gesture is holding the veil.
+ *
+ * ## Why the kind is on this state and not a second one beside it
+ *
+ * The rail does not care which gesture hid it, and this module was written
+ * saying so. Something else does: the **selection chrome** — the bounding box,
+ * its handles, the rotate zones and the size badge — should get out of the way
+ * while an object is being *moved*, and must emphatically stay while it is
+ * being *resized*, because the handles are what the pointer is holding.
+ *
+ * That is a strict subset of "a gesture is in progress", and the tempting
+ * shape is a second boolean fed by the same events. This module exists because
+ * that shape failed once already: six senders, one flag, and any missing
+ * `end` leaves it stuck for the life of the page. A second flag is a second
+ * chance at exactly that bug, with its own `settle` to remember to call.
+ *
+ * So the kind rides along with the state that already has a floor under it.
+ * One machine, one falsifier, and `move` cannot outlive the gesture that set
+ * it because clearing `held` clears the kind with it.
+ */
+export type VeilKind =
+  /** An object is being dragged across the board. */
+  | 'move'
+  /** Anything else: a resize, a handle drag, an open text editor. */
+  | 'gesture';
+
 type Listener = () => void;
 
 let held = false;
+let kind: VeilKind = 'gesture';
 const listeners = new Set<Listener>();
 
-function set(next: boolean): boolean {
-  if (held === next) return false;
+function set(next: boolean, nextKind: VeilKind = 'gesture'): boolean {
+  // The kind can change without the flag doing so — a drag that begins inside
+  // an open text edit, say — and subscribers reading it need telling.
+  if (held === next && kind === nextKind) return false;
   held = next;
+  kind = next ? nextKind : 'gesture';
   listeners.forEach((fn) => fn());
   return true;
 }
@@ -64,8 +95,24 @@ export const railVeil = {
   },
 
   /** A gesture began. Idempotent: overlapping senders are not counted. */
-  begin(): void {
-    set(true);
+  begin(as: VeilKind = 'gesture'): void {
+    set(true, as);
+  },
+
+  /**
+   * Whether what is happening is an object being moved.
+   *
+   * Read by the selection chrome, which stands down for a move and stays for
+   * everything else. `false` whenever nothing is held, so a caller does not
+   * have to check both.
+   */
+  get moving(): boolean {
+    return held && kind === 'move';
+  },
+
+  /** The moving flag, for `useSyncExternalStore`. */
+  getMoveSnapshot(): boolean {
+    return held && kind === 'move';
   },
 
   /**

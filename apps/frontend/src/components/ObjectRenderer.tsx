@@ -429,7 +429,17 @@ export const ObjectRenderer = React.memo(
 
     const handleDragStart = useCallback(
       (e: Konva.KonvaEventObject<DragEvent>) => {
-        window.dispatchEvent(new CustomEvent('canvas-drag-start'));
+        /**
+         * Named, because the selection chrome treats this one differently.
+         *
+         * Every gesture raises the veil; only a *move* makes the bounding box
+         * and its handles get out of the way, because a resize is a gesture
+         * whose handles are the thing the pointer is holding. The kind rides
+         * on the event rather than being set directly on `railVeil`, so there
+         * is still one path from "a gesture started" to the state — the
+         * listener that owns it stays the only writer.
+         */
+        window.dispatchEvent(new CustomEvent('canvas-drag-start', { detail: { kind: 'move' } }));
         // Not labelled next to their name — you can see the object moving.
         // It keeps their name chip up while they work and pings the radar.
         presenceManager.updateActivity('moving');

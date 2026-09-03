@@ -4515,11 +4515,20 @@ input.slider__value:focus-visible {
   gap: var(--space-2);
 }
 
-.dock-nib__row input[type='range'] {
+/* The slider takes the rest of the row beside the preview.
+
+   Its label column shrinks to the word rather than holding the panel's 68px
+   rail: a flyout is narrower than the inspector, and there is only one slider
+   in it, so the column that keeps a *stack* of labels aligned is buying
+   nothing here and would take a third of the row. */
+.dock-nib__row .slider {
   flex: 1;
-  accent-color: var(--text-primary);
-  cursor: pointer;
+  min-width: 0;
+  grid-template-columns: auto minmax(0, 1fr) 40px;
+  gap: var(--space-2);
 }
+
+.dock-nib__row .slider__label { font-size: var(--text-xs); }
 
 /* The control previews itself: a number alone tells you nothing about what a
    "6" draws, and this is a property whose whole meaning is visual. */

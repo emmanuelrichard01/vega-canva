@@ -1,10 +1,10 @@
 import React from 'react';
-import { Droplets, Sun } from 'lucide-react';
-import { Accordion, Row } from '../panelPrimitives';
+import { Droplets, MoveHorizontal, MoveVertical, Sun } from 'lucide-react';
+import { Accordion, Row, SubGroup } from '../panelPrimitives';
 import { ColorPickerPopover } from '../../ui/ColorPickerPopover';
+import { EyedropperButton } from '../../ui/EyedropperButton';
 import { NumberStepper } from '../../ui/NumberStepper';
 import { Slider } from '../../ui/Slider';
-import { Switch } from '../../ui/Switch';
 import {
   DEFAULT_SHADOW_COLOR,
   type Appearance,
@@ -93,6 +93,21 @@ export const EffectsSection: React.FC<EffectsSectionProps> = ({
         both showed two badges four rows apart with nothing to say they were the
         same light. They are one decision seen from either side of an edge, and
         the badge now reports which sides are lit without either being opened.
+
+        ## Why the two are no longer accordions of their own
+
+        Each was a *nested accordion* containing a row labelled "Enabled" with
+        a switch in it — so turning on a drop shadow meant opening a section to
+        find a control whose only job was to reveal the rest of that section.
+        Three affordances for one fact, and two of them redundant: the switch
+        already knows whether the shadow exists, and "open but off" and "closed
+        but on" are both states the panel could get into and neither means
+        anything.
+
+        A `SubGroup` is the switch *as* the disclosure, which is what the text
+        effects below already use for exactly this shape. Turning it on reveals
+        its controls; turning it off puts them away. One control, one fact, and
+        no state that can disagree with itself.
       */}
       {(capabilities.supportsShadow || canInnerShadow) && (
         <Accordion
@@ -102,48 +117,65 @@ export const EffectsSection: React.FC<EffectsSectionProps> = ({
           badge={shadowBadge}
         >
           {capabilities.supportsShadow && (
-            <Accordion
-              nested
-              title="Drop"
-              defaultOpen={Boolean(appearance.shadow)}
-              badge={appearance.shadow ? 'On' : undefined}
+            <SubGroup
+              label="Drop"
+              hint="A shadow cast outward, behind the object."
+              on={Boolean(appearance.shadow)}
+              onToggle={(on) => setAppearance({ shadow: on ? { ...DEFAULT_SHADOW } : undefined })}
             >
-              {/*
-                A real switch, not a bare `<input type="checkbox">`.
-
-                This panel had two of them, and they were the only two controls
-                in the whole inspector that rendered as the browser's own
-                checkbox — a different size, colour and focus ring from every
-                other toggle in the app, on the two rows that turn a feature on.
-              */}
-              <Row label="Enabled" hint="A shadow cast outward, behind the object.">
-                <Switch
-                  checked={Boolean(appearance.shadow)}
-                  onChange={(on) => setAppearance({ shadow: on ? { ...DEFAULT_SHADOW } : undefined })}
-                  tooltip="Drop shadow"
-                />
-              </Row>
               {appearance.shadow && (
                 <>
                   <Row label="Colour">
-                    <ColorPickerPopover
-                      color={appearance.shadow.color}
-                      mixed={sharedPaint((a) => a.shadow?.color).mixed}
-                      onChange={(color) => setShadow({ color })}
-                    />
+                    {/*
+                      A pipette, like every other colour in the panel.
+
+                      A shadow's colour is the one most often sampled *from the
+                      scene* — it is usually a darker relative of the surface
+                      it falls on, not a neutral grey — and it was the last
+                      colour here still offered without one.
+                    */}
+                    <div className="prop-inline">
+                      <ColorPickerPopover
+                        color={appearance.shadow.color}
+                        mixed={sharedPaint((a) => a.shadow?.color).mixed}
+                        onChange={(color) => setShadow({ color })}
+                      />
+                      <EyedropperButton
+                        label="Pick a shadow colour from the screen"
+                        onPick={(color) => setShadow({ color })}
+                      />
+                    </div>
                   </Row>
-                  {/* Two numbers that mean one thing — where the light is —
-                      so they share a row rather than stacking. */}
-                  <div className="prop-pair">
+                  {/*
+                    Where the light is, as two offsets rather than an angle and
+                    a distance.
+
+                    Illustrator's effect dialog offers the polar pair and Figma
+                    offers this one; the reason to follow Figma here is that
+                    everything else on a canvas is already Cartesian — the
+                    Transform block above is X and Y, nudging is X and Y, and
+                    an offset that reads "8 down" composes with those. An angle
+                    would be the better control for matching several objects to
+                    one light source, which is a feature this does not have yet
+                    and which wants a document-level setting rather than a
+                    second spelling of the same field.
+
+                    Two numbers that mean one thing, so they share a row.
+                  */}
+                  <div className="prop-grid">
                     <NumberStepper
+                      aria-label="Shadow offset X"
+                      glyph={<MoveHorizontal size={13} />}
+                      suffix="px"
                       value={Math.round(appearance.shadow.offsetX)}
                       onChange={(v) => setShadow({ offsetX: v })}
-                      label="X"
                     />
                     <NumberStepper
+                      aria-label="Shadow offset Y"
+                      glyph={<MoveVertical size={13} />}
+                      suffix="px"
                       value={Math.round(appearance.shadow.offsetY)}
                       onChange={(v) => setShadow({ offsetY: v })}
-                      label="Y"
                     />
                   </div>
                   {/*
@@ -151,11 +183,10 @@ export const EffectsSection: React.FC<EffectsSectionProps> = ({
 
                     The distinction is what you know when you arrive. An offset
                     is a *position* — "eight down and four across" is a thing
-                    you can mean exactly, and it is what the two fields above
-                    are for. Softness and strength are the other kind: nobody
-                    wants 37% opacity, they want "a little lighter", and finding
-                    that by pressing an arrow while looking at the canvas is the
-                    worst version of this control.
+                    you can mean exactly. Softness and strength are the other
+                    kind: nobody wants 37% opacity, they want "a little
+                    lighter", and finding that by pressing an arrow while
+                    looking at the canvas is the worst version of this control.
 
                     Blur is marked at 8 and 24 — roughly the two shadows a
                     board actually uses, a contact shadow and a lifted one.
@@ -192,17 +223,12 @@ export const EffectsSection: React.FC<EffectsSectionProps> = ({
                   />
                 </>
               )}
-            </Accordion>
+            </SubGroup>
           )}
 
-          {canInnerShadow && (
-            <Accordion
-              nested
-              title="Inner"
-              defaultOpen={Boolean(appearance.innerShadow)}
-              badge={appearance.innerShadow ? 'On' : undefined}
-            >
-              {/*
+          {canInnerShadow &&
+            (penShaded ? (
+              /*
                 Withdrawn on a pen-shaded sketch, rather than left to do nothing.
 
                 An inner shadow falls across the inside of an edge, and a
@@ -214,82 +240,87 @@ export const EffectsSection: React.FC<EffectsSectionProps> = ({
                 Saying why matters here more than usual: this control used to be
                 offered on every sketched shape and honoured on none of them,
                 because the renderer's sketch branch returns before its effects.
-              */}
-              {penShaded ? (
-                <p className="prop-note">
-                  Pen shading leaves the shape open, so there is no inside for a
-                  shadow to fall across. Set the fill to Solid to use one.
-                </p>
-              ) : (
-                <>
-                  <Row label="Enabled" hint="A shadow cast inward, as though the shape were a hole.">
-                    <Switch
-                      checked={Boolean(appearance.innerShadow)}
-                      onChange={(on) =>
-                        setAppearance({ innerShadow: on ? { ...DEFAULT_INNER_SHADOW } : undefined })
-                      }
-                      tooltip="Inner shadow"
-                    />
-                  </Row>
-                  {appearance.innerShadow && (
-                    <>
-                      <Row label="Colour">
+              */
+              <p className="prop-note">
+                Inner shadow needs an inside. Pen shading leaves the shape open —
+                the marks are the fill — so set the fill to Solid to use one.
+              </p>
+            ) : (
+              <SubGroup
+                label="Inner"
+                hint="A shadow cast inward, as though the shape were a hole."
+                on={Boolean(appearance.innerShadow)}
+                onToggle={(on) =>
+                  setAppearance({ innerShadow: on ? { ...DEFAULT_INNER_SHADOW } : undefined })
+                }
+              >
+                {appearance.innerShadow && (
+                  <>
+                    <Row label="Colour">
+                      <div className="prop-inline">
                         <ColorPickerPopover
                           color={appearance.innerShadow.color}
                           mixed={sharedPaint((a) => a.innerShadow?.color).mixed}
                           onChange={(color) => setInnerShadow({ color })}
                         />
-                      </Row>
-                      <div className="prop-pair">
-                        <NumberStepper
-                          value={Math.round(appearance.innerShadow.offsetX)}
-                          onChange={(v) => setInnerShadow({ offsetX: v })}
-                          label="X"
-                        />
-                        <NumberStepper
-                          value={Math.round(appearance.innerShadow.offsetY)}
-                          onChange={(v) => setInnerShadow({ offsetY: v })}
-                          label="Y"
+                        <EyedropperButton
+                          label="Pick an inner shadow colour from the screen"
+                          onPick={(color) => setInnerShadow({ color })}
                         />
                       </div>
-                      {/* The same three as the drop shadow, and the same
-                          reasoning — see the note there. Two shadow panels
-                          whose identical controls behaved differently would be
-                          a worse inconsistency than either choice. */}
-                      <Slider
-                        label="Blur"
-                        unit="px"
-                        value={Math.round(appearance.innerShadow.blur)}
-                        min={0}
-                        max={200}
-                        ticks={[8, 24]}
-                        onChange={(v) => setInnerShadow({ blur: v })}
-                        hint="How soft the inner edge is."
+                    </Row>
+                    <div className="prop-grid">
+                      <NumberStepper
+                        aria-label="Inner shadow offset X"
+                        glyph={<MoveHorizontal size={13} />}
+                        suffix="px"
+                        value={Math.round(appearance.innerShadow.offsetX)}
+                        onChange={(v) => setInnerShadow({ offsetX: v })}
                       />
-                      <Slider
-                        label="Spread"
-                        unit="px"
-                        value={Math.round(appearance.innerShadow.spread ?? 0)}
-                        min={0}
-                        max={100}
-                        onChange={(v) => setInnerShadow({ spread: v })}
-                        hint="How far into the shape the shadow reaches before it is blurred."
+                      <NumberStepper
+                        aria-label="Inner shadow offset Y"
+                        glyph={<MoveVertical size={13} />}
+                        suffix="px"
+                        value={Math.round(appearance.innerShadow.offsetY)}
+                        onChange={(v) => setInnerShadow({ offsetY: v })}
                       />
-                      <Slider
-                        label="Opacity"
-                        unit="%"
-                        value={Math.round((appearance.innerShadow.opacity ?? 1) * 100)}
-                        min={0}
-                        max={100}
-                        ticks={[25, 50, 75]}
-                        onChange={(v) => setInnerShadow({ opacity: v / 100 })}
-                      />
-                    </>
-                  )}
-                </>
-              )}
-            </Accordion>
-          )}
+                    </div>
+                    {/* The same three as the drop shadow, and the same
+                        reasoning — see the note there. Two shadow panels whose
+                        identical controls behaved differently would be a worse
+                        inconsistency than either choice. */}
+                    <Slider
+                      label="Blur"
+                      unit="px"
+                      value={Math.round(appearance.innerShadow.blur)}
+                      min={0}
+                      max={200}
+                      ticks={[8, 24]}
+                      onChange={(v) => setInnerShadow({ blur: v })}
+                      hint="How soft the inner edge is."
+                    />
+                    <Slider
+                      label="Spread"
+                      unit="px"
+                      value={Math.round(appearance.innerShadow.spread ?? 0)}
+                      min={0}
+                      max={100}
+                      onChange={(v) => setInnerShadow({ spread: v })}
+                      hint="How far into the shape the shadow reaches before it is blurred."
+                    />
+                    <Slider
+                      label="Opacity"
+                      unit="%"
+                      value={Math.round((appearance.innerShadow.opacity ?? 1) * 100)}
+                      min={0}
+                      max={100}
+                      ticks={[25, 50, 75]}
+                      onChange={(v) => setInnerShadow({ opacity: v / 100 })}
+                    />
+                  </>
+                )}
+              </SubGroup>
+            ))}
         </Accordion>
       )}
 
