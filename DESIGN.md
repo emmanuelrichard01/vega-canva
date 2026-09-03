@@ -388,6 +388,25 @@ get their own rules.
   the unit outward and made a field with a suffix measurably wider than its
   neighbours.
 
+### Type controls
+
+- **A weight list shows only the weights the face has.** Anything else is
+  synthesised — the browser thickens or thins the outlines, and the result
+  renders, looks like type, and is not the typeface. The same rule governs
+  italic: a family without a drawn one gets a shear, and the control says so
+  rather than implying otherwise.
+- **Dense numeric rows drop the label column.** An 84px label is right where a
+  control's job is not visible from its own shape. It is waste beside a field
+  reading `16 px`, which is a label restating its own value — those fields
+  carry a glyph and pair two to a row instead.
+- **Two numbers you compare go on one line.** Leading is read against tracking,
+  size against weight. Separate rows make related settings look unrelated.
+- **A ratio is stored; a distance is shown.** Leading is a multiplier, because
+  that survives a size change — and `1.2` means nothing without the size beside
+  it, so the pixel value is shown next to the field.
+- **Every numeric field carries its unit**, in a panel where the next row down
+  may be a multiplier.
+
 ### Navigation
 
 Category filters are pill tabs carrying a count, filtering in place rather than

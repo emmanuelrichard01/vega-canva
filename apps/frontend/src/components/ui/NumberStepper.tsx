@@ -40,6 +40,21 @@ interface Props {
    * degrees, which is a question people were answering by experiment.
    */
   suffix?: string;
+  /**
+   * A mark inside the field, standing in for the row label.
+   *
+   * The panel's rows spend 84px on a word, which is right for a control whose
+   * job is not visible from its own shape and wasteful for the dense numeric
+   * ones — "Size" beside a field reading `16 px` is a label restating its own
+   * value. A glyph in the field says the same thing in 14px and frees the row
+   * to hold two controls instead of one, which is how Figma and Illustrator
+   * both fit leading beside tracking.
+   *
+   * It is decoration for the eye only: `aria-label` still carries the name, so
+   * nothing is lost for anyone not looking at the icon.
+   */
+  glyph?: React.ReactNode;
+  'aria-label'?: string;
 }
 
 export const NumberStepper: React.FC<Props> = ({
@@ -54,6 +69,8 @@ export const NumberStepper: React.FC<Props> = ({
   onNudge,
   disabledReason,
   suffix,
+  glyph,
+  'aria-label': ariaLabel,
 }) => {
   const [localValue, setLocalValue] = useState(mixed ? '' : value.toString());
   const disabled = Boolean(disabledReason);
@@ -206,8 +223,14 @@ export const NumberStepper: React.FC<Props> = ({
           was true before this change — the arrows were a *second* way to do
           it, and the less discoverable one now carries a hint instead.
         */}
+        {glyph && (
+          <span className="stepper-glyph" aria-hidden="true">
+            {glyph}
+          </span>
+        )}
         <input
           type="text"
+          aria-label={ariaLabel}
           value={localValue}
           size={1}
           disabled={disabled}
@@ -252,7 +275,7 @@ export const NumberStepper: React.FC<Props> = ({
             // both carrying 8 the unit drifted off to the right on its own and
             // the field measured wider than its neighbours for no reason
             // anyone chose — `%` alone made Opacity 9.5px wider than Weight.
-            padding: suffix ? '0 2px 0 8px' : '0 8px',
+            padding: `0 ${suffix ? 2 : 8}px 0 ${glyph ? 6 : 8}px`,
             textAlign: 'left', fontSize: 'var(--text-sm)', fontFamily: 'var(--font-mono, monospace)',
             fontVariantNumeric: 'tabular-nums',
             color: 'var(--text-primary)',

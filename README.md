@@ -1125,6 +1125,48 @@ Two of the four need no menu at all:
   `/room/` or shaped like a room code, and **fills** the field rather than
   navigating — a paste is not a decision.
 
+### Type — `engine/text/fontCatalogue.ts`, `components/ui/FontSelector.tsx`
+
+Forty faces across nine categories, and the reason there can be forty is that
+none of them is fetched until it is needed. Five used to arrive in a `<link>`
+on every visit whether the picker was opened or not, which caps a catalogue:
+every face added is paid for by everybody, including the people who never look.
+
+A face loads when a row scrolls into view, when a font is applied, or when a
+board arrives that uses it. `ensureFontLoaded` is the single hook, and every
+renderer already called it on every render, so the catalogue became lazy
+without the renderers changing.
+
+Three things about `url()`-free webfont loading that are only obvious in
+hindsight:
+
+- **A spec Google rejects fails silently.** The stylesheet 404s, nothing
+  reaches the console, and the family renders in its fallback — indistinguishable
+  from a design choice. Every spec here was fetched and checked for a real
+  `@font-face`.
+- **The stylesheet has to land before you ask for the face.** `document.fonts.load`
+  cannot find a face the page has no `@font-face` rule for; it resolves having
+  matched nothing, and the font-epoch never bumps, so text measured against the
+  fallback is never re-measured. The face still arrives — the layout just keeps
+  the widths of the font it replaced.
+- **A static family is one file per weight.** Asking for `16px Poppins` fetches
+  its Regular, which is the wrong file to measure text about to be drawn in
+  Bold.
+
+**Weights are read off each family's own stylesheet, not assumed.** A weight a
+face does not have is synthesised: the browser thickens or thins the outlines,
+it renders, it looks like type, and it is not the typeface. So the picker
+offers Bebas Neue one weight rather than nine, Bold goes to the family's
+heaviest rather than a hard 700, Italic says when it is a shear rather than a
+face, and changing family snaps the weight to the nearest one the new face
+actually has.
+
+That last point had a matching hole in the renderer: `konvaFontStyle` collapsed
+nine weights into `bold` and `normal`, so seven of nine did not exist on the
+canvas — while the DOM editing overlay passed the real number through, meaning
+text set in Light changed weight when you double-clicked it. Konva's `fontStyle`
+lands in the CSS `font` shorthand, which takes a numeric weight in that slot.
+
 ### Colour — `engine/model/colorRamp.ts`
 
 Every picker offered two things: a fixed set of swatches, and a saturation-value

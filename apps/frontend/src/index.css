@@ -16191,3 +16191,120 @@ html[data-precise] .canvas-container[data-cursor-mode] .konvajs-content canvas {
   line-height: 1.5;
   color: var(--text-tertiary);
 }
+
+/* A mark inside a number field, standing in for the row's label. See
+   `NumberStepper`'s `glyph`. Tertiary and non-interactive: it names the field,
+   it is not a second control in it. */
+.stepper-glyph {
+  display: grid;
+  place-items: center;
+  flex-shrink: 0;
+  padding-left: 7px;
+  color: var(--text-tertiary);
+  pointer-events: none;
+}
+
+/**
+ * A row with no label column.
+ *
+ * The panel is built on label-plus-control rows, which is right where the
+ * control's job is not visible from its own shape. The type block is where
+ * that stops paying: eight rows each spending 84px on a word, for controls
+ * that carry a glyph and a unit and say what they are. Figma and Illustrator
+ * both drop the labels here and pair the fields two to a row, and the density
+ * is the point — leading and tracking are read against each other.
+ *
+ * Scoped to the rows that opt in, so the rest of the panel keeps its column
+ * and nothing looks like it came from a different app.
+ */
+.prop-grid {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
+  gap: var(--space-2);
+  align-items: center;
+  padding-block: 2px;
+  min-height: var(--control-h-sm);
+}
+
+.prop-grid--single { grid-template-columns: minmax(0, 1fr); }
+
+/* Two segmented groups sharing a row: horizontal and vertical alignment are
+   one question asked twice, and reading them on separate rows makes them look
+   like two unrelated settings. */
+.prop-grid--align {
+  grid-template-columns: minmax(0, 4fr) minmax(0, 3fr);
+}
+
+/* The number a multiplier comes to. Not a control -- a reading, so it takes
+   the quietest text in the panel and never the field's own ground. */
+.prop-derived {
+  flex-shrink: 0;
+  min-width: 34px;
+  font-size: var(--text-2xs);
+  font-variant-numeric: tabular-nums;
+  color: var(--text-tertiary);
+  text-align: right;
+}
+
+/**
+ * The weight, as a native select styled like every other field.
+ *
+ * A real `<select>` rather than the custom popover the font picker uses, and
+ * that is a deliberate split rather than an inconsistency. The font list is
+ * forty entries that have to be searched, grouped and *previewed in their own
+ * face* — no native control can do any of that. A weight list is at most nine
+ * short words with no preview worth rendering, and for that the native control
+ * is better than anything hand-rolled: it gets keyboard behaviour, type-ahead,
+ * touch handling and the platform's own overlay for free, and it opens over
+ * the panel without a portal.
+ *
+ * `appearance: none` and the shared field ground, so it sits in the same row
+ * as the size field beside it rather than announcing that one of the two is a
+ * different kind of control.
+ */
+.weight-select {
+  appearance: none;
+  -webkit-appearance: none;
+  box-sizing: border-box;
+  width: 100%;
+  min-width: 0;
+  height: var(--control-h-sm);
+  /* Room on the right for the chevron drawn behind it. */
+  padding: 0 20px 0 8px;
+  border: 1px solid transparent;
+  border-radius: var(--radius-sm);
+  background-color: var(--surface-hover);
+  /* The chevron is a background image rather than an element, because a
+     `<select>` may not contain one. Stroke colour is baked in per theme
+     below -- `currentColor` cannot reach into a background. */
+  background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='10' height='10' viewBox='0 0 24 24' fill='none' stroke='%2364748B' stroke-width='2.5' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='m6 9 6 6 6-6'/%3E%3C/svg%3E");
+  background-repeat: no-repeat;
+  background-position: right 6px center;
+  color: var(--text-primary);
+  font-family: inherit;
+  font-size: var(--text-sm);
+  line-height: 1;
+  cursor: pointer;
+  transition: border-color var(--motion-hover);
+}
+
+.weight-select:hover:not(:disabled) { border-color: var(--border-divider); }
+.weight-select:focus-visible { outline: 2px solid var(--focus-ring-color); outline-offset: 1px; }
+
+/* A face with one weight. Not an error state -- there is simply nothing to
+   choose between -- so it reads as quiet rather than as broken, and keeps its
+   ground instead of going hollow. */
+.weight-select:disabled {
+  color: var(--text-tertiary);
+  cursor: default;
+  background-image: none;
+  padding-right: 8px;
+}
+
+/* The list itself is drawn by the platform, which does not inherit the page's
+   colours. Naming both keeps it readable in a dark theme instead of black on
+   black. */
+.weight-select option {
+  background: var(--surface-elevated);
+  color: var(--text-primary);
+}

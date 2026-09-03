@@ -7,6 +7,10 @@ import {
   AlignLeft,
   AlignRight,
   AlignStartVertical,
+  AlignVerticalSpaceBetween,
+  ALargeSmall,
+  UnfoldHorizontal,
+  UnfoldVertical,
   Bold,
   CaseSensitive,
   Italic,
@@ -113,7 +117,28 @@ export const TypographySection: React.FC<TypographySectionProps> = ({
             }}
           />
         </Row>
-        <Row label="Weight" hint="Only the weights this face actually has. Anything else would be a weight the browser invents.">
+        {/*
+          Weight and size, on one line, with no labels.
+
+          ## Why these rows lost their label column
+
+          The panel is built on label-plus-control rows, and that is right where
+          a control's job is not visible from its own shape — a swatch, a
+          segmented choice, a list style. The type block is where it stops
+          paying. Eight rows each spending 84px of a 260px panel on one word,
+          for fields that already carry a glyph and a unit: "Size" beside a
+          field reading `16 px` is a label restating its own value.
+
+          Figma and Illustrator both drop the labels here and pair the fields
+          two to a row, and the pairing is not only density — **leading is read
+          against tracking**, and size against weight. Two numbers you compare
+          belong on one line.
+
+          Scoped to these rows rather than applied to the panel, so everything
+          else keeps its column and nothing looks like it came from a different
+          app.
+        */}
+        <div className="prop-grid">
           {(() => {
             const w = sharedType((t) => t.fontWeight ?? 400);
             return (
@@ -125,12 +150,12 @@ export const TypographySection: React.FC<TypographySectionProps> = ({
               />
             );
           })()}
-        </Row>
-        <Row label="Size">
           {(() => {
             const size = sharedType((t) => t.fontSize);
             return (
               <NumberStepper
+                aria-label="Font size"
+                glyph={<ALargeSmall size={13} />}
                 suffix="px"
                 value={Math.round(size.value ?? 16)}
                 mixed={size.mixed}
@@ -147,9 +172,73 @@ export const TypographySection: React.FC<TypographySectionProps> = ({
               />
             );
           })()}
-        </Row>
-        {/* "Colour" — the rest of this panel, and the effects below it, all
-            spell it that way; this row was the only "Color" in the inspector. */}
+        </div>
+
+        {/*
+          Leading and tracking, which belong to the letters rather than the block.
+
+          They lived under Paragraph, and that is the one place this panel's
+          split came out on the wrong side of the line it drew. Illustrator's
+          Character panel holds size, leading, kerning and tracking; its
+          Paragraph panel holds alignment, indents and space around. The test
+          the split states — "what the letters are" against "what the block does
+          with them" — gives the same answer: leading is the distance between
+          two lines of *type*, and changing the size changes it, which is not
+          true of anything else that was down there.
+
+          The glyphs are the controls' names: one opens vertical space, the
+          other horizontal. That is the whole distinction, and it is faster to
+          see than to read.
+        */}
+        <div className="prop-grid">
+          {(() => {
+            const lh = sharedType((t) => t.lineHeight);
+            const px = Math.round(typography.fontSize * (lh.value ?? 1.2));
+            return (
+              <div className="prop-pair">
+                <NumberStepper
+                  aria-label="Leading, as a multiple of the font size"
+                  glyph={<UnfoldVertical size={13} />}
+                  value={lh.value ?? 1.2}
+                  mixed={lh.mixed}
+                  onChange={(lineHeight) => setTypography({ lineHeight })}
+                  min={0.5}
+                  max={3}
+                  step={0.1}
+                />
+                {/*
+                  What the multiplier comes to.
+
+                  A ratio is the right thing to *store* — it survives a size
+                  change, which an absolute value does not — and the wrong
+                  thing to read. `1.2` is a number against something you have
+                  to remember; `19px` is a distance. Illustrator shows points
+                  and Figma shows pixels; both are answering this question.
+                */}
+                <span className="prop-derived" aria-hidden="true">
+                  {lh.mixed ? '—' : `${px}px`}
+                </span>
+              </div>
+            );
+          })()}
+          {(() => {
+            const ls = sharedType((t) => t.letterSpacing);
+            return (
+              <NumberStepper
+                aria-label="Tracking, the space added between characters"
+                glyph={<UnfoldHorizontal size={13} />}
+                suffix="px"
+                value={ls.value ?? 0}
+                mixed={ls.mixed}
+                onChange={(letterSpacing) => setTypography({ letterSpacing })}
+                min={-10}
+                max={50}
+                step={1}
+              />
+            );
+          })()}
+        </div>
+
         <Row label="Colour">
           <div className="prop-inline">
             <ColorPickerPopover
@@ -254,13 +343,37 @@ export const TypographySection: React.FC<TypographySectionProps> = ({
         tool makes and it is not arbitrary: the first group is *what the letters
         are*, the second is *what the block does with them*, and almost nobody
         reaches into both in the same breath.
+
+        **Leading and tracking moved up on 2026-09-03**, which is the one place
+        the first cut came out on the wrong side of its own line. Illustrator's
+        Character panel holds size, leading, kerning and tracking; its Paragraph
+        panel holds alignment, indents and space around. The test above agrees:
+        leading is the distance between two lines of *type* and changes when the
+        size does, which is not true of anything else that was down here.
       */}
       <Accordion
         title="Paragraph"
         icon={<AlignLeft size={13} />}
         defaultOpen={node.type === 'text'}
       >
-        <Row label="Align">
+        {/*
+          Both alignments, on one line.
+
+          Horizontal and vertical are one question asked twice — *where in its
+          box does this sit* — and on separate rows, each with its own label,
+          they read as two unrelated settings. Side by side the seven buttons
+          are one control with two axes, which is what they are, and what both
+          references show.
+
+          The vertical one is newly reachable at all. `verticalAlign` has been
+          in the schema since the beginning and every renderer forwards it, and
+          there has never been a control: the only way a board got anything but
+          `top` was a shape whose renderer hard-codes `middle`. It matters most
+          where this app is used most — a label against the top edge of a box
+          it is centred in horizontally is the commonest thing to want to fix,
+          and the answer used to be to nudge the text by hand.
+        */}
+        <div className="prop-grid prop-grid--align">
           <SegmentedControl
             ariaLabel="Text alignment"
             mixed={sharedType((t) => t.align).mixed}
@@ -273,89 +386,32 @@ export const TypographySection: React.FC<TypographySectionProps> = ({
               { value: 'justify', label: 'Justify', hint: 'Both edges flush, by stretching the spaces', icon: <AlignJustify size={14} /> },
             ]}
           />
-        </Row>
-        {/*
-          Vertical alignment, which was stored, rendered, and unreachable.
-
-          `Typography.verticalAlign` has been in the schema since the beginning
-          and every renderer forwards it — `TextRenderer`, `ShapeRenderer`, the
-          editing overlay. There has never been a control for it, so the only
-          way a board ever got anything but `top` was a shape whose renderer
-          hard-codes `middle`. A field that exists, works, and cannot be
-          reached is a feature nobody knows was built.
-
-          It matters most where this app is used most: text inside a shape. A
-          label sitting against the top edge of a box it is centred in
-          horizontally is the single most common thing to want to fix, and
-          until now the answer was to nudge the text node by hand.
-        */}
-        <Row label="Vertical" hint="Where the block sits in its box when there is room to spare.">
           <SegmentedControl
             ariaLabel="Vertical alignment"
             mixed={sharedType((t) => t.verticalAlign).mixed}
             value={typography.verticalAlign ?? 'top'}
             onChange={(v) => setTypography({ verticalAlign: v as VerticalAlign })}
             segments={[
-              { value: 'top', label: 'Top', icon: <AlignStartVertical size={14} /> },
-              { value: 'middle', label: 'Middle', icon: <AlignCenterVertical size={14} /> },
-              { value: 'bottom', label: 'Bottom', icon: <AlignEndVertical size={14} /> },
+              { value: 'top', label: 'Top', hint: 'Sits against the top of the box', icon: <AlignStartVertical size={14} /> },
+              { value: 'middle', label: 'Middle', hint: 'Centred in the box', icon: <AlignCenterVertical size={14} /> },
+              { value: 'bottom', label: 'Bottom', hint: 'Sits against the bottom of the box', icon: <AlignEndVertical size={14} /> },
             ]}
           />
-        </Row>
+        </div>
         {/*
-          Leading, with the number it actually comes to.
+          Space between paragraphs.
 
-          A multiplier is the right thing to *store* — it survives a size change,
-          which an absolute value does not — and the wrong thing to read. `1.2`
-          is a ratio to something you have to remember; `1.2 · 19px` is a
-          distance. Illustrator shows points and Figma shows pixels, and both
-          are answering the question this hint answers, which is "how far
-          apart".
+          Called "Paragraph" inside a section called Paragraph, which named the
+          section rather than the setting and left the row meaning nothing on
+          its own. It is the gap after a paragraph, so it says that.
         */}
-        <Row
-          label="Leading"
-          hint={`Distance between baselines, as a multiple of the font size. At ${Math.round(typography.fontSize)}px that is ${Math.round(typography.fontSize * (typography.lineHeight ?? 1.2))}px.`}
-        >
-          {(() => {
-            const lh = sharedType((t) => t.lineHeight);
-            return (
-              <div className="prop-pair">
-                <NumberStepper
-                  value={lh.value ?? 1.2}
-                  mixed={lh.mixed}
-                  onChange={(lineHeight) => setTypography({ lineHeight })}
-                  min={0.5}
-                  max={3}
-                  step={0.1}
-                />
-                <span className="prop-derived" aria-hidden="true">
-                  {lh.mixed ? '—' : `${Math.round(typography.fontSize * (lh.value ?? 1.2))}px`}
-                </span>
-              </div>
-            );
-          })()}
-        </Row>
-        <Row label="Tracking" hint="Space added between every character.">
-          {(() => {
-            const ls = sharedType((t) => t.letterSpacing);
-            return (
-              <NumberStepper
-                suffix="px"
-                value={ls.value ?? 0}
-                mixed={ls.mixed}
-                onChange={(letterSpacing) => setTypography({ letterSpacing })}
-                min={-10}
-                max={50}
-                step={1}
-              />
-            );
-          })()}
-        </Row>
-        <Row label="Paragraph" hint="Extra space between paragraphs, on top of the leading.">
+        <Row label="Space after" hint="Extra room between paragraphs, on top of the leading.">
           {(() => {
             const ps = sharedType((t) => t.paragraphSpacing ?? 0);
             return (
               <NumberStepper
+                aria-label="Space after a paragraph"
+                glyph={<AlignVerticalSpaceBetween size={13} />}
                 suffix="px"
                 value={ps.value ?? 0}
                 mixed={ps.mixed}

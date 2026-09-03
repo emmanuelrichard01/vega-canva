@@ -3520,6 +3520,147 @@ The guard was right about more than the bundle — a library index is a list of
 
 16 tests on the module; verified live against this machine's real 15 addresses.
 
+## 5a-0-s. Forty typefaces, and every weight of them real
+
+Asked as "add more fonts". The catalogue was thirteen families held in
+`FontSelector`, five of them fetched by a `<link>` in `index.html` — so every
+visitor downloaded all five on every visit whether they opened the picker or
+not. That arrangement makes "more fonts" a straight trade against load time,
+and the wrong one: most people use two faces, and the fortieth on the list is
+the one nobody is waiting for.
+
+`engine/text/fontCatalogue.ts` is the manifest, and a face is fetched **the
+first time it is needed** — a row scrolling into view, a font being applied, a
+board arriving that uses it. Almost nothing else changed, because
+`ensureFontLoaded` is where the loading hook went and every renderer already
+calls it on every render.
+
+Forty faces across nine categories, including a **condensed** group the
+catalogue had nothing in at all — which for a diagramming tool, where text goes
+inside boxes, is the single most useful thing that was missing.
+
+Every Google `spec` was fetched and checked for a real `@font-face` before
+shipping. This matters more than it sounds: a spec Google rejects 404s
+silently, the family renders in its fallback, and it looks like a design
+choice. Verified in the browser: **zero Google stylesheets at load**, and the
+lazy path takes EB Garamond from two fallback buckets to five distinct real
+widths.
+
+### The weights were the bigger lie
+
+`konvaFontStyle` collapsed nine weights to two:
+
+```ts
+if (typography.fontWeight >= 600) parts.push('bold');
+```
+
+Everything Thin to Medium drew at 400 and everything Semi Bold to Black at 700,
+so **seven of nine weights did not exist on the canvas**. It was inconsistent
+with itself, too: `domTextStyle` has always passed the real number through, so
+text set in Light *changed weight the moment you double-clicked it* and changed
+back when you clicked away — a visible symptom with nowhere to be reported,
+because nothing in the panel could produce a Light in the first place.
+
+Konva puts `fontStyle` into the CSS `font` shorthand, which takes style,
+variant and weight in any order before the size, so a number is simply a legal
+value of the slot "bold" already occupied. Measured after: **Inter renders nine
+distinct widths for nine weights**, where it rendered two.
+
+### Which weights a face has is read, not assumed
+
+A weight a family does not have is **synthesised** — the browser thickens or
+thins the outlines, it renders, it looks like type, and it is no longer the
+typeface. So the weights come from each family's own stylesheet, fetched and
+parsed rather than guessed. Consequences, all of them the same idea:
+
+- The picker offers Bebas Neue **one** weight, not nine.
+- **Bold** goes to 700 where it exists and the family's heaviest otherwise. It
+  used to write a hard 700: on a face topping out at 600 that asked for a
+  weight that does not exist, and on a single-weight display face it lit up and
+  changed nothing.
+- **Italic** says when it is a shear rather than a face. A family without a
+  drawn italic gets one by slanting the upright, and a real italic's
+  letterforms are *drawn* — different shapes for a, e and g.
+- **Changing family snaps the weight** to the nearest the new face has. Inter
+  Thin retyped in Libre Baskerville would otherwise keep `fontWeight: 100` and
+  render synthesised.
+
+`ensureFontLoaded` names the weight now, because a static family ships one file
+per weight — asking for the family alone fetched its Regular in order to
+measure text about to be drawn in Bold.
+
+### A bug of my own, found by measuring rather than by reading
+
+`ensureFamilyStylesheet` appended the `<link>` and `requestFont` ran on the
+very next statement, before the stylesheet had been fetched or parsed. With no
+`@font-face` rule yet, `document.fonts.load` matched nothing and resolved, and
+`requestFont` correctly read an empty match as "the fallback is what is drawn,
+nothing to redo" — so **the epoch never bumped**. The face still arrived, since
+drawing it is itself a request; what never happened was the re-measure, so the
+layout kept the widths of a font that was no longer on screen. That is the
+exact failure the epoch exists to prevent, reintroduced underneath it.
+
+And it could not recover: `requestFont` records a spec in `asked` *before*
+acting on it, so the one wasted attempt blocked the real one permanently.
+`ensureFamilyStylesheet` returns a promise now.
+
+I would not have found this by reading the code — it looks right. It showed up
+as a link in the head, an unchanged width, and a face that never applied.
+
+## 5a-0-t. Character and Paragraph, rearranged
+
+The two sections were already split on a sound rule — "what the letters are"
+against "what the block does with them" — and the first cut came out on the
+wrong side of it in one place, plus paid for its labels everywhere.
+
+**Leading and tracking moved up into Typography.** Illustrator's Character
+panel holds size, leading, kerning and tracking; its Paragraph panel holds
+alignment, indents and space around. The section's own stated test agrees:
+leading is the distance between two lines of *type* and changes when the size
+changes, which is not true of anything else that was down there.
+
+**The dense numeric rows lost their label column.** An 84px label in a 260px
+panel is right where a control's job is not visible from its own shape — a
+swatch, a segmented choice. It stops paying in the type block: "Size" beside a
+field reading `16 px` is a label restating its own value, and eight such rows
+is a third of the panel spent on words. `.prop-grid` is a label-less two-column
+row, scoped to the rows that opt in so the rest of the panel keeps its column
+and nothing looks imported from another app. The fields carry glyphs instead —
+`UnfoldVertical` and `UnfoldHorizontal` for leading and tracking, which *are*
+the distinction: one opens vertical space, the other horizontal.
+
+The pairing is not only density. **Leading is read against tracking**, and size
+against weight; two numbers you compare belong on one line.
+
+**Both alignments share a row.** Horizontal and vertical are one question asked
+twice — where in its box does this sit — and on separate labelled rows they
+read as two unrelated settings. At `4fr 3fr` the seven buttons come out the
+same width (measured: 31.5 and 31.3), so the two groups read as one control
+with two axes.
+
+**`verticalAlign` has a control at all for the first time.** It has been in the
+schema since the beginning and every renderer forwards it; the only way a board
+ever got anything but `top` was a shape whose renderer hard-codes `middle`. A
+field that is stored, rendered and unreachable is a feature nobody knows was
+built — and this one matters where the app is used most, since a label against
+the top edge of a box it is centred in horizontally is the commonest thing to
+want to fix.
+
+Smaller things, in the same pass:
+
+- **Leading shows what the multiplier comes to.** `1.2` is a ratio against
+  something you have to remember; `1.2` beside `19px` is a distance.
+  Illustrator shows points and Figma shows pixels; both answer this question.
+- **"Paragraph" inside the Paragraph section** named the section rather than
+  the setting. It is **Space after** now.
+- **Every numeric field carries its unit.** Size, tracking and paragraph
+  spacing were bare numbers in a panel where the next row down is a multiplier.
+- **The weight control is a native `<select>`**, deliberately, where the font
+  picker is a custom popover. Forty faces need search, grouping and a preview
+  in their own face, which no native control can do; nine short words need
+  keyboard behaviour, type-ahead and the platform's own overlay, which is
+  exactly what a native control gives for free.
+
 ## 5. Next up
 
 ### 5a-0. The four things to do first
