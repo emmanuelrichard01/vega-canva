@@ -4356,6 +4356,27 @@ The genuinely missing thing is a **layout guide** — a twelve-column measure
 drawn as chrome on a frame and snapped to, rather than built as objects — which
 is the other meaning of the word "grid" and a subsystem of its own.
 
+## 5a-0-aq. The frame picker widened three other flyouts
+
+A regression from the commit above, reported immediately and worth recording
+because the shape of it recurs.
+
+The three-column picker needed room, and it took it by widening
+`.dock-flyout__panel--wide` from 200px to 430. But `wide` is **shared**: Type,
+Grid system and the More menu all carry it, so three flyouts doubled in width
+to make room for a grid only one of them has.
+
+**A modifier named for a degree rather than for a purpose will always be worn
+by more than the thing that needed it.** `--wide` says how much, not what for,
+so there was nothing in its name to stop a fourth caller — or to warn the
+person changing it that three others were listening.
+
+The width lives on `.frame-picker` now. The panel is a flex column, so a child
+that declares a width widens it, and that is the honest arrangement: the three
+columns are the reason this flyout is wide, and nothing that does not contain
+them should be. Measured after: a `wide` flyout without the picker is back to
+200px, the frame one is 416.
+
 ## 5. Next up
 
 ### 5a-0. The four things to do first

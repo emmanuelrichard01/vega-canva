@@ -16901,8 +16901,22 @@ html[data-precise] .canvas-container[data-cursor-mode] .konvajs-content canvas {
   color: var(--text-tertiary);
 }
 
-/* Room for three columns. */
-.dock-flyout__panel--wide { min-width: 430px; }
+/**
+ * The width lives on the picker, not on the flyout.
+ *
+ * This was `.dock-flyout__panel--wide { min-width: 430px }` for one commit, and
+ * `wide` is shared: Type, Grid system and the More menu all carry it, so all
+ * three doubled in width to make room for a grid only one of them has. A
+ * modifier named for a *degree* rather than for a purpose will always be worn
+ * by more than the thing that needed it.
+ *
+ * The panel is a flex column, so a child that declares a width widens it. Which
+ * is the honest arrangement: the three columns are why this flyout is wide, and
+ * nothing that does not contain them should be.
+ */
+.frame-picker {
+  min-width: 400px;
+}
 
 
 /* ===========================================================================
