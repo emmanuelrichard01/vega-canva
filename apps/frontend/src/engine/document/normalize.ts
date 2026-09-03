@@ -763,6 +763,15 @@ function normalizePathGeometry(raw: any): PathGeometry {
     svgPath,
     points,
     strokeSize: num(raw?.geometry?.strokeSize ?? raw?.content?.strokeSize, 6),
+    /**
+     * Only stored when true, so every stroke drawn before this existed reads
+     * as open — which it was, since nothing could close one.
+     *
+     * A closed flag with fewer than three points is meaningless and would ask
+     * the renderer to fill a line, so it is refused here rather than guarded at
+     * every reader.
+     */
+    ...(raw?.geometry?.closed === true && points.length > 2 ? { closed: true } : null),
   };
 }
 

@@ -1570,10 +1570,18 @@ export const ObjectContextToolbar: React.FC<Props> = ({ selectedId, selectedIds,
               {!openShape && node.type !== 'connector' && (
                 <FillEditor paint={appearance.fill?.[0]} onChange={(fill) => setAppearance({ fill: [fill] })} />
               )}
-              {/* A freehand blob is a filled outline with no separate stroke
-                  render path, so stroke controls on one would do nothing. */}
-              {(node.type === 'shape' || node.type === 'connector' || node.geometry.kind !== 'freehand') && (
-                <RailPopover
+              {/*
+                  A freehand stroke has a stroke colour now, so it gets the
+                  control.
+
+                  This withheld it on the reasoning that a pencil mark is a
+                  filled outline with no separate stroke render path — true of
+                  the *weight*, which the nib fixed when the pen lifted, and no
+                  longer true of the colour. Both renderers read `stroke.color`
+                  for the ink, so this was hiding the one control that changes
+                  what a pencil line looks like.
+              */}
+              <RailPopover
                   label="Stroke"
                   // The weight it currently holds, drawn. A dash here was the
                   // same mark as Sketch's off state and, on a line object, as
@@ -1598,7 +1606,6 @@ export const ObjectContextToolbar: React.FC<Props> = ({ selectedId, selectedIds,
                     onChange={(width) => setAppearance({ stroke: { color: appearance.stroke?.color ?? DEFAULT_INK, ...appearance.stroke, width } })}
                   />
                 </RailPopover>
-              )}
               {/* Sketch lives on the rail, not only in the panel, because it
                   is a *drawing* decision: you reach for it while laying out a
                   diagram, repeatedly, and walking to the inspector each time

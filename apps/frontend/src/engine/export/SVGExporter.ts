@@ -23,6 +23,7 @@ import { layoutText } from '../text/layout';
 import { measurerFor } from '../text/measure';
 import { highlightPath } from '../text/highlight';
 import { roughShape } from '../model/roughShape';
+import { loopPath } from '../model/freehandLoop';
 import { canvasFontFamily } from '../../components/canvas/renderers/shared';
 import { DEFAULT_INK } from '../model/schema';
 import { computeContentBounds } from './bounds';
@@ -649,9 +650,35 @@ export class SVGExporter implements Exporter {
               `<path d="${bezierPathData(node, node.x, node.y)}" fill="${fill && fill !== 'transparent' ? fill : 'none'}"${rule} stroke="${stroke ?? 'none'}" stroke-width="${sw}"${dash}${cap}${join} />`
             );
           } else if (node.geometry.svgPath) {
+            /**
+             * A freehand stroke: the ink from `stroke`, the interior from
+             * `fill`.
+             *
+             * The outline polygon was exported with `fill`, matching what the
+             * canvas used to do — and the canvas has stopped, because that made
+             * the pencil the one node type where `fill` did not mean the
+             * interior. Both read `stroke.color` for the ink now, which is what
+             * keeps the file and the screen the same picture.
+             *
+             * The enclosed area is emitted **first** so the ink paints over it,
+             * exactly as the canvas layers them. It only exists for a stroke
+             * that came back to where it started; an open one has no inside for
+             * a fill to land in, and emitting one would fill the region between
+             * the two loose ends with a shape nobody drew.
+             */
+            const ink = stroke ?? DEFAULT_INK;
+            const loop =
+              node.geometry.closed && node.geometry.points.length > 2 && fill && fill !== 'transparent'
+                ? loopPath(node.geometry.points)
+                : '';
+            if (loop) {
+              parts.push(
+                `<path d="${loop}" fill="${fill}" transform="translate(${node.x}, ${node.y})" />`
+              );
+            }
             // Freehand strokes store their outline relative to the node origin.
             parts.push(
-              `<path d="${node.geometry.svgPath}" fill="${fill ?? DEFAULT_INK}" transform="translate(${node.x}, ${node.y})" />`
+              `<path d="${node.geometry.svgPath}" fill="${ink}" transform="translate(${node.x}, ${node.y})" />`
             );
           }
           break;

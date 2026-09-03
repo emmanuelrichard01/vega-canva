@@ -4518,6 +4518,11 @@ input.slider__value:focus-visible {
   display: flex;
   align-items: center;
   gap: var(--space-2);
+  /* The same insets `.flyout-field` uses, so the nib row sits on the flyout's
+     rhythm rather than a few pixels off it. It carried its own caption block
+     before and the difference was invisible; with the caption gone it is the
+     only row in the group that would start somewhere else. */
+  padding: 6px 8px 2px;
 }
 
 /* The slider takes the rest of the row beside the preview.

@@ -4161,6 +4161,77 @@ Measured on a real 2D context, sampling one pixel inside the top edge with a
   shadow colour (after)   [62, 190, 249]
 ```
 
+## 5a-0-al. The pencil's ink moved off `fill`
+
+Flagged in 5a-0-ag as the model change it is; here it is.
+
+`perfect-freehand` emits a filled outline polygon rather than a stroked line,
+and the renderer took that literally: the polygon was painted with
+`appearance.fill`, so a pencil stroke's **fill was its ink** and its `stroke`
+was ignored. That made the pencil the one node type in the app where `fill`
+does not mean the interior — a bezier path's fill is its interior, a shape's
+fill is its interior — and it is exactly why a closed pencil loop could never
+be filled: the field that would have held the colour was already spoken for.
+
+**Both renderers read `stroke.color` now.** The change is safe on every board
+that already exists, and that is not luck: `PenTool` has always written the
+same colour to *both* fields, because the smooth branch painted with the fill
+and the sketched branch stroked the centreline. So every stroke ever drawn
+already carries its ink where this now looks. Nothing changes appearance; what
+changes is which control edits it.
+
+The context toolbar was withholding stroke controls from freehand strokes, on
+the reasoning that a pencil mark is a filled outline with no separate stroke
+render path. True of the **weight** — the nib fixed that when the pen lifted —
+and not of the colour, so the rule was hiding the one control that changes what
+a pencil line looks like.
+
+### A closed stroke has an inside
+
+`FreehandGeometry.closed` says the **centreline** loops. The outline is always
+closed, which is not the same question and is why this needed a field rather
+than a check.
+
+Deciding it is not "are the ends close". Two short back-and-forth scribbles end
+near where they began and enclose nothing; a tap ends exactly where it began.
+So the gap is measured against the **nib** — a gap the pen itself would cover
+is one a person calls closed — and the distance travelled has to be many times
+the gap, which is the condition that separates a loop from a line that wandered
+back. `isClosedLoop` has eleven tests, including the there-and-back case a
+plain endpoint test gets wrong every time.
+
+It is decided when the pen lifts and **stored**, because both halves of that
+test are facts about the moment it was drawn. Recomputed at render time, a
+stroke could stop being closed because somebody resized it or erased a piece
+out of the middle, and its fill would vanish for a reason nobody could see.
+
+The interior is drawn from the **centreline**, not the outline: the outline is
+the edge of the ink, so filling it would paint the stroke's own body. The two
+differ by half the nib all the way round, and that overlap is what makes the
+fill meet the ink with no seam. The shadow moves to the interior when there is
+one — a closed stroke's silhouette is the filled region, and casting from the
+ring alone would put a shadow inside the shape as well as outside it.
+
+The SVG exporter emits the same two paths in the same order, so the file and
+the screen stay the same picture.
+
+Verified live: the normalizer keeps `closed` on a real loop, refuses it on a
+two-point stroke, leaves every existing stroke open, and stores the key absent
+rather than `false`.
+
+## 5a-0-am. The draw flyout is two groups
+
+Above the rule: what the **mark** looks like — how thick it is, and what kind of
+line. Below it: how the **tool behaves** while you use it. They were one
+undifferentiated stack of four, which is the shape that makes somebody read all
+of them to find the one they want, and the two halves are reached at completely
+different times — the mark when you decide what you are drawing, the behaviour
+once and then never again.
+
+The nib control is called **Nib** rather than "Stroke". A pencil mark now has a
+stroke colour and a stroke weight of its own, so a segmented control of four
+*textures* under that word named the wrong thing twice over.
+
 ## 5. Next up
 
 ### 5a-0. The four things to do first

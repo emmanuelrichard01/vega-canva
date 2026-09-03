@@ -1,6 +1,7 @@
 import { nanoid } from 'nanoid';
 import { ThemeService } from '../ThemeService';
 import { simplifyPoints } from '../model/simplify';
+import { isClosedLoop } from '../model/freehandLoop';
 import type { Tool, ToolContext } from './Tool';
 import * as React from 'react';
 import { getStroke } from 'perfect-freehand';
@@ -287,6 +288,20 @@ export class PenTool implements Tool {
           svgPath,
           points: centerline,
           strokeSize: PenTool.size,
+          /**
+           * Whether the stroke came back to where it started.
+           *
+           * Decided here, when the pen lifts, because the test involves the
+           * nib and the distance travelled — both facts about the moment it
+           * was drawn. Recomputed later, a stroke could stop being closed
+           * because somebody resized it or erased a piece out of the middle,
+           * and a fill would vanish for a reason nobody could see.
+           *
+           * `isClosedLoop` is deliberately strict about what a loop is: two
+           * short back-and-forth scribbles end near where they began and
+           * enclose nothing. See its own note.
+           */
+          ...(isClosedLoop(centerline, PenTool.size) ? { closed: true } : null),
         },
         /**
          * The nib in the pencil, written onto the stroke.
@@ -298,13 +313,23 @@ export class PenTool implements Tool {
          * same on every machine, and a tool setting is a property of *this*
          * browser.
          *
-         * The fill is what a smooth stroke is made of — perfect-freehand emits
-         * a filled outline polygon, not a stroked line — and the stroke colour
-         * is what a sketched one uses, so both are written and the renderer
-         * takes whichever its branch needs.
+         * ## Only the stroke now, where it used to be both
+         *
+         * The colour was written to `fill` *and* `stroke`, because the smooth
+         * renderer painted the outline polygon with the fill and the sketched
+         * one stroked the centreline. That made the pencil the one node type
+         * where `fill` did not mean the interior — and it is why a closed
+         * pencil loop could never be filled: the field that would hold the
+         * colour was already the ink.
+         *
+         * Both renderers read `stroke.color` now, so the ink is written once
+         * and `fill` is left free to mean what it means everywhere else. A
+         * stroke drawn before this change carries the same colour in both
+         * fields, so nothing already on a board looks different; it simply has
+         * a fill it never asked for, which paints nothing until the stroke is
+         * also closed.
          */
         appearance: {
-          fill: [{ type: 'solid', color: PenTool.currentColor, opacity: 1 }],
           stroke: { color: PenTool.currentColor, width: PenTool.size },
           ...(nib !== 'smooth' ? { sketch: nib } : null),
         },

@@ -1097,13 +1097,33 @@ export const ToolWorkspace: React.FC<Props> = ({ activeToolId, onOpenDiagram, on
                     />
                   ) : (
                     <>
-                      <NibSize label="Brush size" value={penSize} min={1} max={60} onChange={setPenSize} />
+                      {/*
+                        Two groups, and the rule between them is the whole
+                        arrangement.
+
+                        Above it: what the **mark** looks like — how thick it
+                        is and what kind of line it is. Below it: how the
+                        **tool** behaves while you use it. They were one
+                        undifferentiated stack of four, which is the shape that
+                        makes somebody read all of them to find the one they
+                        want, and the two halves are reached at completely
+                        different times: the mark is set when you decide what
+                        you are drawing, the behaviour once and then never
+                        again.
+                      */}
+                      <NibSize label="Size" value={penSize} min={1} max={60} onChange={setPenSize} />
                       {/* Which nib is in the pencil. A tool setting rather than
                           an object one, because a stroke is finished the moment
                           the pen lifts — deciding afterwards means drawing a
-                          line, selecting it and changing it, every time. */}
+                          line, selecting it and changing it, every time.
+
+                          Called "Nib" rather than "Stroke". A stroke now has a
+                          colour and a weight of its own on every pencil mark —
+                          see `PenTool`'s appearance — so a segmented control of
+                          four *textures* under that word named the wrong
+                          thing twice over. */}
                       <div className="flyout-field">
-                        <span className="flyout-field__label">Stroke</span>
+                        <span className="flyout-field__label">Nib</span>
                         <SegmentedControl
                           ariaLabel="Pencil nib"
                           value={pencilNib}
@@ -1116,6 +1136,7 @@ export const ToolWorkspace: React.FC<Props> = ({ activeToolId, onOpenDiagram, on
                           ]}
                         />
                       </div>
+                      <div className="flyout-rule" role="presentation" />
                       {/*
                         Fidelity, which the tool has always had and never
                         offered.

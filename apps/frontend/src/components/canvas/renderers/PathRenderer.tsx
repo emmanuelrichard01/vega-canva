@@ -4,6 +4,7 @@ import type { PathNode } from '../../../engine/model/schema';
 import { DEFAULT_INK } from '../../../engine/model/schema';
 import { contourData } from '../../../engine/model/pathGeometry';
 import { roughLoop, seedFor } from '../../../engine/model/rough';
+import { loopPath } from '../../../engine/model/freehandLoop';
 import { shadowProps, strokeColor, strokeDashProps, strokeWidth } from './shared';
 import { useFillProps } from './useFillProps';
 
@@ -24,7 +25,8 @@ export const PathRenderer: React.FC<Props> = React.memo(({ node }) => {
 
   if (node.geometry.kind === 'freehand') {
     // perfect-freehand produces a filled outline polygon, not a stroked line,
-    // so the stroke colour is irrelevant here — and so is the dash pattern.
+    // so the stroke *weight* is irrelevant here — the nib decided it when the
+    // pen lifted — and so is the dash pattern.
     // Dashing this shape would chop up the *outline* of the stroke rather than
     // the stroke itself, which looks like a rendering fault, not a dashed
     // pencil line. Deliberately not forwarded.
@@ -72,13 +74,62 @@ export const PathRenderer: React.FC<Props> = React.memo(({ node }) => {
       );
     }
 
+    /**
+     * The ink is the **stroke** colour, and `fill` is the interior.
+     *
+     * ## What this used to be, and why it was wrong
+     *
+     * `perfect-freehand` emits a filled outline polygon rather than a stroked
+     * line, and the renderer took that literally: the polygon was painted with
+     * `appearance.fill`, so a pencil stroke's `fill` *was* its ink and its
+     * `stroke` was ignored. The comment above still says the stroke colour is
+     * irrelevant here, and for the outline it is — that is not the same as
+     * `fill` being the right field for it.
+     *
+     * It made the pencil the one node type in the app where `fill` does not
+     * mean the interior. A bezier path's fill is its interior; a shape's fill
+     * is its interior; a pencil stroke's fill was its outline. So a closed
+     * pencil loop — a ring you drew by coming back to where you started — had
+     * no way to be filled at all, because the field that would have held the
+     * colour was already spoken for.
+     *
+     * ## Why the change is safe on documents that already exist
+     *
+     * `PenTool` has always written the same colour to **both** `fill` and
+     * `stroke`, so every pencil stroke ever drawn already carries its ink in
+     * the field this now reads. Nothing on any board changes appearance. What
+     * changes is which control edits it: the Stroke colour, which is where a
+     * line's colour belongs and which the panel was previously withholding
+     * from freehand strokes entirely.
+     */
+    const ink = strokeColor(node.appearance) ?? DEFAULT_INK;
+    const interior =
+      node.geometry.closed && node.geometry.points.length > 2
+        ? loopPath(node.geometry.points)
+        : '';
+
     return (
-      <Path
-        data={node.geometry.svgPath}
-        {...pathFill}
-        {...shadow}
-        hitStrokeWidth={Math.max(20, node.geometry.strokeSize)}
-      />
+      <>
+        {/*
+          The area the loop encloses, under the ink.
+
+          Drawn from the *centreline* rather than the outline: the outline is
+          the edge of the ink, so filling it would paint the stroke's own body.
+          The two differ by half the nib all the way round, and that overlap is
+          what makes the fill meet the ink with no seam between them.
+
+          It takes the shadow, and the outline above it does not — a closed
+          stroke's silhouette is the filled region, and casting from the ring
+          alone would put a shadow inside the shape as well as outside it.
+        */}
+        {interior && <Path data={interior} {...pathFill} {...shadow} listening={false} />}
+        <Path
+          data={node.geometry.svgPath}
+          fill={ink}
+          {...(interior ? null : shadow)}
+          hitStrokeWidth={Math.max(20, node.geometry.strokeSize)}
+        />
+      </>
     );
   }
 

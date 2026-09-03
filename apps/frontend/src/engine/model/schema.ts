@@ -941,7 +941,7 @@ export interface BezierSegment {
   cp2y?: number;
 }
 
-/** Freehand (Pencil) strokes: a filled outline plus the centreline that produced it. */
+/** Freehand (Pencil) strokes: a stroked outline plus the centreline that produced it. */
 export interface FreehandGeometry {
   kind: 'freehand';
   /** Outline path, relative to the node origin. */
@@ -949,6 +949,28 @@ export interface FreehandGeometry {
   /** Centreline, relative to the node origin — what the Eraser splits on. */
   points: Point[];
   strokeSize: number;
+  /**
+   * The stroke came back to where it started, so it encloses an area.
+   *
+   * ## Why a pencil stroke has this at all
+   *
+   * `perfect-freehand` emits a filled outline polygon rather than a line, so
+   * the *outline* is always closed — that is not what this means. This is
+   * whether the **centreline** loops, which is the only sense in which a
+   * pencil stroke has an inside.
+   *
+   * An open stroke has no interior and no fill can land anywhere. A closed one
+   * does, and until this existed there was no way to say so: looping a pencil
+   * stroke back to its start gave you a ring you could not fill, which is the
+   * one thing every vector pencil does.
+   *
+   * Decided when the pen lifts and stored, rather than recomputed from the
+   * points at render time. The threshold involves the nib size and the length
+   * of the stroke, both of which are facts about *the moment it was drawn* —
+   * recomputing later would let a stroke stop being closed because somebody
+   * resized it or erased a piece out of the middle.
+   */
+  closed?: boolean;
 }
 
 /**
