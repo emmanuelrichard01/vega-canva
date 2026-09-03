@@ -1,4 +1,4 @@
-import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import React, { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
 import { initialsFor } from '../../engine/presence/collaborators';
 import {
   activeMentionQuery,
@@ -7,6 +7,14 @@ import {
   toStoredForm,
   type MentionCandidate,
 } from '../../engine/comments/threads';
+import {
+  activeEmojiQuery,
+  pushRecentEmoji,
+  readSkinTone,
+  searchEmoji,
+  withTone,
+  type EmojiEntry,
+} from '../../engine/comments/emoji';
 
 /**
  * A comment composer that can name people.
@@ -49,6 +57,21 @@ interface MentionInputProps {
   /** Escape when no picker is open — usually "close the composer". */
   onCancel?: () => void;
   inputRef?: React.RefObject<HTMLTextAreaElement | null>;
+  /**
+   * A handle for putting text in at the caret, from outside.
+   *
+   * The emoji button sits in the composer's toolbar, next to Post — it is not
+   * inside this component and cannot be, because it belongs to the row of
+   * actions. But the caret does live here, and "insert at the caret" is the
+   * only behaviour worth having: appending to the end means every emoji picked
+   * mid-sentence has to be dragged back into place.
+   *
+   * A ref rather than a prop, because this is an *event* the parent causes
+   * rather than state it owns. Modelling it as state would mean a value that
+   * has to be cleared after it is consumed, which is the shape that produces
+   * "it inserted twice".
+   */
+  insertRef?: React.MutableRefObject<((text: string) => void) | null>;
   'aria-label'?: string;
 }
 
@@ -58,10 +81,11 @@ export const MentionInput: React.FC<MentionInputProps> = ({
   onSubmit,
   candidates,
   placeholder,
-  rows = 3,
+  rows = 2,
   autoFocus,
   onCancel,
   inputRef,
+  insertRef,
   'aria-label': ariaLabel,
 }) => {
   const ownRef = useRef<HTMLTextAreaElement>(null);
@@ -118,33 +142,82 @@ export const MentionInput: React.FC<MentionInputProps> = ({
   // that happens to leave the caret in the same `@word`.
   const [dismissedAt, setDismissedAt] = useState<number | null>(null);
 
-  const query = useMemo(() => {
+  /**
+   * Two triggers, one mechanism.
+   *
+   * `@` names a person and `:` names an emoji, and they are the same gesture:
+   * a character, a partial word, a ranked list, Enter. `activeEmojiQuery`
+   * returns the identical `{ from, to, query }` shape as `activeMentionQuery`
+   * precisely so this component holds one picker rather than two — the caret
+   * tracking, the dismissal rule and the keyboard handling below are hard
+   * enough to get right once.
+   */
+  const mentionQuery = useMemo(() => {
     const found = activeMentionQuery(display, caret);
     if (!found) return null;
     if (dismissedAt !== null && found.from === dismissedAt) return null;
     return found;
   }, [display, caret, dismissedAt]);
 
+  const emojiQuery = useMemo(() => {
+    const found = activeEmojiQuery(display, caret);
+    if (!found) return null;
+    if (dismissedAt !== null && found.from === dismissedAt) return null;
+    return found;
+  }, [display, caret, dismissedAt]);
+
+  /**
+   * When both could fire, the one nearer the caret wins.
+   *
+   * `@dana :fi` has a live `@` behind it and a live `:` in front of it, and
+   * the person is typing the second one. Taking the later `from` is what
+   * "the one you are typing" means, and it needs no state to remember which
+   * trigger opened — which matters, because the answer changes as the caret
+   * moves back through the line.
+   */
+  const mode: 'mention' | 'emoji' | null =
+    mentionQuery && emojiQuery
+      ? mentionQuery.from > emojiQuery.from
+        ? 'mention'
+        : 'emoji'
+      : mentionQuery
+        ? 'mention'
+        : emojiQuery
+          ? 'emoji'
+          : null;
+
+  const query = mode === 'emoji' ? emojiQuery : mentionQuery;
+
   const matches = useMemo(
-    () => (query ? rankMentions(candidates, query.query) : []),
-    [query, candidates]
+    () => (mode === 'mention' && mentionQuery ? rankMentions(candidates, mentionQuery.query) : []),
+    [mode, mentionQuery, candidates]
   );
 
-  const open = !!query && matches.length > 0;
+  // Eight is what fits the picker without scrolling, and a shortcode long
+  // enough to be ambiguous past eight is long enough to finish typing.
+  const emojiMatches = useMemo(
+    () => (mode === 'emoji' && emojiQuery ? searchEmoji(emojiQuery.query, 8) : []),
+    [mode, emojiQuery]
+  );
 
-  const accept = useCallback(
-    (candidate: MentionCandidate) => {
+  const count = mode === 'emoji' ? emojiMatches.length : matches.length;
+  const open = !!query && count > 0;
+
+  /**
+   * Put text where the trigger was, and the caret after it.
+   *
+   * Shared by both triggers because the splice is identical — only what goes
+   * in differs. The trailing space is part of it: a mention or an emoji is
+   * almost never the last thing in a sentence, and typing the space yourself
+   * after every one is the kind of friction nobody reports and everybody
+   * feels.
+   */
+  const splice = useCallback(
+    (token: string) => {
       if (!query) return;
-      // The readable form goes in the box; the id goes in the map. Recorded
-      // before `emit`, because the encode reads it.
-      mentions.current.set(candidate.name, candidate.id);
-      const token = `@${candidate.name}`;
       const next = `${display.slice(0, query.from)}${token} ${display.slice(query.to)}`;
       emit(next);
       setDismissedAt(null);
-
-      // Put the caret after the inserted token, not at the end of the message —
-      // people mention someone mid-sentence and keep typing.
       const at = query.from + token.length + 1;
       requestAnimationFrame(() => {
         const el = ref.current;
@@ -157,6 +230,88 @@ export const MentionInput: React.FC<MentionInputProps> = ({
     [query, display, emit, ref]
   );
 
+  const acceptEmoji = useCallback(
+    (entry: EmojiEntry) => {
+      const char = withTone(entry, readSkinTone());
+      pushRecentEmoji(char);
+      splice(char);
+    },
+    [splice]
+  );
+
+  const accept = useCallback(
+    (candidate: MentionCandidate) => {
+      if (!query) return;
+      // The readable form goes in the box; the id goes in the map. Recorded
+      // before `emit`, because the encode reads it.
+      mentions.current.set(candidate.name, candidate.id);
+      // The caret lands after the token rather than at the end of the message —
+      // people mention someone mid-sentence and keep typing. `splice` owns that
+      // now, and the emoji trigger gets it for free.
+      splice(`@${candidate.name}`);
+    },
+    [query, splice]
+  );
+
+  /**
+   * Insert text where the caret is, for a control outside this component.
+   *
+   * The selection is read off the **live element** rather than the `caret`
+   * state, because the two can differ at exactly the moment this is called: the
+   * emoji button prevents its own `mousedown` so the textarea keeps focus, but
+   * nothing guarantees a `select` event fired for whatever the person did
+   * immediately before reaching for it. The DOM is the authority on where the
+   * caret is; the state is a copy kept for rendering.
+   *
+   * Falls back to the end of the text, which is where an insertion belongs
+   * when there is no caret to speak of.
+   */
+  useEffect(() => {
+    if (!insertRef) return;
+    insertRef.current = (text: string) => {
+      const el = ref.current;
+      const at = el?.selectionStart ?? display.length;
+      const to = el?.selectionEnd ?? at;
+      const next = `${display.slice(0, at)}${text}${display.slice(to)}`;
+      emit(next);
+      const after = at + text.length;
+      requestAnimationFrame(() => {
+        const node = ref.current;
+        if (!node) return;
+        node.focus();
+        node.setSelectionRange(after, after);
+        setCaret(after);
+      });
+    };
+    return () => {
+      insertRef.current = null;
+    };
+  }, [insertRef, display, emit, ref]);
+
+  /**
+   * The box is the size of what is in it.
+   *
+   * It was a fixed three rows, which is 81px of empty field for the one-line
+   * message most comments are — and still not enough for a long one, so the
+   * number was wrong in both directions at once. Any fixed height is: a
+   * composer is asked to hold anything from "yes" to a paragraph.
+   *
+   * So it starts at two rows and grows with the text, to a cap. The cap
+   * matters as much as the growth: a composer that keeps growing pushes the
+   * thread it belongs to off the screen, and past about six lines the right
+   * answer is to scroll the field rather than the conversation.
+   *
+   * `height: auto` before reading `scrollHeight` is the whole trick — without
+   * it the element reports its *current* height whenever the text shrinks, so
+   * deleting a paragraph leaves the box the size the paragraph made it.
+   */
+  useLayoutEffect(() => {
+    const el = ref.current;
+    if (!el) return;
+    el.style.height = 'auto';
+    el.style.height = `${Math.min(el.scrollHeight, 132)}px`;
+  }, [display, ref]);
+
   const syncCaret = (e: React.SyntheticEvent<HTMLTextAreaElement>) =>
     setCaret(e.currentTarget.selectionStart ?? 0);
 
@@ -164,17 +319,19 @@ export const MentionInput: React.FC<MentionInputProps> = ({
     if (open) {
       if (e.key === 'ArrowDown') {
         e.preventDefault();
-        setHighlight((h) => (h + 1) % matches.length);
+        setHighlight((h) => (h + 1) % count);
         return;
       }
       if (e.key === 'ArrowUp') {
         e.preventDefault();
-        setHighlight((h) => (h - 1 + matches.length) % matches.length);
+        setHighlight((h) => (h - 1 + count) % count);
         return;
       }
       if (e.key === 'Enter' || e.key === 'Tab') {
         e.preventDefault();
-        accept(matches[Math.min(highlight, matches.length - 1)]);
+        const at = Math.min(highlight, count - 1);
+        if (mode === 'emoji') acceptEmoji(emojiMatches[at]);
+        else accept(matches[at]);
         return;
       }
       if (e.key === 'Escape') {
@@ -221,30 +378,57 @@ export const MentionInput: React.FC<MentionInputProps> = ({
       />
 
       {open && (
-        <div className="mention-picker" role="listbox" aria-label="People">
-          {matches.map((candidate, index) => (
-            <button
-              key={candidate.id}
-              type="button"
-              role="option"
-              aria-selected={index === highlight}
-              className="mention-option"
-              data-active={index === highlight}
-              // `mousedown` rather than `click`: the textarea loses focus on
-              // mousedown, and a blur handler that closes the picker would
-              // otherwise unmount this button before its click ever lands.
-              onMouseDown={(e) => {
-                e.preventDefault();
-                accept(candidate);
-              }}
-              onMouseEnter={() => setHighlight(index)}
-            >
-              <span className="mention-avatar" style={{ background: candidate.color }}>
-                {initialsFor(candidate.name)}
-              </span>
-              {candidate.name}
-            </button>
-          ))}
+        <div
+          className="mention-picker"
+          role="listbox"
+          aria-label={mode === 'emoji' ? 'Emoji' : 'People'}
+        >
+          {mode === 'emoji'
+            ? emojiMatches.map((entry, index) => (
+                <button
+                  key={entry.name}
+                  type="button"
+                  role="option"
+                  aria-selected={index === highlight}
+                  className="mention-option"
+                  data-active={index === highlight}
+                  onMouseDown={(ev) => {
+                    ev.preventDefault();
+                    acceptEmoji(entry);
+                  }}
+                  onMouseEnter={() => setHighlight(index)}
+                >
+                  {/* The character at reading size, then the shortcode that
+                      found it — so the next time, the shortcode is typed
+                      directly and the picker never opens. A picker that
+                      teaches you not to need it is doing its job. */}
+                  <span className="emoji-option__char">{withTone(entry, readSkinTone())}</span>
+                  <span className="emoji-option__name">:{entry.name}</span>
+                </button>
+              ))
+            : matches.map((candidate, index) => (
+                <button
+                  key={candidate.id}
+                  type="button"
+                  role="option"
+                  aria-selected={index === highlight}
+                  className="mention-option"
+                  data-active={index === highlight}
+                  // `mousedown` rather than `click`: the textarea loses focus on
+                  // mousedown, and a blur handler that closes the picker would
+                  // otherwise unmount this button before its click ever lands.
+                  onMouseDown={(ev) => {
+                    ev.preventDefault();
+                    accept(candidate);
+                  }}
+                  onMouseEnter={() => setHighlight(index)}
+                >
+                  <span className="mention-avatar" style={{ background: candidate.color }}>
+                    {initialsFor(candidate.name)}
+                  </span>
+                  {candidate.name}
+                </button>
+              ))}
         </div>
       )}
     </div>

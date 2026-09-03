@@ -17,6 +17,7 @@ import { readMarks } from '../engine/comments/readMarks';
 import { commentView } from '../engine/comments/commentView';
 import { useCollaborators } from '../engine/presence/useCollaborators';
 import { MentionInput } from './comments/MentionInput';
+import { EmojiPicker } from './comments/EmojiPicker';
 import { MessageBody } from './comments/MessageBody';
 
 interface CommentsOverlayProps {
@@ -118,6 +119,16 @@ export const CommentsOverlay: React.FC<CommentsOverlayProps> = ({
   // local means an abandoned composer never leaves an empty pin behind for everyone.
   const [draft, setDraft] = useState<{ x: number; y: number; objectId?: string } | null>(null);
   const [draftText, setDraftText] = useState('');
+  /**
+   * How the emoji button reaches the caret.
+   *
+   * One per composer, because there are two — a new thread and a reply — and
+   * they are never open at once but are separate components with separate
+   * carets. Sharing a ref would mean the reply box inserting into the draft
+   * box's text on whichever mounted last.
+   */
+  const draftInsert = useRef<((text: string) => void) | null>(null);
+  const replyInsert = useRef<((text: string) => void) | null>(null);
   const draftInputRef = useRef<HTMLTextAreaElement>(null);
 
   // Inline message editing (author-only).
@@ -250,18 +261,30 @@ export const CommentsOverlay: React.FC<CommentsOverlayProps> = ({
               </div>
               <MentionInput
                 inputRef={draftInputRef}
+                insertRef={draftInsert}
                 value={draftText}
                 onChange={setDraftText}
                 onSubmit={commitDraft}
                 onCancel={() => setDraft(null)}
                 candidates={mentionCandidates}
-                placeholder="Add a comment…  @ to mention"
+                placeholder="Add a comment…  @ to mention, : for emoji"
                 aria-label="New comment"
-                rows={3}
               />
               <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginTop: 10 }}>
-                <span style={{ fontSize: 10, color: 'var(--text-tertiary)', display: 'flex', alignItems: 'center', gap: 4 }}>
-                  <CornerDownLeft size={11} /> to post
+                {/*
+                  The hint and the emoji button share the left of the row.
+
+                  The button is here rather than inside the textarea because it
+                  belongs to the row of *actions* — it is a thing you do to the
+                  message, like posting it. Floating it inside the field is the
+                  other convention and it costs a corner of the writing area
+                  permanently, on a composer three lines tall.
+                */}
+                <span style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
+                  <EmojiPicker onPick={(char) => draftInsert.current?.(char)} placement="down" />
+                  <span style={{ fontSize: 10, color: 'var(--text-tertiary)', display: 'flex', alignItems: 'center', gap: 4 }}>
+                    <CornerDownLeft size={11} /> to post
+                  </span>
                 </span>
                 <div style={{ display: 'flex', gap: 6 }}>
                   <button
@@ -378,7 +401,27 @@ export const CommentsOverlay: React.FC<CommentsOverlayProps> = ({
                 color: 'var(--text-primary)',
                 fontSize: 12,
                 fontWeight: 600,
-                cursor: 'pointer',
+                /**
+                 * The board's own arrow, not the browser's hand.
+                 *
+                 * A pin is furniture *on the canvas*, not chrome beside it, and
+                 * `cursor: pointer` punched the OS hand through the cursor
+                 * system every other thing over the board goes through — so
+                 * with the Comment tool active you got the crosshair in the few
+                 * pixels around a pin and a pointing hand the moment you were
+                 * over it.
+                 *
+                 * It does need to differ from the tool's crosshair, and that is
+                 * the part worth keeping: clicking a pin **opens the thread**
+                 * rather than placing a new comment, so a crosshair here would
+                 * be a lie about what the click does. The arrow says "this is a
+                 * thing, not a place", which is the same thing Figma shows over
+                 * a pin and the same mark this app uses everywhere else for it.
+                 *
+                 * `--cursor-arrow` is published on `<html>` by `LocalCursor`,
+                 * so it is theme-aware and follows the rest of the set.
+                 */
+                cursor: 'var(--cursor-arrow, default)',
                 transition: 'transform var(--motion-hover), box-shadow var(--motion-hover)',
                 transform: isExpanded ? 'scale(1.08) translateY(-2px)' : 'scale(1)',
                 opacity: comment.resolved ? 0.55 : 1,
@@ -678,13 +721,18 @@ export const CommentsOverlay: React.FC<CommentsOverlayProps> = ({
                     <MentionInput
                       value={replyText}
                       onChange={setReplyText}
+                      insertRef={replyInsert}
                       onSubmit={submitReply}
                       candidates={mentionCandidates}
-                      placeholder="Reply…  @ to mention"
+                      placeholder="Reply…  @ or : to search"
                       aria-label="Reply to thread"
                       rows={2}
                     />
                   </div>
+                  {/* Opens upward here: the reply box is at the foot of the
+                      thread, and a panel dropping from it would leave the
+                      window rather than the thread. */}
+                  <EmojiPicker onPick={(char) => replyInsert.current?.(char)} placement="up" />
                   <button
                     type="button"
                     onClick={submitReply}

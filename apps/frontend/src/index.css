@@ -1980,6 +1980,12 @@ textarea:focus-visible {
   font-size: var(--text-base);
   line-height: 1.5;
   outline: none;
+  /* The field grows with its text and stops at a cap -- see the layout effect
+     in `MentionInput`. `auto` rather than `hidden` so the cap scrolls instead
+     of clipping, and `block` so the textarea's inline baseline does not leave
+     a few stray pixels under it that read as uneven padding. */
+  display: block;
+  overflow-y: auto;
   transition: border-color var(--motion-hover), box-shadow var(--motion-hover);
 }
 
@@ -8548,7 +8554,10 @@ body[data-rulers='off'] {
 
 /* The selected preset takes an *inked* ground, not the accent. It is a filter
    over looks, not the screen's primary action, and DESIGN.md's One Front Door
-   rule keeps the accent for that. */
+   rule keeps the accent for that.
+
+   This holds for a chip that is a word. A chip that is a *specimen* overrides
+   it below — see `.fx-preset[data-active]`. */
 .prop-preset[data-active] {
   background: var(--text-primary);
   color: var(--surface-primary);
@@ -16235,16 +16244,11 @@ html[data-precise] .canvas-container[data-cursor-mode] .konvajs-content canvas {
   grid-template-columns: minmax(0, 4fr) minmax(0, 3fr);
 }
 
-/* The number a multiplier comes to. Not a control -- a reading, so it takes
-   the quietest text in the panel and never the field's own ground. */
-.prop-derived {
-  flex-shrink: 0;
-  min-width: 34px;
-  font-size: var(--text-2xs);
-  font-variant-numeric: tabular-nums;
-  color: var(--text-tertiary);
-  text-align: right;
-}
+/* `.prop-derived` lived here: a small readout showing what the leading
+   multiplier came to in pixels. The leading field takes pixels directly now,
+   so there is one number instead of two and nothing left to derive. Removed
+   rather than kept for a future caller -- an unused class is a claim that
+   something uses it. */
 
 /**
  * The weight, as a native select styled like every other field.
@@ -16415,3 +16419,202 @@ html[data-precise] .canvas-container[data-cursor-mode] .konvajs-content canvas {
 
 .fx-preset:hover .fx-preset__name { color: var(--text-primary); }
 .fx-preset[data-active] .fx-preset__name { color: var(--text-primary); }
+
+/**
+ * A selected specimen keeps its ground and takes a ring.
+ *
+ * `.prop-preset[data-active]` inverts the tile to `--text-primary`, which is
+ * near-black in a light theme and near-white in a dark one. That is right for
+ * a chip carrying a word and destroys a chip carrying a **preview**: the
+ * white-outline preset vanishes on the white ground, the near-black outline
+ * vanishes on the black one, and the amber glow loses most of its contrast on
+ * either. Selecting a preset made it impossible to see what it did — on the
+ * one tile whose entire job is to show you.
+ *
+ * A ring marks the selection instead, and every tile's ground stays put. That
+ * is what Figma does with a chosen style thumbnail, for the same reason: the
+ * surface behind a preview belongs to the preview.
+ */
+.fx-preset[data-active] {
+  background: var(--surface-secondary);
+  border-color: transparent;
+  box-shadow: inset 0 0 0 1.5px var(--text-primary);
+}
+
+/**
+ * The specimen's own ground: one fixed neutral, in both themes.
+ *
+ * The presets carry literal colours — `#FFFFFF` for the sticker outline,
+ * `#161616` for the neon one — because they are looks for a *board*, not for
+ * this panel. Neither theme's surface can show both: white on a light panel
+ * and near-black on a dark one are each invisible, and it is not a theming bug
+ * to fix, it is two opposite requirements on one surface.
+ *
+ * A mid-tone answers both. At this grey, white clears 4.4:1 and `#161616`
+ * clears 3.5:1, so every preset in the set is legible in both themes without
+ * any of them being recoloured — and recolouring is the thing to avoid, since
+ * a preview that adjusts its own colours is no longer a preview.
+ *
+ * A highlight paints over this from `EffectSpecimen`'s inline style, which is
+ * correct: covering the ground is what a highlight *is*.
+ */
+.fx-specimen {
+  background: #808790;
+  border-radius: var(--radius-sm);
+  padding: 0 5px;
+}
+
+/* ===========================================================================
+   EMOJI
+   ---------------------------------------------------------------------------
+   The `:shortcode` list shares `.mention-picker` and `.mention-option`, because
+   it is the same control with a different payload — one popover, one keyboard,
+   one set of states to keep right.
+   =========================================================================== */
+
+/* Reading size, not icon size. A 13px emoji is a smudge, and the whole point
+   of the row is that you can tell 🙂 from 🙃 before pressing Enter. */
+.emoji-option__char {
+  flex-shrink: 0;
+  width: 22px;
+  font-size: 17px;
+  line-height: 1;
+  text-align: center;
+}
+
+/* The shortcode that found it, so the next time it is typed straight through
+   and this list never opens. A picker that teaches you not to need it is
+   doing its job. */
+.emoji-option__name {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-family: var(--font-mono, monospace);
+  font-size: var(--text-xs);
+  font-weight: var(--weight-regular);
+  color: var(--text-tertiary);
+}
+
+.mention-option[data-active='true'] .emoji-option__name { color: var(--text-secondary); }
+
+.emoji-panel {
+  position: absolute;
+  z-index: var(--z-popover, 99999);
+  display: flex;
+  flex-direction: column;
+  width: 268px;
+  border-radius: var(--radius-lg);
+  box-shadow: var(--shadow-float);
+  overflow: hidden;
+  animation: popIn 120ms var(--ease-settle);
+}
+
+.emoji-panel__search {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  padding: 8px 10px;
+  border-bottom: 1px solid var(--border-divider);
+  color: var(--text-tertiary);
+}
+
+.emoji-panel__search input {
+  flex: 1;
+  min-width: 0;
+  border: none;
+  background: transparent;
+  outline: none;
+  color: var(--text-primary);
+  font-family: inherit;
+  font-size: var(--text-sm);
+}
+
+.emoji-panel__body {
+  max-height: 260px;
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  padding: 6px;
+}
+
+.emoji-panel__label {
+  padding: 6px 4px 4px;
+  font-size: var(--text-2xs);
+  font-weight: var(--weight-bold);
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  color: var(--text-tertiary);
+  user-select: none;
+}
+
+/* A fixed eight-column grid rather than auto-fill: emoji are one width, so a
+   fluid track only ever produces a ragged last row at a different cell size. */
+.emoji-grid {
+  display: grid;
+  grid-template-columns: repeat(8, 1fr);
+  gap: 2px;
+}
+
+.emoji-cell {
+  display: grid;
+  place-items: center;
+  aspect-ratio: 1;
+  border: none;
+  border-radius: var(--radius-sm);
+  background: transparent;
+  font-size: 18px;
+  line-height: 1;
+  cursor: pointer;
+  transition: background var(--motion-hover), transform var(--motion-hover);
+}
+
+.emoji-cell:hover { background: var(--surface-hover); transform: scale(1.15); }
+.emoji-cell:focus-visible { outline: 2px solid var(--focus-ring-color); outline-offset: -2px; }
+
+/* The tone strip. Five swatches and "none", set once and remembered -- nobody
+   picks a different skin tone per message, and asking every time turns a
+   one-keystroke insertion into a two-step one. */
+.emoji-panel__foot {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  padding: 6px 10px;
+  border-top: 1px solid var(--border-divider);
+}
+
+.emoji-panel__foot-label {
+  flex: 1;
+  font-size: var(--text-2xs);
+  color: var(--text-tertiary);
+}
+
+.emoji-tone {
+  display: grid;
+  place-items: center;
+  width: 22px;
+  height: 22px;
+  border: none;
+  border-radius: var(--radius-sm);
+  background: transparent;
+  font-size: 14px;
+  line-height: 1;
+  cursor: pointer;
+}
+
+.emoji-tone:hover { background: var(--surface-hover); }
+.emoji-tone[data-on] { background: var(--surface-active); }
+
+.emoji-trigger {
+  display: grid;
+  place-items: center;
+  width: 26px;
+  height: 26px;
+  border: none;
+  border-radius: var(--radius-sm);
+  background: transparent;
+  color: var(--text-tertiary);
+  cursor: pointer;
+  transition: background var(--motion-hover), color var(--motion-hover);
+}
+
+.emoji-trigger:hover,
+.emoji-trigger[aria-expanded='true'] { background: var(--surface-hover); color: var(--text-primary); }

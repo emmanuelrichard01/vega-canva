@@ -47,6 +47,33 @@ interface Props {
    * exactly the thing worth saying.
    */
   disabledReason?: string;
+  /**
+   * Divide the column between the segments instead of letting them wrap.
+   *
+   * The default is to wrap, and that is right for a long group: six list
+   * styles or five colour ramps are wider than the 136px value column however
+   * they are arranged, so the choice there is between two tidy lines and a row
+   * that draws over its own label.
+   *
+   * A short group is a different problem. Four case segments come to 132px
+   * against a 136px column — four pixels of slack, which is not a layout, it
+   * is a coincidence. Anything that moves (a longer label, a narrower panel, a
+   * scrollbar) tips it into a second line, and a four-segment control that
+   * sometimes has two rows and sometimes one is the kind of thing you notice
+   * without being able to say why.
+   *
+   * Filling makes it deliberate: the group takes the column and the segments
+   * share it. Only offered where the share is *wider* than a segment's natural
+   * size — 136/4 is 34 against a 32px segment, and a stacked row's 228 divides
+   * six ways at 38 — so nothing is squeezed and the rule above still holds.
+   *
+   * Every group in the type sections fills now, which is the other half of the
+   * point: a panel where some segmented controls span their column and others
+   * hug their contents reads as ragged, and the raggedness carries no meaning.
+   * The long ones were also the ones with four pixels of slack, so they were
+   * the ones that would wrap first on a narrower panel.
+   */
+  fill?: boolean;
 }
 
 /**
@@ -63,7 +90,7 @@ interface Props {
  * elevation step, no second colour, which is the same language the rest of the
  * app's chrome uses for "this one".
  */
-export const SegmentedControl: React.FC<Props> = ({ segments, value, onChange, ariaLabel, mixed = false, disabledReason }) => {
+export const SegmentedControl: React.FC<Props> = ({ segments, value, onChange, ariaLabel, mixed = false, disabledReason, fill = false }) => {
   const disabled = Boolean(disabledReason);
   return (
     <div
@@ -83,7 +110,10 @@ export const SegmentedControl: React.FC<Props> = ({ segments, value, onChange, a
         // group ran out under its own label and the two drew on top of each
         // other. `minWidth: 0` is the other half: without it the flex item
         // refuses to be narrower than its contents and the wrap never fires.
-        flexWrap: 'wrap',
+        // A filling group takes its column and divides it; a natural one wraps.
+        // See `fill`.
+        flexWrap: fill ? 'nowrap' : 'wrap',
+        width: fill ? '100%' : undefined,
         minWidth: 0,
         rowGap: '2px',
         background: 'var(--surface-hover)',
@@ -113,8 +143,12 @@ export const SegmentedControl: React.FC<Props> = ({ segments, value, onChange, a
               justifyContent: 'center',
               // Never squeezed narrower than its own icon: a segment that
               // shrinks to fit is a specimen you can no longer recognise,
-              // which is the whole reason these are specimens.
-              flex: '0 0 auto',
+              // which is the whole reason these are specimens. A filling group
+              // divides its column instead, which is only offered where the
+              // share is wider than a segment's natural size anyway.
+              flex: fill ? '1 1 0' : '0 0 auto',
+              width: fill ? 'auto' : undefined,
+              minWidth: 0,
               gap: 'var(--space-1)',
               padding: '4px 6px',
               borderRadius: 'var(--radius-sm)',

@@ -194,32 +194,42 @@ export const TypographySection: React.FC<TypographySectionProps> = ({
         <div className="prop-grid">
           {(() => {
             const lh = sharedType((t) => t.lineHeight);
-            const px = Math.round(typography.fontSize * (lh.value ?? 1.2));
+            const ratio = lh.value ?? 1.2;
+            /**
+             * Shown in pixels, stored as a ratio.
+             *
+             * The field used to show the multiplier with the pixel value beside
+             * it, which is two numbers for one setting — and the multiplier is
+             * the one nobody is reading. `1.2` is a ratio against a size you
+             * have to remember; `19px` is the distance you are actually
+             * setting, and it is what Figma shows and what Illustrator shows
+             * in points. The row beside it is already in pixels, so the two
+             * were being read in different units on the same line.
+             *
+             * The **ratio stays in the model**, and that is deliberate rather
+             * than a leftover: a leading stored in pixels does not follow a
+             * size change, so scaling a heading from 16 to 48 would leave its
+             * lines overlapping. Storing the ratio and editing the product is
+             * the arrangement that gets both — a number you can reason about,
+             * on type that keeps its proportions.
+             *
+             * The bounds move with the size for the same reason: 0.5x to 3x is
+             * the range the model allows, and expressed in pixels that is a
+             * different pair of numbers at every size.
+             */
+            const px = Math.round(typography.fontSize * ratio);
             return (
-              <div className="prop-pair">
-                <NumberStepper
-                  aria-label="Leading, as a multiple of the font size"
-                  glyph={<UnfoldVertical size={13} />}
-                  value={lh.value ?? 1.2}
-                  mixed={lh.mixed}
-                  onChange={(lineHeight) => setTypography({ lineHeight })}
-                  min={0.5}
-                  max={3}
-                  step={0.1}
-                />
-                {/*
-                  What the multiplier comes to.
-
-                  A ratio is the right thing to *store* — it survives a size
-                  change, which an absolute value does not — and the wrong
-                  thing to read. `1.2` is a number against something you have
-                  to remember; `19px` is a distance. Illustrator shows points
-                  and Figma shows pixels; both are answering this question.
-                */}
-                <span className="prop-derived" aria-hidden="true">
-                  {lh.mixed ? '—' : `${px}px`}
-                </span>
-              </div>
+              <NumberStepper
+                aria-label="Leading, the distance between baselines"
+                glyph={<UnfoldVertical size={13} />}
+                suffix="px"
+                value={px}
+                mixed={lh.mixed}
+                onChange={(next) => setTypography({ lineHeight: next / typography.fontSize })}
+                min={Math.round(typography.fontSize * 0.5)}
+                max={Math.round(typography.fontSize * 3)}
+                step={1}
+              />
             );
           })()}
           {(() => {
@@ -332,6 +342,7 @@ export const TypographySection: React.FC<TypographySectionProps> = ({
         <Row label="Case" hint="Changes how the text is shown, never what is stored. Switching back returns what you typed.">
           <SegmentedControl
             ariaLabel="Text case"
+            fill
             mixed={sharedType((t) => t.textCase ?? 'none').mixed}
             value={typography.textCase ?? 'none'}
             onChange={(v) => setTypography({ textCase: v === 'none' ? undefined : (v as TextCase) })}
@@ -388,6 +399,7 @@ export const TypographySection: React.FC<TypographySectionProps> = ({
         <div className="prop-grid prop-grid--align">
           <SegmentedControl
             ariaLabel="Text alignment"
+            fill
             mixed={sharedType((t) => t.align).mixed}
             value={typography.align}
             onChange={(v) => setTypography({ align: v as TextAlign })}
@@ -400,6 +412,7 @@ export const TypographySection: React.FC<TypographySectionProps> = ({
           />
           <SegmentedControl
             ariaLabel="Vertical alignment"
+            fill
             mixed={sharedType((t) => t.verticalAlign).mixed}
             value={typography.verticalAlign ?? 'top'}
             onChange={(v) => setTypography({ verticalAlign: v as VerticalAlign })}
@@ -448,6 +461,7 @@ export const TypographySection: React.FC<TypographySectionProps> = ({
         <Row stack label="List" hint="Marks every paragraph in this block. An empty line is a spacer and takes no marker.">
           <SegmentedControl
             ariaLabel="List style"
+            fill
             mixed={sharedType((t) => t.list ?? 'none').mixed}
             value={typography.list ?? 'none'}
             onChange={(v) => setTypography({ list: v === 'none' ? undefined : (v as ListStyle) })}
@@ -465,6 +479,7 @@ export const TypographySection: React.FC<TypographySectionProps> = ({
           <Row stack label="Resize" hint="Auto width grows sideways. Auto height wraps and grows down. Fixed imposes both, so dragging an edge stretches the letters.">
             <SegmentedControl
               ariaLabel="Text box resizing"
+            fill
               mixed={shared((n) => (n.type === 'text' ? n.resize : null)).mixed}
               value={node.resize}
               onChange={(v) => set({ resize: v as TextResize } as Partial<AnyNode>)}
@@ -574,6 +589,7 @@ export const TypographySection: React.FC<TypographySectionProps> = ({
               <Row label="Shape" hint="Ribbon welds the lines into one shape with tucked corners. Plates keeps each line separate.">
                 <SegmentedControl
                   ariaLabel="Highlight shape"
+            fill
                   value={typography.highlight.join}
                   onChange={(v) =>
                     setTypography({
@@ -728,6 +744,7 @@ export const TypographySection: React.FC<TypographySectionProps> = ({
         <Row stack label="Colour cycle" hint="Spreads a ramp of colours across the whole block. Editing the text re-spaces it.">
           <SegmentedControl
             ariaLabel="Colour ramp"
+            fill
             mixed={sharedType((t) => t.colorCycle?.colors.join(',') ?? 'none').mixed}
             value={cycleKey}
             onChange={(key) => setTypography({
@@ -761,6 +778,7 @@ export const TypographySection: React.FC<TypographySectionProps> = ({
           <Row stack label="Cycle by" hint="A colour per letter reads as a gradient; a colour per word stays legible at small sizes.">
             <SegmentedControl
               ariaLabel="Colour cycle unit"
+            fill
               value={typography.colorCycle.unit}
               onChange={(unit) => setTypography({
                 colorCycle: { ...typography.colorCycle!, unit: unit as CycleUnit },
