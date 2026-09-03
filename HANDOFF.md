@@ -4035,6 +4035,74 @@ and both are genuine tool work rather than settings: redrawing a segment of an
 existing path means hit-testing against a stored centreline, splicing a new run
 into it, and deciding what happens to the pressure profile across the join.
 
+## 5a-0-ah. The eraser erases ink, not area
+
+For every object it could not *cut* — everything except a pen path and a
+freehand stroke — the eraser tested the raw axis-aligned bounding box and
+deleted the whole object if the disc came near it. Three consequences, in
+rising order of alarm:
+
+1. **A rotated object has a box much larger than itself.** A square turned 45°
+   has one 41% wider in each direction, and its four corners are empty. All
+   four were live targets.
+2. **An unfilled shape is a hole with an outline round it.** Erasing through
+   the visibly empty middle of a rectangle deleted it.
+3. **A frame is a container whose interior belongs to its children.** Its box
+   is exactly the region somebody reaches into with an eraser, so *any* stroke
+   inside a frame deleted the frame — and its children with it. That is the one
+   that turns a small mistake into losing a board's work.
+
+The test moved to `eraseHit.ts` with twenty assertions. "Which objects did that
+gesture delete" is invisible to types and to every other test in the codebase,
+and it is destructive; `capApplies` was pulled out of the stroke panel for the
+same reason and found wrong in a shipped build with nothing failing.
+
+What it does now: the pointer is rotated into each node's own frame, so one
+rotation replaces four transformed corners and a polygon test. A frame and an
+unfilled shape are tested against their **outline**. A line is tested against
+its line rather than the two large empty triangles either side of a diagonal.
+An ellipse keeps its normalised-radius test and gains a hollow one for the
+unfilled case. A sticky, an image or a text block is still its box, because for
+those the box *is* the ink.
+
+**Erasing across a stroke also changed what was left.** The pieces were
+re-stroked with `smoothing: 0.5, streamline: 0.5` — the filter the *pencil*
+applies to raw pointer samples. The stored centreline is not raw: it has
+already been streamlined at whatever the tool was set to, then simplified again
+by Douglas–Peucker. Running the filter over it a second time rounds a line that
+was already rounded, so both halves came back visibly softer than the stroke
+they were cut from. `streamline: 0` now, with only enough smoothing to curve a
+polyline, and no thinning — a centreline carries no pressure, and inventing a
+taper would put one where the original had none.
+
+Undo needed nothing: `captureTimeout: 500` on the UndoManager already merges a
+continuous gesture into one step.
+
+## 5a-0-ai. Slider marks moved under the track
+
+Cutting a notch through the rail is what a physical detent looks like — and
+also what a **broken bar** looks like. Three of them made four equal segments
+that read as four separate things rather than as one continuous quantity, and
+the fill had to jump the gaps.
+
+Under the rail, the bar stays whole and the marks annotate it, which is the
+relationship they actually have: the track is the value, a tick is a note about
+where something sits on it.
+
+The decorative ones went with the change. Opacity's quarter/half/three-quarters
+and the shadow blur's 8-and-24 are gone — the latter sat crowded against the
+left end of a track running to 200, annotating a tenth of it. What is left is
+the origin (the value a bipolar control is measured from and returns to, and
+the one position on the track you could not see) and two genuine thresholds:
+export quality's 60 and 80, and the pencil's 40 and 72.
+
+**A hint now hangs off the label rather than the row.** On the row it covered
+the track, so a tooltip appeared over the thing you were dragging at the moment
+you were dragging it, explaining a control you were already using. Opacity lost
+its hint outright: "how much of what is behind this object shows through" is a
+sentence explaining the word *opacity* to somebody who has just found the
+opacity control.
+
 ## 5. Next up
 
 ### 5a-0. The four things to do first

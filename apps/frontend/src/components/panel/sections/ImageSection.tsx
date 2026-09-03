@@ -42,10 +42,13 @@ export const ImageSection: React.FC<ImageSectionProps> = ({
         blur, where zero is also the minimum, that is the same thing and the
         bar simply fills from the left.
 
-        The marks at ±50 are reference, not magnets: they say where half a turn
-        is on a track whose ends are rarely reached, and half is where most
-        adjustments actually live. Blur gets its own, because its scale is a
-        distance and 50px of blur is a different kind of half.
+        The only mark is the origin, and it is the one that carries something:
+        as-shot is the value you keep coming back to and the one a double-click
+        returns to, and it was the single position on the track you could not
+        see. Marks at ±50 were tried and removed — three ticks cut a bar into
+        four equal segments, which reads as four separate things rather than
+        one continuous quantity, and "half a turn" is not a fact anybody needs
+        pointing out.
 
         Shift gives a tenth of a step, which matters here more than anywhere
         else in the app: the whole 200-point range is about a hundred pixels of
@@ -62,7 +65,6 @@ export const ImageSection: React.FC<ImageSectionProps> = ({
           min={ADJUSTMENT_MIN[id]}
           max={100}
           origin={0}
-          ticks={ADJUSTMENT_MIN[id] < 0 ? [-50, 50] : [50]}
           onChange={(v) => setAdjustment(id, v)}
         />
       ))}

@@ -173,8 +173,21 @@ export const Slider: React.FC<Props> = ({
   const marks = [...new Set([from, ...(ticks ?? [])])].filter((n) => n > min && n < max);
 
   return (
-    <div className="slider" data-tooltip={hint}>
-      <label className={labelHidden ? 'sr-only' : 'slider__label'} htmlFor={id}>
+    <div className="slider">
+      {/*
+        The hint hangs off the *label*, not the row.
+
+        On the row it covered the track — so a tooltip appeared over the thing
+        you were dragging, at the moment you were dragging it, explaining a
+        control you were already using. A label is what you read when you do
+        not yet know what something does, which is exactly when a hint helps.
+      */}
+      <label
+        className={labelHidden ? 'sr-only' : 'slider__label'}
+        htmlFor={id}
+        data-tooltip={hint}
+        data-tooltip-pos="left"
+      >
         {label}
       </label>
 

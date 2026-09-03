@@ -188,8 +188,11 @@ export const EffectsSection: React.FC<EffectsSectionProps> = ({
                     lighter", and finding that by pressing an arrow while
                     looking at the canvas is the worst version of this control.
 
-                    Blur is marked at 8 and 24 — roughly the two shadows a
-                    board actually uses, a contact shadow and a lifted one.
+                    No tick marks on any of the three. Blur carried two, at 8
+                    and 24 — the contact shadow and the lifted one — and they
+                    sat crowded against the left end of a track that runs to
+                    200, annotating a tenth of it and saying nothing about the
+                    rest.
                   */}
                   <Slider
                     label="Blur"
@@ -197,7 +200,6 @@ export const EffectsSection: React.FC<EffectsSectionProps> = ({
                     value={Math.round(appearance.shadow.blur)}
                     min={0}
                     max={200}
-                    ticks={[8, 24]}
                     onChange={(v) => setShadow({ blur: v })}
                     hint="How soft the edge is. Zero is a hard-edged copy of the shape."
                   />
@@ -218,7 +220,6 @@ export const EffectsSection: React.FC<EffectsSectionProps> = ({
                     value={Math.round((appearance.shadow.opacity ?? 1) * 100)}
                     min={0}
                     max={100}
-                    ticks={[25, 50, 75]}
                     onChange={(v) => setShadow({ opacity: v / 100 })}
                   />
                 </>
@@ -295,8 +296,7 @@ export const EffectsSection: React.FC<EffectsSectionProps> = ({
                       value={Math.round(appearance.innerShadow.blur)}
                       min={0}
                       max={200}
-                      ticks={[8, 24]}
-                      onChange={(v) => setInnerShadow({ blur: v })}
+                        onChange={(v) => setInnerShadow({ blur: v })}
                       hint="How soft the inner edge is."
                     />
                     <Slider
@@ -314,8 +314,7 @@ export const EffectsSection: React.FC<EffectsSectionProps> = ({
                       value={Math.round((appearance.innerShadow.opacity ?? 1) * 100)}
                       min={0}
                       max={100}
-                      ticks={[25, 50, 75]}
-                      onChange={(v) => setInnerShadow({ opacity: v / 100 })}
+                        onChange={(v) => setInnerShadow({ opacity: v / 100 })}
                     />
                   </>
                 )}

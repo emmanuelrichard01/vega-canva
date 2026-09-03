@@ -3948,7 +3948,9 @@ input.slider__value:focus-visible {
   position: relative;
   display: flex;
   align-items: center;
-  height: 16px;
+  /* Two more pixels than the thumb needs, so the marks below the track have
+     somewhere to sit without pushing the row taller. */
+  height: 18px;
 }
 
 /* The filled segment runs between the origin and the value in either
@@ -3971,28 +3973,31 @@ input.slider__value:focus-visible {
 }
 
 /**
- * A notable value, marked.
+ * A notable value, marked *beneath* the track rather than through it.
+ *
+ * The first version cut a notch across the rail in the page's ground colour,
+ * which is what a physical detent looks like — and on a bar with three of them
+ * it is also what a **broken bar** looks like. Four equal segments read as
+ * four separate things rather than as one continuous quantity with reference
+ * points on it, and the fill had to jump the gaps.
+ *
+ * Under the rail, the bar stays whole and the marks annotate it. That is the
+ * relationship they actually have: the track is the value, and a tick is a
+ * note about where something sits on it.
  *
  * Reference, not magnet. These are continuous quantities, and a slider you
  * cannot set to 51 because 50 keeps grabbing it is worse than one with no
- * marks. The origin gets one always: on a bipolar control it is the value the
- * fill is measured from and the value a double-click returns to, and it was
- * the one position on the track you could not see.
- *
- * Drawn taller than the track and in the page's ground, so it reads as a notch
- * cut through the rail rather than as a dot sitting on it — and so it stays
- * visible against both the filled and unfilled halves.
+ * marks at all.
  */
 .slider__tick {
   position: absolute;
-  top: 50%;
-  width: 2px;
-  height: 8px;
-  margin-left: -1px;
-  translate: 0 -50%;
-  border-radius: 1px;
-  background: var(--surface-primary);
-  opacity: 0.9;
+  top: calc(50% + 5px);
+  width: 1px;
+  height: 3px;
+  margin-left: -0.5px;
+  border-radius: 0.5px;
+  background: var(--text-tertiary);
+  opacity: 0.5;
   pointer-events: none;
 }
 

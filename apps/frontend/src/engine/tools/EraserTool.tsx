@@ -5,6 +5,7 @@ import { getStroke } from 'perfect-freehand';
 import type { Tool, ToolContext } from './Tool';
 import { doc, deleteNode } from '../document';
 import { useStore } from '../../hooks/useStore';
+import { distanceToSegment, erasesObject } from './eraseHit';
 
 function svgPathFromStroke(stroke: number[][]) {
   if (!stroke.length) return '';
@@ -30,15 +31,6 @@ function flattenCubic(p0: any, c1: any, c2: any, p1: any, steps = 8) {
     });
   }
   return pts;
-}
-
-function distanceToSegment(px: number, py: number, ax: number, ay: number, bx: number, by: number) {
-  const dx = bx - ax, dy = by - ay;
-  const lenSq = dx * dx + dy * dy;
-  let t = lenSq > 0 ? ((px - ax) * dx + (py - ay) * dy) / lenSq : 0;
-  t = Math.max(0, Math.min(1, t));
-  const cx = ax + t * dx, cy = ay + t * dy;
-  return Math.hypot(px - cx, py - cy);
 }
 
 /** Runs of consecutive indices NOT in `hitSet`, e.g. hits={2,3} over 6 points -> [[0,1],[4,5]]. */
@@ -239,22 +231,22 @@ export class EraserTool implements Tool {
     });
   }
 
-  /** Precise-enough hit test per object kind, instead of always testing the raw bounding box (which erased empty corners of e.g. a circle or a sticky far from its visible content). Returns true if the object should be deleted whole. */
+  /**
+   * Whether the disc touches this object's ink.
+   *
+   * Moved to `eraseHit` and tested there. It was an ellipse special case and,
+   * for everything else, the raw axis-aligned bounding box — so a rotated
+   * object's empty corners, an unfilled rectangle's empty middle, the two
+   * triangles either side of a diagonal line, and *the entire interior of a
+   * frame* were all live targets. The last of those deleted the frame and
+   * every child in it, from a stroke aimed at something inside.
+   *
+   * "Which objects did that gesture delete" is invisible to types and to every
+   * other test here, and it is destructive, which is why it is twenty
+   * assertions in a module rather than a method nobody can check.
+   */
   private hitsObject(obj: any, cx: number, cy: number, radius: number): boolean {
-    const w = obj.width;
-    const h = obj.height;
-
-    if (obj.type === 'shape' && (obj.geometry?.kind === 'ellipse')) {
-      const rx = w / 2, ry = h / 2;
-      const centerX = obj.x + rx, centerY = obj.y + ry;
-      // Normalized-radius test approximates an ellipse well enough for an eraser cursor.
-      const nx = (cx - centerX) / (rx + radius);
-      const ny = (cy - centerY) / (ry + radius);
-      return nx * nx + ny * ny <= 1;
-    }
-
-    const left = obj.x, right = obj.x + w, top = obj.y, bottom = obj.y + h;
-    return cx >= left - radius && cx <= right + radius && cy >= top - radius && cy <= bottom + radius;
+    return erasesObject(obj, cx, cy, radius);
   }
 
   /** Returns true if this was a 'path' object it knew how to precisely erase (and handled deletion/splitting itself). */
@@ -371,8 +363,24 @@ export class EraserTool implements Tool {
     minX -= pad; minY -= pad; maxX += pad; maxY += pad;
 
     const relPoints = absPoints.map(p => ({ x: p.x - minX, y: p.y - minY }));
+    /**
+     * Re-stroked without smoothing it a second time.
+     *
+     * This was `smoothing: 0.5, streamline: 0.5`, which is the filter the
+     * *pencil* applies to raw pointer samples — and these points are not raw.
+     * They are the stored centreline, already streamlined at whatever the tool
+     * was set to and then simplified again by Douglas–Peucker before being
+     * written. Running the filter over them once more rounds a line that was
+     * already rounded, so the two halves of an erased stroke came back visibly
+     * softer than the stroke they were cut from.
+     *
+     * `streamline: 0` keeps every stored point where it is; the small
+     * `smoothing` is only what turns a polyline into a curve through them.
+     * Thinning is off because the centreline carries no pressure — inventing a
+     * taper here would put one where the original had none.
+     */
     const stroke = getStroke(relPoints.map(p => [p.x, p.y]), {
-      size, thinning: 0.5, smoothing: 0.5, streamline: 0.5,
+      size, thinning: 0, smoothing: 0.2, streamline: 0, simulatePressure: false, last: true,
     });
 
     ctx.editor.createNode({

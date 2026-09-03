@@ -101,9 +101,17 @@ export const FillAppearanceSection: React.FC<FillAppearanceSectionProps> = ({
         one a track for that reason.
 
         Nothing is lost by the change, which is what makes it safe: the readout
-        is typable, so 63% is still one click and three keystrokes away, and
-        the marks at a quarter, a half and three quarters give the positions
-        people actually reach for.
+        is typable, so 63% is still one click and three keystrokes away.
+
+        No tick marks. They were tried at a quarter, a half and three quarters
+        and taken out: three of them cut the bar into four equal segments,
+        which reads as four separate things rather than as one continuous
+        quantity — and none of the three is a fact worth pointing at.
+
+        No hint either. "How much of what is behind this object shows through"
+        is a sentence explaining the word *opacity* to somebody who found the
+        opacity control, and a row that carries one has a tooltip waiting over
+        every part of it.
       */}
       {capabilities.supportsOpacity && (
         <Slider
@@ -112,9 +120,7 @@ export const FillAppearanceSection: React.FC<FillAppearanceSectionProps> = ({
           value={Math.round((opacityShared.value ?? 1) * 100)}
           min={0}
           max={100}
-          ticks={[25, 50, 75]}
           onChange={(v) => set({ opacity: v / 100 })}
-          hint="How much of what is behind this object shows through."
         />
       )}
 
