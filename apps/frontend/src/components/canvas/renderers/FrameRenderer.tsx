@@ -2,6 +2,7 @@ import React from 'react';
 import { Group, Rect, Text } from 'react-konva';
 import { EXPORT_CHROME } from '../../../engine/export/chrome';
 import { safeAreaBox } from '../../../engine/model/frames';
+import { columnBands } from '../../../engine/model/layoutGuide';
 import type { FrameNode } from '../../../engine/model/schema';
 import { useFillProps } from './useFillProps';
 
@@ -25,6 +26,10 @@ export const FrameRenderer: React.FC<Props> = React.memo(({ node, stageScale }) 
   // The frame's own box, origin-anchored, so `safeAreaBox` hands back the
   // guide in local coordinates and the clamping has one implementation.
   const safe = safeAreaBox({ x: 0, y: 0, width: node.width, height: node.height, safeArea: node.safeArea });
+
+  // In the frame's own coordinates, like `safe` above, so the group's
+  // transform places them and nothing here has to know where the frame is.
+  const bands = columnBands(node.width, node.layoutGuide);
 
   return (
     <Group>
@@ -83,6 +88,39 @@ export const FrameRenderer: React.FC<Props> = React.memo(({ node, stageScale }) 
         perfectDrawEnabled={false}
         listening={false}
       />
+
+      {/*
+        The column measure.
+
+        Chrome, like the name and the safe area: it draws nothing that exists,
+        never exports, and cannot be selected. Unlike the safe area, things
+        *do* snap to it — that is the whole point of a measure, and the reason
+        it is not the same feature as the guide below.
+
+        Bands rather than lines. A line marks a boundary and leaves you to work
+        out which side is the column; a tinted band *is* the column, and a
+        block spanning three of them is visibly spanning three. It is what
+        every layout tool draws and it costs the same rectangle.
+
+        Warm and faint, at an alpha low enough to read content through. The
+        safe area is a cool dashed outline, so the two never read as the same
+        kind of mark — one is a warning about the edges, the other a measure
+        across the middle.
+      */}
+      {bands.map((band, i) => (
+        <Rect
+          key={i}
+          name={EXPORT_CHROME}
+          x={band.x}
+          y={0}
+          width={band.width}
+          height={node.height}
+          fill="#F43F5E"
+          opacity={0.08}
+          listening={false}
+          perfectDrawEnabled={false}
+        />
+      ))}
 
       {/* The safe area, for the sizes where part of the rectangle is covered by
           something that is not yours: a story's reply bar, a grid thumbnail's

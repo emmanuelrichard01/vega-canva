@@ -13,6 +13,7 @@ import { useStore } from '../../hooks/useStore';
 import { gridSnap } from './gridSnap';
 import { guideState } from './guideState';
 import { snapToObjects, type Box } from './smartGuides';
+import { columnEdges } from '../model/layoutGuide';
 
 /**
  * Snap distance, in **screen** pixels.
@@ -92,6 +93,27 @@ function candidatesFor(excluded: Set<string>): Box[] {
 }
 
 /**
+ * Every column edge on screen, from the frames that carry a measure.
+ *
+ * Frames being dragged are skipped: an object cannot align to a measure that
+ * is moving with it, which is the same rule the object candidates follow.
+ */
+function visibleColumnEdges(excluded: Set<string>): number[] {
+  const objects = useStore.getState().objects;
+  const view = cameraSystem.getViewportBounds(0);
+  const edges: number[] = [];
+
+  for (const node of Object.values(objects)) {
+    if (node.type !== 'frame' || !node.layoutGuide || node.hidden) continue;
+    if (excluded.has(node.id)) continue;
+    if (node.x > view.maxX || node.x + node.width < view.minX) continue;
+    if (node.y > view.maxY || node.y + node.height < view.minY) continue;
+    edges.push(...columnEdges(node, node.layoutGuide));
+  }
+  return edges;
+}
+
+/**
  * Snap a dragged object's world-space top-left, publishing the guides.
  *
  * Returns the corrected position. Suppressed while the grid-snap modifier is
@@ -131,6 +153,26 @@ export function snapDraggedBox(
         ? { x: guide.position, y: box.y, width: 0, height: box.height }
         : { x: box.x, y: guide.position, width: box.width, height: 0 }
     );
+  }
+  /**
+   * A frame's column measure, as more of the same.
+   *
+   * A layout guide exists to be lined up against — that is the entire
+   * difference between it and the safe area, which is drawn and deliberately
+   * snaps to nothing. So its column edges join the candidate list as
+   * zero-width boxes, exactly as a ruler guide does, and the arithmetic
+   * downstream never learns that layout guides exist.
+   *
+   * Restricted to frames in view for the reason the object candidates are:
+   * snapping to something you cannot see produces a jump with its explanation
+   * drawn off-screen.
+   *
+   * The moving object's own frame is included, which is the case that matters
+   * most — placing a block on the measure of the frame it already sits in is
+   * what a column guide is *for*.
+   */
+  for (const edge of visibleColumnEdges(excluded)) {
+    candidates.push({ x: edge, y: box.y, width: 0, height: box.height });
   }
   const result = snapToObjects(box, candidates, SNAP_PX / (cameraSystem.zoom || 1));
 

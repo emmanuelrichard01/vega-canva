@@ -1193,6 +1193,26 @@ candidates and writes nothing until one is chosen — deliberately not a shuffle
 button, which commits a change you cannot see until it has happened and loses
 the arrangement you liked on the second press.
 
+### Layout guides — `engine/model/layoutGuide.ts`
+
+The other meaning of "grid", and a different feature from `engine/grid/`. That
+one builds a grid **as objects** you can select and colour; this draws nothing
+that exists — chrome over a frame, never exported, unselectable, and its only
+job is to give edges for other things to line up against. Twelve columns is
+ordinary here and would be twelve tall slivers there.
+
+It cost almost no new machinery, which is the interesting part. `objectSnap`
+already snaps to ruler guides by expressing each as a zero-width box on its own
+axis and appending it to the candidate list — "rather than as a special case
+threaded through the arithmetic". A column edge is the same thing, so the
+measure joins the same list and nothing downstream learns that layout guides
+exist.
+
+Things snap to a measure and deliberately never to a safe area. That is the one
+line between them: a frame that promised a safe area and then quietly moved
+things into it would be worse than no guide at all, while a measure exists to
+be moved onto.
+
 ### Frames — `engine/model/frames.ts`
 
 Sixteen presets in three groups, and the list is deliberately short: a picker

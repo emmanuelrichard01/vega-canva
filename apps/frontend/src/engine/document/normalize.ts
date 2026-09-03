@@ -117,6 +117,29 @@ function normalizeSafeArea(raw: unknown): FrameNode['safeArea'] {
   return inset;
 }
 
+/**
+ * A frame's column measure.
+ *
+ * Dropped entirely rather than clamped when it cannot be drawn: a guide with
+ * no columns, or margins that have eaten the frame, is not a measure that
+ * needs fixing — it is a key nothing reads, and storing one leaves the panel
+ * showing a guide that draws nothing.
+ *
+ * The upper bounds are the panel's, so a document written by hand cannot
+ * produce a measure the controls could not have made and could not undo.
+ */
+function normalizeLayoutGuide(raw: unknown): FrameNode['layoutGuide'] {
+  if (!raw || typeof raw !== 'object') return undefined;
+  const source = raw as Record<string, unknown>;
+  const columns = Math.round(num(source.columns, 0));
+  if (columns < 1) return undefined;
+  return {
+    columns: Math.min(24, columns),
+    gutter: Math.min(200, Math.max(0, num(source.gutter, 0))),
+    margin: Math.min(400, Math.max(0, num(source.margin, 0))),
+  };
+}
+
 /** Legacy shape names that no longer exist as distinct kinds. */
 /**
  * Legacy and preset names, and the side count each implies.
@@ -1070,6 +1093,7 @@ export function normalizeNode(raw: any, id?: string): AnyNode {
         appearance: normalizeAppearance(raw),
         layout: raw?.layout,
         safeArea: normalizeSafeArea(raw?.safeArea),
+        layoutGuide: normalizeLayoutGuide(raw?.layoutGuide),
       };
   }
 }

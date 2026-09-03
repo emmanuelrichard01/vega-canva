@@ -49,6 +49,7 @@ import {
   type StrokeStyleId,
 } from '../engine/model/strokeStyle';
 import { descendantsOfFrame, type FramePreset } from '../engine/model/frames';
+import { type LayoutGuide } from '../engine/model/layoutGuide';
 import { TagEditor } from './ui/TagEditor';
 import { THEMES } from '../engine/model/stickyThemes';
 import { STICKY_THEMES } from '../engine/model/schema';
@@ -399,6 +400,17 @@ export const PropertiesPanel: React.FC<PropertiesPanelProps> = ({ selectedIds, o
     ]);
   };
 
+  /**
+   * Set or clear a frame's column measure.
+   *
+   * Written whole rather than patched field by field, because a measure with
+   * no columns is not a measure — the normalizer drops one, so a control that
+   * could put the count to zero would silently delete the guide and leave the
+   * switch on.
+   */
+  const setLayoutGuide = (guide: LayoutGuide | undefined) =>
+    patchEach((n) => (n.type === 'frame' ? { layoutGuide: guide } : null));
+
   /** How many objects the selected frame owns, for the fit control's label. */
   const frameChildCount = (() => {
     const frame = nodes.find((n) => n.type === 'frame');
@@ -702,6 +714,7 @@ export const PropertiesPanel: React.FC<PropertiesPanelProps> = ({ selectedIds, o
         turnFrame={turnFrame}
         fitFrameToContents={fitFrameToContents}
         frameChildCount={frameChildCount}
+        setLayoutGuide={setLayoutGuide}
       />
 
       <ImageSection

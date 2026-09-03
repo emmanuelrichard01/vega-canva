@@ -1201,6 +1201,23 @@ export interface FrameNode extends BaseNode {
    * moved things into it would be worse than no guide at all.
    */
   safeArea?: { top: number; right: number; bottom: number; left: number };
+  /**
+   * A column measure drawn over this frame, for placing things against.
+   *
+   * The **other** meaning of "grid", and a different feature from
+   * `engine/grid/`: that one builds a grid *as objects* you can select and
+   * colour, this one draws nothing that exists. It is chrome, it never
+   * exports, it cannot be selected, and its only job is to give edges for
+   * other things to line up against — which is why twelve columns is ordinary
+   * here and would be twelve tall slivers there.
+   *
+   * On the frame because a measure is a property of the page it measures.
+   * Anywhere else and moving or resizing a frame would leave its own guide
+   * behind, and two frames could not carry different measures.
+   *
+   * See `engine/model/layoutGuide.ts`.
+   */
+  layoutGuide?: { columns: number; gutter: number; margin: number };
   layout?: {
     direction: 'horizontal' | 'vertical';
     padding: number;

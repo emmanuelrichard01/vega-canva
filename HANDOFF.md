@@ -4377,6 +4377,70 @@ columns are the reason this flyout is wide, and nothing that does not contain
 them should be. Measured after: a `wide` flyout without the picker is back to
 200px, the frame one is 416.
 
+## 5a-0-ar. The layout guide — the other meaning of "grid"
+
+Named in 5a-0-ap as the genuinely missing thing, and built here.
+
+**Two features share the word, and conflating them is what makes column layout
+awkward in tools that ship only one.** `engine/grid/` builds a grid **as
+objects** — real rectangles you select, colour and break apart — and its own
+defaults say so: `columns` starts at four, because twelve tracks *drawn as
+objects* is twelve tall slivers rather than the four broad columns anyone
+picturing a column layout has in mind.
+
+A **layout guide** is the opposite. It draws nothing that exists: chrome over a
+frame, never exported, unselectable, and its only job is to give edges for
+other things to line up against. Twelve columns is completely ordinary here,
+because nothing is drawn — you are placing content *on* a measure, not filling
+modules.
+
+### It cost almost no new machinery, and that is the point
+
+`objectSnap` already snaps to ruler guides by expressing each as a **zero-width
+box on its own axis**, appended to the candidate list — its docstring says
+"rather than as a special case threaded through the arithmetic". A column edge
+is the same thing, so the measure joins the same list and nothing downstream
+learns that layout guides exist.
+
+Restricted to frames in view, for the reason the object candidates are:
+snapping to something you cannot see produces a jump with its explanation drawn
+off-screen. A frame being dragged is skipped — an object cannot align to a
+measure moving with it — but the moving object's **own** frame is included,
+which is the case that matters most: placing a block on the measure of the
+frame it already sits in is what a column guide is *for*.
+
+### Details worth keeping
+
+- **It lives on the frame**, because a measure is a property of the page it
+  measures. Anywhere else and moving or resizing a frame leaves its guide
+  behind, and two frames could not carry different measures.
+- **Bands, not lines.** A line marks a boundary and leaves you to work out
+  which side is the column; a tinted band *is* the column, so a block spanning
+  three of them is visibly spanning three.
+- **Warm and faint against the safe area's cool dashed outline**, so the two
+  never read as the same kind of mark — one warns about the edges, the other
+  measures across the middle.
+- **Things snap to it, and deliberately never to the safe area.** That is the
+  one line separating them: a frame that promised a safe area and then quietly
+  moved things into it would be worse than no guide at all, while a measure
+  exists to be moved onto.
+- **A measure that cannot be drawn is dropped, not clamped.** No columns, or
+  margins that have eaten the frame, is a key nothing reads — and storing one
+  leaves the panel showing a guide that draws nothing.
+- **The margins are the first and last column edges by construction**, so they
+  are not added separately. Adding them would put duplicate candidates in the
+  snap set and make a margin twice as sticky as the columns beside it.
+
+14 tests on the arithmetic — the kind that looks obviously right and is off by
+one gutter. Verified live: twelve bands of 70 on a 1200 frame ending at 1152,
+24 snap edges, the normalizer keeping a real measure, dropping a zero-column
+one, clamping 999 to 24, and storing nothing when there is none.
+
+**Rows are the obvious extension and are not built.** Figma has both; a
+horizontal measure is the same arithmetic on the other axis and the same
+zero-width-box trick, and it wants doing when somebody needs it rather than
+speculatively.
+
 ## 5. Next up
 
 ### 5a-0. The four things to do first

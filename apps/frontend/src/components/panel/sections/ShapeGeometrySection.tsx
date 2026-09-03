@@ -2,16 +2,18 @@ import React from 'react';
 import {
   ArrowRight,
   ArrowRightToLine,
+  Columns3,
   Frame,
   RectangleHorizontal,
   RectangleVertical,
   Shrink,
+  UnfoldHorizontal,
   Hexagon,
   Minus,
   MoveRight,
   Star,
 } from 'lucide-react';
-import { Accordion, Row } from '../panelPrimitives';
+import { Accordion, Row, SubGroup } from '../panelPrimitives';
 import { NumberStepper } from '../../ui/NumberStepper';
 import { SegmentedControl } from '../../ui/SegmentedControl';
 import { EndCapIcon } from '../connectorIcons';
@@ -47,6 +49,11 @@ import {
 } from '../../../engine/model/schema';
 import type { Shared } from '../../../engine/model/selection';
 import {
+  DEFAULT_LAYOUT_GUIDE,
+  LAYOUT_GUIDE_PRESETS,
+  type LayoutGuide,
+} from '../../../engine/model/layoutGuide';
+import {
   FRAME_PRESETS,
   FRAME_PRESET_GROUPS,
   framePreset,
@@ -78,6 +85,8 @@ interface ShapeGeometrySectionProps {
   fitFrameToContents: () => void;
   /** How many objects this frame owns, so the fit control can explain itself. */
   frameChildCount: number;
+  /** Set or clear the frame's column measure. */
+  setLayoutGuide: (guide: LayoutGuide | undefined) => void;
 }
 
 export const ShapeGeometrySection: React.FC<ShapeGeometrySectionProps> = ({
@@ -92,6 +101,7 @@ export const ShapeGeometrySection: React.FC<ShapeGeometrySectionProps> = ({
   turnFrame,
   fitFrameToContents,
   frameChildCount,
+  setLayoutGuide,
 }) => {
   return (
     <>
@@ -404,6 +414,87 @@ export const ShapeGeometrySection: React.FC<ShapeGeometrySectionProps> = ({
               Fit to contents
             </button>
           </Row>
+
+          <div className="prop-rule" role="presentation" />
+
+          {/*
+            The column measure — the *other* meaning of "grid".
+
+            `engine/grid/` builds a grid as objects you can select and colour;
+            this draws nothing that exists. It is chrome over the frame, it
+            never exports, and its only job is to give edges for other things
+            to line up against — which is why twelve columns is ordinary here
+            and would be twelve tall slivers there.
+
+            Things snap to it, and that is the one line separating it from the
+            safe area below: a safe area is drawn and deliberately snaps to
+            nothing, because a frame that promised a safe area and then quietly
+            moved things into it would be worse than no guide at all. A measure
+            exists to be moved onto.
+          */}
+          <SubGroup
+            label="Columns"
+            hint="A measure drawn over the frame for placing things against. Never exported, and objects snap to it."
+            on={Boolean(node.layoutGuide)}
+            onToggle={(on) => setLayoutGuide(on ? DEFAULT_LAYOUT_GUIDE : undefined)}
+          >
+            {node.layoutGuide && (
+              <>
+                {/* The three measures worth one click. Twelve is twelve
+                    because of what it factors into: halves, thirds, quarters
+                    and sixths all land on a column boundary. */}
+                <div className="grid-presets" role="group" aria-label="Column measure">
+                  {LAYOUT_GUIDE_PRESETS.map((preset) => (
+                    <button
+                      key={preset.id}
+                      type="button"
+                      className="grid-preset"
+                      data-active={
+                        node.layoutGuide?.columns === preset.guide.columns &&
+                        node.layoutGuide?.gutter === preset.guide.gutter &&
+                        node.layoutGuide?.margin === preset.guide.margin
+                          ? true
+                          : undefined
+                      }
+                      onClick={() => setLayoutGuide(preset.guide)}
+                    >
+                      {preset.label}
+                    </button>
+                  ))}
+                </div>
+                <div className="prop-grid">
+                  <NumberStepper
+                    aria-label="Columns"
+                    glyph={<Columns3 size={13} />}
+                    value={node.layoutGuide.columns}
+                    onChange={(columns) => setLayoutGuide({ ...node.layoutGuide!, columns })}
+                    min={1}
+                    max={24}
+                  />
+                  <NumberStepper
+                    aria-label="Gutter between columns"
+                    glyph={<UnfoldHorizontal size={13} />}
+                    suffix="px"
+                    value={node.layoutGuide.gutter}
+                    onChange={(gutter) => setLayoutGuide({ ...node.layoutGuide!, gutter })}
+                    min={0}
+                    max={200}
+                  />
+                </div>
+                <Row label="Margin" hint="Inset from the frame's left and right edges. The first and last columns start here.">
+                  <NumberStepper
+                    aria-label="Measure margin"
+                    suffix="px"
+                    value={node.layoutGuide.margin}
+                    onChange={(margin) => setLayoutGuide({ ...node.layoutGuide!, margin })}
+                    min={0}
+                    max={400}
+                    step={8}
+                  />
+                </Row>
+              </>
+            )}
+          </SubGroup>
 
           <div className="prop-rule" role="presentation" />
 
