@@ -16776,3 +16776,32 @@ html[data-precise] .canvas-container[data-cursor-mode] .konvajs-content canvas {
 /* The axis letter widens for the two-character skew labels, so all three
    fields on that row still start their digits on one rail. */
 .prop-grid--thirds .stepper-label { width: 15px; }
+
+/* A label and a toggle on one line, for the flyout's boolean settings. The
+   stacked `.flyout-field` is right for a control that needs the width; a
+   switch does not. */
+.flyout-field--row {
+  flex-direction: row;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--space-3);
+}
+
+/**
+ * The slider inside a rail popover.
+ *
+ * A popover is 180px at its narrowest against the inspector's 260, so the
+ * panel's 68px label rail would take more than a third of it. The label sizes
+ * to its word instead — there is rarely more than one slider in a popover, so
+ * the column that keeps a *stack* of labels aligned is buying nothing here.
+ */
+.ctx-popover .slider {
+  grid-template-columns: auto minmax(0, 1fr) 42px;
+  gap: var(--space-2);
+}
+
+.ctx-popover .slider__label {
+  font-size: var(--text-2xs);
+  font-weight: var(--weight-medium);
+  color: var(--text-secondary);
+}

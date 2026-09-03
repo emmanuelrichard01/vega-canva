@@ -64,6 +64,30 @@ export class PenTool implements Tool {
     return useStore.getState().penSize;
   }
 
+  /**
+   * How hard the input is smoothed, as `perfect-freehand` wants it.
+   *
+   * The slider is 0–100 because that is a number somebody can report and
+   * return to; the library takes 0–1, and the conversion happens once, here.
+   *
+   * `streamline` is a low-pass filter on the *input samples*, which is
+   * precisely what Illustrator calls Fidelity: turn it up and the line ignores
+   * more of what your hand actually did. `smoothing` shapes the curve fitted
+   * through whatever survives. They move together because they are two halves
+   * of one question — how literal should this line be — and exposing them
+   * separately would be offering a choice nobody can hold in their head.
+   *
+   * `smoothing` is deliberately the gentler of the two: it rounds corners, and
+   * at the top of the range a fully smoothed line loses the sharp reversal
+   * that makes an arrow head or a tick read as one. So the fidelity slider
+   * spends most of its travel on `streamline`, which drops samples without
+   * rounding what is left.
+   */
+  private static get smoothing(): { streamline: number; smoothing: number } {
+    const t = useStore.getState().penSmoothing / 100;
+    return { streamline: t, smoothing: 0.25 + t * 0.45 };
+  }
+
   private isDrawing = false;
   /**
    * The raw input, with pen pressure where the device reports it.
@@ -106,11 +130,27 @@ export class PenTool implements Tool {
        * was faithfully drawing noise nobody produced.
        */
       thinning: this.hasRealPressure ? 0.5 : 0.12,
-      // Both raised for the mouse. `streamline` is the low-pass filter on the
-      // input itself, and it is what turns a jittery sample stream into one
-      // continuous line.
-      smoothing: this.hasRealPressure ? 0.5 : 0.7,
-      streamline: this.hasRealPressure ? 0.5 : 0.72,
+      /**
+       * From the setting, with the device still counted.
+       *
+       * These were two hard-coded pairs — 0.5 for a stylus, 0.7/0.72 for a
+       * mouse — and the reasoning behind the split was sound: mouse input
+       * arrives in bursts shaped by the OS and the frame budget, and every
+       * burst became a bulge. The constant was still the wrong shape. How
+       * literal a line should be is a property of *what is being drawn*, not
+       * of the hardware: handwriting and a quick circle want opposite ends of
+       * it, on the same device.
+       *
+       * So the setting is the value and the device is an offset. A stylus
+       * reports real positions at a real rate, so it needs about a fifth less
+       * help at every setting — which keeps "less smoothing on a pen than on a
+       * mouse" true across the whole range instead of at one point on it.
+       */
+      ...(() => {
+        const { streamline, smoothing } = PenTool.smoothing;
+        const relief = this.hasRealPressure ? 0.8 : 1;
+        return { streamline: streamline * relief, smoothing: smoothing * relief };
+      })(),
       simulatePressure: !this.hasRealPressure,
       last: !this.isDrawing,
     };
@@ -234,8 +274,9 @@ export class PenTool implements Tool {
         1.2
       );
 
+      const id = nanoid();
       ctx.editor.createNode({
-        id: nanoid(),
+        id,
         type: 'path',
         x: minX,
         y: minY,
@@ -268,8 +309,26 @@ export class PenTool implements Tool {
           ...(nib !== 'smooth' ? { sketch: nib } : null),
         },
       });
+
+      /**
+       * Whether the stroke you just drew stays selected.
+       *
+       * Off by default, and it is the setting anybody who draws a lot ends up
+       * on. Keeping the last stroke selected means every following press lands
+       * on a selection handle rather than the board, the properties panel
+       * changes under you between strokes, and a sketch of twenty lines is
+       * twenty deselections. Keeping it *on* is right for the other job —
+       * drawing one line and immediately restyling it — which is why this is a
+       * preference and not a decision.
+       *
+       * The tool is not swapped either way. `ShapeTool` hands back to Select
+       * after it draws, because a rectangle is placed once; a pencil is held
+       * for a while, and taking it out of your hand after every stroke is the
+       * behaviour people turn off first in the tools that do it.
+       */
+      if (useStore.getState().penKeepSelected) ctx.editor.select(id);
     }
-    
+
     this.points = [];
   }
 

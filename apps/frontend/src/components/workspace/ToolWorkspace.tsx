@@ -32,6 +32,7 @@ import { shortcutFor } from '../../engine/tools/shortcuts';
 import { DEMO_LENGTHS } from '../../engine/text/demoText';
 import { useStore } from '../../hooks/useStore';
 import { Slider } from '../ui/Slider';
+import { Switch } from '../ui/Switch';
 
 /**
  * The tool dock.
@@ -398,6 +399,10 @@ export const ToolWorkspace: React.FC<Props> = ({ activeToolId, onOpenDiagram, on
   const penSize = useStore((s) => s.penSize);
   const setPenSize = useStore((s) => s.setPenSize);
   const pencilNib = useStore((s) => s.pencilNib);
+  const penSmoothing = useStore((s) => s.penSmoothing);
+  const setPenSmoothing = useStore((s) => s.setPenSmoothing);
+  const penKeepSelected = useStore((s) => s.penKeepSelected);
+  const setPenKeepSelected = useStore((s) => s.setPenKeepSelected);
   const setPencilNib = useStore((s) => s.setPencilNib);
   const penStrokeWidth = useStore((s) => s.penStrokeWidth);
   const setPenStrokeWidth = useStore((s) => s.setPenStrokeWidth);
@@ -1109,6 +1114,51 @@ export const ToolWorkspace: React.FC<Props> = ({ activeToolId, onOpenDiagram, on
                             { value: 'medium', label: 'Sketched', hint: 'Gone over twice', icon: <SketchLevelIcon level="medium" /> },
                             { value: 'heavy', label: 'Scribbled', hint: 'Twice, and past every turn', icon: <SketchLevelIcon level="heavy" /> },
                           ]}
+                        />
+                      </div>
+                      {/*
+                        Fidelity, which the tool has always had and never
+                        offered.
+
+                        `streamline` was two hard-coded numbers chosen by input
+                        device, and the reasoning was sound — mouse samples
+                        arrive in bursts shaped by the OS, and every burst
+                        became a bulge. The constant was still the wrong shape.
+                        How literal a line should be is a property of what is
+                        being drawn: handwriting wants the hand's own wobble
+                        and a quick circle wants none of it, on the same
+                        device. The device is an offset now; this is the value.
+
+                        Marked at 40 and 72 — the two settings worth returning
+                        to. 72 is where the tool has always sat and what the
+                        reference workflows recommend for freehand; 40 is about
+                        as literal as a mouse can usefully be.
+                      */}
+                      <div className="flyout-field">
+                        <Slider
+                          label="Smoothing"
+                          value={penSmoothing}
+                          min={0}
+                          max={100}
+                          ticks={[40, 72]}
+                          onChange={setPenSmoothing}
+                          hint="How much of your hand's movement the line ignores. Low follows every wobble; high draws through it."
+                        />
+                      </div>
+                      {/*
+                        Off by default, and it is the setting anybody who draws
+                        a lot ends up on: a stroke that stays selected puts a
+                        handle under the next press and changes the panel
+                        between strokes. On is right for the other job —
+                        drawing one line and restyling it — which is why it is
+                        a preference rather than a decision.
+                      */}
+                      <div className="flyout-field flyout-field--row">
+                        <span className="flyout-field__label">Keep selected</span>
+                        <Switch
+                          checked={penKeepSelected}
+                          onChange={setPenKeepSelected}
+                          tooltip="Leave the stroke you just drew selected"
                         />
                       </div>
                     </>

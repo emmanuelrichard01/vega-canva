@@ -92,7 +92,43 @@ interface StoreState {
    * setting do.
    */
   penSize: number;
+  /**
+   * How hard the pencil smooths the pointer before it becomes a line.
+   *
+   * This is Illustrator's **Fidelity**, and it was two hard-coded numbers: a
+   * stylus got 0.5 and a mouse got 0.72, on the reasoning that mouse input
+   * arrives in bursts shaped by the OS and the frame budget. That reasoning is
+   * right and the constant is still the wrong shape — how much smoothing a
+   * line wants is a property of *what is being drawn*, not of the device.
+   * Handwriting and a quick circle want opposite ends of it, and neither is a
+   * hardware fact.
+   *
+   * Kept as 0–100 rather than the library's 0–1, because it is a control with
+   * a readout: "72" is a setting somebody can report and return to, and a
+   * slider that reads `0.72` looks like a number that escaped.
+   *
+   * The device split survives as an *offset* rather than a value — see
+   * `PenTool.strokeOptions`. A stylus reports real positions and needs less
+   * help at every setting, so the same slider still means "less smoothing on a
+   * pen than on a mouse", which is what made the original constants right.
+   */
+  penSmoothing: number;
+  /**
+   * Whether a finished stroke stays selected.
+   *
+   * Off, which is the setting most people who draw a lot end up on. Keeping it
+   * on lets you immediately restyle what you just drew; keeping it off is what
+   * lets you draw ten strokes in a row without the panel changing under you
+   * and without the next press landing on a selection handle instead of the
+   * board.
+   *
+   * A preference rather than a decision, because both are defensible and which
+   * one is right depends entirely on whether you are sketching or finishing.
+   */
+  penKeepSelected: boolean;
   setPenSize: (val: number) => void;
+  setPenSmoothing: (val: number) => void;
+  setPenKeepSelected: (val: boolean) => void;
   eraserSize: number;
   setEraserSize: (val: number) => void;
 
@@ -291,6 +327,19 @@ const setStoragePref = (key: string, value: string) => {
   }
 };
 
+/**
+ * Where the pencil's fidelity starts.
+ *
+ * 72, which is what the mouse path was hard-coded to and what the reference
+ * workflows all recommend — Illustrator's own guidance is to sit around
+ * 70–80% for freehand, because below that a mouse's burst-shaped input becomes
+ * anchor points nobody drew and above it the line stops following the hand.
+ * Starting at the value the tool already used means nobody's existing strokes
+ * change character the day this shipped.
+ */
+const DEFAULT_PEN_SMOOTHING = 72;
+
+
 export const useStore = create<StoreState>((set) => ({
   objects: {},
   groups: {},
@@ -384,6 +433,17 @@ export const useStore = create<StoreState>((set) => ({
     const clamped = Math.min(60, Math.max(1, val));
     setStoragePref('vega_pen_size', String(clamped));
     set({ penSize: clamped });
+  },
+  penSmoothing: loadNumberPref('vega_pen_smoothing', DEFAULT_PEN_SMOOTHING, 0, 100),
+  setPenSmoothing: (val) => {
+    const clamped = Math.min(100, Math.max(0, Math.round(val)));
+    setStoragePref('vega_pen_smoothing', String(clamped));
+    set({ penSmoothing: clamped });
+  },
+  penKeepSelected: loadBoolPref('vega_pen_keep_selected', false),
+  setPenKeepSelected: (val) => {
+    setStoragePref('vega_pen_keep_selected', String(val));
+    set({ penKeepSelected: val });
   },
   eraserSize: loadNumberPref('vega_eraser_size', 15, 4, 200),
   setEraserSize: (val) => {

@@ -3970,6 +3970,71 @@ them. An angle would be the better control for matching several objects to one
 light, which is a feature this does not have and which wants a document-level
 setting rather than a second spelling of the same field.
 
+## 5a-0-ag. The pencil, against Illustrator's own workflow
+
+The reference workflow's first phase is *set Fidelity before drawing anything*.
+This tool had it hard-coded, as two numbers chosen by input device — a stylus
+got `streamline: 0.5`, a mouse `0.72`.
+
+The reasoning behind that split is right and worth keeping: mouse samples
+arrive in bursts shaped by the OS and the frame budget, and every burst became
+a bulge in the line. But a constant is the wrong *shape* for it. How literal a
+line should be is a property of **what is being drawn**, not of the hardware —
+handwriting wants the hand's own wobble and a quick circle wants none of it, on
+the same device.
+
+So the setting is the value and the device is an offset. A stylus needs about a
+fifth less help at every setting, which keeps "less smoothing on a pen than on
+a mouse" true across the whole range rather than at one point on it.
+
+Measured in the browser against a deliberately jittery sixty-sample run:
+
+```text
+   0   1034 points   528 rad of total turning   (follows every wobble)
+  40    160 points   136
+  72    130 points    55   ← the default, and what the tool already used
+ 100    102 points    26   (draws through everything)
+```
+
+Stored 0–100 rather than the library's 0–1, because it is a control with a
+readout: `72` is a setting somebody can report and return to, and a slider
+reading `0.72` looks like a number that escaped. It starts where the tool
+already sat, so nobody's strokes change character the day it ships.
+
+**Keep-selected** is a preference now, off by default. A stroke that stays
+selected puts a handle under the next press and changes the panel between
+strokes — what anybody drawing twenty lines turns off first. On is right for
+the other job: drawing one line and immediately restyling it. The tool is not
+swapped either way; `ShapeTool` hands back to Select because a rectangle is
+placed once, and a pencil is held for a while.
+
+### What I did not do, and what it would take
+
+**The stroke/fill separation.** The reference is about a tool that draws a
+*stroked path*; this one draws a **filled outline polygon** from
+`perfect-freehand`, so `appearance.fill` is the ink. That is inconsistent with
+this app's own bezier paths, where `fill` is the interior — and it is what
+stops a closed pencil loop from ever having one.
+
+The fix is real and identified: the pencil already writes its colour to
+**both** `fill` and `stroke`, so flipping the freehand renderer to paint its
+polygon from `stroke.color` is safe for every existing document (the two hold
+the same value) and frees `fill` to mean the interior, consistent with every
+other node type. Then a stroke whose end returns near its start stores
+`closed: true` and the enclosed centreline gets painted.
+
+It was not done because it spans `PathRenderer`, `SVGExporter`, `svgImport`,
+the context toolbar's capability rule (`geometry.kind !== 'freehand'` withholds
+stroke controls) and the Properties panel's — and because it changes what the
+Fill control does to a pencil stroke somebody already has on a board. That
+wants verifying on canvas, in an export and through a copy-paste round trip,
+and the Chrome extension has been unreliable all session.
+
+**Edit-selected-paths and Alt-to-smooth** are the other two from the reference,
+and both are genuine tool work rather than settings: redrawing a segment of an
+existing path means hit-testing against a stored centreline, splicing a new run
+into it, and deciding what happens to the pressure profile across the join.
+
 ## 5. Next up
 
 ### 5a-0. The four things to do first
