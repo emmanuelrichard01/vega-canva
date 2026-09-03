@@ -270,9 +270,32 @@ export class PenTool implements Tool {
        * `perfect-freehand` has already produced from the full-rate input.
        */
       const nib = useStore.getState().pencilNib;
+      /**
+       * The stored centreline is thinned in proportion to the smoothing.
+       *
+       * This was a flat `1.2`, chosen when smoothing was a constant — so the
+       * setting shaped the *drawn* outline and left the stored geometry
+       * identical at every value. That is a real inconsistency rather than an
+       * omission: the centreline is what the eraser cuts on, what a sketched
+       * nib is drawn from, and what a resize refits, so a stroke set to
+       * maximum smoothing still carried every wobble the smoothing was asked
+       * to remove — invisible until you erased through it or switched the nib,
+       * and then plainly there.
+       *
+       * Tying the tolerance to the setting makes the two agree: a literal line
+       * keeps its detail, a heavily smoothed one is stored as smoothly as it
+       * is drawn, and a long stroke at high fidelity stops carrying hundreds
+       * of points that say nothing.
+       *
+       * Scaled by the **nib** as well, because tolerance is a distance and a
+       * deviation that matters on a hairline is invisible under a 40-unit
+       * brush. The floor keeps a fine pen honest.
+       */
+      const smoothing = useStore.getState().penSmoothing / 100;
+      const tolerance = Math.max(0.6, (0.6 + smoothing * 1.8) * Math.max(1, PenTool.size / 6));
       const centerline = simplifyPoints(
         this.points.map(p => ({ x: p.x - minX, y: p.y - minY })),
-        1.2
+        tolerance
       );
 
       const id = nanoid();

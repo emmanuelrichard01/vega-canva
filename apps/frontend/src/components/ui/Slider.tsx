@@ -233,6 +233,7 @@ export const Slider: React.FC<Props> = ({
           isDefault={isDefault}
           min={min}
           max={max}
+          step={step}
           onCommit={onChange}
         />
       ) : (
@@ -267,8 +268,10 @@ const SliderField: React.FC<{
   isDefault: boolean;
   min: number;
   max: number;
+  /** What one arrow press moves. The slider's own step, so the units match. */
+  step: number;
   onCommit: (n: number) => void;
-}> = ({ value, unit, label, isDefault, min, max, onCommit }) => {
+}> = ({ value, unit, label, isDefault, min, max, step, onCommit }) => {
   const [text, setText] = useState(String(value));
   const focused = useRef(false);
 
@@ -311,6 +314,31 @@ const SliderField: React.FC<{
           e.preventDefault();
           setText(String(value));
           (e.currentTarget as HTMLInputElement).blur();
+        } else if (e.key === 'ArrowUp' || e.key === 'ArrowDown') {
+          /**
+           * The arrows step the value, as they do in every other number field
+           * in this app.
+           *
+           * A text input ignores them, so the readout was the one number here
+           * you could not nudge — you had to select it, type, and press Enter
+           * to move by one. The track beside it cannot do exactly-one either,
+           * on a range whose whole width is a hundred points, so between the
+           * two controls there was no way to make a small deliberate change.
+           *
+           * `Shift` takes ten, matching `NumberStepper`, and the step comes
+           * from the slider's own `step` so a leading of 0.1 and a size of 1
+           * each move by what they are measured in.
+           *
+           * It commits on every press rather than waiting for a blur, because
+           * an arrow key *is* the commit — holding one is how somebody hunts
+           * for a value while watching the canvas, and a field that only
+           * applied on blur would show them nothing until they looked away.
+           */
+          e.preventDefault();
+          const by = step * (e.shiftKey ? 10 : 1) * (e.key === 'ArrowUp' ? 1 : -1);
+          const next = Math.min(max, Math.max(min, round((Number(text) || value) + by)));
+          setText(String(next));
+          onCommit(next);
         }
       }}
     />

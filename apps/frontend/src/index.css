@@ -16963,3 +16963,36 @@ html[data-precise] .canvas-container[data-cursor-mode] .konvajs-content canvas {
   border-color: var(--text-primary);
   color: var(--surface-primary);
 }
+
+/**
+ * The draw flyout's settings, which need more room than a list of names.
+ *
+ * The flyout is 200px, which is right for two tool entries and too narrow for
+ * a slider: the Size and Smoothing tracks came out 44 and 38 pixels wide,
+ * which is not an instrument — it is a decoration you can nudge. The label
+ * column alone was taking a third of each row.
+ *
+ * Declared here rather than on `--wide`, which is the mistake the frame picker
+ * made one commit earlier: a modifier named for a *degree* is worn by
+ * everything that wants any of it, so widening it moved three unrelated
+ * flyouts. A purpose-named wrapper widens exactly the panel that has sliders
+ * in it.
+ */
+.draw-settings {
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
+  min-width: 232px;
+}
+
+/* The label sizes to its word rather than holding the inspector's 68px rail.
+   There is one slider per row here and no stack of them to keep aligned, so
+   the column that buys alignment elsewhere buys nothing and costs a third of
+   the track. */
+.draw-settings .slider,
+.dock-nib__row .slider {
+  grid-template-columns: auto minmax(0, 1fr) 44px;
+  gap: var(--space-2);
+}
+
+.draw-settings .slider__label { font-size: var(--text-xs); }

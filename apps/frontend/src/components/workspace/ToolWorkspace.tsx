@@ -1115,7 +1115,24 @@ export const ToolWorkspace: React.FC<Props> = ({ activeToolId, onOpenDiagram, on
                       empty list of two tools is the honest first state: pick
                       one, then it tells you about it. */}
                   {isPen && <div className="flyout-rule" role="presentation" />}
-                  {!isPen ? null : activeToolId === 'bezier-pen' ? (
+                  {/*
+                    The settings get their own width.
+
+                    The flyout is 200px, which is right for a list of tool
+                    names and too narrow for a slider: the Size and Smoothing
+                    tracks came out 44 and 38 pixels wide, which is not an
+                    instrument but a decoration you can nudge, and the label
+                    column alone was taking a third of the row.
+
+                    Declared on a wrapper rather than on the shared `--wide`
+                    modifier, which is the mistake the frame picker made one
+                    commit ago: a modifier named for a *degree* gets worn by
+                    everything that wants any of it, and widening it moved
+                    three unrelated flyouts.
+                  */}
+                  {!isPen ? null : (
+                  <div className="draw-settings">
+                  {activeToolId === 'bezier-pen' ? (
                     <NibSize
                       label="Stroke weight"
                       value={penStrokeWidth}
@@ -1211,6 +1228,8 @@ export const ToolWorkspace: React.FC<Props> = ({ activeToolId, onOpenDiagram, on
                         />
                       </div>
                     </>
+                  )}
+                  </div>
                   )}
                 </Flyout>
               )}
