@@ -17,6 +17,7 @@
 import { shapeOutline } from './shapeOutline';
 import type { BezierGeometry, BezierSegment, Point, ShapeNode } from './schema';
 import { fromAnchors, type Anchor } from './pathGeometry';
+import { cornerRadiiOf, fitRadii, type CornerRadii } from './cornerRadii';
 
 /**
  * The magic number that makes four cubics look like a circle.
@@ -49,41 +50,95 @@ function ellipsePath(cx: number, cy: number, rx: number, ry: number): BezierGeom
   return fromAnchors(anchors, true);
 }
 
-/** A rectangle, with the corner radius drawn as four quarter-arcs when there is one. */
-function rectPath(x: number, y: number, w: number, h: number, r: number): BezierGeometry {
-  if (r <= 0) {
+/**
+ * A rectangle, with each corner drawn at its own radius.
+ *
+ * ## Why this takes four numbers
+ *
+ * It took one, from `shapeOutline.radius` — which is the **largest** of the
+ * four, because that module describes a shape as a *kind* and its vocabulary
+ * has one number in it. That collapse is right for a clip or a hit region,
+ * which is what everything else downstream of `shapeOutline` is, and it is
+ * exactly wrong here: this function is the one that produces the *real*
+ * outline, and `shapeOutline`'s own docstring says so.
+ *
+ * So a rectangle with `[30, 0, 0, 0]` came through as a rectangle with four
+ * 30-unit corners. That reached everything built on the real outline —
+ * flatten-to-path, the boolean operations, and most visibly the **sketch**,
+ * which flattens this path to draw a hand-drawn rounded box. Setting one
+ * corner of a sketched rectangle rounded all four, and setting three of them
+ * to zero did nothing at all.
+ *
+ * ## Two anchors per rounded corner, one per square one
+ *
+ * Each rounded corner is where the straight edge stops and where the next one
+ * starts, and each of those carries exactly one handle — the one pointing at
+ * the corner it is rounding. The other side of every anchor is a straight edge
+ * and has no handle, which is what keeps the edges straight.
+ *
+ * A square corner is a single plain anchor. Emitting the pair for it would put
+ * two coincident anchors with two zero-length handles at the same point: a
+ * degenerate curve that renders as a corner, edits as a trap in the path
+ * editor, and doubles the anchor count of a plain rectangle for nothing.
+ *
+ * Clockwise from the end of the top-left corner, so the last anchor's outgoing
+ * handle and the first's incoming one are the two controls of the closing
+ * curve — which is the top-left corner itself.
+ */
+function rectPath(x: number, y: number, w: number, h: number, radii: CornerRadii): BezierGeometry {
+  // Fitted before it is drawn, per *shared edge* rather than per corner: a
+  // 200x40 box carries a 40-unit top-left corner as long as its top-right
+  // neighbour is small, and capping each corner on its own gives a shape whose
+  // corners are individually legal and whose edges have negative length.
+  const [tl, tr, br, bl] = fitRadii(radii, w, h);
+  const x1 = x + w;
+  const y1 = y + h;
+
+  if (tl <= 0 && tr <= 0 && br <= 0 && bl <= 0) {
     return polygonPath(
       [
         { x, y },
-        { x: x + w, y },
-        { x: x + w, y: y + h },
-        { x, y: y + h },
+        { x: x1, y },
+        { x: x1, y: y1 },
+        { x, y: y1 },
       ],
       true
     );
   }
 
-  const k = r * KAPPA;
-  const x1 = x + w;
-  const y1 = y + h;
-  // Two anchors per corner: where the straight edge stops, and where the next
-  // one starts. Each carries exactly one handle — the one pointing at the
-  // corner it is rounding. The other side of every anchor is a straight edge
-  // and has no handle at all, which is what keeps the edges straight.
-  //
-  // Clockwise from the end of the top-left corner. The last anchor's outgoing
-  // handle and the first's incoming one are the two controls of the closing
-  // curve, which is the top-left corner itself.
-  const anchors: Anchor[] = [
-    { x: x + r, y, inX: x + r - k, inY: y },
-    { x: x1 - r, y, outX: x1 - r + k, outY: y },
-    { x: x1, y: y + r, inX: x1, inY: y + r - k },
-    { x: x1, y: y1 - r, outX: x1, outY: y1 - r + k },
-    { x: x1 - r, y: y1, inX: x1 - r + k, inY: y1 },
-    { x: x + r, y: y1, outX: x + r - k, outY: y1 },
-    { x, y: y1 - r, inX: x, inY: y1 - r + k },
-    { x, y: y + r, outX: x, outY: y + r - k },
-  ];
+  const k = (r: number) => r * KAPPA;
+  const anchors: Anchor[] = [];
+
+  // Top-left: the end of its arc, or the corner itself.
+  if (tl > 0) anchors.push({ x: x + tl, y, inX: x + tl - k(tl), inY: y });
+  else anchors.push({ x, y });
+
+  if (tr > 0) {
+    anchors.push({ x: x1 - tr, y, outX: x1 - tr + k(tr), outY: y });
+    anchors.push({ x: x1, y: y + tr, inX: x1, inY: y + tr - k(tr) });
+  } else {
+    anchors.push({ x: x1, y });
+  }
+
+  if (br > 0) {
+    anchors.push({ x: x1, y: y1 - br, outX: x1, outY: y1 - br + k(br) });
+    anchors.push({ x: x1 - br, y: y1, inX: x1 - br + k(br), inY: y1 });
+  } else {
+    anchors.push({ x: x1, y: y1 });
+  }
+
+  if (bl > 0) {
+    anchors.push({ x: x + bl, y: y1, outX: x + bl - k(bl), outY: y1 });
+    anchors.push({ x, y: y1 - bl, inX: x, inY: y1 - bl + k(bl) });
+  } else {
+    anchors.push({ x, y: y1 });
+  }
+
+  // The start of the top-left arc, whose curve back to the first anchor closes
+  // the path. A square top-left needs nothing: the first anchor is the corner,
+  // and the closing segment is the straight left edge.
+  if (tl > 0) anchors.push({ x, y: y + tl, outX: x, outY: y + tl - k(tl) });
+
   return fromAnchors(anchors, true);
 }
 
@@ -99,7 +154,21 @@ export function shapeToPath(
   const outline = shapeOutline(node);
   switch (outline.kind) {
     case 'rect':
-      return rectPath(outline.x, outline.y, outline.width, outline.height, outline.radius);
+      /**
+       * The four radii come from the node, not from the outline.
+       *
+       * `shapeOutline.radius` is the largest of the four — the one number its
+       * vocabulary can hold — and that is the right answer for the clips and
+       * hit regions it feeds. This is the real outline, so it reads the stored
+       * value directly.
+       */
+      return rectPath(
+        outline.x,
+        outline.y,
+        outline.width,
+        outline.height,
+        cornerRadiiOf(node.appearance?.cornerRadius)
+      );
     case 'ellipse':
       return ellipsePath(outline.cx, outline.cy, outline.rx, outline.ry);
     case 'polygon':

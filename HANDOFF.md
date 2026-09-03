@@ -4103,6 +4103,64 @@ its hint outright: "how much of what is behind this object shows through" is a
 sentence explaining the word *opacity* to somebody who has just found the
 opacity control.
 
+## 5a-0-aj. Per-corner radii never reached a sketched shape
+
+Reported as "individual corner radii don't work on sketch shapes", and it was
+wider than that.
+
+`shapeToPath` went through `shapeOutline`, which collapses the four radii to
+`Math.max(a, b, c, d)` — the one number its vocabulary can hold. That collapse
+is *right* for everything else downstream of it, which is clips and hit
+regions, and its own docstring says why: one that is slightly too generous
+rounds a corner that should have been square, which is better than one that
+clips a corner that should have been round.
+
+It is exactly wrong for `shapeToPath`, which is the function that produces the
+**real** outline — and `shapeOutline`'s docstring already said so: four
+different corners "are a path, which is what `shapeToPath` hands to anything
+that needs the real outline." It just never got them.
+
+So `[30, 0, 0, 0]` came through as a rectangle with four 30-unit corners. The
+visible symptom was the sketch, which flattens this path to draw its hand-drawn
+outline — but **flatten-to-path and the boolean operations were losing the same
+information**, silently.
+
+`rectPath` takes four radii now and reads them from the node. Two details worth
+keeping:
+
+- **A square corner is one anchor, not a pair.** Emitting the rounded corner's
+  two coincident anchors with two zero-length handles gives a degenerate curve
+  that renders as a corner, edits as a trap in the path editor, and doubles the
+  anchor count of a plain rectangle for nothing.
+- **The radii are fitted per shared edge**, not capped per corner, so a 200×40
+  box keeps a 40-unit corner as long as its neighbour is small — the same rule
+  `fitRadii` applies everywhere else.
+
+## 5a-0-ak. The inner shadow's spread was a black band
+
+The inverse-path fill above it can be any opaque colour, because it lies
+entirely outside the clip and only its *shadow* shows. The spread stroke
+inherited that reasoning and it does not hold: **a stroke straddles the edge it
+is drawn on**, so the inner half of a `spread * 2` wide line landed inside the
+clip and was painted solid `#000000`.
+
+The symptom was a thick black band hugging the inside of the outline, with the
+shadow's actual colour nowhere in it, the moment spread went above zero.
+
+The geometry was right and only the colour was wrong. That inner half is
+precisely where a spread inner shadow is at full strength — a spread of *n*
+means the shadow is solid for *n* units before the blur starts softening it —
+so painting the band in `shadow.color` at `shadow.opacity` makes the stroke
+draw the very thing it was supposed to be casting.
+
+Measured on a real 2D context, sampling one pixel inside the top edge with a
+`rgb(56, 189, 248)` shadow:
+
+```text
+  black stroke (before)   [0, 0, 0]
+  shadow colour (after)   [62, 190, 249]
+```
+
 ## 5. Next up
 
 ### 5a-0. The four things to do first

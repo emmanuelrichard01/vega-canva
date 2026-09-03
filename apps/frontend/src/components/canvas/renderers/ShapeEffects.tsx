@@ -232,7 +232,10 @@ interface InnerShadowProps extends Props {
  *
  * `spread` grows the hole inward by stroking the same edge, which thickens the
  * region casting the shadow — the same trick the drop shadow's spread uses,
- * pointed the other way.
+ * pointed the other way. Unlike the fill, that stroke *does* paint inside the
+ * clip, so it is drawn in the shadow's own colour rather than in the throwaway
+ * black the fill uses: the half of it that lands inside is the solid core of
+ * the shadow, and painting it black was a black band with no shadow in it.
  */
 export const InnerShadow: React.FC<InnerShadowProps> = ({ path, width, height, shadow }) => (
   <Shape
@@ -253,8 +256,37 @@ export const InnerShadow: React.FC<InnerShadowProps> = ({ path, width, height, s
       ctx.fill(inversePath(path, width, height), 'evenodd');
 
       if (shadow.spread && shadow.spread > 0) {
+        /**
+         * The spread band is drawn in the shadow's own colour, not in black.
+         *
+         * ## The bug
+         *
+         * This was `strokeStyle = '#000000'`, on the same reasoning as the
+         * fill two lines above: *any opaque colour will do, because the ink
+         * lands outside the clip and only its shadow shows.* That is true of
+         * the fill, which is the inverse path and lies entirely outside the
+         * shape. It is false of a **stroke**, which straddles the edge it is
+         * drawn on — so the inner half of a `spread * 2` wide line landed
+         * inside the clip and was painted solid black.
+         *
+         * The symptom was a thick black band hugging the inside of the
+         * outline, with the actual shadow colour nowhere in it, the moment
+         * spread went above zero.
+         *
+         * ## Why the stroke stays rather than being removed
+         *
+         * That inner half is not a mistake to delete — it is exactly where a
+         * spread inner shadow is at full strength. A spread of *n* means the
+         * shadow is solid for *n* units before the blur starts softening it,
+         * which is a band of shadow colour hugging the edge. Painting the band
+         * in `shadow.color` at `shadow.opacity` makes the stroke draw the very
+         * thing it was supposed to be casting, and the blur beyond it comes
+         * from the shadow this same stroke throws further in.
+         *
+         * So the fix is the colour, and the geometry was right all along.
+         */
         ctx.lineWidth = shadow.spread * 2;
-        ctx.strokeStyle = '#000000';
+        ctx.strokeStyle = withAlpha(shadow.color, shadow.opacity);
         ctx.stroke(path);
       }
 
