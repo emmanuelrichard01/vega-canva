@@ -440,6 +440,22 @@
   --chrome-inset: 16px;
   --chrome-gap: 8px;
   --dock-radius: var(--radius-xl);
+  /**
+   * The two side panels, one step tighter than the floating chrome.
+   *
+   * `--dock-radius` is 12 and is right for the things that *float* — the dock,
+   * a comment thread, the recording HUD — small surfaces the eye reads as
+   * lozenges over the board. The Layers and Properties panels are neither
+   * small nor lozenges: they are tall columns pinned to the window edges, and
+   * at 12 the curve is large enough to read as a rounded card that happens to
+   * be very tall, which fights the thing they actually are. The radar takes it
+   * too — it is pinned to a corner and stacked on the Layers panel's own left
+   * edge, so it is the same kind of surface even though it is not tall.
+   *
+   * Scoped rather than folded into `--dock-radius`, because nine other
+   * surfaces share that token and none of them wants this.
+   */
+  --panel-radius: var(--radius-lg);
 
   /* ---------- Z-INDEX SCALE ----------
      Was a scatter of inline `zIndex: 10`, `20`, `100` competing with the
@@ -620,6 +636,35 @@ select {
 }
 
 /* Text fields read better with a border-colour change than a floating ring. */
+/* The canvas surface never wears the focus ring.
+   ---------------------------------------------------------------------------
+   `#canvas-surface` carries `tabIndex={-1}` and `role="application"` so it can
+   be focused *programmatically* — for the accessible label, and so keyboard
+   routing has somewhere to land. It is not a control anybody tabs to, and
+   Chrome focuses `tabindex="-1"` elements on press, so the app-wide ring was
+   painting a 2px amber line around the whole board every time a gesture began.
+
+   That reads as a warning. `--focus-ring-color` is `--text-accent`, which is
+   amber-700 — the colour this product uses for *history* and for states that
+   want attention — so a ring in it around the artwork says something is wrong
+   at the exact moment nothing is.
+
+   The ring is suppressed rather than recoloured, because there is nothing here
+   for it to indicate: a focus ring answers "which control will the keyboard
+   act on", and a surface that exists to *hold* focus rather than to receive
+   input has no answer to give. Every real control keeps the ring — this rule
+   names one element and its canvases. */
+#canvas-surface:focus,
+#canvas-surface:focus-visible,
+.canvas-container:focus,
+.canvas-container:focus-visible,
+.konvajs-content:focus-visible,
+.konvajs-content canvas:focus,
+.konvajs-content canvas:focus-visible {
+  outline: none;
+  box-shadow: none;
+}
+
 input:focus-visible,
 textarea:focus-visible {
   box-shadow: none;
@@ -723,6 +768,15 @@ textarea:focus-visible {
   box-shadow: var(--shadow-float);
   border-radius: var(--dock-radius);
 }
+
+/* The pinned surfaces take the tighter radius. See `--panel-radius`.
+   The radar is here with the two side panels rather than with the floating
+   docks: it is anchored to the window's bottom-left corner and shares its left
+   edge with the Layers panel directly above it, so a 12px curve there under an
+   8px curve read as two different kinds of surface stacked on one rail. */
+.hierarchy-panel.panel-surface,
+.context-inspector.panel-surface,
+.radar-panel { border-radius: var(--panel-radius); }
 
 /**
  * The icon button, sized by the control scale rather than by its contents.
@@ -904,7 +958,7 @@ textarea:focus-visible {
   overflow: hidden;
   display: flex;
   flex-direction: column;
-  border-radius: var(--radius-xl);
+  /* Radius comes from `--panel-radius`, with the other pinned surfaces. */
 }
 
 .radar-head {
@@ -3614,29 +3668,22 @@ textarea:focus-visible {
   cursor: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='32' height='32' viewBox='0 0 24 24' fill='none' stroke-linecap='round' stroke-linejoin='round'%3E%3Cg stroke='%23ffffff' stroke-width='5'%3E%3Cpath d='M21 14a2 2 0 0 1-2 2H8l-5 5V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z'/%3E%3C/g%3E%3Cpath d='M21 14a2 2 0 0 1-2 2H8l-5 5V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z' fill='%23ffffff'/%3E%3Cpath d='M21 14a2 2 0 0 1-2 2H8l-5 5V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z' stroke='%23111827' stroke-width='2'/%3E%3C/svg%3E") 4 27, copy;
 }
 
-/* The drawn pointer is live — LocalCursor is mounted, on a fine pointer, with
-   normal colors — so hand the surface over to it. `cursor` inherits, so this
-   covers the Konva content and the canvas beneath without naming them.
+/* The mode rules above are the **fallback** path, and they are load-bearing
+   rather than vestigial.
 
-   Two things about this rule are load-bearing:
+   `LocalCursor` writes `--cursor-tool` and the rules at the end of this file
+   put our own art on the board. If it has not written yet — the first paint,
+   a coarse pointer, forced colors — the `var()` fallbacks and these keyword
+   rules are what the board has, and every one of them still says what the next
+   press will do. That is the difference between this and the system it
+   replaces, whose failure mode was `cursor: none` with nothing drawn over it:
+   there is no state here in which the board has no pointer. */
 
-   1. **It carries both attributes**, giving it a higher specificity than the
-      single-attribute mode rules above. Written with one attribute it ties
-      with them, and a tie is decided by source order — which is exactly the
-      bug that left the OS arrow showing on top of the drawn one.
-   2. **`data-custom-cursor` is set by LocalCursor itself, never in markup.**
-      If that component is absent or bails out, the mode rules above are still
-      in force and the canvas always has *a* pointer. The failure mode of the
-      cursor system this replaces was `cursor: none` with nothing drawn over
-      it, which left no pointer at all. */
-.canvas-container[data-custom-cursor="on"][data-cursor-mode] { cursor: none; }
-
-/* A bitmap cursor ignores the user's contrast and pointer-size settings, so in
-   forced colors hand every one of them back to the OS. LocalCursor also stands
-   down here and stops setting `data-custom-cursor`, but this outranks it
-   either way rather than depending on that. */
+/* An image cursor ignores the user's contrast and pointer-size settings, so in
+   forced colors hand every one of them back to the OS. `LocalCursor` also
+   stands down there and writes no custom properties at all, but this does not
+   depend on that. */
 @media (forced-colors: active) {
-  .canvas-container[data-custom-cursor="on"][data-cursor-mode],
   .canvas-container[data-cursor-mode="erase"]   { cursor: crosshair; }
   .canvas-container[data-cursor-mode="note"],
   .canvas-container[data-cursor-mode="comment"] { cursor: copy; }
@@ -8023,14 +8070,12 @@ body[data-rulers='off'] {
   font-weight: var(--weight-semibold);
 }
 
-/* Two numbers that mean one thing -- a shadow's X and Y, a pair of insets --
-   sharing a row rather than stacking. Was an inline grid repeated at four call
-   sites, which is four places to change a gap. */
-.prop-pair {
-  display: grid;
-  grid-template-columns: 1fr 1fr;
-  gap: 8px;
-}
+/* `.prop-pair` is defined once, near the corner-radius rules, as a flex row.
+   It used to be declared here as well — a two-column grid with an 8px gap —
+   and the later rule silently won, so this one described a layout the panel
+   had not used for a long time. Two rules for one selector, 7800 lines apart
+   and disagreeing on the display model, is a rule you can read and still be
+   wrong about the page. */
 
 /* Why a control that would be here is not.
  *
@@ -8197,71 +8242,50 @@ body[data-rulers='off'] {
 .stepper:focus-within {
   outline: 2px solid var(--focus-ring-color);
   outline-offset: 1px;
-  border-radius: var(--radius-md);
+  /* The same curve the field rests at. This said `--radius-md` while the field
+     itself is `--radius-sm`, so a field changed shape when you clicked into
+     it — the ring described a box a size larger than the one under it. */
+  border-radius: var(--radius-sm);
 }
 
 /**
- * The number field, on the dense step.
+ * The field wrapper: an axis letter, the box, and nothing else.
  *
- * `.btn-icon` is sized by `--btn-size` now, and its default is the 32px medium
- * step — right for a toolbar and much too heavy for the two nudge buttons that
- * flank a four-character field in a 260px inspector. Scoping the variable on
- * the stepper is the whole fix: the buttons keep every other `.btn-icon`
- * behaviour and simply stop being toolbar-sized.
+ * Named so it can be *sized*. See the long note in `NumberStepper` for what
+ * an unnamed wrapper cost — in short, the field took whatever width its
+ * container implied, which across one panel meant 31px in a flex row and
+ * 95.5px in a grid cell for the same control.
  *
- * They are also narrower than they are tall, which is the one place in the app
- * where that is right: a stepper's chevrons are part of the field, not
- * controls sitting beside it, and a square button either makes the field too
- * wide or squeezes the digits out of it.
+ * `flex: 1` here and `min-width: 0` beneath it mean a field fills the column
+ * it is given and never overflows it. Every container in this panel already
+ * chooses its columns deliberately — a `1fr 28px 1fr` for a Transform pair, a
+ * two-up grid for the corners, a single control column for a plain row — so
+ * agreeing with the column is the whole rule, and there is no width to keep
+ * in step by hand anywhere.
  */
+.field {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  flex: 1;
+  min-width: 0;
+}
+
 /**
- * The number field, on the dense step, and sized by its column.
+ * The number box itself, on the dense step.
  *
- * `.btn-icon` is sized by `--btn-size` now, and its default is the 32px medium
- * step — right for a toolbar and much too heavy for the two nudge buttons that
- * flank a four-character field in a 260px inspector. Scoping the variable here
- * is the whole fix for the height.
- *
- * The width needed the opposite treatment. The field's contents added up to a
- * fixed 76px while the grid column offered 70, and because `.stepper` carries
- * `overflow: hidden` for its rounded corners, the six-pixel difference came
- * off the right-hand edge: every increase button in the Transform section was
- * missing a third of itself. A box that clips its own control is worse than a
- * cramped one, because nothing about it looks like a layout error.
- *
- * So the field now *takes* its column rather than assuming a width, and the
- * input inside it flexes while the two buttons stay fixed. There is nothing
- * left to overflow.
+ * It fills the wrapper, which fills the column. `min-width: 0` is what lets it
+ * actually shrink: a flex item's floor is its content by default, and an input
+ * reports a content width, so without this a narrow column pushes the field
+ * out past its edge instead of squeezing it.
  */
 .stepper {
-  --btn-size: 26px;
   box-sizing: border-box;
   flex: 1;
   min-width: 0;
   height: var(--control-h-sm);
 }
 
-.stepper .btn-icon {
-  width: 18px;
-  flex-shrink: 0;
-  border-radius: var(--radius-sm);
-}
-
-/**
- * The axis letter, given a column of its own.
- *
- * The label was inline with no width, so the field beside it started wherever
- * the glyph happened to end: X, Y, W and H are four different widths, and the
- * Transform grid's value boxes therefore sat at 63.5, 64.2 and 67.2px from the
- * panel edge. Three left edges in a block of four fields that are read as a
- * column.
- *
- * The inline comment on the label claimed `tabular-nums` already prevented
- * this. It does not and cannot: `font-variant-numeric` selects between digit
- * glyphs, and every one of these labels is a letter. The property was doing
- * nothing on that element, and the misalignment it was supposed to prevent was
- * measurable on screen the whole time.
- */
 .stepper-label {
   flex-shrink: 0;
   width: 10px;
@@ -13088,10 +13112,21 @@ body[data-zen='physics'] .forces-handle { bottom: 32px; }
    inline-block so their boxes do not disturb the line. */
 .help-modal__orient {
   margin: 6px 0 0;
-  max-width: 62ch;
+  /* No measure. 62ch is the right cap for a paragraph of prose and wrong for
+     this: it is one short sentence carrying three <kbd> chips, and a measure
+     narrower than the sentence broke it across two lines inside a header that
+     is up to 950px wide. The sentence needs about 510 of those, so it fits at
+     every size the modal actually opens at and wraps only if the window is
+     genuinely too narrow to hold it — which is the wrap you want, rather than
+     one a constant chose in advance.
+
+     `.help-modal__title` carries `min-width: 0`, so this shrinks with the
+     header instead of pushing the close button off the end. */
   color: var(--text-tertiary);
   font-size: var(--text-xs);
-  line-height: 1.9;
+  /* 1.9 was leading for a wrapped block. On one line it only pads the gap to
+     the title above; 1.7 still clears the chips, which stand ~18px tall. */
+  line-height: 1.7;
 }
 
 .help-modal__orient kbd {
@@ -15442,3 +15477,400 @@ body[data-zen='physics'] .forces-handle { bottom: 32px; }
 .mm-palette { display: flex; gap: 2px; }
 
 .mm-stage-svg { width: 100%; height: 100%; min-height: 260px; }
+
+/* ===========================================================================
+   WALKTHROUGH — a lesson performed, one gesture at a time
+   ---------------------------------------------------------------------------
+   The third teaching surface, and the register is deliberately between the
+   other two. `.tour` is annotation over a dimmed screen, because it is talking
+   about the furniture rather than the work. `.coach` is a card above the dock
+   that costs one glance. This is a card that stays for as long as it takes to
+   do something, so it must not dim the board -- the board is where the work
+   happens -- and it must not sit where the object being made is likely to be.
+
+   It shares the coach's plate and geometry on purpose. Two teaching surfaces
+   that look like two different products is the failure `DESIGN.md` names; they
+   differ in what they say, not in what they are made of.
+   =========================================================================== */
+
+.walk {
+  position: absolute;
+  bottom: calc(var(--dock-h, 64px) + 32px);
+  left: 50%;
+  /* `translate`, not `transform`: the entrance animates transform, and
+     centring with it is the trap DESIGN.md names. */
+  translate: -50%;
+  z-index: calc(var(--z-coach) + 10);
+  display: flex;
+  align-items: stretch;
+  gap: var(--space-4);
+  width: min(440px, calc(100vw - 2 * var(--gutter)));
+  padding: var(--space-4);
+  border: 1px solid var(--border-divider);
+  border-radius: var(--radius-xl);
+  background: var(--surface-elevated);
+  box-shadow: var(--shadow-overlay);
+  animation: coachIn 340ms var(--ease-settle) both;
+}
+
+/* The coach mark stands down while a walkthrough is running. Two cards
+   teaching the same tool at once, one of them counting and one of them not,
+   is the surface-exists-twice failure the product principles open with. */
+.coach:has(~ .walk) { display: none; }
+
+.walk__body {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  min-width: 0;
+  flex: 1;
+}
+
+.walk__head {
+  display: flex;
+  align-items: baseline;
+  gap: var(--space-2);
+}
+
+.walk__title {
+  margin: 0;
+  font-size: var(--text-md);
+  font-weight: var(--weight-semibold);
+  letter-spacing: -0.01em;
+  color: var(--text-primary);
+}
+
+.walk__key {
+  flex-shrink: 0;
+  padding: 1px 6px;
+  border: 1px solid var(--border-divider);
+  border-radius: var(--radius-sm);
+  background: var(--surface-secondary);
+  color: var(--text-secondary);
+  font-family: var(--font-mono, ui-monospace, monospace);
+  font-size: var(--text-2xs);
+  line-height: 1.6;
+}
+
+/* The gesture carries the weight, because it is the thing to go and do. It is
+   the only line here in the primary ink. */
+.walk__act {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  margin: 2px 0 0;
+  color: var(--text-primary);
+  font-size: var(--text-base);
+  font-weight: var(--weight-medium);
+  line-height: 1.45;
+}
+
+/* Struck through at the moment it is observed, held for a beat before the next
+   step replaces it. Advancing instantly would make the acknowledgement of what
+   you just did a different sentence appearing where the old one was. */
+.walk__act--done {
+  color: var(--text-tertiary);
+  text-decoration: line-through;
+  text-decoration-color: var(--border-divider);
+}
+
+.walk__act--done svg {
+  color: var(--signal-online, var(--accent));
+  text-decoration: none;
+}
+
+.walk__gives {
+  margin: 0;
+  color: var(--text-secondary);
+  font-size: var(--text-sm);
+  line-height: 1.5;
+}
+
+.walk__foot {
+  display: flex;
+  align-items: center;
+  gap: var(--space-3);
+  margin-top: 6px;
+}
+
+/* Progress as marks rather than "3 of 5". A count invites the question of how
+   long this will take, which is the question a walkthrough wants nobody
+   asking. */
+.walk__pips {
+  display: flex;
+  gap: 4px;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.walk__pip {
+  width: 16px;
+  height: 3px;
+  border-radius: var(--radius-pill, 999px);
+  background: var(--border-divider);
+  transition: background 220ms var(--ease-settle);
+}
+
+.walk__pip[data-state='done'] { background: var(--text-tertiary); }
+.walk__pip[data-state='now']  { background: var(--accent); }
+
+.walk__hint {
+  color: var(--text-tertiary);
+  font-size: var(--text-2xs);
+}
+
+.walk__close {
+  flex-shrink: 0;
+  align-self: flex-start;
+  display: grid;
+  place-items: center;
+  width: 22px;
+  height: 22px;
+  padding: 0;
+  border: 0;
+  border-radius: var(--radius-sm);
+  background: transparent;
+  color: var(--text-tertiary);
+  cursor: pointer;
+}
+
+.walk__close:hover { background: var(--surface-hover); color: var(--text-primary); }
+
+/* The ring round whatever the last step produced.
+   Drawn with the product's own pen for the reason `.tour` is: everything else
+   on this screen is a rectangle with a shadow, and one more of those competes
+   with the thing it is annotating, where a pen mark cannot be mistaken for
+   something to press. */
+.walk-ring {
+  position: fixed;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  overflow: visible;
+  /* Under the card and over the board, and never in the way of the gesture it
+     is asking for. */
+  z-index: var(--z-coach);
+  pointer-events: none;
+  fill: none;
+  stroke: var(--accent);
+  stroke-linecap: round;
+  stroke-linejoin: round;
+}
+
+.walk-ring__path {
+  stroke-width: 2.4;
+  opacity: 0.85;
+  animation: walkRingIn 320ms var(--ease-settle) both;
+}
+
+@keyframes walkRingIn {
+  from { opacity: 0; }
+  to   { opacity: 0.85; }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .walk,
+  .walk-ring__path { animation: none; }
+  .walk__pip { transition: none; }
+}
+
+/* The offer to perform a lesson rather than read it. Quiet, because the card
+   it sits in is a reference entry first: the words above it are the answer for
+   most people, and this is the extra thing for somebody who wants to be shown. */
+.help-lesson__walk {
+  align-self: flex-start;
+  margin-top: var(--space-2);
+  padding: 5px 10px;
+  border: 1px solid var(--border-divider);
+  border-radius: var(--radius-md);
+  background: var(--surface-secondary);
+  color: var(--text-secondary);
+  font-size: var(--text-2xs);
+  font-weight: var(--weight-medium);
+  cursor: pointer;
+  transition: background 160ms var(--ease-settle), color 160ms var(--ease-settle);
+}
+
+.help-lesson__walk:hover {
+  background: var(--surface-hover);
+  color: var(--text-primary);
+}
+
+/* ===========================================================================
+   OUR POINTER ART, AS REAL CSS CURSORS
+   ---------------------------------------------------------------------------
+   `LocalCursor` writes the custom properties below and draws nothing. The
+   compositor draws the pointer, on the same path it draws the OS arrow, so
+   there is no frame of latency to make up and no second pointer to double with.
+   See `cursorCss` for why a drawn element could never keep up.
+
+   Every rule names a fallback keyword inside the `var()`. A data URI can fail
+   to decode or exceed a platform's cursor size limit, and a `cursor` the
+   browser cannot use is *dropped* — so without one the worst case is an arrow
+   over a drawing tool rather than a plain crosshair.
+   =========================================================================== */
+
+/* The arrow, everywhere this app renders — the board, the dashboard, sign-in.
+   Explicit rules elsewhere in this file still win, deliberately: a button
+   keeps `cursor: pointer` and a splitter keeps `col-resize`, because those are
+   real affordances and replacing them with our arrow would spend the
+   consistency on removing information. */
+html { cursor: var(--cursor-arrow, default); }
+
+input,
+textarea,
+[contenteditable='true'] { cursor: var(--cursor-text, text); }
+
+/* The board takes the armed tool's cursor. Scoped to the Konva canvases: the
+   rulers, the rail and every other overlay inside the canvas area are chrome
+   and keep the arrow.
+
+   `--cursor-claim` comes first in every one of these chains, because a handle
+   under the pointer outranks whatever tool is armed — that is the whole
+   meaning of a claim. It is a custom property rather than an inline `cursor`
+   on the container for a reason worth knowing: custom properties inherit, and
+   an inline `cursor` on the container does *not* reach a canvas that has its
+   own rule. Written that way it lost every time, which killed every handle
+   cursor in the app at once. */
+.canvas-container[data-cursor-mode] .konvajs-content canvas {
+  cursor: var(--cursor-claim, var(--cursor-tool, default));
+}
+
+/* The hand closes on press. A swap rather than an animation, which is the one
+   press response worth having and the only one a CSS cursor can express. */
+.canvas-container[data-cursor-mode='pan']:active .konvajs-content canvas,
+.canvas-container[data-cursor-mode='grab'] .konvajs-content canvas {
+  cursor: var(--cursor-claim, var(--cursor-grab, grabbing));
+}
+
+/* Alt duplicates instead of moving, so the pointer says so. `--cursor-alt` is
+   only written for the tools where Alt actually does that, and the inner
+   fallback means the others are unaffected by the attribute. */
+html[data-alt-held] .canvas-container[data-cursor-mode] .konvajs-content canvas {
+  cursor: var(--cursor-claim, var(--cursor-alt, var(--cursor-tool, default)));
+}
+
+/* Caps Lock: the precision crosshair, Photoshop's convention.
+   Every cursor in this set is a shape, and a shape covers the thing you are
+   aiming at. When the job is an exact pixel, the pointer itself is in the way.
+   `--cursor-precise` is only written for the modes that place something at a
+   point, so on the select tool the attribute changes nothing.
+
+   Above the Alt rule and below a claim: a handle under the pointer still
+   outranks it, because a resize arrow is about *what will happen* and this is
+   only about seeing past the pointer. */
+html[data-precise] .canvas-container[data-cursor-mode] .konvajs-content canvas {
+  cursor: var(--cursor-claim, var(--cursor-precise, var(--cursor-tool, default)));
+}
+
+
+/* ===========================================================================
+   CORNER RADIUS — one number, or four
+   ---------------------------------------------------------------------------
+   The link toggle is the difference between the two states, so it is the only
+   thing on the row besides the value itself.
+   =========================================================================== */
+
+.radius-control {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  width: 100%;
+}
+
+.radius-control--open { align-items: flex-start; }
+
+/* Laid out **as the corners are**: left to right, top to bottom, so the four
+   cells read as a picture of the shape. Storage order is clockwise and
+   disagrees on the bottom row — `GRID` in `CornerRadiusRow` converts once, and
+   the version that skipped that step put two fields under the wrong corners. */
+.radius-grid {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
+  gap: 5px;
+  flex: 1;
+  min-width: 0;
+}
+
+/* The glyph sits inside the field's box rather than beside it, so a cell is
+   one object and the grid keeps two clean columns. */
+.radius-cell {
+  position: relative;
+  display: block;
+  min-width: 0;
+}
+
+.radius-cell__glyph {
+  position: absolute;
+  top: 50%;
+  left: 7px;
+  translate: 0 -50%;
+  z-index: 1;
+  color: var(--text-tertiary);
+  pointer-events: none;
+}
+
+/* The four-up grid needs no special case any more: `NumberStepper` has no
+   arrows anywhere, so a cell here is the same bare field every other row in
+   the panel holds. Only the corner glyph's room is left. */
+.radius-cell .stepper {
+  /* Room for the glyph, which is absolutely placed at `left: 7px` and ten
+     wide, so it ends at 17. The input's own 8px starts the digits at 25 — an
+     8px gap from the glyph, matching the inset on the other end, so the
+     corner mark reads as attached to its number rather than floating in the
+     field. This was 20px, inherited from when a minus button sat here: the
+     digits began 11px clear of the glyph and the cell looked padded on one
+     side only. */
+  padding-left: 16px;
+}
+
+.radius-cell input { min-width: 0; }
+
+.radius-link {
+  flex-shrink: 0;
+  display: grid;
+  place-items: center;
+  width: 24px;
+  height: 24px;
+  padding: 0;
+  border: 1px solid transparent;
+  border-radius: var(--radius-sm);
+  background: transparent;
+  color: var(--text-tertiary);
+  cursor: pointer;
+  transition: color 140ms var(--ease-settle), background 140ms var(--ease-settle);
+}
+
+.radius-link:hover { background: var(--surface-hover); color: var(--text-secondary); }
+
+/* Lit while the four are joined, because that is the state the single field
+   above it is describing. */
+.radius-link[data-on] { color: var(--accent); }
+
+.radius-control--open .radius-link { margin-top: 2px; }
+
+/* A control and its adjunct — a swatch beside a pipette, a field beside a
+   toggle. On the shared space scale rather than a hand-picked gap, which is
+   what made pairs in the Appearance section sit a few pixels off each other
+   for no reason anybody chose. */
+.prop-pair {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  min-width: 0;
+  /* Takes the control column, so the fields inside it have something to divide.
+     Without this the pair shrink-wrapped its contents and the two fields sat at
+     their 31px floor, jammed against the panel's right edge — the one row shape
+     in the panel that stayed narrow after every other one learned to fill its
+     column. */
+  flex: 1;
+}
+
+/* Everything a row can hold lines up on one height, so a swatch, a stepper, a
+   select and an icon button in adjacent rows share a baseline. Without it each
+   control sets its own and the column reads as ragged. */
+.prop-row__control > .prop-pair > *,
+.prop-row__control > .radius-control > .radius-link {
+  flex-shrink: 0;
+}

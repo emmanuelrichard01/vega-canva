@@ -26,13 +26,32 @@ export interface RoughShape {
   /** Hachure or cross-hatch strokes, or empty for a solid (or absent) fill. */
   fill: string;
   /**
-   * The smooth silhouette, as a closed SVG path.
+   * The closed region the shape occupies, as a closed SVG path.
    *
-   * What a **solid** fill paints. It cannot reuse `outline`: those strokes are
-   * deliberately disjoint — each edge is its own subpath so the passes do not
-   * weld — and filling a set of disconnected arcs produces a shape with bites
-   * taken out of it wherever two strokes failed to meet. The silhouette is the
-   * true shape; the sketch is what is drawn *on* it.
+   * It cannot reuse `outline`: those strokes are deliberately disjoint — each
+   * edge is its own subpath so the passes do not weld — and filling a set of
+   * disconnected arcs produces a shape with bites taken out of it wherever two
+   * strokes failed to meet. The silhouette is the true shape; the sketch is
+   * what is drawn *on* it.
+   *
+   * **Whether it is painted is the caller's decision, not this one.** It used
+   * to be produced only for a `solid` fill style, which conflated "what region
+   * is this" with "should that region be filled in" — and the two came apart
+   * as soon as something needed the region for another purpose. Two things do:
+   * the renderer clips an inner shadow to it, and the renderer needs it as a
+   * **hit region**, because Konva takes a shape's hit area from what it fills
+   * and every visible layer of a sketch is `listening={false}`.
+   *
+   * That second one is why this changed. A hachured or cross-hatched shape
+   * paints its inside as *strokes*, so nothing is filled anywhere and the
+   * middle of a shape that plainly looks solid was not clickable at all — the
+   * click fell through to the stage, which cleared the selection, so the object
+   * read as refusing to be selected rather than as having been missed. The fix
+   * for that was written against this field while this field was still empty
+   * for precisely the styles it was written for.
+   *
+   * Empty only where there is genuinely no region: an open shape, or a shape
+   * with no fill at all. Callers that *paint* it ask `fillsInterior` first.
    */
   silhouette: string;
 }
@@ -199,6 +218,10 @@ export function roughShape(
           angle: node.appearance?.shadingAngle,
         })
       : '',
-    silhouette: wantsFill && style === 'solid' ? roughSilhouette(ring, { seed, level, width }) : '',
+    // Whatever the style. A pen-shaded shape occupies its region just as much
+    // as a filled one does — it simply does not paint it. See the field's own
+    // note: the caller decides whether this gets painted, and `fillsInterior`
+    // is the question it asks.
+    silhouette: wantsFill ? roughSilhouette(ring, { seed, level, width }) : '',
   };
 }

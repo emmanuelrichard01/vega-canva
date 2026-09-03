@@ -52,6 +52,7 @@ import { cameraSystem } from './engine/CameraSystem';
 import { useBreakpoint } from './hooks/useBreakpoint';
 import { CanvasEmptyState } from './components/CanvasEmptyState';
 import { LessonCoach } from './components/learn/LessonCoach';
+import { WalkthroughGuide } from './components/learn/WalkthroughGuide';
 import { TourGuide, TourOffer } from './components/learn/TourGuide';
 import { tourState } from './engine/learn/tourState';
 import { learnState } from './engine/learn/learnState';
@@ -1661,6 +1662,19 @@ export default function Room() {
         * can say that in one rule -- see `.guide:has(~ .coach)`.
         */}
       <LessonCoach activeTool={activeTool} visible={isUiVisible && tourSettled} />
+
+      {/**
+        * The same lesson, performed rather than read.
+        *
+        * Rendered *after* the coach mark so the stylesheet can stand the coach
+        * down while this is up -- `.coach:has(~ .walk)` -- for the reason the
+        * guide does the same above. Two cards teaching one tool at once, only
+        * one of which is counting what you do, is the surface existing twice.
+        *
+        * It takes the selection because a step can be about what is picked
+        * rather than about what was made, and `selectedIds` lives here.
+        */}
+      <WalkthroughGuide selectedIds={selectedIds} visible={isUiVisible && tourSettled} />
 
       {/**
         * Where things live, pointed at rather than described.

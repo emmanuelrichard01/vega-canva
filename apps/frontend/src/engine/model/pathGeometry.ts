@@ -642,7 +642,44 @@ export function moveAnchor(geo: BezierGeometry, index: number, to: Point): Bezie
  * which is the standard construction and the one that produces a curve
  * continuing the path's existing sweep rather than an arbitrary bulge.
  */
-export function setAnchorMode(geo: BezierGeometry, index: number, mode: 'corner' | 'smooth'): BezierGeometry {
+/**
+ * Set an anchor's handle alignment.
+ *
+ * ## Why `mirrored` had to be added here
+ *
+ * `HandleMode` has always declared three — `corner`, `smooth`, `mirrored` —
+ * and `handleMode` derives all three from where the handles actually are, so
+ * `moveHandle` has always *honoured* a mirrored anchor: drag one side and the
+ * other follows in both direction and length.
+ *
+ * But this function accepted two, so there was no way to ask for the third.
+ * A mirrored anchor could only come about by accident — by dragging until the
+ * two lengths happened to match within epsilon. That is a capability the model
+ * declares, the renderer honours, and nothing can reach: invariant 6 from the
+ * inside, and the reason it hid for so long is that it fails by being merely
+ * unavailable rather than by looking broken.
+ *
+ * ## What each mode means
+ *
+ * - **corner** — no handles at all. The curve arrives and leaves along the
+ *   straight lines to its neighbours.
+ * - **smooth** — collinear, independent lengths. Dragging one handle rotates
+ *   the other without stretching it, which is what keeps a long approach and a
+ *   short departure while the join stays tangent-continuous.
+ * - **mirrored** — collinear *and* equal length. The join is symmetric, which
+ *   is what a circle's anchors are and what you want when the curve either
+ *   side of a point should carry the same weight.
+ *
+ * Made symmetric by **averaging** the two lengths rather than taking one side:
+ * picking a side makes the result depend on which handle happened to be
+ * longer, so the same gesture on the same anchor gives two different curves
+ * depending on history nobody can see.
+ */
+export function setAnchorMode(
+  geo: BezierGeometry,
+  index: number,
+  mode: HandleMode
+): BezierGeometry {
   const anchors = toAnchors(geo).map((a) => ({ ...a }));
   const a = anchors[index];
   if (!a) return geo;
@@ -653,6 +690,35 @@ export function setAnchorMode(geo: BezierGeometry, index: number, mode: 'corner'
     delete a.outX;
     delete a.outY;
     return fromAnchors(anchors, geo.closed);
+  }
+
+  if (mode === 'mirrored' && a.inX !== undefined && a.outX !== undefined) {
+    /**
+     * Already curved: keep the direction it has and equalise the lengths.
+     *
+     * Re-deriving the direction from the neighbours — which is what the
+     * `smooth` path below does — would throw away a tangent the user has
+     * already aimed, and turn "make this symmetric" into "reset this". The
+     * axis comes from the two handles as they stand, so only the lengths move.
+     */
+    const inDx = a.x - (a.inX ?? a.x);
+    const inDy = a.y - (a.inY ?? a.y);
+    const outDx = (a.outX ?? a.x) - a.x;
+    const outDy = (a.outY ?? a.y) - a.y;
+    const inLen = Math.hypot(inDx, inDy);
+    const outLen = Math.hypot(outDx, outDy);
+    if (inLen > EPS || outLen > EPS) {
+      // The outgoing direction, falling back to the incoming one when the
+      // outgoing handle sits on the anchor and has no direction of its own.
+      const dx = outLen > EPS ? outDx / outLen : inDx / inLen;
+      const dy = outLen > EPS ? outDy / outLen : inDy / inLen;
+      const len = (inLen + outLen) / 2;
+      a.inX = a.x - dx * len;
+      a.inY = a.y - dy * len;
+      a.outX = a.x + dx * len;
+      a.outY = a.y + dy * len;
+      return fromAnchors(anchors, geo.closed);
+    }
   }
 
   const n = anchors.length;
@@ -671,8 +737,13 @@ export function setAnchorMode(geo: BezierGeometry, index: number, mode: 'corner'
   // A third of the way to each neighbour: the length that makes a run of
   // smoothed anchors approximate a circle closely, and the same figure every
   // other editor uses for this gesture.
-  const inLen = Math.hypot(a.x - ref1.x, a.y - ref1.y) / 3;
-  const outLen = Math.hypot(ref2.x - a.x, ref2.y - a.y) / 3;
+  const rawIn = Math.hypot(a.x - ref1.x, a.y - ref1.y) / 3;
+  const rawOut = Math.hypot(ref2.x - a.x, ref2.y - a.y) / 3;
+  // A corner being made symmetric has no existing tangent to keep, so the
+  // direction comes from the neighbours as it does for `smooth` — but the two
+  // lengths are averaged, which is the whole difference between the modes.
+  const inLen = mode === 'mirrored' ? (rawIn + rawOut) / 2 : rawIn;
+  const outLen = mode === 'mirrored' ? (rawIn + rawOut) / 2 : rawOut;
   a.inX = a.x - (dx / len) * inLen;
   a.inY = a.y - (dy / len) * inLen;
   a.outX = a.x + (dx / len) * outLen;
@@ -935,4 +1006,86 @@ export function fitPathToBox<T extends PathGeometry>(
   // an undo entry to move nothing anybody can see.
   if (Math.abs(sx - 1) < 0.0005 && Math.abs(sy - 1) < 0.0005) return null;
   return scalePathGeometry(geo, sx, sy);
+}
+
+/* --------------------------------------------------------------- curvature */
+
+/** The osculating circle at a point on a path: the circle the curve is locally. */
+export interface Curvature {
+  /** Radius in world units. Large means nearly straight. */
+  radius: number;
+  /** Centre of that circle, on the concave side. */
+  cx: number;
+  cy: number;
+  /** Signed curvature, so a caller can tell which way the curve bends. */
+  kappa: number;
+}
+
+/**
+ * Curvature where the curve *leaves* an anchor.
+ *
+ * ## What this is for
+ *
+ * A Bézier handle tells you the tangent — which way the curve sets off — and
+ * says almost nothing about how hard it bends. Two handles of very different
+ * lengths can look similar on screen while producing curves that are nothing
+ * alike, and the difference only shows once you zoom or stroke it. The
+ * osculating circle is the missing half: it is the circle the curve *is*, at
+ * that instant, so a run of anchors carrying similar circles is a run that
+ * will read as one smooth sweep.
+ *
+ * ## The arithmetic
+ *
+ * For a cubic `P0 P1 P2 P3`, at `t = 0`:
+ *
+ * ```text
+ *   P'(0)  = 3(P1 − P0)
+ *   P''(0) = 6(P2 − 2P1 + P0) = 6((P2 − P1) − (P1 − P0))
+ *   κ      = |P' × P''| / |P'|³ = (2/3)·|(P1−P0) × (P2−P1)| / |P1−P0|³
+ * ```
+ *
+ * Signed rather than absolute, because the sign is which side the centre sits
+ * on and a caller drawing the circle needs it. The centre is one radius along
+ * the normal, and the normal's direction is the sign of that cross product.
+ *
+ * ## The two degenerate cases, and why they return null rather than Infinity
+ *
+ * A **straight** segment has zero curvature and an infinite radius. There is
+ * no circle to draw and `Infinity` would propagate into whatever tried; a
+ * caller that has to check for it will eventually forget. A **zero-length
+ * outgoing handle** has no `P'` at all, so the tangent is undefined at that
+ * end and the formula divides by zero. Both are "there is no osculating circle
+ * here", which is one answer, so they give one.
+ */
+export function curvatureAt(geo: BezierGeometry, index: number): Curvature | null {
+  const anchors = toAnchors(geo);
+  const n = anchors.length;
+  const a = anchors[index];
+  if (!a) return null;
+  const next = index + 1 < n ? anchors[index + 1] : geo.closed ? anchors[0] : undefined;
+  if (!next) return null;
+
+  // The outgoing cubic's four points. A missing handle sits on its own anchor,
+  // which is what a corner is and what makes that segment a straight line.
+  const p0 = { x: a.x, y: a.y };
+  const p1 = { x: a.outX ?? a.x, y: a.outY ?? a.y };
+  const p2 = { x: next.inX ?? next.x, y: next.inY ?? next.y };
+
+  const ax = p1.x - p0.x;
+  const ay = p1.y - p0.y;
+  const bx = p2.x - p1.x;
+  const by = p2.y - p1.y;
+  const speed = Math.hypot(ax, ay);
+  if (speed < EPS) return null;
+
+  const cross = ax * by - ay * bx;
+  const kappa = ((2 / 3) * cross) / (speed * speed * speed);
+  if (Math.abs(kappa) < EPS) return null;
+
+  const radius = 1 / Math.abs(kappa);
+  // The normal, turned towards the concave side by the sign of the curvature.
+  const sign = kappa > 0 ? 1 : -1;
+  const nx = (-ay / speed) * sign;
+  const ny = (ax / speed) * sign;
+  return { radius, cx: p0.x + nx * radius, cy: p0.y + ny * radius, kappa };
 }

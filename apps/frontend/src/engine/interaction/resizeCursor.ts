@@ -38,3 +38,21 @@ export function cursorForAnchor(name: string, rotationDeg: number): string {
   const angle = (((base + rotationDeg) % 360) + 360) % 360;
   return CURSORS[Math.round(angle / 45) % 8];
 }
+
+/**
+ * The handle's outward direction, unsnapped.
+ *
+ * `cursorForAnchor` above rounds to the nearest of the eight OS cursors,
+ * because that is all the OS has. A *drawn* arrow has no such limit, and the
+ * rounding is worth losing: on an object turned 20° every handle's arrow is up
+ * to 22.5° away from the drag it describes. Same table, same normalisation,
+ * one fewer approximation.
+ *
+ * Returns undefined for a name that is not a handle, so a caller cannot draw an
+ * arrow for something that does not resize.
+ */
+export function anchorAngle(name: string, rotationDeg: number): number | undefined {
+  const base = ANCHOR_ANGLE[name];
+  if (base === undefined) return undefined;
+  return (((base + rotationDeg) % 360) + 360) % 360;
+}

@@ -1,7 +1,16 @@
 export { cursorModeForTool, type CursorMode, type CursorModeInput } from './toolCursor';
 export { RemoteCursors } from './RemoteCursors';
 export { LocalCursor } from './LocalCursor';
-export { CURSOR_ART, type CursorArtSpec } from './cursorArtData';
+export { cursorOverride, claimCursor, type CursorClaim } from './cursorOverride';
+export {
+  cursorVisual,
+  glyphFor,
+  inkFor,
+  CURSOR_SIZE,
+  INK,
+  PAPER,
+  type CursorVisual,
+} from './cursorVisual';
 export {
   chipColorsFor,
   contrastRatio,

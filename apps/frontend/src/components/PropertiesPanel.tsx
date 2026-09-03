@@ -64,6 +64,7 @@ import { ShapeGeometrySection } from './panel/sections/ShapeGeometrySection';
 import { ConnectorSection } from './panel/sections/ConnectorSection';
 import { ImageSection } from './panel/sections/ImageSection';
 import { PhysicsMaterialSection, MetadataSection } from './panel/sections/PhysicsMaterialSection';
+import { cornerRadiiOf } from '../engine/model/cornerRadii';
 
 const DEFAULT_SHADOW: Shadow = {
   color: DEFAULT_SHADOW_COLOR,
@@ -222,7 +223,7 @@ export const PropertiesPanel: React.FC<PropertiesPanelProps> = ({ selectedIds, o
       : n.type === 'shape' &&
           (n.geometry.kind === 'polygon' ||
             n.geometry.kind === 'star' ||
-            (n.geometry.kind === 'rect' && !(paint?.cornerRadius && paint.cornerRadius > 0)));
+            (n.geometry.kind === 'rect' && Math.max(...cornerRadiiOf(paint?.cornerRadius)) <= 0));
   });
 
   const hasEnds = nodes.every((n) => capApplies({ ...n, appearance: appearanceOf(n) }));

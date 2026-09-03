@@ -4,7 +4,6 @@ import { useStore } from './useStore';
 import { LINE_SEAT, TOOL_FOR_KEY, lineSeatFor } from '../engine/tools/shortcuts';
 import { editor } from '../engine/api/EditorAPI';
 import { cameraSystem } from '../engine/CameraSystem';
-import { isForceTool } from '../engine/physics/forces';
 
 export interface RoomShortcutsOptions {
   selectTool: (toolId: string) => void;
@@ -63,13 +62,49 @@ export function useRoomShortcuts({
     return () => window.removeEventListener('keydown', onKey);
   }, [isCompact, panelsOpen, setPanelsOpen]);
 
-  // Escape leaves Force mode or disarms Audio mode
+  /**
+   * Escape puts the arrow back in your hand.
+   *
+   * This used to cover the force tools and the audio tool only, which are the
+   * two that trap you most obviously — but the rule people arrive with is the
+   * one Figma, Illustrator and Photoshop all share: **Escape returns to the
+   * selection tool, from anywhere.** Picking up the pen and then wanting to
+   * move what you just drew is the single most common thing anyone does on
+   * this board, and the alternative was pressing `V` or hunting the dock.
+   *
+   * ## Why a plain bubble-phase listener is the right layering
+   *
+   * Escape already means something to several modes: it leaves a crop, exits
+   * the path editor, cancels a reframe, closes a thread. Every one of those
+   * listens in the **capture** phase and calls `stopPropagation`, which stops
+   * the event before it bubbles back to this one.
+   *
+   * That gives the layering for free, and it is the layering those apps have:
+   * the first Escape cancels whatever is in progress, and the *next* one — with
+   * nothing left to cancel — hands you the arrow. Registering this in capture
+   * too, or reaching for a "is anything in progress" flag, would break that and
+   * would be a second derivation of something the event model already answers.
+   */
   useEffect(() => {
-    if (!isForceTool(activeTool) && activeTool !== 'audio') return;
+    if (activeTool === 'select') return;
     const onKey = (e: KeyboardEvent) => {
       if (e.key !== 'Escape') return;
-      const el = document.activeElement?.tagName;
-      if (el === 'INPUT' || el === 'TEXTAREA') return;
+      /**
+       * Typing into something is the one case where Escape is unambiguously
+       * about the text and not about the tool.
+       *
+       * Read as properties rather than through `instanceof`, which compares
+       * against *this realm's* constructors — so a field inside an embedded
+       * document would fail the test and have the tool yanked out from under
+       * it. It is also what lets this be covered without a DOM.
+       */
+      const el = document.activeElement as {
+        tagName?: unknown;
+        isContentEditable?: unknown;
+      } | null;
+      const tag = el && typeof el.tagName === 'string' ? el.tagName.toUpperCase() : '';
+      if (tag === 'INPUT' || tag === 'TEXTAREA') return;
+      if (el?.isContentEditable === true) return;
       setActiveTool('select');
     };
     window.addEventListener('keydown', onKey);

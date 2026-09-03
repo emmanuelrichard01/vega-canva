@@ -744,6 +744,33 @@ function splineOpen(points: readonly Point[]): string {
 export { spline as closedSpline };
 
 /**
+ * A sketch profile, tempered for strokes laid close together.
+ *
+ * `edge` displaces the ends of a stroke by `offset`, and that number is an
+ * absolute — 1.0, 1.6 or 2.4 by level. For an *outline* that is exactly right:
+ * an edge is long, it has nothing beside it, and the displacement is the whole
+ * character of the mark.
+ *
+ * Shading is the case it was not written for. At the dense setting the strokes
+ * are 5.5 units apart, so a medium profile moving both neighbours' ends by up
+ * to 0.8 toward each other closes a third of the spacing before the scanline
+ * wobble is counted at all — and two shading strokes that merge are not a
+ * rougher drawing, they are a flat tone where a tone was meant to be varied.
+ *
+ * A hand does the same thing without thinking about it: shading a small area
+ * closely, it makes neater strokes than it does drawing the outline round it.
+ * Loosening that would not read as more character, it would read as mud.
+ *
+ * So the displacement is capped as a fraction of the spacing, and only capped
+ * — a light density leaves the profile untouched, because there the absolute
+ * number is already well within the room available.
+ */
+function shadingProfile(prof: SketchProfile, gap: number): SketchProfile {
+  const room = gap * 0.16;
+  return prof.offset <= room ? prof : { ...prof, offset: room };
+}
+
+/**
  * Hachure fill — parallel strokes at an angle, the way a pen shades.
  *
  * A flat fill under a sketched outline looks printed, which fights everything
@@ -757,6 +784,26 @@ export { spline as closedSpline };
  *
  * Each stroke is drawn as a bowed edge rather than a straight run, so the
  * shading is made of the same marks as the outline.
+ *
+ * ## The two displacements are fractions of the gap, and were constants
+ *
+ * A stroke is nudged along its own axis at each end, and off the scanline by a
+ * little. Both were absolute — two units and one unit — while the gap they sit
+ * between ranges from 5.5 to 14, a factor of two and a half. One number cannot
+ * serve that, and it failed at both ends of the range in opposite ways.
+ *
+ * At `dense` the strokes came within 3.5 units of each other, because each of
+ * a pair could wander a whole unit toward the other. The density docstring
+ * names four units as where "the strokes merge into a flat tone and the drawn
+ * quality is lost" — so the densest setting was intermittently destroying the
+ * thing the control exists to vary. At `light` the same unit is seven per cent
+ * of the spacing and reads as nothing, which is why that setting looked ruled
+ * rather than drawn.
+ *
+ * This is the same density-versus-amplitude confusion the file has had to
+ * separate for the shading angle, the ellipse sketcher and the stroke nib. The
+ * tell is always this one: a constant displacement sitting next to a variable
+ * spacing.
  */
 function hachurePass(
   points: readonly Point[],
@@ -765,7 +812,7 @@ function hachurePass(
   const { seed, gap, angle, level } = options;
   if (points.length < 3) return '';
 
-  const prof = profileFor(level);
+  const prof = shadingProfile(profileFor(level), gap);
   const rand = rng(seed ^ 0x9e3779b9);
   const rad = (angle * Math.PI) / 180;
   const cos = Math.cos(-rad);
@@ -777,6 +824,28 @@ function hachurePass(
 
   const strokes: string[] = [];
   const back = (x: number, y: number) => ({ x: x * cos + y * sin, y: -x * sin + y * cos });
+
+  /**
+   * How far a stroke may stray off its scanline, at each end independently.
+   *
+   * Independent ends are deliberate — it tilts the stroke rather than merely
+   * offsetting it, which is what a hand does — and it is why this has to stay
+   * well under half the gap: two neighbours leaning toward each other close
+   * the spacing by twice this.
+   */
+  const wobble = gap * 0.09;
+
+  /**
+   * How far short of the edge a stroke stops, on average.
+   *
+   * The mean is inward, because shading that routinely ran past the outline
+   * would read as a mistake rather than as a hand. The *variation* is
+   * symmetric about that mean, so a stroke occasionally reaches the edge or
+   * crosses it slightly, which is the difference between shading that was
+   * drawn and shading that was clipped. `Math.abs` here forced every stroke
+   * short, which did not avoid a ruled edge so much as move it inward.
+   */
+  const inset = Math.min(gap * 0.22, 3);
 
   for (let y = minY + gap / 2; y < maxY; y += gap) {
     const crossings: number[] = [];
@@ -790,10 +859,15 @@ function hachurePass(
     }
     crossings.sort((p, q) => p - q);
     for (let i = 0; i + 1 < crossings.length; i += 2) {
-      // Pulled in at both ends, unevenly, so the shading does not end on a
-      // ruled edge where the outline is deliberately loose.
-      const s = back(crossings[i] + Math.abs(jitter(2, rand)), y + jitter(1, rand));
-      const e = back(crossings[i + 1] - Math.abs(jitter(2, rand)), y + jitter(1, rand));
+      const lo = crossings[i] + inset + jitter(inset, rand);
+      const hi = crossings[i + 1] - inset - jitter(inset, rand);
+      // A span narrower than the inset would invert, drawing the stroke
+      // backwards past both edges. Skipped rather than clamped: a sliver at
+      // the tip of a star has no room for a mark, and drawing one there is
+      // what puts shading outside the shape.
+      if (hi <= lo) continue;
+      const s = back(lo, y + jitter(wobble, rand));
+      const e = back(hi, y + jitter(wobble, rand));
       strokes.push(edge(s.x, s.y, e.x, e.y, rand, false, prof));
     }
   }
@@ -801,7 +875,69 @@ function hachurePass(
 }
 
 /**
- * Zigzag / scribble fill — continuous back-and-forth pen strokes connecting at edges.
+ * One run of the pen: a span of scanlines it has been travelling down without
+ * lifting. Held in the rotated frame, where a span is a plain interval.
+ */
+interface Scribble {
+  /** The span this chain occupied on the row above, for the overlap test. */
+  lo: number;
+  hi: number;
+  /** Where the pen finished, in the rotated frame and in world space. */
+  atX: number;
+  at: Point;
+  /** Which way the *next* row of this chain runs. */
+  forward: boolean;
+}
+
+/**
+ * Zigzag / scribble fill — continuous back-and-forth pen shading.
+ *
+ * ## What makes this different from hachure, and why that costs something
+ *
+ * Hachure is a set of separate strokes, so each span of each scanline is
+ * independent and nothing has to be tracked between them. A scribble is *one
+ * stroke*: the pen runs to the end of a row, turns, and comes back along the
+ * next one without leaving the paper. That continuity is the entire look, and
+ * it is also the only thing here that can be wrong in a way a stroke-per-span
+ * fill cannot.
+ *
+ * ## The pen may not leave the shape, and it used to
+ *
+ * The first version carried a single `prevPoint` across every span of every
+ * scanline and joined each new span to it. On a convex shape there is one span
+ * per row and that is exactly right. On anything concave — a star, a C, a
+ * ring, a polygon with a notch — a row has two or more spans with a *gap*
+ * between them, and joining the end of one to the start of the next draws a
+ * stroke straight across that gap, outside the shape. A star shaded this way
+ * had its points webbed together.
+ *
+ * So the pen is tracked as one or more `Scribble` chains rather than one
+ * point. A span continues the chain from the row above whose span it overlaps,
+ * and starts a fresh chain when there is none — which is what a hand does at
+ * the top of each arm of a star, because there is nowhere to have come from.
+ * Where a shape narrows to nothing a chain simply ends; where it splits, one
+ * side continues and the other begins, since the pen cannot be in two places.
+ *
+ * `forward` is per chain for the same reason. It was a single flag toggled
+ * once per *span*, so on a row with two spans the two ran in opposite
+ * directions and the next row reversed both — which, combined with the joins
+ * above, is what produced the crossing diagonals rather than shading.
+ *
+ * ## The turn is a turn, not another stroke
+ *
+ * The join between two rows used to be a full bowed `edge`, identical in
+ * character to the shading strokes, so it read as an extra line rather than as
+ * the pen changing direction. A hand turns *past* the end of the row and comes
+ * back — the same overshoot this file already gives every corner, for the same
+ * reason. It is one quadratic bulging outward, away from the span it is
+ * leaving, so the pair of rows is joined by a hairpin.
+ *
+ * The bulge is a fraction of the gap, so a dense scribble turns tightly and a
+ * light one loops — density and amplitude staying in step, which is the
+ * distinction this file has had to make three times elsewhere. It is capped in
+ * absolute terms so a light density cannot produce loops bigger than the marks
+ * they join, and scaled by the level's own overshoot so the three levels differ
+ * in character here as they do everywhere else.
  */
 function zigzagPass(
   points: readonly Point[],
@@ -810,7 +946,7 @@ function zigzagPass(
   const { seed, gap, angle, level } = options;
   if (points.length < 3) return '';
 
-  const prof = profileFor(level);
+  const prof = shadingProfile(profileFor(level), gap);
   const rand = rng(seed ^ 0x9e3779b9);
   const rad = (angle * Math.PI) / 180;
   const cos = Math.cos(-rad);
@@ -822,32 +958,84 @@ function zigzagPass(
   const strokes: string[] = [];
   const back = (x: number, y: number) => ({ x: x * cos + y * sin, y: -x * sin + y * cos });
 
-  let prevPoint: Point | null = null;
-  let forward = true;
+  // How far the pen runs past the end of a row before coming back.
+  const turn = Math.min(gap * 0.5, 5) * (0.5 + prof.overshoot * 0.5);
+  // The same two as `hachurePass`, for the same reason and by the same rule.
+  const wobble = gap * 0.09;
+  const inset = Math.min(gap * 0.22, 3);
+
+  let open: Scribble[] = [];
 
   for (let y = minY + gap / 2; y < maxY; y += gap) {
     const crossings: number[] = [];
     for (let i = 0; i < rot.length; i++) {
       const a = rot[i];
       const b = rot[(i + 1) % rot.length];
+      // Half-open test, so a vertex exactly on the scanline is counted once
+      // rather than opening and closing the same span.
       if (a.y <= y === b.y <= y) continue;
       crossings.push(a.x + ((y - a.y) / (b.y - a.y)) * (b.x - a.x));
     }
     crossings.sort((p, q) => p - q);
+
+    const next: Scribble[] = [];
+    const taken = new Set<Scribble>();
+
     for (let i = 0; i + 1 < crossings.length; i += 2) {
-      const left = back(crossings[i] + Math.abs(jitter(2, rand)), y + jitter(1, rand));
-      const right = back(crossings[i + 1] - Math.abs(jitter(2, rand)), y + jitter(1, rand));
+      const lo = crossings[i];
+      const hi = crossings[i + 1];
+
+      // Pulled in at both ends, unevenly, so the shading does not end on a
+      // ruled edge where the outline is deliberately loose. Fractions of the
+      // gap for the reason `hachurePass` sets out at length: a constant
+      // displacement beside a variable spacing serves neither end of it.
+      const loX = lo + inset + jitter(inset, rand);
+      const hiX = hi - inset - jitter(inset, rand);
+      if (hiX <= loX) continue;
+      const left = back(loX, y + jitter(wobble, rand));
+      const right = back(hiX, y + jitter(wobble, rand));
+
+      /**
+       * The chain this span continues, if any.
+       *
+       * Overlap in the rotated frame, strictly — two spans that merely touch
+       * at a point are a shape pinched to nothing there, and drawing the pen
+       * through that point is the webbing this whole structure exists to
+       * avoid. Each chain is claimed at most once: a span that splits in two
+       * continues one side and starts the other.
+       */
+      const from = open.find(
+        (c) => !taken.has(c) && Math.min(c.hi, hi) - Math.max(c.lo, lo) > 0
+      );
+
+      const forward = from ? from.forward : true;
+      const startX = forward ? loX : hiX;
       const s = forward ? left : right;
       const e = forward ? right : left;
 
-      if (prevPoint) {
-        // Connecting loop stroke between previous scanline and this one
-        strokes.push(edge(prevPoint.x, prevPoint.y, s.x, s.y, rand, false, prof));
+      if (from) {
+        taken.add(from);
+        /**
+         * The hairpin, bulging away from the row it is leaving.
+         *
+         * Which way is outward is decided by which end of its span the pen
+         * finished on, not by `forward` — they agree on a straight run and
+         * come apart the moment a chain continues into a span that has moved
+         * sideways under it, which is every sloped edge.
+         */
+        const out = from.atX >= (from.lo + from.hi) / 2 ? 1 : -1;
+        const cx = (from.atX + startX) / 2 + out * (turn + Math.abs(jitter(turn * 0.3, rand)));
+        // Halfway back up to the row it came from, which sits one gap above.
+        const cy = y - gap / 2;
+        const c = back(cx, cy);
+        strokes.push(`M ${r(from.at.x)} ${r(from.at.y)} Q ${r(c.x)} ${r(c.y)} ${r(s.x)} ${r(s.y)}`);
       }
+
       strokes.push(edge(s.x, s.y, e.x, e.y, rand, false, prof));
-      prevPoint = e;
-      forward = !forward;
+      next.push({ lo, hi, atX: forward ? hiX : loX, at: e, forward: !forward });
     }
+
+    open = next;
   }
   return strokes.join(' ');
 }
@@ -877,27 +1065,76 @@ function dotsPass(
   const maxX = Math.max(...rot.map((p) => p.x));
 
   /**
-   * The spacing, from the gap it was handed — and adapted, not overridden.
+   * The spacing, from the gap it was handed — and capped by a *count*, not by
+   * a length.
    *
-   * This used to compute its own step from the shape's diagonal and *discard*
-   * the `gap` parameter entirely, which made stipple the one shading style with
-   * no density: the control was offered on four styles and worked on three, and
-   * on the fourth it was the one style whose whole language is density. Nothing
-   * about a dot pattern argues for that.
+   * ## The history, because it has now been wrong twice in the same place
    *
-   * The adaptive part is kept, because it is doing real work: a very large
-   * shape at a fixed spacing is thousands of dots, and this is drawn as a path
-   * every frame. So the gap sets the intent and the diagonal sets a floor
-   * beneath it, rather than replacing it.
+   * The first version computed its own step from the shape's diagonal and
+   * discarded `gap` entirely, which made stipple the one shading style with no
+   * density: the control was offered on four styles, worked on three, and did
+   * nothing on the one whose whole language *is* density.
+   *
+   * The fix put the gap back — under `Math.max(gap * nib, min(40, diag / 16))`
+   * — and the floor went straight on dominating it, because a floor derived
+   * from the shape grows with the shape while the gap does not. Measured:
+   *
+   * ```text
+   *              light   medium   dense
+   *   200x140    23.10    15.26   15.26   ← two settings identical
+   *   300x200    23.10    22.53   22.53   ← all three within 3%
+   *   600x400    40.00    40.00   40.00   ← the control does nothing
+   * ```
+   *
+   * So the control worked on small shapes and faded out as the shape grew,
+   * which is worse than not working: it is a control that answers sometimes,
+   * and the existing test asserted `dense !== light` on a 100-unit square,
+   * where it happens to. That is the honest lesson here — the assertion was
+   * true and the feature was broken, because the case it chose was the case
+   * that worked.
+   *
+   * ## What the cap is actually protecting
+   *
+   * Not a spacing. The reason a limit exists at all is that this is drawn as a
+   * single path every frame, so what has to stay bounded is **how many dots
+   * there are**. Saying that directly means density is honoured at every size
+   * and the cap engages only when the count genuinely would be a problem —
+   * which, for a shape big enough to reach it, is a shape where nobody can
+   * distinguish the two densities anyway.
    */
-  const diag = Math.hypot(maxX - minX, maxY - minY);
   const nib = level === 'heavy' ? 1.35 : level === 'light' ? 2 : 1.65;
-  const step = Math.max(gap * nib, Math.min(40, diag / 16));
+  const want = gap * nib;
+  const area = Math.max(1, (maxX - minX) * (maxY - minY));
+  /**
+   * Dots per shape, past which the spacing is opened up.
+   *
+   * Two thousand is roughly where a stipple path stops being cheap to parse
+   * and starts being visible in a frame budget, and it is far past the point
+   * where a shape reads as stippled rather than as filled.
+   */
+  const BUDGET = 2000;
+  const wanted = area / (want * want);
+  const step = wanted > BUDGET ? want * Math.sqrt(wanted / BUDGET) : want;
 
   const paths: string[] = [];
   const back = (x: number, y: number) => ({ x: x * cos + y * sin, y: -x * sin + y * cos });
 
-  for (let y = minY + step * 0.6; y < maxY - step * 0.2; y += step) {
+  /**
+   * Alternate rows are offset by half a step, and the jitter is wider.
+   *
+   * A square lattice with a ±30% wobble is still a square lattice: the eye
+   * finds the rows and the columns straight through that much noise, and
+   * stipple that reads as a grid of dots is the one thing it must not be.
+   * Pushing the jitter far enough to hide a lattice on its own would have to
+   * exceed half a step, at which point dots swap places and clump.
+   *
+   * Staggering the rows is the cheaper half of the answer and the one that
+   * actually removes the artefact — it is why hexagonal packing looks organic
+   * and square packing does not — so the jitter only has to break up what is
+   * left, rather than do the whole job on its own.
+   */
+  let row = 0;
+  for (let y = minY + step * 0.6; y < maxY - step * 0.2; y += step, row++) {
     const crossings: number[] = [];
     for (let i = 0; i < rot.length; i++) {
       const a = rot[i];
@@ -906,12 +1143,13 @@ function dotsPass(
       crossings.push(a.x + ((y - a.y) / (b.y - a.y)) * (b.x - a.x));
     }
     crossings.sort((p, q) => p - q);
+    const stagger = row % 2 ? step / 2 : 0;
     for (let i = 0; i + 1 < crossings.length; i += 2) {
-      const xStart = crossings[i] + step * 0.4;
+      const xStart = crossings[i] + step * 0.4 + stagger;
       const xEnd = crossings[i + 1] - step * 0.4;
       for (let x = xStart; x < xEnd; x += step) {
-        const jx = jitter(step * 0.3, rand);
-        const jy = jitter(step * 0.3, rand);
+        const jx = jitter(step * 0.34, rand);
+        const jy = jitter(step * 0.34, rand);
         const p = back(x + jx, y + jy);
         paths.push(`M ${r(p.x)} ${r(p.y)} l 0.01 0`);
       }
@@ -958,6 +1196,30 @@ export function ellipseRing(cx: number, cy: number, rx: number, ry: number, step
  */
 export type FillStyle = 'solid' | 'hachure' | 'crosshatch' | 'zigzag' | 'dots';
 export const FILL_STYLES: FillStyle[] = ['solid', 'hachure', 'crosshatch', 'zigzag', 'dots'];
+
+/**
+ * Whether a style paints an enclosed region, or draws the inside as marks.
+ *
+ * Said once, here, because four places were asking it and each had written its
+ * own answer: the renderer's solid-fill layer, the renderer's inner-shadow
+ * clip, the SVG exporter, and the Effects panel's `penShaded`. Three of those
+ * spelled the question as `fillPaint.type === 'solid'`, which is a question
+ * about the **paint** — is it a colour or a gradient — and not about the
+ * *style*, so they agreed with each other only by accident of the silhouette
+ * being empty for the pen-shaded styles.
+ *
+ * That accident is exactly what made the hit-region fix inert: gating on
+ * "there is a silhouette" was standing in for "this style fills its interior",
+ * and the moment the silhouette had to exist for a reason *other* than being
+ * painted, the two came apart. A region and a fill are different facts and the
+ * code now asks for them separately.
+ *
+ * Absent is `solid`, matching `shapeFill`, so an unset style behaves as the
+ * ordinary flat fill everywhere rather than in most places.
+ */
+export function fillsInterior(style: FillStyle | undefined): boolean {
+  return (style ?? 'solid') === 'solid';
+}
 
 /**
  * The default hachure angle.

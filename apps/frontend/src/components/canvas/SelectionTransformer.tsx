@@ -4,7 +4,9 @@ import { Group, Rect, Text, Transformer } from 'react-konva';
 import { applyNodePatches } from '../../engine/document';
 import { EXPORT_CHROME } from '../../engine/export/chrome';
 import { useStore } from '../../hooks/useStore';
-import { cursorForAnchor } from '../../engine/interaction/resizeCursor';
+import { anchorAngle, cursorForAnchor } from '../../engine/interaction/resizeCursor';
+import { cursorCss } from '../../engine/cursor/cursorCss';
+import { resizeVisual } from '../../engine/cursor/cursorVisual';
 import { fitPathToBox } from '../../engine/model/pathGeometry';
 import { fitLineToBox, isLineLike } from '../../engine/model/lineEnds';
 import { liveTransformStore } from '../../engine/model/liveTransformStore';
@@ -20,6 +22,8 @@ import {
   type Box,
   type Placed,
 } from '../../engine/interaction/selectionTransform';
+import { claimCursor } from '../../engine/cursor/cursorOverride';
+import { RotateZones } from './RotateZones';
 
 interface Props {
   selectedIds: string[];
@@ -64,6 +68,17 @@ const uniformDrag = (sx: number, sy: number): boolean =>
 
 /** Ink and paper for the handles, matching the hover ring the canvas already draws. */
 const ACCENT = '#3B82F6';
+
+/**
+ * How far the readout sits below the selection, in screen pixels.
+ *
+ * Divided by the zoom at every use, so the badge keeps the same distance from
+ * the box whatever the camera is doing — it is a label about the board, not a
+ * thing on it. Named because two call sites need the identical number and
+ * they had drifted apart: 22 in one and 26 in the other, which the badge
+ * expressed as a small hop at the start and end of every gesture.
+ */
+const BADGE_DROP = 26;
 const HANDLE_FILL = '#FFFFFF';
 
 /**
@@ -222,15 +237,31 @@ export const SelectionTransformer: React.FC<Props> = ({ selectedIds, stageRef })
      * cursor stays correct while the object is being turned.
      */
     const bound: Array<{ node: Konva.Node; enter: () => void; leave: () => void }> = [];
-    for (const name of [...ANCHORS, 'rotater']) {
+    for (const name of ANCHORS) {
       const anchor = tr.findOne(`.${name}`);
       if (!anchor) continue;
+      // One claim id for the whole transformer: only one anchor can be under
+      // the pointer at a time, and re-claiming as the object rotates has to
+      // replace the previous shape rather than stack a second claim.
       const enter = () => {
-        stage.container().style.cursor = cursorForAnchor(name, tr.rotation());
+        /**
+         * Drawn, and turned to the *exact* angle rather than the nearest
+         * eighth of a turn.
+         *
+         * `cursorForAnchor` snaps, because the OS only has eight resize
+         * cursors; on an object rotated 20° every handle's arrow is then up
+         * to 22.5° off the drag it describes. It is still what the `url()`
+         * falls back to, so a browser that cannot use the image gets the
+         * nearest real one.
+         */
+        const angle = anchorAngle(name, tr.rotation());
+        const keyword = cursorForAnchor(name, tr.rotation());
+        claimCursor(
+          'transformer',
+          angle === undefined ? keyword : cursorCss(resizeVisual(angle), keyword)
+        );
       };
-      const leave = () => {
-        stage.container().style.cursor = '';
-      };
+      const leave = () => claimCursor('transformer', null);
       anchor.on('mouseenter', enter);
       anchor.on('mouseleave', leave);
       bound.push({ node: anchor, enter, leave });
@@ -485,6 +516,26 @@ export const SelectionTransformer: React.FC<Props> = ({ selectedIds, stageRef })
     return out;
   };
 
+  /**
+   * A gesture that is ours rather than Konva's, announced as what it is.
+   *
+   * `handleTransform` learns which kind of transform is running from
+   * `tr.getActiveAnchor()` — and during a rotation driven by `RotateZones`
+   * Konva has no active anchor at all, so it read `''`. `activeAnchor` then
+   * kept whatever the *last real resize* had left in it, and `placeAll`
+   * treated a pure rotation as a resize from a stale handle: text nodes were
+   * re-wrapped on every frame of the turn and the badge described the wrong
+   * gesture. That is most of the "jerks and glitches".
+   *
+   * Naming the anchor here is the smallest honest fix: `handleTransform` only
+   * overwrites it when Konva actually has one, so a value set here survives
+   * the gesture, and `handleTransformEnd` already clears it.
+   */
+  const beginExternalGesture = (kind: 'rotate' | 'shear') => {
+    activeAnchor.current = kind === 'rotate' ? 'rotater' : '';
+    handleTransformStart();
+  };
+
   const handleTransform = () => {
     const tr = trRef.current;
     const proxy = proxyRef.current;
@@ -494,7 +545,23 @@ export const SelectionTransformer: React.FC<Props> = ({ selectedIds, stageRef })
     // Captured while Konva still knows it: by `transformend` it has been
     // cleared, and every check there was silently comparing against ''.
     if (anchor) activeAnchor.current = anchor;
-    const rotating = anchor === 'rotater';
+    /**
+     * Which gesture is running — asked of the *sticky* anchor, not the live one.
+     *
+     * Konva reports an active anchor only for a drag Konva itself started. A
+     * rotation from `RotateZones` is ours, so `tr.getActiveAnchor()` is `''`
+     * for every frame of it — and this line used to read the local `anchor`,
+     * so the one gesture that most needs an angle readout was the one gesture
+     * that could never get one. The badge counted width and height while the
+     * object turned, which are the two numbers a rotation does not change:
+     * it sat there showing `145 × 142` for the whole turn.
+     *
+     * `beginExternalGesture` writes `'rotater'` into `activeAnchor` precisely
+     * so the rest of this component can tell what is happening. Reading it
+     * here is the whole fix, and `handleTransformEnd` already clears it, so
+     * the badge returns to dimensions the moment the turn ends.
+     */
+    const rotating = (anchor || activeAnchor.current) === 'rotater';
 
     const placements = placeAll();
     for (const { id, placed, extra } of placements) {
@@ -516,7 +583,12 @@ export const SelectionTransformer: React.FC<Props> = ({ selectedIds, stageRef })
           ? `${deg}°`
           : `${Math.round(box.to.width)} × ${Math.round(box.to.height)}`,
         x: box.to.x + box.to.width / 2,
-        y: box.to.y + box.to.height + 22,
+        // The same offset the resting badge uses, in the same units. These
+        // were 22 world units here and 26 screen pixels there, so the badge
+        // hopped a few pixels at the start of every gesture and back at the
+        // end — a movement with no meaning, on the one element that is
+        // supposed to be the fixed thing you read while everything else moves.
+        y: box.to.y + box.to.height + BADGE_DROP / (stageRef.current?.scaleX() || 1),
       });
     }
   };
@@ -588,13 +660,27 @@ export const SelectionTransformer: React.FC<Props> = ({ selectedIds, stageRef })
       modifiedIds.push(id);
     }
 
-    // The proxy goes back to being a plain box, ready to be re-fitted to
-    // whatever the selection now is.
+    /**
+     * The proxy goes back to being an unscaled box, ready to be re-fitted.
+     *
+     * **The rotation is deliberately not reset.** It used to be, and that was
+     * a visible flash and a real bug. `fitProxy` always sets the angle
+     * explicitly — `boxes.length === 1 ? boxes[0].rotation : 0` — so zeroing
+     * it here is redundant, and it leaves the proxy claiming an angle of zero
+     * for the window between this line and the refit that follows the document
+     * write. In that window the selection box snaps square, and anything that
+     * reads `proxy.rotation()` as a starting angle reads 0 for an object that
+     * is plainly turned.
+     *
+     * That is what made a second rotation jump: `RotateZones` took its start
+     * angle from the proxy, got 0, and turned the object from there. Scale has
+     * no such problem — `fitProxy` sets it unconditionally too, but the
+     * gesture reads it from nowhere.
+     */
     const proxy = proxyRef.current;
     if (proxy) {
       proxy.scaleX(1);
       proxy.scaleY(1);
-      proxy.rotation(0);
     }
 
     initialNodesMap.current = {};
@@ -657,16 +743,84 @@ export const SelectionTransformer: React.FC<Props> = ({ selectedIds, stageRef })
    * about the board and not a thing on it -- at 4x a zoomed readout would be
    * enormous, and at 0.2x unreadable.
    */
-  const hudBadge = transforming && liveBadge ? (() => {
+  /**
+   * The selection's bounds, for anything that needs them during *render*.
+   *
+   * `fitProxy` computes the same thing and writes it into the proxy, but it
+   * runs in an effect and writes a Konva node — so a child that needs the box
+   * cannot read it without inheriting two problems: the proxy is positioned by
+   * its **centre** with an offset, so `proxy.x()` is not the corner; and child
+   * effects run before parent effects, so on a new selection the proxy has not
+   * been fitted yet.
+   *
+   * Keyed on `selectionGeometry`, which is the string that already changes
+   * whenever any selected node's geometry does — so this recomputes exactly
+   * when the box moves and never otherwise. `liveTransformStore` is not
+   * consulted, unlike `fitProxy`: it only differs mid-gesture, and everything
+   * reading this is hidden mid-gesture.
+   */
+  const selectionBounds = React.useMemo(() => {
+    const store = useStore.getState().objects;
+    const boxes = selectedIds.map((id) => store[id]).filter(Boolean) as AnyNode[];
+    if (boxes.length === 0) return null;
+    const solo = boxes.length === 1 ? boxes[0] : undefined;
+    // A line has no box worth rotating from its corners — the same reading
+    // `fitProxy` takes when it declines to give one a transformer at all.
+    if (solo && (isLineLike(solo) || solo.type === 'connector')) return null;
+    const bounds = selectionBox(boxes);
+    if (!bounds) return null;
+    return {
+      bounds,
+      rotation: boxes.length === 1 ? boxes[0].rotation || 0 : 0,
+      // Shear is a field on a node, so it is offered for one and withheld for
+      // many rather than offered and then quietly wrong.
+      soloId: solo ? solo.id : null,
+      soloSkew: { x: solo?.skewX ?? 0, y: solo?.skewY ?? 0 },
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [selectedIds, selectionGeometry]);
+
+  /**
+   * The size readout, shown whenever there is a selection.
+   *
+   * It used to appear only *during* a transform, which is the moment it is
+   * least needed — the object is visibly changing, so the number is confirming
+   * something already on screen. The question it actually answers is "how big
+   * is this", and that is asked while looking at a thing, not while dragging
+   * it. Every reference for this selection box shows it under a resting
+   * selection.
+   *
+   * The live text wins while a gesture is running, because that is a *changing*
+   * number and the resting one would be stale for the length of the drag.
+   * Otherwise it is derived from the same bounds the handles are placed from,
+   * so it cannot disagree with the box it sits under.
+   *
+   * Suppressed for a multi-selection: a combined bounding box has a width and
+   * a height, but they are not the size of anything the user selected, and a
+   * number under a group of objects reads as a claim about each of them.
+   */
+  const restingBadge =
+    !transforming && selectionBounds && selectedIds.length === 1
+      ? {
+          text: `${Math.round(selectionBounds.bounds.width)} × ${Math.round(selectionBounds.bounds.height)}`,
+          x: selectionBounds.bounds.x + selectionBounds.bounds.width / 2,
+          // Below the box, clear of the bottom handles and their padding.
+          y: selectionBounds.bounds.y + selectionBounds.bounds.height + BADGE_DROP / (stageRef.current?.scaleX() || 1),
+        }
+      : null;
+
+  const badge = transforming ? liveBadge : restingBadge;
+
+  const hudBadge = badge ? (() => {
     const scale = 1 / (stageRef.current?.scaleX() || 1);
     // Measured from the string rather than fixed, so a short value gets a short
     // pill. `6.4` is Inter's advance at 11px for the digits and the separator,
     // which is all this ever shows.
-    const width = Math.max(46, liveBadge.text.length * 6.4 + 18);
+    const width = Math.max(46, badge.text.length * 6.4 + 18);
     return (
       <Group
-        x={liveBadge.x}
-        y={liveBadge.y}
+        x={badge.x}
+        y={badge.y}
         scaleX={scale}
         scaleY={scale}
         listening={false}
@@ -687,7 +841,7 @@ export const SelectionTransformer: React.FC<Props> = ({ selectedIds, stageRef })
           x={-width / 2}
           y={-4.5}
           width={width}
-          text={liveBadge.text}
+          text={badge.text}
           fontSize={11}
           fontFamily="Inter, -apple-system, BlinkMacSystemFont, sans-serif"
           fontStyle="500"
@@ -710,11 +864,21 @@ export const SelectionTransformer: React.FC<Props> = ({ selectedIds, stageRef })
       onTransformEnd={handleTransformEnd}
       boundBoxFunc={(oldBox, newBox) => (newBox.width < MIN_SIZE || newBox.height < MIN_SIZE ? oldBox : newBox)}
       /**
-       * Eight vertices: four corners and four edge midpoints.
+       * Eight vertices: four corners and four edge midpoints, and nothing else.
        *
-       * The rotate handle above them stays â€” it is the ninth *control* but not
-       * a ninth vertex, and removing it would take rotation away entirely.
+       * Konva's ninth control — a knob on a stalk above the top edge — is off.
+       * It is a library default rather than a design: it is not part of the
+       * object's geometry, it collides with whatever sits above the selection,
+       * and on a small object it is larger than the thing it belongs to. Figma
+       * and Illustrator both put rotation in the ring just outside each corner
+       * instead, which is what `RotateZones` below does.
+       *
+       * Removing it is only safe *because* that shipped with a rotate cursor.
+       * A stalk with a knob on it advertises itself and an invisible hot zone
+       * does not; what makes it discoverable in those apps is that the pointer
+       * changes the instant you enter it. The cursor is the affordance.
        */
+      rotateEnabled={false}
       enabledAnchors={ANCHORS}
       // A hairline, and the same blue the hover ring uses, so selecting
       // something is a continuation of hovering it rather than a new colour
@@ -731,15 +895,14 @@ export const SelectionTransformer: React.FC<Props> = ({ selectedIds, stageRef })
        * identical asks the user to remember which is which; shaping each one
        * like its job means they do not have to.
        */
+      /**
+       * Corners and edges are drawn differently, because they *do* different
+       * things: a corner scales both axes, an edge scales one. Making them
+       * identical asks the user to remember which is which; shaping each one
+       * like its job means they do not have to.
+       */
       anchorStyleFunc={(anchor) => {
         const name = anchor.name().split(' ')[0];
-        if (name === 'rotater') {
-          // Round, because rotation is continuous and has no axis â€” and a
-          // little further out, so it is never confused with the corner it
-          // sits above.
-          anchor.cornerRadius(anchor.width() / 2);
-          return;
-        }
         if (CORNERS.has(name)) {
           anchor.cornerRadius(2.5);
           return;
@@ -771,6 +934,27 @@ export const SelectionTransformer: React.FC<Props> = ({ selectedIds, stageRef })
   return (
     <>
       {proxy}
+      {/*
+        Under the transformer, deliberately.
+        A rotate zone hangs off its corner and the resize anchor is drawn at the
+        padded corner, so the two overlap by a few pixels. Konva hit-tests
+        top-down, so rendered *after* the transformer these would take the hover
+        that belongs to the anchor and the resize cursor would never appear on
+        the corner handles. Underneath, the anchor wins where they overlap and
+        the ring outside it rotates — which is the arbitration Figma and
+        Illustrator have, and it needs no geometry to maintain.
+      */}
+      {selectionBounds && (
+        <RotateZones
+          box={selectionBounds.bounds}
+          rotation={selectionBounds.rotation}
+          proxyRef={proxyRef}
+          onStart={beginExternalGesture}
+          onMove={handleTransform}
+          onEnd={handleTransformEnd}
+          transforming={transforming}
+        />
+      )}
       {transformerEl}
       {hudBadge}
     </>

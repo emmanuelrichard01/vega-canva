@@ -363,6 +363,28 @@ function normalizeAppearance(raw: any): Appearance {
   const radius = source.cornerRadius ?? raw?.geometry?.cornerRadius ?? legacy.cornerRadius;
   if (typeof radius === 'number' && Number.isFinite(radius)) {
     appearance.cornerRadius = Math.max(0, radius);
+  } else if (Array.isArray(radius) && radius.length === 4) {
+    /**
+     * The four-corner form.
+     *
+     * Missing this is what made independent corners look broken rather than
+     * absent: the panel wrote the array, the CRDT stored it, and **this
+     * function dropped it on the way back out** — so the value round-tripped
+     * to nothing and the field snapped to zero. Stepping it then read 0 and
+     * wrote 1 every time, which is why it appeared to be stuck at 1.
+     *
+     * Invariant 3 is that every read is normalized here, which means this is
+     * the one place a new stored form has to be taught about. Widening the
+     * schema and every consumer without it is exactly the shape of failure the
+     * invariant exists to catch, and it fails *silently* — nothing throws,
+     * the write succeeds, and only the value is gone.
+     */
+    const four = radius.map((n) => (Number.isFinite(n) ? Math.max(0, Number(n)) : 0));
+    // Collapsed when they agree, so a document never carries the wide form for
+    // a shape that does not need it — the same rule `packRadii` applies.
+    appearance.cornerRadius = four.every((n) => n === four[0])
+      ? four[0]
+      : (four as [number, number, number, number]);
   }
 
   // `normal` is stored as absent, so the common case costs no bytes and

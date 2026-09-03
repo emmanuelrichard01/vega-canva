@@ -43,9 +43,14 @@ export class HandTool implements Tool {
   // The grab/grabbing swap used to be done here, by writing
   // `container.style.cursor` on pointer down and up. That is an inline style
   // on the same element React owns, so the two fought on every re-render, and
-  // it only covered a press that started on the stage. `index.css` does it
-  // with `:active` on the container instead — no state, no race, and it also
-  // catches Space-pan, which this never did.
+  // it only covered a press that started on the stage.
+  //
+  // Both pointers now do it without being told, and neither needs a render:
+  // the native one through `[data-cursor-mode="pan"]:active` in `index.css`,
+  // the drawn one by carrying both hands and choosing with `[data-pressed]`.
+  // That also catches Space-pan, which this never did — and it is why the
+  // `grab` mode has no caller: the gesture lives in a ref, and a ref cannot
+  // drive a render, so the closed hand had to be reachable without one.
   onPointerUp(ctx: ToolContext, _e: any) {
     this.isDragging = false;
 

@@ -425,36 +425,59 @@ made it after that person disconnects.
 
 Two different problems, deliberately solved two different ways.
 
-**Your own pointer is drawn by the app**, over the canvas only. Tools resolve
-to a *cursor mode* (`cursorModeForTool`, pure and tested), and `LocalCursor`
-renders the matching art from `cursorArt.tsx`: a solid pointer with a small
-tool badge in its tail, or a crosshair where the job is to hit a point rather
-than indicate a direction. Tools swap instantly — no tweening, no press
-response.
+**Your own pointer is the OS pointer, given a picture.** This is the second
+implementation, and the first one is worth recording because it is the one
+everybody writes.
 
-Two things make this work where the version it replaces did not:
+A custom cursor drawn as a DOM element that follows `pointermove` **cannot**
+keep up. Not because the code is slow — because a composited page element is
+presented on the next frame while the OS draws its own pointer directly, so the
+drawn one is a frame behind *by construction*, at any frame rate, on any
+machine. The old implementation was optimised twice for this: writing the
+transform inside the pointer event instead of a frame, then subscribing to
+uncoalesced `pointerrawupdate`. Both are real improvements and neither can
+close a gap that is not about speed. `toolCursor.ts` carried a header saying
+exactly this, and the element was optimised again anyway before the header was
+believed.
 
-- **The transform is written inside the pointer event, never in a frame.** The
-  old implementation stored a coordinate and applied it in `requestAnimationFrame`,
-  so it was a frame behind by construction. It also subscribes to
-  `pointerrawupdate` where that exists, which is not coalesced, so a
-  high-polling mouse lands on positions `pointermove` never reports.
-- **The art has fixed colours, not theme tokens.** A cursor sits over
-  *content*, not over the background: a `--surface-primary` fill is invisible
-  against a dark canvas and against any dark object in a light one. White fill,
-  near-black outline, offset shadow — legible over everything.
+So every cursor is now a CSS `url(data:image/svg+xml,…)` value handed to the OS
+compositor with a hotspot, and there is nothing to lag. `cursorVisual.ts` holds
+the art as data — geometry plus a palette — and `cursorCss.ts` turns a visual
+into the declaration and its keyword fallback. Tools resolve to a cursor mode
+(`cursorModeForTool`, pure and tested); `LocalCursor` renders `null` and writes
+custom properties.
 
-Panels and chrome keep the real OS pointer. `index.css` also keeps a full set
-of native `[data-cursor-mode]` cursors underneath, and `LocalCursor` hands the
-surface back to them on a coarse pointer or under `forced-colors`, where a
-drawn cursor cannot honour the pointer size and contrast the OS was asked for.
+Four things about `url()` cursors are not obvious until they cost you an
+afternoon:
 
-**The attribute that suppresses the native cursor is applied only while the
-drawn one is actually visible**, so the canvas is never left with `cursor:
-none` and nothing on top of it. Setting it at mount time instead is subtly
-broken, because no `pointerenter` is delivered for a pointer that was already
-inside the element: mounting with the mouse over the canvas — which is what
-every reload and every sign-in does — hid the system cursor and drew nothing.
+- **The SVG needs `xmlns="http://www.w3.org/2000/svg"`.** A data URI that fails
+  to decode does not warn — the whole declaration is dropped and the keyword
+  fallback takes over silently. Every drawn cursor in the app was falling back
+  to `default` for one missing attribute, and it looked deliberate.
+- **The image is clipped to its declared size.** Art that reaches past the
+  SVG's `width`/`height` is cut with no error, which is how the precision
+  crosshair lost its arms.
+- **`Stage.container()` is not `.canvas-container`.** It is react-konva's own
+  `<div>`, a child of it. Six components wrote the cursor on one while
+  `LocalCursor` watched the other, which is a permanent double cursor.
+- **Ownership needs to be falsifiable.** Those six components were assigning
+  `style.cursor` directly — last-writer-wins, with no way to know whether the
+  last writer still exists, so two overlapping hovers left the wrong one in
+  charge and an unmount mid-hover never released. `cursorOverride.ts` is a claim
+  store (`claim` / `release` / `releaseAll`), and claims are published as an
+  **inheriting custom property** rather than an inline style, so it does not
+  matter which of the two elements a caller holds. Publishing them as an inline
+  `cursor` was tried and is dead on arrival: an inline style on a parent does
+  not override a child's own rule, whereas a custom property inherits into it.
+
+The theme rule survived the rewrite intact, inverted: a cursor sits over
+*content*, not over the background, so the body is dark ink on a paper edge in
+a light theme and the reverse in a dark one — legible over artwork either way,
+which a `--surface-primary` fill never is.
+
+Panels and chrome keep the plain arrow, and `index.css` keeps native fallbacks
+underneath for coarse pointers and `forced-colors`, where a custom cursor
+cannot honour the pointer size and contrast the OS was asked for.
 
 **Other people's pointers** are rendered by `RemoteCursors`: React mounts and
 unmounts them and decides whether each is visible, while a frame loop does
@@ -848,6 +871,34 @@ distribution. Three levels that differ in **character** — how many passes, how
 far an edge bellies, how far a stroke runs past its corner — because scaling one
 displacement is the axis that does not produce three usable looks.
 
+**Three of the four pen shadings were wrong in the same way, and one was wrong
+on its own.** The scribble is the only style drawn as a *single continuous
+stroke*, and it carried one previous point across every span of every scanline
+— which is right on a convex shape, where a row is one span, and draws the pen
+straight across the gap on anything concave. A star came out with its points
+webbed together. The pen is tracked as one or more chains now: a span continues
+the chain from the row above whose span it overlaps, and starts a new one when
+there is none, because the pen cannot be in two places.
+
+The other three shared the failure this file has had to fix at three other
+levels: **a constant displacement beside a variable spacing.** Hachure nudged
+each stroke off its scanline by one unit and pulled its ends in by two, while
+the gap between strokes ranges from 5.5 to 14 — so at the dense setting a pair
+of neighbours leaning together closed to 2.4 units, under the four units where
+shading stops being strokes and becomes a flat tone, and at the light setting
+the same unit was seven per cent of the spacing and read as nothing. One number
+cannot serve a range it is a fifth of at one end and a seventh at the other.
+
+Stipple's was the same mistake in a different costume, and it had already been
+fixed once. The docstring records the first version discarding the density
+control outright; the fix put it back *underneath* a spacing floor derived from
+the shape's diagonal, and a floor that grows with the shape swallowed it — at
+300×200 all three densities were within three per cent of each other, and at
+600×400 they were identical. What the cap protects is the number of dots, since
+this is one path parsed every frame, so it says that now and engages only when
+the count would really be a problem. The test that missed it asserted `dense !==
+light` on a 100-unit square, which is one of the few sizes where it worked.
+
 **Shading gained the two things a hand varies and this could not.** The gap
 between strokes and the angle they run at were both single constants, so every
 hachured shape on a board carried the same weight of grey and ran the same way.
@@ -967,6 +1018,75 @@ there to replace. Where there is no interior — hachure, cross-hatch, scribble,
 stipple — the control is withdrawn with the reason, because the marks *are* the
 fill and there is nothing for a shadow to fall across.
 
+### The selection box — `SelectionTransformer`, `RotateZones`
+
+Four corner handles, four edge midpoints, and **no protruding rotate arm**. The
+arm is a piece of chrome that is not part of the object and has to be reached
+for; every tool this is measured against instead arms rotation in the empty
+space just outside a corner. Four invisible zones do that, rendered *under* the
+transformer so a resize anchor wins where the two overlap — which is the
+arbitration Figma and Illustrator both use and it needs no geometry to
+maintain.
+
+The readout under the box is **persistent**. It used to appear only during a
+gesture, which is the moment it is least useful: the object is visibly
+changing, so the number confirms something already on screen. "How big is this"
+is asked while looking at a thing. During a rotation it counts degrees and
+returns to `W × H` when the turn ends.
+
+Rotation took six fixes, and each is a trap rather than a typo:
+
+- **Read the proxy as a centre, not a corner.** `fitProxy` positions by centre
+  with an offset, so `proxy.x()` is not the top-left and the zones sat half a
+  box away.
+- **Arm on press, begin on first move.** Committing on a press that never moved
+  applied a transform between two *different* selections and threw objects
+  across the board.
+- **Do not unmount on the flag your own `onStart` sets.** `visible={!transforming}`
+  destroyed the gesture that had just started it.
+- **Register window listeners once.** Depending on the callbacks re-registered
+  them every render, and the cleanup ended the gesture mid-turn.
+- **Accumulate angle deltas, wrap-aware.** Raw `atan2` gives a 360° flip.
+- **Press and move must share a coordinate space.** One was stage-relative and
+  the other viewport-relative, which read as a ±15° jump at the bottom corners
+  and nowhere else.
+
+A seventh was in the badge rather than the gesture: `tr.getActiveAnchor()`
+reports an anchor only for a drag *Konva* started, so during our own rotation
+it answers `''` and the readout showed width and height — the two numbers a
+rotation does not change. The gesture publishes a sticky anchor instead.
+
+### The Properties panel — `components/panel/`
+
+Two rules carry most of it.
+
+**A field takes its column.** A control with no width of its own is sized by
+whatever contains it, and this panel mixes flex rows with grid cells — so the
+same number field measured 31px in one row and 95.5px in another, five widths
+and five left edges down one 260px column, with the narrow ones fitting `2` but
+not `100`. Containers choose their columns deliberately; a field agrees with
+whatever it is given (`flex: 1; min-width: 0`) and no width is authored by
+hand.
+
+**Steppers show a bare number.** No `−`/`+`: that is two controls per field
+across a dozen fields, and the keyboard already does it better — `↑`/`↓` step,
+`←`/`→` do the same on a horizontal field, `Shift` takes ten, which is what
+lets the keys carry the whole job.
+
+Corner radius is the one control with two shapes. Linked, it is a single field;
+unlinked, a two-by-two grid laid out **as the corners are** — and that last
+part is the whole reason `GRID` exists as an explicit table. Storage order is
+clockwise (`[TL, TR, BR, BL]`, what Konva's `Rect` takes and what an SVG path
+walks) and reading order is left-to-right, top-to-bottom. They agree on the top
+row and disagree on the bottom, so the first version mapped the array straight
+into the grid and shipped two fields editing the wrong corners while looking
+entirely correct.
+
+Whether the corners are linked is **derived from the value**, never stored
+beside it, so a shape whose corners differ cannot show as linked. `packRadii`
+collapses four equal radii back to a number and drops the field when all four
+are zero, which is why nothing had to migrate.
+
 ### Colour — `engine/model/colorRamp.ts`
 
 Every picker offered two things: a fixed set of swatches, and a saturation-value
@@ -1028,6 +1148,10 @@ apps/
         interaction/ snapping and guides, alt-duplicate, floating-panel
                      placement, and the transient stores (crop, path edit,
                      boolean preview) that must not reach the document
+        learn/       the three teaching surfaces: the tour (where things are),
+                     lessons (what a gesture does), and walkthroughs — the same
+                     lessons performed a step at a time, advancing only on a
+                     gesture observed in the document
         cursor/      tool cursor modes, remote cursor rendering
       components/
         canvas/      renderers, node editor, shared transformer

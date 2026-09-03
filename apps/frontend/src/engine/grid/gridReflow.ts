@@ -1,6 +1,7 @@
 import type { AnyNode, GridNode, ImageNode, TextNode } from '../model/schema';
 import { coverCrop, parkedCell, slotBox } from './gridSlot';
 import { gridCellsOf } from './gridNode';
+import { cornerRadiiOf } from '../model/cornerRadii';
 
 /**
  * A node that can sit in a module: a picture, or a caption.
@@ -227,7 +228,7 @@ export function planGridReflow(
      */
     if (image.type === 'image') {
       const radius = cell.outline ? 0 : cell.radius;
-      if (differs(image.appearance?.cornerRadius, radius)) {
+      if (differs(cornerRadiiOf(image.appearance?.cornerRadius)[0], radius)) {
         changes.appearance = { ...(image.appearance ?? {}), cornerRadius: radius };
       }
     }

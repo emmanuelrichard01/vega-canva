@@ -1,5 +1,4 @@
 import React, { useState, useEffect } from 'react';
-import { Minus, Plus } from 'lucide-react';
 
 interface Props {
   value: number;
@@ -75,13 +74,17 @@ export const NumberStepper: React.FC<Props> = ({
    * A mixed field nudges each object relative to itself; an agreed one steps
    * the shared value as it always has.
    */
-  const handleStep = (direction: 1 | -1) => {
+  const handleStep = (direction: 1 | -1, coarse = false) => {
     if (disabled) return;
+    // Shift takes ten steps at once, which is the convention every design tool
+    // shares and the reason the arrows can carry the whole job: without it a
+    // hundred-unit change is a hundred presses.
+    const amount = direction * step * (coarse ? 10 : 1);
     if (mixed) {
-      onNudge?.(direction * step);
+      onNudge?.(amount);
       return;
     }
-    handleCommit(value + direction * step);
+    handleCommit(value + amount);
   };
 
   const handleBlur = () => {
@@ -117,24 +120,50 @@ export const NumberStepper: React.FC<Props> = ({
     if (e.key === 'Enter') {
       e.preventDefault();
       (e.currentTarget as HTMLElement).blur();
-    } else if (e.key === 'ArrowUp') {
+    } else if (e.key === 'ArrowUp' || e.key === 'ArrowRight') {
       e.preventDefault();
-      handleStep(1);
-    } else if (e.key === 'ArrowDown') {
+      handleStep(1, e.shiftKey);
+    } else if (e.key === 'ArrowDown' || e.key === 'ArrowLeft') {
       e.preventDefault();
-      handleStep(-1);
+      handleStep(-1, e.shiftKey);
     }
   };
 
-  // A mixed field's arrows are bounded by nothing, because they move each
-  // object from wherever it already is rather than from the shown value.
-  const atMin = disabled || (!mixed && value <= min) || (mixed && !onNudge);
-  const atMax = disabled || (!mixed && value >= max) || (mixed && !onNudge);
 
   return (
+    /**
+     * The field, as one named thing.
+     *
+     * ## Why this element has a class now
+     *
+     * It used to be an unclassed `div` carrying its layout inline, which meant
+     * it had no sizing of its own — so how wide a number field came out was
+     * decided entirely by what happened to contain it. In a `.prop-row__control`
+     * (flex, right-aligned) it shrank to its content floor; in a grid cell it
+     * stretched to `1fr`. Measured across one 260px panel, the same control
+     * came out at:
+     *
+     * ```text
+     *   Weight            31px
+     *   Opacity         40.5px   ← wider only because it carries a "%"
+     *   Radius (linked)   31px
+     *   Radius corners  95.5px
+     *   Transform X/Y     78px
+     * ```
+     *
+     * A three-fold spread, and five different left edges, for one control. The
+     * 31px ones have fifteen pixels of room between their paddings — enough for
+     * `2` and not for `100`, so the panel's most common value was the one it
+     * could not show.
+     *
+     * `.field` gives it a width rule of its own: take the column, down to a
+     * floor. Every container in the panel already sizes its columns
+     * deliberately, so this is the one line that makes the field agree with
+     * them instead of guessing.
+     */
     <div
-      className={className}
-      style={{ display: 'flex', alignItems: 'center', gap: '4px', opacity: disabled ? 0.45 : 1 }}
+      className={className ? `field ${className}` : 'field'}
+      style={{ opacity: disabled ? 0.45 : 1 }}
       data-tooltip={disabledReason}
     >
       {/* The axis letter: X, Y, W, H, R.
@@ -153,19 +182,30 @@ export const NumberStepper: React.FC<Props> = ({
         className="stepper"
         style={{
           display: 'flex', alignItems: 'center', background: 'var(--surface-hover)',
-          borderRadius: 'var(--radius-md)', overflow: 'hidden', border: '1px solid transparent',
+          /* Tighter than the panel's cards. A field is a small, dense,
+             repeated element and a 6px curve on a 26px box reads as a pill;
+             at 4px it reads as a field. The arrows used to fill the ends and
+             hid this — with a bare number the corner is the shape. */
+          borderRadius: 'var(--radius-sm)', overflow: 'hidden', border: '1px solid transparent',
           transition: 'border-color 0.2s'
         }}
       >
-        <button
-          onClick={() => handleStep(-1)}
-          disabled={atMin}
-          className="btn-icon"
-          aria-label={label ? `Decrease ${label}` : 'Decrease'}
-          style={{ padding: '4px', opacity: atMin ? 0.3 : 1 }}
-        >
-          <Minus size={14} />
-        </button>
+        {/*
+          There are no arrows any more.
+          ---------------------------------------------------------------------
+          A `−` and a `+` beside every number is two controls per field, and
+          this panel holds a dozen fields — so the arrows were the single
+          largest source of visual noise in it, and each pair says only what
+          the field already implies. Every design tool this product is measured
+          against shows a bare number here.
+
+          They are removed rather than hidden because their whole job is
+          already done better by the keyboard: `ArrowUp`/`ArrowDown` step by
+          one, `Shift` takes ten, and `ArrowLeft`/`ArrowRight` do the same for
+          anyone who reaches for a horizontal pair on a horizontal field. That
+          was true before this change — the arrows were a *second* way to do
+          it, and the less discoverable one now carries a hint instead.
+        */}
         <input
           type="text"
           value={localValue}
@@ -178,6 +218,10 @@ export const NumberStepper: React.FC<Props> = ({
           onChange={(e) => setLocalValue(e.target.value)}
           onBlur={handleBlur}
           onKeyDown={handleKeyDown}
+          // The affordance the arrows used to be. A number field that responds
+          // to the arrow keys is a convention, not a certainty, so it is worth
+          // one line of a tooltip rather than left to be discovered.
+          title={disabledReason || '↑ ↓ to step · Shift for ten'}
           style={{
             // Takes the room the field has left over, down to a floor.
             //
@@ -197,7 +241,19 @@ export const NumberStepper: React.FC<Props> = ({
             width: 'auto',
             minWidth: mixed ? '44px' : '28px',
             background: 'transparent', border: 'none', outline: 'none',
-            textAlign: 'center', fontSize: 'var(--text-sm)', fontFamily: 'var(--font-mono, monospace)',
+            /* Left, not centred. Centring was right while a button sat on each
+               side and the number was the middle of three things; with the
+               buttons gone the number *is* the field, and a column of
+               left-aligned figures scans as a column. It is what Figma and
+               Illustrator both show. */
+            // The right inset is the field's, not the input's, whenever a
+            // suffix follows: `100` and `%` are one reading, so they sit a
+            // space apart and the 8px belongs on the outside of both. With
+            // both carrying 8 the unit drifted off to the right on its own and
+            // the field measured wider than its neighbours for no reason
+            // anyone chose — `%` alone made Opacity 9.5px wider than Weight.
+            padding: suffix ? '0 2px 0 8px' : '0 8px',
+            textAlign: 'left', fontSize: 'var(--text-sm)', fontFamily: 'var(--font-mono, monospace)',
             fontVariantNumeric: 'tabular-nums',
             color: 'var(--text-primary)',
             fontStyle: mixed && localValue === '' ? 'italic' : 'normal',
@@ -207,22 +263,13 @@ export const NumberStepper: React.FC<Props> = ({
           <span
             aria-hidden="true"
             style={{
-              fontSize: 'var(--text-2xs)', color: 'var(--text-tertiary)', paddingRight: 4,
+              fontSize: 'var(--text-2xs)', color: 'var(--text-tertiary)', paddingRight: 8,
               fontFamily: 'var(--font-mono, monospace)', pointerEvents: 'none', flexShrink: 0,
             }}
           >
             {suffix === 'deg' ? '°' : suffix}
           </span>
         )}
-        <button
-          onClick={() => handleStep(1)}
-          disabled={atMax}
-          className="btn-icon"
-          aria-label={label ? `Increase ${label}` : 'Increase'}
-          style={{ padding: '4px', opacity: atMax ? 0.3 : 1 }}
-        >
-          <Plus size={14} />
-        </button>
       </div>
     </div>
   );

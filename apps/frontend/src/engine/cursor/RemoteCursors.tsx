@@ -5,9 +5,8 @@ import { collaboratorStore } from '../presence/collaboratorStore';
 import { useCollaborators, useKeyedRef, usePresenceFrame } from '../presence/useCollaborators';
 import { ACTIVITY_LABEL } from '../presence/collaborators';
 import { chipColorsFor, placeChip, type ChipColors } from './remoteCursor';
+import { ARROW_D, ARROW_SCALE, ARROW_TIP, CURSOR_SIZE } from './cursorVisual';
 import { ToolBadge } from './cursorArt';
-import { ARROW_D, ARROW_SCALE, ARROW_TIP, CURSOR_SIZE } from './cursorArtData';
-import { cursorModeForTool } from './toolCursor';
 import { useStore } from '../../hooks/useStore';
 import { RULER_SIZE } from '../../components/canvas/Rulers';
 
@@ -109,13 +108,19 @@ const Arrow = ({
     <g transform={`scale(${ARROW_SCALE})`}>
       <path d={ARROW_D} fill={color} stroke="#FFFFFF" strokeWidth={1.7} strokeLinejoin="round" />
     </g>
-    <ToolBadge
-      mode={cursorModeForTool(tool ?? undefined)}
-      tool={tool ?? undefined}
-      fill={colors.fill}
-      ink={colors.ink}
-      ring="#FFFFFF"
-    />
+    {/*
+      The same glyph table the local pointer reads, which is the whole claim
+      the README makes for this: "your own pointer wears a small glyph for the
+      tool in your hand; a collaborator's pointer wears the same glyph in their
+      colour, so nothing has to be learned twice."
+
+      That was false until now. There were two tables and the local cursor
+      consulted neither — it built its badge through a helper that hard-coded
+      `undefined` for the tool, so it only ever showed the *mode* glyph while a
+      collaborator watching the same tool saw the specific one. A rectangle and
+      a star were one pencil locally and two different shapes remotely.
+    */}
+    <ToolBadge tool={tool ?? undefined} fill={colors.fill} ink={colors.ink} />
   </svg>
 );
 

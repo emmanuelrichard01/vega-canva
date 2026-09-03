@@ -8,6 +8,19 @@ import { shapeToPath } from '../../engine/model/shapeToPath';
 import type { Point, ShapeNode } from '../../engine/model/schema';
 import { isRoundableTurn } from '../../engine/model/roundCorners';
 import { liveTransformStore, useLiveTransform } from '../../engine/model/liveTransformStore';
+import { claimCursor } from '../../engine/cursor/cursorOverride';
+import { cornerRadiiOf, type CornerRadiusValue } from '../../engine/model/cornerRadii';
+
+/**
+ * The live value, when it is the single-number form.
+ *
+ * This handle drags *one* radius, so a live per-corner value is not something
+ * it can show — and there is never one, because the handle is the only thing
+ * that writes a live radius. Narrowing rather than collapsing keeps that true
+ * rather than quietly averaging four corners into a drag.
+ */
+const asNumber = (v: CornerRadiusValue | undefined): number | undefined =>
+  typeof v === 'number' ? v : undefined;
 
 interface Props {
   node: ShapeNode;
@@ -151,7 +164,7 @@ export const CornerRadiusHandle: React.FC<Props> = ({ node, stageScale }) => {
    */
   const max = corner.reach;
   const radius = Math.min(
-    liveRadius ?? liveTransform?.cornerRadius ?? node.appearance?.cornerRadius ?? 0,
+    liveRadius ?? asNumber(liveTransform?.cornerRadius) ?? cornerRadiiOf(node.appearance?.cornerRadius)[0],
     max
   );
 
@@ -220,7 +233,7 @@ export const CornerRadiusHandle: React.FC<Props> = ({ node, stageScale }) => {
         name={EXPORT_CHROME}
         onDragStart={() => {
           window.dispatchEvent(new CustomEvent('canvas-drag-start'));
-          const initial = node.appearance?.cornerRadius ?? 0;
+          const initial = cornerRadiiOf(node.appearance?.cornerRadius)[0];
           setLiveRadius(initial);
           liveTransformStore.set(node.id, { cornerRadius: initial });
         }}
@@ -241,14 +254,8 @@ export const CornerRadiusHandle: React.FC<Props> = ({ node, stageScale }) => {
             y: origin.y + corner.inward.y * settled,
           });
         }}
-        onMouseEnter={(e) => {
-          const stage = e.target.getStage();
-          if (stage) stage.container().style.cursor = 'pointer';
-        }}
-        onMouseLeave={(e) => {
-          const stage = e.target.getStage();
-          if (stage) stage.container().style.cursor = '';
-        }}
+        onMouseEnter={() => claimCursor('corner-radius', 'pointer')}
+        onMouseLeave={() => claimCursor('corner-radius', null)}
       />
     </Group>
   );

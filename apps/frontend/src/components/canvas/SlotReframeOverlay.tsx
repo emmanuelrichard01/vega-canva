@@ -7,6 +7,7 @@ import { slotReframe } from '../../engine/interaction/slotReframe';
 import { setSlotFit, slotFrame } from '../../engine/grid/gridSlotApply';
 import { clampZoom, nudgeFocus, zoomAtPoint } from '../../engine/grid/gridSlot';
 import { EXPORT_CHROME } from '../../engine/export/chrome';
+import { claimCursor } from '../../engine/cursor/cursorOverride';
 
 /**
  * Reframing a picture inside the module that holds it.
@@ -130,10 +131,8 @@ export const SlotReframeOverlay: React.FC = () => {
     if (next) setSlotFit(snapshot.nodeId, next);
   };
 
-  const setCursor = (cursor: string) => (e: Konva.KonvaEventObject<PointerEvent>) => {
-    const container = e.target.getStage()?.container();
-    if (container) container.style.cursor = cursor;
-  };
+  // Through the claim store — see `cursorOverride`.
+  const setCursor = (cursor: string) => () => claimCursor('slot-reframe', cursor || null);
 
   // Thirds, the standard framing aid, drawn inside the module only.
   const thirds = [1, 2].flatMap((i) => [

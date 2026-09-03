@@ -13,6 +13,9 @@ import { TOOL_SHORTCUTS } from '../engine/tools/shortcuts';
 import { TOOL_NAMES } from '../engine/tools/toolNames';
 import { keyFor, LESSONS, type Lesson } from '../engine/learn/lessons';
 import { learnState } from '../engine/learn/learnState';
+import { isWalkable } from '../engine/learn/walkthrough';
+import { walkthroughState } from '../engine/learn/walkthroughState';
+import { useStore } from '../hooks/useStore';
 import { tourState } from '../engine/learn/tourState';
 import { TOUR } from '../engine/learn/tour';
 import { LessonDemo } from './learn/LessonDemo';
@@ -338,13 +341,24 @@ function buildSections(): Section[] {
  * The learned state is shown but never used to hide anything. A reference that
  * withheld what you already knew would be a reference you could not check.
  */
-const LessonCard: React.FC<{ lesson: Lesson }> = ({ lesson }) => {
+const LessonCard: React.FC<{ lesson: Lesson; onWalk: (id: string) => void }> = ({
+  lesson,
+  onWalk,
+}) => {
   const { learned } = useSyncExternalStore(
     learnState.subscribe,
     learnState.getSnapshot,
     learnState.getSnapshot
   );
   const key = keyFor(lesson);
+  /**
+   * Whether this lesson can be *performed* as well as read.
+   *
+   * Derived from the walkthrough table rather than listed here, for the reason
+   * the tool rows below are derived from `TOOL_SHORTCUTS`: a second list of
+   * which lessons are walkable would be wrong the first time one was added.
+   */
+  const walkable = isWalkable(lesson.id);
 
   return (
     <article className="help-lesson" data-known={learned.includes(lesson.id) || undefined}>
@@ -363,6 +377,18 @@ const LessonCard: React.FC<{ lesson: Lesson }> = ({ lesson }) => {
             </div>
           ))}
         </dl>
+        {/*
+          The offer to do it rather than read it.
+          Here rather than on the canvas because a walkthrough is a thing you
+          choose to start: raising one unasked is the wizard this product has
+          twice decided against. The coach mark is what arrives uninvited, and
+          it is one glance rather than five steps.
+        */}
+        {walkable && (
+          <button type="button" className="help-lesson__walk" onClick={() => onWalk(lesson.id)}>
+            Walk me through it
+          </button>
+        )}
       </div>
     </article>
   );
@@ -462,6 +488,30 @@ export const HelpModal: React.FC<Props> = ({ open, onClose }) => {
   const [query, setQuery] = useState('');
   const [activeTab, setActiveTab] = useState(ALL_TAB);
   const panelRef = useFocusTrap(open, onClose);
+
+  /**
+   * Begin a walkthrough, and get out of its way.
+   *
+   * Closing the reference is half the action rather than a courtesy: the
+   * walkthrough's first step is a gesture on the board, and the board is
+   * behind this dialog. Leaving it open would be asking somebody to do
+   * something they cannot reach.
+   *
+   * The snapshot is read at this instant, not when the first step is observed,
+   * so anything already on the board cannot count toward the first step —
+   * starting the connector walkthrough on a board that already has connectors
+   * would otherwise complete step one before it had been read.
+   */
+  const startWalk = useCallback(
+    (lessonId: string) => {
+      walkthroughState.start(lessonId, {
+        objects: useStore.getState().objects,
+        selected: [],
+      });
+      onClose();
+    },
+    [onClose]
+  );
   /**
    * The content pane, so a category change starts at the top of what it shows.
    *
@@ -891,7 +941,7 @@ export const HelpModal: React.FC<Props> = ({ open, onClose }) => {
                       the cards in half; see `.help-section--tips`. */}
                   <div className="help-lessons">
                     {visibleTips.map((lesson) => (
-                      <LessonCard key={lesson.id} lesson={lesson} />
+                      <LessonCard key={lesson.id} lesson={lesson} onWalk={startWalk} />
                     ))}
                   </div>
                 </section>

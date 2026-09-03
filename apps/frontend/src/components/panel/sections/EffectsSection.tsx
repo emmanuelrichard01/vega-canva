@@ -9,6 +9,7 @@ import {
   type Appearance,
   type Shadow,
 } from '../../../engine/model/schema';
+import { fillsInterior } from '../../../engine/model/rough';
 import type { Shared } from '../../../engine/model/selection';
 
 const DEFAULT_SHADOW: Shadow = {
@@ -66,10 +67,7 @@ export const EffectsSection: React.FC<EffectsSectionProps> = ({
    * A solid fill does have one — including a sketched solid fill, which clips
    * against the drawn silhouette rather than the ruled outline beneath it.
    */
-  const penShaded =
-    Boolean(appearance.sketch) &&
-    Boolean(appearance.fillStyle) &&
-    appearance.fillStyle !== 'solid';
+  const penShaded = Boolean(appearance.sketch) && !fillsInterior(appearance.fillStyle);
 
   const canInnerShadow = Boolean(capabilities.supportsEdgeEffects) && !openShape;
 

@@ -413,7 +413,16 @@ export class ShapeTool implements Tool {
       appearance: {
         fill: [{ type: 'solid', color: ThemeService.getDefaultShapeFill(), opacity: 1 }],
         stroke: { color: ThemeService.getDefaultStrokeColor(), width: 2 },
-        cornerRadius: this.preset === 'rect' ? 8 : 0,
+        /**
+         * A rectangle is a rectangle.
+         *
+         * This was 8, so every square anyone drew arrived with rounded
+         * corners nobody asked for — a style decision baked into the *tool*,
+         * which is the one place it cannot be undone by not choosing it. The
+         * corner radius is a control in the panel and on the rail; the default
+         * is the shape's own geometry, and rounding is what you add.
+         */
+        cornerRadius: 0,
       },
     });
 
@@ -609,7 +618,9 @@ export class ShapeTool implements Tool {
 
     if (kind === 'rect') {
       return withReadout(
-        <Rect x={x} y={y} width={width} height={height} fill={fill} stroke={stroke} strokeWidth={2} cornerRadius={8} listening={false} />
+        <Rect x={x} y={y} width={width} height={height} fill={fill} stroke={stroke} strokeWidth={2} /* Square, like the shape this actually creates. It drew a rounded
+             preview and committed a sharp one, which is a preview that lies. */
+        cornerRadius={0} listening={false} />
       );
     }
 

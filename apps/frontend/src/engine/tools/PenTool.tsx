@@ -1,5 +1,5 @@
 import { nanoid } from 'nanoid';
-import { DEFAULT_INK } from '../model/schema';
+import { ThemeService } from '../ThemeService';
 import { simplifyPoints } from '../model/simplify';
 import type { Tool, ToolContext } from './Tool';
 import * as React from 'react';
@@ -25,7 +25,39 @@ export class PenTool implements Tool {
   id = 'pen';
   cursor = 'crosshair';
 
-  static currentColor = DEFAULT_INK;
+  /**
+   * The ink the pencil draws in, from the theme.
+   *
+   * ## Why this was wrong
+   *
+   * It was `static currentColor = DEFAULT_INK` — `#1F2937`, a near-black —
+   * and, unusually, **nothing anywhere ever assigned it**. There is no colour
+   * control for the pencil, so that constant was the colour of every freehand
+   * stroke this product has ever drawn. On a dark board it is a near-black
+   * line on a near-black surface: the tool appeared to do nothing, and the
+   * stroke was there all along.
+   *
+   * `BezierPenTool` one file over already asks `ThemeService` for its stroke,
+   * so the pencil was the odd one out rather than the rule.
+   *
+   * ## Why the body text colour, and not the shape stroke
+   *
+   * `getDefaultStrokeColor` is blue in light mode — right for a shape's edge,
+   * wrong for ink. A pencil draws the same mark a sentence is made of, so it
+   * takes the same pair, and `penInkContrast.test.ts` holds both ends of that
+   * pair against the board they are drawn on.
+   *
+   * ## Why a getter, and what it does not solve
+   *
+   * Read at draw time, so a stroke started after a theme change uses the new
+   * ink. A stroke already *committed* keeps the colour it was drawn with —
+   * switching to light does not repaint a white line — which is inherent to
+   * storing a colour and is what every editor does. This sets the default at
+   * creation, exactly as `getDefaultShapeFill` does for a new rectangle.
+   */
+  static get currentColor(): string {
+    return ThemeService.getDefaultTextColor();
+  }
 
   /** The nib, from the store so the dock's control and the stroke agree. */
   private static get size(): number {

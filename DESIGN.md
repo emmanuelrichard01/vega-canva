@@ -301,6 +301,14 @@ buttons and inputs, 12px on cards and floating panels, 16px on dialogs, and a
 full pill on chips, tabs and badges. Nothing is a circle except avatars, status
 dots and reaction bubbles.
 
+**Pinned surfaces take 8px, not 12.** The 12px step is for small floating
+lozenges over the board. The Layers panel, the Properties panel and the radar
+are not that: they are anchored to the window's edges and stacked on shared
+rails, and at 12 the curve reads as a rounded card that happens to be very
+tall. They share `--panel-radius`, scoped rather than folded into
+`--dock-radius`, because nine other surfaces use that token and none of them
+wants this. A collapsed rail *is* a small lozenge and keeps the 12.
+
 Borders are 1px, always. A coloured left border above 1px on a card or callout
 is not part of this system. The dot grid on the canvas — and on the empty region
 of every board thumbnail — is the one repeating texture, and it is what makes a
@@ -344,10 +352,41 @@ preview read as *a board* rather than as an illustration.
 - **Style:** Paper ground, 1px hairline, 8px radius, 12–14px padding.
 - **Hover:** border steps to `--border-strong`.
 - **Focus:** the global ring, never a hand-rolled one. Inputs take a 2px inset
-  outline; everything else takes the offset two-ring treatment.
+  outline; everything else takes the offset two-ring treatment. The ring is
+  drawn at the field's **resting** radius — a control that changes shape when
+  you click into it is describing a box that is not there.
 - **Never** set `outline: none` inline. An inline declaration outranks every
   selector in the stylesheet, so it makes the app's focus ring unreachable —
   which is exactly what hid focus on the first field of the first screen.
+
+### Number fields
+
+Dense, repeated, and the most common control in the Properties panel, so they
+get their own rules.
+
+- **A bare number, no arrows.** A `−` and a `+` beside every field is two
+  controls per row and a dozen rows; each pair only restates what the field
+  already implies. The keyboard does the job better and always did:
+  `↑`/`↓` step by one, `←`/`→` do the same on a horizontal field, and `Shift`
+  takes ten — which is what lets the keys carry the whole job, since without it
+  a hundred-unit change is a hundred presses. The affordance lives in a
+  one-line `title`, because arrow-key stepping is a convention rather than a
+  certainty.
+- **Left-aligned, at `--radius-sm`.** Centring was right while a button sat on
+  each side and the number was the middle of three things; with them gone the
+  number *is* the field, and a column of left-aligned figures scans as a
+  column. At 6px a 26px box reads as a pill — the arrows used to fill the ends
+  and hide that.
+- **A field takes its column.** This is the load-bearing rule. A field with no
+  width of its own is sized by whatever contains it, which across one 260px
+  panel produced 31px in a flex row and 95.5px in a grid cell for the same
+  control — five widths and five left edges, and the narrow ones fit `2` but
+  not `100`. Containers choose columns deliberately; fields agree with them
+  (`flex: 1; min-width: 0`) and nothing carries a hand-picked width.
+- **A unit sits inside the field's padding, not beside it.** `100 %` is one
+  reading. Giving the number and the unit each their own right padding pushed
+  the unit outward and made a field with a suffix measurably wider than its
+  neighbours.
 
 ### Navigation
 

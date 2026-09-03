@@ -12,6 +12,7 @@ import {
   type BlendMode,
 } from '../../../engine/model/schema';
 import type { Shared } from '../../../engine/model/selection';
+import { CornerRadiusRow } from '../CornerRadiusRow';
 
 const BLEND_LABELS: Record<BlendMode, string> = {
   normal: 'Normal',
@@ -84,20 +85,10 @@ export const FillAppearanceSection: React.FC<FillAppearanceSectionProps> = ({
       )}
 
       {capabilities.supportsRadius && !openShape && (
-        <Row label="Radius" hint="Rounds every corner by the same amount.">
-          {(() => {
-            const radius = sharedPaint((a) => a.cornerRadius ?? 0);
-            return (
-              <NumberStepper
-                value={radius.value ?? 0}
-                mixed={radius.mixed}
-                onChange={(v) => setAppearance({ cornerRadius: v })}
-                min={0}
-                max={200}
-              />
-            );
-          })()}
-        </Row>
+        <CornerRadiusRow
+          value={sharedPaint((a) => a.cornerRadius)}
+          onChange={(cornerRadius) => setAppearance({ cornerRadius })}
+        />
       )}
 
       {capabilities.supportsOpacity && (
@@ -117,7 +108,20 @@ export const FillAppearanceSection: React.FC<FillAppearanceSectionProps> = ({
 
       {!capabilities.supportsFill && capabilities.supportsStroke && appearance && (
         <Row label="Color">
-          <div style={{ display: 'flex', alignItems: 'center', gap: 4 }}>
+          {/*
+            A named class, not an inline flex with its own gap.
+
+            This was `gap: 4` written by hand while every other pair in the
+            panel sits on `--space-2`, so the swatch and the pipette were four
+            pixels closer together than any comparable pair one row above —
+            which is the whole of "the buttons look misaligned": nothing here
+            is *wrong*, several things are each slightly their own. An inline
+            style is also invisible to the token layer, so it could not follow
+            a change to the scale even in principle. `0b83d28` moved the colour
+            picker off inline styles for the same reason and this pair was
+            missed.
+          */}
+          <div className="prop-pair">
             <ColorPickerPopover
               color={appearance.stroke?.color ?? 'transparent'}
               mixed={sharedPaint((a) => a.stroke?.color ?? 'transparent').mixed}

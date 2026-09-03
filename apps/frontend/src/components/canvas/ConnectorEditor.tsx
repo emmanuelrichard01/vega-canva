@@ -20,6 +20,7 @@ import {
 } from '../../engine/model/connectorTargets';
 import type { ConnectorNode } from '../../engine/model/schema';
 import { useStore } from '../../hooks/useStore';
+import { claimCursor } from '../../engine/cursor/cursorOverride';
 
 interface Props {
   node: ConnectorNode;
@@ -153,14 +154,8 @@ export const ConnectorEditor: React.FC<Props> = ({ node, stageScale }) => {
           // something else re-renders it.
           e.target.position(which === 'from' ? a : b);
         }}
-        onMouseEnter={(e) => {
-          const stage = e.target.getStage();
-          if (stage) stage.container().style.cursor = 'move';
-        }}
-        onMouseLeave={(e) => {
-          const stage = e.target.getStage();
-          if (stage) stage.container().style.cursor = '';
-        }}
+        onMouseEnter={() => claimCursor('connector-end', 'move')}
+        onMouseLeave={() => claimCursor('connector-end', null)}
       />
     );
   };

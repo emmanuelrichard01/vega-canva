@@ -17,6 +17,7 @@ import {
   type CropHandle,
   type CropState,
 } from '../../engine/model/imageCrop';
+import { claimCursor } from '../../engine/cursor/cursorOverride';
 
 /** Where each handle sits on the crop rectangle, as a fraction of its box. */
 const HANDLE_AT: Record<CropHandle, { fx: number; fy: number }> = {
@@ -113,10 +114,9 @@ export const CropOverlay: React.FC = () => {
     target.position({ x: state.node.x, y: state.node.y });
   };
 
-  const setCursor = (cursor: string) => (e: Konva.KonvaEventObject<PointerEvent>) => {
-    const container = e.target.getStage()?.container();
-    if (container) container.style.cursor = cursor;
-  };
+  // Through the claim store, so the drawn pointer stands down in the same
+  // tick rather than discovering the change through a watcher.
+  const setCursor = (cursor: string) => () => claimCursor('crop', cursor || null);
 
   // Thirds, the standard framing aid. Drawn inside the kept region only.
   const thirds = [1, 2].flatMap((i) => [

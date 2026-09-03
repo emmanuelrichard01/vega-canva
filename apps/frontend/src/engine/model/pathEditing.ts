@@ -8,6 +8,7 @@ import {
   type Anchor,
   type ContourGeometry,
 } from './pathGeometry';
+import type { HandleMode } from './pathGeometry';
 
 /**
  * Editing several anchors at once, across every contour of a path.
@@ -282,7 +283,7 @@ export function dragHandle(
 export function setAnchorsMode(
   geo: ContourGeometry,
   refs: readonly AnchorRef[],
-  mode: 'corner' | 'smooth'
+  mode: HandleMode
 ): ContourGeometry {
   const subs = subpathsOf(geo).map((s) => s);
   for (const ref of refs) {

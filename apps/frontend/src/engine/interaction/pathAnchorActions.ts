@@ -10,6 +10,7 @@ import {
   type AnchorRef,
 } from '../model/pathEditing';
 import { reframePath, type ContourGeometry } from '../model/pathGeometry';
+import type { HandleMode } from '../model/pathGeometry';
 import { flattenToPath } from '../document/vectorOps';
 import type { AlignEdge } from '../model/align';
 import { pathEdit } from './pathEdit';
@@ -64,7 +65,7 @@ export function nudgePickedAnchors(dx: number, dy: number): boolean {
 }
 
 /** Straighten or round the picked anchors (or all anchors if none picked). Returns whether anything happened. */
-export function setPickedAnchorMode(mode: 'corner' | 'smooth'): boolean {
+export function setPickedAnchorMode(mode: HandleMode): boolean {
   const state = editing();
   if (!state) return false;
   const targetAnchors = state.anchors.length > 0
@@ -78,7 +79,7 @@ export function setPickedAnchorMode(mode: 'corner' | 'smooth'): boolean {
 /**
  * Straighten or round every anchor across multiple selected paths/shapes.
  */
-export function setMultiplePathsAnchorMode(ids: readonly string[], mode: 'corner' | 'smooth'): boolean {
+export function setMultiplePathsAnchorMode(ids: readonly string[], mode: HandleMode): boolean {
   const objects = useStore.getState().objects;
   let changed = false;
   for (const id of ids) {

@@ -31,6 +31,10 @@ import {
   toggleAnchor,
   type AnchorRef,
 } from '../../engine/model/pathEditing';
+import { claimCursor } from '../../engine/cursor/cursorOverride';
+import { curvatureAt } from '../../engine/model/pathGeometry';
+import { cursorCss } from '../../engine/cursor/cursorCss';
+import { penVisual } from '../../engine/cursor/cursorVisual';
 
 interface Props {
   /** Stage zoom, so every handle stays the same size on screen. */
@@ -156,6 +160,64 @@ export const PathEditor: React.FC<Props> = ({ stageScale }) => {
   const rings = contours(geometry);
   const scale = 1 / stageScale;
   const picked = new Set(selection.anchors.map(anchorKey));
+
+  /**
+   * The osculating circle at each picked anchor — the circle the curve *is*.
+   *
+   * ## Why a handle is not enough to see a curve by
+   *
+   * A Bézier handle shows the **tangent**: which way the curve sets off. It
+   * says almost nothing about how hard it bends, and two handles of very
+   * different lengths can look similar on screen while producing curves that
+   * are nothing alike. The difference only shows up once the path is stroked,
+   * zoomed, or laid beside another — which is late.
+   *
+   * The osculating circle is the missing half, and it is the one overlay that
+   * makes a *run* of anchors legible rather than one at a time: anchors
+   * carrying similar circles will read as one continuous sweep, and the odd one
+   * out is visible immediately instead of as a flat spot somebody notices
+   * afterwards.
+   *
+   * ## Why only the picked ones
+   *
+   * Drawing a circle at every anchor turns a path into a spirograph. These
+   * appear for what is selected, which is the same rule the handles follow.
+   *
+   * A circle is skipped where there is none to draw — a straight run, or a
+   * tangent that is undefined because the handle sits on its own anchor.
+   * `curvatureAt` answers null for both rather than `Infinity`, so there is
+   * nothing here to guard against.
+   */
+  const curvatures = ((): Array<{ key: string; cx: number; cy: number; r: number }> => {
+    /**
+     * A plain function, not a `useMemo`.
+     *
+     * This sits after the early returns for a freehand path and a missing
+     * node, so a hook here would be called conditionally — and this component
+     * has already shipped that bug once: `a605dec`, the hooks-order fault that
+     * emptied the canvas on double-click. Moving the memo above the returns
+     * would work and would put a hook a long way from what it is for.
+     *
+     * The work is a handful of curvature calculations over the *picked*
+     * anchors — usually none, occasionally a few — so memoising it buys
+     * nothing worth a hook.
+     */
+    const out: Array<{ key: string; cx: number; cy: number; r: number }> = [];
+    const subs = subpathsOf(geometry);
+    for (const ref of selection.anchors) {
+      const sub = subs[ref.sub];
+      if (!sub) continue;
+      const c = curvatureAt(sub, ref.index);
+      if (!c) continue;
+      // A circle far larger than the artwork is a straight line as far as the
+      // eye is concerned, and drawing it fills the screen with an arc that
+      // says nothing. The bound is generous: it only excludes the ones that
+      // could not be read anyway.
+      if (c.radius > 4000) continue;
+      out.push({ key: anchorKey(ref), cx: c.cx, cy: c.cy, r: c.radius });
+    }
+    return out;
+  })();
 
   /**
    * Write geometry back.
@@ -444,15 +506,13 @@ export const PathEditor: React.FC<Props> = ({ stageScale }) => {
               beginSession(e.target.getStage(), 'handle', p, { ref, side: which });
             }
           }}
-          onMouseEnter={(e) => {
+          onMouseEnter={() => {
             setHoveredHandleKey(handleKeyStr);
-            const stage = e.target.getStage();
-            if (stage) stage.container().style.cursor = 'grab';
+            claimCursor('path-anchor', cursorCss(penVisual('remove'), 'grab'));
           }}
-          onMouseLeave={(e) => {
+          onMouseLeave={() => {
             setHoveredHandleKey(null);
-            const stage = e.target.getStage();
-            if (stage) stage.container().style.cursor = '';
+            claimCursor('path-anchor', null);
           }}
           perfectDrawEnabled={false}
         />
@@ -511,14 +571,8 @@ export const PathEditor: React.FC<Props> = ({ stageScale }) => {
           commit(next);
           pathEdit.select([{ sub: found.sub, index: found.hit.curve + 1 }]);
         }}
-        onMouseEnter={(e) => {
-          const stage = e.target.getStage();
-          if (stage) stage.container().style.cursor = 'copy';
-        }}
-        onMouseLeave={(e) => {
-          const stage = e.target.getStage();
-          if (stage) stage.container().style.cursor = '';
-        }}
+        onMouseEnter={() => claimCursor('path-segment', cursorCss(penVisual('add'), 'copy'))}
+        onMouseLeave={() => claimCursor('path-segment', null)}
         perfectDrawEnabled={false}
       />
 
@@ -592,15 +646,13 @@ export const PathEditor: React.FC<Props> = ({ stageScale }) => {
                   const to = isCorner ? 'smooth' : 'corner';
                   commit(setAnchorsMode(geometry, isPicked ? selection.anchors : [ref], to));
                 }}
-                onMouseEnter={(e) => {
+                onMouseEnter={() => {
                   setHoveredKey(key);
-                  const stage = e.target.getStage();
-                  if (stage) stage.container().style.cursor = 'pointer';
+                  claimCursor('path-handle', cursorCss(penVisual('convert'), 'pointer'));
                 }}
-                onMouseLeave={(e) => {
+                onMouseLeave={() => {
                   setHoveredKey(null);
-                  const stage = e.target.getStage();
-                  if (stage) stage.container().style.cursor = '';
+                  claimCursor('path-handle', null);
                 }}
                 perfectDrawEnabled={false}
               />
@@ -725,6 +777,46 @@ export const PathEditor: React.FC<Props> = ({ stageScale }) => {
       )}
 
       {/* Drag Delta HUD Tooltip Badge */}
+      {/*
+        The osculating circles, under everything else.
+        Faint and dashed on purpose: this is a *reading* of the curve, not part
+        of it, and it must never compete with the handles that are being
+        dragged. Drawn beneath the anchors for the same reason.
+      */}
+      {curvatures.map((c) => (
+        <Circle
+          key={`k-${c.key}`}
+          x={c.cx}
+          y={c.cy}
+          radius={c.r}
+          stroke="#6366F1"
+          strokeWidth={1 * scale}
+          dash={[4 * scale, 4 * scale]}
+          opacity={0.42}
+          listening={false}
+          perfectDrawEnabled={false}
+        />
+      ))}
+
+      {/*
+        The radius, written once beside a single picked anchor.
+        Only for one: a number per anchor across a multi-selection is a wall of
+        digits over the artwork, and the circles already carry the comparison
+        that matters — which of these bend alike — without anyone reading them.
+      */}
+      {curvatures.length === 1 && (
+        <Group x={curvatures[0].cx} y={curvatures[0].cy} listening={false}>
+          <Text
+            text={`R ${curvatures[0].r < 10 ? curvatures[0].r.toFixed(1) : Math.round(curvatures[0].r)}`}
+            x={4 * scale}
+            y={-14 * scale}
+            fill="#6366F1"
+            fontSize={10 * scale}
+            fontFamily="monospace"
+          />
+        </Group>
+      )}
+
       {dragBadge && (
         <Group x={dragBadge.x + 10 * scale} y={dragBadge.y - 20 * scale} listening={false}>
           <Rect

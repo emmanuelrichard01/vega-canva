@@ -11,6 +11,14 @@
  * Splitting mode from appearance is the point: the mode is logic and is tested
  * here, the appearance is design-system material and lives with the tokens.
  *
+ * **Read the first paragraph again if you are about to draw a pointer.** A
+ * drawn `<div>` was reintroduced after this file was written, rebuilt once for
+ * latency, and removed again for the reason stated above — a DOM element is
+ * composited with the page and is a frame behind the compositor-drawn OS
+ * cursor by construction. The art now lives in `cursorVisual.ts` and
+ * `cursorCss.ts` turns it into a `url()` cursor, so this file's mapping is
+ * still what decides *which* one, and `index.css` still applies it.
+ *
  * Tools already declare `cursor` on the `Tool` interface, and `ToolManager`
  * already has a `getCursor()`. Nothing ever called it, so those declarations
  * were decoration while four other places fought over the real cursor. This is
@@ -53,9 +61,34 @@ export type CursorMode =
   /** Aiming a force field. */
   | 'aim';
 
+/**
+ * Every mode, as a value.
+ *
+ * Exported for the same reason `NODE_TYPES` is: something has to be able to
+ * enumerate them at runtime — here, to assert that each one names a fallback
+ * keyword, so a mode added without one cannot ship a drawing tool that falls
+ * back to an arrow.
+ */
+export const CURSOR_MODES = [
+  'pointer', 'pan', 'grab', 'draw', 'text', 'erase', 'note', 'comment', 'place', 'aim',
+] as const satisfies readonly CursorMode[];
+
 /** Tool ids that aim a force field. Mirrors `FORCE_IDS` in `engine/physics/forces.ts`. */
 const FORCE_TOOLS = new Set(['magnet', 'repel', 'wind', 'shockwave', 'gravity']);
 
+/**
+ * Five tools were missing from this table and fell through to `pointer`.
+ *
+ * `shape-line`, `shape-arrow`, `connector`, `frame` and `grid` are all drawn by
+ * dragging out a region, so every one of them wants the crosshair the `draw`
+ * mode carries — and every one of them was showing the select arrow instead,
+ * which says the next drag will select something. The default is a safe answer
+ * to an unknown tool and a wrong answer to a known one, and the difference is
+ * invisible until you notice a tool's cursor never changed.
+ *
+ * `cursor.test.ts` now asserts every id in `TOOL_SHORTCUTS` is named here, so a
+ * tool added to the dock cannot silently inherit the default again.
+ */
 const BY_TOOL: Record<string, CursorMode> = {
   select: 'pointer',
   'direct-select': 'pointer',
@@ -68,6 +101,11 @@ const BY_TOOL: Record<string, CursorMode> = {
   'shape-triangle': 'draw',
   'shape-hexagon': 'draw',
   'shape-star': 'draw',
+  'shape-line': 'draw',
+  'shape-arrow': 'draw',
+  connector: 'draw',
+  frame: 'draw',
+  grid: 'draw',
   text: 'text',
   eraser: 'erase',
   sticky: 'note',

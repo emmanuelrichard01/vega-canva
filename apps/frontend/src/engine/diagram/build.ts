@@ -26,6 +26,7 @@ import {
   type MermaidGraph,
   type NodeStyle,
 } from './mermaid';
+import { cornerRadiiOf } from '../model/cornerRadii';
 
 /**
  * Marks a node as belonging to a generated diagram.
@@ -448,7 +449,7 @@ export function diagramToMermaid(
         shape: shapeFromCanvas(
           node.geometry.kind,
           node.geometry.points,
-          node.appearance?.cornerRadius
+          cornerRadiiOf(node.appearance?.cornerRadius)[0]
         ),
         ...(Object.keys(style).length > 0 ? { style } : {}),
       };

@@ -204,12 +204,38 @@ describe('useRoomShortcuts', () => {
     expect(options.setPanelsOpen).toHaveBeenCalledWith(false);
   });
 
-  it('exits force tool mode on Escape', () => {
-    options.activeTool = 'magnet';
+  /**
+   * Escape returns to the selection tool, from anywhere.
+   *
+   * This used to be true of the force tools and the audio tool only, and the
+   * report that changed it was about the pen: picking one up and then wanting
+   * to move what you just drew is the most common thing anyone does on this
+   * board, and the way out was pressing `V` or hunting the dock.
+   *
+   * The modes that already own Escape — the crop, the path editor, a reframe —
+   * listen in the capture phase and stop propagation, so this never runs while
+   * one of them is up. That is the layering Figma and Illustrator have: the
+   * first Escape cancels what is in progress, the next hands you the arrow.
+   */
+  it.each(['magnet', 'audio', 'pen', 'bezier-pen', 'shape-rect', 'text', 'eraser'])(
+    'returns to the select tool on Escape from %s',
+    (tool) => {
+      options.activeTool = tool;
+      useRoomShortcuts(options);
+
+      fireKeyDown({ key: 'Escape' });
+      expect(options.setActiveTool).toHaveBeenCalledWith('select');
+    }
+  );
+
+  it('does nothing on Escape when select is already armed', () => {
+    // Otherwise every Escape anywhere in the app sets state for no reason, and
+    // the handler is registered when there is nothing for it to do.
+    options.activeTool = 'select';
     useRoomShortcuts(options);
 
     fireKeyDown({ key: 'Escape' });
-    expect(options.setActiveTool).toHaveBeenCalledWith('select');
+    expect(options.setActiveTool).not.toHaveBeenCalled();
   });
 
   it('pans camera on arrow keys when no objects are selected', () => {

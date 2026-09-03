@@ -23,6 +23,7 @@ import { bindCandidates } from '../../engine/model/connectorTargets';
 import { snapLineEndpoint } from '../../engine/interaction/lineMagneticSnap';
 import { useStore } from '../../hooks/useStore';
 import type { Point, ShapeNode } from '../../engine/model/schema';
+import { claimCursor } from '../../engine/cursor/cursorOverride';
 
 interface Props {
   node: ShapeNode;
@@ -200,14 +201,8 @@ export const LineEditor: React.FC<Props> = ({ node, stageScale }) => {
           commit({ vertices: moveVertex(vertices, index, moved), bends });
         }}
         // The pointer says what the handle does before it is pressed.
-        onMouseEnter={(e) => {
-          const stage = e.target.getStage();
-          if (stage) stage.container().style.cursor = 'move';
-        }}
-        onMouseLeave={(e) => {
-          const stage = e.target.getStage();
-          if (stage) stage.container().style.cursor = '';
-        }}
+        onMouseEnter={() => claimCursor('line-vertex', 'move')}
+        onMouseLeave={() => claimCursor('line-vertex', null)}
       />
     );
   };
@@ -263,14 +258,8 @@ export const LineEditor: React.FC<Props> = ({ node, stageScale }) => {
           next[index] = bendFromPoint(a, b, { x: e.target.x(), y: e.target.y() });
           commit({ vertices, bends: next });
         }}
-        onMouseEnter={(e) => {
-          const stage = e.target.getStage();
-          if (stage) stage.container().style.cursor = 'crosshair';
-        }}
-        onMouseLeave={(e) => {
-          const stage = e.target.getStage();
-          if (stage) stage.container().style.cursor = '';
-        }}
+        onMouseEnter={() => claimCursor('line-segment', 'crosshair')}
+        onMouseLeave={() => claimCursor('line-segment', null)}
       />
     );
   };

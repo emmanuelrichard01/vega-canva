@@ -88,7 +88,7 @@ a broken production deploy on 2026-09-01:
 `tsconfig.app.json` is fine for a fast inner-loop check. It is not the check
 to trust before pushing.
 
-Last verified 2026-09-01, by running the four commands above. Every figure in
+Last verified 2026-09-02, by running the four commands above. Every figure in
 it is a second record of something the tools will tell you in 30 seconds — when
 it disagrees with them, they are right and this is stale.
 
@@ -97,7 +97,7 @@ it disagrees with them, they are right and this is stale.
 | Branch | `main`, level with `origin/main`. `grid-slots-and-notices`, `rebuild/time-travel-and-physics` and `session-2` are history, not workspaces |
 | Deployed | **live**: Vercel (`vscanva.vercel.app`) → Render (`vega-canva.onrender.com`) → Neon → Cloudflare R2 → Sentry |
 | Typecheck | clean via `npm run build` |
-| Tests | **2244** across 129 files (frontend, 1 skipped — see `BENCH` below); **75** across 9 files (server) |
+| Tests | **2494** across 145 files (frontend, 1 skipped — see `BENCH` below); **75** across 9 files (server) |
 | Lint | exits 0; 0 warnings, 0 errors |
 | Build | clean. **38 JS chunks**, 2.7MB raw / ~870KB gzip, plus 216KB CSS. Largest: `Room` 527KB, `vendor-sentry` 475KB, `vendor-fontkit` 357KB, `vendor-konva` 310KB, `app-diagram` 259KB, `app-export` 254KB |
 
@@ -2444,6 +2444,942 @@ at once, look for one shared precondition before believing in one shared
 cause. Here it was "something is selected", and everything downstream of it
 failed together.
 
+### 4n-i. …and it did not work, for exactly one commit
+
+The user reported the same bug again, in the same words, against the commit
+above. It was reported correctly.
+
+`roughShape` returned `silhouette: ''` unless the fill style was `solid`:
+
+```ts
+silhouette: wantsFill && style === 'solid' ? roughSilhouette(...) : '',
+```
+
+So the element added by that commit — `{!open && hasFill && sketch.silhouette
+&& <Path fill="transparent" …/>}` — could not render for a hachured or
+cross-hatched shape, which is the only kind the bug was ever about. The fix
+was inert for its own bug report and correct for the case that already worked.
+
+**The test is the part worth reading.** Four assertions, all passing, all
+vacuous. They read the source and proved the JSX was there, and it was. The
+repo's own instruction is to check a test is not vacuous by reverting the fix
+and watching it fail — and reverting the *markup* did fail them, so the check
+looked sound. What no source-reading test can see is that the value the markup
+consumes is empty: it never called anything.
+
+`sketchHitArea.test.ts` now has two halves. The structural half is unchanged.
+The new half calls `roughShape` and asserts a non-empty closed silhouette for
+**every** entry in `FILL_STYLES` — which fails on four of five without the fix,
+and is the assertion that was missing.
+
+**The underlying cause was a conflated question**, and that is the transferable
+part. Three places asked `fillPaint.type === 'solid'` — a question about the
+*paint*, colour or gradient — while meaning "does this style fill its
+interior", a question about the *style*. They agreed only because the
+silhouette happened to be empty for the pen-shaded styles, so the wrong
+question and the right one returned the same answer. The moment the silhouette
+had to exist for another reason — a hit region — they came apart. `fillsInterior`
+in `rough.ts` is now the one place that question is asked, and the fourth copy
+of it (`penShaded` in `EffectsSection`) reads it too.
+
+## 4o. The shading styles, and a control that faded out as shapes grew
+
+Asked for directly after the above. All four pen-shading styles had real
+defects and three of them were the same defect.
+
+**Scribble leaked outside any concave shape.** `zigzagPass` is the one style
+drawn as a single continuous stroke, and it carried one `prevPoint` across
+every span of every scanline. On a convex shape there is one span per row and
+that is right. On a star, a C, a ring or anything notched, a row has two spans
+with a gap between them — and joining the end of one to the start of the next
+draws the pen straight across that gap, outside the shape. A star shaded this
+way had its points webbed together. `forward` was one flag toggled per *span*
+too, so a two-span row ran its halves in opposite directions and the next row
+reversed both, which is where the crossing diagonals came from.
+
+The pen is now tracked as one or more chains: a span continues the chain from
+the row above whose span it *overlaps*, and starts a new one when there is
+none. Where a shape splits, one side continues and the other begins, because
+the pen cannot be in two places. `scribble.test.ts` samples along every stroke
+and asserts nothing crosses the notch — 113 samples did, before.
+
+**Stipple's density control faded out as the shape got bigger.** `step` was
+`Math.max(gap * nib, Math.min(40, diag / 16))`, and a floor derived from the
+shape grows with the shape while the gap does not:
+
+```text
+             light   medium   dense
+  200x140    23.10    15.26   15.26     ← two settings identical
+  300x200    23.10    22.53   22.53     ← all three within 3%
+  600x400    40.00    40.00   40.00     ← the control does nothing
+```
+
+The docstring above it already recorded this field being fixed once, for
+discarding `gap` outright. The second attempt put `gap` back underneath
+something that dominated it. What the cap is actually protecting is the
+*number of dots* — this is one path parsed every frame — so it says that now,
+and engages only when the count would really be a problem.
+
+**Note how it passed.** `shading.test.ts` asserts `dense !== light`, on a
+100-unit square, which is one of the few sizes where it worked.
+`shadingDensity.test.ts` runs the same question over four shape sizes, and that
+is the only difference between it and the test that passed throughout.
+
+**Hachure had a constant displacement beside a variable spacing** — the fourth
+time this file has had to separate density from amplitude, and the tell is
+always that shape. The wobble off the scanline was one unit and the pull-in at
+each end was two, while the gap ranges 5.5 → 14. At `dense` a pair of
+neighbours leaning together closed to 2.4 units, under the four the density
+docstring itself names as where strokes merge into a flat tone; at `light` the
+same unit was 7% of the spacing and read as nothing, which is why the loosest
+setting looked ruled. Both are fractions of the gap now.
+
+That exposed the same thing one level down: `edge()` displaces stroke ends by
+an absolute `offset` (1.0/1.6/2.4 by level), which is right for an *outline* —
+long, nothing beside it — and wrong for strokes packed 5.5 apart.
+`shadingProfile` caps it as a fraction of the spacing and only caps it, so a
+light density is untouched. A hand does the same thing without thinking: it
+makes neater strokes shading a small area closely than drawing the outline
+round it.
+
+The end offsets also stopped being `Math.abs(...)`. Forcing every stroke short
+did not avoid ending on a ruled edge, it moved the ruled edge inward; the mean
+is still inward and the variation is symmetric about it.
+
+## 4p. Per-tool walkthroughs — §5a-ii item 2, started
+
+The piece the brief asked for and the file has listed as "not started" since it
+was written. The engine and the first five sequences are in; see §5a-ii for
+what is left.
+
+**It holds no words of its own.** A walkthrough is a reference *into* a lesson:
+the lesson id, and per step an index into that lesson's own `steps`. The copy
+comes from `lessons.ts` at read time, because that file opens by arguing a
+second body of teaching text about the same gestures will drift — and teaching
+text especially, since nobody updates the tutorial when they change the
+gesture. `walkthrough.test.ts` fails if an index points past the end of the
+lesson it names, which is the failure mode this shape has and the compiler
+cannot see.
+
+**It advances only on evidence.** No Next button, and its absence is the
+design: a Next button lets somebody finish a walkthrough having performed none
+of it, which makes the completion mark a lie. Each step carries an
+`Observation` — `created`, `vertices`, `connected`, `framed`, `selected` — and
+these are **data, not predicates**, so the set of things the product claims to
+be able to notice can be enumerated and tested. Nothing asks a tool to report
+anything; `LessonCoach` rejected per-tool success reporting as "sixteen call
+sites to keep in step" and was right. Every observation is a question about the
+document, answered against a digest taken when the step began.
+
+Two things about that digest, both tested, both silent if wrong: it is taken at
+**start** so a board that already has connectors on it cannot complete step one
+before it is read, and it is **re-taken on each step** so the note made for step
+one of the sticky chain cannot also satisfy step two — which would flash the
+whole walkthrough past and mark it done.
+
+The ring is placed through `walkAnchor.ts`, pure and tested, because that is
+the invariant-10 arithmetic that was wrong in `ObjectContextToolbar` for the
+whole life of that component. It takes the stage origin as an argument rather
+than reaching for it, and one of its tests asserts that omitting the origin is
+wrong by exactly a ruler.
+
+Launched from the reference library ("Walk me through it"), never raised
+unasked — a walkthrough is a thing you choose to start, and raising one
+uninvited is the wizard this product has twice decided against. The coach mark
+stands down while one runs, in CSS, since two cards teaching one tool at once
+is the surface existing twice.
+
+## 4q. The cursor, reworked end to end
+
+Asked for as "4/10 to 9.5/10". Four things were structurally wrong and one of
+them had never worked at all.
+
+### 4q-1. The double cursor was permanent, not a race
+
+Six components took the pointer by writing `stage.container().style.cursor`.
+`LocalCursor` stood down when it saw an inline cursor — and looked for it on
+`.canvas-container`.
+
+**Those are different elements.** react-konva creates its own `<div>` and hands
+*that* to `new Konva.Stage({ container })`, so `stage.container()` is a child of
+`.canvas-container`. Every part of the stand-down was therefore aimed at a node
+nothing writes to: `checkInline()` read an always-empty string on every pointer
+event, and the `MutationObserver` watched attributes without `subtree`, so it
+never fired once. `data-custom-cursor` stayed on, `cursor: none` stayed in force,
+and the inner div's inline cursor overrode it for its own subtree.
+
+So both pointers showed over every resize handle, every path anchor, every crop
+edge — permanently, since the first commit that introduced the watcher. No
+amount of tuning the observer would have found it.
+
+`cursorOverride.ts` replaces the string-through-the-DOM channel with explicit
+claims. `LocalCursor` learns synchronously, in the same tick as the handle's own
+`mouseenter`. It is falsifiable from outside per invariant 12 — `releaseAll` on
+a press ending and on the pointer leaving the canvas — because Konva does not
+fire `mouseleave` for a node destroyed under the pointer and every one of these
+handles is conditionally rendered.
+
+**A second, opposite fault fell out of fixing it.** `cursor: none` was on the
+container, where `cursor` inherits, so it also suppressed the pointer over the
+rulers, the rail, comment pins and every DOM overlay inside the canvas area.
+That was survivable only because the drawn pointer was *also* wrongly drawn over
+those, and the two faults cancelled. It is scoped to the Konva canvases now.
+
+### 4q-2. The lag was React in the pointer path
+
+`inside`, `isPressed`, `isAltHeld` and `hasInlineCursor` were `useState`, so a
+press was a render that called `art.render()` and rebuilt the whole SVG tree
+mid-click. The effect listed `isAltHeld` in its dependencies, so **every Alt tap
+tore down and re-registered eleven listeners**, including the one carrying the
+position. And `place()` — the raw pointer handler — called `setIsAltHeld`
+itself, scheduling a render on the frame it was meant to be moving the pointer.
+
+Nothing about the pointer goes through React after mount now. The art is a
+string written once per tool or theme change; press, Alt and visibility are
+attribute toggles; position is written inside the pointer event. This is the
+presence layer's own rule — positions go straight to the DOM, never through
+React state — applied where latency is most visible.
+
+### 4q-3. The per-tool glyphs were dead on the surface you look at most
+
+Twelve tool glyphs existed and **the local pointer showed none of them**: its
+badge was built by a helper called with `undefined` for the tool, so it always
+fell through to the *mode* glyph. A rectangle, an ellipse, a star and a hexagon
+were one generic pencil — while a collaborator watching you use them saw the
+right shape, because the remote path passed the tool through.
+
+The README states the rule both were meant to share: "your own pointer wears a
+small glyph for the tool in your hand; a collaborator's pointer wears the same
+glyph in their colour, so nothing has to be learned twice." It was true of one
+of them. There is one table now and both surfaces read it.
+
+Five tools were also missing from the mode table — `shape-line`, `shape-arrow`,
+`connector`, `frame`, `grid` — so five draw-by-drag tools showed the select
+arrow. `cursorVisual.test.ts` now fails if any tool in `TOOL_SHORTCUTS` falls
+through to the default.
+
+### 4q-4. Theme awareness, and what it should and should not mean
+
+The old note argued a cursor cannot be themed because it sits over *content*,
+not background. Half right: the **pair** is what gives legibility over
+arbitrary content, and the pair is kept. But which of the two is the *body* is a
+free choice, and the theme is the best available prediction of the backdrop — a
+white arrow on a dark board is the brightest thing on screen and glares. The
+roles swap by theme; contrast is unchanged either way, and a test pins it above
+15:1 in both.
+
+The badge disc takes the edge colour rather than the accent, deliberately.
+`DESIGN.md` calls this product "a quiet neutral instrument, one warm brand
+voice", and a brand-coloured disc riding every pointer at all times spends that
+voice on the one element that is always on screen and says nothing while it is.
+The accent marks *state* instead: the aim point, and the Alt-duplicate badge.
+
+### 4q-5. Smaller things that were wrong
+
+- **The eraser wore a crosshair** — a shape that says "aim at a point" for the
+  one tool whose whole point is that it has a width. The drawn cursor was
+  *worse* than the CSS bitmap fallback it replaced, which has always been a real
+  eraser. It has its own art now, hotspot at the nib.
+- **`grab` was unreachable art.** The pan gesture lives in a `ref`, which cannot
+  drive a render, so `cursorModeForTool`'s `panning` input had no caller and the
+  hand never closed. Both hands are in the markup and `[data-pressed]` chooses —
+  no render, which is the only way a press response can be on time.
+- **The Alt badge promised a gesture some tools do not have.** Gated on the tool
+  actually duplicating on Alt.
+
+### 4q-6. …and then it still lagged, because the element was the problem
+
+Reported again after all of the above: "feels laggy and not fast enough, also
+it lags behind". Correct, and no amount of tuning the drawing could have fixed
+it.
+
+**A DOM element is composited with the page.** The position is written inside
+the pointer event, the browser composites on the next frame, and the frame
+reaches the screen a refresh later. The OS cursor skips all of it — the
+compositor draws it on its own path, ahead of page paint, and updates it
+between frames on most platforms. One frame behind is the *floor* for a drawn
+pointer, by construction.
+
+`toolCursor.ts` opens by saying exactly this — "always one frame behind the
+real pointer" — about the implementation *it* replaced. A drawn pointer was
+reintroduced anyway, and I then optimised it rather than questioning whether it
+should exist. That is the second time this lesson has been paid for, and the
+note is left where it is because being able to point at it is worth more than
+having been right.
+
+So the art stayed and the element went. `cursorVisual` still produces every
+pointer — the five-fingered hand, the per-tool badges, the theme-aware palette,
+the eraser with its hotspot at the nib — and `cursorCss` turns each into a
+`url()` data-URI cursor the compositor draws at zero latency. `LocalCursor`
+renders `null` and writes four custom properties a handful of times a session.
+
+What that removed, rather than fixed:
+
+- **No `cursor: none` anywhere.** The failure this area kept producing — the
+  suppression outliving the thing meant to replace it, leaving a window with no
+  pointer — is now impossible rather than handled.
+- **No second pointer**, so nothing can double up.
+- **No per-event work at all.** `cursorContextFor` was deleted with the element:
+  CSS already resolves what is under the pointer, for free and correctly, and
+  doing it in JavaScript is what put a target test in the pointer path.
+- **It works over the whole app and any page it renders**, because `html` now
+  carries the arrow and `input, textarea, [contenteditable]` carry the I-beam.
+
+The one thing given up is the press *dip*, because a CSS cursor cannot animate.
+It was a 90ms scale on the element nobody looks at directly and it was costing a
+frame on every move. Everything with meaning is a **swap** rather than an
+animation and survives: the hand closes on `:active`, the badge follows the
+tool, Alt shows the duplicate badge.
+
+Every rule names a fallback keyword inside its `var()`. A `cursor` the browser
+cannot use is *dropped*, so without one the worst case would be an arrow over a
+drawing tool rather than a plain crosshair.
+
+## 4r. Escape returns to the select tool
+
+Asked for against the pen. It covered the force tools and audio only; it is now
+any tool.
+
+The layering is free and is the one Figma and Illustrator have: the modes that
+already own Escape — crop, path editor, slot reframe — listen in the **capture**
+phase and call `stopPropagation`, so this bubble-phase handler never runs while
+one is up. First Escape cancels what is in progress, the next hands you the
+arrow. Registering this in capture too, or reaching for an "is anything in
+progress" flag, would have broken that and been a second derivation of something
+the event model already answers.
+
+## 4s. The selection box: four corners, no stalk
+
+Asked as a question — "what do you think or do you push back?" — and I agreed,
+with one caveat that turned out to be the whole job.
+
+Konva's `Transformer` draws a ninth control on a stalk above the top edge. It is
+a library default rather than a design: not part of the object's geometry,
+colliding with whatever sits above the selection, and larger than the object
+itself on anything small. Figma and Illustrator both show corner handles only
+and put rotation in the ring just outside each corner.
+
+**The caveat: a stalk with a knob on it advertises itself and an invisible hot
+zone does not.** What makes it work in those apps is that the pointer becomes a
+curved arrow the instant you enter the zone — the cursor *is* the affordance —
+so removing the handle without one would have been a regression dressed as
+polish. `rotateVisual` angles that arrow to the corner's own diagonal plus the
+object's rotation, so it lies tangential to the arc the corner will travel; a
+fixed-angle curved arrow is right at one corner and visibly wrong at three.
+
+Two things kept the risk down:
+
+- **The gesture is ours; the commit is not.** Everything downstream of a
+  transform — live preview, per-node placement, undo, text reflow — reads
+  `proxy.rotation()` and is driven by three handlers that take no arguments. So
+  `RotateZones` turns the proxy and calls them. Nothing about how a rotation is
+  *applied* is reimplemented.
+- **The angle is computed entirely in world space**, from
+  `screenToWorld`. An angle between two world points is the same angle at any
+  zoom or pan, so the gesture never touches stage or window space and cannot
+  pick up the ruler-inset error that made the rail wrong for the life of that
+  component. The only screen-space quantity is the zone's size, divided by the
+  zoom per invariant 9.
+
+`rotateHandle.ts` holds the arithmetic and is tested, including the rule worth
+knowing: **Shift snaps the result, not the delta.** Rounding the delta makes the
+snap relative to wherever the object already was, so a box at 7° snaps to 7°,
+22°, 37° — a grid of its own that lines up with nothing.
+
+### What is not done
+
+Unwatched, like everything else this session — and for the cursor and the
+selection box that matters more than usual, because the whole subject is how
+something *feels* and where something *is*. The structural claims are tested;
+"not laggy" now follows from the compositor drawing it rather than from
+measurement, which is a stronger argument than the last one but still not a
+look. See §5a.
+
+## 4t. The claim was writing to the wrong element — again
+
+Reported as "the cursor doesn't change at the object vertex when I want to
+rotate, so I don't know when and where it's okay to rotate". The rotate zones
+were fine. **Every claim-based cursor in the app was dead**, and it was my
+regression, of exactly the shape §4q-1 is about.
+
+The claim wrote an inline `cursor` on `.canvas-container`. When the pointer
+became a CSS cursor I moved the board's decision onto the Konva `<canvas>` — a
+*child*. An inline style on a parent only reaches a child with no cursor of its
+own, and that child now has an explicit rule, so the claim lost every time. The
+resize anchors, path anchors, line vertices, connector ends, corner radius,
+crop, reframe and the rotate zones all went silent together. It surfaced on
+rotation because that is the one with no other affordance to fall back on —
+which is precisely the caveat I had raised when agreeing to remove the visible
+handle, arriving as a bug instead of as a warning.
+
+The fix is a custom property: they **inherit**, so `--cursor-claim` reaches the
+canvas wherever the rule that reads it lives, and every board rule resolves it
+first. The cascade arbitrates instead of a specificity coincidence.
+
+Two other things were wrong with the zones and are fixed: they rendered *after*
+the transformer, so they sat on top of the resize anchors and took their hover
+(now underneath, so the anchor wins where they overlap and the ring outside it
+rotates); and they read the proxy on a **120ms timer**, which is a `setState`
+on a schedule for as long as anything is selected. They read on the parent's
+own refit signal now — the same value the proxy's fit effect is keyed on — plus
+the camera event. No timer.
+
+## 4u. The rest of the pointer vocabulary
+
+Added, each because the gesture it names actually exists:
+
+- **Scale arrows, drawn and continuously angled.** The OS has eight resize
+  cursors, 45° apart, so `cursorForAnchor` has to snap — on an object turned
+  20° every handle's arrow was up to 22.5° off the drag it described.
+  `anchorAngle` gives the exact angle and `resizeVisual` draws it; the snapped
+  keyword is still the `url()` fallback.
+- **Pen add / remove / convert.** Three gestures that happen in the *same
+  place* — over a path — and are told apart only by what is under the pointer:
+  a segment adds (`insertAnchor`), an anchor removes, a handle converts
+  (`setAnchorsMode`). Without the sign the pointer says "you are near a path"
+  three times and you find out which by clicking.
+- **The type pointer is an I-beam in a dotted box**, not an arrow with a badge.
+  Text is the one tool whose click lands *between two characters*, and an arrow
+  occludes the gap it is aimed into with its own body. The box is what
+  separates "a drag makes a text box" from the ordinary I-beam's "there is text
+  here to select".
+- **Caps Lock gives a precision crosshair.** Photoshop's convention, and it
+  earns its place for a reason the others cannot meet: every cursor here is a
+  *shape*, and a shape covers what you are aiming at. Read with
+  `getModifierState`, never by tracking presses — Caps Lock is a lock, so the
+  keydown that turns it on and the one that turns it off are the same event.
+  Only for modes that place something at a point.
+- **`not-allowed` on hover where a drag will be refused**, and only there.
+  A viewer (§4k: a divergence that resembles success is worse than a refusal —
+  this is the refusal arriving *before* the gesture) and a pinned note. Not
+  `move` on every object: everything can be moved, so announcing it is the
+  least surprising fact available, and "do not label what the screen already
+  says" is the product's first principle.
+
+**Four were declined, all for invariant 6** — never declare a capability the
+renderer ignores:
+
+| Asked for | Why not |
+| --- | --- |
+| Eyedropper cursor | Uses the browser's native `EyeDropper`, which owns the screen while open and brings its own magnifier and cursor. `eyedropper.ts` already records this. |
+| Shear cursor | `BaseNode` has `rotation` and `scaleX`/`scaleY` and no skew. There is no shear to point at. |
+| Type-on-a-path | Zero matches in the codebase. Text-to-path is the opposite feature. |
+| Touch Type | No per-glyph editing exists. |
+
+One bug the tests caught that looking would not have: the precision crosshair's
+first draft reached 15 from a centre at 14. An SVG in a page can overflow its
+viewBox and this file sets `overflow: visible` — but **a cursor image is
+clipped to its declared size**, so the arms were cut off everywhere it is
+actually used and correct everywhere it is not. `PRECISION_REACH` is now a
+named constant with an assertion against the box.
+
+## 4v. Bézier tangents: what was already there, and the three that were not
+
+Asked for as Illustrator-tier tangent controls. Half of it existed and is worth
+naming, because building it again would have been the second-implementation
+mistake this codebase keeps documenting:
+
+- **Angle-snapping already worked** — Shift constrains a handle drag through
+  `constrainHandleToAngle` at 15°, with 45° and 90° falling out as multiples
+  and the badge naming them "Diagonal" and "Cardinal".
+- **Three handle modes already existed** — `HandleMode` is
+  `corner | smooth | mirrored`, `handleMode` *derives* which one an anchor is
+  from where its handles actually sit, and `moveHandle` honours all three:
+  mirrored keeps both direction and length, smooth keeps direction only.
+- **A drag HUD already existed**, showing the live angle and whether Alt has
+  disconnected the pair.
+
+### What was missing
+
+**1. `mirrored` could not be asked for.** `setAnchorMode` took
+`'corner' | 'smooth'`. So the third mode was declared by the type, derived by
+the reader, honoured by the editor — and reachable only by *accident*, by
+dragging until the two lengths happened to match within epsilon. Invariant 6
+from the inside, and it hid because it fails by being unavailable rather than
+by looking broken.
+
+It now takes a `HandleMode`, and both rails offer Symmetric beside Corner and
+Smooth. Two details: an anchor that already has a tangent keeps it and only its
+**lengths** are equalised — re-deriving the direction from the neighbours would
+turn "make this symmetric" into "reset this" — and the lengths are **averaged**
+rather than taken from a side, because picking a side makes the result depend
+on which handle happened to be longer, so the same gesture gives two different
+curves depending on history nobody can see.
+
+**2. No curvature reading.** `curvatureAt` returns the osculating circle — the
+circle the curve locally *is*. A handle shows the tangent and says almost
+nothing about how hard the curve bends; two handles of very different lengths
+look similar on screen and produce curves that are nothing alike, and the
+difference only surfaces once the path is stroked or laid beside another.
+Drawn faint and dashed under the handles, for picked anchors only, with the
+radius written when exactly one is picked.
+
+Straight runs and undefined tangents return **null rather than `Infinity`** —
+`Infinity` is arithmetically true, propagates into whatever tries to draw it,
+and obliges every caller to remember a check.
+
+**3. The test caught me, not the code.** The first curvature test asserted a
+quarter circle built with the standard `4(√2−1)/3` constant measures radius
+100. It measures 102.19, and the code is right: that constant matches a circle
+to one part in 10⁴ *in position*, and its **endpoint curvature is 2.19% high**.
+Worked through by hand, the tests were rebuilt on a curve whose radius is
+exactly 4.5 by construction, and the 2.19% is now pinned as its own assertion
+so a future "fix" that made it return 100 has to explain itself.
+
+### One thing avoided
+
+The curvature computation sits after this component's early returns, so a
+`useMemo` there would be a **conditionally called hook** — the fault `a605dec`
+already shipped from this exact file, emptying the canvas on double-click. It
+is a plain function instead: the work is a few calculations over the picked
+anchors, which is not worth a hook, let alone a hook in the wrong place.
+
+## 4w. Rotation, wrong three times, and what each one was
+
+Reported three times before it worked. Each report was correct and each cause
+was different — worth writing out, because they are one mistake in three
+costumes: **a gesture that lives across frames cannot be built out of values
+that are replaced every frame.**
+
+**1. The claim went to the wrong element** (§4t). Fixed by making it a custom
+property, which inherits.
+
+**2. The box was in the wrong space.** `RotateZones` read `proxy.x()` as a
+top-left. `fitProxy` positions the proxy **by its centre** with an offset so
+Konva turns it about its middle — so every zone landed half a box down and
+right of its corner, off the shape entirely for anything bigger than a zone.
+Nothing could be hovered, and the pure tests all passed because the arithmetic
+was never wrong. The box is now a prop, computed in the parent from the store.
+
+**3. It unmounted on the press that started it.** `onStart` sets the parent's
+`transforming`, and `visible` was `!transforming` — so pressing a zone
+unmounted it and the effect cleanup ended the gesture on the frame it began.
+A gesture cannot be gated on a flag it sets itself. `busy` is checked before
+that flag and set before `onStart` is called.
+
+**3b. And the listeners re-registered every render.** `onMove`/`onEnd` are
+plain functions in the parent's body, so the effect holding the `pointermove`
+listener re-ran on every render — and its cleanup ends the gesture. Even
+without (3) this alone would have killed every rotation. The effect now has no
+dependencies and reads everything through a ref when it fires.
+
+`rotateHandle.test.ts` pins (2) structurally, in the manner of
+`sketchHitArea.test.ts`: the failure is in what a component *reads*, and no
+assertion about the function it calls can reach it.
+
+The band was also widened from 18 to 26px. The zones sit beneath the
+transformer so the resize anchor wins where they overlap — the right
+arbitration — but the anchor covers the first ~9px, so the usable rotate ring
+was about nine pixels and had to be aimed for.
+
+## 4x. Shear — and a decline that was simply wrong
+
+I declined the shear cursor in §4u on the grounds that `BaseNode` has no skew.
+**That was a misreading of the schema.** `skewX`/`skewY` are on `BaseNode`,
+documented in degrees, handled by `normalize.ts`, rendered by `ObjectRenderer`
+through the `tan()` that converts to Konva's coefficient, and exposed as two
+steppers in the Transform panel. The check was one grep and I did not run it.
+
+What shear actually lacked was a **gesture** — the panel is where you type an
+exact number, not where you find the slant you want. It now has bars outside
+the edge midpoints, mirroring rotation's zones on the corners: the corners
+turn, the edges slant, and the ring outside the box is where transforms that
+are not resizes live.
+
+Three things worth keeping:
+
+- **It is an angle, not a ratio.** `shearFor` uses `atan`, because the field
+  stores degrees and the renderer takes their tangent — a proportional rule
+  would make the same hand movement mean different slants on different box
+  sizes and run away past 45°. Clamped to ±89, matching the steppers: at 90 the
+  tangent is infinite and the object collapses to a line it cannot return from.
+- **It writes through `updateNode`, not the transform commit.** That path is
+  built around a box — a `from`, a `to` and a spin — and a slant is not
+  expressible in it.
+- **Offered for one node, withheld for many.** Shear is a field on a node;
+  distributing one slant across several origins is a different operation, not
+  the same one applied more times.
+
+## 4y. The pencil drew in a colour nobody could change
+
+`PenTool.currentColor` was `static currentColor = DEFAULT_INK` — `#1F2937` —
+and **nothing anywhere assigned it**. There is no colour control for the
+pencil, so that one constant was the colour of every freehand stroke this
+product has ever drawn. On a dark board that is **1.5:1** against the surface:
+not a faint line, an invisible one. The tool looked like it did nothing and the
+stroke was there all along.
+
+`BezierPenTool` one file over already asked `ThemeService` for its stroke, so
+the pencil was the odd one out rather than the rule.
+
+It takes the body-text pair now, not `getDefaultStrokeColor` — that one is blue
+in light mode, which is right for a shape's edge and wrong for ink; a pencil
+draws the same mark a sentence is made of. `penInkContrast.test.ts` asserts the
+**ratio** rather than the wiring, because the wiring was never what was broken,
+and it pins the old constant at under 2:1 so the number is checked rather than
+described.
+
+## 4z. The rotate cursor, rebuilt from its own geometry
+
+The mark itself was the last thing still hand-authored, and it was hand-
+authored badly: `M6.4 16.6 a8 8 0 1 1 3.2 4.4` with a two-stroke chevron near
+it. Three faults, none visible in a path string and all obvious in a
+construction:
+
+1. **The arc was not centred on the hotspot.** An SVG `A` command places a
+   circle from two endpoints and a radius, so its centre lands wherever the
+   arithmetic puts it — and `rotateVisual` turns the whole mark about (14,14).
+   So as the corner angle changed the arrow **orbited** the point being held
+   instead of spinning in place. This is the one that mattered, and it is the
+   reason the geometry is now built from an explicit centre and radius.
+2. **The sweep was not what its own comment said.** `large-arc=1, sweep=1` on
+   that chord is about 320°, which closes into a *refresh* glyph — a button,
+   not a direction. The comment beside it claimed 200°. It is 235° now, with
+   the gap treated as load-bearing.
+3. **The head was at the wrong end and not tangential.** It sat near the arc's
+   *start*, at whatever angle two hand-picked segments made. An arrowhead a few
+   degrees off its tangent does not read as a mistake — it reads as a cheap
+   asset, which is worse.
+
+It is a single filled head, as Illustrator, Figma and Canva all show.
+Photoshop's double-headed version says "either way", which is true, but two
+heads on one small arc eat the gap that makes it read as an arrow at 28px, and
+one head is already unambiguous — nothing else in this product is a circular
+arrow. Filled rather than stroked for the same reason the main pointer is: at
+this size a stroked chevron reads as two marks and a solid one reads as a
+point.
+
+**Four assertions now hold it**, and each names a way it was wrong: the arc's
+endpoints are exactly one radius from the hotspot; the head is perpendicular
+to the radius by construction; every point plus its halo fits inside the box;
+and the sweep still leaves a gap. The extent one earned itself immediately —
+the first pass reached 13.89 against a half-box of 14, so the 3.8px halo would
+have been shaved off all the way round, everywhere the cursor is actually used
+and nowhere it is previewed.
+
+## 5a-0-b. Objects flew off the board when you selected them
+
+Reported as "objects disappearing when I select them", and it was mine.
+
+The rotate and shear zones sit **outside** the object — which is also exactly
+where you click to deselect, or to select a neighbour. A plain click there
+called `onStart` immediately, which snapshots the current selection's box; the
+click then changed the selection, the proxy refitted to the *new* box, and
+`pointerup` committed a transform from the old box to the new one. Everything
+selected was scaled by the ratio between two unrelated rectangles and thrown
+off screen.
+
+The fix is the shape every other drag in this codebase already has: a gesture
+is **armed** on press and **begins** on the first movement. A click that never
+becomes a drag begins nothing, so there is nothing to commit and nothing to
+reconcile against a selection that changed underneath it.
+
+Worth noting what made it hard to see from the code: nothing here is *wrong* in
+isolation. `onStart` snapshots correctly, the selection change is correct, and
+the commit is correct. The fault is only in the ordering, and only when a press
+lands on a zone belonging to a selection that is about to stop existing.
+
+## 5a-0-c. New rectangles are square
+
+`ShapeTool` created rects with `cornerRadius: 8`, so every square anyone drew
+arrived rounded — a style decision baked into the *tool*, which is the one
+place it cannot be undone by not choosing it. The drag preview drew radius 8
+too and committed the same, so the preview was at least honest; both are 0 now.
+Rounding is a control, and the default is the shape's own geometry.
+
+## 5a-0-d. Every drawn cursor was falling back, silently
+
+Reported as "I see an open hand when I want to rotate". `grab` is an open hand,
+and `grab` is what the rotate cursor's `url()` falls back to.
+
+`svgWrap` emitted `<svg width=… viewBox=…>` with **no `xmlns`**. Inline SVG in
+an HTML document inherits the namespace from the parser, so the markup rendered
+correctly in every test, every preview and every place it was embedded. A
+`data:image/svg+xml` cursor is not embedded — it is decoded as a *standalone
+XML document*, where a missing namespace is a parse failure and the image
+simply does not exist. The browser then drops the whole `cursor` declaration
+and uses the keyword after the comma.
+
+So **every drawn pointer in the product had been showing its fallback**, the
+whole time. Nothing errors and nothing warns, and the fallbacks were chosen to
+be sensible — which is exactly what made it invisible. Proven in the browser
+rather than argued: the same markup with the namespace decodes and without it
+fails.
+
+The lesson worth keeping: *rendering correctly when embedded proves nothing
+about decoding standalone.* Anything that becomes a `data:` image needs
+checking as an image.
+
+## 5a-0-e. Rotation jumped back to square before turning
+
+`handleTransformEnd` finished with `proxy.rotation(0)`, on the reasonable
+assumption that `fitProxy` would re-fit it from the document. It does — but not
+until after the write lands, and in that window the proxy claims an angle of
+zero for an object that is plainly turned.
+
+`RotateZones` was reading its starting angle off that proxy. So a rotation
+begun in that window started from 0: the object snapped square, turned a
+little, then jumped to the committed value. It starts from the **document**
+now, which is the same number `fitProxy` fits the proxy *to*, one step earlier
+and unable to be behind it. The `proxy.rotation(0)` reset is gone as well —
+`fitProxy` always sets the angle explicitly, so it was redundant and cost a
+frame of the selection box snapping square after every gesture.
+
+## 5a-0-f. What the selection box is now
+
+Four corner handles, four edge midpoints, no protruding rotate stalk. The edges
+were briefly removed and that was a step too far — an edge changes one
+dimension where a Shift-corner holds the *ratio*, and those are different
+gestures. Rotation is the ring just outside each corner; the zones render
+beneath the transformer so an anchor wins wherever the two overlap.
+
+The rotate cursor is a **double-headed** bent arrow, per the reference: a
+140° arc with a filled tangential head at each end pointing opposite ways, so
+it says "turns either way" rather than "turns this way". Much past 180° the two
+heads meet round the back and it becomes a circle with notches, which is what
+the sweep assertion guards.
+
+The size readout is persistent under a single selection rather than appearing
+only during a gesture — the question "how big is this" is asked while looking
+at something, not while dragging it. Withheld for a multi-selection, where the
+combined box is not the size of anything the user picked.
+
+## 5a-0-g. The rotation opened with a fixed jump, per corner
+
+Reported precisely: "+15° at the bottom right and −15° at the bottom left".
+Equal and opposite at mirrored corners is the signature of a **constant
+offset**, not of noise, and it is what made this findable from the report
+alone.
+
+`cameraSystem.screenToWorld` takes a **stage-relative** coordinate — it
+subtracts the camera offset, which lives inside the stage. The press handler
+fed it `stage.getPointerPosition()`, which is stage-relative and right. The
+move handler fed it `e.clientX/clientY`, which is **viewport-relative** and out
+by wherever the stage starts: about 52px, the header and rulers above it.
+
+So the angle at the press and the angle on the first move were measured from
+points fifty pixels apart, and the gesture opened by applying that difference
+in a single step. The same vertical offset subtends opposite angles on
+opposite sides of the pivot, which is the ±15°.
+
+Invariant 10 again, in code written to respect it — the module header even
+says every angle here is world-space. It was; the *inputs* were not.
+
+## 5a-0-h. The pointer takes the dark half in a light theme
+
+`paletteFor(false)` gave the body to white and the outline to near-black. Every
+native pointer on both platforms, and Figma's, is the other way round: a
+near-black shape with a white outline. The outline is what carries it over dark
+content either way, so legibility never depended on the order — but *weight*
+does, and a white-bodied arrow is the brightest thing on screen whatever is
+behind it.
+
+The tell was that the rotate arc looked right while the arrow beside it did
+not: the arc draws its stroke in `edge`, so it was already dark. Two marks in
+one set reading at different weights means the roles are the wrong way round,
+not that one of them is wrong.
+
+## 5a-0-i. The rotation HUD
+
+Four marks, drawn only while a rotation is running, and **no number** — the
+angle already has a home in the selection's own badge, and a second degree
+label four inches away is one fact in two places.
+
+- The **pivot**, because "it turns about the centre, not the corner under your
+  hand" is the most common wrong guess about this gesture.
+- The **start ray**, dashed — the only record of where the gesture began once
+  the object has moved.
+- The **live ray**, solid, joining pivot to hand.
+- The **wedge** between them, which turns "how far" from a number you read into
+  a shape you see, and makes overshooting a snap obvious before you let go.
+
+A sibling of the zones rather than a child, because the zone group carries the
+object's rotation and this is measured in world terms — the ray you started on
+does not turn with the thing you are turning. Sized in screen pixels over the
+zoom, so it is the same weight at 10% and 500%, and it never listens: a readout
+that can be clicked is a control.
+
+## 5a-0-j. The amber border round the canvas
+
+It was the **app-wide focus ring**. `#canvas-surface` carries `tabIndex={-1}`
+and `role="application"` so it can be focused programmatically — for the
+accessible label, and so keyboard routing has somewhere to land — and Chrome
+focuses a `tabindex="-1"` element on press. So every gesture put the global
+`:focus-visible` ring around the whole board.
+
+In amber, specifically, because `--focus-ring-color` is `--text-accent` =
+amber-700 — the colour this product uses for *history* and for states wanting
+attention. A ring in it around the artwork says something is wrong at the exact
+moment nothing is.
+
+Suppressed rather than recoloured: a focus ring answers "which control will the
+keyboard act on", and a surface that exists to *hold* focus rather than receive
+input has no answer to give. Every real control keeps it; the rule names one
+element and its canvases.
+
+(The header fading at the same time is `railVeil` and is deliberate — the bar
+stands back while you are manipulating something. Nothing is hidden or moved,
+only contrast, so every control stays clickable.)
+
+## 5a-0-k. The rail ignored a collapsed panel
+
+`inset = sidebarsVisible ? SIDEBAR_WIDTH : EDGE_MARGIN` — 288px, hard-coded, and
+`sidebarsVisible` only means "not in presentation mode". So a **collapsed**
+panel still reserved its full expanded width and the rail refused to go near a
+side that was by then empty board.
+
+Measured now, per side, because they collapse independently — opening Layers
+and closing Properties is an ordinary thing to do and used to move the rail on
+neither. A collapsed panel measures narrow, a hidden one measures zero, one
+dragged wider measures wider, and none of that needs a second signal.
+`PresenceEdgeMarkers` already learned this and the README states it: the edge
+to use is the edge of the *visible canvas*, measured from the DOM.
+
+**Cached behind a `ResizeObserver`**, because `updatePosition` runs from a rAF
+loop for as long as the rail is on screen — measuring inside it would be two
+forced layouts every frame, which does not show up in a profile as one bad
+function, only as a canvas that feels heavy while anything is selected.
+
+## 5a-0-l. The number fields lost their arrows
+
+A `−` and a `+` beside every number is two controls per field, and the
+Properties panel holds a dozen fields — so the arrows were the single largest
+source of visual noise in it, and each pair only restated what the field
+already implies. Figma and Illustrator both show a bare number.
+
+They were **removed rather than hidden**, because the keyboard already did the
+job better and had done all along: `ArrowUp`/`ArrowDown` step by one and
+`ArrowLeft`/`ArrowRight` now do the same for anyone who reaches for a
+horizontal pair on a horizontal field, with `Shift` taking ten — which is what
+lets the keys carry the whole job, since without it a hundred-unit change is a
+hundred presses. The arrows were a *second* way to do it and the more
+expensive one.
+
+Two consequences worth naming, because they are the reason it looks different
+rather than just emptier:
+
+- **The number is left-aligned now.** Centring was right while a button sat on
+  each side and the number was the middle of three things. With them gone the
+  number *is* the field, and a column of left-aligned figures scans as a
+  column.
+- **The field's radius dropped to `--radius-sm`.** At 6px a 26px box reads as a
+  pill; the arrows used to fill the ends and hide that. With a bare number the
+  corner is the shape.
+
+The discoverability the buttons were carrying moved to a `title` on the field —
+a number input responding to the arrow keys is a convention rather than a
+certainty, and worth one line rather than leaving it to be found.
+
+The corner-radius grid's special case went with them: it existed only to hide
+the arrows in a four-up layout, and there are no arrows anywhere now.
+
+## 5a-0-m. The badge counts degrees while you turn
+
+The readout under a selection shows `145 × 142` at rest and was supposed to
+switch to `47°` for the length of a rotation. The branch was there and had
+been all along; it simply never ran.
+
+`handleTransform` asked `tr.getActiveAnchor()` which gesture was in progress.
+Konva answers that only for a drag **Konva itself** started — and rotation
+comes from `RotateZones`, which is ours, so the answer was `''` on every frame
+of the one gesture that most needs an angle. The badge spent each turn
+reporting width and height: the two numbers a rotation does not change.
+
+`beginExternalGesture` already writes `'rotater'` into `activeAnchor` so the
+rest of the component can tell what is happening. Reading *that* instead of
+the live anchor is the whole fix, and `handleTransformEnd` already clears it,
+so the badge returns to `W × H` the moment the turn ends with nothing extra to
+unwind.
+
+While there: the resting badge sat `26 / zoom` below the box and the live one
+`22` world units. So the badge hopped a few pixels at the start of every
+gesture and back at the end — a movement with no meaning, on the one element
+whose job is to hold still while everything else moves. One `BADGE_DROP`
+constant now, in screen pixels, divided by zoom at both sites.
+
+## 5a-0-n. The number fields were five different widths
+
+Reported as "some looks too small no padding, some look too long", and that is
+exactly what it was. Measured across one 260px panel, the same control:
+
+```text
+  Weight             31px    ← 15px of room between its paddings
+  Opacity          40.5px    ← wider only because it carries a "%"
+  Radius (linked)    31px
+  Radius corners   95.5px
+  Transform X/Y      78px
+```
+
+Five widths and five different left edges. The 31px ones fit `2` and not
+`100`, so the panel's most ordinary value was one it could not display.
+
+**Cause.** `NumberStepper`'s outer wrapper was an unclassed `div` carrying its
+layout inline, so it had no width rule of its own and took whatever its
+container implied. In a `.prop-row__control` — flex, `justify-content:
+flex-end` — it shrink-wrapped to the input's `min-width` floor and jammed
+against the right margin. In a grid cell it stretched to `1fr`. Nobody chose
+either number; they were both fallout.
+
+**Fix.** The wrapper is `.field` now, with `flex: 1; min-width: 0`. Every
+container in this panel already sizes its columns deliberately — `1fr 28px 1fr`
+for a Transform pair, two-up for the corners, one control column for a plain
+row — so a field agreeing with its column is the entire rule, and there is no
+width left to maintain by hand. After:
+
+```text
+  Weight / Opacity   136px @ x=108   ← the control column exactly
+  Radius (linked)    104px @ x=108   ← the column, less the link button
+  Blur pair       64 + 8 + 64 = 136
+  Radius corners    95.5px, two up
+  Transform X/Y       78px, two up
+  every one of them 28px tall
+```
+
+Four smaller things fell out of the same look:
+
+- **`.prop-pair` was declared twice**, 7800 lines apart, as a two-column grid
+  and as a flex row. The later one silently won, so the rule you would find by
+  searching described a layout the panel had not used in a long time. The
+  stale one is gone and the survivor takes `flex: 1`, which is what the two
+  fields inside it needed in order to have anything to divide.
+- **The focus ring was a size too big.** `.stepper:focus-within` set
+  `--radius-md` while the field rests at `--radius-sm`, so a field changed
+  shape when you clicked into it.
+- **The `%` was pushing its own field wider.** Input and suffix each carried
+  8px of right padding, so the unit drifted off to the right and Opacity
+  measured 9.5px wider than Weight for no reason anyone chose. The 8px belongs
+  on the outside of both; `100 %` is one reading.
+- **The corner glyph kept the minus button's old clearance.** 20px of
+  padding-left left the digits 11px clear of the glyph against an 8px inset on
+  the other end, so the cell looked padded on one side only. At 16px the gap is
+  8 and matches.
+
+## 5a-0-o. The radar takes the panels' radius
+
+`--panel-radius` (8px) exists because the Layers and Properties panels are
+pinned columns rather than floating lozenges, and 12px reads as a rounded card
+that happens to be very tall. The radar is the same kind of surface for the
+same reason — anchored to the bottom-left corner, stacked directly under the
+Layers panel and sharing its left edge — so 12px there beneath 8px above read
+as two different kinds of surface on one rail.
+
+The collapsed `.radar-toggle` keeps `--dock-radius`: it *is* a small lozenge,
+which is what that token is for.
+
+## 5a-0-p. The help modal's orientation line stopped wrapping
+
+`.help-modal__orient` carried `max-width: 62ch`. That is the right cap for a
+paragraph of prose and the wrong one for this: it is a single short sentence
+carrying three `<kbd>` chips, sitting in a header up to 950px wide. Measured,
+the sentence wants 461.6px on one line — so the cap was breaking a line that
+had twice the room it needed.
+
+No `white-space: nowrap` to replace it. Removing the measure lets it wrap only
+if the window is genuinely too narrow to hold it, which is the wrap you want;
+`nowrap` would push the close button off the end instead. Leading dropped from
+1.9 to 1.7 with it — 1.9 was leading for a wrapped block, and on one line it
+only padded the gap to the title.
+
 ## 5. Next up
 
 ### 5a-0. The four things to do first
@@ -2502,20 +3438,64 @@ broken; all of it is unwatched.
   object** — the two ways it used to disappear; and the **shades row with
   `#FFFFFF` and `#000000` picked**, which should now show nine distinct steps.
 
+- **The cursor, the selection box and Escape (§4q, §4r, §4s) are unwatched**,
+  and they are the highest-value things to look at, because all three are about
+  how something feels or where it is. In order: **move the pointer across the
+  board and onto a panel** — one pointer, no seam, no second cursor anywhere;
+  **hover a resize handle**, which is where two pointers used to show at once;
+  **hover just outside a corner**, which should give a curved arrow angled to
+  that corner and rotate on drag; **the pan tool pressed**, where the hand
+  should close; and **the pen with Escape**, which should hand back the arrow.
+  The one thing a test cannot speak for at all is whether the rotate zones are
+  where the eye expects them.
+
+- **The shading and walkthrough work (§4n-i, §4o, §4p) is unwatched too**, and
+  it is the visual kind where a test cannot speak for the result. In priority
+  order: a **sketched shape with a hachure fill, clicked through the middle** —
+  the reported bug, and the one thing here with a user waiting on it; a
+  **scribble-filled star or ring**, which is where the pen used to web the
+  points together; **stipple at all three densities on a 300×200 shape**, where
+  two of the three used to be identical and the change is meant to be plainly
+  visible; **dense hachure**, which should read as strokes and not as a tone;
+  and a **walkthrough run end to end**, where what a test cannot check is
+  whether the ring lands on the object rather than a ruler's width off it.
+
 ### 5a-ii. The walkthrough project (still what the user originally asked for)
 
 Agreed scope, in order. Two of five are done:
 
 1. ~~**Demo rooms**~~ — done. **26 templates in 5 categories**, including
    deliberate scale showcases at 100/500/1000 objects.
-2. **Per-tool guided walkthroughs.** *Not started, and this is the next
-   substantial piece of the brief.* The agreed design: an arrow anchored to a
-   real object that **advances by doing the thing**, not by a Next button. A
-   wizard becomes the thing people dismiss, and it would contradict what makes
-   the templates work — you learn connectors by dragging a box. The templates
-   now give these somewhere to happen; launch a walkthrough *against* a
-   matching template rather than an empty canvas. The user chose "scripted
-   real mutations" over a recorded video when asked.
+2. **Per-tool guided walkthroughs.** *Started — the engine and five sequences
+   are in; see §4p.* The agreed design held: a mark anchored to a real object
+   that **advances by doing the thing**, not by a Next button.
+
+   What is in: the walkthrough table (references into `lessons.ts`, no copy of
+   its own), the five observations, the state machine with its two digest
+   rules, the anchored ring through the tested `walkAnchor`, and the launch
+   from the reference library. Five sequences — connectors, line routes, the
+   sticky chain, frames, the pen.
+
+   **What is left, in the order I would take it:**
+
+   - **Launch against a matching template rather than an empty canvas.** This
+     was in the agreed design and is not built. `engine/templates/templates.ts`
+     has 26 of them and the walkthrough currently starts wherever you are, so
+     the connector sequence on an empty board asks you to join two objects that
+     do not exist. That is the largest remaining gap and it is the one people
+     will hit first.
+   - **A step that cannot be observed has no walkthrough.** Eleven lessons are
+     deliberately excluded and `walkthrough.test.ts` names them. Some are right
+     to exclude for good (`offline`); some are only excluded because their
+     gesture leaves no trace in the document (`forces`, `image-reframe`). If
+     those are wanted, the honest route is a new observation, not a Next button
+     on the ones that cannot detect themselves.
+   - **The ring points at the newest object the step produced**, which is right
+     for most steps and arbitrary when a step creates several. A step could
+     name what it points at.
+   - Nothing here has been **watched running** — see §5a.
+
+   The user chose "scripted real mutations" over a recorded video when asked.
 3. ~~**Visual refinement** of existing surfaces~~ — largely done; see §4b.
 4. **New surfaces** — the canvas empty state and the rooms page are done, and
    ~~**first-run onboarding**~~ is **done** as well: four surfaces, each one

@@ -6,7 +6,7 @@ import { connectorPoints, type Box } from '../model/connector';
 import { gridCellsOf } from '../grid/gridNode';
 import { roundPolygon } from '../grid/gridLayout';
 import { cellGeometry } from '../grid/gridBuild';
-import { roughPolyline, seedFrom } from '../model/rough';
+import { fillsInterior, roughPolyline, seedFrom } from '../model/rough';
 import { SvgPaintDefs } from './svgPaint';
 import { assembleSvg } from './svgDocument';
 import { fetchBlob, inlineImageSources } from './inlineImages';
@@ -26,6 +26,7 @@ import { roughShape } from '../model/roughShape';
 import { canvasFontFamily } from '../../components/canvas/renderers/shared';
 import { DEFAULT_INK } from '../model/schema';
 import { computeContentBounds } from './bounds';
+import { cornerRadiiOf, fitRadii, isPerCorner, roundedRectPath } from '../model/cornerRadii';
 
 /**
  * Embedding raw user text into an SVG without escaping is an XML-corruption
@@ -480,7 +481,16 @@ function shapeMarkup(node: ShapeNode, defs: SvgPaintDefs): string {
     // rather than by regenerating every number in world space.
     const place = ` transform="translate(${x} ${y})"`;
     const parts = [`<g${rot}>`];
-    if (sketch.silhouette && solidFill) {
+    /**
+     * Only a style that fills its interior paints the silhouette.
+     *
+     * The silhouette exists for every filled sketched shape now, because the
+     * canvas needs it as a hit region — so the test that used to be implied by
+     * it being empty has to be written. Without this, an exported hachured
+     * shape would come out solid: a file that disagrees with the screen, which
+     * is the one thing sharing `roughShape` between the two exists to prevent.
+     */
+    if (sketch.silhouette && solidFill && fillsInterior(node.appearance.fillStyle)) {
       parts.push(`<path d="${sketch.silhouette}" fill="${solidFill}"${place} />`);
     }
     if (sketch.fill && solidFill) {
@@ -502,7 +512,19 @@ function shapeMarkup(node: ShapeNode, defs: SvgPaintDefs): string {
 
   switch (node.geometry.kind) {
     case 'rect':
-      return `<rect x="${x}" y="${y}" width="${w}" height="${h}" rx="${node.appearance.cornerRadius ?? 0}" ${paint}${rot} />`;
+      /**
+       * A path when the corners differ, because SVG's `<rect>` cannot say it.
+       * `rx` is one radius for both axes and has no per-corner form at all, so
+       * an independent-cornered rectangle exported as a `<rect>` would come
+       * out with one radius on all four — a file that disagrees with the
+       * screen. `roundedRectPath` is the same function the renderer's outline
+       * uses, so the two agree by construction.
+       */
+      if (isPerCorner(node.appearance.cornerRadius)) {
+        const d = roundedRectPath(x, y, w, h, fitRadii(cornerRadiiOf(node.appearance.cornerRadius), w, h));
+        return `<path d="${d}" ${paint}${rot} />`;
+      }
+      return `<rect x="${x}" y="${y}" width="${w}" height="${h}" rx="${cornerRadiiOf(node.appearance.cornerRadius)[0]}" ${paint}${rot} />`;
     case 'ellipse':
       return `<ellipse cx="${cx}" cy="${cy}" rx="${w / 2}" ry="${h / 2}" ${paint}${rot} />`;
     case 'polygon':
@@ -510,7 +532,7 @@ function shapeMarkup(node: ShapeNode, defs: SvgPaintDefs): string {
       // A rounded one is a real path now, so it exports as one. Falls through
       // to the point-list branches below when there is no radius, which keeps
       // an ordinary hexagon a `<polygon>` in the output.
-      if ((node.appearance?.cornerRadius ?? 0) > 0) {
+      if (Math.max(...cornerRadiiOf(node.appearance?.cornerRadius)) > 0) {
         return `<path d="${pathData(shapeToPath(node))}" ${paint}${rot} />`;
       }
       return node.geometry.kind === 'star'
@@ -674,7 +696,7 @@ export class SVGExporter implements Exporter {
 
         case 'frame': {
           parts.push(
-            `<rect x="${node.x}" y="${node.y}" width="${node.width}" height="${node.height}" rx="${node.appearance.cornerRadius ?? 0}" fill="${defs.fill(node.appearance.fill?.[0], { x: node.x, y: node.y, width: node.width, height: node.height }, '#FFFFFF')}" />`
+            `<rect x="${node.x}" y="${node.y}" width="${node.width}" height="${node.height}" rx="${cornerRadiiOf(node.appearance.cornerRadius)[0]}" fill="${defs.fill(node.appearance.fill?.[0], { x: node.x, y: node.y, width: node.width, height: node.height }, '#FFFFFF')}" />`
           );
           break;
         }

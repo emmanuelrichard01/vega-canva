@@ -32,6 +32,7 @@ import type { BezierGeometry, Point, ShapeNode } from './schema';
 import { fromAnchors, type Anchor } from './pathGeometry';
 import { roundPathCorners } from './roundCorners';
 import { runPoints } from './lineEnds';
+import { cornerRadiiOf } from './cornerRadii';
 
 export function regularPolygonPoints(
   cx: number,
@@ -172,7 +173,7 @@ export function shapeOutline(node: Pick<ShapeNode, 'geometry' | 'width' | 'heigh
     // Clamped to half the shorter side. A radius larger than that draws a
     // rectangle with corners that overlap each other, which Canvas2D renders
     // as a shape turned inside out at the joins.
-    const radius = Math.max(0, Math.min(node.appearance?.cornerRadius ?? 0, Math.min(w, h) / 2));
+    const radius = Math.max(0, Math.min(uniformRadius(node.appearance?.cornerRadius), Math.min(w, h) / 2));
     return { kind: 'rect', x: 0, y: 0, width: w, height: h, radius };
   }
 
@@ -184,7 +185,7 @@ export function shapeOutline(node: Pick<ShapeNode, 'geometry' | 'width' | 'heigh
     return { kind: 'bezier', geometry: fromAnchors(squircleAnchors(w, h), true) };
   }
 
-  const radius = Math.max(0, node.appearance?.cornerRadius ?? 0);
+  const radius = Math.max(0, uniformRadius(node.appearance?.cornerRadius));
 
   if (node.geometry.kind === 'heart') {
     return { kind: 'bezier', geometry: rounded(fromAnchors(heartAnchors(w, h), true), radius) };
@@ -239,4 +240,24 @@ function rounded(geo: BezierGeometry, radius: number): BezierGeometry {
 /** `x,y x,y ...`, the form an SVG `<polygon points>` attribute wants. */
 export function pointsAttribute(points: Point[]): string {
   return points.map((p) => `${p.x},${p.y}`).join(' ');
+}
+
+/**
+ * The single radius this module can express, from either stored form.
+ *
+ * `shapeOutline` describes a shape as one of a few *kinds* — a rect with a
+ * radius, an ellipse, a polygon — and that vocabulary has one number in it.
+ * Four different corners are not a rounded rect in that sense; they are a
+ * path, which is what `roundedRectPath` produces and what `shapeToPath` hands
+ * to anything that needs the real outline.
+ *
+ * So this takes the largest of the four rather than the first. Everything
+ * downstream of `shapeOutline` is a *clip* or a *hit region*, and one that is
+ * slightly too generous rounds a corner that should have been square, while
+ * one that is too small clips a corner that should have been round — visibly,
+ * and in the shadow rather than in the shape.
+ */
+function uniformRadius(value: import('./cornerRadii').CornerRadiusValue | undefined): number {
+  const [a, b, c, d] = cornerRadiiOf(value);
+  return Math.max(a, b, c, d);
 }

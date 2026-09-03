@@ -44,6 +44,10 @@ import { liveTransformStore, useLiveTransform } from '../engine/model/liveTransf
 import { connectorDragPatch, syncConnectedConnectors } from '../engine/model/connectorTargets';
 import { fitPathToBox } from '../engine/model/pathGeometry';
 import { duplicationSet, travelledEnough } from '../engine/interaction/altDuplicate';
+import { claimCursor } from '../engine/cursor/cursorOverride';
+import { cursorCss } from '../engine/cursor/cursorCss';
+import { moveVisual } from '../engine/cursor/cursorVisual';
+import { ThemeService } from '../engine/ThemeService';
 
 /**
  * Which character a click inside a text node landed on.
@@ -208,18 +212,17 @@ function duplicateAt(ids: readonly string[], dx: number, dy: number): void {
  * body so it disappears the moment the pointer leaves the canvas, and cleared
  * to '' rather than 'default' so whatever the active tool had set comes back.
  */
-function setDuplicateCursor(stage: Konva.Stage | null | undefined, on: boolean) {
-  const container = stage?.container();
-  if (!container) return;
-  if (on) {
-    if (container.dataset.cursorBeforeCopy === undefined) {
-      container.dataset.cursorBeforeCopy = container.style.cursor;
-    }
-    container.style.cursor = 'copy';
-  } else if (container.dataset.cursorBeforeCopy !== undefined) {
-    container.style.cursor = container.dataset.cursorBeforeCopy;
-    delete container.dataset.cursorBeforeCopy;
-  }
+function setDuplicateCursor(_stage: Konva.Stage | null | undefined, on: boolean) {
+  /**
+   * A claim, rather than a saved-and-restored inline style.
+   *
+   * The save/restore dance existed because this wrote to the same single
+   * property everything else wrote to, so it had to remember what it had
+   * trampled. A claim is released rather than restored, and whatever else
+   * still holds one wins on its own — which is what that `dataset` was
+   * approximating, and it could only remember one level deep.
+   */
+  claimCursor('alt-duplicate', on ? 'copy' : null);
 }
 
 const altDragState = {
@@ -1193,8 +1196,71 @@ export const ObjectRenderer = React.memo(
           onDragStart={handleDragStart}
           onDragMove={handleDragMove}
           onDragEnd={handleDragEnd}
-          onMouseEnter={() => setIsHovered(selectable)}
-          onMouseLeave={() => setIsHovered(false)}
+          /**
+           * The pointer says when a drag will be *refused*, and says nothing
+           * otherwise.
+           *
+           * The tempting version claims `move` on every object, which is what
+           * a few whiteboards do. It is noise: everything on a board can be
+           * moved, so a cursor announcing it on every hover replaces the tool
+           * badge with the least surprising fact available. "Do not label what
+           * the screen already says" is the product's own first principle.
+           *
+           * The exceptions are worth a cursor because they are invisible.
+           * A **viewer** cannot edit at all, and §4k records what that cost
+           * before the write path was gated: a viewer recoloured shapes, the
+           * server dropped the writes, and their board forked from everyone
+           * else's while appearing to work. A divergence that resembles
+           * success is worse than a refusal, and this is the refusal arriving
+           * before the gesture rather than after it. A **pinned** note is the
+           * same shape at a smaller scale — the pin promises it stays put, and
+           * that promise is otherwise only discoverable by pulling at it.
+           *
+           * `locked` is deliberately absent: a locked node has
+           * `listening={false}`, so it receives no hover at all and there is
+           * nothing here to hang a cursor on. Saying so is better than a
+           * branch that cannot run.
+           *
+           * One shared claim id, because only one object can be under the
+           * pointer — a per-object id would leak an entry for every node whose
+           * `mouseleave` was lost to a re-render.
+           */
+          onMouseEnter={() => {
+            setIsHovered(selectable);
+            /**
+             * What the middle of this object does, when that is not obvious.
+             *
+             * Three answers, and the ordering is the reasoning. A **viewer**
+             * cannot edit at all — §4k records what that cost before the write
+             * path was gated: writes landed locally, the server dropped them,
+             * and their board forked from everyone else's while appearing to
+             * work. A divergence that resembles success is worse than a
+             * refusal, and this is the refusal arriving before the gesture. A
+             * **pinned** note is the same shape smaller: the pin promises it
+             * stays put, and that promise is otherwise only discoverable by
+             * pulling at it.
+             *
+             * Otherwise, **only when it is already selected**. Announcing
+             * "this moves" on every object on the board is the least
+             * surprising fact available — but a *selected* object is ringed by
+             * handles that resize it and a band outside them that turns it, so
+             * the one thing its middle genuinely raises is what that part
+             * does. Over an unselected object the arrow still means "this will
+             * select", which is true and is different.
+             *
+             * `locked` is deliberately absent: a locked node has
+             * `listening={false}`, so it receives no hover at all and there is
+             * nothing here to hang a cursor on.
+             */
+            if (!canDrag || isPinned(node)) claimCursor('object-hover', 'not-allowed');
+            else if (isSelected && selectable) {
+              claimCursor('object-hover', cursorCss(moveVisual(ThemeService.isDarkMode()), 'move'));
+            }
+          }}
+          onMouseLeave={() => {
+            setIsHovered(false);
+            claimCursor('object-hover', null);
+          }}
           dragBoundFunc={(pos) => {
             // Snapping is done in world space on the node's *top-left* corner,
             // then mapped back. Snapping the raw screen position would give a

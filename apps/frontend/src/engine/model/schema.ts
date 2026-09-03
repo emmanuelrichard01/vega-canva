@@ -247,12 +247,31 @@ export type Shadow = {
 };
 export type Point = { x: number; y: number };
 
+export type { CornerRadii, CornerRadiusValue } from './cornerRadii';
+import type { CornerRadiusValue } from './cornerRadii';
+
 export interface Appearance {
   fill?: Paint[];
   stroke?: Stroke;
   shadow?: Shadow;
-  /** Applies to rectangles and images. */
-  cornerRadius?: number;
+  /**
+   * Applies to rectangles and images.
+   *
+   * A number when all four corners agree, or `[topLeft, topRight, bottomRight,
+   * bottomLeft]` when they do not — **one field, two forms**, read through
+   * `cornerRadiiOf` which always answers four.
+   *
+   * The alternative was a second field for the independent case, and that is
+   * two places to store one fact: every reader would have to decide which
+   * wins, and the day one of them decided differently is the day a shape draws
+   * four corners in the renderer and one in the exporter. `DATA-MODEL.md`
+   * opens with the version of that mistake which cost this project most.
+   *
+   * `packRadii` collapses back to a plain number whenever the four agree, so
+   * every document ever written keeps the simple form and nothing has to
+   * migrate.
+   */
+  cornerRadius?: CornerRadiusValue;
   /**
    * How this layer's pixels combine with what is beneath. Absent is `normal`.
    *

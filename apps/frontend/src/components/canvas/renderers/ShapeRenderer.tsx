@@ -12,12 +12,13 @@ import { runPoints } from '../../../engine/model/lineEnds';
 import { terminateRun } from '../../../engine/model/connectorEnds';
 import { pathData } from '../../../engine/model/pathGeometry';
 import { roughShape } from '../../../engine/model/roughShape';
-import { roughEllipse, roughPolyline, seedFrom } from '../../../engine/model/rough';
+import { fillsInterior, roughEllipse, roughPolyline, seedFrom } from '../../../engine/model/rough';
 import { ThemeService } from '../../../engine/ThemeService';
 import { readableOnSurface } from '../../../engine/model/color';
 import { useLiveTransform } from '../../../engine/model/liveTransformStore';
 import { fontEpoch } from '../../../engine/text/fontEpoch';
 import { ensureFontLoaded } from '../../../engine/text/measure';
+import { cornerRadiiOf, fitRadii } from '../../../engine/model/cornerRadii';
 
 interface Props {
   node: ShapeNode;
@@ -165,13 +166,22 @@ export const ShapeRenderer: React.FC<Props> = React.memo(({ node, showLabel }) =
    * The sketched silhouette as a `Path2D`, for the effects that need to clip.
    *
    * Built from the same string the solid fill paints, so an inner shadow falls
-   * across the *drawn* edge rather than the ruled one underneath it. Only when
-   * there is a silhouette at all — a pen-shaded shape has no interior for an
-   * effect to sit inside.
+   * across the *drawn* edge rather than the ruled one underneath it.
+   *
+   * Only where the style fills its interior. That used to be carried by the
+   * silhouette being empty for a pen-shaded shape, which is no longer true —
+   * the hit region needs it for every filled shape — so the rule is now
+   * stated. It matters because the panel withdraws the control rather than
+   * disabling the field: a shape that was solid, given an inner shadow, and
+   * then switched to hachure still has the value in its document, and this is
+   * the thing that decides not to draw it.
    */
   const sketchPath = React.useMemo(
-    () => (innerShadow && sketch?.silhouette ? new Path2D(sketch.silhouette) : null),
-    [innerShadow, sketch?.silhouette]
+    () =>
+      innerShadow && fillsInterior(fillStyle) && sketch?.silhouette
+        ? new Path2D(sketch.silhouette)
+        : null,
+    [innerShadow, fillStyle, sketch?.silhouette]
   );
 
   /**
@@ -489,14 +499,32 @@ export const ShapeRenderer: React.FC<Props> = React.memo(({ node, showLabel }) =
           * target without becoming a mark. Gated on `hasFill` so a hollow
           * sketched shape stays edge-only, which is what a hollow crisp one
           * does and what anyone would expect of an outline.
+          *
+          * **This did nothing for its own bug report for one commit.** The
+          * element was right and `sketch.silhouette` was `''` for every style
+          * except `solid` — so the one gate that could not pass was the one
+          * standing between a hachured shape and its hit region. The test
+          * beside it read the source and asserted this JSX existed, which it
+          * did, so a vacuous check passed over an inert fix. `roughShape` now
+          * produces the region for any filled shape and `sketchHitArea.test.ts`
+          * asserts that against the real function rather than against the
+          * markup that consumes it.
           */}
         {!open && hasFill && sketch.silhouette && (
           <Path data={sketch.silhouette} fill="transparent" perfectDrawEnabled={false} />
         )}
         {/* A solid fill paints the true silhouette, not the sketch: the drawn
             strokes are disjoint by design, so filling them would leave bites
-            taken out of the shape wherever two failed to meet. */}
-        {sketch.silhouette && hachureColor && (
+            taken out of the shape wherever two failed to meet.
+
+            `fillsInterior` is what keeps this to a solid fill. It used to be
+            implied — the silhouette was only *produced* for a solid style, so
+            this test could not fire for any other. The silhouette now exists
+            for every filled shape because the hit region above needs it, so
+            the condition that was doing this job invisibly has to be written
+            down. Without it a hachured shape would paint solid and then draw
+            its strokes on top of itself. */}
+        {sketch.silhouette && hachureColor && fillsInterior(fillStyle) && (
           <Path
             data={sketch.silhouette}
             fill={hachureColor}
@@ -654,7 +682,34 @@ export const ShapeRenderer: React.FC<Props> = React.memo(({ node, showLabel }) =
       </Group>
     );
   } else if (node.geometry.kind === 'rect') {
-    shape = <Rect width={w} height={h} {...rectFill} {...shadow} stroke={primitiveStroke} strokeWidth={sw} {...dashProps} cornerRadius={Math.max(0, radius)} />;
+    /**
+     * A number when the four agree, the array only when they do not.
+     *
+     * Konva's `Rect` takes either — but its scene function branches on
+     * `if (!cornerRadius)`, and **an array is always truthy**. Handing it
+     * `[0, 0, 0, 0]` for an ordinary square-cornered rectangle therefore moves
+     * every such rectangle in the product off `context.rect()` and onto the
+     * rounded-path walk with four zero-radius arcs. It draws the same shape,
+     * and it is a different code path taken by the most common object on the
+     * board for no reason at all.
+     *
+     * Fitted first, because Konva clamps each corner against the whole box
+     * rather than against the pair sharing an edge — see `fitRadii`.
+     */
+    const fitted = fitRadii(cornerRadiiOf(radius), w, h);
+    const konvaRadius = fitted.every((r) => r === fitted[0]) ? fitted[0] : fitted;
+    shape = (
+      <Rect
+        width={w}
+        height={h}
+        {...rectFill}
+        {...shadow}
+        stroke={primitiveStroke}
+        strokeWidth={sw}
+        {...dashProps}
+        cornerRadius={konvaRadius}
+      />
+    );
   } else if (
     node.geometry.kind === 'heart' ||
     node.geometry.kind === 'squircle' ||
@@ -662,7 +717,8 @@ export const ShapeRenderer: React.FC<Props> = React.memo(({ node, showLabel }) =
     // have been filleted into real curves, so it is drawn from the path the
     // outline describes. Konva's own `cornerRadius` exists on `Rect` alone,
     // which is why every other shape's radius did nothing before.
-    ((node.geometry.kind === 'polygon' || node.geometry.kind === 'star') && radius > 0)
+    ((node.geometry.kind === 'polygon' || node.geometry.kind === 'star') &&
+      Math.max(...cornerRadiiOf(radius)) > 0)
   ) {
     // Drawn as a real path rather than as a dense polygon, so it stays smooth
     // at any zoom — the reason `shapeOutline` grew a `bezier` kind. The data

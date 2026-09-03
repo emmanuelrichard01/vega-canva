@@ -1290,9 +1290,12 @@ export const Canvas: React.FC<CanvasProps> = ({ activeTool, selectedIds, setSele
       onTouchEnd={handleTouchEndNative}
       onTouchCancel={handleTouchEndNative}
     >
-      {/* Our own pointer, over the canvas only. It sets `data-custom-cursor`
-          on this container itself, so if it bails out — touch, forced colors —
-          the native `[data-cursor-mode]` cursors stay in force. */}
+      {/* Our pointer art, installed as real CSS cursors. It renders nothing:
+          a drawn element is composited with the page and is a frame behind the
+          compositor-drawn OS cursor by construction, which is what "the cursor
+          lags" turned out to be. It writes `--cursor-tool` and friends; if it
+          bails out — touch, forced colors — the keyword `[data-cursor-mode]`
+          rules above are still in force and the board still has a pointer. */}
       <LocalCursor mode={cursorMode} containerRef={containerRef} activeTool={activeTool} />
       {/* Outside the stage: the rulers are chrome pinned to the viewport, and
           drawing them inside a transformed canvas would mean fighting that

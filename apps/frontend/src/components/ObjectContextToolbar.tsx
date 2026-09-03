@@ -121,9 +121,51 @@ import { sharedValue } from '../engine/model/selection';
 
 // Matches .hierarchy-panel / .context-inspector in index.css:
 // `--shell-inset` (28px, set by the vertical ruler's width) + `--panel-w` (260).
-const SIDEBAR_WIDTH = 288;
 const BOTTOM_DOCK_HEIGHT = 76;
 const EDGE_MARGIN = 16;
+
+/**
+ * How far the chrome on one side actually reaches into the window.
+ *
+ * ## Why this is measured and not a constant
+ *
+ * It was `sidebarsVisible ? 288 : 16` — the Layers and Properties panels'
+ * expanded width, hard-coded. `sidebarsVisible` only means "not in
+ * presentation mode", so a **collapsed** panel still reserved all 288px: the
+ * rail refused to go anywhere near a side that was, by then, empty board. The
+ * panels collapse to a narrow rail and the toolbar never found out.
+ *
+ * Measuring removes the question rather than answering it again. A collapsed
+ * panel measures narrow, a hidden one measures zero, a panel someone drags
+ * wider measures wider, and none of that needs a second signal or a prop
+ * threaded down from whoever owns the collapse state. `PresenceEdgeMarkers`
+ * already learned this and the README states it: the edge to use is the edge
+ * of the *visible canvas*, measured from the DOM, not the window — markers
+ * placed against the window went behind the Properties panel.
+ *
+ * ## Why the result is cached
+ *
+ * `updatePosition` runs from a `requestAnimationFrame` loop for as long as the
+ * rail is on screen, so measuring inside it would be two forced layouts every
+ * frame — the kind of cost that does not show up in a profile as one bad
+ * function, only as a canvas that feels heavy while anything is selected.
+ *
+ * A `ResizeObserver` fires on exactly the events that can change the answer:
+ * a panel collapsing, expanding, or being resized, and the window changing
+ * size. Between those the answer cannot have changed, so the loop reads a
+ * number instead of the DOM.
+ */
+function chromeInset(selector: string, side: 'left' | 'right'): number {
+  const el = document.querySelector(selector);
+  if (!el) return EDGE_MARGIN;
+  const r = el.getBoundingClientRect();
+  // Hidden entirely — presentation mode, or a viewport too narrow for it.
+  if (r.width === 0 || r.height === 0) return EDGE_MARGIN;
+  const reach = side === 'left' ? r.right : window.innerWidth - r.left;
+  // Never *less* than the plain margin: a panel that has scrolled off or is
+  // mid-transition must not let the rail sit against the window edge.
+  return Math.max(EDGE_MARGIN, reach);
+}
 const TOP_BAR_HEIGHT = 48;
 const RAIL_HEIGHT = 40;
 
@@ -193,6 +235,24 @@ const REACTION_SET = ['👍', '❤️', '🎉', '🔥', '🚀', '👀', '💡', 
  * them use the same two shapes. A pair of words would be a second vocabulary
  * for a distinction the canvas has already taught.
  */
+/**
+ * Symmetric: one straight tangent through the point, equal on both sides.
+ *
+ * Drawn as the *handles* rather than as a curve, because that is the
+ * distinction it names. Corner and Smooth differ in the shape of the path, so
+ * they are drawn as path shapes; Symmetric and Smooth produce the same shape
+ * and differ only in what the handles do next — a curve icon could not tell
+ * them apart, and two buttons with one picture is worse than a third shape.
+ */
+const SymmetricIcon: React.FC = () => (
+  <svg width="15" height="15" viewBox="0 0 15 15" fill="none" aria-hidden>
+    <path d="M2.5 11.5 12.5 3.5" stroke="currentColor" strokeWidth="1.4" strokeLinecap="round" />
+    <circle cx="2.5" cy="11.5" r="1.5" fill="none" stroke="currentColor" strokeWidth="1.3" />
+    <circle cx="12.5" cy="3.5" r="1.5" fill="none" stroke="currentColor" strokeWidth="1.3" />
+    <circle cx="7.5" cy="7.5" r="2" fill="currentColor" />
+  </svg>
+);
+
 const CornerIcon: React.FC<{ rounded: boolean }> = ({ rounded }) => (
   <svg width="15" height="15" viewBox="0 0 15 15" fill="none" aria-hidden>
     <path
@@ -219,6 +279,7 @@ import {
   SHAPE_CHOICES,
 } from './toolbar/railConstants';
 import { VectorBooleanSection } from './toolbar/VectorBooleanSection';
+import { cornerRadiiOf } from '../engine/model/cornerRadii';
 
 /**
  * The names, from the one module that holds them.
@@ -271,6 +332,8 @@ export const ObjectContextToolbar: React.FC<Props> = ({ selectedId, selectedIds,
    * whether there is room to stand beside it at all.
    */
   const railRef = useRef<HTMLDivElement>(null);
+  /** How far the side chrome reaches in, re-measured only when it changes. */
+  const insetsRef = useRef({ left: EDGE_MARGIN, right: EDGE_MARGIN });
   const [placement, setPlacement] = useState<RailSide>('top');
   /**
    * False when the selection left the rail nowhere to stand.
@@ -364,6 +427,30 @@ export const ObjectContextToolbar: React.FC<Props> = ({ selectedId, selectedIds,
      */
     lastRef.current = { x: -9999, y: -9999, placement: lastRef.current.placement, clear: lastRef.current.clear, visible: false };
 
+    /**
+     * Re-measure the chrome, and only when it can have changed.
+     *
+     * Observed rather than derived from a prop: whether a panel is open is
+     * state that lives with the panel, and threading it here would be a second
+     * copy of it to keep in step. The DOM already knows, and a collapsed panel
+     * is *narrow* rather than absent — so this reads the same for a collapse,
+     * an expand, and a drag-resize, none of which have to be told apart.
+     */
+    const measure = () => {
+      insetsRef.current = {
+        left: chromeInset('.hierarchy-panel', 'left'),
+        right: chromeInset('.context-inspector', 'right'),
+      };
+    };
+    measure();
+
+    const observer = new ResizeObserver(measure);
+    for (const sel of ['.hierarchy-panel', '.context-inspector']) {
+      const el = document.querySelector(sel);
+      if (el) observer.observe(el);
+    }
+    window.addEventListener('resize', measure);
+
     const updatePosition = () => {
       // Read before anything is written this frame. Taking a rect after writing
       // a transform forces the browser to lay out again to answer.
@@ -427,12 +514,21 @@ export const ObjectContextToolbar: React.FC<Props> = ({ selectedId, selectedIds,
        * Both insets collapse to a plain margin in presentation mode, where none
        * of that chrome is on screen to be avoided.
        */
-      const inset = sidebarsVisible ? SIDEBAR_WIDTH : EDGE_MARGIN;
+      /**
+       * The free strip, from where the chrome actually is.
+       *
+       * Both sides are measured independently, because they collapse
+       * independently: opening Layers and closing Properties is an ordinary
+       * thing to do and used to move the rail on neither side.
+       */
+      const { left, right } = sidebarsVisible
+        ? insetsRef.current
+        : { left: EDGE_MARGIN, right: EDGE_MARGIN };
       const bounds = {
         top: EDGE_MARGIN + TOP_BAR_HEIGHT,
         bottom: window.innerHeight - (sidebarsVisible ? BOTTOM_DOCK_HEIGHT : EDGE_MARGIN),
-        left: inset + 4,
-        right: window.innerWidth - inset - 4,
+        left: left + 4,
+        right: window.innerWidth - right - 4,
       };
 
       // Measured, not estimated: the union rail carrying four booleans and eight
@@ -537,6 +633,8 @@ export const ObjectContextToolbar: React.FC<Props> = ({ selectedId, selectedIds,
     });
 
     return () => {
+      observer.disconnect();
+      window.removeEventListener('resize', measure);
       engineEvents.off('CameraChanged', updatePosition);
       engineEvents.off('ObjectMoved', updatePosition);
       engineEvents.off('ObjectModified', updatePosition);
@@ -1028,6 +1126,15 @@ export const ObjectContextToolbar: React.FC<Props> = ({ selectedId, selectedIds,
                   onClick={() => setMultiplePathsAnchorMode(bulkIds, 'smooth')}
                 >
                   <CornerIcon rounded />
+                </RailButton>
+                {/* The same three the single-path rail offers. Two lists of
+                    modes is how one of them ends up missing the third. */}
+                <RailButton
+                  label="Make Symmetric"
+                  hint="Convert all points across selected shapes to symmetric — equal handles either side"
+                  onClick={() => setMultiplePathsAnchorMode(bulkIds, 'mirrored')}
+                >
+                  <SymmetricIcon />
                 </RailButton>
               </div>
               <Divider />
@@ -1594,9 +1701,9 @@ export const ObjectContextToolbar: React.FC<Props> = ({ selectedId, selectedIds,
                 </RailPopover>
               )}
               {node.type === 'shape' && node.geometry.kind === 'rect' && (
-                <RailPopover label="Corner radius" trigger={<><CornerIcon rounded /><span className="ctx-value">{appearance.cornerRadius ?? 0}</span></>}>
+                <RailPopover label="Corner radius" trigger={<><CornerIcon rounded /><span className="ctx-value">{cornerRadiiOf(appearance.cornerRadius)[0]}</span></>}>
                   <PopoverSlider
-                    label="Corner radius" value={appearance.cornerRadius ?? 0} min={0} max={200}
+                    label="Corner radius" value={cornerRadiiOf(appearance.cornerRadius)[0]} min={0} max={200}
                     onChange={(cornerRadius) => setAppearance({ cornerRadius })}
                   />
                 </RailPopover>
@@ -1761,6 +1868,26 @@ export const ObjectContextToolbar: React.FC<Props> = ({ selectedId, selectedIds,
                     onClick={() => setPickedAnchorMode('smooth')}
                   >
                     <CornerIcon rounded />
+                  </RailButton>
+                  {/*
+                    The third alignment, which the model has always had and
+                    nothing could ask for: `HandleMode` declares `mirrored`,
+                    `handleMode` derives it, and `moveHandle` honours it — but
+                    `setAnchorMode` took two values, so it could only ever come
+                    about by dragging until the lengths happened to match.
+                    Smooth keeps each handle's own length; symmetric equalises
+                    them, which is what a circle's anchors are.
+                  */}
+                  <RailButton
+                    label="Symmetric"
+                    hint={
+                      pickedAnchors > 0
+                        ? 'Make selected points symmetric — equal handles either side'
+                        : 'Make all points symmetric — equal handles either side'
+                    }
+                    onClick={() => setPickedAnchorMode('mirrored')}
+                  >
+                    <SymmetricIcon />
                   </RailButton>
                 </div>
                 {/* Align needs two points to mean anything */}

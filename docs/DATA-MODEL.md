@@ -100,7 +100,8 @@ Shadow     { color: string, blur: number, offsetX: number, offsetY: number,
              spread?: number, opacity?: number }
 
 Appearance { fill?: Paint[], stroke?: Stroke, shadow?: Shadow,
-             cornerRadius?: number, blendMode?: BlendMode, blur?: number,
+             cornerRadius?: number | [number, number, number, number],
+             blendMode?: BlendMode, blur?: number,
              innerShadow?: Shadow, backdropBlur?: number }
 
 Typography {
@@ -120,6 +121,38 @@ Typography {
 
 Author { id: string, name: string, color: string }
 ```
+
+`cornerRadius` is **one field in two forms**: a number when all four corners
+agree, and `[topLeft, topRight, bottomRight, bottomLeft]` when they do not. The
+alternative — `cornerRadius: number` plus a separate `cornerRadii?: [4]` — is
+two places to store one fact, and the opening section of this document records
+what that cost the last time: a size in three places, read with different
+precedence in six modules.
+
+Two consequences make the two-form field worth its slightly awkward type:
+
+- **Nothing migrates.** A document written before per-corner existed holds a
+  number and still reads correctly; a shape that never gets independent corners
+  keeps holding one. The array only appears when it is doing work, so
+  `Appearance` diffs stay small.
+- **"Are the corners linked" is derived, never stored.** `isUniform` reads the
+  value. A shape whose corners differ shows as unlinked in the panel without
+  anything having to remember that it does — there is no second piece of state
+  to fall out of step with the geometry.
+
+Every reader goes through `engine/model/cornerRadii.ts`, which answers four
+numbers whatever it was given, and every writer goes through `packRadii`, which
+collapses four equal radii back to one and drops the field entirely when all
+four are zero. The order is **clockwise**, matching Konva's `Rect` and the
+direction an SVG path walks — which disagrees with reading order on the bottom
+row, and the panel converts once, explicitly, because the version that assumed
+they were the same shipped two fields editing the wrong corners.
+
+The normalizer is the place this is most easily lost. `normalize.ts` accepted
+the number form and silently discarded the array, so per-corner radii round-
+tripped to `1` — the panel was correct, the renderer was correct, and the value
+died in between. Any new form of an existing field needs a matching branch
+there or it does not survive a reload.
 
 `fontWeight`, `italic` and `underline` are deliberately separate fields. Konva
 encodes weight and slant into a single `fontStyle` string; conflating them in the

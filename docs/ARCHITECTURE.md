@@ -72,6 +72,40 @@ of their decisions are *scale-driven* (skip at our size) versus
 - **Persistence** — A periodic compacted snapshot is saved to **PostgreSQL** as the canonical source of truth.
 - **Media store** — **MinIO (S3 Object Storage)**. The CRDT document only holds a URL reference, keeping the sync loop incredibly fast while binary media is piped natively to the cloud.
 
+### The pointer is drawn by the operating system
+
+The cursor is worth a note here because the obvious implementation is the wrong
+one, and this codebase shipped it twice.
+
+A custom cursor drawn as a DOM element that follows `pointermove` **cannot** keep
+up with the real pointer. Not because the code is slow — because a composited
+page element is presented on the next frame while the OS draws its own pointer
+directly, so the drawn one is a frame behind by construction at any frame rate.
+Every optimisation applied to such an element makes it a smoother lagging
+cursor. `engine/cursor/toolCursor.ts` carried a header recording exactly this,
+and the element was optimised again anyway before the header was believed.
+
+So every cursor in the app is a CSS `url(data:image/svg+xml,…)` value, handed to
+the OS compositor along with a hotspot. Three things follow that are not obvious
+until they break:
+
+- **The SVG needs `xmlns="http://www.w3.org/2000/svg"`.** A data-URI cursor that
+  fails to decode does not warn; the whole declaration is dropped and the
+  keyword fallback silently takes over. Every drawn cursor in the app was
+  falling back to `default` for this reason, and it looked like a design choice.
+- **Cursor images are clipped to their declared size**, so art that reaches
+  further than the SVG's `width`/`height` is cut with no error.
+- **The element that owns the cursor is not the one you think.** `Stage.container()`
+  is react-konva's own `<div>`, a *child* of `.canvas-container`. Code writing to
+  one while code reading from the other produced a permanent double cursor.
+  Claims are published as an inheriting custom property (`--cursor-claim`) rather
+  than an inline `style.cursor`, so it does not matter which of the two a given
+  caller holds.
+
+`cursorVisual.ts` holds the art as data — geometry and a palette, with theme
+chosen per-cursor — and `cursorCss.ts` turns a visual into the declaration plus
+its keyword fallback. Nothing renders a cursor as React.
+
 ### Three tiers of state, and the test for which one a thing belongs in
 
 Not everything the client knows is document state, and putting it there is the
@@ -108,6 +142,16 @@ this case hiding the contextual rail until the page was reloaded. Transient
 state that outlives the thing it describes needs something that can *falsify* it
 from outside, not merely a matching call. Here that is "the pointer came up and
 nothing is being typed into".
+
+`cursorOverride` is the third, and it is `railVeil`'s lesson applied before the
+fact rather than after. Six components want to say "while I am hovered, the
+cursor is a resize arrow" — and they used to say it by assigning
+`stage.container().style.cursor`, which is last-writer-wins with no way to know
+whether the last writer still exists. Two of them overlapping left whichever
+released second in charge, and a component unmounted mid-hover never released
+at all. It is a claim store now: `claim(id, mode)` / `release(id)`, plus a
+`releaseAll` the pointer-up path calls, so a stuck claim is recoverable without
+a reload. That is the same falsifiability the tier's rules ask for.
 
 `renderScope` is the tier used as a lever on the render tree: an export declares
 which objects it needs mounted regardless of culling, and releases when it has
