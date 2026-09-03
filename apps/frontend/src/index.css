@@ -6370,13 +6370,50 @@ textarea:focus-visible {
 }
 
 /* The one front door, and the only accent on the rail. */
+/**
+ * The split start control: the `+`, and a caret for the other three ways in.
+ *
+ * The caret hangs off the button's bottom-right corner rather than sitting
+ * beside it. A 38px rail has no room for a second column, and stacking one
+ * under the other would make the front door read as two controls of equal
+ * weight — which is exactly the flattening this change exists to undo. As a
+ * corner badge it reads as *part of* the `+`: one thing, with more behind it.
+ */
+.lrail__start {
+  position: relative;
+  margin-top: var(--space-2);
+}
+
+.lrail__start-more {
+  position: absolute;
+  right: -3px;
+  bottom: -3px;
+  display: grid;
+  place-items: center;
+  width: 16px;
+  height: 16px;
+  padding: 0;
+  /* Ringed in the rail's own ground, so the badge separates from the accent
+     square underneath it without a border of its own. */
+  border: 2px solid var(--surface-primary);
+  border-radius: var(--radius-pill);
+  background: var(--accent);
+  color: var(--accent-on);
+  cursor: pointer;
+  transition: background-color var(--motion-hover), transform var(--motion-hover);
+}
+
+.lrail__start:hover .lrail__start-more,
+.lrail__start-more:focus-visible { background: var(--accent-hover); }
+
+.lrail__start-more[aria-expanded='true'] { transform: rotate(180deg); }
+
 .lrail__new {
   display: flex;
   align-items: center;
   justify-content: center;
   width: 38px;
   height: 38px;
-  margin-top: var(--space-2);
   border: none;
   border-radius: var(--radius-lg);
   background: var(--accent);
@@ -6476,6 +6513,16 @@ textarea:focus-visible {
   min-width: 220px;
 }
 
+/* The account menu sits at the foot of the rail and opens upward from its own
+   bottom edge; this one is at the head, so it opens *downward* from its top.
+   Both are `bottom: 0` otherwise, which would hang the start menu off the top
+   of the window. */
+.lrail__menu--start {
+  top: 0;
+  bottom: auto;
+  min-width: 208px;
+}
+
 .lrail__who {
   margin: 0;
   padding: var(--space-2) var(--space-3) var(--space-1);
@@ -6497,9 +6544,65 @@ textarea:focus-visible {
 /* ----------------------------------------------------------------- stage --- */
 
 .lstage {
+  position: relative;
   flex: 1;
   min-width: 0;
   overflow-y: auto;
+}
+
+/**
+ * The cue while a file is over the page.
+ *
+ * Full-bleed and `pointer-events: none`: it must cover the stage so there is
+ * no seam a drop can fall through, and must not itself become the drop target,
+ * or the `dragleave` bookkeeping would fight an element that appears under the
+ * pointer the moment the drag begins.
+ *
+ * It says what will happen rather than "drop here", because the outcome is the
+ * part that is not obvious — a backup opens as a *new* board and leaves
+ * everything already in the library alone.
+ */
+.lstage__drop {
+  position: absolute;
+  inset: 0;
+  z-index: 5;
+  display: grid;
+  place-items: center;
+  padding: var(--space-6);
+  pointer-events: none;
+  background: color-mix(in srgb, var(--surface-primary) 82%, transparent);
+  backdrop-filter: blur(2px);
+  animation: dropCueIn 140ms var(--ease-settle) both;
+}
+
+@keyframes dropCueIn {
+  from { opacity: 0; }
+  to { opacity: 1; }
+}
+
+.lstage__drop-card {
+  display: grid;
+  place-items: center;
+  gap: var(--space-2);
+  width: min(420px, 100%);
+  padding: var(--space-8);
+  border: 2px dashed var(--accent);
+  border-radius: var(--radius-2xl);
+  background: var(--surface-primary);
+  box-shadow: var(--shadow-float);
+  color: var(--accent);
+  text-align: center;
+}
+
+.lstage__drop-title {
+  font-size: var(--text-lg);
+  font-weight: var(--weight-semibold);
+  color: var(--text-primary);
+}
+
+.lstage__drop-sub {
+  font-size: var(--text-xs);
+  color: var(--text-tertiary);
 }
 
 .lstage__inner {

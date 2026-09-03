@@ -1087,6 +1087,44 @@ beside it, so a shape whose corners differ cannot show as linked. `packRadii`
 collapses four equal radii back to a number and drops the field when all four
 are zero, which is why nothing had to migrate.
 
+### The dashboard's front door — `Home.tsx`
+
+Four ways to get a board on screen: blank, from a template, from a backup file,
+from somebody's link. They are one family — the empty state has always listed
+them together — and the rule is that they live in **one place**, because four
+scattered entrances is four things to remember and muscle memory can hold one.
+
+The `+` at the top of the rail is a **split control**. A plain click opens a
+blank board with nothing in the way; a caret badge on its corner (or a
+right-click on the `+`) opens the two that have nowhere else to be — a backup
+file, and somebody's link. Splitting rather than making it a menu button is
+deliberate: a menu button makes the most common action cost two clicks so that
+the rare ones can cost one, which is the trade backwards.
+
+The menu is deliberately **not** all four. Templates is a permanent destination
+on the same rail, and Blank board is what the `+` already does — an item you
+can reach without the menu turns the menu into a grab-bag, and naming the
+button's own action inside its own menu tells somebody what they just clicked.
+
+Two of them used to sit behind the avatar, and that was the wrong drawer rather
+than merely a quiet one. An avatar means *things about me* — identity, session,
+sign out. A backup file is about a **board**. A label that does not predict its
+contents cannot be learned, however long it sits there.
+
+Two of the four need no menu at all:
+
+- **Drop a `.json` on the stage.** It goes through the same `handleRestoreFile`
+  the picker uses, so the file is parsed and refused *before* anything
+  navigates — a bad drop leaves you here with a message rather than in a new
+  empty room. The cue counts `dragenter` against `dragleave`, because
+  `dragleave` fires when the pointer crosses into a child and clearing on it
+  flickers the overlay over every card in the grid.
+- **Paste a link with nothing focused.** It is already on the clipboard; the
+  old path was find the control, click it, click the field, paste. It stands
+  down inside any input or `contenteditable`, reacts only to text containing
+  `/room/` or shaped like a room code, and **fills** the field rather than
+  navigating — a paste is not a decision.
+
 ### Colour — `engine/model/colorRamp.ts`
 
 Every picker offered two things: a fixed set of swatches, and a saturation-value

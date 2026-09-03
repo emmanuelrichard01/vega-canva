@@ -3380,6 +3380,80 @@ if the window is genuinely too narrow to hold it, which is the wrap you want;
 1.9 to 1.7 with it — 1.9 was leading for a wrapped block, and on one line it
 only padded the gap to the title.
 
+## 5a-0-q. The four ways into a board became one control
+
+Reported as the two rare actions being hidden in the profile menu, and asked as
+a placement question. It was not a placement problem.
+
+There are **four** ways to get a board on screen — blank, from a template, from
+a backup file, from somebody's link — and they sat at three different levels of
+prominence: the `+` at the top of the rail, Templates as a nav destination, and
+the other two behind the avatar. The empty state has always offered three of
+them together, in one list, in the order they are worth trying, which is the
+app already saying they are one family.
+
+Behind the avatar was the **wrong drawer**, not merely a quiet one. An avatar
+means *things about me* — who I am, this session, signing out. A backup file is
+about a **board**. Filing a board action under a heading that describes a
+person is why no amount of use ever made it findable: there was nothing to
+learn, because the label did not predict the contents. That is also why moving
+them somewhere more visible would not have fixed it — four scattered entrances
+is four things to remember, and muscle memory can only hold one.
+
+**The `+` is a split control now.** A plain click still opens a blank board
+with nothing in the way; a caret badge on its bottom-right corner opens **From
+a backup file** and **Open a link**. Splitting rather than turning it into a
+menu button is the whole point: a menu button would make the most common action
+on the page cost two clicks in order to make the rare ones cost one, which is
+the trade backwards. Right-clicking the `+` opens the same menu, because a 16px
+badge is fine as a second way in and thin as the only one.
+
+**The menu holds two items, not four**, and the first draft got this wrong in a
+tidier costume. Templates is already a permanent destination on this rail, one
+icon below — naming it again inside the menu re-scatters the thing the menu
+exists to gather, and a menu carrying something you can reach without it
+teaches people it is a grab-bag rather than a specific set. Blank board goes
+for a sharper version of the same reason: the caret sits *on* the `+`, so the
+menu reads as "and more ways", and naming the button's own action inside its
+own menu tells somebody what they just clicked. What is left is what was
+actually homeless — a file you have, and a link somebody sent.
+
+The caret is a corner badge rather than a second button beside it because a
+38px rail has no room for a second column, and stacking two controls would make
+the front door read as two things of equal weight — exactly the flattening this
+undoes.
+
+**Two of the four need no menu at all**, and these are the parts that make it
+feel native rather than filed away:
+
+- **Drop a backup anywhere on the stage.** "I have a file and I want it open"
+  is a gesture before it is a command. It routes through the same
+  `handleRestoreFile` the picker uses, so the two cannot validate differently —
+  the file is parsed and *refused here* before anything navigates, and a bad
+  drop leaves you on this page with a message rather than in a new empty room.
+  The cue counts `dragenter` against `dragleave`: `dragleave` fires when the
+  pointer crosses into a *child*, so clearing on it flickers the overlay off
+  and on over every card in the grid.
+- **Paste a board link with nothing focused.** That is how people arrive from a
+  link — it is already on the clipboard, and the old path was *find the
+  control, click it, click the field, paste*. It stands down for any input,
+  textarea or `contenteditable` (or it would eat the very field it opens), and
+  only reacts to text containing `/room/` or shaped like a room code. It
+  **fills** the field rather than navigating: a paste is not a decision, and
+  the clipboard can hold something stale.
+
+**And the empty state gained its fourth card.** Somebody restoring a backup is
+*by definition* somebody with no boards — a new device, a cleared browser — so
+that screen is the one they are standing on, and it was the one screen with
+nothing for them to aim at. Three cards named the three ways in and left out
+the one that brought them there.
+
+Verified in the browser: the two menu items and their downward placement, the caret's
+rotation, dismissal on an outside press, the avatar menu reduced to Sign out,
+paste opening the field pre-filled and focused, prose ignored, a paste inside a
+field left entirely alone, and the drop cue surviving a crossing into a child
+but not a real leave.
+
 ## 5. Next up
 
 ### 5a-0. The four things to do first

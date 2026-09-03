@@ -2,7 +2,7 @@ import React, { useEffect, useMemo, useRef, useState } from 'react';
 import { useAuth } from './hooks/useAuth';
 import { nanoid } from 'nanoid';
 import {
-  AlertTriangle, ArrowRight, ChevronRight, Compass, FileText, Layers, Link2, LogOut, Plus,
+  AlertTriangle, ArrowRight, ChevronDown, ChevronRight, Compass, FileText, Layers, Link2, LogOut, Plus,
   Search, Sparkles, Undo2,
   SquarePen, UploadCloud, X,
 } from 'lucide-react';
@@ -148,12 +148,60 @@ export const Home: React.FC = () => {
    * control that filtered it.
    */
   const [seeking, setSeeking] = useState(false);
-  /** The account menu, which also holds the two rare actions. */
+  /** The account menu: identity and the session, and nothing else. */
   const [meOpen, setMeOpen] = useState(false);
+  /**
+   * The menu behind the `+`.
+   *
+   * ## Why the four openings are one control
+   *
+   * There are four ways to get a board on screen — blank, from a template,
+   * from a backup file, from somebody's link — and they used to sit at three
+   * different levels of prominence: the `+` at the top of the rail, Templates
+   * as a nav destination, and the other two behind the avatar. The empty state
+   * has always offered three of them together, in one list, in the order they
+   * are worth trying, which is the app already saying they are one family.
+   *
+   * Behind the avatar was the wrong drawer, not merely a quiet one. An avatar
+   * means *things about me* — who I am, this session, signing out. A backup
+   * file is about a **board**. Filing a board action under a heading that
+   * describes a person is why no amount of use ever made it findable: there
+   * was nothing to learn, because the label did not predict the contents.
+   *
+   * So they are all here, behind the one thing on this page a hand already
+   * goes to. Four scattered entrances is four things to remember; one entrance
+   * with a menu is one, which is what muscle memory can actually hold.
+   *
+   * The `+` itself is unchanged: a plain click still opens a blank board with
+   * no menu in the way. That is the whole point of splitting the control
+   * rather than turning it into a menu button — the common case must not pay
+   * for the rare ones.
+   */
+  const [newOpen, setNewOpen] = useState(false);
+  /**
+   * A backup file is being dragged over the page.
+   *
+   * Held as state rather than a class toggled imperatively because the drop
+   * surface is the whole stage and the cue is a full-bleed overlay: React
+   * already owns that subtree, and a second writer to the same DOM is how the
+   * canvas ended up with two cursors.
+   */
+  const [dropping, setDropping] = useState(false);
   const restoreInputRef = useRef<HTMLInputElement>(null);
   const searchRef = useRef<HTMLInputElement>(null);
   const meRef = useRef<HTMLDivElement>(null);
+  const newRef = useRef<HTMLDivElement>(null);
+  const joinRef = useRef<HTMLInputElement>(null);
   const stageRef = useRef<HTMLElement>(null);
+  /**
+   * How many dragenters are outstanding.
+   *
+   * `dragleave` fires when the pointer crosses into a *child* of the drop
+   * surface, so clearing the cue on it makes the overlay flicker off and on
+   * over every card in the grid. Counting enters against leaves is the only
+   * thing that survives a surface with children in it.
+   */
+  const dragDepth = useRef(0);
 
   useEffect(() => {
     try {
@@ -196,19 +244,29 @@ export const Home: React.FC = () => {
   }, []);
 
   /** A menu that outlives a click elsewhere is a menu you have to dismiss. */
+  /**
+   * Both rail popovers dismiss the same way, so they dismiss in one place.
+   *
+   * Written once over a list rather than twice over a ref: two copies of this
+   * is two chances for one of them to keep a listener after its menu closed,
+   * and the second menu was added by copying the first.
+   */
   useEffect(() => {
-    if (!meOpen) return;
+    if (!meOpen && !newOpen) return;
+    const closeAll = () => { setMeOpen(false); setNewOpen(false); };
     const onDown = (e: PointerEvent) => {
-      if (!meRef.current?.contains(e.target as Node)) setMeOpen(false);
+      const t = e.target as Node;
+      if (meOpen && !meRef.current?.contains(t)) setMeOpen(false);
+      if (newOpen && !newRef.current?.contains(t)) setNewOpen(false);
     };
-    const onKey = (e: KeyboardEvent) => { if (e.key === 'Escape') setMeOpen(false); };
+    const onKey = (e: KeyboardEvent) => { if (e.key === 'Escape') closeAll(); };
     window.addEventListener('pointerdown', onDown);
     window.addEventListener('keydown', onKey);
     return () => {
       window.removeEventListener('pointerdown', onDown);
       window.removeEventListener('keydown', onKey);
     };
-  }, [meOpen]);
+  }, [meOpen, newOpen]);
 
   // Switching views starts a new screen, so it starts at the top of one.
   useEffect(() => { stageRef.current?.scrollTo({ top: 0 }); }, [view]);
@@ -282,6 +340,20 @@ export const Home: React.FC = () => {
    * *then* discovering the file was unreadable leaves them somewhere new with
    * nothing in it and no obvious way back.
    */
+  /**
+   * Whether a drag carries something we could actually restore.
+   *
+   * Checked on `dragover` as well as on drop, because the cue has to be honest
+   * *before* the release: an overlay that says "drop to restore" for a dragged
+   * image is a promise the drop cannot keep. During a drag the browser exposes
+   * only the item's `kind` and `type` — never its name or contents — so this is
+   * as much as can be known, and a `.json` dragged from a file manager
+   * sometimes arrives typed as `''`. A single file with no type is allowed
+   * through and rejected properly on drop, where the content can be read.
+   */
+  const dragHasFile = (dt: DataTransfer | null) =>
+    !!dt && Array.from(dt.items).some((i) => i.kind === 'file');
+
   const handleRestoreFile = async (file: File) => {
     setRestoreError(null);
     const text = await file.text();
@@ -290,6 +362,55 @@ export const Home: React.FC = () => {
     stashPendingRestore(text);
     openBoard();
   };
+
+  /**
+   * Open the join field with something already in it.
+   *
+   * Used by the paste shortcut and by the menu alike, so the field is filled
+   * and focused by one path rather than by two that can drift.
+   */
+  const openJoin = (prefill = '') => {
+    setJoinError(null);
+    setJoinOpen(true);
+    if (prefill) setJoinLink(prefill);
+    window.setTimeout(() => joinRef.current?.focus(), 0);
+  };
+
+  /**
+   * Paste a board link anywhere on this page.
+   *
+   * This is how people arrive from a link: somebody sent it, it is already on
+   * the clipboard, and the current path is *find the control, click it, click
+   * the field, paste*. Four steps to consume a thing the browser already has.
+   *
+   * Two guards, and both matter:
+   *
+   * - **Only when nothing is focused.** A paste into the search field or the
+   *   join field itself must behave like a paste, so this stands down for any
+   *   input, textarea or `contenteditable`. Without that check the shortcut
+   *   would eat the very field it opens.
+   * - **Only for text that is actually a board.** A link containing `/room/`
+   *   or a string shaped like a room code opens the field pre-filled;
+   *   everything else is left alone, because a page that reacts to *any*
+   *   clipboard content is a page you stop pasting near.
+   *
+   * It fills the field rather than navigating. A paste is not a decision — the
+   * clipboard can hold something stale — so the last step stays deliberate.
+   */
+  useEffect(() => {
+    const onPaste = (e: ClipboardEvent) => {
+      const el = document.activeElement as HTMLElement | null;
+      if (el && (el.tagName === 'INPUT' || el.tagName === 'TEXTAREA' || el.isContentEditable)) return;
+      const text = (e.clipboardData?.getData('text') || '').trim();
+      if (!text || text.length > 400) return;
+      if (!text.includes('/room/') && !looksLikeRoomCode(text)) return;
+      e.preventDefault();
+      setView('boards');
+      openJoin(text);
+    };
+    window.addEventListener('paste', onPaste);
+    return () => window.removeEventListener('paste', onPaste);
+  }, []);
 
   /**
    * A link, or a code.
@@ -504,14 +625,18 @@ export const Home: React.FC = () => {
    * and find it is the least useful screen in a product, because it is the one
    * shown to somebody who does not yet know where anything is.
    *
-   * The three are the three real openings, in the order they are worth trying:
-   * a template is the fastest way to something that looks like work, a blank
-   * board is the honest default, and a link is why most people arrive at all.
+   * The four are the four real openings, in the order they are worth trying: a
+   * template is the fastest way to something that looks like work, a blank
+   * board is the honest default, a link is why most people arrive at all, and
+   * a backup is why somebody is looking at an empty library on a machine they
+   * have used before. That last one was missing while it was the only one this
+   * screen could be certain about — a person restoring a backup necessarily
+   * has no boards yet, so this is the screen they land on.
    */
   const boardsBody = !hasRooms ? (
     <div className="stage__empty stage__empty--start">
       <h3>Nothing here yet</h3>
-      <p>Boards you open on this device collect here. Three ways to get the first one.</p>
+      <p>Boards you open on this device collect here. Four ways to get the first one.</p>
       <div className="starts">
         <button type="button" className="start" onClick={() => goTemplates(null)}>
           <span className="start__icon"><FileText size={18} aria-hidden="true" /></span>
@@ -529,11 +654,27 @@ export const Home: React.FC = () => {
           </span>
           <ArrowRight size={15} className="start__go" aria-hidden="true" />
         </button>
-        <button type="button" className="start" onClick={() => setJoinOpen(true)}>
+        <button type="button" className="start" onClick={() => openJoin()}>
           <span className="start__icon"><Link2 size={18} aria-hidden="true" /></span>
           <span className="start__text">
             <span className="start__name">Open a link</span>
             <span className="start__sub">Somebody has shared a board with you</span>
+          </span>
+          <ArrowRight size={15} className="start__go" aria-hidden="true" />
+        </button>
+        {/*
+          The fourth, and the one that was missing for the longest.
+          Somebody restoring a backup is *by definition* somebody with no
+          boards — a new device, a cleared browser — so this screen is the one
+          they are standing on, and until now it was the one screen with
+          nothing for them to aim at. The three cards named the three ways in
+          and quietly left out the way that brought them here.
+        */}
+        <button type="button" className="start" onClick={() => restoreInputRef.current?.click()}>
+          <span className="start__icon"><UploadCloud size={18} aria-hidden="true" /></span>
+          <span className="start__text">
+            <span className="start__name">Restore a backup</span>
+            <span className="start__sub">Or drop the file anywhere on this page</span>
           </span>
           <ArrowRight size={15} className="start__go" aria-hidden="true" />
         </button>
@@ -642,17 +783,87 @@ export const Home: React.FC = () => {
           <Logo piece="mark" size={24} />
         </a>
 
-        {/* The one front door, and the only accent on the rail. */}
-        <button
-          type="button"
-          className="lrail__new"
-          onClick={openBoard}
-          data-tooltip="New board"
-          data-tooltip-pos="right"
-          aria-label="New board"
-        >
-          <Plus size={19} aria-hidden="true" />
-        </button>
+        {/*
+          The one front door, and the only accent on the rail — now with the
+          other three ways in behind it. See `newOpen` for why they belong
+          here rather than behind the avatar.
+
+          A **split** control, not a menu button: the primary click still opens
+          a blank board with nothing in the way, and the caret is a separate
+          target for the rest. Turning the whole button into a menu would make
+          the most common action on the page cost two clicks in order to make
+          three rare ones cost one, which is the trade backwards.
+
+          The caret is also reachable by right-clicking the `+` itself, because
+          a 14px target on a rail is fine as a second way in and thin as the
+          only one.
+        */}
+        <div className="lrail__start" ref={newRef}>
+          <button
+            type="button"
+            className="lrail__new"
+            onClick={openBoard}
+            onContextMenu={(e) => { e.preventDefault(); setNewOpen((o) => !o); }}
+            data-tooltip="New board"
+            data-tooltip-pos="right"
+            aria-label="New board"
+          >
+            <Plus size={19} aria-hidden="true" />
+          </button>
+
+          <button
+            type="button"
+            className="lrail__start-more"
+            onClick={() => { setMeOpen(false); setNewOpen((o) => !o); }}
+            aria-haspopup="menu"
+            aria-expanded={newOpen}
+            aria-label="More ways to start a board"
+          >
+            <ChevronDown size={11} aria-hidden="true" />
+          </button>
+
+          {newOpen && (
+            <div className="lrail__menu lrail__menu--start ctx-popover" role="menu">
+              {/*
+                Exactly the openings with no home of their own — which is two,
+                not four.
+
+                A first draft listed all four here, and that was the same
+                mistake in a tidier costume. **Templates is already a permanent
+                destination on this rail**, one icon below: naming it again
+                inside the menu re-scatters the thing the menu exists to
+                gather, and a menu carrying an item you can reach without it
+                teaches people it is a grab-bag rather than a specific set.
+
+                **Blank board** goes for the same reason and a sharper one. The
+                caret sits *on* the `+`, so this reads as "and more ways" —
+                naming the button's own action inside its own menu tells
+                somebody what they just clicked.
+
+                What is left is what was actually homeless: a file you have,
+                and a link somebody sent. No rule between them. Two short items
+                separated by a divider is three rows for two actions, and the
+                make/join distinction is legible without one.
+              */}
+              <button
+                type="button"
+                className="ctx-menu-item"
+                role="menuitem"
+                onClick={() => { setNewOpen(false); restoreInputRef.current?.click(); }}
+              >
+                <UploadCloud size={15} /> From a backup file
+              </button>
+              <button
+                type="button"
+                className="ctx-menu-item"
+                role="menuitem"
+                onClick={() => { setNewOpen(false); setView('boards'); openJoin(); }}
+              >
+                <Link2 size={15} /> Open a link
+              </button>
+            </div>
+          )}
+        </div>
 
         <div className="lrail__nav">
           <button
@@ -701,11 +912,11 @@ export const Home: React.FC = () => {
           <Search size={18} aria-hidden="true" />
         </button>
 
-        {/* Identity and the two rare actions, in one place.
-            Opening a link and restoring a backup are both real and both
-            uncommon, and they used to sit mid-rail at the weight of the
-            gallery. Behind the avatar they are where anybody looks for the
-            things that are about *you* rather than about the board. */}
+        {/* Identity and the session, and nothing else.
+            Opening a link and restoring a backup lived here for a while and
+            have moved to the `+`. They are about a *board*, and an avatar
+            means "things about me" — filing them under a heading that
+            describes a person is why they were never found. */}
         <div className="lrail__me" ref={meRef}>
           <button
             type="button"
@@ -724,23 +935,6 @@ export const Home: React.FC = () => {
                 <span className="lrail__who-name">{user.name}</span>
                 <span className="lrail__who-sub">{user.isGuest ? 'Guest session' : 'Kept on this device'}</span>
               </p>
-              <div className="ctx-popover__rule" role="separator" />
-              <button
-                type="button"
-                className="ctx-menu-item"
-                role="menuitem"
-                onClick={() => { setMeOpen(false); setJoinOpen(true); }}
-              >
-                <Link2 size={15} /> Open a link
-              </button>
-              <button
-                type="button"
-                className="ctx-menu-item"
-                role="menuitem"
-                onClick={() => { setMeOpen(false); restoreInputRef.current?.click(); }}
-              >
-                <UploadCloud size={15} /> Restore a backup
-              </button>
               <div className="ctx-popover__rule" role="separator" />
               <button type="button" className="ctx-menu-item" role="menuitem" onClick={logout}>
                 <LogOut size={15} /> {user.isGuest ? 'End guest session' : 'Sign out'}
@@ -763,7 +957,53 @@ export const Home: React.FC = () => {
         />
       </nav>
 
-      <main className="lstage" ref={stageRef}>
+      {/*
+        The whole stage restores a backup, not just a menu item.
+        ---------------------------------------------------------------------
+        "I have a file and I want it open" is a gesture before it is a command,
+        and every other place a file goes in this product takes a drop. Routing
+        it through the same `handleRestoreFile` the picker uses means the two
+        cannot validate differently — the file is parsed and *refused here*
+        before anything navigates, so a bad drop leaves you on this page with a
+        message rather than in a new empty room.
+      */}
+      <main
+        className="lstage"
+        ref={stageRef}
+        onDragEnter={(e) => {
+          if (!dragHasFile(e.dataTransfer)) return;
+          dragDepth.current += 1;
+          setDropping(true);
+        }}
+        onDragOver={(e) => {
+          if (!dragHasFile(e.dataTransfer)) return;
+          // Without this the browser navigates to the file, which unloads the
+          // app — the default action for a drop that nobody claimed.
+          e.preventDefault();
+          e.dataTransfer.dropEffect = 'copy';
+        }}
+        onDragLeave={() => {
+          dragDepth.current = Math.max(0, dragDepth.current - 1);
+          if (dragDepth.current === 0) setDropping(false);
+        }}
+        onDrop={(e) => {
+          if (!dragHasFile(e.dataTransfer)) return;
+          e.preventDefault();
+          dragDepth.current = 0;
+          setDropping(false);
+          const file = e.dataTransfer.files[0];
+          if (file) handleRestoreFile(file);
+        }}
+      >
+        {dropping && (
+          <div className="lstage__drop" aria-hidden="true">
+            <div className="lstage__drop-card">
+              <UploadCloud size={22} aria-hidden="true" />
+              <span className="lstage__drop-title">Drop to restore</span>
+              <span className="lstage__drop-sub">A board backup opens as a new board</span>
+            </div>
+          </div>
+        )}
         <div className="lstage__inner">
           {restoreError && <div className="stage__error" role="alert">{restoreError}</div>}
 
@@ -773,6 +1013,7 @@ export const Home: React.FC = () => {
             <form className="lstage__join" onSubmit={handleJoin}>
               <Link2 size={16} aria-hidden="true" />
               <input
+                ref={joinRef}
                 type="text"
                 value={joinLink}
                 onChange={(e) => { setJoinLink(e.target.value); setJoinError(null); }}
