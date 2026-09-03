@@ -1167,6 +1167,33 @@ canvas — while the DOM editing overlay passed the real number through, meaning
 text set in Light changed weight when you double-clicked it. Konva's `fontStyle`
 lands in the CSS `font` shorthand, which takes a numeric weight in that slot.
 
+### Frames — `engine/model/frames.ts`
+
+Sixteen presets in three groups, and the list is deliberately short: a picker
+with forty entries is a search problem. Half the sizes anybody wants are a
+listed size on its side, though — a landscape phone, a portrait slide, an A4
+turned for a certificate — so **orientation is a toggle rather than more
+catalogue**. One control turns sixteen entries into thirty-two sizes without a
+longer list to read.
+
+The turn is a **transpose**, not a rotation, and that distinction is the whole
+of it. A quarter turn is what physically happens when you turn a page, and it
+is wrong for a toggle: two quarter turns is a half turn, so pressing the
+control twice would leave a story's guides upside down rather than back where
+they started. Transposing — top swaps with left, bottom with right — is
+self-inverse, and it is also what swapping width for height *is*.
+
+A frame can be resized to a named size after the fact, turned, and fitted to
+its contents. The fit reads the frame's own membership rather than testing
+overlap, so an object merely passing over one is not counted; it never moves
+the children, whose positions are what the fit is measured from; and it never
+grows, because a frame smaller than its contents is clipping them on purpose as
+often as by accident.
+
+The picker is three columns, one per group, so the whole catalogue is visible
+without scrolling — and each size shows a rectangle at its own ratio, because a
+picker of sizes is scanned by proportion far faster than it is read by numbers.
+
 ### Colour — `engine/model/colorRamp.ts`
 
 Every picker offered two things: a fixed set of swatches, and a saturation-value

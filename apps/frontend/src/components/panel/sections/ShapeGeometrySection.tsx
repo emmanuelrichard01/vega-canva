@@ -3,6 +3,9 @@ import {
   ArrowRight,
   ArrowRightToLine,
   Frame,
+  RectangleHorizontal,
+  RectangleVertical,
+  Shrink,
   Hexagon,
   Minus,
   MoveRight,
@@ -43,6 +46,13 @@ import {
   type AnyNode,
 } from '../../../engine/model/schema';
 import type { Shared } from '../../../engine/model/selection';
+import {
+  FRAME_PRESETS,
+  FRAME_PRESET_GROUPS,
+  framePreset,
+  presetMatching,
+  type FramePreset,
+} from '../../../engine/model/frames';
 import type { AffordanceId } from '../../../engine/selection/affordances';
 
 const SAFE_EDGES = [
@@ -60,6 +70,14 @@ interface ShapeGeometrySectionProps {
   shared: <T>(read: (n: AnyNode) => T) => Shared<T>;
   setGeometry: (patch: Record<string, unknown>) => void;
   setSafeArea: (edge: 'top' | 'right' | 'bottom' | 'left', value: number) => void;
+  /** Resize this frame to a named size, keeping its top-left corner. */
+  applyFramePreset: (preset: FramePreset) => void;
+  /** Swap the frame's width and height, transposing its safe area with them. */
+  turnFrame: () => void;
+  /** Shrink the frame to the union of what it contains. */
+  fitFrameToContents: () => void;
+  /** How many objects this frame owns, so the fit control can explain itself. */
+  frameChildCount: number;
 }
 
 export const ShapeGeometrySection: React.FC<ShapeGeometrySectionProps> = ({
@@ -70,6 +88,10 @@ export const ShapeGeometrySection: React.FC<ShapeGeometrySectionProps> = ({
   shared,
   setGeometry,
   setSafeArea,
+  applyFramePreset,
+  turnFrame,
+  fitFrameToContents,
+  frameChildCount,
 }) => {
   return (
     <>
@@ -272,26 +294,141 @@ export const ShapeGeometrySection: React.FC<ShapeGeometrySectionProps> = ({
 
       {affords('frame-preset') && node.type === 'frame' && (
         <Accordion
-          title="Safe area"
+          title="Frame"
           icon={<Frame size={13} />}
-          defaultOpen={Boolean(node.safeArea)}
-          badge={node.safeArea ? 'On' : undefined}
+          defaultOpen
+          badge={presetMatching(node.width, node.height)?.label}
         >
-          <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '8px' }}>
-            {SAFE_EDGES.map(({ key, label }) => (
-              <NumberStepper
-                key={key}
-                value={Math.round(node.safeArea?.[key] ?? 0)}
-                onChange={(v) => setSafeArea(key, v)}
-                label={label}
-                min={0}
-                step={8}
-              />
-            ))}
-          </div>
-          <p style={{ margin: '8px 0 0', fontSize: 'var(--text-xs)', color: 'var(--text-tertiary)', lineHeight: 1.4 }}>
-            A guide only. Nothing is clipped or moved, and it never appears in an export.
-          </p>
+          {/*
+            The size, by name.
+
+            A frame is one of the few things on a board whose dimensions have
+            a *name* — 1440x1024 is "Desktop", 595x842 is "A4" — and until now
+            the only place that name existed was the tool that made it. Resize
+            a frame by dragging and there was no way back to the size it was
+            born at, short of typing four digits into the Transform block from
+            memory.
+
+            The badge on the header says which one it currently is, and says
+            nothing when it is not one — a frame one unit off a preset has been
+            resized deliberately, and calling it Desktop would be worse than
+            calling it nothing.
+          */}
+          <Row stack label="Size" hint="Resize to a standard size. The frame keeps its top-left corner.">
+            <select
+              className="prop-select"
+              value={presetMatching(node.width, node.height)?.id ?? '__custom'}
+              onChange={(e) => {
+                const preset = framePreset(e.target.value);
+                if (preset) applyFramePreset(preset);
+              }}
+            >
+              {!presetMatching(node.width, node.height) && (
+                <option value="__custom">Custom</option>
+              )}
+              {FRAME_PRESET_GROUPS.map((group) => (
+                <optgroup key={group} label={group}>
+                  {FRAME_PRESETS.filter((p) => p.group === group).map((p) => (
+                    <option key={p.id} value={p.id}>
+                      {p.label} · {p.width} × {p.height}
+                    </option>
+                  ))}
+                </optgroup>
+              ))}
+            </select>
+          </Row>
+
+          {/*
+            Orientation, which is why the list above is still short.
+
+            Half the sizes anybody wants are a listed size on its side — a
+            landscape phone, a portrait slide, an A4 turned for a certificate.
+            Listing both of every one would double a catalogue that is
+            deliberately kept readable, to buy a single bit of information. One
+            toggle buys the same bit.
+
+            It swaps the frame's own width and height rather than looking a
+            preset up, so it works on a custom size too. A square frame has no
+            orientation to choose, and the control says so rather than offering
+            two buttons that do the same nothing.
+          */}
+          <Row label="Orientation" hint="Swap width and height. The safe area is transposed with them.">
+            <SegmentedControl
+              ariaLabel="Frame orientation"
+              fill
+              disabledReason={
+                node.width === node.height
+                  ? 'A square frame is the same either way up.'
+                  : undefined
+              }
+              value={node.height > node.width ? 'portrait' : 'landscape'}
+              onChange={(next) => {
+                const isPortrait = node.height > node.width;
+                if ((next === 'portrait') === isPortrait) return;
+                turnFrame();
+              }}
+              segments={[
+                { value: 'portrait', label: 'Portrait', icon: <RectangleVertical size={14} /> },
+                { value: 'landscape', label: 'Landscape', icon: <RectangleHorizontal size={14} /> },
+              ]}
+            />
+          </Row>
+
+          {/*
+            Shrink to what is actually in it.
+
+            A frame drawn around existing work is almost never the right size
+            for it, and the alternative is dragging four edges in while
+            watching for the moment something clips. This reads the frame's own
+            members — the containment the frame already maintains — and fits
+            the box to their union plus a margin.
+
+            Disabled when the frame is empty rather than hidden, with the
+            reason: an empty frame fitted to its contents would collapse to
+            nothing, and a control that silently does that is worse than one
+            that explains itself.
+          */}
+          <Row stack label="Contents">
+            <button
+              type="button"
+              className="sketch-redraw"
+              onClick={fitFrameToContents}
+              disabled={frameChildCount === 0}
+              data-tooltip={
+                frameChildCount === 0
+                  ? 'Nothing in this frame to fit to'
+                  : `Fit to the ${frameChildCount} object${frameChildCount === 1 ? '' : 's'} inside`
+              }
+            >
+              <Shrink size={13} aria-hidden="true" />
+              Fit to contents
+            </button>
+          </Row>
+
+          <div className="prop-rule" role="presentation" />
+
+          {/*
+            The safe area, which used to be this whole section.
+
+            It is a guide rather than a size, so it sits under the rule with the
+            things that describe the frame rather than the things that change
+            its box.
+          */}
+          <Row stack label="Safe area" hint="Where content is guaranteed to survive. A guide only — nothing is clipped or moved, and it never appears in an export.">
+            <div className="prop-grid">
+              {SAFE_EDGES.map(({ key, label }) => (
+                <NumberStepper
+                  key={key}
+                  value={Math.round(node.safeArea?.[key] ?? 0)}
+                  onChange={(v) => setSafeArea(key, v)}
+                  label={label}
+                  suffix="px"
+                  min={0}
+                  step={8}
+                />
+              ))}
+            </div>
+          </Row>
         </Accordion>
       )}
     </>

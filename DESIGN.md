@@ -407,6 +407,23 @@ get their own rules.
 - **Every numeric field carries its unit**, in a panel where the next row down
   may be a multiplier.
 
+### Pickers
+
+- **A control beats a longer catalogue.** Where half the entries would be
+  another entry transformed — a size on its side, a colour at another weight —
+  one toggle buys the same information and leaves the list readable.
+- **A toggle must be its own inverse.** Pressing it twice returns exactly what
+  you started with. An operation that is *nearly* right — a rotation where a
+  transpose is meant — drifts a little on every press and is only visible after
+  two.
+- **Width buys columns, not room.** A wider single column of twenty rows is
+  twenty rows. If a list is long because it has groups, the groups are the
+  columns.
+- **Show the shape where the shape is the choice.** A size, an aspect ratio, a
+  weight, a dash pattern: all are scanned by proportion far faster than read by
+  numbers. Fit the specimen to a fixed box — the ratio is the information, the
+  absolute size is not.
+
 ### Navigation
 
 Category filters are pill tabs carrying a count, filtering in place rather than

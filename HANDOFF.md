@@ -4232,6 +4232,74 @@ The nib control is called **Nib** rather than "Stroke". A pencil mark now has a
 stroke colour and a stroke weight of its own, so a segmented control of four
 *textures* under that word named the wrong thing twice over.
 
+## 5a-0-an. The frame tool: orientation instead of a longer list
+
+The catalogue was nine presets, and the module's own docstring explains why it
+is short: *a picker with forty entries is a search problem.* That is right, and
+it is also why half the sizes anybody wants were missing — a landscape phone, a
+portrait slide, an A4 turned for a certificate are all a listed size on its
+side.
+
+**Orientation is a control, not more catalogue.** One toggle turns nine entries
+into eighteen sizes without a longer list to read, which is the trade a control
+makes far better than a list. Seven more presets earned their place on their
+own — Desktop HD, the 4:5 portrait post (the tallest a feed shows uncropped),
+a video thumbnail, a link preview, A3, A5 and a business card — bringing it to
+sixteen.
+
+**The turn is a transpose, not a rotation, and a test caught that.** A quarter
+turn was the first instinct: what was the left margin becomes the top one, as
+it does when you turn a page. It is wrong for a *toggle*, because two quarter
+turns in the same direction is a half turn — pressing the control twice would
+leave a story's guides upside down rather than back where they started. A
+toggle has to be its own inverse, and transposing (top swaps with left, bottom
+with right) is both self-inverse and the operation that actually matches what
+the control does: swapping width for height **is** a transpose of the
+rectangle, so the insets get the same treatment as the box they sit in.
+
+The involution test found it on the first run.
+
+### Three new things a frame can do
+
+- **Resize to a named size.** A frame is one of the few things on a board whose
+  dimensions have a *name*, and that name existed only in the tool that made
+  it: drag a frame and there was no way back to A4 short of typing four digits
+  from memory. The preset's safe area comes with the size, which is the honest
+  reading of "make this an A4" — keeping a story's 250/320 insets on a business
+  card would leave a frame promising a guide that means nothing.
+- **Turn it.** Works on a custom size too, since it swaps the frame's own
+  numbers rather than looking a preset up — and most frames are custom once
+  anybody has dragged one.
+- **Fit to contents.** Reads the frame's own membership rather than testing
+  overlap, so an object merely passing over a frame is not counted. It does not
+  move the children (their positions are what the fit is measured *from*) and
+  it does not grow — a frame smaller than its contents is clipping them on
+  purpose as often as by accident, and quietly revealing what somebody cropped
+  is the bigger surprise.
+
+`presetMatching` is exact rather than approximate, so the panel names a size
+only when it really is one: a frame one unit off a preset has been resized
+deliberately, and calling it "Desktop" is worse than calling it nothing.
+
+## 5a-0-ao. The frame picker is three columns
+
+Asked as "make the flyout wider instead of a longer scroll", and the direction
+is right for a reason worth stating: **width alone does not fix it.** A wider
+single column is still twenty rows — sixteen sizes, three headings and Custom
+— behind the same scrollbar, so comparing a Story with an A4 still means
+scrolling between two things that belong on one short menu.
+
+What the width *buys* is columns, and the groups already were the columns.
+Screen, Social and Print sit side by side at five or six each, and the whole
+catalogue is visible at once with nothing to scroll.
+
+With the room, each size shows its **shape**. A picker of sizes is scanned by
+proportion far faster than it is read by numbers — "the tall one" is how
+anybody thinks about this — so every entry carries a rectangle drawn at its own
+ratio. Fitted inside a fixed box, because the ratio is the information and the
+absolute size is not: scaling by it would make a business card a speck beside a
+Desktop.
+
 ## 5. Next up
 
 ### 5a-0. The four things to do first

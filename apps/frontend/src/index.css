@@ -16815,3 +16815,91 @@ html[data-precise] .canvas-container[data-cursor-mode] .konvajs-content canvas {
   font-weight: var(--weight-medium);
   color: var(--text-secondary);
 }
+
+
+/* ===========================================================================
+   FRAME PICKER
+   ---------------------------------------------------------------------------
+   Three columns, one per group. Stacked, sixteen sizes in three groups came to
+   twenty rows behind a scrollbar -- so comparing a Story with an A4 meant
+   scrolling between two things that belong on one short menu. Widening alone
+   would not have helped: a wider single column is still twenty rows. The width
+   buys the columns, and the groups already were them.
+   =========================================================================== */
+
+.frame-picker {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: var(--space-3);
+  padding-top: var(--space-2);
+}
+
+.frame-picker__col {
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
+  min-width: 0;
+}
+
+.frame-chip {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  width: 100%;
+  padding: 5px 6px;
+  border: none;
+  border-radius: var(--radius-sm);
+  background: transparent;
+  color: var(--text-primary);
+  text-align: left;
+  cursor: pointer;
+  transition: background var(--motion-hover);
+}
+
+.frame-chip:hover { background: var(--surface-hover); }
+.frame-chip[data-active] { background: var(--surface-active); }
+
+/* A fixed box, so every glyph takes the same room and the column stays a
+   column. The ratio is the information; the absolute size is not, and scaling
+   by it would make a business card a speck beside a Desktop. */
+.frame-chip__glyph {
+  display: grid;
+  place-items: center;
+  flex-shrink: 0;
+  width: 17px;
+  height: 17px;
+}
+
+.frame-chip__glyph > span {
+  display: block;
+  border: 1px solid var(--text-tertiary);
+  border-radius: 1px;
+}
+
+.frame-chip[data-active] .frame-chip__glyph > span { border-color: var(--accent); }
+
+.frame-chip__text {
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+  line-height: 1.25;
+}
+
+.frame-chip__label {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: var(--text-sm);
+  font-weight: var(--weight-medium);
+}
+
+/* Tabular, so a column of dimensions lines its digits up and the eye can run
+   down it. */
+.frame-chip__size {
+  font-size: var(--text-2xs);
+  font-variant-numeric: tabular-nums;
+  color: var(--text-tertiary);
+}
+
+/* Room for three columns. */
+.dock-flyout__panel--wide { min-width: 430px; }

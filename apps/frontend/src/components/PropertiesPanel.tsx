@@ -48,6 +48,7 @@ import {
   type DashRatio,
   type StrokeStyleId,
 } from '../engine/model/strokeStyle';
+import { descendantsOfFrame, type FramePreset } from '../engine/model/frames';
 import { TagEditor } from './ui/TagEditor';
 import { THEMES } from '../engine/model/stickyThemes';
 import { STICKY_THEMES } from '../engine/model/schema';
@@ -307,6 +308,103 @@ export const PropertiesPanel: React.FC<PropertiesPanelProps> = ({ selectedIds, o
       const empty = !next.top && !next.right && !next.bottom && !next.left;
       return { safeArea: empty ? undefined : next };
     });
+
+  /**
+   * Resize a frame to a named size, keeping its top-left corner.
+   *
+   * The corner rather than the centre, because a frame is a page on a desk and
+   * a page is placed by its corner — growing an A4 into an A3 from the middle
+   * would push it under whatever is above and to the left of it, which is
+   * usually the frame you laid out first.
+   *
+   * The preset's safe area comes with it, and replaces whatever was there.
+   * That is the honest reading of "make this an A4": the guides belong to the
+   * size, and keeping a story's 250/320 insets on a business card would leave
+   * a frame promising a safe area that means nothing.
+   */
+  const applyFramePreset = (preset: FramePreset) =>
+    patchEach((n) =>
+      n.type === 'frame'
+        ? { width: preset.width, height: preset.height, safeArea: preset.safeArea }
+        : null
+    );
+
+  /**
+   * Swap a frame's width and height.
+   *
+   * Operates on the frame's own numbers rather than looking up a preset, so it
+   * works on a custom size too — which is most frames after anybody has
+   * dragged one.
+   *
+   * The safe area is transposed with the box: top swaps with left, bottom with
+   * right. That is the operation `turnPreset` performs and, unlike a quarter
+   * rotation, it is its own inverse — so turning twice returns exactly what
+   * you started with rather than leaving the guides upside down.
+   */
+  const turnFrame = () =>
+    patchEach((n) => {
+      if (n.type !== 'frame') return null;
+      const inset = n.safeArea;
+      return {
+        width: n.height,
+        height: n.width,
+        safeArea: inset
+          ? { top: inset.left, left: inset.top, right: inset.bottom, bottom: inset.right }
+          : undefined,
+      };
+    });
+
+  /**
+   * Shrink a frame to the union of what it contains, plus a margin.
+   *
+   * Reads the frame's own membership — the containment it already maintains —
+   * rather than testing overlap, so an object that merely passes over a frame
+   * is not counted and one that belongs to it is, wherever it currently sits.
+   *
+   * Two things it deliberately does not do. It does not move the children:
+   * their world positions are what "fit" is measured *from*, and moving them
+   * would make the operation something you have to undo to see. And it does
+   * not grow — a frame smaller than its contents is clipping them on purpose
+   * as often as by accident, and quietly revealing what somebody cropped is a
+   * bigger surprise than leaving it.
+   */
+  const fitFrameToContents = () => {
+    const frame = nodes.find((n) => n.type === 'frame');
+    if (!frame) return;
+    const store = useStore.getState().objects;
+    const childIds = descendantsOfFrame(frame.id, Object.values(store));
+    if (childIds.length === 0) return;
+
+    const boxes = childIds.map((id) => store[id]).filter(Boolean);
+    if (boxes.length === 0) return;
+
+    const left = Math.min(...boxes.map((b) => b.x));
+    const top = Math.min(...boxes.map((b) => b.y));
+    const right = Math.max(...boxes.map((b) => b.x + b.width));
+    const bottom = Math.max(...boxes.map((b) => b.y + b.height));
+
+    // A margin, so the fit does not put the frame's own hairline through the
+    // edge of whatever was furthest out.
+    const margin = 24;
+    applyNodePatches([
+      {
+        id: frame.id,
+        changes: {
+          x: left - margin,
+          y: top - margin,
+          width: Math.max(1, right - left + margin * 2),
+          height: Math.max(1, bottom - top + margin * 2),
+        },
+      },
+    ]);
+  };
+
+  /** How many objects the selected frame owns, for the fit control's label. */
+  const frameChildCount = (() => {
+    const frame = nodes.find((n) => n.type === 'frame');
+    if (!frame) return 0;
+    return descendantsOfFrame(frame.id, Object.values(useStore.getState().objects)).length;
+  })();
 
   const setGeometry = (patch: Record<string, unknown>) =>
     patchEach((n) => (n.type === 'shape' ? { geometry: { ...n.geometry, ...patch } } : null));
@@ -600,6 +698,10 @@ export const PropertiesPanel: React.FC<PropertiesPanelProps> = ({ selectedIds, o
         shared={shared}
         setGeometry={setGeometry}
         setSafeArea={setSafeArea}
+        applyFramePreset={applyFramePreset}
+        turnFrame={turnFrame}
+        fitFrameToContents={fitFrameToContents}
+        frameChildCount={frameChildCount}
       />
 
       <ImageSection

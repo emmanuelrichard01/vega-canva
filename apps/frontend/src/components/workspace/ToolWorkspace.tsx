@@ -253,6 +253,34 @@ const FlyoutItem: React.FC<{
  * The dot is the control's own preview: a number alone tells you nothing about
  * what a "6" draws, and this is a property whose whole meaning is visual.
  */
+/**
+ * A rectangle drawn to a preset's own proportions.
+ *
+ * A picker of sizes is scanned by shape far faster than it is read by numbers.
+ * "The tall one" and "the wide one" is how anybody thinks about this, and a
+ * glyph at the preset's ratio answers that without being read at all — where
+ * `1080 x 1920` has to be parsed, compared, and turned back into a shape in
+ * your head.
+ *
+ * Fitted inside a fixed box so every glyph occupies the same room and the
+ * column stays a column. The *ratio* is the information; the absolute size is
+ * not, and scaling by it would make a business card a speck beside a Desktop.
+ */
+const AspectGlyph: React.FC<{ width: number; height: number }> = ({ width, height }) => {
+  const box = 15;
+  const scale = Math.min(box / width, box / height);
+  return (
+    <span className="frame-chip__glyph" aria-hidden="true">
+      <span
+        style={{
+          width: Math.max(3, Math.round(width * scale)),
+          height: Math.max(3, Math.round(height * scale)),
+        }}
+      />
+    </span>
+  );
+};
+
 const NibSize: React.FC<{
   label: string;
   value: number;
@@ -1503,27 +1531,52 @@ export const ToolWorkspace: React.FC<Props> = ({ activeToolId, onOpenDiagram, on
             >
               {openMenu === 'frame' && (
                 <Flyout title="Frame size" wide>
-                  <div className="dock-flyout__scroll">
-                    <FlyoutItem
-                      icon={<Frame size={15} />} label="Custom" detail="drag"
-                      active={activeToolId === 'frame'} onClick={() => pick('frame')}
-                      description="drag to size"
-                    />
+                  {/*
+                    Three columns, not a longer scroll.
+
+                    Sixteen sizes in three groups came to twenty rows behind a
+                    scrollbar, so comparing a Story with an A4 meant scrolling
+                    between two things that belong on one short menu.
+
+                    Widening alone would not have fixed it: a wider single
+                    column is still twenty rows. What the width *buys* is
+                    columns, and the groups already were the columns — Screen,
+                    Social, Print, five or six each, all visible at once.
+
+                    And with the room, each size can show its **shape**. A
+                    picker of sizes is scanned by proportion far faster than it
+                    is read by numbers: "the tall one" is how anybody thinks
+                    about this, and a rectangle at the preset's own ratio
+                    answers it without being read at all.
+                  */}
+                  <FlyoutItem
+                    icon={<Frame size={15} />} label="Custom" detail="drag"
+                    active={activeToolId === 'frame'} onClick={() => pick('frame')}
+                    description="drag to size"
+                  />
+                  <div className="frame-picker">
                     {FRAME_PRESET_GROUPS.map((group) => (
-                      <React.Fragment key={group}>
+                      <div className="frame-picker__col" key={group}>
                         <div className="dock-flyout__group" role="presentation">{group}</div>
                         {FRAME_PRESETS.filter((p) => p.group === group).map((preset) => (
-                          <FlyoutItem
+                          <button
                             key={preset.id}
-                            icon={<Frame size={15} />}
-                            label={preset.label}
-                            detail={`${preset.width} × ${preset.height}`}
-                            active={activeToolId === `frame-${preset.id}`}
+                            type="button"
+                            className="frame-chip"
+                            data-active={activeToolId === `frame-${preset.id}` || undefined}
                             onClick={() => pick(`frame-${preset.id}`)}
-                            description={`${preset.width} by ${preset.height}`}
-                          />
+                            aria-label={`${preset.label}, ${preset.width} by ${preset.height}`}
+                          >
+                            <AspectGlyph width={preset.width} height={preset.height} />
+                            <span className="frame-chip__text">
+                              <span className="frame-chip__label">{preset.label}</span>
+                              <span className="frame-chip__size">
+                                {preset.width} × {preset.height}
+                              </span>
+                            </span>
+                          </button>
                         ))}
-                      </React.Fragment>
+                      </div>
                     ))}
                   </div>
                 </Flyout>
