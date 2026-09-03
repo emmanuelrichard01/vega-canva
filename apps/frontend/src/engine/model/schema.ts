@@ -362,6 +362,33 @@ export interface Appearance {
    * separates them.
    */
   shadingAngle?: number;
+  /**
+   * Which of the infinitely many hands drew this one. Absent is the first.
+   *
+   * ## Why a sketch needs this, when the whole point was that it is stable
+   *
+   * The drawing is seeded from the node id, and that is load-bearing:
+   * regenerating from fresh randomness makes an outline crawl on every
+   * re-render, which here is every selection, drag and presence update. So the
+   * shape is deterministic, and it should be.
+   *
+   * Deterministic is not the same as *chosen*, though, and that gap is the
+   * whole of this field. A hand-drawn effect sometimes lands badly on one
+   * particular shape — a wobble that clips a corner, an overshoot that reads as
+   * a mistake rather than as a hand — and until now the only remedy was to
+   * delete the object and draw it again, because the id is the seed and a new
+   * id means a new object.
+   *
+   * A variant number is mixed into the seed instead. Stability is untouched:
+   * for any given value the drawing is exactly as fixed as it ever was, across
+   * renders, reloads, collaborators and exports. What changes is that there is
+   * now a way to ask for a different one.
+   *
+   * It is **mixed with** the id rather than replacing it, so two shapes redrawn
+   * the same number of times do not become the same drawing — which is what
+   * redrawing a multi-selection would otherwise produce.
+   */
+  sketchSeed?: number;
 }
 
 export type TextAlign = 'left' | 'center' | 'right' | 'justify';

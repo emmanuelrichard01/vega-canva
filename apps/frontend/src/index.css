@@ -16618,3 +16618,42 @@ html[data-precise] .canvas-container[data-cursor-mode] .konvajs-content canvas {
 
 .emoji-trigger:hover,
 .emoji-trigger[aria-expanded='true'] { background: var(--surface-hover); color: var(--text-primary); }
+
+/**
+ * Redraw: the one *verb* in a panel of settings.
+ *
+ * A full-width button rather than a row with a label, because a label would
+ * name it twice — and because it is not a value anybody is scanning down the
+ * column for. Ghost-weight: it is an escape hatch reached occasionally, not
+ * the thing the section is for.
+ */
+.sketch-redraw {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  width: 100%;
+  height: var(--control-h-sm);
+  border: 1px solid var(--border-divider);
+  border-radius: var(--radius-sm);
+  background: transparent;
+  color: var(--text-secondary);
+  font-family: inherit;
+  font-size: var(--text-sm);
+  font-weight: var(--weight-medium);
+  cursor: pointer;
+  transition: border-color var(--motion-hover), color var(--motion-hover), background var(--motion-hover);
+}
+
+.sketch-redraw:hover {
+  border-color: var(--border-strong);
+  background: var(--surface-hover);
+  color: var(--text-primary);
+}
+
+/* The mark turns a little on press, which is the whole feedback this control
+   can give: the result appears on the canvas, not here, and a button that does
+   something invisible from where it sits should at least acknowledge the
+   press. */
+.sketch-redraw:active svg { transform: rotate(-90deg); }
+.sketch-redraw svg { transition: transform 220ms var(--ease-settle); }

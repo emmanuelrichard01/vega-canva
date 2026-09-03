@@ -1,9 +1,9 @@
 import React from 'react';
-import { Pencil } from 'lucide-react';
+import { Pencil, RefreshCw } from 'lucide-react';
 import { Accordion, Row } from '../panelPrimitives';
 import { NumberStepper } from '../../ui/NumberStepper';
 import { SegmentedControl } from '../../ui/SegmentedControl';
-import { FillStyleIcon, ShadingDensityIcon, SketchLevelIcon } from '../sketchIcons';
+import { FillStyleIcon, HatchAngleGlyph, ShadingDensityIcon, SketchLevelIcon } from '../sketchIcons';
 import { HACHURE_ANGLE, SHADING_DENSITIES } from '../../../engine/model/rough';
 import {
   SHADING_DENSITY_HINTS,
@@ -102,6 +102,7 @@ export const SketchSection: React.FC<SketchSectionProps> = ({
             return (
               <SegmentedControl
                 ariaLabel="Hand-drawn sketch"
+                fill
                 mixed={sketch.mixed}
                 value={String(sketch.value ?? 'off')}
                 onChange={(v) =>
@@ -140,6 +141,7 @@ export const SketchSection: React.FC<SketchSectionProps> = ({
             return (
               <SegmentedControl
                 ariaLabel="Sketch fill style"
+                fill
                 mixed={picked.mixed}
                 value={String(picked.value ?? 'solid')}
                 onChange={(v) =>
@@ -157,60 +159,106 @@ export const SketchSection: React.FC<SketchSectionProps> = ({
       )}
 
       {/*
-        How the shading is laid — the two things a hand varies and this could
-        not.
+        Density and angle, on one line.
 
-        The gap and the angle were both single constants, so every hachured
-        shape on a board carried the same weight of grey and ran in the same
-        direction. Density is what pen shading is *for*: a drawing tells a light
-        surface from a dark one by how densely it is hatched. And a shared angle
-        means two hatched shapes laid over each other shade in lockstep, so the
-        pair reads as one continuous field rather than two objects — turning one
-        of them is how a drawing separates them.
-
-        Only where there are strokes to lay. A solid fill has no shading, and a
-        density on one is a number nothing reads.
+        They are the two dimensions of one thing — how the shading reads as
+        tone — and they were two labelled rows, so the panel spent 168px of
+        label column saying "Density" and "Angle" beside controls that show
+        what they are. Read together they are also more useful: a dense field
+        at 41° and a light one at 90° are the two decisions you make about a
+        hatch, and you make them against each other.
       */}
       {capabilities.supportsFill && level && allClosed && style !== 'solid' && (
-        <>
-          <Row label="Density" hint="How closely the strokes are laid. This is what makes one shape read as darker than another.">
-            {(() => {
-              const density = sharedPaint((a) => a.shadingDensity ?? 'medium');
-              return (
-                <SegmentedControl
-                  ariaLabel="Shading density"
-                  mixed={density.mixed}
-                  value={String(density.value ?? 'medium')}
-                  onChange={(v) =>
-                    setAppearance({ shadingDensity: v === 'medium' ? undefined : (v as ShadingDensity) })
-                  }
-                  segments={SHADING_DENSITIES.map((id) => ({
-                    value: id,
-                    label: SHADING_DENSITY_LABELS[id],
-                    hint: SHADING_DENSITY_HINTS[id],
-                    icon: <ShadingDensityIcon density={id} />,
-                  }))}
-                />
-              );
-            })()}
-          </Row>
-          <Row label="Angle" hint="Which way the strokes run. Turn one of two overlapping shapes and they stop reading as one field.">
-            {(() => {
-              const angle = sharedPaint((a) => a.shadingAngle ?? HACHURE_ANGLE);
-              return (
-                <NumberStepper
-                  value={Math.round(angle.value ?? HACHURE_ANGLE)}
-                  mixed={angle.mixed}
-                  onChange={(v) => setAppearance({ shadingAngle: v })}
-                  min={-90}
-                  max={90}
-                  step={5}
-                  suffix="°"
-                />
-              );
-            })()}
-          </Row>
-        </>
+        <div className="prop-grid">
+          {(() => {
+            const density = sharedPaint((a) => a.shadingDensity ?? 'medium');
+            return (
+              <SegmentedControl
+                ariaLabel="Shading density"
+                fill
+                mixed={density.mixed}
+                value={String(density.value ?? 'medium')}
+                onChange={(v) =>
+                  setAppearance({ shadingDensity: v === 'medium' ? undefined : (v as ShadingDensity) })
+                }
+                segments={SHADING_DENSITIES.map((id) => ({
+                  value: id,
+                  label: SHADING_DENSITY_LABELS[id],
+                  hint: SHADING_DENSITY_HINTS[id],
+                  icon: <ShadingDensityIcon density={id} />,
+                }))}
+              />
+            );
+          })()}
+          {(() => {
+            const angle = sharedPaint((a) => a.shadingAngle ?? HACHURE_ANGLE);
+            const value = Math.round(angle.value ?? HACHURE_ANGLE);
+            return (
+              <NumberStepper
+                aria-label="Shading angle"
+                /*
+                  The glyph *is* the value.
+
+                  An angle is the one number in this panel you cannot picture
+                  from the digits — 41° against 90° is a real difference in how
+                  a shape reads, and neither number says which way the strokes
+                  run. Turning the mark to match means the field answers its own
+                  question, and it costs one `rotate`.
+                */
+                glyph={<HatchAngleGlyph degrees={angle.mixed ? 0 : value} />}
+                suffix="°"
+                value={value}
+                mixed={angle.mixed}
+                onChange={(v) => setAppearance({ shadingAngle: v })}
+                min={-90}
+                max={90}
+                step={5}
+              />
+            );
+          })()}
+        </div>
+      )}
+
+      {/*
+        Draw it again.
+
+        The sketch is seeded from the node id, which is what stops the outline
+        crawling on every re-render — and it also means one shape has exactly
+        one drawing for its whole life. That is right until the drawing is bad:
+        a wobble that clips a corner, an overshoot that reads as a mistake
+        rather than as a hand. The remedy used to be deleting the object and
+        making a new one, because a new id is the only new seed.
+
+        A variant number mixed into the seed gives a different drawing without
+        giving up any of the stability — see `Appearance.sketchSeed`. Every
+        value is as fixed as the original was; there is simply more than one.
+
+        It sits under the rule with the shading rather than up with the level,
+        because it is a *verb* and everything above it is a setting. And it is
+        offered whenever there is a sketch, shaded or not: the outline is drawn
+        by hand either way, and the outline is usually what you want redrawn.
+      */}
+      {level && (
+        <div className="prop-grid prop-grid--single">
+          <button
+            type="button"
+            className="sketch-redraw"
+            onClick={() => {
+              const current = sharedPaint((a) => a.sketchSeed ?? 0);
+              // Incremented rather than randomised: the number lands in the
+              // document, and a small counter is a thing somebody reading the
+              // JSON can understand. Pressing again keeps walking forward, so
+              // "the one before last" is reachable by going round.
+              const next = (typeof current.value === 'number' ? current.value : 0) + 1;
+              setAppearance({ sketchSeed: next });
+            }}
+            data-tooltip="A different hand, same settings"
+            data-tooltip-pos="left"
+          >
+            <RefreshCw size={13} aria-hidden="true" />
+            Redraw
+          </button>
+        </div>
       )}
     </Accordion>
   );

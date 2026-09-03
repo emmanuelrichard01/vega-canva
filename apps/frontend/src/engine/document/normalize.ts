@@ -436,6 +436,24 @@ function normalizeAppearance(raw: any): Appearance {
     }
   }
 
+  /**
+   * Which redraw of the sketch this is. Zero and absent both mean the first.
+   *
+   * Kept outside the `fillStyle` branch above and only stored alongside a
+   * sketch, for the same reason the shading fields are: a variant on a shape
+   * that is not drawn by hand is a number nothing reads, and a stored key that
+   * nothing reads is a key somebody will one day try to explain.
+   *
+   * Clamped to a non-negative integer. It reaches `Math.imul` and a `>>> 0`,
+   * which turn a float or a negative into *something* rather than failing — so
+   * a malformed document would still draw, just not the drawing it was saved
+   * with.
+   */
+  if (appearance.sketch && Number.isFinite(source.sketchSeed)) {
+    const variant = Math.max(0, Math.floor(Number(source.sketchSeed)));
+    if (variant > 0) appearance.sketchSeed = variant;
+  }
+
   return appearance;
 }
 

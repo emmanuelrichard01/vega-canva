@@ -254,3 +254,33 @@ export const ShadingDensityIcon: React.FC<{ density: ShadingDensity }> = ({ dens
     </svg>
   );
 };
+
+/**
+ * The hatch angle, drawn at the angle.
+ *
+ * An angle is the one number in the sketch panel you cannot picture from the
+ * digits: 41° against 90° is a real difference in how a hatched shape reads,
+ * and neither figure says which way the strokes run. Turning three short
+ * parallel strokes to match makes the field answer its own question.
+ *
+ * Negative degrees turn the other way, and the CSS rotation is clockwise while
+ * the shading's own convention is anticlockwise from horizontal — so the sign
+ * is flipped here rather than in the model, which is the one place the two
+ * conventions meet.
+ */
+export const HatchAngleGlyph: React.FC<{ degrees: number }> = ({ degrees }) => (
+  <svg
+    width="13"
+    height="13"
+    viewBox="0 0 14 14"
+    aria-hidden="true"
+    focusable="false"
+    style={{ transform: `rotate(${-degrees}deg)`, transition: 'transform 120ms var(--ease-settle)' }}
+  >
+    <g stroke="currentColor" strokeWidth="1.3" strokeLinecap="round">
+      <line x1="1.5" y1="7" x2="12.5" y2="7" />
+      <line x1="3.5" y1="3" x2="10.5" y2="3" />
+      <line x1="3.5" y1="11" x2="10.5" y2="11" />
+    </g>
+  </svg>
+);

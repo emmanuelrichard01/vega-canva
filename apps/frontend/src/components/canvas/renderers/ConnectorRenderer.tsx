@@ -1,6 +1,6 @@
 import React from 'react';
 import { Circle, Group, Label, Line, Path, Tag, Text } from 'react-konva';
-import { roughLoop, roughPolyline, seedFrom } from '../../../engine/model/rough';
+import { roughLoop, roughPolyline, seedFor } from '../../../engine/model/rough';
 import { useShallow } from 'zustand/react/shallow';
 import { DEFAULT_CONNECTOR_INK, type ConnectorNode } from '../../../engine/model/schema';
 import { connectorBounds, connectorPoints, type Box } from '../../../engine/model/connector';
@@ -344,7 +344,7 @@ export const ConnectorRenderer: React.FC<Props> = React.memo(({ node }) => {
         return (
           <Path
             key={key}
-            data={roughLoop(ring, { seed: seedFrom(node.id + key), level: sketchLevel, width })}
+            data={roughLoop(ring, { seed: seedFor(node.id + key, node.appearance?.sketchSeed), level: sketchLevel, width })}
             stroke={stroke}
             strokeWidth={width}
             fill={cap.filled ? stroke : undefined}
@@ -376,7 +376,7 @@ export const ConnectorRenderer: React.FC<Props> = React.memo(({ node }) => {
         <Path
           key={key}
           data={roughPolyline(pairsOf(cap.points), {
-            seed: seedFrom(node.id + key),
+            seed: seedFor(node.id + key, node.appearance?.sketchSeed),
             level: sketchLevel,
             width,
             closed: cap.filled,
@@ -434,13 +434,13 @@ export const ConnectorRenderer: React.FC<Props> = React.memo(({ node }) => {
   const sketched = node.appearance?.sketch
     ? node.routing === 'curved'
       ? roughLoop(pairsOf(trimmed), {
-          seed: seedFrom(node.id),
+          seed: seedFor(node.id, node.appearance?.sketchSeed),
           level: node.appearance.sketch,
           width,
           closed: false,
         })
       : roughPolyline(pairsOf(trimmed), {
-          seed: seedFrom(node.id),
+          seed: seedFor(node.id, node.appearance?.sketchSeed),
           closed: false,
           level: node.appearance.sketch,
           width,

@@ -3730,6 +3730,68 @@ to be sampled from the screen and withheld from the three most likely.
 read against each other: a large radius on tight padding is a lozenge, on loose
 padding a rounded box. Same treatment leading and tracking got.
 
+## 5a-0-x. A hand-drawn shape can be drawn again
+
+The sketch is seeded from the node id, and that is load-bearing: regenerating
+from fresh randomness makes an outline crawl on every re-render, which here is
+every selection, drag and presence update. So the drawing is deterministic, and
+it should be.
+
+Deterministic is not the same as **chosen**, and that gap is the whole feature.
+A hand-drawn effect sometimes lands badly on one particular shape — a wobble
+that clips a corner, an overshoot that reads as a mistake rather than as a hand
+— and the only remedy was to delete the object and draw it again, because the
+id is the seed and a new id means a new object.
+
+`Appearance.sketchSeed` is a variant number mixed into the seed. Stability is
+untouched: for any given value the drawing is as fixed as it ever was. What
+changes is that there is now more than one.
+
+**Mixed with the id rather than replacing it**, and that is the detail worth
+keeping. Replacing would make every shape redrawn `n` times draw *identically*,
+so redrawing a selection of six rectangles would turn them into six copies of
+one rectangle — the opposite of what a hand-drawn effect is for. Absent and
+zero both mean the original, so nothing already on a board changes. Connectors
+and paths seed through the same helper, so a redraw reaches them too.
+
+Verified in the browser against the real generator: the original is unchanged,
+each variant differs, each is stable across calls, and two shapes at the same
+variant stay distinct.
+
+## 5a-0-y. The sketch and stroke sections, rearranged
+
+**The shading angle shows itself.** It is the one number in these sections you
+cannot picture from the digits — 41° against 90° is a real difference in how a
+hatched shape reads, and neither figure says which way the strokes run. The
+glyph turns to match, which costs one `rotate` and means the field answers its
+own question.
+
+**Density and angle share a line**, being the two dimensions of one thing. They
+are also more useful read together: a dense field at 41° and a light one at 90°
+are the two decisions you make about a hatch, and you make them against each
+other.
+
+**Stroke weight and pattern share a line**, and there the pairing is structural
+rather than aesthetic. The dash is *derived from the weight* — `dashFor` gives
+three-on two-off at three times whatever the weight field says — so changing one
+changes what the other draws. Reading them apart hid the only relationship in
+the section.
+
+**Cap and Join came out of their stacks.** Three segments divide the 136px
+column at 45px each, well past a segment's natural 32, so stacking bought
+nothing and cost a row of height each.
+
+**Every segmented group in both sections fills its column**, so none of them can
+wrap — the same fix the type sections got, for the same reason.
+
+One thing deliberately *not* added: a free-form dash editor. `dashFor` derives
+the pattern from the weight on purpose, so a hand-authored array would silently
+stop scaling with the stroke and the panel's own hint ("the pattern scales with
+the weight so it stays legible") would become false. `styleOf` already
+recognises arbitrary arrays by shape, so the door is open — but it wants a
+`dashScale` that survives `restyleForWidth`, not an array field, and that is a
+piece of model design rather than a panel change.
+
 ## 5. Next up
 
 ### 5a-0. The four things to do first

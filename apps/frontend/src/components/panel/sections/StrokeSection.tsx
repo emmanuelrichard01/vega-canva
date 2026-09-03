@@ -1,5 +1,5 @@
 import React from 'react';
-import { PenLine } from 'lucide-react';
+import { Minus, PenLine, Spline } from 'lucide-react';
 import { Accordion, Details, Row, StrokeStyleIcon } from '../panelPrimitives';
 import { ColorPickerPopover } from '../../ui/ColorPickerPopover';
 import { EyedropperButton } from '../../ui/EyedropperButton';
@@ -103,7 +103,7 @@ export const StrokeSection: React.FC<StrokeSectionProps> = ({
     >
       {capabilities.supportsFill && (
         <Row label="Color">
-          <div style={{ display: 'flex', alignItems: 'center', gap: 4 }}>
+          <div className="prop-inline">
             <ColorPickerPopover
               color={appearance.stroke?.color ?? 'transparent'}
               mixed={sharedPaint((a) => a.stroke?.color ?? 'transparent').mixed}
@@ -117,11 +117,23 @@ export const StrokeSection: React.FC<StrokeSectionProps> = ({
         </Row>
       )}
 
-      <Row label="Weight" hint="Thickness of the outline, in pixels. Zero removes it.">
+      {/*
+        Weight and pattern, on one line.
+
+        They are not two settings that happen to be adjacent — the dash is
+        *derived from the weight* (`dashFor`), so a three-on two-off pattern is
+        three times whatever this field says. Changing one changes what the
+        other draws, and reading them apart hides the only relationship in the
+        section.
+      */}
+      <div className="prop-grid">
         {(() => {
           const strokeWidth = sharedPaint((a) => a.stroke?.width ?? 0);
           return (
             <NumberStepper
+              aria-label="Stroke weight"
+              glyph={<Minus size={13} strokeWidth={3} />}
+              suffix="px"
               value={strokeWidth.value ?? 0}
               mixed={strokeWidth.mixed}
               onChange={(width) => setStroke({ width })}
@@ -130,11 +142,9 @@ export const StrokeSection: React.FC<StrokeSectionProps> = ({
             />
           );
         })()}
-      </Row>
-
-      <Row label="Style" hint="Solid, dashed or dotted. The pattern scales with the weight so it stays legible.">
         <SegmentedControl
           ariaLabel="Stroke style"
+          fill
           mixed={sharedPaint((a) => styleOf(a.stroke)).mixed}
           value={styleOf(appearance.stroke)}
           onChange={(id) => setStrokeStyle(id as StrokeStyleId)}
@@ -144,13 +154,14 @@ export const StrokeSection: React.FC<StrokeSectionProps> = ({
             icon: <StrokeStyleIcon style={id} />,
           }))}
         />
-      </Row>
+      </div>
 
       <Details label="Line detail">
         {capabilities.supportsEdgeEffects && !openShape && (
           <Row label="Align" hint="Where the line sits relative to the shape's edge.">
             <SegmentedControl
               ariaLabel="Stroke alignment"
+              fill
               mixed={sharedPaint((a) => a.stroke?.align ?? 'center').mixed}
               value={appearance.stroke?.align ?? 'center'}
               onChange={(align) => setStroke({ align: align as StrokeAlign })}
@@ -163,10 +174,14 @@ export const StrokeSection: React.FC<StrokeSectionProps> = ({
           </Row>
         )}
 
+        {/* Cap and Join sit beside their labels, not under them. Three segments
+            divide the 136px column at 45px each — well past a segment's natural
+            32 — so stacking bought nothing and cost a row of height each. */}
         {capabilities.supportsStroke && (
-          <Row stack label="Cap" hint="How the two ends of an open line are finished.">
+          <Row label="Cap" hint="How the two ends of an open line are finished.">
             <SegmentedControl
               ariaLabel="Line cap"
+              fill
               disabledReason={
                 styleOf(appearance.stroke) === 'dotted'
                   ? 'A dotted line is drawn entirely from round caps, which is what makes the dots. Switch to Solid or Dashed to set a cap.'
@@ -187,9 +202,10 @@ export const StrokeSection: React.FC<StrokeSectionProps> = ({
         )}
 
         {capabilities.supportsStroke && (
-          <Row stack label="Join" hint="How two straight edges meet at a corner.">
+          <Row label="Join" hint="How two straight edges meet at a corner.">
             <SegmentedControl
               ariaLabel="Line join"
+              fill
               disabledReason={hasCorners ? undefined : 'This shape has no straight corners, and a rounded or curved edge has no join.'}
               mixed={sharedPaint((a) => a.stroke?.join ?? 'miter').mixed}
               value={appearance.stroke?.join ?? 'miter'}
@@ -209,6 +225,8 @@ export const StrokeSection: React.FC<StrokeSectionProps> = ({
               const limit = sharedPaint((a) => a.stroke?.miterLimit ?? DEFAULT_MITER_LIMIT);
               return (
                 <NumberStepper
+                  aria-label="Miter limit"
+                  glyph={<Spline size={13} />}
                   value={limit.value ?? DEFAULT_MITER_LIMIT}
                   mixed={limit.mixed}
                   onChange={(miterLimit) => setStroke({ miterLimit })}

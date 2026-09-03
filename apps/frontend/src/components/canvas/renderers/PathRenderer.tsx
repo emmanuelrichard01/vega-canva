@@ -3,7 +3,7 @@ import { Path } from 'react-konva';
 import type { PathNode } from '../../../engine/model/schema';
 import { DEFAULT_INK } from '../../../engine/model/schema';
 import { contourData } from '../../../engine/model/pathGeometry';
-import { roughLoop, seedFrom } from '../../../engine/model/rough';
+import { roughLoop, seedFor } from '../../../engine/model/rough';
 import { shadowProps, strokeColor, strokeDashProps, strokeWidth } from './shared';
 import { useFillProps } from './useFillProps';
 
@@ -54,7 +54,7 @@ export const PathRenderer: React.FC<Props> = React.memo(({ node }) => {
       return (
         <Path
           data={roughLoop(node.geometry.points, {
-            seed: seedFrom(node.id),
+            seed: seedFor(node.id, node.appearance?.sketchSeed),
             level: node.appearance.sketch,
             width: nib,
             closed: false,

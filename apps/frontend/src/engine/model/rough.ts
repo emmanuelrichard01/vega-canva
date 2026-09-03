@@ -186,6 +186,28 @@ export function seedFrom(id: string): number {
   return h >>> 0;
 }
 
+/**
+ * The seed for one shape's drawing, given its id and which variant was asked
+ * for.
+ *
+ * Mixed rather than replaced. Using the variant alone would make every shape
+ * redrawn `n` times draw *identically*, so redrawing a selection of six
+ * rectangles would turn them into six copies of one rectangle — which is the
+ * opposite of what a hand-drawn effect is for. Folding it into the id's hash
+ * keeps each shape's own identity in the result.
+ *
+ * Variant 0 and absent both mean "the original", so nothing that was drawn
+ * before this existed changes.
+ */
+export function seedFor(id: string, variant?: number): number {
+  const base = seedFrom(id);
+  if (!variant) return base;
+  // The same FNV step the hash above uses, applied once more with the variant
+  // folded in — so the variants of one shape are as unrelated to each other as
+  // two different ids are.
+  return Math.imul(base ^ (variant >>> 0), 16777619) >>> 0;
+}
+
 /** Trimmed to a tenth of a unit — no renderer resolves finer, and it halves the string. */
 function r(n: number): string {
   return String(Math.round(n * 10) / 10);

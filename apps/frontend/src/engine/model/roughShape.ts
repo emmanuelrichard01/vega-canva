@@ -14,7 +14,7 @@
  * here, rather than in each caller.
  */
 
-import { ellipseRing, rectRing, roughEllipse, roughLoop, roughPolyline, roughSilhouette, seedFrom, shapeFill } from './rough';
+import { ellipseRing, rectRing, roughEllipse, roughLoop, roughPolyline, roughSilhouette, seedFor, shapeFill } from './rough';
 import { shapeOutline } from './shapeOutline';
 import { shapeToPath } from './shapeToPath';
 import { flattenPath } from './pathGeometry';
@@ -84,7 +84,7 @@ export function roughShape(
 
   const level = node.appearance.sketch;
   const style = node.appearance.fillStyle ?? 'solid';
-  const seed = seedFrom(node.id);
+  const seed = seedFor(node.id, node.appearance.sketchSeed);
   /**
    * The pen the sketch is drawn with, so the wander is scaled to it.
    *
