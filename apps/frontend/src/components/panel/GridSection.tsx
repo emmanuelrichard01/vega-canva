@@ -3,6 +3,7 @@ import { Link2, Unlink2 } from 'lucide-react';
 import { useStore } from '../../hooks/useStore';
 import { GridKindIcon } from '../workspace/gridIcons';
 import { NumberStepper } from '../ui/NumberStepper';
+import { GRID_PRESETS, gridPresetMatching } from '../../engine/grid/gridPresets';
 import { Slider } from '../ui/Slider';
 import { ColorPickerPopover } from '../ui/ColorPickerPopover';
 import { setGridRecipe } from '../../engine/grid/gridApply';
@@ -222,9 +223,67 @@ export const GridSection: React.FC<Props> = ({ nodeId }) => {
   /** More than one shape chosen, or a request to choose one. */
   const mixing = mixWanted || recipe.style.shapes.length > 1;
 
+  const activePreset = gridPresetMatching(recipe.spec);
+
   return (
     <div className="grid-section">
       <Band title="System">
+      {/*
+        The grids people ask for by name.
+
+        The eleven systems below answer *arrangement*, and each arrives at
+        `KIND_DEFAULTS` — chosen to show that kind at its best, which is the
+        right default and is not a configuration. Proportion is the other half,
+        and it is where the named grids live: a twelve-column, 24-gutter web
+        grid is four separate edits away, and every one of them is a number
+        somebody has to already know.
+
+        A row of words rather than miniatures, deliberately, where the systems
+        below get pictures. A system is a shape and the word means nothing
+        until you have seen one; a preset is a *name for numbers*, and "Twelve
+        column" says more than any thumbnail of twelve slivers could. Putting
+        pictures on both would also make two adjacent rows of tiles that mean
+        different kinds of thing.
+
+        "Custom" is shown rather than nothing when the spec matches no preset,
+        because a grid arriving at a kind's defaults has not been configured —
+        and a row that simply had nothing selected would read as a control that
+        failed to notice.
+      */}
+      <span className="grid-section__caption">
+        Preset
+        <strong>{activePreset?.label ?? 'Custom'}</strong>
+      </span>
+      <div className="grid-presets" role="radiogroup" aria-label="Grid preset">
+        {GRID_PRESETS.map((preset) => {
+          const on = activePreset?.id === preset.id;
+          return (
+            <button
+              key={preset.id}
+              type="button"
+              role="radio"
+              aria-checked={on}
+              className="grid-preset"
+              data-active={on || undefined}
+              data-tooltip={preset.hint}
+              data-tooltip-pos="left"
+              onClick={() => {
+                /*
+                  The kind first, then the numbers.
+
+                  `switchKind` brings that kind's own defaults with it, which is
+                  right for the picker below and is exactly what the preset is
+                  overriding — so the patch has to land after it, not before.
+                */
+                apply(withSpec(switchKind(recipe, preset.kind), preset.patch));
+              }}
+            >
+              {preset.label}
+            </button>
+          );
+        })}
+      </div>
+
       {/* The system. Ten miniatures rather than a dropdown of ten words,
           because a grid system is a picture and the words mean nothing until
           you have seen one. */}

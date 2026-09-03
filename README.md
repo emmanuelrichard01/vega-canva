@@ -1167,6 +1167,32 @@ canvas — while the DOM editing overlay passed the real number through, meaning
 text set in Light changed weight when you double-clicked it. Konva's `fontStyle`
 lands in the CSS `font` shorthand, which takes a numeric weight in that slot.
 
+### Grids — `engine/grid/`
+
+Eleven systems, and they answer **arrangement**: columns, modular, bento,
+masonry, hierarchical, manuscript, baseline, golden, orbit, radial, diagonal.
+Each arrives at defaults chosen to show that kind at its best, which is not the
+same as a configuration — `columns` defaults to four rather than twelve,
+because this tool draws tracks as *objects* and twelve of them is twelve tall
+slivers rather than the four broad columns anyone picturing a column layout has
+in mind.
+
+**Proportion is the other half**, and `gridPresets.ts` is it: seven
+configurations that have names, where the numbers are the point. Twelve is
+twelve because of what it factors into — halves, thirds, quarters and sixths
+all land on a track boundary. Rule of thirds has no gutter and no margin,
+because it is a measure laid over a whole picture rather than modules with
+daylight between them.
+
+A preset is a **patch**, not a whole spec: it says nothing about position, size
+or seed, so applying one never moves what you are looking at and trying three
+in a row is a comparison rather than a series of accidents.
+
+Picking a grid by *looking* at it is `GridVariations`, which shows five
+candidates and writes nothing until one is chosen — deliberately not a shuffle
+button, which commits a change you cannot see until it has happened and loses
+the arrangement you liked on the second press.
+
 ### Frames — `engine/model/frames.ts`
 
 Sixteen presets in three groups, and the list is deliberately short: a picker

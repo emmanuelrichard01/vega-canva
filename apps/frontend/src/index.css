@@ -16903,3 +16903,49 @@ html[data-precise] .canvas-container[data-cursor-mode] .konvajs-content canvas {
 
 /* Room for three columns. */
 .dock-flyout__panel--wide { min-width: 430px; }
+
+
+/* ===========================================================================
+   GRID PRESETS
+   ---------------------------------------------------------------------------
+   Words, not miniatures. The systems below this row get pictures because a
+   grid system is a shape and its name means nothing until you have seen one; a
+   preset is a *name for numbers*, and "Twelve column" says more than any
+   thumbnail of twelve slivers could. Two adjacent rows of tiles meaning
+   different kinds of thing would also read as one row that had gone wrong.
+   =========================================================================== */
+
+.grid-presets {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px;
+  margin-bottom: var(--space-2);
+}
+
+.grid-preset {
+  padding: 4px 9px;
+  border: 1px solid transparent;
+  border-radius: var(--radius-pill);
+  background: var(--surface-hover);
+  color: var(--text-secondary);
+  font-family: inherit;
+  font-size: var(--text-2xs);
+  font-weight: var(--weight-semibold);
+  white-space: nowrap;
+  cursor: pointer;
+  transition: background var(--motion-hover), color var(--motion-hover),
+    border-color var(--motion-hover);
+}
+
+.grid-preset:hover {
+  color: var(--text-primary);
+  border-color: var(--border-strong);
+}
+
+/* An inked ground, not the accent: this is a choice among looks, not the
+   screen's primary action, and DESIGN.md keeps the accent for that. */
+.grid-preset[data-active] {
+  background: var(--text-primary);
+  border-color: var(--text-primary);
+  color: var(--surface-primary);
+}

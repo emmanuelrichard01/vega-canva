@@ -4300,6 +4300,62 @@ ratio. Fitted inside a fixed box, because the ratio is the information and the
 absolute size is not: scaling by it would make a business card a speck beside a
 Desktop.
 
+## 5a-0-ap. The grid got the configurations people ask for by name
+
+The eleven systems answer **arrangement**, and each arrives at `KIND_DEFAULTS`
+— numbers chosen to show that kind at its best. That is the right default and
+it is not a configuration. The module says so itself, in the comment beside
+`columns: 4`:
+
+> Four, not twelve. A twelve-column grid is a *measure* you place things
+> against, and this tool draws the tracks as objects — so twelve of them is
+> twelve tall slivers rather than the four broad columns anyone picturing a
+> column layout has in mind.
+
+**Proportion is the other half.** A twelve-column, 24-gutter web grid is four
+separate edits away — switch kind, set columns, set the gap, set the margin —
+and every one is a number somebody has to already know. None of it is
+discoverable from the panel.
+
+Seven named configurations, kept short on the same discipline `frames.ts`
+states. Two are worth their reasoning:
+
+- **Twelve** is twelve because of what it *factors into*: halves, thirds,
+  quarters and sixths all land on a track boundary, which is why the web
+  settled on it rather than on ten.
+- **Rule of thirds** has no gutter and no margin on purpose. It is a measure
+  laid over a whole picture, and a gap between the thirds would be a gap in the
+  picture — the one preset whose cells are meant to touch.
+
+**A preset is a patch, not a whole spec.** Picking "Twelve column" is a
+statement about tracks, not about where the grid sits or how big it is, so
+applying one never moves or resizes what you are looking at. That is what makes
+trying three in a row a *comparison* rather than a series of accidents.
+
+`gridPresetMatching` is blind to the fields a preset does not set — a grid that
+has been moved, resized or reseeded is still the preset it was built from — and
+exact on the ones it does, because a grid one column off has been adjusted
+deliberately. A kind default matches nothing and reads as "Custom", which is
+honest: arriving at a kind is not arriving at a configuration.
+
+**Words rather than miniatures**, where the systems below get pictures. A
+system is a shape whose name means nothing until you have seen one; a preset is
+a *name for numbers*, and "Twelve column" says more than any thumbnail of
+twelve slivers could. Two adjacent rows of tiles meaning different kinds of
+thing would read as one row that had gone wrong.
+
+Verified against the real layout engine: the twelve-column preset produces
+twelve cells 70 units wide, the last ending at 1152 on a 1200-wide grid. 1200
+less two 48 margins is 1104; less eleven 24 gutters is 840; over twelve is 70.
+
+**Not added, and why.** A *shuffle* button was the obvious candidate and is
+already better served: `GridVariations` shows five candidates and writes
+nothing until one is chosen, where a shuffle commits a change you cannot see
+until it has happened and loses the arrangement you liked on the second press.
+The genuinely missing thing is a **layout guide** — a twelve-column measure
+drawn as chrome on a frame and snapped to, rather than built as objects — which
+is the other meaning of the word "grid" and a subsystem of its own.
+
 ## 5. Next up
 
 ### 5a-0. The four things to do first
