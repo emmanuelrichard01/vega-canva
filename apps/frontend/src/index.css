@@ -6325,6 +6325,47 @@ textarea:focus-visible {
 
 .shelf__put:hover { border-color: var(--border-strong); color: var(--text-primary); }
 
+/**
+ * The two quieter things a shelf row offers.
+ *
+ * Text-only against `Put back`'s outlined pill, because a row with three
+ * equally-weighted buttons has no recommended action, and the recommended
+ * action here is obvious: the reason you opened this shelf is that you want a
+ * board back.
+ *
+ * `Forget` is the same weight as `Copy link` at rest and only turns red on
+ * approach. A permanently red control in a list of twelve reads as twelve
+ * warnings and stops meaning anything; the colour is worth more as a response
+ * to the pointer arriving than as a permanent state — and the confirmation,
+ * not the colour, is what actually protects the address.
+ */
+.shelf__act {
+  display: flex;
+  align-items: center;
+  gap: 5px;
+  flex-shrink: 0;
+  height: 28px;
+  padding: 0 var(--space-2);
+  border: 1px solid transparent;
+  border-radius: var(--radius-pill);
+  background: transparent;
+  color: var(--text-tertiary);
+  font-family: inherit;
+  font-size: var(--text-sm);
+  font-weight: var(--weight-medium);
+  cursor: pointer;
+  transition: color var(--motion-hover), background-color var(--motion-hover);
+}
+
+.shelf__act:hover { background: var(--surface-hover); color: var(--text-primary); }
+
+/* The same treatment every other destructive control in the app takes, rather
+   than a second red invented here. See `.ctx-menu-item--danger`. */
+.shelf__act--let-go:hover {
+  background: color-mix(in srgb, var(--status-danger) 14%, transparent);
+  color: var(--status-danger);
+}
+
 /* ===========================================================================
    THE LIBRARY
    ---------------------------------------------------------------------------

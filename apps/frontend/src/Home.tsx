@@ -2,11 +2,15 @@ import React, { useEffect, useMemo, useRef, useState } from 'react';
 import { useAuth } from './hooks/useAuth';
 import { nanoid } from 'nanoid';
 import {
-  AlertTriangle, ArrowRight, ChevronDown, ChevronRight, Compass, FileText, Layers, Link2, LogOut, Plus,
+  AlertTriangle, ArrowRight, ChevronDown, ChevronRight, Compass, Download, FileText, Layers, Link2, LogOut, Plus,
+  Trash2,
   Search, Sparkles, Undo2,
   SquarePen, UploadCloud, X,
 } from 'lucide-react';
 import { parseDocumentExport } from './engine/export/DocumentImport';
+import {
+  looksLikeLibrary, mergeLibrary, parseLibrary, serializeLibrary,
+} from './engine/room/libraryIndex';
 import { looksLikeRoomCode, roomIdFromCode } from './engine/room/roomCode';
 import { notices$ } from './engine/ui/notices';
 import { stashPendingRestore, stashPendingTemplate } from './engine/export/pendingRestore';
@@ -50,8 +54,31 @@ const STORAGE_KEY = 'recentWorkspaces';
  */
 const REMOVED_KEY = 'vega_removed_workspaces';
 
-/** Enough to cover a tidying session. Older ones fall off the end. */
-const REMOVED_LIMIT = 24;
+/**
+ * A ceiling, not a working limit.
+ *
+ * This was 24, described as "enough to cover a tidying session", and entries
+ * beyond it fell off the end silently. That put a hole in the shelf at exactly
+ * the point it exists to cover: removing a twenty-fifth board *permanently
+ * discarded* the oldest removal's address, with no notice and no way back —
+ * the unrecoverable loss this whole area is built around, caused by the
+ * mechanism built to prevent it.
+ *
+ * Worse, the entry that fell off was the one removed *longest ago*, which is
+ * precisely the one least likely to still be reachable from a link in
+ * somebody's chat history.
+ *
+ * An entry is about 120 bytes, so 24 of them saved roughly two kilobytes of a
+ * five-megabyte budget. Nothing was being bought.
+ *
+ * The number is high enough now that reaching it is a genuinely exceptional
+ * event rather than a Tuesday, and `writeRemoved` says so out loud if it ever
+ * happens instead of quietly trimming. The shelf's real exit is **Forget
+ * permanently**: deliberate, per-board and confirmed. A limit is not a way to
+ * delete things, and using one as though it were is what made the silent trim
+ * look reasonable.
+ */
+const REMOVED_LIMIT = 500;
 const VIEW_KEY = 'vega_home_view';
 
 /** Which half of the library the stage is showing. */
@@ -357,6 +384,15 @@ export const Home: React.FC = () => {
   const handleRestoreFile = async (file: File) => {
     setRestoreError(null);
     const text = await file.text();
+
+    // One picker and one drop target for both kinds of file, because a person
+    // holding a .json from this app should not have to know which of two
+    // things it is. The discriminator is checked first so a malformed board
+    // list reports a board-list problem rather than being handed to the
+    // document reader and coming back as "that file does not contain a
+    // document" — an error about the wrong thing, which is worse than none.
+    if (looksLikeLibrary(text)) { loadLibrary(text); return; }
+
     const result = parseDocumentExport(text);
     if (!result.ok) { setRestoreError(result.error); return; }
     stashPendingRestore(text);
@@ -474,6 +510,17 @@ export const Home: React.FC = () => {
 
   const writeRemoved = (next: RemovedWorkspace[]) => {
     const capped = next.slice(0, REMOVED_LIMIT);
+    if (capped.length < next.length) {
+      // Never silently. Losing an address is the one consequence on this page
+      // that cannot be undone, so if the ceiling ever does discard one it is
+      // said plainly rather than discovered later by somebody looking for a
+      // board that is no longer listed anywhere.
+      notices$.notify({
+        message: `The removed list is full at ${REMOVED_LIMIT}, so the oldest entry has been dropped. Save your board list to keep a copy.`,
+        tone: 'warning',
+        duration: 14000,
+      });
+    }
     localStorage.setItem(REMOVED_KEY, JSON.stringify(capped));
     setRemovedRooms(capped);
   };
@@ -530,6 +577,121 @@ export const Home: React.FC = () => {
       const nextRemoved = removed.filter((r) => r.id !== id);
       localStorage.setItem(REMOVED_KEY, JSON.stringify(nextRemoved));
       return nextRemoved;
+    });
+  };
+
+  /**
+   * Drop a removal for good.
+   *
+   * ## Why there has to be one
+   *
+   * There was no way to delete. The shelf only grew, and the only thing that
+   * ever shortened it was the silent cap — so the way to tidy the shelf was to
+   * remove more boards until the old ones fell off the end. The route to a
+   * clean list ran straight through the data loss the list exists to prevent,
+   * which is what a missing exit does to a design: people find one anyway, and
+   * it is the worst available.
+   *
+   * ## Why it is confirmed, when removing a board is not
+   *
+   * They are opposite actions and the asymmetry is the point. Removing a board
+   * is *recoverable* — that is what the notice and this shelf are for — so it
+   * can be a single click on a card. This one is where recovery stops, so it
+   * is the one thing on this page that asks. It names the board, because
+   * "forget this?" over a list of twelve is not a question anybody can answer.
+   */
+  const forgetRemoved = (room: RemovedWorkspace) => {
+    const ok = window.confirm(
+      `Forget “${room.name}” permanently?
+
+` +
+      'The board itself is not deleted — but this device will no longer have its ' +
+      'address, and there is no way to get it back from here. If you have the link ' +
+      'somewhere else, this is safe.'
+    );
+    if (!ok) return;
+    const next = removedRooms.filter((r) => r.id !== room.id);
+    localStorage.setItem(REMOVED_KEY, JSON.stringify(next));
+    setRemovedRooms(next);
+  };
+
+  /**
+   * Put a removed board's address on the clipboard.
+   *
+   * The shelf could only ever put a board *back*, which is one of the two
+   * things somebody wants from it. The other is to hand the link to a
+   * colleague, or paste it somewhere that will outlive this browser — and for
+   * that, restoring it to the grid first is a detour through a state you did
+   * not want.
+   */
+  const copyAddress = async (room: RemovedWorkspace) => {
+    const url = `${window.location.origin}/room/${room.id}`;
+    try {
+      await navigator.clipboard.writeText(url);
+      notices$.notify({ message: `Copied the link to “${room.name}”.`, tone: 'success' });
+    } catch {
+      // A denied clipboard is a permission decision, not a failure to report
+      // as one — so the address is offered instead of announced as lost.
+      notices$.notify({ message: url, tone: 'info', duration: 20000 });
+    }
+  };
+
+  /**
+   * Save the board list as a file.
+   *
+   * Every other safeguard here protects the list *in place* and assumes the
+   * `localStorage` entry still exists. None of them survives clearing site
+   * data or moving to another machine, and neither of those is an accident
+   * anybody gets to undo. A second record is the only answer to "this list is
+   * the only record", so: the index, as a file.
+   *
+   * The removed shelf goes in it too, and is arguably the more valuable half —
+   * those are the addresses this device has already stopped keeping.
+   */
+  const saveLibrary = () => {
+    const text = serializeLibrary(recentRooms, removedRooms);
+    const url = URL.createObjectURL(new Blob([text], { type: 'application/json' }));
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = `vega-board-list-${new Date().toISOString().slice(0, 10)}.json`;
+    a.click();
+    // Revoked on the next turn rather than immediately: the click is
+    // asynchronous, and revoking in the same tick races the download.
+    window.setTimeout(() => URL.revokeObjectURL(url), 0);
+    notices$.notify({
+      message: `Saved ${recentRooms.length + removedRooms.length} board addresses. Keep it somewhere this browser cannot reach.`,
+      tone: 'success',
+    });
+  };
+
+  /**
+   * Fold a saved list back in.
+   *
+   * A **union**, never a replacement — see `mergeLibrary`. Loading a file saved
+   * before three boards were opened must not take those three addresses away,
+   * and doing it as a side effect of an action taken to be safer would be the
+   * worst version of the loss this page is built to avoid.
+   */
+  const loadLibrary = (text: string) => {
+    const parsed = parseLibrary(text);
+    if (!parsed.ok) { setRestoreError(parsed.error); return; }
+
+    const merged = mergeLibrary(recentRooms, parsed.file.boards);
+    writeRecents(merged.boards);
+
+    // The shelf merges on the same terms, and a board restored to the grid by
+    // this load leaves the shelf: it is no longer removed.
+    const live = new Set(merged.boards.map((b) => b.id));
+    const shelf = new Map(removedRooms.map((r) => [r.id, r]));
+    for (const r of parsed.file.removed) if (!shelf.has(r.id)) shelf.set(r.id, r);
+    writeRemoved([...shelf.values()].filter((r) => !live.has(r.id)).sort((a, b) => b.removedAt - a.removedAt));
+
+    setView('boards');
+    notices$.notify({
+      message: merged.added === 0
+        ? 'That list held nothing this device did not already have.'
+        : `Added ${merged.added} board${merged.added === 1 ? '' : 's'} from that list. Nothing was removed.`,
+      tone: 'success',
     });
   };
 
@@ -936,6 +1098,34 @@ export const Home: React.FC = () => {
                 <span className="lrail__who-sub">{user.isGuest ? 'Guest session' : 'Kept on this device'}</span>
               </p>
               <div className="ctx-popover__rule" role="separator" />
+              {/*
+                The board *list*, not a board.
+
+                A backup of a board is about a board, and lives with the other
+                ways into one. This is the index — every address this browser
+                holds — and it is the thing the line above it already calls
+                "Kept on this device". It is also the only safeguard here that
+                survives clearing site data or moving to another machine, which
+                is what makes it worth a permanent place rather than a note in
+                the shelf.
+              */}
+              <button
+                type="button"
+                className="ctx-menu-item"
+                role="menuitem"
+                onClick={() => { setMeOpen(false); saveLibrary(); }}
+              >
+                <Download size={15} /> Save board list
+              </button>
+              <button
+                type="button"
+                className="ctx-menu-item"
+                role="menuitem"
+                onClick={() => { setMeOpen(false); restoreInputRef.current?.click(); }}
+              >
+                <UploadCloud size={15} /> Load a board list
+              </button>
+              <div className="ctx-popover__rule" role="separator" />
               <button type="button" className="ctx-menu-item" role="menuitem" onClick={logout}>
                 <LogOut size={15} /> {user.isGuest ? 'End guest session' : 'Sign out'}
               </button>
@@ -1137,15 +1327,45 @@ export const Home: React.FC = () => {
                 <>
                   <p className="shelf__note">
                     None of these was deleted. Each one still exists and still opens;
-                    this device simply stopped keeping the address.
+                    this device simply stopped keeping the address. Copy a link to take
+                    it with you, or save your whole board list from the account menu.
                   </p>
                   <ul className="shelf__list">
                     {removedRooms.map((room) => (
                       <li key={room.id} className="shelf__row">
                         <span className="shelf__name">{room.name}</span>
                         <span className="shelf__when">Removed {formatDate(room.removedAt)}</span>
+                        {/*
+                          Three things a person wants from a row here, in the
+                          order they are worth offering: put it back, take the
+                          address away with them, or let it go.
+
+                          Forget is last and quiet — a text button rather than
+                          a filled one — because it is the only step on this
+                          page that cannot be undone. It asks before it acts,
+                          which removal itself does not: removal is
+                          recoverable, and that asymmetry is exactly what makes
+                          one a single click on a card and the other a
+                          confirmation.
+                        */}
+                        <button
+                          type="button"
+                          className="shelf__act"
+                          onClick={() => copyAddress(room)}
+                          data-tooltip="Copy this board's link"
+                        >
+                          <Link2 size={14} aria-hidden="true" /> Copy link
+                        </button>
                         <button type="button" className="shelf__put" onClick={() => putBack(room.id)}>
                           <Undo2 size={14} aria-hidden="true" /> Put back
+                        </button>
+                        <button
+                          type="button"
+                          className="shelf__act shelf__act--let-go"
+                          onClick={() => forgetRemoved(room)}
+                          data-tooltip="Drop this address for good"
+                        >
+                          <Trash2 size={14} aria-hidden="true" /> Forget
                         </button>
                       </li>
                     ))}

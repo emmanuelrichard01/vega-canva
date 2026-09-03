@@ -3454,6 +3454,72 @@ paste opening the field pre-filled and focused, prose ignored, a paste inside a
 field left entirely alone, and the drop cue surviving a crossing into a child
 but not a real leave.
 
+## 5a-0-r. The removed-boards shelf had a hole in the middle of it
+
+The reasoning behind the shelf was already right, and worth keeping: removing a
+board here destroys *the only record of its address*, and with no accounts that
+is losing the work while looking like the harmless of the two options. Undo
+lives in two places because a toast is gone in ten seconds and the realisation
+usually is not; `putBack` restores to the **old index**, so an undo looks like
+nothing happened rather than reordering the list as a consequence of correcting
+a mistake.
+
+Three things were wrong underneath it.
+
+**1. The cap discarded addresses silently.** `REMOVED_LIMIT = 24`, and
+`writeRemoved` did `next.slice(0, 24)`. Removing a twenty-fifth board
+permanently dropped the oldest removal — no notice, no confirmation, no way
+back. The safety net had a hole in precisely the failure mode it existed to
+cover. And ordered by removal recency, the entry that fell off was the one
+removed *longest ago*: the one least likely to still be reachable from a link
+in somebody's chat history. Measured against this machine's real library, the
+whole index — 7 boards and 8 removals — serialises to **1983 bytes**. The cap
+was saving about two kilobytes of a five-megabyte budget.
+
+The ceiling is 500 now, and if it is ever reached it says so rather than
+trimming quietly.
+
+**2. There was no way to delete.** The shelf only grew, and the only thing that
+ever shortened it was the silent cap — so the route to a tidy shelf ran
+straight through the data loss the shelf exists to prevent. A missing exit does
+not stop people leaving; it makes them leave the worst way. **Forget
+permanently** is per-row, and it is the one action on this page that asks
+first. That asymmetry is the point: removing a board is recoverable, so it can
+be a click on a card; this is where recovery stops.
+
+**3. The shelf could only put a board back.** The other thing somebody wants
+from it is the link — to hand to a colleague, or to paste somewhere that
+outlives this browser — and getting it meant restoring the board to the grid
+first, through a state you did not want. **Copy link** is on the row now.
+
+**And the structural one: the list is exportable.** Every safeguard above
+protects the list *in place* and assumes the `localStorage` entry still exists.
+None survives clearing site data or moving to another machine, and neither of
+those is an accident anybody gets to undo. `engine/room/libraryIndex.ts` makes
+the index a file — both halves, since the removed shelf is arguably the more
+valuable one.
+
+Loading **merges, never replaces**. A file saved before three boards were
+opened must not take those three addresses away, and doing that as a side
+effect of an action taken to be *safer* would be the worst version of the loss
+this page is built around. Verified against the real library: a stale file
+holding 2 of 7 boards still leaves all 7.
+
+One picker and one drop target handle both kinds of file. `looksLikeLibrary`
+is checked first so a malformed board list reports a board-list problem rather
+than being handed to the document reader and coming back as "that file does not
+contain a document" — an error about the wrong thing, which is worse than none.
+
+**Where it went, and why that was not my first guess.** The module started in
+`engine/export/` because it serialises JSON, and `exportChunking.test.ts`
+refused it on the spot: that directory is a lazily-loaded chunk behind the
+export dialog, and `Home.tsx` is the landing page, so the import would have
+pulled the export pipeline into the first paint of a screen that never exports.
+The guard was right about more than the bundle — a library index is a list of
+**room addresses**, which is what `engine/room/` already holds.
+
+16 tests on the module; verified live against this machine's real 15 addresses.
+
 ## 5. Next up
 
 ### 5a-0. The four things to do first
