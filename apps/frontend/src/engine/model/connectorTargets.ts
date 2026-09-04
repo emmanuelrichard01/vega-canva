@@ -17,23 +17,58 @@ import { portPoint, type Box, type ConnectorEnd, type Point, type Port } from '.
 import type { BindCandidate } from './connectorBinding';
 import { attachOnOutline, outlineOfNode } from './shapePerimeter';
 import { anchorPoint, type Anchor } from './connectorAnchor';
+import { NODE_TYPES } from './schema';
+
+/**
+ * The two types a connector cannot attach to, and why.
+ *
+ * Stated as the exclusion rather than as an allow-list, because the allow-list
+ * was the bug: it was written when there were six node types, and `grid` and
+ * `audio` arrived without being added, so the connector tool silently did
+ * nothing when pointed at either. An exclusion list is wrong in the safe
+ * direction — a new type is connectable until somebody says otherwise, which
+ * is a control that works rather than one that is quietly absent.
+ */
+const NOT_CONNECTABLE: ReadonlySet<string> = new Set([
+  /**
+   * Another connector. An arrow bound to an arrow has no box to take a side
+   * of, and the chain of derivations it creates has no natural end — move one
+   * and every connector downstream of it has to re-resolve, in an order
+   * nothing establishes.
+   */
+  'connector',
+  /**
+   * A comment pin. It is a 32px marker anchored to a point rather than a shape
+   * with sides, and it is chrome about the board rather than part of it —
+   * `objectSnap` excludes it from alignment for the same reason.
+   */
+  'comment',
+]);
 
 /**
  * Types a connector can attach to.
  *
- * Another connector is deliberately not one of them. An arrow bound to an
- * arrow has no box to take a side of, and the chain of derivations it creates
- * has no natural end — move one and every connector downstream of it has to
- * re-resolve, in an order nothing establishes.
+ * ## The rule
+ *
+ * Anything with a box somebody can point at. That is nearly everything, which
+ * is why the interesting content of this module is `NOT_CONNECTABLE` below —
+ * the two exclusions and their reasons — and why `connectorTargets.test.ts`
+ * checks the two sets against `NODE_TYPES` rather than against a copy of this
+ * list.
+ *
+ * ## Why that guard exists
+ *
+ * `grid` and `audio` were both missing, and neither was a decision. This was
+ * an allow-list written when there were six node types, and a seventh and
+ * eighth arrived without it — so pointing the connector tool at a grid did
+ * nothing at all, with no error and nothing to suggest the tool had even seen
+ * it. `audio` is the same omission caught by the same guard: it is already in
+ * `BOX_IS_THE_SHAPE` one module over, so somebody had thought about it there
+ * and not here, which is exactly the asymmetry a list like this produces.
  */
-export const CONNECTABLE: ReadonlySet<string> = new Set([
-  'shape',
-  'sticky',
-  'image',
-  'text',
-  'frame',
-  'path',
-]);
+export const CONNECTABLE: ReadonlySet<string> = new Set(
+  NODE_TYPES.filter((type) => !NOT_CONNECTABLE.has(type)),
+);
 
 type BoxNode = {
   x: number;

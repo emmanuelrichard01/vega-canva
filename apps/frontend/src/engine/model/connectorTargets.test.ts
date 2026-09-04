@@ -1,8 +1,8 @@
 import { describe, it, expect } from 'vitest';
 import { boxOfNode, outlineFor, attachPoint, portPointsFor, bodyOutlinePoints,
-  connectorDragPatch,
+  connectorDragPatch, CONNECTABLE, isConnectable, bindCandidates,
 } from './connectorTargets';
-import type { AnyNode } from './schema';
+import { NODE_TYPES, type AnyNode } from './schema';
 
 /** Minimal shape node factory — only the fields the functions under test read. */
 function makeNode(overrides: Partial<AnyNode> & { id: string; type: string }): AnyNode {
@@ -164,5 +164,87 @@ describe('connectorDragPatch', () => {
     // them, and `undefined + 40` is `NaN` -- which Konva renders as nothing.
     const patch = connectorDragPatch({ from: {}, to: {} }, 40, 25)!;
     expect(patch.from).toMatchObject({ x: 40, y: 25 });
+  });
+});
+
+/**
+ * Every node type is connectable unless somebody said otherwise.
+ *
+ * `CONNECTABLE` was an **allow-list**, written when there were six node types,
+ * and `grid` and `audio` arrived without being added to it. Pointing the
+ * connector tool at a grid therefore did nothing at all — no port under the
+ * pointer, no error, nothing to suggest the tool had even seen it.
+ *
+ * The failure has a shape worth naming: a list that must be updated when a type
+ * is added, with nothing to say so. Inverting it makes a new type connectable
+ * by default, which is wrong in the safe direction — a control that works
+ * rather than one that is quietly absent — and this block is what keeps the set
+ * honest against `NODE_TYPES` rather than against a copy of it.
+ */
+describe('the connectable set is derived from the node types', () => {
+  it('covers every type except the stated exclusions', () => {
+    const excluded = NODE_TYPES.filter((t) => !CONNECTABLE.has(t));
+    expect([...excluded].sort()).toEqual(['comment', 'connector']);
+  });
+
+  it('contains nothing that is not a node type', () => {
+    // A stale entry is the other half of the same failure: a type renamed and
+    // the list left holding the old spelling, matching nothing forever.
+    for (const type of CONNECTABLE) {
+      expect(NODE_TYPES as readonly string[], type).toContain(type);
+    }
+  });
+
+  it('includes the two that were missing', () => {
+    /**
+     * The bug, stated. `audio` shows how the omission happens: it is already
+     * in `BOX_IS_THE_SHAPE` one module over, so somebody had thought about it
+     * there and not here.
+     */
+    expect(CONNECTABLE.has('grid')).toBe(true);
+    expect(CONNECTABLE.has('audio')).toBe(true);
+  });
+
+  it('still refuses a connector', () => {
+    // An arrow bound to an arrow has no box to take a side of, and the chain
+    // of derivations it creates has no natural end.
+    expect(CONNECTABLE.has('connector')).toBe(false);
+  });
+
+  it('still refuses a comment pin', () => {
+    // A 32px marker anchored to a point, and chrome about the board rather
+    // than part of it. `objectSnap` excludes it from alignment for the same
+    // reason.
+    expect(CONNECTABLE.has('comment')).toBe(false);
+  });
+});
+
+describe('a grid is a real binding target', () => {
+  it('accepts an ordinary one', () => {
+    expect(isConnectable(makeNode({ id: 'g', type: 'grid' }))).toBe(true);
+  });
+
+  it('refuses a hidden or locked one', () => {
+    // Both mean "you cannot interact with this", and an arrow bound to
+    // something invisible is a connector pointing at nothing.
+    expect(isConnectable(makeNode({ id: 'g', type: 'grid', hidden: true }))).toBe(false);
+    expect(isConnectable(makeNode({ id: 'g', type: 'grid', locked: true }))).toBe(false);
+  });
+
+  it('appears among the candidates with its box', () => {
+    const grid = makeNode({ id: 'g', type: 'grid', x: 0, y: 0, width: 100, height: 80 });
+    const candidates = bindCandidates({ g: grid });
+    expect(candidates.map((c) => c.id)).toEqual(['g']);
+    expect(candidates[0].box).toEqual({ x: 0, y: 0, width: 100, height: 80 });
+  });
+
+  it('presents a turned grid as its rotated silhouette', () => {
+    /**
+     * `grid` was missing from `BOX_IS_THE_SHAPE` as well, which left a rotated
+     * grid handing the connector system its axis-aligned box — a side attached
+     * at the wrong place on any grid somebody had turned.
+     */
+    const turned = makeNode({ id: 'gr', type: 'grid', rotation: 45 });
+    expect(outlineFor(turned)).toHaveLength(4);
   });
 });

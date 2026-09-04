@@ -41,7 +41,15 @@ import { shapeToPath } from './shapeToPath';
 import type { Point } from './connector';
 import type { AnyNode } from './schema';
 
-/** Node types whose outline is their box, so there is nothing to project onto. */
+/**
+ * Node types whose outline is their box, so there is nothing to project onto.
+ *
+ * `grid` belongs here for the same reason a frame does: it is a rectangular
+ * region, and its modules are drawn *inside* that rectangle rather than being
+ * its silhouette. It was missing, which left a rotated grid presenting its
+ * axis-aligned box to the connector system — a side attached at the wrong
+ * place on any grid somebody had turned.
+ */
 const BOX_IS_THE_SHAPE: ReadonlySet<string> = new Set([
   'sticky',
   'image',
@@ -49,6 +57,7 @@ const BOX_IS_THE_SHAPE: ReadonlySet<string> = new Set([
   'text',
   'comment',
   'audio',
+  'grid',
 ]);
 
 /** A point turned about another, in degrees. Zero returns the point untouched. */

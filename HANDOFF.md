@@ -4496,6 +4496,48 @@ It is also the rule `ShapeTool` already follows: a new rectangle has square
 corners, and a grid of rectangles that did not would have been the one place
 the app rounded something nobody asked it to.
 
+## 5a-0-au. The connector could not attach to a grid
+
+Reported as "connector tool doesn't work on grid objects", and it was exactly
+that: `CONNECTABLE` did not contain `'grid'`, so pointing the tool at one did
+**nothing at all** — no port under the pointer, no error, nothing to suggest
+the tool had seen it.
+
+**The shape of the bug is the interesting part.** It was an *allow-list*,
+written when there were six node types, and `grid` and `audio` arrived without
+being added to it. A list that must be updated when a type is added, with
+nothing to say so, will eventually not be — and the failure is silent, because
+a missing entry looks identical to a deliberate exclusion.
+
+`audio` shows how it happens: it is already in `BOX_IS_THE_SHAPE` one module
+over, so somebody had thought about audio *there* and not here. Two lists, one
+updated, one not.
+
+So the list is inverted. `NOT_CONNECTABLE` holds the two genuine exclusions
+with their reasons — a connector (an arrow bound to an arrow has no box to take
+a side of, and the chain of derivations has no natural end) and a comment pin
+(a 32px marker anchored to a point, which `objectSnap` excludes from alignment
+for the same reason) — and `CONNECTABLE` is derived from `NODE_TYPES`. A new
+node type is now connectable until somebody says otherwise, which is wrong in
+the safe direction: a control that works rather than one that is quietly
+absent.
+
+`grid` was missing from `BOX_IS_THE_SHAPE` too, which left a *rotated* grid
+presenting its axis-aligned box to the connector system — a side attached at
+the wrong place on any grid somebody had turned.
+
+Nine tests guard the two sets against `NODE_TYPES` rather than against a copy,
+including that nothing in `CONNECTABLE` has stopped being a node type: a
+renamed type leaving a stale spelling behind is the other half of the same
+failure, and it matches nothing forever.
+
+**A mistake worth recording:** I first wrote those tests as a *new*
+`connectorTargets.test.ts`, and the file already existed — 16 tests on
+`boxOfNode`, the outline cache, `attachPoint`, `portPointsFor`,
+`bodyOutlinePoints` and `connectorDragPatch`, all overwritten. The suite total
+dropping from 2682 to 2675 is what surfaced it. Restored from `HEAD` and the
+new block appended; the file now holds 25.
+
 ## 5. Next up
 
 ### 5a-0. The four things to do first
