@@ -17295,3 +17295,541 @@ html[data-precise] .canvas-container[data-cursor-mode] .konvajs-content canvas {
   .chart-picker { columns: 1; width: 240px; }
 }
 
+/* ---------------------------------------------------------------------------
+   Recovered 2026-09-04. The block below was deleted whole by an edit that
+   replaced the chart-type picker above: it searched for the *next* section
+   marker to know where the picker ended, found none because every following
+   section used a different comment rule, and truncated the file from there.
+   528 lines went silently, the build stayed green, and the panel simply had no
+   styles.
+
+   The lesson is about the edit, not the CSS: a "replace up to the next
+   marker" edit must fail when the marker is missing rather than treating the
+   rest of the file as part of the match.
+   --------------------------------------------------------------------------- */
+
+/* ===========================================================================
+   CHART PROPERTIES PANEL
+   ---------------------------------------------------------------------------
+   Prefixed `chartp-`, not `cp-`. The colour picker already owns that
+   namespace - `.cp-field`, `.cp-group`, `.cp-group__label`, `.cp-swatches` -
+   and an earlier version of this panel reused four of those names. The chart
+   rows inherited `.cp-field`'s 148px height, crosshair cursor and inset
+   hairline, which is most of why the section looked broken rather than merely
+   plain. A prefix collision has no compiler and no test; the only defence is
+   picking a name nothing else has.
+
+   Rows are NOT defined here. Every label/control pair uses `.prop-row` through
+   `Row`, so chart rows share the inspector's 84px label column instead of
+   inventing a third width - which was the visible misalignment against the
+   Transform and Fill rows directly above them.
+   =========================================================================== */
+
+.chartp { display: flex; flex-direction: column; }
+
+/* --- the type header ----------------------------------------------------- */
+
+.chartp-type { position: relative; margin-bottom: var(--space-3); }
+
+.chartp-type__current {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  width: 100%;
+  padding: 8px;
+  border: 1px solid var(--border-divider);
+  border-radius: var(--radius-md);
+  background: var(--surface-secondary);
+  color: var(--text-primary);
+  text-align: left;
+  cursor: pointer;
+  transition: background var(--motion-hover), border-color var(--motion-hover);
+}
+
+.chartp-type__current:hover { background: var(--surface-hover); }
+.chartp-type__current[aria-expanded="true"] { border-color: var(--accent); }
+
+.chartp-type__glyph {
+  display: grid;
+  place-items: center;
+  flex: 0 0 auto;
+  width: 28px;
+  height: 28px;
+  border-radius: var(--radius-sm);
+  background: var(--surface-primary);
+  color: var(--accent);
+}
+
+.chartp-type__text {
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
+  min-width: 0;
+  flex: 1;
+  line-height: 1.25;
+}
+
+.chartp-type__name {
+  font-size: var(--text-sm);
+  font-weight: 600;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.chartp-type__hint {
+  font-size: var(--text-xs);
+  color: var(--text-tertiary);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.chartp-type__caret { flex: 0 0 auto; color: var(--text-tertiary); }
+
+/* Anchored to the panel rather than portaled: it is a child of the panel's own
+   scroll container, so it travels with the control it belongs to and needs no
+   coordinate conversion. Invariant 10's lesson, on a surface small enough not
+   to need a portal. */
+.chartp-type__popover {
+  position: absolute;
+  z-index: 40;
+  top: calc(100% + 4px);
+  left: 0;
+  right: 0;
+  max-height: 320px;
+  overflow-y: auto;
+  padding: var(--space-2);
+  border: 1px solid var(--border-divider);
+  border-radius: var(--radius-lg);
+  background: var(--surface-elevated);
+  box-shadow: var(--shadow-overlay);
+}
+
+.chartp-type__group + .chartp-type__group { margin-top: var(--space-2); }
+
+.chartp-type__groupLabel {
+  padding: 2px 6px 3px;
+  font-size: var(--text-xs);
+  font-weight: 600;
+  letter-spacing: 0.05em;
+  text-transform: uppercase;
+  color: var(--text-tertiary);
+}
+
+.chartp-type__option {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  width: 100%;
+  padding: 5px 6px;
+  border: none;
+  border-radius: var(--radius-sm);
+  background: transparent;
+  color: var(--text-primary);
+  text-align: left;
+  cursor: pointer;
+}
+
+.chartp-type__option:hover { background: var(--surface-hover); }
+.chartp-type__option[data-active] { background: var(--surface-active); }
+
+.chartp-type__optionText {
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+  flex: 1;
+  line-height: 1.25;
+}
+
+.chartp-type__optionName { font-size: var(--text-sm); font-weight: 500; }
+
+.chartp-type__optionHint {
+  font-size: var(--text-xs);
+  color: var(--text-tertiary);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.chartp-type__check { flex: 0 0 auto; color: var(--accent); }
+
+/* --- groups -------------------------------------------------------------- */
+
+/* A hairline and a quiet heading, not a disclosure. The whole section already
+   sits inside the panel's `Chart` accordion; a second layer of collapsing
+   turned a list into a tree and charged a click for every control in it. */
+.chartp-group + .chartp-group {
+  margin-top: var(--space-3);
+  padding-top: var(--space-3);
+  border-top: 1px solid var(--border-divider);
+}
+
+.chartp-group__head {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  min-height: 20px;
+  margin-bottom: 4px;
+}
+
+.chartp-group__label {
+  margin: 0;
+  font-size: var(--text-xs);
+  font-weight: 600;
+  letter-spacing: 0.05em;
+  text-transform: uppercase;
+  color: var(--text-tertiary);
+}
+
+/* Pushed to the far edge, so the heading reads as "name ... tools". */
+.chartp-group__actions { margin-left: auto; display: flex; align-items: center; gap: 4px; }
+.chartp-group__body { display: flex; flex-direction: column; }
+
+/* --- the two remaining reveals ------------------------------------------- */
+
+.chartp-reveal { margin-top: var(--space-2); }
+
+.chartp-reveal__summary {
+  font-size: var(--text-xs);
+  color: var(--text-secondary);
+  cursor: pointer;
+  padding: 3px 0;
+  list-style: revert;
+}
+
+.chartp-reveal__summary:hover { color: var(--text-primary); }
+.chartp-reveal__body { padding-top: var(--space-2); }
+
+/* --- toggles and actions ------------------------------------------------- */
+
+/* Independent switches. A bordered track so the group reads as one control,
+   which is what tells them apart from the action row below at a glance. */
+.chartp-toggles {
+  display: inline-flex;
+  gap: 1px;
+  padding: 1px;
+  border: 1px solid var(--border-divider);
+  border-radius: var(--radius-sm);
+  background: var(--surface-secondary);
+}
+
+.chartp-toggles__item {
+  display: grid;
+  place-items: center;
+  width: 26px;
+  height: 22px;
+  border: none;
+  border-radius: var(--radius-sm);
+  background: transparent;
+  color: var(--text-tertiary);
+  cursor: pointer;
+  transition: background var(--motion-hover), color var(--motion-hover);
+}
+
+.chartp-toggles__item:hover { color: var(--text-primary); }
+
+.chartp-toggles__item[aria-pressed="true"] {
+  background: var(--surface-primary);
+  color: var(--accent);
+  box-shadow: var(--shadow-sm);
+}
+
+/* Buttons that do something and hold no state, so deliberately *not* in a
+   track: they were drawn as toggles that never light, which is a control
+   lying about its own kind. */
+.chartp-actions { display: flex; gap: 2px; }
+
+.chartp-actions__item {
+  display: grid;
+  place-items: center;
+  width: 22px;
+  height: 22px;
+  border: none;
+  border-radius: var(--radius-sm);
+  background: transparent;
+  color: var(--text-tertiary);
+  cursor: pointer;
+  transition: background var(--motion-hover), color var(--motion-hover);
+}
+
+.chartp-actions__item:hover { background: var(--surface-hover); color: var(--text-primary); }
+
+.chartp-mono {
+  font-family: var(--font-mono);
+  font-size: var(--text-xs);
+  font-weight: 600;
+  line-height: 1;
+}
+
+/* --- the data grid ------------------------------------------------------- */
+
+.chartp-grid-wrap { display: flex; flex-direction: column; gap: 5px; }
+.chartp-grid { display: grid; gap: 2px; align-items: center; }
+
+/* An explicit cell, so the header row's first column takes part in the grid
+   rhythm instead of collapsing to nothing and shifting the row above. */
+.chartp-grid__corner { min-height: 22px; }
+
+.chartp-grid__head,
+.chartp-grid__cell {
+  min-width: 0;
+  width: 100%;
+  height: 22px;
+  padding: 0 5px;
+  border: 1px solid transparent;
+  border-radius: var(--radius-sm);
+  background: var(--surface-secondary);
+  color: var(--text-primary);
+  font-size: var(--text-xs);
+  /* Tabular figures, so a column of numbers lines up on the decimal - the
+     whole reason a table of them is readable at a glance. */
+  font-variant-numeric: tabular-nums;
+}
+
+.chartp-grid__head { font-weight: 600; color: var(--text-secondary); }
+.chartp-grid__cell--label { text-align: left; font-variant-numeric: normal; }
+
+.chartp-grid__head:focus,
+.chartp-grid__cell:focus {
+  outline: none;
+  border-color: var(--accent);
+  background: var(--surface-primary);
+}
+
+/* Sized explicitly. Left to shrink-to-fit inside a 22px grid column these
+   collapsed to a few pixels and pulled their row out of alignment. */
+.chartp-grid__icon {
+  display: grid;
+  place-items: center;
+  width: 22px;
+  height: 22px;
+  padding: 0;
+  border: none;
+  border-radius: var(--radius-sm);
+  background: transparent;
+  color: var(--text-tertiary);
+  cursor: pointer;
+}
+
+.chartp-grid__icon:hover { background: var(--surface-hover); color: var(--text-primary); }
+
+/* --- small shared pieces ------------------------------------------------- */
+
+.chartp-add {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 5px;
+  width: 100%;
+  height: 26px;
+  padding: 0 8px;
+  margin-top: 4px;
+  border: 1px dashed var(--border-divider);
+  border-radius: var(--radius-sm);
+  background: transparent;
+  color: var(--text-secondary);
+  font-size: var(--text-xs);
+  cursor: pointer;
+  transition: background var(--motion-hover), color var(--motion-hover);
+}
+
+.chartp-add:hover { background: var(--surface-hover); color: var(--text-primary); }
+.chartp-add--quiet { border-style: solid; }
+
+.chartp-note {
+  margin: 6px 0 0;
+  font-size: var(--text-xs);
+  line-height: 1.45;
+  color: var(--text-tertiary);
+}
+
+.chartp-note code {
+  font-family: var(--font-mono);
+  background: var(--surface-secondary);
+  border-radius: var(--radius-sm);
+  padding: 0 3px;
+}
+
+.chartp-notice { font-size: var(--text-xs); color: var(--text-tertiary); white-space: nowrap; }
+
+.chartp-swatches { display: flex; gap: 3px; flex-wrap: wrap; }
+
+.chartp-swatches__chip {
+  width: 14px;
+  height: 14px;
+  border-radius: var(--radius-sm);
+  box-shadow: inset 0 0 0 1px var(--border-divider);
+}
+
+/* Domain shortcuts. A plot's range is almost always a multiple of pi or a
+   small symmetric window, and both are awkward to type and easy to get subtly
+   wrong. */
+.chartp-quick { display: flex; gap: 3px; width: 100%; }
+
+.chartp-quick button {
+  flex: 1;
+  min-width: 0;
+  height: 22px;
+  border: 1px solid var(--border-divider);
+  border-radius: var(--radius-sm);
+  background: var(--surface-secondary);
+  color: var(--text-secondary);
+  font-size: var(--text-xs);
+  cursor: pointer;
+}
+
+.chartp-quick button:hover { background: var(--surface-hover); color: var(--text-primary); }
+
+/* --- formulae ------------------------------------------------------------ */
+
+.chartp-formula + .chartp-formula { margin-top: 3px; }
+.chartp-formula__row { display: flex; align-items: center; gap: 4px; }
+
+.chartp-formula__name {
+  flex: 0 0 auto;
+  min-width: 34px;
+  font-size: var(--text-xs);
+  font-variant-numeric: tabular-nums;
+  color: var(--text-tertiary);
+}
+
+.chartp-formula__input {
+  flex: 1;
+  min-width: 0;
+  /* A formula is read character by character, and a proportional face makes
+     l1I and O0 ambiguous in exactly the place it matters most. */
+  font-family: var(--font-mono);
+  font-size: var(--text-xs);
+}
+
+.chartp-formula__input[data-invalid] { border-color: var(--signal-danger); }
+
+.chartp-formula__error {
+  margin: 2px 0 0 38px;
+  font-size: var(--text-xs);
+  color: var(--signal-danger);
+}
+
+.chartp-help__fns {
+  margin: 6px 0 0;
+  font-family: var(--font-mono);
+  font-size: var(--text-xs);
+  line-height: 1.6;
+  color: var(--text-tertiary);
+  word-spacing: 2px;
+}
+
+/* --- the preset gallery -------------------------------------------------- */
+
+/* Names, not thumbnails. A 40px picture of a spiral and a 40px picture of a
+   cardioid are the same grey scribble, so the image would carry none of the
+   information the name and its note do - the opposite of the chart-kind
+   picker, where the shape *is* the distinction. */
+.chartp-gallery {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 2px;
+  max-height: 200px;
+  overflow-y: auto;
+}
+
+.chartp-gallery__item {
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
+  padding: 5px 7px;
+  border: none;
+  border-radius: var(--radius-sm);
+  background: var(--surface-secondary);
+  color: var(--text-primary);
+  text-align: left;
+  cursor: pointer;
+  min-width: 0;
+  transition: background var(--motion-hover);
+}
+
+.chartp-gallery__item:hover { background: var(--surface-hover); }
+
+.chartp-gallery__name {
+  font-size: var(--text-xs);
+  font-weight: 500;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.chartp-gallery__note {
+  font-size: var(--text-xs);
+  color: var(--text-tertiary);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+/* --- fields that must not wrap ------------------------------------------- */
+
+/* An optional bound reads as a number or as the word "Auto", and both are
+   short. Centred and tabular so a column of them lines up, and never wrapped:
+   a two-line axis field pushes every row below it out of the panel's rhythm. */
+.chartp-optnum {
+  width: 100%;
+  min-width: 0;
+  text-align: center;
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+}
+
+/* `SegmentedControl` wraps by default and divides its column when told to
+   `fill`. Every group in this panel passes `fill`, which is what stops four
+   segments becoming three rows of broken words - the fault the Order row had.
+   The control carries its own inline styles, so there is nothing to override
+   here; the fix is the prop, and this comment is where somebody will look. */
+
+/* Notes wrap, and are the only thing here that should. `overflow-wrap` rather
+   than `word-break`, so a long formula name breaks between words where it can
+   and only mid-word when it genuinely cannot fit. */
+.chartp-note,
+.chartp-help__fns {
+  overflow-wrap: anywhere;
+}
+
+/* Preset groups. The gallery scrolls as one, so the group labels stick to its
+   top edge rather than scrolling away from the rows they name. */
+.chartp-presetGroup + .chartp-presetGroup { margin-top: var(--space-2); }
+
+.chartp-presetGroup__label {
+  position: sticky;
+  top: 0;
+  z-index: 1;
+  padding: 2px 0 3px;
+  background: var(--surface-primary);
+  font-size: var(--text-xs);
+  font-weight: 600;
+  letter-spacing: 0.05em;
+  text-transform: uppercase;
+  color: var(--text-tertiary);
+}
+
+/* ── Grid system picker ──────────────────────────────────────────────────────
+   Two balanced columns, packed by column flow. Eleven systems down one column
+   ran the flyout the full height of the window and pushed its first rows up
+   behind the header — and a picker of pictures is scanned across as readily as
+   down, so the single column was buying nothing with the height it spent. */
+.grid-picker {
+  columns: 2;
+  column-gap: var(--space-3);
+  width: 380px;
+  max-width: 74vw;
+}
+
+/* A row must not be split across the column boundary: its glyph would sit at
+   the foot of one column with its label at the head of the next. */
+.grid-picker > * {
+  break-inside: avoid;
+  page-break-inside: avoid;
+}
+
+@media (max-width: 820px) {
+  .grid-picker { columns: 1; width: 208px; }
+}

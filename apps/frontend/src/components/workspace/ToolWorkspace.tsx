@@ -1634,7 +1634,15 @@ export const ToolWorkspace: React.FC<Props> = ({ activeToolId, onOpenDiagram, on
           >
             {openMenu === 'grid' && (
               <Flyout title="Grid system" wide>
-                <div className="dock-flyout__scroll">
+                {/*
+                  Two columns rather than one tall scroll. Eleven systems in a
+                  single column ran the flyout the height of the window and put
+                  its first rows behind the header -- and a picker of *pictures*
+                  is scanned across as readily as down, so the column was
+                  costing height for nothing. The chart picker made the same
+                  move for the same reason.
+                */}
+                <div className="grid-picker">
                   {GRID_KINDS.map((kind) => (
                     <FlyoutItem
                       key={kind}
