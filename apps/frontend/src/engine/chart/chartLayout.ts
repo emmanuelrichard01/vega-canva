@@ -251,9 +251,41 @@ export function layoutChart(
   height: number,
   measure: Measure = approximateMeasure
 ): ChartLayout {
+  /**
+   * A histogram is bucketed *before* normalisation, and the order matters.
+   *
+   * `normalizeSpec` makes every series exactly `categories.length` long, and a
+   * histogram's categories are empty until bucketing invents them -- so
+   * normalising first truncated all thirty raw samples to nothing and the
+   * chart drew an empty axis. The samples are the data; the categories are a
+   * *result*. `chartCapabilities.test.ts` caught this by asking why a
+   * histogram with values showed no value labels.
+   */
+  const bucketed =
+    rawSpec.kind === 'histogram'
+      ? (() => {
+          const opts0 = resolveChartOptions(rawSpec);
+          const { categories, counts } = bucketize(
+            rawSpec.series.flatMap((s) => s.values),
+            opts0.buckets
+          );
+          return {
+            ...rawSpec,
+            categories,
+            series: [
+              {
+                name: rawSpec.series[0]?.name ?? 'Count',
+                values: counts,
+                color: rawSpec.series[0]?.color,
+              },
+            ],
+          };
+        })()
+      : rawSpec;
+
   // Sorting is a view, applied before layout and never written back --
   // see `sortSpec`. Done here so every kind gets it for free.
-  const spec = sortSpec(normalizeSpec(rawSpec));
+  const spec = sortSpec(normalizeSpec(bucketed));
   const opts = resolveChartOptions(spec);
 
   const empty: ChartLayout = {
@@ -316,18 +348,9 @@ export function layoutChart(
    * branch inside the stack builder, which is two transforms living where the
    * geometry lives and no way to test either on its own.
    */
+  // The histogram has already been bucketed above, before normalisation.
   let prepared = spec;
-  if (spec.kind === 'histogram') {
-    const pooled = spec.series.flatMap((s) => s.values);
-    const { categories, counts } = bucketize(pooled, opts.buckets);
-    prepared = {
-      ...spec,
-      categories,
-      series: [
-        { name: spec.series[0]?.name ?? 'Count', values: counts, color: spec.series[0]?.color },
-      ],
-    };
-  } else if (isPercentStacked(spec.kind)) {
+  if (isPercentStacked(spec.kind)) {
     prepared = toPercentStack(spec);
   }
 
@@ -660,7 +683,10 @@ function layoutCartesian(
               : 4;
           dots.push({ ...p, radius, color, seriesIndex: si, categoryIndex: ci, value: v });
         }
-        if (opts.showValues && (kind === 'line' || kind === 'step' || kind === 'area')) {
+        // Every run kind, not three of them. `scatter`, `bubble` and
+        // `stackedArea` were excluded for no reason anybody recorded, so the
+        // Values toggle was offered on them and did nothing.
+        if (opts.showValues) {
           valueLabels.push({
             text: formatValue(v, spec),
             x: p.x - band.step / 2,
@@ -1115,7 +1141,9 @@ function layoutField(
     title,
     rings: [],
     spokes: [],
-    reference: null,
+    // A two-variable plot has a real y axis, so a rule at a value is as
+    // meaningful here as on any other chart with one.
+    reference: buildReference(spec, yDomain, plot, sy, false, measure),
     domain: yDomain,
   };
 }
@@ -1735,13 +1763,17 @@ function layoutRadial(
       });
 
       if (opts.showValues) {
-        const pct = Math.round((v / total) * 100);
+        // Honours `decimals` so the Numbers control is not inert here: a pie of
+        // near-equal slices needs 33.3% to say anything at all.
+        const share = (v / total) * 100;
+        const places = Math.min(3, Math.max(0, Math.round(spec.decimals ?? 0)));
+        const pct = Number(share.toFixed(places));
         // Under about six per cent there is no room for the text inside the
         // slice, and a percentage sitting over its neighbour is worse than an
         // unlabelled sliver the legend already names.
         if (pct >= 6) {
           valueLabels.push({
-            text: `${pct}%`,
+            text: `${share.toFixed(places)}%`,
             x: cx + Math.cos(mid) * labelR - 20,
             y: cy + Math.sin(mid) * labelR - LABEL_SIZE / 2,
             width: 40,

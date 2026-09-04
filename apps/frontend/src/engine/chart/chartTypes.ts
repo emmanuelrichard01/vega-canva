@@ -553,6 +553,72 @@ export function normalizeSpec(spec: ChartSpec): ChartSpec {
 }
 
 /**
+ * Which panel controls a kind can actually honour.
+ *
+ * ## Why this exists
+ *
+ * Invariant 6 says never declare a capability the renderer ignores, and a
+ * properties panel is where that rule is broken most easily: a control is
+ * offered for every kind because it applies to *most* of them, and on the rest
+ * it silently does nothing. Four were found at once during an audit --
+ * a reference line on a pie, value labels on a scatter, number formatting on a
+ * donut whose labels are percentages, and a `curved` field with no control at
+ * all.
+ *
+ * Each answer here is a statement about the **layout**, not about taste, and
+ * `chartCapabilities.test.ts` holds it against what the layout actually
+ * produces. Adding a kind without teaching this table fails that test rather
+ * than shipping a panel with dead rows in it.
+ */
+export interface ChartCapabilities {
+  /** A table of categories and series, editable in the data grid. */
+  data: boolean;
+  /** `showValues` puts a number on each mark. */
+  valueLabels: boolean;
+  /** `yMin`/`yMax`/`includeZero`/`yScale` reach a value axis. */
+  valueAxis: boolean;
+  /** `valuePrefix`/`valueSuffix`/`decimals` reach a drawn number. */
+  numberFormat: boolean;
+  /** `reference` draws a rule at a value. */
+  reference: boolean;
+  /** `sort` reorders what is drawn. */
+  sort: boolean;
+  /** `curved` smooths the run through its points. */
+  curved: boolean;
+  /** Per-series colour is meaningful (rather than per-category). */
+  seriesColors: boolean;
+}
+
+export function chartCapabilities(kind: ChartKind): ChartCapabilities {
+  const radial = isRadial(kind);
+  const polar = isPolar(kind);
+  const plot = isPlot(kind);
+  const twoVar = isTwoVariable(kind);
+
+  return {
+    data: !plot,
+    // Radial draws a percentage in each slice; radar and the plots draw no
+    // per-mark number at all, so the toggle would be inert there.
+    valueLabels: !plot && !polar,
+    valueAxis: !radial && !polar && !plot,
+    // A pie's label *is* a percentage, so a currency prefix has nothing to act
+    // on -- though `decimals` does, which is why the slice label honours it.
+    // A radar draws neither axis ticks nor per-mark numbers, so nothing there
+    // is formatted at all.
+    numberFormat: !radial && !polar,
+    // Wherever a value axis exists to place it against, which is everything
+    // except the two that have no such axis: a pie has no y, and a ring at a
+    // value on a radar is a different mark that is not built.
+    reference: !radial && !polar,
+    sort: !plot,
+    curved: kind === 'line' || kind === 'area' || kind === 'stackedArea',
+    seriesColors: !plot && !radial && kind !== 'funnel',
+    // `twoVar` is read only to keep the parameter honest for future rows.
+    ...(twoVar ? {} : {}),
+  };
+}
+
+/**
  * Bucket raw samples into counts, for a histogram.
  *
  * The one data transform any kind performs, and it is explicit for that

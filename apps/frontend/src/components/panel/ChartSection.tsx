@@ -31,10 +31,15 @@ import {
   parseChartData,
   withChartData,
 } from '../../engine/chart/chartCsv';
-import { PLOT_PRESETS, specFromPreset } from '../../engine/chart/plotPresets';
+import {
+  presetGroups,
+  specFromPreset,
+  type PlotPreset,
+} from '../../engine/chart/plotPresets';
 import { logDomainOf } from '../../engine/chart/scales';
 import { EXPRESSION_FUNCTIONS, parseExpression } from '../../engine/chart/expression';
 import {
+  chartCapabilities,
   CHART_PALETTE,
   CHART_SORTS,
   CHART_SORT_LABELS,
@@ -108,6 +113,14 @@ export const ChartSection: React.FC<Props> = ({ node }) => {
   const polar = isPolar(spec.kind);
   const plot = isPlot(spec.kind);
   const twoVar = isTwoVariable(spec.kind);
+  /**
+   * What this kind can actually honour.
+   *
+   * Every group below is gated on it rather than on a hand-written condition,
+   * so the panel and the layout cannot drift -- which is exactly how a
+   * reference line came to be offered on a pie that never drew one.
+   */
+  const can = chartCapabilities(spec.kind);
 
   const patch = React.useCallback(
     (next: Partial<ChartSpec>) => updateChart(node.id, { ...spec, ...next }),
@@ -175,12 +188,16 @@ export const ChartSection: React.FC<Props> = ({ node }) => {
                 label: 'Legend',
                 on: spec.showLegend ?? true,
               },
-              {
-                id: 'values',
-                icon: <Hash size={12} />,
-                label: 'Value labels',
-                on: spec.showValues ?? false,
-              },
+              ...(can.valueLabels
+                ? [
+                    {
+                      id: 'values',
+                      icon: <Hash size={12} />,
+                      label: 'Value labels',
+                      on: spec.showValues ?? false,
+                    },
+                  ]
+                : []),
               ...(radial || polar
                 ? []
                 : [
@@ -201,13 +218,38 @@ export const ChartSection: React.FC<Props> = ({ node }) => {
         </Row>
       </Group>
 
-      {!radial && !polar && !plot && (
+      {/*
+        `curved` was implemented in the layout and had no control at all --
+        a feature nothing could reach, which is the dead-capability rule in its
+        other direction. Offered only for the runs that are drawn through
+        points, and never for `step`: a staircase asserts the value did *not*
+        slide between readings, and rounding its corners states the opposite.
+      */}
+      {can.curved && (
+        <Group label="Line">
+          <Row label="Shape">
+            <SegmentedControl
+              fill
+              ariaLabel="How the run is drawn"
+              value={spec.curved ? 'curved' : 'straight'}
+              onChange={(v) => patch({ curved: v === 'curved' ? true : undefined })}
+              segments={[
+                { value: 'straight', label: 'Straight', hint: 'Joins the points directly' },
+                { value: 'curved', label: 'Curved', hint: 'Smooths through the points' },
+              ]}
+            />
+          </Row>
+        </Group>
+      )}
+
+      {can.valueAxis && (
         <Group label="Value axis">
           <AxisFields spec={spec} patch={patch} />
         </Group>
       )}
 
-      <Group label="Numbers">
+      {can.numberFormat && (
+        <Group label="Numbers">
         <Row label="Prefix">
           <input
             className="panel-input"
@@ -226,17 +268,18 @@ export const ChartSection: React.FC<Props> = ({ node }) => {
             onChange={(e) => patch({ valueSuffix: e.target.value || undefined })}
           />
         </Row>
-        <Row label="Decimals">
-          <NumberStepper
-            value={spec.decimals ?? 0}
-            min={0}
-            max={6}
-            onChange={(v) => patch({ decimals: v })}
-          />
-        </Row>
-      </Group>
+          <Row label="Decimals">
+            <NumberStepper
+              value={spec.decimals ?? 0}
+              min={0}
+              max={6}
+              onChange={(v) => patch({ decimals: v })}
+            />
+          </Row>
+        </Group>
+      )}
 
-      {!plot && (
+      {can.sort && (
         <Group label="Order">
           {/*
             Short labels with the full wording on hover. Four segments sharing
@@ -292,11 +335,13 @@ export const ChartSection: React.FC<Props> = ({ node }) => {
         </Group>
       )}
 
-      <Group label="Reference line">
-        <ReferenceFields spec={spec} patch={patch} />
-      </Group>
+      {can.reference && (
+        <Group label="Reference line">
+          <ReferenceFields spec={spec} patch={patch} />
+        </Group>
+      )}
 
-      {!plot && (
+      {can.seriesColors && (
         <Group label="Series">
           <SeriesFields spec={spec} patch={patch} />
         </Group>
@@ -777,21 +822,32 @@ const FormulaEditor: React.FC<{ spec: ChartSpec; patch: (n: Partial<ChartSpec>) 
         <Plus size={12} /> Add a formula
       </button>
 
-      <Reveal label="Start from a curve">
-        <div className="chartp-gallery">
-          {PLOT_PRESETS.map((preset) => (
-            <button
-              key={preset.id}
-              type="button"
-              className="chartp-gallery__item"
-              title={preset.note}
-              onClick={() => updateChartFromPreset(preset)}
-            >
-              <span className="chartp-gallery__name">{preset.name}</span>
-              <span className="chartp-gallery__note">{preset.note}</span>
-            </button>
-          ))}
-        </div>
+      <Reveal label="Start from an example">
+        {/*
+          Grouped, with this kind's own examples first. A flat list of
+          twenty-nine is the wall the type picker was already fixed for, and
+          making somebody editing a vector field scroll past fourteen curves to
+          reach four is that fault at a smaller scale.
+        */}
+        {presetGroups(spec.kind).map((group) => (
+          <div className="chartp-presetGroup" key={group.kind}>
+            <div className="chartp-presetGroup__label">{group.label}</div>
+            <div className="chartp-gallery">
+              {group.presets.map((preset) => (
+                <button
+                  key={preset.id}
+                  type="button"
+                  className="chartp-gallery__item"
+                  title={preset.note}
+                  onClick={() => updateChartFromPreset(preset)}
+                >
+                  <span className="chartp-gallery__name">{preset.name}</span>
+                  <span className="chartp-gallery__note">{preset.note}</span>
+                </button>
+              ))}
+            </div>
+          </div>
+        ))}
       </Reveal>
 
       <Reveal label="What you can write">
@@ -811,7 +867,7 @@ const FormulaEditor: React.FC<{ spec: ChartSpec; patch: (n: Partial<ChartSpec>) 
    * half-finished work is neither. Undo puts back exactly what was there,
    * which is what makes trying one cheap.
    */
-  function updateChartFromPreset(preset: (typeof PLOT_PRESETS)[number]) {
+  function updateChartFromPreset(preset: PlotPreset) {
     patch(specFromPreset(preset));
   }
 };

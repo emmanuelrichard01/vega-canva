@@ -17767,3 +17767,20 @@ html[data-precise] .canvas-container[data-cursor-mode] .konvajs-content canvas {
 .chartp-help__fns {
   overflow-wrap: anywhere;
 }
+
+/* Preset groups. The gallery scrolls as one, so the group labels stick to its
+   top edge rather than scrolling away from the rows they name. */
+.chartp-presetGroup + .chartp-presetGroup { margin-top: var(--space-2); }
+
+.chartp-presetGroup__label {
+  position: sticky;
+  top: 0;
+  z-index: 1;
+  padding: 2px 0 3px;
+  background: var(--surface-primary);
+  font-size: var(--text-xs);
+  font-weight: 600;
+  letter-spacing: 0.05em;
+  text-transform: uppercase;
+  color: var(--text-tertiary);
+}

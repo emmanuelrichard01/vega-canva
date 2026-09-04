@@ -231,7 +231,235 @@ export const PLOT_PRESETS: PlotPreset[] = [
       samples: 900,
     },
   },
+  // ------------------------------------------------------------------ implicit
+  {
+    id: 'conics',
+    name: 'Circle and hyperbola',
+    note: 'two curves that are not functions of x',
+    kind: 'implicit',
+    spec: {
+      title: 'Conic sections',
+      // Neither passes the vertical-line test, which is the whole reason
+      // implicit form exists -- and the hyperbola is the shape that exposes a
+      // marching-squares implementation that does not resolve its saddle.
+      functions: [{ source: 'x^2 + y^2 - 9' }, { source: 'x^2 - y^2 - 4' }],
+      xMin: -6, xMax: 6, yPlotMin: -6, yPlotMax: 6, resolution: 90,
+    },
+  },
+  {
+    id: 'cassini',
+    name: 'Cassini ovals',
+    note: 'one curve that splits into two as it changes',
+    kind: 'implicit',
+    spec: {
+      title: 'Cassini oval',
+      // At b = a the oval pinches into a lemniscate; either side it is one
+      // loop or two. A single expression whose *topology* changes is the case
+      // no point-sampling plotter can follow.
+      functions: [{ source: '(x^2 + y^2)^2 - 2*4*(x^2 - y^2) - (2.2^4 - 4^2)' }],
+      xMin: -4, xMax: 4, yPlotMin: -3, yPlotMax: 3, resolution: 120,
+    },
+  },
+  {
+    id: 'folium',
+    name: 'Folium of Descartes',
+    note: 'a loop and two asymptotic arms',
+    kind: 'implicit',
+    spec: {
+      title: 'x³ + y³ = 3xy',
+      functions: [{ source: 'x^3 + y^3 - 3*x*y' }],
+      xMin: -3, xMax: 3, yPlotMin: -3, yPlotMax: 3, resolution: 110,
+    },
+  },
+  {
+    id: 'lemniscate',
+    name: 'Lemniscate',
+    note: 'the figure eight, crossing itself at the origin',
+    kind: 'implicit',
+    spec: {
+      title: 'Lemniscate of Bernoulli',
+      functions: [{ source: '(x^2 + y^2)^2 - 4*(x^2 - y^2)' }],
+      xMin: -3, xMax: 3, yPlotMin: -2, yPlotMax: 2, resolution: 120,
+    },
+  },
+
+  // ------------------------------------------------------------------- contour
+  {
+    id: 'saddle',
+    name: 'Saddle',
+    note: 'level curves that split rather than nest',
+    kind: 'contour',
+    spec: {
+      title: 'sin(x)·cos(y)',
+      functions: [{ source: 'sin(x) * cos(y)' }],
+      xMin: -6, xMax: 6, yPlotMin: -6, yPlotMax: 6, resolution: 100, levels: 9,
+    },
+  },
+  {
+    id: 'hill',
+    name: 'Gaussian hill',
+    note: 'nested rings, the shape a peak makes',
+    kind: 'contour',
+    spec: {
+      title: 'A single peak',
+      functions: [{ source: 'exp(-(x^2 + y^2) / 4)' }],
+      xMin: -5, xMax: 5, yPlotMin: -5, yPlotMax: 5, resolution: 90, levels: 10,
+    },
+  },
+  {
+    id: 'ripple',
+    name: 'Ripple',
+    note: 'concentric waves from a centre',
+    kind: 'contour',
+    spec: {
+      title: 'sin(√(x²+y²))',
+      functions: [{ source: 'sin(sqrt(x^2 + y^2))' }],
+      xMin: -10, xMax: 10, yPlotMin: -10, yPlotMax: 10, resolution: 120, levels: 8,
+    },
+  },
+  {
+    id: 'potential',
+    name: 'Two charges',
+    note: 'a potential field, drawn as equipotentials',
+    kind: 'contour',
+    spec: {
+      title: 'Equipotentials',
+      // Two poles of opposite sign: the contours crowd near each charge and
+      // flatten to a straight line halfway between them.
+      functions: [{ source: '1/sqrt((x-2)^2 + y^2 + 0.05) - 1/sqrt((x+2)^2 + y^2 + 0.05)' }],
+      xMin: -6, xMax: 6, yPlotMin: -4, yPlotMax: 4, resolution: 130, levels: 14,
+    },
+  },
+
+  // ---------------------------------------------------------------- slope field
+  {
+    id: 'slope-linear',
+    name: 'dy/dx = y − x',
+    note: 'the family of solutions, before solving anything',
+    kind: 'slopeField',
+    spec: {
+      title: "dy/dx = y − x",
+      functions: [{ source: 'y - x' }],
+      xMin: -5, xMax: 5, yPlotMin: -5, yPlotMax: 5, resolution: 18,
+    },
+  },
+  {
+    id: 'slope-logistic',
+    name: 'Logistic growth',
+    note: 'every solution bending toward the carrying capacity',
+    kind: 'slopeField',
+    spec: {
+      title: 'dy/dx = y(1 − y)',
+      // The two equilibria are visible as flat rows at y = 0 and y = 1, which
+      // is the thing a slope field shows and an algebraic solution hides.
+      functions: [{ source: 'y * (1 - y)' }],
+      xMin: -4, xMax: 4, yPlotMin: -0.6, yPlotMax: 1.6, resolution: 20,
+    },
+  },
+  {
+    id: 'slope-circular',
+    name: 'Circular flow',
+    note: 'slopes whose solutions are circles',
+    kind: 'slopeField',
+    spec: {
+      title: 'dy/dx = −x / y',
+      functions: [{ source: '-x / y' }],
+      xMin: -4, xMax: 4, yPlotMin: -4, yPlotMax: 4, resolution: 18,
+    },
+  },
+
+  // --------------------------------------------------------------- vector field
+  {
+    id: 'rotation',
+    name: 'Rotation',
+    note: 'circulation about the origin',
+    kind: 'vectorField',
+    spec: {
+      title: '⟨−y, x⟩',
+      functions: [{ source: '-y' }, { source: 'x' }],
+      xMin: -5, xMax: 5, yPlotMin: -5, yPlotMax: 5, resolution: 15,
+    },
+  },
+  {
+    id: 'source-sink',
+    name: 'Source and sink',
+    note: 'arrows growing outward, and where they do not',
+    kind: 'vectorField',
+    spec: {
+      title: '⟨x, −y⟩',
+      // A saddle: outward along x, inward along y. The magnitudes matter here,
+      // which is the difference between this and a slope field.
+      functions: [{ source: 'x' }, { source: '-y' }],
+      xMin: -4, xMax: 4, yPlotMin: -4, yPlotMax: 4, resolution: 14,
+    },
+  },
+  {
+    id: 'gradient',
+    name: 'Gradient field',
+    note: 'the steepest ascent of a surface',
+    kind: 'vectorField',
+    spec: {
+      title: '∇(x² + y²)/4',
+      functions: [{ source: 'x / 2' }, { source: 'y / 2' }],
+      xMin: -4, xMax: 4, yPlotMin: -4, yPlotMax: 4, resolution: 14,
+    },
+  },
+  {
+    id: 'shear',
+    name: 'Shear flow',
+    note: 'speed varying across the channel',
+    kind: 'vectorField',
+    spec: {
+      title: '⟨y, 0⟩',
+      functions: [{ source: 'y' }, { source: '0*x' }],
+      xMin: -4, xMax: 4, yPlotMin: -3, yPlotMax: 3, resolution: 14,
+    },
+  },
 ];
+
+/**
+ * The presets grouped for the gallery, with the current kind's own first.
+ *
+ * Twenty-nine entries in one flat list is the wall the chart-type picker was
+ * already fixed for. Grouping by kind is not enough on its own either: someone
+ * editing a vector field wants vector fields, and making them scroll past
+ * fourteen curves to reach four is the same fault at a smaller scale.
+ *
+ * So the current kind's group is lifted to the top and the rest follow in a
+ * stable order. Stable, because a list that reorders itself as you work is one
+ * you cannot build muscle memory against — only the *first* group moves, and
+ * only when the kind changes.
+ */
+export function presetGroups(current: ChartKind): Array<{ kind: ChartKind; label: string; presets: PlotPreset[] }> {
+  const order: ChartKind[] = [
+    'function',
+    'parametric',
+    'polarPlot',
+    'implicit',
+    'contour',
+    'slopeField',
+    'vectorField',
+  ];
+  const ranked = [current, ...order.filter((k) => k !== current)];
+
+  return ranked
+    .map((kind) => ({
+      kind,
+      label: GROUP_LABELS[kind] ?? kind,
+      presets: PLOT_PRESETS.filter((p) => p.kind === kind),
+    }))
+    .filter((g) => g.presets.length > 0);
+}
+
+const GROUP_LABELS: Partial<Record<ChartKind, string>> = {
+  function: 'Functions',
+  parametric: 'Parametric',
+  polarPlot: 'Polar',
+  implicit: 'Implicit',
+  contour: 'Contours',
+  slopeField: 'Slope fields',
+  vectorField: 'Vector fields',
+};
 
 /** Turn a preset into a whole spec, keeping nothing of what was there. */
 export function specFromPreset(preset: PlotPreset): ChartSpec {
