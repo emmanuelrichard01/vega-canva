@@ -32,6 +32,8 @@ import {
   bandScale,
   formatTick,
   linearScale,
+  logDomainOf,
+  logScale,
   niceDomain,
   type Domain,
 } from './scales';
@@ -348,7 +350,7 @@ function layoutCartesian(
   const nice = niceDomain(spec.yMin ?? extent.min, spec.yMax ?? extent.max, 5, opts.includeZero);
   // An explicit bound is honoured exactly: someone who typed 100 wants 100,
   // not the nearest round number above it.
-  const domain: Domain = [spec.yMin ?? nice.domain[0], spec.yMax ?? nice.domain[1]];
+  let domain: Domain = [spec.yMin ?? nice.domain[0], spec.yMax ?? nice.domain[1]];
   const ticks = nice.ticks.filter((t) => t >= domain[0] && t <= domain[1]);
   const tickTexts = ticks.map((t) => formatValue(t, spec));
 
@@ -360,9 +362,12 @@ function layoutCartesian(
    * value ticks run along the bottom. Measuring the wrong set is how a
    * horizontal chart ends up with its category names clipped.
    */
-  const leftTexts = transposed ? spec.categories : tickTexts;
-  const gutterLeft = PAD + Math.max(...leftTexts.map((t) => measure(t, LABEL_SIZE)), 0) + TICK_GAP;
   const bottomBand = LABEL_SIZE + TICK_GAP;
+  const measureGutter = () => {
+    const leftTexts = transposed ? spec.categories : tickTexts;
+    return PAD + Math.max(...leftTexts.map((t) => measure(t, LABEL_SIZE)), 0) + TICK_GAP;
+  };
+  let gutterLeft = measureGutter();
 
   const plot: Rect = {
     x: gutterLeft,
@@ -376,9 +381,41 @@ function layoutCartesian(
   // transposed; the band scale takes the other axis. Every mark below is
   // expressed through these two, which is what lets one code path draw both
   // orientations instead of two that can disagree about anything.
-  const value = transposed
-    ? linearScale(domain, [plot.x, plot.x + plot.width])
-    : linearScale(domain, [plot.y + plot.height, plot.y]);
+  /**
+   * A log axis replaces both the domain and the mapping, so it is resolved
+   * before either is used. `logDomainOf` rounds out to whole decades, because
+   * an axis running 8 to 40000 with ticks at those numbers is not a log axis
+   * anybody can read.
+   */
+  const wantsLog = spec.yScale === 'log';
+  const logInfo = wantsLog
+    ? logDomainOf(spec.series.flatMap((s) => s.values.filter((v): v is number => v !== null)))
+    : null;
+  const useLog = !!logInfo?.ok;
+  if (useLog && logInfo) {
+    domain = logInfo.domain;
+    ticks.length = 0;
+    ticks.push(...logInfo.ticks);
+    tickTexts.length = 0;
+    tickTexts.push(...logInfo.ticks.map((t) => formatValue(t, spec)));
+  }
+
+  const range: Domain = transposed
+    ? [plot.x, plot.x + plot.width]
+    : [plot.y + plot.height, plot.y];
+  const value = useLog ? logScale(domain, range) : linearScale(domain, range);
+
+  // A log axis's labels are decades and may be wider than the linear ones the
+  // gutter was first measured against; measuring once more is cheaper than
+  // threading the scale choice above the plot rectangle.
+  if (useLog) {
+    const widened = measureGutter();
+    if (widened > gutterLeft) {
+      plot.x = widened;
+      plot.width = Math.max(1, width - widened - PAD);
+      gutterLeft = widened;
+    }
+  }
 
   const bandRange: Domain = transposed
     ? [plot.y, plot.y + plot.height]
@@ -1082,6 +1119,7 @@ function layoutPlot(
    */
   const dots: ChartDot[] = [];
   const areas: ChartArea[] = [];
+  const bars: ChartBar[] = [];
   const valueLabels: ChartLabel[] = [];
   const firstCurve = live[0];
 
@@ -1121,6 +1159,57 @@ function layoutPlot(
           width: 60, align: 'center', fontSize: LABEL_SIZE,
         });
       }
+    }
+
+    /**
+     * Riemann rectangles: how integration is taught, and a real check on the
+     * number the area readout reports.
+     *
+     * Each strip is a `ChartBar`, so it inherits the bar painter in both
+     * renderers and needs no new mark type. The sum of the strips is printed
+     * *beside* the trapezium value rather than instead of it, because the gap
+     * between them is the thing worth seeing: watching a left sum climb toward
+     * the trapezium answer as `n` rises is the whole reason to draw these.
+     */
+    if (spec.riemann && firstCurve.compiled) {
+      const n = Math.min(200, Math.max(1, Math.round(spec.riemann.n)));
+      const mode = spec.riemann.mode;
+      const width = (to - from) / n;
+      const zeroY = sy(clamp(0, yDomain[0], yDomain[1]));
+      let sum = 0;
+
+      for (let i = 0; i < n; i += 1) {
+        const left = from + i * width;
+        const at =
+          mode === 'left' ? left : mode === 'right' ? left + width : left + width / 2;
+        const h = firstCurve.compiled.evaluate(at);
+        if (!Number.isFinite(h)) continue;
+        sum += h * width;
+
+        const yTop = sy(h);
+        const x0 = sx(left);
+        const x1 = sx(left + width);
+        bars.push({
+          x: Math.min(x0, x1),
+          y: Math.min(yTop, zeroY),
+          width: Math.abs(x1 - x0),
+          height: Math.abs(zeroY - yTop),
+          color: firstCurve.color ?? seriesColor(undefined, 0),
+          seriesIndex: 0,
+          categoryIndex: i,
+          value: h,
+          negative: h < 0,
+        });
+      }
+
+      valueLabels.push({
+        text: `Σ ${formatValue(sum, spec)} · n=${n}`,
+        x: plot.x + 6,
+        y: plot.y + 4 + (spec.fillArea ? LABEL_SIZE + 3 : 0),
+        width: plot.width - 12,
+        align: 'left',
+        fontSize: LABEL_SIZE,
+      });
     }
 
     if (spec.fillArea) {
@@ -1165,7 +1254,7 @@ function layoutPlot(
 
   return {
     plot,
-    bars: [],
+    bars,
     runs,
     areas,
     dots,

@@ -182,3 +182,66 @@ function trimZeros(value: number): string {
   const rounded = Math.round(value * 10) / 10;
   return Number.isInteger(rounded) ? String(rounded) : rounded.toFixed(1);
 }
+
+/**
+ * A logarithmic scale, for data that spans orders of magnitude.
+ *
+ * ## Why this is not a flag on `linearScale`
+ *
+ * A log scale is undefined at and below zero, and that is not an edge case to
+ * clamp away — it is the whole reason the caller has to opt in. A response-time
+ * chart from 8ms to 40s is unreadable on a linear axis and obvious on a log
+ * one; the same axis applied to a series containing a zero has no honest
+ * answer, and silently substituting one would draw a point where the data says
+ * nothing.
+ *
+ * So: values at or below zero map to the bottom of the range and the *caller*
+ * is told, through `logDomainOf`, whether its data can be drawn this way at
+ * all. A control that offers a log axis for data containing zero and quietly
+ * lies is the failure this arrangement exists to prevent.
+ */
+export function logScale(domain: Domain, range: Domain): (value: number) => number {
+  const [d0, d1] = domain;
+  const [r0, r1] = range;
+
+  const lo = Math.log10(Math.max(d0, Number.MIN_VALUE));
+  const hi = Math.log10(Math.max(d1, Number.MIN_VALUE));
+  const span = hi - lo;
+
+  if (!(span > 0) || !Number.isFinite(span)) {
+    const mid = (r0 + r1) / 2;
+    return () => mid;
+  }
+
+  return (value: number) => {
+    if (!(value > 0)) return r0;
+    return r0 + ((Math.log10(value) - lo) / span) * (r1 - r0);
+  };
+}
+
+/**
+ * Whether a set of values can be drawn on a log axis, and the domain if so.
+ *
+ * Decades rather than the data's own bounds: an axis running 8 to 40000 with
+ * ticks at those numbers is not a log axis anybody can read. Rounding out to
+ * powers of ten is what puts the gridlines where the eye expects them.
+ */
+export function logDomainOf(values: number[]): { ok: boolean; domain: Domain; ticks: number[] } {
+  const positive = values.filter((v) => Number.isFinite(v) && v > 0);
+  // Fewer than two positive values is not a range, and any non-positive value
+  // means part of the data cannot be shown at all.
+  const ok = positive.length > 0 && positive.length === values.filter(Number.isFinite).length;
+
+  if (positive.length === 0) return { ok: false, domain: [1, 10], ticks: [1, 10] };
+
+  const lo = 10 ** Math.floor(Math.log10(Math.min(...positive)));
+  const hi = 10 ** Math.ceil(Math.log10(Math.max(...positive)));
+  const domain: Domain = [lo, hi === lo ? lo * 10 : hi];
+
+  const ticks: number[] = [];
+  for (let e = Math.log10(domain[0]); e <= Math.log10(domain[1]) + 1e-9; e += 1) {
+    ticks.push(10 ** Math.round(e));
+  }
+
+  return { ok, domain, ticks };
+}

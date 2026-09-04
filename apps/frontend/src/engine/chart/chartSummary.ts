@@ -39,16 +39,19 @@ export function labelSummary(spec: ChartSpec): string {
 
 /** The value axis: its bounds, however they were arrived at. */
 export function axisSummary(spec: ChartSpec): string {
+  // The scale is named first when it is not the default: it changes what every
+  // other number in the summary means.
+  const scale = spec.yScale === 'log' ? 'Log · ' : '';
   const hasMin = typeof spec.yMin === 'number';
   const hasMax = typeof spec.yMax === 'number';
 
-  if (hasMin && hasMax) return `${trim(spec.yMin!)}–${trim(spec.yMax!)}`;
+  if (hasMin && hasMax) return `${scale}${trim(spec.yMin!)}–${trim(spec.yMax!)}`;
   // "From 0" and "to 300" rather than "0–auto": a half-set range is a real and
   // common state, and a placeholder word in one half of a range reads as a
   // value rather than as its absence.
-  if (hasMin) return `From ${trim(spec.yMin!)}`;
-  if (hasMax) return `To ${trim(spec.yMax!)}`;
-  return spec.includeZero === false ? 'Auto, not from zero' : 'Auto';
+  if (hasMin) return `${scale}from ${trim(spec.yMin!)}`;
+  if (hasMax) return `${scale}to ${trim(spec.yMax!)}`;
+  return `${scale}${spec.includeZero === false ? 'auto, not from zero' : 'auto'}`.trim();
 }
 
 /** Number formatting: the affixes and the precision. */
@@ -98,6 +101,7 @@ export function domainSummary(spec: ChartSpec): string {
 /** What is being read off the curve. */
 export function analysisSummary(spec: ChartSpec): string {
   const on: string[] = [];
+  if (spec.riemann) on.push(`${spec.riemann.n} rectangles`);
   if (spec.showRoots) on.push('roots');
   if (spec.showExtrema) on.push('turning points');
   if (spec.fillArea) on.push('area');

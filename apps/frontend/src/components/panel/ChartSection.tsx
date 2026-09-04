@@ -24,6 +24,7 @@ import {
   withChartData,
 } from '../../engine/chart/chartCsv';
 import { PLOT_PRESETS, specFromPreset } from '../../engine/chart/plotPresets';
+import { logDomainOf } from '../../engine/chart/scales';
 import { EXPRESSION_FUNCTIONS, parseExpression } from '../../engine/chart/expression';
 import {
   analysisSummary,
@@ -463,6 +464,7 @@ const AxisFields: React.FC<{ spec: ChartSpec; patch: (n: Partial<ChartSpec>) => 
       <NumberStepper value={spec.yMin ?? 0} onChange={(v) => patch({ yMin: v })} />
       <NumberStepper value={spec.yMax ?? 0} onChange={(v) => patch({ yMax: v })} />
     </FieldPair>
+    <ScaleField spec={spec} patch={patch} />
     <Field label="Baseline" hint="A bar's length means nothing if it is not measured from zero">
       <SegmentedControl
         ariaLabel="Where the axis starts"
@@ -485,6 +487,46 @@ const AxisFields: React.FC<{ spec: ChartSpec; patch: (n: Partial<ChartSpec>) => 
     )}
   </>
 );
+
+/**
+ * Linear or logarithmic, and the option is withdrawn when the data cannot take
+ * it.
+ *
+ * A log axis is undefined at and below zero. Offering it anyway and clamping
+ * would put a point where the data says nothing, so `logDomainOf` is asked
+ * first and the control explains its own absence rather than appearing and
+ * misbehaving. That is the same reading as the rest of this panel: a control
+ * that cannot reach the renderer is not shown.
+ */
+const ScaleField: React.FC<{ spec: ChartSpec; patch: (n: Partial<ChartSpec>) => void }> = ({
+  spec,
+  patch,
+}) => {
+  const values = spec.series.flatMap((s) => s.values.filter((v): v is number => v !== null));
+  const canLog = logDomainOf(values).ok;
+
+  if (!canLog && spec.yScale !== 'log') {
+    return (
+      <p className="cp-note">
+        A log scale needs every value above zero; this data has one that is not.
+      </p>
+    );
+  }
+
+  return (
+    <Field label="Scale" hint="Log suits data spanning orders of magnitude">
+      <SegmentedControl
+        ariaLabel="Value axis scale"
+        value={spec.yScale ?? 'linear'}
+        onChange={(v) => patch({ yScale: v === 'log' ? 'log' : undefined })}
+        segments={[
+          { value: 'linear', label: 'Linear' },
+          { value: 'log', label: 'Log' },
+        ]}
+      />
+    </Field>
+  );
+};
 
 const NumberFields: React.FC<{ spec: ChartSpec; patch: (n: Partial<ChartSpec>) => void }> = ({
   spec,
@@ -817,9 +859,42 @@ const AnalysisFields: React.FC<{ spec: ChartSpec; patch: (n: Partial<ChartSpec>)
         }}
       />
     </Field>
+    <Field label="Rectangles" hint="Riemann strips under the curve, and their sum">
+      <div className="cp-inline">
+        <SegmentedControl
+          ariaLabel="Riemann rectangles"
+          value={spec.riemann ? spec.riemann.mode : 'off'}
+          onChange={(v) =>
+            patch({
+              riemann:
+                v === 'off'
+                  ? undefined
+                  : { n: spec.riemann?.n ?? 12, mode: v as 'left' | 'right' | 'midpoint' },
+            })
+          }
+          segments={[
+            { value: 'off', label: 'Off' },
+            { value: 'left', label: 'L', hint: 'Left corner meets the curve' },
+            { value: 'midpoint', label: 'M', hint: 'Midpoint meets the curve' },
+            { value: 'right', label: 'R', hint: 'Right corner meets the curve' },
+          ]}
+        />
+      </div>
+    </Field>
+    {spec.riemann && (
+      <Field label="Count">
+        <NumberStepper
+          value={spec.riemann.n}
+          min={1}
+          max={200}
+          onChange={(n) => patch({ riemann: { ...spec.riemann!, n } })}
+        />
+      </Field>
+    )}
     <p className="cp-note">
       Roots are refined against the function itself. Turning points sit at the nearest sample —
-      raise the sample count for a sharper answer.
+      raise the sample count for a sharper answer. Left and right sums bracket the true area from
+      either side, and converge on it as the count rises.
     </p>
   </>
 );

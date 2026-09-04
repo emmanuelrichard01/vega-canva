@@ -358,6 +358,31 @@ export interface ChartSpec {
   fillArea?: boolean;
   /** Draw the numeric derivative of the first curve alongside it. */
   showDerivative?: boolean;
+  /**
+   * How the value axis is spaced.
+   *
+   * `log` is opt-in and stays opt-in, because it is undefined at and below
+   * zero — a series containing a zero has no honest position on it, and a
+   * control that silently substituted one would draw a point where the data
+   * says nothing. `logDomainOf` reports whether the data can take it, and the
+   * panel refuses the option rather than offering a lie.
+   *
+   * Worth having at all because a response-time series from 8ms to 40s is
+   * unreadable on a linear axis and obvious on a log one, and that shape is
+   * ordinary in anything measured rather than counted.
+   */
+  yScale?: 'linear' | 'log';
+  /**
+   * Riemann rectangles under the first curve: how integration is actually
+   * taught, and a real check on the number the area readout reports.
+   *
+   * `mode` is which corner of each strip meets the curve. It is a visible
+   * control rather than a hidden choice because the three answers *differ* —
+   * left and right bracket the true area from either side on a monotonic
+   * curve, and watching them converge as `n` rises is the entire point of
+   * drawing them.
+   */
+  riemann?: { n: number; mode: 'left' | 'right' | 'midpoint' };
 }
 
 export const CHART_SORTS = ['none', 'valueDesc', 'valueAsc', 'labelAsc'] as const;
