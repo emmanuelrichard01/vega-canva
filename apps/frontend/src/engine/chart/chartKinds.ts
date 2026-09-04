@@ -30,6 +30,9 @@ export const CHART_LABELS: Record<ChartKind, string> = {
   funnel: 'Funnel',
   waterfall: 'Waterfall',
   radar: 'Radar',
+  function: 'Function',
+  parametric: 'Parametric',
+  polarPlot: 'Polar',
 };
 
 /**
@@ -56,6 +59,9 @@ export const CHART_HINTS: Record<ChartKind, string> = {
   funnel: 'what survives each stage',
   waterfall: 'how a total was arrived at',
   radar: 'several measures at once, per category',
+  function: 'y = f(x), plotted',
+  parametric: 'x(t) and y(t), a curve in the plane',
+  polarPlot: 'r(a), swept around a centre',
 };
 
 export const FAMILY_LABELS: Record<ChartFamily, string> = {
@@ -64,6 +70,7 @@ export const FAMILY_LABELS: Record<ChartFamily, string> = {
   distribution: 'Relationship',
   partToWhole: 'Parts of a whole',
   specialist: 'Specialist',
+  plot: 'Maths',
 };
 
 /**
@@ -97,11 +104,21 @@ export const CHART_PICKER_ORDER: ChartKind[] = [
   'funnel',
   'waterfall',
   'radar',
+  'function',
+  'parametric',
+  'polarPlot',
 ];
 
 /** The picker's rows, grouped, in family order then picker order. */
 export function chartPickerGroups(): Array<{ family: ChartFamily; label: string; kinds: ChartKind[] }> {
-  const order: ChartFamily[] = ['comparison', 'trend', 'distribution', 'partToWhole', 'specialist'];
+  const order: ChartFamily[] = [
+    'comparison',
+    'trend',
+    'distribution',
+    'partToWhole',
+    'specialist',
+    'plot',
+  ];
   return order.map((family) => ({
     family,
     label: FAMILY_LABELS[family],

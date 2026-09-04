@@ -38,6 +38,17 @@ const Dot: React.FC<{ x: number; y: number; r?: number; dim?: boolean }> = ({ x,
   <circle cx={x} cy={y} r={r} fill="currentColor" opacity={dim ? 0.4 : 0.85} />
 );
 
+/** The axis cross every plot glyph carries. */
+const Axes: React.FC = () => (
+  <path
+    d="M 10 78 H 90 M 22 12 V 90"
+    fill="none"
+    stroke="currentColor"
+    strokeWidth={5}
+    opacity={0.28}
+  />
+);
+
 /** A wedge from twelve o'clock, matching how the layout starts a pie. */
 function wedge(cx: number, cy: number, r: number, from: number, to: number, inner = 0): string {
   const p = (a: number, rad: number) => [
@@ -166,6 +177,33 @@ const GLYPHS: Record<ChartKind, React.ReactNode> = {
     <>
       <path d={pentagon(50, 52, 36)} fill="none" stroke="currentColor" strokeWidth={7} opacity={0.3} />
       <path d={pentagon(50, 52, 20)} fill="currentColor" fillOpacity={0.3} stroke="currentColor" strokeWidth={7} opacity={0.85} />
+    </>
+  ),
+  /*
+    The three plots carry an *axis cross* the table kinds do not, because that
+    is the visible difference: a plot has a continuous domain with an origin in
+    it, and the cross is what says so at 20px.
+  */
+  function: (
+    <>
+      <Axes />
+      <Stroke d="M 14 78 C 34 78 30 22 50 22 C 70 22 66 78 86 78" />
+    </>
+  ),
+  parametric: (
+    <>
+      <Axes />
+      {/* A lissajous figure: the curve that crosses itself, which is the whole
+          reason to reach for parametric form. */}
+      <Stroke d="M 50 20 C 84 34 84 66 50 80 C 16 66 16 34 50 20 M 20 50 C 40 26 60 74 80 50" />
+    </>
+  ),
+  polarPlot: (
+    <>
+      <circle cx={50} cy={50} r={34} fill="none" stroke="currentColor" strokeWidth={6} opacity={0.25} />
+      {/* Four petals: `r = cos(2a)`, and the reason negative radii are drawn on
+          the opposite ray rather than dropped. */}
+      <Stroke d="M 50 50 C 74 26 74 74 50 50 C 26 26 26 74 50 50 C 74 26 26 26 50 50 C 74 74 26 74 50 50" />
     </>
   ),
 };

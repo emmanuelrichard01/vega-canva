@@ -1,3 +1,4 @@
+import type { PlotCurve } from './chartPlot';
 /**
  * What a chart *is*, as data.
  *
@@ -52,6 +53,11 @@ export const CHART_KINDS = [
   // Specialist
   'waterfall',
   'radar',
+  // Plots: a formula rather than a table. These read `functions` and ignore
+  // `categories` and `series` entirely -- see `ChartSpec.functions`.
+  'function',
+  'parametric',
+  'polarPlot',
 ] as const;
 
 /**
@@ -68,6 +74,7 @@ export const CHART_FAMILIES = [
   'distribution',
   'partToWhole',
   'specialist',
+  'plot',
 ] as const;
 
 export type ChartFamily = (typeof CHART_FAMILIES)[number];
@@ -89,6 +96,9 @@ export const CHART_FAMILY_OF: Record<ChartKind, ChartFamily> = {
   funnel: 'partToWhole',
   waterfall: 'specialist',
   radar: 'specialist',
+  function: 'plot',
+  parametric: 'plot',
+  polarPlot: 'plot',
 };
 
 export type ChartKind = (typeof CHART_KINDS)[number];
@@ -164,6 +174,24 @@ export function encodesMagnitude(kind: ChartKind): boolean {
 /** Bars that touch, because the categories are a continuum and not a set. */
 export function isContinuous(kind: ChartKind): boolean {
   return kind === 'histogram';
+}
+
+/**
+ * Drawn from a formula rather than from a table.
+ *
+ * The dividing line in this whole module. A plot has **no categories**: its x
+ * axis is a continuous domain, its points are sampled rather than entered, and
+ * `series` is meaningless to it. Every reader that walks `categories` has to
+ * check this first, which is why it is a predicate and not a comparison
+ * written out at each site.
+ */
+export function isPlot(kind: ChartKind): boolean {
+  return kind === 'function' || kind === 'parametric' || kind === 'polarPlot';
+}
+
+/** A plot whose two axes are the same units, so the grid must stay square. */
+export function isIsotropic(kind: ChartKind): boolean {
+  return kind === 'parametric' || kind === 'polarPlot';
 }
 
 export interface ChartSeries {
@@ -282,6 +310,34 @@ export interface ChartSpec {
    * draws.
    */
   sort?: ChartSort;
+
+  /**
+   * The formulae a plot draws. Ignored by every other kind.
+   *
+   * A list rather than one, because comparing curves is most of what a plot is
+   * for -- `sin(x)` beside `sin(2x)` says something neither says alone. Each
+   * carries its own colour and its own visibility, so a curve can be silenced
+   * without losing the expression that produced it.
+   *
+   * For `parametric` the first two entries are read as `x(t)` and `y(t)`; for
+   * `polarPlot` each entry is an `r(a)`. That is positional rather than named
+   * because a parametric curve *is* an ordered pair, and naming the halves
+   * would invite a spec with an `x` and no `y`.
+   */
+  functions?: PlotCurve[];
+  /** The domain a plot is sampled across. Absent is -10..10, or 0..tau. */
+  xMin?: number;
+  xMax?: number;
+  /** Baseline sample count before adaptive subdivision. */
+  samples?: number;
+  /**
+   * Whether a plot keeps its two axes at the same scale.
+   *
+   * On by default for parametric and polar, where the axes are the same units
+   * and letting them differ turns a circle into an ellipse -- which is not a
+   * stylistic difference, it is a different curve.
+   */
+  equalAxes?: boolean;
 }
 
 export const CHART_SORTS = ['none', 'valueDesc', 'valueAsc', 'labelAsc'] as const;
@@ -711,6 +767,51 @@ export function defaultChartSpec(kind: ChartKind = 'bar'): ChartSpec {
           { name: 'Last quarter', values: [6, 6, 4, 7, 3] },
         ],
         yMax: 10,
+      };
+
+    case 'function':
+      return {
+        kind,
+        title: 'y = f(x)',
+        categories: [],
+        series: [],
+        // Two curves rather than one, because comparing them is most of what a
+        // plot is for -- and the damped wave shows the sampler doing its job:
+        // adaptive subdivision where it turns, no aliasing where it is fast.
+        functions: [
+          { source: 'sin(x)' },
+          { source: 'sin(2x) / 2' },
+        ],
+        xMin: -6.5,
+        xMax: 6.5,
+      };
+
+    case 'parametric':
+      return {
+        kind,
+        title: 'A Lissajous figure',
+        categories: [],
+        series: [],
+        // x(t) and y(t), positionally. The 3:2 frequency ratio is the classic
+        // figure and it crosses itself, which is the reason to use this form.
+        functions: [{ source: 'sin(3t)' }, { source: 'sin(2t)' }],
+        xMin: 0,
+        xMax: Math.PI * 2,
+        samples: 900,
+      };
+
+    case 'polarPlot':
+      return {
+        kind,
+        title: 'A four-petal rose',
+        categories: [],
+        series: [],
+        // `cos(2a)` goes negative on half its sweep, and drawing those points
+        // on the opposite ray is what makes four petals instead of two.
+        functions: [{ source: 'cos(2a)' }],
+        xMin: 0,
+        xMax: Math.PI * 2,
+        samples: 720,
       };
 
     case 'bar':

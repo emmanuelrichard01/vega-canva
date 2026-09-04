@@ -1,17 +1,25 @@
 import React from 'react';
-import { ClipboardPaste, Copy, Plus, Trash2 } from 'lucide-react';
+import { ClipboardPaste, Copy, Download, Plus, Trash2, Upload } from 'lucide-react';
 import { NumberStepper } from '../ui/NumberStepper';
 import { Slider } from '../ui/Slider';
 import { ColorPickerPopover } from '../ui/ColorPickerPopover';
 import { ChartKindIcon } from '../workspace/chartIcons';
 import { Row, ToggleButton } from './panelPrimitives';
 import { setChartKind, updateChart } from '../../engine/chart/chartApply';
-import { chartToCsv, parseChartData, withChartData } from '../../engine/chart/chartCsv';
+import {
+  chartToCsv,
+  csvFilename,
+  downloadCsv,
+  parseChartData,
+  withChartData,
+} from '../../engine/chart/chartCsv';
 import { CHART_HINTS, CHART_LABELS, chartPickerGroups } from '../../engine/chart/chartKinds';
+import { parseExpression, EXPRESSION_FUNCTIONS } from '../../engine/chart/expression';
 import {
   CHART_PALETTE,
   CHART_SORTS,
   CHART_SORT_LABELS,
+  isPlot,
   isPolar,
   isRadial,
   seriesColor,
@@ -81,7 +89,17 @@ export const ChartSection: React.FC<Props> = ({ node }) => {
   return (
     <div className="chart-section">
       <ChartTypeRow kind={spec.kind} onPick={(k) => setChartKind(node.id, spec, k)} />
-      <DataGrid node={node} spec={spec} patch={patch} />
+      {/*
+        A plot has no table: its x axis is a domain and its points are sampled,
+        so a categories-and-series grid would be a control editing data the kind
+        does not read. Offering it would be the dead capability rule inverted --
+        a live control wired to nothing.
+      */}
+      {isPlot(spec.kind) ? (
+        <FormulaEditor spec={spec} patch={patch} />
+      ) : (
+        <DataGrid node={node} spec={spec} patch={patch} />
+      )}
 
       <Group label="Labels">
         <Row label="Title">
@@ -124,7 +142,8 @@ export const ChartSection: React.FC<Props> = ({ node }) => {
         A donut hole on a bar chart, or an axis minimum on a pie, would be the
         dead capability this project keeps deleting -- see invariant 6.
       */}
-      {!radial && !polar && <AxisGroup spec={spec} patch={patch} />}
+      {isPlot(spec.kind) && <DomainGroup spec={spec} patch={patch} />}
+      {!radial && !polar && !isPlot(spec.kind) && <AxisGroup spec={spec} patch={patch} />}
 
       <Group label="Order">
         {/*
@@ -208,8 +227,140 @@ export const ChartSection: React.FC<Props> = ({ node }) => {
       )}
 
       <ReferenceGroup spec={spec} patch={patch} />
-      <SeriesColors spec={spec} patch={patch} />
+      {!isPlot(spec.kind) && <SeriesColors spec={spec} patch={patch} />}
     </div>
+  );
+};
+
+/**
+ * The formula editor.
+ *
+ * ## Errors are shown, never thrown, and never clear the curve
+ *
+ * Somebody typing `sin(` is not wrong, they are halfway through. So the field
+ * keeps its text, the message appears underneath, and the last curve that
+ * *did* compile stays on the board. Clearing the plot on every keystroke that
+ * does not yet parse makes the chart flash empty through the whole of typing.
+ *
+ * The message names the thing that is wrong -- an unknown function, a missing
+ * bracket -- because `parseExpression` knows the grammar. That is most of the
+ * argument for having written a parser instead of reaching for `eval`, which
+ * could only ever have reported a `SyntaxError` about JavaScript.
+ */
+const FormulaEditor: React.FC<{ spec: ChartSpec; patch: (n: Partial<ChartSpec>) => void }> = ({
+  spec,
+  patch,
+}) => {
+  const variable = spec.kind === 'parametric' ? 't' : spec.kind === 'polarPlot' ? 'a' : 'x';
+  const curves = spec.functions ?? [];
+  // A parametric curve is an ordered pair, so the two rows are named rather
+  // than numbered -- "Series 2" would not tell anybody it is the y half.
+  const rowLabel = (i: number) =>
+    spec.kind === 'parametric' ? (i === 0 ? `x(${variable})` : `y(${variable})`) : `f${i + 1}(${variable})`;
+
+  const set = (i: number, next: Partial<(typeof curves)[number]>) =>
+    patch({ functions: curves.map((c, j) => (i === j ? { ...c, ...next } : c)) });
+
+  return (
+    <Group label={spec.kind === 'polarPlot' ? 'Polar formulae' : 'Formulae'}>
+      {curves.map((curve, i) => {
+        const result = parseExpression(curve.source, variable);
+        return (
+          <div className="chart-formula" key={i}>
+            <div className="chart-formula__row">
+              <span className="chart-formula__name">{rowLabel(i)}</span>
+              <input
+                className="panel-input chart-formula__input"
+                value={curve.source}
+                spellCheck={false}
+                data-invalid={!result.ok || undefined}
+                onChange={(e) => set(i, { source: e.target.value })}
+                aria-label={rowLabel(i)}
+              />
+              <ColorPickerPopover
+                color={curve.color ?? seriesColor(undefined, i)}
+                onChange={(color) => set(i, { color })}
+              />
+              <button
+                type="button"
+                className="chart-data__icon"
+                title="Remove"
+                aria-label={`Remove ${rowLabel(i)}`}
+                onClick={() => patch({ functions: curves.filter((_, j) => j !== i) })}
+              >
+                <Trash2 size={11} />
+              </button>
+            </div>
+            {!result.ok && <div className="chart-formula__error">{result.error.message}</div>}
+          </div>
+        );
+      })}
+
+      <div className="chart-data__actions">
+        <button
+          type="button"
+          className="chart-data__action"
+          onClick={() => patch({ functions: [...curves, { source: variable }] })}
+        >
+          <Plus size={12} /> Formula
+        </button>
+      </div>
+
+      {/*
+        The vocabulary, listed rather than documented elsewhere. It is a closed
+        set, so anything absent from it is a parse error -- and a user with no
+        way to see the set has to discover that by trial.
+      */}
+      <details className="chart-formula__help">
+        <summary>What you can write</summary>
+        <p>
+          <code>{variable}</code>, numbers, <code>+ - * / % ^</code>, brackets,{' '}
+          <code>|x|</code>, and <code>pi e tau phi</code>. Implicit products work:{' '}
+          <code>2{variable}</code>, <code>3sin({variable})</code>.
+        </p>
+        <p className="chart-formula__fns">{EXPRESSION_FUNCTIONS.join('  ')}</p>
+      </details>
+    </Group>
+  );
+};
+
+/** A plot's domain: the range of the variable it is sampled across. */
+const DomainGroup: React.FC<{ spec: ChartSpec; patch: (n: Partial<ChartSpec>) => void }> = ({
+  spec,
+  patch,
+}) => {
+  const variable = spec.kind === 'parametric' ? 't' : spec.kind === 'polarPlot' ? 'a' : 'x';
+  return (
+    <Group label={`Domain (${variable})`}>
+      <Row label="From">
+        <NumberStepper value={spec.xMin ?? -10} onChange={(v) => patch({ xMin: v })} />
+      </Row>
+      <Row label="To">
+        <NumberStepper value={spec.xMax ?? 10} onChange={(v) => patch({ xMax: v })} />
+      </Row>
+      <Row label="Samples" hint="Before adaptive subdivision">
+        <NumberStepper
+          value={spec.samples ?? 160}
+          min={16}
+          max={2000}
+          step={20}
+          onChange={(v) => patch({ samples: v })}
+        />
+      </Row>
+      <div className="chart-toggles">
+        {/*
+          Not a preference for parametric and polar: a circle on unequal axes is
+          an ellipse, which is a different curve rather than a styled one.
+        */}
+        <ToggleButton
+          label="Keep both axes at the same scale"
+          active={spec.equalAxes ?? (spec.kind !== 'function')}
+          onClick={() => patch({ equalAxes: !(spec.equalAxes ?? (spec.kind !== 'function')) })}
+        >
+          Equal axes
+        </ToggleButton>
+      </div>
+    </Group>
   );
 };
 
@@ -313,6 +464,40 @@ const DataGrid: React.FC<{
     window.setTimeout(() => setNotice(null), 2000);
   };
 
+  /**
+   * The file paths, beside the clipboard ones.
+   *
+   * Both exist because they answer different questions. The clipboard is for
+   * "I have this range in a sheet right now"; a file is for "somebody sent me
+   * a CSV" and for "I need this data in a sheet later". Offering only the
+   * clipboard makes the second case go through a text editor.
+   *
+   * A `.csv` download rather than the export dialog's formats: those all
+   * produce a *picture* of the chart, and this is the numbers. Putting it in
+   * the same menu would make "Export CSV" look like a sixth image format.
+   */
+  const download = () => downloadCsv(spec, csvFilename(spec.title));
+
+  const openFile = () => {
+    const input = document.createElement('input');
+    input.type = 'file';
+    input.accept = '.csv,.tsv,.txt,text/csv,text/tab-separated-values,text/plain';
+    input.onchange = async () => {
+      const file = input.files?.[0];
+      if (!file) return;
+      const text = await file.text();
+      const data = parseChartData(text);
+      if (data.categories.length === 0) {
+        setNotice(`${file.name} had no table in it`);
+      } else {
+        updateChart(node.id, withChartData(spec, data));
+        setNotice(`Read ${data.categories.length} rows from ${file.name}`);
+      }
+      window.setTimeout(() => setNotice(null), 3000);
+    };
+    input.click();
+  };
+
   const paste = async () => {
     try {
       const text = await navigator.clipboard.readText();
@@ -396,6 +581,12 @@ const DataGrid: React.FC<{
           </button>
           <button type="button" className="chart-data__action" onClick={copy}>
             <Copy size={12} /> Copy
+          </button>
+          <button type="button" className="chart-data__action" onClick={openFile}>
+            <Upload size={12} /> Import CSV
+          </button>
+          <button type="button" className="chart-data__action" onClick={download}>
+            <Download size={12} /> Export CSV
           </button>
           {spec.series.length > 1 && (
             <button

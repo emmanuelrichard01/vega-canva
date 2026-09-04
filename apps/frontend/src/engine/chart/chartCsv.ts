@@ -230,3 +230,61 @@ export function withChartData(spec: ChartSpec, data: ParsedChartData): ChartSpec
     }),
   };
 }
+
+/**
+ * Hand a chart's data to the browser as a `.csv` file.
+ *
+ * ## Why this does not reuse `ExportService.save`
+ *
+ * It would be the same eight lines, and importing it costs the whole export
+ * subsystem. `exportChunking.test.ts` holds `engine/export/` out of the bundle
+ * every board loads — `app-export` is 261KB of PDF writer, SVG serialiser and
+ * image pipeline — and it counts *dynamic* references too, so an `await
+ * import()` is refused as well. The test caught this on the first attempt,
+ * which is the whole reason it exists.
+ *
+ * The deeper reason is that this is not an export in the sense that module
+ * means. "Export" there is rendering the board to a picture; this is handing
+ * back the numbers that were typed in. Filing it under the image pipeline
+ * would put "Export CSV" in a menu of six raster formats, where it would read
+ * as a seventh.
+ *
+ * The object URL is revoked on the *next frame* rather than immediately: the
+ * navigation to the blob is queued by `click()` and not yet started, and
+ * revoking synchronously is a race some browsers lose, producing a download
+ * that silently fails. That detail is learned from `ExportService.save`, which
+ * carries the same comment.
+ */
+export function downloadCsv(spec: ChartSpec, filename: string): void {
+  if (typeof document === 'undefined') return;
+
+  // The BOM is not decoration: without it Excel opens a UTF-8 CSV using the
+  // system codepage, and every non-ASCII category name arrives mangled.
+  const blob = new Blob(['﻿', chartToCsv(spec)], { type: 'text/csv;charset=utf-8' });
+  const url = URL.createObjectURL(blob);
+  const link = document.createElement('a');
+  link.href = url;
+  link.download = filename.endsWith('.csv') ? filename : `${filename}.csv`;
+  document.body.appendChild(link);
+  link.click();
+  document.body.removeChild(link);
+  requestAnimationFrame(() => URL.revokeObjectURL(url));
+}
+
+/**
+ * A filename stem from a chart's title.
+ *
+ * A local slug rather than `engine/export/filenames`, for the reason above:
+ * that module is inside the lazy chunk. Kept deliberately strict — a
+ * downloaded file lands in a folder shared with everything else on the
+ * machine, and a name with a slash or a colon in it fails differently on every
+ * operating system.
+ */
+export function csvFilename(title: string | undefined): string {
+  const slug = (title ?? '')
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, '-')
+    .replace(/^-+|-+$/g, '')
+    .slice(0, 60);
+  return slug || 'chart';
+}

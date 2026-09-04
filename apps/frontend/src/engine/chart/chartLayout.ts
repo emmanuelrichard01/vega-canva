@@ -36,12 +36,15 @@ import {
   type Domain,
 } from './scales';
 import { catmullRomPoints } from '../model/polyline';
+import { compileCurves, samplePlot, sampleParametric, samplePolar } from './chartPlot';
 import {
   bucketize,
   isBarLike,
   isContinuous,
   isPercentStacked,
   isPolar,
+  isIsotropic,
+  isPlot,
   isRadial,
   isStacked,
   isTransposed,
@@ -286,6 +289,9 @@ export function layoutChart(
   }
   if (isPolar(spec.kind)) {
     return layoutPolar(spec, opts, width, height, top, bottomReserved, title, measure, empty);
+  }
+  if (isPlot(spec.kind)) {
+    return layoutPlot(spec, opts, width, height, top, bottomReserved, title, measure, empty);
   }
 
   /**
@@ -830,6 +836,293 @@ function layoutPolar(
     reference: null,
     domain,
   };
+}
+
+/**
+ * A plot: curves sampled from formulae, against two continuous axes.
+ *
+ * ## Why this is not the cartesian path with a flag
+ *
+ * Everything the cartesian layout is built around is absent here. There are no
+ * categories, so there is no band scale and no per-category label; the x axis
+ * is a *domain* with its own ticks and its own gutter, and the y domain is
+ * discovered from what the functions actually did rather than from a table.
+ * Threading that through `layoutCartesian` would mean a `isPlot` branch on
+ * almost every line of it, which is two layouts sharing a function body rather
+ * than one layout.
+ *
+ * ## The origin is drawn, and the axes can be locked square
+ *
+ * A plot with no visible origin is a picture of a curve rather than a graph of
+ * one -- you cannot read a root or an intercept off it. Both zero rules are
+ * drawn whenever they fall inside the view.
+ *
+ * `equalAxes` keeps one unit the same length on both axes, which for a
+ * parametric or polar curve is not a preference: a circle drawn on unequal
+ * axes is an ellipse, and that is a different curve rather than a differently
+ * styled one.
+ */
+function layoutPlot(
+  spec: ChartSpec,
+  opts: ReturnType<typeof resolveChartOptions>,
+  width: number,
+  height: number,
+  top: number,
+  bottomReserved: number,
+  title: ChartLabel | null,
+  measure: Measure,
+  empty: ChartLayout
+): ChartLayout {
+  const kind = spec.kind;
+  const polarKind = kind === 'polarPlot';
+  const variable = kind === 'parametric' ? 't' : polarKind ? 'a' : 'x';
+  const curves = compileCurves(spec.functions ?? [], variable);
+  const live = curves.filter((c) => c.compiled && !((spec.functions ?? [])[curves.indexOf(c)]?.hidden));
+
+  const from = spec.xMin ?? (kind === 'function' ? -10 : 0);
+  const to = spec.xMax ?? (kind === 'function' ? 10 : Math.PI * 2);
+
+  // ---- sample first: the y domain is whatever the curves actually reached ---
+  const runsRaw: Array<{ points: Array<{ x: number; y: number } | null>; color: string }> = [];
+
+  if (kind === 'function') {
+    live.forEach((c, i) => {
+      const samples = samplePlot((x) => c.compiled!.evaluate(x), {
+        from, to, samples: spec.samples,
+      });
+      runsRaw.push({
+        points: samples.map((s) => (s.y === null ? null : { x: s.x, y: s.y })),
+        color: c.color ?? seriesColor(undefined, i),
+      });
+    });
+  } else if (kind === 'parametric') {
+    // The first two expressions are x(t) and y(t) -- a parametric curve *is* an
+    // ordered pair, so this is positional rather than named.
+    const [fx, fy] = live;
+    if (fx?.compiled && fy?.compiled) {
+      runsRaw.push({
+        points: sampleParametric(
+          (t) => fx.compiled!.evaluate(t),
+          (t) => fy.compiled!.evaluate(t),
+          { from, to, samples: spec.samples }
+        ),
+        color: fx.color ?? seriesColor(undefined, 0),
+      });
+    }
+  } else {
+    live.forEach((c, i) => {
+      runsRaw.push({
+        points: samplePolar((a) => c.compiled!.evaluate(a), { from, to, samples: spec.samples }),
+        color: c.color ?? seriesColor(undefined, i),
+      });
+    });
+  }
+
+  const xs: number[] = [];
+  const ys: number[] = [];
+  for (const r of runsRaw) {
+    for (const p of r.points) {
+      if (!p) continue;
+      if (Number.isFinite(p.x)) xs.push(p.x);
+      if (Number.isFinite(p.y)) ys.push(p.y);
+    }
+  }
+
+  const xDomainRaw: Domain =
+    kind === 'function'
+      ? [from, to]
+      : xs.length
+        ? [Math.min(...xs), Math.max(...xs)]
+        : [-1, 1];
+
+  /**
+   * The y domain is clipped to a window around the data's own middle.
+   *
+   * A function with an asymptote reaches values in the millions a few samples
+   * from it, and fitting the axis to those flattens every interesting part of
+   * the curve into a horizontal line at zero. The interquartile spread is a
+   * robust measure of where the curve actually lives, and the window is a
+   * generous multiple of it -- so `tan(x)` shows its branches at a readable
+   * scale instead of one spike and a flat line.
+   */
+  const yDomainRaw: Domain = ys.length ? robustExtent(ys) : [-1, 1];
+
+  const niceX = niceDomain(xDomainRaw[0], xDomainRaw[1], 6, false);
+  const niceY = niceDomain(spec.yMin ?? yDomainRaw[0], spec.yMax ?? yDomainRaw[1], 5, false);
+
+  let xDomain: Domain = kind === 'function' ? xDomainRaw : niceX.domain;
+  let yDomain: Domain = [spec.yMin ?? niceY.domain[0], spec.yMax ?? niceY.domain[1]];
+
+  const yTexts = niceY.ticks.map((t) => formatValue(t, spec));
+  const gutterLeft = PAD + Math.max(...yTexts.map((t) => measure(t, LABEL_SIZE)), 0) + TICK_GAP;
+  const bottomBand = LABEL_SIZE + TICK_GAP;
+
+  const plot: Rect = {
+    x: gutterLeft,
+    y: top,
+    width: Math.max(1, width - gutterLeft - PAD),
+    height: Math.max(1, height - top - bottomReserved - bottomBand),
+  };
+  if (plot.width < 8 || plot.height < 8) return { ...empty, title };
+
+  // Equal axes: widen whichever domain is "tighter" per pixel, so one unit is
+  // the same length both ways and nothing is cropped.
+  if (spec.equalAxes ?? isIsotropic(kind)) {
+    const xPerPx = (xDomain[1] - xDomain[0]) / plot.width;
+    const yPerPx = (yDomain[1] - yDomain[0]) / plot.height;
+    const unit = Math.max(xPerPx, yPerPx);
+    const cx = (xDomain[0] + xDomain[1]) / 2;
+    const cy = (yDomain[0] + yDomain[1]) / 2;
+    const halfW = (unit * plot.width) / 2;
+    const halfH = (unit * plot.height) / 2;
+    xDomain = [cx - halfW, cx + halfW];
+    yDomain = [cy - halfH, cy + halfH];
+  }
+
+  const sx = linearScale(xDomain, [plot.x, plot.x + plot.width]);
+  const sy = linearScale(yDomain, [plot.y + plot.height, plot.y]);
+
+  const xTicks = niceDomain(xDomain[0], xDomain[1], 6, false).ticks.filter(
+    (t) => t >= xDomain[0] && t <= xDomain[1]
+  );
+  const yTicks = niceDomain(yDomain[0], yDomain[1], 5, false).ticks.filter(
+    (t) => t >= yDomain[0] && t <= yDomain[1]
+  );
+
+  const gridLines: ChartGridLine[] = [];
+  const axisLabels: ChartLabel[] = [];
+  const categoryLabels: ChartLabel[] = [];
+
+  for (const t of yTicks) {
+    const y = sy(t);
+    if (opts.showGrid) gridLines.push({ x1: plot.x, y1: y, x2: plot.x + plot.width, y2: y });
+    axisLabels.push({
+      text: formatValue(t, spec),
+      x: PAD,
+      y: y - LABEL_SIZE / 2,
+      width: gutterLeft - PAD - TICK_GAP,
+      align: 'right',
+      fontSize: LABEL_SIZE,
+    });
+  }
+
+  for (const t of xTicks) {
+    const x = sx(t);
+    if (opts.showGrid) gridLines.push({ x1: x, y1: plot.y, x2: x, y2: plot.y + plot.height });
+    // x labels are the *category* slot, so both painters draw them already.
+    categoryLabels.push({
+      text: formatValue(t, spec),
+      x: x - 30,
+      y: plot.y + plot.height + TICK_GAP,
+      width: 60,
+      align: 'center',
+      fontSize: LABEL_SIZE,
+    });
+  }
+
+  // Both zero rules, so a root or an intercept can actually be read off.
+  let baseline: ChartGridLine | null = null;
+  if (yDomain[0] <= 0 && yDomain[1] >= 0) {
+    const y = sy(0);
+    baseline = { x1: plot.x, y1: y, x2: plot.x + plot.width, y2: y };
+  }
+  if (xDomain[0] <= 0 && xDomain[1] >= 0) {
+    const x = sx(0);
+    gridLines.push({ x1: x, y1: plot.y, x2: x, y2: plot.y + plot.height });
+  }
+
+  const runs: ChartRun[] = [];
+  runsRaw.forEach((r, si) => {
+    let current: Point[] = [];
+    const flush = () => {
+      if (current.length > 1) runs.push({ points: current, color: r.color, seriesIndex: si });
+      current = [];
+    };
+    for (const p of r.points) {
+      if (!p) {
+        flush();
+        continue;
+      }
+      const px = sx(p.x);
+      const py = sy(p.y);
+      // Off-screen by a wide margin is cut rather than drawn: a point at y =
+      // 1e9 turns the whole run into one near-vertical stroke through the plot.
+      if (!Number.isFinite(px) || !Number.isFinite(py) || py < plot.y - plot.height || py > plot.y + plot.height * 2) {
+        flush();
+        continue;
+      }
+      current.push({ x: px, y: py });
+    }
+    flush();
+  });
+
+  return {
+    plot,
+    bars: [],
+    runs,
+    areas: [],
+    dots: [],
+    slices: [],
+    gridLines,
+    baseline,
+    axisLabels,
+    categoryLabels,
+    valueLabels: [],
+    legend: buildPlotLegend(spec, opts, curves, width, height, measure),
+    title,
+    rings: [],
+    spokes: [],
+    reference: buildReference(spec, yDomain, plot, sy, false, measure),
+    domain: yDomain,
+  };
+}
+
+/**
+ * A window around where the data actually lives.
+ *
+ * The interquartile spread rather than min/max, because one sample beside an
+ * asymptote is enough to make the true extent useless as an axis. Falls back to
+ * the full extent when the spread is degenerate -- a constant function has no
+ * quartile spread and still has to be drawn.
+ */
+function robustExtent(values: number[]): Domain {
+  const sorted = [...values].sort((a, b) => a - b);
+  const min = sorted[0];
+  const max = sorted[sorted.length - 1];
+  const q1 = sorted[Math.floor(sorted.length * 0.25)];
+  const q3 = sorted[Math.floor(sorted.length * 0.75)];
+  const iqr = q3 - q1;
+
+  if (!(iqr > 0)) return min === max ? [min - 1, max + 1] : [min, max];
+
+  const lo = Math.max(min, q1 - iqr * 3);
+  const hi = Math.min(max, q3 + iqr * 3);
+  return lo === hi ? [lo - 1, hi + 1] : [lo, hi];
+}
+
+/** A plot's legend names its formulae, and says which of them failed. */
+function buildPlotLegend(
+  spec: ChartSpec,
+  opts: ReturnType<typeof resolveChartOptions>,
+  curves: ReturnType<typeof compileCurves>,
+  width: number,
+  height: number,
+  measure: Measure
+): ChartLegendEntry[] {
+  if (!opts.showLegend || curves.length === 0) return [];
+  const asSeries: ChartSpec = {
+    ...spec,
+    kind: 'line',
+    series: curves.map((c, i) => ({
+      // The expression itself is the name: it is what the reader wants to know
+      // and what the author typed, and inventing "Series 1" beside it would be
+      // a label that says less than the thing it labels.
+      name: c.error ? `${c.source} — ${c.error}` : c.source,
+      values: [],
+      color: c.color ?? seriesColor(undefined, i),
+    })),
+  };
+  return buildLegend(asSeries, { ...opts, showLegend: true }, width, height, measure);
 }
 
 /**

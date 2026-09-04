@@ -17400,3 +17400,58 @@ html[data-precise] .canvas-container[data-cursor-mode] .konvajs-content canvas {
 }
 
 .chart-hint { font-size: 10px; color: var(--text-tertiary); margin-top: 3px; }
+
+/* ── Formula editor ──────────────────────────────────────────────────────────
+   An invalid expression keeps its text and its curve; only the border and the
+   message change. Clearing the plot on every keystroke that does not yet parse
+   makes the chart flash empty through the whole of typing. */
+.chart-formula { margin-bottom: 4px; }
+
+.chart-formula__row {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+}
+
+.chart-formula__name {
+  flex: 0 0 auto;
+  min-width: 34px;
+  font-size: 10px;
+  font-variant-numeric: tabular-nums;
+  color: var(--text-tertiary);
+}
+
+.chart-formula__input {
+  flex: 1;
+  min-width: 0;
+  /* A formula is read character by character, and a proportional face makes
+     `l1I` and `O0` ambiguous in exactly the place that matters most. */
+  font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  font-size: 11px;
+}
+
+.chart-formula__input[data-invalid] {
+  border-color: var(--signal-danger, #EF4444);
+}
+
+.chart-formula__error {
+  margin: 2px 0 0 38px;
+  font-size: 10px;
+  color: var(--signal-danger, #EF4444);
+}
+
+.chart-formula__help { margin-top: 6px; font-size: 10px; color: var(--text-tertiary); }
+.chart-formula__help summary { cursor: pointer; }
+.chart-formula__help p { margin: 4px 0 0; line-height: 1.5; }
+.chart-formula__help code {
+  font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  background: var(--surface-secondary);
+  border-radius: 3px;
+  padding: 0 3px;
+}
+
+.chart-formula__fns {
+  font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  word-spacing: 2px;
+  opacity: 0.85;
+}

@@ -4,7 +4,13 @@ import type { ChartNode } from '../../../engine/model/schema';
 import { layoutChart, type ChartLayout, type Measure } from '../../../engine/chart/chartLayout';
 import type { ChartInk } from '../../../engine/chart/chartInk';
 import { measureChartText } from '../../../engine/chart/chartMeasure';
+import { ThemeService } from '../../../engine/ThemeService';
+import { EXPORT_CHROME } from '../../../engine/export/chrome';
 import { currentChartInk } from '../../../engine/chart/chartInk';
+import { chartHitTest, placeReadout, type ChartHit } from '../../../engine/chart/chartHitTest';
+import { formatValue } from '../../../engine/chart/chartLayout';
+import { isRadial } from '../../../engine/chart/chartTypes';
+import { canvasPlateFill } from '../../../engine/ThemeService';
 import {
   rectRing,
   roughLoop,
@@ -73,17 +79,159 @@ export const ChartRenderer: React.FC<Props> = ({ node }) => {
    */
   const ink = currentChartInk();
 
+  /**
+   * What the pointer is over, if anything.
+   *
+   * Transient by every test in `ARCHITECTURE.md`'s table: nobody else wants to
+   * see which bar *I* am hovering, it must never enter the undo history, and it
+   * would flicker on every collaborator's screen if it did. So it is component
+   * state, not awareness and not the document.
+   */
+  const [hover, setHover] = React.useState<ChartHit | null>(null);
+
   const seed = React.useMemo(
     () => seedFor(node.id, node.appearance?.sketchSeed),
     [node.id, node.appearance?.sketchSeed]
   );
 
+  /**
+   * The pointer, in the node's own coordinate space.
+   *
+   * `getRelativePointerPosition` on the group does the whole conversion --
+   * world, camera, rotation and the node's own offset -- with Konva's own
+   * transform. Doing it by hand from the event's client coordinates is the
+   * three-spaces bug in invariant 10, and this is the one call that cannot get
+   * it wrong.
+   */
+  const onMove = (e: any) => {
+    const group = e.currentTarget;
+    const p = group?.getRelativePointerPosition?.();
+    if (!p) return;
+    setHover(
+      chartHitTest(layout, p, {
+        format: (v) => formatValue(v, node.chart),
+        categories: node.chart.categories,
+        seriesNames: node.chart.series.map((s) => s.name),
+        keyedOnCategories: isRadial(node.chart.kind) || node.chart.kind === 'funnel',
+      })
+    );
+  };
+
   return (
-    <Group listening={false}>
+    /*
+      Listening, where every other part of this renderer is not.
+      A chart's marks are `listening={false}` so the object answers as one thing
+      to selection and dragging -- the grid renderer's rule, for the grid
+      renderer's reason. The hit rectangle below is the single listener, so a
+      hover costs one hit test rather than one per bar.
+    */
+    <Group onPointerMove={onMove} onPointerLeave={() => setHover(null)}>
+      <Rect
+        x={0}
+        y={0}
+        width={node.width}
+        height={node.height}
+        // A fill is required to exist in Konva's hit graph at all; the same
+        // trick `AudioRenderer` needs for its DOM overlay.
+        fill="rgba(0,0,0,0.001)"
+        perfectDrawEnabled={false}
+      />
       <Chrome layout={layout} ink={ink} />
       <Marks layout={layout} sketch={sketch} seed={seed} ink={ink} />
       <Reference layout={layout} />
       <Labels layout={layout} ink={ink} />
+      <Readout hit={hover} node={node} ink={ink} />
+    </Group>
+  );
+};
+
+/**
+ * The live readout.
+ *
+ * ## Drawn in Konva rather than in the DOM
+ *
+ * Every other floating surface in this app is a DOM element positioned in
+ * *window* coordinates, and every one of them has had to learn to add the
+ * stage origin -- see invariant 10 and the contextual rail, which was drawn a
+ * ruler's width off for as long as it existed. A readout that lives inside the
+ * chart's own Konva group is in node-local coordinates by construction: it pans,
+ * zooms and rotates with the object for free, and there is no space to convert
+ * between and therefore no conversion to get wrong.
+ *
+ * The trade is that it cannot use the app's CSS. For a small plate with two
+ * lines of text that is not a real cost, and `canvasPlateFill` already exists
+ * for exactly this -- a surface colour that stays readable over whatever the
+ * board is.
+ *
+ * ## Why it carries `EXPORT_CHROME`
+ *
+ * It is a hover state. It is on the stage, so a raster capture would find it
+ * and put somebody's pointer position into the exported file.
+ */
+const Readout: React.FC<{ hit: ChartHit | null; node: ChartNode; ink: ChartInk }> = ({
+  hit,
+  node,
+  ink,
+}) => {
+  if (!hit) return null;
+
+  const ROW = 15;
+  const PAD = 8;
+  const SWATCH = 7;
+  // Measured off the longest row rather than fixed, so a long series name is
+  // not clipped and a short one does not sit in a wide empty plate.
+  const widest = Math.max(
+    measureChartText(hit.label, 11, '600'),
+    ...hit.entries.map((e) => measureChartText(`${e.name}  ${e.text}`, 11) + SWATCH + 6)
+  );
+  const width = Math.min(node.width - 8, widest + PAD * 2);
+  const height = PAD * 2 + ROW * (hit.entries.length + (hit.label ? 1 : 0));
+
+  const at = placeReadout(hit.anchor, { width, height }, { width: node.width, height: node.height });
+  const plate = canvasPlateFill(ThemeService.isDarkMode());
+
+  return (
+    <Group x={at.x} y={at.y} listening={false} name={EXPORT_CHROME}>
+      <Rect
+        width={width}
+        height={height}
+        cornerRadius={6}
+        fill={plate}
+        shadowColor="rgba(0,0,0,0.28)"
+        shadowBlur={12}
+        shadowOffsetY={3}
+        perfectDrawEnabled={false}
+      />
+      {hit.label && (
+        <Text
+          text={hit.label}
+          x={PAD}
+          y={PAD}
+          width={width - PAD * 2}
+          fontSize={11}
+          fontStyle="600"
+          fill={ink.ink}
+        />
+      )}
+      {hit.entries.map((e, i) => {
+        const y = PAD + (hit.label ? ROW : 0) + i * ROW;
+        return (
+          <React.Fragment key={i}>
+            <Rect x={PAD} y={y + 3} width={SWATCH} height={SWATCH} cornerRadius={2} fill={e.color} />
+            <Text text={e.name} x={PAD + SWATCH + 6} y={y} fontSize={11} fill={ink.chrome} />
+            <Text
+              text={e.text}
+              x={PAD}
+              y={y}
+              width={width - PAD * 2}
+              align="right"
+              fontSize={11}
+              fontStyle="600"
+              fill={ink.ink}
+            />
+          </React.Fragment>
+        );
+      })}
     </Group>
   );
 };
