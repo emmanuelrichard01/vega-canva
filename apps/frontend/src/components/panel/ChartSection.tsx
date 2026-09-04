@@ -10,6 +10,8 @@ import { chartToCsv, parseChartData, withChartData } from '../../engine/chart/ch
 import { CHART_HINTS, CHART_LABELS, chartPickerGroups } from '../../engine/chart/chartKinds';
 import {
   CHART_PALETTE,
+  CHART_SORTS,
+  CHART_SORT_LABELS,
   isPolar,
   isRadial,
   seriesColor,
@@ -123,6 +125,26 @@ export const ChartSection: React.FC<Props> = ({ node }) => {
         dead capability this project keeps deleting -- see invariant 6.
       */}
       {!radial && !polar && <AxisGroup spec={spec} patch={patch} />}
+
+      <Group label="Order">
+        {/*
+          A view on the data, never an edit to it -- the rows keep the order
+          they were typed in, so turning this off gives back exactly what was
+          there and the next paste is not fighting a sort.
+        */}
+        <div className="chart-toggles">
+          {CHART_SORTS.map((mode) => (
+            <ToggleButton
+              key={mode}
+              label={CHART_SORT_LABELS[mode]}
+              active={(spec.sort ?? 'none') === mode}
+              onClick={() => patch({ sort: mode === 'none' ? undefined : mode })}
+            >
+              {CHART_SORT_LABELS[mode]}
+            </ToggleButton>
+          ))}
+        </div>
+      </Group>
 
       <Group label="Numbers">
         <Row label="Prefix">

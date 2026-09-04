@@ -76,6 +76,7 @@ export const ChartRenderer: React.FC<Props> = ({ node }) => {
     <Group listening={false}>
       <Chrome layout={layout} />
       <Marks layout={layout} sketch={sketch} seed={seed} />
+      <Reference layout={layout} />
       <Labels layout={layout} />
     </Group>
   );
@@ -104,8 +105,73 @@ const Chrome: React.FC<{ layout: ChartLayout }> = ({ layout }) => (
         perfectDrawEnabled={false}
       />
     )}
+
+    {/*
+      Radar's spokes and rings. Rings are polygons rather than circles: they
+      have to have the same shape as the outline in front of them, or a value
+      sitting on a ring does not appear to touch it.
+    */}
+    {layout.spokes.map((s, i) => (
+      <Line
+        key={`sp${i}`}
+        points={[s.x1, s.y1, s.x2, s.y2]}
+        stroke={CHROME}
+        strokeWidth={1}
+        opacity={0.35}
+        listening={false}
+        perfectDrawEnabled={false}
+      />
+    ))}
+    {layout.rings.map((r, i) => (
+      <Line
+        key={`rg${i}`}
+        points={flatten(r.points)}
+        closed
+        stroke={CHROME}
+        strokeWidth={1}
+        opacity={0.3}
+        listening={false}
+        perfectDrawEnabled={false}
+      />
+    ))}
   </>
 );
+
+/**
+ * The reference rule, above the marks.
+ *
+ * Dashed so it reads as an annotation rather than as another series, and drawn
+ * after the geometry so a bar cannot hide the target it missed.
+ */
+const Reference: React.FC<{ layout: ChartLayout }> = ({ layout }) => {
+  const r = layout.reference;
+  if (!r) return null;
+  return (
+    <>
+      <Line
+        points={[r.x1, r.y1, r.x2, r.y2]}
+        stroke={r.color}
+        strokeWidth={1.5}
+        dash={[5, 4]}
+        listening={false}
+        perfectDrawEnabled={false}
+      />
+      {r.label && (
+        <Text
+          text={r.label.text}
+          x={r.label.x}
+          y={r.label.y}
+          width={r.label.width}
+          align={r.label.align}
+          fontSize={r.label.fontSize}
+          fontStyle="600"
+          fill={r.color}
+          listening={false}
+        />
+      )}
+    </>
+  );
+};
 
 const Marks: React.FC<{
   layout: ChartLayout;

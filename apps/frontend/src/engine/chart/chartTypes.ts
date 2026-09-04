@@ -268,6 +268,66 @@ export interface ChartSpec {
    * anything the moment either changes.
    */
   reference?: { value: number; label?: string; color?: string };
+  /**
+   * The order categories are drawn in. Absent is the order they were entered.
+   *
+   * A *view* on the data rather than an edit to it: the rows keep the order
+   * they were typed or pasted in, so turning sorting off gives back exactly
+   * what was there. Sorting the stored arrays instead would make the setting
+   * destructive and un-undoable in one step, and would fight the next paste.
+   *
+   * Sorting by value uses the **first series**, because that is the one a
+   * reader takes as the subject when several are present — and sorting by a
+   * total would silently reorder a comparison chart by a quantity it never
+   * draws.
+   */
+  sort?: ChartSort;
+}
+
+export const CHART_SORTS = ['none', 'valueDesc', 'valueAsc', 'labelAsc'] as const;
+export type ChartSort = (typeof CHART_SORTS)[number];
+
+export const CHART_SORT_LABELS: Record<ChartSort, string> = {
+  none: 'As entered',
+  valueDesc: 'Largest first',
+  valueAsc: 'Smallest first',
+  labelAsc: 'A to Z',
+};
+
+/**
+ * Reorder a spec's categories, carrying every series along with them.
+ *
+ * The whole point is that the series move *with* the categories: sorting the
+ * labels alone is the classic way to produce a chart where every bar is under
+ * the wrong name, and it looks entirely plausible.
+ */
+export function sortSpec(spec: ChartSpec): ChartSpec {
+  const mode = spec.sort ?? 'none';
+  if (mode === 'none' || spec.categories.length < 2) return spec;
+
+  const first = spec.series[0];
+  const order = spec.categories.map((label, i) => ({ label, i }));
+
+  order.sort((a, b) => {
+    if (mode === 'labelAsc') return a.label.localeCompare(b.label);
+    const av = first?.values[a.i];
+    const bv = first?.values[b.i];
+    // A hole sorts last whichever direction is asked for: it is not a small
+    // value, it is an absent one, and putting it at the top of "largest first"
+    // would read as a reading of zero.
+    const an = typeof av === 'number' ? av : null;
+    const bn = typeof bv === 'number' ? bv : null;
+    if (an === null && bn === null) return 0;
+    if (an === null) return 1;
+    if (bn === null) return -1;
+    return mode === 'valueDesc' ? bn - an : an - bn;
+  });
+
+  return {
+    ...spec,
+    categories: order.map((o) => o.label),
+    series: spec.series.map((s) => ({ ...s, values: order.map((o) => s.values[o.i] ?? null) })),
+  };
 }
 
 /** Everything a spec may leave out, resolved once so no reader guesses twice. */

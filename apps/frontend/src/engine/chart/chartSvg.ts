@@ -148,6 +148,24 @@ export function paintLayout(layout: ChartLayout, options: ChartSvgOptions): stri
     );
   }
 
+  /**
+   * Radar's rings and spokes, drawn before the data so the data sits on them.
+   *
+   * Rings are polygons rather than circles: they have to have the same shape
+   * as the outline they sit behind, or a value on a ring does not appear to
+   * touch it.
+   */
+  for (const spoke of layout.spokes) {
+    out.push(
+      `<line x1="${spoke.x1}" y1="${spoke.y1}" x2="${spoke.x2}" y2="${spoke.y2}" stroke="${CHART_CHROME}" stroke-width="1" opacity="0.35" />`
+    );
+  }
+  for (const ring of layout.rings) {
+    out.push(
+      `<polygon points="${ring.points.map((p) => `${p.x},${p.y}`).join(' ')}" fill="none" stroke="${CHART_CHROME}" stroke-width="1" opacity="0.3" />`
+    );
+  }
+
   layout.bars.forEach((b, i) => {
     if (sketch) {
       const d = roughLoop(
@@ -193,6 +211,22 @@ export function paintLayout(layout: ChartLayout, options: ChartSvgOptions): stri
     out.push(
       `<path d="${slicePath(s.cx, s.cy, s.outerRadius, s.innerRadius, s.startAngle, s.endAngle)}" fill="${s.color}" stroke="#FFFFFF" stroke-width="1.5" fill-rule="evenodd" />`
     );
+  }
+
+  /**
+   * The reference rule, above the marks.
+   *
+   * Dashed so it reads as an annotation rather than as another series, and
+   * drawn last of the geometry so a bar cannot hide the target it missed.
+   */
+  if (layout.reference) {
+    const r = layout.reference;
+    out.push(
+      `<line x1="${r.x1}" y1="${r.y1}" x2="${r.x2}" y2="${r.y2}" stroke="${r.color}" stroke-width="1.5" stroke-dasharray="5 4" />`
+    );
+    if (r.label) {
+      out.push(label(r.label.text, r.label.x, r.label.y, r.label.width, r.label.align, r.label.fontSize, r.color, '600'));
+    }
   }
 
   if (layout.title) {

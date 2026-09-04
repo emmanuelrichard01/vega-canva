@@ -35,6 +35,7 @@ import {
   niceDomain,
   type Domain,
 } from './scales';
+import { catmullRomPoints } from '../model/polyline';
 import {
   bucketize,
   isBarLike,
@@ -47,6 +48,7 @@ import {
   normalizeSpec,
   resolveChartOptions,
   seriesColor,
+  sortSpec,
   toPercentStack,
   toStaircase,
   type ChartSpec,
@@ -217,7 +219,9 @@ export function layoutChart(
   height: number,
   measure: Measure = approximateMeasure
 ): ChartLayout {
-  const spec = normalizeSpec(rawSpec);
+  // Sorting is a view, applied before layout and never written back --
+  // see `sortSpec`. Done here so every kind gets it for free.
+  const spec = sortSpec(normalizeSpec(rawSpec));
   const opts = resolveChartOptions(spec);
 
   const empty: ChartLayout = {
@@ -595,7 +599,19 @@ function layoutCartesian(
       segments.forEach((points, segIndex) => {
         if (kind === 'scatter' || kind === 'bubble') return;
 
-        const drawn = kind === 'step' ? toStaircase(points) : points;
+        /**
+         * `curved` smooths the run through its points, and is deliberately
+         * exclusive with `step`: a staircase is an assertion that the value
+         * did *not* slide between readings, and rounding its corners states
+         * the opposite. The same argument `polyline.ts` makes for why `smooth`
+         * and per-segment bends are alternatives rather than layers.
+         */
+        const drawn =
+          kind === 'step'
+            ? toStaircase(points)
+            : opts.curved
+              ? catmullRomPoints(points)
+              : points;
         runs.push({ points: drawn, color, seriesIndex: si });
 
         if ((kind === 'area' || kind === 'stackedArea') && drawn.length > 1) {
