@@ -1,5 +1,8 @@
 import React, { useCallback, useEffect, useRef, useState, useSyncExternalStore, useMemo } from 'react';
 import { GridKindIcon } from './gridIcons';
+import { ChartKindIcon } from './chartIcons';
+import { CHART_HINTS, CHART_LABELS, CHART_PICKER_ORDER } from '../../engine/chart/chartKinds';
+import { ChartTool } from '../../engine/tools/ChartTool';
 import { GRID_HINTS, GRID_KINDS, GRID_LABELS } from '../../engine/grid/gridLayout';
 import { dockDefaults } from '../../engine/workspace/dockDefaults';
 import {
@@ -16,7 +19,8 @@ import {
 } from '../../engine/workspace/dockLayout';
 import { gridDefaults } from '../../engine/grid/gridDefaults';
 import { switchKind } from '../../engine/grid/gridBuild';
-import { MousePointer2, MousePointerClick, LayoutGrid, Hand, Pen, PenTool as PenToolIcon, Type, Square, StickyNote, MessageSquare, ImageIcon, Mic, Sparkles, Frame, Eraser, Workflow, MoreVertical, TextQuote } from 'lucide-react';
+import {
+  BarChart3, MousePointer2, MousePointerClick, LayoutGrid, Hand, Pen, PenTool as PenToolIcon, Type, Square, StickyNote, MessageSquare, ImageIcon, Mic, Sparkles, Frame, Eraser, Workflow, MoreVertical, TextQuote } from 'lucide-react';
 import { Check, Minus, Move, RotateCcw, SeparatorVertical, Spline, Undo2 } from 'lucide-react';
 import { SegmentedControl } from '../ui/SegmentedControl';
 import { SketchLevelIcon } from '../panel/sketchIcons';
@@ -355,6 +359,7 @@ const MORE_SEAT = DOCK_SEATS.length;
  * unlabelled row nobody can identify.
  */
 const SEAT_LABEL: Record<DockSeat, string> = {
+  chart: 'Chart',
   select: 'Select', directSelect: 'Direct select', hand: 'Hand',
   draw: 'Draw', eraser: 'Eraser',
   type: 'Type', shape: 'Shape', line: 'Line',
@@ -384,6 +389,7 @@ const SEAT_TOOL: Partial<Record<DockSeat, string>> = {
   line: 'line',
   frame: 'frame',
   grid: 'grid',
+  chart: 'chart',
   connector: 'connector',
   sticky: 'sticky',
   image: 'image',
@@ -395,7 +401,7 @@ const SEAT_GLYPH: Record<DockSeat, React.ReactNode> = {
   select: <MousePointer2 size={16} />, directSelect: <MousePointerClick size={16} />, hand: <Hand size={16} />,
   draw: <Pen size={16} />, eraser: <Eraser size={16} />,
   type: <Type size={16} />, shape: <Square size={16} />, line: <Minus size={16} />,
-  frame: <Frame size={16} />, grid: <LayoutGrid size={16} />, connector: <Spline size={16} />, sticky: <StickyNote size={16} />,
+  frame: <Frame size={16} />, grid: <LayoutGrid size={16} />, chart: <BarChart3 size={16} />, connector: <Spline size={16} />, sticky: <StickyNote size={16} />,
   image: <ImageIcon size={16} />, audio: <Mic size={16} />, forces: <Sparkles size={16} />,
 };
 
@@ -467,7 +473,7 @@ export const ToolWorkspace: React.FC<Props> = ({ activeToolId, onOpenDiagram, on
   /** Editing the dock is a mode, and a loud one -- see `dock-editing`. */
   const [editing, setEditing] = useState(false);
 
-  type DockMenu = 'pen' | 'shape' | 'line' | 'frame' | 'grid' | 'eraser' | 'block' | 'more';
+  type DockMenu = 'pen' | 'shape' | 'line' | 'frame' | 'grid' | 'chart' | 'eraser' | 'block' | 'more';
   const [pinnedMenu, setPinnedMenu] = useState<DockMenu | null>(null);
   const [hoveredMenu, setHoveredMenu] = useState<DockMenu | null>(null);
 
@@ -1649,6 +1655,44 @@ export const ToolWorkspace: React.FC<Props> = ({ activeToolId, onOpenDiagram, on
                           switchKind(gridDefaults.forBox({ x: 0, y: 0, width: 0, height: 0 }), kind)
                         );
                         pick('grid');
+                      }}
+                    />
+                  ))}
+                </div>
+              </Flyout>
+            )}
+          </DockButton>
+        </div>
+
+        {/* Chart. Beside Grid because both are composite objects built from a
+            drag rather than drawn stroke by stroke, and because the flyout is
+            answering the same shape of question -- which system, before the
+            gesture, so the thing that lands is already the right one. */}
+        <div {...hoverProps('chart')} className="dock-slot-wrap" {...seatChrome('chart')}>
+          <DockButton
+            {...seatProps('chart', true)}
+            icon={<BarChart3 size={17} />} label="Chart" toolId="chart"
+            description="bars, lines, pies"
+            active={activeToolId === 'chart'} hasMenu menuOpen={openMenu === 'chart'}
+            onClick={() => toggleMenu('chart')}
+          >
+            {openMenu === 'chart' && (
+              <Flyout title="Chart type" wide>
+                <div className="dock-flyout__scroll">
+                  {CHART_PICKER_ORDER.map((kind) => (
+                    <FlyoutItem
+                      key={kind}
+                      icon={<ChartKindIcon kind={kind} />}
+                      label={CHART_LABELS[kind]}
+                      description={CHART_HINTS[kind]}
+                      active={ChartTool.kind === kind}
+                      onClick={() => {
+                        // Remembering the pick and arming the tool, the way the
+                        // grid flyout does -- so this is a choice about the next
+                        // drag rather than seven tools that would each need
+                        // registering and each need a key.
+                        ChartTool.kind = kind;
+                        pick('chart');
                       }}
                     />
                   ))}
