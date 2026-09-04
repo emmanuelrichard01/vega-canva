@@ -2,6 +2,12 @@ import React from 'react';
 import { Circle, Group, Label, Line, Path, Tag, Text } from 'react-konva';
 import { roughLoop, roughPolyline, seedFor } from '../../../engine/model/rough';
 import { roundedPolyline } from '../../../engine/model/connectorCorners';
+import {
+  publishConnectorLabel,
+  retractConnectorLabel,
+  slotFor,
+  subscribeConnectorLabels,
+} from '../../../engine/model/connectorLabelStore';
 import { useShallow } from 'zustand/react/shallow';
 import { DEFAULT_CONNECTOR_INK, type ConnectorNode } from '../../../engine/model/schema';
 import { connectorBounds, connectorPoints, type Box } from '../../../engine/model/connector';
@@ -139,6 +145,47 @@ export const ConnectorRenderer: React.FC<Props> = React.memo(({ node }) => {
   );
 
   const world = connectorPoints(node.from, node.to, node.routing, boxOf, attachOf);
+
+  /*
+    Above the `world.length < 4` bail below, because these are hooks.
+
+    A connector whose two ends resolve to nothing renders null, and a hook
+    called after that point runs on some renders and not others -- which is the
+    one thing React cannot survive. Publishing a degenerate route is harmless:
+    `placeConnectorLabels` skips anything with fewer than two points.
+  */
+  /**
+   * Offer this route to the shared arrangement, and read back where the word
+   * ended up.
+   *
+   * Every label used to be drawn at the same fraction of its own run, which is
+   * right for one connector and a guaranteed collision for several: two arrows
+   * between the same pair of boxes stacked their words, and a fan out of a
+   * decision node put three in the same few pixels. A connector cannot fix
+   * that alone — the thing it needs to know is where the *other* labels went —
+   * so the decision is made across all of them in `connectorLabels.ts` and
+   * this publishes into it.
+   *
+   * Published in an effect rather than during render, and the store ignores a
+   * route that has not meaningfully moved, so this cannot feed itself.
+   */
+  const labelText = node.label ?? '';
+  React.useEffect(() => {
+    if (!labelText) {
+      retractConnectorLabel(node.id);
+      return;
+    }
+    publishConnectorLabel(node.id, labelText, world);
+    return () => retractConnectorLabel(node.id);
+    // `world` is a fresh array every render; the store compares its contents.
+  }, [node.id, labelText, world]);
+
+  const slot = React.useSyncExternalStore(
+    subscribeConnectorLabels,
+    () => slotFor(node.id),
+    () => null
+  );
+
 
   /**
    * Keep the stored box in step with the route, on a trailing delay.
@@ -508,8 +555,18 @@ export const ConnectorRenderer: React.FC<Props> = React.memo(({ node }) => {
           belongs to, which is exactly where it sits. */}
       {node.label ? (
         <Label
-          x={points[Math.floor(points.length / 4) * 2] ?? points[0]}
-          y={points[(Math.floor(points.length / 4) * 2) + 1] ?? points[1]}
+          /* The arrangement's answer, brought into the group's own space. It
+             is computed in world coordinates because that is the only frame
+             the connectors share; the fallback is the fixed quarter-point this
+             drew before, for the one frame before the first pass has run. */
+          x={
+            slot ? slot.x - node.x : points[Math.floor(points.length / 4) * 2] ?? points[0]
+          }
+          y={
+            slot
+              ? slot.y - node.y
+              : points[Math.floor(points.length / 4) * 2 + 1] ?? points[1]
+          }
           listening={false}
         >
           {/* The ink is lifted against the plate, not taken on trust. A

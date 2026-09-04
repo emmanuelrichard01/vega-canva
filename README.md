@@ -267,21 +267,51 @@ in the Properties panel, deciding how far it carries and how hard it bounces.
 
 ### Diagrams as code — `engine/diagram/`
 
-Mermaid flowcharts in and out. The text is parsed into the canvas's own
-vocabulary — shapes and connectors — rather than handed to the `mermaid`
-package, which renders an SVG. That matters: an SVG is one opaque picture on a
-canvas whose entire point is that everything on it is editable, and it is also
-why the dependency is not worth over a megabyte.
+Mermaid in and out, in three kinds: **flowcharts**, **sequence diagrams** and
+**pie charts**. The text is parsed into the canvas's own vocabulary — shapes,
+paths and connectors — rather than handed to the `mermaid` package, which
+renders an SVG. That matters: an SVG is one opaque picture on a canvas whose
+entire point is that everything on it is editable, and it is also why the
+dependency is not worth over a megabyte.
 
 | Module | Responsibility |
 | --- | --- |
-| `mermaid.ts` | The parser and the emitter. Bracket shapes, both edge-label syntaxes, `style`/`classDef` directives. Pure. |
-| `layout.ts` | Layered (Sugiyama) placement — cycles broken first, then longest-path ranking, then barycentre ordering. Pure. |
+| `mermaid.ts` | Flowchart parser and emitter. Bracket shapes, both edge-label syntaxes, `style`/`classDef` directives, and the five themes. Pure. |
+| `layout.ts` | Layered (Sugiyama) placement via dagre — plus the anchors extracted from its edge routes, which is what stops a fan-out from crossing itself. Pure. |
 | `build.ts` | Graph to canvas nodes, and any selection back to source. |
+| `sequence.ts` | Sequence parser and timeline layout: participants, every arrow form, notes, self-messages, and blocks (`loop`, `alt`/`else`, `opt`, `par`) nested to any depth. Pure. |
+| `buildSequence.ts` / `sequenceEmit.ts` | Timeline to canvas nodes, and back. |
+| `pie.ts` / `buildPie.ts` | Pie parser, wedge geometry, and the objects. Pure. |
+
+**Three engines, because they are three different problems.** A flowchart is a
+*graph* and goes to dagre. A sequence diagram is a *timeline* — the participants
+are columns in a fixed order and the messages are rows in the order they were
+written — so a layered-graph algorithm would only reproduce a grid it has no
+reason to prefer, and would reorder the cast to uncross two arrows, which is the
+one thing a sequence diagram may never do. A pie is arithmetic on a circle.
 
 Connectors store the **ids** of what they join and recompute their route on
 every read, so a generated diagram survives being rearranged by hand — drag a
-box and the arrows follow, because they were never told where it was.
+box and the arrows follow, because they were never told where it was. A sequence
+diagram gets the same property from the same mechanism: messages bind to the
+**lifelines**, and the row is an `Anchor` (a fraction of the lifeline's own box),
+so dragging a participant carries its whole conversation with it.
+
+Everything is **measured before it is placed** — every column is as wide as its
+own name, every gap as wide as the widest message crossing it, every legend row
+as wide as its text — and both the preview and the insert are handed the *same*
+pre-wrapped lines, so the picture in the dialog is the one you get.
+
+A pie wedge is a closed **bezier path**, not a shape: the shape vocabulary has
+no arc, and a path means the anchors are real anchors that the pen tool can
+nudge afterwards.
+
+**Colour is content.** A diagram's palette is written into the objects and
+shared, so it cannot be re-picked per viewer. Anything with a surface is checked
+against that surface; anything drawn on the bare board takes `canvasInk`, a
+mid-tone that clears 3:1 against a light board *and* a dark one. Small dense text
+— a pie legend — gets a card instead, because no single ink clears 4.5:1 against
+both. `themeContrast.test.ts` holds every one of those pairings to account.
 
 ### Text — `engine/text/`
 
@@ -1301,7 +1331,7 @@ apps/
         export/      exporter registry
         presence/    awareness state: one writer, one reader, one frame loop
                      + the radar's projection and painter
-        diagram/     Mermaid in and out — parser, layered layout, builder
+        diagram/     Mermaid in and out — flowchart, sequence and pie engines
         text/        layout, measurement, the highlight ribbon, demo copy,
                      and the second font path: glyph outlines for convert-to-path
         physics/     the simulation, force specs, shared in-flight state

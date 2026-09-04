@@ -105,6 +105,23 @@ export interface DiagramTheme {
   clusterStroke: string;
   connectorColor: string;
   accentFills: string[];
+  /**
+   * Ink for anything drawn **directly on the board**, with no fill behind it.
+   *
+   * Every other colour here is chosen against a known surface: `textColor`
+   * reads on `accentFills`, `clusterStroke` outlines a `clusterFill`. A
+   * lifeline, a block frame and its label have no surface -- they sit on the
+   * canvas, whose colour is the *viewer's* theme and is not knowable when the
+   * objects are written. A near-black `textColor` is right on a pale node and
+   * invisible on a dark board.
+   *
+   * So these are mid-tones, picked to clear roughly 3:1 against both a white
+   * canvas and a near-black one. That is the contrast a line or a small label
+   * needs, and it is about the most a single fixed colour can do against two
+   * opposite backgrounds -- which is why everything smaller or denser than a
+   * label gets a plate to sit on instead. The pie legend is the example.
+   */
+  canvasInk: string;
 }
 
 export const DIAGRAM_THEMES: Record<DiagramThemeId, DiagramTheme> = {
@@ -118,17 +135,21 @@ export const DIAGRAM_THEMES: Record<DiagramThemeId, DiagramTheme> = {
     clusterStroke: '#94A3B8',
     connectorColor: '#64748B',
     accentFills: ['#EEF2FF', '#E0E7FF', '#C7D2FE', '#F1F5F9'],
+    canvasInk: '#7C8AA5',
   },
   pastel: {
     id: 'pastel',
     name: 'Pastel Studio',
     primaryFill: '#FEF3C7',
-    primaryStroke: '#D97706',
+    // Was #D97706, which is 2.86:1 on this theme's own pale fill -- an
+    // outline you have to look for. One step darker clears 3:1.
+    primaryStroke: '#B45309',
     textColor: '#1F2937',
     clusterFill: 'rgba(249, 250, 251, 0.7)',
     clusterStroke: '#CBD5E1',
     connectorColor: '#475569',
     accentFills: ['#FEF3C7', '#EDE9FE', '#DCFCE7', '#E0F2FE', '#FCE7F3'],
+    canvasInk: '#8B8FA3',
   },
   emerald: {
     id: 'emerald',
@@ -140,6 +161,7 @@ export const DIAGRAM_THEMES: Record<DiagramThemeId, DiagramTheme> = {
     clusterStroke: '#6EE7B7',
     connectorColor: '#047857',
     accentFills: ['#ECFDF5', '#D1FAE5', '#A7F3D0', '#F0FDF4'],
+    canvasInk: '#4E9E86',
   },
   amber: {
     id: 'amber',
@@ -151,6 +173,7 @@ export const DIAGRAM_THEMES: Record<DiagramThemeId, DiagramTheme> = {
     clusterStroke: '#FDBA74',
     connectorColor: '#C2410C',
     accentFills: ['#FFF7ED', '#FFEDD5', '#FED7AA', '#FEF2F2'],
+    canvasInk: '#B08157',
   },
   mono: {
     id: 'mono',
@@ -162,6 +185,7 @@ export const DIAGRAM_THEMES: Record<DiagramThemeId, DiagramTheme> = {
     clusterStroke: '#64748B',
     connectorColor: '#334155',
     accentFills: ['#FFFFFF', '#F1F5F9', '#E2E8F0', '#CBD5E1'],
+    canvasInk: '#7B8794',
   },
 };
 
@@ -393,19 +417,29 @@ export function parseMermaid(source: string): ParseResult {
   const first = lines[0];
   const header = /^(flowchart|graph)\s+([A-Za-z]{2})?/i.exec(first.text);
   if (!header) {
-    const kind = /^(sequenceDiagram|classDiagram|stateDiagram|erDiagram|gantt|pie|journey)/i.exec(
+    /**
+     * `sequenceDiagram` and `pie` are deliberately absent from this list.
+     *
+     * Each has its own parser and its own layout -- see `sequence.ts` for why
+     * a timeline cannot go through dagre, and `pie.ts` for why a wedge is a
+     * path rather than a shape -- and the callers dispatch on
+     * `looksLikeSequence` / `looksLikePie` before reaching here. Naming them
+     * as unsupported would be this module reporting on a decision it no longer
+     * makes.
+     */
+    const kind = /^(classDiagram|stateDiagram|erDiagram|gantt|journey|mindmap)/i.exec(
       first.text
     );
     if (kind) {
       return {
         graph: null,
-        error: `${kind[1]} is not supported yet. This converts flowcharts into editable objects, so start with "flowchart TD".`,
+        error: `${kind[1]} is not supported yet. Flowcharts, sequence diagrams and pie charts become editable objects — start with "flowchart TD", "sequenceDiagram" or "pie".`,
         errorLine: first.lineNum,
       };
     }
     return {
       graph: null,
-      error: 'Start with "flowchart TD" or "graph LR".',
+      error: 'Start with "flowchart TD", "graph LR", "sequenceDiagram" or "pie".',
       errorLine: first.lineNum,
     };
   }

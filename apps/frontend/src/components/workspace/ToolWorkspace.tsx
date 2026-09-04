@@ -1246,7 +1246,17 @@ export const ToolWorkspace: React.FC<Props> = ({ activeToolId, onOpenDiagram, on
             >
               {openMenu === 'eraser' && (
                 <Flyout title="Eraser">
-                  <NibSize label="Eraser size" value={eraserSize} min={4} max={200} onChange={setEraserSize} />
+                  {/* A width, the same unit the pencil's own Size means --
+                      it was read as a radius, so the tip was twice the number
+                      shown and the top of the range was unreachable in
+                      practice. */}
+                  {/* "Size", not "Eraser size" -- the flyout is already
+                      titled Eraser, and the pencil's own control next door
+                      says Size. The longer label was what the row ran out of
+                      width for. It is a width, the same unit the pencil means:
+                      it was read as a radius, so the tip was twice the number
+                      shown. */}
+                  <NibSize label="Size" value={eraserSize} min={4} max={120} onChange={setEraserSize} />
                 </Flyout>
               )}
             </DockButton>

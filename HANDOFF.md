@@ -4597,6 +4597,182 @@ other way" means. Withheld unless both ends are bound, because reversing a
 half-attached connector swaps a real object for a loose point and leaves the
 arrow pointing into empty space.
 
+## 5a-0-aw. The eraser: three bugs, and one of them was mine
+
+The report was "the nib says 4px and it removes about 15px", then "the whole
+canvas is lagging", then "everything is frozen". Three separate defects, and the
+second and third were caused by fixing the first.
+
+**The number meant a radius.** `eraserSize` was read as a radius everywhere,
+while `NibSize` — the same control the pencil uses — means a stroke **width**.
+So the tool was twice the size it reported, and the 4–200 range was really an
+8–400 one where most of the travel was unusable. It is a width now, 4–120,
+default 20, and the conversion happens in exactly one place (`radiusFor`)
+because the previous arrangement had the division scattered across three call
+sites and the ring overlay.
+
+**The hole was the sampling, not the nib.** A freehand stroke was cut at *sample*
+granularity: any segment the disc came near lost **both** its endpoints. Pointer
+samples are as far apart as the hand was fast — twenty or more world units on a
+quick stroke — so the gap was that spacing whatever size the tool was set to,
+which is why shrinking the nib appeared to do nothing. `clipPolylineByCapsule`
+splits each segment at its exact intersections with the nib instead, so the gap
+*is* the nib: a radius-2 nib leaves a 4-unit hole and a radius-8 leaves 16, and
+`eraseSweep.test.ts` asserts both.
+
+**Then the canvas froze, and that was the fix's own fault.** Halving the radius
+multiplied the sweep's cost. The sweep erased by stepping discs along the
+distance travelled at `distance / max(1, radius * 0.5)` passes, and **each pass
+scanned every object on the board**. At a 4px nib that is one full-document scan
+per world unit: hundreds per pointer move, at sixty pointer moves a second.
+
+> **The lesson worth keeping.** Making a number smaller made an unrelated loop
+> longer, because the number was a divisor in a cost expression nobody was
+> looking at. Any change to a tunable wants a glance at what divides by it.
+
+Capping the passes would have traded the freeze for a dotted trail on fast
+swipes — the exact bug the stepping existed to prevent. So the discs are gone:
+a moving nib sweeps a **capsule**, and `capsuleSpan` computes it exactly as two
+end discs plus the rectangle between them, unioned by taking the outer bounds
+(valid because a capsule is convex). One pass, at any nib size and any speed.
+The board is also filtered once per sweep by the travelled segment's inflated
+bounds, rather than walked per step.
+
+## 5a-0-ax. Three diagram engines, not one
+
+The mermaid feature was strong where it existed — dagre layering with compound
+clusters, anchors extracted from its real edge routes, lenient parsing with
+line-numbered errors, a debounced preview. The gap was **breadth**: the parser
+detected `sequenceDiagram` and `pie` and politely declined them.
+
+Both are built now, each in its own module, because they are genuinely different
+problems:
+
+- **Flowchart** — a graph. Goes to dagre. Unchanged.
+- **Sequence** (`sequence.ts`) — a *timeline*. Participants are columns in a
+  fixed order and messages are rows in written order, so the layout is a table
+  and deliberately not clever. Running it through dagre would ask a
+  layered-graph algorithm to reproduce a grid it has no reason to prefer, and
+  the first time two messages crossed it would reorder the participants to
+  uncross them — the one thing a sequence diagram may never do, because the
+  column order is the reader's map.
+- **Pie** (`pie.ts`) — arithmetic on a circle.
+
+**The lifeline is the load-bearing object.** The obvious build is a head box per
+participant and free-floating arrows positioned by the computed coordinates. It
+draws correctly and it is dead: move a participant and its messages stay behind.
+So a lifeline is a `line` shape with a **zero-width box** — a line runs corner to
+corner, so a box with no width and the column's full depth is exactly a lifeline
+— and every message is a connector bound to two of them, with the row stored as
+an `Anchor` (`{u, v}` normalised to the node's own box). Drag a participant and
+its whole conversation follows. The zero width also disposes of the awkward case:
+`u` picks a side, and on a box with no width both sides are the same x.
+
+**A pie wedge is a closed bezier path**, because `ShapeGeometry.points` is a side
+*count*, not a list of vertices — there is no way to say "this outline" with a
+shape at all. The rim is cut into spans of at most 90°, since one cubic cannot
+hold more than that without visible error and a pie's biggest slice is routinely
+most of the circle. The payoff is that a wedge is editable with the pen tool.
+
+### Blocks were refused, and that was wrong
+
+`loop`, `alt`/`else`, `opt`, `par` were declined by name on the grounds that a
+frame around a *range* of messages cannot be dropped without drawing a picture
+that looks complete and says something the source does not. The reasoning was
+right and the conclusion was wrong: **the answer to a construct you cannot fake
+is to implement it**, and a sequence diagram without `alt` is missing the thing
+sequence diagrams are mostly drawn for. They nest to any depth, and an
+unbalanced document is an error pointing at the line that *opened* the frame —
+the missing `end` is invisible, so there is nothing else useful to point at.
+
+> **A bug worth remembering.** Frames are re-read off the board by sorting their
+> edges by y. A closed frame's bottom sat a few units *below* the next frame's
+> top, which looks fine on the canvas — the boxes are side by side — but made the
+> next `loop` sort before the previous `end`, so the nesting came back inverted.
+> Two orderings that must agree, and only one of them was being looked at.
+
+### Editing a sequence diagram used to destroy it
+
+"Edit diagram" re-derives source from the objects rather than remembering what it
+was given, which is right and is most of the value. But `diagramToMermaid` only
+knows how to write flowcharts, so pointing it at a sequence diagram produced a
+flowchart of lifelines and arrow stubs — and applying that replaced the real
+diagram with the nonsense. `sequenceEmit.ts` is the counterpart, and it stores
+nothing extra: a lifeline is the keyed `line` shape, an actor is recognised by
+the corner radius that drew it as a pill, a frame by the block keyword its label
+opens with, and nesting by containment. `sequenceBlocks.test.ts` round-trips
+mermaid's own nested example and asserts a *second* trip is byte-identical.
+
+### Everything is measured before it is placed
+
+The first sequence layout used a fixed 150-unit column and a fixed gap, and it
+looked *unfinished* — "Identity provider" and "Exchange code + code_verifier"
+ran outside their boxes and across their neighbours. The same bug then appeared
+in the pie legend, where a 220-unit card could not hold "Reviewing each other's
+code — 18%".
+
+Both are measured now, through an injected `Measurer` so the layouts stay pure
+and testable: columns take their own names, gaps take the widest message
+crossing them (shortest span first, so a long label cannot spread its demand
+thinly and leave a neighbouring pair too close), and the legend card takes its
+widest row. **Both renderers are handed the same pre-wrapped `lines`** — the SVG
+preview cannot wrap text by itself, and if it wrapped differently from Konva the
+preview would be showing a diagram nobody is about to get.
+
+### Colour is content, so contrast has to be decided blind
+
+A diagram's palette is written into the objects and shared, so it cannot be
+re-picked per viewer the way chrome can. Every pairing is a decision taken once,
+not knowing the theme it will be opened in — and exactly the kind of decision
+that is wrong quietly.
+
+Two rules. Anything with a **surface** is checked against that surface. Anything
+with **none** — a lifeline, a block frame, a chart title — takes the new
+`canvasInk`, a mid-tone clearing 3:1 against both a white board and a near-black
+one. `textColor` is a near-black chosen against the pale node fills, and using it
+on the canvas is what made block labels vanish on a dark board.
+
+Small dense text cannot be served by any single ink against two opposite
+backgrounds — the best a fixed colour manages is a little under 4:1 — which is
+why the pie legend gets a **card** rather than an ink. `themeContrast.test.ts`
+holds all of it to account, and found a pre-existing defect on the way in:
+Pastel's outline was 2.86:1 against its own fill.
+
+> Block frames went through two wrong answers first. `fill: []` is *not* "no
+> fill" — `fillColor` reads `fill[0]` and falls back to the renderer's default,
+> so frames came out in a colour nobody chose. Tinting them fixed that and broke
+> something worse: a frame covers the messages it contains, so every arrow
+> inside a `loop` was read through a wash, and a nested block washed them twice.
+> Outline and label, which is what mermaid draws and what the construct means.
+
+## 5a-0-ay. Connector labels no longer sit on each other
+
+Every label was drawn at the same fraction along its own run — right for one
+connector and a guaranteed collision for several. Two arrows between the same
+pair of boxes stacked their words; a fan out of a decision node put three in the
+same few pixels. No amount of cleverness inside one connector can fix that,
+because the thing it needs to know is where the *other* labels went.
+
+`connectorLabels.ts` places all of them at once: each label offers a short list
+of positions it would accept, best first, and they are handed out
+first-come-first-served. Sliding along its own run is tried before stepping
+perpendicular off it, because a label that has moved along its arrow still
+obviously belongs to it. The order is by **id**, never by position or document
+order — placement runs on every render, and if it depended on which connector
+was drawn first, a label would jump when an unrelated object was added.
+
+The routes come from the renderers rather than from a central pass, because a
+connector's path depends on live positions, outlines, rotations and
+mid-gesture `liveTransformStore` state that `ConnectorRenderer` has already
+resolved; working it out a second time would mean a second copy of the hardest
+code in the system. `connectorLabelStore.ts` cannot loop: publishing happens in
+an effect, is ignored unless the route actually moved, is deferred to a
+microtask, and notifies only when a placement *changed*.
+
+> The hooks for it were first written after the renderer's `world.length < 4`
+> bail, which lint caught: a hook that runs on some renders and not others is
+> the one thing React cannot survive.
+
 ## 5. Next up
 
 ### 5a-0. The four things to do first
@@ -4613,11 +4789,15 @@ arrow pointing into empty space.
    the bucket, recovery is Neon's six-hour window and nothing else. Everything
    else in this list can wait; this is the only one where the cost of waiting
    is unbounded.
-3. **Look at the mermaid modal.** The dialog was redesigned, the templates were
-   rewritten and the zoom was rebuilt, and the browser tab wedged at a 0x0
-   viewport before the last of it could be seen. Functionally verified — all
-   seven templates parse, the preview renders, the zoom steps 51 → 63 → 79 and
-   fits back — but not *looked at* in its final state.
+3. **Look at the mermaid modal.** It now carries three engines, fourteen
+   templates behind a single grouped menu, and a preview layer per kind.
+   Functionally verified — every template parses, every label is asserted to
+   fit inside the box drawn for it, every theme pairing is held to a contrast
+   ratio, and the sequence round trip is byte-identical on a second pass — but
+   the *sequence* and *pie* previews have never been looked at. The specific
+   thing to check by eye is the block frames: their extents come from which
+   participants each block mentions, which is arithmetic no test can confirm
+   reads well.
 4. **Confirm the zoom buttons respond to a real mouse.** They were broken by
    pointer capture and fixed structurally; the fix could not be verified here
    because synthetic pointer events do not reach this tab at all. A capture
@@ -4633,10 +4813,16 @@ broken; all of it is unwatched.
 - **The right-click menu targeting an object.** Only the empty-board variant
   has been seen. The object variant needs Konva's hit graph, which an
   automation tab does not populate.
-- **The Mermaid apply path.** Parse, layout, build, silhouettes and the
-  templates now carry 79 tests, and the frame-clipping bug that made applied
-  diagrams look broken is fixed and covered. The `Room` wiring — transaction,
-  replace-in-place, selection — still has never run.
+- **The Mermaid apply path.** Parse, layout, build, emit, silhouettes and the
+  templates now carry ~280 tests across three engines, and the frame-clipping
+  bug that made applied diagrams look broken is fixed and covered. The `Room`
+  wiring — transaction, replace-in-place, selection — still has never run, and
+  it now has two more branches in it (sequence and pie) that have never run
+  either.
+- **Connector label placement.** The algorithm is covered, including the
+  fan-out case that motivated it, but it has never been *seen* — and the thing
+  worth seeing is whether a label that has stepped perpendicular off its run
+  still reads as belonging to that run.
 - **Sketched caps, midpoint labels, the context menu, dock spacing** were
   confirmed by reading the scene graph rather than by looking. The label
   contrast fix *was* seen working (white ink on a white plate lifted to

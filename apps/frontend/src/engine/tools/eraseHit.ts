@@ -204,3 +204,215 @@ export function distanceToSegment(
   t = Math.max(0, Math.min(1, t));
   return Math.hypot(px - (ax + t * dx), py - (ay + t * dy));
 }
+
+
+// ---------------------------------------------------------------------------
+// Clipping a stroke to the nib
+// ---------------------------------------------------------------------------
+
+export interface Pt {
+  x: number;
+  y: number;
+}
+
+
+/**
+ * The span of a segment lying inside the **capsule** swept by a moving nib.
+ *
+ * ## Why a capsule rather than a row of discs
+ *
+ * The sweep used to erase by stepping discs along the distance travelled since
+ * the last pointer sample, spaced half a radius apart so they overlapped. The
+ * cost of that is `distance / radius` passes, which is unbounded as the nib
+ * gets smaller: a 4px nib is a 2-unit radius, so a 300-unit swipe asked for
+ * 300 passes -- each one a scan of every object on the board -- and the canvas
+ * stopped responding. Capping the passes would have traded the freeze for a
+ * dotted trail on fast swipes, which is the bug the stepping existed to fix.
+ *
+ * A capsule is what those discs were approximating: every point within `r` of
+ * the segment travelled. Computing it directly is one pass at any nib size and
+ * any speed, and it is *exact* rather than an overlap-and-hope.
+ *
+ * ## Why the answer is a single interval
+ *
+ * A capsule is convex, so a straight segment enters it once and leaves it
+ * once. That is what lets the three parts be unioned by taking the outermost
+ * bounds: the two end discs and the rectangle between them, each contributing
+ * an interval, cannot leave a hole between them.
+ */
+export function capsuleSpan(
+  a: Pt,
+  b: Pt,
+  from: Pt,
+  to: Pt,
+  radius: number
+): [number, number] | null {
+  const spans: Array<[number, number]> = [];
+
+  const headDisc = discSpan(a, b, from.x, from.y, radius);
+  if (headDisc) spans.push(headDisc);
+  const tailDisc = discSpan(a, b, to.x, to.y, radius);
+  if (tailDisc) spans.push(tailDisc);
+
+  const slab = slabSpan(a, b, from, to, radius);
+  if (slab) spans.push(slab);
+
+  if (spans.length === 0) return null;
+  // Convexity: the union of the parts is the interval between the extremes.
+  return [Math.min(...spans.map((s) => s[0])), Math.max(...spans.map((s) => s[1]))];
+}
+
+/**
+ * The span of segment `a->b` inside the rectangle that is `from->to` thickened
+ * by `radius`, in the travel direction's own frame.
+ *
+ * Rotating into that frame turns an oriented rectangle into an axis-aligned
+ * one, which is a pair of independent one-dimensional clips rather than four
+ * edge intersections.
+ */
+function slabSpan(a: Pt, b: Pt, from: Pt, to: Pt, radius: number): [number, number] | null {
+  const ux = to.x - from.x;
+  const uy = to.y - from.y;
+  const travelled = Math.hypot(ux, uy);
+  // A stationary nib is the two end discs, which are the same disc.
+  if (travelled === 0) return null;
+  const ex = ux / travelled;
+  const ey = uy / travelled;
+
+  // Along the travel, and across it.
+  const project = (p: Pt) => ({
+    along: (p.x - from.x) * ex + (p.y - from.y) * ey,
+    across: -(p.x - from.x) * ey + (p.y - from.y) * ex,
+  });
+  const pa = project(a);
+  const pb = project(b);
+
+  let lo = 0;
+  let hi = 1;
+  // Liang-Barsky, twice: once for each pair of parallel edges.
+  const clip = (start: number, end: number, min: number, max: number): boolean => {
+    const delta = end - start;
+    if (delta === 0) return start >= min && start <= max;
+    const t1 = (min - start) / delta;
+    const t2 = (max - start) / delta;
+    lo = Math.max(lo, Math.min(t1, t2));
+    hi = Math.min(hi, Math.max(t1, t2));
+    return hi > lo;
+  };
+
+  if (!clip(pa.along, pb.along, 0, travelled)) return null;
+  if (!clip(pa.across, pb.across, -radius, radius)) return null;
+  return hi > lo ? [lo, hi] : null;
+}
+
+/**
+ * The interval of a segment that lies within a disc, or null for none.
+ *
+ * `|a + t(b - a) - c|² = r²` is a quadratic in `t`; its two roots are where
+ * the segment crosses the circle. Clamped to the segment's own `[0, 1]`, so a
+ * chord that starts or ends beyond the endpoints is reported as reaching them.
+ */
+function discSpan(
+  a: Pt,
+  b: Pt,
+  cx: number,
+  cy: number,
+  radius: number
+): [number, number] | null {
+  const dx = b.x - a.x;
+  const dy = b.y - a.y;
+  const fx = a.x - cx;
+  const fy = a.y - cy;
+
+  const qa = dx * dx + dy * dy;
+  if (qa === 0) {
+    // A duplicated sample. It is inside or it is not; there is no interval.
+    return fx * fx + fy * fy <= radius * radius ? [0, 1] : null;
+  }
+  const qb = 2 * (fx * dx + fy * dy);
+  const qc = fx * fx + fy * fy - radius * radius;
+
+  const disc = qb * qb - 4 * qa * qc;
+  if (disc < 0) return null;
+
+  const root = Math.sqrt(disc);
+  const t0 = (-qb - root) / (2 * qa);
+  const t1 = (-qb + root) / (2 * qa);
+
+  const lo = Math.max(0, t0);
+  const hi = Math.min(1, t1);
+  // Tangent, or a chord entirely off the ends of this segment.
+  return hi > lo ? [lo, hi] : null;
+}
+
+function lerp(a: Pt, b: Pt, t: number): Pt {
+  return { x: a.x + (b.x - a.x) * t, y: a.y + (b.y - a.y) * t };
+}
+
+
+/**
+ * The parts of a polyline left after a whole nib *stroke* is lifted out of it.
+ *
+ * ## The bug this replaces
+ *
+ * A freehand stroke was erased at *sample* granularity: if the nib came within
+ * range of any part of a segment, **both of that segment's endpoints were
+ * deleted**. Pointer samples are as far apart as the hand was fast -- twenty
+ * or more world units on a quick stroke -- so a 2-unit nib touching the middle
+ * of one wiped the whole span and reached into its neighbours. The tool
+ * removed roughly the sample spacing whatever size it was set to, which is why
+ * shrinking the nib appeared to do nothing.
+ *
+ * So the cut is computed rather than snapped: each segment is intersected with
+ * the swept capsule analytically and split at the **boundary points**, which
+ * are new vertices lying exactly on it. The gap left behind is the nib's own
+ * width, at every size and every speed.
+ *
+ * A pointer move is a segment rather than a point, and taking it in one pass
+ * is what makes the cost independent of how far the hand travelled -- see
+ * `capsuleSpan` for why the row of discs this replaces could not be made fast
+ * and correct at the same time.
+ *
+ * Runs of fewer than two points are dropped: a single point is not a stroke,
+ * and rebuilding one produces a dot the person did not draw.
+ */
+export function clipPolylineByCapsule(
+  points: readonly Pt[],
+  from: Pt,
+  to: Pt,
+  radius: number
+): Pt[][] {
+  const runs: Pt[][] = [];
+  if (points.length === 0 || !(radius > 0)) return points.length >= 2 ? [points.slice()] : runs;
+
+  let current: Pt[] = [];
+  const cut = () => {
+    if (current.length >= 2) runs.push(current);
+    current = [];
+  };
+  const inside = (p: Pt) => distanceToSegment(p.x, p.y, from.x, from.y, to.x, to.y) <= radius;
+
+  if (!inside(points[0])) current.push(points[0]);
+
+  for (let i = 0; i < points.length - 1; i += 1) {
+    const a = points[i];
+    const b = points[i + 1];
+    const span = capsuleSpan(a, b, from, to, radius);
+
+    if (!span) {
+      current.push(b);
+      continue;
+    }
+
+    const [lo, hi] = span;
+    if (lo > 0) current.push(lerp(a, b, lo));
+    cut();
+    if (hi < 1) {
+      current.push(lerp(a, b, hi));
+      current.push(b);
+    }
+  }
+
+  cut();
+  return runs;
+}

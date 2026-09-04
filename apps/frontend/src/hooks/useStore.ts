@@ -445,9 +445,19 @@ export const useStore = create<StoreState>((set) => ({
     setStoragePref('vega_pen_keep_selected', String(val));
     set({ penKeepSelected: val });
   },
-  eraserSize: loadNumberPref('vega_eraser_size', 15, 4, 200),
+  /**
+   * The eraser tip's **width** in screen pixels, like every other nib in the
+   * app -- the pencil's `penSize` is a stroke width and both are set by the
+   * same control, so they have to mean the same thing.
+   *
+   * It used to be read as a radius, which made the tool twice the size it
+   * reported and turned this 4-200 into an effective 8-400 where most of the
+   * travel was unusable. 120 is a generous eraser; beyond that a person is
+   * selecting, not erasing.
+   */
+  eraserSize: loadNumberPref('vega_eraser_size', 20, 4, 120),
   setEraserSize: (val) => {
-    const clamped = Math.min(200, Math.max(4, val));
+    const clamped = Math.min(120, Math.max(4, Math.round(val)));
     setStoragePref('vega_eraser_size', String(clamped));
     set({ eraserSize: clamped });
   },

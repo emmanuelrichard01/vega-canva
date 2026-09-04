@@ -4518,6 +4518,11 @@ input.slider__value:focus-visible {
   display: flex;
   align-items: center;
   gap: var(--space-2);
+  /* A label, a track and a typable readout on one line do not fit the dock's
+     default 172px panel, and the label is what gave -- so the row sets its own
+     floor and the panel grows to it. A flyout may be wider; none may be too
+     narrow to read. */
+  min-width: 208px;
   /* The same insets `.flyout-field` uses, so the nib row sits on the flyout's
      rhythm rather than a few pixels off it. It carried its own caption block
      before and the difference was invisible; with the caption gone it is the
@@ -13417,6 +13422,14 @@ body[data-zen='physics'] .forces-handle { bottom: 32px; }
   white-space: nowrap;
 }
 
+/* Takes the slack in the header so the close button sits at the far right.
+   The h2 rule below cannot do this: the heading is nested inside this block,
+   so it grew within a wrapper that was itself shrink-to-fit. */
+.mermaid-modal__title {
+  flex: 1;
+  min-width: 0;
+}
+
 .mermaid-modal__head h2,
 .help-modal__head h2 {
   flex: 1;
@@ -15695,12 +15708,92 @@ body[data-zen='physics'] .forces-handle { bottom: 32px; }
    visible nor obviously reachable, and a sideways scrollbar inside a dialog
    reads as a layout fault. They wrap instead. Two rows, everything visible,
    nothing to discover. */
-.mm-templates {
-  height: auto;
-  flex-wrap: wrap;
-  margin-bottom: var(--space-2);
-  max-width: 100%;
+/* The template menu, sized and lit exactly like `.mm-btn` next to it.
+
+   It is a native `select` under a chevron of our own: `appearance: none` takes
+   the platform's control chrome off the trigger while leaving the *menu* the
+   platform draws — which is the half worth keeping, because it escapes this
+   narrow column, groups its options and brings keyboard and type-ahead. What
+   made the first attempt look wrong was inheriting none of the toolbar's
+   metrics: its own height, its own font size and the OS arrow still in place,
+   beside a button that had none of those. Every value here is the one `.mm-btn`
+   uses, so the two read as one row of controls. */
+.mm-template-picker {
+  position: relative;
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-1);
+  height: var(--control-h-sm);
+  padding: 0 var(--space-2);
+  border: 1px solid var(--border-divider);
+  border-radius: var(--radius-md);
+  background: var(--surface-primary);
+  color: var(--text-secondary);
+  cursor: pointer;
+  transition: background-color var(--motion-hover), color var(--motion-hover),
+    border-color var(--motion-hover);
 }
+
+.mm-template-picker:hover {
+  background: var(--surface-hover);
+  color: var(--text-primary);
+}
+
+/* Keyboard focus only.
+
+   `:focus-within` fired on every click, so opening the menu with the mouse
+   left a ring behind it — the affordance a keyboard user needs, shown to the
+   one person who has just demonstrated they do not. `:has(:focus-visible)`
+   asks the browser the question that was actually meant: did this get focus in
+   a way that wants to be seen. */
+.mm-template-picker:has(.mm-template-picker__select:focus-visible) {
+  outline: 2px solid var(--focus-ring);
+  outline-offset: 1px;
+}
+
+/* Our chevron, since the platform's is gone. `currentColor` so it picks up the
+   hover with the rest of the control rather than staying a fixed grey. */
+.mm-template-picker::after {
+  content: '';
+  width: 7px;
+  height: 7px;
+  margin-left: 2px;
+  border-right: 1.5px solid currentColor;
+  border-bottom: 1.5px solid currentColor;
+  transform: translateY(-2px) rotate(45deg);
+  opacity: 0.7;
+}
+
+.mm-template-picker__select {
+  appearance: none;
+  -webkit-appearance: none;
+  border: 0;
+  background: transparent;
+  color: inherit;
+  font-family: inherit;
+  font-size: var(--text-xs);
+  font-weight: 500;
+  line-height: 1;
+  padding: 0;
+  max-width: 132px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  cursor: pointer;
+}
+
+.mm-template-picker__select:focus {
+  outline: none;
+}
+
+/* The menu itself is drawn by the platform, which does not inherit the page's
+   colours — so the options are given them explicitly or a dark theme shows
+   white rows. */
+.mm-template-picker__select option,
+.mm-template-picker__select optgroup {
+  background: var(--surface-primary);
+  color: var(--text-primary);
+}
+
 
 /* The bars wrap for the same reason: at a narrow width the direction switch
    and the Format button would otherwise push each other out of the panel.

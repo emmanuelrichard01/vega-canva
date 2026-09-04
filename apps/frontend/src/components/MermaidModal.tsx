@@ -15,6 +15,7 @@ import {
   ArrowLeft,
   Wand2,
   PenTool,
+  LayoutTemplate,
 } from 'lucide-react';
 import { useFocusTrap } from '../hooks/useFocusTrap';
 import { useDebouncedValue } from '../hooks/useDeferredValue';
@@ -27,12 +28,54 @@ import {
   type MermaidNode,
 } from '../engine/diagram/mermaid';
 import { layoutGraph } from '../engine/diagram/layout';
+import {
+  looksLikeSequence,
+  parseSequence,
+  layoutSequence,
+  SEQ_TYPE,
+  SELF_REACH,
+  SELF_DROP,
+} from '../engine/diagram/sequence';
+import { sequenceMeasurer } from '../engine/diagram/sequenceMeasure';
+import {
+  looksLikePie,
+  parsePie,
+  layoutPie,
+  wedgePath,
+  PIE_LEGEND_SIZE,
+  PIE_SLICE_SIZE,
+} from '../engine/diagram/pie';
 import { diagramNodeSizes } from '../engine/diagram/build';
 
-const TEMPLATES = [
+/**
+ * The starting points, and what each one is for.
+ *
+ * A template is the fastest honest answer to "what can this thing do", so the
+ * set is chosen to *span* the feature rather than to repeat it: two engines
+ * (flowchart, sequence and pie), every shape, subgraphs, class styling, all
+ * four arrow weights, notes, self-messages, and every block form — `loop`,
+ * `alt`/`else`, `opt` and `par`. Somebody who clicks through all of them has
+ * seen the whole vocabulary without reading any documentation.
+ *
+ * Each one is a real artefact rather than a demonstration of syntax -- an
+ * OAuth exchange that is actually correct, a pipeline that actually branches
+ * the way pipelines do. A template that is obviously a toy teaches that the
+ * feature is a toy.
+ *
+ * The `kind` groups the picker, because "which of these draws a timeline"
+ * is the first thing to know and the names alone do not say — Checkout and
+ * CI/CD could each be either.
+ */
+const TEMPLATES: ReadonlyArray<{
+  id: string;
+  name: string;
+  kind: 'flow' | 'sequence' | 'pie';
+  source: string;
+}> = [
   {
     id: 'flowchart',
     name: 'Flowchart',
+    kind: 'flow',
     source: `%% The basics: a shape per role, and a branch that says why.
 flowchart TD
     Start([Request received]) --> Check{Payload valid?}
@@ -45,6 +88,7 @@ flowchart TD
   {
     id: 'shapes',
     name: 'Shape Reference',
+    kind: 'flow',
     source: `%% Every shape, labelled with the syntax that makes it.
 %% Keep this one open beside your own diagram as a cheat sheet.
 flowchart LR
@@ -74,103 +118,345 @@ flowchart LR
   {
     id: 'architecture',
     name: 'Cloud Architecture',
-    source: `%% Nested subgraphs, and classDef to colour a tier at a time.
+    kind: 'flow',
+    source: `%% Nested subgraphs for the trust boundaries, classDef to colour a
+%% tier at a time, and thick arrows for the path a request actually takes.
 flowchart TD
-    subgraph Edge ["Edge"]
+    subgraph Edge ["Public edge"]
         Web([Browser]):::client
         Mobile([iOS / Android]):::client
+        CDN{{CDN + WAF}}:::edge
     end
 
     subgraph Cloud ["Private network"]
-        LB{{Load balancer}}
+        LB{{Load balancer}}:::edge
 
         subgraph Services ["Services"]
             Gateway[API gateway]:::svc
-            Auth[Auth]:::svc
-            Orders[Orders]:::svc
+            Auth[[Auth]]:::svc
+            Orders[[Orders]]:::svc
+            Search[[Search]]:::svc
+        end
+
+        subgraph Async ["Work that outlives the request"]
+            Queue[/Job queue/]:::queue
+            Worker[Workers]:::svc
         end
 
         Cache[(Redis)]:::data
         Main[(Postgres)]:::data
+        Blob[(Object store)]:::data
     end
 
-    Web --> LB
-    Mobile --> LB
-    LB --> Gateway
-    Gateway --> Auth
-    Gateway --> Orders
+    Web & Mobile ==> CDN
+    CDN ==> LB
+    LB ==> Gateway
+    Gateway ==> Auth & Orders & Search
     Auth --> Cache
-    Orders --> Main
+    Orders ==> Main
+    Orders -.->|receipt, email, webhook| Queue
+    Queue --> Worker
+    Worker --> Blob
+    Worker -.->|retry| Queue
+    Search --> Cache
 
     classDef client fill:#EEF2FF,stroke:#6366F1
+    classDef edge fill:#F5F3FF,stroke:#7C3AED
     classDef svc fill:#ECFDF5,stroke:#059669
+    classDef queue fill:#FFF7ED,stroke:#EA580C
     classDef data fill:#FEF3C7,stroke:#D97706`,
-  },
-  {
-    id: 'oauth',
-    name: 'OAuth2 Auth Flow',
-    source: `%% Solid is a request, dotted is what comes back.
-%% Reading direction alone tells you which half of the round trip you are in.
-flowchart TD
-    User([User]) -->|1 Sign in| App[Your app]
-    App -->|2 Redirect| Provider{{Identity provider}}
-    Provider -.->|3 Authorization code| App
-    App -->|4 Exchange code + secret| Token[/Token endpoint/]
-    Token -.->|5 Access token| App
-    App -->|6 Bearer request| Api[API]
-    Api -.->|7 Protected resource| App`,
   },
   {
     id: 'gitflow',
     name: 'Git Branching Strategy',
-    source: `%% "&" fans one arrow out to several nodes, and the loop is the point:
-%% a failing check sends the work back rather than forward.
+    kind: 'flow',
+    source: `%% "&" fans one arrow out to several nodes, and the loops are the
+%% point: a failing check sends work back rather than forward.
 flowchart LR
     Main([main]) --> Feat1[feature/canvas]
     Main --> Feat2[feature/export]
+    Main --> Hot[/hotfix/]
 
     Feat1 & Feat2 --> Review{Review + CI}
-    Review -->|passes| Staging[(staging)]
-    Review -.->|fails| Fix[Fix and push]
+    Review -->|approved| Squash[[Squash merge]]
+    Review -.->|changes requested| Fix[Fix and push]
     Fix --> Review
 
-    Staging --> Tag[/Tag a version/]
-    Tag ==> Main`,
+    Squash --> Staging[(staging)]
+    Staging --> Soak{Soak 24h}
+    Soak -.->|regression| Revert>Revert]
+    Revert --> Main
+    Soak -->|clean| Tag[/Tag a version/]
+    Tag ==> Main
+    Hot ==>|straight to prod| Tag`,
   },
   {
     id: 'cicd',
     name: 'CI/CD Pipeline',
-    source: `%% Thick arrows are the path a green build takes; dotted is the way out.
+    kind: 'flow',
+    source: `%% Thick arrows are the path a green build takes; dotted is the way
+%% out. Everything inside the group runs at once.
 flowchart LR
-    Push([Push]) ==> Install[Install]
+    Push([Push]) ==> Install[Install + cache]
 
     subgraph Checks ["Runs in parallel"]
         Lint[Typecheck + lint]
         Test[Unit tests]
         Build[Build]
+        Scan[Dependency audit]
     end
 
-    Install ==> Lint
-    Install ==> Test
-    Install ==> Build
+    Install ==> Lint & Test & Build & Scan
+    Lint & Test & Build & Scan ==> Gate{All green?}
 
-    Lint & Test & Build ==> Gate{All green?}
-    Gate ==>|yes| Deploy[[Deploy]]
-    Gate -.->|no| Report[/Report the failure/]
-    Deploy ==> Live([Live])`,
+    Gate -.->|no| Report[/Annotate the failing lines/]
+    Report -.-> Push
+    Gate ==>|yes| Canary[[Deploy 5%]]
+    Canary --> Watch{Error rate steady?}
+    Watch -.->|no| Roll>Roll back]
+    Watch ==>|yes| Full[[Deploy 100%]]
+    Full ==> Live(((Live)))`,
   },
   {
     id: 'state',
     name: 'State Machine',
-    source: `%% Self-loops for the states that retry, a double circle for the end.
+    kind: 'flow',
+    source: `%% An order's whole life. Self-loops for the states that retry, a
+%% double circle for the ones you can never leave.
 flowchart LR
-    Start(((Idle))) --> Queued([Queued])
-    Queued --> Running{{Running}}
-    Running -->|retry| Running
-    Running -->|ok| Done(((Done)))
-    Running -->|error| Failed[/Failed/]
-    Failed -->|requeue| Queued
-    Failed -->|give up| Dead((Dead letter))`,
+    New(((Draft))) --> Placed([Placed])
+    Placed --> Pay{Payment}
+    Pay -->|authorised| Picking{{Picking}}
+    Pay -.->|declined| Held[/On hold/]
+    Held -->|new card| Pay
+    Held -->|48h| Cancelled(((Cancelled)))
+
+    Picking -->|short stock| Picking
+    Picking --> Shipped([Shipped])
+    Shipped --> Delivered(((Delivered)))
+    Shipped -.->|lost| Claim[Claim]
+    Claim --> Refunded(((Refunded)))
+    Delivered -.->|30 days| Returned[Return]
+    Returned --> Refunded`,
+  },
+  {
+    id: 'pipeline',
+    name: 'Data Pipeline',
+    kind: 'flow',
+    source: `%% Where the data comes from, what happens to it, and what happens
+%% when a batch is bad. Dotted arrows are the failure paths.
+flowchart LR
+    subgraph Sources ["Sources"]
+        App[(App events)]:::src
+        Crm[(CRM export)]:::src
+        Files[/Partner CSVs/]:::src
+    end
+
+    App & Crm & Files ==> Land[(Landing zone)]
+    Land ==> Validate{Schema valid?}
+
+    Validate -.->|no| Quarantine[[Quarantine]]:::bad
+    Quarantine -.-> Alert>Page the owner]
+
+    Validate ==>|yes| Clean[Dedupe + normalise]
+    Clean ==> Enrich[Join reference data]
+    Enrich ==> Warehouse[(Warehouse)]
+
+    subgraph Serving ["Serving"]
+        Marts[Marts]:::out
+        Dash[Dashboards]:::out
+        Model[Feature store]:::out
+    end
+
+    Warehouse ==> Marts ==> Dash
+    Warehouse ==> Model
+    Model -.->|drift detected| Enrich
+
+    classDef src fill:#EEF2FF,stroke:#6366F1
+    classDef bad fill:#FEE2E2,stroke:#DC2626
+    classDef out fill:#ECFDF5,stroke:#059669`,
+  },
+  {
+    id: 'oauth',
+    name: 'OAuth 2.0 (PKCE)',
+    kind: 'sequence',
+    source: `%% OAuth is a conversation, so it is drawn as one. Solid arrows are
+%% requests, dotted are the replies -- and the vertical order is the only
+%% thing that says which step comes first.
+sequenceDiagram
+    actor User as User
+    participant App as Single-page app
+    participant IdP as Identity provider
+    participant API as Resource API
+
+    Note over App: Generates code_verifier
+    App->>App: Hash it into code_challenge
+    User->>App: Click "Sign in"
+    App->>IdP: Authorize + code_challenge
+    IdP->>User: Show consent screen
+    User->>IdP: Approve
+    IdP-->>App: Authorization code
+    App->>IdP: Exchange code + code_verifier
+    IdP-->>App: Access token + refresh token
+    Note over App,API: The token never leaves the browser tab
+    App->>API: GET /me with bearer token
+    API-->>App: Profile
+    App-)IdP: Refresh in the background`,
+  },
+  {
+    id: 'checkout',
+    name: 'Checkout & Payment',
+    kind: 'sequence',
+    source: `%% Where the money is is where the failure cases matter, so they are
+%% drawn: "-x" is a message that does not arrive, and the async arrow is work
+%% that outlives the request.
+sequenceDiagram
+    actor Buyer as Buyer
+    participant Store as Storefront
+    participant Cart as Cart service
+    participant PSP as Payment provider
+    participant Bank as Issuing bank
+    participant Mail as Email worker
+
+    Buyer->>Store: Confirm order
+    Store->>Cart: Reserve stock
+    Cart-->>Store: Reserved for 15 min
+    Store->>PSP: Authorize
+    PSP->>Bank: Request funds
+    Bank-->>PSP: 3-D Secure required
+    PSP-->>Store: Challenge URL
+    Store->>Buyer: Redirect to the bank
+    Buyer->>Bank: Approve
+    Bank-->>PSP: Authorized
+    PSP-->>Store: Payment captured
+    Note over Store,Cart: Reservation becomes a real allocation
+    Store->>Cart: Commit
+    Store-)Mail: Queue the receipt
+    Store-->>Buyer: Order confirmed
+    Mail-xBuyer: Bounced address, retried later`,
+  },
+  {
+    id: 'incident',
+    name: 'Incident Response',
+    kind: 'sequence',
+    source: `%% A postmortem timeline, drawn while it is still fresh. Notes carry
+%% the things that are true of a span rather than of one message.
+sequenceDiagram
+    participant Alert as Alerting
+    actor Oncall as On-call
+    participant Svc as Checkout service
+    participant DB as Primary database
+    actor Lead as Incident lead
+    participant Status as Status page
+
+    Alert->>Oncall: p99 latency over budget
+    Oncall->>Svc: Read the dashboards
+    Svc-->>Oncall: Connection pool saturated
+    Oncall->>DB: Check active queries
+    DB-->>Oncall: One unindexed scan, 40s
+    Note over Oncall,Lead: Declared a Sev-2 at 14:12
+    Oncall->>Lead: Page the incident lead
+    Lead->>Status: Post "investigating"
+    Oncall->>DB: Kill the query
+    DB-->>Svc: Pool recovers
+    Svc-->>Alert: Latency back under budget
+    Note over Lead,Status: Monitored for 30 minutes before closing
+    Lead->>Status: Post "resolved"
+    Lead-)Oncall: Schedule the postmortem`,
+  },
+  {
+    id: 'retry',
+    name: 'Retry with Backoff',
+    kind: 'sequence',
+    source: `%% What a resilient client actually does. "loop" frames the range
+%% it repeats, "alt" the branch it takes, "opt" the step it may skip —
+%% each is a box around the messages inside it, not a message of its own.
+sequenceDiagram
+    actor Caller as Caller
+    participant Client as SDK client
+    participant Api as Payments API
+    participant Bus as Event bus
+
+    Caller->>Client: charge(order)
+    loop up to 3 attempts
+        Client->>Api: POST /charges
+        alt accepted
+            Api-->>Client: 201 Created
+        else rate limited
+            Api-->>Client: 429 Retry-After
+            Note over Client: Sleeps, then doubles the wait
+        else server error
+            Api--xClient: 503
+        end
+    end
+
+    opt every attempt failed
+        Client-->>Caller: PaymentUnavailable
+    end
+
+    Client-)Bus: Emit charge.attempted
+    Client-->>Caller: Receipt`,
+  },
+  {
+    id: 'trace',
+    name: 'Distributed Trace',
+    kind: 'sequence',
+    source: `%% One request across four services, with the parallel fan-out
+%% drawn as what it is: "par" frames work that happens at the same time.
+sequenceDiagram
+    participant Edge as Edge proxy
+    participant Web as Web app
+    participant Cart as Cart
+    participant Stock as Inventory
+    participant Price as Pricing
+
+    Edge->>Web: GET /checkout
+    Web->>Cart: Load basket
+    Cart-->>Web: 4 items
+
+    par fan out
+        Web->>Stock: Reserve all four
+    and
+        Web->>Price: Quote with promotions
+    end
+
+    Stock-->>Web: 3 reserved, 1 short
+    Price-->>Web: Total with discount
+
+    alt everything in stock
+        Web-->>Edge: 200 with the full basket
+    else something is short
+        Note over Web,Cart: Basket is split, not failed
+        Web->>Cart: Move the short item to saved
+        Web-->>Edge: 200 with a warning
+    end`,
+  },
+  {
+    id: 'sprint',
+    name: 'Where the Sprint Went',
+    kind: 'pie',
+    source: `%% A pie is a title and a list of shares. The numbers are whatever
+%% unit you like — they are normalised, so these are hours.
+pie title Where the sprint actually went
+    "Shipping the roadmap" : 34
+    "Reviewing each other's code" : 18
+    "Production incidents" : 15
+    "Meetings that were emails" : 21
+    "Fighting the build" : 12`,
+  },
+  {
+    id: 'bundle',
+    name: 'Bundle Budget',
+    kind: 'pie',
+    source: `%% "showData" prints the raw number beside each share, which is what
+%% you want when the units mean something. These are kilobytes gzipped.
+pie showData title What is in the 480 kB bundle
+    "Framework" : 128
+    "Canvas engine" : 96
+    "Icons and fonts" : 74
+    "Collaboration (CRDT)" : 71
+    "Charts" : 58
+    "Everything else" : 53`,
   },
 ];
 
@@ -254,10 +540,58 @@ export const MermaidModal: React.FC<Props> = ({
    * the diagram gets more worth previewing.
    */
   const settledSource = useDebouncedValue(source, 140);
-  const { graph, error, errorLine, skippedLines } = useMemo(
-    () => parseMermaidLenient(settledSource),
-    [settledSource]
+  /**
+   * Which kind of diagram is in the editor.
+   *
+   * Decided from the source rather than from a mode the reader has to set,
+   * because mermaid already says so on its first line and asking twice is a
+   * way for the two answers to disagree. `sequence.ts` explains why the two
+   * take different paths from here: a flowchart is a graph and goes to dagre,
+   * a sequence diagram is a timeline and is laid out as a table.
+   */
+  const isSequence = looksLikeSequence(settledSource);
+  const isPie = !isSequence && looksLikePie(settledSource);
+  const flow = useMemo(() => parseMermaidLenient(settledSource), [settledSource]);
+  const seq = useMemo(
+    () => (isSequence ? parseSequence(settledSource) : null),
+    [settledSource, isSequence]
   );
+  const pie = useMemo(() => (isPie ? parsePie(settledSource) : null), [settledSource, isPie]);
+  const pieLayout = useMemo(
+    () =>
+      pie?.chart
+        ? layoutPie(pie.chart, {
+            originX: 20,
+            originY: 20,
+            // The same measurer the insert uses, so the card is the same size
+            // in the preview as on the board.
+            measure: sequenceMeasurer(renderStyle === 'sketch'),
+          })
+        : null,
+    [pie, renderStyle]
+  );
+
+  const seqLayout = useMemo(
+    () =>
+      seq?.diagram
+        ? layoutSequence(seq.diagram, {
+            originX: 20,
+            originY: 20,
+            // The same measurer the insert uses, so the preview breaks its
+            // lines exactly where the board will.
+            measure: sequenceMeasurer(renderStyle === 'sketch'),
+          })
+        : null,
+    [seq, renderStyle]
+  );
+
+  const graph = isSequence || isPie ? null : flow.graph;
+  const error = isSequence ? seq?.error ?? null : isPie ? pie?.error ?? null : flow.error;
+  const errorLine = isSequence ? seq?.errorLine : isPie ? pie?.errorLine : flow.errorLine;
+  const skippedLines =
+    (isSequence ? seq?.skippedLines : isPie ? pie?.skippedLines : flow.skippedLines) ?? [];
+  /** Something parsed that the button could insert -- of any of the three kinds. */
+  const ready = Boolean(graph || seqLayout || pieLayout);
   /** True while the preview is a keystroke or two behind the editor. */
   const previewPending = settledSource !== source;
   const activeTheme = DIAGRAM_THEMES[themeId] || DIAGRAM_THEMES.indigo;
@@ -292,6 +626,23 @@ export const MermaidModal: React.FC<Props> = ({
    * that disagrees with the result is worse than no preview.
    */
   const preview = useMemo(() => {
+    /**
+     * A sequence diagram has its own geometry and none of the flowchart's, so
+     * it reports only the bounds the stage needs to fit and leaves every
+     * flowchart collection empty -- the `map`s below then draw nothing without
+     * a branch of their own.
+     */
+    if (seqLayout || pieLayout) {
+      const box = seqLayout ?? pieLayout!;
+      return {
+        placed: [],
+        at: new Map(),
+        clusterAt: new Map(),
+        subgraphs: [],
+        maxX: box.width + 60,
+        maxY: box.height + 60,
+      };
+    }
     if (!graph) return null;
     const sizes = diagramNodeSizes(graph, renderStyle === 'sketch');
     const { nodes: placedNodes, clusters } = layoutGraph(graph, {
@@ -324,7 +675,7 @@ export const MermaidModal: React.FC<Props> = ({
     const maxY = Math.max(150, ...allY, ...subgraphs.map((s) => s!.y + s!.height));
 
     return { placed: placedNodes, at, clusterAt, subgraphs, maxX, maxY };
-  }, [graph, renderStyle]);
+  }, [graph, seqLayout, pieLayout, renderStyle]);
 
   /**
    * Whether the reader has taken the camera over.
@@ -499,8 +850,16 @@ export const MermaidModal: React.FC<Props> = ({
 
   if (!open) return null;
 
-  const nodeCount = graph?.nodes.length ?? 0;
-  const edgeCount = graph?.edges.length ?? 0;
+  // A sequence diagram counts participants and messages; the words differ
+  // because the things do, and "3 boxes" for three lifelines would be wrong.
+  const nodeCount = pieLayout
+    ? pieLayout.wedges.length
+    : seqLayout
+      ? seqLayout.lanes.length
+      : graph?.nodes.length ?? 0;
+  const edgeCount = seqLayout
+    ? seqLayout.steps.filter((st) => st.kind === 'arrow').length
+    : graph?.edges.length ?? 0;
   const subgraphCount = graph?.subgraphs?.length ?? 0;
 
   return (
@@ -514,18 +873,29 @@ export const MermaidModal: React.FC<Props> = ({
         onPointerDown={(e) => e.stopPropagation()}
       >
         <header className="mermaid-modal__head">
-          <div>
+          {/* The title block takes the slack, so the close button lands at the
+              far right of the header rather than tucked against the heading.
+              `h2 { flex: 1 }` could not do it: the h2 is nested one level
+              down, so it was growing inside this wrapper while the wrapper
+              itself stayed shrink-to-fit. */}
+          <div className="mermaid-modal__title">
             <h2 id="mermaid-title">
               {replacing ? 'Edit diagram' : 'Diagram from code'}
             </h2>
             {/* The count belongs with the title, not in a toolbar: it is what
                 was understood, not something to operate. */}
             <span className="mm-count">
-              {graph
-                ? `${nodeCount} ${nodeCount === 1 ? 'box' : 'boxes'} · ${edgeCount} ${
-                    edgeCount === 1 ? 'connection' : 'connections'
-                  }${subgraphCount ? ` · ${subgraphCount} ${subgraphCount === 1 ? 'group' : 'groups'}` : ''}`
-                : 'Mermaid syntax'}
+              {pieLayout
+                ? `${nodeCount} ${nodeCount === 1 ? 'slice' : 'slices'}`
+                : seqLayout
+                ? `${nodeCount} ${nodeCount === 1 ? 'participant' : 'participants'} · ${edgeCount} ${
+                    edgeCount === 1 ? 'message' : 'messages'
+                  }`
+                : graph
+                  ? `${nodeCount} ${nodeCount === 1 ? 'box' : 'boxes'} · ${edgeCount} ${
+                      edgeCount === 1 ? 'connection' : 'connections'
+                    }${subgraphCount ? ` · ${subgraphCount} ${subgraphCount === 1 ? 'group' : 'groups'}` : ''}`
+                  : 'Mermaid syntax'}
             </span>
           </div>
           <button className="btn-icon" onClick={onClose} aria-label="Close">
@@ -563,6 +933,59 @@ export const MermaidModal: React.FC<Props> = ({
               </div>
 
               <div className="mm-bar__group">
+                {/*
+                  Nine templates as one control, not as nine chips.
+
+                  The chips were a wrapping strip two rows deep above a code
+                  editor — the largest block of chrome in the dialog, spent on
+                  something used once at the start and never again. A menu is
+                  the same nine choices in one row's height, and it puts the
+                  space back where the work is.
+
+                  Native, for the reason `EndPicker` is: the platform draws an
+                  overlay that escapes this column, `optgroup` labels the two
+                  engines properly — better than the hairline the strip needed
+                  to say the same thing — and keyboard and type-ahead come free.
+                */}
+                <span className="mm-template-picker">
+                  <LayoutTemplate size={12} aria-hidden />
+                  <select
+                    className="mm-template-picker__select"
+                    value={activeTemplate ?? ''}
+                    aria-label="Start from a template"
+                    onChange={(e) => {
+                      const chosen = TEMPLATES.find((t) => t.id === e.target.value);
+                      if (!chosen) return;
+                      setSource(chosen.source);
+                      setActiveTemplate(chosen.id);
+                    }}
+                  >
+                    {/* Present only until one is picked: it is the empty state,
+                        not a way back to it — there is nothing to return to. */}
+                    {!activeTemplate && <option value="">Template</option>}
+                    <optgroup label="Flowcharts">
+                      {TEMPLATES.filter((t) => t.kind === 'flow').map((t) => (
+                        <option key={t.id} value={t.id}>
+                          {t.name}
+                        </option>
+                      ))}
+                    </optgroup>
+                    <optgroup label="Sequence diagrams">
+                      {TEMPLATES.filter((t) => t.kind === 'sequence').map((t) => (
+                        <option key={t.id} value={t.id}>
+                          {t.name}
+                        </option>
+                      ))}
+                    </optgroup>
+                    <optgroup label="Pie charts">
+                      {TEMPLATES.filter((t) => t.kind === 'pie').map((t) => (
+                        <option key={t.id} value={t.id}>
+                          {t.name}
+                        </option>
+                      ))}
+                    </optgroup>
+                  </select>
+                </span>
                 <button
                   type="button"
                   className="mm-btn"
@@ -573,27 +996,6 @@ export const MermaidModal: React.FC<Props> = ({
                 </button>
               </div>
             </div>
-
-            {/* Templates seed the editor, so they live over it. A row of quiet
-                chips rather than a labelled strip: the label said "Templates:"
-                next to five buttons that are visibly templates. */}
-            <div className="mm-seg mm-templates" role="group" aria-label="Start from a template">
-              {TEMPLATES.map((tmpl) => (
-                <button
-                  key={tmpl.id}
-                  type="button"
-                  className="mm-seg__btn"
-                  aria-pressed={activeTemplate === tmpl.id}
-                  onClick={() => {
-                    setSource(tmpl.source);
-                    setActiveTemplate(tmpl.id);
-                  }}
-                >
-                  {tmpl.name}
-                </button>
-              ))}
-            </div>
-
 
             <textarea
               id="mermaid-source"
@@ -607,7 +1009,7 @@ export const MermaidModal: React.FC<Props> = ({
               }}
               onKeyDown={(e) => {
                 if ((e.metaKey || e.ctrlKey) && e.key === 'Enter') {
-                  if (graph) {
+                  if (ready) {
                     onApply(source, { theme: themeId, renderStyle });
                     onClose();
                   }
@@ -733,7 +1135,7 @@ export const MermaidModal: React.FC<Props> = ({
                 );
               }}
             >
-              {preview && graph ? (
+              {preview && ready ? (
                 <>
                   <svg
                     ref={svgRef}
@@ -769,6 +1171,353 @@ export const MermaidModal: React.FC<Props> = ({
                         </marker>
                       </defs>
 
+                      {/*
+                        The sequence layer.
+
+                        Drawn in the order it is read: lifelines first so the
+                        heads and notes sit on top of them, then the heads,
+                        then the messages. It mirrors what `buildSequence.ts`
+                        puts on the board rather than approximating it -- a
+                        preview that arranges things differently from the
+                        insert is worse than no preview, because it is only
+                        found out once somebody has trusted it.
+                      */}
+                      {pieLayout && (
+                        <g className="mermaid-preview__pie">
+                          {/* The legend card, under its rows: it is what gives
+                              the labels a surface to read against on any
+                              board. See `legendCard`. */}
+                          <rect
+                            x={pieLayout.legendCard.x}
+                            y={pieLayout.legendCard.y}
+                            width={pieLayout.legendCard.width}
+                            height={pieLayout.legendCard.height}
+                            rx={8}
+                            fill={activeTheme.clusterFill}
+                            stroke={activeTheme.canvasInk}
+                            strokeWidth={1}
+                          />
+                          {pieLayout.titleBox && (
+                            <text
+                              x={pieLayout.titleBox.x + pieLayout.titleBox.width / 2}
+                              y={pieLayout.titleBox.y + 22}
+                              textAnchor="middle"
+                              fontSize={20}
+                              fontWeight={600}
+                              fill={activeTheme.canvasInk}
+                            >
+                              {pieLayout.title}
+                            </text>
+                          )}
+                          {/* The same path the insert builds, from the same
+                              geometry — a preview that drew its own arcs could
+                              disagree with the wedge you are about to get. */}
+                          {pieLayout.wedges.map((wedge, i) => (
+                            <path
+                              key={"wedge-" + i}
+                              d={wedgePath(wedge)}
+                              fill={
+                                activeTheme.accentFills[i % activeTheme.accentFills.length] ||
+                                activeTheme.primaryFill
+                              }
+                              stroke={activeTheme.primaryStroke}
+                              strokeWidth={1.5}
+                            />
+                          ))}
+                          {/* The share on each wedge with room for it. On the
+                              wedge's own fill, so `textColor` is the right ink
+                              here even though it is wrong on the bare board. */}
+                          {pieLayout.wedges.map((wedge, i) =>
+                            wedge.sliceLabel ? (
+                              <text
+                                key={"share-" + i}
+                                x={wedge.centroid.x}
+                                y={wedge.centroid.y}
+                                textAnchor="middle"
+                                dominantBaseline="central"
+                                fontSize={PIE_SLICE_SIZE}
+                                fontWeight={600}
+                                fill={activeTheme.textColor}
+                              >
+                                {wedge.sliceLabel}
+                              </text>
+                            ) : null
+                          )}
+                          {pieLayout.wedges.map((wedge, i) => {
+                            const swatch = 14;
+                            return (
+                              <g key={"legend-" + i}>
+                                <rect
+                                  x={wedge.legend.x}
+                                  y={wedge.legend.y + (wedge.legend.height - swatch) / 2}
+                                  width={swatch}
+                                  height={swatch}
+                                  rx={3}
+                                  fill={
+                                    activeTheme.accentFills[i % activeTheme.accentFills.length] ||
+                                    activeTheme.primaryFill
+                                  }
+                                  stroke={activeTheme.primaryStroke}
+                                  strokeWidth={1}
+                                />
+                                {/* The lines the layout decided on. Composing
+                                    the string here too would be a second
+                                    opinion about how wide the card has to be. */}
+                                <text
+                                  x={wedge.legend.x + swatch + 10}
+                                  y={
+                                    wedge.legend.y +
+                                    wedge.legend.height / 2 -
+                                    ((wedge.legendLines.length - 1) * PIE_LEGEND_SIZE * 1.35) / 2
+                                  }
+                                  dominantBaseline="central"
+                                  fontSize={PIE_LEGEND_SIZE}
+                                  fill={activeTheme.textColor}
+                                >
+                                  {wedge.legendLines.map((line, li) => (
+                                    <tspan
+                                      key={li}
+                                      x={wedge.legend.x + swatch + 10}
+                                      dy={li === 0 ? 0 : PIE_LEGEND_SIZE * 1.35}
+                                    >
+                                      {line}
+                                    </tspan>
+                                  ))}
+                                </text>
+                              </g>
+                            );
+                          })}
+                        </g>
+                      )}
+
+                      {seqLayout && (
+                        <g className="mermaid-preview__sequence">
+                          {/* Frames first: they are the background of
+                              everything inside them, and outermost first so a
+                              nested alt reads as being inside its loop. */}
+                          {[...seqLayout.frames]
+                            .sort((a, b) => a.depth - b.depth)
+                            .map((frame, fi) => (
+                              <g key={"frame-" + fi}>
+                                {/* Outline only, as mermaid draws it. A tinted
+                                    frame washes every arrow and lifeline
+                                    inside it, and a nested one washes them
+                                    twice. */}
+                                <rect
+                                  x={frame.x}
+                                  y={frame.y}
+                                  width={frame.width}
+                                  height={frame.height}
+                                  rx={4}
+                                  fill="none"
+                                  stroke={activeTheme.canvasInk}
+                                  strokeWidth={1.25}
+                                />
+                                <text
+                                  x={frame.x + 8}
+                                  y={frame.y + 14}
+                                  fontSize={SEQ_TYPE.message}
+                                  fontWeight={600}
+                                  fill={activeTheme.canvasInk}
+                                >
+                                  {frame.label ? frame.block + " " + frame.label : frame.block}
+                                </text>
+                                {frame.sections.map((section, si) => (
+                                  <g key={"section-" + si}>
+                                    <line
+                                      x1={frame.x}
+                                      y1={section.y}
+                                      x2={frame.x + frame.width}
+                                      y2={section.y}
+                                      stroke={activeTheme.canvasInk}
+                                      strokeWidth={1}
+                                      strokeDasharray="4 4"
+                                    />
+                                    <text
+                                      x={frame.x + 8}
+                                      y={section.y + 13}
+                                      fontSize={SEQ_TYPE.message}
+                                      fill={activeTheme.canvasInk}
+                                    >
+                                      {("else " + section.label).trim()}
+                                    </text>
+                                  </g>
+                                ))}
+                              </g>
+                            ))}
+                          {seqLayout.lanes.map((lane) => (
+                            <line
+                              key={"life-" + lane.key}
+                              x1={lane.centreX}
+                              y1={lane.lineTop}
+                              x2={lane.centreX}
+                              y2={lane.lineBottom}
+                              stroke={activeTheme.canvasInk}
+                              strokeWidth={1.5}
+                              strokeDasharray="4 5"
+                              strokeLinecap="round"
+                            />
+                          ))}
+                          {/* Head and foot, the same box twice: mermaid names
+                              the cast at both ends so a reader at the bottom of
+                              a long exchange can still tell the columns apart. */}
+                          {seqLayout.lanes.flatMap((lane, i) =>
+                            [lane.y, lane.footY].map((top, half) => (
+                            <g key={"head-" + lane.key + "-" + half}>
+                              <rect
+                                x={lane.x}
+                                y={top}
+                                width={lane.width}
+                                height={lane.height}
+                                /* An actor is a pill, a participant is a box --
+                                   the same distinction the build makes, by the
+                                   same means. */
+                                rx={lane.actor ? lane.height / 2 : 8}
+                                fill={
+                                  activeTheme.accentFills[i % activeTheme.accentFills.length] ||
+                                  activeTheme.primaryFill
+                                }
+                                stroke={activeTheme.primaryStroke}
+                                strokeWidth={1.75}
+                              />
+                              {/* The lines the layout decided on, not a
+                                  re-wrap: SVG cannot wrap text at all, and the
+                                  box was sized for these exact breaks. */}
+                              <text
+                                x={lane.centreX}
+                                y={
+                                  top +
+                                  lane.height / 2 -
+                                  ((lane.lines.length - 1) * SEQ_TYPE.head * 1.35) / 2
+                                }
+                                textAnchor="middle"
+                                dominantBaseline="central"
+                                fontSize={SEQ_TYPE.head}
+                                fontWeight={600}
+                                fill={activeTheme.textColor}
+                              >
+                                {lane.lines.map((line, li) => (
+                                  <tspan
+                                    key={li}
+                                    x={lane.centreX}
+                                    dy={li === 0 ? 0 : SEQ_TYPE.head * 1.35}
+                                  >
+                                    {line}
+                                  </tspan>
+                                ))}
+                              </text>
+                            </g>
+                            ))
+                          )}
+                          {seqLayout.steps.map((step, i) => {
+                            if (step.kind === 'note') {
+                              return (
+                                <g key={"note-" + i}>
+                                  <rect
+                                    x={step.x}
+                                    y={step.y}
+                                    width={step.width}
+                                    height={step.height}
+                                    rx={4}
+                                    fill={activeTheme.clusterFill}
+                                    stroke={activeTheme.clusterStroke}
+                                    strokeWidth={1.25}
+                                  />
+                                  <text
+                                    x={step.x + step.width / 2}
+                                    y={
+                                      step.y +
+                                      step.height / 2 -
+                                      ((step.lines.length - 1) * SEQ_TYPE.note * 1.35) / 2
+                                    }
+                                    textAnchor="middle"
+                                    dominantBaseline="central"
+                                    fontSize={SEQ_TYPE.note}
+                                    fill={activeTheme.textColor}
+                                  >
+                                    {step.lines.map((line, li) => (
+                                      <tspan
+                                        key={li}
+                                        x={step.x + step.width / 2}
+                                        dy={li === 0 ? 0 : SEQ_TYPE.note * 1.35}
+                                      >
+                                        {line}
+                                      </tspan>
+                                    ))}
+                                  </text>
+                                </g>
+                              );
+                            }
+                            const fromLane = seqLayout.lanes.find((l) => l.key === step.from);
+                            const toLane = seqLayout.lanes.find((l) => l.key === step.to);
+                            if (!fromLane || !toLane) return null;
+                            const dash = step.line === 'dotted' ? '6 4' : undefined;
+                            /* An open head is mermaid's `->`, which genuinely
+                               draws no arrowhead at all. */
+                            const marker =
+                              step.head === 'open' ? undefined : 'url(#mermaid-arrow-end)';
+                            if (step.self) {
+                              const out = SELF_REACH;
+                              const x = fromLane.centreX;
+                              const d = [
+                                'M' + x + ' ' + step.y,
+                                'L' + (x + out) + ' ' + step.y,
+                                'L' + (x + out) + ' ' + (step.y + SELF_DROP),
+                                'L' + x + ' ' + (step.y + SELF_DROP),
+                              ].join(' ');
+                              return (
+                                <g key={"msg-" + i}>
+                                  <path
+                                    d={d}
+                                    fill="none"
+                                    stroke={activeTheme.connectorColor}
+                                    strokeWidth={2}
+                                    strokeDasharray={dash}
+                                    markerEnd={marker}
+                                  />
+                                  {step.label && (
+                                    <text
+                                      x={x + out + 8}
+                                      y={step.y + SELF_DROP / 2}
+                                      fontSize={SEQ_TYPE.message}
+                                      dominantBaseline="central"
+                                      fill={activeTheme.textColor}
+                                    >
+                                      {step.label}
+                                    </text>
+                                  )}
+                                </g>
+                              );
+                            }
+                            return (
+                              <g key={"msg-" + i}>
+                                <line
+                                  x1={fromLane.centreX}
+                                  y1={step.y}
+                                  x2={toLane.centreX}
+                                  y2={step.y}
+                                  stroke={activeTheme.connectorColor}
+                                  strokeWidth={2}
+                                  strokeDasharray={dash}
+                                  markerEnd={marker}
+                                />
+                                {step.label && (
+                                  <text
+                                    x={(fromLane.centreX + toLane.centreX) / 2}
+                                    y={step.y - 8}
+                                    textAnchor="middle"
+                                    fontSize={11}
+                                    fill={activeTheme.textColor}
+                                  >
+                                    {step.label}
+                                  </text>
+                                )}
+                              </g>
+                            );
+                          })}
+                        </g>
+                      )}
+
                       {/* Render Subgraph Cluster Frames */}
                       {preview.subgraphs?.map(
                         (sub) =>
@@ -800,7 +1549,7 @@ export const MermaidModal: React.FC<Props> = ({
                       )}
 
                       {/* Render Edges */}
-                      {graph.edges.map((edge, i) => {
+                      {graph?.edges.map((edge, i) => {
                         const a = preview.at.get(edge.from) || preview.clusterAt.get(edge.from);
                         const b = preview.at.get(edge.to) || preview.clusterAt.get(edge.to);
                         if (!a || !b) return null;
@@ -854,7 +1603,7 @@ export const MermaidModal: React.FC<Props> = ({
                       })}
 
                       {/* Render Nodes */}
-                      {graph.nodes.map((node, nodeIdx) => {
+                      {graph?.nodes.map((node, nodeIdx) => {
                         const p = preview.at.get(node.key);
                         if (!p) return null;
                         return (
@@ -942,7 +1691,7 @@ export const MermaidModal: React.FC<Props> = ({
                 {/* Say what the preview is showing, so a picture built from
                     less than the whole document never passes for the whole
                     document. Recovery has to be visible to be trustworthy. */}
-                {graph && skippedLines.length > 0 ? (
+                {ready && skippedLines.length > 0 ? (
                   <em className="mermaid-modal__status-note">
                     {' '}— previewing without{' '}
                     {skippedLines.length === 1
@@ -951,7 +1700,7 @@ export const MermaidModal: React.FC<Props> = ({
                   </em>
                 ) : null}
               </>
-            ) : graph ? (
+            ) : ready ? (
               /* The count moved to the header, beside the title it describes.
                  Repeating it here said the same thing twice and got the
                  plural wrong the second time ("1 clusters"). What the footer
@@ -969,7 +1718,7 @@ export const MermaidModal: React.FC<Props> = ({
             </button>
             <button
               className="export__primary"
-              disabled={!graph}
+              disabled={!ready}
               onClick={() => {
                 onApply(source, { theme: themeId, renderStyle });
                 onClose();

@@ -5,7 +5,7 @@ import { getStroke } from 'perfect-freehand';
 import type { Tool, ToolContext } from './Tool';
 import { doc, deleteNode } from '../document';
 import { useStore } from '../../hooks/useStore';
-import { distanceToSegment, erasesObject } from './eraseHit';
+import { clipPolylineByCapsule, erasesObject } from './eraseHit';
 
 function svgPathFromStroke(stroke: number[][]) {
   if (!stroke.length) return '';
@@ -54,14 +54,39 @@ export class EraserTool implements Tool {
   cursor = 'none';
 
   /**
-   * The eraser's radius in world units, shared across strokes like the
-   * pencil's colour and size. `[` and `]` resize it, which is the convention
-   * every raster editor has taught. It was a hardcoded 15 with no way to
-   * change it, so erasing a hairline and erasing a wall of stickies were the
-   * same gesture at the same scale.
+   * The eraser's tip **width** in screen pixels, shared across strokes like
+   * the pencil's colour and size. `[` and `]` resize it, which is the
+   * convention every raster editor has taught. It was a hardcoded 15 with no
+   * way to change it, so erasing a hairline and erasing a wall of stickies
+   * were the same gesture at the same scale.
+   *
+   * ## Width, not radius
+   *
+   * This number was read as a *radius* everywhere it was used, while the
+   * control that sets it is the same `NibSize` the pencil uses — where the
+   * number is a stroke **width**. So the eraser drew and erased at twice the
+   * size it reported: a slider reading 15 wiped a 30px hole, against the
+   * pencil's 6px line at 6. The range compounded it, since 4-200 as a radius
+   * is an 8-400 tip, and most of that travel was unusable.
+   *
+   * The conversion now happens in exactly one place -- `radiusFor` -- because
+   * the previous arrangement had the division scattered across three call
+   * sites and the overlay, which is how the ring and the erase come to
+   * disagree about what the tool is about to remove.
    */
   private static get size(): number {
     return useStore.getState().eraserSize;
+  }
+
+  /**
+   * The tip in world units: half the width, undone by the zoom.
+   *
+   * Screen-space is the right frame for a *tool* tip -- the eraser should feel
+   * the same size under the hand whether the board is at 10% or 400%, which is
+   * how every raster editor behaves and the opposite of how an object behaves.
+   */
+  private static radiusFor(zoom: number): number {
+    return EraserTool.size / 2 / zoom;
   }
 
   private isErasing = false;
@@ -94,8 +119,20 @@ export class EraserTool implements Tool {
   onKeyDown(ctx: ToolContext, e: KeyboardEvent) {
     // `[` and `]` resize, as in every raster editor.
     if (e.key === '[' || e.key === ']') {
-      const step = Math.max(2, EraserTool.size * 0.25);
-      useStore.getState().setEraserSize(EraserTool.size + (e.key === ']' ? step : -step));
+      /**
+       * Geometric, not additive.
+       *
+       * A flat 25% of the current size floored at 2 was coarse at both ends
+       * for opposite reasons: near the minimum the floor dominated and each
+       * press was a ~50% jump, and near the maximum a press moved 50px. Going
+       * up and down by the same *ratio* makes every press feel like the same
+       * adjustment, and makes `[` exactly undo `]`.
+       */
+      const next = EraserTool.size * (e.key === ']' ? 1.25 : 1 / 1.25);
+      // Rounded away from the current value, so the smallest sizes -- where a
+      // ratio step lands inside a single pixel -- still move on every press.
+      const stepped = e.key === ']' ? Math.ceil(next) : Math.floor(next);
+      useStore.getState().setEraserSize(stepped);
       // Repaint the ring at its new size without waiting for a mouse move.
       ctx.setOverlayState?.({
         type: 'eraser',
@@ -147,7 +184,7 @@ export class EraserTool implements Tool {
    * which is the tool telling you to work around it.
    */
   private eraseSweep(ctx: ToolContext) {
-    const radius = EraserTool.size / ctx.camera.zoom;
+    const radius = EraserTool.radiusFor(ctx.camera.zoom);
     // One transaction for the whole sweep. Each `deleteNode` used to be its
     // own, so a single swipe across a dozen objects landed as a dozen document
     // changes — twelve undo presses to put back one gesture, twelve entries in
@@ -159,9 +196,23 @@ export class EraserTool implements Tool {
     const dy = this.currentY - fromY;
     const distance = Math.hypot(dx, dy);
 
-    // Half the radius per step, so consecutive discs overlap and the swept
-    // area has no holes in it.
-    const steps = Math.max(1, Math.ceil(distance / Math.max(1, radius * 0.5)));
+    /**
+     * How many discs the *whole-object* tests need along the travel.
+     *
+     * Freehand strokes are no longer tested this way at all -- they are cut
+     * against the swept capsule in one pass, below -- but `erasesObject` still
+     * asks "does the nib touch this shape", and that question is asked at
+     * points. Spacing them by the radius keeps consecutive discs touching, and
+     * the cap is what stops the cost from being unbounded: at a 2-unit radius
+     * a 300-unit swipe used to ask for 300 passes, each a scan of every object
+     * on the board, and the canvas stopped responding.
+     *
+     * A cap would ordinarily trade that freeze for a dotted trail. It does not
+     * here, because the objects it now governs are deleted whole: missing a
+     * shape by a few units means the next pointer move catches it, not that it
+     * comes back cut into pieces.
+     */
+    const steps = Math.min(16, Math.max(1, Math.ceil(distance / Math.max(1, radius))));
     /**
      * The whole sweep in one transaction — splits included.
      *
@@ -171,9 +222,26 @@ export class EraserTool implements Tool {
      * which is the same undo problem one level down.
      */
     doc.transact(() => {
+      /**
+       * The board is scanned once for the whole sweep, not once per step.
+       *
+       * `eraseAt` walks every object, and calling it per step meant a fast
+       * swipe with a small nib walked the whole document hundreds of times for
+       * a single pointer move. The candidates are the objects whose bounds
+       * come within `radius` of the travelled segment, which is a cheap test
+       * and throws away nearly everything on a real board.
+       */
+      const candidates = this.candidatesNear(fromX, fromY, radius);
+
+      // Strokes are cut against the capsule the nib swept -- one exact pass,
+      // whatever the speed or the size.
+      for (const [id, obj] of candidates) {
+        this.eraseFreehand(ctx, id, obj, fromX, fromY, this.currentX, this.currentY, radius);
+      }
+
       for (let i = 1; i <= steps; i += 1) {
         const t = i / steps;
-        this.eraseAt(ctx, fromX + dx * t, fromY + dy * t, radius);
+        this.eraseAt(ctx, fromX + dx * t, fromY + dy * t, radius, candidates);
       }
       this.pending.forEach((id) => deleteNode(id));
       this.pending = new Set();
@@ -183,10 +251,24 @@ export class EraserTool implements Tool {
     this.lastY = this.currentY;
   }
 
+  /**
+   * A press with no travel yet: the capsule is a single disc.
+   *
+   * `capsuleSpan` handles a zero-length sweep as its two end discs, which are
+   * the same disc — so the press and the drag go through one code path and
+   * cannot disagree about what the nib covers.
+   */
   private eraseAtPointer(ctx: ToolContext) {
     this.pending = new Set();
+    const radius = EraserTool.radiusFor(ctx.camera.zoom);
     doc.transact(() => {
-      this.eraseAt(ctx, this.currentX, this.currentY, EraserTool.size / ctx.camera.zoom);
+      const candidates = this.candidatesNear(this.currentX, this.currentY, radius);
+      for (const [id, obj] of candidates) {
+        this.eraseFreehand(
+          ctx, id, obj, this.currentX, this.currentY, this.currentX, this.currentY, radius
+        );
+      }
+      this.eraseAt(ctx, this.currentX, this.currentY, radius, candidates);
       this.pending.forEach((id) => deleteNode(id));
       this.pending = new Set();
     });
@@ -201,7 +283,86 @@ export class EraserTool implements Tool {
    */
   private pending: Set<string> = new Set();
 
-  private eraseAt(ctx: ToolContext, cx: number, cy: number, eraserRadius: number) {
+  /**
+   * The objects a sweep could possibly touch, gathered once.
+   *
+   * Bounds-only and deliberately generous: this decides what is *worth*
+   * testing, and the precise answer comes from `erasesObject` afterwards. The
+   * box is the segment travelled, inflated by the nib and by a margin for
+   * strokes whose ink reaches past their stored box.
+   */
+  private candidatesNear(fromX: number, fromY: number, radius: number): Array<[string, any]> {
+    const pad = radius + 32;
+    const left = Math.min(fromX, this.currentX) - pad;
+    const right = Math.max(fromX, this.currentX) + pad;
+    const top = Math.min(fromY, this.currentY) - pad;
+    const bottom = Math.max(fromY, this.currentY) + pad;
+
+    const objects = useStore.getState().objects;
+    const out: Array<[string, any]> = [];
+    for (const [id, node] of Object.entries(objects)) {
+      const obj = node as any;
+      if (obj.locked || obj.hidden) continue;
+      if (
+        obj.x + obj.width < left ||
+        obj.x > right ||
+        obj.y + obj.height < top ||
+        obj.y > bottom
+      ) {
+        continue;
+      }
+      out.push([id, obj]);
+    }
+    return out;
+  }
+
+  /**
+   * Cut one freehand stroke against the capsule the nib swept.
+   *
+   * The gap is the nib's own width, computed rather than snapped to samples.
+   * This used to mark both endpoints of any segment the disc came near and
+   * delete them, so the hole was the *sample spacing* -- twenty or more world
+   * units on a fast stroke -- regardless of the size the tool was set to.
+   */
+  private eraseFreehand(
+    ctx: ToolContext,
+    id: string,
+    obj: any,
+    fromX: number,
+    fromY: number,
+    toX: number,
+    toY: number,
+    radius: number
+  ): void {
+    if (obj.geometry?.kind !== 'freehand' || !obj.geometry.points?.length) return;
+    if (this.pending.has(id)) return;
+
+    const absPoints = obj.geometry.points.map((p: any) => ({ x: obj.x + p.x, y: obj.y + p.y }));
+    const runs = clipPolylineByCapsule(
+      absPoints,
+      { x: fromX, y: fromY },
+      { x: toX, y: toY },
+      radius
+    );
+
+    // Untouched: nothing to rewrite, and no reason to churn the document.
+    if (runs.length === 1 && runs[0].length === absPoints.length) return;
+    if (runs.length === 0) {
+      this.pending.add(id);
+      return;
+    }
+
+    deleteNode(id);
+    runs.forEach((run) => this.createFreehandSubPath(ctx, obj, run));
+  }
+
+  private eraseAt(
+    ctx: ToolContext,
+    cx: number,
+    cy: number,
+    eraserRadius: number,
+    candidates?: Array<[string, any]>
+  ) {
     /**
      * Read from the store, not from the CRDT.
      *
@@ -211,12 +372,16 @@ export class EraserTool implements Tool {
      * nodes. The store already holds every node normalized and cached; reading
      * it is a property access.
      */
-    const objects = useStore.getState().objects;
-    Object.entries(objects).forEach(([id, node]) => {
+    const entries =
+      candidates ?? this.candidatesNear(this.currentX, this.currentY, eraserRadius);
+    entries.forEach(([id, node]) => {
       const obj = node as any;
       if (obj.locked || obj.hidden) return;
       // Already condemned by an earlier step of this same sweep.
       if (this.pending.has(id)) return;
+      // Handled in one exact pass by `eraseFreehand`, before any of the
+      // stepping -- testing it again here would cut it twice.
+      if (obj.geometry?.kind === 'freehand') return;
 
       if (obj.type === 'path') {
         if (this.erasePath(ctx, id, obj, cx, cy, eraserRadius)) return;
@@ -291,33 +456,13 @@ export class EraserTool implements Tool {
       return true;
     }
 
-    // Freehand stroke — erase at centerline-point granularity.
-    if (obj.geometry?.kind === 'freehand' && obj.geometry.points.length > 0) {
-      const absPoints = obj.geometry.points.map((p: any) => ({ x: obj.x + p.x, y: obj.y + p.y }));
-      const hitSet = new Set<number>();
-      absPoints.forEach((p: any, i: number) => {
-        if (Math.hypot(p.x - cx, p.y - cy) <= radius) hitSet.add(i);
-      });
-      // Consecutive mouse samples can be sparse relative to the eraser radius
-      // — also test along each segment, marking both endpoints when hit.
-      for (let i = 0; i < absPoints.length - 1; i++) {
-        const a = absPoints[i], b = absPoints[i + 1];
-        if (distanceToSegment(cx, cy, a.x, a.y, b.x, b.y) <= radius) {
-          hitSet.add(i);
-          hitSet.add(i + 1);
-        }
-      }
-      if (hitSet.size === 0) return true;
+    /*
+      Freehand is not handled here.
 
-      const runs = splitRuns(absPoints.length, hitSet);
-      deleteNode(id);
-      runs.forEach(run => {
-        if (run.length < 2) return;
-        const pts = run.map(i => absPoints[i]);
-        this.createFreehandSubPath(ctx, obj, pts);
-      });
-      return true;
-    }
+      It is cut against the whole capsule the nib swept, once per pointer move,
+      in `eraseFreehand`. Doing it here as well would cut the same stroke a
+      second time at each stepped disc — the work this rewrite exists to stop.
+    */
 
     return false;
   }
@@ -399,7 +544,7 @@ export class EraserTool implements Tool {
       // so it has to be the same number the erase uses — it was a second
       // hardcoded 15, which would have silently started lying the moment the
       // size became adjustable.
-      const radius = (overlayState.size ?? EraserTool.size) / overlayState.zoom;
+      const radius = (overlayState.size ?? EraserTool.size) / 2 / overlayState.zoom;
       return (
         <Circle
           x={overlayState.x}

@@ -43,6 +43,11 @@ const TimeTravelBar = lazy(() => import('./components/TimeTravelBar').then((m) =
 const ForcesBar = lazy(() => import('./components/ForcesBar').then((m) => ({ default: m.ForcesBar })));
 import { parseMermaid, looksLikeMermaid } from './engine/diagram/mermaid';
 import { buildDiagram, canEmitDiagram, diagramIdOf, diagramToMermaid, type DiagramBuildOptions } from './engine/diagram/build';
+import { looksLikeSequence, parseSequence } from './engine/diagram/sequence';
+import { buildSequenceDiagram } from './engine/diagram/buildSequence';
+import { looksLikePie, parsePie } from './engine/diagram/pie';
+import { buildPieDiagram } from './engine/diagram/buildPie';
+import { isSequenceDiagram, sequenceToMermaid } from './engine/diagram/sequenceEmit';
 import { demoBox, demoText } from './engine/text/demoText';
 import { deleteNodesWithFrames } from './engine/interaction/frameMembership';
 import { parseClipboard } from './engine/clipboard/clipboard';
@@ -460,8 +465,24 @@ export default function Room() {
       const whole = Object.values(diagramObjects).filter(
         (n) => diagramIdOf(n) === id
       );
-      setDiagramSource(diagramToMermaid(whole));
+      /**
+       * Which kind of diagram this is, before writing it out.
+       *
+       * `diagramToMermaid` only knows how to write flowcharts, so pointing it
+       * at a sequence diagram produced a flowchart made of lifelines and arrow
+       * stubs -- and applying that replaced a correct diagram with the
+       * nonsense. Editing was destructive on exactly the diagrams this feature
+       * had just learned to draw.
+       */
+      setDiagramSource(
+        (isSequenceDiagram(whole) ? sequenceToMermaid(whole) : null) ?? diagramToMermaid(whole)
+      );
       setDiagramReplacing(id);
+    } else if (isSequenceDiagram(selected)) {
+      // A sequence diagram whose objects carry no id -- pasted, or a
+      // generation whose tag was lost. Readable, but not claimed.
+      setDiagramSource(sequenceToMermaid(selected) ?? undefined);
+      setDiagramReplacing(null);
     } else if (canEmitDiagram(selected)) {
       // A flowchart drawn by hand has no diagram id, and reading it out as code
       // is most of the value here — so it seeds the editor without claiming
@@ -485,15 +506,37 @@ export default function Room() {
    * and every collaborator would watch the diagram vanish and reappear.
    */
   const applyDiagram = (source: string, options?: DiagramBuildOptions) => {
-    const { graph } = parseMermaid(source);
-    if (!graph) return;
     const origin = cameraSystem.screenToWorld(window.innerWidth / 2, window.innerHeight / 2);
-    const built = buildDiagram(
-      graph,
-      { x: Math.round(origin.x - 200), y: Math.round(origin.y - 140) },
-      diagramReplacing ?? undefined,
-      options
-    );
+    const at = { x: Math.round(origin.x - 200), y: Math.round(origin.y - 140) };
+
+    /**
+     * Which kind of diagram this is, decided once and here.
+     *
+     * A flowchart is a graph and goes to dagre; a sequence diagram is a
+     * timeline and goes to its own layout, for the reason `sequence.ts` opens
+     * with. Both end at the same place -- a list of nodes and a shared id --
+     * so everything below this point is common, and adding a third kind is a
+     * branch here rather than a second copy of the replace-and-select logic.
+     */
+    const built = looksLikeSequence(source)
+      ? (() => {
+          const { diagram } = parseSequence(source);
+          return diagram
+            ? buildSequenceDiagram(diagram, at, diagramReplacing ?? undefined, options)
+            : null;
+        })()
+      : looksLikePie(source)
+        ? (() => {
+            const { chart } = parsePie(source);
+            return chart
+              ? buildPieDiagram(chart, at, diagramReplacing ?? undefined, options)
+              : null;
+          })()
+        : (() => {
+            const { graph } = parseMermaid(source);
+            return graph ? buildDiagram(graph, at, diagramReplacing ?? undefined, options) : null;
+          })();
+    if (!built) return;
 
     /**
      * What this apply replaces.
