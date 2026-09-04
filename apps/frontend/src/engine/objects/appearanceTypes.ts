@@ -25,5 +25,12 @@ export const APPEARANCE_TYPES: ReadonlySet<string> = new Set([
   'frame',
   'text',
   'connector',
-
+  /**
+   * A chart carries an `appearance` for exactly one thing -- the sketch block
+   * -- and `ChartRenderer` honours it, drawing bars with `roughLoop` and runs
+   * with `roughPolyline`. It is the first type to declare `supportsEdgeEffects`
+   * without also declaring a fill or a stroke, which is how it found that the
+   * test's list of appearance-gated capabilities was one short.
+   */
+  'chart',
 ]);

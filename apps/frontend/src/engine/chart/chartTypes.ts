@@ -338,6 +338,26 @@ export interface ChartSpec {
    * stylistic difference, it is a different curve.
    */
   equalAxes?: boolean;
+  /**
+   * Mark where the first curve crosses zero.
+   *
+   * Roots are refined by bisection against the real function rather than read
+   * off the samples, so a marker sits where the crossing actually is. See
+   * `chartAnalysis.findRoots` for what that costs and what it cannot find.
+   */
+  showRoots?: boolean;
+  /** Mark local turning points, at the sample where the slope changes sign. */
+  showExtrema?: boolean;
+  /**
+   * Shade the region between the first curve and the axis, and report the
+   * signed area.
+   *
+   * Signed, not absolute: the integral of `sin(x)` over a period is zero, and
+   * reporting `4` would confidently answer a different question.
+   */
+  fillArea?: boolean;
+  /** Draw the numeric derivative of the first curve alongside it. */
+  showDerivative?: boolean;
 }
 
 export const CHART_SORTS = ['none', 'valueDesc', 'valueAsc', 'labelAsc'] as const;

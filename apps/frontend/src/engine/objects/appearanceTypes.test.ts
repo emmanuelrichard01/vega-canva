@@ -30,7 +30,26 @@ import { objectRegistry } from './index';
  * as bugs when neither is one. A guard that fires on things that are fine is
  * one people learn to edit rather than believe.
  */
-const NEEDS_APPEARANCE = ['supportsFill', 'supportsStroke', 'supportsShadow'] as const;
+const NEEDS_APPEARANCE = [
+  'supportsFill',
+  'supportsStroke',
+  'supportsShadow',
+  /**
+   * The sketch block, added 2026-09-04 when `chart` became the first type to
+   * declare it *without* also declaring one of the three above.
+   *
+   * It belongs here on the same test the others pass: `SketchSection` reads
+   * `appearance` and writes through `setAppearance`, and `appearanceOf`
+   * returns `null` for any type not in the list — so a type declaring
+   * `supportsEdgeEffects` and missing from it gets a sketch section gated
+   * off, which is the connector bug in this file's header exactly.
+   *
+   * Its absence was not a decision, it was the case never arising: every
+   * previous sketchable type also had a fill or a stroke, so the list happened
+   * to contain them for another reason.
+   */
+  'supportsEdgeEffects',
+] as const;
 
 describe('APPEARANCE_TYPES', () => {
   it('covers every type whose paint sections are gated on an appearance block', () => {

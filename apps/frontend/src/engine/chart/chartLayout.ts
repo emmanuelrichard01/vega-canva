@@ -37,6 +37,7 @@ import {
 } from './scales';
 import { catmullRomPoints } from '../model/polyline';
 import { compileCurves, samplePlot, sampleParametric, samplePolar } from './chartPlot';
+import { differentiate, findExtrema, findRoots, integrate } from './chartAnalysis';
 import {
   bucketize,
   isBarLike,
@@ -885,16 +886,30 @@ function layoutPlot(
   // ---- sample first: the y domain is whatever the curves actually reached ---
   const runsRaw: Array<{ points: Array<{ x: number; y: number } | null>; color: string }> = [];
 
+  // Kept so the analysis below reads the *same* samples that were drawn --
+  // re-sampling for it would mean a marker that can disagree with its curve.
+  let firstSamples: Array<{ x: number; y: number | null }> = [];
+
   if (kind === 'function') {
     live.forEach((c, i) => {
       const samples = samplePlot((x) => c.compiled!.evaluate(x), {
         from, to, samples: spec.samples,
       });
+      if (i === 0) firstSamples = samples;
       runsRaw.push({
         points: samples.map((s) => (s.y === null ? null : { x: s.x, y: s.y })),
         color: c.color ?? seriesColor(undefined, i),
       });
     });
+
+    // The derivative is another curve, so it goes through the same pipeline
+    // and gets the same hole-breaking and the same clipping for free.
+    if (spec.showDerivative && firstSamples.length) {
+      runsRaw.push({
+        points: differentiate(firstSamples).map((s) => (s.y === null ? null : { x: s.x, y: s.y })),
+        color: seriesColor(undefined, live.length),
+      });
+    }
   } else if (kind === 'parametric') {
     // The first two expressions are x(t) and y(t) -- a parametric curve *is* an
     // ordered pair, so this is positional rather than named.
@@ -1056,18 +1071,110 @@ function layoutPlot(
     flush();
   });
 
+  /**
+   * The analysis marks, in the plot's own pixel space.
+   *
+   * Placed here rather than in `chartAnalysis.ts` for the reason the whole
+   * module is arranged this way: analysis answers questions about the
+   * *function*, in the function's units, and knows nothing about where the
+   * plot is on screen. Mixing the two would make the roots of `sin(x)` depend
+   * on how big somebody dragged the box.
+   */
+  const dots: ChartDot[] = [];
+  const areas: ChartArea[] = [];
+  const valueLabels: ChartLabel[] = [];
+  const firstCurve = live[0];
+
+  if (kind === 'function' && firstSamples.length && firstCurve?.compiled) {
+    const inView = (x: number, y: number) =>
+      x >= xDomain[0] && x <= xDomain[1] && y >= yDomain[0] && y <= yDomain[1];
+
+    if (spec.showRoots) {
+      for (const r of findRoots(firstSamples, (x) => firstCurve.compiled!.evaluate(x))) {
+        if (!inView(r, 0)) continue;
+        dots.push({
+          x: sx(r), y: sy(0), radius: 4,
+          color: firstCurve.color ?? seriesColor(undefined, 0),
+          seriesIndex: 0, categoryIndex: -1, value: 0,
+        });
+        valueLabels.push({
+          text: formatValue(r, spec),
+          x: sx(r) - 30, y: sy(0) + 6, width: 60, align: 'center', fontSize: LABEL_SIZE,
+        });
+      }
+    }
+
+    if (spec.showExtrema) {
+      for (const e of findExtrema(firstSamples)) {
+        if (!inView(e.x, e.y)) continue;
+        dots.push({
+          x: sx(e.x), y: sy(e.y), radius: 4,
+          color: firstCurve.color ?? seriesColor(undefined, 0),
+          seriesIndex: 0, categoryIndex: -1, value: e.y,
+        });
+        valueLabels.push({
+          text: formatValue(e.y, spec),
+          x: sx(e.x) - 30,
+          // Above a maximum and below a minimum, so the label never sits on
+          // the curve it is describing.
+          y: e.kind === 'max' ? sy(e.y) - LABEL_SIZE - 8 : sy(e.y) + 8,
+          width: 60, align: 'center', fontSize: LABEL_SIZE,
+        });
+      }
+    }
+
+    if (spec.fillArea) {
+      const zeroY = sy(clamp(0, yDomain[0], yDomain[1]));
+      let band: Point[] = [];
+      const flushBand = () => {
+        if (band.length > 1) {
+          areas.push({
+            points: band,
+            color: firstCurve.color ?? seriesColor(undefined, 0),
+            seriesIndex: 0,
+            polygon: [
+              ...band,
+              { x: band[band.length - 1].x, y: zeroY },
+              { x: band[0].x, y: zeroY },
+            ],
+          });
+        }
+        band = [];
+      };
+      for (const smp of firstSamples) {
+        if (smp.y === null) { flushBand(); continue; }
+        band.push({ x: sx(smp.x), y: sy(smp.y) });
+      }
+      flushBand();
+
+      const { value, complete } = integrate(firstSamples);
+      valueLabels.push({
+        // The tilde is not decoration: this is a trapezium sum over adaptive
+        // samples, and presenting it as an exact integral would overstate it.
+        // An incomplete one says so, because a curve with a pole in the
+        // interval has an area this cannot claim to know.
+        text: complete ? `∫ ≈ ${formatValue(value, spec)}` : '∫ undefined on this domain',
+        x: plot.x + 6,
+        y: plot.y + 4,
+        width: plot.width - 12,
+        align: 'left',
+        fontSize: LABEL_SIZE,
+      });
+    }
+  }
+
   return {
     plot,
     bars: [],
     runs,
-    areas: [],
-    dots: [],
+    areas,
+    dots,
     slices: [],
     gridLines,
     baseline,
     axisLabels,
     categoryLabels,
-    valueLabels: [],
+    valueLabels,
     legend: buildPlotLegend(spec, opts, curves, width, height, measure),
     title,
     rings: [],

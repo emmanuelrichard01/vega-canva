@@ -126,14 +126,33 @@ export const ChartRenderer: React.FC<Props> = ({ node }) => {
       hover costs one hit test rather than one per bar.
     */
     <Group onPointerMove={onMove} onPointerLeave={() => setHover(null)}>
+      {/**
+       * The chart's hit area is its **box**, and this rectangle is the whole of
+       * it.
+       *
+       * Two things depend on it, and the first is not optional. Konva hit-tests
+       * *drawn pixels*, and every mark below is `listening={false}` so the chart
+       * answers as one object rather than as ninety bars — which means without
+       * this rectangle the node has no hit area at all. It was not here for the
+       * first four commits of this feature, and the consequence was not subtle:
+       * a chart could not be selected, dragged, or right-clicked. It drew
+       * perfectly and could not be touched.
+       *
+       * Second, it is the single listener the hover readout hangs off, so
+       * moving the pointer across a chart costs one hit test rather than one
+       * per mark.
+       *
+       * Not `fill="transparent"`, and not a small non-zero alpha: an
+       * alpha-**zero** fill draws nothing and is hit everywhere, which is the
+       * idiom `GridRenderer` established here and the reason its docstring
+       * spells it out.
+       */}
       <Rect
         x={0}
         y={0}
         width={node.width}
         height={node.height}
-        // A fill is required to exist in Konva's hit graph at all; the same
-        // trick `AudioRenderer` needs for its DOM overlay.
-        fill="rgba(0,0,0,0.001)"
+        fill="rgba(0,0,0,0)"
         perfectDrawEnabled={false}
       />
       <Chrome layout={layout} ink={ink} />

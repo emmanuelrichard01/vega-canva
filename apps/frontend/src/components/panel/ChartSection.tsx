@@ -15,6 +15,7 @@ import {
 } from '../../engine/chart/chartCsv';
 import { CHART_HINTS, CHART_LABELS, chartPickerGroups } from '../../engine/chart/chartKinds';
 import { parseExpression, EXPRESSION_FUNCTIONS } from '../../engine/chart/expression';
+import { PLOT_PRESETS, specFromPreset } from '../../engine/chart/plotPresets';
 import {
   CHART_PALETTE,
   CHART_SORTS,
@@ -96,7 +97,11 @@ export const ChartSection: React.FC<Props> = ({ node }) => {
         a live control wired to nothing.
       */}
       {isPlot(spec.kind) ? (
-        <FormulaEditor spec={spec} patch={patch} />
+        <>
+          <PlotGallery onPick={(next) => updateChart(node.id, next)} />
+          <FormulaEditor spec={spec} patch={patch} />
+          <AnalysisGroup spec={spec} patch={patch} />
+        </>
       ) : (
         <DataGrid node={node} spec={spec} patch={patch} />
       )}
@@ -229,6 +234,95 @@ export const ChartSection: React.FC<Props> = ({ node }) => {
       <ReferenceGroup spec={spec} patch={patch} />
       {!isPlot(spec.kind) && <SeriesColors spec={spec} patch={patch} />}
     </div>
+  );
+};
+
+/**
+ * The preset gallery.
+ *
+ * A formula field is the most powerful control in this panel and the least
+ * discoverable: it works perfectly and says nothing about what it can do.
+ * Somebody who does not already know that `cos(2a)` draws a four-petal rose
+ * cannot find that out from an empty text box, and the whole feature reads as
+ * "you can type x^2".
+ *
+ * So this is the documentation, in the only form a graph can be documented in.
+ * It replaces the *whole* spec rather than merging: a preset is an example to
+ * start from, and half of one merged into somebody's half-finished work is
+ * neither. Undo puts back exactly what was there, which is what makes trying
+ * one cheap.
+ */
+const PlotGallery: React.FC<{ onPick: (spec: ChartSpec) => void }> = ({ onPick }) => (
+  <Group label="Start from">
+    <div className="plot-gallery">
+      {PLOT_PRESETS.map((preset) => (
+        <button
+          key={preset.id}
+          type="button"
+          className="plot-gallery__item"
+          title={preset.note}
+          onClick={() => onPick(specFromPreset(preset))}
+        >
+          <span className="plot-gallery__name">{preset.name}</span>
+          <span className="plot-gallery__note">{preset.note}</span>
+        </button>
+      ))}
+    </div>
+  </Group>
+);
+
+/**
+ * What to read off the curve.
+ *
+ * Only offered for `function`, and that is not an omission. A root is where
+ * `y` is zero for a given `x`, which is a question about a curve that *has* a
+ * single y for each x — a parametric figure that loops back on itself has no
+ * such thing, and a polar rose crosses the origin four times in a way "roots"
+ * does not describe. Offering the control there and quietly doing nothing is
+ * the dead capability this project keeps deleting.
+ */
+const AnalysisGroup: React.FC<{ spec: ChartSpec; patch: (n: Partial<ChartSpec>) => void }> = ({
+  spec,
+  patch,
+}) => {
+  if (spec.kind !== 'function') return null;
+  return (
+    <Group label="Read off the curve">
+      <div className="chart-toggles">
+        <ToggleButton
+          label="Mark where the curve crosses zero"
+          active={spec.showRoots ?? false}
+          onClick={() => patch({ showRoots: !spec.showRoots })}
+        >
+          Roots
+        </ToggleButton>
+        <ToggleButton
+          label="Mark local turning points"
+          active={spec.showExtrema ?? false}
+          onClick={() => patch({ showExtrema: !spec.showExtrema })}
+        >
+          Turning points
+        </ToggleButton>
+        <ToggleButton
+          label="Shade the area under the curve and report it"
+          active={spec.fillArea ?? false}
+          onClick={() => patch({ fillArea: !spec.fillArea })}
+        >
+          Area
+        </ToggleButton>
+        <ToggleButton
+          label="Draw the numeric derivative alongside"
+          active={spec.showDerivative ?? false}
+          onClick={() => patch({ showDerivative: !spec.showDerivative })}
+        >
+          Derivative
+        </ToggleButton>
+      </div>
+      <div className="chart-hint">
+        Roots are refined against the function itself. Turning points sit at the
+        nearest sample, so raise the sample count for a sharper answer.
+      </div>
+    </Group>
   );
 };
 
