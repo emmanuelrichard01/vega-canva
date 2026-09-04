@@ -1,7 +1,7 @@
 import { layoutChart, approximateMeasure, type ChartLayout, type Measure } from './chartLayout';
 import type { ChartSpec } from './chartTypes';
 import { rectRing, roughLoop, roughPolyline, seedFor, type SketchLevel } from '../model/rough';
-import { CHART_CHROME, CHART_INK } from './chartInk';
+import { currentChartInk, type ChartInk } from './chartInk';
 
 /**
  * The second painter.
@@ -111,6 +111,8 @@ export interface ChartSvgOptions {
   sketchSeed?: number;
   /** Injected so the exporter can measure with a real font when it has one. */
   measure?: Measure;
+  /** Overrides the on-screen theme, for a worker with no DOM to ask. */
+  ink?: ChartInk;
 }
 
 /**
@@ -132,19 +134,22 @@ export function chartToSvg(
 
 /** Split out so a test can paint a layout it built itself. */
 export function paintLayout(layout: ChartLayout, options: ChartSvgOptions): string {
+  // The same ink the canvas is using, so an export made while the board is dark
+  // is the chart that was on screen rather than a second reading of it.
+  const ink: ChartInk = options.ink ?? currentChartInk();
   const out: string[] = [];
   const sketch = options.sketch;
   const seed = seedFor(options.id, options.sketchSeed);
 
   for (const g of layout.gridLines) {
     out.push(
-      `<line x1="${g.x1}" y1="${g.y1}" x2="${g.x2}" y2="${g.y2}" stroke="${CHART_CHROME}" stroke-width="1" opacity="0.35" />`
+      `<line x1="${g.x1}" y1="${g.y1}" x2="${g.x2}" y2="${g.y2}" stroke="${ink.chrome}" stroke-width="1" opacity="0.35" />`
     );
   }
   if (layout.baseline) {
     const b = layout.baseline;
     out.push(
-      `<line x1="${b.x1}" y1="${b.y1}" x2="${b.x2}" y2="${b.y2}" stroke="${CHART_CHROME}" stroke-width="1.5" />`
+      `<line x1="${b.x1}" y1="${b.y1}" x2="${b.x2}" y2="${b.y2}" stroke="${ink.chrome}" stroke-width="1.5" />`
     );
   }
 
@@ -157,12 +162,12 @@ export function paintLayout(layout: ChartLayout, options: ChartSvgOptions): stri
    */
   for (const spoke of layout.spokes) {
     out.push(
-      `<line x1="${spoke.x1}" y1="${spoke.y1}" x2="${spoke.x2}" y2="${spoke.y2}" stroke="${CHART_CHROME}" stroke-width="1" opacity="0.35" />`
+      `<line x1="${spoke.x1}" y1="${spoke.y1}" x2="${spoke.x2}" y2="${spoke.y2}" stroke="${ink.chrome}" stroke-width="1" opacity="0.35" />`
     );
   }
   for (const ring of layout.rings) {
     out.push(
-      `<polygon points="${ring.points.map((p) => `${p.x},${p.y}`).join(' ')}" fill="none" stroke="${CHART_CHROME}" stroke-width="1" opacity="0.3" />`
+      `<polygon points="${ring.points.map((p) => `${p.x},${p.y}`).join(' ')}" fill="none" stroke="${ink.chrome}" stroke-width="1" opacity="0.3" />`
     );
   }
 
@@ -209,7 +214,7 @@ export function paintLayout(layout: ChartLayout, options: ChartSvgOptions): stri
 
   for (const s of layout.slices) {
     out.push(
-      `<path d="${slicePath(s.cx, s.cy, s.outerRadius, s.innerRadius, s.startAngle, s.endAngle)}" fill="${s.color}" stroke="#FFFFFF" stroke-width="1.5" fill-rule="evenodd" />`
+      `<path d="${slicePath(s.cx, s.cy, s.outerRadius, s.innerRadius, s.startAngle, s.endAngle)}" fill="${s.color}" stroke="${ink.sliceEdge}" stroke-width="1.5" fill-rule="evenodd" />`
     );
   }
 
@@ -231,19 +236,19 @@ export function paintLayout(layout: ChartLayout, options: ChartSvgOptions): stri
 
   if (layout.title) {
     const t = layout.title;
-    out.push(label(t.text, t.x, t.y, t.width, t.align, t.fontSize, CHART_INK, '600'));
+    out.push(label(t.text, t.x, t.y, t.width, t.align, t.fontSize, ink.ink, '600'));
   }
   for (const l of [...layout.axisLabels, ...layout.categoryLabels]) {
-    out.push(label(l.text, l.x, l.y, l.width, l.align, l.fontSize, CHART_CHROME));
+    out.push(label(l.text, l.x, l.y, l.width, l.align, l.fontSize, ink.chrome));
   }
   for (const l of layout.valueLabels) {
-    out.push(label(l.text, l.x, l.y, l.width, l.align, l.fontSize, CHART_INK, '600'));
+    out.push(label(l.text, l.x, l.y, l.width, l.align, l.fontSize, ink.ink, '600'));
   }
   for (const e of layout.legend) {
     out.push(
       `<rect x="${e.x}" y="${e.y}" width="${e.swatch}" height="${e.swatch}" rx="2" fill="${e.color}" />`
     );
-    out.push(label(e.label, e.textX, e.y - 1, 0, 'left', e.fontSize, CHART_INK));
+    out.push(label(e.label, e.textX, e.y - 1, 0, 'left', e.fontSize, ink.ink));
   }
 
   return out.join('');

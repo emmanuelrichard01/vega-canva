@@ -516,20 +516,210 @@ export function seriesColor(series: ChartSeries | undefined, index: number): str
 }
 
 /** A starting chart, used by the tool and by the templates. */
+/**
+ * The chart a new node starts as, chosen per kind.
+ *
+ * ## Why every kind gets its own numbers
+ *
+ * A default is not filler; it is the first explanation of what the tool does.
+ * Every kind used to open as "Visits this week" over Mon-Fri, which taught the
+ * wrong thing twice over: it made a waterfall look like a bar chart with a
+ * strange axis, and it made a radar look broken, because five weekdays and one
+ * series of visits is the wrong *shape* of data for both. Somebody dropping a
+ * funnel on the board and seeing a funnel of realistic stages has learned what
+ * the kind is for before reading a word.
+ *
+ * So each one carries data whose shape is the reason the kind exists:
+ * `barHorizontal` gets names long enough to be why you would reach for it,
+ * `histogram` gets a spread of samples rather than four tidy categories,
+ * `waterfall` gets an opening balance and signed movements, `scatter` gets a
+ * relationship rather than a trend, `radar` gets five axes because three is
+ * the minimum and five is when it starts reading as a shape.
+ *
+ * The numbers are deliberately not round. A demo of 100/200/300 reads as
+ * placeholder and invites nobody to edit it; 128/214/186 reads as a
+ * measurement, which is what a chart is a picture of.
+ */
 export function defaultChartSpec(kind: ChartKind = 'bar'): ChartSpec {
-  if (isRadial(kind)) {
-    return {
-      kind,
-      categories: ['Direct', 'Search', 'Social', 'Referral'],
-      series: [{ name: 'Sessions', values: [420, 310, 180, 90] }],
-      title: 'Traffic by channel',
-    };
-  }
+  switch (kind) {
+    case 'barHorizontal':
+      return {
+        kind,
+        title: 'Where new revenue came from',
+        categories: [
+          'Enterprise renewals',
+          'Self-serve signups',
+          'Partner referrals',
+          'Outbound',
+          'Marketplace',
+        ],
+        series: [{ name: 'ARR', values: [412, 268, 191, 96, 44] }],
+        valuePrefix: '$',
+        valueSuffix: 'k',
+        sort: 'valueDesc',
+      };
 
-  return {
-    kind,
-    categories: ['Mon', 'Tue', 'Wed', 'Thu', 'Fri'],
-    series: [{ name: 'Visits', values: [120, 210, 170, 260, 300] }],
-    title: 'Visits this week',
-  };
+    case 'stackedBar':
+      return {
+        kind,
+        title: 'Revenue by segment',
+        categories: ['Q1', 'Q2', 'Q3', 'Q4'],
+        series: [
+          { name: 'Enterprise', values: [180, 214, 246, 291] },
+          { name: 'Mid-market', values: [122, 138, 141, 167] },
+          { name: 'Self-serve', values: [64, 71, 88, 96] },
+        ],
+        valuePrefix: '$',
+        valueSuffix: 'k',
+      };
+
+    case 'stackedBar100':
+      return {
+        kind,
+        title: 'Share of sessions by device',
+        categories: ['Jan', 'Feb', 'Mar', 'Apr', 'May'],
+        series: [
+          { name: 'Mobile', values: [52, 55, 58, 61, 64] },
+          { name: 'Desktop', values: [38, 35, 33, 30, 28] },
+          { name: 'Tablet', values: [10, 10, 9, 9, 8] },
+        ],
+        valueSuffix: '%',
+      };
+
+    case 'line':
+      return {
+        kind,
+        title: 'p95 response time',
+        categories: ['00:00', '04:00', '08:00', '12:00', '16:00', '20:00'],
+        series: [
+          { name: 'api', values: [186, 174, 243, 388, 412, 264] },
+          { name: 'web', values: [121, 118, 154, 205, 231, 168] },
+        ],
+        valueSuffix: 'ms',
+        reference: { value: 300, label: 'SLA' },
+      };
+
+    case 'step':
+      return {
+        kind,
+        title: 'Seats on the plan',
+        // A step chart asserts the value changed *at* a point, which is what a
+        // seat count does and what a temperature does not.
+        categories: ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun'],
+        series: [{ name: 'Seats', values: [25, 25, 40, 40, 40, 75] }],
+      };
+
+    case 'area':
+      return {
+        kind,
+        title: 'Cumulative signups',
+        categories: ['Week 1', 'Week 2', 'Week 3', 'Week 4', 'Week 5', 'Week 6'],
+        series: [{ name: 'Signups', values: [148, 372, 641, 979, 1284, 1663] }],
+      };
+
+    case 'stackedArea':
+      return {
+        kind,
+        title: 'Traffic by source',
+        categories: ['Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat', 'Sun'],
+        series: [
+          { name: 'Organic', values: [412, 468, 501, 522, 486, 291, 264] },
+          { name: 'Referral', values: [186, 194, 213, 241, 228, 142, 121] },
+          { name: 'Paid', values: [94, 108, 121, 134, 118, 62, 48] },
+        ],
+      };
+
+    case 'scatter':
+      return {
+        kind,
+        title: 'Page weight against load time',
+        categories: ['1.2', '1.8', '2.1', '2.6', '3.4', '3.9', '4.6', '5.2'],
+        series: [{ name: 'Load', values: [0.9, 1.2, 1.4, 1.9, 2.2, 2.8, 3.1, 3.8] }],
+        valueSuffix: 's',
+      };
+
+    case 'bubble':
+      return {
+        kind,
+        title: 'Accounts by usage',
+        categories: ['Atlas', 'Bramble', 'Cinder', 'Dovetail', 'Ember', 'Fathom'],
+        series: [{ name: 'Monthly active', values: [82, 214, 146, 388, 121, 267] }],
+      };
+
+    case 'histogram':
+      return {
+        kind,
+        title: 'Response times',
+        // Raw samples, not categories: the kind buckets them itself, and a
+        // default of four tidy values would hide that entirely.
+        categories: [],
+        series: [
+          {
+            name: 'Requests',
+            values: [
+              88, 94, 96, 101, 104, 106, 108, 112, 114, 118, 119, 122, 124, 127, 131,
+              134, 138, 141, 146, 152, 158, 164, 171, 182, 194, 211, 238, 274, 318, 402,
+            ],
+          },
+        ],
+        buckets: 8,
+        valueSuffix: 'ms',
+      };
+
+    case 'pie':
+    case 'donut':
+      return {
+        kind,
+        title: 'Where the budget went',
+        categories: ['Engineering', 'Infrastructure', 'Design', 'Support', 'Other'],
+        series: [{ name: 'Spend', values: [428, 196, 124, 88, 41] }],
+        showValues: true,
+        valuePrefix: '$',
+        valueSuffix: 'k',
+      };
+
+    case 'funnel':
+      return {
+        kind,
+        title: 'Signup funnel',
+        categories: ['Visited', 'Started', 'Verified', 'Configured', 'Activated'],
+        series: [{ name: 'People', values: [12480, 4310, 2960, 1740, 1188] }],
+        showValues: true,
+      };
+
+    case 'waterfall':
+      return {
+        kind,
+        title: 'How ARR got to where it is',
+        // An opening balance, then signed movements: the shape the kind exists
+        // to draw, and one nothing else can show honestly.
+        categories: ['Opening', 'New', 'Expansion', 'Contraction', 'Churn'],
+        series: [{ name: 'ARR', values: [820, 214, 96, -48, -112] }],
+        valuePrefix: '$',
+        valueSuffix: 'k',
+      };
+
+    case 'radar':
+      return {
+        kind,
+        title: 'Where the team is strong',
+        // Five axes: three is the minimum a radar can draw and five is where it
+        // starts reading as a shape rather than as a triangle.
+        categories: ['Delivery', 'Quality', 'Discovery', 'Support', 'Docs'],
+        series: [
+          { name: 'This quarter', values: [8, 7, 5, 6, 4] },
+          { name: 'Last quarter', values: [6, 6, 4, 7, 3] },
+        ],
+        yMax: 10,
+      };
+
+    case 'bar':
+    default:
+      return {
+        kind,
+        title: 'Weekly active users',
+        categories: ['Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat', 'Sun'],
+        series: [{ name: 'Users', values: [1284, 1471, 1396, 1622, 1738, 942, 806] }],
+      };
+  }
 }

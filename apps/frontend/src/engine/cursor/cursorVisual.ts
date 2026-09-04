@@ -174,6 +174,17 @@ const GLYPHS: Record<string, string> = {
   'shape-arrow': '<path d="M4 20 20 4M20 4h-7M20 4v7"/>',
   connector: '<path d="M4 6h9a5 5 0 0 1 0 10H8m0 0 3.5-3.5M8 16l3.5 3.5"/>',
   grid: '<path d="M4 4h16v16H4zM4 12h16M12 4v16"/>',
+  /**
+   * Three bars, and nothing else.
+   *
+   * The chart tool fell through to `draw` -- the pencil stroke -- which says
+   * the next gesture will draw freehand, and it will not. Three uprights of
+   * different heights is the most reduced thing that still reads as a chart at
+   * 9px, and it is three strokes with no small features, which is the rule this
+   * set is held to. An axis was tried and lost: the L of the axis plus three
+   * bars is five strokes and closes up into a solid block.
+   */
+  chart: '<path d="M6 20V13M12 20V5M18 20V9"/>',
   frame: '<path d="M4 8h16M4 16h16M8 4v16M16 4v16"/>',
   image: '<path d="M3.5 5h17v14h-17zM3.5 16l5-5 4 4 3-3 5 5"/>',
   audio: '<path d="M12 3a3 3 0 0 1 3 3v5a3 3 0 0 1-6 0V6a3 3 0 0 1 3-3zM5.5 11a6.5 6.5 0 0 0 13 0"/>',

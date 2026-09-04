@@ -199,12 +199,35 @@ export interface ChartLayout {
   domain: Domain;
 }
 
-const PAD = 14;
-const TITLE_SIZE = 15;
+/**
+ * The spacing, as one scale rather than six numbers picked per call site.
+ *
+ * The first version was tuned by eye per gap and read as a chart drawn by a
+ * program: labels crowding their axis, a title sitting on the plot, a legend
+ * touching the bottom edge. Every value here is a multiple of 2 off a 4-unit
+ * rhythm, which is what makes the whitespace look decided rather than left
+ * over -- the same argument `index.css` makes for having a space scale at all.
+ *
+ * `PAD` is the outer margin and is generous on purpose: a chart is a node on a
+ * board, so its edge is where it meets somebody else's work, and a mark
+ * running to the boundary reads as clipped even when it is not.
+ */
+const PAD = 18;
+/** Big enough to be a title, not so big it competes with the marks. */
+const TITLE_SIZE = 16;
+/** The gap under the title: a full step, so the title owns a band of its own. */
+const TITLE_GAP = 14;
 const LABEL_SIZE = 11;
 const LEGEND_SIZE = 11;
 const LEGEND_SWATCH = 10;
-const TICK_GAP = 6;
+/**
+ * Between a tick and the thing it labels.
+ *
+ * Wider than it looks like it needs to be. At 6 the digits touched the plot
+ * edge and the axis read as one dense column of ink rather than as numbers
+ * beside a chart.
+ */
+const TICK_GAP = 8;
 
 /**
  * Lay a chart out inside `width` x `height`, in node-local coordinates.
@@ -250,10 +273,12 @@ export function layoutChart(
       align: 'left',
       fontSize: TITLE_SIZE,
     };
-    top += TITLE_SIZE + 10;
+    top += TITLE_SIZE + TITLE_GAP;
   }
 
-  const legendHeight = opts.showLegend ? LEGEND_SIZE + 12 : 0;
+  // The legend sits in a band of its own under the plot, clear of the
+  // category labels above it.
+  const legendHeight = opts.showLegend ? LEGEND_SIZE + 16 : 0;
   const bottomReserved = PAD + legendHeight;
 
   if (isRadial(spec.kind)) {
@@ -1044,7 +1069,7 @@ function buildLegend(
 
   if (entries.length === 0) return [];
 
-  const GAP = 14;
+  const GAP = 16;
   const out: ChartLegendEntry[] = [];
   let x = PAD;
   let y = height - PAD - LEGEND_SIZE;

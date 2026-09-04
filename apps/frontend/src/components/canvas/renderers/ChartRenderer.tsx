@@ -2,8 +2,9 @@ import React from 'react';
 import { Arc, Circle, Group, Line, Path, Rect, Text } from 'react-konva';
 import type { ChartNode } from '../../../engine/model/schema';
 import { layoutChart, type ChartLayout, type Measure } from '../../../engine/chart/chartLayout';
+import type { ChartInk } from '../../../engine/chart/chartInk';
 import { measureChartText } from '../../../engine/chart/chartMeasure';
-import { CHART_CHROME, CHART_INK, CHART_SLICE_EDGE } from '../../../engine/chart/chartInk';
+import { currentChartInk } from '../../../engine/chart/chartInk';
 import {
   rectRing,
   roughLoop,
@@ -42,10 +43,7 @@ interface Props {
   node: ChartNode;
 }
 
-// Both painters read these from one module, so a chart cannot be drawn in one
-// set of greys on screen and another in the file. See `chartInk.ts`.
-const CHROME = CHART_CHROME;
-const INK = CHART_INK;
+
 
 export const ChartRenderer: React.FC<Props> = ({ node }) => {
   const sketch = node.appearance?.sketch;
@@ -67,6 +65,14 @@ export const ChartRenderer: React.FC<Props> = ({ node }) => {
     [node.chart, node.width, node.height, measure]
   );
 
+  /**
+   * Re-read on every render rather than memoised: the theme toggle rewrites a
+   * class on `body`, which is not something React re-renders for. Every render
+   * this component does have already been triggered by something else, and the
+   * read is a `classList.contains`.
+   */
+  const ink = currentChartInk();
+
   const seed = React.useMemo(
     () => seedFor(node.id, node.appearance?.sketchSeed),
     [node.id, node.appearance?.sketchSeed]
@@ -74,22 +80,22 @@ export const ChartRenderer: React.FC<Props> = ({ node }) => {
 
   return (
     <Group listening={false}>
-      <Chrome layout={layout} />
-      <Marks layout={layout} sketch={sketch} seed={seed} />
+      <Chrome layout={layout} ink={ink} />
+      <Marks layout={layout} sketch={sketch} seed={seed} ink={ink} />
       <Reference layout={layout} />
-      <Labels layout={layout} />
+      <Labels layout={layout} ink={ink} />
     </Group>
   );
 };
 
 /** Grid rules, the zero baseline, and nothing that carries a value. */
-const Chrome: React.FC<{ layout: ChartLayout }> = ({ layout }) => (
+const Chrome: React.FC<{ layout: ChartLayout; ink: ChartInk }> = ({ layout, ink }) => (
   <>
     {layout.gridLines.map((g, i) => (
       <Line
         key={`g${i}`}
         points={[g.x1, g.y1, g.x2, g.y2]}
-        stroke={CHROME}
+        stroke={ink.chrome}
         strokeWidth={1}
         opacity={0.35}
         listening={false}
@@ -99,7 +105,7 @@ const Chrome: React.FC<{ layout: ChartLayout }> = ({ layout }) => (
     {layout.baseline && (
       <Line
         points={[layout.baseline.x1, layout.baseline.y1, layout.baseline.x2, layout.baseline.y2]}
-        stroke={CHROME}
+        stroke={ink.chrome}
         strokeWidth={1.5}
         listening={false}
         perfectDrawEnabled={false}
@@ -115,7 +121,7 @@ const Chrome: React.FC<{ layout: ChartLayout }> = ({ layout }) => (
       <Line
         key={`sp${i}`}
         points={[s.x1, s.y1, s.x2, s.y2]}
-        stroke={CHROME}
+        stroke={ink.chrome}
         strokeWidth={1}
         opacity={0.35}
         listening={false}
@@ -127,7 +133,7 @@ const Chrome: React.FC<{ layout: ChartLayout }> = ({ layout }) => (
         key={`rg${i}`}
         points={flatten(r.points)}
         closed
-        stroke={CHROME}
+        stroke={ink.chrome}
         strokeWidth={1}
         opacity={0.3}
         listening={false}
@@ -177,7 +183,8 @@ const Marks: React.FC<{
   layout: ChartLayout;
   sketch: SketchLevel | undefined;
   seed: number;
-}> = ({ layout, sketch, seed }) => (
+  ink: ChartInk;
+}> = ({ layout, sketch, seed, ink }) => (
   <>
     {layout.bars.map((b, i) =>
       sketch ? (
@@ -288,7 +295,7 @@ const Marks: React.FC<{
         rotation={(s.startAngle * 180) / Math.PI}
         angle={((s.endAngle - s.startAngle) * 180) / Math.PI}
         fill={s.color}
-        stroke={CHART_SLICE_EDGE}
+        stroke={ink.sliceEdge}
         strokeWidth={1.5}
         listening={false}
         perfectDrawEnabled={false}
@@ -297,7 +304,7 @@ const Marks: React.FC<{
   </>
 );
 
-const Labels: React.FC<{ layout: ChartLayout }> = ({ layout }) => (
+const Labels: React.FC<{ layout: ChartLayout; ink: ChartInk }> = ({ layout, ink }) => (
   <>
     {layout.title && (
       <Text
@@ -307,7 +314,7 @@ const Labels: React.FC<{ layout: ChartLayout }> = ({ layout }) => (
         width={layout.title.width}
         fontSize={layout.title.fontSize}
         fontStyle="600"
-        fill={INK}
+        fill={ink.ink}
         listening={false}
       />
     )}
@@ -321,7 +328,7 @@ const Labels: React.FC<{ layout: ChartLayout }> = ({ layout }) => (
         width={l.width}
         align={l.align}
         fontSize={l.fontSize}
-        fill={CHROME}
+        fill={ink.chrome}
         listening={false}
       />
     ))}
@@ -336,7 +343,7 @@ const Labels: React.FC<{ layout: ChartLayout }> = ({ layout }) => (
         align={l.align}
         fontSize={l.fontSize}
         fontStyle="600"
-        fill={INK}
+        fill={ink.ink}
         listening={false}
       />
     ))}
@@ -357,7 +364,7 @@ const Labels: React.FC<{ layout: ChartLayout }> = ({ layout }) => (
           x={e.textX}
           y={e.y - 1}
           fontSize={e.fontSize}
-          fill={INK}
+          fill={ink.ink}
           listening={false}
         />
       </React.Fragment>

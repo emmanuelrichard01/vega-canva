@@ -1,3 +1,5 @@
+import { ThemeService } from '../ThemeService';
+
 /**
  * The ink a chart's chrome is drawn in.
  *
@@ -6,38 +8,70 @@
  * disagree, and the disagreement shows up in an exported file rather than on
  * screen where somebody would see it.
  *
- * ## Why these are mid-tones and not theme tokens
+ * ## Why this is theme-aware, having started out fixed
  *
- * A chart is *content*. It sits on the board, not in the chrome, so it is over
- * whatever the board is — a white canvas, a near-black one, a frame someone
- * has filled with their brand colour, or a photograph. A near-black axis label
- * is right on a pale board and invisible on a dark one, and `--text-secondary`
- * follows the *interface* theme rather than the surface the object is actually
- * sitting on, so it is wrong in exactly the case that matters.
+ * The first version was a single mid-tone per role, on the diagram engine's
+ * reasoning: a chart is *content*, it sits over whatever the board is, and one
+ * colour that clears 3:1 against both a white canvas and a near-black one is
+ * about the most a fixed value can do.
  *
- * These are the same call `canvasInk` makes in the diagram engine, and the
- * reasoning transfers verbatim: pick a mid-tone that clears roughly 3:1
- * against both a white canvas and a near-black one. That is the contrast a
- * rule or a small label needs, and it is about the most a single fixed colour
- * can do against two opposite backgrounds.
+ * That reasoning is sound and it buys the wrong thing. "Clears 3:1 against
+ * both" is a compromise that is *merely legible* in both themes and crisp in
+ * neither — a grey pale enough to survive a dark board is washed out on a
+ * white one, and the axis labels end up looking like a disabled control. The
+ * board's background is not actually unknown: it follows the theme, and the
+ * theme is a value this app already publishes.
  *
- * The series colours are a different question and are not here — they are
- * content in the strong sense, chosen by the author and stored on the node, so
- * that a chart looks the same for everybody rather than being re-picked per
- * viewer. See `CHART_PALETTE`.
+ * So each role has a light and a dark value, each chosen for its own ground.
+ * The compromise tone is kept as the fallback for the one caller that has no
+ * DOM to ask — an export running in a worker — where a colour that is legible
+ * on both is exactly right.
+ *
+ * Konva parses fills with the 2D context, not with CSS, so a
+ * `var(--text-secondary)` handed to a canvas is unparseable and silently
+ * leaves the previous value in place. Every colour here is a literal for that
+ * reason; `ThemeService` documents the failure in full.
  */
 
-/** Grid rules, the baseline, axis ticks and category labels. */
-export const CHART_CHROME = '#94A3B8';
+export interface ChartInk {
+  /** Grid rules, the baseline, axis ticks, category labels, radar rings. */
+  chrome: string;
+  /** Title, value labels and legend text: the words that carry meaning. */
+  ink: string;
+  /**
+   * The hairline between a pie slice and its neighbour.
+   *
+   * It separates two filled wedges from each other, not the pie from the board
+   * behind it — so it takes the *board's* colour rather than a fixed white,
+   * which on a dark board read as a bright cage drawn over the chart.
+   */
+  sliceEdge: string;
+}
 
-/** Title, value labels and legend text: the words that carry meaning. */
-export const CHART_INK = '#64748B';
+/** Pure, so it can be asserted and so a worker can ask for either. */
+export function chartInkFor(dark: boolean): ChartInk {
+  return dark
+    ? { chrome: '#7A8699', ink: '#C8D2E0', sliceEdge: '#18181B' }
+    : { chrome: '#98A2B3', ink: '#475569', sliceEdge: '#FFFFFF' };
+}
 
 /**
- * The hairline between a pie slice and its neighbour.
+ * The ink for the theme currently on screen.
  *
- * White rather than the board's colour, because it is separating two filled
- * wedges from each other and not the pie from what is behind it. Against a
- * dark board it reads as a drawn edge, which is what it is.
+ * Falls back to the light palette with no DOM, which is what an export running
+ * outside a document gets. That is the right default rather than an arbitrary
+ * one: a chart exported to SVG or PDF is overwhelmingly going into a document
+ * with a white page.
  */
-export const CHART_SLICE_EDGE = '#FFFFFF';
+export function currentChartInk(): ChartInk {
+  return chartInkFor(ThemeService.isDarkMode());
+}
+
+/**
+ * The single-tone fallback, kept for callers with no theme to consult.
+ *
+ * These are the values every chart used before the split, and they are still
+ * the correct answer to "one colour that has to survive both grounds".
+ */
+export const CHART_CHROME_NEUTRAL = '#94A3B8';
+export const CHART_INK_NEUTRAL = '#64748B';
