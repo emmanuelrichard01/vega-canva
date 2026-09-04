@@ -136,10 +136,18 @@ commit as the code, not after.
 **"Dead" is the important category and it is worse than "Absent."** A dead
 field is declared on the schema, written by something, and read by nobody — so
 the app *claims* a capability it does not have, and every reader downstream is
-entitled to believe it. Ten have been found and killed so far. The most recent
-was `TextNode.autoHeight` (Phase 5). The rule that follows from it: **never
+entitled to believe it. Eleven have been found and closed so far. The most
+recent was `FrameNode.layout` on 2026-09-04, and **there are none left** — the
+spec's Dead column is empty for the first time. The rule that follows: **never
 declare a capability the renderer ignores**, and **a feature ships with the
 control that gives it a purpose**.
+
+A dead field has two honest exits and the choice between them is about the
+*prerequisite*, not the effort. `Appearance.shadow` was wired, because a
+renderer was already waiting for it. `FrameNode.layout` was deleted, because
+auto-layout needs real nesting and groups here are flat — the declaration was
+ahead of something that does not exist, so implementing it would have meant
+building the prerequisite first and calling that a bug fix.
 
 Recent commits, newest first. **This table is a copy of `git log` and it goes
 stale between every session — check the log before trusting a "newest".** As of

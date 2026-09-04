@@ -1126,7 +1126,6 @@ export function normalizeNode(raw: any, id?: string): AnyNode {
         ...base,
         type: 'frame',
         appearance: normalizeAppearance(raw),
-        layout: raw?.layout,
         safeArea: normalizeSafeArea(raw?.safeArea),
         layoutGuide: normalizeLayoutGuide(raw?.layoutGuide),
       };

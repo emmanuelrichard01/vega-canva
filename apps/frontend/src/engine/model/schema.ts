@@ -1229,11 +1229,28 @@ export interface FrameNode extends BaseNode {
     columns?: { count: number; gutter: number; margin: number };
     rows?: { count: number; gutter: number; margin: number };
   };
-  layout?: {
-    direction: 'horizontal' | 'vertical';
-    padding: number;
-    gap: number;
-  };
+  /**
+   * There is deliberately no `layout` field here.
+   *
+   * One declaring `direction`, `padding` and `gap` sat on this interface from
+   * the first commit and was read by nothing — the file's last **Dead** entry,
+   * and the only field in this interface that never carried a docstring, which
+   * is its own tell. It was removed on 2026-09-04 under invariant 6: never
+   * declare a capability the renderer ignores. A dead field is worse than an
+   * absent one, because it reads as finished to anyone scanning the schema, is
+   * carried by every migration, is serialized into every export, and invites a
+   * second implementation beside it.
+   *
+   * Auto-layout is Phase 6 in `docs/CANVAS-SPEC.md`, and that phase states its
+   * own prerequisite: real nesting. Groups here are flat — members share a
+   * synthetic `parentId`, there is no enter-group editing — so the declaration
+   * was not merely unimplemented, it was ahead of something that does not
+   * exist. Reintroduce it *with* the renderer that honours it and the panel
+   * controls that reach it, which is the order the invariant asks for.
+   *
+   * Nothing migrates. Nothing ever wrote the field, so no stored document
+   * carries it; `normalize.ts` dropped its passthrough in the same commit.
+   */
 }
 
 /**

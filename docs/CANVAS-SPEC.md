@@ -98,7 +98,7 @@ it.
 | Grouping | **Partial** | Foldable in the Layers panel, and right-clicking one member targets the whole group — which is what makes "copy this as Mermaid" answerable, since grouping is the only signal a person can give that a set of objects is one diagram. Still flat otherwise: a shared synthetic `parentId`, no nesting, no enter-group editing, no group bounds as a first-class object. |
 | Lock / unlock | **Shipped** | |
 | Visibility / hide | **Shipped** | `hidden` on the base node; renderer and Layers panel both gate on it, and there is deliberately no second `visible` field. |
-| Auto layout / flexbox | **Dead** | `FrameNode.layout` declares `direction`, `padding` and `gap` in the schema and nothing reads it. It has been the file's only dead entry since 2026-08-11, and it is Phase 6's to either implement or delete. The second half of this row used to read "and no frame can be created in the first place", which stopped being true when the frame tool shipped in Phase 1 — the declaration is dead on its own merits, not for want of a frame to put it on. |
+| Auto layout / flexbox | **Absent** | Was **Dead** from the first commit until 2026-09-04: `FrameNode.layout` declared `direction`, `padding` and `gap`, and nothing read it. Given the choice this row set out — Phase 6's to either implement or delete — it was **deleted**, because Phase 6 states its own prerequisite of real nesting and groups here are still flat, so the declaration was ahead of something that does not exist rather than merely unimplemented. Nothing migrated: no document ever carried the field. `schema.ts` keeps a comment where it stood saying why, so it is not re-added by someone reading the spec and assuming an oversight. **This file now has no Dead entries.** |
 | Constraints / resizing rules | **Absent** | No pinning, stretching, hug or fill. Requires frames. |
 | Absolute positioning | **Absent** | Only meaningful once auto-layout exists. |
 
@@ -301,12 +301,12 @@ in 15, and every mention in prose, *including the ones in this paragraph* — an
 it counts the Drop shadow row in §8 twice, because that row says **Shipped**
 and then says it was **Dead** until 2026-08-11. The awk above is scoped to
 table rows in sections 1-14 and takes the first marker in each, so none of that
-reaches it. Last recounted 2026-09-03, in the commit that shipped per-corner radii.
+reaches it. Last recounted 2026-09-04, in the commit that deleted `FrameNode.layout`.
 
 - **Shipped: 84** — the canvas core, collaboration, frames, the whole paint model, the precision tools, the vector engine, and the parts of the transform/typography blocks that a whiteboard needs.
 - **Partial: 6**
-- **Dead: 1** — `FrameNode.layout`, the auto-layout declaration, which Phase 6 owns. `Appearance.shadow` was the second entry here until 2026-08-11.
-- **Absent: 27** — design systems and prototyping. Vector manipulation left this list on 2026-08-12; **the export pipeline left it on 2026-08-18** — six formats with a live preview, a hand-rolled PDF writer, batch export of every frame, and a JSON export that can now actually be read back.
+- **Dead: 0** — and this is the first time. `FrameNode.layout` was deleted on 2026-09-04 rather than implemented, for the reason in its row above; `Appearance.shadow` left on 2026-08-11 by being wired instead. Both routes out of Dead are legitimate and the choice is about the prerequisite, not the effort: shadow had a renderer waiting for it, auto-layout needs nesting that does not exist. **Eleven dead fields have now been found and closed over this project's life.**
+- **Absent: 28** — design systems and prototyping, plus auto-layout as of 2026-09-04. Vector manipulation left this list on 2026-08-12; **the export pipeline left it on 2026-08-18** — six formats with a live preview, a hand-rolled PDF writer, batch export of every frame, and a JSON export that can now actually be read back.
 
 Section 15 is counted separately: it audits the product *around* the canvas
 (templates, physics, thumbnails, sharing, the help screen, the design system),
@@ -346,10 +346,13 @@ possible rather than painful.
 Ordered by what unlocks the most and what the model already leans toward, not
 by section number.
 
-**Phase 0 — Settle the dead items. Done, apart from what Phase 1 covers.**
+**Phase 0 — Settle the dead items. Done** (2026-09-04).
 Dash, star parameters, follow mode, image adjustments, image crop and the
 natural-size fields all now ship with the control that gives them a purpose.
-Frames and auto-layout are the remaining two, and Phase 1 is where they belong.
+Frames shipped in Phase 1. Auto-layout was the last one standing and took the
+other exit: **deleted, not wired**, because its prerequisite is Phase 3's
+nesting rather than any amount of work on the field itself. The Dead column is
+empty.
 
 **Phase 1 — Frames and artboards. Done** (2026-08-11), apart from bleed, which
 is scoped out above with its reason. The tool, presets, ownership, clipping,
@@ -486,7 +489,11 @@ What that unlocked, and what it did not:
   Canvas2D exposes neither. That is a dependency decision, not a design one.
 
 **Phase 6 — Auto-layout and constraints.** Requires Phase 1 and real nesting
-from Phase 3.
+from Phase 3. It starts from **nothing declared** — the old `FrameNode.layout`
+was deleted on 2026-09-04 rather than left as a stub to build into, so this
+phase adds the field, the reflow and the panel controls in one piece. That is
+the order invariant 6 asks for, and `schema.ts` carries a comment where the
+field stood so it is not re-added by someone assuming an oversight.
 
 **Phase 7 — Components, instances, variants and document tokens.** The largest
 single system, and the one with the most CRDT design risk: overrides that
