@@ -171,6 +171,62 @@ export function scopeOptions(scope: ExportScope): {
 }
 
 /**
+ * The other half of `scopeOptions`: reading those two fields back.
+ *
+ * `scopeOptions` is the only place export options are *built* from a
+ * selection, and it exists because two inline copies of that decision had
+ * already drifted. This is the same argument applied to the read side, where
+ * there were **four** copies of the predicate:
+ *
+ * ```ts
+ * options.selectedOnly && options.selectedIds?.length   // isolate, mount
+ * options.selectedOnly ? options.selectedIds : undefined // both bounds calls
+ * ```
+ *
+ * Those are not the same test, and the difference is that **`[]` is truthy in
+ * JavaScript**. Given `{ selectedOnly: true, selectedIds: [] }` the first
+ * yields "everything" and the second yields "these zero objects" — so the
+ * raster path would frame to `computeContentBounds`'s empty-list fallback, a
+ * default 800×600 box at the world origin, while isolating nothing and
+ * capturing whatever board content happened to overlap that box. Neither the
+ * selection nor the board.
+ *
+ * That state is **not currently reachable**: `exportScope` returns
+ * `ids: null` when nothing survives, precisely so an exporter is never handed
+ * an empty list, and `PDFExporter` always includes the frame's own id. This
+ * is therefore a latch on a door that is already shut — which is the point.
+ * Invariant 7 asks for one source of truth *or* a test holding the copies
+ * together, and four copies agreeing today by coincidence is neither.
+ *
+ * @returns the ids the export covers, or `null` for "the whole document".
+ *   `null` is deliberately distinct from `[]`, and the reason is the bug
+ *   above: callers must not be able to confuse "everything" with "nothing".
+ */
+export function exportIds(options: {
+  selectedOnly?: boolean;
+  selectedIds?: readonly string[];
+}): string[] | null {
+  if (!options.selectedOnly) return null;
+  if (!options.selectedIds || options.selectedIds.length === 0) return null;
+  return [...options.selectedIds];
+}
+
+/**
+ * `exportIds` as a set, for the two callers that test membership.
+ *
+ * Built on `exportIds` rather than beside it, so there is one predicate and
+ * not two — a set-shaped copy of the rule would be the fifth derivation this
+ * function exists to remove.
+ */
+export function exportIdSet(options: {
+  selectedOnly?: boolean;
+  selectedIds?: readonly string[];
+}): ReadonlySet<string> | null {
+  const ids = exportIds(options);
+  return ids ? new Set(ids) : null;
+}
+
+/**
  * What the menu item should say.
  *
  * ## Why the words come from here

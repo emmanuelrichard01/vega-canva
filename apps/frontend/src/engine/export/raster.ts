@@ -5,6 +5,7 @@ import { isolateObjects } from './isolate';
 import { nextCommit, renderScope } from './renderScope';
 import { expectedImages, waitForImages } from './imagesReady';
 import { resolveBackground, type ExportOptions, type FormatSpec } from './ExportTypes';
+import { exportIds, exportIdSet } from './exportScope';
 import { fitScale } from './rasterLimits';
 
 // Re-exported so importers keep one name for the cap, while the arithmetic
@@ -73,7 +74,10 @@ export function captureRaster(options: ExportOptions, spec: FormatSpec): RasterC
       // Read here rather than defaulted inside `computeContentBounds`, so that
       // module stays free of the store and can be asserted in Node.
       useStore.getState().objects,
-      options.selectedOnly ? options.selectedIds : undefined,
+      // `?? undefined` because `computeContentBounds` distinguishes "no ids
+      // given" from an empty list, and `exportIds` already collapsed the
+      // empty list into `null`. See its docstring for why that matters.
+      exportIds(options) ?? undefined,
       options.padding
     );
 
@@ -94,10 +98,7 @@ export function captureRaster(options: ExportOptions, spec: FormatSpec): RasterC
   const restoreChrome = hideExportChrome(stage);
   // And everything the export is *not* of. `null` for a whole-board export,
   // which is the common case and does not walk the tree.
-  const restoreIsolation = isolateObjects(
-    stage,
-    options.selectedOnly && options.selectedIds?.length ? new Set(options.selectedIds) : null
-  );
+  const restoreIsolation = isolateObjects(stage, exportIdSet(options));
 
   const width = Math.max(1, Math.round(bounds.width * scale));
   const height = Math.max(1, Math.round(bounds.height * scale));
@@ -183,10 +184,7 @@ export function canvasToBlob(canvas: HTMLCanvasElement, mime: string, quality?: 
  */
 export async function mountForCapture(options: ExportOptions): Promise<() => void> {
   const objects = useStore.getState().objects;
-  const ids =
-    options.selectedOnly && options.selectedIds?.length
-      ? options.selectedIds
-      : Object.keys(objects);
+  const ids = exportIds(options) ?? Object.keys(objects);
 
   const release = renderScope.require(ids);
   try {

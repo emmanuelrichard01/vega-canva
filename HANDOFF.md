@@ -1958,6 +1958,47 @@ anything that purges media takes the backups with it, and the server's own
 credentials can delete them. `docs/SETUP-CHECKLIST.md` carries the migration
 to a scoped bucket as the follow-up.
 
+## 4f-i. Four readings of "what does this export cover"
+
+`isolate.ts` exists because the raster path and the vector path disagreed
+about which objects a selection-scoped export contained, and its docstring
+names the shape: *two derivations of one question*. Auditing it for the
+unwatched check in §5a turned up the same shape one level down — the fix had
+removed the disagreement about *hiding* and left four copies of the predicate
+that decides **which ids**:
+
+```ts
+options.selectedOnly && options.selectedIds?.length    // isolate, mountForCapture
+options.selectedOnly ? options.selectedIds : undefined // both computeContentBounds calls
+```
+
+**Those are not the same test, because `[]` is truthy.** Handed
+`{ selectedOnly: true, selectedIds: [] }` the first pair answers "everything"
+and the second answers "these zero objects" — and `computeContentBounds`
+returns a default 800×600 box at the world origin for an empty list. The
+raster export would frame to that box, isolate nothing, and capture whatever
+board content happened to overlap it: not the selection, not the board.
+
+**It is not reachable today**, and that is worth stating plainly rather than
+dressing this up as a live bug. `exportScope` returns `ids: null` when nothing
+survives — deliberately, so no exporter is ever handed an empty list — and
+`PDFExporter` always includes the frame's own id. Every current caller goes
+through one of those.
+
+So this is a latch on a door that is already shut, and invariant 7 is the
+argument for fitting it: *one source of truth, or a test that holds the copies
+together*. Four copies agreeing today by coincidence is neither, and the
+coincidence is exactly what `scopeOptions` was written to stop on the build
+side. `exportIds` / `exportIdSet` are the read side of the same idea, and all
+four call sites now go through them.
+
+The test was checked the way this file asks: reverting `exportIds` to the
+bounds-side predicate fails `treats an empty selection as the whole board`,
+and nothing else. **What this does and does not buy:** the two exporters
+provably start from one id set, so that half of the PNG-vs-SVG check no longer
+needs a browser. Whether the resulting *pixels* match is still unwatched, and
+still on the §5a list.
+
 ### The reaper's clock was broken
 
 `rooms.last_active_at` was written only from the Database extension's `store`
@@ -4841,7 +4882,9 @@ broken; all of it is unwatched.
   did not connect on a single attempt across either of them. In priority order,
   because these are the ones where a wrong answer is invisible from the code:
   a selection-scoped **PNG next to the SVG of the same selection** (they must
-  contain the same objects — the whole point of `isolate.ts`); a **whole-board
+  contain the same objects — the whole point of `isolate.ts`; **the id half of
+  this is now held by a test** — see §4f-i — so what is left to see by eye is
+  the pixels, not the set); a **whole-board
   PNG on a board larger than the window**, which is the `renderScope` fix and
   the one most likely to still be wrong; an **export of a selection containing a
   photograph**, for `imagesReady`; the **rail after a handle drag is interrupted

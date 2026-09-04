@@ -27,6 +27,7 @@ import { loopPath } from '../model/freehandLoop';
 import { canvasFontFamily } from '../../components/canvas/renderers/shared';
 import { DEFAULT_INK } from '../model/schema';
 import { computeContentBounds } from './bounds';
+import { exportIds, exportIdSet } from './exportScope';
 import { cornerRadiiOf, fitRadii, isPerCorner, roundedRectPath } from '../model/cornerRadii';
 
 /**
@@ -562,10 +563,8 @@ export class SVGExporter implements Exporter {
     const state = useStore.getState();
     let nodes = Object.values(state.objects);
 
-    if (options.selectedOnly && options.selectedIds?.length) {
-      const ids = new Set(options.selectedIds);
-      nodes = nodes.filter((n) => ids.has(n.id));
-    }
+    const ids = exportIdSet(options);
+    if (ids) nodes = nodes.filter((n) => ids.has(n.id));
 
     // Draw in stacking order so the export matches what is on screen.
     nodes = nodes.filter((n) => !n.hidden).sort((a, b) => a.zIndex - b.zIndex);
@@ -819,7 +818,7 @@ export class SVGExporter implements Exporter {
       options.bounds ??
       computeContentBounds(
         state.objects,
-        options.selectedOnly ? options.selectedIds : undefined,
+        exportIds(options) ?? undefined,
         options.padding
       );
 

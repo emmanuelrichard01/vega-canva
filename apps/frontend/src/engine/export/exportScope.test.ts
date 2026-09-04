@@ -1,5 +1,13 @@
 import { describe, expect, it } from 'vitest';
-import { copyLabel, expandForExport, exportLabel, exportScope, scopeOptions } from './exportScope';
+import {
+  copyLabel,
+  expandForExport,
+  exportIds,
+  exportIdSet,
+  exportLabel,
+  exportScope,
+  scopeOptions,
+} from './exportScope';
 import type { AnyNode } from '../model/schema';
 
 const node = (id: string, extra: Partial<AnyNode> = {}): AnyNode =>
@@ -118,6 +126,79 @@ describe('scopeOptions', () => {
     const scoped = scopeOptions(exportScope(board(node('a')), ['a'], 'B'));
     expect(scoped).toEqual({ selectedOnly: true, selectedIds: ['a'] });
     expect(scopeOptions(exportScope(board(node('a')), [], 'B'))).toEqual({});
+  });
+});
+
+/**
+ * The invariant these hold is the one `isolate.ts` was written for: **a PNG
+ * and an SVG of the same selection must cover the same objects.**
+ *
+ * That was checkable only by exporting both and opening them, and it is on
+ * HANDOFF's unwatched list for exactly that reason. It does not have to be.
+ * What made the two disagree was never the pixels — it was four separate
+ * copies of "which ids does this export cover", and the raster path answering
+ * it differently from the vector path. One reader, asserted here, is a
+ * stronger guarantee than looking at two files once.
+ */
+describe('exportIds / exportIdSet', () => {
+  it('answers null for a whole-board export, not an empty list', () => {
+    /**
+     * The distinction is load-bearing. `computeContentBounds` treats "no ids"
+     * as the whole document and an empty list as zero objects — for which it
+     * returns a default 800x600 box at the origin. Collapsing the two is how
+     * a caller frames a capture to a box with nothing in it.
+     */
+    expect(exportIds({})).toBeNull();
+    expect(exportIds({ selectedOnly: false, selectedIds: ['a'] })).toBeNull();
+    expect(exportIdSet({})).toBeNull();
+  });
+
+  it('treats an empty selection as the whole board, because [] is truthy', () => {
+    /**
+     * The bug this forecloses. Two of the four old call sites tested
+     * `selectedIds?.length` and two tested `selectedOnly ? selectedIds :
+     * undefined`; given `{ selectedOnly: true, selectedIds: [] }` the first
+     * pair said "everything" and the second said "these zero objects". The
+     * raster export would then frame to the 800x600 fallback while isolating
+     * nothing, and capture whatever board content overlapped that box.
+     *
+     * `exportScope` never produces this state -- it returns `ids: null` when
+     * nothing survives -- so this asserts a latch on a door that is shut.
+     * Four copies agreeing by coincidence is what invariant 7 rules out.
+     */
+    expect(exportIds({ selectedOnly: true, selectedIds: [] })).toBeNull();
+    expect(exportIdSet({ selectedOnly: true, selectedIds: [] })).toBeNull();
+  });
+
+  it('gives the raster and vector paths the same answer', () => {
+    /**
+     * The two exporters consume the result differently -- the vector path
+     * filters nodes by membership, the raster path hides everything outside
+     * the set and frames to `computeContentBounds` -- but they must start
+     * from one set. This asserts the set, which is the half that used to
+     * differ; `isolate.ts` covers the hiding.
+     */
+    const options = { selectedOnly: true, selectedIds: ['a', 'c'] };
+
+    const vector = exportIdSet(options);
+    const raster = exportIdSet(options);
+    expect(vector).toEqual(raster);
+
+    // And what each derives from it, in the shape its own caller uses.
+    const nodes = [node('a'), node('b'), node('c')];
+    expect(nodes.filter((n) => vector!.has(n.id)).map((n) => n.id)).toEqual(['a', 'c']);
+    expect(exportIds(options)).toEqual(['a', 'c']);
+  });
+
+  it('copies the ids rather than aliasing the caller\'s array', () => {
+    /**
+     * An exporter that sorted or spliced its ids in place would otherwise
+     * reach back into the selection it was handed.
+     */
+    const selectedIds = ['a', 'b'];
+    const out = exportIds({ selectedOnly: true, selectedIds })!;
+    out.push('c');
+    expect(selectedIds).toEqual(['a', 'b']);
   });
 });
 

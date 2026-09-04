@@ -4,6 +4,7 @@ import { commentsMap, metadataMap, roomId as currentRoomId } from '../document';
 import { roomFingerprint } from '../room/roomCode';
 import { SCHEMA_VERSION } from '../model/schema';
 import { EXPORT_ENVELOPE_VERSION } from './DocumentImport';
+import { exportIdSet } from './exportScope';
 
 export class JSONExporter implements Exporter {
   type: ExportFormat = "json";
@@ -12,8 +13,8 @@ export class JSONExporter implements Exporter {
     const state = useStore.getState();
 
     let objects = state.objects;
-    if (options.selectedOnly && options.selectedIds?.length) {
-      const idSet = new Set(options.selectedIds);
+    const idSet = exportIdSet(options);
+    if (idSet) {
       objects = Object.fromEntries(Object.entries(state.objects).filter(([id]) => idSet.has(id)));
     }
 
