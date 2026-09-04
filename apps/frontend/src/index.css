@@ -17491,7 +17491,7 @@ html[data-precise] .canvas-container[data-cursor-mode] .konvajs-content canvas {
   width: 24px;
   height: 20px;
   border: none;
-  border-radius: 3px;
+  border-radius: var(--radius-sm);
   background: transparent;
   color: var(--text-tertiary);
   cursor: pointer;
@@ -17507,7 +17507,7 @@ html[data-precise] .canvas-container[data-cursor-mode] .konvajs-content canvas {
 }
 
 .cp-mono {
-  font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  font-family: var(--font-mono);
   font-size: var(--text-xs);
   font-weight: 600;
   line-height: 1;
@@ -17584,7 +17584,7 @@ html[data-precise] .canvas-container[data-cursor-mode] .konvajs-content canvas {
 .cp-swatches__chip {
   width: 14px;
   height: 14px;
-  border-radius: 3px;
+  border-radius: var(--radius-sm);
   box-shadow: inset 0 0 0 1px var(--border-divider);
 }
 
@@ -17624,7 +17624,7 @@ html[data-precise] .canvas-container[data-cursor-mode] .konvajs-content canvas {
   min-width: 0;
   /* A formula is read character by character, and a proportional face makes
      l1I and O0 ambiguous in exactly the place it matters most. */
-  font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  font-family: var(--font-mono);
   font-size: var(--text-xs);
 }
 
@@ -17641,14 +17641,14 @@ html[data-precise] .canvas-container[data-cursor-mode] .konvajs-content canvas {
 .cp-help p { margin: 4px 0 0; line-height: 1.5; }
 
 .cp-help code {
-  font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  font-family: var(--font-mono);
   background: var(--surface-secondary);
-  border-radius: 3px;
+  border-radius: var(--radius-sm);
   padding: 0 3px;
 }
 
 .cp-help__fns {
-  font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  font-family: var(--font-mono);
   word-spacing: 2px;
   opacity: 0.85;
 }
