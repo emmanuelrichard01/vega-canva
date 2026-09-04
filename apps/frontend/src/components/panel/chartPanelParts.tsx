@@ -1,5 +1,5 @@
 import React from 'react';
-import { Check, ChevronDown, ChevronRight } from 'lucide-react';
+import { Check, ChevronDown } from 'lucide-react';
 import { ChartKindIcon } from '../workspace/chartIcons';
 import { CHART_HINTS, CHART_LABELS, chartPickerGroups } from '../../engine/chart/chartKinds';
 import type { ChartKind } from '../../engine/chart/chartTypes';
@@ -7,83 +7,84 @@ import type { ChartKind } from '../../engine/chart/chartTypes';
 /**
  * The parts the chart panel is built from.
  *
- * ## Why a summary on every collapsed header
+ * ## Why there are almost no disclosures here
  *
- * The panel had nine always-open blocks and was two screens long, so finding
- * the axis controls meant scrolling past the data grid every time. Collapsing
- * them fixes the length and creates a worse problem: a closed section hides
- * whether anything inside it is set, so the only way to know if a prefix is
- * applied is to open the section and look.
+ * There were nine, and they were wrong twice over.
  *
- * Every disclosure here therefore carries a **live summary of its own state**
- * on the header row — `$ · 2dp`, `0–300`, `Title, values`. That is the whole
- * design. It is what a properties panel in Figma or a palette in Illustrator
- * does, and the reason is the same: the header is doing two jobs at once, and
- * the second one — *is there anything in here I should care about* — is asked
- * far more often than the first.
+ * First, structurally: this whole section already renders **inside** the
+ * panel's `Chart` accordion. Nine collapsibles within a collapsible is a tree
+ * where the panel everywhere else is a list, and the cost is paid on every
+ * visit — three clicks to reach a control that was two rows away.
  *
- * A section with nothing set says so in the same slot, quietly, rather than
- * leaving the space blank: "off" is a state and blank is an absence, and a
- * reader cannot tell an unset section from a broken one.
+ * Second, in principle. Progressive disclosure earns its keep when the hidden
+ * thing is genuinely secondary *and* long. Applied to eight rows of ordinary
+ * controls it inverts: a title field and two toggles are cheaper to show than
+ * to describe on a header, and hiding them means every one of them costs a
+ * click that reveals almost nothing. A properties panel is scanned far more
+ * often than it is read, and scanning is what a collapsed section prevents.
+ *
+ * So the layout is **flat, with quiet headings and hairlines**, which is what
+ * Figma's inspector and Illustrator's palettes do. Exactly two things stay
+ * behind a disclosure, and both pass the test: the preset gallery (fourteen
+ * entries, reference material, wanted once) and the function vocabulary (a
+ * wall of names, consulted rarely).
+ *
+ * ## Why rows are not defined here
+ *
+ * They were, at `72px`, and that was the alignment bug. `.prop-row` in
+ * `index.css` is `84px | 1fr` and its comment records why — a narrower column
+ * truncated the labels this panel actually uses. Inventing a third width put
+ * the chart rows a dozen pixels out of step with the Transform and Fill rows
+ * directly above them in the same panel. So chart rows are `Row` from
+ * `panelPrimitives`, like every other row in the inspector, and this file
+ * defines only what genuinely has no equivalent.
  */
 
-/** A collapsible block whose header reports what is inside it. */
-export const Disclosure: React.FC<{
+/** A titled block, with a hairline above it. Not collapsible: see the header. */
+export const Group: React.FC<{
   label: string;
-  /** The live state, shown on the header when collapsed *and* when open. */
-  summary?: string;
-  /** Open on first render. The data grid and the formulae are; nothing else. */
-  defaultOpen?: boolean;
-  /** Trailing controls that belong to the section, not to its contents. */
+  /** Trailing controls that belong to the group rather than to a row in it. */
   actions?: React.ReactNode;
   children: React.ReactNode;
-}> = ({ label, summary, defaultOpen, actions, children }) => {
-  const [open, setOpen] = React.useState(defaultOpen ?? false);
-  const id = React.useId();
+}> = ({ label, actions, children }) => (
+  <section className="chartp-group">
+    <div className="chartp-group__head">
+      <h4 className="chartp-group__label">{label}</h4>
+      {actions && <div className="chartp-group__actions">{actions}</div>}
+    </div>
+    <div className="chartp-group__body">{children}</div>
+  </section>
+);
 
-  return (
-    <section className="cp-section" data-open={open || undefined}>
-      <div className="cp-section__head">
-        <button
-          type="button"
-          className="cp-section__toggle"
-          aria-expanded={open}
-          aria-controls={id}
-          onClick={() => setOpen((v) => !v)}
-        >
-          {open ? <ChevronDown size={12} /> : <ChevronRight size={12} />}
-          <span className="cp-section__label">{label}</span>
-          {/*
-            Kept visible when the section is open as well. Hiding it on expand
-            makes the header flicker between two widths every time somebody
-            opens and closes a section, and the summary is still the fastest
-            way to read the state once you are inside.
-          */}
-          {summary && <span className="cp-section__summary">{summary}</span>}
-        </button>
-        {actions && <div className="cp-section__actions">{actions}</div>}
-      </div>
-      {open && (
-        <div className="cp-section__body" id={id}>
-          {children}
-        </div>
-      )}
-    </section>
-  );
-};
+/**
+ * The two things still worth hiding.
+ *
+ * Kept deliberately plain — a summary line would be reinventing the header
+ * that was just removed. These hold reference material, and the only question
+ * asked of them is "show me the list", which the label already answers.
+ */
+export const Reveal: React.FC<{ label: string; children: React.ReactNode }> = ({
+  label,
+  children,
+}) => (
+  <details className="chartp-reveal">
+    <summary className="chartp-reveal__summary">{label}</summary>
+    <div className="chartp-reveal__body">{children}</div>
+  </details>
+);
 
 /**
  * The type control: what this chart *is*, at the top, in one line.
  *
- * It was a grid of nineteen 18px glyphs. That is a picker optimised for
- * somebody who already knows which cell they want and hostile to everybody
- * else — the icons are too small to read as pictures, there is no room for a
- * name, and the five families were flattened into one undifferentiated block.
+ * It was a grid of nineteen 18px glyphs — a picker optimised for somebody who
+ * already knows which cell they want and hostile to everybody else. The icons
+ * are too small to read as pictures, there is no room for a name, and the five
+ * families were flattened into one undifferentiated block.
  *
  * So the panel shows the *current* kind large, with its name and the sentence
- * that says what it is for, and the full catalogue opens as a popover with the
- * room to be read. That is the trade every serious tool makes here: the common
- * case is confirming what you have, not changing it.
+ * saying what it is for, and the catalogue opens as a popover with room to be
+ * read. That is the trade every serious tool makes here: the common act is
+ * confirming what you have, not changing it.
  */
 export const TypeHeader: React.FC<{ kind: ChartKind; onPick: (k: ChartKind) => void }> = ({
   kind,
@@ -93,8 +94,8 @@ export const TypeHeader: React.FC<{ kind: ChartKind; onPick: (k: ChartKind) => v
   const ref = React.useRef<HTMLDivElement>(null);
 
   // Closing on an outside press rather than on blur: blur fires when focus
-  // moves *into* the popover's own buttons, which would shut it on the click
-  // that was choosing something.
+  // moves *into* the popover's own buttons, which would shut it on the very
+  // click that was choosing something.
   React.useEffect(() => {
     if (!open) return;
     const onDown = (e: PointerEvent) => {
@@ -112,46 +113,46 @@ export const TypeHeader: React.FC<{ kind: ChartKind; onPick: (k: ChartKind) => v
   }, [open]);
 
   return (
-    <div className="cp-type" ref={ref}>
+    <div className="chartp-type" ref={ref}>
       <button
         type="button"
-        className="cp-type__current"
+        className="chartp-type__current"
         aria-expanded={open}
         aria-haspopup="dialog"
         onClick={() => setOpen((v) => !v)}
       >
-        <span className="cp-type__glyph">
-          <ChartKindIcon kind={kind} size={22} />
+        <span className="chartp-type__glyph">
+          <ChartKindIcon kind={kind} size={20} />
         </span>
-        <span className="cp-type__text">
-          <span className="cp-type__name">{CHART_LABELS[kind]}</span>
-          <span className="cp-type__hint">{CHART_HINTS[kind]}</span>
+        <span className="chartp-type__text">
+          <span className="chartp-type__name">{CHART_LABELS[kind]}</span>
+          <span className="chartp-type__hint">{CHART_HINTS[kind]}</span>
         </span>
-        <ChevronDown size={13} className="cp-type__caret" />
+        <ChevronDown size={13} className="chartp-type__caret" />
       </button>
 
       {open && (
-        <div className="cp-type__popover" role="dialog" aria-label="Chart type">
+        <div className="chartp-type__popover" role="dialog" aria-label="Chart type">
           {chartPickerGroups().map((group) => (
-            <div className="cp-type__group" key={group.family}>
-              <div className="cp-type__groupLabel">{group.label}</div>
+            <div className="chartp-type__group" key={group.family}>
+              <div className="chartp-type__groupLabel">{group.label}</div>
               {group.kinds.map((k) => (
                 <button
                   key={k}
                   type="button"
-                  className="cp-type__option"
+                  className="chartp-type__option"
                   data-active={k === kind || undefined}
                   onClick={() => {
                     onPick(k);
                     setOpen(false);
                   }}
                 >
-                  <ChartKindIcon kind={k} size={17} />
-                  <span className="cp-type__optionText">
-                    <span className="cp-type__optionName">{CHART_LABELS[k]}</span>
-                    <span className="cp-type__optionHint">{CHART_HINTS[k]}</span>
+                  <ChartKindIcon kind={k} size={16} />
+                  <span className="chartp-type__optionText">
+                    <span className="chartp-type__optionName">{CHART_LABELS[k]}</span>
+                    <span className="chartp-type__optionHint">{CHART_HINTS[k]}</span>
                   </span>
-                  {k === kind && <Check size={12} className="cp-type__check" />}
+                  {k === kind && <Check size={12} className="chartp-type__check" />}
                 </button>
               ))}
             </div>
@@ -163,29 +164,24 @@ export const TypeHeader: React.FC<{ kind: ChartKind; onPick: (k: ChartKind) => v
 };
 
 /**
- * A row of icon toggles that read as one group.
+ * A row of icon toggles that reads as one group.
  *
- * Text buttons in a wrapping flex row were what this replaced, and they had two
- * faults at once: they wrapped differently at every panel width, so the control
- * moved as you resized, and a pressed text button is a weak state — there is no
- * strong visual difference between "Legend" pressed and "Legend" not.
- *
- * These are `aria-pressed` toggles in a bordered track, which is the shape a
- * multi-select of independent options has in every tool this is measured
- * against. It is deliberately *not* `SegmentedControl`: that one is a choice
- * *between* options, and lighting two of its segments would say something it
- * cannot mean.
+ * Deliberately *not* `SegmentedControl`: that one is a choice **between**
+ * options, and lighting two of its segments would say something it cannot
+ * mean. These are independent switches, so they get a bordered track and
+ * `aria-pressed` — the shape a multi-select has in every tool this is measured
+ * against.
  */
 export const ToggleRow: React.FC<{
   options: Array<{ id: string; icon: React.ReactNode; label: string; on: boolean }>;
   onToggle: (id: string) => void;
 }> = ({ options, onToggle }) => (
-  <div className="cp-toggles" role="group">
+  <div className="chartp-toggles" role="group">
     {options.map((o) => (
       <button
         key={o.id}
         type="button"
-        className="cp-toggles__item"
+        className="chartp-toggles__item"
         aria-pressed={o.on}
         aria-label={o.label}
         data-tooltip={o.label}
@@ -197,30 +193,29 @@ export const ToggleRow: React.FC<{
   </div>
 );
 
-/** A label and its control on one line, at the panel's shared column. */
-export const Field: React.FC<{
-  label: string;
-  hint?: string;
-  children: React.ReactNode;
-}> = ({ label, hint, children }) => (
-  <div className="cp-field">
-    <span className="cp-field__label" data-tooltip={hint} data-tooltip-pos="left">
-      {label}
-    </span>
-    <div className="cp-field__control">{children}</div>
-  </div>
-);
-
-/** Two controls sharing one row, for bounds and ranges that belong together. */
-export const FieldPair: React.FC<{
-  label: string;
-  hint?: string;
-  children: React.ReactNode;
-}> = ({ label, hint, children }) => (
-  <div className="cp-field">
-    <span className="cp-field__label" data-tooltip={hint} data-tooltip-pos="left">
-      {label}
-    </span>
-    <div className="cp-field__control cp-field__control--pair">{children}</div>
+/**
+ * A row of buttons that *do* something, rather than holding a state.
+ *
+ * Separated from `ToggleRow` because they are not toggles and were being drawn
+ * as permanently-unpressed ones — four switches that never light, which is a
+ * control lying about its own kind.
+ */
+export const ActionRow: React.FC<{
+  actions: Array<{ id: string; icon: React.ReactNode; label: string }>;
+  onRun: (id: string) => void;
+}> = ({ actions, onRun }) => (
+  <div className="chartp-actions">
+    {actions.map((a) => (
+      <button
+        key={a.id}
+        type="button"
+        className="chartp-actions__item"
+        aria-label={a.label}
+        data-tooltip={a.label}
+        onClick={() => onRun(a.id)}
+      >
+        {a.icon}
+      </button>
+    ))}
   </div>
 );
