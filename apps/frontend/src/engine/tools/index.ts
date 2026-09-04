@@ -14,4 +14,5 @@ export * from './CommentTool';
 // Trigger HMR cache clear
 export * from './FrameTool';
 export * from './GridTool';
+export * from './ChartTool';
 export * from './ConnectorTool';

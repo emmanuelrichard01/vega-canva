@@ -55,7 +55,7 @@ const DRAWING_TOOLS = new Set([
 const isDrawingTool = (toolId: string) => DRAWING_TOOLS.has(toolId) || toolId.startsWith('frame-');
 import { cursorModeForTool, LocalCursor } from '../engine/cursor';
 import { GestureOverlay } from "./GestureOverlay";
-import { ToolManager, SelectTool, ShapeTool, TextTool, StickyTool, AudioTool, PenTool, BezierPenTool, HandTool, EraserTool, CommentTool, FrameTool, GridTool, ConnectorTool } from '../engine/tools';
+import { ToolManager, SelectTool, ShapeTool, TextTool, StickyTool, AudioTool, PenTool, BezierPenTool, HandTool, EraserTool, CommentTool, FrameTool, GridTool, ChartTool, ConnectorTool } from '../engine/tools';
 import { canSelectWith } from '../engine/tools/shortcuts';
 import { DirectSelectTool } from '../engine/tools/DirectSelectTool';
 
@@ -1098,6 +1098,7 @@ export const Canvas: React.FC<CanvasProps> = ({ activeTool, selectedIds, setSele
     // tool id and the frame that gets created cannot drift apart.
     tm.registerTool(new FrameTool());
     tm.registerTool(new GridTool());
+    tm.registerTool(new ChartTool());
     FRAME_PRESETS.forEach((preset) => tm.registerTool(new FrameTool(preset.id)));
     return tm;
   }, []);

@@ -132,6 +132,7 @@ export const TYPE_LABEL: Record<NodeType, string> = {
   audio: 'Audio',
   comment: 'Comments',
   grid: 'Grids',
+  chart: 'Charts',
 };
 
 /**
@@ -141,5 +142,8 @@ export const TYPE_LABEL: Record<NodeType, string> = {
 export const TYPE_ORDER: NodeType[] = [
   // Grids sit beside frames: both are scaffolding you arrange other work
   // against, and neither is content in its own right.
-  'frame', 'grid', 'text', 'shape', 'path', 'connector', 'image', 'sticky', 'audio', 'comment',
+  // A chart is scaffolding's opposite -- it is the content -- but it sits
+  // beside 'grid' because both are composite objects people look for by shape
+  // rather than by the words inside them.
+  'frame', 'grid', 'chart', 'text', 'shape', 'path', 'connector', 'image', 'sticky', 'audio', 'comment',
 ];

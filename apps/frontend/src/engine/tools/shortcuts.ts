@@ -28,6 +28,7 @@ export const TOOL_SHORTCUTS: Record<string, string> = {
   'shape-line': 'L',
   frame: 'F',
   grid: 'G',
+  chart: 'K',
   connector: 'X',
   sticky: 'S',
   comment: 'C',

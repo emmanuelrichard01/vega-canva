@@ -1,4 +1,5 @@
 import { normalizeRecipe } from '../grid/gridNode';
+import { isChartKind, type ChartKind, type ChartSeries, type ChartSpec } from '../chart/chartTypes';
 import { LIST_STYLES } from '../model/schema';
 import { CYCLE_UNITS } from '../text/colorCycle';
 import { LINE_PROFILES, MAX_AMPLITUDE_SCALE, MAX_WAVES, MIN_AMPLITUDE_SCALE, MIN_WAVES } from '../model/linePath';
@@ -1120,6 +1121,23 @@ export function normalizeNode(raw: any, id?: string): AnyNode {
         grid: normalizeRecipe(raw?.grid, width, height),
       };
 
+    /**
+     * A chart's data, made total.
+     *
+     * Everything here is a fallback rather than a validation failure, because
+     * this function may not throw and may not return undefined for a required
+     * field -- invariant 3. A chart off the wire with a `kind` this build does
+     * not know draws as a bar chart rather than as nothing, which is the same
+     * reading `NODE_TYPES` takes for an unknown node type.
+     */
+    case 'chart':
+      return {
+        ...base,
+        type: 'chart',
+        chart: normalizeChartSpec(raw?.chart),
+        appearance: normalizeAppearance(raw),
+      };
+
     case 'frame':
     default:
       return {
@@ -1130,6 +1148,55 @@ export function normalizeNode(raw: any, id?: string): AnyNode {
         layoutGuide: normalizeLayoutGuide(raw?.layoutGuide),
       };
   }
+}
+
+
+/**
+ * A `ChartSpec` that every reader can rely on.
+ *
+ * The rectangularity rule -- every series exactly as long as `categories` --
+ * is enforced in `chartTypes.normalizeSpec` at layout time rather than here,
+ * deliberately: the document should keep what somebody typed, so that adding a
+ * category back does not discover the values were thrown away on the last
+ * save. This function is about *shape and type*, not about length.
+ */
+function normalizeChartSpec(raw: any): ChartSpec {
+  const kind: ChartKind = isChartKind(raw?.kind) ? raw.kind : 'bar';
+
+  const categories: string[] = Array.isArray(raw?.categories)
+    ? raw.categories.map((c: unknown) => (typeof c === 'string' ? c : String(c ?? '')))
+    : [];
+
+  const series: ChartSeries[] = Array.isArray(raw?.series)
+    ? raw.series.map((s: any, i: number) => ({
+        name: typeof s?.name === 'string' ? s.name : `Series ${i + 1}`,
+        // A hole stays a hole. Coercing it to zero is the one transformation
+        // this function must not make: it turns a missing reading into a
+        // measured one, and no later reader can tell the difference.
+        values: Array.isArray(s?.values)
+          ? s.values.map((v: unknown) =>
+              typeof v === 'number' && Number.isFinite(v) ? v : null
+            )
+          : [],
+        ...(typeof s?.color === 'string' ? { color: s.color } : {}),
+      }))
+    : [];
+
+  const spec: ChartSpec = { kind, categories, series };
+
+  if (typeof raw?.title === 'string') spec.title = raw.title;
+  if (typeof raw?.showLegend === 'boolean') spec.showLegend = raw.showLegend;
+  if (typeof raw?.showGrid === 'boolean') spec.showGrid = raw.showGrid;
+  if (typeof raw?.showValues === 'boolean') spec.showValues = raw.showValues;
+  if (typeof raw?.includeZero === 'boolean') spec.includeZero = raw.includeZero;
+  if (typeof raw?.curved === 'boolean') spec.curved = raw.curved;
+  if (typeof raw?.yMin === 'number' && Number.isFinite(raw.yMin)) spec.yMin = raw.yMin;
+  if (typeof raw?.yMax === 'number' && Number.isFinite(raw.yMax)) spec.yMax = raw.yMax;
+  if (typeof raw?.innerRadius === 'number' && Number.isFinite(raw.innerRadius)) {
+    spec.innerRadius = raw.innerRadius;
+  }
+
+  return spec;
 }
 
 /**

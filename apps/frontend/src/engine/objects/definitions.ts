@@ -132,6 +132,30 @@ objectRegistry.register({
 });
 
 objectRegistry.register({
+  type: 'chart',
+  capabilities: {
+    /**
+     * Opacity and edge effects, and nothing else from the generic stack.
+     *
+     * The same trade `grid` makes, for the same reason. A chart's fill is a
+     * *palette* -- one colour per series -- and a single swatch offering to
+     * answer that with one value would look broken the moment there were two
+     * series. Series colour is set in the Chart section, which understands the
+     * question it is asking.
+     *
+     * `supportsEdgeEffects` is the sketch block, and it is declared here
+     * because `ChartRenderer` genuinely honours it: bars are drawn with
+     * `roughLoop` and runs with `roughPolyline`, seeded from the node id like
+     * every other sketched object. Declaring it without that would be the dead
+     * capability this registry exists to prevent.
+     */
+    supportsOpacity: true,
+    supportsEdgeEffects: true,
+  },
+  defaultProperties: () => ({ width: 480, height: 320 }),
+});
+
+objectRegistry.register({
   type: 'grid',
   capabilities: {
     /**

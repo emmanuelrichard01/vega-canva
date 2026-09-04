@@ -32,6 +32,7 @@ import { ImageRenderer } from './canvas/renderers/ImageRenderer';
 import { PathRenderer } from './canvas/renderers/PathRenderer';
 import { ShapeRenderer } from './canvas/renderers/ShapeRenderer';
 import { GridRenderer } from './canvas/renderers/GridRenderer';
+import { ChartRenderer } from './canvas/renderers/ChartRenderer';
 import { StickyRenderer } from './canvas/renderers/StickyRenderer';
 import { FrameRenderer } from './canvas/renderers/FrameRenderer';
 import { ConnectorRenderer } from './canvas/renderers/ConnectorRenderer';
@@ -1414,5 +1415,8 @@ const NodeContent: React.FC<{ node: AnyNode; isEditing: boolean; stageScale?: nu
       return <ConnectorRenderer node={node} />;
     case 'grid':
       return <GridRenderer node={node} />;
+
+    case 'chart':
+      return <ChartRenderer node={node} />;
   }
 };

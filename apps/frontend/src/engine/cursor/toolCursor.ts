@@ -106,6 +106,9 @@ const BY_TOOL: Record<string, CursorMode> = {
   connector: 'draw',
   frame: 'draw',
   grid: 'draw',
+  // A chart is dragged out as a region like the frame and grid above it, so it
+  // takes the same crosshair rather than the arrow that promises a selection.
+  chart: 'draw',
   text: 'text',
   eraser: 'erase',
   sticky: 'note',

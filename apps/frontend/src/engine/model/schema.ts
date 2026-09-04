@@ -50,6 +50,7 @@ export const NODE_TYPES = [
   'comment',
   'connector',
   'grid',
+  'chart',
 ] as const;
 
 export type NodeType = (typeof NODE_TYPES)[number];
@@ -61,6 +62,8 @@ export type { EndCapKind } from './connectorEnds';
 import type { EndCapKind } from './connectorEnds';
 export type { GridRecipe } from '../grid/gridBuild';
 import type { GridRecipe } from '../grid/gridBuild';
+export type { ChartSpec, ChartKind, ChartSeries } from '../chart/chartTypes';
+import type { ChartSpec } from '../chart/chartTypes';
 
 /**
  * Current schema revision, stamped into document metadata by the migration.
@@ -1347,6 +1350,30 @@ export interface GridNode extends BaseNode {
   grid: GridRecipe;
 }
 
+/**
+ * A chart.
+ *
+ * The node stores **only the data and the reading of it** -- `ChartSpec` -- and
+ * nothing positional. Every bar rectangle, tick coordinate and slice angle is
+ * recomputed on read by `engine/chart/chartLayout.ts`, which is the same
+ * decision `connector` makes and for the same reason: stored geometry goes
+ * stale the moment the box is resized, and a chart is resized constantly.
+ *
+ * That also means one layout feeds both painters -- the Konva renderer and the
+ * SVG exporter -- so a chart cannot be one picture on screen and a different
+ * one in the exported file. This codebase has shipped exactly that bug in the
+ * export path before; see `isolate.ts`.
+ *
+ * `appearance` is present for one reason beyond opacity: it is where `sketch`
+ * lives, so a chart can be hand-drawn with the same pen, the same seeded
+ * stroke and the same shading as every other object on the board.
+ */
+export interface ChartNode extends BaseNode {
+  type: 'chart';
+  chart: ChartSpec;
+  appearance?: Appearance;
+}
+
 export type AnyNode =
   | TextNode
   | ShapeNode
@@ -1357,7 +1384,8 @@ export type AnyNode =
   | CommentNode
   | FrameNode
   | ConnectorNode
-  | GridNode;
+  | GridNode
+  | ChartNode;
 
 // ---------------------------------------------------------------------------
 // Narrowing helpers

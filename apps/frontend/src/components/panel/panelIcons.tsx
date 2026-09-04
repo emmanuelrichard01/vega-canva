@@ -1,5 +1,6 @@
 import React from 'react';
 import {
+  BarChart3,
   Frame,
   ImageIcon,
   LayoutGrid,
@@ -40,6 +41,7 @@ import type { NodeType } from '../../engine/model/schema';
 export const TYPE_ICON: Record<NodeType, LucideIcon> = {
   frame: Frame,
   grid: LayoutGrid,
+  chart: BarChart3,
   text: Type,
   shape: Square,
   path: PenLine,
