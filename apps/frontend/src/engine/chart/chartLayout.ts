@@ -36,11 +36,19 @@ import {
   type Domain,
 } from './scales';
 import {
+  bucketize,
+  isBarLike,
+  isContinuous,
+  isPercentStacked,
+  isPolar,
   isRadial,
   isStacked,
+  isTransposed,
   normalizeSpec,
   resolveChartOptions,
   seriesColor,
+  toPercentStack,
+  toStaircase,
   type ChartSpec,
 } from './chartTypes';
 
@@ -144,6 +152,26 @@ export interface ChartLegendEntry {
   fontSize: number;
 }
 
+export interface ChartPolarRing {
+  cx: number;
+  cy: number;
+  radius: number;
+  /** One point per category, so the ring is a polygon and not a circle. */
+  points: Point[];
+}
+
+export interface ChartPolarSpoke {
+  x1: number;
+  y1: number;
+  x2: number;
+  y2: number;
+}
+
+export interface ChartReference extends ChartGridLine {
+  color: string;
+  label?: ChartLabel;
+}
+
 export interface ChartLayout {
   /** The drawing area, inside the axes and under the title. */
   plot: Rect;
@@ -160,6 +188,11 @@ export interface ChartLayout {
   valueLabels: ChartLabel[];
   legend: ChartLegendEntry[];
   title: ChartLabel | null;
+  /** Radar only: the value rings and the category spokes. */
+  rings: ChartPolarRing[];
+  spokes: ChartPolarSpoke[];
+  /** The `reference` rule, when the spec carries one inside the domain. */
+  reference: ChartReference | null;
   /** The resolved value-axis domain, exposed for tests and the panel. */
   domain: Domain;
 }
@@ -193,6 +226,7 @@ export function layoutChart(
     gridLines: [], baseline: null,
     axisLabels: [], categoryLabels: [], valueLabels: [], legend: [],
     title: null,
+    rings: [], spokes: [], reference: null,
     domain: [0, 1],
   };
 
@@ -221,8 +255,34 @@ export function layoutChart(
   if (isRadial(spec.kind)) {
     return layoutRadial(spec, opts, width, height, top, bottomReserved, title, measure, empty);
   }
+  if (isPolar(spec.kind)) {
+    return layoutPolar(spec, opts, width, height, top, bottomReserved, title, measure, empty);
+  }
 
-  return layoutCartesian(spec, opts, width, height, top, bottomReserved, title, measure, empty);
+  /**
+   * The two kinds that change the numbers before anything is placed.
+   *
+   * Done here, once, so every mark builder below sees ordinary data. The
+   * alternative is a bucketing branch inside the bar builder and a normalising
+   * branch inside the stack builder, which is two transforms living where the
+   * geometry lives and no way to test either on its own.
+   */
+  let prepared = spec;
+  if (spec.kind === 'histogram') {
+    const pooled = spec.series.flatMap((s) => s.values);
+    const { categories, counts } = bucketize(pooled, opts.buckets);
+    prepared = {
+      ...spec,
+      categories,
+      series: [
+        { name: spec.series[0]?.name ?? 'Count', values: counts, color: spec.series[0]?.color },
+      ],
+    };
+  } else if (isPercentStacked(spec.kind)) {
+    prepared = toPercentStack(spec);
+  }
+
+  return layoutCartesian(prepared, opts, width, height, top, bottomReserved, title, measure, empty);
 }
 
 function layoutCartesian(
@@ -236,186 +296,289 @@ function layoutCartesian(
   measure: Measure,
   empty: ChartLayout
 ): ChartLayout {
-  const stacked = isStacked(spec.kind) && spec.kind === 'stackedBar';
+  const kind = spec.kind;
+  const stacked = isStacked(kind);
+  const transposed = isTransposed(kind);
+  const barLike = isBarLike(kind);
 
-  // ---- the value domain -------------------------------------------------
-  // Stacked bars are measured against the *sum* at each category, not against
-  // the tallest single series: an axis topping out at the largest component
-  // would have every stack running off the top of the plot.
-  const totals: number[] = [];
-  for (let i = 0; i < spec.categories.length; i += 1) {
-    if (stacked) {
-      let sum = 0;
-      let any = false;
-      for (const s of spec.series) {
-        const v = s.values[i];
-        if (typeof v === 'number') { sum += v; any = true; }
-      }
-      if (any) totals.push(sum);
-    } else {
-      for (const s of spec.series) {
-        const v = s.values[i];
-        if (typeof v === 'number') totals.push(v);
-      }
-    }
-  }
+  /**
+   * A waterfall's bars float: each starts where the previous finished, and the
+   * axis has to cover the running total rather than the individual steps.
+   * Computed first because it decides the domain.
+   */
+  const waterfall = kind === 'waterfall' ? runningTotals(spec) : null;
 
-  const dataMin = totals.length ? Math.min(...totals) : 0;
-  const dataMax = totals.length ? Math.max(...totals) : 1;
-
-  const nice = niceDomain(
-    spec.yMin ?? dataMin,
-    spec.yMax ?? dataMax,
-    5,
-    opts.includeZero
-  );
-  // An explicit bound is honoured exactly — someone who typed 100 wants 100,
+  const extent = valueExtent(spec, { stacked, waterfall });
+  const nice = niceDomain(spec.yMin ?? extent.min, spec.yMax ?? extent.max, 5, opts.includeZero);
+  // An explicit bound is honoured exactly: someone who typed 100 wants 100,
   // not the nearest round number above it.
   const domain: Domain = [spec.yMin ?? nice.domain[0], spec.yMax ?? nice.domain[1]];
   const ticks = nice.ticks.filter((t) => t >= domain[0] && t <= domain[1]);
+  const tickTexts = ticks.map((t) => formatValue(t, spec));
 
-  // ---- the gutters, measured ---------------------------------------------
-  const tickTexts = ticks.map(formatTick);
-  const gutterLeft =
-    PAD + Math.max(...tickTexts.map((t) => measure(t, LABEL_SIZE)), 0) + TICK_GAP;
+  /**
+   * The gutters, measured.
+   *
+   * Transposing swaps which axis needs the room: a horizontal bar chart's
+   * *category* names sit in the left gutter and are the long strings, while its
+   * value ticks run along the bottom. Measuring the wrong set is how a
+   * horizontal chart ends up with its category names clipped.
+   */
+  const leftTexts = transposed ? spec.categories : tickTexts;
+  const gutterLeft = PAD + Math.max(...leftTexts.map((t) => measure(t, LABEL_SIZE)), 0) + TICK_GAP;
+  const bottomBand = LABEL_SIZE + TICK_GAP;
 
-  const categoryBand = LABEL_SIZE + TICK_GAP;
   const plot: Rect = {
     x: gutterLeft,
     y: top,
     width: Math.max(1, width - gutterLeft - PAD),
-    height: Math.max(1, height - top - bottomReserved - categoryBand),
+    height: Math.max(1, height - top - bottomReserved - bottomBand),
   };
-
   if (plot.width < 8 || plot.height < 8) return { ...empty, title };
 
-  const y = linearScale(domain, [plot.y + plot.height, plot.y]);
-  const zeroY = y(clamp(0, domain[0], domain[1]));
+  // The value scale runs up the page when vertical and rightward when
+  // transposed; the band scale takes the other axis. Every mark below is
+  // expressed through these two, which is what lets one code path draw both
+  // orientations instead of two that can disagree about anything.
+  const value = transposed
+    ? linearScale(domain, [plot.x, plot.x + plot.width])
+    : linearScale(domain, [plot.y + plot.height, plot.y]);
 
-  // ---- axis furniture -----------------------------------------------------
+  const bandRange: Domain = transposed
+    ? [plot.y, plot.y + plot.height]
+    : [plot.x, plot.x + plot.width];
+  // A histogram's bars touch, because its categories are a continuum.
+  const padding = barLike ? (isContinuous(kind) ? 0.02 : 0.28) : 0;
+  const band = bandScale(spec.categories.length, bandRange, padding);
+
+  const zeroValue = value(clamp(0, domain[0], domain[1]));
+
   const gridLines: ChartGridLine[] = [];
   const axisLabels: ChartLabel[] = [];
 
   ticks.forEach((t, i) => {
-    const ty = y(t);
+    const at = value(t);
     if (opts.showGrid) {
-      gridLines.push({ x1: plot.x, y1: ty, x2: plot.x + plot.width, y2: ty });
+      gridLines.push(
+        transposed
+          ? { x1: at, y1: plot.y, x2: at, y2: plot.y + plot.height }
+          : { x1: plot.x, y1: at, x2: plot.x + plot.width, y2: at }
+      );
     }
-    axisLabels.push({
-      text: tickTexts[i],
-      // Right-aligned into the gutter, so the digits line up against the plot
-      // rather than ragging away from it.
-      x: PAD,
-      y: ty - LABEL_SIZE / 2,
-      width: gutterLeft - PAD - TICK_GAP,
-      align: 'right',
-      fontSize: LABEL_SIZE,
-    });
+    axisLabels.push(
+      transposed
+        ? {
+            text: tickTexts[i],
+            x: at - band.step / 2,
+            y: plot.y + plot.height + TICK_GAP,
+            width: band.step,
+            align: 'center',
+            fontSize: LABEL_SIZE,
+          }
+        : {
+            // Right-aligned into the gutter, so the digits line up against the
+            // plot rather than ragging away from it.
+            text: tickTexts[i],
+            x: PAD,
+            y: at - LABEL_SIZE / 2,
+            width: gutterLeft - PAD - TICK_GAP,
+            align: 'right',
+            fontSize: LABEL_SIZE,
+          }
+    );
   });
 
   const baseline: ChartGridLine | null =
     domain[0] <= 0 && domain[1] >= 0
-      ? { x1: plot.x, y1: zeroY, x2: plot.x + plot.width, y2: zeroY }
+      ? transposed
+        ? { x1: zeroValue, y1: plot.y, x2: zeroValue, y2: plot.y + plot.height }
+        : { x1: plot.x, y1: zeroValue, x2: plot.x + plot.width, y2: zeroValue }
       : null;
 
-  // ---- the marks ----------------------------------------------------------
+  const categoryLabels: ChartLabel[] = spec.categories.map((text, i) =>
+    transposed
+      ? {
+          text,
+          x: PAD,
+          y: band.centre(i) - LABEL_SIZE / 2,
+          width: gutterLeft - PAD - TICK_GAP,
+          align: 'right',
+          fontSize: LABEL_SIZE,
+        }
+      : {
+          text,
+          x: band.centre(i) - band.step / 2,
+          y: plot.y + plot.height + TICK_GAP,
+          width: band.step,
+          align: 'center',
+          fontSize: LABEL_SIZE,
+        }
+  );
+
   const bars: ChartBar[] = [];
   const runs: ChartRun[] = [];
   const areas: ChartArea[] = [];
   const dots: ChartDot[] = [];
   const valueLabels: ChartLabel[] = [];
 
-  const isBar = spec.kind === 'bar' || spec.kind === 'stackedBar';
-  const band = bandScale(spec.categories.length, [plot.x, plot.x + plot.width], isBar ? 0.28 : 0);
+  /** One bar, in whichever orientation this chart is. */
+  const pushBar = (
+    categoryIndex: number,
+    seriesIndex: number,
+    lane: { offset: number; width: number },
+    from: number,
+    to: number,
+    color: string,
+    v: number
+  ) => {
+    const a = value(from);
+    const b = value(to);
+    const lo = Math.min(a, b);
+    const len = Math.abs(b - a);
+    const bandStart = band.at(categoryIndex) + lane.offset;
 
-  const categoryLabels: ChartLabel[] = spec.categories.map((text, i) => ({
-    text,
-    x: band.centre(i) - band.step / 2,
-    y: plot.y + plot.height + TICK_GAP,
-    width: band.step,
-    align: 'center',
-    fontSize: LABEL_SIZE,
-  }));
+    bars.push(
+      transposed
+        ? {
+            x: lo, y: bandStart, width: len, height: lane.width,
+            color, seriesIndex, categoryIndex, value: v, negative: v < 0,
+          }
+        : {
+            x: bandStart, y: lo, width: lane.width, height: len,
+            color, seriesIndex, categoryIndex, value: v, negative: v < 0,
+          }
+    );
 
-  if (isBar) {
-    // Grouped bars share the band; stacked bars each take the whole of it.
-    const lanes = stacked ? 1 : Math.max(1, spec.series.length);
-    const laneWidth = band.bandWidth / lanes;
-    const runningPos = new Array(spec.categories.length).fill(0);
-    const runningNeg = new Array(spec.categories.length).fill(0);
+    if (opts.showValues) {
+      const text = formatValue(v, spec);
+      valueLabels.push(
+        transposed
+          ? {
+              text, x: lo + len + 4, y: bandStart + lane.width / 2 - LABEL_SIZE / 2,
+              width: 60, align: 'left', fontSize: LABEL_SIZE,
+            }
+          : {
+              text, x: bandStart, y: v >= 0 ? lo - LABEL_SIZE - 2 : lo + len + 2,
+              width: lane.width, align: 'center', fontSize: LABEL_SIZE,
+            }
+      );
+    }
+  };
 
-    spec.series.forEach((s, si) => {
-      const color = seriesColor(s, si);
-      s.values.forEach((v, ci) => {
-        if (typeof v !== 'number') return;
-
-        let y0: number;
-        let y1: number;
-        if (stacked) {
-          const base = v >= 0 ? runningPos[ci] : runningNeg[ci];
-          const next = base + v;
-          y0 = y(base);
-          y1 = y(next);
-          if (v >= 0) runningPos[ci] = next;
-          else runningNeg[ci] = next;
-        } else {
-          y0 = zeroY;
-          y1 = y(v);
-        }
-
-        const x = stacked ? band.at(ci) : band.at(ci) + si * laneWidth;
-        const barTop = Math.min(y0, y1);
-        const barHeight = Math.abs(y1 - y0);
-
-        bars.push({
-          x,
-          y: barTop,
-          width: stacked ? band.bandWidth : laneWidth,
-          height: barHeight,
-          color,
-          seriesIndex: si,
-          categoryIndex: ci,
-          value: v,
-          negative: v < 0,
-        });
-
-        if (opts.showValues) {
-          valueLabels.push({
-            text: formatTick(v),
-            x,
-            y: v >= 0 ? barTop - LABEL_SIZE - 2 : barTop + barHeight + 2,
-            width: stacked ? band.bandWidth : laneWidth,
-            align: 'center',
-            fontSize: LABEL_SIZE,
-          });
-        }
+  if (barLike) {
+    if (waterfall) {
+      // Each step floats between where the running total was and where it got
+      // to, so a fall is drawn in the negative colour without the axis moving.
+      waterfall.forEach((step, ci) => {
+        pushBar(
+          ci,
+          0,
+          { offset: 0, width: band.bandWidth },
+          step.from,
+          step.to,
+          step.delta >= 0 ? seriesColor(spec.series[0], 0) : seriesColor(undefined, 4),
+          step.delta
+        );
       });
-    });
+    } else if (kind === 'funnel') {
+      // One series, each stage its own colour, so the shape reads as stages
+      // rather than as one quantity that happens to shrink.
+      const s = spec.series[0];
+      s?.values.forEach((v, ci) => {
+        if (typeof v !== 'number') return;
+        pushBar(ci, 0, { offset: 0, width: band.bandWidth }, 0, v, seriesColor(undefined, ci), v);
+      });
+    } else {
+      const lanes = stacked ? 1 : Math.max(1, spec.series.length);
+      const laneWidth = band.bandWidth / lanes;
+      const runningPos = new Array(spec.categories.length).fill(0);
+      const runningNeg = new Array(spec.categories.length).fill(0);
+
+      spec.series.forEach((s, si) => {
+        const color = seriesColor(s, si);
+        s.values.forEach((v, ci) => {
+          if (typeof v !== 'number') return;
+          let from: number;
+          let to: number;
+          if (stacked) {
+            const base = v >= 0 ? runningPos[ci] : runningNeg[ci];
+            from = base;
+            to = base + v;
+            if (v >= 0) runningPos[ci] = to;
+            else runningNeg[ci] = to;
+          } else {
+            from = clamp(0, domain[0], domain[1]);
+            to = v;
+          }
+          pushBar(
+            ci,
+            si,
+            {
+              offset: stacked ? 0 : si * laneWidth,
+              width: stacked ? band.bandWidth : laneWidth,
+            },
+            from,
+            to,
+            color,
+            v
+          );
+        });
+      });
+    }
   } else {
-    // Lines, areas and scatter all place a point per category; they differ in
-    // what is drawn through them.
+    // Lines, steps, areas, scatter and bubble all place a point per category
+    // and differ only in what is drawn through them.
+    const stackTotals = new Array(spec.categories.length).fill(0);
+
     spec.series.forEach((s, si) => {
       const color = seriesColor(s, si);
       const segments: Point[][] = [];
+      const baseSegments: Point[][] = [];
       let current: Point[] = [];
+      let currentBase: Point[] = [];
 
       s.values.forEach((v, ci) => {
         if (typeof v !== 'number') {
           // A hole ends the run. Joining across it would draw a straight line
           // over missing data and present an outage as a smooth decline.
-          if (current.length) segments.push(current);
+          if (current.length) {
+            segments.push(current);
+            baseSegments.push(currentBase);
+          }
           current = [];
+          currentBase = [];
           return;
         }
-        const p = { x: band.centre(ci), y: y(v) };
-        current.push(p);
 
-        if (spec.kind === 'scatter') {
-          dots.push({ ...p, radius: 4, color, seriesIndex: si, categoryIndex: ci, value: v });
+        const base = kind === 'stackedArea' ? stackTotals[ci] : 0;
+        const topValue = kind === 'stackedArea' ? base + v : v;
+        if (kind === 'stackedArea') stackTotals[ci] = topValue;
+
+        const centre = band.centre(ci);
+        const p = transposed
+          ? { x: value(topValue), y: centre }
+          : { x: centre, y: value(topValue) };
+        current.push(p);
+        currentBase.push(
+          transposed ? { x: value(base), y: centre } : { x: centre, y: value(base) }
+        );
+
+        if (kind === 'scatter' || kind === 'bubble') {
+          /**
+           * Bubble takes its radius from the value, **area**-proportional: a
+           * value four times larger draws a disc of four times the area.
+           * Scaling the radius instead squares the difference, which is the
+           * classic way a bubble chart overstates its own data.
+           */
+          const radius =
+            kind === 'bubble'
+              ? 4 + Math.sqrt(Math.abs(v) / extent.absMax) * 16
+              : 4;
+          dots.push({ ...p, radius, color, seriesIndex: si, categoryIndex: ci, value: v });
         }
-        if (opts.showValues) {
+        if (opts.showValues && (kind === 'line' || kind === 'step' || kind === 'area')) {
           valueLabels.push({
-            text: formatTick(v),
+            text: formatValue(v, spec),
             x: p.x - band.step / 2,
             y: p.y - LABEL_SIZE - 5,
             width: band.step,
@@ -424,25 +587,36 @@ function layoutCartesian(
           });
         }
       });
-      if (current.length) segments.push(current);
+      if (current.length) {
+        segments.push(current);
+        baseSegments.push(currentBase);
+      }
 
-      for (const points of segments) {
-        if (spec.kind === 'scatter') continue;
-        runs.push({ points, color, seriesIndex: si });
+      segments.forEach((points, segIndex) => {
+        if (kind === 'scatter' || kind === 'bubble') return;
 
-        if (spec.kind === 'area' && points.length > 1) {
-          areas.push({
-            points,
-            color,
-            seriesIndex: si,
-            polygon: [
-              { x: points[0].x, y: zeroY },
-              ...points,
-              { x: points[points.length - 1].x, y: zeroY },
-            ],
-          });
+        const drawn = kind === 'step' ? toStaircase(points) : points;
+        runs.push({ points: drawn, color, seriesIndex: si });
+
+        if ((kind === 'area' || kind === 'stackedArea') && drawn.length > 1) {
+          const base = baseSegments[segIndex];
+          // A stacked area closes onto the series beneath it rather than onto
+          // the axis, which is the whole difference between the two kinds.
+          const floor =
+            kind === 'stackedArea' && base.length
+              ? [...base].reverse()
+              : transposed
+                ? [
+                    { x: zeroValue, y: drawn[drawn.length - 1].y },
+                    { x: zeroValue, y: drawn[0].y },
+                  ]
+                : [
+                    { x: drawn[drawn.length - 1].x, y: zeroValue },
+                    { x: drawn[0].x, y: zeroValue },
+                  ];
+          areas.push({ points: drawn, color, seriesIndex: si, polygon: [...drawn, ...floor] });
         }
-        if (spec.kind === 'line') {
+        if (kind === 'line' || kind === 'step') {
           for (const p of points) {
             dots.push({
               ...p, radius: 3, color, seriesIndex: si,
@@ -450,7 +624,7 @@ function layoutCartesian(
             });
           }
         }
-      }
+      });
     });
   }
 
@@ -468,8 +642,264 @@ function layoutCartesian(
     valueLabels,
     legend: buildLegend(spec, opts, width, height, measure),
     title,
+    rings: [],
+    spokes: [],
+    reference: buildReference(spec, domain, plot, value, transposed, measure),
     domain,
   };
+}
+
+/**
+ * A radar chart: one spoke per category, rings for the value scale.
+ *
+ * Its own function rather than a branch in the cartesian one, because nothing
+ * is shared past the domain — there is no band scale, no gutter, and the
+ * "axis" is a set of rings whose labels sit along a single spoke. Forcing it
+ * through the cartesian path would mean a `transposed`-style flag on every
+ * line of that function for one kind.
+ */
+function layoutPolar(
+  spec: ChartSpec,
+  opts: ReturnType<typeof resolveChartOptions>,
+  width: number,
+  height: number,
+  top: number,
+  bottomReserved: number,
+  title: ChartLabel | null,
+  measure: Measure,
+  empty: ChartLayout
+): ChartLayout {
+  // Room for the category names, which sit outside the outermost ring.
+  const labelRoom = Math.max(...spec.categories.map((c) => measure(c, LABEL_SIZE)), 0) + 8;
+
+  const plot: Rect = {
+    x: PAD,
+    y: top,
+    width: Math.max(1, width - PAD * 2),
+    height: Math.max(1, height - top - bottomReserved),
+  };
+  if (plot.width < 8 || plot.height < 8) return { ...empty, title };
+
+  const n = spec.categories.length;
+  if (n < 3) {
+    // Two spokes is a line and one is a point; neither is a radar, and drawing
+    // one anyway produces a shape that looks like a bug rather than like data.
+    return { ...empty, plot, title, legend: buildLegend(spec, opts, width, height, measure) };
+  }
+
+  const cx = plot.x + plot.width / 2;
+  const cy = plot.y + plot.height / 2;
+  const radius = Math.max(
+    8,
+    Math.min(plot.width, plot.height) / 2 - Math.min(labelRoom, plot.width / 4)
+  );
+
+  let max = 0;
+  for (const s of spec.series) {
+    for (const v of s.values) if (typeof v === 'number') max = Math.max(max, v);
+  }
+  const nice = niceDomain(0, spec.yMax ?? max, 4, true);
+  const domain: Domain = [0, spec.yMax ?? nice.domain[1]];
+  const scale = linearScale(domain, [0, radius]);
+
+  // Twelve o'clock, clockwise, matching the pie. One quarter turn, applied
+  // once, in the layout rather than in either painter.
+  const angleAt = (i: number) => (i / n) * Math.PI * 2 - Math.PI / 2;
+  const pointAt = (i: number, r: number) => ({
+    x: cx + Math.cos(angleAt(i)) * r,
+    y: cy + Math.sin(angleAt(i)) * r,
+  });
+
+  const rings: ChartPolarRing[] = nice.ticks
+    .filter((t) => t > domain[0] && t <= domain[1])
+    .map((t) => {
+      const r = scale(t);
+      return {
+        cx, cy, radius: r,
+        // A polygon, not a circle: the rings have to have the same shape as the
+        // data they are behind, or a value on a ring does not sit on it.
+        points: Array.from({ length: n }, (_, i) => pointAt(i, r)),
+      };
+    });
+
+  const spokes: ChartPolarSpoke[] = Array.from({ length: n }, (_, i) => {
+    const p = pointAt(i, radius);
+    return { x1: cx, y1: cy, x2: p.x, y2: p.y };
+  });
+
+  const runs: ChartRun[] = [];
+  const areas: ChartArea[] = [];
+  const dots: ChartDot[] = [];
+
+  spec.series.forEach((s, si) => {
+    const color = seriesColor(s, si);
+    const points = s.values
+      .slice(0, n)
+      .map((v, i) => pointAt(i, scale(typeof v === 'number' ? v : 0)));
+    if (points.length < 3) return;
+
+    // Closed, because a radar's outline is a shape and not a run: leaving the
+    // last spoke unjoined draws a wedge missing from an otherwise closed form.
+    const closed = [...points, points[0]];
+    runs.push({ points: closed, color, seriesIndex: si });
+    areas.push({ points: closed, color, seriesIndex: si, polygon: points });
+    points.forEach((p, i) => {
+      const v = s.values[i];
+      dots.push({
+        ...p, radius: 3, color, seriesIndex: si,
+        categoryIndex: i, value: typeof v === 'number' ? v : Number.NaN,
+      });
+    });
+  });
+
+  const categoryLabels: ChartLabel[] = spec.categories.map((text, i) => {
+    const p = pointAt(i, radius + 10);
+    // The label is placed by which side of the circle its spoke points at, so
+    // it never overlaps the shape: left of the centre it is right-aligned.
+    const dx = p.x - cx;
+    const align: 'left' | 'center' | 'right' =
+      Math.abs(dx) < radius * 0.25 ? 'center' : dx > 0 ? 'left' : 'right';
+    const w = measure(text, LABEL_SIZE) + 2;
+    return {
+      text,
+      x: align === 'center' ? p.x - w / 2 : align === 'left' ? p.x : p.x - w,
+      y: p.y - LABEL_SIZE / 2,
+      width: w,
+      align,
+      fontSize: LABEL_SIZE,
+    };
+  });
+
+  return {
+    plot,
+    bars: [],
+    runs,
+    areas,
+    dots,
+    slices: [],
+    gridLines: [],
+    baseline: null,
+    axisLabels: [],
+    categoryLabels,
+    valueLabels: [],
+    legend: buildLegend(spec, opts, width, height, measure),
+    title,
+    rings,
+    spokes,
+    reference: null,
+    domain,
+  };
+}
+
+/**
+ * A waterfall's steps: where each bar starts, where it ends, what it added.
+ *
+ * The running total is what the axis must cover, which is why this is computed
+ * before the domain rather than while placing bars.
+ */
+function runningTotals(spec: ChartSpec): Array<{ from: number; to: number; delta: number }> {
+  const s = spec.series[0];
+  if (!s) return [];
+  let running = 0;
+  return s.values.map((v) => {
+    const delta = typeof v === 'number' ? v : 0;
+    const from = running;
+    running += delta;
+    return { from, to: running, delta };
+  });
+}
+
+/** The smallest and largest value the axis has to cover. */
+function valueExtent(
+  spec: ChartSpec,
+  ctx: { stacked: boolean; waterfall: Array<{ from: number; to: number }> | null }
+): { min: number; max: number; absMax: number } {
+  const seen: number[] = [];
+
+  if (ctx.waterfall) {
+    for (const step of ctx.waterfall) seen.push(step.from, step.to);
+  } else if (ctx.stacked) {
+    // Against the *sum*: an axis topping out at the largest single component
+    // would put every stack through the roof of the plot.
+    for (let i = 0; i < spec.categories.length; i += 1) {
+      let pos = 0;
+      let neg = 0;
+      for (const s of spec.series) {
+        const v = s.values[i];
+        if (typeof v !== 'number') continue;
+        if (v >= 0) pos += v;
+        else neg += v;
+      }
+      seen.push(pos, neg);
+    }
+  } else {
+    for (const s of spec.series) {
+      for (const v of s.values) if (typeof v === 'number') seen.push(v);
+    }
+  }
+
+  if (seen.length === 0) return { min: 0, max: 1, absMax: 1 };
+  return {
+    min: Math.min(...seen),
+    max: Math.max(...seen),
+    absMax: Math.max(...seen.map(Math.abs), 1e-9),
+  };
+}
+
+/**
+ * The reference rule, if the spec has one and it falls inside the axis.
+ *
+ * Dropped rather than clamped when it does not: a target line pinned to the top
+ * of the plot because the real target is off the scale is a drawing that says
+ * the target was met.
+ */
+function buildReference(
+  spec: ChartSpec,
+  domain: Domain,
+  plot: Rect,
+  value: (v: number) => number,
+  transposed: boolean,
+  measure: Measure
+): ChartReference | null {
+  const ref = spec.reference;
+  if (!ref || !Number.isFinite(ref.value)) return null;
+  if (ref.value < domain[0] || ref.value > domain[1]) return null;
+
+  const at = value(ref.value);
+  const color = ref.color ?? '#EF4444';
+  const line = transposed
+    ? { x1: at, y1: plot.y, x2: at, y2: plot.y + plot.height }
+    : { x1: plot.x, y1: at, x2: plot.x + plot.width, y2: at };
+
+  if (!ref.label) return { ...line, color };
+
+  const w = measure(ref.label, LABEL_SIZE) + 4;
+  return {
+    ...line,
+    color,
+    label: {
+      text: ref.label,
+      x: transposed ? at + 4 : plot.x + plot.width - w,
+      y: transposed ? plot.y + 2 : at - LABEL_SIZE - 3,
+      width: w,
+      align: transposed ? 'left' : 'right',
+      fontSize: LABEL_SIZE,
+    },
+  };
+}
+
+/**
+ * A value as text, honouring the spec's prefix, suffix and decimals.
+ *
+ * One function, used for tick labels and value labels alike, so an axis
+ * reading `$1.2k` cannot sit under bars labelled `1200`.
+ */
+export function formatValue(v: number, spec: ChartSpec): string {
+  const body =
+    typeof spec.decimals === 'number'
+      ? v.toFixed(Math.min(6, Math.max(0, Math.round(spec.decimals))))
+      : formatTick(v);
+  return `${spec.valuePrefix ?? ''}${body}${spec.valueSuffix ?? ''}`;
 }
 
 function layoutRadial(
@@ -561,6 +991,9 @@ function layoutRadial(
     valueLabels,
     legend: buildLegend(spec, opts, width, height, measure),
     title,
+    rings: [],
+    spokes: [],
+    reference: null,
     domain: [0, total || 1],
   };
 }
@@ -583,8 +1016,10 @@ function buildLegend(
 ): ChartLegendEntry[] {
   if (!opts.showLegend) return [];
 
-  // A pie's legend names its categories; every other kind names its series.
-  const entries = isRadial(spec.kind)
+  // A pie's and a funnel's legend name their *categories*: both draw one
+  // series whose points are the things being compared. Everything else names
+  // its series.
+  const entries = isRadial(spec.kind) || spec.kind === 'funnel'
     ? spec.categories.map((label, i) => ({
         label,
         color: seriesColor({ name: '', values: [], color: spec.series[0]?.color }, i),

@@ -28,6 +28,7 @@ import { canvasFontFamily } from '../../components/canvas/renderers/shared';
 import { DEFAULT_INK } from '../model/schema';
 import { computeContentBounds } from './bounds';
 import { exportIds, exportIdSet } from './exportScope';
+import { chartToSvg } from '../chart/chartSvg';
 import { cornerRadiiOf, fitRadii, isPerCorner, roundedRectPath } from '../model/cornerRadii';
 
 /**
@@ -796,6 +797,25 @@ export class SVGExporter implements Exporter {
                 break;
             }
           });
+          break;
+        }
+
+        /**
+         * A chart, from the same layout the canvas renderer draws.
+         *
+         * There was no case here for two commits, so a chart exported as
+         * *nothing* -- silently, in a format with no way to say so. The
+         * layout being shared is what makes this a wrapper rather than a
+         * second implementation with its own arithmetic to drift.
+         */
+        case 'chart': {
+          parts.push(
+            `<g transform="translate(${node.x} ${node.y})">${chartToSvg(node.chart, node.width, node.height, {
+              id: node.id,
+              sketch: node.appearance?.sketch,
+              sketchSeed: node.appearance?.sketchSeed,
+            })}</g>`
+          );
           break;
         }
 

@@ -3,6 +3,7 @@ import { Arc, Circle, Group, Line, Path, Rect, Text } from 'react-konva';
 import type { ChartNode } from '../../../engine/model/schema';
 import { layoutChart, type ChartLayout, type Measure } from '../../../engine/chart/chartLayout';
 import { measureChartText } from '../../../engine/chart/chartMeasure';
+import { CHART_CHROME, CHART_INK, CHART_SLICE_EDGE } from '../../../engine/chart/chartInk';
 import {
   rectRing,
   roughLoop,
@@ -41,9 +42,10 @@ interface Props {
   node: ChartNode;
 }
 
-/** Ink for chrome — axes, ticks, labels — that clears 3:1 on either board. */
-const CHROME = '#94A3B8';
-const INK = '#475569';
+// Both painters read these from one module, so a chart cannot be drawn in one
+// set of greys on screen and another in the file. See `chartInk.ts`.
+const CHROME = CHART_CHROME;
+const INK = CHART_INK;
 
 export const ChartRenderer: React.FC<Props> = ({ node }) => {
   const sketch = node.appearance?.sketch;
@@ -220,7 +222,7 @@ const Marks: React.FC<{
         rotation={(s.startAngle * 180) / Math.PI}
         angle={((s.endAngle - s.startAngle) * 180) / Math.PI}
         fill={s.color}
-        stroke="#FFFFFF"
+        stroke={CHART_SLICE_EDGE}
         strokeWidth={1.5}
         listening={false}
         perfectDrawEnabled={false}

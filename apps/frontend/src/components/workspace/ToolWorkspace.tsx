@@ -1,7 +1,7 @@
 import React, { useCallback, useEffect, useRef, useState, useSyncExternalStore, useMemo } from 'react';
 import { GridKindIcon } from './gridIcons';
 import { ChartKindIcon } from './chartIcons';
-import { CHART_HINTS, CHART_LABELS, CHART_PICKER_ORDER } from '../../engine/chart/chartKinds';
+import { CHART_HINTS, CHART_LABELS, chartPickerGroups } from '../../engine/chart/chartKinds';
 import { ChartTool } from '../../engine/tools/ChartTool';
 import { GRID_HINTS, GRID_KINDS, GRID_LABELS } from '../../engine/grid/gridLayout';
 import { dockDefaults } from '../../engine/workspace/dockDefaults';
@@ -1678,23 +1678,47 @@ export const ToolWorkspace: React.FC<Props> = ({ activeToolId, onOpenDiagram, on
           >
             {openMenu === 'chart' && (
               <Flyout title="Chart type" wide>
-                <div className="dock-flyout__scroll">
-                  {CHART_PICKER_ORDER.map((kind) => (
-                    <FlyoutItem
-                      key={kind}
-                      icon={<ChartKindIcon kind={kind} />}
-                      label={CHART_LABELS[kind]}
-                      description={CHART_HINTS[kind]}
-                      active={ChartTool.kind === kind}
-                      onClick={() => {
-                        // Remembering the pick and arming the tool, the way the
-                        // grid flyout does -- so this is a choice about the next
-                        // drag rather than seven tools that would each need
-                        // registering and each need a key.
-                        ChartTool.kind = kind;
-                        pick('chart');
-                      }}
-                    />
+                {/*
+                  Five columns, one per family, rather than sixteen rows behind
+                  a scrollbar. The frame picker made the same call for the same
+                  reason: a picker of *pictures* is scanned, not read, and a
+                  scroll hides exactly the kinds somebody does not already know
+                  they want. Grouping is by the question being asked -- nobody
+                  arrives wanting "a stacked area", they arrive wanting to show
+                  how a total split up over time.
+                */}
+                <div className="chart-picker">
+                  {chartPickerGroups().map((group) => (
+                    <div className="chart-picker__col" key={group.family}>
+                      <div className="dock-flyout__group" role="presentation">
+                        {group.label}
+                      </div>
+                      {group.kinds.map((kind) => (
+                        <button
+                          key={kind}
+                          type="button"
+                          className="chart-chip"
+                          data-active={ChartTool.kind === kind || undefined}
+                          title={CHART_HINTS[kind]}
+                          onClick={() => {
+                            // Remembering the pick and arming the tool, the way
+                            // the grid flyout does, so this is a choice about
+                            // the next drag rather than sixteen tools that
+                            // would each need registering and each need a key.
+                            ChartTool.kind = kind;
+                            pick('chart');
+                          }}
+                        >
+                          <span className="chart-chip__glyph" aria-hidden="true">
+                            <ChartKindIcon kind={kind} size={20} />
+                          </span>
+                          <span className="chart-chip__text">
+                            <span className="chart-chip__label">{CHART_LABELS[kind]}</span>
+                            <span className="chart-chip__hint">{CHART_HINTS[kind]}</span>
+                          </span>
+                        </button>
+                      ))}
+                    </div>
                   ))}
                 </div>
               </Flyout>

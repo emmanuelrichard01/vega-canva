@@ -17178,3 +17178,225 @@ html[data-precise] .canvas-container[data-cursor-mode] .konvajs-content canvas {
 }
 
 .connector-bond__arrow { flex-shrink: 0; color: var(--text-tertiary); }
+
+/* ── Chart type picker ───────────────────────────────────────────────────────
+   Five columns, one per family. The same shape as `.frame-picker`, and for the
+   same reasons: sixteen kinds down a scroll is a list nobody reads to the end,
+   and a picker of pictures is scanned by shape rather than read by name.
+
+   The width lives here rather than on `.dock-flyout__panel--wide`, which is
+   shared by Type, Grid and More — a modifier named for a degree rather than a
+   purpose gets worn by everything, and widening it once already doubled three
+   flyouts to make room for a grid only one of them had. The panel is a flex
+   column, so a child that declares a width widens it. */
+.chart-picker {
+  display: grid;
+  grid-template-columns: repeat(5, minmax(0, 1fr));
+  gap: var(--space-4);
+  padding-top: var(--space-2);
+  min-width: 660px;
+}
+
+.chart-picker__col {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  min-width: 0;
+}
+
+.chart-chip {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  width: 100%;
+  padding: 7px 8px;
+  border: none;
+  border-radius: var(--radius-md);
+  background: transparent;
+  color: var(--text-primary);
+  text-align: left;
+  cursor: pointer;
+  transition: background var(--motion-hover);
+}
+
+.chart-chip:hover { background: var(--surface-hover); }
+.chart-chip[data-active] { background: var(--surface-active); }
+
+/* A fixed box, so every glyph takes the same room and the column stays a
+   column — the frame picker's rule, for the same reason. */
+.chart-chip__glyph {
+  display: grid;
+  place-items: center;
+  flex: 0 0 auto;
+  width: 30px;
+  height: 30px;
+  border-radius: var(--radius-sm);
+  color: var(--text-secondary);
+  background: var(--surface-secondary);
+  transition: color var(--motion-hover), background var(--motion-hover);
+}
+
+.chart-chip:hover .chart-chip__glyph { color: var(--text-primary); }
+
+.chart-chip[data-active] .chart-chip__glyph {
+  color: var(--accent);
+  background: var(--surface-primary);
+  box-shadow: var(--shadow-sm);
+}
+
+.chart-chip__text {
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+  line-height: 1.3;
+}
+
+.chart-chip__label {
+  font-size: var(--text-sm);
+  font-weight: 500;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+/* The hint is what makes the picker choosable rather than merely readable, so
+   it is present on every row rather than in a tooltip nobody hovers for. It
+   wraps to two lines rather than being clipped: the sentence is the reason the
+   row exists, and half of one is worse than none. */
+.chart-chip__hint {
+  font-size: 10px;
+  color: var(--text-tertiary);
+  white-space: normal;
+  display: -webkit-box;
+  -webkit-line-clamp: 2;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
+}
+
+/* A narrow viewport cannot hold five columns beside the dock; three still
+   reads as a grouped picker rather than as a scroll. */
+@media (max-width: 900px) {
+  .chart-picker {
+    grid-template-columns: repeat(3, minmax(0, 1fr));
+    min-width: 420px;
+  }
+}
+
+
+/* ── Chart properties section ────────────────────────────────────────────────
+   The data grid is the reason somebody opened this panel, so it gets the room
+   and the styling controls sit under it rather than competing with it. */
+.chart-group { margin-bottom: var(--space-3); }
+
+.chart-group__label {
+  font-size: 10px;
+  font-weight: 600;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  color: var(--text-tertiary);
+  margin-bottom: var(--space-1);
+}
+
+.chart-group__body { display: flex; flex-direction: column; gap: 2px; }
+
+/* Sixteen glyphs in a compact grid: the same pictures as the dock flyout, so
+   the kind is recognised rather than re-learned in a second vocabulary. */
+.chart-type-grid {
+  display: grid;
+  grid-template-columns: repeat(8, minmax(0, 1fr));
+  gap: 2px;
+}
+
+.chart-type-cell {
+  display: grid;
+  place-items: center;
+  aspect-ratio: 1;
+  border: none;
+  border-radius: var(--radius-sm);
+  background: transparent;
+  color: var(--text-secondary);
+  cursor: pointer;
+  transition: background var(--motion-hover), color var(--motion-hover);
+}
+
+.chart-type-cell:hover { background: var(--surface-hover); color: var(--text-primary); }
+.chart-type-cell[data-active] { background: var(--surface-active); color: var(--accent); }
+
+.chart-data { display: flex; flex-direction: column; gap: var(--space-2); }
+
+.chart-data__grid {
+  display: grid;
+  gap: 1px;
+  align-items: stretch;
+}
+
+.chart-data__corner { min-height: 20px; }
+
+.chart-data__head,
+.chart-data__cell {
+  min-width: 0;
+  width: 100%;
+  padding: 3px 5px;
+  border: 1px solid transparent;
+  border-radius: var(--radius-sm);
+  background: var(--surface-secondary);
+  color: var(--text-primary);
+  font-size: var(--text-sm);
+  font-variant-numeric: tabular-nums;
+}
+
+.chart-data__head { font-weight: 600; font-size: 10px; color: var(--text-secondary); }
+.chart-data__cell--label { text-align: left; font-variant-numeric: normal; }
+
+.chart-data__head:focus,
+.chart-data__cell:focus {
+  outline: none;
+  border-color: var(--accent);
+  background: var(--surface-primary);
+}
+
+.chart-data__icon {
+  display: grid;
+  place-items: center;
+  border: none;
+  background: transparent;
+  color: var(--text-tertiary);
+  border-radius: var(--radius-sm);
+  cursor: pointer;
+}
+
+.chart-data__icon:hover { background: var(--surface-hover); color: var(--text-primary); }
+
+.chart-data__actions { display: flex; flex-wrap: wrap; gap: 4px; }
+
+.chart-data__action {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  padding: 3px 7px;
+  border: 1px solid var(--border-divider);
+  border-radius: var(--radius-sm);
+  background: var(--surface-secondary);
+  color: var(--text-secondary);
+  font-size: 11px;
+  cursor: pointer;
+}
+
+.chart-data__action:hover { background: var(--surface-hover); color: var(--text-primary); }
+
+/* Said here rather than as a toast: the action happened in this panel, and a
+   message four inches away is a message about something else. */
+.chart-data__notice { font-size: 10px; color: var(--text-tertiary); }
+
+.chart-toggles { display: flex; flex-wrap: wrap; gap: 3px; }
+.chart-swatch-row { display: flex; align-items: center; gap: 6px; }
+.chart-swatches { display: flex; gap: 3px; flex-wrap: wrap; }
+
+.chart-swatches__chip {
+  width: 14px;
+  height: 14px;
+  border-radius: 3px;
+  box-shadow: inset 0 0 0 1px rgb(0 0 0 / 0.08);
+}
+
+.chart-hint { font-size: 10px; color: var(--text-tertiary); margin-top: 3px; }

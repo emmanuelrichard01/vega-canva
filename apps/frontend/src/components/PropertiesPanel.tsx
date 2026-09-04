@@ -1,6 +1,7 @@
 import React, { useMemo, useState } from 'react';
 import { useShallow } from 'zustand/react/shallow';
 import {
+  BarChart3,
   BringToFront,
   FlipHorizontal,
   FlipVertical,
@@ -15,6 +16,7 @@ import { useStore } from '../hooks/useStore';
 import { APPEARANCE_TYPES } from '../engine/objects/appearanceTypes';
 import { resolveAffordances, type AffordanceId } from '../engine/selection/affordances';
 import { GridSection } from './panel/GridSection';
+import { ChartSection } from './panel/ChartSection';
 import { gridNodeOf } from '../engine/grid/gridApply';
 import { objectRegistry } from '../engine/objects';
 import {
@@ -663,6 +665,17 @@ export const PropertiesPanel: React.FC<PropertiesPanelProps> = ({ selectedIds, o
       {gridNode && (
         <Accordion title="Grid" icon={<LayoutGrid size={13} />} defaultOpen>
           <GridSection nodeId={gridNode.id} />
+        </Accordion>
+      )}
+
+      {/*
+        Open by default, and first, because the data grid inside it is the
+        reason somebody selected the chart. A chart whose numbers are behind a
+        closed accordion is a chart you have to learn to edit.
+      */}
+      {node.type === 'chart' && (
+        <Accordion title="Chart" icon={<BarChart3 size={13} />} defaultOpen>
+          <ChartSection node={node} />
         </Accordion>
       )}
 

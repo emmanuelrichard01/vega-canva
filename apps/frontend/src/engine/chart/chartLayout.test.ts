@@ -181,10 +181,39 @@ describe('layoutChart — runs', () => {
   });
 
   it('closes an area down to the baseline', () => {
+    /**
+     * Asserted as a property rather than by index. The polygon is the top edge
+     * followed by the floor, which is the order a *stacked* area needs -- its
+     * floor is the series beneath it, reversed -- so pinning `polygon[0]` to
+     * the baseline was pinning the construction rather than the meaning.
+     */
     const l = layoutChart(spec({ kind: 'area' }), W, H);
-    const area = l.areas[0];
-    expect(area.polygon[0].y).toBeCloseTo(l.baseline!.y1, 6);
-    expect(area.polygon[area.polygon.length - 1].y).toBeCloseTo(l.baseline!.y1, 6);
+    const poly = l.areas[0].polygon;
+    const floor = poly.slice(-2);
+    for (const p of floor) expect(p.y).toBeCloseTo(l.baseline!.y1, 6);
+    // And it spans the full run rather than closing early.
+    expect(Math.min(...floor.map((p) => p.x))).toBeCloseTo(poly[0].x, 6);
+  });
+
+  it('closes a stacked area onto the series beneath it, not the axis', () => {
+    /**
+     * The whole difference between `area` and `stackedArea`. If the second
+     * series closed to the axis it would be drawn over the first rather than
+     * on top of it, and the picture would double-count every total.
+     */
+    const l = layoutChart(
+      spec({ kind: 'stackedArea', series: [
+        { name: 'A', values: [10, 20, 30] },
+        { name: 'B', values: [10, 10, 10] },
+      ] }),
+      W,
+      H
+    );
+    expect(l.areas).toHaveLength(2);
+    const upper = l.areas[1];
+    const floor = upper.polygon.slice(-3);
+    // None of the upper band's floor sits on the zero rule.
+    for (const p of floor) expect(Math.abs(p.y - l.baseline!.y1)).toBeGreaterThan(1);
   });
 
   it('scatter draws dots and no connecting run', () => {
