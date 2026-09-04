@@ -4,6 +4,7 @@ import {
   ArrowRightToLine,
   Columns3,
   Frame,
+  Rows3,
   RectangleHorizontal,
   RectangleVertical,
   Shrink,
@@ -15,6 +16,7 @@ import {
 } from 'lucide-react';
 import { Accordion, Row, SubGroup } from '../panelPrimitives';
 import { NumberStepper } from '../../ui/NumberStepper';
+import { Switch } from '../../ui/Switch';
 import { SegmentedControl } from '../../ui/SegmentedControl';
 import { EndCapIcon } from '../connectorIcons';
 import { LineProfileIcon } from '../lineProfileIcons';
@@ -49,8 +51,11 @@ import {
 } from '../../../engine/model/schema';
 import type { Shared } from '../../../engine/model/selection';
 import {
-  DEFAULT_LAYOUT_GUIDE,
+  DEFAULT_COLUMNS,
+  DEFAULT_ROWS,
   LAYOUT_GUIDE_PRESETS,
+  guideDraws,
+  type LayoutAxis,
   type LayoutGuide,
 } from '../../../engine/model/layoutGuide';
 import {
@@ -87,6 +92,49 @@ interface ShapeGeometrySectionProps {
   frameChildCount: number;
   /** Set or clear the frame's column measure. */
   setLayoutGuide: (guide: LayoutGuide | undefined) => void;
+}
+
+/**
+ * The two axes of a measure, so the panel writes one block rather than two.
+ *
+ * They are the same shape by design — see `LayoutGuide` — and rendering them
+ * from a list is what keeps them the same in the panel too. Two hand-written
+ * blocks is where "columns has a margin field and rows does not" comes from.
+ */
+const AXES: {
+  key: 'columns' | 'rows';
+  label: string;
+  hint: string;
+  fallback: LayoutAxis;
+  glyph: React.ReactNode;
+}[] = [
+  {
+    key: 'columns',
+    label: 'Columns',
+    hint: 'Vertical tracks, dividing the width.',
+    fallback: DEFAULT_COLUMNS,
+    glyph: <Columns3 size={13} />,
+  },
+  {
+    key: 'rows',
+    label: 'Rows',
+    hint: 'Horizontal tracks, dividing the height. A baseline rhythm more often than eight stacked boxes.',
+    fallback: DEFAULT_ROWS,
+    glyph: <Rows3 size={13} />,
+  },
+];
+
+/**
+ * Whether a guide is exactly a preset.
+ *
+ * Field by field on both axes, because a preset that sets only columns is not
+ * matched by a guide that also has rows — it is that preset *plus* something,
+ * and lighting the chip would claim the rows came from it.
+ */
+function sameGuide(a: LayoutGuide | undefined, b: LayoutGuide): boolean {
+  const axis = (x: LayoutAxis | undefined, y: LayoutAxis | undefined) =>
+    (!x && !y) || Boolean(x && y && x.count === y.count && x.gutter === y.gutter && x.margin === y.margin);
+  return axis(a?.columns, b.columns) && axis(a?.rows, b.rows);
 }
 
 export const ShapeGeometrySection: React.FC<ShapeGeometrySectionProps> = ({
@@ -433,65 +481,116 @@ export const ShapeGeometrySection: React.FC<ShapeGeometrySectionProps> = ({
             exists to be moved onto.
           */}
           <SubGroup
-            label="Columns"
-            hint="A measure drawn over the frame for placing things against. Never exported, and objects snap to it."
+            label="Measure"
+            hint="Columns and rows drawn over the frame for placing things against. Never exported, and objects snap to them."
             on={Boolean(node.layoutGuide)}
-            onToggle={(on) => setLayoutGuide(on ? DEFAULT_LAYOUT_GUIDE : undefined)}
+            onToggle={(on) => setLayoutGuide(on ? { columns: DEFAULT_COLUMNS } : undefined)}
           >
             {node.layoutGuide && (
               <>
-                {/* The three measures worth one click. Twelve is twelve
-                    because of what it factors into: halves, thirds, quarters
-                    and sixths all land on a column boundary. */}
-                <div className="grid-presets" role="group" aria-label="Column measure">
+                {/* The measures worth one click. Twelve is twelve because of
+                    what it factors into: halves, thirds, quarters and sixths
+                    all land on a column boundary. */}
+                <div className="grid-presets" role="group" aria-label="Measure preset">
                   {LAYOUT_GUIDE_PRESETS.map((preset) => (
                     <button
                       key={preset.id}
                       type="button"
                       className="grid-preset"
-                      data-active={
-                        node.layoutGuide?.columns === preset.guide.columns &&
-                        node.layoutGuide?.gutter === preset.guide.gutter &&
-                        node.layoutGuide?.margin === preset.guide.margin
-                          ? true
-                          : undefined
-                      }
+                      data-active={sameGuide(node.layoutGuide, preset.guide) || undefined}
                       onClick={() => setLayoutGuide(preset.guide)}
                     >
                       {preset.label}
                     </button>
                   ))}
                 </div>
-                <div className="prop-grid">
-                  <NumberStepper
-                    aria-label="Columns"
-                    glyph={<Columns3 size={13} />}
-                    value={node.layoutGuide.columns}
-                    onChange={(columns) => setLayoutGuide({ ...node.layoutGuide!, columns })}
-                    min={1}
-                    max={24}
-                  />
-                  <NumberStepper
-                    aria-label="Gutter between columns"
-                    glyph={<UnfoldHorizontal size={13} />}
-                    suffix="px"
-                    value={node.layoutGuide.gutter}
-                    onChange={(gutter) => setLayoutGuide({ ...node.layoutGuide!, gutter })}
-                    min={0}
-                    max={200}
-                  />
-                </div>
-                <Row label="Margin" hint="Inset from the frame's left and right edges. The first and last columns start here.">
-                  <NumberStepper
-                    aria-label="Measure margin"
-                    suffix="px"
-                    value={node.layoutGuide.margin}
-                    onChange={(margin) => setLayoutGuide({ ...node.layoutGuide!, margin })}
-                    min={0}
-                    max={400}
-                    step={8}
-                  />
-                </Row>
+
+                {/*
+                  Two axes, each with its own switch.
+
+                  A count of zero would be the obvious way to turn one off and
+                  is the wrong one: the normalizer drops an axis with no
+                  tracks, so the field would delete itself and leave a stepper
+                  showing a number that is not stored. An axis is present or it
+                  is not, and the switch says which.
+                */}
+                {AXES.map(({ key, label, hint, fallback, glyph }) => {
+                  const axis = node.layoutGuide?.[key];
+                  return (
+                    <React.Fragment key={key}>
+                      <Row label={label} hint={hint}>
+                        <Switch
+                          checked={Boolean(axis)}
+                          onChange={(on) =>
+                            setLayoutGuide({
+                              ...node.layoutGuide,
+                              [key]: on ? fallback : undefined,
+                            })
+                          }
+                        />
+                      </Row>
+                      {axis && (
+                        <>
+                          <div className="prop-grid">
+                            <NumberStepper
+                              aria-label={`${label} count`}
+                              glyph={glyph}
+                              value={axis.count}
+                              onChange={(count) =>
+                                setLayoutGuide({ ...node.layoutGuide, [key]: { ...axis, count } })
+                              }
+                              min={1}
+                              max={48}
+                            />
+                            <NumberStepper
+                              aria-label={`Gutter between ${label.toLowerCase()}`}
+                              glyph={<UnfoldHorizontal size={13} />}
+                              suffix="px"
+                              value={axis.gutter}
+                              onChange={(gutter) =>
+                                setLayoutGuide({ ...node.layoutGuide, [key]: { ...axis, gutter } })
+                              }
+                              min={0}
+                              max={200}
+                            />
+                          </div>
+                          <Row
+                            label="Margin"
+                            hint="Inset from the two edges this axis runs between. The first and last tracks start here."
+                          >
+                            <NumberStepper
+                              aria-label={`${label} margin`}
+                              suffix="px"
+                              value={axis.margin}
+                              onChange={(margin) =>
+                                setLayoutGuide({ ...node.layoutGuide, [key]: { ...axis, margin } })
+                              }
+                              min={0}
+                              max={400}
+                              step={8}
+                            />
+                          </Row>
+                        </>
+                      )}
+                    </React.Fragment>
+                  );
+                })}
+
+                {/*
+                  Said when the numbers do not fit, rather than drawing nothing
+                  and leaving you to work out why.
+
+                  Twelve columns at a 100-unit gutter needs 1100 units of gap
+                  before a single column exists, and margins can eat a frame
+                  outright. Both are arithmetic somebody can fix in one edit —
+                  once they know which of the three numbers is the problem.
+                */}
+                {!guideDraws(node, node.layoutGuide) && (
+                  <p className="prop-note">
+                    The gutters and margins come to more than the frame. Lower one of
+                    them, or reduce the count.
+                  </p>
+                )}
               </>
             )}
           </SubGroup>

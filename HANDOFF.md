@@ -4441,6 +4441,61 @@ horizontal measure is the same arithmetic on the other axis and the same
 zero-width-box trick, and it wants doing when somebody needs it rather than
 speculatively.
 
+## 5a-0-as. Rows, and why the guide changed shape to get them
+
+The measure shipped flat — `{ columns, gutter, margin }` — which reads well
+until rows arrive and there is nowhere symmetrical to put them. `rowGutter` and
+`rowMargin` beside a bare `gutter` makes one axis the default and the other an
+afterthought, and every reader then has to know which of the two spellings it
+is looking at.
+
+A guide is **two optional axes of identical shape** now. Columns divide the
+width, rows divide the height, and `axisBands` takes one axis and one extent —
+so the arithmetic is written once and the caller says which way it is pointing.
+A separate row function would have been a second place for the off-by-one
+gutter to live.
+
+The normalizer still reads the flat form. It shipped one commit ago, the boards
+written in between are real, and this is the module whose whole job is that
+every stored form arrives as one shape. Verified: `{ columns: 12, gutter: 24,
+margin: 48 }` comes back as `{ columns: { count: 12, gutter: 24, margin: 48 } }`.
+
+Details:
+
+- **Rows default to eight tracks and no margin.** A horizontal measure is
+  almost always a baseline rhythm rather than a division into equal bands —
+  you are spacing headings down a page, not filling eight stacked boxes — and
+  a top and bottom inset is what the frame's safe area already says. Repeating
+  it here would draw two guides along the same two edges.
+- **Rows are drawn fainter than columns**, 0.05 against 0.08. Where the two
+  cross they add, and two bands at 0.08 come to 0.15 — a chequerboard whose
+  intersections read as a third kind of mark. At 0.05 the crossings stay close
+  enough to a column alone that the eye still sees two overlaid measures rather
+  than a plaid.
+- **A row edge is a `y`.** Keeping the two candidate lists apart is what stops
+  a block's left side snapping to a horizontal band — nonsense that would look
+  like a bug in the snapper rather than in the guide.
+- **Each axis has a switch, not a count of zero.** The normalizer drops an axis
+  with no tracks, so a stepper that could reach zero would delete the field and
+  then show a number that is not stored.
+- **The panel renders both axes from one list.** Two hand-written blocks is
+  where "columns has a margin field and rows does not" comes from.
+- **It says when the numbers do not fit.** Twelve tracks at a 100-unit gutter
+  needs 1100 units of gap before one exists; margins can eat a frame outright.
+  Both are one edit to fix, once you know which of the three numbers is the
+  problem — so the panel names it rather than drawing nothing.
+
+## 5a-0-at. Grid modules are square by default
+
+`defaultStyle().radius` was 12. A rounded module is a **decision** — it says
+the grid is a set of cards rather than a division of a space — and making it
+the default meant every grid arrived having made it. A modular grid, or a set
+of thirds laid over a picture, is not a set of cards.
+
+It is also the rule `ShapeTool` already follows: a new rectangle has square
+corners, and a grid of rectangles that did not would have been the one place
+the app rounded something nobody asked it to.
+
 ## 5. Next up
 
 ### 5a-0. The four things to do first

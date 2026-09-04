@@ -1215,9 +1215,20 @@ export interface FrameNode extends BaseNode {
    * Anywhere else and moving or resizing a frame would leave its own guide
    * behind, and two frames could not carry different measures.
    *
+   * Two optional axes of identical shape. The first version was flat —
+   * `{ columns, gutter, margin }` — which reads well until rows arrive and
+   * there is nowhere symmetrical to put them: `rowGutter` beside a bare
+   * `gutter` makes one axis the default and the other an afterthought, and
+   * every reader then has to know which spelling it is looking at. The
+   * normalizer still reads the flat form, so nothing written in between is
+   * lost.
+   *
    * See `engine/model/layoutGuide.ts`.
    */
-  layoutGuide?: { columns: number; gutter: number; margin: number };
+  layoutGuide?: {
+    columns?: { count: number; gutter: number; margin: number };
+    rows?: { count: number; gutter: number; margin: number };
+  };
   layout?: {
     direction: 'horizontal' | 'vertical';
     padding: number;

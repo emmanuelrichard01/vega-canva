@@ -128,16 +128,43 @@ function normalizeSafeArea(raw: unknown): FrameNode['safeArea'] {
  * The upper bounds are the panel's, so a document written by hand cannot
  * produce a measure the controls could not have made and could not undo.
  */
-function normalizeLayoutGuide(raw: unknown): FrameNode['layoutGuide'] {
+function normalizeLayoutAxis(raw: unknown): { count: number; gutter: number; margin: number } | undefined {
   if (!raw || typeof raw !== 'object') return undefined;
   const source = raw as Record<string, unknown>;
-  const columns = Math.round(num(source.columns, 0));
-  if (columns < 1) return undefined;
+  const count = Math.round(num(source.count, 0));
+  if (count < 1) return undefined;
   return {
-    columns: Math.min(24, columns),
+    count: Math.min(48, count),
     gutter: Math.min(200, Math.max(0, num(source.gutter, 0))),
     margin: Math.min(400, Math.max(0, num(source.margin, 0))),
   };
+}
+
+function normalizeLayoutGuide(raw: unknown): FrameNode['layoutGuide'] {
+  if (!raw || typeof raw !== 'object') return undefined;
+  const source = raw as Record<string, unknown>;
+
+  /**
+   * The flat form this field shipped with for one commit.
+   *
+   * `{ columns: 12, gutter: 24, margin: 48 }` — a number where an axis now
+   * sits. Read here rather than left to break, because the boards written
+   * between the two commits are real and this is the module whose whole job is
+   * that every stored form arrives as one shape.
+   */
+  const legacy =
+    typeof source.columns === 'number'
+      ? normalizeLayoutAxis({ count: source.columns, gutter: source.gutter, margin: source.margin })
+      : undefined;
+
+  const columns = legacy ?? normalizeLayoutAxis(source.columns);
+  const rows = normalizeLayoutAxis(source.rows);
+
+  // A guide with neither axis draws nothing and snaps to nothing, so it is a
+  // key that would sit in the document meaning "there is a measure here" while
+  // there is not.
+  if (!columns && !rows) return undefined;
+  return { ...(columns ? { columns } : null), ...(rows ? { rows } : null) };
 }
 
 /** Legacy shape names that no longer exist as distinct kinds. */

@@ -2,7 +2,7 @@ import React from 'react';
 import { Group, Rect, Text } from 'react-konva';
 import { EXPORT_CHROME } from '../../../engine/export/chrome';
 import { safeAreaBox } from '../../../engine/model/frames';
-import { columnBands } from '../../../engine/model/layoutGuide';
+import { axisBands } from '../../../engine/model/layoutGuide';
 import type { FrameNode } from '../../../engine/model/schema';
 import { useFillProps } from './useFillProps';
 
@@ -29,7 +29,8 @@ export const FrameRenderer: React.FC<Props> = React.memo(({ node, stageScale }) 
 
   // In the frame's own coordinates, like `safe` above, so the group's
   // transform places them and nothing here has to know where the frame is.
-  const bands = columnBands(node.width, node.layoutGuide);
+  const columns = axisBands(node.width, node.layoutGuide?.columns);
+  const rows = axisBands(node.height, node.layoutGuide?.rows);
 
   return (
     <Group>
@@ -107,16 +108,38 @@ export const FrameRenderer: React.FC<Props> = React.memo(({ node, stageScale }) 
         kind of mark — one is a warning about the edges, the other a measure
         across the middle.
       */}
-      {bands.map((band, i) => (
+      {columns.map((band, i) => (
         <Rect
-          key={i}
+          key={`c${i}`}
           name={EXPORT_CHROME}
-          x={band.x}
+          x={band.start}
           y={0}
-          width={band.width}
+          width={band.size}
           height={node.height}
           fill="#F43F5E"
           opacity={0.08}
+          listening={false}
+          perfectDrawEnabled={false}
+        />
+      ))}
+      {/*
+        Rows, at a lower alpha than the columns.
+
+        Where the two cross they add, and two bands at 0.08 come to 0.15 — a
+        chequerboard whose intersections read as a third kind of mark. Dropping
+        the rows to 0.05 keeps the crossings close enough to a column alone
+        that the eye still sees two overlaid measures rather than a plaid.
+      */}
+      {rows.map((band, i) => (
+        <Rect
+          key={`r${i}`}
+          name={EXPORT_CHROME}
+          x={0}
+          y={band.start}
+          width={node.width}
+          height={band.size}
+          fill="#F43F5E"
+          opacity={0.05}
           listening={false}
           perfectDrawEnabled={false}
         />

@@ -13,7 +13,7 @@ import { useStore } from '../../hooks/useStore';
 import { gridSnap } from './gridSnap';
 import { guideState } from './guideState';
 import { snapToObjects, type Box } from './smartGuides';
-import { columnEdges } from '../model/layoutGuide';
+import { guideEdges } from '../model/layoutGuide';
 
 /**
  * Snap distance, in **screen** pixels.
@@ -93,24 +93,27 @@ function candidatesFor(excluded: Set<string>): Box[] {
 }
 
 /**
- * Every column edge on screen, from the frames that carry a measure.
+ * Every measure edge on screen, from the frames that carry one.
  *
  * Frames being dragged are skipped: an object cannot align to a measure that
  * is moving with it, which is the same rule the object candidates follow.
  */
-function visibleColumnEdges(excluded: Set<string>): number[] {
+function visibleGuideEdges(excluded: Set<string>): { x: number[]; y: number[] } {
   const objects = useStore.getState().objects;
   const view = cameraSystem.getViewportBounds(0);
-  const edges: number[] = [];
+  const x: number[] = [];
+  const y: number[] = [];
 
   for (const node of Object.values(objects)) {
     if (node.type !== 'frame' || !node.layoutGuide || node.hidden) continue;
     if (excluded.has(node.id)) continue;
     if (node.x > view.maxX || node.x + node.width < view.minX) continue;
     if (node.y > view.maxY || node.y + node.height < view.minY) continue;
-    edges.push(...columnEdges(node, node.layoutGuide));
+    const edges = guideEdges(node, node.layoutGuide);
+    x.push(...edges.x);
+    y.push(...edges.y);
   }
-  return edges;
+  return { x, y };
 }
 
 /**
@@ -171,8 +174,15 @@ export function snapDraggedBox(
    * most — placing a block on the measure of the frame it already sits in is
    * what a column guide is *for*.
    */
-  for (const edge of visibleColumnEdges(excluded)) {
+  const measure = visibleGuideEdges(excluded);
+  for (const edge of measure.x) {
     candidates.push({ x: edge, y: box.y, width: 0, height: box.height });
+  }
+  // A row edge is a `y`, and keeping the two lists apart is what stops a
+  // block's left side snapping to a horizontal band — nonsense that would look
+  // like a bug in the snapper rather than in the guide.
+  for (const edge of measure.y) {
+    candidates.push({ x: box.x, y: edge, width: box.width, height: 0 });
   }
   const result = snapToObjects(box, candidates, SNAP_PX / (cameraSystem.zoom || 1));
 

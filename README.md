@@ -1213,6 +1213,14 @@ line between them: a frame that promised a safe area and then quietly moved
 things into it would be worse than no guide at all, while a measure exists to
 be moved onto.
 
+A guide is **two optional axes of identical shape** — columns dividing the
+width, rows dividing the height — and `axisBands` takes one axis and one
+extent, so the arithmetic is written once and the caller says which way it
+points. The first version was flat, which reads well until rows arrive and
+`rowGutter` beside a bare `gutter` makes one axis the default and the other an
+afterthought. Rows draw fainter than columns, because where the two cross their
+alphas add and two equal bands read as a plaid rather than as two measures.
+
 ### Frames — `engine/model/frames.ts`
 
 Sixteen presets in three groups, and the list is deliberately short: a picker

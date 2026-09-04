@@ -231,7 +231,19 @@ export function defaultStyle(): GridStyle {
     shapes: ['rect'],
     palette: GRID_PALETTES[0].colors,
     colorMode: 'gradient',
-    radius: 12,
+    /**
+     * Square, like every other new shape in this app.
+     *
+     * This was 12, and a rounded module is a *decision* — it says the grid is
+     * a set of cards rather than a division of a space. Making it the default
+     * meant every grid arrived having made that decision, and a modular grid
+     * or a set of thirds laid over a picture is not a set of cards.
+     *
+     * It is also the same rule `ShapeTool` follows: a new rectangle has square
+     * corners, and a grid of rectangles that did not would be the one place
+     * the app rounded something nobody asked it to.
+     */
+    radius: 0,
     strokeColor: 'transparent',
     strokeWidth: 0,
     opacity: 1,
