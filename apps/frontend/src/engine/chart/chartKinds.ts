@@ -33,6 +33,10 @@ export const CHART_LABELS: Record<ChartKind, string> = {
   function: 'Function',
   parametric: 'Parametric',
   polarPlot: 'Polar',
+  implicit: 'Implicit',
+  contour: 'Contour',
+  slopeField: 'Slope field',
+  vectorField: 'Vector field',
 };
 
 /**
@@ -62,6 +66,13 @@ export const CHART_HINTS: Record<ChartKind, string> = {
   function: 'y = f(x), plotted',
   parametric: 'x(t) and y(t), a curve in the plane',
   polarPlot: 'r(a), swept around a centre',
+  // Starts lower case like every other hint: they read as sentence fragments
+  // after the name, not as titles. `chartKinds.test.ts` holds that rule and
+  // caught this one opening with a capital F.
+  implicit: 'the curve where F(x, y) = 0',
+  contour: 'level curves of a surface',
+  slopeField: "dy/dx, as a direction at every point",
+  vectorField: 'a vector at every point of the plane',
 };
 
 export const FAMILY_LABELS: Record<ChartFamily, string> = {
@@ -71,6 +82,7 @@ export const FAMILY_LABELS: Record<ChartFamily, string> = {
   partToWhole: 'Parts of a whole',
   specialist: 'Specialist',
   plot: 'Maths',
+  field: 'Two variables',
 };
 
 /**
@@ -107,6 +119,10 @@ export const CHART_PICKER_ORDER: ChartKind[] = [
   'function',
   'parametric',
   'polarPlot',
+  'implicit',
+  'contour',
+  'slopeField',
+  'vectorField',
 ];
 
 /** The picker's rows, grouped, in family order then picker order. */
@@ -118,6 +134,7 @@ export function chartPickerGroups(): Array<{ family: ChartFamily; label: string;
     'partToWhole',
     'specialist',
     'plot',
+    'field',
   ];
   return order.map((family) => ({
     family,

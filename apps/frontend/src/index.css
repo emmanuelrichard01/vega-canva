@@ -17740,3 +17740,30 @@ html[data-precise] .canvas-container[data-cursor-mode] .konvajs-content canvas {
   overflow: hidden;
   text-overflow: ellipsis;
 }
+
+/* --- fields that must not wrap ------------------------------------------- */
+
+/* An optional bound reads as a number or as the word "Auto", and both are
+   short. Centred and tabular so a column of them lines up, and never wrapped:
+   a two-line axis field pushes every row below it out of the panel's rhythm. */
+.chartp-optnum {
+  width: 100%;
+  min-width: 0;
+  text-align: center;
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+}
+
+/* `SegmentedControl` wraps by default and divides its column when told to
+   `fill`. Every group in this panel passes `fill`, which is what stops four
+   segments becoming three rows of broken words - the fault the Order row had.
+   The control carries its own inline styles, so there is nothing to override
+   here; the fix is the prop, and this comment is where somebody will look. */
+
+/* Notes wrap, and are the only thing here that should. `overflow-wrap` rather
+   than `word-break`, so a long formula name breaks between words where it can
+   and only mid-word when it genuinely cannot fit. */
+.chartp-note,
+.chartp-help__fns {
+  overflow-wrap: anywhere;
+}

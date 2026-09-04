@@ -2,20 +2,27 @@ import React from 'react';
 import {
   ClipboardPaste,
   Copy,
-  Download,
+  FileDown,
+  FileUp,
   Grid3x3,
   Hash,
   Plus,
   Tag,
   Trash2,
-  Upload,
 } from 'lucide-react';
 import { NumberStepper } from '../ui/NumberStepper';
 import { Slider } from '../ui/Slider';
 import { SegmentedControl } from '../ui/SegmentedControl';
 import { ColorPickerPopover } from '../ui/ColorPickerPopover';
 import { Row } from './panelPrimitives';
-import { ActionRow, Group, Reveal, ToggleRow, TypeHeader } from './chartPanelParts';
+import {
+  ActionRow,
+  Group,
+  OptionalNumber,
+  Reveal,
+  ToggleRow,
+  TypeHeader,
+} from './chartPanelParts';
 import { setChartKind, updateChart } from '../../engine/chart/chartApply';
 import {
   chartToCsv,
@@ -33,6 +40,7 @@ import {
   CHART_SORT_LABELS,
   isPlot,
   isPolar,
+  isTwoVariable,
   isRadial,
   seriesColor,
   type ChartSpec,
@@ -78,12 +86,28 @@ import type { ChartNode } from '../../engine/model/schema';
 interface Props {
   node: ChartNode;
 }
+/**
+ * One character per ordering, because four names do not fit four segments.
+ *
+ * The arrow says the direction and the bar beside it says what is being
+ * ordered *by* — height for value, letters for the label. Each carries its
+ * full wording as the segment's hint, so the short form is a compression of
+ * the label rather than a replacement for it.
+ */
+const SORT_GLYPH: Record<string, string> = {
+  none: '—',
+  valueDesc: '↓',
+  valueAsc: '↑',
+  labelAsc: 'A→Z',
+};
+
 
 export const ChartSection: React.FC<Props> = ({ node }) => {
   const spec = node.chart;
   const radial = isRadial(spec.kind);
   const polar = isPolar(spec.kind);
   const plot = isPlot(spec.kind);
+  const twoVar = isTwoVariable(spec.kind);
 
   const patch = React.useCallback(
     (next: Partial<ChartSpec>) => updateChart(node.id, { ...spec, ...next }),
@@ -99,8 +123,12 @@ export const ChartSection: React.FC<Props> = ({ node }) => {
           <Group label="Formulae">
             <FormulaEditor spec={spec} patch={patch} />
           </Group>
-          <Group label="Domain">
-            <DomainFields spec={spec} patch={patch} />
+          <Group label={twoVar ? 'Plane' : 'Domain'}>
+            {twoVar ? (
+              <PlaneFields spec={spec} patch={patch} />
+            ) : (
+              <DomainFields spec={spec} patch={patch} />
+            )}
           </Group>
           {spec.kind === 'function' && (
             <Group label="Read off the curve">
@@ -123,6 +151,21 @@ export const ChartSection: React.FC<Props> = ({ node }) => {
             onChange={(e) => patch({ title: e.target.value || undefined })}
           />
         </Row>
+        {/*
+          Offered only once there is a title to size. A stepper controlling the
+          type of an empty string is a live control with nothing to act on,
+          which is the dead-UI rule applied to a field rather than a feature.
+        */}
+        {spec.title && (
+          <Row label="Title size">
+            <NumberStepper
+              value={spec.titleSize ?? 16}
+              min={9}
+              max={48}
+              onChange={(v) => patch({ titleSize: v === 16 ? undefined : v })}
+            />
+          </Row>
+        )}
         <Row label="Show">
           <ToggleRow
             options={[
@@ -195,14 +238,27 @@ export const ChartSection: React.FC<Props> = ({ node }) => {
 
       {!plot && (
         <Group label="Order">
-          <Row label="Sort by" stack>
+          {/*
+            Short labels with the full wording on hover. Four segments sharing
+            a 170px control cannot hold "As entered / Largest first / Smallest
+            first / A to Z" -- they wrapped to two lines each and the control
+            grew to three rows of broken words. The glyphs say the ordering and
+            the hint says it in full, which is the division `Segment` was
+            written for.
+          */}
+          <Row label="Order" stack>
             <SegmentedControl
+              fill
               ariaLabel="Category order"
               value={spec.sort ?? 'none'}
               onChange={(v) =>
                 patch({ sort: v === 'none' ? undefined : (v as ChartSpec['sort']) })
               }
-              segments={CHART_SORTS.map((s) => ({ value: s, label: CHART_SORT_LABELS[s] }))}
+              segments={CHART_SORTS.map((s) => ({
+                value: s,
+                label: SORT_GLYPH[s],
+                hint: CHART_SORT_LABELS[s],
+              }))}
             />
           </Row>
         </Group>
@@ -310,8 +366,18 @@ const DataActions: React.FC<{ node: ChartNode; spec: ChartSpec }> = ({ node, spe
         actions={[
           { id: 'paste', icon: <ClipboardPaste size={12} />, label: 'Paste a table' },
           { id: 'copy', icon: <Copy size={12} />, label: 'Copy as CSV' },
-          { id: 'import', icon: <Upload size={12} />, label: 'Import a CSV file' },
-          { id: 'export', icon: <Download size={12} />, label: 'Export a CSV file' },
+          /*
+            `FileUp`/`FileDown` rather than `Upload`/`Download`. The mapping was
+            never wrong -- this app uses a down arrow for export everywhere, and
+            the restore control in the export dialog uses an up arrow -- but at
+            12px `Upload` and `Download` are the *same tray* with an arrow that
+            differs only in direction, and four monochrome glyphs in a row gave
+            the eye nothing else to go on. A page with an arrow is a different
+            silhouette, not a mirrored one, which is the property that makes a
+            pair of opposites legible at this size.
+          */
+          { id: 'import', icon: <FileUp size={12} />, label: 'Import a CSV file' },
+          { id: 'export', icon: <FileDown size={12} />, label: 'Export a CSV file' },
         ]}
         onRun={(id) => void run(id)}
       />
@@ -456,14 +522,29 @@ const AxisFields: React.FC<{ spec: ChartSpec; patch: (n: Partial<ChartSpec>) => 
 
   return (
     <>
-      <Row label="Minimum" hint="Leave at zero for automatic">
-        <NumberStepper value={spec.yMin ?? 0} onChange={(v) => patch({ yMin: v })} />
+      {/*
+        `OptionalNumber`, not a stepper. These were steppers using 0 as the
+        sentinel for "automatic", which made a minimum of *zero* unexpressible
+        -- and pinning a bar chart's baseline to zero is the single most likely
+        thing anybody wants from this field.
+      */}
+      <Row label="Minimum">
+        <OptionalNumber
+          label="Axis minimum"
+          value={spec.yMin}
+          onChange={(v) => patch({ yMin: v })}
+        />
       </Row>
-      <Row label="Maximum" hint="Leave at zero for automatic">
-        <NumberStepper value={spec.yMax ?? 0} onChange={(v) => patch({ yMax: v })} />
+      <Row label="Maximum">
+        <OptionalNumber
+          label="Axis maximum"
+          value={spec.yMax}
+          onChange={(v) => patch({ yMax: v })}
+        />
       </Row>
       <Row label="Baseline" hint="A bar's length means nothing measured from anywhere else">
         <SegmentedControl
+          fill
           ariaLabel="Where the axis starts"
           value={(spec.includeZero ?? true) ? 'zero' : 'fit'}
           onChange={(v) => patch({ includeZero: v === 'zero' })}
@@ -482,6 +563,7 @@ const AxisFields: React.FC<{ spec: ChartSpec; patch: (n: Partial<ChartSpec>) => 
       {canLog || spec.yScale === 'log' ? (
         <Row label="Scale" hint="Log suits data spanning orders of magnitude">
           <SegmentedControl
+            fill
             ariaLabel="Value axis scale"
             value={spec.yScale ?? 'linear'}
             onChange={(v) => patch({ yScale: v === 'log' ? 'log' : undefined })}
@@ -501,7 +583,7 @@ const AxisFields: React.FC<{ spec: ChartSpec; patch: (n: Partial<ChartSpec>) => 
           className="chartp-add chartp-add--quiet"
           onClick={() => patch({ yMin: undefined, yMax: undefined })}
         >
-          Back to automatic
+          Clear both bounds
         </button>
       )}
     </>
@@ -628,16 +710,26 @@ const FormulaEditor: React.FC<{ spec: ChartSpec; patch: (n: Partial<ChartSpec>) 
   spec,
   patch,
 }) => {
-  const variable = spec.kind === 'parametric' ? 't' : spec.kind === 'polarPlot' ? 'a' : 'x';
+  const twoVar = isTwoVariable(spec.kind);
+  const variable = twoVar
+    ? 'x'
+    : spec.kind === 'parametric'
+      ? 't'
+      : spec.kind === 'polarPlot'
+        ? 'a'
+        : 'x';
+  // Two-variable expressions read both; the parser is told the set so an
+  // unknown name is still an error rather than a silent NaN.
+  const variables = twoVar ? ['x', 'y'] : [variable];
   const curves = spec.functions ?? [];
-  // A parametric curve is an ordered pair, so its rows are named rather than
-  // numbered — "f2" would not tell anybody it is the y half.
-  const rowLabel = (i: number) =>
-    spec.kind === 'parametric'
-      ? i === 0
-        ? `x(${variable})`
-        : `y(${variable})`
-      : `f${i + 1}(${variable})`;
+  // Pairs are named rather than numbered: "f2" would not tell anybody it is
+  // the y half of a parametric curve or the Q of a vector field.
+  const rowLabel = (i: number) => {
+    if (spec.kind === 'parametric') return i === 0 ? 'x(t)' : 'y(t)';
+    if (spec.kind === 'vectorField') return i === 0 ? 'P(x,y)' : 'Q(x,y)';
+    if (twoVar) return spec.kind === 'implicit' ? `F${i + 1}(x,y)` : 'f(x,y)';
+    return `f${i + 1}(${variable})`;
+  };
 
   const set = (i: number, next: Partial<(typeof curves)[number]>) =>
     patch({ functions: curves.map((c, j) => (i === j ? { ...c, ...next } : c)) });
@@ -645,7 +737,7 @@ const FormulaEditor: React.FC<{ spec: ChartSpec; patch: (n: Partial<ChartSpec>) 
   return (
     <>
       {curves.map((curve, i) => {
-        const result = parseExpression(curve.source, variable);
+        const result = parseExpression(curve.source, variables);
         return (
           <div className="chartp-formula" key={i}>
             <div className="chartp-formula__row">
@@ -704,7 +796,7 @@ const FormulaEditor: React.FC<{ spec: ChartSpec; patch: (n: Partial<ChartSpec>) 
 
       <Reveal label="What you can write">
         <p className="chartp-note">
-          <code>{variable}</code>, numbers, <code>+ − × / % ^</code>, brackets, <code>|x|</code>,
+          <code>{variables.join('</code>, <code>')}</code>, numbers, <code>+ − × / % ^</code>, brackets, <code>|x|</code>,
           and <code>pi e tau phi</code>. Implicit products work: <code>2{variable}</code>,{' '}
           <code>3sin({variable})</code>.
         </p>
@@ -724,6 +816,60 @@ const FormulaEditor: React.FC<{ spec: ChartSpec; patch: (n: Partial<ChartSpec>) 
   }
 };
 
+/**
+ * The box a two-variable plot is drawn over, and how finely it is sampled.
+ *
+ * Four bounds rather than two, because both axes are *inputs* here: a contour
+ * has no y to discover and an implicit curve's y is not a result. Every other
+ * plot in this panel fits its value axis to what the function reached, which is
+ * impossible and would be meaningless for these.
+ */
+const PlaneFields: React.FC<{ spec: ChartSpec; patch: (n: Partial<ChartSpec>) => void }> = ({
+  spec,
+  patch,
+}) => (
+  <>
+    <Row label="x from">
+      <NumberStepper value={spec.xMin ?? -5} onChange={(v) => patch({ xMin: v })} />
+    </Row>
+    <Row label="x to">
+      <NumberStepper value={spec.xMax ?? 5} onChange={(v) => patch({ xMax: v })} />
+    </Row>
+    <Row label="y from">
+      <NumberStepper value={spec.yPlotMin ?? -5} onChange={(v) => patch({ yPlotMin: v })} />
+    </Row>
+    <Row label="y to">
+      <NumberStepper value={spec.yPlotMax ?? 5} onChange={(v) => patch({ yPlotMax: v })} />
+    </Row>
+    <Row
+      label={spec.kind === 'implicit' || spec.kind === 'contour' ? 'Detail' : 'Density'}
+      hint="Cost is quadratic in this, unlike a curve's sample count"
+    >
+      <NumberStepper
+        value={spec.resolution ?? (spec.kind === 'contour' ? 100 : 80)}
+        min={8}
+        max={160}
+        step={4}
+        onChange={(v) => patch({ resolution: v })}
+      />
+    </Row>
+    {spec.kind === 'contour' && (
+      <Row label="Levels" hint="Spread across what the function actually reaches">
+        <NumberStepper
+          value={spec.levels ?? 8}
+          min={2}
+          max={40}
+          onChange={(v) => patch({ levels: v })}
+        />
+      </Row>
+    )}
+    <p className="chartp-note">
+      Both axes are the same plane, so a unit is kept the same length on each —
+      otherwise an implicit circle would draw as an ellipse.
+    </p>
+  </>
+);
+
 const DomainFields: React.FC<{ spec: ChartSpec; patch: (n: Partial<ChartSpec>) => void }> = ({
   spec,
   patch,
@@ -732,11 +878,18 @@ const DomainFields: React.FC<{ spec: ChartSpec; patch: (n: Partial<ChartSpec>) =
   return (
     <>
       <Row label="From">
-        <NumberStepper value={spec.xMin ?? (isFn ? -10 : 0)} onChange={(v) => patch({ xMin: v })} />
+        <OptionalNumber
+          label="Domain start"
+          placeholder={String(isFn ? -10 : 0)}
+          value={spec.xMin}
+          onChange={(v) => patch({ xMin: v })}
+        />
       </Row>
       <Row label="To">
-        <NumberStepper
-          value={spec.xMax ?? (isFn ? 10 : Math.PI * 2)}
+        <OptionalNumber
+          label="Domain end"
+          placeholder={isFn ? '10' : '2π'}
+          value={spec.xMax}
           onChange={(v) => patch({ xMax: v })}
         />
       </Row>
@@ -772,6 +925,7 @@ const DomainFields: React.FC<{ spec: ChartSpec; patch: (n: Partial<ChartSpec>) =
       </Row>
       <Row label="Scale" hint="A circle on unequal axes is an ellipse — a different curve">
         <SegmentedControl
+          fill
           ariaLabel="Axis scale"
           value={(spec.equalAxes ?? !isFn) ? 'equal' : 'free'}
           onChange={(v) => patch({ equalAxes: v === 'equal' })}
@@ -828,6 +982,7 @@ const AnalysisFields: React.FC<{ spec: ChartSpec; patch: (n: Partial<ChartSpec>)
     </Row>
     <Row label="Rectangles" hint="Riemann strips, and their sum">
       <SegmentedControl
+        fill
         ariaLabel="Riemann rectangles"
         value={spec.riemann ? spec.riemann.mode : 'off'}
         onChange={(v) =>

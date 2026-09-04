@@ -40,9 +40,21 @@
 export interface CompiledExpression {
   /** The source, as typed. */
   source: string;
-  /** Evaluate at a value of the variable. Never throws; may return NaN. */
-  evaluate(variable: number): number;
-  /** Which free variable this expression reads (`x`, `t` or `a`). */
+  /**
+   * Evaluate at the declared variables, positionally.
+   *
+   * One argument for `f(x)`, two for `F(x, y)` — an implicit curve, a contour,
+   * a slope field or a vector component. Positional rather than a record
+   * because the caller is a sampling loop running tens of thousands of times
+   * per frame, and allocating an object per sample is the difference between a
+   * contour that draws and one that stutters.
+   *
+   * Never throws; may return NaN.
+   */
+  evaluate(...values: number[]): number;
+  /** The free variables this expression may read, in argument order. */
+  variables: string[];
+  /** The first of them, for the single-variable callers. */
   variableName: string;
 }
 
@@ -116,25 +128,25 @@ const ARITY: Record<string, number> = { atan2: 2, min: 2, max: 2, pow: 2, mod: 2
 
 type Node =
   | { kind: 'num'; value: number }
-  | { kind: 'var' }
+  | { kind: 'var'; index: number }
   | { kind: 'unary'; op: '-' | '+'; operand: Node }
   | { kind: 'binary'; op: '+' | '-' | '*' | '/' | '%' | '^'; left: Node; right: Node }
   | { kind: 'call'; name: string; args: Node[] }
   | { kind: 'abs'; operand: Node };
 
-function evalNode(node: Node, x: number): number {
+function evalNode(node: Node, vars: number[]): number {
   switch (node.kind) {
     case 'num':
       return node.value;
     case 'var':
-      return x;
+      return vars[node.index] ?? Number.NaN;
     case 'unary':
-      return node.op === '-' ? -evalNode(node.operand, x) : evalNode(node.operand, x);
+      return node.op === '-' ? -evalNode(node.operand, vars) : evalNode(node.operand, vars);
     case 'abs':
-      return Math.abs(evalNode(node.operand, x));
+      return Math.abs(evalNode(node.operand, vars));
     case 'binary': {
-      const a = evalNode(node.left, x);
-      const b = evalNode(node.right, x);
+      const a = evalNode(node.left, vars);
+      const b = evalNode(node.right, vars);
       switch (node.op) {
         case '+': return a + b;
         case '-': return a - b;
@@ -151,7 +163,7 @@ function evalNode(node: Node, x: number): number {
     case 'call': {
       const fn = FUNCTIONS[node.name];
       if (!fn) return Number.NaN;
-      return fn(...node.args.map((a) => evalNode(a, x)));
+      return fn(...node.args.map((a) => evalNode(a, vars)));
     }
   }
 }
@@ -166,11 +178,11 @@ class Parser {
   // build runs with `erasableSyntaxOnly`, which rules out any TypeScript that
   // emits code rather than being stripped.
   private readonly src: string;
-  private readonly variable: string;
+  private readonly variables: string[];
 
-  constructor(src: string, variable: string) {
+  constructor(src: string, variables: string[]) {
     this.src = src;
-    this.variable = variable;
+    this.variables = variables;
   }
 
   parse(): Node {
@@ -328,7 +340,8 @@ class Parser {
       return { kind: 'call', name, args };
     }
 
-    if (name === this.variable) return { kind: 'var' };
+    const varIndex = this.variables.indexOf(name);
+    if (varIndex !== -1) return { kind: 'var', index: varIndex };
     if (name in CONSTANTS) return { kind: 'num', value: CONSTANTS[name] };
 
     this.i = start;
@@ -344,19 +357,29 @@ class Parser {
  * through typing the next one. Throwing would make "in progress" and "wrong"
  * the same event.
  */
-export function parseExpression(source: string, variable = 'x'): ParseResult {
+export function parseExpression(
+  source: string,
+  variable: string | string[] = 'x'
+): ParseResult {
+  const variables = Array.isArray(variable) ? variable : [variable];
   const trimmed = source.trim();
   if (!trimmed) return { ok: false, error: { message: 'Empty expression', position: 0 } };
 
   try {
-    const node = new Parser(trimmed, variable).parse();
+    const node = new Parser(trimmed, variables).parse();
+    // Reused across calls so a sampling loop allocates nothing per sample: a
+    // contour grid evaluates this a hundred thousand times for one frame.
+    const slot: number[] = [];
     return {
       ok: true,
       expression: {
         source: trimmed,
-        variableName: variable,
-        evaluate: (x: number) => {
-          const v = evalNode(node, x);
+        variables,
+        variableName: variables[0],
+        evaluate: (...values: number[]) => {
+          slot.length = 0;
+          for (let i = 0; i < values.length; i += 1) slot.push(values[i]);
+          const v = evalNode(node, slot);
           return typeof v === 'number' ? v : Number.NaN;
         },
       },

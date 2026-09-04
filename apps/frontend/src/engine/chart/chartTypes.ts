@@ -58,6 +58,12 @@ export const CHART_KINDS = [
   'function',
   'parametric',
   'polarPlot',
+  // Two-variable plots. These read `functions` like the others, but their
+  // expressions take *both* x and y -- see `isTwoVariable`.
+  'implicit',
+  'contour',
+  'slopeField',
+  'vectorField',
 ] as const;
 
 /**
@@ -75,6 +81,7 @@ export const CHART_FAMILIES = [
   'partToWhole',
   'specialist',
   'plot',
+  'field',
 ] as const;
 
 export type ChartFamily = (typeof CHART_FAMILIES)[number];
@@ -99,6 +106,10 @@ export const CHART_FAMILY_OF: Record<ChartKind, ChartFamily> = {
   function: 'plot',
   parametric: 'plot',
   polarPlot: 'plot',
+  implicit: 'field',
+  contour: 'field',
+  slopeField: 'field',
+  vectorField: 'field',
 };
 
 export type ChartKind = (typeof CHART_KINDS)[number];
@@ -186,12 +197,36 @@ export function isContinuous(kind: ChartKind): boolean {
  * written out at each site.
  */
 export function isPlot(kind: ChartKind): boolean {
-  return kind === 'function' || kind === 'parametric' || kind === 'polarPlot';
+  return (
+    kind === 'function' ||
+    kind === 'parametric' ||
+    kind === 'polarPlot' ||
+    isTwoVariable(kind)
+  );
+}
+
+/**
+ * Plots whose expressions read **both** `x` and `y`.
+ *
+ * The dividing line that made the parser multi-variable. Everything above
+ * samples one variable and gets a value; these sample a *plane*, which is why
+ * they need marching squares or a grid of directions rather than a run of
+ * points, and why their cost is quadratic in resolution rather than linear.
+ */
+export function isTwoVariable(kind: ChartKind): boolean {
+  return (
+    kind === 'implicit' ||
+    kind === 'contour' ||
+    kind === 'slopeField' ||
+    kind === 'vectorField'
+  );
 }
 
 /** A plot whose two axes are the same units, so the grid must stay square. */
 export function isIsotropic(kind: ChartKind): boolean {
-  return kind === 'parametric' || kind === 'polarPlot';
+  // A two-variable plot's axes are the same plane, so letting them differ
+  // shears the picture -- a circle drawn implicitly would become an ellipse.
+  return kind === 'parametric' || kind === 'polarPlot' || isTwoVariable(kind);
 }
 
 export interface ChartSeries {
@@ -224,6 +259,16 @@ export interface ChartSpec {
   series: ChartSeries[];
   /** Drawn above the plot. Absent draws nothing and gives the space back. */
   title?: string;
+  /**
+   * Title size in points. Absent is 16.
+   *
+   * A real field rather than a constant, because the size a title wants
+   * depends on the chart's own size: 16pt reads as a heading on a 480-wide
+   * chart and as a caption on one blown up to fill a frame. The layout already
+   * reserves the title's height from this number, so the plot gives back the
+   * space rather than the title overlapping it.
+   */
+  titleSize?: number;
   /** Absent is "show it when there is more than one series". */
   showLegend?: boolean;
   /** Horizontal rules behind the marks. Absent is on for axis charts. */
@@ -383,6 +428,20 @@ export interface ChartSpec {
    * drawing them.
    */
   riemann?: { n: number; mode: 'left' | 'right' | 'midpoint' };
+  /** The y half of a two-variable plot's box. `xMin`/`xMax` carry the x half. */
+  yPlotMin?: number;
+  yPlotMax?: number;
+  /**
+   * Grid resolution for a two-variable plot.
+   *
+   * Cost is **quadratic** in this, unlike `samples`, which is why it is a
+   * separate field with its own much smaller default rather than reusing one
+   * control for both. A contour at 300 is ninety thousand evaluations per
+   * level; the same number in `samples` is three hundred.
+   */
+  resolution?: number;
+  /** How many contour levels to spread across the function's own range. */
+  levels?: number;
 }
 
 export const CHART_SORTS = ['none', 'valueDesc', 'valueAsc', 'labelAsc'] as const;
@@ -857,6 +916,73 @@ export function defaultChartSpec(kind: ChartKind = 'bar'): ChartSpec {
         xMin: 0,
         xMax: Math.PI * 2,
         samples: 720,
+      };
+
+    case 'implicit':
+      return {
+        kind,
+        title: 'A circle and a hyperbola',
+        categories: [],
+        series: [],
+        // Both are ordinary implicit curves and neither is a function of x:
+        // the circle fails the vertical-line test, the hyperbola has two
+        // branches, and the hyperbola is the shape that exposes a marching
+        // squares implementation that does not resolve its saddle.
+        functions: [{ source: 'x^2 + y^2 - 9' }, { source: 'x^2 - y^2 - 4' }],
+        xMin: -6,
+        xMax: 6,
+        yPlotMin: -6,
+        yPlotMax: 6,
+        resolution: 90,
+      };
+
+    case 'contour':
+      return {
+        kind,
+        title: 'Level curves',
+        categories: [],
+        series: [],
+        // A saddle at the origin, which is the surface whose contours are
+        // worth looking at rather than a bowl's concentric rings.
+        functions: [{ source: 'sin(x) * cos(y)' }],
+        xMin: -6,
+        xMax: 6,
+        yPlotMin: -6,
+        yPlotMax: 6,
+        resolution: 100,
+        levels: 9,
+      };
+
+    case 'slopeField':
+      return {
+        kind,
+        title: "dy/dx = y − x",
+        categories: [],
+        series: [],
+        // The family of solutions is visible in the field itself, which is the
+        // whole reason to draw one before solving anything.
+        functions: [{ source: 'y - x' }],
+        xMin: -5,
+        xMax: 5,
+        yPlotMin: -5,
+        yPlotMax: 5,
+        resolution: 18,
+      };
+
+    case 'vectorField':
+      return {
+        kind,
+        title: 'A rotational field',
+        categories: [],
+        series: [],
+        // ⟨−y, x⟩: the classic circulation, and the field where an arrowhead
+        // is carrying real information rather than decorating a slope.
+        functions: [{ source: '-y' }, { source: 'x' }],
+        xMin: -5,
+        xMax: 5,
+        yPlotMin: -5,
+        yPlotMax: 5,
+        resolution: 15,
       };
 
     case 'bar':

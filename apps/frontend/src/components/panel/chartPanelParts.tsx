@@ -164,6 +164,74 @@ export const TypeHeader: React.FC<{ kind: ChartKind; onPick: (k: ChartKind) => v
 };
 
 /**
+ * A number that may be absent, where absent means "work it out".
+ *
+ * ## Why `NumberStepper` could not do this
+ *
+ * It takes a `number`, so an optional bound has to pick a sentinel — and the
+ * axis controls picked `0`. That makes a minimum of zero **unexpressible**:
+ * typing 0 to pin a bar chart's baseline reads back as "automatic", and the
+ * one value somebody is most likely to want on that field is the one it cannot
+ * hold. A control that silently refuses a legitimate value is worse than one
+ * that is missing.
+ *
+ * So this is a text field that keeps its own draft while focused and commits on
+ * blur or Enter. Empty is `undefined`, and the placeholder says what will
+ * happen instead of leaving a blank that reads as a bug. Escape restores the
+ * committed value, because a half-typed number is not a state anybody wants to
+ * be left in.
+ *
+ * Committing on blur rather than per keystroke matters here for the same
+ * reason it does in the data grid: every commit is a CRDT write, an undo entry
+ * and a network frame, and typing `-12.5` would broadcast four intermediate
+ * axis bounds, one of which is `-` and not a number at all.
+ */
+export const OptionalNumber: React.FC<{
+  value: number | undefined;
+  onChange: (value: number | undefined) => void;
+  placeholder?: string;
+  label: string;
+}> = ({ value, onChange, placeholder = 'Auto', label }) => {
+  const committed = value === undefined ? '' : String(value);
+  const [draft, setDraft] = React.useState<string | null>(null);
+  const shown = draft ?? committed;
+
+  const commit = () => {
+    if (draft === null) return;
+    const trimmed = draft.trim();
+    if (trimmed === '') onChange(undefined);
+    else {
+      const n = Number(trimmed);
+      // An unreadable draft reverts rather than writing NaN into the document,
+      // which would put a broken axis on everybody's board.
+      if (Number.isFinite(n)) onChange(n);
+    }
+    setDraft(null);
+  };
+
+  return (
+    <input
+      className="panel-input chartp-optnum"
+      inputMode="decimal"
+      value={shown}
+      placeholder={placeholder}
+      aria-label={label}
+      onChange={(e) => setDraft(e.target.value)}
+      onBlur={commit}
+      onKeyDown={(e) => {
+        if (e.key === 'Enter') {
+          commit();
+          (e.target as HTMLInputElement).blur();
+        } else if (e.key === 'Escape') {
+          setDraft(null);
+          (e.target as HTMLInputElement).blur();
+        }
+      }}
+    />
+  );
+};
+
+/**
  * A row of icon toggles that reads as one group.
  *
  * Deliberately *not* `SegmentedControl`: that one is a choice **between**

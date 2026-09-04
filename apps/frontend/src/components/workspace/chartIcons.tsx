@@ -206,6 +206,64 @@ const GLYPHS: Record<ChartKind, React.ReactNode> = {
       <Stroke d="M 50 50 C 74 26 74 74 50 50 C 26 26 26 74 50 50 C 74 26 26 26 50 50 C 74 74 26 74 50 50" />
     </>
   ),
+  /*
+    The two-variable set. Each shows the *mark* that distinguishes it — a
+    hyperbola's two branches, nested rings, a lattice of parallel dashes, a
+    lattice of arrows — because at 20px that is the only thing that separates
+    them from one another.
+  */
+  implicit: (
+    <>
+      <Axes />
+      {/* A hyperbola: the curve marching squares gets wrong at the saddle, and
+          the reason the centre is evaluated. */}
+      <Stroke d="M 34 10 C 46 34 46 66 34 90 M 68 10 C 56 34 56 66 68 90" />
+    </>
+  ),
+  contour: (
+    <>
+      <ellipse cx={50} cy={50} rx={36} ry={26} fill="none" stroke="currentColor" strokeWidth={7} opacity={0.3} />
+      <ellipse cx={50} cy={50} rx={24} ry={17} fill="none" stroke="currentColor" strokeWidth={7} opacity={0.55} />
+      <ellipse cx={50} cy={50} rx={11} ry={8} fill="none" stroke="currentColor" strokeWidth={7} opacity={0.85} />
+    </>
+  ),
+  slopeField: (
+    <>
+      {[20, 50, 80].map((y, r) =>
+        [20, 50, 80].map((x, c) => (
+          <line
+            key={`${r}-${c}`}
+            x1={x - 11}
+            y1={y + (c - 1) * 7}
+            x2={x + 11}
+            y2={y - (c - 1) * 7}
+            stroke="currentColor"
+            strokeWidth={7}
+            strokeLinecap="round"
+            opacity={0.75}
+          />
+        ))
+      )}
+    </>
+  ),
+  vectorField: (
+    <>
+      {[24, 56, 88].map((y, r) =>
+        [18, 50, 82].map((x, c) => (
+          <path
+            key={`${r}-${c}`}
+            d={`M ${x - 12} ${y} L ${x + 8} ${y} M ${x + 8} ${y} l -6 -5 M ${x + 8} ${y} l -6 5`}
+            fill="none"
+            stroke="currentColor"
+            strokeWidth={6}
+            strokeLinecap="round"
+            strokeLinejoin="round"
+            opacity={0.75}
+          />
+        ))
+      )}
+    </>
+  ),
 };
 
 export const ChartKindIcon: React.FC<{ kind: ChartKind; size?: number }> = ({ kind, size = 16 }) => (

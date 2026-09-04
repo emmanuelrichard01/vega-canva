@@ -40,6 +40,8 @@ import {
 import { catmullRomPoints } from '../model/polyline';
 import { compileCurves, samplePlot, sampleParametric, samplePolar } from './chartPlot';
 import { differentiate, findExtrema, findRoots, integrate } from './chartAnalysis';
+import { contourLevels, marchingSquares } from './marchingSquares';
+import { slopeField, vectorField } from './vectorField';
 import {
   bucketize,
   isBarLike,
@@ -51,6 +53,7 @@ import {
   isRadial,
   isStacked,
   isTransposed,
+  isTwoVariable,
   normalizeSpec,
   resolveChartOptions,
   seriesColor,
@@ -271,15 +274,20 @@ export function layoutChart(
   let title: ChartLabel | null = null;
 
   if (spec.title) {
+    // Clamped rather than trusted: a title larger than the chart leaves no
+    // plot at all, and the layout would go on drawing an axis into nothing.
+    const size = Math.min(48, Math.max(9, Math.round(spec.titleSize ?? TITLE_SIZE)));
     title = {
       text: spec.title,
       x: PAD,
       y: top,
       width: width - PAD * 2,
       align: 'left',
-      fontSize: TITLE_SIZE,
+      fontSize: size,
     };
-    top += TITLE_SIZE + TITLE_GAP;
+    // The gap grows with the type, so a large title is not left sitting on the
+    // plot -- a fixed gap is only right at one size.
+    top += size + Math.round(TITLE_GAP * (size / TITLE_SIZE));
   }
 
   // The legend sits in a band of its own under the plot, clear of the
@@ -292,6 +300,9 @@ export function layoutChart(
   }
   if (isPolar(spec.kind)) {
     return layoutPolar(spec, opts, width, height, top, bottomReserved, title, measure, empty);
+  }
+  if (isTwoVariable(spec.kind)) {
+    return layoutField(spec, opts, width, height, top, bottomReserved, title, measure, empty);
   }
   if (isPlot(spec.kind)) {
     return layoutPlot(spec, opts, width, height, top, bottomReserved, title, measure, empty);
@@ -873,6 +884,239 @@ function layoutPolar(
     spokes,
     reference: null,
     domain,
+  };
+}
+
+/**
+ * The two-variable plots: implicit curves, contours, slope fields and vector
+ * fields.
+ *
+ * ## Why these share a function
+ *
+ * All four sample a **plane** rather than a run, so all four need the same
+ * things and nothing the one-variable path provides: a box in two dimensions
+ * rather than a domain and a discovered range, axes that must stay square
+ * because both are the same plane, and a cost that is quadratic in resolution
+ * rather than linear in samples.
+ *
+ * What differs between them is only *what is drawn at each grid location*, and
+ * that is a switch at the bottom rather than four layouts.
+ *
+ * ## The box is given, never discovered
+ *
+ * Every other plot fits its y axis to what the function reached. That is
+ * impossible here and would be wrong anyway: `F(x, y) = 0` has no y to
+ * discover — y is an *input* — and a slope field is defined everywhere its
+ * expression is. So both axes are the author's, and the panel offers all four
+ * bounds.
+ */
+function layoutField(
+  spec: ChartSpec,
+  opts: ReturnType<typeof resolveChartOptions>,
+  width: number,
+  height: number,
+  top: number,
+  bottomReserved: number,
+  title: ChartLabel | null,
+  measure: Measure,
+  empty: ChartLayout
+): ChartLayout {
+  const curves = compileCurves(spec.functions ?? [], ['x', 'y']);
+  const live = curves.filter((c) => c.compiled);
+
+  const xMin = spec.xMin ?? -5;
+  const xMax = spec.xMax ?? 5;
+  const yMin = spec.yPlotMin ?? -5;
+  const yMax = spec.yPlotMax ?? 5;
+
+  const niceY = niceDomain(yMin, yMax, 5, false);
+  const yTexts = niceY.ticks.map((t) => formatValue(t, spec));
+  const gutterLeft = PAD + Math.max(...yTexts.map((t) => measure(t, LABEL_SIZE)), 0) + TICK_GAP;
+  const bottomBand = LABEL_SIZE + TICK_GAP;
+
+  const plot: Rect = {
+    x: gutterLeft,
+    y: top,
+    width: Math.max(1, width - gutterLeft - PAD),
+    height: Math.max(1, height - top - bottomReserved - bottomBand),
+  };
+  if (plot.width < 8 || plot.height < 8) return { ...empty, title };
+
+  // Both axes are the same plane, so a unit must be the same length on each or
+  // the picture is sheared -- an implicitly drawn circle would be an ellipse.
+  let xDomain: Domain = [xMin, xMax];
+  let yDomain: Domain = [yMin, yMax];
+  if (spec.equalAxes ?? true) {
+    const unit = Math.max(
+      (xDomain[1] - xDomain[0]) / plot.width,
+      (yDomain[1] - yDomain[0]) / plot.height
+    );
+    const cx = (xDomain[0] + xDomain[1]) / 2;
+    const cy = (yDomain[0] + yDomain[1]) / 2;
+    xDomain = [cx - (unit * plot.width) / 2, cx + (unit * plot.width) / 2];
+    yDomain = [cy - (unit * plot.height) / 2, cy + (unit * plot.height) / 2];
+  }
+
+  const sx = linearScale(xDomain, [plot.x, plot.x + plot.width]);
+  const sy = linearScale(yDomain, [plot.y + plot.height, plot.y]);
+
+  const gridLines: ChartGridLine[] = [];
+  const axisLabels: ChartLabel[] = [];
+  const categoryLabels: ChartLabel[] = [];
+
+  const xTicks = niceDomain(xDomain[0], xDomain[1], 6, false).ticks;
+  const yTicks = niceDomain(yDomain[0], yDomain[1], 5, false).ticks;
+
+  for (const t of yTicks) {
+    if (t < yDomain[0] || t > yDomain[1]) continue;
+    const y = sy(t);
+    if (opts.showGrid) gridLines.push({ x1: plot.x, y1: y, x2: plot.x + plot.width, y2: y });
+    axisLabels.push({
+      text: formatValue(t, spec),
+      x: PAD,
+      y: y - LABEL_SIZE / 2,
+      width: gutterLeft - PAD - TICK_GAP,
+      align: 'right',
+      fontSize: LABEL_SIZE,
+    });
+  }
+  for (const t of xTicks) {
+    if (t < xDomain[0] || t > xDomain[1]) continue;
+    const x = sx(t);
+    if (opts.showGrid) gridLines.push({ x1: x, y1: plot.y, x2: x, y2: plot.y + plot.height });
+    categoryLabels.push({
+      text: formatValue(t, spec),
+      x: x - 30,
+      y: plot.y + plot.height + TICK_GAP,
+      width: 60,
+      align: 'center',
+      fontSize: LABEL_SIZE,
+    });
+  }
+
+  // Both zero rules, so an intercept can be read off.
+  let baseline: ChartGridLine | null = null;
+  if (yDomain[0] <= 0 && yDomain[1] >= 0) {
+    const y = sy(0);
+    baseline = { x1: plot.x, y1: y, x2: plot.x + plot.width, y2: y };
+  }
+  if (xDomain[0] <= 0 && xDomain[1] >= 0) {
+    const x = sx(0);
+    gridLines.push({ x1: x, y1: plot.y, x2: x, y2: plot.y + plot.height });
+  }
+
+  const runs: ChartRun[] = [];
+  const box = { xMin: xDomain[0], xMax: xDomain[1], yMin: yDomain[0], yMax: yDomain[1] };
+  // Capped well below the module's own limit: this is recomputed on every
+  // resize frame, and a contour at 300 is ninety thousand evaluations *per
+  // level*. 120 is legible and stays interactive.
+  const resolution = Math.min(160, Math.max(8, Math.round(spec.resolution ?? 80)));
+
+  const toScreen = (seg: [{ x: number; y: number }, { x: number; y: number }]) => [
+    { x: sx(seg[0].x), y: sy(seg[0].y) },
+    { x: sx(seg[1].x), y: sy(seg[1].y) },
+  ];
+
+  if (spec.kind === 'implicit') {
+    live.forEach((c, i) => {
+      const f = (x: number, y: number) => c.compiled!.evaluate(x, y);
+      const color = c.color ?? seriesColor(undefined, i);
+      for (const seg of marchingSquares(f, { ...box, resolution })) {
+        runs.push({ points: toScreen(seg), color, seriesIndex: i });
+      }
+    });
+  } else if (spec.kind === 'contour') {
+    const c = live[0];
+    if (c?.compiled) {
+      const f = (x: number, y: number) => c.compiled!.evaluate(x, y);
+      const levels = contourLevels(f, box, spec.levels ?? 8);
+      levels.forEach((level, li) => {
+        // Each level takes the palette in order, so a contour map reads as a
+        // ramp rather than as one colour repeated.
+        const color = c.color ?? seriesColor(undefined, li % 10);
+        for (const seg of marchingSquares(f, { ...box, resolution, level })) {
+          runs.push({ points: toScreen(seg), color, seriesIndex: li });
+        }
+      });
+    }
+  } else if (spec.kind === 'slopeField') {
+    const c = live[0];
+    if (c?.compiled) {
+      const color = c.color ?? seriesColor(undefined, 0);
+      const marks = slopeField((x, y) => c.compiled!.evaluate(x, y), {
+        ...box,
+        density: Math.min(40, Math.max(4, Math.round(spec.resolution ?? 18))),
+      });
+      for (const m of marks) {
+        runs.push({
+          points: [
+            { x: sx(m.x1), y: sy(m.y1) },
+            { x: sx(m.x2), y: sy(m.y2) },
+          ],
+          color,
+          seriesIndex: 0,
+        });
+      }
+    }
+  } else {
+    // A vector field needs both components, so the first two expressions are
+    // P and Q -- positional, for the reason a parametric curve's pair is.
+    const [pc, qc] = live;
+    if (pc?.compiled && qc?.compiled) {
+      const color = pc.color ?? seriesColor(undefined, 0);
+      const marks = vectorField(
+        (x, y) => pc.compiled!.evaluate(x, y),
+        (x, y) => qc.compiled!.evaluate(x, y),
+        { ...box, density: Math.min(40, Math.max(4, Math.round(spec.resolution ?? 16))) }
+      );
+      for (const m of marks) {
+        const a = { x: sx(m.x1), y: sy(m.y1) };
+        const b = { x: sx(m.x2), y: sy(m.y2) };
+        runs.push({ points: [a, b], color, seriesIndex: 0 });
+
+        // The head, as two short strokes rather than a filled triangle: both
+        // painters already draw runs, and a triangle would need a new mark in
+        // each of them for a decoration six pixels across.
+        const angle = Math.atan2(b.y - a.y, b.x - a.x);
+        const len = Math.hypot(b.x - a.x, b.y - a.y);
+        const head = Math.min(5, len * 0.4);
+        if (head > 1) {
+          for (const spread of [2.6, -2.6]) {
+            runs.push({
+              points: [
+                b,
+                {
+                  x: b.x + Math.cos(angle + spread) * head,
+                  y: b.y + Math.sin(angle + spread) * head,
+                },
+              ],
+              color,
+              seriesIndex: 0,
+            });
+          }
+        }
+      }
+    }
+  }
+
+  return {
+    plot,
+    bars: [],
+    runs,
+    areas: [],
+    dots: [],
+    slices: [],
+    gridLines,
+    baseline,
+    axisLabels,
+    categoryLabels,
+    valueLabels: [],
+    legend: buildPlotLegend(spec, opts, curves, width, height, measure),
+    title,
+    rings: [],
+    spokes: [],
+    reference: null,
+    domain: yDomain,
   };
 }
 

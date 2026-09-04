@@ -170,7 +170,10 @@ export interface CompiledCurve {
 }
 
 /** Compile a list of curves, keeping the failures so the panel can show them. */
-export function compileCurves(curves: PlotCurve[], variable = 'x'): CompiledCurve[] {
+export function compileCurves(
+  curves: PlotCurve[],
+  variable: string | string[] = 'x'
+): CompiledCurve[] {
   return curves.map((c) => {
     const result = parseExpression(c.source, variable);
     return result.ok
