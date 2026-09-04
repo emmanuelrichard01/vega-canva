@@ -276,6 +276,24 @@ export const ChartSection: React.FC<Props> = ({ node }) => {
               onChange={(v) => patch({ decimals: v })}
             />
           </Row>
+          {/*
+            Its own control now. Abbreviation used to be inferred from
+            `decimals` being absent, so setting a decimal count silently turned
+            `12k` back into `12000` and the only way to get it back was to
+            clear a field that looked unrelated.
+          */}
+          <Row label="Large numbers">
+            <SegmentedControl
+              fill
+              ariaLabel="How large numbers are written"
+              value={(spec.compactNumbers ?? true) ? 'compact' : 'full'}
+              onChange={(v) => patch({ compactNumbers: v === 'compact' ? undefined : false })}
+              segments={[
+                { value: 'compact', label: '12k', hint: 'Abbreviate thousands and millions' },
+                { value: 'full', label: '12,000', hint: 'Write them out in full' },
+              ]}
+            />
+          </Row>
         </Group>
       )}
 
@@ -635,11 +653,42 @@ const AxisFields: React.FC<{ spec: ChartSpec; patch: (n: Partial<ChartSpec>) => 
   );
 };
 
+/**
+ * Mean, median and extremes of everything drawn.
+ *
+ * Pooled across series, because a reference line is one rule across the whole
+ * chart and an average of one series would be a number the picture does not
+ * show. Holes are skipped rather than counted as zero -- an average that
+ * treats a missing reading as nought is lower than the truth by exactly the
+ * amount nobody measured.
+ *
+ * Returns null for a plot, which has no data table to average.
+ */
+function summarise(spec: ChartSpec): { mean: number; median: number; min: number; max: number } | null {
+  const values = spec.series.flatMap((s) => s.values.filter((v): v is number => v !== null));
+  if (values.length === 0) return null;
+
+  const sorted = [...values].sort((a, b) => a - b);
+  const mid = Math.floor(sorted.length / 2);
+  const round = (n: number) => Math.round(n * 1000) / 1000;
+
+  return {
+    mean: round(values.reduce((a, b) => a + b, 0) / values.length),
+    // The average of the middle two for an even count, which is the
+    // definition -- taking the lower one is off by half a step on every
+    // even-length series.
+    median: round(sorted.length % 2 ? sorted[mid] : (sorted[mid - 1] + sorted[mid]) / 2),
+    min: round(sorted[0]),
+    max: round(sorted[sorted.length - 1]),
+  };
+}
+
 const ReferenceFields: React.FC<{ spec: ChartSpec; patch: (n: Partial<ChartSpec>) => void }> = ({
   spec,
   patch,
 }) => {
   const ref = spec.reference;
+  const stats = summarise(spec);
   if (!ref) {
     return (
       <>
@@ -678,6 +727,44 @@ const ReferenceFields: React.FC<{ spec: ChartSpec; patch: (n: Partial<ChartSpec>
           onChange={(color) => patch({ reference: { ...ref, color } })}
         />
       </Row>
+      <Row label="Style" hint="Dashed reads as a note on the data; solid reads as data">
+        <SegmentedControl
+          fill
+          ariaLabel="Reference line style"
+          value={ref.style ?? 'dashed'}
+          onChange={(v) =>
+            patch({ reference: { ...ref, style: v === 'solid' ? 'solid' : undefined } })
+          }
+          segments={[
+            { value: 'dashed', label: 'Dashed' },
+            { value: 'solid', label: 'Solid' },
+          ]}
+        />
+      </Row>
+      {/*
+        Set from the data rather than typed. "Put a line at the average" is the
+        commonest thing anybody wants here and the one thing they cannot do
+        without leaving the app to work it out — which is exactly the kind of
+        arithmetic the chart already has in front of it.
+      */}
+      {stats && (
+        <Row label="Set to" stack>
+          <div className="chartp-quick">
+            <button type="button" onClick={() => patch({ reference: { ...ref, value: stats.mean } })}>
+              Mean
+            </button>
+            <button type="button" onClick={() => patch({ reference: { ...ref, value: stats.median } })}>
+              Median
+            </button>
+            <button type="button" onClick={() => patch({ reference: { ...ref, value: stats.max } })}>
+              Max
+            </button>
+            <button type="button" onClick={() => patch({ reference: { ...ref, value: stats.min } })}>
+              Min
+            </button>
+          </div>
+        </Row>
+      )}
       <button
         type="button"
         className="chartp-add chartp-add--quiet"

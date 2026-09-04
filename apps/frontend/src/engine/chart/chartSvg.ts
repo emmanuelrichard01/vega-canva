@@ -227,7 +227,7 @@ export function paintLayout(layout: ChartLayout, options: ChartSvgOptions): stri
   if (layout.reference) {
     const r = layout.reference;
     out.push(
-      `<line x1="${r.x1}" y1="${r.y1}" x2="${r.x2}" y2="${r.y2}" stroke="${r.color}" stroke-width="1.5" stroke-dasharray="5 4" />`
+      `<line x1="${r.x1}" y1="${r.y1}" x2="${r.x2}" y2="${r.y2}" stroke="${r.color}" stroke-width="1.5"${r.dashed ? ' stroke-dasharray="5 4"' : ''} />`
     );
     if (r.label) {
       out.push(label(r.label.text, r.label.x, r.label.y, r.label.width, r.label.align, r.label.fontSize, r.color, '600'));

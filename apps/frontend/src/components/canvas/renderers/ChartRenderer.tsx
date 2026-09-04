@@ -325,7 +325,7 @@ const Reference: React.FC<{ layout: ChartLayout }> = ({ layout }) => {
         points={[r.x1, r.y1, r.x2, r.y2]}
         stroke={r.color}
         strokeWidth={1.5}
-        dash={[5, 4]}
+        dash={r.dashed ? [5, 4] : undefined}
         listening={false}
         perfectDrawEnabled={false}
       />

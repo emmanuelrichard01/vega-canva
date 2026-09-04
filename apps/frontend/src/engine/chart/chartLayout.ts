@@ -180,6 +180,8 @@ export interface ChartPolarSpoke {
 
 export interface ChartReference extends ChartGridLine {
   color: string;
+  /** Dashed reads as an annotation; solid reads as another series. */
+  dashed: boolean;
   label?: ChartLabel;
 }
 
@@ -1669,16 +1671,18 @@ function buildReference(
 
   const at = value(ref.value);
   const color = ref.color ?? '#EF4444';
+  const dashed = (ref.style ?? 'dashed') === 'dashed';
   const line = transposed
     ? { x1: at, y1: plot.y, x2: at, y2: plot.y + plot.height }
     : { x1: plot.x, y1: at, x2: plot.x + plot.width, y2: at };
 
-  if (!ref.label) return { ...line, color };
+  if (!ref.label) return { ...line, color, dashed };
 
   const w = measure(ref.label, LABEL_SIZE) + 4;
   return {
     ...line,
     color,
+    dashed,
     label: {
       text: ref.label,
       x: transposed ? at + 4 : plot.x + plot.width - w,
@@ -1697,11 +1701,43 @@ function buildReference(
  * reading `$1.2k` cannot sit under bars labelled `1200`.
  */
 export function formatValue(v: number, spec: ChartSpec): string {
-  const body =
+  /**
+   * Two independent settings, not one.
+   *
+   * Abbreviation used to be inferred from `decimals` being absent, so setting
+   * a decimal count silently switched `12k` back to `12000` -- two behaviours
+   * riding one field, which is the shape this codebase keeps splitting apart.
+   * `compactNumbers` says it now, and defaults to true so nothing that was
+   * abbreviating stops.
+   */
+  const compact = spec.compactNumbers ?? true;
+  const places =
     typeof spec.decimals === 'number'
-      ? v.toFixed(Math.min(6, Math.max(0, Math.round(spec.decimals))))
-      : formatTick(v);
+      ? Math.min(6, Math.max(0, Math.round(spec.decimals)))
+      : null;
+
+  let body: string;
+  if (compact && Math.abs(v) >= 10_000) {
+    // The abbreviation already discards precision, so a decimal count applies
+    // to the abbreviated figure rather than the raw one: `1.50M`, not
+    // `1500000.00` shortened afterwards.
+    const unit = Math.abs(v) >= 1_000_000 ? 1_000_000 : 1000;
+    const suffix = unit === 1_000_000 ? 'M' : 'k';
+    const scaled = v / unit;
+    body = `${places === null ? trimTo1(scaled) : scaled.toFixed(places)}${suffix}`;
+  } else if (places !== null) {
+    body = v.toFixed(places);
+  } else {
+    body = compact ? formatTick(v) : String(Math.round(v * 1e6) / 1e6);
+  }
+
   return `${spec.valuePrefix ?? ''}${body}${spec.valueSuffix ?? ''}`;
+}
+
+/** One decimal at most, and none when it would be `.0`. */
+function trimTo1(value: number): string {
+  const rounded = Math.round(value * 10) / 10;
+  return Number.isInteger(rounded) ? String(rounded) : rounded.toFixed(1);
 }
 
 function layoutRadial(

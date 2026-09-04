@@ -315,6 +315,15 @@ export interface ChartSpec {
    */
   buckets?: number;
   /**
+   * Abbreviate thousands and millions on axis ticks: `12k`, `1.5M`.
+   *
+   * Explicit rather than implied. It used to be inferred from `decimals` being
+   * absent, so setting a decimal count silently turned abbreviation off and
+   * turning it back on meant clearing a field that looked unrelated. Two
+   * settings sharing one field is the shape this codebase keeps splitting.
+   */
+  compactNumbers?: boolean;
+  /**
    * A unit written after every value, e.g. `%`, `ms`, `k`.
    *
    * A suffix rather than a format string: a format string is a small language
@@ -340,7 +349,18 @@ export interface ChartSpec {
    * rule at y=250 is at 250 pixels, not at 250 units, and stops meaning
    * anything the moment either changes.
    */
-  reference?: { value: number; label?: string; color?: string };
+  reference?: {
+    value: number;
+    label?: string;
+    color?: string;
+    /**
+     * Dashed by default, because a reference is an *annotation* and a solid
+     * rule of the same weight reads as another series. Solid is offered for
+     * the case where it genuinely is one -- a budget line somebody wants to
+     * read as data rather than as a note on it.
+     */
+    style?: 'dashed' | 'solid';
+  };
   /**
    * The order categories are drawn in. Absent is the order they were entered.
    *

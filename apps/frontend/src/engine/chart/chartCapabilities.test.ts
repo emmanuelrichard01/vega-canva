@@ -132,3 +132,66 @@ describe('no control is offered where nothing draws it', () => {
     }
   });
 });
+
+/**
+ * The three sections that looked inert, checked end to end.
+ *
+ * Each was reported as "not functional", and each was working in the layout
+ * and being stripped at the CRDT boundary — `normalizeChartSpec` copied twelve
+ * fields while `ChartSpec` had grown to thirty. These assert the layout half;
+ * `normalize.test.ts` asserts the boundary half. Both are needed, because
+ * either one passing alone is exactly the state that produced the report.
+ */
+describe('the sections that were reported inert', () => {
+  it('Order actually reorders the drawn marks', () => {
+    const spec: ChartSpec = {
+      kind: 'bar',
+      categories: ['a', 'b', 'c'],
+      series: [{ name: 'S', values: [5, 30, 12] }],
+    };
+    const entered = layoutChart(spec, W, H);
+    const sorted = layoutChart({ ...spec, sort: 'valueDesc' }, W, H);
+
+    const order = (l: typeof entered) =>
+      [...l.bars].sort((p, q) => p.x - q.x).map((b) => b.value);
+
+    expect(order(entered)).toEqual([5, 30, 12]);
+    expect(order(sorted)).toEqual([30, 12, 5]);
+  });
+
+  it('Numbers reaches both the axis and the value labels', () => {
+    const spec: ChartSpec = {
+      kind: 'bar',
+      categories: ['a', 'b'],
+      series: [{ name: 'S', values: [1.5, 2.5] }],
+      showValues: true,
+      valuePrefix: '$',
+      valueSuffix: 'k',
+      decimals: 2,
+    };
+    const l = layoutChart(spec, W, H);
+
+    // Both surfaces, because an axis reading `$1.50k` under bars labelled
+    // `1.5` is the disagreement `formatValue` exists to prevent.
+    expect(l.valueLabels.some((v) => v.text === '$1.50k')).toBe(true);
+    expect(l.axisLabels.every((a) => a.text.startsWith('$') && a.text.endsWith('k'))).toBe(true);
+  });
+
+  it('a reference line lands where the value says, not where the pixels do', () => {
+    const spec: ChartSpec = {
+      kind: 'bar',
+      categories: ['a', 'b'],
+      series: [{ name: 'S', values: [0, 100] }],
+      reference: { value: 50, label: 'Half' },
+    };
+    const small = layoutChart(spec, W, H);
+    const large = layoutChart(spec, W, H * 2);
+
+    // Halfway up the plot in both, which is the property a drawn line cannot
+    // have: the pixel moves, the value does not.
+    const fraction = (l: typeof small) =>
+      (l.reference!.y1 - l.plot.y) / l.plot.height;
+    expect(fraction(small)).toBeCloseTo(fraction(large), 2);
+    expect(fraction(small)).toBeCloseTo(0.5, 1);
+  });
+});

@@ -446,3 +446,107 @@ describe('normalizeNode — totality', () => {
   });
 });
 
+
+/**
+ * The chart spec survives the boundary intact.
+ *
+ * Invariant 3 says every read passes through `normalizeNode`, which means a
+ * field the normalizer does not copy **does not exist** downstream, whatever
+ * the schema declares. That is not theoretical: the first version of
+ * `normalizeChartSpec` copied twelve fields while `ChartSpec` grew to about
+ * thirty, and the twenty it dropped included `functions` — where every plot's
+ * formulae live. Function, parametric, polar, implicit, contour, slope-field
+ * and vector-field charts all drew their axes correctly and drew no curve at
+ * all, because the formulae had been thrown away one layer earlier.
+ *
+ * A round trip is the only test that scales here. Asserting field by field
+ * means the assertions rot exactly as the normalizer did; asserting that a
+ * fully-populated spec comes back unchanged fails the moment somebody adds a
+ * field to `ChartSpec` and forgets the branch.
+ */
+describe('a chart spec survives normalization', () => {
+  const full = {
+    kind: 'function' as const,
+    categories: ['a', 'b'],
+    series: [{ name: 'S', values: [1, null, 3], color: '#123456' }],
+    title: 'A title',
+    titleSize: 22,
+    showLegend: false,
+    showGrid: false,
+    showValues: true,
+    includeZero: false,
+    yMin: -5,
+    yMax: 12,
+    yScale: 'log' as const,
+    valuePrefix: '$',
+    valueSuffix: 'ms',
+    decimals: 2,
+    innerRadius: 0.42,
+    buckets: 14,
+    curved: true,
+    sort: 'valueDesc' as const,
+    reference: { value: 7, label: 'Target', color: '#EF4444' },
+    functions: [{ source: 'sin(x)', color: '#00FF00' }, { source: 'cos(x)', hidden: true }],
+    xMin: -3,
+    xMax: 9,
+    samples: 420,
+    equalAxes: true,
+    showRoots: true,
+    showExtrema: true,
+    fillArea: true,
+    showDerivative: true,
+    riemann: { n: 24, mode: 'midpoint' as const },
+    yPlotMin: -2,
+    yPlotMax: 6,
+    resolution: 96,
+    levels: 11,
+  };
+
+  it('keeps every field a chart can carry', () => {
+    const node = normalizeNode({ id: 'c1', type: 'chart', chart: full }) as { chart: typeof full };
+    // Compared whole rather than key by key, so a field added to the schema
+    // and forgotten in the normalizer fails here.
+    expect(node.chart).toEqual(full);
+  });
+
+  it('keeps the formulae, which is the field whose loss drew empty plots', () => {
+    const node = normalizeNode({
+      id: 'c2',
+      type: 'chart',
+      chart: { kind: 'polarPlot', categories: [], series: [], functions: [{ source: 'cos(2a)' }] },
+    }) as { chart: { functions?: unknown[] } };
+    expect(node.chart.functions).toEqual([{ source: 'cos(2a)' }]);
+  });
+
+  it('drops a formula with no readable source rather than keeping an empty row', () => {
+    const node = normalizeNode({
+      id: 'c3',
+      type: 'chart',
+      chart: { kind: 'function', categories: [], series: [], functions: [{ color: '#fff' }] },
+    }) as { chart: { functions?: unknown[] } };
+    expect(node.chart.functions).toBeUndefined();
+  });
+
+  it('refuses values it cannot trust, rather than passing them through', () => {
+    const node = normalizeNode({
+      id: 'c4',
+      type: 'chart',
+      chart: {
+        kind: 'bar',
+        categories: [],
+        series: [],
+        yMin: Number.NaN,
+        titleSize: 'big',
+        yScale: 'sideways',
+        riemann: { n: 5, mode: 'diagonal' },
+        reference: { label: 'no value' },
+      },
+    }) as unknown as { chart: Record<string, unknown> };
+
+    expect(node.chart.yMin).toBeUndefined();
+    expect(node.chart.titleSize).toBeUndefined();
+    expect(node.chart.yScale).toBeUndefined();
+    expect(node.chart.riemann).toBeUndefined();
+    expect(node.chart.reference).toBeUndefined();
+  });
+});

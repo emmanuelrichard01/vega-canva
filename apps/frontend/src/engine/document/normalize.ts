@@ -1154,11 +1154,32 @@ export function normalizeNode(raw: any, id?: string): AnyNode {
 /**
  * A `ChartSpec` that every reader can rely on.
  *
- * The rectangularity rule -- every series exactly as long as `categories` --
- * is enforced in `chartTypes.normalizeSpec` at layout time rather than here,
- * deliberately: the document should keep what somebody typed, so that adding a
+ * ## Why this function is the whole feature working or not
+ *
+ * Invariant 3: every read passes through here, so a field this function does
+ * not copy **does not exist** downstream, whatever the schema says. That is
+ * not a theoretical risk — it is the bug this rewrite fixes. The first version
+ * copied twelve fields, and roughly twenty more were added to `ChartSpec`
+ * afterwards without a matching branch here. Every one of them was silently
+ * dropped at the boundary, including `functions`.
+ *
+ * `functions` is where a plot's formulae live, so every function, parametric,
+ * polar, implicit, contour, slope-field and vector-field chart arrived at the
+ * renderer with nothing to draw. They laid out their axes correctly and drew
+ * no curve at all, which looks like a rendering fault and is really a field
+ * that was thrown away one layer earlier.
+ *
+ * `normalize.test.ts` now round-trips a fully-populated spec and asserts
+ * nothing is lost, so a field added to `ChartSpec` without a branch here fails
+ * the suite rather than shipping as a control that does nothing.
+ *
+ * ## What this function is *not* about
+ *
+ * The rectangularity rule — every series exactly as long as `categories` — is
+ * enforced in `chartTypes.normalizeSpec` at layout time rather than here,
+ * deliberately: the document should keep what somebody typed, so adding a
  * category back does not discover the values were thrown away on the last
- * save. This function is about *shape and type*, not about length.
+ * save. This is about *shape and type*, never about length.
  */
 function normalizeChartSpec(raw: any): ChartSpec {
   const kind: ChartKind = isChartKind(raw?.kind) ? raw.kind : 'bar';
@@ -1184,17 +1205,107 @@ function normalizeChartSpec(raw: any): ChartSpec {
 
   const spec: ChartSpec = { kind, categories, series };
 
-  if (typeof raw?.title === 'string') spec.title = raw.title;
-  if (typeof raw?.showLegend === 'boolean') spec.showLegend = raw.showLegend;
-  if (typeof raw?.showGrid === 'boolean') spec.showGrid = raw.showGrid;
-  if (typeof raw?.showValues === 'boolean') spec.showValues = raw.showValues;
-  if (typeof raw?.includeZero === 'boolean') spec.includeZero = raw.includeZero;
-  if (typeof raw?.curved === 'boolean') spec.curved = raw.curved;
-  if (typeof raw?.yMin === 'number' && Number.isFinite(raw.yMin)) spec.yMin = raw.yMin;
-  if (typeof raw?.yMax === 'number' && Number.isFinite(raw.yMax)) spec.yMax = raw.yMax;
-  if (typeof raw?.innerRadius === 'number' && Number.isFinite(raw.innerRadius)) {
-    spec.innerRadius = raw.innerRadius;
+  const str = (key: keyof ChartSpec) => {
+    if (typeof raw?.[key] === 'string' && raw[key]) (spec as any)[key] = raw[key];
+  };
+  const bool = (key: keyof ChartSpec) => {
+    if (typeof raw?.[key] === 'boolean') (spec as any)[key] = raw[key];
+  };
+  const num = (key: keyof ChartSpec) => {
+    if (typeof raw?.[key] === 'number' && Number.isFinite(raw[key])) {
+      (spec as any)[key] = raw[key];
+    }
+  };
+
+  // --- labels and legend ---------------------------------------------------
+  str('title');
+  num('titleSize');
+  bool('showLegend');
+  bool('showGrid');
+  bool('showValues');
+
+  // --- the value axis ------------------------------------------------------
+  bool('includeZero');
+  num('yMin');
+  num('yMax');
+  if (raw?.yScale === 'log' || raw?.yScale === 'linear') spec.yScale = raw.yScale;
+
+  // --- numbers -------------------------------------------------------------
+  str('valuePrefix');
+  str('valueSuffix');
+  num('decimals');
+
+  // --- per-kind ------------------------------------------------------------
+  num('innerRadius');
+  num('buckets');
+  bool('curved');
+  if (
+    raw?.sort === 'valueDesc' ||
+    raw?.sort === 'valueAsc' ||
+    raw?.sort === 'labelAsc'
+  ) {
+    // `none` is the absence of a sort rather than a value, so it is dropped —
+    // storing it would put a default in every document that never chose one.
+    spec.sort = raw.sort;
   }
+
+  // --- the reference rule --------------------------------------------------
+  if (raw?.reference && typeof raw.reference === 'object') {
+    const value = raw.reference.value;
+    if (typeof value === 'number' && Number.isFinite(value)) {
+      spec.reference = {
+        value,
+        ...(typeof raw.reference.label === 'string' ? { label: raw.reference.label } : {}),
+        ...(typeof raw.reference.color === 'string' ? { color: raw.reference.color } : {}),
+      };
+    }
+  }
+
+  // --- plots ---------------------------------------------------------------
+  /**
+   * The field whose absence started all this.
+   *
+   * An entry with no readable `source` is dropped rather than kept as an empty
+   * formula: an empty row in the editor is a row somebody has to delete, and a
+   * formula that cannot compile is already reported by the panel.
+   */
+  if (Array.isArray(raw?.functions)) {
+    const curves = raw.functions
+      .filter((f: any) => typeof f?.source === 'string')
+      .map((f: any) => ({
+        source: f.source,
+        ...(typeof f.color === 'string' ? { color: f.color } : {}),
+        ...(f.hidden === true ? { hidden: true } : {}),
+      }));
+    if (curves.length) spec.functions = curves;
+  }
+
+  num('xMin');
+  num('xMax');
+  num('samples');
+  bool('equalAxes');
+  bool('showRoots');
+  bool('showExtrema');
+  bool('fillArea');
+  bool('showDerivative');
+
+  if (raw?.riemann && typeof raw.riemann === 'object') {
+    const n = raw.riemann.n;
+    const mode = raw.riemann.mode;
+    if (
+      typeof n === 'number' &&
+      Number.isFinite(n) &&
+      (mode === 'left' || mode === 'right' || mode === 'midpoint')
+    ) {
+      spec.riemann = { n, mode };
+    }
+  }
+
+  // --- two-variable plots --------------------------------------------------
+  num('yPlotMin');
+  num('yPlotMax');
+  num('resolution');
+  num('levels');
 
   return spec;
 }
