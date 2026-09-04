@@ -68,8 +68,8 @@ Verify in ~30 seconds:
 
 ```bash
 npm run build -w apps/frontend                        # tsc -b + vite build
-npx vitest run --root apps/frontend                   # 2244 tests, 129 files
-npx vitest run --root apps/server                     # 75 tests, 9 files
+npx vitest run --root apps/frontend                   # 2945 tests, 165 files
+npx vitest run --root apps/server                     # 92 tests, 10 files
 npx oxlint apps/frontend/src                          # 0 warnings, 0 errors, exit 0
 ```
 
@@ -88,7 +88,7 @@ a broken production deploy on 2026-09-01:
 `tsconfig.app.json` is fine for a fast inner-loop check. It is not the check
 to trust before pushing.
 
-Last verified 2026-09-02, by running the four commands above. Every figure in
+Last verified 2026-09-04, by running the four commands above. Every figure in
 it is a second record of something the tools will tell you in 30 seconds — when
 it disagrees with them, they are right and this is stale.
 
@@ -97,9 +97,9 @@ it disagrees with them, they are right and this is stale.
 | Branch | `main`, level with `origin/main`. `grid-slots-and-notices`, `rebuild/time-travel-and-physics` and `session-2` are history, not workspaces |
 | Deployed | **live**: Vercel (`vscanva.vercel.app`) → Render (`vega-canva.onrender.com`) → Neon → Cloudflare R2 → Sentry |
 | Typecheck | clean via `npm run build` |
-| Tests | **2494** across 145 files (frontend, 1 skipped — see `BENCH` below); **75** across 9 files (server) |
+| Tests | **2945** across 165 files (frontend, 1 skipped — see `BENCH` below); **92** across 10 files (server) |
 | Lint | exits 0; 0 warnings, 0 errors |
-| Build | clean. **38 JS chunks**, 2.7MB raw / ~870KB gzip, plus 216KB CSS. Largest: `Room` 527KB, `vendor-sentry` 475KB, `vendor-fontkit` 357KB, `vendor-konva` 310KB, `app-diagram` 259KB, `app-export` 254KB |
+| Build | clean. **38 JS chunks**, 2.7MB raw / ~907KB gzip, plus 240KB CSS. Largest: `Room` 581KB, `vendor-sentry` 475KB, `vendor-fontkit` 357KB, `vendor-konva` 310KB, `app-diagram` 286KB, `app-export` 261KB |
 
 The eager first-paint set is *not* that total. `vite.config.ts` filters the
 dashboard's `modulepreload` down to three files — the runtime, the icons and
@@ -149,40 +149,31 @@ auto-layout needs real nesting and groups here are flat — the declaration was
 ahead of something that does not exist, so implementing it would have meant
 building the prerequisite first and calling that a bug fix.
 
-Recent commits, newest first. **This table is a copy of `git log` and it goes
-stale between every session — check the log before trusting a "newest".** As of
-2026-08-27 the newest is `925d179`, and the twelve above `e531549` are all
-newer than anything listed here:
+**The recent-commits table that stood here has been struck, and the reason is
+invariant 7.** It was a hand-copied `git log` carrying its own warning that it
+went stale between sessions. It did: it named `925d179` as the newest as of
+2026-08-27, and by 2026-09-04 there were **78 commits above it** — the whole of
+the grid, layout-guide, connector, cursor, pencil, eraser and font work, none of
+it listed. A reader trusting the table would have been seventy-eight commits
+wrong about what this project is.
 
-| | |
+Invariant 7 says where a list can be derived, derive it, and this one can:
+
+```bash
+git log --oneline -30
+```
+
+The commit subjects here are written as sentences for exactly this reason —
+`git log` reads as a changelog without a second copy needing to exist. Where a
+run of commits needs *more* than its subject line, that explanation belongs in
+a numbered section of this file and the section is what to read:
+
+| Arc | Read |
 | --- | --- |
-| `925d179` | identity: a face, a colour of one's own, and a working L key |
-| `3131634`… | the pen and sketch arc — five commits, through `cabbd13` |
-| `9172b53` | the radar's people list given room to be read |
-| `803826a`… | the line-profile and arrowhead arc — five commits, through `383e2b8` |
-| `e531549` | the export rewrite and the two disappearances, written down |
-| `595497a` | the rail stops vanishing; white gets a ramp |
-| `b11b3e7` | a copy contains what it says it contains |
-| `f7780b0` | the four combines work on turned shapes, and subtract turns the right way round |
-| `d2d61a3` | the rail drawn where the object actually is |
-| `54a9ad4`… | the line-profile arc — see §4a-iv. Twelve commits; read that section rather than the log |
-| `f047011` | a line's box becomes what it draws; endpoints move into `geometry` |
-| `a605dec` | the hooks-order bug that emptied the canvas on double-click |
-| `42efea7` | selection restored after a tool change (a stale `React.memo` comparator) |
-| `006d92e` | connectors: anchored binding, draggable ends, and the shape that moved while you drew |
-| `f848435` | Blend and Blur hidden for connectors |
-| `417ec41` | the keyboard audit recorded; §5a-ii restored |
-| `260bcab` | the keyboard audit — nudge, Cmd+A and `?` bound, the help screen corrected |
-| `44d807e` | diagrams as code, the line/arrow rework, the right-click menu, help, text layout |
-| `5cebd12` | connectors given the appearance block they were declared to have |
-| `54697cd` | preview versioning, star/polygon geometry, connector colour in Appearance |
-| `0b83d28` | the colour picker and gradient editor off inline styles |
-| `e0fee09` | ruler/grid toggles, the dot field, focus mode, export, share sheet |
-| `ccf0594` | board covers that survive being opened |
-| `16b7858` | the canvas empty state |
-| `f615fa8` | layer search |
-| `2702a9a` | Phase 5 — text case, strikethrough, three-way text box resizing |
-| `ed1db3d` | Phase 4 — anchor/handle editing, booleans, flatten, outline stroke |
+| the line-profile and arrowhead work (`54a9ad4`…`383e2b8`, ~17 commits) | §4a-iv |
+| the cursor rework | §4q |
+| the selection box | §4s |
+| three diagram engines | §5a-0-ax |
 
 ## 3. The one thing that will waste your time if you don't know it
 
@@ -223,13 +214,43 @@ move faster, minimise testing and calling claude in chrome, let's focus on
 building faster" — and the extension has been reliably unreliable since. Treat
 that as the working agreement.
 
-**In the most recent session it did not connect at all**: `tabs_context_mcp`
-returned "Browser extension is not connected" for the whole session, so nothing
-was observed. That is survivable for arithmetic and expensive for anything
+**For two sessions it did not connect at all**: `tabs_context_mcp` returned
+"Browser extension is not connected" for the whole of both, so nothing was
+observed. That is survivable for arithmetic and expensive for anything
 positional — the rail was drawn a ruler's width off for three rounds of user
 reports because the only evidence available was the user's description. **When a
 report is about where something is and the fix does not hold, stop tuning the
 number and check the coordinate space** (invariant 10).
+
+**On 2026-09-04 it connected, and that still was not enough.** Recording the
+exact signature, because "the extension is working" is now a claim that needs
+qualifying and the next session will otherwise spend the same twenty minutes:
+
+- `tabs_context_mcp` returns a real tab group, and `navigate` works. The app
+  loads — `document.title` is `Vega Studio` and `window.objectsMap` is a live
+  object.
+- **`document.hidden` is `true` and `visibilityState` is `"hidden"`.** This is
+  the old offscreen problem, unchanged. rAF never fires, so the camera loop,
+  the culling pass and all physics are stopped. A `javascript_tool` snippet
+  that *awaits* a rAF chain therefore never resolves and dies at the 45-second
+  CDP timeout — which reads like a frozen renderer and is really the tab
+  telling you it is not being painted.
+- **`Page.captureScreenshot` times out after 30s**, before and after a reload.
+  So this session could not fall back to the static-render technique below
+  either: that depends on being able to capture, and nothing could be
+  captured.
+
+The cheap gate, before trusting anything you see, is one synchronous line —
+never an awaited rAF loop:
+
+```js
+({ vis: document.visibilityState, hidden: document.hidden,
+   hasStage: !!document.querySelector('.konvajs-content') })
+```
+
+If `hidden` is `true`, the app is loaded but not ticking, and every
+positional or gesture-driven check below is unavailable. Say so and move on
+rather than spending the session on it.
 
 **So prefer writing a failing test to trying to watch the bug.** Every piece of
 arithmetic in this codebase lives in a pure module for that reason —
@@ -1937,7 +1958,7 @@ array read `preview` before it was declared. `npx tsc --noEmit` passed; `tsc
 render and React unmounted the tree. That is the "whole canvas goes blank"
 report. See §1 for why those two checks differ.
 
-### Backups exist now, and are the last unproven thing
+### Backups exist, and are now proven end to end
 
 Neon's Free plan history window is **6 hours, capped at 1 GB of change
 history**. That does not cover a bad write found the next morning, and it is
@@ -1951,12 +1972,40 @@ contents. All five tables matched, including the three `bytea` columns a
 text-mangling backup would corrupt silently, and the restored schema kept all
 three `ON DELETE CASCADE` foreign keys.
 
-**It has not yet run against Neon and R2.** All five repository secrets are
-set. `R2_BACKUP_BUCKET` is `vega-canva-media` — the same bucket as uploads, a
-deliberate choice to start backing up immediately, and the tradeoff is real:
+**It has now run against Neon and R2, and keeps running.** Confirmed
+2026-09-04 from `gh run list --workflow=backup.yml`:
+
+| Run | Trigger | Result |
+| --- | --- | --- |
+| 2026-09-02 07:56 | schedule | **failure** — the `pg_dump` version mismatch |
+| 2026-09-02 09:08 | dispatch | **failure** — same, before the fix landed |
+| 2026-09-02 09:10 | dispatch | success (`--dry-run`) |
+| 2026-09-02 09:11 | dispatch | success — first real upload |
+| 2026-09-03 08:04 | schedule | success |
+| 2026-09-04 07:59 | schedule | success |
+
+`7da08f5` is the commit between the failures and the successes, and the two
+failures above are what its message means by "a number typed once". The
+nightly has run unattended twice since. This morning's:
+
+```
+backup-db: vega-2026-09-04T08-00-34Z.dump is 2100147 bytes and lists all expected tables
+backup-db: uploaded s3://***/daily/vega-2026-09-04T08-00-34Z.dump
+backup-db: nothing to prune (keeping 30)
+```
+
+So the guard is doing real work — 2.1 MB dumped, all five tables present in
+the table of contents, object in the bucket. Retention has not yet engaged;
+the thirty-first nightly is the first prune, and that path is the one part of
+the script still unexercised in production.
+
+All five repository secrets are set. `R2_BACKUP_BUCKET` is `vega-canva-media`
+— the same bucket as uploads, a deliberate choice to start backing up
+immediately, and **the tradeoff is still real and still outstanding**:
 anything that purges media takes the backups with it, and the server's own
-credentials can delete them. `docs/SETUP-CHECKLIST.md` carries the migration
-to a scoped bucket as the follow-up.
+credentials can delete them. Proving the backup runs does not fix that.
+`docs/SETUP-CHECKLIST.md` carries the migration to a scoped bucket as the
+follow-up, and it is now the largest remaining risk in this area.
 
 ## 4f-i. Four readings of "what does this export cover"
 
@@ -4833,11 +4882,17 @@ microtask, and notifies only when a placement *changed*.
    something, share a **View** link, and check a second browser sees it *and*
    is refused an edit. Then redeploy the server and check it again: that is the
    one that proves §4j-2, and it cannot be proven any other way.
-2. **Run the backup workflow once by hand.** Actions → *Database backup* → Run
-   workflow, `dry_run` checked, then again unchecked. Until an object lands in
-   the bucket, recovery is Neon's six-hour window and nothing else. Everything
-   else in this list can wait; this is the only one where the cost of waiting
-   is unbounded.
+2. ~~**Run the backup workflow once by hand.**~~ **Done** — and it had been
+   done since 2026-09-02, three days before this line was struck. Both
+   dispatches and every scheduled run since have succeeded, with an object in
+   the bucket each time; see §4f for the run table and this morning's log. The
+   item that replaces it is **moving the backups off `vega-canva-media`**,
+   which is still the same bucket the app uploads to.
+
+   *This entry is the invariant-7 failure it warns about, caught in the act:
+   the work shipped, the doc kept asking for it, and the only reason it was
+   noticed is that somebody ran `gh run list` instead of believing the file.
+   Strike an item in the commit that finishes it.*
 3. **Look at the mermaid modal.** It now carries three engines, fourteen
    templates behind a single grouped menu, and a preview layer per kind.
    Functionally verified — every template parses, every label is asserted to

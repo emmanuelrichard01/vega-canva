@@ -168,6 +168,19 @@ from `apps/server/src/migrations.ts`:
 - The restored schema carried all three foreign keys with `ON DELETE CASCADE`
   intact and all eight indexes.
 
-**Not yet tested: a real run against Neon and R2.** Run the workflow once by
-hand with `dry_run` checked, then once without, and confirm the object lands
-in the bucket. A backup nobody has restored is a hypothesis, not a backup.
+**Tested against Neon and R2 on 2026-09-02, and running nightly since.** The
+dry run, the first real upload, and every scheduled run to 2026-09-04 have
+succeeded; 2026-09-04 dumped 2,100,147 bytes, listed all five tables and put
+the object in `daily/`. `gh run list --workflow=backup.yml` is the check, and
+it is worth running occasionally — the two runs before the fix in `7da08f5`
+failed silently, which is the failure mode a nightly job has.
+
+**Still untested, and worth knowing:**
+
+- **The prune path.** Retention keeps 30 and there have been three. Nothing
+  has been deleted yet, so the one part of this script that can *destroy* a
+  backup has never executed against the real bucket.
+- **A restore from an R2 object.** The restore procedure above was verified
+  against a locally produced dump, not against one fetched back out of the
+  bucket. That is the last gap, and the sentence below is still the reason it
+  matters: a backup nobody has restored is a hypothesis, not a backup.
