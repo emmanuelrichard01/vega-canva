@@ -4538,6 +4538,65 @@ failure, and it matches nothing forever.
 dropping from 2682 to 2675 is what surfaced it. Restored from `HEAD` and the
 new block appended; the file now holds 25.
 
+## 5a-0-av. The connector section, and rounded elbows
+
+**Rounded elbows are the missing control.** Every tool this is measured against
+offers one, and an orthogonal route drawn with square corners is the single
+thing that makes a flowchart here look less finished than the same flowchart in
+Figma.
+
+It needed a path. Konva's `Line` has no per-corner radius — it rounds a
+*shape's* corners, not a polyline's joins — so the run becomes a `<Path>`
+when there is something to round, and stays a `Line` otherwise. Each corner is
+a quadratic whose control point is the corner itself, which for a right angle
+is the exact quarter-circle a rounded rectangle draws.
+
+**Each corner takes the radius it can afford**, and that is the whole of the
+arithmetic. A route's segments are whatever the layout gave it, and an elbow a
+few units from a box's edge is ordinary — a fixed radius there consumes the
+whole segment, the next corner starts before the previous one finished, and it
+draws as a knot. Half the shorter of the two segments, capped at the request.
+Collinear points are passed through without an arc, since a 180° "corner" has
+no curve and constructing one puts a zero-length quadratic in the path that
+some renderers draw as a dot. 12 tests.
+
+Offered on the **orthogonal** routing only. A straight run has no elbows and a
+curved one is already a curve, so on either it would be a number that changes
+nothing.
+
+### Both ends on one line
+
+They were two stacked rows of six tiles. "Which way does this arrow point" is
+**one** question, and it was laid out as two — eighty pixels apart, with no way
+to see both answers without moving your eyes between them.
+
+Side by side they are one row and one glance, and the **swap** between them is
+the operation the arrangement makes obvious: an arrow drawn the wrong way round
+is the commonest fix here and used to be two edits through two pickers.
+
+A native `select` per end, with the cap glyph showing through underneath. This
+is the opposite call from `FontWeightSelect` and for a stated reason: six short
+names with a glyph each fit a menu the platform draws, and there is nothing to
+preview that the trigger cannot already show — where a font weight is a thing
+you have to *see*. What it buys is keyboard behaviour, type-ahead and an
+overlay that escapes a 260px panel, which a six-tile group in half a row
+cannot.
+
+### It says what it joins
+
+The old status line was prose about the *state*: "Both ends follow the objects
+they are attached to." On a board of forty boxes the question is **which two**,
+and the panel knew and did not say. Names now, through the same `nodeLabel` the
+Layers panel uses — so a box called "Retry" reads as "Retry" in both places —
+with a loose end shown in italics because it is not a name.
+
+**Reverse** swaps the ends themselves rather than their caps, and the two are
+genuinely different operations: one changes what is drawn, the other changes
+which object the arrow leaves from, which is what "this dependency runs the
+other way" means. Withheld unless both ends are bound, because reversing a
+half-attached connector swaps a real object for a loose point and leaves the
+arrow pointing into empty space.
+
 ## 5. Next up
 
 ### 5a-0. The four things to do first

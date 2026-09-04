@@ -50,6 +50,7 @@ import {
 } from '../engine/model/strokeStyle';
 import { descendantsOfFrame, type FramePreset } from '../engine/model/frames';
 import { type LayoutGuide } from '../engine/model/layoutGuide';
+import { nodeLabel } from '../engine/model/nodeLabel';
 import { TagEditor } from './ui/TagEditor';
 import { THEMES } from '../engine/model/stickyThemes';
 import { STICKY_THEMES } from '../engine/model/schema';
@@ -411,6 +412,28 @@ export const PropertiesPanel: React.FC<PropertiesPanelProps> = ({ selectedIds, o
   const setLayoutGuide = (guide: LayoutGuide | undefined) =>
     patchEach((n) => (n.type === 'frame' ? { layoutGuide: guide } : null));
 
+  /**
+   * What each end of the selected connector is attached to, by name.
+   *
+   * Resolved here rather than in the section, because the section is given one
+   * node and this needs the store — and a component that reaches into the
+   * store for a name is a component that re-renders on every unrelated edit.
+   *
+   * `nodeLabel` is the same function the Layers panel uses, so an object reads
+   * the same in both places: a box called "Retry" is "Retry" in the tree and
+   * "Retry" here, and one that has never been named falls back to its type in
+   * both.
+   */
+  const connectorBoundNames = (() => {
+    if (!node || node.type !== 'connector') return {};
+    const objects = useStore.getState().objects;
+    const name = (id?: string) => {
+      const target = id ? objects[id] : undefined;
+      return target ? nodeLabel(target) : undefined;
+    };
+    return { from: name(node.from.nodeId), to: name(node.to.nodeId) };
+  })();
+
   /** How many objects the selected frame owns, for the fit control's label. */
   const frameChildCount = (() => {
     const frame = nodes.find((n) => n.type === 'frame');
@@ -700,6 +723,7 @@ export const PropertiesPanel: React.FC<PropertiesPanelProps> = ({ selectedIds, o
         affords={affords}
         shared={shared}
         set={set}
+        boundNames={connectorBoundNames}
       />
 
       <ShapeGeometrySection

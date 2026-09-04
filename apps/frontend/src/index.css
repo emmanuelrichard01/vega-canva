@@ -16996,3 +16996,92 @@ html[data-precise] .canvas-container[data-cursor-mode] .konvajs-content canvas {
 }
 
 .draw-settings .slider__label { font-size: var(--text-xs); }
+
+/* ===========================================================================
+   CONNECTOR ENDS
+   ---------------------------------------------------------------------------
+   Both ends on one line with the swap between them. They were two stacked
+   rows of six tiles for a pair of settings read against each other — "which
+   way does this arrow point" is one question, and it was laid out as two,
+   eighty pixels apart.
+   =========================================================================== */
+
+.end-pair {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) 26px minmax(0, 1fr);
+  align-items: center;
+  gap: var(--space-2);
+  width: 100%;
+}
+
+/* The glyph is the answer; the select is how you change it. Overlaid rather
+   than side by side, so a 1fr half-row holds a preview *and* a control at a
+   readable size — a native select's own text would take the whole cell. */
+.end-picker {
+  position: relative;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  height: var(--control-h-sm);
+  border: 1px solid transparent;
+  border-radius: var(--radius-sm);
+  background: var(--surface-hover);
+  color: var(--text-primary);
+  transition: border-color var(--motion-hover);
+}
+
+.end-picker:hover { border-color: var(--border-divider); }
+.end-picker:focus-within { border-color: var(--border-strong); }
+
+/* Transparent and on top: the platform draws the menu, the glyph underneath
+   shows the answer, and the whole cell is the hit target. */
+.end-picker__select {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  opacity: 0;
+  cursor: pointer;
+}
+
+.end-pair__swap {
+  display: grid;
+  place-items: center;
+  width: 26px;
+  height: 26px;
+  padding: 0;
+  border: none;
+  border-radius: var(--radius-sm);
+  background: transparent;
+  color: var(--text-tertiary);
+  cursor: pointer;
+  transition: background var(--motion-hover), color var(--motion-hover);
+}
+
+.end-pair__swap:hover { background: var(--surface-hover); color: var(--text-primary); }
+
+/* What the arrow joins, named. It was a sentence saying the *state* — "both
+   ends follow the objects they are attached to" — where the question on a
+   board of forty boxes is *which two*. */
+.connector-bond {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  min-width: 0;
+  font-size: var(--text-xs);
+}
+
+.connector-bond__end {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  color: var(--text-primary);
+}
+
+/* A loose end is not a name, so it does not read as one. */
+.connector-bond__end[data-loose] {
+  color: var(--text-tertiary);
+  font-style: italic;
+}
+
+.connector-bond__arrow { flex-shrink: 0; color: var(--text-tertiary); }

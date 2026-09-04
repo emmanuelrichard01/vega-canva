@@ -1095,6 +1095,14 @@ export function normalizeNode(raw: any, id?: string): AnyNode {
           ? { endScale: clamp(num(raw.endScale, 1), MIN_END_SCALE, MAX_END_SCALE) }
           : null),
         label: typeof raw?.label === 'string' ? raw.label : undefined,
+        /**
+         * Absent when square, so a connector that has never been rounded
+         * carries no key — and the panel's "is this rounded" question is "did
+         * anyone set it" rather than "is it zero".
+         */
+        ...(num(raw?.cornerRadius, 0) > 0
+          ? { cornerRadius: Math.min(200, num(raw.cornerRadius, 0)) }
+          : null),
       };
 
     /**

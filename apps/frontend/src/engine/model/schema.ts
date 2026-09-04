@@ -1272,6 +1272,19 @@ export interface ConnectorNode extends BaseNode {
   arrowEnd?: boolean;
   /** A word or two riding the middle of the run — "yes", "no", "retry". */
   label?: string;
+  /**
+   * How far the elbows of a routed connector are rounded. Absent is square.
+   *
+   * Only an *orthogonal* route has elbows: a straight run has none and a
+   * curved one is already a curve, so the field is stored on every connector
+   * and read by one of the three routings. That is the same arrangement
+   * `miterLimit` has — a number that is only meaningful beside a particular
+   * choice, kept in one place rather than in a variant per routing.
+   *
+   * Each corner takes the radius it can afford rather than the radius asked
+   * for; see `connectorCorners.ts` for why a fixed one draws a knot.
+   */
+  cornerRadius?: number;
 }
 
 /**

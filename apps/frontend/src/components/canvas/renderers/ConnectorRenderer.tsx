@@ -1,6 +1,7 @@
 import React from 'react';
 import { Circle, Group, Label, Line, Path, Tag, Text } from 'react-konva';
 import { roughLoop, roughPolyline, seedFor } from '../../../engine/model/rough';
+import { roundedPolyline } from '../../../engine/model/connectorCorners';
 import { useShallow } from 'zustand/react/shallow';
 import { DEFAULT_CONNECTOR_INK, type ConnectorNode } from '../../../engine/model/schema';
 import { connectorBounds, connectorPoints, type Box } from '../../../engine/model/connector';
@@ -431,6 +432,18 @@ export const ConnectorRenderer: React.FC<Props> = React.memo(({ node }) => {
    * same bristling mess a heart did before `roughLoop` existed. It takes the
    * drift sampler instead, as an open run.
    */
+  /**
+   * The run with its corners rounded, or `''` when there is nothing to round.
+   *
+   * Orthogonal only. A straight route has no elbows and a curved one is
+   * already smooth, so offering the control on those would be a number that
+   * changes nothing — and the panel withholds it for the same reason.
+   */
+  const rounded =
+    !node.appearance?.sketch && node.routing === 'orthogonal' && (node.cornerRadius ?? 0) > 0
+      ? roundedPolyline(trimmed, node.cornerRadius!)
+      : '';
+
   const sketched = node.appearance?.sketch
     ? node.routing === 'curved'
       ? roughLoop(pairsOf(trimmed), {
@@ -457,6 +470,30 @@ export const ConnectorRenderer: React.FC<Props> = React.memo(({ node }) => {
           lineCap="round"
           lineJoin="round"
           dash={common.dash}
+          hitStrokeWidth={Math.max(20, width * 3)}
+          perfectDrawEnabled={false}
+        />
+      ) : rounded ? (
+        /**
+         * Rounded elbows, drawn as a path.
+         *
+         * Konva's `Line` has no per-corner radius — it rounds a *shape's*
+         * corners, not a polyline's joins — so this is the one case the run
+         * cannot be a `Line`. Everything else about it is identical, which is
+         * why `common` is spread into both.
+         *
+         * Only when the route actually has elbows and somebody asked for them:
+         * a straight run has no corners, a curved one is already a curve, and
+         * a sketched one is handled above, where a hand-drawn corner is soft
+         * by construction.
+         */
+        <Path
+          data={rounded}
+          stroke={common.stroke}
+          strokeWidth={common.strokeWidth}
+          dash={common.dash}
+          lineCap={common.lineCap}
+          lineJoin="round"
           hitStrokeWidth={Math.max(20, width * 3)}
           perfectDrawEnabled={false}
         />
