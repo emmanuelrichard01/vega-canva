@@ -64,7 +64,6 @@ import {
   isStacked,
   isTransposed,
   isTwoVariable,
-  getPaletteColors,
   normalizeSpec,
   resolveChartOptions,
   seriesColor,
@@ -869,7 +868,7 @@ function layoutCartesian(
           { offset: 0, width: band.bandWidth },
           step.from,
           step.to,
-          step.delta >= 0 ? seriesColor(spec.series[0], 0) : seriesColor(undefined, 4),
+          step.delta >= 0 ? seriesColor(spec.series[0], 0, opts.palette) : seriesColor(undefined, 4, opts.palette),
           step.delta
         );
       });
@@ -879,7 +878,7 @@ function layoutCartesian(
       const s = spec.series[0];
       s?.values.forEach((v, ci) => {
         if (typeof v !== 'number') return;
-        pushBar(ci, 0, { offset: 0, width: band.bandWidth }, 0, v, seriesColor(undefined, ci), v);
+        pushBar(ci, 0, { offset: 0, width: band.bandWidth }, 0, v, seriesColor(undefined, ci, opts.palette), v);
       });
     } else {
       const lanes = stacked ? 1 : Math.max(1, spec.series.length);
@@ -888,7 +887,7 @@ function layoutCartesian(
       const runningNeg = new Array(spec.categories.length).fill(0);
 
       spec.series.forEach((s, si) => {
-        const color = seriesColor(s, si);
+        const color = seriesColor(s, si, opts.palette);
         s.values.forEach((v, ci) => {
           if (typeof v !== 'number') return;
           let from: number;
@@ -924,7 +923,7 @@ function layoutCartesian(
     const stackTotals = new Array(spec.categories.length).fill(0);
 
     spec.series.forEach((s, si) => {
-      const color = seriesColor(s, si);
+      const color = seriesColor(s, si, opts.palette);
       const segments: Point[][] = [];
       const baseSegments: Point[][] = [];
       let current: Point[] = [];
@@ -1287,7 +1286,7 @@ function layoutPolar(
   const dots: ChartDot[] = [];
 
   spec.series.forEach((s, si) => {
-    const color = seriesColor(s, si);
+    const color = seriesColor(s, si, opts.palette);
     const points = s.values
       .slice(0, n)
       .map((v, i) => pointAt(i, scale(typeof v === 'number' ? v : 0)));
@@ -1562,7 +1561,7 @@ function layoutField(
   } else if (spec.kind === 'implicit') {
     live.forEach((c, i) => {
       const f = (x: number, y: number) => c.compiled!.evaluate(x, y);
-      const color = c.color ?? seriesColor(undefined, i);
+      const color = c.color ?? seriesColor(undefined, i, opts.palette);
       for (const seg of marchingSquares(f, { ...box, resolution })) {
         runs.push({ points: toScreen(seg), color, seriesIndex: i });
       }
@@ -1575,7 +1574,7 @@ function layoutField(
       levels.forEach((level, li) => {
         // Each level takes the palette in order, so a contour map reads as a
         // ramp rather than as one colour repeated.
-        const color = c.color ?? seriesColor(undefined, li % 10);
+        const color = c.color ?? seriesColor(undefined, li % 10, opts.palette);
         for (const seg of marchingSquares(f, { ...box, resolution, level })) {
           runs.push({ points: toScreen(seg), color, seriesIndex: li });
         }
@@ -1584,7 +1583,7 @@ function layoutField(
   } else if (spec.kind === 'slopeField') {
     const c = live[0];
     if (c?.compiled) {
-      const color = c.color ?? seriesColor(undefined, 0);
+      const color = c.color ?? seriesColor(undefined, 0, opts.palette);
       const marks = slopeField((x, y) => c.compiled!.evaluate(x, y), {
         ...box,
         density: Math.min(40, Math.max(4, Math.round(spec.resolution ?? 18))),
@@ -1621,7 +1620,7 @@ function layoutField(
     // P and Q -- positional, for the reason a parametric curve's pair is.
     const [pc, qc] = live;
     if (pc?.compiled && qc?.compiled) {
-      const color = pc.color ?? seriesColor(undefined, 0);
+      const color = pc.color ?? seriesColor(undefined, 0, opts.palette);
       const marks = vectorField(
         (x, y) => pc.compiled!.evaluate(x, y),
         (x, y) => qc.compiled!.evaluate(x, y),
@@ -1710,7 +1709,7 @@ function layoutField(
         .filter((c) => c.compiled)
         .map((c, idx) => ({
           source: c.source,
-          color: c.color ?? seriesColor(undefined, idx),
+          color: c.color ?? seriesColor(undefined, idx, opts.palette),
           evaluate: (x: number, y = 0) => c.compiled!.evaluate(x, y),
         })),
       roots: [],
@@ -1780,7 +1779,7 @@ function layoutPlot(
       if (i === 0) firstSamples = samples;
       runsRaw.push({
         points: samples.map((s) => (s.y === null ? null : { x: s.x, y: s.y })),
-        color: c.color ?? seriesColor(undefined, i),
+        color: c.color ?? seriesColor(undefined, i, opts.palette),
       });
     });
 
@@ -1789,7 +1788,7 @@ function layoutPlot(
     if (spec.showDerivative && firstSamples.length) {
       runsRaw.push({
         points: differentiate(firstSamples).map((s) => (s.y === null ? null : { x: s.x, y: s.y })),
-        color: seriesColor(undefined, live.length),
+        color: seriesColor(undefined, live.length, opts.palette),
       });
     }
   } else if (kind === 'parametric') {
@@ -1803,14 +1802,14 @@ function layoutPlot(
           (t) => fy.compiled!.evaluate(t),
           { from, to, samples: spec.samples }
         ),
-        color: fx.color ?? seriesColor(undefined, 0),
+        color: fx.color ?? seriesColor(undefined, 0, opts.palette),
       });
     }
   } else {
     live.forEach((c, i) => {
       runsRaw.push({
         points: samplePolar((a) => c.compiled!.evaluate(a), { from, to, samples: spec.samples }),
-        color: c.color ?? seriesColor(undefined, i),
+        color: c.color ?? seriesColor(undefined, i, opts.palette),
       });
     });
   }
@@ -2195,7 +2194,7 @@ function layoutPlot(
     if (spec.showRoots) {
       for (const r of calculatedRoots) {
         if (!inView(r.x, 0)) continue;
-        const color = live[r.curveIndex]?.color ?? seriesColor(undefined, r.curveIndex);
+        const color = live[r.curveIndex]?.color ?? seriesColor(undefined, r.curveIndex, opts.palette);
         dots.push({
           x: sx(r.x), y: sy(0), radius: 4,
           color,
@@ -2211,7 +2210,7 @@ function layoutPlot(
     if (spec.showExtrema) {
       for (const e of calculatedExtrema) {
         if (!inView(e.x, e.y)) continue;
-        const color = live[e.curveIndex]?.color ?? seriesColor(undefined, e.curveIndex);
+        const color = live[e.curveIndex]?.color ?? seriesColor(undefined, e.curveIndex, opts.palette);
         dots.push({
           x: sx(e.x), y: sy(e.y), radius: 4,
           color,
@@ -2261,7 +2260,7 @@ function layoutPlot(
           y: Math.min(yTop, zeroY),
           width: Math.abs(x1 - x0),
           height: Math.abs(zeroY - yTop),
-          color: firstCurve.color ?? seriesColor(undefined, 0),
+          color: firstCurve.color ?? seriesColor(undefined, 0, opts.palette),
           seriesIndex: 0,
           categoryIndex: i,
           value: h,
@@ -2295,7 +2294,7 @@ function layoutPlot(
         if (band.length > 1) {
           areas.push({
             points: band,
-            color: firstCurve.color ?? seriesColor(undefined, 0),
+            color: firstCurve.color ?? seriesColor(undefined, 0, opts.palette),
             seriesIndex: 0,
             polygon: [
               ...band,
@@ -2351,7 +2350,7 @@ function layoutPlot(
         if (band.length > 1) {
           areas.push({
             points: band,
-            color: firstCurve.color ?? seriesColor(undefined, 0),
+            color: firstCurve.color ?? seriesColor(undefined, 0, opts.palette),
             seriesIndex: 0,
             polygon: [
               ...band,
@@ -2414,7 +2413,7 @@ function layoutPlot(
         .filter((c) => c.compiled)
         .map((c, idx) => ({
           source: c.source,
-          color: c.color ?? seriesColor(undefined, idx),
+          color: c.color ?? seriesColor(undefined, idx, opts.palette),
           evaluate: (x: number, y = 0) => c.compiled!.evaluate(x, y),
         })),
       parametric:
@@ -2422,7 +2421,7 @@ function layoutPlot(
           ? {
               sourceX: live[0].source,
               sourceY: live[1].source,
-              color: live[0].color ?? seriesColor(undefined, 0),
+              color: live[0].color ?? seriesColor(undefined, 0, opts.palette),
               fx: (t: number) => live[0].compiled!.evaluate(t),
               fy: (t: number) => live[1].compiled!.evaluate(t),
               tMin: from,
@@ -2434,7 +2433,7 @@ function layoutPlot(
           ? [
               {
                 source: live[0].source,
-                color: live[0].color ?? seriesColor(undefined, 0),
+                color: live[0].color ?? seriesColor(undefined, 0, opts.palette),
                 fr: (a: number) => live[0].compiled!.evaluate(a),
                 aMin: from,
                 aMax: to,
@@ -2568,7 +2567,7 @@ function buildPlotLegend(
       // a label that says less than the thing it labels.
       name: c.error ? `${c.source} — ${c.error}` : c.source,
       values: [],
-      color: c.color ?? seriesColor(undefined, i),
+      color: c.color ?? seriesColor(undefined, i, opts.palette),
     })),
   };
   return buildLegend(asSeries, { ...opts, showLegend: true }, width, height, measure);
@@ -2770,7 +2769,7 @@ function layoutRadial(
         cx, cy, outerRadius, innerRadius,
         startAngle: angle,
         endAngle: angle + sweep,
-        color: seriesColor({ name: '', values: [], color: series?.color }, i),
+        color: seriesColor({ name: '', values: [], color: series?.color }, i, opts.palette),
         index: i,
         value: v,
         fraction: v / total,
@@ -2863,16 +2862,15 @@ function buildLegend(
 ): ChartLegendEntry[] {
   if (!opts.showLegend) return [];
 
-  const palette = getPaletteColors(spec.paletteId);
   // A pie's and a funnel's legend name their *categories*: both draw one
   // series whose points are the things being compared. Everything else names
   // its series.
   const entries = isRadial(spec.kind) || spec.kind === 'funnel'
     ? spec.categories.map((label, i) => ({
         label,
-        color: seriesColor({ name: '', values: [], color: spec.series[0]?.color }, i, palette),
+        color: seriesColor({ name: '', values: [], color: spec.series[0]?.color }, i, opts.palette),
       }))
-    : spec.series.map((s, i) => ({ label: s.name || `Series ${i + 1}`, color: seriesColor(s, i, palette) }));
+    : spec.series.map((s, i) => ({ label: s.name || `Series ${i + 1}`, color: seriesColor(s, i, opts.palette) }));
 
   if (entries.length === 0) return [];
 

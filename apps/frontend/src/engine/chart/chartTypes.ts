@@ -774,6 +774,8 @@ export interface ResolvedChartOptions {
   innerRadius: number;
   curved: boolean;
   buckets: number;
+  /** The palette every mark takes its colour from. */
+  palette: readonly string[];
 }
 
 /**
@@ -801,6 +803,20 @@ export function resolveChartOptions(spec: ChartSpec): ResolvedChartOptions {
       spec.kind === 'donut' ? Math.min(0.85, Math.max(0.15, spec.innerRadius ?? 0.55)) : 0,
     curved: spec.curved ?? false,
     buckets: Math.min(60, Math.max(2, Math.round(spec.buckets ?? 10))),
+    /**
+     * The chosen palette, resolved once.
+     *
+     * `paletteId` was read in exactly one place -- `buildLegend` -- and by
+     * none of the twenty-six calls that colour an actual mark. So picking a
+     * palette recoloured the legend's swatches and left the bars, lines and
+     * slices on the default: not a control that did nothing, but one that made
+     * the legend and the chart disagree about what colour a series is.
+     *
+     * It rides on the options because the options are already threaded to
+     * every layout function. Resolving it at each call site instead is how it
+     * came to be resolved at one of them.
+     */
+    palette: getPaletteColors(spec.paletteId),
   };
 }
 

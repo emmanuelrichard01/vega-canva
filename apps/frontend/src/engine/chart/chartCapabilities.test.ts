@@ -2,6 +2,7 @@ import { describe, expect, it } from 'vitest';
 import { layoutChart } from './chartLayout';
 import {
   chartCapabilities,
+  CHART_AGENCY_PALETTES,
   CHART_KINDS,
   defaultChartSpec,
   defaultPlotDomain,
@@ -266,5 +267,90 @@ describe('defaultPlotDomain', () => {
         yPlotMax: fresh.yPlotMax,
       });
     }
+  });
+});
+
+/**
+ * The palette reaches the marks, not just the legend.
+ *
+ * `paletteId` was read in exactly one place — `buildLegend` — and by none of
+ * the twenty-six calls that colour an actual mark. So choosing a palette
+ * recoloured the legend's swatches and left the bars, lines and slices on the
+ * default: not a control that did nothing, which would at least have been
+ * honest, but one that made the chart and its own key disagree about what
+ * colour a series is.
+ */
+describe('the palette', () => {
+  const other = CHART_AGENCY_PALETTES.find((p) => p.id !== 'default')!;
+
+  /** Every colour a layout draws with, from whichever marks the kind uses. */
+  const inkOf = (layout: ReturnType<typeof layoutChart>) =>
+    new Set(
+      [
+        ...layout.bars.map((b) => b.color),
+        ...layout.runs.map((r) => r.color),
+        ...layout.areas.map((a) => a.color),
+        ...layout.dots.map((d) => d.color),
+        ...layout.slices.map((s) => s.color),
+      ].filter(Boolean)
+    );
+
+  it('changes the marks, for every kind that draws with a palette', () => {
+    for (const kind of CHART_KINDS) {
+      // A heatmap paints from its colour *ramp*: the surface is a continuous
+      // scale, not a set of series, so the categorical palette has nothing to
+      // colour there. That is a different colour source rather than a control
+      // being ignored, which is why it is exempt here and `gridLines` was not.
+      if (kind === 'heatmap') continue;
+      const base = defaultChartSpec(kind);
+      // Explicit per-series colours would mask the palette, which is correct
+      // behaviour and not what this is testing.
+      const spec: ChartSpec = {
+        ...base,
+        series: base.series.map((s) => ({ ...s, color: undefined })),
+        functions: base.functions?.map((f) => ({ ...f, color: undefined })),
+      };
+
+      const before = inkOf(layoutChart(spec, W, H));
+      const after = inkOf(layoutChart({ ...spec, paletteId: other.id }, W, H));
+      if (before.size === 0) continue;
+
+      expect(
+        [...after].every((c) => !before.has(c)) || after.size > 0,
+        `${kind} ignored the palette`
+      ).toBe(true);
+      // The strong form: at least one mark actually took a colour from the
+      // chosen palette rather than from the default.
+      expect([...after].some((c) => other.colors.includes(c)), kind).toBe(true);
+    }
+  });
+
+  it('keeps the legend and the marks agreeing', () => {
+    const spec: ChartSpec = {
+      kind: 'bar',
+      categories: ['a', 'b'],
+      series: [{ name: 'One', values: [1, 2] }, { name: 'Two', values: [3, 4] }],
+      paletteId: other.id,
+      showLegend: true,
+    };
+    const layout = layoutChart(spec, W, H);
+    const legendInk = new Set(layout.legend.map((e) => e.color));
+    for (const colour of legendInk) {
+      expect(inkOf(layout).has(colour), `legend colour ${colour} appears on no mark`).toBe(true);
+    }
+  });
+
+  it('lets a series keep a colour of its own', () => {
+    const layout = layoutChart(
+      {
+        kind: 'bar',
+        categories: ['a'],
+        series: [{ name: 'One', values: [1], color: '#123456' }],
+        paletteId: other.id,
+      },
+      W,
+      H
+    );
+    expect(layout.bars[0].color).toBe('#123456');
   });
 });

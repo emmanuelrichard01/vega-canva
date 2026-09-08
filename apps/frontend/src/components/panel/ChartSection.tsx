@@ -28,12 +28,10 @@ import {
   ActionRow,
   Group,
   OptionalNumber,
-  Reveal,
   ToggleRow,
   SubHead,
   TypeHeader,
   PaletteRibbonPicker,
-  MathTokenBar,
 } from './chartPanelParts';
 import { setChartKind, updateChart } from '../../engine/chart/chartApply';
 import {
@@ -43,9 +41,10 @@ import {
   parseChartData,
   withChartData,
 } from '../../engine/chart/chartCsv';
-import { PresetGallery } from './PresetGallery';
+import { ExampleStrip } from './ExampleStrip';
+import { ExpressionReference } from './ExpressionReference';
 import { logDomainOf } from '../../engine/chart/scales';
-import { EXPRESSION_FUNCTIONS, parseExpression } from '../../engine/chart/expression';
+import { parseExpression } from '../../engine/chart/expression';
 import { RAMP_IDS, RAMP_LABELS, rampSwatches } from '../../engine/chart/colorRamps';
 import { formatValue } from '../../engine/chart/chartLayout';
 import { findRoots, findExtrema, integrate, type Sample } from '../../engine/chart/chartAnalysis';
@@ -188,6 +187,25 @@ export const ChartSection: React.FC<Props> = ({ node }) => {
           <DataGrid spec={spec} patch={patch} />
         </Group>
       )}
+
+      {/**
+        * Examples, for every kind rather than only for the plots.
+        *
+        * They lived inside `FormulaEditor`, which meant a bar chart, a pie, a
+        * funnel and a waterfall — everything anybody reaches for first — had
+        * none at all. That asymmetry was backwards: somebody plotting sin(x)
+        * knows what they want, and somebody making their first waterfall
+        * mostly does not know what a waterfall is *for*.
+        */}
+      <ExampleStrip
+        kind={spec.kind}
+        onPick={(next) => updateChart(node.id, next)}
+        onAddCurves={
+          plot
+            ? (extra) => patch({ functions: [...(spec.functions ?? []), ...extra] })
+            : undefined
+        }
+      />
 
       {/* ─── 2. Marks ──────────────────────────────────────────────────── */}
       <Group label="Marks">
@@ -1408,8 +1426,6 @@ const FormulaEditor: React.FC<{ spec: ChartSpec; patch: (n: Partial<ChartSpec>) 
 
   return (
     <>
-      <MathTokenBar variable={variable} onInsert={onInsertToken} />
-
       {curves.map((curve, i) => {
         const result = parseExpression(curve.source, variables);
         return (
@@ -1484,22 +1500,10 @@ const FormulaEditor: React.FC<{ spec: ChartSpec; patch: (n: Partial<ChartSpec>) 
         <Plus size={12} /> Add a formula
       </button>
 
-      <Reveal label="Start from an example">
-        <PresetGallery
-          kind={spec.kind}
-          onPick={(next) => patch(next)}
-          onAddCurve={(newCurves) => patch({ functions: [...curves, ...newCurves] })}
-        />
-      </Reveal>
-
-      <Reveal label="What you can write">
-        <p className="chartp-note">
-          <code>{variables.join('</code>, <code>')}</code>, numbers, <code>+ − × / % ^</code>, brackets, <code>|x|</code>,
-          and <code>pi e tau phi</code>. Implicit products work: <code>2{variable}</code>,{' '}
-          <code>3sin({variable})</code>.
-        </p>
-        <p className="chartp-help__fns">{EXPRESSION_FUNCTIONS.join('  ')}</p>
-      </Reveal>
+      {/* Not behind a disclosure. The people who need a function reference
+          are the ones who have not yet worked out what the panel contains,
+          and a `<details>` is invisible to exactly them. */}
+      <ExpressionReference variable={variable} onInsert={onInsertToken} />
     </>
   );
 };
