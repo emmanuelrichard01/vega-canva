@@ -82,15 +82,6 @@ export const SubHead: React.FC<{ label: string }> = ({ label }) => (
   </div>
 );
 
-export const Reveal: React.FC<{ label: string; children: React.ReactNode }> = ({
-  label,
-  children,
-}) => (
-  <details className="chartp-reveal">
-    <summary className="chartp-reveal__summary">{label}</summary>
-    <div className="chartp-reveal__body">{children}</div>
-  </details>
-);
 
 /**
  * The type control: what this chart *is*, at the top, in one line.

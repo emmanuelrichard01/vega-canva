@@ -1,6 +1,8 @@
 import React from 'react';
-import { Search, X } from 'lucide-react';
+import { FunctionSquare, Search, X } from 'lucide-react';
+import { PanelPopover } from './PanelPopover';
 import {
+  EXPRESSION_TOKENS,
   tokenFor,
   tokenGroups,
   type ExpressionToken,
@@ -19,16 +21,26 @@ import {
  * not that `log` is base ten while `ln` is natural, not how many arguments
  * `atan2` takes.
  *
- * One list now, not hidden, where every entry both documents and inserts.
+ * One list now, where every entry both documents and inserts.
  *
- * ## Why it is filterable rather than long
+ * ## Why a popover rather than the panel
  *
- * Thirty-one entries with a line of prose each is more than a properties
- * panel should show at rest, and grouping alone does not fix that — the
- * thing somebody arrives knowing is a *word*: "root", "log", "round". So the
- * list is short by default (the dozen that carry most plots) and the field
- * opens the rest. Typing filters names *and* notes together, because "bell"
- * finds `gauss` and that is the search somebody actually performs.
+ * It sat inline for a while, and 260px could not hold thirty-one rows of
+ * signature-plus-prose — so it showed a common dozen behind a "show all 31",
+ * which was a compromise forced by the width and not a judgement that two
+ * thirds of the reference was not worth reading. The surface has room, so the
+ * list is whole and the compromise is gone with the constraint that caused it.
+ *
+ * The trigger carries the count for the same reason the examples button does:
+ * "Functions · 31" promises something specific, where a lid labelled "What you
+ * can write" promises nothing and gets opened by nobody.
+ *
+ * ## Search across notes, not just names
+ *
+ * The thing somebody arrives knowing is a *word* — "root", "bell", "round" —
+ * and "bell" finds `gauss` only because the note is searched too. That is the
+ * search people actually perform when they do not know the name, which is
+ * exactly when a reference is worth having.
  */
 
 interface Props {
@@ -37,30 +49,41 @@ interface Props {
   onInsert: (text: string) => void;
 }
 
-/**
- * The dozen shown before anybody types.
- *
- * Chosen by what appears in real formulae rather than by any ordering of the
- * parser: the trig three, the exponential pair, roots, absolute value, the two
- * shapes that are awkward to write out, and the constants.
- */
-const COMMON = new Set([
-  'sin', 'cos', 'tan', 'exp', 'ln', 'log', 'sqrt', 'abs', 'sinc', 'gauss', 'pi', 'e',
-]);
 
-export const ExpressionReference: React.FC<Props> = ({ variable, onInsert }) => {
+export const ExpressionReference: React.FC<Props> = ({ variable, onInsert }) => (
+  <PanelPopover
+    title="What you can write"
+    width={380}
+    icon={<FunctionSquare size={12} aria-hidden />}
+    label={
+      <>
+        Functions
+        {/* The count, for the same reason the examples button carries one: a
+            trigger that says only "Functions" promises nothing in particular,
+            and this reference's whole value is that it is complete. */}
+        <span className="pnpop__count">{EXPRESSION_TOKENS.length}</span>
+      </>
+    }
+  >
+    <ReferenceList variable={variable} onInsert={onInsert} />
+  </PanelPopover>
+);
+
+const ReferenceList: React.FC<Props> = ({ variable, onInsert }) => {
   const [query, setQuery] = React.useState('');
-  const [expanded, setExpanded] = React.useState(false);
   const trimmed = query.trim().toLowerCase();
 
   const groups = React.useMemo(() => {
     const all = tokenGroups();
-    if (!trimmed) {
-      if (expanded) return all;
-      return all
-        .map((g) => ({ ...g, tokens: g.tokens.filter((t) => COMMON.has(t.name)) }))
-        .filter((g) => g.tokens.length > 0);
-    }
+    /**
+     * All of it, always.
+     *
+     * Inline in the panel this showed a common dozen behind a "show all 31",
+     * which was a density compromise forced by 260px and not a judgement that
+     * two thirds of the reference was not worth showing. The surface has room
+     * now, so the compromise goes with the constraint that caused it.
+     */
+    if (!trimmed) return all;
     return all
       .map((g) => ({
         ...g,
@@ -72,7 +95,7 @@ export const ExpressionReference: React.FC<Props> = ({ variable, onInsert }) => 
         ),
       }))
       .filter((g) => g.tokens.length > 0);
-  }, [trimmed, expanded]);
+  }, [trimmed]);
 
   const shown = groups.reduce((n, g) => n + g.tokens.length, 0);
 
@@ -121,20 +144,6 @@ export const ExpressionReference: React.FC<Props> = ({ variable, onInsert }) => 
             </section>
           ))}
         </div>
-      )}
-
-      {/* Not a disclosure over the whole reference — the common dozen are
-          always on screen. This only says whether the rarer two thirds are
-          listed as well, which is a genuine choice about density rather than
-          a lid on the feature. */}
-      {!trimmed && (
-        <button
-          type="button"
-          className="exref__more"
-          onClick={() => setExpanded((v) => !v)}
-        >
-          {expanded ? 'Show fewer' : 'Show all 31'}
-        </button>
       )}
 
       <p className="exref__note">

@@ -30,7 +30,10 @@ describe('the chart panel', () => {
    * cluster becoming a sixteenth heading.
    */
   it('has one fixed spine of sections', () => {
-    const sections = [...PANEL.matchAll(/<Group label=(?:"([^"]+)"|\{([^}]+)\})/g)].map(
+    // `\s+` rather than a literal space: a `<Group>` that also carries
+    // `actions` puts its label on the next line, and matching only the
+    // one-line form silently dropped the two source sections.
+    const sections = [...PANEL.matchAll(/<Group\s+label=(?:"([^"]+)"|\{([^}]+)\})/g)].map(
       (m) => m[1] ?? m[2]
     );
 

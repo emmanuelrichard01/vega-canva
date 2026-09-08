@@ -420,7 +420,7 @@ const PlaneChrome: React.FC<{
   // rest is the chart and not the controls.
   if (!locked && !isHovered) return null;
 
-  const SIZE = 20;
+  const SIZE = 22;
   const GAP = 3;
   const x = plot.x + 4;
   const y = plot.y + 4;
@@ -436,7 +436,7 @@ const PlaneChrome: React.FC<{
         label={locked ? 'Unlock the plane' : 'Lock the plane against panning and zooming'}
         onPress={() => updateChart(node.id, { ...node.chart, lockPlane: !locked })}
       >
-        <LockGlyph size={SIZE} locked={locked} color={locked ? ink.ink : ink.chrome} />
+        <LockGlyph size={SIZE - GLYPH_INSET * 2} locked={locked} color={locked ? ink.ink : ink.chrome} />
       </PlaneButton>
 
       {moved && isHovered && (
@@ -449,7 +449,7 @@ const PlaneChrome: React.FC<{
           label="Put the plane back where it started"
           onPress={onReset}
         >
-          <ResetGlyph size={SIZE} color={ink.chrome} />
+          <ResetGlyph size={SIZE - GLYPH_INSET * 2} color={ink.chrome} />
         </PlaneButton>
       )}
     </Group>
@@ -487,7 +487,17 @@ const PlaneButton: React.FC<{
         strokeWidth={1}
         perfectDrawEnabled={false}
       />
-      {children}
+      {/*
+        Inset, and centred by that inset.
+
+        The glyph was drawn at the button's full size from its top-left
+        corner, so it ran edge to edge and its stroke sat on the button's own
+        border — which is most of why the two read as broken rather than
+        merely plain. An icon wants roughly a quarter of its button as air.
+      */}
+      <Group x={GLYPH_INSET} y={GLYPH_INSET}>
+        {children}
+      </Group>
       {/* Named for a screen reader and for the accessibility tree Konva
           exposes; the visual is the glyph. */}
       <Rect width={size} height={size} fill="rgba(0,0,0,0)" name={label} />
@@ -495,78 +505,79 @@ const PlaneButton: React.FC<{
   );
 };
 
-/** A padlock, drawn rather than typed. Open when the plane is free. */
-const LockGlyph: React.FC<{ size: number; locked: boolean; color: string }> = ({
+/**
+ * The two glyphs, as path data on a 24-unit grid.
+ *
+ * ## Why not `Arc`
+ *
+ * They were drawn with Konva's `Arc` at `innerRadius === outerRadius`, which
+ * is a degenerate ring: an `Arc` is a filled wedge or annulus, and collapsing
+ * its two radii gives a shape with no area whose stroke is its own radial
+ * edges laid on top of each other. It cannot produce an open arc, which is
+ * exactly what a padlock's shackle and a circular arrow both are — so the
+ * lock had no bow and the reset arrow had no curve.
+ *
+ * `Path` takes SVG arc commands and draws what they say. The geometry is the
+ * same as the `lock`, `unlock` and `rotate-ccw` icons the rest of the app
+ * uses from lucide, so the canvas chrome and the panel chrome are the same
+ * drawings rather than two people's idea of a padlock.
+ *
+ * ## Scaled, not re-authored
+ *
+ * Written at 24 units and scaled to the button, so the proportions are fixed
+ * and only one number changes if the control resizes. The stroke is set in
+ * the same space and scales with it, which is what keeps the two glyphs
+ * visually the same weight as each other.
+ */
+const GLYPH_GRID = 24;
+
+/** The air between a glyph and the edge of the button it sits in. */
+const GLYPH_INSET = 4;
+
+const LOCK_BODY = 'M5 11.5h14a1.5 1.5 0 0 1 1.5 1.5v7a1.5 1.5 0 0 1-1.5 1.5H5A1.5 1.5 0 0 1 3.5 20v-7A1.5 1.5 0 0 1 5 11.5z';
+/** Closed: both legs come down into the body. */
+const LOCK_SHUT = 'M7.5 11.5V7a4.5 4.5 0 0 1 9 0v4.5';
+/** Open: the bow is lifted and swung, so only one leg meets the body. */
+const LOCK_OPEN = 'M7.5 11.5V7a4.5 4.5 0 0 1 8.9-.9';
+/** A circular arrow running anticlockwise, with its head at the start. */
+const RESET_ARC = 'M3.5 12a8.5 8.5 0 1 0 2.5-6.01L3.5 7.5';
+const RESET_HEAD = 'M3.5 3.5v4.5h4.5';
+
+const Glyph: React.FC<{ size: number; color: string; paths: string[] }> = ({
   size,
-  locked,
   color,
+  paths,
 }) => {
-  const cx = size / 2;
-  const bodyW = 9;
-  const bodyH = 7;
-  const bodyY = size / 2 - 1;
+  const scale = size / GLYPH_GRID;
   return (
     <>
-      <Rect
-        x={cx - bodyW / 2}
-        y={bodyY}
-        width={bodyW}
-        height={bodyH}
-        cornerRadius={1.5}
-        stroke={color}
-        strokeWidth={1.3}
-        listening={false}
-        perfectDrawEnabled={false}
-      />
-      {/* The shackle: centred when closed, and swung off to one side when
-          open, which is how a padlock actually reads as unlocked. */}
-      <Arc
-        x={locked ? cx : cx + 2.6}
-        y={bodyY}
-        innerRadius={3}
-        outerRadius={3}
-        angle={180}
-        rotation={180}
-        stroke={color}
-        strokeWidth={1.3}
-        listening={false}
-        perfectDrawEnabled={false}
-      />
+      {paths.map((data, i) => (
+        <Path
+          key={i}
+          data={data}
+          scaleX={scale}
+          scaleY={scale}
+          stroke={color}
+          strokeWidth={2}
+          lineCap="round"
+          lineJoin="round"
+          listening={false}
+          perfectDrawEnabled={false}
+        />
+      ))}
     </>
   );
 };
 
-/** A counter-clockwise arrow: the shape "undo" has meant for forty years. */
-const ResetGlyph: React.FC<{ size: number; color: string }> = ({ size, color }) => {
-  const c = size / 2;
-  const r = 5;
-  return (
-    <>
-      <Arc
-        x={c}
-        y={c}
-        innerRadius={r}
-        outerRadius={r}
-        angle={280}
-        rotation={140}
-        stroke={color}
-        strokeWidth={1.3}
-        listening={false}
-        perfectDrawEnabled={false}
-      />
-      <Line
-        points={[c - r - 2.2, c - 1.6, c - r, c - 4.4, c - r + 2.6, c - 2.2]}
-        stroke={color}
-        strokeWidth={1.3}
-        lineJoin="round"
-        lineCap="round"
-        closed={false}
-        listening={false}
-        perfectDrawEnabled={false}
-      />
-    </>
-  );
-};
+const LockGlyph: React.FC<{ size: number; locked: boolean; color: string }> = ({
+  size,
+  locked,
+  color,
+}) => <Glyph size={size} color={color} paths={[LOCK_BODY, locked ? LOCK_SHUT : LOCK_OPEN]} />;
+
+const ResetGlyph: React.FC<{ size: number; color: string }> = ({ size, color }) => (
+  <Glyph size={size} color={color} paths={[RESET_ARC, RESET_HEAD]} />
+);
 
 /**
  * The live readout.

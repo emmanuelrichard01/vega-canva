@@ -17323,20 +17323,6 @@ html[data-precise] .canvas-container[data-cursor-mode] .konvajs-content canvas {
 .chartp-group__actions { margin-left: auto; display: flex; align-items: center; gap: 4px; }
 .chartp-group__body { display: flex; flex-direction: column; }
 
-/* --- the two remaining reveals ------------------------------------------- */
-
-.chartp-reveal { margin-top: var(--space-2); }
-
-.chartp-reveal__summary {
-  font-size: var(--text-xs);
-  color: var(--text-secondary);
-  cursor: pointer;
-  padding: 3px 0;
-  list-style: revert;
-}
-
-.chartp-reveal__summary:hover { color: var(--text-primary); }
-.chartp-reveal__body { padding-top: var(--space-2); }
 
 /* --- toggles and actions ------------------------------------------------- */
 
@@ -18917,186 +18903,6 @@ html[data-precise] .canvas-container[data-cursor-mode] .konvajs-content canvas {
   color: var(--text-primary);
 }
 
-/* ─────────────────────────────────────────────────────────────────────────
-   Start from an example
-
-   A strip, not a gallery, and not behind a disclosure. One row of live
-   previews that scrolls sideways costs about eighty pixels wherever the chart
-   is in its life — little enough to leave open permanently, and enough to see
-   four examples at a glance. That is the trade every component browser makes,
-   and it is why they are strips rather than grids.
-   ───────────────────────────────────────────────────────────────────────── */
-.exs {
-  display: flex;
-  flex-direction: column;
-  gap: 5px;
-  padding: var(--space-2) 0 var(--space-3);
-  border-bottom: 1px solid var(--border-divider);
-}
-
-.exs__head {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: 8px;
-}
-
-.exs__title {
-  color: var(--text-tertiary);
-  font-size: var(--text-2xs);
-  font-weight: 600;
-  letter-spacing: 0.06em;
-  text-transform: uppercase;
-}
-
-.exs__nav {
-  display: flex;
-  gap: 2px;
-}
-
-.exs__arrow {
-  display: grid;
-  place-items: center;
-  width: 20px;
-  height: 20px;
-  padding: 0;
-  border: 1px solid var(--border-divider);
-  border-radius: var(--radius-sm);
-  background: none;
-  color: var(--text-secondary);
-  cursor: pointer;
-  transition: border-color var(--motion-hover), color var(--motion-hover);
-}
-
-.exs__arrow:hover:not(:disabled) {
-  border-color: var(--accent-line);
-  color: var(--text-primary);
-}
-
-/* An arrow with nowhere to go says there is more when there is not. */
-.exs__arrow:disabled {
-  opacity: 0.3;
-  cursor: default;
-}
-
-.exs__scroller {
-  display: flex;
-  gap: 6px;
-  /* Snap, so a nudge lands on a card boundary rather than halfway through a
-     preview — a half-visible chart reads as a rendering fault. */
-  scroll-snap-type: x mandatory;
-  overflow-x: auto;
-  overscroll-behavior-x: contain;
-  padding-bottom: 2px;
-  scrollbar-width: thin;
-}
-
-.exs__scroller::-webkit-scrollbar { height: 5px; }
-
-.exs__scroller::-webkit-scrollbar-thumb {
-  border-radius: 999px;
-  background: var(--border-divider);
-}
-
-.exs__cell {
-  display: flex;
-  flex-direction: column;
-  gap: 3px;
-  flex: none;
-  scroll-snap-align: start;
-}
-
-/* Reserved whether or not this card starts a run of its kind, so the cards
-   stay on one baseline instead of stepping up and down the strip. */
-.exs__kind {
-  min-height: 12px;
-  padding-left: 2px;
-  color: var(--text-tertiary);
-  font-size: var(--text-2xs);
-  line-height: 12px;
-  white-space: nowrap;
-}
-
-.exs__card {
-  position: relative;
-  display: flex;
-}
-
-.exs__pick {
-  display: flex;
-  flex-direction: column;
-  gap: 4px;
-  width: 116px;
-  padding: 5px;
-  border: 1px solid var(--border-divider);
-  border-radius: var(--radius-md);
-  background: var(--surface-sunken, var(--surface-secondary));
-  cursor: pointer;
-  transition: border-color var(--motion-hover), background-color var(--motion-hover);
-}
-
-.exs__pick:hover {
-  border-color: var(--accent-line);
-  background: var(--surface-hover);
-}
-
-.exs__pick:focus-visible {
-  outline: 2px solid var(--text-accent);
-  outline-offset: 1px;
-}
-
-.exs__thumb {
-  display: block;
-  border-radius: var(--radius-sm);
-  background: var(--surface-primary);
-  overflow: hidden;
-}
-
-.exs__thumb svg {
-  display: block;
-  width: 100%;
-  height: auto;
-}
-
-.exs__name {
-  color: var(--text-secondary);
-  font-size: var(--text-2xs);
-  line-height: 1.25;
-  text-align: left;
-  overflow: hidden;
-  white-space: nowrap;
-  text-overflow: ellipsis;
-}
-
-.exs__pick:hover .exs__name { color: var(--text-primary); }
-
-/* Adding a curve to a plot that already has one is a different act from
-   replacing the chart, and it is the one people want more often. Quiet until
-   the card is under the pointer, because replacing is still the primary. */
-.exs__add {
-  position: absolute;
-  top: 8px;
-  right: 8px;
-  display: grid;
-  place-items: center;
-  width: 18px;
-  height: 18px;
-  padding: 0;
-  border: 1px solid var(--border-divider);
-  border-radius: var(--radius-sm);
-  background: var(--surface-primary);
-  color: var(--text-secondary);
-  opacity: 0;
-  cursor: pointer;
-  transition: opacity var(--motion-hover), color var(--motion-hover);
-}
-
-.exs__card:hover .exs__add,
-.exs__add:focus-visible {
-  opacity: 1;
-}
-
-.exs__add:hover { color: var(--text-accent); }
 
 /* ─────────────────────────────────────────────────────────────────────────
    What you can write
@@ -19248,4 +19054,271 @@ html[data-precise] .canvas-container[data-cursor-mode] .konvajs-content canvas {
   border-radius: 3px;
   background: var(--surface-sunken, var(--surface-secondary));
   font-family: var(--font-mono);
+}
+
+/* ─────────────────────────────────────────────────────────────────────────
+   Panel popovers
+
+   A surface wide enough to design in, opened from a button on a section
+   heading. The properties column is about 260px, which fits two example cards
+   or one cramped column of function names — the constraint was doing the
+   design harm, and no arrangement inside it was going to fix that.
+   ───────────────────────────────────────────────────────────────────────── */
+.pnpop__trigger {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  padding: 2px 6px;
+  border: 1px solid var(--border-divider);
+  border-radius: var(--radius-sm);
+  background: none;
+  color: var(--text-secondary);
+  font-size: var(--text-2xs);
+  font-weight: 500;
+  white-space: nowrap;
+  cursor: pointer;
+  transition:
+    background-color var(--motion-hover),
+    border-color var(--motion-hover),
+    color var(--motion-hover);
+}
+
+.pnpop__trigger:hover {
+  border-color: var(--accent-line);
+  color: var(--text-primary);
+}
+
+.pnpop__trigger[data-open] {
+  border-color: var(--accent-line);
+  background: var(--accent-quiet);
+  color: var(--text-primary);
+}
+
+.pnpop__trigger:focus-visible {
+  outline: 2px solid var(--text-accent);
+  outline-offset: 1px;
+}
+
+/* The count is the promise. A trigger that says only "Examples" is a lid with
+   a word on it; "Examples 24" says what is behind it and how much. */
+.pnpop__count {
+  padding: 0 4px;
+  border-radius: 999px;
+  background: var(--surface-sunken, var(--surface-secondary));
+  color: var(--text-tertiary);
+  font-size: var(--text-2xs);
+  font-variant-numeric: tabular-nums;
+  line-height: 1.5;
+}
+
+.pnpop__trigger[data-open] .pnpop__count {
+  background: var(--surface-primary);
+  color: var(--text-primary);
+}
+
+.pnpop {
+  position: fixed;
+  z-index: 1000;
+  display: flex;
+  flex-direction: column;
+  max-height: min(70vh, 560px);
+  border: 1px solid var(--border-divider);
+  border-radius: var(--radius-lg);
+  background: var(--surface-primary);
+  box-shadow: 0 18px 48px rgb(0 0 0 / 28%);
+  overflow: hidden;
+}
+
+/* ── The example browser ─────────────────────────────────────────────── */
+
+.exb {
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+}
+
+.exb__search {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  flex: none;
+  padding: 10px 12px;
+  border-bottom: 1px solid var(--border-divider);
+  color: var(--text-tertiary);
+}
+
+.exb__input {
+  flex: 1;
+  min-width: 0;
+  border: 0;
+  background: none;
+  color: var(--text-primary);
+  font-size: var(--text-sm);
+  outline: none;
+}
+
+.exb__clear {
+  display: grid;
+  place-items: center;
+  width: 18px;
+  height: 18px;
+  padding: 0;
+  border: 0;
+  border-radius: var(--radius-sm);
+  background: none;
+  color: var(--text-tertiary);
+  cursor: pointer;
+}
+
+.exb__clear:hover { color: var(--text-primary); }
+
+.exb__scroll {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-3);
+  min-height: 0;
+  padding: var(--space-3);
+  overflow-y: auto;
+  overscroll-behavior: contain;
+}
+
+.exb__group {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+/* Sticky, so the run being scrolled through keeps saying what kind it is. */
+.exb__groupLabel {
+  position: sticky;
+  top: 0;
+  z-index: 1;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  margin: 0;
+  padding: 2px 0 4px;
+  background: var(--surface-primary);
+  color: var(--text-tertiary);
+  font-size: var(--text-2xs);
+  font-weight: 600;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+}
+
+.exb__count {
+  color: var(--text-tertiary);
+  font-weight: 500;
+  font-variant-numeric: tabular-nums;
+  opacity: 0.7;
+}
+
+/* Three up. At 440px that is a 124px preview with room for a name and the one
+   line explaining what it demonstrates — which in the 260px strip could only
+   live in a tooltip. */
+.exb__grid {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 6px;
+}
+
+.exb__card {
+  position: relative;
+  display: flex;
+  min-width: 0;
+}
+
+.exb__pick {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  width: 100%;
+  min-width: 0;
+  padding: 6px;
+  border: 1px solid var(--border-divider);
+  border-radius: var(--radius-md);
+  background: var(--surface-sunken, var(--surface-secondary));
+  text-align: left;
+  cursor: pointer;
+  transition: border-color var(--motion-hover), background-color var(--motion-hover);
+}
+
+.exb__pick:hover {
+  border-color: var(--accent-line);
+  background: var(--surface-hover);
+}
+
+.exb__pick:focus-visible {
+  outline: 2px solid var(--text-accent);
+  outline-offset: 1px;
+}
+
+.exb__thumb {
+  display: block;
+  border-radius: var(--radius-sm);
+  background: var(--surface-primary);
+  overflow: hidden;
+}
+
+.exb__thumb svg {
+  display: block;
+  width: 100%;
+  height: auto;
+}
+
+.exb__name {
+  color: var(--text-primary);
+  font-size: var(--text-2xs);
+  font-weight: 600;
+  line-height: 1.25;
+  overflow: hidden;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+}
+
+.exb__note {
+  color: var(--text-tertiary);
+  font-size: var(--text-2xs);
+  line-height: 1.3;
+  /* Two lines, then an ellipsis: enough for the one-line note without letting
+     a long one change the height of its row. */
+  display: -webkit-box;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 2;
+  overflow: hidden;
+}
+
+/* Adding a curve to a plot that already has one is a different act from
+   replacing the chart, and it is the one people want more often. Quiet until
+   the card is under the pointer, because replacing is still the primary. */
+.exb__add {
+  position: absolute;
+  top: 10px;
+  right: 10px;
+  display: grid;
+  place-items: center;
+  width: 18px;
+  height: 18px;
+  padding: 0;
+  border: 1px solid var(--border-divider);
+  border-radius: var(--radius-sm);
+  background: var(--surface-primary);
+  color: var(--text-secondary);
+  opacity: 0;
+  cursor: pointer;
+  transition: opacity var(--motion-hover), color var(--motion-hover);
+}
+
+.exb__card:hover .exb__add,
+.exb__add:focus-visible { opacity: 1; }
+
+.exb__add:hover { color: var(--text-accent); }
+
+.exb__empty {
+  margin: 0;
+  padding: var(--space-5) var(--space-3);
+  color: var(--text-tertiary);
+  font-size: var(--text-xs);
+  text-align: center;
 }

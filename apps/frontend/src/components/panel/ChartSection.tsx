@@ -41,7 +41,7 @@ import {
   parseChartData,
   withChartData,
 } from '../../engine/chart/chartCsv';
-import { ExampleStrip } from './ExampleStrip';
+import { ExampleButton } from './ExampleBrowser';
 import { ExpressionReference } from './ExpressionReference';
 import { logDomainOf } from '../../engine/chart/scales';
 import { parseExpression } from '../../engine/chart/expression';
@@ -113,6 +113,20 @@ interface Props {
  * the label rather than a replacement for it.
  */
 /** The two kinds drawn as a field of arrows, which alone take seed points. */
+/**
+ * The letter this kind's formulae are written in.
+ *
+ * Derived inside `FormulaEditor` until the function reference moved onto the
+ * section heading and needed it too — a pure function of the kind, so it is
+ * one rather than a prop threaded back up.
+ */
+const plotVariableFor = (kind: ChartKind): string => {
+  if (isTwoVariable(kind)) return 'x';
+  if (kind === 'parametric') return 't';
+  if (kind === 'polarPlot') return 'a';
+  return 'x';
+};
+
 const isField = (kind: ChartKind) => kind === 'slopeField' || kind === 'vectorField';
 
 const SORT_GLYPH: Record<string, string> = {
@@ -137,11 +151,42 @@ export const ChartSection: React.FC<Props> = ({ node }) => {
    * reference line came to be offered on a pie that never drew one.
    */
   const can = chartCapabilities(spec.kind);
+  const plotVariable = plotVariableFor(spec.kind);
+
+  /**
+   * Which formula row an inserted token lands in.
+   *
+   * It was `FormulaEditor`'s own state, and it still would be if the function
+   * reference had stayed in the body. The reference is on the section heading
+   * now, so two children of this component need the same answer — which is
+   * the textbook reason for state to sit at their common parent rather than
+   * be duplicated or guessed at.
+   */
+  const [activeCurve, setActiveCurve] = React.useState(0);
 
   const patch = React.useCallback(
     (next: Partial<ChartSpec>) => updateChart(node.id, { ...spec, ...next }),
     [node.id, spec]
   );
+
+  const insertToken = React.useCallback(
+    (token: string) => {
+      const curves = spec.functions ?? [];
+      if (curves.length === 0) {
+        patch({ functions: [{ source: token }] });
+        return;
+      }
+      const target = Math.min(activeCurve, curves.length - 1);
+      const current = curves[target].source.trim();
+      patch({
+        functions: curves.map((c, i) =>
+          i === target ? { ...c, source: current ? `${current} + ${token}` : token } : c
+        ),
+      });
+    },
+    [spec.functions, activeCurve, patch]
+  );
+
 
   return (
     <div className="chartp">
@@ -177,35 +222,57 @@ export const ChartSection: React.FC<Props> = ({ node }) => {
         * to open a section to discover is a control nobody finds.
         */}
 
-      {/* ─── 1. Source ─────────────────────────────────────────────────── */}
+      {/**
+        * ─── 1. Source ───────────────────────────────────────────────────
+        *
+        * Both entry points ride on the section's *heading*, where the data
+        * actions already were. That is where they belong: opening the example
+        * browser or the function reference is an act on the whole section,
+        * not a row within it — the same distinction that put Import and
+        * Export beside "Data" rather than under it.
+        *
+        * Examples are offered for every kind, not only for the plots. They
+        * lived inside `FormulaEditor`, so a bar chart, a pie, a funnel and a
+        * waterfall — everything anybody reaches for first — had none at all.
+        * That asymmetry was backwards: somebody plotting sin(x) knows what
+        * they want, and somebody making their first waterfall mostly does not
+        * know what a waterfall is *for*.
+        */}
       {plot ? (
-        <Group label="Formula">
-          <FormulaEditor spec={spec} patch={patch} />
+        <Group
+          label="Formula"
+          actions={
+            <>
+              <ExpressionReference variable={plotVariable} onInsert={insertToken} />
+              <ExampleButton
+                kind={spec.kind}
+                onPick={(next) => updateChart(node.id, next)}
+                onAddCurves={(extra) =>
+                  patch({ functions: [...(spec.functions ?? []), ...extra] })
+                }
+              />
+            </>
+          }
+        >
+          <FormulaEditor
+            spec={spec}
+            patch={patch}
+            onFocusCurve={setActiveCurve}
+          />
         </Group>
       ) : (
-        <Group label="Data" actions={<DataActions node={node} spec={spec} />}>
+        <Group
+          label="Data"
+          actions={
+            <>
+              <DataActions node={node} spec={spec} />
+              <ExampleButton kind={spec.kind} onPick={(next) => updateChart(node.id, next)} />
+            </>
+          }
+        >
           <DataGrid spec={spec} patch={patch} />
         </Group>
       )}
-
-      {/**
-        * Examples, for every kind rather than only for the plots.
-        *
-        * They lived inside `FormulaEditor`, which meant a bar chart, a pie, a
-        * funnel and a waterfall — everything anybody reaches for first — had
-        * none at all. That asymmetry was backwards: somebody plotting sin(x)
-        * knows what they want, and somebody making their first waterfall
-        * mostly does not know what a waterfall is *for*.
-        */}
-      <ExampleStrip
-        kind={spec.kind}
-        onPick={(next) => updateChart(node.id, next)}
-        onAddCurves={
-          plot
-            ? (extra) => patch({ functions: [...(spec.functions ?? []), ...extra] })
-            : undefined
-        }
-      />
 
       {/* ─── 2. Marks ──────────────────────────────────────────────────── */}
       <Group label="Marks">
@@ -1383,23 +1450,18 @@ const SeriesFields: React.FC<{ spec: ChartSpec; patch: (n: Partial<ChartSpec>) =
  * on the board. Clearing the plot on every keystroke that does not yet parse
  * makes the chart flash empty through the whole of typing.
  */
-const FormulaEditor: React.FC<{ spec: ChartSpec; patch: (n: Partial<ChartSpec>) => void }> = ({
-  spec,
-  patch,
-}) => {
+const FormulaEditor: React.FC<{
+  spec: ChartSpec;
+  patch: (n: Partial<ChartSpec>) => void;
+  /** Reports which row has focus; the section is what remembers it. */
+  onFocusCurve: (index: number) => void;
+}> = ({ spec, patch, onFocusCurve }) => {
   const twoVar = isTwoVariable(spec.kind);
-  const variable = twoVar
-    ? 'x'
-    : spec.kind === 'parametric'
-      ? 't'
-      : spec.kind === 'polarPlot'
-        ? 'a'
-        : 'x';
+  const variable = plotVariableFor(spec.kind);
   // Two-variable expressions read both; the parser is told the set so an
   // unknown name is still an error rather than a silent NaN.
   const variables = twoVar ? ['x', 'y'] : [variable];
   const curves = spec.functions ?? [];
-  const [activeCurveIdx, setActiveCurveIdx] = React.useState<number>(0);
 
   // Pairs are named rather than numbered: "f2" would not tell anybody it is
   // the y half of a parametric curve or the Q of a vector field.
@@ -1412,17 +1474,6 @@ const FormulaEditor: React.FC<{ spec: ChartSpec; patch: (n: Partial<ChartSpec>) 
 
   const set = (i: number, next: Partial<(typeof curves)[number]>) =>
     patch({ functions: curves.map((c, j) => (i === j ? { ...c, ...next } : c)) });
-
-  const onInsertToken = (tok: string) => {
-    const target = Math.min(activeCurveIdx, Math.max(0, curves.length - 1));
-    if (curves.length === 0) {
-      patch({ functions: [{ source: tok }] });
-      return;
-    }
-    const cur = curves[target].source.trim();
-    const nextSrc = !cur ? tok : `${cur} + ${tok}`;
-    set(target, { source: nextSrc });
-  };
 
   return (
     <>
@@ -1437,7 +1488,7 @@ const FormulaEditor: React.FC<{ spec: ChartSpec; patch: (n: Partial<ChartSpec>) 
                 value={curve.source}
                 spellCheck={false}
                 data-invalid={!result.ok || undefined}
-                onFocus={() => setActiveCurveIdx(i)}
+                onFocus={() => onFocusCurve(i)}
                 onChange={(e) => set(i, { source: e.target.value })}
                 aria-label={rowLabel(i)}
               />
@@ -1500,10 +1551,6 @@ const FormulaEditor: React.FC<{ spec: ChartSpec; patch: (n: Partial<ChartSpec>) 
         <Plus size={12} /> Add a formula
       </button>
 
-      {/* Not behind a disclosure. The people who need a function reference
-          are the ones who have not yet worked out what the panel contains,
-          and a `<details>` is invisible to exactly them. */}
-      <ExpressionReference variable={variable} onInsert={onInsertToken} />
     </>
   );
 };
