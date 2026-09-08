@@ -543,6 +543,72 @@ export function chartHitTest(
     };
   }
 
+  /**
+   * ---- columns: one x, every series at it -------------------------------
+   *
+   * The reading for every cartesian kind that is not bars. It used to be the
+   * *dots*, which meant an area chart -- which draws none -- answered
+   * nothing: no readout, no highlight, no explanation, on one of the four
+   * kinds people use most. A line with its markers switched off had the same
+   * hole, and neither said anything was wrong.
+   *
+   * Reading by column rather than by nearest mark is also the better answer
+   * on its own terms: hovering a moment in time to compare the series is what
+   * the gesture is for, and picking the single nearest vertex reports one
+   * series and hides the rest.
+   */
+  if (layout.columns.length) {
+    const transposed = layout.columns.length > 1 && layout.columns[0].x === layout.columns[1].x;
+    const along = (c: (typeof layout.columns)[number]) => (transposed ? c.y : c.x);
+    const at = transposed ? point.y : point.x;
+
+    let best: (typeof layout.columns)[number] | null = null;
+    let bestD = Infinity;
+    for (const column of layout.columns) {
+      const d = Math.abs(along(column) - at);
+      if (d < bestD) {
+        bestD = d;
+        best = column;
+      }
+    }
+
+    if (best && bestD <= REACH && best.entries.length > 0) {
+      // The series nearest the pointer *within* the column, so the readout can
+      // say which line is being followed and the renderer can lift it.
+      let nearest = best.entries[0];
+      let nearestD = Infinity;
+      for (const entry of best.entries) {
+        const d = Math.hypot(entry.x - point.x, entry.y - point.y);
+        if (d < nearestD) {
+          nearestD = d;
+          nearest = entry;
+        }
+      }
+
+      let deltaVsTarget: string | undefined;
+      if (typeof options.referenceValue === 'number' && Number.isFinite(options.referenceValue)) {
+        const d = nearest.value - options.referenceValue;
+        deltaVsTarget = `${d > 0 ? '+' : ''}${options.format(d)}`;
+      }
+
+      return {
+        label: options.categories[best.categoryIndex] ?? '',
+        categoryIndex: best.categoryIndex,
+        seriesIndex: nearest.seriesIndex,
+        entries: best.entries.map((entry) => ({
+          name: options.seriesNames[entry.seriesIndex] ?? '',
+          value: entry.value,
+          color: entry.color,
+          text: options.format(entry.value),
+        })),
+        // Anchored on the series being followed rather than on the column's
+        // top, so the readout appears beside the value it is describing.
+        anchor: { x: nearest.x, y: nearest.y },
+        deltaVsTarget,
+      };
+    }
+  }
+
   // ---- points: the nearest one that carries a value -----------------------
   const valued = layout.dots.filter((d) => Number.isFinite(d.value));
   if (valued.length) {
@@ -558,6 +624,11 @@ export function chartHitTest(
     if (best && bestD <= REACH) {
       return {
         label: options.categories[best.categoryIndex] ?? '',
+        // Both indices, which this branch never reported -- so hovering a
+        // scatter point lit nothing, because every highlight in the renderer
+        // keys off exactly these.
+        categoryIndex: best.categoryIndex,
+        seriesIndex: best.seriesIndex,
         entries: [
           {
             name: options.seriesNames[best.seriesIndex] ?? '',

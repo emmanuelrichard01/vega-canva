@@ -9,7 +9,7 @@ import { EXPORT_CHROME } from '../../../engine/export/chrome';
 import { currentChartInk } from '../../../engine/chart/chartInk';
 import { chartHitTest, placeReadout, type ChartHit } from '../../../engine/chart/chartHitTest';
 import { formatValue } from '../../../engine/chart/chartLayout';
-import { isRadial, isPlot } from '../../../engine/chart/chartTypes';
+import { isRadial, isPlot, defaultPlotDomain } from '../../../engine/chart/chartTypes';
 import { updateChart } from '../../../engine/chart/chartApply';
 import { useStore } from '../../../hooks/useStore';
 import { canvasPlateFill } from '../../../engine/ThemeService';
@@ -53,6 +53,25 @@ interface Props {
 
 
 
+/** The four numbers that say which part of the plane is on screen. */
+interface PlaneDomain {
+  xMin: number;
+  xMax: number;
+  yPlotMin: number;
+  yPlotMax: number;
+}
+
+/**
+ * Three decimals, which is finer than a pixel at any zoom this supports.
+ *
+ * Rounding at all is what stops a pan writing `-6.500000000000001` into the
+ * document and into everybody's undo history.
+ */
+const round3 = (v: number) => Number(v.toFixed(3));
+
+/** How long after the last wheel event the zoom is written down. */
+const PLANE_SETTLE_MS = 260;
+
 export const ChartRenderer: React.FC<Props> = ({ node }) => {
   const sketch = node.appearance?.sketch;
 
@@ -68,9 +87,29 @@ export const ChartRenderer: React.FC<Props> = ({ node }) => {
     []
   );
 
+  /**
+   * The plane while it is being moved, before it is written down.
+   *
+   * Panning wrote to the document on every pointer move: a CRDT transaction
+   * per frame, replicated to everyone in the room and pushed onto the undo
+   * stack, so dragging a plot across two units left forty edits behind and
+   * forty presses of undo to take back. The same defect the data sheet had,
+   * on a gesture that fires far more often than typing does.
+   *
+   * The draft is local, the layout is drawn from it, and the document is
+   * written once when the gesture ends -- so a pan is one edit, and a
+   * collaborator sees where it landed rather than every frame on the way.
+   */
+  const [draftPlane, setDraftPlane] = React.useState<PlaneDomain | null>(null);
+
+  const shownSpec = React.useMemo(
+    () => (draftPlane ? { ...node.chart, ...draftPlane } : node.chart),
+    [node.chart, draftPlane]
+  );
+
   const layout = React.useMemo(
-    () => layoutChart(node.chart, node.width, node.height, measure),
-    [node.chart, node.width, node.height, measure]
+    () => layoutChart(shownSpec, node.width, node.height, measure),
+    [shownSpec, node.width, node.height, measure]
   );
 
   /**
@@ -96,14 +135,27 @@ export const ChartRenderer: React.FC<Props> = ({ node }) => {
     [node.id, node.appearance?.sketchSeed]
   );
 
-  const dragStartRef = React.useRef<{
-    startX: number;
-    startY: number;
-    xMin: number;
-    xMax: number;
-    yPlotMin: number;
-    yPlotMax: number;
-  } | null>(null);
+  const settleRef = React.useRef<number | null>(null);
+
+  const dragStartRef = React.useRef<{ startX: number; startY: number } & PlaneDomain | null>(null);
+
+  /**
+   * Where the plane is now, filled in from the kind's real default.
+   *
+   * Every one of these read `?? -10`, and no plot opens at -10: a function
+   * plot is -6.5 to 6.5 and a two-variable one is -6 to 6. So the first pan
+   * or zoom of an untouched plot did not move the view, it *teleported* it --
+   * the gesture began from a domain the chart had never been drawn at.
+   */
+  const planeNow = React.useCallback((): PlaneDomain => {
+    const fallback = defaultPlotDomain(node.chart.kind);
+    return {
+      xMin: node.chart.xMin ?? fallback.xMin ?? -5,
+      xMax: node.chart.xMax ?? fallback.xMax ?? 5,
+      yPlotMin: node.chart.yPlotMin ?? fallback.yPlotMin ?? -5,
+      yPlotMax: node.chart.yPlotMax ?? fallback.yPlotMax ?? 5,
+    };
+  }, [node.chart]);
 
   const onPointerDown = (e: any) => {
     if ((node.chart.kind === 'slopeField' || node.chart.kind === 'vectorField') && e.evt.altKey) {
@@ -135,20 +187,20 @@ export const ChartRenderer: React.FC<Props> = ({ node }) => {
       const group = e.currentTarget;
       const p = group?.getRelativePointerPosition?.();
       if (!p) return;
-      dragStartRef.current = {
-        startX: p.x,
-        startY: p.y,
-        xMin: node.chart.xMin ?? -10,
-        xMax: node.chart.xMax ?? 10,
-        yPlotMin: node.chart.yPlotMin ?? -10,
-        yPlotMax: node.chart.yPlotMax ?? 10,
-      };
+      dragStartRef.current = { startX: p.x, startY: p.y, ...planeNow() };
     }
   };
 
-  const onPointerUp = () => {
+  /** The gesture is over: write where it landed, once. */
+  const commitPlane = React.useCallback(() => {
     dragStartRef.current = null;
-  };
+    setDraftPlane((current) => {
+      if (current) updateChart(node.id, { ...node.chart, ...current });
+      return null;
+    });
+  }, [node.id, node.chart]);
+
+  const onPointerUp = () => commitPlane();
 
   /**
    * The pointer, in the node's own coordinate space.
@@ -172,12 +224,11 @@ export const ChartRenderer: React.FC<Props> = ({ node }) => {
       const dxDomain = -(dx / plotW) * xSpan;
       const dyDomain = (dy / plotH) * ySpan;
 
-      updateChart(node.id, {
-        ...node.chart,
-        xMin: Number((dragStartRef.current.xMin + dxDomain).toFixed(3)),
-        xMax: Number((dragStartRef.current.xMax + dxDomain).toFixed(3)),
-        yPlotMin: Number((dragStartRef.current.yPlotMin + dyDomain).toFixed(3)),
-        yPlotMax: Number((dragStartRef.current.yPlotMax + dyDomain).toFixed(3)),
+      setDraftPlane({
+        xMin: round3(dragStartRef.current.xMin + dxDomain),
+        xMax: round3(dragStartRef.current.xMax + dxDomain),
+        yPlotMin: round3(dragStartRef.current.yPlotMin + dyDomain),
+        yPlotMax: round3(dragStartRef.current.yPlotMax + dyDomain),
       });
       return;
     }
@@ -207,10 +258,7 @@ export const ChartRenderer: React.FC<Props> = ({ node }) => {
       const p = group?.getRelativePointerPosition?.();
       if (!p) return;
       const factor = e.evt.deltaY < 0 ? 0.88 : 1.15;
-      const xMin = node.chart.xMin ?? -10;
-      const xMax = node.chart.xMax ?? 10;
-      const yPlotMin = node.chart.yPlotMin ?? -10;
-      const yPlotMax = node.chart.yPlotMax ?? 10;
+      const { xMin, xMax, yPlotMin, yPlotMax } = draftPlane ?? planeNow();
       const plotW = Math.max(layout.plot.width, 10);
       const plotH = Math.max(layout.plot.height, 10);
 
@@ -224,13 +272,25 @@ export const ChartRenderer: React.FC<Props> = ({ node }) => {
       const nextYMin = curY - ratioY * (yPlotMax - yPlotMin) * factor;
       const nextYMax = nextYMin + (yPlotMax - yPlotMin) * factor;
 
-      updateChart(node.id, {
-        ...node.chart,
-        xMin: Number(nextXMin.toFixed(3)),
-        xMax: Number(nextXMax.toFixed(3)),
-        yPlotMin: Number(nextYMin.toFixed(3)),
-        yPlotMax: Number(nextYMax.toFixed(3)),
+      /**
+       * Drafted like a drag, and settled shortly after the wheel stops.
+       *
+       * A wheel emits dozens of events per turn and each one was a document
+       * write. There is no "wheel end" event to commit on, so the settle is a
+       * timer: long enough that one continuous zoom is one edit, short enough
+       * that letting go feels like it landed.
+       */
+      setDraftPlane({
+        xMin: round3(nextXMin),
+        xMax: round3(nextXMax),
+        yPlotMin: round3(nextYMin),
+        yPlotMax: round3(nextYMax),
       });
+      if (settleRef.current !== null) window.clearTimeout(settleRef.current);
+      settleRef.current = window.setTimeout(() => {
+        settleRef.current = null;
+        commitPlane();
+      }, PLANE_SETTLE_MS);
     }
   };
 
@@ -246,7 +306,9 @@ export const ChartRenderer: React.FC<Props> = ({ node }) => {
       onWheel={onWheel}
       onDblClick={onDblClick}
       onPointerLeave={() => {
-        dragStartRef.current = null;
+        // Commits rather than discards: the pointer leaving the chart is the
+        // end of the gesture, not a reason to throw away where it got to.
+        commitPlane();
         setHover(null);
       }}
     >
@@ -260,6 +322,17 @@ export const ChartRenderer: React.FC<Props> = ({ node }) => {
       />
       <Chrome layout={layout} ink={ink} />
       <CategoryBand hit={hover} layout={layout} />
+      {/* Under the marks: a guide drawn over the data hides the thing it is
+          helping you read. Bars have the band instead — two indicators for
+          one pointer is one too many. */}
+      {layout.bars.length === 0 && (
+        <Crosshair
+          hit={hover}
+          layout={layout}
+          ink={ink}
+          bothAxes={Boolean(layout.mathPlot?.isTwoVariable)}
+        />
+      )}
       <ToleranceBand layout={layout} />
       <Marks
         layout={layout}
@@ -267,17 +340,26 @@ export const ChartRenderer: React.FC<Props> = ({ node }) => {
         seed={seed}
         ink={ink}
         hoveredCategoryIndex={hover?.categoryIndex}
+        hoveredSeriesIndex={hover?.seriesIndex}
         areaOpacity={node.chart.areaOpacity}
       />
       <MathHUD hit={hover} ink={ink} />
       <Reference layout={layout} />
       <Labels layout={layout} ink={ink} />
       {isPlot(node.chart.kind) && (
-        <PlaneLockBadge
+        <PlaneChrome
           node={node}
           layout={layout}
           ink={ink}
           isHovered={Boolean(hover)}
+          onReset={() => {
+            // Cancels any pending settle, so a zoom that was still in flight
+            // does not land on top of the reset a moment later.
+            if (settleRef.current !== null) window.clearTimeout(settleRef.current);
+            settleRef.current = null;
+            setDraftPlane(null);
+            updateChart(node.id, { ...node.chart, ...defaultPlotDomain(node.chart.kind) });
+          }}
         />
       )}
       <Readout hit={hover} node={node} ink={ink} />
@@ -286,60 +368,203 @@ export const ChartRenderer: React.FC<Props> = ({ node }) => {
 };
 
 /**
- * Interactive canvas badge showing whether the graph plane is locked against zoom/pan.
- * Tapping/clicking toggles lockPlane on the chart node.
+ * The plane's lock, and the way back to where it started.
+ *
+ * ## Two controls, because the lock alone was a trap
+ *
+ * A plot you can pan and zoom is a plot you can get lost in — three seconds of
+ * scrolling leaves you at a domain of `147.3` to `152.9` with the curve
+ * nowhere on screen, and nothing on the chart says how to get back. The reset
+ * lived in the properties panel, which is the one place you are not looking
+ * when you have just lost the view. It sits on the chart now, next to the
+ * thing that let you lose it.
+ *
+ * It appears only once the plane has actually been moved, so an untouched
+ * plot carries one control rather than two: a "reset" beside a view that is
+ * already the default is a button that does nothing, and offering it is how a
+ * reader learns to ignore that corner.
+ *
+ * ## Why not an emoji
+ *
+ * It was 🔒, which Konva hands to the platform's emoji font: a flat glyph on
+ * one machine, a full-colour picture on another, a box on a third — and it
+ * cannot take the ink colour, so it ignored the theme entirely. These are
+ * drawn from paths at the same weight as every other mark on the chart.
+ *
+ * ## Where it sits
+ *
+ * Top-left of the plot, not top-right, because the top-right is where a
+ * heatmap's colour bar goes and two things placed at the same corner is a
+ * collision waiting for the first surface that has both.
  */
-const PlaneLockBadge: React.FC<{
+const PlaneChrome: React.FC<{
   node: ChartNode;
   layout: ChartLayout;
   ink: ChartInk;
+  /** Shown on hover as well as when locked; a lock is state and must persist. */
   isHovered: boolean;
-}> = ({ node, layout, ink, isHovered }) => {
-  const isLocked = Boolean(node.chart.lockPlane);
+  onReset: () => void;
+}> = ({ node, layout, ink, isHovered, onReset }) => {
+  const locked = Boolean(node.chart.lockPlane);
   const plot = layout.plot;
-  if (plot.width <= 0 || plot.height <= 0) return null;
+  if (plot.width <= 20 || plot.height <= 20) return null;
 
-  // Show if locked, or if hovering over the chart
-  if (!isLocked && !isHovered) return null;
+  const fallback = defaultPlotDomain(node.chart.kind);
+  const moved =
+    (node.chart.xMin ?? fallback.xMin) !== fallback.xMin ||
+    (node.chart.xMax ?? fallback.xMax) !== fallback.xMax ||
+    (node.chart.yPlotMin ?? fallback.yPlotMin) !== fallback.yPlotMin ||
+    (node.chart.yPlotMax ?? fallback.yPlotMax) !== fallback.yPlotMax;
 
-  const btnW = isLocked ? 68 : 24;
-  const btnH = 20;
-  const btnX = plot.x + plot.width - btnW - 4;
-  const btnY = plot.y + 4;
+  // A locked plane always says so. Everything else is on hover, so a chart at
+  // rest is the chart and not the controls.
+  if (!locked && !isHovered) return null;
+
+  const SIZE = 20;
+  const GAP = 3;
+  const x = plot.x + 4;
+  const y = plot.y + 4;
 
   return (
-    <Group
-      x={btnX}
-      y={btnY}
-      name={EXPORT_CHROME}
-      onClick={(e) => {
-        e.cancelBubble = true;
-        updateChart(node.id, { ...node.chart, lockPlane: !isLocked });
-      }}
-      onTap={(e) => {
-        e.cancelBubble = true;
-        updateChart(node.id, { ...node.chart, lockPlane: !isLocked });
-      }}
-    >
+    <Group name={EXPORT_CHROME}>
+      <PlaneButton
+        x={x}
+        y={y}
+        size={SIZE}
+        ink={ink}
+        active={locked}
+        label={locked ? 'Unlock the plane' : 'Lock the plane against panning and zooming'}
+        onPress={() => updateChart(node.id, { ...node.chart, lockPlane: !locked })}
+      >
+        <LockGlyph size={SIZE} locked={locked} color={locked ? ink.ink : ink.chrome} />
+      </PlaneButton>
+
+      {moved && isHovered && (
+        <PlaneButton
+          x={x + SIZE + GAP}
+          y={y}
+          size={SIZE}
+          ink={ink}
+          active={false}
+          label="Put the plane back where it started"
+          onPress={onReset}
+        >
+          <ResetGlyph size={SIZE} color={ink.chrome} />
+        </PlaneButton>
+      )}
+    </Group>
+  );
+};
+
+/** One square control on the plot, with the hit area and chrome they share. */
+const PlaneButton: React.FC<{
+  x: number;
+  y: number;
+  size: number;
+  ink: ChartInk;
+  active: boolean;
+  label: string;
+  onPress: () => void;
+  children: React.ReactNode;
+}> = ({ x, y, size, ink, active, label, onPress, children }) => {
+  const press = (e: any) => {
+    // The chart under it must not also take the click.
+    e.cancelBubble = true;
+    onPress();
+  };
+  return (
+    <Group x={x} y={y} onClick={press} onTap={press}>
       <Rect
-        width={btnW}
-        height={btnH}
+        width={size}
+        height={size}
         cornerRadius={4}
-        fill={isLocked ? 'rgba(239, 68, 68, 0.18)' : 'rgba(15, 23, 42, 0.55)'}
-        stroke={isLocked ? '#EF4444' : ink.chrome}
+        // The board's own colour rather than a fixed dark wash, so the control
+        // reads as sitting on the chart in both themes instead of as a black
+        // square on a white one.
+        fill={ink.sliceEdge}
+        opacity={active ? 0.95 : 0.8}
+        stroke={active ? ink.ink : ink.chrome}
         strokeWidth={1}
         perfectDrawEnabled={false}
       />
-      <Text
-        text={isLocked ? '🔒 Locked' : '🔓'}
-        x={isLocked ? 6 : 4}
-        y={4}
-        fontSize={10}
-        fontStyle="600"
-        fill={isLocked ? '#EF4444' : ink.chrome}
+      {children}
+      {/* Named for a screen reader and for the accessibility tree Konva
+          exposes; the visual is the glyph. */}
+      <Rect width={size} height={size} fill="rgba(0,0,0,0)" name={label} />
+    </Group>
+  );
+};
+
+/** A padlock, drawn rather than typed. Open when the plane is free. */
+const LockGlyph: React.FC<{ size: number; locked: boolean; color: string }> = ({
+  size,
+  locked,
+  color,
+}) => {
+  const cx = size / 2;
+  const bodyW = 9;
+  const bodyH = 7;
+  const bodyY = size / 2 - 1;
+  return (
+    <>
+      <Rect
+        x={cx - bodyW / 2}
+        y={bodyY}
+        width={bodyW}
+        height={bodyH}
+        cornerRadius={1.5}
+        stroke={color}
+        strokeWidth={1.3}
+        listening={false}
         perfectDrawEnabled={false}
       />
-    </Group>
+      {/* The shackle: centred when closed, and swung off to one side when
+          open, which is how a padlock actually reads as unlocked. */}
+      <Arc
+        x={locked ? cx : cx + 2.6}
+        y={bodyY}
+        innerRadius={3}
+        outerRadius={3}
+        angle={180}
+        rotation={180}
+        stroke={color}
+        strokeWidth={1.3}
+        listening={false}
+        perfectDrawEnabled={false}
+      />
+    </>
+  );
+};
+
+/** A counter-clockwise arrow: the shape "undo" has meant for forty years. */
+const ResetGlyph: React.FC<{ size: number; color: string }> = ({ size, color }) => {
+  const c = size / 2;
+  const r = 5;
+  return (
+    <>
+      <Arc
+        x={c}
+        y={c}
+        innerRadius={r}
+        outerRadius={r}
+        angle={280}
+        rotation={140}
+        stroke={color}
+        strokeWidth={1.3}
+        listening={false}
+        perfectDrawEnabled={false}
+      />
+      <Line
+        points={[c - r - 2.2, c - 1.6, c - r, c - 4.4, c - r + 2.6, c - 2.2]}
+        stroke={color}
+        strokeWidth={1.3}
+        lineJoin="round"
+        lineCap="round"
+        closed={false}
+        listening={false}
+        perfectDrawEnabled={false}
+      />
+    </>
   );
 };
 
@@ -376,24 +601,18 @@ const Readout: React.FC<{ hit: ChartHit | null; node: ChartNode; ink: ChartInk }
   const ROW = 16;
   const PAD = 8;
   const SWATCH = 7;
-  const hasDelta = Boolean(hit.deltaVsTarget);
+  const feature = hit.mathTrace?.snappedFeature;
+  const delta = hit.deltaVsTarget;
 
-  const displayLabel = hit.mathTrace?.snappedFeature
-    ? `[${hit.mathTrace.snappedFeature.label}] ${hit.label}`
-    : hit.label;
-
-  const deltaText = hit.deltaVsTarget
-    ? `Δ vs target: ${hit.deltaVsTarget}`
-    : '';
-  const isPositiveDelta = Boolean(hit.deltaVsTarget && !hit.deltaVsTarget.startsWith('-'));
+  const displayLabel = feature ? `${feature.label} · ${hit.label}` : hit.label;
 
   const widest = Math.max(
     measureChartText(displayLabel, 11, '600'),
-    hasDelta ? measureChartText(deltaText, 10, '600') + 12 : 0,
+    delta ? measureChartText(`vs target  ${delta}`, 10, '600') + 14 : 0,
     ...hit.entries.map((e) => measureChartText(`${e.name}  ${e.text}`, 11) + SWATCH + 8)
   );
   const width = Math.min(node.width - 8, Math.max(110, widest + PAD * 2));
-  const height = PAD * 2 + ROW * (hit.entries.length + (displayLabel ? 1 : 0) + (hasDelta ? 1 : 0));
+  const height = PAD * 2 + ROW * (hit.entries.length + (displayLabel ? 1 : 0) + (delta ? 1 : 0));
 
   const at = placeReadout(hit.anchor, { width, height }, { width: node.width, height: node.height });
   const plate = canvasPlateFill(ThemeService.isDarkMode());
@@ -405,6 +624,11 @@ const Readout: React.FC<{ hit: ChartHit | null; node: ChartNode; ink: ChartInk }
         height={height}
         cornerRadius={6}
         fill={plate}
+        // A hairline as well as a shadow: over a dark heatmap cell the plate
+        // and the surface behind it are near enough in value that the shadow
+        // alone does not separate them, and the readout melts into the chart.
+        stroke={ink.chrome}
+        strokeWidth={0.5}
         shadowColor="rgba(0,0,0,0.28)"
         shadowBlur={12}
         shadowOffsetY={3}
@@ -418,7 +642,10 @@ const Readout: React.FC<{ hit: ChartHit | null; node: ChartNode; ink: ChartInk }
           width={width - PAD * 2}
           fontSize={11}
           fontStyle="600"
-          fill={hit.mathTrace?.snappedFeature ? '#F59E0B' : ink.ink}
+          // A found feature is worth saying loudly -- being exactly on a root
+          // is different from being near one -- and the colour is a role now
+          // rather than an amber literal that could not follow the theme.
+          fill={feature ? ink.feature : ink.ink}
         />
       )}
       {hit.entries.map((e, i) => {
@@ -435,35 +662,65 @@ const Readout: React.FC<{ hit: ChartHit | null; node: ChartNode; ink: ChartInk }
               align="right"
               fontSize={11}
               fontStyle="600"
+              // Monospaced, so a column of values does not jump sideways as the
+              // pointer moves between `1.2` and `11.87` -- which is most of
+              // what makes a readout hard to read while it is moving.
+              fontFamily={HUD_NUMERIC_FONT}
               fill={ink.ink}
             />
           </React.Fragment>
         );
       })}
-      {hit.deltaVsTarget && (
+      {delta && (
         <Group y={PAD + (displayLabel ? ROW : 0) + hit.entries.length * ROW + 2}>
-          <Rect
+          {/*
+            Direction, not a verdict.
+
+            This was a green pill when the delta was positive and a red one
+            when it was negative — which asserts that above target is good.
+            For a revenue target it is; for a cost, a latency budget, an error
+            rate or a headcount cap it is exactly backwards, and the chart has
+            no way to know which it is looking at. Colouring it anyway is the
+            interface inventing a judgement and then stating it confidently.
+
+            So the sign is said in the number, an arrow says which way, and the
+            emphasis is the reference line's own colour — the thing the delta
+            is measured against, which is the one association that is always
+            true.
+          */}
+          <Text
+            text="vs target"
             x={PAD}
-            y={0}
-            width={width - PAD * 2}
-            height={13}
-            cornerRadius={3}
-            fill={isPositiveDelta ? 'rgba(16, 185, 129, 0.15)' : 'rgba(239, 68, 68, 0.15)'}
+            y={1}
+            fontSize={10}
+            fill={ink.chrome}
           />
           <Text
-            text={deltaText}
-            x={PAD + 4}
+            text={`${delta.startsWith('-') ? '▼' : '▲'} ${delta}`}
+            x={PAD}
             y={1}
-            width={width - PAD * 2 - 8}
+            width={width - PAD * 2}
+            align="right"
             fontSize={10}
             fontStyle="600"
-            fill={isPositiveDelta ? '#10B981' : '#EF4444'}
+            fontFamily={HUD_NUMERIC_FONT}
+            fill={ink.derived}
           />
         </Group>
       )}
     </Group>
   );
 };
+
+/**
+ * The face numbers in the readout are set in.
+ *
+ * A stack rather than one name, because Konva hands this straight to the 2D
+ * context and an unavailable family falls back to the browser's default
+ * proportional face — which is the failure this is here to avoid.
+ */
+const HUD_NUMERIC_FONT =
+  'ui-monospace, SFMono-Regular, Menlo, Consolas, "Liberation Mono", monospace';
 
 /**
  * Category column highlight band behind bars when hovered.
@@ -834,14 +1091,101 @@ const Reference: React.FC<{ layout: ChartLayout }> = ({ layout }) => {
   );
 };
 
+/**
+ * The pointer, cast onto the plot.
+ *
+ * ## Why this was the missing half
+ *
+ * A bar chart answered the pointer by lighting its category band, and every
+ * *continuous* kind answered with nothing at all: a plate of numbers appeared
+ * beside the cursor and nothing on the chart said which x it had been read
+ * at. On a line of forty readings, or anywhere on a plot, that gap is the
+ * difference between a readout you trust and one you have to check.
+ *
+ * ## One line or two
+ *
+ * A cartesian chart gets the vertical only. Its readout is about a *column* --
+ * every series at one x -- so a horizontal line would point at a y that
+ * belongs to only one of the values listed, and would imply the reading was
+ * about that one.
+ *
+ * A two-variable plot gets both, because there the reading genuinely is about
+ * a point: `F(x, y)` at one place on the plane, and both coordinates are in
+ * the readout.
+ *
+ * ## Weight
+ *
+ * Its own quiet ink, below the marks in z-order and dashed. At the gridlines'
+ * weight it reads as another gridline; solid and dark it competes with the
+ * data it exists to help you read.
+ */
+const Crosshair: React.FC<{
+  hit: ChartHit | null;
+  layout: ChartLayout;
+  ink: ChartInk;
+  /** Both axes, for the plots whose reading is a point rather than a column. */
+  bothAxes: boolean;
+}> = ({ hit, layout, ink, bothAxes }) => {
+  if (!hit) return null;
+  const plot = layout.plot;
+  const { x, y } = hit.anchor;
+  // Outside the drawing area the hairline would run over the axis labels,
+  // which is where the pointer is when it has left the data behind.
+  if (x < plot.x || x > plot.x + plot.width) return null;
+
+  return (
+    <Group listening={false} name={EXPORT_CHROME}>
+      <Line
+        points={[x, plot.y, x, plot.y + plot.height]}
+        stroke={ink.crosshair}
+        strokeWidth={1}
+        dash={[3, 3]}
+        perfectDrawEnabled={false}
+      />
+      {bothAxes && y >= plot.y && y <= plot.y + plot.height && (
+        <Line
+          points={[plot.x, y, plot.x + plot.width, y]}
+          stroke={ink.crosshair}
+          strokeWidth={1}
+          dash={[3, 3]}
+          perfectDrawEnabled={false}
+        />
+      )}
+    </Group>
+  );
+};
+
+/**
+ * How present a run is, given which series the pointer is reading.
+ *
+ * Nothing hovered leaves every run at full strength; hovering one pushes the
+ * others back far enough to read past without hiding them -- a chart where
+ * the unfocused series vanish is one that answers a different question every
+ * time the pointer moves.
+ */
+function runFocus(hovered: number | undefined, seriesIndex: number): number {
+  if (hovered === undefined) return 1;
+  return hovered === seriesIndex ? 1 : 0.28;
+}
+
 const Marks: React.FC<{
   layout: ChartLayout;
   sketch: SketchLevel | undefined;
   seed: number;
   ink: ChartInk;
   hoveredCategoryIndex?: number;
+  /**
+   * Which series the readout is about, when it is about one.
+   *
+   * Bars, dots and slices already dimmed their neighbours on hover; runs and
+   * areas did not, so a chart of six lines gave no indication at all which of
+   * the six the numbers beside the pointer belonged to. That is the case
+   * where the feedback matters most, because six lines is exactly when you
+   * cannot tell by looking.
+   */
+  hoveredSeriesIndex?: number;
   areaOpacity?: number;
-}> = ({ layout, sketch, seed, ink, hoveredCategoryIndex, areaOpacity }) => (
+}> = ({ layout, sketch, seed, ink, hoveredCategoryIndex, hoveredSeriesIndex, areaOpacity }) => (
   <>
     {layout.bars.map((b, i) => {
       const isDimmed = hoveredCategoryIndex !== undefined && b.categoryIndex !== hoveredCategoryIndex;
@@ -899,7 +1243,12 @@ const Marks: React.FC<{
           a.gradient ? { x: 0, y: layout.baseline?.y1 ?? (layout.plot.y + layout.plot.height) } : undefined
         }
         fillLinearGradientColorStops={a.gradient ? [0, a.color, 1, 'rgba(0,0,0,0.02)'] : undefined}
-        opacity={a.gradient ? 0.45 : (areaOpacity ?? 0.22)}
+        // One expression, because two `opacity` props on one element is the
+        // second silently winning.
+        opacity={
+          (a.gradient ? 0.45 : (areaOpacity ?? 0.22)) *
+          (hoveredSeriesIndex !== undefined && a.seriesIndex !== hoveredSeriesIndex ? 0.4 : 1)
+        }
         listening={false}
         perfectDrawEnabled={false}
       />
@@ -919,6 +1268,7 @@ const Marks: React.FC<{
           data={roughPolyline(r.points, { seed: seed + i * 31, level: sketch, closed: false })}
           stroke={r.color}
           strokeWidth={r.width ?? 2.5}
+          opacity={runFocus(hoveredSeriesIndex, r.seriesIndex)}
           lineCap="round"
           lineJoin="round"
           listening={false}
@@ -929,7 +1279,13 @@ const Marks: React.FC<{
           key={`r${i}`}
           points={flatten(r.points)}
           stroke={r.color}
-          strokeWidth={r.width ?? 2.5}
+          // The focused run also thickens slightly. Opacity alone is not
+          // enough to pick one line out of six that cross each other -- the
+          // eye follows weight before it follows value.
+          strokeWidth={
+            (r.width ?? 2.5) * (hoveredSeriesIndex === r.seriesIndex ? 1.35 : 1)
+          }
+          opacity={runFocus(hoveredSeriesIndex, r.seriesIndex)}
           dash={r.style === 'dashed' ? [6, 4] : r.style === 'dotted' ? [2, 3] : undefined}
           lineCap="round"
           lineJoin="round"
@@ -1255,6 +1611,40 @@ const Labels: React.FC<{ layout: ChartLayout; ink: ChartInk }> = ({ layout, ink 
         listening={false}
       />
     ))}
+
+    {/* The colour scale. Same stops, same ticks, same way up as the export. */}
+    {layout.colorBar && (
+      <>
+        <Rect
+          x={layout.colorBar.x}
+          y={layout.colorBar.y}
+          width={layout.colorBar.width}
+          height={layout.colorBar.height}
+          cornerRadius={2}
+          stroke={ink.chrome}
+          strokeWidth={0.5}
+          // Bottom to top, so offset zero is the low end of the ramp.
+          fillLinearGradientStartPoint={{ x: 0, y: layout.colorBar.y + layout.colorBar.height }}
+          fillLinearGradientEndPoint={{ x: 0, y: layout.colorBar.y }}
+          fillLinearGradientColorStops={layout.colorBar.stops.flatMap((stop) => [
+            stop.offset,
+            stop.color,
+          ])}
+          listening={false}
+        />
+        {layout.colorBar.ticks.map((tick, i) => (
+          <Text
+            key={`cb${i}`}
+            text={tick.text}
+            x={layout.colorBar!.textX}
+            y={tick.y - layout.colorBar!.fontSize}
+            fontSize={layout.colorBar!.fontSize}
+            fill={ink.ink}
+            listening={false}
+          />
+        ))}
+      </>
+    )}
 
     {layout.legend.map((e, i) => (
       <React.Fragment key={`l${i}`}>

@@ -1,4 +1,5 @@
 import type { PlotCurve } from './chartPlot';
+import type { RampId } from './colorRamps';
 /**
  * What a chart *is*, as data.
  *
@@ -484,7 +485,14 @@ export interface ChartSpec {
    * meaningful *centre*, where above and below zero are different in kind
    * rather than merely in amount.
    */
-  ramp?: 'viridis' | 'magma' | 'diverging' | 'mono';
+  ramp?: RampId;
+  /**
+   * Read the ramp from its light end down.
+   *
+   * For the surfaces where "more" is worse -- a cost, an error, a depth --
+   * so the heavy end of the colour sits where the heavy end of the meaning is.
+   */
+  rampReversed?: boolean;
   /**
    * Remote or streaming data source configuration.
    */
@@ -910,9 +918,15 @@ export function chartCapabilities(kind: ChartKind): ChartCapabilities {
     curved: kind === 'line' || kind === 'area' || kind === 'stackedArea',
     seriesColors: !plot && !radial && kind !== 'funnel',
     lockPlane: plot,
-    // A radial or polar chart draws its own rings and spokes; there is no
-    // cartesian rule for the toggle to turn on.
-    gridLines: !radial && !polar,
+    /**
+     * A radial or polar chart draws its own rings and spokes, and a heatmap's
+     * surface covers its whole plot -- rules would be drawn under the cells
+     * and never seen, which is why `layoutField` throws them away for that
+     * kind. Declaring the capability anyway meant the panel offered a switch
+     * the layout had already decided to ignore, and the test that should have
+     * caught it carried an exemption for heatmap instead.
+     */
+    gridLines: !radial && !polar && kind !== 'heatmap',
     /**
      * The kinds that draw an area for the fade to happen in.
      *

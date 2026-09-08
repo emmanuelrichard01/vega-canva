@@ -43,7 +43,7 @@ import {
 import { PresetGallery } from './PresetGallery';
 import { logDomainOf } from '../../engine/chart/scales';
 import { EXPRESSION_FUNCTIONS, parseExpression } from '../../engine/chart/expression';
-import type { RampId } from '../../engine/chart/colorRamps';
+import { RAMP_IDS, RAMP_LABELS, rampSwatches } from '../../engine/chart/colorRamps';
 import { formatValue } from '../../engine/chart/chartLayout';
 import { findRoots, findExtrema, integrate, type Sample } from '../../engine/chart/chartAnalysis';
 import {
@@ -1352,6 +1352,69 @@ const FormulaEditor: React.FC<{ spec: ChartSpec; patch: (n: Partial<ChartSpec>) 
  * plot in this panel fits its value axis to what the function reached, which is
  * impossible and would be meaningless for these.
  */
+/**
+ * The colormap, shown rather than named.
+ *
+ * A picker of four *colour scales* that offered four words was the shape
+ * picker with no shapes in it: "Magma" and "Diverging" mean nothing to
+ * somebody who has not already used them, and the whole decision is about
+ * what the surface will look like. The swatches come from the same
+ * `rampColor` the cells are painted with, so a strip cannot show a ramp the
+ * surface does not use.
+ *
+ * Reversal sits under them rather than as a fifth ramp, because it is not a
+ * fifth ramp -- it applies to whichever is chosen, and duplicating four
+ * entries into eight is how a picker doubles without saying anything new.
+ */
+const RampPicker: React.FC<{ spec: ChartSpec; patch: (n: Partial<ChartSpec>) => void }> = ({
+  spec,
+  patch,
+}) => {
+  const current = spec.ramp ?? 'viridis';
+  const reversed = spec.rampReversed ?? false;
+
+  return (
+    <>
+      <Row label="Colours" stack>
+        <div className="chartp-ramps" role="radiogroup" aria-label="Colour scale">
+          {RAMP_IDS.map((id) => (
+            <button
+              key={id}
+              type="button"
+              role="radio"
+              aria-checked={current === id}
+              aria-label={RAMP_LABELS[id]}
+              className="chartp-ramp"
+              data-active={current === id || undefined}
+              data-tooltip={RAMP_LABELS[id]}
+              onClick={() => patch({ ramp: id })}
+            >
+              <span className="chartp-ramp__strip" aria-hidden>
+                {rampSwatches(id, 12, reversed).map((color, i) => (
+                  <span key={i} style={{ background: color }} />
+                ))}
+              </span>
+              <span className="chartp-ramp__name">{RAMP_LABELS[id]}</span>
+            </button>
+          ))}
+        </div>
+      </Row>
+      <Row label="Direction" hint="Put the heavy end of the colour where the heavy end of the meaning is">
+        <SegmentedControl
+          fill
+          ariaLabel="Colour scale direction"
+          value={reversed ? 'high-dark' : 'high-light'}
+          onChange={(v) => patch({ rampReversed: v === 'high-dark' ? true : undefined })}
+          segments={[
+            { value: 'high-light', label: 'More is light', hint: 'The default: growth, density, count' },
+            { value: 'high-dark', label: 'More is dark', hint: 'For a cost, an error or a depth' },
+          ]}
+        />
+      </Row>
+    </>
+  );
+};
+
 const PlaneFields: React.FC<{ spec: ChartSpec; patch: (n: Partial<ChartSpec>) => void }> = ({
   spec,
   patch,
@@ -1391,22 +1454,7 @@ const PlaneFields: React.FC<{ spec: ChartSpec; patch: (n: Partial<ChartSpec>) =>
         />
       </Row>
     )}
-    {spec.kind === 'heatmap' && (
-      <Row label="Colormap" hint="Perceptually uniform color ramps">
-        <SegmentedControl
-          fill
-          ariaLabel="Heatmap colormap"
-          value={spec.ramp ?? 'viridis'}
-          onChange={(v) => patch({ ramp: v as RampId })}
-          segments={[
-            { value: 'viridis', label: 'Viridis', hint: 'Perceptually uniform blue-green-yellow' },
-            { value: 'magma', label: 'Magma', hint: 'Black through purple/red to near-white' },
-            { value: 'diverging', label: 'Diverging', hint: 'Blue-white-red with neutral midpoint' },
-            { value: 'mono', label: 'Mono', hint: 'Single blue hue gradient' },
-          ]}
-        />
-      </Row>
-    )}
+    {spec.kind === 'heatmap' && <RampPicker spec={spec} patch={patch} />}
     <Row label="Aspect" hint="Keep square geometric aspect ratio">
       <SegmentedControl
         fill

@@ -51,7 +51,7 @@ import {
 } from './chartAnalysis';
 import { contourLevels, marchingSquares } from './marchingSquares';
 import { slopeField, vectorField } from './vectorField';
-import { rampColor } from './colorRamps';
+import { rampColorAt } from './colorRamps';
 import {
   bucketize,
   isBarLike,
@@ -124,6 +124,42 @@ export interface ChartRun {
   style?: 'solid' | 'dashed' | 'dotted';
 }
 
+/**
+ * One category, and every series' reading at it.
+ *
+ * ## Why the hover needs its own model
+ *
+ * Hit-testing used to work off whatever a kind happened to *draw*: bars for a
+ * bar chart, dots for a scatter. Which meant an **area chart answered
+ * nothing at all** -- it emits no bars, and dots are only pushed for `line`
+ * and `step` -- so hovering one produced no readout, no highlight and no
+ * explanation. A line with its markers turned off had the same hole.
+ *
+ * Deriving it from the runs instead would not work either: `toStaircase` and
+ * the spline resample the points, so by the time a run exists its vertices no
+ * longer correspond to categories one for one.
+ *
+ * So the column is built from the source values, in the same pass that places
+ * the marks, and every cartesian kind gets the same reading: one x, every
+ * series at it. That is also the reading people expect -- you hover a moment
+ * in time to compare the lines, not to interrogate one vertex.
+ */
+export interface ChartColumn {
+  /** The category's centre along the value-independent axis, in screen space. */
+  x: number;
+  /** And along the other one, for a transposed chart. */
+  y: number;
+  categoryIndex: number;
+  entries: Array<{
+    seriesIndex: number;
+    value: number;
+    color: string;
+    /** Where this series sits, so a marker can be drawn on it. */
+    x: number;
+    y: number;
+  }>;
+}
+
 export interface ChartArea extends ChartRun {
   /** The closed polygon, baseline included. */
   polygon: Point[];
@@ -184,6 +220,29 @@ export interface ChartGridLine {
   y2: number;
 }
 
+/**
+ * The scale beside a surface, saying what a colour means.
+ *
+ * A heatmap without one is a picture of structure with no way to read a
+ * value off it -- you can see where the peaks are and not how high. It is a
+ * legend in every sense except that its entries are continuous, which is why
+ * it is its own primitive rather than a run of `ChartLegendEntry` swatches
+ * pretending to be a gradient.
+ *
+ * Laid out here and painted twice, like everything else in this file: the
+ * canvas draws it with a Konva gradient and the exporter with a
+ * `<linearGradient>`, from the same stops and the same ticks.
+ */
+export interface ChartColorBar extends Rect {
+  /** Ordered 0..1 along the bar, from its bottom to its top. */
+  stops: Array<{ offset: number; color: string }>;
+  /** Where the numbers sit against it, already formatted. */
+  ticks: Array<{ y: number; text: string }>;
+  fontSize: number;
+  /** Left edge of the tick text, which sits to the right of the bar. */
+  textX: number;
+}
+
 export interface ChartLegendEntry {
   label: string;
   color: string;
@@ -232,6 +291,15 @@ export interface ChartLayout {
   categoryLabels: ChartLabel[];
   valueLabels: ChartLabel[];
   legend: ChartLegendEntry[];
+  /**
+   * What the pointer reads on a cartesian chart, by category.
+   *
+   * Empty for the kinds whose reading is not a column -- radial, polar, and
+   * the plots, which answer with a computed value rather than a stored one.
+   */
+  columns: ChartColumn[];
+  /** The continuous scale, for the kinds whose colour *is* the value. */
+  colorBar?: ChartColorBar | null;
   title: ChartLabel | null;
   /** Editorial subtitle beneath the title. */
   subtitle?: ChartLabel | null;
@@ -384,7 +452,7 @@ export function layoutChart(
 
   const empty: ChartLayout = {
     plot: { x: 0, y: 0, width: 0, height: 0 },
-    bars: [], runs: [], areas: [], dots: [], slices: [],
+    bars: [], runs: [], areas: [], dots: [], slices: [], columns: [],
     gridLines: [], baseline: null,
     axisLabels: [], categoryLabels: [], valueLabels: [], legend: [],
     title: null,
@@ -686,6 +754,14 @@ function layoutCartesian(
   const runs: ChartRun[] = [];
   const areas: ChartArea[] = [];
   const dots: ChartDot[] = [];
+  /**
+   * One entry per category, filled in as the marks are placed.
+   *
+   * Keyed by category index rather than pushed in order, because a series
+   * with a gap contributes nothing at that category and the columns must
+   * still line up with the axis.
+   */
+  const columnBuild = new Map<number, ChartColumn>();
   const valueLabels: ChartLabel[] = [];
 
   /** One bar, in whichever orientation this chart is. */
@@ -879,6 +955,17 @@ function layoutCartesian(
             shape: spec.markerShape ?? 'circle',
           });
         }
+
+        /**
+         * The hover reading, recorded whether or not a marker was drawn.
+         *
+         * This is the line that fixes the hole: an area chart draws no dots
+         * at all, so before this its readings existed nowhere and hovering it
+         * returned nothing.
+         */
+        const column = columnBuild.get(ci) ?? { x: p.x, y: p.y, categoryIndex: ci, entries: [] };
+        column.entries.push({ seriesIndex: si, value: v, color, x: p.x, y: p.y });
+        columnBuild.set(ci, column);
         // Every run kind, not three of them. `scatter`, `bubble` and
         // `stackedArea` were excluded for no reason anybody recorded, so the
         // Values toggle was offered on them and did nothing.
@@ -1064,7 +1151,11 @@ function layoutCartesian(
     }
   }
 
+  // In category order, so "the next column" means what it looks like.
+  const columns = [...columnBuild.values()].sort((a, b) => a.categoryIndex - b.categoryIndex);
+
   return {
+    columns,
     plot,
     bars,
     runs,
@@ -1211,6 +1302,9 @@ function layoutPolar(
   });
 
   return {
+    // A radar reads by spoke, not by column: its own hit test walks the
+    // rings, and a column here would be a second answer to the same question.
+    columns: [],
     plot,
     bars: [],
     runs,
@@ -1362,6 +1456,15 @@ function layoutField(
     { x: sx(seg[1].x), y: sy(seg[1].y) },
   ];
 
+  /**
+   * What the surface's colours span, kept for the scale beside it.
+   *
+   * The range was computed inside the cell loop and thrown away, so nothing
+   * downstream could say what a colour meant -- which is why the heatmap
+   * shipped without a legend of any kind.
+   */
+  let surfaceRange: { lo: number; hi: number } | null = null;
+
   const streamlines: Array<{ points: Point[]; seed: Point }> = [];
   const seeds = spec.seedPoints || [];
 
@@ -1400,6 +1503,7 @@ function layoutField(
       }
 
       const span = hi - lo;
+      if (Number.isFinite(lo) && Number.isFinite(hi)) surfaceRange = { lo, hi };
       const ramp = spec.ramp ?? 'viridis';
       const cellW = Math.abs(sx(box.xMin + dx) - sx(box.xMin)) + 0.5;
       const cellH = Math.abs(sy(box.yMin + dy) - sy(box.yMin)) + 0.5;
@@ -1419,7 +1523,7 @@ function layoutField(
             y: y0,
             width: cellW,
             height: cellH,
-            color: rampColor(ramp, t),
+            color: rampColorAt(ramp, t, spec.rampReversed),
             seriesIndex: 0,
             categoryIndex: iy * n + ix,
             value: v,
@@ -1544,6 +1648,9 @@ function layoutField(
   }
 
   return {
+    // A field's reading is computed from the function under the pointer,
+    // not looked up in a table of stored values.
+    columns: [],
     plot,
     bars,
     runs,
@@ -1558,6 +1665,7 @@ function layoutField(
     categoryLabels,
     valueLabels: [],
     legend: buildPlotLegend(spec, opts, curves, width, height, measure),
+    colorBar: buildColorBar(spec, surfaceRange, plot, measure),
     title,
     rings: [],
     spokes: [],
@@ -2250,6 +2358,9 @@ function layoutPlot(
   }
 
   return {
+    // A curve's value at a point is evaluated, not looked up -- `chartTrace`
+    // answers the hover here, and a stored column would be a stale second copy.
+    columns: [],
     plot,
     bars,
     runs,
@@ -2335,6 +2446,82 @@ function robustExtent(values: number[]): Domain {
 }
 
 /** A plot's legend names its formulae, and says which of them failed. */
+/**
+ * The scale beside a surface.
+ *
+ * ## Where it goes
+ *
+ * Inside the plot, along its right edge, rather than in reserved gutter of
+ * its own. A colour bar is small and a surface is dense to its edges anyway,
+ * so taking a strip out of the drawing area would shrink the picture by more
+ * than the bar occupies. Sitting over the surface is also what makes it
+ * readable: the eye compares the bar to the colours directly beside it
+ * without travelling.
+ *
+ * ## The stops
+ *
+ * Nine, sampled from the same `rampColor` the cells are painted with, so the
+ * bar cannot show a ramp the surface does not use. Nine rather than two,
+ * because every ramp here except `mono` turns corners in the middle -- a
+ * two-stop gradient from viridis's ends is a purple-to-yellow fade with none
+ * of the green that makes it readable.
+ *
+ * ## The numbers
+ *
+ * Three: the bottom, the middle and the top. A surface's scale is read for
+ * magnitude and sign, not for precise values -- that is what the hover
+ * readout is for -- and a column of eight numbers down the side of a picture
+ * is furniture competing with the thing it describes.
+ */
+function buildColorBar(
+  spec: ChartSpec,
+  range: { lo: number; hi: number } | null,
+  plot: Rect,
+  measure: Measure
+): ChartColorBar | null {
+  if (!range || spec.kind !== 'heatmap') return null;
+  // The legend toggle governs this too: it is the legend, for this kind.
+  if (!(spec.showLegend ?? true)) return null;
+
+  const BAR_W = 10;
+  const fontSize = LABEL_SIZE;
+  const texts = [range.hi, (range.lo + range.hi) / 2, range.lo].map((v) => formatValue(v, spec));
+  const textW = Math.max(...texts.map((t) => measure(t, fontSize)), 0);
+
+  const height = Math.max(40, Math.min(plot.height - PAD * 2, plot.height * 0.55));
+  const x = plot.x + plot.width - PAD - textW - TICK_GAP - BAR_W;
+  const y = plot.y + (plot.height - height) / 2;
+
+  // Not enough room to sit inside the picture without covering it: no bar is
+  // better than a bar over the only part of the surface still visible.
+  if (x < plot.x + plot.width * 0.5) return null;
+
+  const ramp = spec.ramp ?? 'viridis';
+  const STOPS = 9;
+  const stops = Array.from({ length: STOPS }, (_, i) => {
+    const offset = i / (STOPS - 1);
+    // Offset zero is the *bottom* of the bar, which is the low end of the
+    // ramp -- so the colour at an offset is the colour of the value at that
+    // height, and the bar reads the same way up as the surface does.
+    return { offset, color: rampColorAt(ramp, offset, spec.rampReversed) };
+  });
+
+  return {
+    x,
+    y,
+    width: BAR_W,
+    height,
+    stops,
+    ticks: [
+      { y: y + fontSize * 0.8, text: texts[0] },
+      { y: y + height / 2 + fontSize * 0.3, text: texts[1] },
+      { y: y + height, text: texts[2] },
+    ],
+    fontSize,
+    textX: x + BAR_W + TICK_GAP,
+  };
+}
+
 function buildPlotLegend(
   spec: ChartSpec,
   opts: ReturnType<typeof resolveChartOptions>,
@@ -2608,6 +2795,8 @@ function layoutRadial(
       : null;
 
   return {
+    // A slice is its own reading; there is no second axis to column by.
+    columns: [],
     plot,
     bars: [], runs: [], areas: [], dots: [],
     slices,

@@ -212,9 +212,7 @@ describe('gridLines and gradient', () => {
       const spec = { ...defaultChartSpec(kind), showGrid: true };
       const drawn = layoutChart(spec, W, H).gridLines.length > 0;
       if (chartCapabilities(kind).gridLines) {
-        // Heatmap suppresses its own rules on purpose -- the cells are the
-        // surface -- so it is allowed to declare the capability and draw none.
-        if (kind !== 'heatmap') expect(drawn, kind).toBe(true);
+        expect(drawn, kind).toBe(true);
       } else {
         expect(drawn, kind).toBe(false);
       }

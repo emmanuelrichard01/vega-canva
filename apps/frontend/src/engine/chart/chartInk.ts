@@ -58,15 +58,48 @@ export interface ChartInk {
    * never be mistaken for the curve it was derived from.
    */
   derived: string;
+  /**
+   * A feature the plot found *for* you: a root, a pole, an extremum.
+   *
+   * Distinct from `derived`, which is a computed *number*; this marks a
+   * computed *place* on the curve, and the readout leans on it to say "you are
+   * not just near here, you are exactly on something".
+   *
+   * It was the literal `#F59E0B` in the readout and nowhere else, so it could
+   * not follow the theme and no other surface could match it.
+   */
+  feature: string;
+  /**
+   * The hairline the pointer casts onto the axes.
+   *
+   * Quieter than `chrome`, because it crosses the whole plot: at the axis
+   * rules' own weight it reads as another gridline and competes with the data
+   * it is there to help you read.
+   */
+  crosshair: string;
 }
 
 /** Pure, so it can be asserted and so a worker can ask for either. */
 export function chartInkFor(dark: boolean): ChartInk {
   return dark
-    ? { chrome: '#7A8699', ink: '#C8D2E0', sliceEdge: '#18181B', derived: '#22D3EE' }
-    : // A step darker on a white ground, where the bright cyan the dark theme
-      // uses drops under 3:1 and the derived rows read as disabled text.
-      { chrome: '#98A2B3', ink: '#475569', sliceEdge: '#FFFFFF', derived: '#0E7490' };
+    ? {
+        chrome: '#7A8699',
+        ink: '#C8D2E0',
+        sliceEdge: '#18181B',
+        derived: '#22D3EE',
+        feature: '#FBBF24',
+        crosshair: 'rgba(200, 210, 224, 0.34)',
+      }
+    : {
+        chrome: '#98A2B3',
+        ink: '#475569',
+        sliceEdge: '#FFFFFF',
+        // A step darker on a white ground, where the bright values the dark
+        // theme uses drop under 3:1 and read as disabled text.
+        derived: '#0E7490',
+        feature: '#B45309',
+        crosshair: 'rgba(71, 85, 105, 0.30)',
+      };
 }
 
 /**

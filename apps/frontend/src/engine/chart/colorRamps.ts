@@ -76,6 +76,19 @@ const RAMPS: Record<RampId, RGB[]> = {
  * scale, and wrapping would paint the maximum in the colour of the minimum —
  * the one mistake that makes a heatmap unreadable rather than merely wrong.
  */
+/**
+ * A ramp read backwards.
+ *
+ * Not a decoration. Every ramp here runs dark-to-light, which reads as
+ * "more" -- and half of what people plot is a cost, a depth or an error,
+ * where more is worse and the dark end belongs at the top. Flipping the ramp
+ * is the difference between a surface that agrees with its subject and one
+ * that has to be read against the grain.
+ */
+export function rampColorAt(id: RampId, t: number, reversed?: boolean): string {
+  return rampColor(id, reversed ? 1 - t : t);
+}
+
 export function rampColor(id: RampId, t: number): string {
   const stops = RAMPS[id] ?? RAMPS.viridis;
   const clamped = Number.isFinite(t) ? Math.min(1, Math.max(0, t)) : 0;
@@ -95,6 +108,9 @@ function hex(v: number): string {
   return Math.min(255, Math.max(0, v)).toString(16).padStart(2, '0');
 }
 
+/** Every ramp, in the order a picker should offer them: uniform first. */
+export const RAMP_IDS: readonly RampId[] = ['viridis', 'magma', 'mono', 'diverging'];
+
 export const RAMP_LABELS: Record<RampId, string> = {
   viridis: 'Viridis',
   magma: 'Magma',
@@ -103,6 +119,6 @@ export const RAMP_LABELS: Record<RampId, string> = {
 };
 
 /** A few swatches of a ramp, for a picker that shows what it is choosing. */
-export function rampSwatches(id: RampId, count = 5): string[] {
-  return Array.from({ length: count }, (_, i) => rampColor(id, i / (count - 1)));
+export function rampSwatches(id: RampId, count = 5, reversed?: boolean): string[] {
+  return Array.from({ length: count }, (_, i) => rampColorAt(id, i / (count - 1), reversed));
 }

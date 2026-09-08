@@ -366,6 +366,34 @@ export function paintLayout(layout: ChartLayout, options: ChartSvgOptions): stri
   for (const l of layout.valueLabels) {
     out.push(label(l.text, l.x, l.y, l.width, l.align, l.fontSize, ink.ink, '600'));
   }
+  /**
+   * The colour scale, from the same stops the canvas uses.
+   *
+   * Painted before the legend so the two never overlap in z-order the way
+   * they would if this were appended last and the layout ever placed them
+   * together.
+   */
+  if (layout.colorBar) {
+    const bar = layout.colorBar;
+    const id = `${options.id}-colorbar`;
+    // y1 at the bottom and y2 at the top, so offset zero is the low end --
+    // the same way up as the surface it describes.
+    out.push(
+      `<defs><linearGradient id="${id}" x1="0" y1="${bar.y + bar.height}" x2="0" y2="${bar.y}" gradientUnits="userSpaceOnUse">` +
+        bar.stops
+          .map((stop) => `<stop offset="${stop.offset}" stop-color="${stop.color}" />`)
+          .join('') +
+        `</linearGradient></defs>`
+    );
+    out.push(
+      `<rect x="${bar.x}" y="${bar.y}" width="${bar.width}" height="${bar.height}" rx="2" ` +
+        `fill="url(#${id})" stroke="${ink.chrome}" stroke-width="0.5" />`
+    );
+    for (const tick of bar.ticks) {
+      out.push(label(tick.text, bar.textX, tick.y, 0, 'left', bar.fontSize, ink.ink));
+    }
+  }
+
   for (const e of layout.legend) {
     out.push(
       `<rect x="${e.x}" y="${e.y}" width="${e.swatch}" height="${e.swatch}" rx="2" fill="${e.color}" />`

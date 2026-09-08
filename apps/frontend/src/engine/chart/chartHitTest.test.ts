@@ -246,3 +246,95 @@ describe('placeReadout', () => {
     expect(p2.y).toBeGreaterThanOrEqual(0);
   });
 });
+
+/**
+ * The kinds that answered nothing.
+ *
+ * Hit-testing worked off whatever a kind happened to *draw* — bars, or dots.
+ * An area chart draws neither: dots are pushed only for `line` and `step`, so
+ * hovering an area produced no readout, no highlight and no explanation, on
+ * one of the four kinds people use most. A line with its markers switched off
+ * had the same hole and said nothing either.
+ */
+describe('column readings', () => {
+  const W = 480;
+  const H = 300;
+
+  const spec = (over: Partial<ChartSpec>): ChartSpec => ({
+    kind: 'area',
+    categories: ['Jan', 'Feb', 'Mar', 'Apr'],
+    series: [
+      { name: 'Revenue', values: [10, 40, 25, 60] },
+      { name: 'Cost', values: [8, 20, 22, 30] },
+    ],
+    ...over,
+  });
+
+  const hitAt = (s: ChartSpec, atCategory: number) => {
+    const layout = layoutChart(s, W, H);
+    const column = layout.columns.find((c) => c.categoryIndex === atCategory);
+    expect(column, 'the layout should carry a column for every category').toBeTruthy();
+    return chartHitTest(layout, { x: column!.x, y: column!.entries[0].y }, {
+      format: (v) => String(v),
+      categories: s.categories,
+      seriesNames: s.series.map((x) => x.name),
+      keyedOnCategories: false,
+    });
+  };
+
+  it('answers on an area chart, which draws no dots at all', () => {
+    const hit = hitAt(spec({ kind: 'area' }), 1);
+    expect(hit).not.toBeNull();
+    expect(hit!.label).toBe('Feb');
+    expect(hit!.entries.map((e) => e.value)).toEqual([40, 20]);
+  });
+
+  it('answers on a line whose markers are switched off', () => {
+    const hit = hitAt(spec({ kind: 'line', markerShape: 'none' }), 2);
+    expect(hit).not.toBeNull();
+    expect(hit!.entries.map((e) => e.value)).toEqual([25, 22]);
+  });
+
+  it('reports the whole column, not just the nearest mark', () => {
+    const hit = hitAt(spec({ kind: 'line' }), 0);
+    expect(hit!.entries).toHaveLength(2);
+  });
+
+  /**
+   * Both indices, which every highlight in the renderer keys off — the run
+   * that thickens, the dots that dim, the band behind the bars. Without them
+   * the readout appeared and the chart did not react.
+   */
+  it('says which category and which series, so the chart can respond', () => {
+    const hit = hitAt(spec({ kind: 'area' }), 3);
+    expect(hit!.categoryIndex).toBe(3);
+    expect(hit!.seriesIndex).toBeTypeOf('number');
+  });
+
+  it('keeps a column for a series with a gap in it', () => {
+    const withGap = spec({
+      kind: 'line',
+      series: [
+        { name: 'Revenue', values: [10, null, 25, 60] },
+        { name: 'Cost', values: [8, 20, 22, 30] },
+      ],
+    });
+    const layout = layoutChart(withGap, W, H);
+    // Four categories, four columns -- the gap costs that series its entry at
+    // Feb and costs the column nothing.
+    expect(layout.columns).toHaveLength(4);
+    expect(layout.columns[1].entries).toHaveLength(1);
+    expect(layout.columns[1].entries[0].value).toBe(20);
+  });
+
+  it('leaves the kinds whose reading is computed without a column table', () => {
+    for (const kind of ['function', 'contour', 'heatmap', 'vectorField'] as const) {
+      const layout = layoutChart(
+        { kind, categories: [], series: [], functions: [{ source: 'x + y' }] },
+        W,
+        H
+      );
+      expect(layout.columns, kind).toEqual([]);
+    }
+  });
+});

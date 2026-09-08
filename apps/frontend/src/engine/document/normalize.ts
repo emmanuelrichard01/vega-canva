@@ -1493,6 +1493,9 @@ function normalizeChartSpec(raw: any): ChartSpec {
   ) {
     spec.ramp = raw.ramp;
   }
+  if (raw?.rampReversed === true) {
+    spec.rampReversed = true;
+  }
 
   // --- visual theme & data connector ---------------------------------------
   bool('gradient');

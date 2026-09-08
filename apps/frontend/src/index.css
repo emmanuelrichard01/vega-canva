@@ -18921,3 +18921,70 @@ html[data-precise] .canvas-container[data-cursor-mode] .konvajs-content canvas {
   border-color: var(--accent-line);
   color: var(--text-primary);
 }
+
+/* The colormap picker.
+
+   Four colour scales, shown as colour scales. It offered four words before,
+   which is the shape picker with no shapes in it: "Magma" and "Diverging"
+   mean nothing until you have seen one, and the whole decision is about what
+   the surface will look like. */
+.chartp-ramps {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 4px;
+  width: 100%;
+}
+
+.chartp-ramp {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  min-width: 0;
+  padding: 5px;
+  border: 1px solid var(--border-divider);
+  border-radius: var(--radius-sm);
+  background: var(--surface-sunken, var(--surface-secondary));
+  cursor: pointer;
+  transition: border-color var(--motion-hover), background-color var(--motion-hover);
+}
+
+.chartp-ramp:hover { border-color: var(--accent-line); }
+
+.chartp-ramp:focus-visible {
+  outline: 2px solid var(--text-accent);
+  outline-offset: 1px;
+}
+
+.chartp-ramp[data-active] {
+  border-color: var(--accent-line);
+  background: var(--accent-quiet);
+}
+
+/* Twelve hard stops rather than a CSS gradient, because these ramps turn
+   corners: a two-stop `linear-gradient` between viridis's ends is a purple to
+   yellow fade with none of the green that makes it readable, and it would be
+   a second, differently-wrong copy of the interpolation `rampColor` already
+   does. Flex children with no gap read as continuous. */
+.chartp-ramp__strip {
+  display: flex;
+  height: 12px;
+  border-radius: var(--radius-sm);
+  overflow: hidden;
+}
+
+.chartp-ramp__strip > span {
+  flex: 1;
+  min-width: 0;
+}
+
+.chartp-ramp__name {
+  color: var(--text-secondary);
+  font-size: var(--text-2xs);
+  line-height: 1;
+  text-align: left;
+  overflow: hidden;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+}
+
+.chartp-ramp[data-active] .chartp-ramp__name { color: var(--text-primary); }
