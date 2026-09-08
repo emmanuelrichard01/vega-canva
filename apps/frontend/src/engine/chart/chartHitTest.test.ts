@@ -338,3 +338,76 @@ describe('column readings', () => {
     }
   });
 });
+
+/**
+ * Which way round the chart is, asked once.
+ *
+ * The hover band asked whether the first bar in a group was wider than it was
+ * tall; the hit test asked whether a bar was four times wider than tall. Both
+ * are questions about a *rectangle*, and the answer they wanted is a fact
+ * about the *chart* — so on a waterfall, where a small step is short and wide
+ * and a large one is tall and narrow, the band came out horizontal over some
+ * bars and vertical over others and the pointer's distance was measured along
+ * a different axis for each. A bar chart with any category near zero did the
+ * same thing.
+ */
+describe('category axis', () => {
+  const W = 480;
+  const H = 300;
+
+  it('follows the kind, not the proportions of a bar', () => {
+    for (const kind of ['bar', 'stackedBar', 'histogram', 'waterfall'] as const) {
+      expect(
+        layoutChart({ kind, categories: ['a', 'b'], series: [{ name: 'S', values: [1, 2] }] }, W, H)
+          .categoryAxis,
+        kind
+      ).toBe('x');
+    }
+    for (const kind of ['barHorizontal', 'funnel'] as const) {
+      expect(
+        layoutChart({ kind, categories: ['a', 'b'], series: [{ name: 'S', values: [1, 2] }] }, W, H)
+          .categoryAxis,
+        kind
+      ).toBe('y');
+    }
+  });
+
+  /**
+   * The failing case, as reported: one waterfall, one tiny step among tall
+   * ones. Every bar must be found by moving along the same axis.
+   */
+  it('reads every bar of a waterfall along the same axis', () => {
+    const spec: ChartSpec = {
+      kind: 'waterfall',
+      categories: ['Start', 'Blip', 'Surge', 'End'],
+      // The second delta is a hundredth of the others, so its rectangle is
+      // wider than it is tall while its neighbours are the opposite.
+      series: [{ name: 'Delta', values: [400, 3, 380, -300] }],
+    };
+    const layout = layoutChart(spec, W, H);
+    expect(layout.categoryAxis).toBe('x');
+
+    const shapes = layout.bars.map((b) => b.width > b.height);
+    expect(
+      new Set(shapes).size,
+      'the fixture needs bars of both proportions or it proves nothing'
+    ).toBe(2);
+
+    // Sweeping horizontally across the plot must reach all four categories.
+    const seen = new Set<number>();
+    for (const bar of layout.bars) {
+      const hit = chartHitTest(
+        layout,
+        { x: bar.x + bar.width / 2, y: layout.plot.y + layout.plot.height / 2 },
+        {
+          format: (v) => String(v),
+          categories: spec.categories,
+          seriesNames: ['Delta'],
+          keyedOnCategories: false,
+        }
+      );
+      if (hit?.categoryIndex !== undefined) seen.add(hit.categoryIndex);
+    }
+    expect(seen.size).toBe(4);
+  });
+});

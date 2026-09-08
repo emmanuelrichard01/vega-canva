@@ -503,7 +503,13 @@ export function chartHitTest(
     for (const b of layout.bars) {
       // Distance along the *category* axis only, which is what makes a whole
       // column answer rather than the individual rectangle under the pointer.
-      const horizontal = b.width > b.height * 4 && layout.bars.length > 1;
+      //
+      // Which axis that is comes from the layout. It was worked out per bar,
+      // from whether that bar was four times wider than tall -- so on a
+      // waterfall, where a small step is short and wide, the pointer's
+      // distance was measured along y for that bar and along x for its
+      // neighbours, in the same chart.
+      const horizontal = layout.categoryAxis === 'y';
       const centre = horizontal ? b.y + b.height / 2 : b.x + b.width / 2;
       const along = horizontal ? point.y : point.x;
       const d = Math.abs(along - centre);

@@ -18988,3 +18988,79 @@ html[data-precise] .canvas-container[data-cursor-mode] .konvajs-content canvas {
 }
 
 .chartp-ramp[data-active] .chartp-ramp__name { color: var(--text-primary); }
+
+/* A heading inside a section.
+
+   The panel had fifteen top-level groups because a cluster of two rows that
+   wanted a name could only get one by becoming a group — so "Numbers",
+   "Order", "Density" and "Donut" sat at the same level as "Data", implying
+   they were the same size of idea. A rule with a word on it says "still this
+   section, new subject", at a fifth of the height a group costs. */
+.chartp-subhead {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin: 10px 0 2px;
+  color: var(--text-tertiary);
+  font-size: var(--text-2xs);
+  font-weight: 600;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+}
+
+/* The rule runs from the end of the word to the edge, so the eye is carried
+   across the panel rather than stopped by a full-width line. */
+.chartp-subhead::after {
+  content: '';
+  flex: 1;
+  height: 1px;
+  background: var(--border-divider);
+}
+
+/* A count with an action beside it: "3 curves — Clear".
+
+   Was a flex div with an inline 11px span and a button carrying its own
+   opacity arithmetic, none of it from the design system. */
+.chartp-count {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  width: 100%;
+  color: var(--text-secondary);
+  font-size: var(--text-xs);
+  font-variant-numeric: tabular-nums;
+}
+
+.chartp-clear {
+  flex: none;
+  padding: 2px 8px;
+  border: 1px solid var(--border-divider);
+  border-radius: var(--radius-sm);
+  background: none;
+  color: var(--text-secondary);
+  font-size: var(--text-2xs);
+  cursor: pointer;
+  transition: border-color var(--motion-hover), color var(--motion-hover);
+}
+
+.chartp-clear:hover:not(:disabled) {
+  border-color: var(--accent-line);
+  color: var(--text-primary);
+}
+
+.chartp-clear:disabled {
+  opacity: 0.4;
+  cursor: not-allowed;
+}
+
+/* A preset chip that knows whether it is the current format.
+
+   The five number presets could not say which one was active — they set four
+   fields and then had no idea what they had set — so the strip read as five
+   equally-unselected buttons however the chart was formatted. */
+.chartp-preset-chip[data-active] {
+  border-color: var(--accent-line);
+  background: var(--accent-quiet);
+  color: var(--text-primary);
+}

@@ -63,6 +63,25 @@ export const Group: React.FC<{
  * that was just removed. These hold reference material, and the only question
  * asked of them is "show me the list", which the label already answers.
  */
+/**
+ * A heading *inside* a section.
+ *
+ * The panel had fifteen top-level groups because every cluster of two rows
+ * that wanted a name could only get one by becoming a group — so "Numbers",
+ * "Order", "Density", "Distribution", "Donut" and "Analytics" all sat at the
+ * same level as "Data", implying they were the same size of idea. They are
+ * not: they are subdivisions of the axis, of the marks, of the palette.
+ *
+ * A rule with a word on it says "still in this section, new subject", which
+ * is all those six ever needed and a fifth of the vertical space a group
+ * costs.
+ */
+export const SubHead: React.FC<{ label: string }> = ({ label }) => (
+  <div className="chartp-subhead" role="presentation">
+    <span>{label}</span>
+  </div>
+);
+
 export const Reveal: React.FC<{ label: string; children: React.ReactNode }> = ({
   label,
   children,

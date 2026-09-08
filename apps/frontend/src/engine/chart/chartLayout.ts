@@ -298,6 +298,28 @@ export interface ChartLayout {
    * the plots, which answer with a computed value rather than a stored one.
    */
   columns: ChartColumn[];
+  /**
+   * Which axis the categories run along.
+   *
+   * ## Why this is on the layout and not inferred
+   *
+   * Two readers used to work it out for themselves, from the *shape of a
+   * bar*: the hover band asked whether the first bar in the group was wider
+   * than it was tall, and the hit test asked whether a bar was four times
+   * wider than tall. Both are questions about a rectangle, and the answer
+   * they wanted is a fact about the chart.
+   *
+   * On a waterfall the two diverge visibly. A step with a small delta is a
+   * short, wide rectangle and a step with a large one is tall and narrow --
+   * so on a single chart the hover band came out horizontal over some bars
+   * and vertical over others, and the hit test measured the pointer's
+   * distance along x for one bar and along y for the next. Exactly the same
+   * happens to a plain bar chart the moment one category is near zero.
+   *
+   * The kind knows. `isTransposed` has always known. Saying it once here
+   * means neither reader can guess, and neither can guess differently.
+   */
+  categoryAxis: 'x' | 'y';
   /** The continuous scale, for the kinds whose colour *is* the value. */
   colorBar?: ChartColorBar | null;
   title: ChartLabel | null;
@@ -452,7 +474,7 @@ export function layoutChart(
 
   const empty: ChartLayout = {
     plot: { x: 0, y: 0, width: 0, height: 0 },
-    bars: [], runs: [], areas: [], dots: [], slices: [], columns: [],
+    bars: [], runs: [], areas: [], dots: [], slices: [], columns: [], categoryAxis: 'x',
     gridLines: [], baseline: null,
     axisLabels: [], categoryLabels: [], valueLabels: [], legend: [],
     title: null,
@@ -1155,6 +1177,8 @@ function layoutCartesian(
   const columns = [...columnBuild.values()].sort((a, b) => a.categoryIndex - b.categoryIndex);
 
   return {
+    // From the kind, which is the only thing that knows -- see `categoryAxis`.
+    categoryAxis: transposed ? 'y' : 'x',
     columns,
     plot,
     bars,
@@ -1302,6 +1326,8 @@ function layoutPolar(
   });
 
   return {
+    // A radar has no category axis; the spokes are the categories.
+    categoryAxis: 'x',
     // A radar reads by spoke, not by column: its own hit test walks the
     // rings, and a column here would be a second answer to the same question.
     columns: [],
@@ -1648,6 +1674,7 @@ function layoutField(
   }
 
   return {
+    categoryAxis: 'x',
     // A field's reading is computed from the function under the pointer,
     // not looked up in a table of stored values.
     columns: [],
@@ -2358,6 +2385,7 @@ function layoutPlot(
   }
 
   return {
+    categoryAxis: 'x',
     // A curve's value at a point is evaluated, not looked up -- `chartTrace`
     // answers the hover here, and a stored column would be a stale second copy.
     columns: [],
@@ -2795,6 +2823,8 @@ function layoutRadial(
       : null;
 
   return {
+    // A pie's categories are angles, not a run along an axis.
+    categoryAxis: 'x',
     // A slice is its own reading; there is no second axis to column by.
     columns: [],
     plot,

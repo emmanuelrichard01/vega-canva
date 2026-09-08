@@ -16,6 +16,8 @@ import {
   Eye,
   EyeOff,
   ArrowLeftRight,
+  Waves,
+  TrendingUp,
 } from 'lucide-react';
 import { NumberStepper } from '../ui/NumberStepper';
 import { Slider } from '../ui/Slider';
@@ -28,6 +30,7 @@ import {
   OptionalNumber,
   Reveal,
   ToggleRow,
+  SubHead,
   TypeHeader,
   PaletteRibbonPicker,
   MathTokenBar,
@@ -56,8 +59,10 @@ import {
   isTwoVariable,
   isRadial,
   seriesColor,
+  type ChartKind,
   type ChartSpec,
 } from '../../engine/chart/chartTypes';
+
 import { useStore } from '../../hooks/useStore';
 import type { ChartNode } from '../../engine/model/schema';
 
@@ -108,6 +113,9 @@ interface Props {
  * full wording as the segment's hint, so the short form is a compression of
  * the label rather than a replacement for it.
  */
+/** The two kinds drawn as a field of arrows, which alone take seed points. */
+const isField = (kind: ChartKind) => kind === 'slopeField' || kind === 'vectorField';
+
 const SORT_GLYPH: Record<string, string> = {
   none: '—',
   valueDesc: '↓',
@@ -140,530 +148,138 @@ export const ChartSection: React.FC<Props> = ({ node }) => {
     <div className="chartp">
       <TypeHeader kind={spec.kind} onPick={(k) => setChartKind(node.id, spec, k)} />
 
+      {/**
+        * Six sections, in this order, for every kind.
+        *
+        * ## Why the spine is fixed
+        *
+        * There were up to fifteen top-level groups, and which ones appeared
+        * depended entirely on the kind: a bar chart showed Data, Labels,
+        * Palette & Style, Value axis, Numbers, Order, Reference line and
+        * Series; a scatter added Analytics; a histogram added Density *and*
+        * Distribution; a field added Solution Streamlines. Nothing was in the
+        * same place twice, so switching kind meant re-reading the panel from
+        * the top to find the control you had been using a moment ago.
+        *
+        * Four of those groups held exactly one row — a heading and a divider
+        * spent on a single stepper — and two of them, Density and
+        * Distribution, were the same histogram split across two headings for
+        * no reason beyond the order they were written in.
+        *
+        * So: **Source, Marks, Scales, Labels, Colour, Notes.** Always those,
+        * always in that order, with the kind-specific rows folded into
+        * whichever one they belong to rather than earning a heading of their
+        * own. A section that has nothing to offer this kind is absent, which
+        * is the only variation left — so the panel's shape tells you what the
+        * kind can do, instead of where its author happened to put things.
+        *
+        * Nothing is behind a disclosure. That was asked for explicitly, and
+        * it is right: a properties panel is scanned, and a control you have
+        * to open a section to discover is a control nobody finds.
+        */}
+
+      {/* ─── 1. Source ─────────────────────────────────────────────────── */}
       {plot ? (
-        <>
-          <Group label="Formulae">
-            <FormulaEditor spec={spec} patch={patch} />
-          </Group>
-          <Group label={twoVar ? 'Plane' : 'Domain'}>
-            {twoVar ? (
-              <PlaneFields spec={spec} patch={patch} />
-            ) : (
-              <DomainFields spec={spec} patch={patch} />
-            )}
-          </Group>
-          {spec.kind === 'function' && (
-            <Group label="Read off the curve">
-              <AnalysisFields spec={spec} patch={patch} />
-            </Group>
-          )}
-        </>
+        <Group label="Formula">
+          <FormulaEditor spec={spec} patch={patch} />
+        </Group>
       ) : (
         <Group label="Data" actions={<DataActions node={node} spec={spec} />}>
           <DataGrid spec={spec} patch={patch} />
         </Group>
       )}
 
-      <Group label="Labels">
-        <Row label="Title">
-          <input
-            className="panel-input"
-            value={spec.title ?? ''}
-            placeholder="None"
-            onChange={(e) => patch({ title: e.target.value || undefined })}
-          />
-        </Row>
-        {spec.title && (
-          <Row label="Title size">
-            <NumberStepper
-              value={spec.titleSize ?? 16}
-              min={9}
-              max={48}
-              onChange={(v) => patch({ titleSize: v === 16 ? undefined : v })}
-            />
-          </Row>
-        )}
-        <Row label="Subtitle">
-          <input
-            className="panel-input"
-            value={spec.subtitle ?? ''}
-            placeholder="None"
-            onChange={(e) => patch({ subtitle: e.target.value || undefined })}
-          />
-        </Row>
-        <Row label="Footnote">
-          <input
-            className="panel-input"
-            value={spec.footnote ?? ''}
-            placeholder="Source / context note"
-            onChange={(e) => patch({ footnote: e.target.value || undefined })}
-          />
-        </Row>
-        {!radial && !polar && !plot && (
-          <>
-            <Row label="X-axis title">
-              <input
-                className="panel-input"
-                value={spec.xAxisLabel ?? ''}
-                placeholder="e.g. Quarter"
-                onChange={(e) => patch({ xAxisLabel: e.target.value || undefined })}
-              />
-            </Row>
-            <Row label="Y-axis title">
-              <input
-                className="panel-input"
-                value={spec.yAxisLabel ?? ''}
-                placeholder="e.g. Revenue ($)"
-                onChange={(e) => patch({ yAxisLabel: e.target.value || undefined })}
-              />
-            </Row>
-          </>
-        )}
-        <Row label="Show">
-          <ToggleRow
-            options={[
-              {
-                id: 'legend',
-                icon: <Tag size={12} />,
-                label: 'Legend',
-                on: spec.showLegend ?? true,
-              },
-              ...(can.valueLabels
-                ? [
-                    {
-                      id: 'values',
-                      icon: <Hash size={12} />,
-                      label: 'Value labels',
-                      on: spec.showValues ?? false,
-                    },
-                  ]
-                : []),
-              ...(!can.gridLines
-                ? []
-                : [
-                    {
-                      id: 'grid',
-                      icon: <Grid3x3 size={12} />,
-                      label: 'Grid lines',
-                      on: spec.showGrid ?? true,
-                    },
-                  ]),
-            ]}
-            onToggle={(id) => {
-              if (id === 'legend') patch({ showLegend: !(spec.showLegend ?? true) });
-              else if (id === 'values') patch({ showValues: !(spec.showValues ?? false) });
-              else patch({ showGrid: !(spec.showGrid ?? true) });
-            }}
-          />
-        </Row>
-        {(spec.showLegend ?? true) && (
-          <Row label="Legend pos">
-            <SegmentedControl
-              fill
-              ariaLabel="Legend position"
-              value={spec.legendPosition ?? 'bottom'}
-              onChange={(v) => patch({ legendPosition: v as any })}
-              segments={[
-                { value: 'top', label: 'Top' },
-                { value: 'bottom', label: 'Bottom' },
-                { value: 'right', label: 'Right' },
-              ]}
-            />
-          </Row>
-        )}
-        {spec.showValues && can.valueLabels && (
-          <>
-            <Row label="Value place">
-              <SegmentedControl
-                fill
-                ariaLabel="Value label placement"
-                value={spec.valuePlacement ?? 'auto'}
-                onChange={(v) => patch({ valuePlacement: v as any })}
-                segments={[
-                  { value: 'auto', label: 'Auto' },
-                  { value: 'inside', label: 'In' },
-                  { value: 'outside', label: 'Out' },
-                  { value: 'center', label: 'Center' },
-                ]}
-              />
-            </Row>
-            <Row label="Value style">
-              <SegmentedControl
-                fill
-                ariaLabel="Value label format"
-                value={spec.valueFormat ?? 'value'}
-                onChange={(v) => patch({ valueFormat: v as any })}
-                segments={[
-                  { value: 'value', label: 'Value' },
-                  { value: 'percent', label: '%' },
-                  { value: 'both', label: 'Both' },
-                ]}
-              />
-            </Row>
-          </>
-        )}
-        {spec.showValues && (spec.kind === 'line' || spec.kind === 'area') && (
-          <Row label="Values on">
-            <SegmentedControl
-              fill
-              ariaLabel="Value labels subset"
-              value={spec.extremesOnly ? 'extremes' : 'all'}
-              onChange={(v) => patch({ extremesOnly: v === 'extremes' ? true : undefined })}
-              segments={[
-                { value: 'all', label: 'All points' },
-                { value: 'extremes', label: 'Extremes' },
-              ]}
-            />
-          </Row>
-        )}
+      {/* ─── 2. Marks ──────────────────────────────────────────────────── */}
+      <Group label="Marks">
+        <MarkFields spec={spec} patch={patch} can={can} />
       </Group>
 
-      {/*
-        `curved` was implemented in the layout and had no control at all --
-        a feature nothing could reach, which is the dead-capability rule in its
-        other direction. Offered only for the runs that are drawn through
-        points, and never for `step`: a staircase asserts the value did *not*
-        slide between readings, and rounding its corners states the opposite.
-      */}
-      {can.curved && (
-        <Group label="Line">
-          <Row label="Shape">
-            <SegmentedControl
-              fill
-              ariaLabel="How the run is drawn"
-              value={spec.curved ? 'curved' : 'straight'}
-              onChange={(v) => patch({ curved: v === 'curved' ? true : undefined })}
-              segments={[
-                { value: 'straight', label: 'Straight', hint: 'Joins the points directly' },
-                { value: 'curved', label: 'Curved', hint: 'Smooths through the points' },
-              ]}
-            />
-          </Row>
+      {/* ─── 3. Scales ─────────────────────────────────────────────────── */}
+      {(plot || can.valueAxis || can.numberFormat || can.sort) && (
+        <Group label="Scales">
+          {plot &&
+            (twoVar ? (
+              <PlaneFields spec={spec} patch={patch} />
+            ) : (
+              <DomainFields spec={spec} patch={patch} />
+            ))}
+
+          {can.valueAxis && (
+            <>
+              {plot && <SubHead label="Value axis" />}
+              <AxisFields spec={spec} patch={patch} />
+            </>
+          )}
+
+          {can.numberFormat && (
+            <>
+              <SubHead label="Numbers" />
+              <NumberFields spec={spec} patch={patch} />
+            </>
+          )}
+
+          {can.sort && (
+            <>
+              <SubHead label="Order" />
+              <OrderFields spec={spec} patch={patch} />
+            </>
+          )}
         </Group>
       )}
 
-      {spec.kind === 'step' && (
-        <Group label="Step">
-          <Row label="Alignment">
-            <SegmentedControl
-              fill
-              ariaLabel="Step transition alignment"
-              value={spec.stepMode ?? 'after'}
-              onChange={(v) => patch({ stepMode: v as any })}
-              segments={[
-                { value: 'after', label: 'After', hint: 'Step after point' },
-                { value: 'mid', label: 'Mid', hint: 'Step halfway' },
-                { value: 'before', label: 'Before', hint: 'Step before point' },
-              ]}
-            />
-          </Row>
-        </Group>
-      )}
+      {/* ─── 4. Labels ─────────────────────────────────────────────────── */}
+      <Group label="Labels">
+        <LabelFields spec={spec} patch={patch} can={can} radial={radial} polar={polar} plot={plot} />
+      </Group>
 
-      {(spec.kind === 'scatter' || spec.kind === 'bubble') && (
-        <Group label="Analytics">
-          <Row label="Trendline">
-            <SegmentedControl
-              fill
-              ariaLabel="Linear regression trendline"
-              value={spec.showTrendline ? 'on' : 'off'}
-              onChange={(v) => patch({ showTrendline: v === 'on' ? true : undefined })}
-              segments={[
-                { value: 'off', label: 'None', hint: 'No trendline' },
-                { value: 'on', label: 'OLS (R²)', hint: 'Ordinary Least Squares regression with R²' },
-              ]}
-            />
-          </Row>
-        </Group>
-      )}
-
-      {spec.kind === 'histogram' && (
-        <Group label="Density">
-          <Row label="KDE curve">
-            <SegmentedControl
-              fill
-              ariaLabel="Gaussian Kernel Density Estimation"
-              value={spec.showKde ? 'on' : 'off'}
-              onChange={(v) => patch({ showKde: v === 'on' ? true : undefined })}
-              segments={[
-                { value: 'off', label: 'Bars only', hint: 'Histogram bars only' },
-                { value: 'on', label: 'Gaussian KDE', hint: 'Overlaid smooth density curve' },
-              ]}
-            />
-          </Row>
-        </Group>
-      )}
-
-      {(spec.kind === 'slopeField' || spec.kind === 'vectorField') && (
-        <Group label="Solution Streamlines">
-          <Row label="Seeds">
-            <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', width: '100%' }}>
-              <span style={{ fontSize: 11, color: 'var(--text-secondary)' }}>
-                {(spec.seedPoints?.length ?? 0)} solution {spec.seedPoints?.length === 1 ? 'curve' : 'curves'}
-              </span>
-              <button
-                type="button"
-                className="btn-text"
-                onClick={() => patch({ seedPoints: undefined })}
-                disabled={!spec.seedPoints?.length}
-                style={{ fontSize: 11, padding: '2px 8px', opacity: spec.seedPoints?.length ? 1 : 0.5 }}
-              >
-                Clear seeds
-              </button>
-            </div>
-          </Row>
-          <p className="chartp-note" style={{ margin: '4px 0 0' }}>
-            Alt+Click anywhere on the field to drop an initial-value solution curve.
-          </p>
-        </Group>
-      )}
-
-      <Group label="Palette & Style">
+      {/* ─── 5. Colour ─────────────────────────────────────────────────── */}
+      <Group label="Colour">
         <Row label="Palette">
           <PaletteRibbonPicker
             value={spec.paletteId ?? 'default'}
             onChange={(id) => patch({ paletteId: id })}
           />
         </Row>
+        {spec.kind === 'heatmap' && <RampPicker spec={spec} patch={patch} />}
         {can.gradient && (
-          <Row label="Fill style">
+          <Row label="Fill" hint="Fade the area toward the baseline">
             <SegmentedControl
               fill
-              ariaLabel="Fill style"
+              ariaLabel="Area fill style"
               value={spec.gradient ? 'gradient' : 'solid'}
               onChange={(v) => patch({ gradient: v === 'gradient' ? true : undefined })}
               segments={[
-                { value: 'solid', label: 'Solid', hint: 'Flat solid color' },
-                { value: 'gradient', label: 'Gradient', hint: 'Smooth linear agency gradient' },
+                { value: 'solid', label: 'Solid' },
+                { value: 'gradient', label: 'Gradient' },
               ]}
             />
           </Row>
         )}
-        {(spec.kind === 'bar' || spec.kind === 'barHorizontal') && (
-          <Row label="Corner radius">
-            <Slider
-              label="Corner radius"
-              labelHidden
-              value={spec.cornerRadius ?? 3}
-              min={0}
-              max={16}
-              onChange={(v) => patch({ cornerRadius: v === 3 ? undefined : v })}
-            />
-          </Row>
-        )}
-        {(spec.kind === 'line' || spec.kind === 'area' || spec.kind === 'step') && (
+        {can.seriesColors && (
           <>
-            <Row label="Line width">
-              <NumberStepper
-                value={spec.lineWidth ?? 2.5}
-                min={1}
-                max={6}
-                step={0.5}
-                onChange={(v) => patch({ lineWidth: v === 2.5 ? undefined : v })}
-              />
-            </Row>
-            <Row label="Markers">
-              <SegmentedControl
-                fill
-                ariaLabel="Line data point markers"
-                value={spec.markerShape ?? 'circle'}
-                onChange={(v) => patch({ markerShape: v as any })}
-                segments={[
-                  { value: 'circle', label: '● Filled' },
-                  { value: 'ring', label: '○ Ring' },
-                  { value: 'none', label: '— None' },
-                ]}
-              />
-            </Row>
+            <SubHead label={spec.series.length > 1 ? 'Series' : 'Colour'} />
+            <SeriesFields spec={spec} patch={patch} />
           </>
         )}
-        {(spec.kind === 'area' || spec.kind === 'stackedArea') && (
-          <Row label="Area fill">
-            <Slider
-              label="Area fill opacity"
-              labelHidden
-              value={Math.round((spec.areaOpacity ?? 0.22) * 100)}
-              min={10}
-              max={90}
-              onChange={(v) => patch({ areaOpacity: v / 100 })}
-            />
-          </Row>
-        )}
+        {(isRadial(spec.kind) || spec.kind === 'funnel') && <SeriesFields spec={spec} patch={patch} />}
       </Group>
 
-      {can.valueAxis && (
-        <Group label="Value axis">
-          <AxisFields spec={spec} patch={patch} />
-        </Group>
-      )}
-
-      {can.numberFormat && (
-        <Group label="Numbers">
-          <Row label="Presets" stack>
-            <div className="chartp-presets-strip">
-              <button
-                type="button"
-                className="chartp-preset-chip"
-                onClick={() => patch({ valuePrefix: '$', compactNumbers: true, decimals: 0 })}
-              >
-                $ USD
-              </button>
-              <button
-                type="button"
-                className="chartp-preset-chip"
-                onClick={() => patch({ valuePrefix: '€', compactNumbers: true, decimals: 0 })}
-              >
-                € EUR
-              </button>
-              <button
-                type="button"
-                className="chartp-preset-chip"
-                onClick={() => patch({ valueSuffix: '%', decimals: 1, compactNumbers: false })}
-              >
-                % Pct
-              </button>
-              <button
-                type="button"
-                className="chartp-preset-chip"
-                onClick={() => patch({ valuePrefix: '$', compactNumbers: true, decimals: 1 })}
-              >
-                $1.2M
-              </button>
-              <button
-                type="button"
-                className="chartp-preset-chip"
-                onClick={() => patch({ decimals: 0, compactNumbers: false, valuePrefix: undefined, valueSuffix: undefined })}
-              >
-                Integer
-              </button>
-            </div>
-          </Row>
-          <Row label="Preview">
-            <div className="chartp-preview-badge">
-              <span>1,250,000 → </span>
-              <strong>{formatValue(1250000, spec)}</strong>
-            </div>
-          </Row>
-          <Row label="Prefix">
-            <input
-              className="panel-input"
-              value={spec.valuePrefix ?? ''}
-              placeholder="$"
-              aria-label="Value prefix"
-              onChange={(e) => patch({ valuePrefix: e.target.value || undefined })}
-            />
-          </Row>
-          <Row label="Suffix">
-            <input
-              className="panel-input"
-              value={spec.valueSuffix ?? ''}
-              placeholder="%"
-              aria-label="Value suffix"
-              onChange={(e) => patch({ valueSuffix: e.target.value || undefined })}
-            />
-          </Row>
-          <Row label="Decimals">
-            <NumberStepper
-              value={spec.decimals ?? 0}
-              min={0}
-              max={6}
-              onChange={(v) => patch({ decimals: v })}
-            />
-          </Row>
-          <Row label="Large numbers">
-            <SegmentedControl
-              fill
-              ariaLabel="How large numbers are written"
-              value={(spec.compactNumbers ?? true) ? 'compact' : 'full'}
-              onChange={(v) => patch({ compactNumbers: v === 'compact' ? undefined : false })}
-              segments={[
-                { value: 'compact', label: '12k', hint: 'Abbreviate thousands and millions' },
-                { value: 'full', label: '12,000', hint: 'Write them out in full' },
-              ]}
-            />
-          </Row>
-        </Group>
-      )}
-
-      {can.sort && (
-        <Group label="Order">
-          <Row label="Order" stack>
-            <SegmentedControl
-              fill
-              ariaLabel="Category order"
-              value={spec.sort ?? 'none'}
-              onChange={(v) =>
-                patch({ sort: v === 'none' ? undefined : (v as ChartSpec['sort']) })
-              }
-              segments={CHART_SORTS.map((s) => ({
-                value: s,
-                label: SORT_GLYPH[s],
-                hint: CHART_SORT_LABELS[s],
-              }))}
-            />
-          </Row>
-          {spec.series.length > 1 && (
-            <Row label="Sort by">
-              <SegmentedControl
-                fill
-                ariaLabel="Sort key"
-                value={spec.sortKey ?? 'series'}
-                onChange={(v) => patch({ sortKey: v as any })}
-                segments={[
-                  { value: 'series', label: 'Series 1' },
-                  { value: 'total', label: 'Total Sum' },
-                ]}
-              />
-            </Row>
+      {/* ─── 6. Notes ──────────────────────────────────────────────────── */}
+      {(can.reference || spec.kind === 'function' || isField(spec.kind)) && (
+        <Group label="Notes">
+          {can.reference && <ReferenceFields spec={spec} patch={patch} />}
+          {spec.kind === 'function' && (
+            <>
+              {can.reference && <SubHead label="Read off the curve" />}
+              <AnalysisFields spec={spec} patch={patch} />
+            </>
           )}
-          <Row label="Top items" hint="Consolidate tail categories into 'Other'">
-            <NumberStepper
-              value={spec.topN ?? spec.categories.length}
-              min={3}
-              max={Math.max(3, spec.categories.length)}
-              onChange={(v) => patch({ topN: v >= spec.categories.length ? undefined : v })}
-            />
-          </Row>
-        </Group>
-      )}
-
-      {spec.kind === 'donut' && (
-        <Group label="Donut">
-          <Row label="Hole">
-            <Slider
-              label="Hole"
-              labelHidden
-              value={Math.round((spec.innerRadius ?? 0.55) * 100)}
-              min={15}
-              max={85}
-              onChange={(v) => patch({ innerRadius: v / 100 })}
-            />
-          </Row>
-        </Group>
-      )}
-
-      {spec.kind === 'histogram' && (
-        <Group label="Distribution">
-          <Row label="Buckets" hint="The same samples at 5 and at 40 tell different stories">
-            <NumberStepper
-              value={spec.buckets ?? 10}
-              min={2}
-              max={60}
-              onChange={(v) => patch({ buckets: v })}
-            />
-          </Row>
-        </Group>
-      )}
-
-      {can.reference && (
-        <Group label="Reference line">
-          <ReferenceFields spec={spec} patch={patch} />
-        </Group>
-      )}
-
-      {can.seriesColors && (
-        <Group label="Series">
-          <SeriesFields spec={spec} patch={patch} />
+          {isField(spec.kind) && (
+            <>
+              {can.reference && <SubHead label="Solution curves" />}
+              <SeedFields spec={spec} patch={patch} />
+            </>
+          )}
         </Group>
       )}
     </div>
@@ -682,6 +298,550 @@ export const ChartSection: React.FC<Props> = ({ node }) => {
  * something and hold no state, and drawing them as switches that never light
  * was a control lying about its own kind.
  */
+/**
+ * The words on the chart, and which of its three furniture layers show.
+ */
+const LabelFields: React.FC<{
+  spec: ChartSpec;
+  patch: (n: Partial<ChartSpec>) => void;
+  can: ReturnType<typeof chartCapabilities>;
+  radial: boolean;
+  polar: boolean;
+  plot: boolean;
+}> = ({ spec, patch, can, radial, polar, plot }) => (
+  <>
+    <Row label="Title">
+      <input
+        className="panel-input"
+        value={spec.title ?? ''}
+        placeholder="None"
+        onChange={(e) => patch({ title: e.target.value || undefined })}
+      />
+    </Row>
+    {/* The size only matters once there is a title to size, so it arrives with
+        one rather than sitting there greyed out. */}
+    {spec.title && (
+      <Row label="Title size">
+        <NumberStepper
+          value={spec.titleSize ?? 16}
+          min={9}
+          max={48}
+          suffix="px"
+          onChange={(v) => patch({ titleSize: v === 16 ? undefined : v })}
+        />
+      </Row>
+    )}
+    <Row label="Subtitle">
+      <input
+        className="panel-input"
+        value={spec.subtitle ?? ''}
+        placeholder="None"
+        onChange={(e) => patch({ subtitle: e.target.value || undefined })}
+      />
+    </Row>
+    <Row label="Footnote">
+      <input
+        className="panel-input"
+        value={spec.footnote ?? ''}
+        placeholder="Source or context"
+        onChange={(e) => patch({ footnote: e.target.value || undefined })}
+      />
+    </Row>
+
+    {!radial && !polar && !plot && (
+      <>
+        <Row label="X axis">
+          <input
+            className="panel-input"
+            value={spec.xAxisLabel ?? ''}
+            placeholder="e.g. Quarter"
+            onChange={(e) => patch({ xAxisLabel: e.target.value || undefined })}
+          />
+        </Row>
+        <Row label="Y axis">
+          <input
+            className="panel-input"
+            value={spec.yAxisLabel ?? ''}
+            placeholder="e.g. Revenue"
+            onChange={(e) => patch({ yAxisLabel: e.target.value || undefined })}
+          />
+        </Row>
+      </>
+    )}
+
+    <Row label="Show">
+      <ToggleRow
+        options={[
+          { id: 'legend', icon: <Tag size={12} />, label: 'Legend', on: spec.showLegend ?? true },
+          ...(can.valueLabels
+            ? [
+                {
+                  id: 'values',
+                  icon: <Hash size={12} />,
+                  label: 'Values',
+                  on: spec.showValues ?? false,
+                },
+              ]
+            : []),
+          ...(can.gridLines
+            ? [
+                {
+                  id: 'grid',
+                  icon: <Grid3x3 size={12} />,
+                  label: 'Grid',
+                  on: spec.showGrid ?? true,
+                },
+              ]
+            : []),
+        ]}
+        onToggle={(id) => {
+          if (id === 'legend') patch({ showLegend: !(spec.showLegend ?? true) });
+          else if (id === 'values') patch({ showValues: !(spec.showValues ?? false) });
+          else patch({ showGrid: !(spec.showGrid ?? true) });
+        }}
+      />
+    </Row>
+
+    {(spec.showLegend ?? true) && (
+      <Row label="Legend at">
+        <SegmentedControl
+          fill
+          ariaLabel="Legend position"
+          value={spec.legendPosition ?? 'bottom'}
+          onChange={(v) => patch({ legendPosition: v as ChartSpec['legendPosition'] })}
+          segments={[
+            { value: 'top', label: 'Top' },
+            { value: 'bottom', label: 'Bottom' },
+            { value: 'right', label: 'Right' },
+          ]}
+        />
+      </Row>
+    )}
+
+    {spec.showValues && can.valueLabels && (
+      <>
+        <Row label="Place">
+          <SegmentedControl
+            fill
+            ariaLabel="Where value labels sit"
+            value={spec.valuePlacement ?? 'auto'}
+            onChange={(v) => patch({ valuePlacement: v as ChartSpec['valuePlacement'] })}
+            segments={[
+              { value: 'auto', label: 'Auto' },
+              { value: 'inside', label: 'In' },
+              { value: 'outside', label: 'Out' },
+              { value: 'center', label: 'Middle' },
+            ]}
+          />
+        </Row>
+        <Row label="Read as">
+          <SegmentedControl
+            fill
+            ariaLabel="What a value label says"
+            value={spec.valueFormat ?? 'value'}
+            onChange={(v) => patch({ valueFormat: v as ChartSpec['valueFormat'] })}
+            segments={[
+              { value: 'value', label: 'Value' },
+              { value: 'percent', label: 'Share' },
+              { value: 'both', label: 'Both' },
+            ]}
+          />
+        </Row>
+      </>
+    )}
+
+    {/* Forty labels on a line chart is a wall of numbers; the two that matter
+        are the high and the low. Offered only where there is a run long enough
+        for that to be true. */}
+    {spec.showValues && (spec.kind === 'line' || spec.kind === 'area') && (
+      <Row label="Label">
+        <SegmentedControl
+          fill
+          ariaLabel="Which points carry a value label"
+          value={spec.extremesOnly ? 'extremes' : 'all'}
+          onChange={(v) => patch({ extremesOnly: v === 'extremes' ? true : undefined })}
+          segments={[
+            { value: 'all', label: 'Every point' },
+            { value: 'extremes', label: 'High and low' },
+          ]}
+        />
+      </Row>
+    )}
+  </>
+);
+
+/**
+ * How the mark itself is drawn.
+ *
+ * This is six of the old top-level groups in one: Line, Step, Analytics,
+ * Density, Distribution and Donut, plus the stroke and fill rows that were
+ * filed under "Palette & Style" despite being about geometry rather than
+ * colour. Every one of them was a heading spent on one or two rows that all
+ * answer the same question — *what does the mark look like* — and splitting
+ * that question six ways is why the panel had fifteen sections.
+ */
+const MarkFields: React.FC<{
+  spec: ChartSpec;
+  patch: (n: Partial<ChartSpec>) => void;
+  can: ReturnType<typeof chartCapabilities>;
+}> = ({ spec, patch, can }) => {
+  const line = spec.kind === 'line' || spec.kind === 'area' || spec.kind === 'step';
+  const bar = spec.kind === 'bar' || spec.kind === 'barHorizontal';
+  const area = spec.kind === 'area' || spec.kind === 'stackedArea';
+
+  return (
+    <>
+      {/* `curved` was implemented in the layout with no control at all — a
+          capability nothing could reach. Never offered for `step`: a staircase
+          asserts the value did *not* slide between readings, and rounding its
+          corners states the opposite. */}
+      {can.curved && (
+        <Row label="Shape">
+          <SegmentedControl
+            fill
+            ariaLabel="How the run is drawn"
+            value={spec.curved ? 'curved' : 'straight'}
+            onChange={(v) => patch({ curved: v === 'curved' ? true : undefined })}
+            segments={[
+              { value: 'straight', label: 'Straight', hint: 'Joins the points directly' },
+              { value: 'curved', label: 'Curved', hint: 'Smooths through the points' },
+            ]}
+          />
+        </Row>
+      )}
+
+      {spec.kind === 'step' && (
+        <Row label="Step at" hint="Where the value changes, relative to the reading">
+          <SegmentedControl
+            fill
+            ariaLabel="Step alignment"
+            value={spec.stepMode ?? 'after'}
+            onChange={(v) => patch({ stepMode: v as ChartSpec['stepMode'] })}
+            segments={[
+              { value: 'before', label: 'Before' },
+              { value: 'mid', label: 'Middle' },
+              { value: 'after', label: 'After' },
+            ]}
+          />
+        </Row>
+      )}
+
+      {line && (
+        <>
+          <Row label="Weight">
+            <NumberStepper
+              value={spec.lineWidth ?? 2.5}
+              min={1}
+              max={6}
+              step={0.5}
+              suffix="px"
+              onChange={(v) => patch({ lineWidth: v === 2.5 ? undefined : v })}
+            />
+          </Row>
+          <Row label="Points">
+            <SegmentedControl
+              fill
+              ariaLabel="Marker at each reading"
+              value={spec.markerShape ?? 'circle'}
+              onChange={(v) => patch({ markerShape: v as ChartSpec['markerShape'] })}
+              segments={[
+                { value: 'circle', label: 'Filled' },
+                { value: 'ring', label: 'Ring' },
+                { value: 'none', label: 'None' },
+              ]}
+            />
+          </Row>
+        </>
+      )}
+
+      {bar && (
+        <Row label="Corners">
+          <Slider
+            label="Corner radius"
+            labelHidden
+            value={spec.cornerRadius ?? 3}
+            min={0}
+            max={16}
+            onChange={(v) => patch({ cornerRadius: v === 3 ? undefined : v })}
+          />
+        </Row>
+      )}
+
+      {area && (
+        <Row label="Fill">
+          <Slider
+            label="Area fill opacity"
+            labelHidden
+            value={Math.round((spec.areaOpacity ?? 0.22) * 100)}
+            min={10}
+            max={90}
+            onChange={(v) => patch({ areaOpacity: v / 100 })}
+          />
+        </Row>
+      )}
+
+      {spec.kind === 'donut' && (
+        <Row label="Hole" hint="The inner radius, as a share of the outer">
+          <Slider
+            label="Hole"
+            labelHidden
+            value={Math.round((spec.innerRadius ?? 0.55) * 100)}
+            min={15}
+            max={85}
+            onChange={(v) => patch({ innerRadius: v / 100 })}
+          />
+        </Row>
+      )}
+
+      {/* Buckets and the density curve were "Distribution" and "Density": two
+          headings, one row each, on the same chart, describing the same
+          distribution. */}
+      {spec.kind === 'histogram' && (
+        <>
+          <Row label="Buckets" hint="The same samples at 5 and at 40 tell different stories">
+            <NumberStepper
+              value={spec.buckets ?? 10}
+              min={2}
+              max={60}
+              onChange={(v) => patch({ buckets: v })}
+            />
+          </Row>
+          <ToggleRow
+            options={[
+              {
+                id: 'kde',
+                icon: <Waves size={12} />,
+                label: 'Density curve',
+                on: Boolean(spec.showKde),
+              },
+            ]}
+            onToggle={() => patch({ showKde: spec.showKde ? undefined : true })}
+          />
+        </>
+      )}
+
+      {/* A switch, not two words in a segmented control. "None" against
+          "OLS (R²)" implied two ways of drawing a trendline, one of which was
+          not drawing one — which is a toggle wearing a picker's clothes. */}
+      {(spec.kind === 'scatter' || spec.kind === 'bubble') && (
+        <ToggleRow
+          options={[
+            {
+              id: 'trend',
+              icon: <TrendingUp size={12} />,
+              label: 'Trendline (R²)',
+              on: Boolean(spec.showTrendline),
+            },
+          ]}
+          onToggle={() => patch({ showTrendline: spec.showTrendline ? undefined : true })}
+        />
+      )}
+
+      {isTwoVariable(spec.kind) && (
+        <Row
+          label={spec.kind === 'implicit' || spec.kind === 'contour' ? 'Detail' : 'Density'}
+          hint="Cost is quadratic in this, unlike a curve's sample count"
+        >
+          <NumberStepper
+            value={spec.resolution ?? (spec.kind === 'contour' ? 100 : 80)}
+            min={8}
+            max={160}
+            step={4}
+            onChange={(v) => patch({ resolution: v })}
+          />
+        </Row>
+      )}
+
+      {spec.kind === 'contour' && (
+        <Row label="Levels" hint="Spread across what the function actually reaches">
+          <NumberStepper
+            value={spec.levels ?? 8}
+            min={2}
+            max={40}
+            onChange={(v) => patch({ levels: v })}
+          />
+        </Row>
+      )}
+
+    </>
+  );
+};
+
+/**
+ * How a number is written, wherever the chart writes one.
+ *
+ * Lifted out of its own top-level group and into Scales, where it belongs: a
+ * prefix and a decimal count are properties of the value axis, not a separate
+ * concern from it. The preset chips stay — they are the fastest path to the
+ * four formats anybody actually wants — and the live preview stays with them,
+ * because a format you cannot see the result of is a format you set by trial.
+ */
+const NumberFields: React.FC<{ spec: ChartSpec; patch: (n: Partial<ChartSpec>) => void }> = ({
+  spec,
+  patch,
+}) => (
+  <>
+    <Row label="Preset" stack>
+      <div className="chartp-presets-strip">
+        {NUMBER_PRESETS.map((preset) => (
+          <button
+            key={preset.label}
+            type="button"
+            className="chartp-preset-chip"
+            data-active={matchesPreset(spec, preset) || undefined}
+            onClick={() => patch(preset.patch)}
+          >
+            {preset.label}
+          </button>
+        ))}
+      </div>
+    </Row>
+    <Row label="Preview">
+      <div className="chartp-preview-badge">
+        <span>1,250,000</span>
+        <strong>{formatValue(1250000, spec)}</strong>
+      </div>
+    </Row>
+    <Row label="Before">
+      <input
+        className="panel-input"
+        value={spec.valuePrefix ?? ''}
+        placeholder="$"
+        aria-label="Text before the number"
+        onChange={(e) => patch({ valuePrefix: e.target.value || undefined })}
+      />
+    </Row>
+    <Row label="After">
+      <input
+        className="panel-input"
+        value={spec.valueSuffix ?? ''}
+        placeholder="%"
+        aria-label="Text after the number"
+        onChange={(e) => patch({ valueSuffix: e.target.value || undefined })}
+      />
+    </Row>
+    <Row label="Decimals">
+      <NumberStepper
+        value={spec.decimals ?? 0}
+        min={0}
+        max={6}
+        onChange={(v) => patch({ decimals: v })}
+      />
+    </Row>
+    <Row label="Large">
+      <SegmentedControl
+        fill
+        ariaLabel="How large numbers are written"
+        value={(spec.compactNumbers ?? true) ? 'compact' : 'full'}
+        onChange={(v) => patch({ compactNumbers: v === 'compact' ? undefined : false })}
+        segments={[
+          { value: 'compact', label: '12k', hint: 'Abbreviate thousands and millions' },
+          { value: 'full', label: '12,000', hint: 'Write them out in full' },
+        ]}
+      />
+    </Row>
+  </>
+);
+
+/**
+ * The number formats worth one press.
+ *
+ * A table rather than five hand-written buttons, so a chip can also *show*
+ * whether it is the current format — which the five could not, having no idea
+ * what they had set.
+ */
+const NUMBER_PRESETS: Array<{ label: string; patch: Partial<ChartSpec> }> = [
+  { label: '$ USD', patch: { valuePrefix: '$', valueSuffix: undefined, compactNumbers: true, decimals: 0 } },
+  { label: '€ EUR', patch: { valuePrefix: '€', valueSuffix: undefined, compactNumbers: true, decimals: 0 } },
+  { label: '%', patch: { valuePrefix: undefined, valueSuffix: '%', compactNumbers: false, decimals: 1 } },
+  { label: '$1.2M', patch: { valuePrefix: '$', valueSuffix: undefined, compactNumbers: true, decimals: 1 } },
+  { label: '1,250', patch: { valuePrefix: undefined, valueSuffix: undefined, compactNumbers: false, decimals: 0 } },
+];
+
+function matchesPreset(spec: ChartSpec, preset: { patch: Partial<ChartSpec> }): boolean {
+  return (Object.keys(preset.patch) as Array<keyof ChartSpec>).every(
+    (key) => (spec[key] ?? undefined) === (preset.patch[key] ?? undefined)
+  );
+}
+
+/** What order the categories come in, and how many of them are shown. */
+const OrderFields: React.FC<{ spec: ChartSpec; patch: (n: Partial<ChartSpec>) => void }> = ({
+  spec,
+  patch,
+}) => (
+  <>
+    <Row label="Order" stack>
+      <SegmentedControl
+        fill
+        ariaLabel="Category order"
+        value={spec.sort ?? 'none'}
+        onChange={(v) => patch({ sort: v === 'none' ? undefined : (v as ChartSpec['sort']) })}
+        segments={CHART_SORTS.map((s) => ({
+          value: s,
+          label: SORT_GLYPH[s],
+          hint: CHART_SORT_LABELS[s],
+        }))}
+      />
+    </Row>
+    {spec.series.length > 1 && (
+      <Row label="By" hint="Which number decides the order when there are several">
+        <SegmentedControl
+          fill
+          ariaLabel="Sort key"
+          value={spec.sortKey ?? 'series'}
+          onChange={(v) => patch({ sortKey: v as ChartSpec['sortKey'] })}
+          segments={[
+            { value: 'series', label: spec.series[0]?.name || 'First' },
+            { value: 'total', label: 'Total' },
+          ]}
+        />
+      </Row>
+    )}
+    <Row label="Keep" hint="The rest are gathered into a single ‘Other’">
+      <NumberStepper
+        value={spec.topN ?? spec.categories.length}
+        min={3}
+        max={Math.max(3, spec.categories.length)}
+        onChange={(v) => patch({ topN: v >= spec.categories.length ? undefined : v })}
+      />
+    </Row>
+  </>
+);
+
+/**
+ * The seeds a field draws its solution curves from.
+ *
+ * Was a top-level group called "Solution Streamlines" holding one row of
+ * inline-styled markup: a flex container, an 11px span and a button with its
+ * own opacity arithmetic, none of it from the design system.
+ */
+const SeedFields: React.FC<{ spec: ChartSpec; patch: (n: Partial<ChartSpec>) => void }> = ({
+  spec,
+  patch,
+}) => {
+  const count = spec.seedPoints?.length ?? 0;
+  return (
+    <>
+      <Row label="Curves">
+        <div className="chartp-count">
+          <span>{count === 0 ? 'None yet' : `${count} ${count === 1 ? 'curve' : 'curves'}`}</span>
+          <button
+            type="button"
+            className="chartp-clear"
+            disabled={count === 0}
+            onClick={() => patch({ seedPoints: undefined })}
+          >
+            Clear
+          </button>
+        </div>
+      </Row>
+      <p className="chartp-note">
+        Alt-click anywhere on the field to drop a solution curve through that point.
+      </p>
+    </>
+  );
+};
+
 const DataActions: React.FC<{ node: ChartNode; spec: ChartSpec }> = ({ node, spec }) => {
   const [notice, setNotice] = React.useState<string | null>(null);
   const say = (msg: string) => {
@@ -1432,29 +1592,6 @@ const PlaneFields: React.FC<{ spec: ChartSpec; patch: (n: Partial<ChartSpec>) =>
     <Row label="y to">
       <NumberStepper value={spec.yPlotMax ?? 5} onChange={(v) => patch({ yPlotMax: v })} />
     </Row>
-    <Row
-      label={spec.kind === 'implicit' || spec.kind === 'contour' ? 'Detail' : 'Density'}
-      hint="Cost is quadratic in this, unlike a curve's sample count"
-    >
-      <NumberStepper
-        value={spec.resolution ?? (spec.kind === 'contour' ? 100 : 80)}
-        min={8}
-        max={160}
-        step={4}
-        onChange={(v) => patch({ resolution: v })}
-      />
-    </Row>
-    {spec.kind === 'contour' && (
-      <Row label="Levels" hint="Spread across what the function actually reaches">
-        <NumberStepper
-          value={spec.levels ?? 8}
-          min={2}
-          max={40}
-          onChange={(v) => patch({ levels: v })}
-        />
-      </Row>
-    )}
-    {spec.kind === 'heatmap' && <RampPicker spec={spec} patch={patch} />}
     <Row label="Aspect" hint="Keep square geometric aspect ratio">
       <SegmentedControl
         fill

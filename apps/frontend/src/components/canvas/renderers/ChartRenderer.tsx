@@ -321,7 +321,7 @@ export const ChartRenderer: React.FC<Props> = ({ node }) => {
         perfectDrawEnabled={false}
       />
       <Chrome layout={layout} ink={ink} />
-      <CategoryBand hit={hover} layout={layout} />
+      <CategoryBand hit={hover} layout={layout} ink={ink} />
       {/* Under the marks: a guide drawn over the data hides the thing it is
           helping you read. Bars have the band instead — two indicators for
           one pointer is one too many. */}
@@ -725,12 +725,30 @@ const HUD_NUMERIC_FONT =
 /**
  * Category column highlight band behind bars when hovered.
  */
-const CategoryBand: React.FC<{ hit: ChartHit | null; layout: ChartLayout }> = ({ hit, layout }) => {
+const CategoryBand: React.FC<{ hit: ChartHit | null; layout: ChartLayout; ink: ChartInk }> = ({
+  hit,
+  layout,
+  ink,
+}) => {
+  // The crosshair's ink at a fraction of its strength: the band is the same
+  // idea as the hairline -- "the pointer is here" -- drawn as an area rather
+  // than a line, so it should be the same colour and quieter, not a fixed
+  // mid-grey that washes out on a dark board.
+  const band = ink.crosshair;
   if (hit?.categoryIndex === undefined) return null;
   const bars = layout.bars.filter((b) => b.categoryIndex === hit.categoryIndex);
   if (bars.length === 0) return null;
 
-  const isHorizontal = layout.plot.height > 0 && bars[0].height < bars[0].width;
+  /**
+   * From the layout, not from the first bar's proportions.
+   *
+   * This asked whether `bars[0]` was wider than it was tall, which is a
+   * question about a rectangle and not about the chart. On a waterfall a
+   * small step *is* wider than it is tall, so the band came out horizontal
+   * over the small steps and vertical over the tall ones — on one chart, from
+   * one pointer. A bar chart with any category near zero did the same.
+   */
+  const isHorizontal = layout.categoryAxis === 'y';
   if (isHorizontal) {
     const minY = Math.min(...bars.map((b) => b.y)) - 2;
     const maxY = Math.max(...bars.map((b) => b.y + b.height)) + 2;
@@ -740,7 +758,7 @@ const CategoryBand: React.FC<{ hit: ChartHit | null; layout: ChartLayout }> = ({
         y={minY}
         width={layout.plot.width}
         height={maxY - minY}
-        fill="rgba(128, 128, 128, 0.08)"
+        fill={band}
         cornerRadius={4}
         listening={false}
         perfectDrawEnabled={false}
@@ -756,7 +774,7 @@ const CategoryBand: React.FC<{ hit: ChartHit | null; layout: ChartLayout }> = ({
       y={layout.plot.y}
       width={maxX - minX}
       height={layout.plot.height}
-      fill="rgba(128, 128, 128, 0.08)"
+      fill={band}
       cornerRadius={4}
       listening={false}
       perfectDrawEnabled={false}
