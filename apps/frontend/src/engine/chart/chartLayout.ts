@@ -205,6 +205,21 @@ export interface ChartLabel {
   text: string;
   x: number;
   y: number;
+  /**
+   * The colour this label is drawn *on top of*, when that is not the board.
+   *
+   * Every value label was painted in `ink.ink` — the board's foreground —
+   * including the ones placed *inside* a bar or a slice. So a number inside a
+   * dark bar was dark on dark in the light theme, and light on light in the
+   * dark one: invisible in both, and only for the marks whose colour happened
+   * to be near the board's. The palette has seven colours, so roughly a third
+   * of any chart with inside labels lost them.
+   *
+   * The layout knows which marks a label lands on and the painters do not, so
+   * the layout is what says. Present means "pick a foreground against this";
+   * absent means the board, and `ink.ink` is right.
+   */
+  on?: string;
   /** Labels are drawn into a box so they can be centred without measuring
    *  again in the renderer. */
   width: number;
@@ -975,10 +990,13 @@ function layoutCartesian(
       }
       const isInside = spec.valuePlacement === 'inside';
       const isCenter = spec.valuePlacement === 'center';
+      // Inside and centred sit on the bar; outside and auto sit on the board.
+      const on = isInside || isCenter ? color : undefined;
       valueLabels.push(
         transposed
           ? {
               text,
+              on,
               x: isInside ? lo + len - 6 : isCenter ? lo + len / 2 : lo + len + 4,
               y: bandStart + lane.width / 2 - LABEL_SIZE / 2,
               width: 60,
@@ -987,6 +1005,7 @@ function layoutCartesian(
             }
           : {
               text,
+              on,
               x: bandStart,
               y: isInside
                 ? v >= 0 ? lo + 4 : lo + len - LABEL_SIZE - 4
@@ -3067,6 +3086,13 @@ function layoutRadial(
         if (isOutside || pct >= 6) {
           valueLabels.push({
             text,
+            // A label inside the wedge sits on the wedge; one placed outside
+            // sits on the board. This is the case where it mattered most: a
+            // percentage is *always* inside by default, so a pie in the
+            // palette's darker colours lost a third of its numbers.
+            on: isOutside
+              ? undefined
+              : seriesColor({ name: '', values: [], color: series?.color }, i, opts.palette),
             x: cx + Math.cos(mid) * finalR - 25,
             y: cy + Math.sin(mid) * finalR - LABEL_SIZE / 2,
             width: 50,

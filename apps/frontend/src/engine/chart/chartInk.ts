@@ -59,17 +59,6 @@ export interface ChartInk {
    */
   derived: string;
   /**
-   * A feature the plot found *for* you: a root, a pole, an extremum.
-   *
-   * Distinct from `derived`, which is a computed *number*; this marks a
-   * computed *place* on the curve, and the readout leans on it to say "you are
-   * not just near here, you are exactly on something".
-   *
-   * It was the literal `#F59E0B` in the readout and nowhere else, so it could
-   * not follow the theme and no other surface could match it.
-   */
-  feature: string;
-  /**
    * The hairline the pointer casts onto the axes.
    *
    * Quieter than `chrome`, because it crosses the whole plot: at the axis
@@ -77,6 +66,28 @@ export interface ChartInk {
    * it is there to help you read.
    */
   crosshair: string;
+  /**
+   * The accents the maths HUD marks a found feature with.
+   *
+   * Five hues, one per kind of thing the plotter can find for you — a root, an
+   * extremum, a tangent, a crossing — because they mean different things and a
+   * single accent would say only "something is here".
+   *
+   * Theme-aware, which they were not: they were five literals in the
+   * renderer, chosen against a dark board, so on a light one the amber and
+   * the cyan both dropped under 3:1 and a found root was marked in a colour
+   * you had to look for. Being in the ink means they follow the theme like
+   * everything else that has to be read.
+   *
+   * `feature` is the general one — the readout uses it to say "you are not
+   * near this, you are exactly on it" — and the four beneath it distinguish
+   * *what* was found.
+   */
+  feature: string;
+  featureRoot: string;
+  featureExtremum: string;
+  featureTangent: string;
+  featureCrossing: string;
 }
 
 /** Pure, so it can be asserted and so a worker can ask for either. */
@@ -88,6 +99,10 @@ export function chartInkFor(dark: boolean): ChartInk {
         sliceEdge: '#18181B',
         derived: '#22D3EE',
         feature: '#FBBF24',
+        featureRoot: '#FBBF24',
+        featureExtremum: '#FB923C',
+        featureTangent: '#34D399',
+        featureCrossing: '#22D3EE',
         crosshair: 'rgba(200, 210, 224, 0.34)',
       }
     : {
@@ -97,7 +112,14 @@ export function chartInkFor(dark: boolean): ChartInk {
         // A step darker on a white ground, where the bright values the dark
         // theme uses drop under 3:1 and read as disabled text.
         derived: '#0E7490',
+        // Every one a step darker than its dark-theme twin, because these are
+        // drawn *on* the board rather than over a plate: the bright values
+        // clear 3:1 on near-black and nowhere near it on near-white.
         feature: '#B45309',
+        featureRoot: '#B45309',
+        featureExtremum: '#C2410C',
+        featureTangent: '#047857',
+        featureCrossing: '#0E7490',
         crosshair: 'rgba(71, 85, 105, 0.30)',
       };
 }
@@ -120,5 +142,29 @@ export function currentChartInk(): ChartInk {
  * These are the values every chart used before the split, and they are still
  * the correct answer to "one colour that has to survive both grounds".
  */
+/**
+ * The accent for a feature the plotter found, by what it found.
+ *
+ * A function rather than five call sites reading five fields: the renderer had
+ * a nested ternary picking between five literals, which is the shape a lookup
+ * takes when it has nowhere to live.
+ */
+export function featureInk(kind: string | undefined, ink: ChartInk): string {
+  switch (kind) {
+    case 'root':
+    case 'pole':
+      return ink.featureRoot;
+    case 'extremum':
+    case 'cusp':
+      return ink.featureExtremum;
+    case 'tangent':
+      return ink.featureTangent;
+    case 'intersection':
+      return ink.featureCrossing;
+    default:
+      return ink.feature;
+  }
+}
+
 export const CHART_CHROME_NEUTRAL = '#94A3B8';
 export const CHART_INK_NEUTRAL = '#64748B';

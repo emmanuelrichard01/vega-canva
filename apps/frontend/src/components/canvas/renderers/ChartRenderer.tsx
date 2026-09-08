@@ -6,9 +6,14 @@ import type { ChartInk } from '../../../engine/chart/chartInk';
 import { measureChartText } from '../../../engine/chart/chartMeasure';
 import { ThemeService } from '../../../engine/ThemeService';
 import { EXPORT_CHROME } from '../../../engine/export/chrome';
-import { currentChartInk } from '../../../engine/chart/chartInk';
+import { currentChartInk, featureInk } from '../../../engine/chart/chartInk';
 import { chartHitTest, placeReadout, type ChartHit } from '../../../engine/chart/chartHitTest';
-import { formatValue, TOLERANCE_FILL_OPACITY } from '../../../engine/chart/chartLayout';
+import {
+  formatValue,
+  TOLERANCE_FILL_OPACITY,
+  type ChartLabel,
+} from '../../../engine/chart/chartLayout';
+import { contrastInk } from '../../../engine/model/color';
 import {
   chartCapabilities,
   isRadial,
@@ -73,6 +78,18 @@ interface PlaneDomain {
  * document and into everybody's undo history.
  */
 const round3 = (v: number) => Number(v.toFixed(3));
+
+/**
+ * The colour a label is legible in, given what it is drawn on.
+ *
+ * `ChartLabel.on` is the mark's colour when the label sits inside one, and
+ * absent when it sits on the board. `contrastInk` picks black or white by the
+ * ground's luminance, which is the same choice the colour picker's own handle
+ * makes for the same reason.
+ */
+function labelInk(label: ChartLabel, ink: ChartInk): string {
+  return label.on ? contrastInk(label.on) : ink.ink;
+}
 
 /** How long after the last wheel event the zoom is written down. */
 const PLANE_SETTLE_MS = 260;
@@ -897,16 +914,10 @@ const MathHUD: React.FC<{ hit: ChartHit | null; ink: ChartInk }> = ({ hit, ink }
   if (!trace) return null;
 
   const feature = trace.snappedFeature;
-  const badgeColor =
-    feature?.kind === 'root' || (feature?.kind as string) === 'pole'
-      ? '#F59E0B'
-      : feature?.kind === 'extremum' || (feature?.kind as string) === 'cusp'
-        ? '#F97316'
-        : (feature?.kind as string) === 'tangent'
-          ? '#10B981'
-          : feature?.kind === 'intersection'
-            ? '#06B6D4'
-            : '#A855F7';
+  // A lookup, from the ink, rather than a nested ternary over five literals
+  // chosen against a dark board — half of which dropped under 3:1 on a light
+  // one, so a found root was marked in a colour you had to hunt for.
+  const badgeColor = featureInk(feature?.kind as string | undefined, ink);
 
   const badgeText = feature?.badgeText || feature?.label || '';
   const badgeW = Math.max(68, measureChartText(badgeText, 9, '600') + 16);
@@ -914,7 +925,7 @@ const MathHUD: React.FC<{ hit: ChartHit | null; ink: ChartInk }> = ({ hit, ink }
   const badgeY =
     trace.screenPoint.y - 28 < 16 ? trace.screenPoint.y + 12 : trace.screenPoint.y - 28;
 
-  const beadColor = feature ? badgeColor : trace.curveColor || '#06B6D4';
+  const beadColor = feature ? badgeColor : trace.curveColor || ink.derived;
 
   return (
     <Group listening={false} name={EXPORT_CHROME}>
@@ -939,7 +950,7 @@ const MathHUD: React.FC<{ hit: ChartHit | null; ink: ChartInk }> = ({ hit, ink }
           trace.crosshair.xRay[1].x,
           trace.crosshair.xRay[1].y,
         ]}
-        stroke={trace.polarRadius !== undefined ? '#8B5CF6' : ink.chrome}
+        stroke={trace.polarRadius !== undefined ? ink.derived : ink.chrome}
         strokeWidth={trace.polarRadius !== undefined ? 1.5 : 1}
         dash={trace.polarRadius !== undefined ? [4, 3] : [3, 3]}
         opacity={trace.polarRadius !== undefined ? 0.8 : 0.55}
@@ -969,7 +980,7 @@ const MathHUD: React.FC<{ hit: ChartHit | null; ink: ChartInk }> = ({ hit, ink }
             trace.tangentSegment[1].x,
             trace.tangentSegment[1].y,
           ]}
-          stroke="#06B6D4"
+          stroke={ink.derived}
           strokeWidth={1.5}
           dash={[4, 4]}
           opacity={0.85}
@@ -987,7 +998,7 @@ const MathHUD: React.FC<{ hit: ChartHit | null; ink: ChartInk }> = ({ hit, ink }
               trace.fieldVector.segment[1].x,
               trace.fieldVector.segment[1].y,
             ]}
-            stroke="#06B6D4"
+            stroke={ink.derived}
             strokeWidth={2}
             perfectDrawEnabled={false}
           />
@@ -995,7 +1006,7 @@ const MathHUD: React.FC<{ hit: ChartHit | null; ink: ChartInk }> = ({ hit, ink }
             x={trace.fieldVector.segment[1].x}
             y={trace.fieldVector.segment[1].y}
             radius={2.5}
-            fill="#06B6D4"
+            fill={ink.derived}
             perfectDrawEnabled={false}
           />
         </>
@@ -1006,7 +1017,7 @@ const MathHUD: React.FC<{ hit: ChartHit | null; ink: ChartInk }> = ({ hit, ink }
         x={trace.screenPoint.x}
         y={trace.screenPoint.y}
         radius={7}
-        fill={feature ? `${badgeColor}33` : 'rgba(6, 182, 212, 0.25)'}
+        fill={feature ? `${badgeColor}33` : `${ink.derived}40`}
         perfectDrawEnabled={false}
       />
       <Circle
@@ -1014,7 +1025,10 @@ const MathHUD: React.FC<{ hit: ChartHit | null; ink: ChartInk }> = ({ hit, ink }
         y={trace.screenPoint.y}
         radius={3.5}
         fill={beadColor}
-        stroke="#FFFFFF"
+        // The board's own colour, not a fixed white: a white ring on a white
+        // board is no ring at all, which is the failure `sliceEdge` was added
+        // for on the pie.
+        stroke={ink.sliceEdge}
         strokeWidth={1.5}
         perfectDrawEnabled={false}
       />
@@ -1037,7 +1051,10 @@ const MathHUD: React.FC<{ hit: ChartHit | null; ink: ChartInk }> = ({ hit, ink }
             width={badgeW}
             height={18}
             cornerRadius={4}
-            fill="#1E293B"
+            // The same plate the readout uses, so the two pieces of HUD are
+            // the same object in both themes rather than one dark chip and
+            // one theme-aware panel.
+            fill={canvasPlateFill(ThemeService.isDarkMode())}
             stroke={badgeColor}
             strokeWidth={1}
             shadowColor="rgba(0,0,0,0.3)"
@@ -1495,7 +1512,7 @@ const Marks: React.FC<{
             layout.trendline.line[1].x,
             layout.trendline.line[1].y,
           ]}
-          stroke="#F59E0B"
+          stroke={ink.derived}
           strokeWidth={1.8}
           dash={[6, 4]}
           opacity={0.9}
@@ -1508,7 +1525,7 @@ const Marks: React.FC<{
           height={16}
           cornerRadius={3}
           fill="rgba(15, 23, 42, 0.75)"
-          stroke="#F59E0B"
+          stroke={ink.derived}
           strokeWidth={0.8}
           perfectDrawEnabled={false}
         />
@@ -1520,7 +1537,7 @@ const Marks: React.FC<{
           align="center"
           fontSize={10}
           fontStyle="600"
-          fill="#F59E0B"
+          fill={ink.feature}
           perfectDrawEnabled={false}
         />
       </Group>
@@ -1530,7 +1547,7 @@ const Marks: React.FC<{
     {layout.kdeCurve && (
       <Line
         points={flatten(layout.kdeCurve)}
-        stroke="#06B6D4"
+        stroke={ink.derived}
         strokeWidth={2.2}
         opacity={0.9}
         listening={false}
@@ -1543,7 +1560,7 @@ const Marks: React.FC<{
       <React.Fragment key={`sl${i}`}>
         <Line
           points={flatten(sl.points)}
-          stroke="#38BDF8"
+          stroke={ink.derived}
           strokeWidth={1.8}
           opacity={0.85}
           listening={false}
@@ -1553,10 +1570,10 @@ const Marks: React.FC<{
           x={sl.seed.x}
           y={sl.seed.y}
           radius={4}
-          fill="#F59E0B"
-          stroke="#FFFFFF"
+          fill={ink.feature}
+          stroke={ink.sliceEdge}
           strokeWidth={1.5}
-          shadowColor="rgba(245, 158, 11, 0.6)"
+          shadowColor={ink.feature}
           shadowBlur={6}
           listening={false}
           perfectDrawEnabled={false}
@@ -1693,7 +1710,10 @@ const Labels: React.FC<{ layout: ChartLayout; ink: ChartInk }> = ({ layout, ink 
         align={l.align}
         fontSize={l.fontSize}
         fontStyle="600"
-        fill={ink.ink}
+        // Against the mark when the label sits on one, and against the board
+        // otherwise. `ink.ink` for everything meant a number inside a dark bar
+        // was dark on dark, and inside a pale one in dark mode, pale on pale.
+        fill={labelInk(l, ink)}
         listening={false}
       />
     ))}

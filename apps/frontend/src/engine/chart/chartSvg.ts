@@ -6,6 +6,7 @@ import {
   type Measure,
 } from './chartLayout';
 import type { ChartSpec } from './chartTypes';
+import { contrastInk } from '../model/color';
 import { rectRing, roughLoop, roughPolyline, seedFor, type SketchLevel } from '../model/rough';
 import { currentChartInk, type ChartInk } from './chartInk';
 
@@ -296,22 +297,22 @@ export function paintLayout(layout: ChartLayout, options: ChartSvgOptions): stri
   if (layout.trendline) {
     const tl = layout.trendline;
     out.push(
-      `<line x1="${tl.line[0].x}" y1="${tl.line[0].y}" x2="${tl.line[1].x}" y2="${tl.line[1].y}" stroke="#F59E0B" stroke-width="1.8" stroke-dasharray="6 4" opacity="0.9" />`
+      `<line x1="${tl.line[0].x}" y1="${tl.line[0].y}" x2="${tl.line[1].x}" y2="${tl.line[1].y}" stroke="${ink.derived}" stroke-width="1.8" stroke-dasharray="6 4" opacity="0.9" />`
     );
   }
 
   if (layout.kdeCurve) {
     out.push(
-      `<polyline points="${layout.kdeCurve.map((p) => `${p.x},${p.y}`).join(' ')}" fill="none" stroke="#06B6D4" stroke-width="2.2" opacity="0.9" />`
+      `<polyline points="${layout.kdeCurve.map((p) => `${p.x},${p.y}`).join(' ')}" fill="none" stroke="${ink.derived}" stroke-width="2.2" opacity="0.9" />`
     );
   }
 
   for (const sl of layout.streamlines ?? []) {
     out.push(
-      `<polyline points="${sl.points.map((p) => `${p.x},${p.y}`).join(' ')}" fill="none" stroke="#38BDF8" stroke-width="1.8" opacity="0.85" />`
+      `<polyline points="${sl.points.map((p) => `${p.x},${p.y}`).join(' ')}" fill="none" stroke="${ink.derived}" stroke-width="1.8" opacity="0.85" />`
     );
     out.push(
-      `<circle cx="${sl.seed.x}" cy="${sl.seed.y}" r="4" fill="#F59E0B" stroke="#FFFFFF" stroke-width="1.5" />`
+      `<circle cx="${sl.seed.x}" cy="${sl.seed.y}" r="4" fill="${ink.feature}" stroke="${ink.sliceEdge}" stroke-width="1.5" />`
     );
   }
 
@@ -388,7 +389,10 @@ export function paintLayout(layout: ChartLayout, options: ChartSvgOptions): stri
     out.push(label(l.text, l.x, l.y, l.width, l.align, l.fontSize, ink.chrome));
   }
   for (const l of layout.valueLabels) {
-    out.push(label(l.text, l.x, l.y, l.width, l.align, l.fontSize, ink.ink, '600'));
+    // Against the mark it sits on, or the board when it sits on nothing --
+    // the same rule the canvas follows, read from the same field.
+    const fill = l.on ? contrastInk(l.on) : ink.ink;
+    out.push(label(l.text, l.x, l.y, l.width, l.align, l.fontSize, fill, '600'));
   }
   /**
    * The colour scale, from the same stops the canvas uses.
