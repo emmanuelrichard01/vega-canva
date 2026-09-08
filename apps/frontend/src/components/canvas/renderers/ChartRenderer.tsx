@@ -9,7 +9,12 @@ import { EXPORT_CHROME } from '../../../engine/export/chrome';
 import { currentChartInk } from '../../../engine/chart/chartInk';
 import { chartHitTest, placeReadout, type ChartHit } from '../../../engine/chart/chartHitTest';
 import { formatValue } from '../../../engine/chart/chartLayout';
-import { isRadial, isPlot, defaultPlotDomain } from '../../../engine/chart/chartTypes';
+import {
+  chartCapabilities,
+  isRadial,
+  isPlot,
+  defaultPlotDomain,
+} from '../../../engine/chart/chartTypes';
 import { updateChart } from '../../../engine/chart/chartApply';
 import { useStore } from '../../../hooks/useStore';
 import { canvasPlateFill } from '../../../engine/ThemeService';
@@ -294,7 +299,16 @@ export const ChartRenderer: React.FC<Props> = ({ node }) => {
     }
   };
 
+  /**
+   * Double-click opens the sheet, where there is a sheet to open.
+   *
+   * On a plot there is not: the marks come from an expression and the data
+   * table is empty by construction, so this opened a spreadsheet of nothing.
+   * Left to fall through instead, which is what every other object does with
+   * a double-click it has no use for.
+   */
   const onDblClick = () => {
+    if (!chartCapabilities(node.chart.kind).data) return;
     useStore.getState().setChartDataModalNodeId(node.id);
   };
 

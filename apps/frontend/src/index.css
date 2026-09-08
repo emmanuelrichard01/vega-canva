@@ -18279,18 +18279,36 @@ html[data-precise] .canvas-container[data-cursor-mode] .konvajs-content canvas {
 }
 
 /* ─────────────────────────────────────────────────────────────────────────
-   Chart data dialog
+   Chart data sheet
 
-   The sheet a chart's numbers are edited in, and where they come from.
+   The numbers behind a chart, and where they come from.
 
-   This was eighty inline style objects: the same button declared six times
-   with the same nine properties, and hard-coded colours sitting beside
-   `var(--x, #fallback)` pairs whose fallbacks no longer matched the theme.
+   ## One gutter, held by everything
+
+   Every band — header, toolbar, sheet, footer — is inset by the same
+   `--space-4`, and the sheet's first and last columns are padded to sit on
+   that line rather than running to the dialog's border. It did not: the table
+   went edge to edge, so the row labels started flush against the frame and
+   the last column ran off under the scrollbar, which is the single thing that
+   made it read as unfinished rather than plain.
+
+   ## Rows you can read down
+
+   32px, from padding on the spacing scale rather than the 6px/9px it had.
+   A 27px row with 13px numerals is dense enough that the eye loses its place
+   crossing a wide table, and this is a table people scan down one column of.
+
+   ## Nothing off the scale
+
+   The previous pass carried `gap: 7px`, `padding: 7px 10px`, `padding: 5px
+   8px` and a `width: calc(100% - 46px)` that encoded the pixel widths of a
+   swatch and a delete button. That last one is the tell: a magic number
+   standing in for a layout the browser can do itself.
    ───────────────────────────────────────────────────────────────────────── */
 .cdm {
   display: flex;
   flex-direction: column;
-  width: min(94vw, 880px);
+  width: min(94vw, 900px);
   max-height: 86vh;
   border: 1px solid var(--border-divider);
   border-radius: var(--radius-lg);
@@ -18306,6 +18324,7 @@ html[data-precise] .canvas-container[data-cursor-mode] .konvajs-content canvas {
   display: flex;
   align-items: center;
   gap: var(--space-3);
+  flex: none;
   padding: var(--space-3) var(--space-4);
   border-bottom: 1px solid var(--border-divider);
 }
@@ -18313,9 +18332,9 @@ html[data-precise] .canvas-container[data-cursor-mode] .konvajs-content canvas {
 .cdm__title {
   display: flex;
   align-items: center;
-  gap: 7px;
-  min-width: 0;
+  gap: var(--space-2);
   flex: 1;
+  min-width: 0;
   color: var(--text-primary);
   font-size: var(--text-base);
   font-weight: 600;
@@ -18338,7 +18357,7 @@ html[data-precise] .canvas-container[data-cursor-mode] .konvajs-content canvas {
 
 .cdm__tab {
   position: relative;
-  padding: 4px 12px;
+  padding: var(--space-1) var(--space-3);
   border: 0;
   border-radius: 999px;
   background: none;
@@ -18362,7 +18381,7 @@ html[data-precise] .canvas-container[data-cursor-mode] .konvajs-content canvas {
   display: inline-block;
   width: 5px;
   height: 5px;
-  margin-left: 5px;
+  margin-left: var(--space-1);
   border-radius: 50%;
   background: var(--status-online);
   vertical-align: middle;
@@ -18372,8 +18391,8 @@ html[data-precise] .canvas-container[data-cursor-mode] .konvajs-content canvas {
   display: grid;
   place-items: center;
   flex: none;
-  width: 26px;
-  height: 26px;
+  width: 28px;
+  height: 28px;
   border: 0;
   border-radius: var(--radius-sm);
   background: none;
@@ -18394,6 +18413,7 @@ html[data-precise] .canvas-container[data-cursor-mode] .konvajs-content canvas {
   align-items: center;
   justify-content: space-between;
   gap: var(--space-2);
+  flex: none;
   flex-wrap: wrap;
   padding: var(--space-2) var(--space-4);
   border-bottom: 1px solid var(--border-divider);
@@ -18402,14 +18422,15 @@ html[data-precise] .canvas-container[data-cursor-mode] .konvajs-content canvas {
 .cdm__barGroup {
   display: flex;
   align-items: center;
-  gap: 4px;
+  gap: var(--space-1);
 }
 
 .cdm__btn {
   display: inline-flex;
   align-items: center;
-  gap: 6px;
-  padding: 5px 10px;
+  gap: var(--space-2);
+  height: 28px;
+  padding: 0 var(--space-3);
   border: 1px solid var(--border-divider);
   border-radius: var(--radius-sm);
   background: var(--surface-sunken, var(--surface-secondary));
@@ -18427,6 +18448,11 @@ html[data-precise] .canvas-container[data-cursor-mode] .konvajs-content canvas {
 .cdm__btn:hover:not(:disabled) {
   border-color: var(--accent-line);
   color: var(--text-primary);
+}
+
+.cdm__btn:focus-visible {
+  outline: 2px solid var(--text-accent);
+  outline-offset: 1px;
 }
 
 .cdm__btn:disabled {
@@ -18457,21 +18483,22 @@ html[data-precise] .canvas-container[data-cursor-mode] .konvajs-content canvas {
   display: flex;
   flex-direction: column;
   gap: var(--space-2);
+  flex: none;
   padding: var(--space-3) var(--space-4);
   border-bottom: 1px solid var(--border-divider);
   background: var(--surface-sunken, var(--surface-secondary));
 }
 
 .cdm__pasteBox {
-  min-height: 108px;
-  padding: 10px;
+  min-height: 112px;
+  padding: var(--space-3);
   border: 1px solid var(--border-divider);
   border-radius: var(--radius-sm);
   background: var(--surface-primary);
   color: var(--text-primary);
   font-family: var(--font-mono);
   font-size: var(--text-xs);
-  line-height: 1.5;
+  line-height: 1.6;
   resize: vertical;
 }
 
@@ -18483,15 +18510,20 @@ html[data-precise] .canvas-container[data-cursor-mode] .konvajs-content canvas {
 .cdm__pasteActions {
   display: flex;
   justify-content: flex-end;
-  gap: 6px;
+  gap: var(--space-2);
 }
 
 /* The sheet --------------------------------------------------------------- */
 
 .cdm__sheet {
   flex: 1;
-  min-height: 180px;
+  min-height: 200px;
+  /* The gutter the rest of the dialog keeps. Vertical only: the horizontal
+     inset belongs to the first and last cells, so a sticky row label stays
+     flush with its own edge while it scrolls. */
+  padding: var(--space-3) 0;
   overflow: auto;
+  overscroll-behavior: contain;
 }
 
 .cdm__table {
@@ -18506,6 +18538,7 @@ html[data-precise] .canvas-container[data-cursor-mode] .konvajs-content canvas {
   position: sticky;
   top: 0;
   z-index: 1;
+  padding: 0;
   background: var(--surface-primary);
   border-bottom: 1px solid var(--border-divider);
 }
@@ -18515,35 +18548,39 @@ html[data-precise] .canvas-container[data-cursor-mode] .konvajs-content canvas {
   position: sticky;
   left: 0;
   z-index: 1;
-  min-width: 132px;
-  max-width: 200px;
+  width: 168px;
+  min-width: 168px;
   background: var(--surface-primary);
   border-right: 1px solid var(--border-divider);
   text-align: left;
   font-weight: 400;
 }
 
-/* Above the row labels, and sticky on both axes, so it has to outrank each. */
+/* Above the row labels *and* to the left of the column heads, so it has to
+   outrank both of the things it overlaps. */
 .cdm__corner {
   z-index: 2;
-  padding: 7px 10px;
+  padding: var(--space-2) var(--space-4);
 }
 
 .cdm__colHead {
-  display: table-cell;
-  min-width: 118px;
-  padding: 5px 8px;
-  text-align: left;
-  font-weight: 400;
-  white-space: nowrap;
+  min-width: 132px;
 }
 
-.cdm__colHead > * { vertical-align: middle; }
+/* A flex row, replacing three inline children held together by
+   `vertical-align: middle` and a name whose width was `calc(100% - 46px)` —
+   the pixel widths of the swatch and the delete button, written down. */
+.cdm__colHeadInner {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  padding: var(--space-2) var(--space-3);
+}
 
 .cdm__seriesName {
-  width: calc(100% - 46px);
-  margin: 0 2px;
-  padding: 3px 5px;
+  flex: 1;
+  min-width: 0;
+  padding: var(--space-1) var(--space-2);
   border: 1px solid transparent;
   border-radius: var(--radius-sm);
   background: none;
@@ -18560,15 +18597,32 @@ html[data-precise] .canvas-container[data-cursor-mode] .konvajs-content canvas {
   background: var(--surface-sunken, var(--surface-secondary));
 }
 
+.cdm__table tbody th,
+.cdm__table tbody td {
+  padding: 0;
+  border-bottom: 1px solid var(--border-divider);
+}
+
+/* Tracks the row under the pointer across the whole table, which is most of
+   what makes a wide grid readable one row at a time. */
+.cdm__table tbody tr:hover th,
+.cdm__table tbody tr:hover td {
+  background: var(--surface-hover);
+}
+
 .cdm__cell {
   width: 100%;
-  padding: 6px 9px;
+  height: 32px;
+  padding: 0 var(--space-3);
   border: 1px solid transparent;
-  border-radius: 0;
   background: none;
   color: var(--text-primary);
   font-size: var(--text-sm);
 }
+
+/* The first column carries the dialog's gutter, so its text lands on the same
+   line as the header's title and the toolbar's first button. */
+.cdm__cell--label { padding-left: var(--space-4); }
 
 /* Numbers line up on the decimal point, which is the only reason a column of
    them can be read down rather than one at a time. */
@@ -18580,34 +18634,27 @@ html[data-precise] .canvas-container[data-cursor-mode] .konvajs-content canvas {
 
 .cdm__cell::placeholder { color: var(--text-tertiary); }
 
-.cdm__cell:hover { background: var(--surface-hover); }
-
 .cdm__cell:focus {
   outline: none;
   /* Inset, so the ring sits inside the cell and does not shift the row. */
   border-color: var(--accent-line);
   background: var(--surface-sunken, var(--surface-secondary));
+  position: relative;
+  z-index: 1;
 }
-
-.cdm__table tbody td {
-  padding: 0;
-  border-bottom: 1px solid var(--border-divider);
-}
-
-.cdm__table tbody th { padding: 0; border-bottom: 1px solid var(--border-divider); }
 
 /* The delete column: present, and quiet until the row is under the pointer. */
 .cdm__gutter {
-  width: 30px;
-  padding: 0 4px !important;
+  width: calc(var(--space-4) + 24px);
+  padding: 0 var(--space-2) 0 0 !important;
   text-align: center;
 }
 
 .cdm__rowBtn {
   display: inline-grid;
   place-items: center;
-  width: 22px;
-  height: 22px;
+  width: 24px;
+  height: 24px;
   border: 0;
   border-radius: var(--radius-sm);
   background: none;
@@ -18618,11 +18665,12 @@ html[data-precise] .canvas-container[data-cursor-mode] .konvajs-content canvas {
 }
 
 .cdm__table tr:hover .cdm__rowBtn,
-.cdm__rowBtn:focus-visible {
-  opacity: 1;
-}
+.cdm__rowBtn:focus-visible { opacity: 1; }
 
-.cdm__rowBtn:hover:not(:disabled) { color: var(--status-danger); }
+.cdm__rowBtn:hover:not(:disabled) {
+  background: var(--surface-hover);
+  color: var(--status-danger);
+}
 
 .cdm__rowBtn:disabled { opacity: 0; pointer-events: none; }
 
@@ -18631,7 +18679,7 @@ html[data-precise] .canvas-container[data-cursor-mode] .konvajs-content canvas {
 .cdm__source {
   display: flex;
   flex-direction: column;
-  gap: var(--space-3);
+  gap: var(--space-4);
   padding: var(--space-4);
   overflow-y: auto;
 }
@@ -18639,15 +18687,15 @@ html[data-precise] .canvas-container[data-cursor-mode] .konvajs-content canvas {
 .cdm__note {
   display: flex;
   align-items: flex-start;
-  gap: 8px;
+  gap: var(--space-2);
   margin: 0;
-  padding: 10px 12px;
+  padding: var(--space-3);
   border: 1px solid var(--border-divider);
   border-radius: var(--radius-sm);
   background: var(--surface-sunken, var(--surface-secondary));
   color: var(--text-secondary);
   font-size: var(--text-xs);
-  line-height: 1.5;
+  line-height: 1.6;
 }
 
 .cdm__note strong { color: var(--text-primary); }
@@ -18655,7 +18703,7 @@ html[data-precise] .canvas-container[data-cursor-mode] .konvajs-content canvas {
 .cdm__field {
   display: flex;
   flex-direction: column;
-  gap: 4px;
+  gap: var(--space-1);
 }
 
 .cdm__field > span {
@@ -18666,7 +18714,8 @@ html[data-precise] .canvas-container[data-cursor-mode] .konvajs-content canvas {
 
 .cdm__input {
   width: 100%;
-  padding: 7px 9px;
+  height: 32px;
+  padding: 0 var(--space-3);
   border: 1px solid var(--border-divider);
   border-radius: var(--radius-sm);
   background: var(--surface-sunken, var(--surface-secondary));
@@ -18680,10 +18729,10 @@ html[data-precise] .canvas-container[data-cursor-mode] .konvajs-content canvas {
 }
 
 .cdm__hint {
-  margin: -6px 0 0;
+  margin: calc(var(--space-3) * -1) 0 0;
   color: var(--text-tertiary);
   font-size: var(--text-2xs);
-  line-height: 1.5;
+  line-height: 1.6;
 }
 
 .cdm__sourceActions {
@@ -18699,6 +18748,8 @@ html[data-precise] .canvas-container[data-cursor-mode] .konvajs-content canvas {
   align-items: center;
   justify-content: space-between;
   gap: var(--space-3);
+  flex: none;
+  min-height: 40px;
   padding: var(--space-2) var(--space-4);
   border-top: 1px solid var(--border-divider);
 }
@@ -18712,7 +18763,7 @@ html[data-precise] .canvas-container[data-cursor-mode] .konvajs-content canvas {
 .cdm__notice {
   display: inline-flex;
   align-items: center;
-  gap: 6px;
+  gap: var(--space-2);
   margin: 0;
   font-size: var(--text-xs);
 }

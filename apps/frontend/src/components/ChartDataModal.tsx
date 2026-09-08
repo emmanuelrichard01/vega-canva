@@ -447,6 +447,10 @@ export const ChartDataModal: React.FC<Props> = ({ nodeId, onClose }) => {
                     </th>
                     {series.map((s, si) => (
                       <th key={si} scope="col" className="cdm__colHead">
+                        {/* A flex row, rather than three inline children held
+                            together by `vertical-align` and a name whose width
+                            was the pixel widths of its neighbours written down. */}
+                        <div className="cdm__colHeadInner">
                         <ColorPickerPopover
                           color={s.color ?? seriesColor(undefined, si)}
                           onChange={(color) =>
@@ -476,6 +480,7 @@ export const ChartDataModal: React.FC<Props> = ({ nodeId, onClose }) => {
                         >
                           <Trash2 size={12} />
                         </button>
+                        </div>
                       </th>
                     ))}
                     <th className="cdm__gutter" />

@@ -2261,14 +2261,24 @@ export const ObjectContextToolbar: React.FC<Props> = ({ selectedId, selectedIds,
                 />
               </RailPopover>
 
-              {/* Edit Data in Spreadsheet */}
-              <RailButton
-                label="Edit Data"
-                hint="Open interactive spreadsheet grid"
-                onClick={() => useStore.getState().setChartDataModalNodeId(node.id)}
-              >
-                <TableIcon size={15} />
-              </RailButton>
+{/*
+                The sheet, for the kinds that have one.
+                
+                A plot has no table: its marks come from an expression, so
+                `categories` and `series` are empty by construction and the
+                spreadsheet opened onto nothing at all. `chartCapabilities`
+                has answered this since the panel started gating on it — the
+                rail was the surface that never asked.
+              */}
+              {chartCapabilities(node.chart.kind).data && (
+                <RailButton
+                  label="Edit data"
+                  hint="Open the data sheet"
+                  onClick={() => useStore.getState().setChartDataModalNodeId(node.id)}
+                >
+                  <TableIcon size={15} />
+                </RailButton>
+              )}
 
               {/* Math Plot / Graph Plane Lock & Reset */}
               {chartCapabilities(node.chart.kind).lockPlane && (

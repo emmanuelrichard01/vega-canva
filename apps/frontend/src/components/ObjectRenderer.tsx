@@ -33,6 +33,7 @@ import { PathRenderer } from './canvas/renderers/PathRenderer';
 import { ShapeRenderer } from './canvas/renderers/ShapeRenderer';
 import { GridRenderer } from './canvas/renderers/GridRenderer';
 import { ChartRenderer } from './canvas/renderers/ChartRenderer';
+import { chartCapabilities } from '../engine/chart/chartTypes';
 import { StickyRenderer } from './canvas/renderers/StickyRenderer';
 import { FrameRenderer } from './canvas/renderers/FrameRenderer';
 import { ConnectorRenderer } from './canvas/renderers/ConnectorRenderer';
@@ -875,7 +876,9 @@ export const ObjectRenderer = React.memo(
         const id = addTextToCell(node.id, cell);
         if (id) onSelect(id);
       }
-      if (node.type === 'chart') {
+      // Only the kinds that have a table; a plot's data comes from its
+      // formula, so the sheet would open onto nothing.
+      if (node.type === 'chart' && chartCapabilities(node.chart.kind).data) {
         useStore.getState().setChartDataModalNodeId(node.id);
       }
     }, [isSelected, node, objId, onSelect]);
