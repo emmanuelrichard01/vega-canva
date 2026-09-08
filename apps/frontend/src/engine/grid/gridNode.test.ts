@@ -185,3 +185,45 @@ describe('migrateGridGroups', () => {
     expect(nodes.size).toBe(0);
   });
 });
+
+/**
+ * The display mode and the track labels are style, and style crosses here.
+ *
+ * They were dropped by this function while the panel wrote them and the
+ * renderer read them -- so the control appeared to do nothing the moment the
+ * document round-tripped, which is on reload and on every other machine in the
+ * room. The test is the whole-object kind for that reason: asserting the two
+ * fields individually is what the original code would also have passed, since
+ * it never lost them on the way *in*.
+ */
+describe('display mode across the boundary', () => {
+  it('keeps a guide a guide', () => {
+    const r = normalizeRecipe(
+      { spec: { kind: 'columns' }, style: { mode: 'guide', showLabels: true } },
+      400,
+      300
+    );
+    expect(r.style.mode).toBe('guide');
+    expect(r.style.showLabels).toBe(true);
+  });
+
+  it('survives a full round trip', () => {
+    const once = normalizeRecipe(
+      { spec: { kind: 'modular' }, style: { mode: 'wireframe', showLabels: true } },
+      400,
+      300
+    );
+    expect(normalizeRecipe(once, 400, 300)).toEqual(once);
+  });
+
+  it('refuses a mode it does not have', () => {
+    const r = normalizeRecipe({ style: { mode: 'hologram' } }, 400, 300);
+    expect(r.style.mode).toBeUndefined();
+  });
+
+  it('writes no key for the default, so old documents gain none', () => {
+    const r = normalizeRecipe({ style: { mode: 'surface' } }, 400, 300);
+    expect('mode' in r.style).toBe(false);
+    expect('showLabels' in r.style).toBe(false);
+  });
+});

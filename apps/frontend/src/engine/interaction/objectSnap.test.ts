@@ -189,6 +189,48 @@ describe('snapDraggedBox', () => {
     snapDraggedBox('moving', { x: 900, y: 900, width: 100, height: 100 });
     expect(guideState.getSnapshot()).toHaveLength(0);
   });
+
+  it('snaps against visible grid column edges', () => {
+    objects = {
+      g: {
+        id: 'g',
+        type: 'grid',
+        x: 100,
+        y: 100,
+        width: 600,
+        height: 400,
+        grid: {
+          spec: {
+            kind: 'columns',
+            x: 100,
+            y: 100,
+            width: 600,
+            height: 400,
+            columns: 4,
+            rows: 1,
+            gutterX: 16,
+            gutterY: 16,
+            margin: 0,
+            variation: 0,
+            seed: 1,
+          },
+          style: {
+            shapes: ['rect'],
+            palette: ['#000'],
+            colorMode: 'solid',
+            radius: 0,
+            strokeColor: 'transparent',
+            strokeWidth: 0,
+            opacity: 1,
+            seed: 1,
+          },
+        },
+      },
+    };
+
+    const snapped = snapDraggedBox('moving', { x: 103, y: 50, width: 50, height: 50 });
+    expect(snapped.x).toBe(100);
+  });
 });
 
 describe('guideState', () => {

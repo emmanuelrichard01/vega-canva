@@ -174,6 +174,45 @@ const SHAPES: Record<GridKind, React.ReactNode> = {
       )}
     </>
   ),
+  isometric: (
+    <>
+      <polygon
+        points="30,12 52,24 30,36 8,24"
+        fill="none"
+        stroke="currentColor"
+        strokeWidth="7"
+        opacity="0.85"
+      />
+      <polygon
+        points="70,12 92,24 70,36 48,24"
+        fill="currentColor"
+        opacity="0.25"
+        stroke="currentColor"
+        strokeWidth="7"
+      />
+      <polygon
+        points="50,38 72,50 50,62 28,50"
+        fill="none"
+        stroke="currentColor"
+        strokeWidth="7"
+        opacity="0.85"
+      />
+      <polygon
+        points="30,64 52,76 30,88 8,76"
+        fill="currentColor"
+        opacity="0.2"
+        stroke="currentColor"
+        strokeWidth="7"
+      />
+      <polygon
+        points="70,64 92,76 70,88 48,76"
+        fill="none"
+        stroke="currentColor"
+        strokeWidth="7"
+        opacity="0.85"
+      />
+    </>
+  ),
 };
 
 export const GridKindIcon: React.FC<{ kind: GridKind; size?: number }> = ({ kind, size = 15 }) => (

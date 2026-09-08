@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import { isCanonical, normalizeNode } from './normalize';
 import { MATERIAL_IDS } from '../../utils/behaviorSystem';
+import { shapeParams } from '../model/shapeParams';
 import type { ShapeNode, StickyNode, TextNode, PathNode, ImageNode, AudioNode } from '../model/schema';
 
 /**
@@ -481,25 +482,65 @@ describe('a chart spec survives normalization', () => {
     valuePrefix: '$',
     valueSuffix: 'ms',
     decimals: 2,
+    compactNumbers: false,
+    subtitle: 'Quarterly Analysis',
+    footnote: 'Source: Finance Dept',
+    xAxisLabel: 'Fiscal Quarter',
+    yAxisLabel: 'Revenue (USD M)',
+    legendPosition: 'bottom' as const,
+    valuePlacement: 'outside' as const,
+    valueFormat: 'both' as const,
+    extremesOnly: true,
     innerRadius: 0.42,
     buckets: 14,
     curved: true,
     sort: 'valueDesc' as const,
-    reference: { value: 7, label: 'Target', color: '#EF4444' },
-    functions: [{ source: 'sin(x)', color: '#00FF00' }, { source: 'cos(x)', hidden: true }],
+    topN: 5,
+    sortKey: 'sum' as const,
+    reference: { value: 7, label: 'Target', color: '#EF4444', style: 'solid' as const },
+    toleranceBand: { min: 6, max: 8, label: 'Target Corridor', color: '#10B981' },
+    functions: [
+      { source: 'sin(x)', color: '#00FF00', width: 3, style: 'dashed' as const },
+      { source: 'cos(x)', hidden: true },
+    ],
     xMin: -3,
     xMax: 9,
+    yClipMin: -5,
+    yClipMax: 5,
+    isotropic: true,
     samples: 420,
     equalAxes: true,
     showRoots: true,
     showExtrema: true,
     fillArea: true,
     showDerivative: true,
+    lockPlane: true,
+    integralBounds: { a: 0, b: 3.14 },
     riemann: { n: 24, mode: 'midpoint' as const },
     yPlotMin: -2,
     yPlotMax: 6,
     resolution: 96,
     levels: 11,
+    ramp: 'magma' as const,
+    gradient: true,
+    paletteId: 'linearDark',
+    cornerRadius: 6,
+    lineWidth: 2.5,
+    markerShape: 'circle' as const,
+    areaOpacity: 0.35,
+    showTrendline: true,
+    showKde: true,
+    stepMode: 'before' as const,
+    seedPoints: [{ x: 1, y: 2 }],
+    dataSource: {
+      mode: 'url' as const,
+      url: 'https://api.example.com/metrics',
+      pollInterval: 30,
+      dataPath: 'data.points',
+      streamSpeed: 'normal' as const,
+      lastSyncedAt: 1700000000,
+      syncError: undefined,
+    },
   };
 
   it('keeps every field a chart can carry', () => {
@@ -550,3 +591,54 @@ describe('a chart spec survives normalization', () => {
     expect(node.chart.reference).toBeUndefined();
   });
 });
+
+describe('normalizing advanced shape geometries', () => {
+  it('normalizes document waveHeight within clamped bounds', () => {
+    const n1 = normalizeNode({ id: 'd1', type: 'shape', geometry: { kind: 'document', waveHeight: 0.25 } }) as ShapeNode;
+    expect(n1.geometry).toEqual({ kind: 'document', waveHeight: 0.25 });
+
+    const nClamped = normalizeNode({ id: 'd2', type: 'shape', geometry: { kind: 'document', waveHeight: 0.99 } }) as ShapeNode;
+    expect(nClamped.geometry).toEqual({ kind: 'document', waveHeight: 0.35 });
+  });
+
+  /**
+   * Sixteen was never real. `cpuPoints` has always clamped at six -- a
+   * deliberate cap, for a package silhouette that reads at the size a chip is
+   * drawn -- so a document holding sixteen described a shape nobody could
+   * draw, and the panel offering sixteen was ten steps of dead stepper.
+   *
+   * The bound is read from `SHAPE_PARAMS` rather than typed here, because a
+   * literal in this file is the fourth copy of the number this whole change
+   * was made to remove.
+   */
+  it('holds cpu pinCount to the range the outline actually draws', () => {
+    const pins = shapeParams('cpu')[0];
+
+    const n = normalizeNode({ id: 'cpu1', type: 'shape', geometry: { kind: 'cpu', pinCount: 4.4 } }) as ShapeNode;
+    expect(n.geometry).toEqual({ kind: 'cpu', pinCount: 4 });
+
+    const nClamped = normalizeNode({ id: 'cpu2', type: 'shape', geometry: { kind: 'cpu', pinCount: 30 } }) as ShapeNode;
+    expect(nClamped.geometry).toEqual({ kind: 'cpu', pinCount: pins.max });
+  });
+
+  it('normalizes gear teeth clamped to integers between 4 and 24', () => {
+    const n = normalizeNode({ id: 'g1', type: 'shape', geometry: { kind: 'gear', teeth: 10 } }) as ShapeNode;
+    expect(n.geometry).toEqual({ kind: 'gear', teeth: 10 });
+  });
+
+  it('normalizes server shelfCount clamped between 2 and 6', () => {
+    const n = normalizeNode({ id: 's1', type: 'shape', geometry: { kind: 'server', shelfCount: 4 } }) as ShapeNode;
+    expect(n.geometry).toEqual({ kind: 'server', shelfCount: 4 });
+  });
+
+  it('maps shape aliases like phone, console, rack, chip, auth_key, instant, box', () => {
+    expect((normalizeNode({ id: 'a1', type: 'shape', geometry: { kind: 'phone' } }) as ShapeNode).geometry.kind).toBe('mobile');
+    expect((normalizeNode({ id: 'a2', type: 'shape', geometry: { kind: 'console' } }) as ShapeNode).geometry.kind).toBe('terminal');
+    expect((normalizeNode({ id: 'a3', type: 'shape', geometry: { kind: 'rack' } }) as ShapeNode).geometry.kind).toBe('server');
+    expect((normalizeNode({ id: 'a4', type: 'shape', geometry: { kind: 'chip' } }) as ShapeNode).geometry.kind).toBe('cpu');
+    expect((normalizeNode({ id: 'a5', type: 'shape', geometry: { kind: 'auth_key' } }) as ShapeNode).geometry.kind).toBe('key');
+    expect((normalizeNode({ id: 'a6', type: 'shape', geometry: { kind: 'instant' } }) as ShapeNode).geometry.kind).toBe('bolt');
+    expect((normalizeNode({ id: 'a7', type: 'shape', geometry: { kind: 'box' } }) as ShapeNode).geometry.kind).toBe('package');
+  });
+});
+

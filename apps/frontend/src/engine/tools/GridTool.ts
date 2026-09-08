@@ -19,8 +19,19 @@ export class GridTool implements Tool {
   private startY = 0;
   private currentX = 0;
   private currentY = 0;
+  private isAlt = false;
 
   private box() {
+    if (this.isAlt) {
+      const halfW = Math.abs(this.currentX - this.startX);
+      const halfH = Math.abs(this.currentY - this.startY);
+      return {
+        x: this.startX - halfW,
+        y: this.startY - halfH,
+        width: halfW * 2,
+        height: halfH * 2,
+      };
+    }
     return {
       x: Math.min(this.startX, this.currentX),
       y: Math.min(this.startY, this.currentY),
@@ -33,6 +44,7 @@ export class GridTool implements Tool {
     const pos = this.getPointerPos(ctx, e);
     if (!pos) return;
     this.isDragging = true;
+    this.isAlt = Boolean(e.evt?.altKey);
     this.startX = pos.x;
     this.startY = pos.y;
     this.currentX = pos.x;
@@ -44,6 +56,7 @@ export class GridTool implements Tool {
     if (!this.isDragging) return;
     const pos = this.getPointerPos(ctx, e);
     if (!pos) return;
+    this.isAlt = Boolean(e.evt?.altKey);
     this.currentX = pos.x;
     this.currentY = pos.y;
 
@@ -61,6 +74,7 @@ export class GridTool implements Tool {
   onPointerUp(ctx: ToolContext) {
     if (!this.isDragging) return;
     this.isDragging = false;
+    this.isAlt = false;
     ctx.setOverlayState?.({ active: false });
 
     const drawn = this.box();
@@ -85,12 +99,52 @@ export class GridTool implements Tool {
   onKeyDown(ctx: ToolContext, e: KeyboardEvent) {
     if (e.key === 'Escape' && this.isDragging) {
       this.isDragging = false;
+      this.isAlt = false;
       ctx.setOverlayState?.({ active: false });
+      return;
     }
+
+    // Dynamic track adjustment during live drag (like Illustrator / InDesign)
+    if (this.isDragging) {
+      if (e.key === 'ArrowUp') {
+        e.preventDefault();
+        this.adjustRows(ctx, +1);
+      } else if (e.key === 'ArrowDown') {
+        e.preventDefault();
+        this.adjustRows(ctx, -1);
+      } else if (e.key === 'ArrowRight') {
+        e.preventDefault();
+        this.adjustColumns(ctx, +1);
+      } else if (e.key === 'ArrowLeft') {
+        e.preventDefault();
+        this.adjustColumns(ctx, -1);
+      }
+    }
+  }
+
+  private adjustColumns(ctx: ToolContext, delta: number) {
+    const snap = gridDefaults.getSnapshot();
+    const newCols = Math.max(1, Math.min(24, Math.round(snap.spec.columns + delta)));
+    gridDefaults.remember({
+      spec: { ...snap.spec, columns: newCols, x: 0, y: 0, width: 0, height: 0 },
+      style: snap.style,
+    });
+    this.pushOverlay(ctx);
+  }
+
+  private adjustRows(ctx: ToolContext, delta: number) {
+    const snap = gridDefaults.getSnapshot();
+    const newRows = Math.max(1, Math.min(24, Math.round(snap.spec.rows + delta)));
+    gridDefaults.remember({
+      spec: { ...snap.spec, rows: newRows, x: 0, y: 0, width: 0, height: 0 },
+      style: snap.style,
+    });
+    this.pushOverlay(ctx);
   }
 
   onDeactivate(ctx: ToolContext) {
     this.isDragging = false;
+    this.isAlt = false;
     ctx.setOverlayState?.({ active: false });
   }
 

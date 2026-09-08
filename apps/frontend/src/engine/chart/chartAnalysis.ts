@@ -143,6 +143,51 @@ export function findExtrema(samples: Sample[], limit = 48): Extremum[] {
 }
 
 /**
+ * Refines a local extremum within bracket [lo, hi] to floating-point resolution
+ * using a golden-section search.
+ */
+export function refineExtremum(
+  f: (x: number) => number,
+  lo: number,
+  hi: number,
+  isMax: boolean
+): { x: number; y: number } {
+  const PHI = (Math.sqrt(5) - 1) / 2;
+  let a = Math.min(lo, hi);
+  let b = Math.max(lo, hi);
+  let c = b - PHI * (b - a);
+  let d = a + PHI * (b - a);
+  let fc = f(c);
+  let fd = f(d);
+
+  for (let i = 0; i < 28; i += 1) {
+    if (!Number.isFinite(fc) || !Number.isFinite(fd)) break;
+    const moveRight = isMax ? fc < fd : fc > fd;
+    if (moveRight) {
+      a = c;
+      c = d;
+      fc = fd;
+      d = a + PHI * (b - a);
+      fd = f(d);
+    } else {
+      b = d;
+      d = c;
+      fd = fc;
+      c = b - PHI * (b - a);
+      fc = f(c);
+    }
+    if (Math.abs(b - a) < 1e-11) break;
+  }
+
+  const mid = (a + b) / 2;
+  const fmid = f(mid);
+  return {
+    x: mid,
+    y: Number.isFinite(fmid) ? fmid : isMax ? Math.max(fc, fd) : Math.min(fc, fd),
+  };
+}
+
+/**
  * The signed area between the curve and the x axis, by the trapezium rule.
  *
  * **Signed**, which is the whole point: the integral of `sin(x)` over a full

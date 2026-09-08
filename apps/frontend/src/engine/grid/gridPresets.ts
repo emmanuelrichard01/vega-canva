@@ -96,6 +96,22 @@ export const GRID_PRESETS: GridPreset[] = [
     kind: 'manuscript',
     patch: { rows: 1, columns: 1, gutterX: 0, gutterY: 0, margin: 96, variation: 0 },
   },
+  {
+    id: 'bento-wall',
+    label: 'Bento showcase',
+    hint: 'Asymmetric feature compartments with hero card and metric tiles.',
+    kind: 'bento',
+    patch: { rows: 4, columns: 4, gutterX: 16, gutterY: 16, margin: 24, variation: 0.7 },
+  },
+  {
+    id: 'isometric-3d',
+    label: 'Isometric axonometric',
+    hint: 'A true 30° lattice of interlocking rhombi, for 3D illustration and spatial UI.',
+    kind: 'isometric',
+    // Six rows deep, because a lattice has to interlock to read as one; four
+    // rows of five is a pattern of lozenges. Variation zero is the true 30°.
+    patch: { rows: 6, columns: 5, gutterX: 4, gutterY: 4, margin: 24, variation: 0 },
+  },
 ];
 
 export function gridPreset(id: string | undefined): GridPreset | undefined {

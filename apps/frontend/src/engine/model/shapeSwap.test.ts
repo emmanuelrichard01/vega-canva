@@ -110,3 +110,41 @@ describe('swapping a closed shape to a line', () => {
     expect(swapShapeKind({ kind: 'ellipse' }, 'arrow')).toEqual({ kind: 'arrow', endEnd: 'arrow' });
   });
 });
+
+describe('swapping to and from advanced parametric shapes', () => {
+  it('swaps to donut with sensible default innerRatio', () => {
+    const donut = swapShapeKind({ kind: 'rect' }, 'donut');
+    expect(donut).toEqual({ kind: 'donut', innerRatio: 0.5 });
+  });
+
+  it('swaps to badge carrying count from polygon or star', () => {
+    const fromStar = swapShapeKind({ kind: 'star', points: 16, innerRatio: 0.8 }, 'badge');
+    expect(fromStar).toEqual({ kind: 'badge', points: 16, innerRatio: 0.8 });
+  });
+
+  it('swaps to callout with default tail configuration', () => {
+    const callout = swapShapeKind({ kind: 'ellipse' }, 'callout');
+    expect(callout).toEqual({ kind: 'callout', tailPosition: 'bottom-left', tailSize: 16 });
+  });
+
+  it('cleanses callout-specific fields when swapping away to rect or diamond', () => {
+    const diamond = swapShapeKind({ kind: 'callout', tailPosition: 'top-left', tailSize: 0.3 }, 'diamond');
+    expect(diamond).toEqual({ kind: 'diamond' });
+  });
+
+  it('swaps to cylinder, cross, chevron, trapezoid, parallelogram with sensible defaults', () => {
+    expect(swapShapeKind({ kind: 'rect' }, 'cylinder')).toEqual({ kind: 'cylinder', rimRatio: 0.18 });
+    expect(swapShapeKind({ kind: 'rect' }, 'cross')).toEqual({ kind: 'cross', armRatio: 0.33 });
+    expect(swapShapeKind({ kind: 'rect' }, 'chevron')).toEqual({ kind: 'chevron', indent: 0.25 });
+    expect(swapShapeKind({ kind: 'rect' }, 'trapezoid')).toEqual({ kind: 'trapezoid', inset: 0.2 });
+    expect(swapShapeKind({ kind: 'rect' }, 'parallelogram')).toEqual({ kind: 'parallelogram', skew: 0.2 });
+  });
+
+  it('swaps to document, cpu, gear, and server with sensible defaults', () => {
+    expect(swapShapeKind({ kind: 'rect' }, 'document')).toEqual({ kind: 'document', waveHeight: 0.15 });
+    expect(swapShapeKind({ kind: 'rect' }, 'cpu')).toEqual({ kind: 'cpu', pinCount: 6 });
+    expect(swapShapeKind({ kind: 'rect' }, 'gear')).toEqual({ kind: 'gear', teeth: 8 });
+    expect(swapShapeKind({ kind: 'rect' }, 'server')).toEqual({ kind: 'server', shelfCount: 3 });
+  });
+});
+

@@ -22,6 +22,7 @@ const loadHelp = () => import('../HelpModal');
 const loadMermaid = () => import('../MermaidModal');
 const loadPalette = () => import('../CommandPalette');
 const loadFlatten = () => import('../ui/FlattenShapeModal');
+const loadChartData = () => import('../ChartDataModal');
 
 const ShareModal = lazy(() => loadShare().then(m => ({ default: m.ShareModal })));
 const ExportModal = lazy(() => loadExport().then(m => ({ default: m.ExportModal })));
@@ -29,6 +30,7 @@ const HelpModal = lazy(() => loadHelp().then(m => ({ default: m.HelpModal })));
 const MermaidModal = lazy(() => loadMermaid().then(m => ({ default: m.MermaidModal })));
 const CommandPalette = lazy(() => loadPalette().then(m => ({ default: m.CommandPalette })));
 const FlattenShapeModal = lazy(() => loadFlatten().then(m => ({ default: m.FlattenShapeModal })));
+const ChartDataModal = lazy(() => loadChartData().then(m => ({ default: m.ChartDataModal })));
 
 /**
  * Fetch the cheap dialogs once the board has stopped being busy.
@@ -134,6 +136,8 @@ export const RoomModals: React.FC<RoomModalsProps> = ({
    * three extra requests.
    */
   const flattenNodeId = useStore((s) => s.flattenConfirmNodeId);
+  const chartDataModalNodeId = useStore((s) => s.chartDataModalNodeId);
+  const setChartDataModalNodeId = useStore((s) => s.setChartDataModalNodeId);
 
   React.useEffect(warmDialogs, []);
 
@@ -190,6 +194,15 @@ export const RoomModals: React.FC<RoomModalsProps> = ({
 
       <Suspense fallback={null}>
         {flattenNodeId && <FlattenShapeModal />}
+      </Suspense>
+
+      <Suspense fallback={null}>
+        {chartDataModalNodeId && (
+          <ChartDataModal
+            nodeId={chartDataModalNodeId}
+            onClose={() => setChartDataModalNodeId(null)}
+          />
+        )}
       </Suspense>
     </>
   );

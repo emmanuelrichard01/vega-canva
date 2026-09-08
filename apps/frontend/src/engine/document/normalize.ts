@@ -1,6 +1,7 @@
 import { normalizeRecipe } from '../grid/gridNode';
 import { isChartKind, type ChartKind, type ChartSeries, type ChartSpec } from '../chart/chartTypes';
 import { LIST_STYLES } from '../model/schema';
+import { CALLOUT_TAILS, clampParam, shapeParams } from '../model/shapeParams';
 import { CYCLE_UNITS } from '../text/colorCycle';
 import { LINE_PROFILES, MAX_AMPLITUDE_SCALE, MAX_WAVES, MIN_AMPLITUDE_SCALE, MIN_WAVES } from '../model/linePath';
 import {
@@ -198,6 +199,94 @@ export const SHAPE_KIND_ALIASES: Record<string, { kind: ShapeKind; sides?: numbe
   hexagon: { kind: 'polygon', sides: 6 },
   heptagon: { kind: 'polygon', sides: 7 },
   octagon: { kind: 'polygon', sides: 8 },
+  diamond: { kind: 'diamond' },
+  rhombus: { kind: 'diamond' },
+  decision: { kind: 'diamond' },
+  trapezoid: { kind: 'trapezoid' },
+  parallelogram: { kind: 'parallelogram' },
+  capsule: { kind: 'capsule' },
+  pill: { kind: 'capsule' },
+  stadium: { kind: 'capsule' },
+  cylinder: { kind: 'cylinder' },
+  database: { kind: 'cylinder' },
+  storage: { kind: 'cylinder' },
+  cloud: { kind: 'cloud' },
+  callout: { kind: 'callout' },
+  speech_bubble: { kind: 'callout' },
+  speech: { kind: 'callout' },
+  chevron: { kind: 'chevron' },
+  cross: { kind: 'cross' },
+  plus: { kind: 'cross' },
+  donut: { kind: 'donut' },
+  ring: { kind: 'donut' },
+  badge: { kind: 'badge' },
+  seal: { kind: 'badge' },
+  scallop: { kind: 'badge' },
+  banner: { kind: 'banner' },
+  ribbon: { kind: 'banner' },
+  document: { kind: 'document' },
+  doc: { kind: 'document' },
+  report: { kind: 'document' },
+  predefined_process: { kind: 'predefined_process' },
+  subroutine: { kind: 'predefined_process' },
+  summing_junction: { kind: 'summing_junction' },
+  summing: { kind: 'summing_junction' },
+  junction: { kind: 'summing_junction' },
+  adder: { kind: 'summing_junction' },
+  or_gate: { kind: 'or_gate' },
+  flowchart_or: { kind: 'or_gate' },
+  and_gate: { kind: 'and_gate' },
+  flowchart_and: { kind: 'and_gate' },
+  internal_storage: { kind: 'internal_storage' },
+  memory: { kind: 'internal_storage' },
+  delay: { kind: 'delay' },
+  server: { kind: 'server' },
+  rack: { kind: 'server' },
+  host: { kind: 'server' },
+  cpu: { kind: 'cpu' },
+  chip: { kind: 'cpu' },
+  computer_chip: { kind: 'cpu' },
+  processor: { kind: 'cpu' },
+  microprocessor: { kind: 'cpu' },
+  mobile: { kind: 'mobile' },
+  phone: { kind: 'mobile' },
+  smartphone: { kind: 'mobile' },
+  device: { kind: 'mobile' },
+  terminal: { kind: 'terminal' },
+  console: { kind: 'terminal' },
+  cli: { kind: 'terminal' },
+  browser: { kind: 'browser' },
+  web: { kind: 'browser' },
+  window: { kind: 'browser' },
+  shield: { kind: 'shield' },
+  security: { kind: 'shield' },
+  protect: { kind: 'shield' },
+  crest: { kind: 'shield' },
+  key: { kind: 'key' },
+  auth_key: { kind: 'key' },
+  authentication_key: { kind: 'key' },
+  bolt: { kind: 'bolt' },
+  instant: { kind: 'bolt' },
+  lightning: { kind: 'bolt' },
+  flash: { kind: 'bolt' },
+  package: { kind: 'package' },
+  box: { kind: 'package' },
+  cube: { kind: 'package' },
+  parcel: { kind: 'package' },
+  mail: { kind: 'mail' },
+  envelope: { kind: 'mail' },
+  email: { kind: 'mail' },
+  message: { kind: 'mail' },
+  user: { kind: 'user' },
+  person: { kind: 'user' },
+  avatar: { kind: 'user' },
+  profile: { kind: 'user' },
+  gear: { kind: 'gear' },
+  settings: { kind: 'gear' },
+  cog: { kind: 'gear' },
+  wallet: { kind: 'wallet' },
+  purse: { kind: 'wallet' },
+  cardholder: { kind: 'wallet' },
 };
 
 /** A unit-space point, defaulted, for gradient geometry. */
@@ -759,6 +848,30 @@ function normalizeShapeGeometry(raw: any): ShapeGeometry {
     if (endScale !== 1) geometry.endScale = clamp(endScale, MIN_END_SCALE, MAX_END_SCALE);
   }
 
+  /**
+   * The parametric dials, from the one table that describes them.
+   *
+   * This was twelve near-identical blocks -- a kind test, a `typeof` test and
+   * a `clamp` with two literals -- and the literals had already drifted from
+   * the ones the panel and the geometry used. `SHAPE_PARAMS` is now the only
+   * place a bound is written down, so the document, the stepper and the
+   * outline cannot disagree about what a legal gear looks like.
+   *
+   * Absent stays absent: a field nobody has touched writes no key, so a
+   * document made before its dial existed does not gain one that means
+   * "the default".
+   */
+  for (const param of shapeParams(alias.kind)) {
+    const value = raw?.geometry?.[param.field];
+    if (typeof value === 'number' && Number.isFinite(value)) {
+      geometry[param.field] = clampParam(param, value);
+    }
+  }
+
+  if (alias.kind === 'callout' && CALLOUT_TAILS.includes(raw?.geometry?.tailPosition)) {
+    geometry.tailPosition = raw.geometry.tailPosition;
+  }
+
   return geometry;
 }
 
@@ -1220,9 +1333,33 @@ function normalizeChartSpec(raw: any): ChartSpec {
   // --- labels and legend ---------------------------------------------------
   str('title');
   num('titleSize');
+  str('subtitle');
+  str('footnote');
+  str('xAxisLabel');
+  str('yAxisLabel');
+  if (
+    raw?.legendPosition === 'top' ||
+    raw?.legendPosition === 'bottom' ||
+    raw?.legendPosition === 'right' ||
+    raw?.legendPosition === 'none'
+  ) {
+    spec.legendPosition = raw.legendPosition;
+  }
   bool('showLegend');
   bool('showGrid');
   bool('showValues');
+  if (
+    raw?.valuePlacement === 'auto' ||
+    raw?.valuePlacement === 'inside' ||
+    raw?.valuePlacement === 'outside' ||
+    raw?.valuePlacement === 'center'
+  ) {
+    spec.valuePlacement = raw.valuePlacement;
+  }
+  if (raw?.valueFormat === 'value' || raw?.valueFormat === 'percent' || raw?.valueFormat === 'both') {
+    spec.valueFormat = raw.valueFormat;
+  }
+  bool('extremesOnly');
 
   // --- the value axis ------------------------------------------------------
   bool('includeZero');
@@ -1234,6 +1371,7 @@ function normalizeChartSpec(raw: any): ChartSpec {
   str('valuePrefix');
   str('valueSuffix');
   num('decimals');
+  bool('compactNumbers');
 
   // --- per-kind ------------------------------------------------------------
   num('innerRadius');
@@ -1248,8 +1386,18 @@ function normalizeChartSpec(raw: any): ChartSpec {
     // storing it would put a default in every document that never chose one.
     spec.sort = raw.sort;
   }
+  num('topN');
+  if (
+    raw?.sortKey === 'first' ||
+    raw?.sortKey === 'sum' ||
+    raw?.sortKey === 'series' ||
+    raw?.sortKey === 'total' ||
+    raw?.sortKey === 'category'
+  ) {
+    spec.sortKey = raw.sortKey;
+  }
 
-  // --- the reference rule --------------------------------------------------
+  // --- the reference rule & tolerance band ---------------------------------
   if (raw?.reference && typeof raw.reference === 'object') {
     const value = raw.reference.value;
     if (typeof value === 'number' && Number.isFinite(value)) {
@@ -1257,6 +1405,22 @@ function normalizeChartSpec(raw: any): ChartSpec {
         value,
         ...(typeof raw.reference.label === 'string' ? { label: raw.reference.label } : {}),
         ...(typeof raw.reference.color === 'string' ? { color: raw.reference.color } : {}),
+        ...(raw.reference.style === 'solid' || raw.reference.style === 'dashed'
+          ? { style: raw.reference.style }
+          : {}),
+      };
+    }
+  }
+
+  if (raw?.toleranceBand && typeof raw.toleranceBand === 'object') {
+    const min = raw.toleranceBand.min;
+    const max = raw.toleranceBand.max;
+    if (typeof min === 'number' && Number.isFinite(min) && typeof max === 'number' && Number.isFinite(max)) {
+      spec.toleranceBand = {
+        min,
+        max,
+        ...(typeof raw.toleranceBand.label === 'string' ? { label: raw.toleranceBand.label } : {}),
+        ...(typeof raw.toleranceBand.color === 'string' ? { color: raw.toleranceBand.color } : {}),
       };
     }
   }
@@ -1276,18 +1440,33 @@ function normalizeChartSpec(raw: any): ChartSpec {
         source: f.source,
         ...(typeof f.color === 'string' ? { color: f.color } : {}),
         ...(f.hidden === true ? { hidden: true } : {}),
+        ...(typeof f.width === 'number' && Number.isFinite(f.width) ? { width: f.width } : {}),
+        ...(f.style === 'solid' || f.style === 'dashed' || f.style === 'dotted' ? { style: f.style } : {}),
       }));
     if (curves.length) spec.functions = curves;
   }
 
+  str('variable');
   num('xMin');
   num('xMax');
+  num('yClipMin');
+  num('yClipMax');
+  bool('isotropic');
   num('samples');
   bool('equalAxes');
   bool('showRoots');
   bool('showExtrema');
   bool('fillArea');
   bool('showDerivative');
+  bool('lockPlane');
+
+  if (raw?.integralBounds && typeof raw.integralBounds === 'object') {
+    const a = raw.integralBounds.a;
+    const b = raw.integralBounds.b;
+    if (typeof a === 'number' && Number.isFinite(a) && typeof b === 'number' && Number.isFinite(b)) {
+      spec.integralBounds = { a, b };
+    }
+  }
 
   if (raw?.riemann && typeof raw.riemann === 'object') {
     const n = raw.riemann.n;
@@ -1306,6 +1485,63 @@ function normalizeChartSpec(raw: any): ChartSpec {
   num('yPlotMax');
   num('resolution');
   num('levels');
+  if (
+    raw?.ramp === 'viridis' ||
+    raw?.ramp === 'magma' ||
+    raw?.ramp === 'diverging' ||
+    raw?.ramp === 'mono'
+  ) {
+    spec.ramp = raw.ramp;
+  }
+
+  // --- visual theme & data connector ---------------------------------------
+  bool('gradient');
+  str('paletteId');
+  num('cornerRadius');
+  num('lineWidth');
+  if (
+    raw?.markerShape === 'none' ||
+    raw?.markerShape === 'circle' ||
+    raw?.markerShape === 'square' ||
+    raw?.markerShape === 'hollow' ||
+    raw?.markerShape === 'ring'
+  ) {
+    spec.markerShape = raw.markerShape;
+  }
+  num('areaOpacity');
+  bool('showTrendline');
+  bool('showKde');
+  if (raw?.stepMode === 'after' || raw?.stepMode === 'before' || raw?.stepMode === 'mid') {
+    spec.stepMode = raw.stepMode;
+  }
+  if (Array.isArray(raw?.seedPoints)) {
+    const validSeeds = raw.seedPoints
+      .filter((p: any) => p && typeof p === 'object' && Number.isFinite(p.x) && Number.isFinite(p.y))
+      .map((p: any) => ({ x: Number(p.x), y: Number(p.y) }));
+    if (validSeeds.length > 0) {
+      spec.seedPoints = validSeeds;
+    }
+  }
+
+  if (raw?.dataSource && typeof raw.dataSource === 'object') {
+    const ds = raw.dataSource;
+    const mode = ds.mode === 'url' || ds.mode === 'stream' ? ds.mode : 'manual';
+    spec.dataSource = {
+      mode,
+      ...(typeof ds.url === 'string' ? { url: ds.url } : {}),
+      ...(typeof ds.pollInterval === 'number' && Number.isFinite(ds.pollInterval)
+        ? { pollInterval: ds.pollInterval }
+        : {}),
+      ...(typeof ds.dataPath === 'string' ? { dataPath: ds.dataPath } : {}),
+      ...(ds.streamSpeed === 'slow' || ds.streamSpeed === 'normal' || ds.streamSpeed === 'fast'
+        ? { streamSpeed: ds.streamSpeed }
+        : {}),
+      ...(typeof ds.lastSyncedAt === 'number' && Number.isFinite(ds.lastSyncedAt)
+        ? { lastSyncedAt: ds.lastSyncedAt }
+        : {}),
+      ...(typeof ds.syncError === 'string' ? { syncError: ds.syncError } : {}),
+    };
+  }
 
   return spec;
 }

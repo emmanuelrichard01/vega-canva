@@ -228,34 +228,30 @@ class Parser {
   }
 
   private term(): Node {
-    let left = this.power();
+    let left = this.unary();
     for (;;) {
       const c = this.peek();
       if (c === '*' || c === '/' || c === '%') {
         this.i += 1;
-        left = { kind: 'binary', op: c, left, right: this.power() };
+        left = { kind: 'binary', op: c, left, right: this.unary() };
       } else if (this.startsImplicitProduct()) {
         // `2x`, `3sin(x)`, `2(x+1)`. Binds at the same level as an explicit
         // `*`, which is what the notation means.
-        left = { kind: 'binary', op: '*', left, right: this.power() };
+        left = { kind: 'binary', op: '*', left, right: this.unary() };
       } else return left;
     }
   }
 
+  private openPipes = 0;
+
   /** Whether what follows a complete factor is another factor. */
   private startsImplicitProduct(): boolean {
     const c = this.peek();
-    return c === '(' || c === '|' || /[A-Za-z0-9._]/.test(c);
-  }
-
-  private power(): Node {
-    const base = this.unary();
-    if (this.peek() === '^') {
-      this.i += 1;
-      // Right-associative: 2^3^2 is 2^(3^2), as in every maths notation.
-      return { kind: 'binary', op: '^', left: base, right: this.power() };
+    if (c === '|') {
+      // If a pipe is currently open, `|` closes it rather than starting a new factor.
+      return this.openPipes === 0;
     }
-    return base;
+    return c === '(' || /[A-Za-z0-9._]/.test(c);
   }
 
   private unary(): Node {
@@ -264,7 +260,19 @@ class Parser {
       this.i += 1;
       return { kind: 'unary', op: c, operand: this.unary() };
     }
-    return this.primary();
+    return this.power();
+  }
+
+  private power(): Node {
+    const base = this.primary();
+    if (this.peek() === '^') {
+      this.i += 1;
+      // Right-associative: 2^3^2 is 2^(3^2), as in every maths notation.
+      // Precedence: exponentiation binds tighter than unary negation,
+      // so `-x^2` is `-(x^2)` and `2^-3` is `2^(-3)`.
+      return { kind: 'binary', op: '^', left: base, right: this.unary() };
+    }
+    return base;
   }
 
   private primary(): Node {
@@ -279,8 +287,10 @@ class Parser {
 
     if (c === '|') {
       this.i += 1;
+      this.openPipes += 1;
       const inner = this.expression();
       if (!this.eat('|')) this.fail('Missing closing "|"');
+      this.openPipes -= 1;
       return { kind: 'abs', operand: inner };
     }
 

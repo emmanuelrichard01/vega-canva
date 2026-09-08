@@ -1,4 +1,4 @@
-import { Rect, Ellipse, Line, RegularPolygon, Star, Group, Label, Tag, Text } from 'react-konva';
+import { Rect, Ellipse, Line, RegularPolygon, Star, Group, Label, Tag, Text, Path } from 'react-konva';
 import { nanoid } from 'nanoid';
 import { useStore } from '../../hooks/useStore';
 import { ThemeService } from '../ThemeService';
@@ -7,6 +7,9 @@ import type { ShapeGeometry } from '../model/schema';
 import { PRESET_GEOMETRY, type ShapePreset } from '../../components/workspace/shapePresetTypes';
 import { gridSnap } from '../interaction/gridSnap';
 import { constrainToAngle, lineNodeFromEndpoints, lineNodeFromVertices } from '../model/lineEnds';
+import { contourData } from '../model/pathGeometry';
+import { shapeToPath } from '../model/shapeToPath';
+import { shapeFeaturePaths } from '../model/shapeOutline';
 import {
   addVertex,
   beginSession,
@@ -702,8 +705,57 @@ export class ShapeTool implements Tool {
       );
     }
 
+    if (
+      kind === 'triangle' ||
+      kind === 'pentagon' ||
+      kind === 'hexagon' ||
+      kind === 'octagon'
+    ) {
+      return withReadout(
+        <RegularPolygon
+          {...center}
+          sides={PRESET_GEOMETRY[kind as ShapePreset]?.points ?? 3}
+          radius={base / 2}
+          scaleX={scaleX}
+          scaleY={scaleY}
+          fill={fill}
+          stroke={stroke}
+          strokeWidth={2}
+          strokeScaleEnabled={false}
+          listening={false}
+        />
+      );
+    }
+
+    const geom = PRESET_GEOMETRY[kind as ShapePreset] ?? { kind: 'rect' };
+    const dummyNode = {
+      geometry: geom,
+      width,
+      height,
+      appearance: {},
+    };
+    const pathD = contourData(shapeToPath(dummyNode as any));
+    const featurePaths = shapeFeaturePaths(dummyNode as any, 0, 0);
     return withReadout(
-      <RegularPolygon {...center} sides={PRESET_GEOMETRY[kind as ShapePreset]?.points ?? 3} radius={base / 2} scaleX={scaleX} scaleY={scaleY} fill={fill} stroke={stroke} strokeWidth={2} strokeScaleEnabled={false} listening={false} />
+      <Group x={x} y={y} listening={false}>
+        <Path
+          data={pathD}
+          fillRule="evenodd"
+          fill={fill}
+          stroke={stroke}
+          strokeWidth={2}
+          listening={false}
+        />
+        {featurePaths.map((featD, i) => (
+          <Path
+            key={`feat-${i}`}
+            data={featD}
+            stroke={stroke}
+            strokeWidth={1.5}
+            listening={false}
+          />
+        ))}
+      </Group>
     );
   }
 

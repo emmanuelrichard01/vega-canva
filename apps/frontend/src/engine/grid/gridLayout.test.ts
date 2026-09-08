@@ -952,6 +952,83 @@ describe('diagonal', () => {
   });
 });
 
+describe('isometric', () => {
+  /**
+   * The old lattice was not one, and none of its tests said so: they checked
+   * that a diamond had four points and that odd rows moved *some* amount to
+   * the right. Both passed on a grid whose projection changed with the node's
+   * aspect ratio and whose rows did not interlock. These assert the two facts
+   * that make a lattice a lattice.
+   */
+  it('holds 30° whatever shape the box is', () => {
+    for (const [w, h] of [[400, 400], [900, 200], [200, 900]]) {
+      const cells = layoutGrid(
+        spec({ kind: 'isometric', width: w, height: h, rows: 4, columns: 4, gutterX: 0, gutterY: 0, variation: 0 })
+      );
+      const c = cells[0];
+      // The edge from the left vertex to the top one rises half the height
+      // over half the width, so its angle is atan(h / w).
+      expect((Math.atan(c.height / c.width) * 180) / Math.PI).toBeCloseTo(30, 4);
+    }
+  });
+
+  it('opens to 45° at full variation', () => {
+    const cells = layoutGrid(
+      spec({ kind: 'isometric', rows: 4, columns: 4, gutterX: 0, gutterY: 0, variation: 1 })
+    );
+    const c = cells[0];
+    expect((Math.atan(c.height / c.width) * 180) / Math.PI).toBeCloseTo(45, 4);
+  });
+
+  it('tessellates: half a tile across, half a tile down', () => {
+    const cells = layoutGrid(
+      spec({ kind: 'isometric', rows: 3, columns: 3, gutterX: 0, gutterY: 0, variation: 0 })
+    );
+    const byRow = (r: number) => cells.filter((c) => c.row === r).sort((a, b) => a.col - b.col);
+    const [r0, r1, r2] = [byRow(0), byRow(1), byRow(2)];
+
+    // Odd rows are pushed exactly half a tile right...
+    expect(r1[0].x - r0[0].x).toBeCloseTo(r0[0].width / 2, 5);
+    // ...and every row advances exactly half a tile down, so neighbouring
+    // rows overlap by half and the rhombi interlock rather than sit in bands.
+    expect(r1[0].y - r0[0].y).toBeCloseTo(r0[0].height / 2, 5);
+    expect(r2[0].y - r1[0].y).toBeCloseTo(r0[0].height / 2, 5);
+    // The stagger returns on even rows rather than accumulating.
+    expect(r2[0].x).toBeCloseTo(r0[0].x, 5);
+  });
+
+  it('gives each cell a rhombus outline in its own coordinates', () => {
+    const cells = layoutGrid(spec({ kind: 'isometric', rows: 3, columns: 3 }));
+    for (const c of cells) {
+      expect(c.outline).toHaveLength(4);
+      expect(c.outline![0]).toEqual({ x: c.width / 2, y: 0 });
+      expect(c.outline![1]).toEqual({ x: c.width, y: c.height / 2 });
+      expect(c.outline![2]).toEqual({ x: c.width / 2, y: c.height });
+      expect(c.outline![3]).toEqual({ x: 0, y: c.height / 2 });
+    }
+  });
+
+  it('spends both gutters, so neither panel field is dead', () => {
+    const tight = layoutGrid(spec({ kind: 'isometric', rows: 3, columns: 3, gutterX: 0, gutterY: 0 }));
+    const wideX = layoutGrid(spec({ kind: 'isometric', rows: 3, columns: 3, gutterX: 12, gutterY: 0 }));
+    const wideY = layoutGrid(spec({ kind: 'isometric', rows: 3, columns: 3, gutterX: 0, gutterY: 12 }));
+    expect(wideX[0].width).toBeLessThan(tight[0].width);
+    expect(wideY[0].height).toBeLessThan(tight[0].height);
+  });
+
+  it('stays inside its box', () => {
+    const cells = layoutGrid(
+      spec({ kind: 'isometric', width: 400, height: 300, margin: 10, rows: 5, columns: 4 })
+    );
+    for (const c of cells) {
+      expect(c.x).toBeGreaterThanOrEqual(10 - 0.001);
+      expect(c.y).toBeGreaterThanOrEqual(10 - 0.001);
+      expect(c.x + c.width).toBeLessThanOrEqual(390.001);
+      expect(c.y + c.height).toBeLessThanOrEqual(290.001);
+    }
+  });
+});
+
 describe('rng', () => {
   it('is deterministic and stays in range', () => {
     const a = rng(42);

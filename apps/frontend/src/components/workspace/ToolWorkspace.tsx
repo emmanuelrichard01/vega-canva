@@ -1,5 +1,6 @@
 import React, { useCallback, useEffect, useRef, useState, useSyncExternalStore, useMemo } from 'react';
 import { GridKindIcon } from './gridIcons';
+import { KindPicker } from './KindPicker';
 import { ChartKindIcon } from './chartIcons';
 import { CHART_HINTS, CHART_LABELS, chartPickerGroups } from '../../engine/chart/chartKinds';
 import { ChartTool } from '../../engine/tools/ChartTool';
@@ -31,7 +32,16 @@ import { LineSpecimen } from '../panel/lineSpecimen';
 import { isForceTool } from '../../engine/physics/forces';
 import { FRAME_PRESETS, FRAME_PRESET_GROUPS } from '../../engine/model/frames';
 import { ShapeIcon } from './shapeIcons';
-import { LINE_KINDS, SHAPE_KINDS, SHAPE_LABELS, shapeToolId, shapeKindFromToolId, type ShapePreset } from './shapePresetTypes';
+import {
+  LINE_KINDS,
+  SHAPE_LABELS,
+  SHAPE_CATEGORIES,
+  SHAPE_SEARCH_KEYWORDS,
+  SHAPE_DESCRIPTIONS,
+  shapeToolId,
+  shapeKindFromToolId,
+  type ShapePreset,
+} from './shapePresetTypes';
 import { shortcutFor } from '../../engine/tools/shortcuts';
 import { DEMO_LENGTHS } from '../../engine/text/demoText';
 import { useStore } from '../../hooks/useStore';
@@ -227,7 +237,9 @@ const FlyoutItem: React.FC<{
   description?: string;
   /** Right-hand text when there is no shortcut — a frame's dimensions. */
   detail?: string;
-}> = ({ icon, label, toolId, active, onClick, description, detail }) => {
+  onMouseEnter?: () => void;
+  onMouseLeave?: () => void;
+}> = ({ icon, label, toolId, active, onClick, description, detail, onMouseEnter, onMouseLeave }) => {
   const key = toolId ? shortcutFor(toolId) : undefined;
   return (
     <button
@@ -236,6 +248,8 @@ const FlyoutItem: React.FC<{
       aria-checked={active}
       className={`btn-icon dock-item ${active ? 'active' : ''}`}
       onClick={onClick}
+      onMouseEnter={onMouseEnter}
+      onMouseLeave={onMouseLeave}
       aria-label={description ? `${label}. ${description}` : label}
     >
       <span className="dock-item__icon" aria-hidden="true">{icon}</span>
@@ -346,6 +360,16 @@ interface Props {
  */
 const HOVER_INTENT = 170;
 
+/**
+ * How long a hover-opened flyout waits before believing the pointer has left.
+ *
+ * Not a comfort delay -- a correctness one. The pointer can end up outside a
+ * panel that nobody moved away from, because the panel itself changed size
+ * under it, and closing on that reads as the interface flinching away from
+ * the click that caused it.
+ */
+const HOVER_CLOSE_GRACE = 140;
+
 const MORE_SEAT = DOCK_SEATS.length;
 
 /**
@@ -405,6 +429,10 @@ const SEAT_GLYPH: Record<DockSeat, React.ReactNode> = {
   image: <ImageIcon size={16} />, audio: <Mic size={16} />, forces: <Sparkles size={16} />,
 };
 
+
+/** Which systems each category shows. A constant, so it lives out here:
+ *  rebuilt in the component body it was a new object every render and the
+ *  memo that reads it could not list it as a dependency. */
 
 export const ToolWorkspace: React.FC<Props> = ({ activeToolId, onOpenDiagram, onAddTextBlock }) => {
   /** What the drawer holds, as data — the menu and the seat's icon read it. */
@@ -476,6 +504,8 @@ export const ToolWorkspace: React.FC<Props> = ({ activeToolId, onOpenDiagram, on
   type DockMenu = 'pen' | 'shape' | 'line' | 'frame' | 'grid' | 'chart' | 'eraser' | 'block' | 'more';
   const [pinnedMenu, setPinnedMenu] = useState<DockMenu | null>(null);
   const [hoveredMenu, setHoveredMenu] = useState<DockMenu | null>(null);
+  const [shapeCategory, setShapeCategory] = useState<string>('basic');
+  const [recentShapes, setRecentShapes] = useState<ShapePreset[]>(['rect', 'ellipse', 'squircle', 'diamond', 'star']);
 
   /**
    * While the dock is being edited, only the drawer opens.
@@ -516,16 +546,30 @@ export const ToolWorkspace: React.FC<Props> = ({ activeToolId, onOpenDiagram, on
    * flyout is the answer to hovering it, and the tooltip stands down.
    */
   const hoverTimer = useRef<number | null>(null);
+  const closeTimer = useRef<number | null>(null);
   const cancelHoverOpen = () => {
     if (hoverTimer.current !== null) {
       window.clearTimeout(hoverTimer.current);
       hoverTimer.current = null;
     }
   };
-  useEffect(() => cancelHoverOpen, []);
+  const cancelHoverClose = () => {
+    if (closeTimer.current !== null) {
+      window.clearTimeout(closeTimer.current);
+      closeTimer.current = null;
+    }
+  };
+  useEffect(
+    () => () => {
+      cancelHoverOpen();
+      cancelHoverClose();
+    },
+    []
+  );
   const hoverProps = (menu: DockMenu) => ({
     onMouseEnter: () => {
       cancelHoverOpen();
+      cancelHoverClose();
       // Already showing a menu: move between seats with no wait, the way a
       // menu bar hands off once one of its menus is open.
       if (hoveredMenu !== null || pinnedMenu !== null) {
@@ -534,9 +578,42 @@ export const ToolWorkspace: React.FC<Props> = ({ activeToolId, onOpenDiagram, on
       }
       hoverTimer.current = window.setTimeout(() => setHoveredMenu(menu), HOVER_INTENT);
     },
+    /**
+     * Leaving is given a moment to be a mistake.
+     *
+     * A hover-opened panel closes when the pointer leaves it, and the pointer
+     * can leave it without anybody moving: switching to a category with fewer
+     * shapes in it made the panel shorter, the pointer was suddenly below its
+     * bottom edge, and the whole flyout vanished mid-click. The panel now
+     * holds its height (see `.kp__body`), and this is the belt to that
+     * braces -- any geometry change that briefly strands the pointer has a
+     * grace period to be corrected before it counts as leaving.
+     *
+     * Short enough to still feel like a hover menu, long enough that no
+     * re-layout can beat it.
+     */
     onMouseLeave: () => {
       cancelHoverOpen();
-      setHoveredMenu(current => (current === menu ? null : current));
+      cancelHoverClose();
+      closeTimer.current = window.setTimeout(() => {
+        setHoveredMenu((current) => (current === menu ? null : current));
+      }, HOVER_CLOSE_GRACE);
+    },
+    /**
+     * A click inside the panel makes it stick.
+     *
+     * Hovering a seat is a glance; clicking something in the panel it opened
+     * is a commitment to working in there, and from that moment the panel
+     * should not evaporate because the pointer wandered. This is what every
+     * menu bar does, and it is what makes changing category safe: the panel
+     * is already pinned by the time it re-lays-out.
+     *
+     * The seat's own button is excluded -- it has a toggle of its own, and
+     * pinning here would fight it.
+     */
+    onClickCapture: (e: React.MouseEvent) => {
+      if (pinnedMenu === menu) return;
+      if ((e.target as HTMLElement).closest('.dock-flyout')) setPinnedMenu(menu);
     },
     // Keep presses inside a menu away from the close-on-outside-press listener,
     // which would otherwise cancel the button's own toggle.
@@ -600,6 +677,77 @@ export const ToolWorkspace: React.FC<Props> = ({ activeToolId, onOpenDiagram, on
     setTool(id);
     setPinnedMenu(null);
   };
+
+  const pickShape = (kind: ShapePreset) => {
+    setRecentShapes((prev) => [kind, ...prev.filter((k) => k !== kind)].slice(0, 5));
+    pick(shapeToolId(kind));
+  };
+
+  /**
+   * The three pickers' options, built from the lists that already describe
+   * them -- `SHAPE_CATEGORIES`, `GRID_LABELS`/`GRID_HINTS` and
+   * `chartPickerGroups`. Nothing here restates a name or a sentence: a
+   * picker that carried its own copy of a label is how the dock came to call
+   * something by a name the panel no longer used.
+   */
+  const shapeOption = React.useCallback(
+    (kind: ShapePreset) => ({
+      id: kind,
+      label: SHAPE_LABELS[kind],
+      hint: SHAPE_DESCRIPTIONS[kind] ?? '',
+      keywords: SHAPE_SEARCH_KEYWORDS[kind],
+      icon: <ShapeIcon kind={kind} size={18} />,
+    }),
+    []
+  );
+
+  const shapePickerGroups = useMemo(() => {
+    const category = SHAPE_CATEGORIES.find((c) => c.id === shapeCategory) ?? SHAPE_CATEGORIES[0];
+    // A category with named runs shows them; one without is a single group.
+    if (category.groups && category.groups.length > 0) {
+      return category.groups.map((group) => ({
+        id: `${category.id}:${group.name}`,
+        label: group.name,
+        options: group.presets.map(shapeOption),
+      }));
+    }
+    return [{ id: category.id, options: category.presets.map(shapeOption) }];
+  }, [shapeCategory, shapeOption]);
+
+  const recentShapeOptions = useMemo(
+    () => recentShapes.map(shapeOption),
+    [recentShapes, shapeOption]
+  );
+
+  const gridPickerGroups = useMemo(
+    () => [
+      {
+        id: 'systems',
+        options: GRID_KINDS.map((kind) => ({
+          id: kind,
+          label: GRID_LABELS[kind],
+          hint: GRID_HINTS[kind],
+          icon: <GridKindIcon kind={kind} size={20} />,
+        })),
+      },
+    ],
+    []
+  );
+
+  const chartPickerOptions = useMemo(
+    () =>
+      chartPickerGroups().map((group) => ({
+        id: group.family,
+        label: group.label,
+        options: group.kinds.map((kind) => ({
+          id: kind,
+          label: CHART_LABELS[kind],
+          hint: CHART_HINTS[kind],
+          icon: <ChartKindIcon kind={kind} size={20} />,
+        })),
+      })),
+    []
+  );
 
   const armedShape = shapeKindFromToolId(activeToolId);
   /**
@@ -1345,27 +1493,28 @@ export const ToolWorkspace: React.FC<Props> = ({ activeToolId, onOpenDiagram, on
               hasMenu menuOpen={openMenu === 'shape'} onClick={() => toggleMenu('shape')}
             >
               {openMenu === 'shape' && (
-                <Flyout title="Shapes">
-                  <div className="dock-flyout__grid">
-                    {SHAPE_KINDS.map(kind => {
-                      const id = shapeToolId(kind);
-                      return (
-                        <button
-                          key={kind}
-                          type="button"
-                          role="menuitemradio"
-                          aria-checked={activeToolId === id}
-                          className={`btn-icon dock-tile ${activeToolId === id ? 'active' : ''}`}
-                          onClick={() => pick(id)}
-                          data-tooltip={SHAPE_LABELS[kind]}
-                          aria-label={SHAPE_LABELS[kind]}
-                        >
-                          <ShapeIcon kind={kind} size={17} />
-                        </button>
-                      );
-                    })}
-                  </div>
-                </Flyout>
+                <Flyout title="Shapes" wide>
+                  {/*
+                    Forty shapes as a sheet of glyphs, six across.
+
+                    The glyph is the identity here -- nobody reads "octagon",
+                    they see eight sides -- so the tile is mostly picture and
+                    the sentence lives in the preview bar, once, for whatever
+                    the pointer or the keyboard is on.
+                  */}
+                  <KindPicker
+                    columns={6}
+                    search
+                    searchPlaceholder="Search shapes"
+                    groups={shapePickerGroups}
+                    facets={SHAPE_CATEGORIES.map((c) => ({ id: c.id, label: c.name }))}
+                    activeFacet={shapeCategory}
+                    onFacet={setShapeCategory}
+                    recent={recentShapeOptions}
+                    value={armedBoxShape ?? null}
+                    onPick={pickShape}
+                  />
+                                </Flyout>
               )}
             </DockButton>
         </div>
@@ -1635,38 +1784,27 @@ export const ToolWorkspace: React.FC<Props> = ({ activeToolId, onOpenDiagram, on
             {openMenu === 'grid' && (
               <Flyout title="Grid system" wide>
                 {/*
-                  Two columns rather than one tall scroll. Eleven systems in a
-                  single column ran the flyout the height of the window and put
-                  its first rows behind the header -- and a picker of *pictures*
-                  is scanned across as readily as down, so the column was
-                  costing height for nothing. The chart picker made the same
-                  move for the same reason.
+                  Twelve systems, two across, each name beside its schematic.
+
+                  No search, no category tabs and no preset chips. All three
+                  were chrome over a list short enough to read at a glance:
+                  filtering twelve pictures you can already see is slower than
+                  looking at them, and a category tab changed the panel's size
+                  under the pointer. The names carry it.
                 */}
-                <div className="grid-picker">
-                  {GRID_KINDS.map((kind) => (
-                    <FlyoutItem
-                      key={kind}
-                      icon={<GridKindIcon kind={kind} />}
-                      label={GRID_LABELS[kind]}
-                      description={GRID_HINTS[kind]}
-                      active={gridKind === kind}
-                      onClick={() => {
-                        // Remembering the pick *and* arming the tool, so the
-                        // flyout is a choice rather than a menu of ten tools
-                        // that would each need registering.
-                        //
-                        // `switchKind` brings the kind's own track counts along:
-                        // twelve spokes for a dial, five squares for a golden
-                        // spiral. Carrying a 3x3 across would make the preview
-                        // under the pointer the worst version of what was picked.
-                        gridDefaults.remember(
-                          switchKind(gridDefaults.forBox({ x: 0, y: 0, width: 0, height: 0 }), kind)
-                        );
-                        pick('grid');
-                      }}
-                    />
-                  ))}
-                </div>
+                <KindPicker
+                  dense
+                  columns={2}
+                  searchPlaceholder="Grid systems"
+                  groups={gridPickerGroups}
+                  value={gridKind}
+                  onPick={(kind) => {
+                    gridDefaults.remember(
+                      switchKind(gridDefaults.forBox({ x: 0, y: 0, width: 0, height: 0 }), kind)
+                    );
+                    pick('grid');
+                  }}
+                />
               </Flyout>
             )}
           </DockButton>
@@ -1687,49 +1825,31 @@ export const ToolWorkspace: React.FC<Props> = ({ activeToolId, onOpenDiagram, on
             {openMenu === 'chart' && (
               <Flyout title="Chart type" wide>
                 {/*
-                  Five columns, one per family, rather than sixteen rows behind
-                  a scrollbar. The frame picker made the same call for the same
-                  reason: a picker of *pictures* is scanned, not read, and a
-                  scroll hides exactly the kinds somebody does not already know
-                  they want. Grouping is by the question being asked -- nobody
-                  arrives wanting "a stacked area", they arrive wanting to show
-                  how a total split up over time.
+                  Twenty-four kinds in seven families, four across.
+
+                  They were laid out as seven columns of chips, each chip
+                  carrying its own hint -- which made the flyout as wide as
+                  the board and truncated most of the hints anyway. Grouping
+                  by the *question being asked* is kept, because nobody
+                  arrives wanting "a stacked area"; they arrive wanting to
+                  show how a total split up over time.
                 */}
-                <div className="chart-picker">
-                  {chartPickerGroups().map((group) => (
-                    <div className="chart-picker__col" key={group.family}>
-                      <div className="dock-flyout__group" role="presentation">
-                        {group.label}
-                      </div>
-                      {group.kinds.map((kind) => (
-                        <button
-                          key={kind}
-                          type="button"
-                          className="chart-chip"
-                          data-active={ChartTool.kind === kind || undefined}
-                          title={CHART_HINTS[kind]}
-                          onClick={() => {
-                            // Remembering the pick and arming the tool, the way
-                            // the grid flyout does, so this is a choice about
-                            // the next drag rather than sixteen tools that
-                            // would each need registering and each need a key.
-                            ChartTool.kind = kind;
-                            pick('chart');
-                          }}
-                        >
-                          <span className="chart-chip__glyph" aria-hidden="true">
-                            <ChartKindIcon kind={kind} size={20} />
-                          </span>
-                          <span className="chart-chip__text">
-                            <span className="chart-chip__label">{CHART_LABELS[kind]}</span>
-                            <span className="chart-chip__hint">{CHART_HINTS[kind]}</span>
-                          </span>
-                        </button>
-                      ))}
-                    </div>
-                  ))}
-                </div>
-              </Flyout>
+                <KindPicker
+                  columns={4}
+                  tile={88}
+                  searchPlaceholder="Chart types"
+                  groups={chartPickerOptions}
+                  value={ChartTool.kind}
+                  onPick={(kind) => {
+                    // Remembering the pick and arming the tool, the way the
+                    // grid flyout does, so this is a choice about the next
+                    // drag rather than twenty-four tools that would each need
+                    // registering and each need a key.
+                    ChartTool.kind = kind;
+                    pick('chart');
+                  }}
+                />
+                            </Flyout>
             )}
           </DockButton>
         </div>

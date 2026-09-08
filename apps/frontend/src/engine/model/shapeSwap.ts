@@ -49,19 +49,31 @@ export function swapShapeKind(
   const next: ShapeGeometry = { kind };
 
   /**
-   * How many sides or points, for the two kinds that have a count.
-   *
-   * Carried across between them on purpose: a hexagon swapped to a star is a
-   * six-pointed star, which is the answer that keeps the swap feeling like a
-   * change of form rather than a reset.
+   * How many sides or points, for the kinds that have a count.
    */
-  if (kind === 'polygon' || kind === 'star') {
+  if (kind === 'polygon' || kind === 'star' || kind === 'badge') {
     const carried = points ?? geometry.points;
     if (carried !== undefined) next.points = carried;
   }
-  // Only a star has an interior radius. On anything else it is a number that
-  // renders nowhere and reappears if the shape is ever swapped back.
-  if (kind === 'star') next.innerRatio = geometry.innerRatio ?? 0.5;
+  // Kinds that feature an interior ratio or depth
+  if (kind === 'star' || kind === 'donut' || kind === 'badge') {
+    next.innerRatio = geometry.innerRatio ?? (kind === 'badge' ? 0.85 : 0.5);
+  }
+  if (kind === 'parallelogram') next.skew = geometry.skew ?? 0.2;
+  if (kind === 'trapezoid') next.inset = geometry.inset ?? 0.2;
+  if (kind === 'chevron') next.indent = geometry.indent ?? 0.25;
+  if (kind === 'cross') next.armRatio = geometry.armRatio ?? 0.33;
+  if (kind === 'cylinder') next.rimRatio = geometry.rimRatio ?? 0.18;
+  if (kind === 'callout') {
+    next.tailPosition = geometry.tailPosition ?? 'bottom-left';
+    next.tailSize = geometry.tailSize ?? 16;
+  }
+  if (kind === 'document') next.waveHeight = geometry.waveHeight ?? 0.15;
+  if (kind === 'cpu') next.pinCount = geometry.pinCount ?? 6;
+  if (kind === 'gear') {
+    next.teeth = geometry.teeth ?? (geometry.points ? Math.max(4, Math.min(24, geometry.points)) : 8);
+  }
+  if (kind === 'server') next.shelfCount = geometry.shelfCount ?? 3;
 
   if (isOpenShape(kind)) {
     /**

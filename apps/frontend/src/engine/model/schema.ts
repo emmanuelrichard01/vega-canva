@@ -756,11 +756,52 @@ export const SHAPE_KIND_VALUES = [
   'polygon',
   'star',
   'heart',
+  'diamond',
+  'trapezoid',
+  'parallelogram',
+  'capsule',
+  'cylinder',
+  'cloud',
+  'callout',
+  'chevron',
+  'cross',
+  'donut',
+  'badge',
+  'banner',
+  'document',
+  'predefined_process',
+  'summing_junction',
+  'or_gate',
+  'and_gate',
+  'internal_storage',
+  'delay',
+  'server',
+  'cpu',
+  'mobile',
+  'terminal',
+  'browser',
+  'shield',
+  'key',
+  'bolt',
+  'package',
+  'mail',
+  'user',
+  'gear',
+  'wallet',
   'line',
   'arrow',
 ] as const;
 
 export type ShapeKind = (typeof SHAPE_KIND_VALUES)[number];
+
+export type CalloutTail =
+  | 'bottom-left'
+  | 'bottom-right'
+  | 'top-left'
+  | 'top-right'
+  | 'bottom'
+  | 'left'
+  | 'right';
 
 /** Shapes with no interior: no fill, no corner radius, no inside stroke. */
 export const OPEN_SHAPE_KINDS: ShapeKind[] = ['line', 'arrow'];
@@ -913,6 +954,38 @@ export interface ShapeGeometry {
    * end of the range rather than a broken state.
    */
   innerRatio?: number;
+  /**
+   * The parametric dials, one per shape that has one.
+   *
+   * Their ranges and defaults are **not** written here. Each was documented in
+   * this comment, clamped in `normalize`, bounded again on the panel's stepper
+   * and defaulted a fourth time inside the geometry function, and by the time
+   * anyone checked, four of them disagreed -- including a pin count offered up
+   * to sixteen and drawn up to six. `model/shapeParams` holds all of it now,
+   * and every one of those four readers asks it.
+   */
+  /** Parallelogram: how far the sides lean, as a ratio of the width. */
+  skew?: number;
+  /** Trapezoid: how far the top edge is drawn in, as a ratio of the width. */
+  inset?: number;
+  /** Cross: arm thickness, as a ratio of the short side. */
+  armRatio?: number;
+  /** Cylinder: the rim's depth, as a ratio of the height. */
+  rimRatio?: number;
+  /** Chevron: the depth of the point and of the notch behind it. */
+  indent?: number;
+  /** Callout: which edge the tail comes out of, and where along it. */
+  tailPosition?: CalloutTail;
+  /** Callout: how far the tail projects, in px. */
+  tailSize?: number;
+  /** Document: amplitude of the torn bottom edge, as a ratio of the height. */
+  waveHeight?: number;
+  /** CPU: contact pins on each edge of the package. */
+  pinCount?: number;
+  /** Gear: radial cogs. */
+  teeth?: number;
+  /** Server: rack units drawn across the face. */
+  shelfCount?: number;
   /**
    * What sits at each end of a line or arrow — see `EndCapKind`.
    *

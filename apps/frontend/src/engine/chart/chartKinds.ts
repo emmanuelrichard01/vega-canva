@@ -37,6 +37,7 @@ export const CHART_LABELS: Record<ChartKind, string> = {
   contour: 'Contour',
   slopeField: 'Slope field',
   vectorField: 'Vector field',
+  heatmap: 'Heatmap',
 };
 
 /**
@@ -73,6 +74,7 @@ export const CHART_HINTS: Record<ChartKind, string> = {
   contour: 'level curves of a surface',
   slopeField: "dy/dx, as a direction at every point",
   vectorField: 'a vector at every point of the plane',
+  heatmap: 'a surface, painted by value',
 };
 
 export const FAMILY_LABELS: Record<ChartFamily, string> = {
@@ -123,6 +125,7 @@ export const CHART_PICKER_ORDER: ChartKind[] = [
   'contour',
   'slopeField',
   'vectorField',
+  'heatmap',
 ];
 
 /** The picker's rows, grouped, in family order then picker order. */

@@ -171,6 +171,24 @@ export function paintLayout(layout: ChartLayout, options: ChartSvgOptions): stri
     );
   }
 
+  if (layout.toleranceBand) {
+    const tb = layout.toleranceBand;
+    const bandHeight = Math.max(1, tb.y2 - tb.y1);
+    const color = tb.color ?? '#10B981';
+    out.push(
+      `<rect x="${layout.plot.x}" y="${tb.y1}" width="${layout.plot.width}" height="${bandHeight}" fill="${color}" fill-opacity="0.1" />`
+    );
+    out.push(
+      `<line x1="${layout.plot.x}" y1="${tb.y1}" x2="${layout.plot.x + layout.plot.width}" y2="${tb.y1}" stroke="${color}" stroke-width="1" stroke-dasharray="3 3" opacity="0.6" />`
+    );
+    out.push(
+      `<line x1="${layout.plot.x}" y1="${tb.y2}" x2="${layout.plot.x + layout.plot.width}" y2="${tb.y2}" stroke="${color}" stroke-width="1" stroke-dasharray="3 3" opacity="0.6" />`
+    );
+    if (tb.label) {
+      out.push(label(tb.label, layout.plot.x + 6, tb.y1 + 4, layout.plot.width, 'left', 9, color, '600'));
+    }
+  }
+
   layout.bars.forEach((b, i) => {
     if (sketch) {
       const d = roughLoop(
@@ -181,9 +199,15 @@ export function paintLayout(layout: ChartLayout, options: ChartSvgOptions): stri
         `<path d="${d}" fill="${b.color}" stroke="${b.color}" stroke-width="1.4" opacity="0.92" />`
       );
     } else {
-      const r = Math.min(3, b.width / 6);
+      const r =
+        b.cornerRadius !== undefined
+          ? Math.min(b.cornerRadius, Math.min(b.width, b.height) / 2)
+          : (b.rounded ?? true)
+          ? Math.min(3, b.width / 6)
+          : 0;
+      const rx = r > 0 ? ` rx="${r}"` : '';
       out.push(
-        `<rect x="${b.x}" y="${b.y}" width="${b.width}" height="${b.height}" rx="${r}" fill="${b.color}" />`
+        `<rect x="${b.x}" y="${b.y}" width="${b.width}" height="${b.height}"${rx} fill="${b.color}" />`
       );
     }
   });
@@ -196,25 +220,82 @@ export function paintLayout(layout: ChartLayout, options: ChartSvgOptions): stri
 
   layout.runs.forEach((r, i) => {
     if (r.points.length < 2) return;
+    const strokeW = r.width ?? 2.5;
+    const dash =
+      r.style === 'dashed'
+        ? ' stroke-dasharray="6 4"'
+        : r.style === 'dotted'
+        ? ' stroke-dasharray="2 3"'
+        : '';
     if (sketch) {
       const d = roughPolyline(r.points, { seed: seed + i * 31, level: sketch, closed: false });
       out.push(
-        `<path d="${d}" fill="none" stroke="${r.color}" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round" />`
+        `<path d="${d}" fill="none" stroke="${r.color}" stroke-width="${strokeW}" stroke-linecap="round" stroke-linejoin="round" />`
       );
     } else {
       out.push(
-        `<polyline points="${r.points.map((p) => `${p.x},${p.y}`).join(' ')}" fill="none" stroke="${r.color}" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round" />`
+        `<polyline points="${r.points.map((p) => `${p.x},${p.y}`).join(' ')}" fill="none" stroke="${r.color}" stroke-width="${strokeW}"${dash} stroke-linecap="round" stroke-linejoin="round" />`
       );
     }
   });
 
   for (const d of layout.dots) {
-    out.push(`<circle cx="${d.x}" cy="${d.y}" r="${d.radius}" fill="${d.color}" />`);
+    if (d.shape === 'ring' || d.shape === 'hollow') {
+      out.push(`<circle cx="${d.x}" cy="${d.y}" r="${d.radius}" fill="none" stroke="${d.color}" stroke-width="2" />`);
+    } else if (d.shape === 'square') {
+      out.push(`<rect x="${d.x - d.radius}" y="${d.y - d.radius}" width="${d.radius * 2}" height="${d.radius * 2}" fill="${d.color}" />`);
+    } else {
+      out.push(`<circle cx="${d.x}" cy="${d.y}" r="${d.radius}" fill="${d.color}" />`);
+    }
   }
 
   for (const s of layout.slices) {
     out.push(
       `<path d="${slicePath(s.cx, s.cy, s.outerRadius, s.innerRadius, s.startAngle, s.endAngle)}" fill="${s.color}" stroke="${ink.sliceEdge}" stroke-width="1.5" fill-rule="evenodd" />`
+    );
+  }
+
+  for (const b of layout.waterfallBridges ?? []) {
+    out.push(
+      `<line x1="${b.x1}" y1="${b.y1}" x2="${b.x2}" y2="${b.y2}" stroke="${ink.chrome}" stroke-width="1.2" stroke-dasharray="3 3" opacity="0.65" />`
+    );
+  }
+
+  for (const h of layout.funnelHulls ?? []) {
+    out.push(
+      `<polygon points="${h.polygon.map((p) => `${p.x},${p.y}`).join(' ')}" fill="rgba(59, 130, 246, 0.08)" stroke="rgba(59, 130, 246, 0.2)" stroke-width="1" stroke-dasharray="4 4" />`
+    );
+  }
+
+  if (layout.trendline) {
+    const tl = layout.trendline;
+    out.push(
+      `<line x1="${tl.line[0].x}" y1="${tl.line[0].y}" x2="${tl.line[1].x}" y2="${tl.line[1].y}" stroke="#F59E0B" stroke-width="1.8" stroke-dasharray="6 4" opacity="0.9" />`
+    );
+  }
+
+  if (layout.kdeCurve) {
+    out.push(
+      `<polyline points="${layout.kdeCurve.map((p) => `${p.x},${p.y}`).join(' ')}" fill="none" stroke="#06B6D4" stroke-width="2.2" opacity="0.9" />`
+    );
+  }
+
+  for (const sl of layout.streamlines ?? []) {
+    out.push(
+      `<polyline points="${sl.points.map((p) => `${p.x},${p.y}`).join(' ')}" fill="none" stroke="#38BDF8" stroke-width="1.8" opacity="0.85" />`
+    );
+    out.push(
+      `<circle cx="${sl.seed.x}" cy="${sl.seed.y}" r="4" fill="#F59E0B" stroke="#FFFFFF" stroke-width="1.5" />`
+    );
+  }
+
+  if (layout.donutMetric) {
+    const dm = layout.donutMetric;
+    out.push(
+      `<text x="${dm.x}" y="${dm.y - 4}" text-anchor="middle" font-size="9" font-weight="600" fill="${ink.chrome}">${dm.label}</text>`
+    );
+    out.push(
+      `<text x="${dm.x}" y="${dm.y + 11}" text-anchor="middle" font-size="12" font-weight="700" fill="${ink.ink}">${dm.value}</text>`
     );
   }
 
@@ -237,6 +318,24 @@ export function paintLayout(layout: ChartLayout, options: ChartSvgOptions): stri
   if (layout.title) {
     const t = layout.title;
     out.push(label(t.text, t.x, t.y, t.width, t.align, t.fontSize, ink.ink, '600'));
+  }
+  if (layout.subtitle) {
+    const s = layout.subtitle;
+    out.push(label(s.text, s.x, s.y, s.width, s.align, s.fontSize, ink.chrome, '400'));
+  }
+  if (layout.footnote) {
+    const f = layout.footnote;
+    out.push(label(f.text, f.x, f.y, f.width, f.align, f.fontSize, ink.chrome, '400'));
+  }
+  if (layout.xAxisTitle) {
+    const xa = layout.xAxisTitle;
+    out.push(label(xa.text, xa.x - xa.width / 2, xa.y, xa.width, xa.align, xa.fontSize, ink.chrome, '600'));
+  }
+  if (layout.yAxisTitle) {
+    const ya = layout.yAxisTitle;
+    out.push(
+      `<text x="${ya.x}" y="${ya.y}" transform="rotate(-90 ${ya.x} ${ya.y})" text-anchor="middle" font-family="${esc(FONT)}" font-size="${ya.fontSize}" font-weight="600" fill="${ink.chrome}">${esc(ya.text)}</text>`
+    );
   }
   for (const l of [...layout.axisLabels, ...layout.categoryLabels]) {
     out.push(label(l.text, l.x, l.y, l.width, l.align, l.fontSize, ink.chrome));

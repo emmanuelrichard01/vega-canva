@@ -14,6 +14,8 @@ import { gridSnap } from './gridSnap';
 import { guideState } from './guideState';
 import { snapToObjects, type Box } from './smartGuides';
 import { guideEdges } from '../model/layoutGuide';
+import { gridCellsOf } from '../grid/gridNode';
+import type { GridNode } from '../model/schema';
 
 /**
  * Snap distance, in **screen** pixels.
@@ -93,9 +95,42 @@ function candidatesFor(excluded: Set<string>): Box[] {
 }
 
 /**
- * Every measure edge on screen, from the frames that carry one.
+ * Every track and module boundary of a grid node on screen, in world coordinates.
  *
- * Frames being dragged are skipped: an object cannot align to a measure that
+ * Allows shapes, cards, images, and text to snap magnetically to grid columns,
+ * gutter boundaries, and rows.
+ */
+function gridGuideEdges(node: GridNode): { x: number[]; y: number[] } {
+  const xSet = new Set<number>();
+  const ySet = new Set<number>();
+
+  xSet.add(node.x);
+  xSet.add(node.x + node.width);
+  ySet.add(node.y);
+  ySet.add(node.y + node.height);
+
+  try {
+    const cells = gridCellsOf(node);
+    for (const cell of cells) {
+      xSet.add(node.x + cell.x);
+      xSet.add(node.x + cell.x + cell.width);
+      ySet.add(node.y + cell.y);
+      ySet.add(node.y + cell.y + cell.height);
+    }
+  } catch {
+    // Graceful fallback if node.grid is incomplete or in middle of creation
+  }
+
+  return {
+    x: Array.from(xSet),
+    y: Array.from(ySet),
+  };
+}
+
+/**
+ * Every measure edge on screen, from the frames and grids that carry one.
+ *
+ * Objects being dragged are skipped: an object cannot align to a measure that
  * is moving with it, which is the same rule the object candidates follow.
  */
 function visibleGuideEdges(excluded: Set<string>): { x: number[]; y: number[] } {
@@ -105,13 +140,19 @@ function visibleGuideEdges(excluded: Set<string>): { x: number[]; y: number[] } 
   const y: number[] = [];
 
   for (const node of Object.values(objects)) {
-    if (node.type !== 'frame' || !node.layoutGuide || node.hidden) continue;
-    if (excluded.has(node.id)) continue;
+    if (node.hidden || excluded.has(node.id)) continue;
     if (node.x > view.maxX || node.x + node.width < view.minX) continue;
     if (node.y > view.maxY || node.y + node.height < view.minY) continue;
-    const edges = guideEdges(node, node.layoutGuide);
-    x.push(...edges.x);
-    y.push(...edges.y);
+
+    if (node.type === 'frame' && node.layoutGuide) {
+      const edges = guideEdges(node, node.layoutGuide);
+      x.push(...edges.x);
+      y.push(...edges.y);
+    } else if (node.type === 'grid') {
+      const edges = gridGuideEdges(node as GridNode);
+      x.push(...edges.x);
+      y.push(...edges.y);
+    }
   }
   return { x, y };
 }
@@ -150,41 +191,37 @@ export function snapDraggedBox(
   // put it there on purpose — so it snaps like any other edge. Expressed as a
   // zero-width box on its own axis, which is exactly what a guide is, rather
   // than as a special case threaded through the arithmetic.
+  const xCandidates = [...candidates];
+  const yCandidates = [...candidates];
+
   for (const guide of readGuides()) {
-    candidates.push(
-      guide.axis === 'x'
-        ? { x: guide.position, y: box.y, width: 0, height: box.height }
-        : { x: box.x, y: guide.position, width: box.width, height: 0 }
-    );
+    if (guide.axis === 'x') {
+      xCandidates.push({ x: guide.position, y: box.y, width: 0, height: box.height });
+    } else {
+      yCandidates.push({ x: box.x, y: guide.position, width: box.width, height: 0 });
+    }
   }
-  /**
-   * A frame's column measure, as more of the same.
-   *
-   * A layout guide exists to be lined up against — that is the entire
-   * difference between it and the safe area, which is drawn and deliberately
-   * snaps to nothing. So its column edges join the candidate list as
-   * zero-width boxes, exactly as a ruler guide does, and the arithmetic
-   * downstream never learns that layout guides exist.
-   *
-   * Restricted to frames in view for the reason the object candidates are:
-   * snapping to something you cannot see produces a jump with its explanation
-   * drawn off-screen.
-   *
-   * The moving object's own frame is included, which is the case that matters
-   * most — placing a block on the measure of the frame it already sits in is
-   * what a column guide is *for*.
-   */
+
   const measure = visibleGuideEdges(excluded);
   for (const edge of measure.x) {
-    candidates.push({ x: edge, y: box.y, width: 0, height: box.height });
+    xCandidates.push({ x: edge, y: box.y, width: 0, height: box.height });
   }
-  // A row edge is a `y`, and keeping the two lists apart is what stops a
-  // block's left side snapping to a horizontal band — nonsense that would look
-  // like a bug in the snapper rather than in the guide.
   for (const edge of measure.y) {
-    candidates.push({ x: box.x, y: edge, width: box.width, height: 0 });
+    yCandidates.push({ x: box.x, y: edge, width: box.width, height: 0 });
   }
-  const result = snapToObjects(box, candidates, SNAP_PX / (cameraSystem.zoom || 1));
+
+  const tol = SNAP_PX / (cameraSystem.zoom || 1);
+  const snapX = snapToObjects(box, xCandidates, tol);
+  const snapY = snapToObjects(box, yCandidates, tol);
+
+  const result = {
+    dx: snapX.dx,
+    dy: snapY.dy,
+    guides: [
+      ...snapX.guides.filter((g) => g.orientation === 'vertical'),
+      ...snapY.guides.filter((g) => g.orientation === 'horizontal'),
+    ],
+  };
 
   guideState.set(result.guides);
   lastSnap = { x: box.x + result.dx, y: box.y + result.dy };

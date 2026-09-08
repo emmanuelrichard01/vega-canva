@@ -1120,11 +1120,7 @@ export const Canvas: React.FC<CanvasProps> = ({ activeTool, selectedIds, setSele
 
   useEffect(() => {
     let mappedTool = activeTool;
-    if (activeTool === 'shape' || activeTool === 'shape-rect') mappedTool = 'shape-rect';
-    else if (activeTool === 'shape-ellipse') mappedTool = 'shape-ellipse';
-    else if (activeTool === 'shape-triangle') mappedTool = 'shape-triangle';
-    else if (activeTool === 'shape-hexagon') mappedTool = 'shape-hexagon';
-    else if (activeTool === 'shape-star') mappedTool = 'shape-star';
+    if (activeTool === 'shape') mappedTool = 'shape-rect';
     toolManager.setActiveTool(mappedTool);
   }, [activeTool, toolManager]);
 

@@ -341,3 +341,178 @@ describe('layoutChart — legend', () => {
     expect(new Set(l.legend.map((e) => e.y)).size).toBeGreaterThan(1);
   });
 });
+
+describe('layoutChart — bar corner rounding', () => {
+  it('marks heatmap cells as rounded: false to avoid lozenge pinhole gaps', () => {
+    const l = layoutChart(
+      spec({
+        kind: 'heatmap',
+        categories: [],
+        series: [],
+        functions: [{ source: 'x + y' }],
+        resolution: 10,
+      }),
+      W,
+      H
+    );
+    expect(l.bars.length).toBeGreaterThan(0);
+    for (const b of l.bars) {
+      expect(b.rounded).toBe(false);
+    }
+  });
+
+  it('marks riemann rectangles as rounded: false for sharp integration strips', () => {
+    const l = layoutChart(
+      spec({
+        kind: 'function',
+        categories: [],
+        series: [],
+        functions: [{ source: 'x^2' }],
+        riemann: { n: 10, mode: 'midpoint' },
+      }),
+      W,
+      H
+    );
+    expect(l.bars.length).toBe(10);
+    for (const b of l.bars) {
+      expect(b.rounded).toBe(false);
+    }
+  });
+
+  it('keeps standard categorical bars rounded by default', () => {
+    const l = layoutChart(spec({ kind: 'bar', series: [{ name: 'S', values: [10, 20] }] }), W, H);
+    expect(l.bars.length).toBe(2);
+    for (const b of l.bars) {
+      expect(b.rounded).not.toBe(false);
+    }
+  });
+});
+
+describe('layoutChart — advanced properties & functionalities', () => {
+  it('sorts multi-series by total sum when sortKey is total', () => {
+    const s = spec({
+      kind: 'bar',
+      categories: ['P', 'Q', 'R'],
+      series: [
+        { name: 'S1', values: [10, 50, 20] },
+        { name: 'S2', values: [100, 10, 5] },
+      ],
+      sort: 'valueDesc',
+      sortKey: 'total',
+    });
+    const l = layoutChart(s, W, H);
+    // P total = 110, Q total = 60, R total = 25
+    expect(l.categoryLabels.map((c) => c.text)).toEqual(['P', 'Q', 'R']);
+
+    // By first series: Q (50), R (20), P (10)
+    const lFirst = layoutChart({ ...s, sortKey: 'series' }, W, H);
+    expect(lFirst.categoryLabels.map((c) => c.text)).toEqual(['Q', 'R', 'P']);
+  });
+
+  it('consolidates Pareto tail categories into Other at the end', () => {
+    const s = spec({
+      kind: 'bar',
+      categories: ['A', 'B', 'C', 'D', 'E'],
+      series: [{ name: 'S', values: [50, 40, 30, 20, 10] }],
+      topN: 3,
+    });
+    const l = layoutChart(s, W, H);
+    expect(l.categoryLabels.map((c) => c.text)).toEqual(['A', 'B', 'C', 'Other']);
+    expect(l.bars).toHaveLength(4);
+    // Other bar should consolidate 20 + 10 = 30
+    expect(l.bars[3].value).toBe(30);
+  });
+
+  it('honours markerShape: none suppresses dots, ring sets shape', () => {
+    const lNone = layoutChart(
+      spec({
+        kind: 'line',
+        categories: ['A', 'B', 'C'],
+        series: [{ name: 'S', values: [10, 20, 30] }],
+        markerShape: 'none',
+      }),
+      W,
+      H
+    );
+    expect(lNone.dots).toHaveLength(0);
+
+    const lRing = layoutChart(
+      spec({
+        kind: 'line',
+        categories: ['A', 'B', 'C'],
+        series: [{ name: 'S', values: [10, 20, 30] }],
+        markerShape: 'ring',
+      }),
+      W,
+      H
+    );
+    expect(lRing.dots.length).toBe(3);
+    for (const d of lRing.dots) {
+      expect(d.shape).toBe('ring');
+    }
+  });
+
+  it('filters value labels to extremes only when extremesOnly is true', () => {
+    const sAll = spec({
+      kind: 'line',
+      categories: ['A', 'B', 'C', 'D', 'E'],
+      series: [{ name: 'S', values: [10, 50, 30, 5, 40] }],
+      showValues: true,
+      extremesOnly: false,
+    });
+    const lAll = layoutChart(sAll, W, H);
+    expect(lAll.valueLabels).toHaveLength(5);
+
+    const sExtremes = { ...sAll, extremesOnly: true };
+    const lExtremes = layoutChart(sExtremes, W, H);
+    // Only min (5) and max (50)
+    expect(lExtremes.valueLabels).toHaveLength(2);
+    expect(lExtremes.valueLabels.map((v) => v.text)).toEqual(expect.arrayContaining(['50', '5']));
+  });
+
+  it('renders definite integral region and fences when integralBounds is set', () => {
+    const l = layoutChart(
+      spec({
+        kind: 'function',
+        categories: [],
+        series: [],
+        functions: [{ source: 'x^2' }],
+        xMin: -5,
+        xMax: 5,
+        integralBounds: { a: 0, b: 2 },
+      }),
+      W,
+      H
+    );
+    expect(l.areas.length).toBeGreaterThan(0);
+    expect(l.valueLabels.some((vl) => vl.text.includes('∫[0, 2] ≈'))).toBe(true);
+    expect(l.gridLines.length).toBeGreaterThan(0);
+  });
+
+  it('formats bar and radial values as percentage or both when valueFormat is set', () => {
+    const sBar = spec({
+      kind: 'stackedBar',
+      categories: ['A'],
+      series: [
+        { name: 'S1', values: [25] },
+        { name: 'S2', values: [75] },
+      ],
+      showValues: true,
+      valueFormat: 'percent',
+    });
+    const lBar = layoutChart(sBar, W, H);
+    expect(lBar.valueLabels.map((v) => v.text)).toEqual(['25%', '75%']);
+
+    const sPie = spec({
+      kind: 'pie',
+      categories: ['A', 'B'],
+      series: [{ name: 'S', values: [50, 50] }],
+      showValues: true,
+      valueFormat: 'both',
+    });
+    const lPie = layoutChart(sPie, W, H);
+    expect(lPie.valueLabels.some((vl) => vl.text.includes('50 (50%)'))).toBe(true);
+  });
+});
+
+

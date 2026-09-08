@@ -35,8 +35,26 @@ vi.mock('react', () => {
 import { cameraSystem } from '../engine/CameraSystem';
 import { useCanvasNavigation } from './useCanvasNavigation';
 
+class MockEventTarget {
+  listeners: Record<string, Function[]> = {};
+  addEventListener(type: string, fn: Function) {
+    this.listeners[type] = this.listeners[type] || [];
+    this.listeners[type].push(fn);
+  }
+  removeEventListener(type: string, fn: Function) {
+    if (!this.listeners[type]) return;
+    this.listeners[type] = this.listeners[type].filter((l) => l !== fn);
+  }
+  dispatchEvent(evt: any) {
+    (this.listeners[evt.type] || []).forEach((fn) => fn(evt));
+    return true;
+  }
+}
+
 describe('useCanvasNavigation', () => {
   beforeEach(() => {
+    (globalThis as any).window = new MockEventTarget();
+    (globalThis as any).document = new MockEventTarget();
     cameraSystem.x = 0;
     cameraSystem.y = 0;
     cameraSystem.zoom = 1;
@@ -117,5 +135,69 @@ describe('useCanvasNavigation', () => {
     } as unknown as React.TouchEvent);
 
     expect(isMultiTouchRef.current).toBe(false);
+  });
+
+  it('prevents browser tab zooming on Ctrl+Wheel anywhere in window and zooms camera', () => {
+    const zoomByWheelSpy = vi.spyOn(cameraSystem, 'zoomByWheel');
+    const container = { current: null };
+    const stage = { current: null };
+
+    useCanvasNavigation({
+      containerRef: container,
+      stageRef: stage,
+    });
+
+    const mockEvt = {
+      type: 'wheel',
+      ctrlKey: true,
+      deltaY: -100,
+      clientX: 500,
+      clientY: 300,
+      preventDefault: vi.fn(),
+    } as unknown as WheelEvent;
+
+    window.dispatchEvent(mockEvt);
+
+    expect(mockEvt.preventDefault).toHaveBeenCalled();
+    expect(zoomByWheelSpy).toHaveBeenCalledWith(-100, 500, 300);
+    zoomByWheelSpy.mockRestore();
+  });
+
+  it('prevents browser tab zooming on Ctrl + keydown shortcuts and zooms camera', () => {
+    const zoomAtSpy = vi.spyOn(cameraSystem, 'zoomAt');
+    const container = { current: null };
+    const stage = { current: null };
+
+    useCanvasNavigation({
+      containerRef: container,
+      stageRef: stage,
+    });
+
+    const mockKeyPlus = {
+      type: 'keydown',
+      ctrlKey: true,
+      key: '+',
+      code: 'Equal',
+      preventDefault: vi.fn(),
+    } as unknown as KeyboardEvent;
+
+    window.dispatchEvent(mockKeyPlus);
+
+    expect(mockKeyPlus.preventDefault).toHaveBeenCalled();
+    expect(zoomAtSpy).toHaveBeenCalledWith(1, expect.any(Number), expect.any(Number));
+
+    const mockKeyMinus = {
+      type: 'keydown',
+      ctrlKey: true,
+      key: '-',
+      code: 'Minus',
+      preventDefault: vi.fn(),
+    } as unknown as KeyboardEvent;
+
+    window.dispatchEvent(mockKeyMinus);
+
+    expect(mockKeyMinus.preventDefault).toHaveBeenCalled();
+    expect(zoomAtSpy).toHaveBeenCalledWith(-1, expect.any(Number), expect.any(Number));
+    zoomAtSpy.mockRestore();
   });
 });

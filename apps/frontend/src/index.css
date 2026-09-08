@@ -587,6 +587,7 @@
   padding: 0;
 }
 
+html,
 body {
   font-family: var(--font-sans);
   font-size: var(--text-base);
@@ -597,6 +598,8 @@ body {
   height: 100vh;
   -webkit-font-smoothing: antialiased;
   -moz-osx-font-smoothing: grayscale;
+  overscroll-behavior: none;
+  touch-action: pan-x pan-y;
 }
 
 #root {
@@ -5642,7 +5645,6 @@ input.slider__value:focus-visible {
 }
 
 
-
 /* A collapsed radar is a button rather than a block, so the left panel stops
    reserving 214px of height for it. */
 .hierarchy-panel[data-radar-collapsed='true'] {
@@ -10541,7 +10543,6 @@ html.dark-theme,
 .help-lesson__steps > div + div { margin-top: 5px; }
 
 
-
 .help-lesson__steps dt {
   display: inline;
   color: var(--text-primary);
@@ -10561,7 +10562,6 @@ html.dark-theme,
   margin: 0;
   color: var(--text-tertiary);
 }
-
 
 
 /* ===========================================================================
@@ -11023,8 +11023,6 @@ body[data-zen='physics'] .forces-handle { bottom: 32px; }
   font-family: var(--font-sans);
   animation: popIn 200ms var(--ease-settle);
 }
-
-
 
 
 .forces__done {
@@ -12285,13 +12283,8 @@ body[data-zen='physics'] .forces-handle { bottom: 32px; }
    --------------------------------------------------------------------------- */
 
 
-
 /* Quieter than New board. Restoring is the rarer act and the page should not
    present two equally loud front doors. */
-
-
-
-
 
 
 /* The masthead stacks on a phone; two side-by-side actions would each end up
@@ -12510,21 +12503,14 @@ body[data-zen='physics'] .forces-handle { bottom: 32px; }
    --------------------------------------------------------------------------- */
 
 
-
 /* A titled section rather than a bare label. The gallery is a real part of
    the page — for a new person it is the *only* part with anything in it — so
    it gets the same heading treatment the page's own masthead has, one step
    down in scale. */
 
 
-
-
-
-
 /* Leads the page, so it gets air beneath it rather than a rule above it —
    the boards below are the second section now, not this one. */
-
-
 
 
 /* ---------------------------------------------------------------------------
@@ -12546,38 +12532,22 @@ body[data-zen='physics'] .forces-handle { bottom: 32px; }
    than documents, and 16/10 crops the ones that are close to square. */
 
 
-
-
-
-
-
-
 /* Lifts on the same exponential settle every other elevated surface uses, so
    a card rising reads as the same material as a panel opening. */
-
-
 
 
 /* The board, at the top of the card. Fixed aspect so a row of cards has one
    baseline for its text rather than four different ones. */
 
 
-
-
-
-
 /* What the board is *for*, not what it contains — a list of contents is
    something you can see for yourself the moment it opens. */
-
-
 
 
 /* The features you will meet, stated plainly. These are the reason a template
    exists rather than a blank board, so they are worth naming. */
 /* The count is the claim the showcase boards make, so it is inked rather than
    grey — and it comes first, before the feature chips. */
-
-
 
 
 /* ---------------------------------------------------------------------------
@@ -12587,11 +12557,6 @@ body[data-zen='physics'] .forces-handle { bottom: 32px; }
    — a tab that navigated would throw away the scroll position and anything
    typed into the search box above it.
    --------------------------------------------------------------------------- */
-
-
-
-
-
 
 
 /* The selected tab is inked rather than tinted. A row of pills where the
@@ -12606,12 +12571,6 @@ body[data-zen='physics'] .forces-handle { bottom: 32px; }
 /* The gallery collapses, so someone who knows their way around is not scrolling
    past it every visit. The heading is the control — a separate chevron button
    beside a non-clickable title is a smaller target for the same job. */
-
-
-
-
-
-
 
 
 /* No title in the top row any more — it belongs to the boards section now — so
@@ -12629,10 +12588,6 @@ body[data-zen='physics'] .forces-handle { bottom: 32px; }
    controls two rows tall, with nothing aligned to anything.
 
    One row, no rule, sized to their content. */
-
-
-
-
 
 
 /* Narrow enough that the heading and its controls cannot share a line: the
@@ -16994,19 +16949,7 @@ html[data-precise] .canvas-container[data-cursor-mode] .konvajs-content canvas {
   color: var(--text-tertiary);
 }
 
-/**
- * The width lives on the picker, not on the flyout.
- *
- * This was `.dock-flyout__panel--wide { min-width: 430px }` for one commit, and
- * `wide` is shared: Type, Grid system and the More menu all carry it, so all
- * three doubled in width to make room for a grid only one of them has. A
- * modifier named for a *degree* rather than for a purpose will always be worn
- * by more than the thing that needed it.
- *
- * The panel is a flex column, so a child that declares a width widens it. Which
- * is the honest arrangement: the three columns are why this flyout is wide, and
- * nothing that does not contain them should be.
- */
+
 .frame-picker {
   min-width: 400px;
 }
@@ -17179,120 +17122,14 @@ html[data-precise] .canvas-container[data-cursor-mode] .konvajs-content canvas {
 
 .connector-bond__arrow { flex-shrink: 0; color: var(--text-tertiary); }
 
-/* ── Chart type picker ───────────────────────────────────────────────────────
-   **Column flow, not a column per family.** It was `repeat(5, 1fr)` with one
-   family each, which worked at five and broke at seven: the panel grew to
-   660px+, and because every column had to be narrow enough for seven to fit,
-   every hint was truncated to a few words. Two faults from one decision -- a
-   grid that ties column count to family count cannot stay both narrow and
-   readable as families are added.
-
-   `columns` packs the families into a fixed number of *balanced* columns
-   instead, so an eighth family costs a little height rather than another
-   150px of width. `break-inside: avoid` keeps a family whole, which is the
-   one thing the flow must not get wrong.
-
-   The hint now wraps to two lines rather than being clipped: the sentence is
-   the reason the row exists, and half of one is worse than none. */
-.chart-picker {
-  columns: 3;
-  column-gap: var(--space-4);
-  padding-top: var(--space-2);
-  width: 420px;
-  max-width: 78vw;
-}
-
-/* A family is one block: it must not be split across a column boundary, or a
-   heading ends up at the foot of one column with its rows at the head of the
-   next. */
-.chart-picker__col {
-  break-inside: avoid;
-  page-break-inside: avoid;
-  display: flex;
-  flex-direction: column;
-  gap: 1px;
-  min-width: 0;
-  /* The gap between families, which `columns` cannot express as a row gap. */
-  padding-bottom: var(--space-3);
-}
-
-.chart-chip {
-  display: flex;
-  align-items: flex-start;
-  gap: var(--space-2);
-  width: 100%;
-  padding: 5px 6px;
-  border: none;
-  border-radius: var(--radius-md);
-  background: transparent;
-  color: var(--text-primary);
-  text-align: left;
-  cursor: pointer;
-  transition: background var(--motion-hover);
-}
-
-.chart-chip:hover { background: var(--surface-hover); }
-.chart-chip[data-active] { background: var(--surface-active); }
-
-.chart-chip__glyph {
-  display: grid;
-  place-items: center;
-  flex: 0 0 auto;
-  width: 26px;
-  height: 26px;
-  border-radius: var(--radius-sm);
-  color: var(--text-secondary);
-  background: var(--surface-secondary);
-  transition: color var(--motion-hover), background var(--motion-hover);
-}
-
-.chart-chip:hover .chart-chip__glyph { color: var(--text-primary); }
-
-.chart-chip[data-active] .chart-chip__glyph {
-  color: var(--accent);
-  background: var(--surface-primary);
-  box-shadow: var(--shadow-sm);
-}
-
-.chart-chip__text {
-  display: flex;
-  flex-direction: column;
-  min-width: 0;
-  line-height: 1.3;
-  padding-top: 1px;
-}
-
-.chart-chip__label {
-  font-size: var(--text-sm);
-  font-weight: 500;
-  white-space: nowrap;
-  overflow: hidden;
-  text-overflow: ellipsis;
-}
-
-/* Wraps to two lines instead of truncating. A hint cut to "compare, and show
-   what each is..." says less than no hint at all, because the reader now has
-   to open the chart to find out what it was going to say. */
-.chart-chip__hint {
-  font-size: var(--text-xs);
-  color: var(--text-tertiary);
-  white-space: normal;
-  overflow-wrap: anywhere;
-  display: -webkit-box;
-  -webkit-line-clamp: 2;
-  -webkit-box-orient: vertical;
-  overflow: hidden;
-}
 
 /* Two columns where three will not fit beside the dock, and the width follows
    the viewport rather than a fixed number -- the old rule kept a 420px
    minimum that overflowed a narrow window rather than reflowing. */
 @media (max-width: 1100px) {
-  .chart-picker { columns: 2; width: 320px; }
 }
 
 @media (max-width: 720px) {
-  .chart-picker { columns: 1; width: 240px; }
 }
 
 /* ---------------------------------------------------------------------------
@@ -17720,8 +17557,6 @@ html[data-precise] .canvas-container[data-cursor-mode] .konvajs-content canvas {
   word-spacing: 2px;
 }
 
-/* --- the preset gallery -------------------------------------------------- */
-
 /* Names, not thumbnails. A 40px picture of a spiral and a 40px picture of a
    cardioid are the same grey scribble, so the image would carry none of the
    information the name and its note do - the opposite of the chart-kind
@@ -17794,15 +17629,88 @@ html[data-precise] .canvas-container[data-cursor-mode] .konvajs-content canvas {
   overflow-wrap: anywhere;
 }
 
-/* Preset groups. The gallery scrolls as one, so the group labels stick to its
-   top edge rather than scrolling away from the rows they name. */
-.chartp-presetGroup + .chartp-presetGroup { margin-top: var(--space-2); }
 
-.chartp-presetGroup__label {
+@media (max-width: 820px) {
+}
+
+/* ── Preset gallery ──────────────────────────────────────────────────────────
+   Cards with a live preview, drawn by the same painter as the export. The old
+   version was names and notes, which is the right shape for a *kind* and the
+   wrong one for an instance: "Cassini ovals" and "Lemniscate" are two names,
+   and they are also two pictures, and the picture is the whole of what
+   somebody is choosing between. */
+.preset { display: flex; flex-direction: column; gap: var(--space-2); }
+
+.preset__search {
+  display: flex;
+  align-items: center;
+  gap: 5px;
+  padding: 0 6px;
+  height: 26px;
+  border: 1px solid var(--border-divider);
+  border-radius: var(--radius-sm);
+  background: var(--surface-secondary);
+  color: var(--text-tertiary);
+}
+
+.preset__search:focus-within { border-color: var(--accent); background: var(--surface-primary); }
+
+.preset__input {
+  flex: 1;
+  min-width: 0;
+  border: none;
+  background: transparent;
+  color: var(--text-primary);
+  font-size: var(--text-xs);
+  outline: none;
+}
+
+.preset__clear {
+  display: grid;
+  place-items: center;
+  width: 16px;
+  height: 16px;
+  border: none;
+  border-radius: var(--radius-sm);
+  background: transparent;
+  color: var(--text-tertiary);
+  cursor: pointer;
+}
+
+.preset__clear:hover { background: var(--surface-hover); color: var(--text-primary); }
+
+.ctx-shape-grid {
+  display: grid;
+  grid-template-columns: repeat(4, 1fr);
+  gap: 4px;
+  max-height: 280px;
+  overflow-y: auto;
+  padding: 2px;
+}
+
+/* Tall enough to show a row and a half, so the scroll is visibly a scroll
+   rather than a list that happens to end. */
+.preset__scroll {
+  max-height: 320px;
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  margin: 0 calc(var(--space-1) * -1);
+  padding: 0 var(--space-1);
+}
+
+.preset__group + .preset__group { margin-top: var(--space-3); }
+
+/* Sticks to the top of the scroll, so the family a card belongs to is legible
+   while it is being scrolled past. */
+.preset__groupLabel {
   position: sticky;
   top: 0;
   z-index: 1;
-  padding: 2px 0 3px;
+  display: flex;
+  align-items: center;
+  gap: 5px;
+  margin: 0 0 5px;
+  padding: 3px 0;
   background: var(--surface-primary);
   font-size: var(--text-xs);
   font-weight: 600;
@@ -17811,25 +17719,725 @@ html[data-precise] .canvas-container[data-cursor-mode] .konvajs-content canvas {
   color: var(--text-tertiary);
 }
 
-/* ── Grid system picker ──────────────────────────────────────────────────────
-   Two balanced columns, packed by column flow. Eleven systems down one column
-   ran the flyout the full height of the window and pushed its first rows up
-   behind the header — and a picker of pictures is scanned across as readily as
-   down, so the single column was buying nothing with the height it spent. */
-.grid-picker {
-  columns: 2;
-  column-gap: var(--space-3);
-  width: 380px;
-  max-width: 74vw;
+.preset__count {
+  padding: 0 5px;
+  border-radius: var(--radius-pill);
+  background: var(--surface-secondary);
+  font-size: var(--text-xs);
+  font-weight: 500;
+  letter-spacing: 0;
+  color: var(--text-tertiary);
 }
 
-/* A row must not be split across the column boundary: its glyph would sit at
-   the foot of one column with its label at the head of the next. */
-.grid-picker > * {
-  break-inside: avoid;
-  page-break-inside: avoid;
+.preset__grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 5px;
 }
 
-@media (max-width: 820px) {
-  .grid-picker { columns: 1; width: 208px; }
+.preset__card {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  padding: 5px;
+  border: 1px solid transparent;
+  border-radius: var(--radius-md);
+  background: var(--surface-secondary);
+  color: var(--text-primary);
+  text-align: left;
+  cursor: pointer;
+  min-width: 0;
+  transition: background var(--motion-hover), border-color var(--motion-hover);
 }
+
+.preset__card:hover { background: var(--surface-hover); border-color: var(--border-divider); }
+
+/* The preview sits on the board's own surface rather than the card's, because
+   that is the ground the chart will actually be drawn on — a curve previewed
+   against a tinted card and then placed on the canvas is two different
+   pictures of the same thing. */
+.preset__thumb {
+  display: block;
+  border-radius: var(--radius-sm);
+  background: var(--surface-primary);
+  overflow: hidden;
+  aspect-ratio: 132 / 74;
+}
+
+.preset__thumb svg { display: block; width: 100%; height: 100%; }
+
+.preset__name {
+  font-size: var(--text-xs);
+  font-weight: 500;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.preset__note {
+  font-size: var(--text-xs);
+  color: var(--text-tertiary);
+  line-height: 1.3;
+  display: -webkit-box;
+  -webkit-line-clamp: 2;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
+}
+
+.preset__empty {
+  margin: 0;
+  padding: var(--space-3) 0;
+  font-size: var(--text-xs);
+  color: var(--text-tertiary);
+  text-align: center;
+}
+
+/* ── Chart Properties Panel Enhancements ────────────────────────────────── */
+
+/* Mathematical Token Bar */
+.chartp-tokens {
+  display: flex;
+  gap: 3px;
+  overflow-x: auto;
+  padding: 2px 0 6px;
+  scrollbar-width: none;
+}
+.chartp-tokens::-webkit-scrollbar { display: none; }
+.chartp-token-btn {
+  flex: 0 0 auto;
+  height: 20px;
+  padding: 0 6px;
+  border: 1px solid var(--border-divider);
+  border-radius: var(--radius-sm);
+  background: var(--surface-secondary);
+  color: var(--text-secondary);
+  font-family: var(--font-mono);
+  font-size: 10px;
+  cursor: pointer;
+  transition: all var(--motion-fast);
+}
+.chartp-token-btn:hover {
+  background: var(--surface-hover);
+  color: var(--text-primary);
+  border-color: var(--accent);
+}
+
+/* Eye Mute Toggle Button */
+.chartp-eye-btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 22px;
+  height: 22px;
+  border: none;
+  border-radius: var(--radius-sm);
+  background: transparent;
+  color: var(--text-tertiary);
+  cursor: pointer;
+  transition: all var(--motion-fast);
+}
+.chartp-eye-btn:hover {
+  background: var(--surface-hover);
+  color: var(--text-primary);
+}
+.chartp-eye-btn[data-muted="true"] {
+  color: var(--text-disabled, #9ca3af);
+  opacity: 0.6;
+}
+
+/* Palette Ribbon Swatches Popover & Button */
+.chartp-palette-btn {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  width: 100%;
+  height: 26px;
+  padding: 0 8px;
+  border: 1px solid var(--border-divider);
+  border-radius: var(--radius-sm);
+  background: var(--surface-secondary);
+  color: var(--text-primary);
+  font-size: var(--text-xs);
+  cursor: pointer;
+  transition: all var(--motion-fast);
+}
+.chartp-palette-btn:hover { background: var(--surface-hover); border-color: var(--accent); }
+.chartp-ribbon {
+  display: flex;
+  height: 10px;
+  border-radius: var(--radius-pill);
+  overflow: hidden;
+  box-shadow: inset 0 0 0 1px rgba(0, 0, 0, 0.1);
+}
+.chartp-ribbon-stripe {
+  width: 10px;
+  height: 100%;
+}
+.chartp-palette-popover {
+  position: absolute;
+  top: 100%;
+  left: 0;
+  right: 0;
+  z-index: 100;
+  margin-top: 4px;
+  padding: 6px;
+  border: 1px solid var(--border-divider);
+  border-radius: var(--radius-md);
+  background: var(--surface-primary);
+  box-shadow: var(--shadow-lg);
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+.chartp-palette-option {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  padding: 5px 8px;
+  border: none;
+  border-radius: var(--radius-sm);
+  background: transparent;
+  color: var(--text-primary);
+  font-size: var(--text-xs);
+  cursor: pointer;
+  transition: background var(--motion-fast);
+}
+.chartp-palette-option:hover { background: var(--surface-hover); }
+.chartp-palette-option[data-active="true"] {
+  background: var(--surface-active);
+  font-weight: 600;
+}
+
+/* Standardized Lock Button & Secondary Action Button */
+.chartp-lock-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  height: 24px;
+  padding: 0 10px;
+  border-radius: var(--radius-sm);
+  font-size: 11px;
+  font-weight: 500;
+  cursor: pointer;
+  border: 1px solid var(--border-divider);
+  background: var(--surface-secondary);
+  color: var(--text-secondary);
+  transition: all var(--motion-fast);
+}
+.chartp-lock-btn:hover { background: var(--surface-hover); color: var(--text-primary); }
+.chartp-lock-btn[data-locked="true"] {
+  background: rgba(239, 68, 68, 0.12);
+  color: #ef4444;
+  border-color: #ef4444;
+}
+
+.chartp-btn-secondary {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  height: 24px;
+  padding: 0 10px;
+  border-radius: var(--radius-sm);
+  font-size: 11px;
+  font-weight: 500;
+  cursor: pointer;
+  border: 1px solid var(--border-divider);
+  background: var(--surface-secondary);
+  color: var(--text-secondary);
+  transition: all var(--motion-fast);
+}
+.chartp-btn-secondary:hover { background: var(--surface-hover); color: var(--text-primary); }
+
+/* Live Telemetry Beacon Badge */
+.chartp-telemetry-badge {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 3px 8px;
+  border-radius: var(--radius-pill);
+  background: rgba(16, 185, 129, 0.12);
+  border: 1px solid rgba(16, 185, 129, 0.3);
+  color: #10b981;
+  font-size: 10px;
+  font-weight: 600;
+}
+.chartp-telemetry-dot {
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: #10b981;
+  box-shadow: 0 0 6px #10b981;
+  animation: pulse-dot 2s infinite ease-in-out;
+}
+@keyframes pulse-dot {
+  0%, 100% { transform: scale(1); opacity: 1; }
+  50% { transform: scale(1.3); opacity: 0.6; }
+}
+
+/* Number Format Presets Strip & Live Preview Badge */
+.chartp-presets-strip {
+  display: flex;
+  gap: 3px;
+  width: 100%;
+  margin-bottom: 6px;
+}
+.chartp-preset-chip {
+  flex: 1;
+  min-width: 0;
+  height: 22px;
+  border: 1px solid var(--border-divider);
+  border-radius: var(--radius-sm);
+  background: var(--surface-secondary);
+  color: var(--text-secondary);
+  font-size: 10px;
+  font-weight: 500;
+  cursor: pointer;
+  transition: all var(--motion-fast);
+}
+.chartp-preset-chip:hover {
+  background: var(--surface-hover);
+  color: var(--text-primary);
+  border-color: var(--accent);
+}
+.chartp-preview-badge {
+  display: block;
+  width: 100%;
+  padding: 4px 8px;
+  margin-top: 4px;
+  border-radius: var(--radius-sm);
+  background: var(--surface-secondary);
+  border: 1px solid var(--border-divider);
+  color: var(--text-tertiary);
+  font-family: var(--font-mono);
+  font-size: 10px;
+  text-align: center;
+  font-variant-numeric: tabular-nums;
+}
+
+/* Numerical Solutions Readout Card */
+.chartp-readout-card {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  padding: 6px 8px;
+  margin-top: 6px;
+  border-radius: var(--radius-sm);
+  background: var(--surface-secondary);
+  border: 1px solid var(--border-divider);
+}
+.chartp-readout-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  font-size: 10px;
+  color: var(--text-secondary);
+}
+.chartp-readout-pills {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 3px;
+}
+.chartp-pill-chip {
+  display: inline-flex;
+  align-items: center;
+  padding: 1px 5px;
+  border-radius: var(--radius-pill);
+  background: var(--surface-primary);
+  border: 1px solid var(--border-divider);
+  font-family: var(--font-mono);
+  font-size: 9.5px;
+  color: var(--text-primary);
+  cursor: pointer;
+  transition: border-color var(--motion-fast);
+}
+.chartp-pill-chip:hover {
+  border-color: var(--accent);
+  color: var(--accent);
+}
+
+/* ─────────────────────────────────────────────────────────────────────────
+   Callout tail pad
+
+   Seven directions, chosen as a picture of the directions. A row of seven
+   named chips does not fit a 260px panel -- "Bottom L" was already a
+   truncation of "Bottom left" -- and a direction is the one thing a label is
+   worst at saying. The balloon sits in the middle cell so each dot reads as
+   "the tail comes out here", and the centre is deliberately not a button:
+   there is no such thing as a callout with no tail.
+   ───────────────────────────────────────────────────────────────────────── */
+.tailpad {
+  position: relative;
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+  grid-template-rows: repeat(3, 22px);
+  gap: 2px;
+  width: 100%;
+  padding: 2px;
+  border: 1px solid var(--border-divider);
+  border-radius: var(--radius-sm);
+  background: var(--surface-sunken, var(--surface-secondary));
+}
+
+.tailpad__cell {
+  display: grid;
+  place-items: center;
+  border: 0;
+  border-radius: var(--radius-sm);
+  background: transparent;
+  cursor: pointer;
+  transition: background-color var(--motion-hover);
+}
+
+.tailpad__cell:hover {
+  background: var(--surface-hover, rgb(255 255 255 / 6%));
+}
+
+.tailpad__cell:focus-visible {
+  outline: 2px solid var(--accent-strong, var(--brand-orange));
+  outline-offset: -2px;
+}
+
+.tailpad__dot {
+  width: 5px;
+  height: 5px;
+  border-radius: 50%;
+  background: var(--text-tertiary);
+  transition: background-color var(--motion-hover), scale var(--motion-hover);
+}
+
+.tailpad__cell[data-active] .tailpad__dot {
+  background: var(--accent-strong, var(--brand-orange));
+  scale: 1.6;
+}
+
+/* The balloon the tails come out of. Purely indicative, so it takes no
+   pointer events and sits under the cells rather than between them. */
+.tailpad__balloon {
+  grid-row: 2;
+  grid-column: 2;
+  width: 60%;
+  height: 60%;
+  border: 1px solid var(--border-divider);
+  border-radius: var(--radius-sm);
+  background: var(--surface-primary);
+  pointer-events: none;
+}
+
+/* ─────────────────────────────────────────────────────────────────────────
+   Kind picker
+
+   The one control behind the Shape, Grid and Chart flyouts. Three near-copies
+   of it existed under three namespaces; the differences between them were an
+   accident of which was written last, not a design.
+
+   The anatomy is fixed and the density is not: --kp-cols is set per flyout,
+   so shapes come out as a dense sheet of glyphs and grids as a short run of
+   wide cards, from the same markup and the same behaviour.
+   ───────────────────────────────────────────────────────────────────────── */
+.kp {
+  display: flex;
+  flex-direction: column;
+  /* A definite width, set by the grid rather than by the contents.
+
+     It was content-driven, and the widest thing in a picker is the sentence
+     in the preview bar -- so the whole flyout grew and shrank as the pointer
+     moved from 'Bento' to 'Hierarchical'. A panel that resizes while you read
+     it is the same defect as one that resizes while you click in it, and the
+     preview bar exists precisely so that nothing else has to grow. */
+  --kp-tile: 62px;
+  width: calc(var(--kp-cols, 4) * var(--kp-tile));
+}
+
+.kp[data-dense] { --kp-tile: 148px; }
+
+/* Filters ---------------------------------------------------------------- */
+
+.kp__filters {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+  padding: var(--space-1) var(--space-1) var(--space-2);
+}
+
+.kp__search {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 0 6px;
+  height: 26px;
+  border: 1px solid var(--border-divider);
+  border-radius: var(--radius-sm);
+  background: var(--surface-sunken, var(--surface-secondary));
+  color: var(--text-tertiary);
+  transition: border-color var(--motion-hover);
+}
+
+.kp__search:focus-within {
+  border-color: var(--accent-strong, var(--brand-orange));
+}
+
+.kp__input {
+  flex: 1;
+  min-width: 0;
+  border: 0;
+  background: none;
+  color: var(--text-primary);
+  font-size: var(--text-xs);
+  outline: none;
+}
+
+.kp__input::placeholder { color: var(--text-tertiary); }
+
+.kp__clear {
+  display: grid;
+  place-items: center;
+  flex: none;
+  width: 16px;
+  height: 16px;
+  padding: 0;
+  border: 0;
+  border-radius: var(--radius-sm);
+  background: none;
+  color: var(--text-tertiary);
+  cursor: pointer;
+}
+
+.kp__clear:hover { color: var(--text-primary); }
+
+.kp__facets {
+  display: flex;
+  gap: 2px;
+  /* Scrolls rather than wraps: a second row of tabs pushes the grid down by
+     the height of a row every time somebody widens a category name. */
+  overflow-x: auto;
+  scrollbar-width: none;
+}
+
+.kp__facets::-webkit-scrollbar { display: none; }
+
+.kp__facet {
+  flex: none;
+  padding: 3px 8px;
+  border: 0;
+  border-radius: 999px;
+  background: none;
+  color: var(--text-secondary);
+  font-size: var(--text-xs);
+  font-weight: 500;
+  white-space: nowrap;
+  cursor: pointer;
+  transition: background-color var(--motion-hover), color var(--motion-hover);
+}
+
+.kp__facet:hover { background: var(--surface-hover, rgb(255 255 255 / 6%)); }
+
+.kp__facet[data-active] {
+  background: var(--surface-raised, var(--surface-primary));
+  color: var(--text-primary);
+  box-shadow: inset 0 0 0 1px var(--border-divider);
+}
+
+/* Body ------------------------------------------------------------------- */
+
+.kp__body {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+  /* Tall enough to show two groups, short enough never to reach the top of
+     the viewport -- the dock sits low, and a flyout that grows past the nav
+     bar is one whose top cannot be read. */
+  /* A floor as well as a ceiling.
+
+     The panel used to be exactly as tall as its contents, so switching to a
+     category with three shapes in it shortened the flyout by two hundred
+     pixels -- out from under the pointer, which then counted as leaving and
+     closed the whole thing. Reserving the height of a few rows means changing
+     category changes what is *in* the panel and never how big it is, which is
+     what every tabbed browser panel does and for exactly this reason. */
+  min-height: 168px;
+  max-height: min(46vh, 380px);
+  padding: 0 var(--space-1);
+  overflow-y: auto;
+  overscroll-behavior: contain;
+}
+
+.kp__group {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  min-width: 0;
+}
+
+/* Sticky, so the run being scrolled through keeps saying what it is. */
+.kp__groupLabel {
+  position: sticky;
+  top: 0;
+  z-index: 1;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  margin: 0;
+  padding: 4px 2px 3px;
+  background: var(--surface-primary);
+  color: var(--text-tertiary);
+  font-size: var(--text-2xs);
+  font-weight: 600;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+}
+
+.kp__count {
+  color: var(--text-tertiary);
+  font-size: var(--text-2xs);
+  font-weight: 500;
+  font-variant-numeric: tabular-nums;
+  opacity: 0.7;
+}
+
+.kp__grid {
+  display: grid;
+  grid-template-columns: repeat(var(--kp-cols, 4), minmax(0, 1fr));
+  gap: 3px;
+}
+
+/* Tiles ------------------------------------------------------------------ */
+
+.kp__tile {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 5px;
+  min-width: 0;
+  padding: 8px 4px 6px;
+  border: 1px solid transparent;
+  border-radius: var(--radius-md);
+  background: none;
+  color: var(--text-secondary);
+  cursor: pointer;
+  transition:
+    background-color var(--motion-hover),
+    border-color var(--motion-hover),
+    color var(--motion-hover);
+}
+
+.kp__tile:hover {
+  background: var(--surface-hover, rgb(255 255 255 / 6%));
+  color: var(--text-primary);
+}
+
+/* The focus ring is the keyboard cursor, so it is the loudest state here --
+   arrow keys are the point of this control. */
+.kp__tile:focus-visible {
+  outline: none;
+  border-color: var(--accent-strong, var(--brand-orange));
+  background: var(--surface-hover, rgb(255 255 255 / 6%));
+  color: var(--text-primary);
+}
+
+.kp__tile[data-active] {
+  background: color-mix(in srgb, var(--accent-strong, var(--brand-orange)) 14%, transparent);
+  border-color: color-mix(in srgb, var(--accent-strong, var(--brand-orange)) 40%, transparent);
+  color: var(--text-primary);
+}
+
+.kp__glyph {
+  display: grid;
+  place-items: center;
+  flex: none;
+  color: currentcolor;
+}
+
+.kp__label {
+  max-width: 100%;
+  color: inherit;
+  font-size: var(--text-2xs);
+  line-height: 1.25;
+  text-align: center;
+  /* Two lines, then an ellipsis. One line clipped "Predefined process" to a
+     word that names nothing; three lets the rows of a dense sheet jump about
+     as the labels change length. */
+  display: -webkit-box;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 2;
+  overflow: hidden;
+  overflow-wrap: anywhere;
+}
+
+/* The dense variant lays the name beside the glyph, for the pickers whose
+   items are few and whose names are long. */
+.kp[data-dense] .kp__tile {
+  flex-direction: row;
+  align-items: center;
+  gap: 8px;
+  padding: 7px 8px;
+}
+
+.kp[data-dense] .kp__label {
+  flex: 1;
+  font-size: var(--text-xs);
+  text-align: left;
+  -webkit-line-clamp: 1;
+}
+
+.kp__empty {
+  margin: 0;
+  padding: var(--space-4) var(--space-2);
+  color: var(--text-tertiary);
+  font-size: var(--text-xs);
+  text-align: center;
+}
+
+/* Preview bar ------------------------------------------------------------ */
+
+.kp__preview {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  /* A fixed height, so the picker does not change size as the sentence under
+     the pointer gets longer. */
+  height: 38px;
+  margin-top: var(--space-2);
+  padding: 0 var(--space-2);
+  border-top: 1px solid var(--border-divider);
+  color: var(--text-secondary);
+}
+
+.kp__previewGlyph {
+  display: grid;
+  place-items: center;
+  flex: none;
+  width: 22px;
+  height: 22px;
+  border-radius: var(--radius-sm);
+  background: var(--surface-sunken, var(--surface-secondary));
+  color: var(--text-primary);
+}
+
+.kp__previewText {
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+  gap: 1px;
+}
+
+.kp__previewName {
+  color: var(--text-primary);
+  font-size: var(--text-xs);
+  font-weight: 600;
+  line-height: 1.2;
+}
+
+.kp__previewHint {
+  color: var(--text-tertiary);
+  font-size: var(--text-2xs);
+  line-height: 1.3;
+  /* One line. The bar is a status line, and a status line that wraps is a
+     paragraph that moves everything above it. */
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+

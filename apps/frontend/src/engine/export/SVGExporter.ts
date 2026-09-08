@@ -6,16 +6,22 @@ import { connectorPoints, type Box } from '../model/connector';
 import { gridCellsOf } from '../grid/gridNode';
 import { roundPolygon } from '../grid/gridLayout';
 import { cellGeometry } from '../grid/gridBuild';
+import {
+  cellLabel,
+  cellPaint,
+  labelInk,
+  LABEL_INSET,
+  LABEL_SIZE,
+} from '../grid/gridStyle';
 import { fillsInterior, roughPolyline, seedFrom } from '../model/rough';
 import { SvgPaintDefs } from './svgPaint';
 import { assembleSvg } from './svgDocument';
 import { fetchBlob, inlineImageSources } from './inlineImages';
-import { pointsAttribute, regularPolygonPoints, shapeOutline, starPoints } from '../model/shapeOutline';
+import { pointsAttribute, regularPolygonPoints, shapeFeaturePaths, shapeOutline, starPoints } from '../model/shapeOutline';
 import { shapeToPath } from '../model/shapeToPath';
 import { defaultEndAlign } from '../model/linePath';
 import { runPoints } from '../model/lineEnds';
 import { endCapShape, terminateRun } from '../model/connectorEnds';
-import { pathData } from '../model/pathGeometry';
 import { contourData, translatePath } from '../model/pathGeometry';
 import { applyTextCase } from '../model/textCase';
 import { contrastInk } from '../model/color';
@@ -532,11 +538,9 @@ function shapeMarkup(node: ShapeNode, defs: SvgPaintDefs): string {
       return `<ellipse cx="${cx}" cy="${cy}" rx="${w / 2}" ry="${h / 2}" ${paint}${rot} />`;
     case 'polygon':
     case 'star':
-      // A rounded one is a real path now, so it exports as one. Falls through
-      // to the point-list branches below when there is no radius, which keeps
-      // an ordinary hexagon a `<polygon>` in the output.
       if (Math.max(...cornerRadiiOf(node.appearance?.cornerRadius)) > 0) {
-        return `<path d="${pathData(shapeToPath(node))}" ${paint}${rot} />`;
+        const d = contourData(translatePath(shapeToPath(node), x, y));
+        return `<path d="${d}" fill-rule="evenodd" ${paint}${rot} />`;
       }
       return node.geometry.kind === 'star'
         ? `<polygon points="${pointsAttribute(starPoints(cx, cy, node.geometry.points ?? 5, node.geometry.innerRatio ?? 0.5, w / 2, h / 2))}" ${paint}${rot} />`
@@ -544,16 +548,35 @@ function shapeMarkup(node: ShapeNode, defs: SvgPaintDefs): string {
 
     case 'heart':
     case 'squircle':
-      // Through `shapeToPath`, which is what the canvas draws from, so an
-      // exported heart/squircle cannot be a second, hand-written approximation of the
-      // one on screen — the failure this file's own header describes.
-      return `<path d="${pathData(shapeToPath(node))}" ${paint}${rot} />`;
+    case 'diamond':
+    case 'trapezoid':
+    case 'parallelogram':
+    case 'capsule':
+    case 'cloud':
+    case 'callout':
+    case 'chevron':
+    case 'cross':
+    case 'donut':
+    case 'badge':
+    case 'banner': {
+      const d = contourData(translatePath(shapeToPath(node), x, y));
+      return `<path d="${d}" fill-rule="evenodd" ${paint}${rot} />`;
+    }
 
     case 'line':
     case 'arrow':
       return openShapeMarkup(node);
-    default:
-      return `<polygon points="${pointsAttribute(regularPolygonPoints(cx, cy, node.geometry.points ?? 3, w / 2, h / 2))}" ${paint}${rot} />`;
+    default: {
+      const d = contourData(translatePath(shapeToPath(node), x, y));
+      const features = shapeFeaturePaths(node, x, y);
+      if (features.length > 0) {
+        const featureLines = features
+          .map((f) => `<path d="${f}" fill="none" stroke="${stroke}" stroke-width="${sw}"${dashAttrs(node.appearance.stroke)} />`)
+          .join('');
+        return `<g${rot}><path d="${d}" fill-rule="evenodd" ${paint} />${featureLines}</g>`;
+      }
+      return `<path d="${d}" fill-rule="evenodd" ${paint}${rot} />`;
+    }
   }
 }
 
@@ -748,12 +771,17 @@ export class SVGExporter implements Exporter {
          */
         case 'grid': {
           const style = node.grid.style;
-          gridCellsOf(node).forEach((cell) => {
-            const paintOf =
-              `fill="${cell.fill}"` +
-              (style.strokeWidth > 0
-                ? ` stroke="${style.strokeColor}" stroke-width="${style.strokeWidth}"`
-                : '');
+          const cells = gridCellsOf(node);
+
+          cells.forEach((cell) => {
+            // The same resolver the canvas renderer calls. It carried its own
+            // copy of the display-mode branch until this line, which is how an
+            // export and a board come to disagree about what colour a guide is.
+            const { fill, stroke, strokeWidth } = cellPaint(cell, style);
+
+            const paint =
+              `fill="${fill}"` +
+              (strokeWidth > 0 && stroke ? ` stroke="${stroke}" stroke-width="${strokeWidth}"` : '');
 
             // A sector carries its own silhouette; nothing else here can
             // describe it. Rounded by the layout's own rounder, so the file and
@@ -762,7 +790,7 @@ export class SVGExporter implements Exporter {
               const pts = roundPolygon(cell.outline, cell.radius)
                 .map((pt) => `${node.x + cell.x + pt.x},${node.y + cell.y + pt.y}`)
                 .join(' ');
-              parts.push(`<polygon points="${pts}" ${paintOf} />`);
+              parts.push(`<polygon points="${pts}" ${paint} />`);
               return;
             }
 
@@ -775,11 +803,6 @@ export class SVGExporter implements Exporter {
             });
             const x = node.x + cell.x;
             const y = node.y + cell.y;
-            const paint =
-              `fill="${cell.fill}"` +
-              (style.strokeWidth > 0
-                ? ` stroke="${style.strokeColor}" stroke-width="${style.strokeWidth}"`
-                : '');
             switch (outline.kind) {
               case 'rect':
                 parts.push(`<rect x="${x}" y="${y}" width="${outline.width}" height="${outline.height}" rx="${outline.radius}" ${paint} />`);
@@ -797,6 +820,24 @@ export class SVGExporter implements Exporter {
                 break;
             }
           });
+
+          /**
+           * The track labels, which the export used to leave out entirely --
+           * a grid annotated on the board and bare in the file. Drawn from
+           * `cellLabel`, so the two agree about which modules are named.
+           */
+          if (style.showLabels) {
+            const ink = labelInk(style);
+            cells.forEach((cell) => {
+              const label = cellLabel(cell);
+              if (label === null) return;
+              parts.push(
+                `<text x="${node.x + cell.x + LABEL_INSET}" y="${node.y + cell.y + LABEL_INSET + LABEL_SIZE}" ` +
+                  `font-family="Inter, sans-serif" font-size="${LABEL_SIZE}" font-weight="600" ` +
+                  `fill="${ink}" fill-opacity="0.85">${escapeXml(label)}</text>`
+              );
+            });
+          }
           break;
         }
 

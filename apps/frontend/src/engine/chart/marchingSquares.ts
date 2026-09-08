@@ -222,3 +222,83 @@ export function contourLevels(
   // where the surface bottoms out, which is a dot rather than a contour.
   return Array.from({ length: n }, (_, i) => lo + ((hi - lo) * (i + 1)) / (n + 1));
 }
+
+/**
+ * Stitches a set of unordered level segments into continuous polylines.
+ * Joins adjacent edges within a distance tolerance.
+ */
+export function stitchSegments(
+  segments: LevelSegment[],
+  tolerance = 1e-4
+): GridPoint[][] {
+  if (segments.length === 0) return [];
+
+  const keyOf = (p: GridPoint) =>
+    `${Math.round(p.x / tolerance)}:${Math.round(p.y / tolerance)}`;
+
+  type Edge = { segIndex: number; p1: GridPoint; p2: GridPoint };
+  const graph = new Map<string, Edge[]>();
+
+  segments.forEach((seg, i) => {
+    const k1 = keyOf(seg[0]);
+    const k2 = keyOf(seg[1]);
+    const edge: Edge = { segIndex: i, p1: seg[0], p2: seg[1] };
+    if (!graph.has(k1)) graph.set(k1, []);
+    if (!graph.has(k2)) graph.set(k2, []);
+    graph.get(k1)!.push(edge);
+    graph.get(k2)!.push(edge);
+  });
+
+  const visited = new Uint8Array(segments.length);
+  const polylines: GridPoint[][] = [];
+
+  for (let i = 0; i < segments.length; i += 1) {
+    if (visited[i]) continue;
+    visited[i] = 1;
+
+    const line: GridPoint[] = [segments[i][0], segments[i][1]];
+
+    // Extend forward from line[line.length - 1]
+    let forwardGrowing = true;
+    while (forwardGrowing) {
+      forwardGrowing = false;
+      const tail = line[line.length - 1];
+      const edges = graph.get(keyOf(tail)) || [];
+      for (const e of edges) {
+        if (!visited[e.segIndex]) {
+          visited[e.segIndex] = 1;
+          const nextPt = Math.hypot(e.p1.x - tail.x, e.p1.y - tail.y) < Math.hypot(e.p2.x - tail.x, e.p2.y - tail.y)
+            ? e.p2
+            : e.p1;
+          line.push(nextPt);
+          forwardGrowing = true;
+          break;
+        }
+      }
+    }
+
+    // Extend backward from line[0]
+    let backwardGrowing = true;
+    while (backwardGrowing) {
+      backwardGrowing = false;
+      const head = line[0];
+      const edges = graph.get(keyOf(head)) || [];
+      for (const e of edges) {
+        if (!visited[e.segIndex]) {
+          visited[e.segIndex] = 1;
+          const prevPt = Math.hypot(e.p1.x - head.x, e.p1.y - head.y) < Math.hypot(e.p2.x - head.x, e.p2.y - head.y)
+            ? e.p2
+            : e.p1;
+          line.unshift(prevPt);
+          backwardGrowing = true;
+          break;
+        }
+      }
+    }
+
+    polylines.push(line);
+  }
+
+  return polylines;
+}
+

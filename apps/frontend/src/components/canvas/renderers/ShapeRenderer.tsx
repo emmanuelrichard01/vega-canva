@@ -10,7 +10,8 @@ import { shapeToPath } from '../../../engine/model/shapeToPath';
 import { defaultEndAlign } from '../../../engine/model/linePath';
 import { runPoints } from '../../../engine/model/lineEnds';
 import { terminateRun } from '../../../engine/model/connectorEnds';
-import { pathData } from '../../../engine/model/pathGeometry';
+import { contourData } from '../../../engine/model/pathGeometry';
+import { shapeFeaturePaths } from '../../../engine/model/shapeOutline';
 import { roughShape } from '../../../engine/model/roughShape';
 import { fillsInterior, roughEllipse, roughPolyline, seedFrom } from '../../../engine/model/rough';
 import { ThemeService } from '../../../engine/ThemeService';
@@ -715,23 +716,74 @@ export const ShapeRenderer: React.FC<Props> = React.memo(({ node, showLabel }) =
         cornerRadius={konvaRadius}
       />
     );
-  } else if (
-    node.geometry.kind === 'heart' ||
-    node.geometry.kind === 'squircle' ||
-    // A rounded polygon or star is no longer a Konva primitive: its corners
-    // have been filleted into real curves, so it is drawn from the path the
-    // outline describes. Konva's own `cornerRadius` exists on `Rect` alone,
-    // which is why every other shape's radius did nothing before.
-    ((node.geometry.kind === 'polygon' || node.geometry.kind === 'star') &&
-      Math.max(...cornerRadiiOf(radius)) > 0)
-  ) {
-    // Drawn as a real path rather than as a dense polygon, so it stays smooth
-    // at any zoom — the reason `shapeOutline` grew a `bezier` kind. The data
-    // comes from the same `shapeToPath` the effects and the exporter read, so
-    // the three cannot draw three different hearts.
+  } else if (node.geometry.kind === 'ellipse') {
     shape = (
+      <Ellipse
+        x={w / 2}
+        y={h / 2}
+        radiusX={w / 2}
+        radiusY={h / 2}
+        {...ellipseFill}
+        {...shadow}
+        stroke={primitiveStroke}
+        strokeWidth={sw}
+        {...dashProps}
+      />
+    );
+  } else if (
+    node.geometry.kind === 'polygon' &&
+    Math.max(...cornerRadiiOf(radius)) === 0
+  ) {
+    const scaleX = w / base;
+    const scaleY = h / base;
+    shape = (
+      <RegularPolygon
+        x={w / 2}
+        y={h / 2}
+        scaleX={scaleX}
+        scaleY={scaleY}
+        sides={node.geometry.points ?? 3}
+        radius={base / 2}
+        {...polygonFill}
+        {...shadow}
+        stroke={primitiveStroke}
+        strokeWidth={sw}
+        strokeScaleEnabled={false}
+        {...dashProps}
+      />
+    );
+  } else if (
+    node.geometry.kind === 'star' &&
+    Math.max(...cornerRadiiOf(radius)) === 0
+  ) {
+    const scaleX = w / base;
+    const scaleY = h / base;
+    shape = (
+      <Star
+        x={w / 2}
+        y={h / 2}
+        scaleX={scaleX}
+        scaleY={scaleY}
+        numPoints={node.geometry.points ?? 5}
+        innerRadius={(base / 2) * (node.geometry.innerRatio ?? 0.5)}
+        outerRadius={base / 2}
+        {...polygonFill}
+        {...shadow}
+        stroke={primitiveStroke}
+        strokeWidth={sw}
+        strokeScaleEnabled={false}
+        {...dashProps}
+      />
+    );
+  } else {
+    // All advanced vector shapes (squircle, heart, diamond, triangle, trapezoid,
+    // parallelogram, capsule, cylinder, cloud, callout, chevron, cross, donut, badge, banner)
+    // as well as rounded polygons and stars render through `shapeToPath`.
+    const pathD = contourData(shapeToPath(effectiveNode));
+    const mainPath = (
       <Path
-        data={pathData(shapeToPath(effectiveNode))}
+        data={pathD}
+        fillRule="evenodd"
         {...polygonFill}
         {...shadow}
         stroke={primitiveStroke}
@@ -739,43 +791,27 @@ export const ShapeRenderer: React.FC<Props> = React.memo(({ node, showLabel }) =
         {...dashProps}
       />
     );
-  } else if (node.geometry.kind === 'ellipse') {
-    // Independent radii, so a non-square ellipse stays elliptical.
-    shape = <Ellipse x={w / 2} y={h / 2} radiusX={w / 2} radiusY={h / 2} {...ellipseFill} {...shadow} stroke={primitiveStroke} strokeWidth={sw} {...dashProps} />;
-  } else {
-    // Build on the smaller dimension and stretch the node itself to fill the
-    // w x h box. `strokeScaleEnabled={false}` keeps the outline an even weight
-    // despite that non-uniform stretch, which would otherwise make the
-    // vertical edges of a widened hexagon visibly thicker than the horizontal
-    // ones.
-    const scaleX = w / base;
-    const scaleY = h / base;
-    const common = {
-      x: w / 2,
-      y: h / 2,
-      scaleX,
-      scaleY,
-      ...polygonFill,
-      ...shadow,
-      stroke: primitiveStroke,
-      strokeWidth: sw,
-      strokeScaleEnabled: false,
-      ...dashProps,
-    };
 
-    shape =
-      node.geometry.kind === 'star' ? (
-        <Star
-          {...common}
-          numPoints={node.geometry.points ?? 5}
-          innerRadius={(base / 2) * (node.geometry.innerRatio ?? 0.5)}
-          outerRadius={base / 2}
-        />
-      ) : (
-        // One primitive for every regular polygon. Triangle and hexagon used
-        // to be separate kinds with the side count written into this line.
-        <RegularPolygon {...common} sides={node.geometry.points ?? 3} radius={base / 2} />
+    const featurePaths = shapeFeaturePaths(node, 0, 0);
+    if (featurePaths.length > 0) {
+      shape = (
+        <Group>
+          {mainPath}
+          {featurePaths.map((featD, i) => (
+            <Path
+              key={`feat-${i}`}
+              data={featD}
+              stroke={primitiveStroke}
+              strokeWidth={sw}
+              {...dashProps}
+              listening={false}
+            />
+          ))}
+        </Group>
       );
+    } else {
+      shape = mainPath;
+    }
   }
 
   return (

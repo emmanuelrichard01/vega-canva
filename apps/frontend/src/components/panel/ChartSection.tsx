@@ -9,6 +9,13 @@ import {
   Plus,
   Tag,
   Trash2,
+  Table as TableIcon,
+  Lock,
+  Unlock,
+  RotateCcw,
+  Eye,
+  EyeOff,
+  ArrowLeftRight,
 } from 'lucide-react';
 import { NumberStepper } from '../ui/NumberStepper';
 import { Slider } from '../ui/Slider';
@@ -22,6 +29,8 @@ import {
   Reveal,
   ToggleRow,
   TypeHeader,
+  PaletteRibbonPicker,
+  MathTokenBar,
 } from './chartPanelParts';
 import { setChartKind, updateChart } from '../../engine/chart/chartApply';
 import {
@@ -31,13 +40,12 @@ import {
   parseChartData,
   withChartData,
 } from '../../engine/chart/chartCsv';
-import {
-  presetGroups,
-  specFromPreset,
-  type PlotPreset,
-} from '../../engine/chart/plotPresets';
+import { PresetGallery } from './PresetGallery';
 import { logDomainOf } from '../../engine/chart/scales';
 import { EXPRESSION_FUNCTIONS, parseExpression } from '../../engine/chart/expression';
+import type { RampId } from '../../engine/chart/colorRamps';
+import { formatValue } from '../../engine/chart/chartLayout';
+import { findRoots, findExtrema, integrate, type Sample } from '../../engine/chart/chartAnalysis';
 import {
   chartCapabilities,
   CHART_PALETTE,
@@ -50,6 +58,7 @@ import {
   seriesColor,
   type ChartSpec,
 } from '../../engine/chart/chartTypes';
+import { useStore } from '../../hooks/useStore';
 import type { ChartNode } from '../../engine/model/schema';
 
 /**
@@ -164,11 +173,6 @@ export const ChartSection: React.FC<Props> = ({ node }) => {
             onChange={(e) => patch({ title: e.target.value || undefined })}
           />
         </Row>
-        {/*
-          Offered only once there is a title to size. A stepper controlling the
-          type of an empty string is a live control with nothing to act on,
-          which is the dead-UI rule applied to a field rather than a feature.
-        */}
         {spec.title && (
           <Row label="Title size">
             <NumberStepper
@@ -178,6 +182,42 @@ export const ChartSection: React.FC<Props> = ({ node }) => {
               onChange={(v) => patch({ titleSize: v === 16 ? undefined : v })}
             />
           </Row>
+        )}
+        <Row label="Subtitle">
+          <input
+            className="panel-input"
+            value={spec.subtitle ?? ''}
+            placeholder="None"
+            onChange={(e) => patch({ subtitle: e.target.value || undefined })}
+          />
+        </Row>
+        <Row label="Footnote">
+          <input
+            className="panel-input"
+            value={spec.footnote ?? ''}
+            placeholder="Source / context note"
+            onChange={(e) => patch({ footnote: e.target.value || undefined })}
+          />
+        </Row>
+        {!radial && !polar && !plot && (
+          <>
+            <Row label="X-axis title">
+              <input
+                className="panel-input"
+                value={spec.xAxisLabel ?? ''}
+                placeholder="e.g. Quarter"
+                onChange={(e) => patch({ xAxisLabel: e.target.value || undefined })}
+              />
+            </Row>
+            <Row label="Y-axis title">
+              <input
+                className="panel-input"
+                value={spec.yAxisLabel ?? ''}
+                placeholder="e.g. Revenue ($)"
+                onChange={(e) => patch({ yAxisLabel: e.target.value || undefined })}
+              />
+            </Row>
+          </>
         )}
         <Row label="Show">
           <ToggleRow
@@ -216,6 +256,66 @@ export const ChartSection: React.FC<Props> = ({ node }) => {
             }}
           />
         </Row>
+        {(spec.showLegend ?? true) && (
+          <Row label="Legend pos">
+            <SegmentedControl
+              fill
+              ariaLabel="Legend position"
+              value={spec.legendPosition ?? 'bottom'}
+              onChange={(v) => patch({ legendPosition: v as any })}
+              segments={[
+                { value: 'top', label: 'Top' },
+                { value: 'bottom', label: 'Bottom' },
+                { value: 'right', label: 'Right' },
+              ]}
+            />
+          </Row>
+        )}
+        {spec.showValues && can.valueLabels && (
+          <>
+            <Row label="Value place">
+              <SegmentedControl
+                fill
+                ariaLabel="Value label placement"
+                value={spec.valuePlacement ?? 'auto'}
+                onChange={(v) => patch({ valuePlacement: v as any })}
+                segments={[
+                  { value: 'auto', label: 'Auto' },
+                  { value: 'inside', label: 'In' },
+                  { value: 'outside', label: 'Out' },
+                  { value: 'center', label: 'Center' },
+                ]}
+              />
+            </Row>
+            <Row label="Value style">
+              <SegmentedControl
+                fill
+                ariaLabel="Value label format"
+                value={spec.valueFormat ?? 'value'}
+                onChange={(v) => patch({ valueFormat: v as any })}
+                segments={[
+                  { value: 'value', label: 'Value' },
+                  { value: 'percent', label: '%' },
+                  { value: 'both', label: 'Both' },
+                ]}
+              />
+            </Row>
+          </>
+        )}
+        {spec.showValues && (spec.kind === 'line' || spec.kind === 'area') && (
+          <Row label="Values on">
+            <SegmentedControl
+              fill
+              ariaLabel="Value labels subset"
+              value={spec.extremesOnly ? 'extremes' : 'all'}
+              onChange={(v) => patch({ extremesOnly: v === 'extremes' ? true : undefined })}
+              segments={[
+                { value: 'all', label: 'All points' },
+                { value: 'extremes', label: 'Extremes' },
+              ]}
+            />
+          </Row>
+        )}
       </Group>
 
       {/*
@@ -242,6 +342,155 @@ export const ChartSection: React.FC<Props> = ({ node }) => {
         </Group>
       )}
 
+      {spec.kind === 'step' && (
+        <Group label="Step">
+          <Row label="Alignment">
+            <SegmentedControl
+              fill
+              ariaLabel="Step transition alignment"
+              value={spec.stepMode ?? 'after'}
+              onChange={(v) => patch({ stepMode: v as any })}
+              segments={[
+                { value: 'after', label: 'After', hint: 'Step after point' },
+                { value: 'mid', label: 'Mid', hint: 'Step halfway' },
+                { value: 'before', label: 'Before', hint: 'Step before point' },
+              ]}
+            />
+          </Row>
+        </Group>
+      )}
+
+      {(spec.kind === 'scatter' || spec.kind === 'bubble') && (
+        <Group label="Analytics">
+          <Row label="Trendline">
+            <SegmentedControl
+              fill
+              ariaLabel="Linear regression trendline"
+              value={spec.showTrendline ? 'on' : 'off'}
+              onChange={(v) => patch({ showTrendline: v === 'on' ? true : undefined })}
+              segments={[
+                { value: 'off', label: 'None', hint: 'No trendline' },
+                { value: 'on', label: 'OLS (R²)', hint: 'Ordinary Least Squares regression with R²' },
+              ]}
+            />
+          </Row>
+        </Group>
+      )}
+
+      {spec.kind === 'histogram' && (
+        <Group label="Density">
+          <Row label="KDE curve">
+            <SegmentedControl
+              fill
+              ariaLabel="Gaussian Kernel Density Estimation"
+              value={spec.showKde ? 'on' : 'off'}
+              onChange={(v) => patch({ showKde: v === 'on' ? true : undefined })}
+              segments={[
+                { value: 'off', label: 'Bars only', hint: 'Histogram bars only' },
+                { value: 'on', label: 'Gaussian KDE', hint: 'Overlaid smooth density curve' },
+              ]}
+            />
+          </Row>
+        </Group>
+      )}
+
+      {(spec.kind === 'slopeField' || spec.kind === 'vectorField') && (
+        <Group label="Solution Streamlines">
+          <Row label="Seeds">
+            <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', width: '100%' }}>
+              <span style={{ fontSize: 11, color: 'var(--text-secondary)' }}>
+                {(spec.seedPoints?.length ?? 0)} solution {spec.seedPoints?.length === 1 ? 'curve' : 'curves'}
+              </span>
+              <button
+                type="button"
+                className="btn-text"
+                onClick={() => patch({ seedPoints: undefined })}
+                disabled={!spec.seedPoints?.length}
+                style={{ fontSize: 11, padding: '2px 8px', opacity: spec.seedPoints?.length ? 1 : 0.5 }}
+              >
+                Clear seeds
+              </button>
+            </div>
+          </Row>
+          <p className="chartp-note" style={{ margin: '4px 0 0' }}>
+            Alt+Click anywhere on the field to drop an initial-value solution curve.
+          </p>
+        </Group>
+      )}
+
+      <Group label="Palette & Style">
+        <Row label="Palette">
+          <PaletteRibbonPicker
+            value={spec.paletteId ?? 'default'}
+            onChange={(id) => patch({ paletteId: id })}
+          />
+        </Row>
+        {(spec.kind === 'line' || spec.kind === 'area' || spec.kind === 'bar' || spec.kind === 'barHorizontal') && (
+          <Row label="Fill style">
+            <SegmentedControl
+              fill
+              ariaLabel="Fill style"
+              value={spec.gradient ? 'gradient' : 'solid'}
+              onChange={(v) => patch({ gradient: v === 'gradient' ? true : undefined })}
+              segments={[
+                { value: 'solid', label: 'Solid', hint: 'Flat solid color' },
+                { value: 'gradient', label: 'Gradient', hint: 'Smooth linear agency gradient' },
+              ]}
+            />
+          </Row>
+        )}
+        {(spec.kind === 'bar' || spec.kind === 'barHorizontal') && (
+          <Row label="Corner radius">
+            <Slider
+              label="Corner radius"
+              labelHidden
+              value={spec.cornerRadius ?? 3}
+              min={0}
+              max={16}
+              onChange={(v) => patch({ cornerRadius: v === 3 ? undefined : v })}
+            />
+          </Row>
+        )}
+        {(spec.kind === 'line' || spec.kind === 'area' || spec.kind === 'step') && (
+          <>
+            <Row label="Line width">
+              <NumberStepper
+                value={spec.lineWidth ?? 2.5}
+                min={1}
+                max={6}
+                step={0.5}
+                onChange={(v) => patch({ lineWidth: v === 2.5 ? undefined : v })}
+              />
+            </Row>
+            <Row label="Markers">
+              <SegmentedControl
+                fill
+                ariaLabel="Line data point markers"
+                value={spec.markerShape ?? 'circle'}
+                onChange={(v) => patch({ markerShape: v as any })}
+                segments={[
+                  { value: 'circle', label: '● Filled' },
+                  { value: 'ring', label: '○ Ring' },
+                  { value: 'none', label: '— None' },
+                ]}
+              />
+            </Row>
+          </>
+        )}
+        {(spec.kind === 'area' || spec.kind === 'stackedArea') && (
+          <Row label="Area fill">
+            <Slider
+              label="Area fill opacity"
+              labelHidden
+              value={Math.round((spec.areaOpacity ?? 0.22) * 100)}
+              min={10}
+              max={90}
+              onChange={(v) => patch({ areaOpacity: v / 100 })}
+            />
+          </Row>
+        )}
+      </Group>
+
       {can.valueAxis && (
         <Group label="Value axis">
           <AxisFields spec={spec} patch={patch} />
@@ -250,24 +499,69 @@ export const ChartSection: React.FC<Props> = ({ node }) => {
 
       {can.numberFormat && (
         <Group label="Numbers">
-        <Row label="Prefix">
-          <input
-            className="panel-input"
-            value={spec.valuePrefix ?? ''}
-            placeholder="$"
-            aria-label="Value prefix"
-            onChange={(e) => patch({ valuePrefix: e.target.value || undefined })}
-          />
-        </Row>
-        <Row label="Suffix">
-          <input
-            className="panel-input"
-            value={spec.valueSuffix ?? ''}
-            placeholder="%"
-            aria-label="Value suffix"
-            onChange={(e) => patch({ valueSuffix: e.target.value || undefined })}
-          />
-        </Row>
+          <Row label="Presets" stack>
+            <div className="chartp-presets-strip">
+              <button
+                type="button"
+                className="chartp-preset-chip"
+                onClick={() => patch({ valuePrefix: '$', compactNumbers: true, decimals: 0 })}
+              >
+                $ USD
+              </button>
+              <button
+                type="button"
+                className="chartp-preset-chip"
+                onClick={() => patch({ valuePrefix: '€', compactNumbers: true, decimals: 0 })}
+              >
+                € EUR
+              </button>
+              <button
+                type="button"
+                className="chartp-preset-chip"
+                onClick={() => patch({ valueSuffix: '%', decimals: 1, compactNumbers: false })}
+              >
+                % Pct
+              </button>
+              <button
+                type="button"
+                className="chartp-preset-chip"
+                onClick={() => patch({ valuePrefix: '$', compactNumbers: true, decimals: 1 })}
+              >
+                $1.2M
+              </button>
+              <button
+                type="button"
+                className="chartp-preset-chip"
+                onClick={() => patch({ decimals: 0, compactNumbers: false, valuePrefix: undefined, valueSuffix: undefined })}
+              >
+                Integer
+              </button>
+            </div>
+          </Row>
+          <Row label="Preview">
+            <div className="chartp-preview-badge">
+              <span>1,250,000 → </span>
+              <strong>{formatValue(1250000, spec)}</strong>
+            </div>
+          </Row>
+          <Row label="Prefix">
+            <input
+              className="panel-input"
+              value={spec.valuePrefix ?? ''}
+              placeholder="$"
+              aria-label="Value prefix"
+              onChange={(e) => patch({ valuePrefix: e.target.value || undefined })}
+            />
+          </Row>
+          <Row label="Suffix">
+            <input
+              className="panel-input"
+              value={spec.valueSuffix ?? ''}
+              placeholder="%"
+              aria-label="Value suffix"
+              onChange={(e) => patch({ valueSuffix: e.target.value || undefined })}
+            />
+          </Row>
           <Row label="Decimals">
             <NumberStepper
               value={spec.decimals ?? 0}
@@ -276,12 +570,6 @@ export const ChartSection: React.FC<Props> = ({ node }) => {
               onChange={(v) => patch({ decimals: v })}
             />
           </Row>
-          {/*
-            Its own control now. Abbreviation used to be inferred from
-            `decimals` being absent, so setting a decimal count silently turned
-            `12k` back into `12000` and the only way to get it back was to
-            clear a field that looked unrelated.
-          */}
           <Row label="Large numbers">
             <SegmentedControl
               fill
@@ -299,14 +587,6 @@ export const ChartSection: React.FC<Props> = ({ node }) => {
 
       {can.sort && (
         <Group label="Order">
-          {/*
-            Short labels with the full wording on hover. Four segments sharing
-            a 170px control cannot hold "As entered / Largest first / Smallest
-            first / A to Z" -- they wrapped to two lines each and the control
-            grew to three rows of broken words. The glyphs say the ordering and
-            the hint says it in full, which is the division `Segment` was
-            written for.
-          */}
           <Row label="Order" stack>
             <SegmentedControl
               fill
@@ -320,6 +600,28 @@ export const ChartSection: React.FC<Props> = ({ node }) => {
                 label: SORT_GLYPH[s],
                 hint: CHART_SORT_LABELS[s],
               }))}
+            />
+          </Row>
+          {spec.series.length > 1 && (
+            <Row label="Sort by">
+              <SegmentedControl
+                fill
+                ariaLabel="Sort key"
+                value={spec.sortKey ?? 'series'}
+                onChange={(v) => patch({ sortKey: v as any })}
+                segments={[
+                  { value: 'series', label: 'Series 1' },
+                  { value: 'total', label: 'Total Sum' },
+                ]}
+              />
+            </Row>
+          )}
+          <Row label="Top items" hint="Consolidate tail categories into 'Other'">
+            <NumberStepper
+              value={spec.topN ?? spec.categories.length}
+              min={3}
+              max={Math.max(3, spec.categories.length)}
+              onChange={(v) => patch({ topN: v >= spec.categories.length ? undefined : v })}
             />
           </Row>
         </Group>
@@ -398,6 +700,27 @@ const DataActions: React.FC<{ node: ChartNode; spec: ChartSpec }> = ({ node, spe
 
   const run = async (id: string) => {
     try {
+      if (id === 'sheet') {
+        useStore.getState().setChartDataModalNodeId(node.id);
+        return;
+      }
+      if (id === 'transpose') {
+        const oldCats = spec.categories;
+        const oldSeries = spec.series;
+        if (oldCats.length === 0 || oldSeries.length === 0) return;
+        const newCats = oldSeries.map((s) => s.name);
+        const newSeries = oldCats.map((cat, ci) => ({
+          name: cat,
+          values: oldSeries.map((s) => s.values[ci] ?? null),
+        }));
+        updateChart(node.id, {
+          ...spec,
+          categories: newCats,
+          series: newSeries,
+        });
+        say('Transposed table');
+        return;
+      }
       if (id === 'paste') readInto(await navigator.clipboard.readText(), 'the clipboard');
       else if (id === 'copy') {
         await navigator.clipboard.writeText(chartToCsv(spec));
@@ -427,18 +750,10 @@ const DataActions: React.FC<{ node: ChartNode; spec: ChartSpec }> = ({ node, spe
       {notice && <span className="chartp-notice">{notice}</span>}
       <ActionRow
         actions={[
+          { id: 'sheet', icon: <TableIcon size={12} />, label: 'Open spreadsheet editor' },
+          { id: 'transpose', icon: <ArrowLeftRight size={12} />, label: 'Transpose rows & columns' },
           { id: 'paste', icon: <ClipboardPaste size={12} />, label: 'Paste a table' },
           { id: 'copy', icon: <Copy size={12} />, label: 'Copy as CSV' },
-          /*
-            `FileUp`/`FileDown` rather than `Upload`/`Download`. The mapping was
-            never wrong -- this app uses a down arrow for export everywhere, and
-            the restore control in the export dialog uses an up arrow -- but at
-            12px `Upload` and `Download` are the *same tray* with an arrow that
-            differs only in direction, and four monochrome glyphs in a row gave
-            the eye nothing else to go on. A page with an arrow is a different
-            silhouette, not a mirrored one, which is the property that makes a
-            pair of opposites legible at this size.
-          */
           { id: 'import', icon: <FileUp size={12} />, label: 'Import a CSV file' },
           { id: 'export', icon: <FileDown size={12} />, label: 'Export a CSV file' },
         ]}
@@ -568,6 +883,10 @@ const DataGrid: React.FC<{ spec: ChartSpec; patch: (n: Partial<ChartSpec>) => vo
       >
         <Plus size={12} /> Add a row
       </button>
+      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', padding: '6px 4px 2px', fontSize: 11, color: 'var(--text-secondary)' }}>
+        <span>{spec.categories.length} categories × {spec.series.length} series</span>
+        <span>{spec.series.reduce((acc, s) => acc + s.values.filter((v) => v !== null).length, 0)} points</span>
+      </div>
     </div>
   );
 };
@@ -688,90 +1007,138 @@ const ReferenceFields: React.FC<{ spec: ChartSpec; patch: (n: Partial<ChartSpec>
   patch,
 }) => {
   const ref = spec.reference;
+  const band = spec.toleranceBand;
   const stats = summarise(spec);
-  if (!ref) {
-    return (
-      <>
+
+  return (
+    <>
+      {ref ? (
+        <>
+          <Row label="Target">
+            <NumberStepper
+              value={ref.value}
+              onChange={(v) => patch({ reference: { ...ref, value: v } })}
+            />
+          </Row>
+          <Row label="Label">
+            <input
+              className="panel-input"
+              value={ref.label ?? ''}
+              placeholder="Target"
+              onChange={(e) => patch({ reference: { ...ref, label: e.target.value || undefined } })}
+            />
+          </Row>
+          <Row label="Colour">
+            <ColorPickerPopover
+              color={ref.color ?? '#EF4444'}
+              onChange={(color) => patch({ reference: { ...ref, color } })}
+            />
+          </Row>
+          <Row label="Style" hint="Dashed reads as a note on the data; solid reads as data">
+            <SegmentedControl
+              fill
+              ariaLabel="Reference line style"
+              value={ref.style ?? 'dashed'}
+              onChange={(v) =>
+                patch({ reference: { ...ref, style: v === 'solid' ? 'solid' : undefined } })
+              }
+              segments={[
+                { value: 'dashed', label: 'Dashed' },
+                { value: 'solid', label: 'Solid' },
+              ]}
+            />
+          </Row>
+          {stats && (
+            <Row label="Set to" stack>
+              <div className="chartp-quick">
+                <button type="button" onClick={() => patch({ reference: { ...ref, value: stats.mean } })}>
+                  Mean
+                </button>
+                <button type="button" onClick={() => patch({ reference: { ...ref, value: stats.median } })}>
+                  Median
+                </button>
+                <button type="button" onClick={() => patch({ reference: { ...ref, value: stats.max } })}>
+                  Max
+                </button>
+                <button type="button" onClick={() => patch({ reference: { ...ref, value: stats.min } })}>
+                  Min
+                </button>
+              </div>
+            </Row>
+          )}
+          <button
+            type="button"
+            className="chartp-add chartp-add--quiet"
+            onClick={() => patch({ reference: undefined })}
+          >
+            <Trash2 size={12} /> Remove target line
+          </button>
+        </>
+      ) : (
         <button
           type="button"
           className="chartp-add"
-          onClick={() => patch({ reference: { value: 0, label: 'Target' } })}
+          onClick={() => patch({ reference: { value: stats?.mean ?? 0, label: 'Target' } })}
         >
           <Plus size={12} /> Add a target line
         </button>
-        <p className="chartp-note">
-          Kept at a <em>value</em>, so it survives a resize and a change of data — which a line
-          drawn on top cannot.
-        </p>
-      </>
-    );
-  }
-  return (
-    <>
-      <Row label="Value">
-        <NumberStepper
-          value={ref.value}
-          onChange={(v) => patch({ reference: { ...ref, value: v } })}
-        />
-      </Row>
-      <Row label="Label">
-        <input
-          className="panel-input"
-          value={ref.label ?? ''}
-          onChange={(e) => patch({ reference: { ...ref, label: e.target.value || undefined } })}
-        />
-      </Row>
-      <Row label="Colour">
-        <ColorPickerPopover
-          color={ref.color ?? '#EF4444'}
-          onChange={(color) => patch({ reference: { ...ref, color } })}
-        />
-      </Row>
-      <Row label="Style" hint="Dashed reads as a note on the data; solid reads as data">
-        <SegmentedControl
-          fill
-          ariaLabel="Reference line style"
-          value={ref.style ?? 'dashed'}
-          onChange={(v) =>
-            patch({ reference: { ...ref, style: v === 'solid' ? 'solid' : undefined } })
-          }
-          segments={[
-            { value: 'dashed', label: 'Dashed' },
-            { value: 'solid', label: 'Solid' },
-          ]}
-        />
-      </Row>
-      {/*
-        Set from the data rather than typed. "Put a line at the average" is the
-        commonest thing anybody wants here and the one thing they cannot do
-        without leaving the app to work it out — which is exactly the kind of
-        arithmetic the chart already has in front of it.
-      */}
-      {stats && (
-        <Row label="Set to" stack>
-          <div className="chartp-quick">
-            <button type="button" onClick={() => patch({ reference: { ...ref, value: stats.mean } })}>
-              Mean
-            </button>
-            <button type="button" onClick={() => patch({ reference: { ...ref, value: stats.median } })}>
-              Median
-            </button>
-            <button type="button" onClick={() => patch({ reference: { ...ref, value: stats.max } })}>
-              Max
-            </button>
-            <button type="button" onClick={() => patch({ reference: { ...ref, value: stats.min } })}>
-              Min
-            </button>
-          </div>
-        </Row>
       )}
-      <button
-        type="button"
-        className="chartp-add chartp-add--quiet"
-        onClick={() => patch({ reference: undefined })}
-      >
-        <Trash2 size={12} /> Remove the target
-      </button>
+
+      {band ? (
+        <div style={{ marginTop: 10, paddingTop: 8, borderTop: '1px solid var(--border-subtle)' }}>
+          <Row label="Band min">
+            <NumberStepper
+              value={band.min}
+              onChange={(v) => patch({ toleranceBand: { ...band, min: v } })}
+            />
+          </Row>
+          <Row label="Band max">
+            <NumberStepper
+              value={band.max}
+              onChange={(v) => patch({ toleranceBand: { ...band, max: v } })}
+            />
+          </Row>
+          <Row label="Band label">
+            <input
+              className="panel-input"
+              value={band.label ?? ''}
+              placeholder="Tolerance"
+              onChange={(e) => patch({ toleranceBand: { ...band, label: e.target.value || undefined } })}
+            />
+          </Row>
+          <Row label="Band color">
+            <ColorPickerPopover
+              color={band.color ?? '#10B981'}
+              onChange={(color) => patch({ toleranceBand: { ...band, color } })}
+            />
+          </Row>
+          <button
+            type="button"
+            className="chartp-add chartp-add--quiet"
+            onClick={() => patch({ toleranceBand: undefined })}
+          >
+            <Trash2 size={12} /> Remove tolerance corridor
+          </button>
+        </div>
+      ) : (
+        <button
+          type="button"
+          className="chartp-add"
+          style={{ marginTop: ref ? 6 : 0 }}
+          onClick={() =>
+            patch({
+              toleranceBand: {
+                min: (ref?.value ?? stats?.mean ?? 10) - 5,
+                max: (ref?.value ?? stats?.mean ?? 10) + 5,
+                label: 'Tolerance',
+                color: '#10B981',
+              },
+            })
+          }
+        >
+          <Plus size={12} /> Add a tolerance corridor
+        </button>
+      )}
     </>
   );
 };
@@ -854,6 +1221,8 @@ const FormulaEditor: React.FC<{ spec: ChartSpec; patch: (n: Partial<ChartSpec>) 
   // unknown name is still an error rather than a silent NaN.
   const variables = twoVar ? ['x', 'y'] : [variable];
   const curves = spec.functions ?? [];
+  const [activeCurveIdx, setActiveCurveIdx] = React.useState<number>(0);
+
   // Pairs are named rather than numbered: "f2" would not tell anybody it is
   // the y half of a parametric curve or the Q of a vector field.
   const rowLabel = (i: number) => {
@@ -866,8 +1235,21 @@ const FormulaEditor: React.FC<{ spec: ChartSpec; patch: (n: Partial<ChartSpec>) 
   const set = (i: number, next: Partial<(typeof curves)[number]>) =>
     patch({ functions: curves.map((c, j) => (i === j ? { ...c, ...next } : c)) });
 
+  const onInsertToken = (tok: string) => {
+    const target = Math.min(activeCurveIdx, Math.max(0, curves.length - 1));
+    if (curves.length === 0) {
+      patch({ functions: [{ source: tok }] });
+      return;
+    }
+    const cur = curves[target].source.trim();
+    const nextSrc = !cur ? tok : `${cur} + ${tok}`;
+    set(target, { source: nextSrc });
+  };
+
   return (
     <>
+      <MathTokenBar variable={variable} onInsert={onInsertToken} />
+
       {curves.map((curve, i) => {
         const result = parseExpression(curve.source, variables);
         return (
@@ -879,9 +1261,19 @@ const FormulaEditor: React.FC<{ spec: ChartSpec; patch: (n: Partial<ChartSpec>) 
                 value={curve.source}
                 spellCheck={false}
                 data-invalid={!result.ok || undefined}
+                onFocus={() => setActiveCurveIdx(i)}
                 onChange={(e) => set(i, { source: e.target.value })}
                 aria-label={rowLabel(i)}
               />
+              <button
+                type="button"
+                className={`chartp-eye-btn ${curve.hidden ? 'muted' : ''}`}
+                data-tooltip={curve.hidden ? 'Show curve' : 'Mute curve'}
+                aria-label={curve.hidden ? 'Show curve' : 'Mute curve'}
+                onClick={() => set(i, { hidden: !curve.hidden })}
+              >
+                {curve.hidden ? <EyeOff size={11} /> : <Eye size={11} />}
+              </button>
               <ColorPickerPopover
                 color={curve.color ?? seriesColor(undefined, i)}
                 onChange={(color) => set(i, { color })}
@@ -897,6 +1289,29 @@ const FormulaEditor: React.FC<{ spec: ChartSpec; patch: (n: Partial<ChartSpec>) 
               </button>
             </div>
             {!result.ok && <div className="chartp-formula__error">{result.error.message}</div>}
+
+            {/* Per-curve stroke width & dash style */}
+            <div style={{ display: 'flex', alignItems: 'center', gap: 6, marginTop: 4, paddingLeft: 34 }}>
+              <span style={{ fontSize: 10, color: 'var(--text-secondary)' }}>Stroke:</span>
+              <NumberStepper
+                value={curve.width ?? 2}
+                min={1}
+                max={5}
+                step={0.5}
+                onChange={(w) => set(i, { width: w === 2 ? undefined : w })}
+              />
+              <SegmentedControl
+                fill
+                ariaLabel="Stroke pattern"
+                value={curve.style ?? 'solid'}
+                onChange={(st) => set(i, { style: st === 'solid' ? undefined : (st as any) })}
+                segments={[
+                  { value: 'solid', label: '—' },
+                  { value: 'dashed', label: '--' },
+                  { value: 'dotted', label: '··' },
+                ]}
+              />
+            </div>
           </div>
         );
       })}
@@ -910,31 +1325,11 @@ const FormulaEditor: React.FC<{ spec: ChartSpec; patch: (n: Partial<ChartSpec>) 
       </button>
 
       <Reveal label="Start from an example">
-        {/*
-          Grouped, with this kind's own examples first. A flat list of
-          twenty-nine is the wall the type picker was already fixed for, and
-          making somebody editing a vector field scroll past fourteen curves to
-          reach four is that fault at a smaller scale.
-        */}
-        {presetGroups(spec.kind).map((group) => (
-          <div className="chartp-presetGroup" key={group.kind}>
-            <div className="chartp-presetGroup__label">{group.label}</div>
-            <div className="chartp-gallery">
-              {group.presets.map((preset) => (
-                <button
-                  key={preset.id}
-                  type="button"
-                  className="chartp-gallery__item"
-                  title={preset.note}
-                  onClick={() => updateChartFromPreset(preset)}
-                >
-                  <span className="chartp-gallery__name">{preset.name}</span>
-                  <span className="chartp-gallery__note">{preset.note}</span>
-                </button>
-              ))}
-            </div>
-          </div>
-        ))}
+        <PresetGallery
+          kind={spec.kind}
+          onPick={(next) => patch(next)}
+          onAddCurve={(newCurves) => patch({ functions: [...curves, ...newCurves] })}
+        />
       </Reveal>
 
       <Reveal label="What you can write">
@@ -947,16 +1342,6 @@ const FormulaEditor: React.FC<{ spec: ChartSpec; patch: (n: Partial<ChartSpec>) 
       </Reveal>
     </>
   );
-
-  /**
-   * A preset replaces the whole spec rather than merging into it: it is an
-   * example to start from, and half of one merged into somebody's
-   * half-finished work is neither. Undo puts back exactly what was there,
-   * which is what makes trying one cheap.
-   */
-  function updateChartFromPreset(preset: PlotPreset) {
-    patch(specFromPreset(preset));
-  }
 };
 
 /**
@@ -1006,10 +1391,65 @@ const PlaneFields: React.FC<{ spec: ChartSpec; patch: (n: Partial<ChartSpec>) =>
         />
       </Row>
     )}
+    {spec.kind === 'heatmap' && (
+      <Row label="Colormap" hint="Perceptually uniform color ramps">
+        <SegmentedControl
+          fill
+          ariaLabel="Heatmap colormap"
+          value={spec.ramp ?? 'viridis'}
+          onChange={(v) => patch({ ramp: v as RampId })}
+          segments={[
+            { value: 'viridis', label: 'Viridis', hint: 'Perceptually uniform blue-green-yellow' },
+            { value: 'magma', label: 'Magma', hint: 'Black through purple/red to near-white' },
+            { value: 'diverging', label: 'Diverging', hint: 'Blue-white-red with neutral midpoint' },
+            { value: 'mono', label: 'Mono', hint: 'Single blue hue gradient' },
+          ]}
+        />
+      </Row>
+    )}
+    <Row label="Aspect" hint="Keep square geometric aspect ratio">
+      <SegmentedControl
+        fill
+        ariaLabel="Isotropic aspect ratio"
+        value={spec.isotropic ? '1:1' : 'free'}
+        onChange={(v) => patch({ isotropic: v === '1:1' ? true : undefined })}
+        segments={[
+          { value: 'free', label: 'Free' },
+          { value: '1:1', label: '1:1' },
+        ]}
+      />
+    </Row>
     <p className="chartp-note">
       Both axes are the same plane, so a unit is kept the same length on each —
       otherwise an implicit circle would draw as an ellipse.
     </p>
+    <Row label="Plane Lock" hint="Prevent accidental zoom and pan gestures">
+      <button
+        type="button"
+        className={`chartp-lock-btn ${spec.lockPlane ? 'locked' : ''}`}
+        onClick={() => patch({ lockPlane: !spec.lockPlane })}
+      >
+        {spec.lockPlane ? <Lock size={12} /> : <Unlock size={12} />}
+        <span>{spec.lockPlane ? 'Locked' : 'Unlocked'}</span>
+      </button>
+    </Row>
+    <Row label="Reset Plane">
+      <button
+        type="button"
+        className="chartp-btn-secondary"
+        onClick={() =>
+          patch({
+            xMin: -5,
+            xMax: 5,
+            yPlotMin: -5,
+            yPlotMax: 5,
+          })
+        }
+      >
+        <RotateCcw size={12} />
+        <span>Reset Plane Bounds</span>
+      </button>
+    </Row>
   </>
 );
 
@@ -1037,11 +1477,6 @@ const DomainFields: React.FC<{ spec: ChartSpec; patch: (n: Partial<ChartSpec>) =
         />
       </Row>
       <Row label="Range" stack>
-        {/*
-          The domains people actually want. A plot's range is almost always a
-          multiple of pi or a small symmetric window, and both are awkward to
-          type and easy to get subtly wrong.
-        */}
         <div className="chartp-quick">
           <button type="button" onClick={() => patch({ xMin: -Math.PI, xMax: Math.PI })}>
             ±π
@@ -1057,6 +1492,20 @@ const DomainFields: React.FC<{ spec: ChartSpec; patch: (n: Partial<ChartSpec>) =
           </button>
         </div>
       </Row>
+      <Row label="Y-clip min" hint="Clamp singular spikes (e.g. tan or 1/x)">
+        <OptionalNumber
+          label="Y-clip minimum"
+          value={spec.yClipMin}
+          onChange={(v) => patch({ yClipMin: v })}
+        />
+      </Row>
+      <Row label="Y-clip max" hint="Clamp singular spikes (e.g. tan or 1/x)">
+        <OptionalNumber
+          label="Y-clip maximum"
+          value={spec.yClipMax}
+          onChange={(v) => patch({ yClipMax: v })}
+        />
+      </Row>
       <Row label="Samples" hint="Before adaptive subdivision">
         <NumberStepper
           value={spec.samples ?? 160}
@@ -1066,17 +1515,52 @@ const DomainFields: React.FC<{ spec: ChartSpec; patch: (n: Partial<ChartSpec>) =
           onChange={(v) => patch({ samples: v })}
         />
       </Row>
-      <Row label="Scale" hint="A circle on unequal axes is an ellipse — a different curve">
+      <Row label="Aspect" hint="Equal unit scaling or square 1:1">
         <SegmentedControl
           fill
-          ariaLabel="Axis scale"
-          value={(spec.equalAxes ?? !isFn) ? 'equal' : 'free'}
-          onChange={(v) => patch({ equalAxes: v === 'equal' })}
+          ariaLabel="Axis scaling"
+          value={spec.isotropic ? '1:1' : (spec.equalAxes ?? !isFn) ? 'equal' : 'free'}
+          onChange={(v) =>
+            patch({
+              isotropic: v === '1:1' ? true : undefined,
+              equalAxes: v === 'equal' || v === '1:1' ? true : false,
+            })
+          }
           segments={[
+            { value: 'free', label: 'Free' },
             { value: 'equal', label: 'Equal' },
-            { value: 'free', label: 'Fill' },
+            { value: '1:1', label: '1:1' },
           ]}
         />
+      </Row>
+      <Row label="Plane Lock" hint="Prevent accidental zoom and pan gestures">
+        <button
+          type="button"
+          className={`chartp-lock-btn ${spec.lockPlane ? 'locked' : ''}`}
+          onClick={() => patch({ lockPlane: !spec.lockPlane })}
+        >
+          {spec.lockPlane ? <Lock size={12} /> : <Unlock size={12} />}
+          <span>{spec.lockPlane ? 'Locked' : 'Unlocked'}</span>
+        </button>
+      </Row>
+      <Row label="Reset Domain">
+        <button
+          type="button"
+          className="chartp-btn-secondary"
+          onClick={() =>
+            patch({
+              xMin: isFn ? -10 : 0,
+              xMax: isFn ? 10 : Number((Math.PI * 2).toFixed(3)),
+              yPlotMin: undefined,
+              yPlotMax: undefined,
+              yClipMin: undefined,
+              yClipMax: undefined,
+            })
+          }
+        >
+          <RotateCcw size={12} />
+          <span>Reset Domain Bounds</span>
+        </button>
       </Row>
     </>
   );
@@ -1085,78 +1569,217 @@ const DomainFields: React.FC<{ spec: ChartSpec; patch: (n: Partial<ChartSpec>) =
 const AnalysisFields: React.FC<{ spec: ChartSpec; patch: (n: Partial<ChartSpec>) => void }> = ({
   spec,
   patch,
-}) => (
-  <>
-    <Row label="Mark">
-      <ToggleRow
-        options={[
-          {
-            id: 'roots',
-            icon: <span className="chartp-mono">0</span>,
-            label: 'Where the curve crosses zero',
-            on: !!spec.showRoots,
-          },
-          {
-            id: 'extrema',
-            icon: <span className="chartp-mono">∧</span>,
-            label: 'Turning points',
-            on: !!spec.showExtrema,
-          },
-          {
-            id: 'area',
-            icon: <span className="chartp-mono">∫</span>,
-            label: 'Area under the curve',
-            on: !!spec.fillArea,
-          },
-          {
-            id: 'derivative',
-            icon: <span className="chartp-mono">f′</span>,
-            label: 'The derivative, alongside',
-            on: !!spec.showDerivative,
-          },
-        ]}
-        onToggle={(id) => {
-          if (id === 'roots') patch({ showRoots: !spec.showRoots });
-          else if (id === 'extrema') patch({ showExtrema: !spec.showExtrema });
-          else if (id === 'area') patch({ fillArea: !spec.fillArea });
-          else patch({ showDerivative: !spec.showDerivative });
-        }}
-      />
-    </Row>
-    <Row label="Rectangles" hint="Riemann strips, and their sum">
-      <SegmentedControl
-        fill
-        ariaLabel="Riemann rectangles"
-        value={spec.riemann ? spec.riemann.mode : 'off'}
-        onChange={(v) =>
-          patch({
-            riemann:
-              v === 'off'
-                ? undefined
-                : { n: spec.riemann?.n ?? 12, mode: v as 'left' | 'right' | 'midpoint' },
-          })
+}) => {
+  const primaryCurve = spec.functions?.[0];
+  const parsed = React.useMemo(() => {
+    if (!primaryCurve?.source) return null;
+    const res = parseExpression(primaryCurve.source, ['x']);
+    return res.ok ? (x: number) => res.expression.evaluate(x) : null;
+  }, [primaryCurve?.source]);
+
+  const analysis = React.useMemo(() => {
+    if (!parsed) return null;
+    const xMin = spec.xMin ?? -10;
+    const xMax = spec.xMax ?? 10;
+    const n = Math.min(300, spec.samples ?? 160);
+    const step = (xMax - xMin) / n;
+    const samples: Sample[] = [];
+    for (let i = 0; i <= n; i++) {
+      const x = xMin + i * step;
+      try {
+        const y = parsed(x);
+        samples.push({ x, y: Number.isFinite(y) ? y : null });
+      } catch {
+        samples.push({ x, y: null });
+      }
+    }
+    const roots = spec.showRoots ? findRoots(samples, parsed) : [];
+    const extrema = spec.showExtrema ? findExtrema(samples) : [];
+    let integralVal: number | null = null;
+    if (spec.integralBounds) {
+      const a = Math.min(spec.integralBounds.a, spec.integralBounds.b);
+      const b = Math.max(spec.integralBounds.a, spec.integralBounds.b);
+      const sign = spec.integralBounds.a <= spec.integralBounds.b ? 1 : -1;
+      const intSamples: Sample[] = [];
+      const m = 120;
+      const intStep = (b - a) / m;
+      for (let i = 0; i <= m; i++) {
+        const x = a + i * intStep;
+        try {
+          const y = parsed(x);
+          intSamples.push({ x, y: Number.isFinite(y) ? y : null });
+        } catch {
+          intSamples.push({ x, y: null });
         }
-        segments={[
-          { value: 'off', label: 'Off' },
-          { value: 'left', label: 'L', hint: 'Left corner meets the curve' },
-          { value: 'midpoint', label: 'M', hint: 'Midpoint meets the curve' },
-          { value: 'right', label: 'R', hint: 'Right corner meets the curve' },
-        ]}
-      />
-    </Row>
-    {spec.riemann && (
-      <Row label="Count">
-        <NumberStepper
-          value={spec.riemann.n}
-          min={1}
-          max={200}
-          onChange={(n) => patch({ riemann: { ...spec.riemann!, n } })}
+      }
+      const intRes = integrate(intSamples);
+      integralVal = intRes.complete ? intRes.value * sign : null;
+    }
+    return { roots, extrema, integralVal };
+  }, [parsed, spec.xMin, spec.xMax, spec.samples, spec.showRoots, spec.showExtrema, spec.integralBounds]);
+
+  return (
+    <>
+      <Row label="Mark">
+        <ToggleRow
+          options={[
+            {
+              id: 'roots',
+              icon: <span className="chartp-mono">0</span>,
+              label: 'Where the curve crosses zero',
+              on: !!spec.showRoots,
+            },
+            {
+              id: 'extrema',
+              icon: <span className="chartp-mono">∧</span>,
+              label: 'Turning points',
+              on: !!spec.showExtrema,
+            },
+            {
+              id: 'area',
+              icon: <span className="chartp-mono">∫</span>,
+              label: 'Area under the curve',
+              on: !!spec.fillArea,
+            },
+            {
+              id: 'derivative',
+              icon: <span className="chartp-mono">f′</span>,
+              label: 'The derivative, alongside',
+              on: !!spec.showDerivative,
+            },
+          ]}
+          onToggle={(id) => {
+            if (id === 'roots') patch({ showRoots: !spec.showRoots });
+            else if (id === 'extrema') patch({ showExtrema: !spec.showExtrema });
+            else if (id === 'area') patch({ fillArea: !spec.fillArea });
+            else patch({ showDerivative: !spec.showDerivative });
+          }}
         />
       </Row>
-    )}
-    <p className="chartp-note">
-      Left and right sums bracket the true area from either side, and converge on it as the count
-      rises.
-    </p>
-  </>
-);
+
+      <Row label="Definite ∫" hint="Integrate over [a, b]">
+        <div style={{ display: 'flex', gap: 6, width: '100%' }}>
+          <OptionalNumber
+            label="Lower bound a"
+            placeholder={String(spec.xMin ?? -10)}
+            value={spec.integralBounds?.a}
+            onChange={(v) =>
+              patch({
+                integralBounds: {
+                  a: v ?? (spec.xMin ?? -10),
+                  b: spec.integralBounds?.b ?? (spec.xMax ?? 10),
+                },
+              })
+            }
+          />
+          <OptionalNumber
+            label="Upper bound b"
+            placeholder={String(spec.xMax ?? 10)}
+            value={spec.integralBounds?.b}
+            onChange={(v) =>
+              patch({
+                integralBounds: {
+                  a: spec.integralBounds?.a ?? (spec.xMin ?? -10),
+                  b: v ?? (spec.xMax ?? 10),
+                },
+              })
+            }
+          />
+        </div>
+      </Row>
+
+      {analysis?.integralVal !== null && analysis?.integralVal !== undefined && (
+        <div className="chartp-readout-card">
+          <span className="chartp-readout-title">∫ Area [a, b]:</span>
+          <strong style={{ fontSize: 11, fontFamily: 'monospace' }}>
+            {analysis.integralVal.toFixed(4)}
+          </strong>
+        </div>
+      )}
+      {spec.integralBounds && (
+        <button
+          type="button"
+          className="chartp-add chartp-add--quiet"
+          style={{ marginTop: 4 }}
+          onClick={() => patch({ integralBounds: undefined })}
+        >
+          <Trash2 size={12} /> Clear ∫ bounds
+        </button>
+      )}
+
+      {analysis?.roots && analysis.roots.length > 0 && (
+        <div className="chartp-readout-card">
+          <span className="chartp-readout-title">Roots:</span>
+          <div className="chartp-readout-list">
+            {analysis.roots.slice(0, 6).map((r, i) => (
+              <button
+                key={i}
+                type="button"
+                className="chartp-pill-chip"
+                data-tooltip="Click to copy root"
+                onClick={() => navigator.clipboard.writeText(String(r))}
+              >
+                x = {Number(r.toFixed(3))}
+              </button>
+            ))}
+          </div>
+        </div>
+      )}
+
+      {analysis?.extrema && analysis.extrema.length > 0 && (
+        <div className="chartp-readout-card">
+          <span className="chartp-readout-title">Extrema:</span>
+          <div className="chartp-readout-list">
+            {analysis.extrema.slice(0, 6).map((e, i) => (
+              <button
+                key={i}
+                type="button"
+                className="chartp-pill-chip"
+                data-tooltip={`Click to copy ${e.kind}`}
+                onClick={() => navigator.clipboard.writeText(`(${e.x}, ${e.y})`)}
+              >
+                {e.kind === 'max' ? '▲' : '▼'} ({Number(e.x.toFixed(2))}, {Number(e.y.toFixed(2))})
+              </button>
+            ))}
+          </div>
+        </div>
+      )}
+
+      <Row label="Rectangles" hint="Riemann strips, and their sum">
+        <SegmentedControl
+          fill
+          ariaLabel="Riemann rectangles"
+          value={spec.riemann ? spec.riemann.mode : 'off'}
+          onChange={(v) =>
+            patch({
+              riemann:
+                v === 'off'
+                  ? undefined
+                  : { n: spec.riemann?.n ?? 12, mode: v as 'left' | 'right' | 'midpoint' },
+            })
+          }
+          segments={[
+            { value: 'off', label: 'Off' },
+            { value: 'left', label: 'L', hint: 'Left corner meets the curve' },
+            { value: 'midpoint', label: 'M', hint: 'Midpoint meets the curve' },
+            { value: 'right', label: 'R', hint: 'Right corner meets the curve' },
+          ]}
+        />
+      </Row>
+      {spec.riemann && (
+        <Row label="Count">
+          <NumberStepper
+            value={spec.riemann.n}
+            min={1}
+            max={200}
+            onChange={(n) => patch({ riemann: { ...spec.riemann!, n } })}
+          />
+        </Row>
+      )}
+      <p className="chartp-note">
+        Left and right sums bracket the true area from either side, and converge on it as the count
+        rises.
+      </p>
+    </>
+  );
+};

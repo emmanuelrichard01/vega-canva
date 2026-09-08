@@ -1,4 +1,5 @@
 import type { ChartLayout, Point } from './chartLayout';
+import { traceMathPlot, type MathTraceInfo } from './chartTrace';
 
 /**
  * What is under the pointer, in a chart's own coordinate space.
@@ -33,6 +34,11 @@ export interface ChartHit {
   entries: ChartHitEntry[];
   /** Where the readout should point, in node-local coordinates. */
   anchor: Point;
+  categoryIndex?: number;
+  seriesIndex?: number;
+  mathTrace?: MathTraceInfo;
+  deltaVsTarget?: string;
+  pctOfTotal?: string;
 }
 
 /**
@@ -53,6 +59,7 @@ export interface HitOptions {
   seriesNames: string[];
   /** Pie and funnel name their categories; everything else names its series. */
   keyedOnCategories: boolean;
+  referenceValue?: number;
 }
 
 /**
@@ -80,6 +87,358 @@ export function chartHitTest(
     point.y <= plot.y + plot.height + REACH;
   if (!inside) return null;
 
+  // ---- 2D plane plots (heatmaps, contours, vector fields, slope fields) ---
+  if (layout.mathPlot?.isTwoVariable && layout.mathPlot.curves.length > 0) {
+    const { xMin, xMax, yMin, yMax } = layout.mathPlot.domain;
+    const xSpan = xMax - xMin;
+    const ySpan = yMax - yMin;
+    if (xSpan > 0 && ySpan > 0) {
+      const clampedX = Math.max(plot.x, Math.min(plot.x + plot.width, point.x));
+      const clampedY = Math.max(plot.y, Math.min(plot.y + plot.height, point.y));
+      const xVal = xMin + ((clampedX - plot.x) / plot.width) * xSpan;
+      const yVal = yMin + ((plot.y + plot.height - clampedY) / plot.height) * ySpan;
+      const kind = layout.mathPlot.kind;
+
+      if (kind === 'slopeField') {
+        const curve = layout.mathPlot.curves[0];
+        const slope = curve ? curve.evaluate(xVal, yVal) : NaN;
+        if (Number.isFinite(slope)) {
+          const angleRad = Math.atan(slope);
+          const angleDeg = (angleRad * 180) / Math.PI;
+          const scaleX = plot.width / xSpan;
+          const scaleY = plot.height / ySpan;
+          const scrAngle = Math.atan(-slope * (scaleY / scaleX));
+          const NEEDLE_LEN = 16;
+          const cosA = Math.cos(scrAngle);
+          const sinA = Math.sin(scrAngle);
+          const needle: [Point, Point] = [
+            { x: clampedX - NEEDLE_LEN * cosA, y: clampedY - NEEDLE_LEN * sinA },
+            { x: clampedX + NEEDLE_LEN * cosA, y: clampedY + NEEDLE_LEN * sinA },
+          ];
+
+          return {
+            label: `(${Number(xVal.toFixed(2))}, ${Number(yVal.toFixed(2))})`,
+            entries: [
+              {
+                name: 'dy/dx',
+                value: slope,
+                color: curve.color,
+                text: `slope = ${Number(slope.toFixed(3))}`,
+              },
+              {
+                name: 'θ',
+                value: angleDeg,
+                color: curve.color,
+                text: `angle = ${Number(angleDeg.toFixed(1))}°`,
+              },
+            ],
+            anchor: point,
+            mathTrace: {
+              x: xVal,
+              y: yVal,
+              screenPoint: { x: clampedX, y: clampedY },
+              curveIndex: 0,
+              curveColor: curve.color,
+              curveName: curve.source,
+              slope,
+              tangentSegment: needle,
+              crosshair: {
+                xRay: [{ x: clampedX, y: clampedY }, { x: clampedX, y: plot.y + plot.height }],
+                yRay: [{ x: clampedX, y: clampedY }, { x: plot.x, y: clampedY }],
+              },
+              fieldVector: {
+                u: 1,
+                v: slope,
+                magnitude: Math.hypot(1, slope),
+                angleDeg,
+                segment: needle,
+              },
+            },
+          };
+        }
+      } else if (kind === 'vectorField') {
+        const curveP = layout.mathPlot.curves[0];
+        const curveQ = layout.mathPlot.curves[1];
+        const u = curveP ? curveP.evaluate(xVal, yVal) : 0;
+        const v = curveQ ? curveQ.evaluate(xVal, yVal) : 0;
+        if (Number.isFinite(u) && Number.isFinite(v)) {
+          const mag = Math.hypot(u, v);
+          const angleRad = Math.atan2(v, u);
+          const angleDeg = (angleRad * 180) / Math.PI;
+
+          const scaleX = plot.width / xSpan;
+          const scaleY = plot.height / ySpan;
+          const scrAngle = Math.atan2(-v * scaleY, u * scaleX);
+          const VEC_LEN = 20;
+          const cosA = Math.cos(scrAngle);
+          const sinA = Math.sin(scrAngle);
+          const needle: [Point, Point] = [
+            { x: clampedX - VEC_LEN * 0.3 * cosA, y: clampedY - VEC_LEN * 0.3 * sinA },
+            { x: clampedX + VEC_LEN * 0.7 * cosA, y: clampedY + VEC_LEN * 0.7 * sinA },
+          ];
+
+          return {
+            label: `(${Number(xVal.toFixed(2))}, ${Number(yVal.toFixed(2))})`,
+            entries: [
+              {
+                name: 'F(x,y)',
+                value: mag,
+                color: curveP?.color || '#06B6D4',
+                text: `⟨${Number(u.toFixed(2))}, ${Number(v.toFixed(2))}⟩`,
+              },
+              {
+                name: '|F|',
+                value: mag,
+                color: curveP?.color || '#06B6D4',
+                text: `magnitude = ${Number(mag.toFixed(3))}`,
+              },
+              {
+                name: 'θ',
+                value: angleDeg,
+                color: curveP?.color || '#06B6D4',
+                text: `dir = ${Number(angleDeg.toFixed(1))}°`,
+              },
+            ],
+            anchor: point,
+            mathTrace: {
+              x: xVal,
+              y: yVal,
+              screenPoint: { x: clampedX, y: clampedY },
+              curveIndex: 0,
+              curveColor: curveP?.color || '#06B6D4',
+              curveName: 'F(x,y)',
+              slope: u !== 0 ? v / u : Infinity,
+              tangentSegment: needle,
+              crosshair: {
+                xRay: [{ x: clampedX, y: clampedY }, { x: clampedX, y: plot.y + plot.height }],
+                yRay: [{ x: clampedX, y: clampedY }, { x: plot.x, y: clampedY }],
+              },
+              fieldVector: {
+                u,
+                v,
+                magnitude: mag,
+                angleDeg,
+                segment: needle,
+              },
+            },
+          };
+        }
+      } else if (kind === 'implicit') {
+        const curve = layout.mathPlot.curves[0];
+        const fVal = curve ? curve.evaluate(xVal, yVal) : NaN;
+        if (Number.isFinite(fVal)) {
+          const onCurve = Math.abs(fVal) < 0.08;
+          return {
+            label: `(${Number(xVal.toFixed(2))}, ${Number(yVal.toFixed(2))})`,
+            entries: [
+              {
+                name: curve.source,
+                value: fVal,
+                color: curve.color,
+                text: `F(x,y) = ${Number(fVal.toFixed(3))}${onCurve ? ' · On Curve' : ''}`,
+              },
+            ],
+            anchor: point,
+          };
+        }
+      } else {
+        // heatmap, contour
+        const curve = layout.mathPlot.curves[0];
+        if (curve) {
+          const zVal = curve.evaluate(xVal, yVal);
+          if (Number.isFinite(zVal)) {
+            const h = Math.max(1e-5, xSpan * 1e-4);
+            const zXPlus = curve.evaluate(xVal + h, yVal);
+            const zXMinus = curve.evaluate(xVal - h, yVal);
+            const zYPlus = curve.evaluate(xVal, yVal + h);
+            const zYMinus = curve.evaluate(xVal, yVal - h);
+            const dzdx = (zXPlus - zXMinus) / (2 * h);
+            const dzdy = (zYPlus - zYMinus) / (2 * h);
+            const gradMag = Math.hypot(dzdx, dzdy);
+
+            return {
+              label: `(${Number(xVal.toFixed(2))}, ${Number(yVal.toFixed(2))})`,
+              entries: [
+                {
+                  name: curve.source,
+                  value: zVal,
+                  color: curve.color,
+                  text: `z = ${Number(zVal.toFixed(3))}`,
+                },
+                ...(Number.isFinite(gradMag)
+                  ? [
+                      {
+                        name: '|∇f|',
+                        value: gradMag,
+                        color: curve.color,
+                        text: `gradient = ${Number(gradMag.toFixed(2))}`,
+                      },
+                    ]
+                  : []),
+              ],
+              anchor: point,
+            };
+          }
+        }
+      }
+    }
+  }
+
+  // ---- 1D math plots: live continuous curve tracer ------------------------
+  if (layout.mathPlot && !layout.mathPlot.isTwoVariable && layout.mathPlot.curves.length > 0) {
+    const trace = traceMathPlot(layout.plot, layout.mathPlot, point);
+    if (trace) {
+      const kind = layout.mathPlot.kind;
+
+      if (kind === 'parametric') {
+        const tVal = trace.parameterValue ?? 0;
+        const tStr = Number(tVal.toFixed(3)).toString();
+        const xStr = Number(trace.x.toFixed(3)).toString();
+        const yStr = Number(trace.y.toFixed(3)).toString();
+
+        const entries: ChartHitEntry[] = [
+          {
+            name: 'P(t)',
+            value: trace.y,
+            color: trace.curveColor,
+            text: `(${xStr}, ${yStr})`,
+          },
+        ];
+
+        if (trace.parametricVelocity) {
+          const { vx, vy, speed } = trace.parametricVelocity;
+          entries.push({
+            name: 'v(t)',
+            value: speed,
+            color: trace.curveColor,
+            text: `⟨${Number(vx.toFixed(2))}, ${Number(vy.toFixed(2))}⟩`,
+          });
+          entries.push({
+            name: '|v|',
+            value: speed,
+            color: trace.curveColor,
+            text: `speed = ${Number(speed.toFixed(3))}`,
+          });
+        }
+
+        const isVert =
+          Math.abs(trace.parametricVelocity?.vx ?? 0) < 1e-4 &&
+          Math.abs(trace.parametricVelocity?.vy ?? 0) > 1e-4;
+        const slopeStr = Number.isFinite(trace.slope)
+          ? `slope = ${Number(trace.slope.toFixed(2))}`
+          : isVert
+            ? 'vertical'
+            : 'undefined';
+
+        entries.push({
+          name: 'dy/dx',
+          value: trace.slope,
+          color: '#06B6D4',
+          text: slopeStr,
+        });
+
+        if (trace.tangentEquation) {
+          entries.push({
+            name: 'Tangent',
+            value: trace.slope,
+            color: '#06B6D4',
+            text: trace.tangentEquation,
+          });
+        }
+
+        return {
+          label: `t = ${tStr}`,
+          entries,
+          anchor: trace.screenPoint,
+          mathTrace: trace,
+        };
+      }
+
+      if (kind === 'polarPlot') {
+        const degStr = Number((trace.polarAngleDeg ?? 0).toFixed(1)).toString();
+        const radStr = Number((trace.polarAngleRad ?? 0).toFixed(3)).toString();
+        const rStr = Number((trace.polarRadius ?? 0).toFixed(3)).toString();
+        const xStr = Number(trace.x.toFixed(3)).toString();
+        const yStr = Number(trace.y.toFixed(3)).toString();
+
+        const entries: ChartHitEntry[] = [
+          {
+            name: 'r(θ)',
+            value: trace.polarRadius ?? 0,
+            color: trace.curveColor,
+            text: `r = ${rStr}`,
+          },
+          {
+            name: '(x, y)',
+            value: trace.y,
+            color: trace.curveColor,
+            text: `(${xStr}, ${yStr})`,
+          },
+          {
+            name: 'dy/dx',
+            value: trace.slope,
+            color: '#06B6D4',
+            text: Number.isFinite(trace.slope)
+              ? `slope = ${Number(trace.slope.toFixed(2))}`
+              : 'vertical',
+          },
+        ];
+
+        if (trace.tangentEquation) {
+          entries.push({
+            name: 'Tangent',
+            value: trace.slope,
+            color: '#06B6D4',
+            text: trace.tangentEquation,
+          });
+        }
+
+        return {
+          label: `θ = ${degStr}° (${radStr} rad)`,
+          entries,
+          anchor: trace.screenPoint,
+          mathTrace: trace,
+        };
+      }
+
+      // Default 1D Cartesian function: f(x)
+      const varName = layout.mathPlot.variable || 'x';
+      const slopeStr = Number(trace.slope.toFixed(2)).toString();
+      const xStr = Number(trace.x.toFixed(3)).toString();
+      const yStr = Number(trace.y.toFixed(3)).toString();
+
+      return {
+        label: `${varName}: ${xStr}`,
+        entries: [
+          {
+            name: trace.curveName,
+            value: trace.y,
+            color: trace.curveColor,
+            text: `f(${xStr}) = ${yStr}`,
+          },
+          {
+            name: `f'(${varName})`,
+            value: trace.slope,
+            color: trace.curveColor,
+            text: `slope = ${slopeStr}`,
+          },
+          ...(trace.tangentEquation
+            ? [
+                {
+                  name: 'Tangent',
+                  value: trace.slope,
+                  color: '#06B6D4',
+                  text: trace.tangentEquation,
+                },
+              ]
+            : []),
+        ],
+        anchor: trace.screenPoint,
+        mathTrace: trace,
+      };
+    }
+  }
+
   // ---- slices: the pointer is inside one wedge or it is not ---------------
   if (layout.slices.length) {
     for (const s of layout.slices) {
@@ -96,6 +455,7 @@ export function chartHitTest(
 
       return {
         label: options.categories[s.index] ?? `Slice ${s.index + 1}`,
+        categoryIndex: s.index,
         entries: [
           {
             name: `${Math.round(s.fraction * 100)}%`,
@@ -111,7 +471,10 @@ export function chartHitTest(
   }
 
   // ---- bars: nearest band, then everything in it --------------------------
-  if (layout.bars.length) {
+  // Guarded on categories: heatmaps and Riemann rectangles emit bars for painting
+  // but have no categories. Hit-testing thousands of heatmap cells along a 1D axis
+  // is both expensive and produces blank category tooltips.
+  if (layout.bars.length && options.categories.length > 0) {
     let best: { index: number; distance: number } | null = null;
     for (const b of layout.bars) {
       // Distance along the *category* axis only, which is what makes a whole
@@ -127,8 +490,19 @@ export function chartHitTest(
     const inBand = layout.bars.filter((b) => b.categoryIndex === best!.index);
     if (!inBand.length) return null;
 
+    let deltaVsTarget: string | undefined;
+    if (typeof options.referenceValue === 'number' && Number.isFinite(options.referenceValue)) {
+      const firstVal = inBand[0]?.value;
+      if (typeof firstVal === 'number') {
+        const d = firstVal - options.referenceValue;
+        const sign = d > 0 ? '+' : '';
+        deltaVsTarget = `${sign}${options.format(d)} vs target`;
+      }
+    }
+
     return {
       label: options.categories[best.index] ?? '',
+      categoryIndex: best.index,
       entries: inBand.map((b) => ({
         name: options.keyedOnCategories
           ? (options.categories[b.categoryIndex] ?? '')
@@ -141,6 +515,7 @@ export function chartHitTest(
         x: inBand.reduce((a, b) => a + b.x + b.width / 2, 0) / inBand.length,
         y: Math.min(...inBand.map((b) => b.y)),
       },
+      deltaVsTarget,
     };
   }
 

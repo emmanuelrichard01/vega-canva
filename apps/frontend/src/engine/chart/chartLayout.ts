@@ -37,11 +37,21 @@ import {
   niceDomain,
   type Domain,
 } from './scales';
-import { catmullRomPoints } from '../model/polyline';
+import { monotoneSplinePoints } from './monotoneSpline';
+import { integrateStreamline } from './streamline';
+import { linearRegression, optimalBinCount, kernelDensityEstimation } from './chartStats';
 import { compileCurves, samplePlot, sampleParametric, samplePolar } from './chartPlot';
-import { differentiate, findExtrema, findRoots, integrate } from './chartAnalysis';
+import {
+  differentiate,
+  findExtrema,
+  findRoots,
+  integrate,
+  findIntersections,
+  refineExtremum,
+} from './chartAnalysis';
 import { contourLevels, marchingSquares } from './marchingSquares';
 import { slopeField, vectorField } from './vectorField';
+import { rampColor } from './colorRamps';
 import {
   bucketize,
   isBarLike,
@@ -54,6 +64,7 @@ import {
   isStacked,
   isTransposed,
   isTwoVariable,
+  getPaletteColors,
   normalizeSpec,
   resolveChartOptions,
   seriesColor,
@@ -62,6 +73,7 @@ import {
   toStaircase,
   type ChartSpec,
 } from './chartTypes';
+import type { MathPlotMeta } from './chartTrace';
 
 export interface Point {
   x: number;
@@ -94,6 +106,10 @@ export interface ChartBar extends Rect {
   value: number;
   /** Bars below the baseline, so a renderer can label them underneath. */
   negative: boolean;
+  /** Whether corners are rounded. Heatmaps and Riemann rectangles are sharp. */
+  rounded?: boolean;
+  /** Custom corner radius in pixels. */
+  cornerRadius?: number;
 }
 
 export interface ChartRun {
@@ -102,6 +118,10 @@ export interface ChartRun {
   points: Point[];
   color: string;
   seriesIndex: number;
+  /** Stroke thickness in pixels (1 to 5). */
+  width?: number;
+  /** Dash style. */
+  style?: 'solid' | 'dashed' | 'dotted';
 }
 
 export interface ChartArea extends ChartRun {
@@ -115,6 +135,7 @@ export interface ChartDot extends Point {
   seriesIndex: number;
   categoryIndex: number;
   value: number;
+  shape?: 'none' | 'circle' | 'square' | 'hollow' | 'ring';
 }
 
 export interface ChartSlice {
@@ -201,6 +222,16 @@ export interface ChartLayout {
   valueLabels: ChartLabel[];
   legend: ChartLegendEntry[];
   title: ChartLabel | null;
+  /** Editorial subtitle beneath the title. */
+  subtitle?: ChartLabel | null;
+  /** Footnote or source citation at the chart footer. */
+  footnote?: ChartLabel | null;
+  /** Horizontal axis unit/name label. */
+  xAxisTitle?: ChartLabel | null;
+  /** Vertical axis unit/name label. */
+  yAxisTitle?: ChartLabel | null;
+  /** Shaded target corridor / tolerance band across the value axis. */
+  toleranceBand?: { y1: number; y2: number; label?: string; color?: string } | null;
   /** Radar only: the value rings and the category spokes. */
   rings: ChartPolarRing[];
   spokes: ChartPolarSpoke[];
@@ -208,6 +239,26 @@ export interface ChartLayout {
   reference: ChartReference | null;
   /** The resolved value-axis domain, exposed for tests and the panel. */
   domain: Domain;
+  /** Math plot analytical and evaluation metadata for interactive tracing */
+  mathPlot?: MathPlotMeta;
+  /** Trendline (linear regression) for scatter and bubble plots */
+  trendline?: {
+    line: [Point, Point];
+    slope: number;
+    intercept: number;
+    r2: number;
+    label: string;
+  } | null;
+  /** Gaussian Kernel Density Estimation (KDE) curve for histograms */
+  kdeCurve?: Point[] | null;
+  /** Interactive solution curves for slope and vector fields */
+  streamlines?: Array<{ points: Point[]; seed: Point }>;
+  /** Horizontal connector bridges between waterfall bars */
+  waterfallBridges?: Array<{ x1: number; y1: number; x2: number; y2: number }>;
+  /** Funnel connecting trapezoidal polygons between consecutive stages */
+  funnelHulls?: Array<{ polygon: Point[]; deltaPct: string }>;
+  /** Donut central summary metric */
+  donutMetric?: { value: string; label: string; x: number; y: number } | null;
 }
 
 /**
@@ -267,9 +318,11 @@ export function layoutChart(
     rawSpec.kind === 'histogram'
       ? (() => {
           const opts0 = resolveChartOptions(rawSpec);
+          const rawVals = rawSpec.series.flatMap((s) => s.values.filter((v): v is number => typeof v === 'number'));
+          const numBuckets = rawSpec.buckets ?? (rawVals.length >= 4 ? optimalBinCount(rawVals) : opts0.buckets);
           const { categories, counts } = bucketize(
-            rawSpec.series.flatMap((s) => s.values),
-            opts0.buckets
+            rawVals,
+            numBuckets
           );
           return {
             ...rawSpec,
@@ -285,9 +338,37 @@ export function layoutChart(
         })()
       : rawSpec;
 
+  // Pareto Top-N category consolidation if configured
+  const aggregated =
+    bucketed.topN && bucketed.topN >= 2 && bucketed.categories.length > bucketed.topN && !isPlot(bucketed.kind)
+      ? (() => {
+          const preSorted = sortSpec({
+            ...bucketed,
+            sort: bucketed.sort && bucketed.sort !== 'none' ? bucketed.sort : 'valueDesc',
+          });
+          const n = bucketed.topN!;
+          const topCats = preSorted.categories.slice(0, n);
+          const newSeries = preSorted.series.map((s) => {
+            const topVals = s.values.slice(0, n);
+            const otherVals = s.values.slice(n).filter((v): v is number => typeof v === 'number' && Number.isFinite(v));
+            const otherSum = otherVals.length ? otherVals.reduce((a, b) => a + b, 0) : null;
+            return {
+              ...s,
+              values: [...topVals, otherSum],
+            };
+          });
+          return {
+            ...preSorted,
+            categories: [...topCats, 'Other'],
+            series: newSeries,
+            sort: 'none' as const,
+          };
+        })()
+      : bucketed;
+
   // Sorting is a view, applied before layout and never written back --
   // see `sortSpec`. Done here so every kind gets it for free.
-  const spec = sortSpec(normalizeSpec(bucketed));
+  const spec = sortSpec(normalizeSpec(aggregated));
   const opts = resolveChartOptions(spec);
 
   const empty: ChartLayout = {
@@ -324,39 +405,105 @@ export function layoutChart(
     top += size + Math.round(TITLE_GAP * (size / TITLE_SIZE));
   }
 
+  let subtitle: ChartLabel | null = null;
+  if (spec.subtitle) {
+    const size = 11;
+    subtitle = {
+      text: spec.subtitle,
+      x: PAD,
+      y: top,
+      width: width - PAD * 2,
+      align: 'left',
+      fontSize: size,
+    };
+    top += size + 6;
+  }
+
+  let footnote: ChartLabel | null = null;
+  let footnoteReserved = 0;
+  if (spec.footnote) {
+    const size = 9;
+    footnoteReserved = size + 6;
+    footnote = {
+      text: spec.footnote,
+      x: PAD,
+      y: height - PAD / 2 - size,
+      width: width - PAD * 2,
+      align: 'left',
+      fontSize: size,
+    };
+  }
+
   // The legend sits in a band of its own under the plot, clear of the
   // category labels above it.
   const legendHeight = opts.showLegend ? LEGEND_SIZE + 16 : 0;
-  const bottomReserved = PAD + legendHeight;
+  const bottomReserved = PAD + legendHeight + footnoteReserved;
 
-  if (isRadial(spec.kind)) {
-    return layoutRadial(spec, opts, width, height, top, bottomReserved, title, measure, empty);
-  }
-  if (isPolar(spec.kind)) {
-    return layoutPolar(spec, opts, width, height, top, bottomReserved, title, measure, empty);
-  }
-  if (isTwoVariable(spec.kind)) {
-    return layoutField(spec, opts, width, height, top, bottomReserved, title, measure, empty);
-  }
-  if (isPlot(spec.kind)) {
-    return layoutPlot(spec, opts, width, height, top, bottomReserved, title, measure, empty);
+  let layout = isRadial(spec.kind)
+    ? layoutRadial(spec, opts, width, height, top, bottomReserved, title, measure, empty)
+    : isPolar(spec.kind)
+    ? layoutPolar(spec, opts, width, height, top, bottomReserved, title, measure, empty)
+    : isTwoVariable(spec.kind)
+    ? layoutField(spec, opts, width, height, top, bottomReserved, title, measure, empty)
+    : isPlot(spec.kind)
+    ? layoutPlot(spec, opts, width, height, top, bottomReserved, title, measure, empty)
+    : (() => {
+        let prepared = spec;
+        if (isPercentStacked(spec.kind)) {
+          prepared = toPercentStack(spec);
+        }
+        return layoutCartesian(prepared, opts, width, height, top, bottomReserved, title, measure, empty);
+      })();
+
+  let xAxisTitle: ChartLabel | null = null;
+  if (spec.xAxisLabel && layout.plot.width > 0) {
+    xAxisTitle = {
+      text: spec.xAxisLabel,
+      x: layout.plot.x + layout.plot.width / 2,
+      y: layout.plot.y + layout.plot.height + 22,
+      width: layout.plot.width,
+      align: 'center',
+      fontSize: 11,
+    };
   }
 
-  /**
-   * The two kinds that change the numbers before anything is placed.
-   *
-   * Done here, once, so every mark builder below sees ordinary data. The
-   * alternative is a bucketing branch inside the bar builder and a normalising
-   * branch inside the stack builder, which is two transforms living where the
-   * geometry lives and no way to test either on its own.
-   */
-  // The histogram has already been bucketed above, before normalisation.
-  let prepared = spec;
-  if (isPercentStacked(spec.kind)) {
-    prepared = toPercentStack(spec);
+  let yAxisTitle: ChartLabel | null = null;
+  if (spec.yAxisLabel && layout.plot.height > 0) {
+    yAxisTitle = {
+      text: spec.yAxisLabel,
+      x: PAD,
+      y: layout.plot.y + layout.plot.height / 2,
+      width: layout.plot.height,
+      align: 'center',
+      fontSize: 11,
+    };
   }
 
-  return layoutCartesian(prepared, opts, width, height, top, bottomReserved, title, measure, empty);
+  let toleranceBand: { y1: number; y2: number; label?: string; color?: string } | null = null;
+  if (spec.toleranceBand && layout.domain && !isRadial(spec.kind) && !isPolar(spec.kind)) {
+    const [dMin, dMax] = layout.domain;
+    if (dMax > dMin) {
+      const scaleY = (v: number) =>
+        layout.plot.y + layout.plot.height - ((v - dMin) / (dMax - dMin)) * layout.plot.height;
+      const yA = scaleY(spec.toleranceBand.max);
+      const yB = scaleY(spec.toleranceBand.min);
+      toleranceBand = {
+        y1: Math.min(yA, yB),
+        y2: Math.max(yA, yB),
+        label: spec.toleranceBand.label,
+        color: spec.toleranceBand.color,
+      };
+    }
+  }
+
+  return {
+    ...layout,
+    subtitle,
+    footnote,
+    xAxisTitle,
+    yAxisTitle,
+    toleranceBand: layout.toleranceBand ?? toleranceBand,
+  };
 }
 
 function layoutCartesian(
@@ -551,24 +698,52 @@ function layoutCartesian(
         ? {
             x: lo, y: bandStart, width: len, height: lane.width,
             color, seriesIndex, categoryIndex, value: v, negative: v < 0,
+            cornerRadius: spec.cornerRadius,
           }
         : {
             x: bandStart, y: lo, width: lane.width, height: len,
             color, seriesIndex, categoryIndex, value: v, negative: v < 0,
+            cornerRadius: spec.cornerRadius,
           }
     );
 
     if (opts.showValues) {
-      const text = formatValue(v, spec);
+      let text = formatValue(v, spec);
+      if (spec.valueFormat === 'percent' || spec.valueFormat === 'both') {
+        const catVals = spec.series
+          .map((s) => s.values[categoryIndex])
+          .filter((x): x is number => typeof x === 'number' && Number.isFinite(x) && x > 0);
+        const catSum = catVals.reduce((a, b) => a + b, 0);
+        if (catSum > 0) {
+          const share = (v / catSum) * 100;
+          const places = Math.min(2, Math.max(0, Math.round(spec.decimals ?? 0)));
+          const pctStr = `${share.toFixed(places)}%`;
+          text = spec.valueFormat === 'percent' ? pctStr : `${text} (${pctStr})`;
+        }
+      }
+      const isInside = spec.valuePlacement === 'inside';
+      const isCenter = spec.valuePlacement === 'center';
       valueLabels.push(
         transposed
           ? {
-              text, x: lo + len + 4, y: bandStart + lane.width / 2 - LABEL_SIZE / 2,
-              width: 60, align: 'left', fontSize: LABEL_SIZE,
+              text,
+              x: isInside ? lo + len - 6 : isCenter ? lo + len / 2 : lo + len + 4,
+              y: bandStart + lane.width / 2 - LABEL_SIZE / 2,
+              width: 60,
+              align: isInside ? 'right' : isCenter ? 'center' : 'left',
+              fontSize: LABEL_SIZE,
             }
           : {
-              text, x: bandStart, y: v >= 0 ? lo - LABEL_SIZE - 2 : lo + len + 2,
-              width: lane.width, align: 'center', fontSize: LABEL_SIZE,
+              text,
+              x: bandStart,
+              y: isInside
+                ? v >= 0 ? lo + 4 : lo + len - LABEL_SIZE - 4
+                : isCenter
+                ? lo + len / 2 - LABEL_SIZE / 2
+                : v >= 0 ? lo - LABEL_SIZE - 2 : lo + len + 2,
+              width: lane.width,
+              align: 'center',
+              fontSize: LABEL_SIZE,
             }
       );
     }
@@ -683,20 +858,39 @@ function layoutCartesian(
             kind === 'bubble'
               ? 4 + Math.sqrt(Math.abs(v) / extent.absMax) * 16
               : 4;
-          dots.push({ ...p, radius, color, seriesIndex: si, categoryIndex: ci, value: v });
+          dots.push({
+            ...p,
+            radius,
+            color,
+            seriesIndex: si,
+            categoryIndex: ci,
+            value: v,
+            shape: spec.markerShape ?? 'circle',
+          });
         }
         // Every run kind, not three of them. `scatter`, `bubble` and
         // `stackedArea` were excluded for no reason anybody recorded, so the
         // Values toggle was offered on them and did nothing.
         if (opts.showValues) {
-          valueLabels.push({
-            text: formatValue(v, spec),
-            x: p.x - band.step / 2,
-            y: p.y - LABEL_SIZE - 5,
-            width: band.step,
-            align: 'center',
-            fontSize: LABEL_SIZE,
-          });
+          let shouldLabel = true;
+          if (spec.extremesOnly && (kind === 'line' || kind === 'area')) {
+            const numVals = s.values.filter((x): x is number => typeof x === 'number' && Number.isFinite(x));
+            if (numVals.length > 0) {
+              const minVal = Math.min(...numVals);
+              const maxVal = Math.max(...numVals);
+              shouldLabel = v === minVal || v === maxVal;
+            }
+          }
+          if (shouldLabel) {
+            valueLabels.push({
+              text: formatValue(v, spec),
+              x: p.x - band.step / 2,
+              y: p.y - LABEL_SIZE - 5,
+              width: band.step,
+              align: 'center',
+              fontSize: LABEL_SIZE,
+            });
+          }
         }
       });
       if (current.length) {
@@ -716,11 +910,11 @@ function layoutCartesian(
          */
         const drawn =
           kind === 'step'
-            ? toStaircase(points)
+            ? toStaircase(points, spec.stepMode)
             : opts.curved
-              ? catmullRomPoints(points)
+              ? monotoneSplinePoints(points, transposed)
               : points;
-        runs.push({ points: drawn, color, seriesIndex: si });
+        runs.push({ points: drawn, color, seriesIndex: si, width: spec.lineWidth ?? 2 });
 
         if ((kind === 'area' || kind === 'stackedArea') && drawn.length > 1) {
           const base = baseSegments[segIndex];
@@ -741,15 +935,116 @@ function layoutCartesian(
           areas.push({ points: drawn, color, seriesIndex: si, polygon: [...drawn, ...floor] });
         }
         if (kind === 'line' || kind === 'step') {
-          for (const p of points) {
-            dots.push({
-              ...p, radius: 3, color, seriesIndex: si,
-              categoryIndex: -1, value: Number.NaN,
-            });
+          if (spec.markerShape !== 'none') {
+            for (const p of points) {
+              dots.push({
+                ...p,
+                radius: 3,
+                color,
+                seriesIndex: si,
+                categoryIndex: -1,
+                value: Number.NaN,
+                shape: spec.markerShape ?? 'circle',
+              });
+            }
           }
         }
       });
     });
+  }
+
+  // Waterfall horizontal connector bridges
+  const waterfallBridges: Array<{ x1: number; y1: number; x2: number; y2: number }> = [];
+  if (waterfall && waterfall.length > 1) {
+    for (let i = 0; i < waterfall.length - 1; i += 1) {
+      const yBridge = value(waterfall[i].to);
+      const xStart = band.at(i) + band.bandWidth;
+      const xEnd = band.at(i + 1);
+      if (transposed) {
+        waterfallBridges.push({
+          x1: yBridge,
+          y1: band.at(i) + band.bandWidth,
+          x2: yBridge,
+          y2: band.at(i + 1),
+        });
+      } else {
+        waterfallBridges.push({
+          x1: xStart,
+          y1: yBridge,
+          x2: xEnd,
+          y2: yBridge,
+        });
+      }
+    }
+  }
+
+  // Funnel connecting trapezoidal hulls between consecutive stages
+  const funnelHulls: Array<{ polygon: Point[]; deltaPct: string }> = [];
+  if (kind === 'funnel' && bars.length > 1) {
+    for (let i = 0; i < bars.length - 1; i += 1) {
+      const b1 = bars[i];
+      const b2 = bars[i + 1];
+      const v1 = b1.value;
+      const v2 = b2.value;
+      const drop = v1 > 0 ? ((v1 - v2) / v1) * 100 : 0;
+      const deltaPct = drop > 0 ? `-${drop.toFixed(0)}%` : `+${Math.abs(drop).toFixed(0)}%`;
+      const poly: Point[] = transposed
+        ? [
+            { x: b1.x + b1.width, y: b1.y + b1.height },
+            { x: b2.x + b2.width, y: b2.y },
+            { x: b2.x, y: b2.y },
+            { x: b1.x, y: b1.y + b1.height },
+          ]
+        : [
+            { x: b1.x, y: b1.y + b1.height },
+            { x: b1.x + b1.width, y: b1.y + b1.height },
+            { x: b2.x + b2.width, y: b2.y },
+            { x: b2.x, y: b2.y },
+          ];
+      funnelHulls.push({ polygon: poly, deltaPct });
+    }
+  }
+
+  // Linear regression trendline for scatter and bubble
+  let trendline: ChartLayout['trendline'] = null;
+  if ((kind === 'scatter' || kind === 'bubble') && spec.showTrendline && dots.length >= 2) {
+    const reg = linearRegression(dots.map((d) => ({ x: d.x, y: d.y })));
+    if (reg) {
+      const x1 = plot.x;
+      const y1 = reg.predict(x1);
+      const x2 = plot.x + plot.width;
+      const y2 = reg.predict(x2);
+      trendline = {
+        line: [
+          { x: x1, y: clamp(y1, plot.y, plot.y + plot.height) },
+          { x: x2, y: clamp(y2, plot.y, plot.y + plot.height) },
+        ],
+        slope: reg.slope,
+        intercept: reg.intercept,
+        r2: reg.r2,
+        label: `R² = ${reg.r2.toFixed(3)}`,
+      };
+    }
+  }
+
+  // Gaussian Kernel Density Estimation (KDE) curve for histogram
+  let kdeCurve: Point[] | null = null;
+  if (kind === 'histogram' && spec.showKde && spec.series.length > 0) {
+    const rawValues = spec.series.flatMap((s) => s.values.filter((v): v is number => typeof v === 'number'));
+    if (rawValues.length >= 2 && bars.length > 0) {
+      const numEval = 40;
+      const evalPts: number[] = [];
+      for (let i = 0; i <= numEval; i += 1) {
+        evalPts.push(domain[0] + (i / numEval) * (domain[1] - domain[0]));
+      }
+      const densities = kernelDensityEstimation(rawValues, evalPts);
+      const maxDensity = Math.max(...densities.map((d) => d.density), 1e-6);
+      kdeCurve = densities.map((d, i) => {
+        const screenX = plot.x + (i / numEval) * plot.width;
+        const screenY = plot.y + plot.height - (d.density / maxDensity) * (plot.height * 0.85);
+        return { x: screenX, y: screenY };
+      });
+    }
   }
 
   return {
@@ -770,6 +1065,10 @@ function layoutCartesian(
     spokes: [],
     reference: buildReference(spec, domain, plot, value, transposed, measure),
     domain,
+    trendline,
+    kdeCurve,
+    waterfallBridges,
+    funnelHulls,
   };
 }
 
@@ -1034,6 +1333,7 @@ function layoutField(
   }
 
   const runs: ChartRun[] = [];
+  const bars: ChartBar[] = [];
   const box = { xMin: xDomain[0], xMax: xDomain[1], yMin: yDomain[0], yMax: yDomain[1] };
   // Capped well below the module's own limit: this is recomputed on every
   // resize frame, and a contour at 300 is ninety thousand evaluations *per
@@ -1045,7 +1345,74 @@ function layoutField(
     { x: sx(seg[1].x), y: sy(seg[1].y) },
   ];
 
-  if (spec.kind === 'implicit') {
+  const streamlines: Array<{ points: Point[]; seed: Point }> = [];
+  const seeds = spec.seedPoints || [];
+
+  if (spec.kind === 'heatmap') {
+    /**
+     * A filled cell per sample, emitted as `ChartBar`s so both painters draw
+     * it with the rectangle code they already have.
+     *
+     * The cells overlap by half a pixel on purpose. Adjacent rectangles at
+     * fractional coordinates leave a hairline of background between them that
+     * reads as a grid drawn over the surface -- the one artefact that makes a
+     * heatmap look like a table.
+     */
+    const c = live[0];
+    if (c?.compiled) {
+      const f = (x: number, y: number) => c.compiled!.evaluate(x, y);
+      const n = Math.min(120, Math.max(8, Math.round(spec.resolution ?? 64)));
+      const dx = (box.xMax - box.xMin) / n;
+      const dy = (box.yMax - box.yMin) / n;
+
+      // Sampled once, then painted: the range has to be known before any cell
+      // can be given a colour, and evaluating twice would double the cost of
+      // the most expensive kind here.
+      const grid: number[] = [];
+      let lo = Infinity;
+      let hi = -Infinity;
+      for (let iy = 0; iy < n; iy += 1) {
+        for (let ix = 0; ix < n; ix += 1) {
+          const v = f(box.xMin + (ix + 0.5) * dx, box.yMin + (iy + 0.5) * dy);
+          grid.push(v);
+          if (Number.isFinite(v)) {
+            if (v < lo) lo = v;
+            if (v > hi) hi = v;
+          }
+        }
+      }
+
+      const span = hi - lo;
+      const ramp = spec.ramp ?? 'viridis';
+      const cellW = Math.abs(sx(box.xMin + dx) - sx(box.xMin)) + 0.5;
+      const cellH = Math.abs(sy(box.yMin + dy) - sy(box.yMin)) + 0.5;
+
+      for (let iy = 0; iy < n; iy += 1) {
+        for (let ix = 0; ix < n; ix += 1) {
+          const v = grid[iy * n + ix];
+          // An undefined cell is left unpainted rather than given the bottom
+          // of the ramp: the surface has no value there, and colouring it the
+          // minimum would invent a region of low density.
+          if (!Number.isFinite(v)) continue;
+          const t = span > 0 ? (v - lo) / span : 0.5;
+          const x0 = sx(box.xMin + ix * dx);
+          const y0 = sy(box.yMin + (iy + 1) * dy);
+          bars.push({
+            x: x0,
+            y: y0,
+            width: cellW,
+            height: cellH,
+            color: rampColor(ramp, t),
+            seriesIndex: 0,
+            categoryIndex: iy * n + ix,
+            value: v,
+            negative: false,
+            rounded: false,
+          });
+        }
+      }
+    }
+  } else if (spec.kind === 'implicit') {
     live.forEach((c, i) => {
       const f = (x: number, y: number) => c.compiled!.evaluate(x, y);
       const color = c.color ?? seriesColor(undefined, i);
@@ -1084,6 +1451,22 @@ function layoutField(
           color,
           seriesIndex: 0,
         });
+      }
+
+      if (seeds.length > 0) {
+        for (const seed of seeds) {
+          const line = integrateStreamline(
+            (x, y) => ({ dx: 1, dy: c.compiled!.evaluate(x, y) }),
+            seed,
+            { bounds: box }
+          );
+          if (line.length > 1) {
+            streamlines.push({
+              points: line.map((p) => ({ x: sx(p.x), y: sy(p.y) })),
+              seed: { x: sx(seed.x), y: sy(seed.y) },
+            });
+          }
+        }
       }
     }
   } else {
@@ -1124,18 +1507,36 @@ function layoutField(
           }
         }
       }
+
+      if (seeds.length > 0) {
+        for (const seed of seeds) {
+          const line = integrateStreamline(
+            (x, y) => ({ dx: pc.compiled!.evaluate(x, y), dy: qc.compiled!.evaluate(x, y) }),
+            seed,
+            { bounds: box }
+          );
+          if (line.length > 1) {
+            streamlines.push({
+              points: line.map((p) => ({ x: sx(p.x), y: sy(p.y) })),
+              seed: { x: sx(seed.x), y: sy(seed.y) },
+            });
+          }
+        }
+      }
     }
   }
 
   return {
     plot,
-    bars: [],
+    bars,
     runs,
     areas: [],
     dots: [],
     slices: [],
-    gridLines,
-    baseline,
+    // The surface is the picture, so rules over it would be drawn *under* the
+    // cells and never seen; a heatmap keeps its axis labels and nothing else.
+    gridLines: spec.kind === 'heatmap' ? [] : gridLines,
+    baseline: spec.kind === 'heatmap' ? null : baseline,
     axisLabels,
     categoryLabels,
     valueLabels: [],
@@ -1147,6 +1548,22 @@ function layoutField(
     // meaningful here as on any other chart with one.
     reference: buildReference(spec, yDomain, plot, sy, false, measure),
     domain: yDomain,
+    streamlines,
+    mathPlot: {
+      isTwoVariable: true,
+      kind: spec.kind,
+      variables: ['x', 'y'],
+      domain: { xMin: box.xMin, xMax: box.xMax, yMin: box.yMin, yMax: box.yMax },
+      curves: live
+        .filter((c) => c.compiled)
+        .map((c, idx) => ({
+          source: c.source,
+          color: c.color ?? seriesColor(undefined, idx),
+          evaluate: (x: number, y = 0) => c.compiled!.evaluate(x, y),
+        })),
+      roots: [],
+      extrema: [],
+    },
   };
 }
 
@@ -1200,12 +1617,14 @@ function layoutPlot(
   // Kept so the analysis below reads the *same* samples that were drawn --
   // re-sampling for it would mean a marker that can disagree with its curve.
   let firstSamples: Array<{ x: number; y: number | null }> = [];
+  const allCurveSamples: Array<Array<{ x: number; y: number | null }>> = [];
 
   if (kind === 'function') {
     live.forEach((c, i) => {
       const samples = samplePlot((x) => c.compiled!.evaluate(x), {
         from, to, samples: spec.samples,
       });
+      allCurveSamples.push(samples);
       if (i === 0) firstSamples = samples;
       runsRaw.push({
         points: samples.map((s) => (s.y === null ? null : { x: s.x, y: s.y })),
@@ -1277,7 +1696,10 @@ function layoutPlot(
   const niceY = niceDomain(spec.yMin ?? yDomainRaw[0], spec.yMax ?? yDomainRaw[1], 5, false);
 
   let xDomain: Domain = kind === 'function' ? xDomainRaw : niceX.domain;
-  let yDomain: Domain = [spec.yMin ?? niceY.domain[0], spec.yMax ?? niceY.domain[1]];
+  let yDomain: Domain = [
+    spec.yClipMin ?? spec.yMin ?? niceY.domain[0],
+    spec.yClipMax ?? spec.yMax ?? niceY.domain[1],
+  ];
 
   const yTexts = niceY.ticks.map((t) => formatValue(t, spec));
   const gutterLeft = PAD + Math.max(...yTexts.map((t) => measure(t, LABEL_SIZE)), 0) + TICK_GAP;
@@ -1361,7 +1783,16 @@ function layoutPlot(
   runsRaw.forEach((r, si) => {
     let current: Point[] = [];
     const flush = () => {
-      if (current.length > 1) runs.push({ points: current, color: r.color, seriesIndex: si });
+      if (current.length > 1) {
+        const curveSpec = (spec.functions ?? [])[si];
+        runs.push({
+          points: current,
+          color: r.color,
+          seriesIndex: si,
+          width: curveSpec?.width ?? spec.lineWidth ?? 2,
+          style: curveSpec?.style,
+        });
+      }
       current = [];
     };
     for (const p of r.points) {
@@ -1397,32 +1828,242 @@ function layoutPlot(
   const valueLabels: ChartLabel[] = [];
   const firstCurve = live[0];
 
-  if (kind === 'function' && firstSamples.length && firstCurve?.compiled) {
+  const calculatedRoots: Array<{ x: number; y: number; curveIndex: number }> = [];
+  const calculatedExtrema: Array<{ x: number; y: number; kind: 'min' | 'max'; curveIndex: number }> = [];
+  const calculatedIntersections: Array<{ x: number; y: number; curveIndices: [number, number] }> = [];
+  const calculatedYIntercepts: Array<{ x: number; y: number; curveIndex: number }> = [];
+
+  if (kind === 'function') {
+    live.forEach((c, i) => {
+      const samples = allCurveSamples[i];
+      if (!samples?.length || !c.compiled) return;
+
+      const rList = findRoots(samples, (x) => c.compiled!.evaluate(x));
+      for (const r of rList) {
+        calculatedRoots.push({ x: r, y: 0, curveIndex: i });
+      }
+
+      const eList = findExtrema(samples);
+      for (const e of eList) {
+        const idx = samples.findIndex((s) => s.x === e.x);
+        let refined = { x: e.x, y: e.y };
+        if (
+          idx > 0 &&
+          idx < samples.length - 1 &&
+          samples[idx - 1].y !== null &&
+          samples[idx + 1].y !== null
+        ) {
+          refined = refineExtremum(
+            (x) => c.compiled!.evaluate(x),
+            samples[idx - 1].x,
+            samples[idx + 1].x,
+            e.kind === 'max'
+          );
+        }
+        calculatedExtrema.push({ x: refined.x, y: refined.y, kind: e.kind, curveIndex: i });
+      }
+
+      if (from <= 0 && to >= 0) {
+        const y0 = c.compiled.evaluate(0);
+        if (Number.isFinite(y0)) {
+          calculatedYIntercepts.push({ x: 0, y: y0, curveIndex: i });
+        }
+      }
+    });
+
+    for (let i = 0; i < live.length; i += 1) {
+      for (let j = i + 1; j < live.length; j += 1) {
+        const c1 = live[i];
+        const c2 = live[j];
+        const s1 = allCurveSamples[i];
+        if (c1?.compiled && c2?.compiled && s1?.length) {
+          const ints = findIntersections(
+            s1,
+            (x) => c1.compiled!.evaluate(x),
+            (x) => c2.compiled!.evaluate(x)
+          );
+          for (const pt of ints) {
+            calculatedIntersections.push({ x: pt.x, y: pt.y, curveIndices: [i, j] });
+          }
+        }
+      }
+    }
+  }
+
+  const calculatedParamFeatures: Array<{
+    kind: 'pole' | 'cusp' | 'horizontalTangent' | 'verticalTangent' | 'axisCrossing' | 'apsis';
+    parameterValue: number;
+    x: number;
+    y: number;
+    label: string;
+    badgeText: string;
+  }> = [];
+
+  const roundVal = (n: number, d: number) => Number(n.toFixed(d)).toString();
+
+  if (kind === 'parametric') {
+    const [fx, fy] = live;
+    if (fx?.compiled && fy?.compiled) {
+      const fnX = (t: number) => fx.compiled!.evaluate(t);
+      const fnY = (t: number) => fy.compiled!.evaluate(t);
+      const N_FEAT = 240;
+      const tStep = (to - from) / N_FEAT;
+      const samplesX: Array<{ x: number; y: number | null }> = [];
+      const samplesY: Array<{ x: number; y: number | null }> = [];
+      for (let i = 0; i <= N_FEAT; i += 1) {
+        const t = from + i * tStep;
+        samplesX.push({ x: t, y: fnX(t) });
+        samplesY.push({ x: t, y: fnY(t) });
+      }
+
+      const extY = findExtrema(samplesY);
+      const extX = findExtrema(samplesX);
+
+      const cuspTol = 1.5 * tStep;
+      const matchedExtX = new Set<number>();
+      const matchedExtY = new Set<number>();
+
+      for (let i = 0; i < extX.length; i += 1) {
+        for (let j = 0; j < extY.length; j += 1) {
+          if (Math.abs(extX[i].x - extY[j].x) < cuspTol) {
+            matchedExtX.add(i);
+            matchedExtY.add(j);
+            const tVal = (extX[i].x + extY[j].x) / 2;
+            calculatedParamFeatures.push({
+              kind: 'cusp',
+              parameterValue: tVal,
+              x: fnX(tVal),
+              y: fnY(tVal),
+              label: `Cusp / Singularity at t = ${roundVal(tVal, 3)}`,
+              badgeText: `Cusp (v=0)`,
+            });
+            break;
+          }
+        }
+      }
+
+      for (let j = 0; j < extY.length; j += 1) {
+        if (matchedExtY.has(j)) continue;
+        const e = extY[j];
+        const tVal = e.x;
+        calculatedParamFeatures.push({
+          kind: 'horizontalTangent',
+          parameterValue: tVal,
+          x: fnX(tVal),
+          y: e.y,
+          label: `Horizontal Tangent: dy/dt = 0 at t = ${roundVal(tVal, 3)}`,
+          badgeText: `dy/dt = 0`,
+        });
+      }
+
+      for (let i = 0; i < extX.length; i += 1) {
+        if (matchedExtX.has(i)) continue;
+        const e = extX[i];
+        const tVal = e.x;
+        calculatedParamFeatures.push({
+          kind: 'verticalTangent',
+          parameterValue: tVal,
+          x: e.y,
+          y: fnY(tVal),
+          label: `Vertical Tangent: dx/dt = 0 at t = ${roundVal(tVal, 3)}`,
+          badgeText: `dx/dt = 0`,
+        });
+      }
+
+      const rootsX = findRoots(samplesX, fnX);
+      for (const tVal of rootsX) {
+        calculatedParamFeatures.push({
+          kind: 'axisCrossing',
+          parameterValue: tVal,
+          x: 0,
+          y: fnY(tVal),
+          label: `y-Axis Crossing: x = 0 at t = ${roundVal(tVal, 3)}`,
+          badgeText: `x = 0`,
+        });
+      }
+      const rootsY = findRoots(samplesY, fnY);
+      for (const tVal of rootsY) {
+        calculatedParamFeatures.push({
+          kind: 'axisCrossing',
+          parameterValue: tVal,
+          x: fnX(tVal),
+          y: 0,
+          label: `x-Axis Crossing: y = 0 at t = ${roundVal(tVal, 3)}`,
+          badgeText: `y = 0`,
+        });
+      }
+    }
+  } else if (kind === 'polarPlot') {
+    const c = live[0];
+    if (c?.compiled) {
+      const fnR = (a: number) => c.compiled!.evaluate(a);
+      const N_FEAT = 360;
+      const aStep = (to - from) / N_FEAT;
+      const samplesR: Array<{ x: number; y: number | null }> = [];
+      for (let i = 0; i <= N_FEAT; i += 1) {
+        const a = from + i * aStep;
+        samplesR.push({ x: a, y: fnR(a) });
+      }
+
+      const rootsR = findRoots(samplesR, fnR);
+      for (const aVal of rootsR) {
+        calculatedParamFeatures.push({
+          kind: 'pole',
+          parameterValue: aVal,
+          x: 0,
+          y: 0,
+          label: `Pole: r = 0 at θ = ${roundVal((aVal * 180) / Math.PI, 1)}°`,
+          badgeText: `r = 0 (Pole)`,
+        });
+      }
+
+      const extR = findExtrema(samplesR);
+      for (const e of extR) {
+        const aVal = e.x;
+        const rVal = e.y;
+        const xVal = rVal * Math.cos(aVal);
+        const yVal = rVal * Math.sin(aVal);
+        const kindLabel = e.kind === 'max' ? 'Max Radius' : 'Min Radius';
+        calculatedParamFeatures.push({
+          kind: 'apsis',
+          parameterValue: aVal,
+          x: xVal,
+          y: yVal,
+          label: `${kindLabel}: r = ${roundVal(rVal, 3)} at θ = ${roundVal((aVal * 180) / Math.PI, 1)}°`,
+          badgeText: `${kindLabel} (${roundVal(rVal, 2)})`,
+        });
+      }
+    }
+  }
+
+  if (kind === 'function' && live.length && firstCurve?.compiled) {
     const inView = (x: number, y: number) =>
       x >= xDomain[0] && x <= xDomain[1] && y >= yDomain[0] && y <= yDomain[1];
 
     if (spec.showRoots) {
-      for (const r of findRoots(firstSamples, (x) => firstCurve.compiled!.evaluate(x))) {
-        if (!inView(r, 0)) continue;
+      for (const r of calculatedRoots) {
+        if (!inView(r.x, 0)) continue;
+        const color = live[r.curveIndex]?.color ?? seriesColor(undefined, r.curveIndex);
         dots.push({
-          x: sx(r), y: sy(0), radius: 4,
-          color: firstCurve.color ?? seriesColor(undefined, 0),
-          seriesIndex: 0, categoryIndex: -1, value: 0,
+          x: sx(r.x), y: sy(0), radius: 4,
+          color,
+          seriesIndex: r.curveIndex, categoryIndex: -1, value: 0,
         });
         valueLabels.push({
-          text: formatValue(r, spec),
-          x: sx(r) - 30, y: sy(0) + 6, width: 60, align: 'center', fontSize: LABEL_SIZE,
+          text: formatValue(r.x, spec),
+          x: sx(r.x) - 30, y: sy(0) + 6, width: 60, align: 'center', fontSize: LABEL_SIZE,
         });
       }
     }
 
     if (spec.showExtrema) {
-      for (const e of findExtrema(firstSamples)) {
+      for (const e of calculatedExtrema) {
         if (!inView(e.x, e.y)) continue;
+        const color = live[e.curveIndex]?.color ?? seriesColor(undefined, e.curveIndex);
         dots.push({
           x: sx(e.x), y: sy(e.y), radius: 4,
-          color: firstCurve.color ?? seriesColor(undefined, 0),
-          seriesIndex: 0, categoryIndex: -1, value: e.y,
+          color,
+          seriesIndex: e.curveIndex, categoryIndex: -1, value: e.y,
         });
         valueLabels.push({
           text: formatValue(e.y, spec),
@@ -1473,6 +2114,7 @@ function layoutPlot(
           categoryIndex: i,
           value: h,
           negative: h < 0,
+          rounded: false,
         });
       }
 
@@ -1486,7 +2128,71 @@ function layoutPlot(
       });
     }
 
-    if (spec.fillArea) {
+    if (spec.integralBounds && firstCurve?.compiled) {
+      const a = Math.min(spec.integralBounds.a, spec.integralBounds.b);
+      const b = Math.max(spec.integralBounds.a, spec.integralBounds.b);
+      const sign = spec.integralBounds.a <= spec.integralBounds.b ? 1 : -1;
+      const intSamples = samplePlot((x) => firstCurve.compiled!.evaluate(x), {
+        from: a,
+        to: b,
+        samples: 120,
+      });
+      const zeroY = sy(clamp(0, yDomain[0], yDomain[1]));
+      let band: Point[] = [];
+      const flushBand = () => {
+        if (band.length > 1) {
+          areas.push({
+            points: band,
+            color: firstCurve.color ?? seriesColor(undefined, 0),
+            seriesIndex: 0,
+            polygon: [
+              ...band,
+              { x: band[band.length - 1].x, y: zeroY },
+              { x: band[0].x, y: zeroY },
+            ],
+          });
+        }
+        band = [];
+      };
+      for (const smp of intSamples) {
+        if (smp.y === null) { flushBand(); continue; }
+        band.push({ x: sx(smp.x), y: sy(smp.y) });
+      }
+      flushBand();
+
+      const ya = firstCurve.compiled.evaluate(a);
+      const yb = firstCurve.compiled.evaluate(b);
+      if (Number.isFinite(ya)) {
+        gridLines.push({
+          x1: sx(a),
+          y1: zeroY,
+          x2: sx(a),
+          y2: sy(clamp(ya, yDomain[0], yDomain[1])),
+        });
+      }
+      if (Number.isFinite(yb)) {
+        gridLines.push({
+          x1: sx(b),
+          y1: zeroY,
+          x2: sx(b),
+          y2: sy(clamp(yb, yDomain[0], yDomain[1])),
+        });
+      }
+
+      const { value, complete } = integrate(intSamples);
+      const roundedA = roundVal(spec.integralBounds.a, 2);
+      const roundedB = roundVal(spec.integralBounds.b, 2);
+      valueLabels.push({
+        text: complete
+          ? `∫[${roundedA}, ${roundedB}] ≈ ${formatValue(sign * value, spec)}`
+          : `∫[${roundedA}, ${roundedB}] undefined`,
+        x: plot.x + 6,
+        y: plot.y + 4,
+        width: plot.width - 12,
+        align: 'left',
+        fontSize: LABEL_SIZE,
+      });
+    } else if (spec.fillArea) {
       const zeroY = sy(clamp(0, yDomain[0], yDomain[1]));
       let band: Point[] = [];
       const flushBand = () => {
@@ -1544,6 +2250,47 @@ function layoutPlot(
     spokes: [],
     reference: buildReference(spec, yDomain, plot, sy, false, measure),
     domain: yDomain,
+    mathPlot: {
+      kind,
+      variable: spec.variable ?? variable,
+      domain: { xMin: xDomain[0], xMax: xDomain[1], yMin: yDomain[0], yMax: yDomain[1] },
+      curves: live
+        .filter((c) => c.compiled)
+        .map((c, idx) => ({
+          source: c.source,
+          color: c.color ?? seriesColor(undefined, idx),
+          evaluate: (x: number, y = 0) => c.compiled!.evaluate(x, y),
+        })),
+      parametric:
+        kind === 'parametric' && live[0]?.compiled && live[1]?.compiled
+          ? {
+              sourceX: live[0].source,
+              sourceY: live[1].source,
+              color: live[0].color ?? seriesColor(undefined, 0),
+              fx: (t: number) => live[0].compiled!.evaluate(t),
+              fy: (t: number) => live[1].compiled!.evaluate(t),
+              tMin: from,
+              tMax: to,
+            }
+          : undefined,
+      polar:
+        kind === 'polarPlot' && live[0]?.compiled
+          ? [
+              {
+                source: live[0].source,
+                color: live[0].color ?? seriesColor(undefined, 0),
+                fr: (a: number) => live[0].compiled!.evaluate(a),
+                aMin: from,
+                aMax: to,
+              },
+            ]
+          : undefined,
+      roots: calculatedRoots,
+      extrema: calculatedExtrema,
+      intersections: calculatedIntersections,
+      yIntercepts: calculatedYIntercepts,
+      paramFeatures: calculatedParamFeatures,
+    },
   };
 }
 
@@ -1804,15 +2551,26 @@ function layoutRadial(
         const share = (v / total) * 100;
         const places = Math.min(3, Math.max(0, Math.round(spec.decimals ?? 0)));
         const pct = Number(share.toFixed(places));
+        const pctStr = `${share.toFixed(places)}%`;
+        const rawStr = formatValue(v, spec);
+        const text =
+          spec.valueFormat === 'value'
+            ? rawStr
+            : spec.valueFormat === 'both'
+            ? `${rawStr} (${pctStr})`
+            : pctStr;
+
+        const isOutside = spec.valuePlacement === 'outside';
+        const finalR = isOutside ? outerRadius + 14 : labelR;
         // Under about six per cent there is no room for the text inside the
         // slice, and a percentage sitting over its neighbour is worse than an
-        // unlabelled sliver the legend already names.
-        if (pct >= 6) {
+        // unlabelled sliver the legend already names. Outside placement avoids this.
+        if (isOutside || pct >= 6) {
           valueLabels.push({
-            text: `${share.toFixed(places)}%`,
-            x: cx + Math.cos(mid) * labelR - 20,
-            y: cy + Math.sin(mid) * labelR - LABEL_SIZE / 2,
-            width: 40,
+            text,
+            x: cx + Math.cos(mid) * finalR - 25,
+            y: cy + Math.sin(mid) * finalR - LABEL_SIZE / 2,
+            width: 50,
             align: 'center',
             fontSize: LABEL_SIZE,
           });
@@ -1821,6 +2579,16 @@ function layoutRadial(
       angle += sweep;
     });
   }
+
+  const donutMetric =
+    opts.innerRadius > 0 && total > 0
+      ? {
+          value: formatValue(total, spec),
+          label: 'Total',
+          x: cx,
+          y: cy,
+        }
+      : null;
 
   return {
     plot,
@@ -1837,6 +2605,7 @@ function layoutRadial(
     spokes: [],
     reference: null,
     domain: [0, total || 1],
+    donutMetric,
   };
 }
 
@@ -1858,15 +2627,16 @@ function buildLegend(
 ): ChartLegendEntry[] {
   if (!opts.showLegend) return [];
 
+  const palette = getPaletteColors(spec.paletteId);
   // A pie's and a funnel's legend name their *categories*: both draw one
   // series whose points are the things being compared. Everything else names
   // its series.
   const entries = isRadial(spec.kind) || spec.kind === 'funnel'
     ? spec.categories.map((label, i) => ({
         label,
-        color: seriesColor({ name: '', values: [], color: spec.series[0]?.color }, i),
+        color: seriesColor({ name: '', values: [], color: spec.series[0]?.color }, i, palette),
       }))
-    : spec.series.map((s, i) => ({ label: s.name || `Series ${i + 1}`, color: seriesColor(s, i) }));
+    : spec.series.map((s, i) => ({ label: s.name || `Series ${i + 1}`, color: seriesColor(s, i, palette) }));
 
   if (entries.length === 0) return [];
 

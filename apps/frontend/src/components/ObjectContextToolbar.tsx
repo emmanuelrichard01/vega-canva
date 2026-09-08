@@ -8,6 +8,7 @@ import {
   MessageSquarePlus, Minus, PenLine, Pin, Scissors, SendToBack, SmilePlus,
   Square, Waypoints, Radius, WandSparkles, ChevronRight,
   Strikethrough, Trash2, Type, Underline, Ungroup, Unlock,
+  Check, Sliders, Table as TableIcon, RotateCcw,
 } from 'lucide-react';
 import { TEXT_PRESETS, isTextPresetActive } from './panel/textEffectPresets';
 
@@ -29,6 +30,11 @@ import { requestEditOnMount } from '../engine/interaction/pendingEdit';
 import { textEditing } from '../engine/interaction/textEditing';
 import { Clock, ImageOff, ImagePlus, Palette, Shuffle } from 'lucide-react';
 import { GridKindIcon } from './workspace/gridIcons';
+import { ChartKindIcon } from './workspace/chartIcons';
+import { CHART_HINTS, CHART_LABELS, chartPickerGroups } from '../engine/chart/chartKinds';
+import { setChartKind, updateChart } from '../engine/chart/chartApply';
+import { chartCapabilities, isRadial, isPolar, isPlot, isTwoVariable } from '../engine/chart/chartTypes';
+import { chartToCsv, csvFilename, downloadCsv } from '../engine/chart/chartCsv';
 import { breakApartGrid, gridNodeOf, gridRecipe as gridRecipeFor, setGridRecipe } from '../engine/grid/gridApply';
 import {
   fillGridWithImages,
@@ -2205,6 +2211,162 @@ export const ObjectContextToolbar: React.FC<Props> = ({ selectedId, selectedIds,
                 data-tooltip="Download recording"
                 aria-label="Download recording"
               ><Download size={16} /></a>
+            </div>
+            <Divider />
+          </>
+        )}
+
+        {/* ------------------------------------------------------------ chart */}
+        {node.type === 'chart' && (
+          <>
+            <div className="ctx-group">
+              {/* Chart Kind Switcher Popover */}
+              <RailPopover
+                label="Chart Type"
+                trigger={
+                  <span style={{ display: 'inline-flex', alignItems: 'center', gap: 5 }}>
+                    <ChartKindIcon kind={node.chart.kind} size={15} />
+                    <span className="ctx-value">{CHART_LABELS[node.chart.kind]}</span>
+                  </span>
+                }
+                align="start"
+              >
+                <span className="ctx-popover__label">Chart Type</span>
+                {chartPickerGroups().map((group) => (
+                  <div key={group.family} style={{ marginBottom: 8 }}>
+                    <div style={{ fontSize: 10, fontWeight: 600, color: 'var(--text-secondary, #9ca3af)', textTransform: 'uppercase', marginBottom: 4 }}>
+                      {group.label}
+                    </div>
+                    <div className="ctx-shape-grid">
+                      {group.kinds.map((k) => (
+                        <button
+                          key={k}
+                          type="button"
+                          className="ctx-shape-btn"
+                          aria-pressed={node.chart.kind === k}
+                          data-tooltip={`${CHART_LABELS[k]}: ${CHART_HINTS[k]}`}
+                          onClick={() => setChartKind(node.id, node.chart, k)}
+                        >
+                          <ChartKindIcon kind={k} size={16} />
+                        </button>
+                      ))}
+                    </div>
+                  </div>
+                ))}
+              </RailPopover>
+
+              {/* Edit Data in Spreadsheet */}
+              <RailButton
+                label="Edit Data"
+                hint="Open interactive spreadsheet grid"
+                onClick={() => useStore.getState().setChartDataModalNodeId(node.id)}
+              >
+                <TableIcon size={15} />
+              </RailButton>
+
+              {/* Math Plot / Graph Plane Lock & Reset */}
+              {isPlot(node.chart.kind) && (
+                <>
+                  <RailButton
+                    label={node.chart.lockPlane ? 'Unlock Plane' : 'Lock Plane'}
+                    hint={
+                      node.chart.lockPlane
+                        ? 'Plane is locked against accidental zoom/pan'
+                        : 'Lock graph plane to prevent accidental zoom/pan'
+                    }
+                    pressed={Boolean(node.chart.lockPlane)}
+                    onClick={() => updateChart(node.id, { ...node.chart, lockPlane: !node.chart.lockPlane })}
+                  >
+                    {node.chart.lockPlane ? <Lock size={15} /> : <Unlock size={15} />}
+                  </RailButton>
+                  <RailButton
+                    label="Reset View"
+                    hint="Reset graph plane to default domain"
+                    onClick={() => {
+                      const isFn = node.chart.kind === 'function';
+                      const isTwo = isTwoVariable(node.chart.kind);
+                      updateChart(node.id, {
+                        ...node.chart,
+                        xMin: isFn ? -10 : isTwo ? -5 : 0,
+                        xMax: isFn ? 10 : isTwo ? 5 : Number((Math.PI * 2).toFixed(3)),
+                        yPlotMin: isTwo ? -5 : undefined,
+                        yPlotMax: isTwo ? 5 : undefined,
+                      });
+                    }}
+                  >
+                    <RotateCcw size={15} />
+                  </RailButton>
+                </>
+              )}
+
+              {/* Quick Display Toggles */}
+              <RailPopover label="Display" trigger={<Sliders size={15} />} align="start">
+                <span className="ctx-popover__label">Display Elements</span>
+                <div style={{ display: 'flex', flexDirection: 'column', gap: 6, minWidth: 160 }}>
+                  <button
+                    type="button"
+                    className="ctx-popover__action"
+                    onClick={() => updateChart(node.id, { ...node.chart, showLegend: !(node.chart.showLegend ?? true) })}
+                  >
+                    <Check size={14} style={{ opacity: (node.chart.showLegend ?? true) ? 1 : 0 }} />
+                    Legend
+                  </button>
+                  {chartCapabilities(node.chart.kind).valueLabels && (
+                    <button
+                      type="button"
+                      className="ctx-popover__action"
+                      onClick={() => updateChart(node.id, { ...node.chart, showValues: !node.chart.showValues })}
+                    >
+                      <Check size={14} style={{ opacity: node.chart.showValues ? 1 : 0 }} />
+                      Value labels
+                    </button>
+                  )}
+                  {!isRadial(node.chart.kind) && !isPolar(node.chart.kind) && (
+                    <button
+                      type="button"
+                      className="ctx-popover__action"
+                      onClick={() => updateChart(node.id, { ...node.chart, showGrid: !(node.chart.showGrid ?? true) })}
+                    >
+                      <Check size={14} style={{ opacity: (node.chart.showGrid ?? true) ? 1 : 0 }} />
+                      Grid lines
+                    </button>
+                  )}
+                  {(node.chart.kind === 'line' || node.chart.kind === 'area') && (
+                    <button
+                      type="button"
+                      className="ctx-popover__action"
+                      onClick={() => updateChart(node.id, { ...node.chart, gradient: !node.chart.gradient })}
+                    >
+                      <Check size={14} style={{ opacity: node.chart.gradient ? 1 : 0 }} />
+                      Smooth gradient fill
+                    </button>
+                  )}
+                </div>
+              </RailPopover>
+
+              {/* CSV I/O Popover */}
+              <RailPopover label="CSV Data" trigger={<Download size={15} />} align="start">
+                <span className="ctx-popover__label">Data Import / Export</span>
+                <button
+                  type="button"
+                  className="ctx-popover__action"
+                  onClick={() => {
+                    const csv = chartToCsv(node.chart);
+                    navigator.clipboard.writeText(csv);
+                  }}
+                >
+                  <Copy size={14} />
+                  Copy CSV to clipboard
+                </button>
+                <button
+                  type="button"
+                  className="ctx-popover__action"
+                  onClick={() => downloadCsv(node.chart, csvFilename(node.chart.title))}
+                >
+                  <Download size={14} />
+                  Download .csv file
+                </button>
+              </RailPopover>
             </div>
             <Divider />
           </>

@@ -246,6 +246,26 @@ const GLYPHS: Record<ChartKind, React.ReactNode> = {
       )}
     </>
   ),
+  heatmap: (
+    // A block of cells at graded opacity: the one glyph in this set where the
+    // *fill* is the information rather than the outline.
+    <>
+      {[0, 1, 2, 3].map((r) =>
+        [0, 1, 2, 3].map((c) => (
+          <rect
+            key={`${r}-${c}`}
+            x={10 + c * 21}
+            y={10 + r * 21}
+            width={19}
+            height={19}
+            rx={2}
+            fill="currentColor"
+            opacity={0.14 + ((r + c) / 6) * 0.72}
+          />
+        ))
+      )}
+    </>
+  ),
   vectorField: (
     <>
       {[24, 56, 88].map((y, r) =>

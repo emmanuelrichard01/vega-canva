@@ -114,6 +114,7 @@ export function useRoomShortcuts({
   // Main room shortcut router
   useEffect(() => {
     const handleKeyDown = (e: KeyboardEvent) => {
+      if (e.defaultPrevented) return;
       if (e.target instanceof HTMLInputElement || e.target instanceof HTMLTextAreaElement) return;
 
       const hasModifier = e.ctrlKey || e.metaKey;

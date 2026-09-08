@@ -1,6 +1,30 @@
 import { describe, expect, it } from 'vitest';
-import { pointsAttribute, regularPolygonPoints, shapeOutline, starPoints } from './shapeOutline';
-import { flattenPath } from './pathGeometry';
+import {
+  badgePoints,
+  bannerPoints,
+  boltPoints,
+  calloutPoints,
+  chevronPoints,
+  cpuPoints,
+  crossPoints,
+  diamondPoints,
+  documentOutline,
+  gearGeometry,
+  keyPoints,
+  packagePoints,
+  parallelogramPoints,
+  pointsAttribute,
+  regularPolygonPoints,
+  serverPoints,
+  shapeFeaturePaths,
+  shapeOutline,
+  shieldPoints,
+  starPoints,
+  trapezoidPoints,
+  userGeometry,
+  walletPoints,
+} from './shapeOutline';
+import { contourData, flattenPath } from './pathGeometry';
 import { SHAPE_KIND_VALUES } from './schema';
 import { SHAPE_KIND_ALIASES } from '../document/normalize';
 import { PRESET_GEOMETRY } from '../../components/workspace/shapePresetTypes';
@@ -257,3 +281,256 @@ describe('every shape kind survives the round trip', () => {
     }
   });
 });
+
+describe('diamond', () => {
+  it('places 4 diamond points at top, right, bottom, and left compass points', () => {
+    const pts = diamondPoints(100, 60);
+    expect(pts).toHaveLength(4);
+    near(pts[0].x, 50);
+    near(pts[0].y, 0);
+    near(pts[1].x, 100);
+    near(pts[1].y, 30);
+    near(pts[2].x, 50);
+    near(pts[2].y, 60);
+    near(pts[3].x, 0);
+    near(pts[3].y, 30);
+  });
+
+  it('generates polygon outline and rounded bezier outline when cornerRadius > 0', () => {
+    const flat = shapeOutline(shape({ geometry: { kind: 'diamond' } }));
+    expect(flat.kind).toBe('polygon');
+    const rounded = shapeOutline(
+      shape({ geometry: { kind: 'diamond' }, appearance: { cornerRadius: 8 } })
+    );
+    expect(rounded.kind).toBe('bezier');
+  });
+});
+
+describe('trapezoid and parallelogram', () => {
+  it('trapezoid insets top edge symmetrically', () => {
+    const pts = trapezoidPoints(100, 60, 0.2);
+    expect(pts).toHaveLength(4);
+    near(pts[0].x, 20);
+    near(pts[0].y, 0);
+    near(pts[1].x, 80);
+    near(pts[1].y, 0);
+    near(pts[2].x, 100);
+    near(pts[2].y, 60);
+    near(pts[3].x, 0);
+    near(pts[3].y, 60);
+  });
+
+  it('parallelogram skews horizontal edges by specified skew ratio', () => {
+    const pts = parallelogramPoints(100, 60, 0.25);
+    expect(pts).toHaveLength(4);
+    near(pts[0].x, 25);
+    near(pts[0].y, 0);
+    near(pts[1].x, 100);
+    near(pts[1].y, 0);
+    near(pts[2].x, 75);
+    near(pts[2].y, 60);
+    near(pts[3].x, 0);
+    near(pts[3].y, 60);
+  });
+});
+
+describe('capsule (pill/stadium)', () => {
+  it('is a smooth continuous bezier curve', () => {
+    const outline = shapeOutline(shape({ geometry: { kind: 'capsule' }, width: 200, height: 60 }));
+    expect(outline.kind).toBe('bezier');
+    if (outline.kind !== 'bezier') throw new Error('expected bezier');
+    const pts = flattenPath(outline.geometry);
+    const xs = pts.map((p) => p.x);
+    const ys = pts.map((p) => p.y);
+    expect(Math.min(...xs)).toBeCloseTo(0, 0);
+    expect(Math.max(...xs)).toBeCloseTo(200, 0);
+    expect(Math.min(...ys)).toBeCloseTo(0, 0);
+    expect(Math.max(...ys)).toBeCloseTo(60, 0);
+  });
+
+  it('renders matching bezier in shapeToPath', () => {
+    const node = shape({ geometry: { kind: 'capsule' }, width: 140, height: 50 });
+    const outline = shapeOutline(node);
+    if (outline.kind !== 'bezier') throw new Error('expected bezier');
+    expect(shapeToPath(node)).toEqual(outline.geometry);
+  });
+});
+
+describe('cylinder (database)', () => {
+  it('forms a closed bezier body with elliptical top and bottom caps', () => {
+    const outline = shapeOutline(
+      shape({ geometry: { kind: 'cylinder', rimRatio: 0.2 }, width: 120, height: 160 })
+    );
+    expect(outline.kind).toBe('bezier');
+    if (outline.kind !== 'bezier') throw new Error('expected bezier');
+    const pts = flattenPath(outline.geometry);
+    const xs = pts.map((p) => p.x);
+    const ys = pts.map((p) => p.y);
+    expect(Math.min(...xs)).toBeCloseTo(0, 0);
+    expect(Math.max(...xs)).toBeCloseTo(120, 0);
+    expect(Math.min(...ys)).toBeCloseTo(0, 0);
+    expect(Math.max(...ys)).toBeCloseTo(160, 0);
+  });
+});
+
+describe('chevron and banner', () => {
+  it('chevron creates 6 vertices with pointed tip and notched tail', () => {
+    const pts = chevronPoints(100, 60, 0.25);
+    expect(pts).toHaveLength(6);
+    near(pts[0].x, 0);
+    near(pts[0].y, 0);
+    near(pts[1].x, 75);
+    near(pts[1].y, 0);
+    near(pts[2].x, 100);
+    near(pts[2].y, 30);
+    near(pts[3].x, 75);
+    near(pts[3].y, 60);
+    near(pts[4].x, 0);
+    near(pts[4].y, 60);
+    near(pts[5].x, 25);
+    near(pts[5].y, 30);
+  });
+
+  it('banner creates folded ribbon with tail folds', () => {
+    const pts = bannerPoints(120, 50, 0.2);
+    expect(pts).toHaveLength(14);
+  });
+});
+
+describe('cross (plus)', () => {
+  it('produces a 12-vertex symmetric cruciform polygon', () => {
+    const pts = crossPoints(100, 100, 0.3);
+    expect(pts).toHaveLength(12);
+    near(pts[0].x, 35);
+    near(pts[0].y, 0);
+    near(pts[1].x, 65);
+    near(pts[1].y, 0);
+  });
+});
+
+describe('donut (annulus with inner hole)', () => {
+  it('returns a compound geometry with 2 subpaths (outer and inner rings)', () => {
+    const node = shape({ geometry: { kind: 'donut', innerRatio: 0.5 }, width: 100, height: 100 });
+    const outline = shapeOutline(node);
+    expect(outline.kind).toBe('bezier');
+    if (outline.kind !== 'bezier') throw new Error('expected bezier');
+    expect(outline.geometry.kind).toBe('compound');
+    if (outline.geometry.kind !== 'compound') throw new Error('expected compound');
+    expect(outline.geometry.subpaths).toHaveLength(2);
+
+    // contourData formats both subpaths for fillRule="evenodd"
+    const data = contourData(outline.geometry);
+    expect(data.match(/M /g)).toHaveLength(2);
+    expect(data.match(/Z/g)).toHaveLength(2);
+  });
+});
+
+describe('badge and callout', () => {
+  it('badge alternates peaks and troughs for scallop rosette', () => {
+    const pts = badgePoints(50, 50, 12, 0.85, 50, 50);
+    expect(pts).toHaveLength(24);
+  });
+
+  it('callout creates speech bubble box with triangular pointer tail', () => {
+    const pts = calloutPoints(120, 80, 'bottom', 0.2);
+    expect(pts.length).toBeGreaterThanOrEqual(7);
+  });
+});
+
+describe('advanced flowchart shapes', () => {
+  it('document creates a closed bezier with sinusoidal wave bottom', () => {
+    const geo = documentOutline(100, 120, 0.15);
+    expect(geo.kind).toBe('bezier');
+    expect(geo.closed).toBe(true);
+    expect(geo.segments.length).toBeGreaterThanOrEqual(4);
+    const d = contourData(geo);
+    expect(d).toContain('C ');
+  });
+
+  it('and_gate, or_gate, and delay generate valid closed bezier contours', () => {
+    const andNode = shape({ geometry: { kind: 'and_gate' }, width: 100, height: 80 });
+    const orNode = shape({ geometry: { kind: 'or_gate' }, width: 100, height: 80 });
+    const delayNode = shape({ geometry: { kind: 'delay' }, width: 100, height: 80 });
+
+    const andOutline = shapeOutline(andNode);
+    const orOutline = shapeOutline(orNode);
+    const delayOutline = shapeOutline(delayNode);
+
+    expect(andOutline.kind).toBe('bezier');
+    expect(orOutline.kind).toBe('bezier');
+    expect(delayOutline.kind).toBe('bezier');
+  });
+
+  it('predefined_process, summing_junction, and internal_storage yield precise outlines', () => {
+    const proc = shapeOutline(shape({ geometry: { kind: 'predefined_process' }, width: 140, height: 70 }));
+    const sum = shapeOutline(shape({ geometry: { kind: 'summing_junction' }, width: 80, height: 80 }));
+    const store = shapeOutline(shape({ geometry: { kind: 'internal_storage' }, width: 120, height: 90 }));
+
+    expect(proc.kind).toBe('rect');
+    expect(sum.kind).toBe('ellipse');
+    expect(store.kind).toBe('rect');
+  });
+});
+
+describe('advanced architecture, tech & symbol shapes', () => {
+  it('serverPoints creates rack chassis outline', () => {
+    const pts = serverPoints(120, 80);
+    expect(pts.length).toBe(4);
+    expect(pts[0]).toEqual({ x: 0, y: 0 });
+  });
+
+  it('cpuPoints scales contact pins along all 4 perimeter edges', () => {
+    const pts6 = cpuPoints(100, 100, 4);
+    // 4 sides * 4 pins * 3 pts + corner transitions
+    expect(pts6.length).toBeGreaterThan(16);
+  });
+
+  it('gearGeometry generates compound geometry with cogs and center bore hole', () => {
+    const gear = gearGeometry(50, 50, 50, 50, 8);
+    expect(gear.kind).toBe('compound');
+    expect(gear.subpaths).toHaveLength(2);
+    const d = contourData(gear);
+    expect(d.match(/M /g)).toHaveLength(2);
+    expect(d.match(/Z/g)).toHaveLength(2);
+  });
+
+  it('userGeometry creates compound geometry with avatar head and shoulders', () => {
+    const user = userGeometry(50, 50, 50, 50);
+    expect(user.kind).toBe('compound');
+    expect(user.subpaths).toHaveLength(2);
+  });
+
+  it('shield, bolt, package, key, and wallet generate expected polygons', () => {
+    expect(shieldPoints(100, 120)).toHaveLength(5);
+    expect(boltPoints(60, 100)).toHaveLength(6);
+    expect(packagePoints(100, 100)).toHaveLength(6);
+    expect(keyPoints(120, 60)).toHaveLength(16);
+    expect(walletPoints(120, 80)).toHaveLength(10);
+  });
+});
+
+describe('shapeFeaturePaths (dual painter parity)', () => {
+  it('produces identical relative feature paths in local and world space', () => {
+    const node = shape({ geometry: { kind: 'summing_junction' }, width: 100, height: 100 });
+    const local = shapeFeaturePaths(node, 0, 0);
+    const world = shapeFeaturePaths(node, 50, 50);
+
+    expect(local).toHaveLength(1);
+    expect(local[0]).toBe('M 0 50 L 100 50 M 50 0 L 50 100');
+    expect(world).toHaveLength(1);
+    expect(world[0]).toBe('M 50 100 L 150 100 M 100 50 L 100 150');
+  });
+
+  it('produces feature lines for server, terminal, browser, mobile, package, and mail', () => {
+    expect(shapeFeaturePaths(shape({ geometry: { kind: 'server', shelfCount: 3 }, width: 120, height: 90 }))).toHaveLength(8);
+    expect(shapeFeaturePaths(shape({ geometry: { kind: 'terminal' }, width: 140, height: 100 })).length).toBeGreaterThanOrEqual(4);
+    expect(shapeFeaturePaths(shape({ geometry: { kind: 'browser' }, width: 160, height: 110 })).length).toBeGreaterThanOrEqual(4);
+    expect(shapeFeaturePaths(shape({ geometry: { kind: 'mobile' }, width: 80, height: 160 }))).toHaveLength(2);
+    expect(shapeFeaturePaths(shape({ geometry: { kind: 'package' }, width: 100, height: 100 }))).toHaveLength(1);
+    expect(shapeFeaturePaths(shape({ geometry: { kind: 'mail' }, width: 120, height: 80 }))).toHaveLength(1);
+    expect(shapeFeaturePaths(shape({ geometry: { kind: 'cpu' }, width: 100, height: 100 }))).toHaveLength(1);
+    expect(shapeFeaturePaths(shape({ geometry: { kind: 'wallet' }, width: 120, height: 80 }))).toHaveLength(2);
+    expect(shapeFeaturePaths(shape({ geometry: { kind: 'cylinder' }, width: 100, height: 120 }))).toHaveLength(1);
+  });
+});
+

@@ -67,6 +67,55 @@ export const COLOR_MODE_LABELS: Record<ColorMode, string> = {
   solid: 'One colour',
 };
 
+/**
+ * What a grid is being used *as*.
+ *
+ * The same recipe answers three different questions, and the answer decides
+ * how it should be painted rather than what it contains:
+ *
+ * - `surface` -- the modules are the artwork. Paint them.
+ * - `guide` -- the modules are scaffolding for something laid over them, the
+ *   way a column guide sits under a page. Tint, don't fill.
+ * - `wireframe` -- only the division of the space matters. Draw the edges.
+ *
+ * It is a display concern and nothing else: the layout, the palette and the
+ * seed are untouched by it, so switching to a guide and back returns exactly
+ * the grid you had rather than a re-rolled one.
+ */
+export type GridDisplayMode = 'surface' | 'guide' | 'wireframe';
+
+export const GRID_DISPLAY_MODES: readonly GridDisplayMode[] = ['surface', 'guide', 'wireframe'];
+
+export const GRID_DISPLAY_LABELS: Record<GridDisplayMode, string> = {
+  surface: 'Surface',
+  guide: 'Guide',
+  wireframe: 'Wireframe',
+};
+
+/** What each is *for*, not what it looks like -- the rule `GRID_HINTS` follows. */
+export const GRID_DISPLAY_HINTS: Record<GridDisplayMode, string> = {
+  surface: 'The modules are the artwork. Palette and shapes apply.',
+  guide: 'Scaffolding to lay a composition over. Tinted tracks, hairline edges.',
+  wireframe: 'The division of the space alone. Edges, no fill.',
+};
+
+/**
+ * The guide ink, in one place.
+ *
+ * One hue at three strengths rather than three unrelated colours: the tint,
+ * the hairline and the label are one mark seen at three weights, and picking
+ * them separately is how a guide ends up with a red edge round a pink fill.
+ * Red because a guide has to lose to whatever is laid over it and still be
+ * findable -- the same reason print software has used it for margins for
+ * thirty years.
+ */
+const GUIDE_TINT = 'rgba(239, 68, 68, 0.12)';
+const GUIDE_EDGE = 'rgba(239, 68, 68, 0.45)';
+const GUIDE_LABEL = '#EF4444';
+
+/** The wireframe's edge: a mid slate that reads on both themes. */
+const WIRE_EDGE = '#64748B';
+
 export interface GridStyle {
   /**
    * The shapes a module may take -- and, by how many there are, whether they mix.
@@ -93,6 +142,15 @@ export interface GridStyle {
   opacity: number;
   /** Drives every seeded draw here, independently of the layout's seed. */
   seed: number;
+  /**
+   * Display mode:
+   * - 'surface': solid or gradient generative tiles (default)
+   * - 'guide': architectural layout guide with translucent column tint & hairlines
+   * - 'wireframe': structural outlines only
+   */
+  mode?: GridDisplayMode;
+  /** Whether to render track index badges (C1, C2...) */
+  showLabels?: boolean;
 }
 
 export interface StyledCell extends GridCell {
@@ -225,6 +283,83 @@ export function styleCells(cells: readonly GridCell[], style: GridStyle): Styled
   });
 }
 
+/** How one module is actually painted, once the display mode has had its say. */
+export interface CellPaint {
+  fill: string;
+  stroke?: string;
+  strokeWidth: number;
+}
+
+/**
+ * The paint for one module -- the *only* place display mode is resolved.
+ *
+ * Both painters call this. They did not: the Konva renderer and the SVG
+ * exporter each carried their own copy of the mode branch, down to the same
+ * three colour literals typed out twice, which is this codebase's standing
+ * defect -- one answer derived in two places, drifting the first time either
+ * is edited. A guide that was pink in the file and red on the board would
+ * have been nobody's bug until an export went out.
+ *
+ * A stroke the author has chosen always wins. In `guide` and `wireframe` the
+ * edge is the whole drawing, so a grid with no stroke set is given one rather
+ * than vanishing -- but a grid that *does* carry a stroke keeps its own,
+ * because the mode is a lens over the style and not a replacement for it.
+ */
+export function cellPaint(cell: StyledCell, style: GridStyle): CellPaint {
+  const hasStroke = style.strokeWidth > 0;
+
+  switch (style.mode ?? 'surface') {
+    case 'guide':
+      return {
+        fill: GUIDE_TINT,
+        stroke: hasStroke ? style.strokeColor : GUIDE_EDGE,
+        strokeWidth: hasStroke ? style.strokeWidth : 1,
+      };
+    case 'wireframe':
+      return {
+        // Transparent rather than absent: the module still has to occupy its
+        // box, so the label has something to sit against and the silhouette
+        // still describes the division of the space.
+        fill: 'rgba(0,0,0,0)',
+        stroke: hasStroke ? style.strokeColor : WIRE_EDGE,
+        strokeWidth: hasStroke ? style.strokeWidth : 1,
+      };
+    default:
+      return {
+        fill: cell.fill,
+        stroke: hasStroke ? style.strokeColor : undefined,
+        strokeWidth: style.strokeWidth,
+      };
+  }
+}
+
+/** The ink a track label is drawn in, so the two painters cannot disagree. */
+export function labelInk(style: GridStyle): string {
+  return (style.mode ?? 'surface') === 'guide' ? GUIDE_LABEL : WIRE_EDGE;
+}
+
+/** Where a label sits inside its module, and how big. Shared by both painters. */
+export const LABEL_INSET = 5;
+export const LABEL_SIZE = 10;
+
+/**
+ * The track label for one module, or nothing.
+ *
+ * Only the edges are named. Every cell carried a running index before, which
+ * on a forty-module grid is forty numbers over the artwork answering a
+ * question nobody asked -- the useful fact is which *track* a module is in,
+ * and that is what the top row and the left column say. It is also what print
+ * software labels, and for the same reason: you count in from an edge.
+ *
+ * Interior modules return `null` rather than an empty string, so a caller
+ * skips them instead of drawing an invisible text node per cell.
+ */
+export function cellLabel(cell: StyledCell): string | null {
+  if (cell.row === 0) return `C${cell.col + 1}`;
+  if (cell.col === 0) return `R${cell.row + 1}`;
+  return null;
+}
+
 /** A style with everything filled in. */
 export function defaultStyle(): GridStyle {
   return {
@@ -248,5 +383,7 @@ export function defaultStyle(): GridStyle {
     strokeWidth: 0,
     opacity: 1,
     seed: 1,
+    mode: 'surface',
+    showLabels: false,
   };
 }

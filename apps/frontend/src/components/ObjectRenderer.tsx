@@ -875,6 +875,9 @@ export const ObjectRenderer = React.memo(
         const id = addTextToCell(node.id, cell);
         if (id) onSelect(id);
       }
+      if (node.type === 'chart') {
+        useStore.getState().setChartDataModalNodeId(node.id);
+      }
     }, [isSelected, node, objId, onSelect]);
 
     const handleCommit = useCallback(

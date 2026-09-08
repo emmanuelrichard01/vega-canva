@@ -1,20 +1,26 @@
 import { describe, it, expect } from 'vitest';
 import { shapeToPath, KAPPA } from './shapeToPath';
 import { flattenPath, pathBounds, toAnchors, toCubics } from './pathGeometry';
-import type { ShapeNode } from './schema';
+import type { BezierGeometry, ShapeNode } from './schema';
 
-const shape = (partial: Partial<ShapeNode>): Pick<ShapeNode, 'geometry' | 'width' | 'height' | 'appearance'> =>
+const shape = <T extends Partial<ShapeNode>>(partial: T) =>
   ({
-    geometry: { kind: 'rect' },
+    geometry: { kind: 'rect' as const },
     width: 100,
     height: 100,
     appearance: {},
     ...partial,
-  }) as never;
+  });
+
+const asBezier = (node: Parameters<typeof shapeToPath>[0]): BezierGeometry => {
+  const geo = shapeToPath(node);
+  if (geo.kind === 'compound') throw new Error('expected single contour');
+  return geo;
+};
 
 describe('shapeToPath', () => {
   it('turns a plain rectangle into four straight sides', () => {
-    const path = shapeToPath(shape({ geometry: { kind: 'rect' } }));
+    const path = asBezier(shape({ geometry: { kind: 'rect' } }));
     expect(path.closed).toBe(true);
     expect(path.segments.map((s) => [s.x, s.y])).toEqual([
       [0, 0],
@@ -26,7 +32,7 @@ describe('shapeToPath', () => {
   });
 
   it('draws a rounded rectangle as four arcs between four straight edges', () => {
-    const path = shapeToPath(shape({ appearance: { cornerRadius: 20 } }));
+    const path = asBezier(shape({ appearance: { cornerRadius: 20 } }));
     expect(path.segments).toHaveLength(8);
     // Eight points, all on the boundary, none of them outside the box.
     const b = pathBounds(path);
@@ -40,7 +46,7 @@ describe('shapeToPath', () => {
   });
 
   it('rounds the top-left corner on the closing curve, which used to be a straight cut', () => {
-    const path = shapeToPath(shape({ appearance: { cornerRadius: 20 } }));
+    const path = asBezier(shape({ appearance: { cornerRadius: 20 } }));
     // The closing curve's controls live on segment zero, and here they are.
     expect(path.segments[0].cp1x).toBeDefined();
     expect(path.segments[0].cp2x).toBeDefined();
@@ -50,7 +56,9 @@ describe('shapeToPath', () => {
   });
 
   it('clamps the corner radius the way the renderer does, so the path matches the shape', () => {
-    const path = shapeToPath(shape({ width: 40, height: 40, appearance: { cornerRadius: 999 } }));
+    const path = asBezier(
+      shape({ width: 40, height: 40, appearance: { cornerRadius: 999 } })
+    );
     // Radius pinned at half the shorter side turns the rectangle into a disc:
     // the two anchors of each edge collapse onto each other.
     expect(path.segments[0].x).toBeCloseTo(20, 6);
@@ -58,14 +66,16 @@ describe('shapeToPath', () => {
   });
 
   it('approximates an ellipse well enough that no one can see the difference', () => {
-    const path = shapeToPath(shape({ geometry: { kind: 'ellipse' }, width: 200, height: 200 }));
+    const path = asBezier(
+      shape({ geometry: { kind: 'ellipse' }, width: 200, height: 200 })
+    );
     for (const p of flattenPath(path)) {
       expect(Math.abs(Math.hypot(p.x - 100, p.y - 100) - 100)).toBeLessThan(0.3);
     }
   });
 
   it('starts an ellipse at twelve o’clock and runs clockwise, as the primitives do', () => {
-    const path = shapeToPath(shape({ geometry: { kind: 'ellipse' } }));
+    const path = asBezier(shape({ geometry: { kind: 'ellipse' } }));
     const anchors = toAnchors(path);
     expect([anchors[0].x, anchors[0].y]).toEqual([50, 0]);
     expect([anchors[1].x, anchors[1].y]).toEqual([100, 50]);
@@ -75,19 +85,28 @@ describe('shapeToPath', () => {
   });
 
   it('gives a polygon one anchor per side', () => {
-    const path = shapeToPath(shape({ geometry: { kind: 'polygon', points: 7 } }));
+    const path = asBezier(shape({ geometry: { kind: 'polygon', points: 7 } }));
     expect(path.segments).toHaveLength(7);
     expect(path.closed).toBe(true);
   });
 
   it('gives a star two anchors per point', () => {
-    const path = shapeToPath(shape({ geometry: { kind: 'star', points: 5, innerRatio: 0.5 } }));
+    const path = asBezier(
+      shape({ geometry: { kind: 'star', points: 5, innerRatio: 0.5 } })
+    );
     expect(path.segments).toHaveLength(10);
   });
 
   it('leaves a line open, because closing it would invent an interior', () => {
-    const path = shapeToPath(shape({ geometry: { kind: 'line' } }));
+    const path = asBezier(shape({ geometry: { kind: 'line' } }));
     expect(path.closed).toBe(false);
     expect(path.segments).toHaveLength(2);
+  });
+
+  it('converts donut to a compound path with two subpaths', () => {
+    const path = shapeToPath(shape({ geometry: { kind: 'donut', innerRatio: 0.5 } }));
+    expect(path.kind).toBe('compound');
+    if (path.kind !== 'compound') throw new Error('expected compound');
+    expect(path.subpaths).toHaveLength(2);
   });
 });

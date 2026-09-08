@@ -64,6 +64,7 @@ export const CHART_KINDS = [
   'contour',
   'slopeField',
   'vectorField',
+  'heatmap',
 ] as const;
 
 /**
@@ -110,6 +111,7 @@ export const CHART_FAMILY_OF: Record<ChartKind, ChartFamily> = {
   contour: 'field',
   slopeField: 'field',
   vectorField: 'field',
+  heatmap: 'field',
 };
 
 export type ChartKind = (typeof CHART_KINDS)[number];
@@ -218,7 +220,8 @@ export function isTwoVariable(kind: ChartKind): boolean {
     kind === 'implicit' ||
     kind === 'contour' ||
     kind === 'slopeField' ||
-    kind === 'vectorField'
+    kind === 'vectorField' ||
+    kind === 'heatmap'
   );
 }
 
@@ -424,6 +427,11 @@ export interface ChartSpec {
   /** Draw the numeric derivative of the first curve alongside it. */
   showDerivative?: boolean;
   /**
+   * Prevent accidental interactive zooming or panning of the plot's coordinate plane.
+   * When true, Ctrl/Alt+wheel and drag gestures will not alter xMin/xMax/yPlotMin/yPlotMax.
+   */
+  lockPlane?: boolean;
+  /**
    * How the value axis is spaced.
    *
    * `log` is opt-in and stays opt-in, because it is undefined at and below
@@ -462,6 +470,188 @@ export interface ChartSpec {
   resolution?: number;
   /** How many contour levels to spread across the function's own range. */
   levels?: number;
+  /**
+   * The ramp a heatmap paints its surface with.
+   *
+   * `viridis` by default, and that is not a taste: it is perceptually uniform
+   * and monotonic in lightness, so equal steps in the data look like equal
+   * steps in the colour and the picture survives being printed in grey or read
+   * by somebody with a colour deficiency. A rainbow ramp fails all three --
+   * it invents banding at the yellow, reverses lightness in the middle, and is
+   * the single most-criticised default in scientific visualisation.
+   *
+   * `diverging` is offered because one real case needs it: data with a
+   * meaningful *centre*, where above and below zero are different in kind
+   * rather than merely in amount.
+   */
+  ramp?: 'viridis' | 'magma' | 'diverging' | 'mono';
+  /**
+   * Remote or streaming data source configuration.
+   */
+  dataSource?: ChartDataSource;
+  /**
+   * Apply rich aesthetic gradient fills to area runs or bars.
+   */
+  gradient?: boolean;
+  /**
+   * Curated agency color theme palette ID.
+   */
+  paletteId?: string;
+  /**
+   * Linear regression trendline for scatter and bubble plots.
+   */
+  showTrendline?: boolean;
+  /**
+   * Gaussian Kernel Density Estimation (KDE) curve for histograms.
+   */
+  showKde?: boolean;
+  /**
+   * Initial value solution seed points for slope and vector fields.
+   */
+  seedPoints?: Array<{ x: number; y: number }>;
+  /**
+   * Step alignment mode: 'after' (default), 'before', or 'mid'.
+   */
+  stepMode?: 'after' | 'before' | 'mid';
+  /**
+   * Independent variable symbol for mathematical plots (e.g. 'x', 't', 'a').
+   */
+  variable?: string;
+  /**
+   * Editorial subtitle drawn beneath the main title.
+   */
+  subtitle?: string;
+  /**
+   * Explanatory footnote or data source citation at the chart footer.
+   */
+  footnote?: string;
+  /**
+   * Label / unit title for the horizontal category or domain axis.
+   */
+  xAxisLabel?: string;
+  /**
+   * Label / unit title for the vertical value axis.
+   */
+  yAxisLabel?: string;
+  /**
+   * Placement for the legend: 'top' (default), 'bottom', 'right', or 'none'.
+   */
+  legendPosition?: 'top' | 'bottom' | 'right' | 'none';
+  /**
+   * Corner radius in pixels for bar and column charts (0 to 12).
+   */
+  cornerRadius?: number;
+  /**
+   * Stroke width in pixels for line/curve runs (1 to 5). Default 2.
+   */
+  lineWidth?: number;
+  /**
+   * Point marker dot style for lines and scatter charts.
+   */
+  markerShape?: 'none' | 'circle' | 'square' | 'hollow' | 'ring';
+  /**
+   * Fill opacity for area and stacked area charts (0.1 to 1.0).
+   */
+  areaOpacity?: number;
+  /**
+   * Hard y-axis clamping bounds for 1D function plots to avoid singularity blowup (e.g. tan(x)).
+   */
+  yClipMin?: number;
+  yClipMax?: number;
+  /**
+   * Force 1:1 square isotropic aspect ratio for coordinate planes.
+   */
+  isotropic?: boolean;
+  /**
+   * Value label placement: 'auto', 'inside', 'outside', or 'center'.
+   */
+  valuePlacement?: 'auto' | 'inside' | 'outside' | 'center';
+  /**
+   * Value label format: 'value', 'percent', or 'both'.
+   */
+  valueFormat?: 'value' | 'percent' | 'both';
+  /**
+   * Only show value labels on extreme points (min & max).
+   */
+  extremesOnly?: boolean;
+  /**
+   * Shaded target corridor / tolerance band across the value axis.
+   */
+  toleranceBand?: {
+    min: number;
+    max: number;
+    label?: string;
+    color?: string;
+  };
+  /**
+   * Integration bounds for definite area under the curve [a, b].
+   */
+  integralBounds?: {
+    a: number;
+    b: number;
+  };
+  /**
+   * Pareto Top-N categories limit (remaining items aggregated to 'Other').
+   */
+  topN?: number;
+  /**
+   * Multi-series sort criterion: 'series' | 'first' (primary series), 'total' | 'sum' (sum across series), or 'category' (label).
+   */
+  sortKey?: 'series' | 'total' | 'first' | 'sum' | 'category';
+}
+
+export interface ChartDataSource {
+  mode?: 'manual' | 'url' | 'stream';
+  url?: string;
+  pollInterval?: number;
+  dataPath?: string;
+  streamSpeed?: 'slow' | 'normal' | 'fast';
+  lastSyncedAt?: number;
+  syncError?: string;
+}
+
+export interface ChartPalette {
+  id: string;
+  label: string;
+  colors: string[];
+}
+
+export const CHART_AGENCY_PALETTES: ChartPalette[] = [
+  {
+    id: 'default',
+    label: 'Standard',
+    colors: ['#2563EB', '#10B981', '#F59E0B', '#EF4444', '#8B5CF6', '#EC4899', '#06B6D4'],
+  },
+  {
+    id: 'linearDark',
+    label: 'Linear Dark',
+    colors: ['#5E6AD2', '#27B5E2', '#86EFAC', '#F472B6', '#A78BFA', '#FDE047'],
+  },
+  {
+    id: 'cyberNeon',
+    label: 'Cyber Neon',
+    colors: ['#00F5D4', '#7B2CBF', '#F72585', '#4CC9F0', '#FFE600', '#B5179E'],
+  },
+  {
+    id: 'bloomberg',
+    label: 'Terminal',
+    colors: ['#F59E0B', '#10B981', '#38BDF8', '#F87171', '#FBBF24', '#A3E635'],
+  },
+  {
+    id: 'editorial',
+    label: 'Editorial',
+    colors: ['#C2410C', '#0F766E', '#B45309', '#4338CA', '#BE185D', '#15803D'],
+  },
+  {
+    id: 'nordic',
+    label: 'Nordic Pastel',
+    colors: ['#64748B', '#38BDF8', '#34D399', '#F472B6', '#A78BFA', '#FB923C'],
+  },
+];
+
+export function getPaletteColors(paletteId?: string): readonly string[] {
+  const found = CHART_AGENCY_PALETTES.find((p) => p.id === paletteId);
+  return found?.colors ?? CHART_PALETTE;
 }
 
 export const CHART_SORTS = ['none', 'valueDesc', 'valueAsc', 'labelAsc'] as const;
@@ -487,16 +677,46 @@ export function sortSpec(spec: ChartSpec): ChartSpec {
 
   const first = spec.series[0];
   const order = spec.categories.map((label, i) => ({ label, i }));
+  const isTotal = spec.sortKey === 'total' || spec.sortKey === 'sum';
+  const isCategory = spec.sortKey === 'category';
 
   order.sort((a, b) => {
-    if (mode === 'labelAsc') return a.label.localeCompare(b.label);
-    const av = first?.values[a.i];
-    const bv = first?.values[b.i];
+    if (mode === 'labelAsc' || isCategory) return a.label.localeCompare(b.label);
+
+    let an: number | null = null;
+    let bn: number | null = null;
+
+    if (isTotal) {
+      let sumA = 0;
+      let hasA = false;
+      for (const s of spec.series) {
+        const v = s.values[a.i];
+        if (typeof v === 'number' && Number.isFinite(v)) {
+          sumA += v;
+          hasA = true;
+        }
+      }
+      let sumB = 0;
+      let hasB = false;
+      for (const s of spec.series) {
+        const v = s.values[b.i];
+        if (typeof v === 'number' && Number.isFinite(v)) {
+          sumB += v;
+          hasB = true;
+        }
+      }
+      an = hasA ? sumA : null;
+      bn = hasB ? sumB : null;
+    } else {
+      const av = first?.values[a.i];
+      const bv = first?.values[b.i];
+      an = typeof av === 'number' && Number.isFinite(av) ? av : null;
+      bn = typeof bv === 'number' && Number.isFinite(bv) ? bv : null;
+    }
+
     // A hole sorts last whichever direction is asked for: it is not a small
     // value, it is an absent one, and putting it at the top of "largest first"
     // would read as a reading of zero.
-    const an = typeof av === 'number' ? av : null;
-    const bn = typeof bv === 'number' ? bv : null;
     if (an === null && bn === null) return 0;
     if (an === null) return 1;
     if (bn === null) return -1;
@@ -607,6 +827,8 @@ export interface ChartCapabilities {
   curved: boolean;
   /** Per-series colour is meaningful (rather than per-category). */
   seriesColors: boolean;
+  /** Whether the chart kind has a continuous graph plane that can be locked against zoom/pan. */
+  lockPlane: boolean;
 }
 
 export function chartCapabilities(kind: ChartKind): ChartCapabilities {
@@ -633,6 +855,7 @@ export function chartCapabilities(kind: ChartKind): ChartCapabilities {
     sort: !plot,
     curved: kind === 'line' || kind === 'area' || kind === 'stackedArea',
     seriesColors: !plot && !radial && kind !== 'funnel',
+    lockPlane: plot,
     // `twoVar` is read only to keep the parameter honest for future rows.
     ...(twoVar ? {} : {}),
   };
@@ -724,12 +947,28 @@ export function toPercentStack(spec: ChartSpec): ChartSpec {
  * the wrong one for a temperature -- which is why it is a separate kind rather
  * than a smoothing option.
  */
-export function toStaircase<T extends { x: number; y: number }>(points: T[]): Array<{ x: number; y: number }> {
+export function toStaircase<T extends { x: number; y: number }>(
+  points: T[],
+  mode: 'after' | 'before' | 'mid' = 'after'
+): Array<{ x: number; y: number }> {
   if (points.length < 2) return points.map((p) => ({ x: p.x, y: p.y }));
   const out: Array<{ x: number; y: number }> = [{ x: points[0].x, y: points[0].y }];
   for (let i = 1; i < points.length; i += 1) {
-    out.push({ x: points[i].x, y: points[i - 1].y });
-    out.push({ x: points[i].x, y: points[i].y });
+    const prev = points[i - 1];
+    const curr = points[i];
+    if (mode === 'before') {
+      out.push({ x: prev.x, y: curr.y });
+      out.push({ x: curr.x, y: curr.y });
+    } else if (mode === 'mid') {
+      const midX = (prev.x + curr.x) / 2;
+      out.push({ x: midX, y: prev.y });
+      out.push({ x: midX, y: curr.y });
+      out.push({ x: curr.x, y: curr.y });
+    } else {
+      // 'after' (default)
+      out.push({ x: curr.x, y: prev.y });
+      out.push({ x: curr.x, y: curr.y });
+    }
   }
   return out;
 }
@@ -756,9 +995,10 @@ export const CHART_PALETTE = [
   '#F97316',
 ] as const;
 
-/** The colour for series `index`, honouring an explicit override. */
-export function seriesColor(series: ChartSeries | undefined, index: number): string {
-  return series?.color ?? CHART_PALETTE[index % CHART_PALETTE.length];
+/** The colour for series `index`, honouring an explicit override or custom palette. */
+export function seriesColor(series: ChartSeries | undefined, index: number, palette?: readonly string[]): string {
+  const pal = palette && palette.length ? palette : CHART_PALETTE;
+  return series?.color ?? pal[index % pal.length];
 }
 
 /** A starting chart, used by the tool and by the templates. */
@@ -1053,6 +1293,25 @@ export function defaultChartSpec(kind: ChartKind = 'bar'): ChartSpec {
         yPlotMin: -5,
         yPlotMax: 5,
         resolution: 18,
+      };
+
+    case 'heatmap':
+      return {
+        kind,
+        title: 'A density surface',
+        categories: [],
+        series: [],
+        // Two Gaussian peaks of different weight: the surface a density
+        // estimate actually produces, and the one where a uniform ramp earns
+        // itself -- a rainbow would invent a ridge between them.
+        functions: [
+          { source: 'exp(-((x-1.5)^2 + (y-1)^2)/2) + 0.6*exp(-((x+2)^2 + (y+1.5)^2)/3)' },
+        ],
+        xMin: -6,
+        xMax: 6,
+        yPlotMin: -5,
+        yPlotMax: 5,
+        resolution: 64,
       };
 
     case 'vectorField':

@@ -767,6 +767,11 @@ export const SHAPE_SPECS: Record<MermaidShape, ShapeSpec> = {
 export function shapeFromCanvas(kind: ShapeKind, points?: number, cornerRadius?: number): MermaidShape {
   if (kind === 'ellipse') return 'circle';
   if (kind === 'squircle') return 'round';
+  if (kind === 'diamond') return 'diamond';
+  if (kind === 'cylinder') return 'database';
+  if (kind === 'capsule') return 'stadium';
+  if (kind === 'parallelogram') return 'parallelogram';
+  if (kind === 'trapezoid') return 'trapezoid';
   if (kind === 'polygon') {
     if (points === 4) return 'diamond';
     if (points === 6) return 'hexagon';

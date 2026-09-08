@@ -1,5 +1,12 @@
 import { layoutGrid, type GridKind, type GridSpec, KIND_DEFAULTS } from './gridLayout';
-import { styleCells, CELL_SHAPES, COLOR_MODES, GRID_PALETTES, type StyledCell } from './gridStyle';
+import {
+  styleCells,
+  CELL_SHAPES,
+  COLOR_MODES,
+  GRID_DISPLAY_MODES,
+  GRID_PALETTES,
+  type StyledCell,
+} from './gridStyle';
 import { cellPatch, type GridRecipe } from './gridBuild';
 
 /**
@@ -73,6 +80,24 @@ export function explodeGrid(node: {
 
 const KINDS = new Set<string>(Object.keys(KIND_DEFAULTS));
 
+/**
+ * Kinds that were retired, and what they became.
+ *
+ * `fibonacci` divided a box by the golden section along rotating edges;
+ * `golden` divides a box by the golden section. They were one kind and a
+ * step count, and having both meant the picker offered a choice with no
+ * answer -- the second one existed because the first had a more exciting
+ * name.
+ *
+ * Mapped rather than dropped. Falling through to the default would turn
+ * somebody's composition into a plain modular grid on next load, which is a
+ * worse outcome than the redundancy this removes: the shapes are close, so
+ * the layout survives recognisably.
+ */
+const RETIRED_KINDS: Record<string, GridKind> = {
+  fibonacci: 'golden',
+};
+
 function num(v: unknown, fallback: number): number {
   return typeof v === 'number' && Number.isFinite(v) ? v : fallback;
 }
@@ -103,7 +128,10 @@ export function normalizeRecipe(raw: unknown, width: number, height: number): Gr
   const spec = r.spec ?? {};
   const style = r.style ?? {};
 
-  const kind = (KINDS.has(spec.kind as string) ? spec.kind : 'modular') as GridKind;
+  const stored = spec.kind as string;
+  const kind = (
+    KINDS.has(stored) ? stored : (RETIRED_KINDS[stored] ?? 'modular')
+  ) as GridKind;
   const defaults = KIND_DEFAULTS[kind];
 
   const shapes = Array.isArray(style.shapes)
@@ -153,6 +181,23 @@ export function normalizeRecipe(raw: unknown, width: number, height: number): Gr
       strokeWidth: clamp(num(style.strokeWidth, 0), 0, 40),
       opacity: clamp(num(style.opacity, 1), 0, 1),
       seed: num(style.seed, 1),
+      /**
+       * Display mode and track labels cross the boundary too.
+       *
+       * They did not, for the whole life of the feature: the panel wrote them,
+       * the renderer read them, and this function -- the only door between the
+       * CRDT and everything downstream -- copied neither. A grid switched to a
+       * guide came back a surface on reload and arrived as a surface on every
+       * other machine in the room, which is the failure that looks like the
+       * control does nothing rather than like a bug.
+       *
+       * Both are written only when they say something, so a document that
+       * predates them keeps no key rather than gaining one that means default.
+       */
+      ...(GRID_DISPLAY_MODES.includes(style.mode as never) && style.mode !== 'surface'
+        ? { mode: style.mode as GridRecipe['style']['mode'] }
+        : null),
+      ...(style.showLabels === true ? { showLabels: true } : null),
     },
   };
 }

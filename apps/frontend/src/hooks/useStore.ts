@@ -298,6 +298,11 @@ interface StoreState {
    */
   flattenConfirmNodeId: string | null;
   setFlattenConfirmNodeId: (id: string | null) => void;
+  /**
+   * Node ID of the chart currently open in the floating interactive spreadsheet grid modal.
+   */
+  chartDataModalNodeId: string | null;
+  setChartDataModalNodeId: (id: string | null) => void;
   /** Currently entered / isolated group ID for nested group editing. */
   enteredGroupId: string | null;
   setEnteredGroupId: (id: string | null) => void;
@@ -724,6 +729,8 @@ export const useStore = create<StoreState>((set) => ({
   },
   flattenConfirmNodeId: null,
   setFlattenConfirmNodeId: (flattenConfirmNodeId) => set({ flattenConfirmNodeId }),
+  chartDataModalNodeId: null,
+  setChartDataModalNodeId: (chartDataModalNodeId) => set({ chartDataModalNodeId }),
   enteredGroupId: null,
   setEnteredGroupId: (enteredGroupId) => set({ enteredGroupId }),
 }));

@@ -2,6 +2,8 @@ import { describe, expect, it } from 'vitest';
 import { defaultSpec, layoutGrid, type GridCell } from './gridLayout';
 import {
   assignColors,
+  cellLabel,
+  cellPaint,
   COLOR_MODES,
   COLOR_MODE_LABELS,
   defaultStyle,
@@ -150,5 +152,61 @@ describe('palettes', () => {
 describe('labels', () => {
   it('names every shape', () => {
     for (const key of Object.keys(SHAPE_LABELS)) expect(SHAPE_LABELS[key as never]).toBeTruthy();
+  });
+});
+
+/**
+ * One resolver, because there were two.
+ *
+ * `cellPaint` exists so the Konva renderer and the SVG exporter cannot answer
+ * "what colour is this module" differently. These assert the properties the
+ * two painters rely on rather than the literals themselves, so re-picking the
+ * guide hue is a one-line change and not a test edit.
+ */
+describe('cellPaint', () => {
+  const base = defaultStyle();
+  const cell = styleCells(layoutGrid({ kind: 'modular', x: 0, y: 0, width: 400, height: 300, rows: 2, columns: 2, gutterX: 8, gutterY: 8, margin: 0, variation: 0, seed: 1 }), base);
+
+  it('paints a surface with the cell own fill', () => {
+    expect(cellPaint(cell[0], base).fill).toBe(cell[0].fill);
+  });
+
+  it('tints a guide rather than filling it, and gives it an edge', () => {
+    const paint = cellPaint(cell[0], { ...base, mode: 'guide' });
+    expect(paint.fill).not.toBe(cell[0].fill);
+    expect(paint.strokeWidth).toBeGreaterThan(0);
+    expect(paint.stroke).toBeTruthy();
+  });
+
+  it('leaves a wireframe unfilled but drawn', () => {
+    const paint = cellPaint(cell[0], { ...base, mode: 'wireframe' });
+    expect(paint.fill).toBe('rgba(0,0,0,0)');
+    expect(paint.strokeWidth).toBeGreaterThan(0);
+  });
+
+  it('lets an author own stroke win over the mode default', () => {
+    const styled = { ...base, mode: 'guide' as const, strokeColor: '#00FF00', strokeWidth: 3 };
+    const paint = cellPaint(cell[0], styled);
+    expect(paint.stroke).toBe('#00FF00');
+    expect(paint.strokeWidth).toBe(3);
+  });
+});
+
+describe('cellLabel', () => {
+  const base = defaultStyle();
+  const cells = styleCells(layoutGrid({ kind: 'modular', x: 0, y: 0, width: 400, height: 300, rows: 3, columns: 3, gutterX: 8, gutterY: 8, margin: 0, variation: 0, seed: 1 }), base);
+
+  it('names the top row by column', () => {
+    const top = cells.filter((c) => c.row === 0).sort((a, b) => a.col - b.col);
+    expect(top.map(cellLabel)).toEqual(['C1', 'C2', 'C3']);
+  });
+
+  it('names the left column by row', () => {
+    const left = cells.filter((c) => c.col === 0 && c.row > 0).sort((a, b) => a.row - b.row);
+    expect(left.map(cellLabel)).toEqual(['R2', 'R3']);
+  });
+
+  it('leaves the field unlabelled', () => {
+    expect(cells.filter((c) => c.row > 0 && c.col > 0).every((c) => cellLabel(c) === null)).toBe(true);
   });
 });

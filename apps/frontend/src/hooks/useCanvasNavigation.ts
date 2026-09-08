@@ -70,8 +70,9 @@ export function useCanvasNavigation({
 
     const onWheel = (evt: WheelEvent) => {
       evt.preventDefault();
-      if (evt.ctrlKey) {
+      if (evt.ctrlKey || evt.metaKey) {
         cameraSystem.zoomByWheel(evt.deltaY, evt.clientX, evt.clientY);
+        (evt as any).__vegaZoomHandled = true;
       } else {
         cameraSystem.pan(evt.deltaX, evt.deltaY);
       }
@@ -80,6 +81,71 @@ export function useCanvasNavigation({
     el.addEventListener('wheel', onWheel, { passive: false });
     return () => el.removeEventListener('wheel', onWheel);
   }, [containerRef]);
+
+  // Global window guard: disables accidental browser tab zooming across the entire application
+  useEffect(() => {
+    if (typeof window === 'undefined') return;
+
+    // 1. Prevent Ctrl+Wheel / trackpad pinch zoom from zooming the browser tab anywhere in the window
+    const onWindowWheel = (evt: WheelEvent) => {
+      if (evt.ctrlKey || evt.metaKey) {
+        evt.preventDefault();
+        if (!(evt as any).__vegaZoomHandled) {
+          (evt as any).__vegaZoomHandled = true;
+          cameraSystem.zoomByWheel(evt.deltaY, evt.clientX, evt.clientY);
+        }
+      }
+    };
+
+    // 2. Prevent Ctrl/Cmd + (+ / - / 0 / =) from zooming the browser tab; zoom the canvas camera instead
+    const onWindowKeyDown = (e: KeyboardEvent) => {
+      if (e.ctrlKey || e.metaKey) {
+        const key = e.key;
+        const code = e.code;
+        const isZoomIn = key === '=' || key === '+' || code === 'NumpadAdd' || code === 'Equal';
+        const isZoomOut = key === '-' || key === '_' || code === 'NumpadSubtract' || code === 'Minus';
+        const isZoomReset = key === '0' || code === 'Numpad0' || code === 'Digit0';
+
+        if (isZoomIn || isZoomOut || isZoomReset) {
+          e.preventDefault();
+          const cx = typeof window !== 'undefined' ? window.innerWidth / 2 : 400;
+          const cy = typeof window !== 'undefined' ? window.innerHeight / 2 : 300;
+          if (isZoomIn) {
+            cameraSystem.zoomAt(1, cx, cy);
+          } else if (isZoomOut) {
+            cameraSystem.zoomAt(-1, cx, cy);
+          } else if (isZoomReset) {
+            window.dispatchEvent(
+              new CustomEvent('navigateViewport', { detail: { x: 0, y: 0, zoom: 1 } })
+            );
+          }
+        }
+      }
+    };
+
+    // 3. Prevent Safari / WebKit gesture pinch zooming on document
+    const onGesture = (e: Event) => {
+      e.preventDefault();
+    };
+
+    window.addEventListener('wheel', onWindowWheel, { passive: false });
+    window.addEventListener('keydown', onWindowKeyDown, { capture: true });
+    if (typeof document !== 'undefined') {
+      document.addEventListener('gesturestart', onGesture, { passive: false });
+      document.addEventListener('gesturechange', onGesture, { passive: false });
+      document.addEventListener('gestureend', onGesture, { passive: false });
+    }
+
+    return () => {
+      window.removeEventListener('wheel', onWindowWheel);
+      window.removeEventListener('keydown', onWindowKeyDown, { capture: true });
+      if (typeof document !== 'undefined') {
+        document.removeEventListener('gesturestart', onGesture);
+        document.removeEventListener('gesturechange', onGesture);
+        document.removeEventListener('gestureend', onGesture);
+      }
+    };
+  }, []);
 
   const touchMetrics = (touches: TouchList) => {
     const [a, b] = [touches[0], touches[1]];

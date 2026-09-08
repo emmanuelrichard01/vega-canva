@@ -18,6 +18,18 @@ import { Accordion, Row, SubGroup } from '../panelPrimitives';
 import { NumberStepper } from '../../ui/NumberStepper';
 import { Switch } from '../../ui/Switch';
 import { SegmentedControl } from '../../ui/SegmentedControl';
+import { ShapeIcon } from '../../workspace/shapeIcons';
+import {
+  CALLOUT_TAILS,
+  CALLOUT_TAIL_CELLS,
+  displayBounds,
+  fromDisplay,
+  paramSuffix,
+  paramValue,
+  shapeParamLabel,
+  shapeParams,
+  toDisplay,
+} from '../../../engine/model/shapeParams';
 import { EndCapIcon } from '../connectorIcons';
 import { LineProfileIcon } from '../lineProfileIcons';
 import { hasBend, isMultiPoint } from '../../../engine/model/polyline';
@@ -151,6 +163,9 @@ export const ShapeGeometrySection: React.FC<ShapeGeometrySectionProps> = ({
   frameChildCount,
   setLayoutGuide,
 }) => {
+  // Empty for every kind with no dial of its own, which is most of them.
+  const params = node.type === 'shape' ? shapeParams(node.geometry.kind) : [];
+
   return (
     <>
       {uniformKind && node.type === 'shape' && openShape && (
@@ -347,6 +362,80 @@ export const ShapeGeometrySection: React.FC<ShapeGeometrySectionProps> = ({
               max={MAX_POLYGON_SIDES}
             />
           </Row>
+        </Accordion>
+      )}
+
+      {/**
+        * Every parametric shape's dials, from `SHAPE_PARAMS`.
+        *
+        * This was ten hand-written accordions of one or two steppers each,
+        * every one repeating the same four lines with a different field and a
+        * different pair of bounds -- and the bounds had drifted from the ones
+        * the document enforced and the geometry honoured. Reading the table
+        * means a new dial is a row in it, and means a stepper cannot offer a
+        * range the shape will not draw.
+        *
+        * The group is titled with the shape's own name, which is what the ten
+        * accordions were really for.
+        */}
+      {uniformKind && node.type === 'shape' && params.length > 0 && (
+        <Accordion
+          title={shapeParamLabel(node.geometry.kind) ?? 'Shape'}
+          icon={<ShapeIcon kind={node.geometry.kind} size={13} />}
+          defaultOpen
+        >
+          {params.map((param) => {
+            const bounds = displayBounds(param);
+            return (
+              <Row key={param.field} label={param.label} hint={param.hint}>
+                <NumberStepper
+                  value={toDisplay(param, paramValue(node.geometry, param))}
+                  onChange={(shown) =>
+                    setGeometry({ [param.field]: fromDisplay(param, shown) })
+                  }
+                  min={bounds.min}
+                  max={bounds.max}
+                  step={bounds.step}
+                  suffix={paramSuffix(param)}
+                />
+              </Row>
+            );
+          })}
+
+          {/*
+            The tail, as a pad rather than a row of seven chips.
+            Seven names do not fit a 260px panel -- "Bottom L" was already a
+            truncation of one -- and the thing being chosen is a *direction*,
+            which a picture of the directions says without any names at all.
+            Two of the seven were missing from the old picker entirely, so
+            they were drawable, storable and unreachable.
+          */}
+          {node.geometry.kind === 'callout' && (
+            <Row stack label="Tail">
+              <div className="tailpad" role="radiogroup" aria-label="Where the tail comes out">
+                {CALLOUT_TAILS.map((tail) => {
+                  const cell = CALLOUT_TAIL_CELLS[tail];
+                  const active = (node.geometry.tailPosition ?? 'bottom-left') === tail;
+                  return (
+                    <button
+                      key={tail}
+                      type="button"
+                      role="radio"
+                      aria-checked={active}
+                      aria-label={tail.replace('-', ' ')}
+                      className="tailpad__cell"
+                      data-active={active || undefined}
+                      style={{ gridRow: cell.row, gridColumn: cell.col }}
+                      onClick={() => setGeometry({ tailPosition: tail })}
+                    >
+                      <span className="tailpad__dot" />
+                    </button>
+                  );
+                })}
+                <span className="tailpad__balloon" aria-hidden />
+              </div>
+            </Row>
+          )}
         </Accordion>
       )}
 

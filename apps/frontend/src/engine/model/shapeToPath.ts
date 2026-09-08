@@ -16,7 +16,7 @@
 
 import { shapeOutline } from './shapeOutline';
 import type { BezierGeometry, BezierSegment, Point, ShapeNode } from './schema';
-import { fromAnchors, type Anchor } from './pathGeometry';
+import { fromAnchors, type Anchor, type ContourGeometry } from './pathGeometry';
 import { cornerRadiiOf, fitRadii, type CornerRadii } from './cornerRadii';
 
 /**
@@ -150,7 +150,7 @@ function rectPath(x: number, y: number, w: number, h: number, radii: CornerRadii
  */
 export function shapeToPath(
   node: Pick<ShapeNode, 'geometry' | 'width' | 'height' | 'appearance'>
-): BezierGeometry {
+): ContourGeometry {
   const outline = shapeOutline(node);
   switch (outline.kind) {
     case 'rect':

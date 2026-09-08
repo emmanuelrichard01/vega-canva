@@ -1,12 +1,20 @@
 import React from 'react';
-import { Ellipse, Group, Line, Path, Rect } from 'react-konva';
+import { Ellipse, Group, Line, Path, Rect, Text } from 'react-konva';
 import type { GridNode } from '../../../engine/model/schema';
 import { gridCellsOf } from '../../../engine/grid/gridNode';
 import { roundPolygon } from '../../../engine/grid/gridLayout';
 import { cellGeometry } from '../../../engine/grid/gridBuild';
 import { shapeOutline } from '../../../engine/model/shapeOutline';
 import { contourData } from '../../../engine/model/pathGeometry';
-import type { StyledCell } from '../../../engine/grid/gridStyle';
+import {
+  cellLabel,
+  cellPaint,
+  labelInk,
+  LABEL_INSET,
+  LABEL_SIZE,
+  type GridStyle,
+  type StyledCell,
+} from '../../../engine/grid/gridStyle';
 
 /**
  * A grid, drawn from its recipe.
@@ -36,15 +44,16 @@ interface Props {
 }
 
 /** One module. Split out so React can key it and skip the untouched ones. */
-const Cell: React.FC<{ cell: StyledCell; stroke?: string; strokeWidth: number }> = ({
-  cell,
-  stroke,
-  strokeWidth,
-}) => {
+const Cell: React.FC<{ cell: StyledCell; style: GridStyle }> = ({ cell, style }) => {
+  // Resolved in `gridStyle`, which is also what the SVG exporter asks. The
+  // branch used to live here *and* there, in two copies that shared three
+  // colour literals and nothing else.
+  const resolved = cellPaint(cell, style);
+
   const paint = {
-    fill: cell.fill,
-    stroke: strokeWidth > 0 ? stroke : undefined,
-    strokeWidth: strokeWidth > 0 ? strokeWidth : undefined,
+    fill: resolved.fill,
+    stroke: resolved.strokeWidth > 0 ? resolved.stroke : undefined,
+    strokeWidth: resolved.strokeWidth > 0 ? resolved.strokeWidth : undefined,
     // No module is its own hit target -- the backdrop below takes every click,
     // so the grid answers as one object -- and skipping the hit graph for forty
     // shapes is most of what makes a dense grid cheap to draw.
@@ -123,7 +132,7 @@ export const GridRenderer: React.FC<Props> = React.memo(({ node }) => {
     [width, height, grid]
   );
 
-  const { strokeColor, strokeWidth, opacity } = grid.style;
+  const { opacity } = grid.style;
 
   return (
     <Group opacity={opacity}>
@@ -154,8 +163,33 @@ export const GridRenderer: React.FC<Props> = React.memo(({ node }) => {
         perfectDrawEnabled={false}
       />
       {cells.map((cell) => (
-        <Cell key={cell.index} cell={cell} stroke={strokeColor} strokeWidth={strokeWidth} />
+        <Cell key={cell.index} cell={cell} style={grid.style} />
       ))}
+      {/*
+        Labels last, so they sit over every module rather than under the ones
+        drawn after them. Which cells get named -- and what they are named --
+        is `cellLabel`'s answer, shared with the exporter.
+      */}
+      {grid.style.showLabels &&
+        cells.map((cell) => {
+          const label = cellLabel(cell);
+          if (label === null) return null;
+          return (
+            <Text
+              key={`lbl-${cell.index}`}
+              x={cell.x + LABEL_INSET}
+              y={cell.y + LABEL_INSET}
+              text={label}
+              fontSize={LABEL_SIZE}
+              fontFamily="Inter, sans-serif"
+              fontStyle="600"
+              fill={labelInk(grid.style)}
+              opacity={0.85}
+              listening={false}
+              perfectDrawEnabled={false}
+            />
+          );
+        })}
     </Group>
   );
 });

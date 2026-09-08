@@ -2,7 +2,7 @@ import React from 'react';
 import { Check, ChevronDown } from 'lucide-react';
 import { ChartKindIcon } from '../workspace/chartIcons';
 import { CHART_HINTS, CHART_LABELS, chartPickerGroups } from '../../engine/chart/chartKinds';
-import type { ChartKind } from '../../engine/chart/chartTypes';
+import { CHART_AGENCY_PALETTES, type ChartKind } from '../../engine/chart/chartTypes';
 
 /**
  * The parts the chart panel is built from.
@@ -287,3 +287,110 @@ export const ActionRow: React.FC<{
     ))}
   </div>
 );
+
+/**
+ * Luxury visual ribbon palette picker.
+ * Displays harmonious color bands rather than plain text dropdown options.
+ */
+export const PaletteRibbonPicker: React.FC<{
+  value: string;
+  onChange: (paletteId: string) => void;
+}> = ({ value, onChange }) => {
+  const [open, setOpen] = React.useState(false);
+  const ref = React.useRef<HTMLDivElement>(null);
+
+  React.useEffect(() => {
+    if (!open) return;
+    const onDown = (e: PointerEvent) => {
+      if (!ref.current?.contains(e.target as Node)) setOpen(false);
+    };
+    window.addEventListener('pointerdown', onDown);
+    return () => window.removeEventListener('pointerdown', onDown);
+  }, [open]);
+
+  const current = CHART_AGENCY_PALETTES.find((p) => p.id === value) ?? CHART_AGENCY_PALETTES[0];
+
+  return (
+    <div style={{ position: 'relative', width: '100%' }} ref={ref}>
+      <button
+        type="button"
+        className="chartp-palette-btn"
+        aria-expanded={open}
+        onClick={() => setOpen((o) => !o)}
+      >
+        <span style={{ fontWeight: 500 }}>{current.label}</span>
+        <div className="chartp-ribbon">
+          {current.colors.slice(0, 6).map((c, i) => (
+            <span key={i} className="chartp-ribbon-stripe" style={{ background: c }} />
+          ))}
+        </div>
+      </button>
+
+      {open && (
+        <div className="chartp-palette-popover" role="dialog" aria-label="Palette selection">
+          {CHART_AGENCY_PALETTES.map((p) => {
+            const active = p.id === value;
+            return (
+              <button
+                key={p.id}
+                type="button"
+                className="chartp-palette-option"
+                data-active={active}
+                onClick={() => {
+                  onChange(p.id);
+                  setOpen(false);
+                }}
+              >
+                <span style={{ fontSize: 11 }}>{p.label}</span>
+                <div className="chartp-ribbon">
+                  {p.colors.slice(0, 6).map((c, i) => (
+                    <span key={i} className="chartp-ribbon-stripe" style={{ background: c }} />
+                  ))}
+                </div>
+              </button>
+            );
+          })}
+        </div>
+      )}
+    </div>
+  );
+};
+
+/**
+ * Clickable mathematical token chips for quick formula insertion.
+ */
+export const MathTokenBar: React.FC<{
+  onInsert: (token: string) => void;
+  variable?: string;
+}> = ({ onInsert, variable = 'x' }) => {
+  const TOKENS = [
+    { label: 'sin', insert: `sin(${variable})` },
+    { label: 'cos', insert: `cos(${variable})` },
+    { label: 'tan', insert: `tan(${variable})` },
+    { label: 'exp', insert: `exp(${variable})` },
+    { label: 'ln', insert: `ln(${variable})` },
+    { label: `√${variable}`, insert: `sqrt(${variable})` },
+    { label: 'π', insert: 'pi' },
+    { label: `${variable}²`, insert: `${variable}^2` },
+    { label: `${variable}ⁿ`, insert: `${variable}^` },
+    { label: `|${variable}|`, insert: `abs(${variable})` },
+    { label: '( )', insert: '()' },
+  ];
+
+  return (
+    <div className="chartp-tokens" aria-label="Insert math functions">
+      {TOKENS.map((t) => (
+        <button
+          key={t.label}
+          type="button"
+          className="chartp-token-btn"
+          onClick={() => onInsert(t.insert)}
+          title={`Insert ${t.insert}`}
+        >
+          {t.label}
+        </button>
+      ))}
+    </div>
+  );
+};
+

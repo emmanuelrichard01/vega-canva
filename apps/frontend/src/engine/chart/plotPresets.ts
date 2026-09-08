@@ -35,6 +35,7 @@ export interface PlotPreset {
   /** One line, saying what it demonstrates rather than what it is. */
   note: string;
   kind: ChartKind;
+  category?: 'Calculus' | 'Physics' | 'Machine Learning' | 'Geometry' | 'Fields';
   spec: Omit<ChartSpec, 'kind' | 'categories' | 'series'>;
 }
 
@@ -398,6 +399,7 @@ export const PLOT_PRESETS: PlotPreset[] = [
     name: 'Gradient field',
     note: 'the steepest ascent of a surface',
     kind: 'vectorField',
+    category: 'Physics',
     spec: {
       title: '∇(x² + y²)/4',
       functions: [{ source: 'x / 2' }, { source: 'y / 2' }],
@@ -409,10 +411,227 @@ export const PLOT_PRESETS: PlotPreset[] = [
     name: 'Shear flow',
     note: 'speed varying across the channel',
     kind: 'vectorField',
+    category: 'Physics',
     spec: {
       title: '⟨y, 0⟩',
       functions: [{ source: 'y' }, { source: '0*x' }],
       xMin: -4, xMax: 4, yPlotMin: -3, yPlotMax: 3, resolution: 14,
+    },
+  },
+
+  // -------------------------------------------------------- Machine Learning & AI
+  {
+    id: 'gelu',
+    name: 'GELU Activation',
+    note: 'the smooth probabilistic gate powering transformers',
+    kind: 'function',
+    category: 'Machine Learning',
+    spec: {
+      title: 'GELU(x)',
+      functions: [{ source: '0.5 * x * (1 + tanh(0.797884 * (x + 0.044715 * x^3)))' }],
+      xMin: -4,
+      xMax: 4,
+    },
+  },
+  {
+    id: 'relu-family',
+    name: 'ReLU & Leaky ReLU',
+    note: 'piecewise non-linearities and gradient flow',
+    kind: 'function',
+    category: 'Machine Learning',
+    spec: {
+      title: 'ReLU vs Leaky ReLU',
+      functions: [{ source: 'max(0, x)' }, { source: 'max(0.1*x, x)' }],
+      xMin: -4,
+      xMax: 4,
+    },
+  },
+  {
+    id: 'swish-silu',
+    name: 'Swish / SiLU',
+    note: 'self-gated activation with a non-monotonic valley',
+    kind: 'function',
+    category: 'Machine Learning',
+    spec: {
+      title: 'Swish: x · σ(x)',
+      functions: [{ source: 'x / (1 + exp(-x))' }],
+      xMin: -5,
+      xMax: 5,
+    },
+  },
+  {
+    id: 'softplus',
+    name: 'Softplus',
+    note: 'smooth differentiable approximation to the rectifier',
+    kind: 'function',
+    category: 'Machine Learning',
+    spec: {
+      title: 'ln(1 + e^x)',
+      functions: [{ source: 'ln(1 + exp(x))' }, { source: 'max(0, x)' }],
+      xMin: -4,
+      xMax: 4,
+    },
+  },
+
+  // ---------------------------------------------------- Physics & Dynamic Systems
+  {
+    id: 'wave-packet',
+    name: 'Wave packet',
+    note: 'localized carrier wave modulated by a Gaussian envelope',
+    kind: 'function',
+    category: 'Physics',
+    spec: {
+      title: 'Wave Packet',
+      functions: [
+        { source: 'exp(-x^2 / 10) * cos(6*x)' },
+        { source: 'exp(-x^2 / 10)' },
+        { source: '-exp(-x^2 / 10)' },
+      ],
+      xMin: -8,
+      xMax: 8,
+      samples: 400,
+    },
+  },
+  {
+    id: 'witch-agnesi',
+    name: 'Witch of Agnesi',
+    note: 'classical bell-shaped cubic curve with Cauchy distribution form',
+    kind: 'function',
+    category: 'Geometry',
+    spec: {
+      title: 'y = 8 / (x² + 4)',
+      functions: [{ source: '8 / (x^2 + 4)' }],
+      xMin: -6,
+      xMax: 6,
+    },
+  },
+  {
+    id: 'trefoil-knot',
+    name: 'Trefoil knot projection',
+    note: 'the simplest non-trivial knot projected onto 2D',
+    kind: 'parametric',
+    category: 'Geometry',
+    spec: {
+      title: 'Trefoil Knot',
+      functions: [
+        { source: 'sin(t) + 2*sin(2*t)' },
+        { source: 'cos(t) - 2*cos(2*t)' },
+      ],
+      xMin: 0,
+      xMax: Math.PI * 2,
+      samples: 1000,
+    },
+  },
+  {
+    id: 'ballistic-drag',
+    name: 'Ballistic flight with drag',
+    note: 'aerodynamic trajectory with exponential terminal velocity',
+    kind: 'parametric',
+    category: 'Physics',
+    spec: {
+      title: 'Trajectory with Drag',
+      functions: [
+        { source: '18 * (1 - exp(-0.35*t))' },
+        { source: '28 * (1 - exp(-0.35*t)) - 1.8*t' },
+      ],
+      xMin: 0,
+      xMax: 6,
+      samples: 400,
+    },
+  },
+  {
+    id: 'fermat-spiral',
+    name: 'Fermat spiral',
+    note: 'parabolic spiral mirroring phyllotaxis plant packing',
+    kind: 'polarPlot',
+    category: 'Geometry',
+    spec: {
+      title: 'r² = a (Fermat)',
+      functions: [{ source: 'sqrt(a)' }],
+      xMin: 0,
+      xMax: Math.PI * 8,
+      samples: 1200,
+    },
+  },
+  {
+    id: 'rose-8',
+    name: 'Eight-petal rose',
+    note: 'r = cos(4θ) exhibiting multi-fold rotational symmetry',
+    kind: 'polarPlot',
+    category: 'Geometry',
+    spec: {
+      title: 'r = cos(4a)',
+      functions: [{ source: 'cos(4*a)' }],
+      xMin: 0,
+      xMax: Math.PI * 2,
+      samples: 900,
+    },
+  },
+  {
+    id: 'van-der-pol',
+    name: 'Van der Pol oscillator',
+    note: 'phase plane showing limit cycle convergence',
+    kind: 'slopeField',
+    category: 'Physics',
+    spec: {
+      title: 'dy/dx = (1 - x²)y - x',
+      functions: [{ source: '(1 - x^2)*y - x' }],
+      xMin: -3.5,
+      xMax: 3.5,
+      yPlotMin: -3.5,
+      yPlotMax: 3.5,
+      resolution: 20,
+    },
+  },
+  {
+    id: 'lotka-volterra',
+    name: 'Lotka-Volterra predator-prey',
+    note: 'ecological population cycles around a neutral center',
+    kind: 'vectorField',
+    category: 'Physics',
+    spec: {
+      title: '⟨x(1 − 0.5y), −y(1 − 0.5x)⟩',
+      functions: [{ source: 'x * (1 - 0.5*y)' }, { source: '-y * (1 - 0.5*x)' }],
+      xMin: 0.1,
+      xMax: 5,
+      yPlotMin: 0.1,
+      yPlotMax: 5,
+      resolution: 16,
+    },
+  },
+  {
+    id: 'vortex-flow',
+    name: 'Vortex flow',
+    note: 'irrotational circulation with 1/r velocity decay',
+    kind: 'vectorField',
+    category: 'Physics',
+    spec: {
+      title: 'Point Vortex',
+      functions: [
+        { source: '-y / (x^2 + y^2 + 0.15)' },
+        { source: 'x / (x^2 + y^2 + 0.15)' },
+      ],
+      xMin: -4,
+      xMax: 4,
+      yPlotMin: -4,
+      yPlotMax: 4,
+      resolution: 16,
+    },
+  },
+  {
+    id: 'doublet-flow',
+    name: 'Aerodynamic doublet',
+    note: 'source and sink coalescing at the origin',
+    kind: 'slopeField',
+    category: 'Physics',
+    spec: {
+      title: 'Doublet Flow',
+      functions: [{ source: '(y^2 - x^2) / (2*x*y + 0.05)' }],
+      xMin: -4,
+      xMax: 4,
+      yPlotMin: -4,
+      yPlotMax: 4,
+      resolution: 20,
     },
   },
 ];

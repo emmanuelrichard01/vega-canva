@@ -160,6 +160,10 @@ export interface PlotCurve {
   color?: string;
   /** Absent means visible; the panel toggles it without deleting the formula. */
   hidden?: boolean;
+  /** Stroke thickness in pixels (1 to 5). Absent defaults to 2. */
+  width?: number;
+  /** Stroke dash style. Absent is solid. */
+  style?: 'solid' | 'dashed' | 'dotted';
 }
 
 export interface CompiledCurve {

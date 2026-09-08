@@ -48,7 +48,8 @@ export type GridKind =
    */
   | 'orbit'
   | 'radial'
-  | 'diagonal';
+  | 'diagonal'
+  | 'isometric';
 
 export interface GridSpec {
   kind: GridKind;
@@ -143,6 +144,7 @@ export interface GridCell {
 export const GRID_KINDS: readonly GridKind[] = [
   'columns', 'modular', 'bento', 'masonry', 'hierarchical',
   'manuscript', 'baseline', 'golden', 'orbit', 'radial', 'diagonal',
+  'isometric',
 ];
 
 export const GRID_LABELS: Record<GridKind, string> = {
@@ -157,6 +159,7 @@ export const GRID_LABELS: Record<GridKind, string> = {
   orbit: 'Orbit',
   radial: 'Radial',
   diagonal: 'Diagonal',
+  isometric: 'Isometric',
 };
 
 /** One line each, for the picker. What the grid is *for*, not what it looks like. */
@@ -172,6 +175,7 @@ export const GRID_HINTS: Record<GridKind, string> = {
   orbit: 'Modules stepped around concentric rings. For anything that circles a centre.',
   radial: 'Wedges radiating from the middle, cut from a ring. For cycles, phases and stages.',
   diagonal: 'Rows cascading sideways, every cell whole. Motion, from nothing but an offset.',
+  isometric: 'A true 30° lattice of interlocking rhombi. For 3D diagrams, game art and spatial UI.',
 };
 
 /**
@@ -230,6 +234,9 @@ export const KIND_DEFAULTS: Record<
    */
   radial: { rows: 1, columns: 9, variation: 0.45, gutterX: 8, gutterY: 8 },
   diagonal: { rows: 4, columns: 4, variation: 0.5, gutterX: 12, gutterY: 12 },
+  // Four deep reads as a lattice rather than as a row of lozenges, and zero
+  // variation is the true 30° -- see `isometric`.
+  isometric: { rows: 6, columns: 5, variation: 0, gutterX: 4, gutterY: 4 },
 };
 
 /**
@@ -332,6 +339,9 @@ export const VARIATION_LABELS: Partial<Record<GridKind, string>> = {
   // high one. Nothing else about a sector is a matter of degree.
   radial: 'Ring width',
   diagonal: 'Cascade',
+  // Not a stagger. The stagger is half a tile and is not negotiable; the
+  // angle is the only thing about a lattice that is a matter of degree.
+  isometric: 'Projection angle',
 };
 
 /** Fill in `weight` from the areas produced, so no kind has to compute it. */
@@ -1286,8 +1296,126 @@ function diagonal(spec: GridSpec): Omit<GridCell, 'weight'>[] {
   return out;
 }
 
+/**
+ * Isometric: a true 30° axonometric lattice.
+ *
+ * ## What was here before
+ *
+ * A rectangular grid of axis-aligned diamonds with an arbitrary horizontal
+ * offset on odd rows. Three separate things were wrong with it, and the
+ * comment above it claimed the first:
+ *
+ *   - **It was not 30°.** Each diamond was inscribed in whatever box the
+ *     column count happened to produce, so its edge angle was a function of
+ *     the node's aspect ratio. Stretch the grid and the "isometric" grid
+ *     changed projection.
+ *   - **It did not tessellate.** Rows advanced by a full tile height, so the
+ *     diamonds sat in separate rows with gaps between the points instead of
+ *     interlocking. An isometric lattice is a *tiling*; a scatter of
+ *     lozenges in rows is a pattern of lozenges.
+ *   - **The stagger was a free parameter.** It ran from 0.2 to 0.8 of a step
+ *     on `variation`, and exactly one value in that range (0.5) produces a
+ *     lattice. Every other setting produced a lattice that was slightly
+ *     wrong, which is the worst thing a construction grid can be, because it
+ *     looks right and does not line up.
+ *
+ * ## What it is now
+ *
+ * The ground plane's two axes project at ±30° from the horizontal, which is
+ * what "isometric" names. A unit square of that plane therefore projects to a
+ * rhombus whose half-width is cos 30° and half-height is sin 30° -- a width to
+ * height ratio of √3 : 1. That ratio is derived from the angle rather than
+ * assumed, so the 2:1 tiles of pixel-art convention are reachable by turning
+ * the dial and are not silently substituted for the real thing.
+ *
+ * Rows are offset by exactly half a tile and advance by exactly half a tile's
+ * height, which is the only pair of numbers that tessellates. They are not
+ * settings.
+ *
+ * `variation` is the projection angle, from the true 30° at zero up to 45° --
+ * where the rhombi become squares standing on a corner. Zero being *correct*
+ * rather than *minimal* is deliberate: the default grid is the one the name
+ * promises, and the dial departs from it.
+ */
+function isometric(spec: GridSpec): Omit<GridCell, 'weight'>[] {
+  const box = inner(spec);
+  if (box.width <= 0 || box.height <= 0) return [];
+
+  const nCols = Math.max(1, Math.floor(spec.columns));
+  const nRows = Math.max(1, Math.floor(spec.rows));
+
+  // 30° at rest, opening to 45°. Beyond 45° the lattice is the same set of
+  // shapes seen from the other diagonal, so there is nothing past it to offer.
+  const angle = (Math.PI / 6) * (1 + Math.min(1, Math.max(0, spec.variation)) * 0.5);
+  const ratio = Math.tan(angle); // tile height as a fraction of tile width
+
+  /**
+   * The lattice's own extent, in tiles.
+   *
+   * Odd rows are pushed half a tile right, so a lattice more than one row
+   * deep is half a tile wider than its column count. Rows overlap by half
+   * their height, so n rows are (n + 1) / 2 tiles tall rather than n.
+   */
+  const spanX = nCols + (nRows > 1 ? 0.5 : 0);
+  const spanY = (nRows + 1) / 2;
+
+  // Whichever axis runs out first sets the tile size; the other is then
+  // over-provisioned and the lattice is centred in it.
+  const tileW = Math.max(1, Math.min(box.width / spanX, box.height / (spanY * ratio)));
+  const tileH = tileW * ratio;
+
+  const originX = box.x + (box.width - tileW * spanX) / 2;
+  const originY = box.y + (box.height - tileH * spanY) / 2;
+
+  /**
+   * The gutter, as an inset toward each rhombus's centre.
+   *
+   * Rhombi that tessellate have no room between them by construction, so a
+   * gap can only be made by shrinking each tile about its own centre -- there
+   * is no other place for it to come from. Both axes are honoured separately,
+   * so neither of the panel's two gutter fields is a control that does
+   * nothing on this kind.
+   *
+   * Capped at a third of the tile so a wide gutter thins the lattice rather
+   * than erasing it.
+   */
+  const insetX = Math.min(Math.max(0, spec.gutterX) / 2, tileW / 3);
+  const insetY = Math.min(Math.max(0, spec.gutterY) / 2, tileH / 3);
+  const halfW = tileW / 2 - insetX;
+  const halfH = tileH / 2 - insetY;
+
+  const out: Omit<GridCell, 'weight'>[] = [];
+  for (let r = 0; r < nRows; r += 1) {
+    const rowShift = r % 2 === 1 ? tileW / 2 : 0;
+    for (let c = 0; c < nCols; c += 1) {
+      // The rhombus's centre, then its bounding box -- which is what every
+      // consumer of a cell reads, outline or not.
+      const cx = originX + rowShift + (c + 0.5) * tileW;
+      const cy = originY + (r + 1) * (tileH / 2);
+
+      out.push({
+        x: cx - halfW,
+        y: cy - halfH,
+        width: halfW * 2,
+        height: halfH * 2,
+        row: r,
+        col: c,
+        // In the cell's own coordinates, like every other outline here.
+        outline: [
+          { x: halfW, y: 0 },
+          { x: halfW * 2, y: halfH },
+          { x: halfW, y: halfH * 2 },
+          { x: 0, y: halfH },
+        ],
+      });
+    }
+  }
+  return out;
+}
+
 const LAYOUTS: Record<GridKind, (spec: GridSpec) => Omit<GridCell, 'weight'>[]> = {
   columns, modular, bento, masonry, hierarchical, manuscript, baseline, golden, orbit, radial, diagonal,
+  isometric,
 };
 
 /**

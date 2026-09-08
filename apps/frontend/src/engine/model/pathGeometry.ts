@@ -93,50 +93,54 @@ const EPS = 1e-6;
 // ---------------------------------------------------------------------------
 
 /** The curves of a path, in drawing order. Empty for a path with fewer than two anchors. */
-export function toCubics(geo: BezierGeometry): Cubic[] {
-  const segs = geo.segments;
-  if (segs.length < 2) return [];
+export function toCubics(geo: ContourGeometry): Cubic[] {
+  return subpathsOf(geo).flatMap((sub) => {
+    const segs = sub.segments;
+    if (segs.length < 2) return [];
 
-  const cubics: Cubic[] = [];
-  const curve = (from: BezierSegment, to: BezierSegment): Cubic => ({
-    x0: from.x,
-    y0: from.y,
-    // An anchor placed without dragging has no handles. Collapsing the control
-    // onto its own endpoint degenerates the cubic into the straight line
-    // between them, which is exactly what such an anchor should draw.
-    c1x: to.cp1x ?? from.x,
-    c1y: to.cp1y ?? from.y,
-    c2x: to.cp2x ?? to.x,
-    c2y: to.cp2y ?? to.y,
-    x1: to.x,
-    y1: to.y,
+    const cubics: Cubic[] = [];
+    const curve = (from: BezierSegment, to: BezierSegment): Cubic => ({
+      x0: from.x,
+      y0: from.y,
+      // An anchor placed without dragging has no handles. Collapsing the control
+      // onto its own endpoint degenerates the cubic into the straight line
+      // between them, which is exactly what such an anchor should draw.
+      c1x: to.cp1x ?? from.x,
+      c1y: to.cp1y ?? from.y,
+      c2x: to.cp2x ?? to.x,
+      c2y: to.cp2y ?? to.y,
+      x1: to.x,
+      y1: to.y,
+    });
+
+    for (let i = 1; i < segs.length; i++) cubics.push(curve(segs[i - 1], segs[i]));
+    if (sub.closed) cubics.push(curve(segs[segs.length - 1], segs[0]));
+    return cubics;
   });
-
-  for (let i = 1; i < segs.length; i++) cubics.push(curve(segs[i - 1], segs[i]));
-  if (geo.closed) cubics.push(curve(segs[segs.length - 1], segs[0]));
-  return cubics;
 }
 
 /** The anchor-centric view: every anchor with both of its own handles. */
-export function toAnchors(geo: BezierGeometry): Anchor[] {
-  const segs = geo.segments;
-  const n = segs.length;
-  return segs.map((s, i) => {
-    // The curve leaving anchor i is the one arriving at anchor i+1 — which for
-    // the last anchor of a closed path wraps to the closing curve at index 0.
-    const next = i + 1 < n ? segs[i + 1] : geo.closed ? segs[0] : undefined;
-    const anchor: Anchor = { x: s.x, y: s.y };
-    // Segment 0 of an *open* path has no arriving curve, so its cp2 is not a
-    // handle of anything and is dropped rather than shown.
-    if ((i > 0 || geo.closed) && s.cp2x !== undefined && s.cp2y !== undefined) {
-      anchor.inX = s.cp2x;
-      anchor.inY = s.cp2y;
-    }
-    if (next?.cp1x !== undefined && next?.cp1y !== undefined) {
-      anchor.outX = next.cp1x;
-      anchor.outY = next.cp1y;
-    }
-    return anchor;
+export function toAnchors(geo: ContourGeometry): Anchor[] {
+  return subpathsOf(geo).flatMap((sub) => {
+    const segs = sub.segments;
+    const n = segs.length;
+    return segs.map((s, i) => {
+      // The curve leaving anchor i is the one arriving at anchor i+1 — which for
+      // the last anchor of a closed path wraps to the closing curve at index 0.
+      const next = i + 1 < n ? segs[i + 1] : sub.closed ? segs[0] : undefined;
+      const anchor: Anchor = { x: s.x, y: s.y };
+      // Segment 0 of an *open* path has no arriving curve, so its cp2 is not a
+      // handle of anything and is dropped rather than shown.
+      if ((i > 0 || sub.closed) && s.cp2x !== undefined && s.cp2y !== undefined) {
+        anchor.inX = s.cp2x;
+        anchor.inY = s.cp2y;
+      }
+      if (next?.cp1x !== undefined && next?.cp1y !== undefined) {
+        anchor.outX = next.cp1x;
+        anchor.outY = next.cp1y;
+      }
+      return anchor;
+    });
   });
 }
 
@@ -376,7 +380,10 @@ function flattenCubic(c: Cubic, toleranceSq: number, depth: number, out: Point[]
  * declared closed, and a duplicated final point is a degenerate edge that
  * upsets every polygon algorithm that receives one.
  */
-export function flattenPath(geo: BezierGeometry, tolerance = FLATTEN_TOLERANCE): Point[] {
+export function flattenPath(geo: ContourGeometry, tolerance = FLATTEN_TOLERANCE): Point[] {
+  if (geo.kind === 'compound') {
+    return geo.subpaths.flatMap((sub) => flattenPath(sub, tolerance));
+  }
   const segs = geo.segments;
   if (segs.length === 0) return [];
   const points: Point[] = [{ x: segs[0].x, y: segs[0].y }];
@@ -396,7 +403,7 @@ export function flattenPath(geo: BezierGeometry, tolerance = FLATTEN_TOLERANCE):
  * report a box half again too big, which would show up as a selection
  * rectangle standing off the shape.
  */
-export function pathBounds(geo: BezierGeometry): { x: number; y: number; width: number; height: number } {
+export function pathBounds(geo: ContourGeometry): { x: number; y: number; width: number; height: number } {
   const points = flattenPath(geo);
   if (points.length === 0) return { x: 0, y: 0, width: 0, height: 0 };
   let minX = Infinity;

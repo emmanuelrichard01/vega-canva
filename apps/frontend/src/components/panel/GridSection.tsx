@@ -22,6 +22,9 @@ import {
   CELL_SHAPES,
   COLOR_MODES,
   COLOR_MODE_LABELS,
+  GRID_DISPLAY_HINTS,
+  GRID_DISPLAY_LABELS,
+  GRID_DISPLAY_MODES,
   GRID_PALETTES,
   SHAPE_LABELS,
   type CellShape,
@@ -208,6 +211,7 @@ export const GridSection: React.FC<Props> = ({ nodeId }) => {
    * anything, and the only way to learn that is to try.
    */
   const merged = recipe.spec.kind === 'radial' && recipe.spec.merged === true;
+  const displayMode = recipe.style.mode ?? 'surface';
   const usesColumns = !['manuscript', 'baseline'].includes(recipe.spec.kind) && !merged;
   /** The two kinds built out of rings, and so the two with rings to turn. */
   const hasRings = recipe.spec.kind === 'radial' || recipe.spec.kind === 'orbit';
@@ -322,6 +326,61 @@ export const GridSection: React.FC<Props> = ({ nodeId }) => {
         {' '}
         {GRID_HINTS[recipe.spec.kind]}
       </p>
+
+      {/**
+        * What the grid is being used *as*, which is a different question from
+        * what it contains -- and the reason it sits under the system picker
+        * rather than in the palette band. Switching to a guide and back returns
+        * the same grid: the mode touches no seed and no layout.
+        *
+        * The three labels and their hints come from `gridStyle`, beside the
+        * resolver that acts on them, so a fourth mode is one edit and not four.
+        */}
+      <span className="grid-section__caption">
+        Used as
+        <strong>{GRID_DISPLAY_LABELS[displayMode]}</strong>
+      </span>
+      <div className="grid-presets" role="radiogroup" aria-label="What the grid is used as">
+        {GRID_DISPLAY_MODES.map((m) => (
+          <button
+            key={m}
+            type="button"
+            role="radio"
+            aria-checked={displayMode === m}
+            className="grid-preset"
+            data-active={displayMode === m || undefined}
+            data-tooltip={GRID_DISPLAY_HINTS[m]}
+            onClick={() => apply(withStyle(recipe, { mode: m }))}
+          >
+            {GRID_DISPLAY_LABELS[m]}
+          </button>
+        ))}
+      </div>
+      <p className="grid-section__hint">{GRID_DISPLAY_HINTS[displayMode]}</p>
+
+      {/* A switch, not a button reading "On" -- the same control the ring
+          toggle above uses, for the same boolean shape. It was drawn as a
+          preset chip, which is the class this panel uses for *choices between
+          alternatives*, and a chip that toggles is a chip whose unpressed
+          state means nothing. */}
+      <label className="grid-field grid-field--wide grid-toggle-field">
+        <span>Track labels</span>
+        <button
+          type="button"
+          role="switch"
+          aria-checked={recipe.style.showLabels === true}
+          className="grid-switch"
+          data-active={recipe.style.showLabels || undefined}
+          data-tooltip={
+            recipe.style.showLabels
+              ? 'Hide the C1 / R1 track names'
+              : 'Name the top row and left column, the way a column guide is counted'
+          }
+          onClick={() => apply(withStyle(recipe, { showLabels: !recipe.style.showLabels }))}
+        >
+          <span className="grid-switch__dot" />
+        </button>
+      </label>
       </Band>
 
       {/**
