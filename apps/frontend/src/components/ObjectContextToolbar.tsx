@@ -33,7 +33,7 @@ import { GridKindIcon } from './workspace/gridIcons';
 import { ChartKindIcon } from './workspace/chartIcons';
 import { CHART_HINTS, CHART_LABELS, chartPickerGroups } from '../engine/chart/chartKinds';
 import { setChartKind, updateChart } from '../engine/chart/chartApply';
-import { chartCapabilities, isRadial, isPolar, isPlot, isTwoVariable } from '../engine/chart/chartTypes';
+import { chartCapabilities, defaultPlotDomain } from '../engine/chart/chartTypes';
 import { chartToCsv, csvFilename, downloadCsv } from '../engine/chart/chartCsv';
 import { breakApartGrid, gridNodeOf, gridRecipe as gridRecipeFor, setGridRecipe } from '../engine/grid/gridApply';
 import {
@@ -2233,10 +2233,8 @@ export const ObjectContextToolbar: React.FC<Props> = ({ selectedId, selectedIds,
               >
                 <span className="ctx-popover__label">Chart Type</span>
                 {chartPickerGroups().map((group) => (
-                  <div key={group.family} style={{ marginBottom: 8 }}>
-                    <div style={{ fontSize: 10, fontWeight: 600, color: 'var(--text-secondary, #9ca3af)', textTransform: 'uppercase', marginBottom: 4 }}>
-                      {group.label}
-                    </div>
+                  <div key={group.family} className="ctx-popover__section">
+                    <span className="ctx-popover__label">{group.label}</span>
                     <div className="ctx-shape-grid">
                       {group.kinds.map((k) => (
                         <button
@@ -2265,7 +2263,7 @@ export const ObjectContextToolbar: React.FC<Props> = ({ selectedId, selectedIds,
               </RailButton>
 
               {/* Math Plot / Graph Plane Lock & Reset */}
-              {isPlot(node.chart.kind) && (
+              {chartCapabilities(node.chart.kind).lockPlane && (
                 <>
                   <RailButton
                     label={node.chart.lockPlane ? 'Unlock Plane' : 'Lock Plane'}
@@ -2280,19 +2278,17 @@ export const ObjectContextToolbar: React.FC<Props> = ({ selectedId, selectedIds,
                     {node.chart.lockPlane ? <Lock size={15} /> : <Unlock size={15} />}
                   </RailButton>
                   <RailButton
-                    label="Reset View"
-                    hint="Reset graph plane to default domain"
-                    onClick={() => {
-                      const isFn = node.chart.kind === 'function';
-                      const isTwo = isTwoVariable(node.chart.kind);
+                    label="Reset view"
+                    hint="Put the plane back where a new plot starts"
+                    onClick={() =>
+                      // From `defaultChartSpec`, so this cannot reset to a
+                      // plane no plot has ever opened at -- which is what its
+                      // own three hand-written domains did.
                       updateChart(node.id, {
                         ...node.chart,
-                        xMin: isFn ? -10 : isTwo ? -5 : 0,
-                        xMax: isFn ? 10 : isTwo ? 5 : Number((Math.PI * 2).toFixed(3)),
-                        yPlotMin: isTwo ? -5 : undefined,
-                        yPlotMax: isTwo ? 5 : undefined,
-                      });
-                    }}
+                        ...defaultPlotDomain(node.chart.kind),
+                      })
+                    }
                   >
                     <RotateCcw size={15} />
                   </RailButton>
@@ -2302,7 +2298,7 @@ export const ObjectContextToolbar: React.FC<Props> = ({ selectedId, selectedIds,
               {/* Quick Display Toggles */}
               <RailPopover label="Display" trigger={<Sliders size={15} />} align="start">
                 <span className="ctx-popover__label">Display Elements</span>
-                <div style={{ display: 'flex', flexDirection: 'column', gap: 6, minWidth: 160 }}>
+                <div className="ctx-popover__list">
                   <button
                     type="button"
                     className="ctx-popover__action"
@@ -2321,7 +2317,7 @@ export const ObjectContextToolbar: React.FC<Props> = ({ selectedId, selectedIds,
                       Value labels
                     </button>
                   )}
-                  {!isRadial(node.chart.kind) && !isPolar(node.chart.kind) && (
+                  {chartCapabilities(node.chart.kind).gridLines && (
                     <button
                       type="button"
                       className="ctx-popover__action"
@@ -2331,7 +2327,7 @@ export const ObjectContextToolbar: React.FC<Props> = ({ selectedId, selectedIds,
                       Grid lines
                     </button>
                   )}
-                  {(node.chart.kind === 'line' || node.chart.kind === 'area') && (
+                  {chartCapabilities(node.chart.kind).gradient && (
                     <button
                       type="button"
                       className="ctx-popover__action"
@@ -2351,8 +2347,12 @@ export const ObjectContextToolbar: React.FC<Props> = ({ selectedId, selectedIds,
                   type="button"
                   className="ctx-popover__action"
                   onClick={() => {
-                    const csv = chartToCsv(node.chart);
-                    navigator.clipboard.writeText(csv);
+                    // Rejects on a non-secure origin and wherever the
+                    // permission is denied, and an unhandled rejection is a
+                    // copy button that quietly does nothing.
+                    navigator.clipboard.writeText(chartToCsv(node.chart)).catch(() => {
+                      downloadCsv(node.chart, csvFilename(node.chart.title));
+                    });
                   }}
                 >
                   <Copy size={14} />

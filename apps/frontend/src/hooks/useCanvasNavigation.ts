@@ -72,7 +72,6 @@ export function useCanvasNavigation({
       evt.preventDefault();
       if (evt.ctrlKey || evt.metaKey) {
         cameraSystem.zoomByWheel(evt.deltaY, evt.clientX, evt.clientY);
-        (evt as any).__vegaZoomHandled = true;
       } else {
         cameraSystem.pan(evt.deltaX, evt.deltaY);
       }
@@ -82,70 +81,60 @@ export function useCanvasNavigation({
     return () => el.removeEventListener('wheel', onWheel);
   }, [containerRef]);
 
-  // Global window guard: disables accidental browser tab zooming across the entire application
+  /**
+   * Ctrl/Cmd + wheel belongs to the board, wherever the pointer is.
+   *
+   * The canvas listener above already claims it over the canvas. This one
+   * catches the rest of the window -- the dock, the panels, the overlays --
+   * because a pinch over the toolbar that zooms the *browser* leaves the app
+   * at a scale it does not know about and cannot undo. Every canvas tool
+   * owns this gesture for the same reason.
+   *
+   * The two listeners coordinate through `defaultPrevented`, which is what
+   * the platform provides for exactly this. They coordinated through a
+   * `__vegaZoomHandled` property monkey-patched onto the event and read back
+   * through two `as any` casts -- a private protocol between two functions
+   * in the same file, reinvented on top of one the browser already has.
+   *
+   * What is deliberately *not* here any more:
+   *
+   *   - **The keyboard zoom.** Ctrl/Cmd with =, - and 0 was implemented here
+   *     a third time, in capture phase, so it ran before `useRoomShortcuts`'s
+   *     own copy and left it dead. That copy checks whether you are typing
+   *     first; this one did not, so the shortcut fired inside text fields.
+   *     Removing it restores the guarded implementation rather than adding a
+   *     guard to the duplicate.
+   *   - **Document-wide gesture suppression.** `gesturestart` and friends
+   *     were cancelled on the whole document, which takes Safari's pinch-zoom
+   *     away from the panels and the dialogs as well as from the board. It is
+   *     scoped to the canvas, which is the only place it was ever aimed at.
+   */
   useEffect(() => {
-    if (typeof window === 'undefined') return;
+    const el = containerRef.current;
 
-    // 1. Prevent Ctrl+Wheel / trackpad pinch zoom from zooming the browser tab anywhere in the window
     const onWindowWheel = (evt: WheelEvent) => {
-      if (evt.ctrlKey || evt.metaKey) {
-        evt.preventDefault();
-        if (!(evt as any).__vegaZoomHandled) {
-          (evt as any).__vegaZoomHandled = true;
-          cameraSystem.zoomByWheel(evt.deltaY, evt.clientX, evt.clientY);
-        }
-      }
+      if (!evt.ctrlKey && !evt.metaKey) return;
+      // The canvas listener has already zoomed for this event.
+      if (evt.defaultPrevented) return;
+      evt.preventDefault();
+      cameraSystem.zoomByWheel(evt.deltaY, evt.clientX, evt.clientY);
     };
 
-    // 2. Prevent Ctrl/Cmd + (+ / - / 0 / =) from zooming the browser tab; zoom the canvas camera instead
-    const onWindowKeyDown = (e: KeyboardEvent) => {
-      if (e.ctrlKey || e.metaKey) {
-        const key = e.key;
-        const code = e.code;
-        const isZoomIn = key === '=' || key === '+' || code === 'NumpadAdd' || code === 'Equal';
-        const isZoomOut = key === '-' || key === '_' || code === 'NumpadSubtract' || code === 'Minus';
-        const isZoomReset = key === '0' || code === 'Numpad0' || code === 'Digit0';
-
-        if (isZoomIn || isZoomOut || isZoomReset) {
-          e.preventDefault();
-          const cx = typeof window !== 'undefined' ? window.innerWidth / 2 : 400;
-          const cy = typeof window !== 'undefined' ? window.innerHeight / 2 : 300;
-          if (isZoomIn) {
-            cameraSystem.zoomAt(1, cx, cy);
-          } else if (isZoomOut) {
-            cameraSystem.zoomAt(-1, cx, cy);
-          } else if (isZoomReset) {
-            window.dispatchEvent(
-              new CustomEvent('navigateViewport', { detail: { x: 0, y: 0, zoom: 1 } })
-            );
-          }
-        }
-      }
-    };
-
-    // 3. Prevent Safari / WebKit gesture pinch zooming on document
-    const onGesture = (e: Event) => {
-      e.preventDefault();
-    };
+    // Safari's own pinch, over the board only.
+    const onGesture = (e: Event) => e.preventDefault();
 
     window.addEventListener('wheel', onWindowWheel, { passive: false });
-    window.addEventListener('keydown', onWindowKeyDown, { capture: true });
-    if (typeof document !== 'undefined') {
-      document.addEventListener('gesturestart', onGesture, { passive: false });
-      document.addEventListener('gesturechange', onGesture, { passive: false });
-      document.addEventListener('gestureend', onGesture, { passive: false });
-    }
+    el?.addEventListener('gesturestart', onGesture, { passive: false });
+    el?.addEventListener('gesturechange', onGesture, { passive: false });
+    el?.addEventListener('gestureend', onGesture, { passive: false });
 
     return () => {
       window.removeEventListener('wheel', onWindowWheel);
-      window.removeEventListener('keydown', onWindowKeyDown, { capture: true });
-      if (typeof document !== 'undefined') {
-        document.removeEventListener('gesturestart', onGesture);
-        document.removeEventListener('gesturechange', onGesture);
-        document.removeEventListener('gestureend', onGesture);
-      }
+      el?.removeEventListener('gesturestart', onGesture);
+      el?.removeEventListener('gesturechange', onGesture);
+      el?.removeEventListener('gestureend', onGesture);
     };
-  }, []);
+  }, [containerRef]);
 
   const touchMetrics = (touches: TouchList) => {
     const [a, b] = [touches[0], touches[1]];

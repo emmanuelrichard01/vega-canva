@@ -7,7 +7,20 @@
     <link rel="icon" type="image/png" sizes="64x64" href="/brand/favicon-64.png" />
     <link rel="apple-touch-icon" href="/apple-touch-icon.png" />
     <link rel="manifest" href="/site.webmanifest" />
-    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no" />
+    <!--
+      Zoom stays available.
+
+      `maximum-scale=1, user-scalable=no` was added to stop double-tap zoom on
+      the board, and it is both the wrong tool and unnecessary: the canvas
+      already declares `touch-action: none` and the body `pan-x pan-y`, which
+      routes gestures per element instead of taking them away from the whole
+      document. What the flag actually did was remove pinch-zoom from the
+      panels, the dialogs and every piece of text in the app -- which is a
+      WCAG 1.4.4 failure for anyone who needs to magnify, in exchange for
+      behaviour the canvas had already handled. iOS has ignored it since 10
+      for the same reason.
+    -->
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     <title>Vega Studio</title>
     <!-- Board faces, and only the ones that are not already in the bundle.
 

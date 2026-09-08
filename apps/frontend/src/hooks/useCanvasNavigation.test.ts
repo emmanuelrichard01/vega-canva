@@ -163,17 +163,66 @@ describe('useCanvasNavigation', () => {
     zoomByWheelSpy.mockRestore();
   });
 
-  it('prevents browser tab zooming on Ctrl + keydown shortcuts and zooms camera', () => {
+  it('does not zoom twice when the canvas has already handled the wheel', () => {
+    const zoomByWheelSpy = vi.spyOn(cameraSystem, 'zoomByWheel');
+    useCanvasNavigation({ containerRef: { current: null }, stageRef: { current: null } });
+
+    // What the canvas listener leaves behind after zooming: a cancelled event.
+    // The window guard has to read that and stand down, or a pinch over the
+    // board zooms once for the element and once for the window.
+    const handled = {
+      type: 'wheel',
+      ctrlKey: true,
+      deltaY: -100,
+      clientX: 500,
+      clientY: 300,
+      defaultPrevented: true,
+      preventDefault: vi.fn(),
+    } as unknown as WheelEvent;
+
+    window.dispatchEvent(handled);
+
+    expect(zoomByWheelSpy).not.toHaveBeenCalled();
+    zoomByWheelSpy.mockRestore();
+  });
+
+  it('leaves a plain wheel alone, so panels can still scroll', () => {
+    const zoomByWheelSpy = vi.spyOn(cameraSystem, 'zoomByWheel');
+    useCanvasNavigation({ containerRef: { current: null }, stageRef: { current: null } });
+
+    const plain = {
+      type: 'wheel',
+      ctrlKey: false,
+      metaKey: false,
+      deltaY: -100,
+      clientX: 500,
+      clientY: 300,
+      preventDefault: vi.fn(),
+    } as unknown as WheelEvent;
+
+    window.dispatchEvent(plain);
+
+    expect(plain.preventDefault).not.toHaveBeenCalled();
+    expect(zoomByWheelSpy).not.toHaveBeenCalled();
+    zoomByWheelSpy.mockRestore();
+  });
+
+  /**
+   * The keyboard zoom is `useRoomShortcuts`' job, and asserting that here is
+   * the point rather than an omission.
+   *
+   * This hook grew its own copy of Ctrl/Cmd with =, - and 0, registered in
+   * capture phase -- so it ran first, cancelled the event and left the room's
+   * implementation dead. The two were not equivalent: the room's checks
+   * whether you are typing before acting, and this one did not, so the
+   * shortcut fired inside text fields. A test that the duplicate is gone is
+   * what stops it coming back.
+   */
+  it('leaves the keyboard zoom to the room shortcuts', () => {
     const zoomAtSpy = vi.spyOn(cameraSystem, 'zoomAt');
-    const container = { current: null };
-    const stage = { current: null };
+    useCanvasNavigation({ containerRef: { current: null }, stageRef: { current: null } });
 
-    useCanvasNavigation({
-      containerRef: container,
-      stageRef: stage,
-    });
-
-    const mockKeyPlus = {
+    const plus = {
       type: 'keydown',
       ctrlKey: true,
       key: '+',
@@ -181,23 +230,10 @@ describe('useCanvasNavigation', () => {
       preventDefault: vi.fn(),
     } as unknown as KeyboardEvent;
 
-    window.dispatchEvent(mockKeyPlus);
+    window.dispatchEvent(plus);
 
-    expect(mockKeyPlus.preventDefault).toHaveBeenCalled();
-    expect(zoomAtSpy).toHaveBeenCalledWith(1, expect.any(Number), expect.any(Number));
-
-    const mockKeyMinus = {
-      type: 'keydown',
-      ctrlKey: true,
-      key: '-',
-      code: 'Minus',
-      preventDefault: vi.fn(),
-    } as unknown as KeyboardEvent;
-
-    window.dispatchEvent(mockKeyMinus);
-
-    expect(mockKeyMinus.preventDefault).toHaveBeenCalled();
-    expect(zoomAtSpy).toHaveBeenCalledWith(-1, expect.any(Number), expect.any(Number));
+    expect(plus.preventDefault).not.toHaveBeenCalled();
+    expect(zoomAtSpy).not.toHaveBeenCalled();
     zoomAtSpy.mockRestore();
   });
 });

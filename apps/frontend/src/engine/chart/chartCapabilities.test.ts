@@ -4,9 +4,11 @@ import {
   chartCapabilities,
   CHART_KINDS,
   defaultChartSpec,
+  defaultPlotDomain,
   isPlot,
   type ChartSpec,
 } from './chartTypes';
+import { paintLayout } from './chartSvg';
 
 /**
  * Every control the chart panel offers must reach the renderer, for every kind.
@@ -193,5 +195,78 @@ describe('the sections that were reported inert', () => {
       (l.reference!.y1 - l.plot.y) / l.plot.height;
     expect(fraction(small)).toBeCloseTo(fraction(large), 2);
     expect(fraction(small)).toBeCloseTo(0.5, 1);
+  });
+});
+
+/**
+ * The two capabilities added when the context toolbar was audited.
+ *
+ * Both were hand-written conditions in two places that disagreed with each
+ * other and with the renderer: the toolbar offered a gradient on lines, the
+ * panel offered it on bars as well, and `layout.areas` -- the only thing the
+ * flag acts on -- is produced by neither.
+ */
+describe('gridLines and gradient', () => {
+  it('offers grid lines exactly where a rule is drawn', () => {
+    for (const kind of CHART_KINDS) {
+      const spec = { ...defaultChartSpec(kind), showGrid: true };
+      const drawn = layoutChart(spec, W, H).gridLines.length > 0;
+      if (chartCapabilities(kind).gridLines) {
+        // Heatmap suppresses its own rules on purpose -- the cells are the
+        // surface -- so it is allowed to declare the capability and draw none.
+        if (kind !== 'heatmap') expect(drawn, kind).toBe(true);
+      } else {
+        expect(drawn, kind).toBe(false);
+      }
+    }
+  });
+
+  it('offers a gradient only where there is an area to fade', () => {
+    for (const kind of CHART_KINDS) {
+      if (!chartCapabilities(kind).gradient) continue;
+      const spec = { ...defaultChartSpec(kind), gradient: true };
+      const areas = layoutChart(spec, W, H).areas;
+      expect(areas.length, kind).toBeGreaterThan(0);
+      expect(areas.every((a) => a.gradient), kind).toBe(true);
+    }
+  });
+
+  /**
+   * The defect this whole field was carrying: the renderer faded the fill and
+   * the exporter wrote a flat polygon, so the file did not match the board.
+   * Asserted against the SVG rather than against the flag, because the flag
+   * was always right -- it was the painter that never read it.
+   */
+  it('paints the fade into the export too', () => {
+    const spec = { ...defaultChartSpec('area'), gradient: true };
+    const svg = paintLayout(layoutChart(spec, W, H), { id: 'x' });
+    expect(svg).toContain('linearGradient');
+    expect(svg).toContain('fill="url(#x-areafill-0)"');
+  });
+
+  it('leaves a flat area flat in the export', () => {
+    const spec = { ...defaultChartSpec('area'), gradient: undefined };
+    const svg = paintLayout(layoutChart(spec, W, H), { id: 'x' });
+    expect(svg).not.toContain('linearGradient');
+  });
+});
+
+/**
+ * "Reset view" put the plane somewhere no plot had ever opened at: it carried
+ * its own -10..10 and -5..5 while a new function plot is -6.5..6.5 and a new
+ * two-variable plot is -6..6.
+ */
+describe('defaultPlotDomain', () => {
+  it('is the domain a new plot of that kind actually opens with', () => {
+    for (const kind of CHART_KINDS) {
+      if (!isPlot(kind)) continue;
+      const fresh = defaultChartSpec(kind);
+      expect(defaultPlotDomain(kind), kind).toEqual({
+        xMin: fresh.xMin,
+        xMax: fresh.xMax,
+        yPlotMin: fresh.yPlotMin,
+        yPlotMax: fresh.yPlotMax,
+      });
+    }
   });
 });

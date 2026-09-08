@@ -95,36 +95,52 @@ function candidatesFor(excluded: Set<string>): Box[] {
 }
 
 /**
- * Every track and module boundary of a grid node on screen, in world coordinates.
+ * Every module boundary of a grid, in world coordinates.
  *
- * Allows shapes, cards, images, and text to snap magnetically to grid columns,
- * gutter boundaries, and rows.
+ * A grid is a set of places to put things, so its own edges are the most
+ * useful measure on the board -- lining a card up with a column is the entire
+ * point of having drawn the column.
+ *
+ * ## Cached on the node object
+ *
+ * This runs inside a drag, once per pointer move, for every grid in view --
+ * and `gridCellsOf` is a full layout pass plus a styling pass. The renderer
+ * memoises it for exactly this reason: the answer does not change while
+ * something *else* is being dragged, and recomputing a hundred and forty-four
+ * modules forty times a second to get the same numbers back is most of a
+ * frame.
+ *
+ * A `WeakMap` keyed on the node gives the right invalidation for nothing:
+ * the CRDT boundary produces a fresh node object whenever a grid changes, so
+ * a changed grid misses the cache and an unchanged one hits it, with no key
+ * to compose and nothing to remember to bump. Entries die with the node.
  */
+const gridEdgeCache = new WeakMap<GridNode, { x: number[]; y: number[] }>();
+
 function gridGuideEdges(node: GridNode): { x: number[]; y: number[] } {
-  const xSet = new Set<number>();
-  const ySet = new Set<number>();
+  const cached = gridEdgeCache.get(node);
+  if (cached) return cached;
 
-  xSet.add(node.x);
-  xSet.add(node.x + node.width);
-  ySet.add(node.y);
-  ySet.add(node.y + node.height);
+  // The box itself, then every module inside it. Sets rather than arrays:
+  // adjacent modules share an edge, and a regular grid would otherwise offer
+  // the same number once per track.
+  const xSet = new Set<number>([node.x, node.x + node.width]);
+  const ySet = new Set<number>([node.y, node.y + node.height]);
 
-  try {
-    const cells = gridCellsOf(node);
-    for (const cell of cells) {
-      xSet.add(node.x + cell.x);
-      xSet.add(node.x + cell.x + cell.width);
-      ySet.add(node.y + cell.y);
-      ySet.add(node.y + cell.y + cell.height);
-    }
-  } catch {
-    // Graceful fallback if node.grid is incomplete or in middle of creation
+  // No `try` around this. `layoutGrid` is total by construction -- every spec
+  // produces some grid, including degenerate ones -- and `normalizeRecipe`
+  // guarantees the recipe is complete before a node reaches here. Catching
+  // would only hide the day one of those two stops being true.
+  for (const cell of gridCellsOf(node)) {
+    xSet.add(node.x + cell.x);
+    xSet.add(node.x + cell.x + cell.width);
+    ySet.add(node.y + cell.y);
+    ySet.add(node.y + cell.y + cell.height);
   }
 
-  return {
-    x: Array.from(xSet),
-    y: Array.from(ySet),
-  };
+  const edges = { x: Array.from(xSet), y: Array.from(ySet) };
+  gridEdgeCache.set(node, edges);
+  return edges;
 }
 
 /**
@@ -149,7 +165,7 @@ function visibleGuideEdges(excluded: Set<string>): { x: number[]; y: number[] } 
       x.push(...edges.x);
       y.push(...edges.y);
     } else if (node.type === 'grid') {
-      const edges = gridGuideEdges(node as GridNode);
+      const edges = gridGuideEdges(node);
       x.push(...edges.x);
       y.push(...edges.y);
     }
@@ -202,6 +218,28 @@ export function snapDraggedBox(
     }
   }
 
+  /**
+   * A frame's column measure and a grid's modules, as more of the same.
+   *
+   * A layout guide exists to be lined up against -- that is the entire
+   * difference between it and the safe area, which is drawn and deliberately
+   * snaps to nothing. So its edges join the candidate list as zero-width
+   * boxes, exactly as a ruler guide does, and the arithmetic downstream never
+   * learns that layout guides exist.
+   *
+   * Restricted to what is in view for the reason the object candidates are:
+   * snapping to something you cannot see produces a jump with its explanation
+   * drawn off-screen.
+   *
+   * The moving object's own frame is included, which is the case that matters
+   * most -- placing a block on the measure of the frame it already sits in is
+   * what a column guide is *for*.
+   *
+   * A column edge is an `x` and a row edge is a `y`, and the two candidate
+   * lists are what keep them apart: a single list let a block's left side
+   * snap to a horizontal band, which reads as a bug in the snapper rather
+   * than in the guide.
+   */
   const measure = visibleGuideEdges(excluded);
   for (const edge of measure.x) {
     xCandidates.push({ x: edge, y: box.y, width: 0, height: box.height });

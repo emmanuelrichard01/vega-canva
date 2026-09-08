@@ -829,13 +829,40 @@ export interface ChartCapabilities {
   seriesColors: boolean;
   /** Whether the chart kind has a continuous graph plane that can be locked against zoom/pan. */
   lockPlane: boolean;
+  /** `showGrid` reaches a drawn rule. */
+  gridLines: boolean;
+  /** `gradient` fades the fill under a run. */
+  gradient: boolean;
+}
+
+/**
+ * The plane a plot opens with -- taken from the spec that opens it.
+ *
+ * "Reset view" carried its own three domains (-10..10, -5..5, 0..2π) and not
+ * one of them was what a new plot is actually given (-6.5..6.5, -6..6,
+ * 0..2π). So the button did not reset anything; it moved the plane somewhere
+ * a plot had never been. Reading `defaultChartSpec` cannot be wrong about
+ * what the default is, because it *is* the default.
+ */
+export function defaultPlotDomain(kind: ChartKind): {
+  xMin?: number;
+  xMax?: number;
+  yPlotMin?: number;
+  yPlotMax?: number;
+} {
+  const spec = defaultChartSpec(kind);
+  return {
+    xMin: spec.xMin,
+    xMax: spec.xMax,
+    yPlotMin: spec.yPlotMin,
+    yPlotMax: spec.yPlotMax,
+  };
 }
 
 export function chartCapabilities(kind: ChartKind): ChartCapabilities {
   const radial = isRadial(kind);
   const polar = isPolar(kind);
   const plot = isPlot(kind);
-  const twoVar = isTwoVariable(kind);
 
   return {
     data: !plot,
@@ -856,8 +883,18 @@ export function chartCapabilities(kind: ChartKind): ChartCapabilities {
     curved: kind === 'line' || kind === 'area' || kind === 'stackedArea',
     seriesColors: !plot && !radial && kind !== 'funnel',
     lockPlane: plot,
-    // `twoVar` is read only to keep the parameter honest for future rows.
-    ...(twoVar ? {} : {}),
+    // A radial or polar chart draws its own rings and spokes; there is no
+    // cartesian rule for the toggle to turn on.
+    gridLines: !radial && !polar,
+    /**
+     * The kinds that draw an area for the fade to happen in.
+     *
+     * The panel offered this on bars and on plain lines as well, and the
+     * renderer applies it to `layout.areas` -- which a bar chart has none of
+     * and a line only gets from the plot section's own fill toggle. So three
+     * quarters of where it was offered, it did nothing.
+     */
+    gradient: kind === 'area' || kind === 'stackedArea',
   };
 }
 

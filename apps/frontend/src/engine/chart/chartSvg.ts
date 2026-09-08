@@ -212,11 +212,34 @@ export function paintLayout(layout: ChartLayout, options: ChartSvgOptions): stri
     }
   });
 
-  for (const a of layout.areas) {
+  /**
+   * Areas, with the same fade the canvas draws.
+   *
+   * There was no gradient here at all: the renderer faded its fill from the
+   * series colour to nothing and the export wrote a flat 22% polygon, so the
+   * two disagreed about what the chart looked like. The stops match the
+   * renderer's exactly and both now read the flag off the layout.
+   *
+   * One `<defs>` per area that wants one, keyed by the export's own id, so
+   * two charts in one file cannot collide on a gradient name.
+   */
+  layout.areas.forEach((a, i) => {
+    const points = a.polygon.map((p) => `${p.x},${p.y}`).join(' ');
+    if (!a.gradient) {
+      out.push(`<polygon points="${points}" fill="${a.color}" opacity="0.22" />`);
+      return;
+    }
+    const id = `${options.id}-areafill-${i}`;
+    const top = layout.plot.y;
+    const bottom = layout.baseline?.y1 ?? layout.plot.y + layout.plot.height;
     out.push(
-      `<polygon points="${a.polygon.map((p) => `${p.x},${p.y}`).join(' ')}" fill="${a.color}" opacity="0.22" />`
+      `<defs><linearGradient id="${id}" x1="0" y1="${top}" x2="0" y2="${bottom}" gradientUnits="userSpaceOnUse">` +
+        `<stop offset="0" stop-color="${a.color}" />` +
+        `<stop offset="1" stop-color="rgba(0,0,0,0.02)" />` +
+        `</linearGradient></defs>`
     );
-  }
+    out.push(`<polygon points="${points}" fill="url(#${id})" opacity="0.45" />`);
+  });
 
   layout.runs.forEach((r, i) => {
     if (r.points.length < 2) return;

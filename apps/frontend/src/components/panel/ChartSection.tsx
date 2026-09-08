@@ -238,7 +238,7 @@ export const ChartSection: React.FC<Props> = ({ node }) => {
                     },
                   ]
                 : []),
-              ...(radial || polar
+              ...(!can.gridLines
                 ? []
                 : [
                     {
@@ -425,7 +425,7 @@ export const ChartSection: React.FC<Props> = ({ node }) => {
             onChange={(id) => patch({ paletteId: id })}
           />
         </Row>
-        {(spec.kind === 'line' || spec.kind === 'area' || spec.kind === 'bar' || spec.kind === 'barHorizontal') && (
+        {can.gradient && (
           <Row label="Fill style">
             <SegmentedControl
               fill

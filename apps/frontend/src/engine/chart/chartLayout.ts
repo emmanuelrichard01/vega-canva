@@ -127,6 +127,17 @@ export interface ChartRun {
 export interface ChartArea extends ChartRun {
   /** The closed polygon, baseline included. */
   polygon: Point[];
+  /**
+   * Whether the fill fades toward the baseline.
+   *
+   * Carried on the *layout* rather than read from the spec by each painter,
+   * which is what this file exists to enforce. The Konva renderer read
+   * `node.chart.gradient` straight off the node and the SVG exporter had no
+   * idea the field existed -- so a chart faded on the board and flat in the
+   * file, silently, in a format with no way to say so. Putting it here means
+   * a painter that draws areas at all cannot miss it.
+   */
+  gradient?: boolean;
 }
 
 export interface ChartDot extends Point {
@@ -932,7 +943,13 @@ function layoutCartesian(
                     { x: drawn[drawn.length - 1].x, y: zeroValue },
                     { x: drawn[0].x, y: zeroValue },
                   ];
-          areas.push({ points: drawn, color, seriesIndex: si, polygon: [...drawn, ...floor] });
+          areas.push({
+            points: drawn,
+            color,
+            seriesIndex: si,
+            polygon: [...drawn, ...floor],
+            gradient: spec.gradient,
+          });
         }
         if (kind === 'line' || kind === 'step') {
           if (spec.markerShape !== 'none') {

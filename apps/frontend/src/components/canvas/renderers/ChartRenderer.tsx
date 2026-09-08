@@ -264,7 +264,6 @@ export const ChartRenderer: React.FC<Props> = ({ node }) => {
         seed={seed}
         ink={ink}
         hoveredCategoryIndex={hover?.categoryIndex}
-        gradient={node.chart.gradient}
         areaOpacity={node.chart.areaOpacity}
       />
       <MathHUD hit={hover} ink={ink} />
@@ -838,9 +837,8 @@ const Marks: React.FC<{
   seed: number;
   ink: ChartInk;
   hoveredCategoryIndex?: number;
-  gradient?: boolean;
   areaOpacity?: number;
-}> = ({ layout, sketch, seed, ink, hoveredCategoryIndex, gradient, areaOpacity }) => (
+}> = ({ layout, sketch, seed, ink, hoveredCategoryIndex, areaOpacity }) => (
   <>
     {layout.bars.map((b, i) => {
       const isDimmed = hoveredCategoryIndex !== undefined && b.categoryIndex !== hoveredCategoryIndex;
@@ -892,13 +890,13 @@ const Marks: React.FC<{
         key={`a${i}`}
         points={flatten(a.polygon)}
         closed
-        fill={gradient ? undefined : a.color}
-        fillLinearGradientStartPoint={gradient ? { x: 0, y: layout.plot.y } : undefined}
+        fill={a.gradient ? undefined : a.color}
+        fillLinearGradientStartPoint={a.gradient ? { x: 0, y: layout.plot.y } : undefined}
         fillLinearGradientEndPoint={
-          gradient ? { x: 0, y: layout.baseline?.y1 ?? (layout.plot.y + layout.plot.height) } : undefined
+          a.gradient ? { x: 0, y: layout.baseline?.y1 ?? (layout.plot.y + layout.plot.height) } : undefined
         }
-        fillLinearGradientColorStops={gradient ? [0, a.color, 1, 'rgba(0,0,0,0.02)'] : undefined}
-        opacity={gradient ? 0.45 : (areaOpacity ?? 0.22)}
+        fillLinearGradientColorStops={a.gradient ? [0, a.color, 1, 'rgba(0,0,0,0.02)'] : undefined}
+        opacity={a.gradient ? 0.45 : (areaOpacity ?? 0.22)}
         listening={false}
         perfectDrawEnabled={false}
       />
