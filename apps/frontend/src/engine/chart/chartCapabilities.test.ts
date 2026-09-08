@@ -340,17 +340,32 @@ describe('the palette', () => {
     }
   });
 
+  /**
+   * A sentinel, and its whole job is to belong to no palette.
+   *
+   * If this were a real palette colour the assertion could pass by
+   * coincidence — the mark would carry it whether the series' own colour had
+   * been honoured or the palette had simply happened to supply it. Being
+   * outside every palette is what makes the test mean anything.
+   */
+  const NOT_IN_ANY_PALETTE = '#123456';
+
   it('lets a series keep a colour of its own', () => {
+    expect(
+      CHART_AGENCY_PALETTES.some((p) => p.colors.includes(NOT_IN_ANY_PALETTE)),
+      'the sentinel has drifted into a palette and no longer proves anything'
+    ).toBe(false);
+
     const layout = layoutChart(
       {
         kind: 'bar',
         categories: ['a'],
-        series: [{ name: 'One', values: [1], color: '#123456' }],
+        series: [{ name: 'One', values: [1], color: NOT_IN_ANY_PALETTE }],
         paletteId: other.id,
       },
       W,
       H
     );
-    expect(layout.bars[0].color).toBe('#123456');
+    expect(layout.bars[0].color).toBe(NOT_IN_ANY_PALETTE);
   });
 });
