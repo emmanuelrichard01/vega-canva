@@ -152,6 +152,13 @@ export function paintLayout(layout: ChartLayout, options: ChartSvgOptions): stri
       `<line x1="${g.x1}" y1="${g.y1}" x2="${g.x2}" y2="${g.y2}" stroke="${ink.chrome}" stroke-width="1" opacity="0.35" />`
     );
   }
+  // The vertical axis, at the horizontal one's weight — see `zeroRule`.
+  if (layout.zeroRule) {
+    const z = layout.zeroRule;
+    out.push(
+      `<line x1="${z.x1}" y1="${z.y1}" x2="${z.x2}" y2="${z.y2}" stroke="${ink.chrome}" stroke-width="1.5" />`
+    );
+  }
   if (layout.baseline) {
     const b = layout.baseline;
     out.push(
@@ -179,25 +186,10 @@ export function paintLayout(layout: ChartLayout, options: ChartSvgOptions): stri
 
   if (layout.toleranceBand) {
     const tb = layout.toleranceBand;
-    const right = layout.plot.x + layout.plot.width;
-    const bottom = layout.plot.y + layout.plot.height;
-
     out.push(
       `<rect x="${layout.plot.x}" y="${tb.y1}" width="${layout.plot.width}" height="${Math.max(1, tb.y2 - tb.y1)}" ` +
         `fill="${tb.color}" fill-opacity="${TOLERANCE_FILL_OPACITY}" />`
     );
-
-    // Only where the corridor really ends. A cropped edge is the axis, not a
-    // limit, and a dashed rule there claims a bound the data has not got.
-    const edge = (y: number) =>
-      `<line x1="${layout.plot.x}" y1="${y}" x2="${right}" y2="${y}" stroke="${tb.color}" stroke-width="1" stroke-dasharray="3 3" opacity="0.6" />`;
-    if (!tb.cropped || tb.y1 > layout.plot.y + 0.5) out.push(edge(tb.y1));
-    if (!tb.cropped || tb.y2 < bottom - 0.5) out.push(edge(tb.y2));
-
-    if (tb.label) {
-      const l = tb.label;
-      out.push(label(l.text, l.x, l.y, l.width, l.align, l.fontSize, tb.color, '600'));
-    }
   }
 
   layout.bars.forEach((b, i) => {
@@ -339,6 +331,27 @@ export function paintLayout(layout: ChartLayout, options: ChartSvgOptions): stri
    * Dashed so it reads as an annotation rather than as another series, and
    * drawn last of the geometry so a bar cannot hide the target it missed.
    */
+  /**
+   * The corridor's boundaries, over the marks.
+   *
+   * The tint is drawn behind them, further up — over an opaque bar it would
+   * shift the bar's colour — but behind is where a bar chart hides it
+   * completely, so the part that carries the meaning comes back on top.
+   */
+  if (layout.toleranceBand) {
+    const tb = layout.toleranceBand;
+    const right = layout.plot.x + layout.plot.width;
+    const bottom = layout.plot.y + layout.plot.height;
+    const edge = (y: number) =>
+      `<line x1="${layout.plot.x}" y1="${y}" x2="${right}" y2="${y}" stroke="${tb.color}" stroke-width="1.25" stroke-dasharray="4 3" opacity="0.9" />`;
+    if (!tb.cropped || tb.y1 > layout.plot.y + 0.5) out.push(edge(tb.y1));
+    if (!tb.cropped || tb.y2 < bottom - 0.5) out.push(edge(tb.y2));
+    if (tb.label) {
+      const l = tb.label;
+      out.push(label(l.text, l.x, l.y, l.width, l.align, l.fontSize, tb.color, '600'));
+    }
+  }
+
   if (layout.reference) {
     const r = layout.reference;
     out.push(

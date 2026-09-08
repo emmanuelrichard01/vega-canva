@@ -347,7 +347,7 @@ export const ChartRenderer: React.FC<Props> = ({ node }) => {
           bothAxes={Boolean(layout.mathPlot?.isTwoVariable)}
         />
       )}
-      <ToleranceBand layout={layout} />
+      <ToleranceFill layout={layout} />
       <Marks
         layout={layout}
         sketch={sketch}
@@ -358,6 +358,7 @@ export const ChartRenderer: React.FC<Props> = ({ node }) => {
         areaOpacity={node.chart.areaOpacity}
       />
       <MathHUD hit={hover} ink={ink} />
+      <ToleranceEdges layout={layout} />
       <Reference layout={layout} />
       <Labels layout={layout} ink={ink} />
       {isPlot(node.chart.kind) && (
@@ -810,50 +811,68 @@ const CategoryBand: React.FC<{ hit: ChartHit | null; layout: ChartLayout; ink: C
 /**
  * Tolerance Corridor / Band behind marks.
  */
-const ToleranceBand: React.FC<{ layout: ChartLayout }> = ({ layout }) => {
+/**
+ * The corridor, in two layers.
+ *
+ * The tint has to sit *behind* the marks — over an opaque bar at 12% it would
+ * shift the bar's colour, and a chart whose series change hue when you add an
+ * annotation is worse than one with no annotation. But behind the marks is
+ * exactly where a bar chart hides it: bars fill from the baseline, so a
+ * corridor anywhere in their range was completely covered and the feature
+ * looked like it had done nothing.
+ *
+ * So the boundaries and the label go on top. Those are the part that carries
+ * the meaning — where the corridor starts and stops — and two hairlines over
+ * a bar read as an annotation on it rather than as a change to it. It is what
+ * every spreadsheet does with a band over columns, for this reason.
+ */
+const ToleranceFill: React.FC<{ layout: ChartLayout }> = ({ layout }) => {
   const tb = layout.toleranceBand;
   if (!tb) return null;
+  return (
+    <Rect
+      x={layout.plot.x}
+      y={tb.y1}
+      width={layout.plot.width}
+      height={Math.max(1, tb.y2 - tb.y1)}
+      fill={tb.color}
+      // From the layout, so the canvas and the file cannot disagree about it.
+      // They did: 0.12 here and 0.10 in the exporter.
+      opacity={TOLERANCE_FILL_OPACITY}
+      listening={false}
+      perfectDrawEnabled={false}
+    />
+  );
+};
+
+const ToleranceEdges: React.FC<{ layout: ChartLayout }> = ({ layout }) => {
+  const tb = layout.toleranceBand;
+  if (!tb) return null;
+  const bottom = layout.plot.y + layout.plot.height;
+
+  /**
+   * An edge is drawn only where the corridor actually ends.
+   *
+   * A cropped band's cut edge is not a boundary — the range continues past
+   * the axis — so a rule there claims a limit the data has not got.
+   */
+  const edge = (y: number, real: boolean) =>
+    real ? (
+      <Line
+        points={[layout.plot.x, y, layout.plot.x + layout.plot.width, y]}
+        stroke={tb.color}
+        strokeWidth={1.25}
+        dash={[4, 3]}
+        opacity={0.9}
+        listening={false}
+        perfectDrawEnabled={false}
+      />
+    ) : null;
 
   return (
     <Group listening={false}>
-      <Rect
-        x={layout.plot.x}
-        y={tb.y1}
-        width={layout.plot.width}
-        height={Math.max(1, tb.y2 - tb.y1)}
-        fill={tb.color}
-        // From the layout, so the canvas and the file cannot disagree about
-        // it. They did: 0.12 here and 0.10 in the exporter.
-        opacity={TOLERANCE_FILL_OPACITY}
-        perfectDrawEnabled={false}
-      />
-      {/*
-        An edge is drawn only where the corridor actually ends.
-
-        A cropped band's cut edge is not a boundary — the range continues past
-        the axis — so drawing the same dashed rule there claims a limit that
-        is not in the data.
-      */}
-      {!tb.cropped || tb.y1 > layout.plot.y + 0.5 ? (
-        <Line
-          points={[layout.plot.x, tb.y1, layout.plot.x + layout.plot.width, tb.y1]}
-          stroke={tb.color}
-          strokeWidth={1}
-          dash={[3, 3]}
-          opacity={0.6}
-          perfectDrawEnabled={false}
-        />
-      ) : null}
-      {!tb.cropped || tb.y2 < layout.plot.y + layout.plot.height - 0.5 ? (
-        <Line
-          points={[layout.plot.x, tb.y2, layout.plot.x + layout.plot.width, tb.y2]}
-          stroke={tb.color}
-          strokeWidth={1}
-          dash={[3, 3]}
-          opacity={0.6}
-          perfectDrawEnabled={false}
-        />
-      ) : null}
+      {edge(tb.y1, !tb.cropped || tb.y1 > layout.plot.y + 0.5)}
+      {edge(tb.y2, !tb.cropped || tb.y2 < bottom - 0.5)}
       {tb.label && (
         <Text
           text={tb.label.text}
@@ -1056,6 +1075,18 @@ const Chrome: React.FC<{ layout: ChartLayout; ink: ChartInk }> = ({ layout, ink 
         perfectDrawEnabled={false}
       />
     ))}
+    {/* The vertical axis, at the same weight as the horizontal one. It used
+        to be filed among the grid lines, which drew it at their opacity — so
+        on a maths plot the y axis was as faint as the squares behind it. */}
+    {layout.zeroRule && (
+      <Line
+        points={[layout.zeroRule.x1, layout.zeroRule.y1, layout.zeroRule.x2, layout.zeroRule.y2]}
+        stroke={ink.chrome}
+        strokeWidth={1.5}
+        listening={false}
+        perfectDrawEnabled={false}
+      />
+    )}
     {layout.baseline && (
       <Line
         points={[layout.baseline.x1, layout.baseline.y1, layout.baseline.x2, layout.baseline.y2]}

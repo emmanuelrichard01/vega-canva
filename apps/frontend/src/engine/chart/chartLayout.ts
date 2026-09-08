@@ -294,8 +294,21 @@ export interface ChartLayout {
   dots: ChartDot[];
   slices: ChartSlice[];
   gridLines: ChartGridLine[];
-  /** The zero rule, when the axis crosses it. */
+  /** The horizontal zero rule, when the value axis crosses it. */
   baseline: ChartGridLine | null;
+  /**
+   * The vertical zero rule, on the plots whose x axis crosses zero.
+   *
+   * It had no field of its own, so it was pushed into `gridLines` — where two
+   * things went wrong at once. It was drawn at grid weight, which on a maths
+   * plot makes the y axis as faint as the squares behind it; and the push was
+   * not gated on `showGrid`, so turning the grid off left one stray vertical
+   * line down the middle of the plot with nothing to explain it.
+   *
+   * An axis is not a grid line. `baseline` has always known that about the
+   * horizontal one; this is the other half.
+   */
+  zeroRule: ChartGridLine | null;
   axisLabels: ChartLabel[];
   categoryLabels: ChartLabel[];
   valueLabels: ChartLabel[];
@@ -487,11 +500,12 @@ export function layoutChart(
   // Sorting is a view, applied before layout and never written back --
   // see `sortSpec`. Done here so every kind gets it for free.
   const spec = sortSpec(normalizeSpec(aggregated));
-  const opts = resolveChartOptions(spec);
+  let opts = resolveChartOptions(spec);
 
   const empty: ChartLayout = {
     plot: { x: 0, y: 0, width: 0, height: 0 },
     bars: [], runs: [], areas: [], dots: [], slices: [], columns: [], categoryAxis: 'x',
+    zeroRule: null,
     gridLines: [], baseline: null,
     axisLabels: [], categoryLabels: [], valueLabels: [], legend: [],
     title: null,
@@ -565,14 +579,47 @@ export function layoutChart(
    */
   const legendSide = opts.showLegend ? (spec.legendPosition ?? 'bottom') : 'none';
   const legendBand = legendSide === 'top' || legendSide === 'bottom' ? LEGEND_SIZE + 16 : 0;
+
+  /**
+   * A ceiling on the right-hand gutter.
+   *
+   * It was measured from the labels alone, so one long series name —
+   * "Revenue, net of returns" — took half the chart and left a plot squeezed
+   * into what remained. A legend is furniture: it may take a third, and past
+   * that the *name* gives way rather than the picture, which is what the
+   * truncation in `buildLegend` is for.
+   */
   const legendGutter =
-    legendSide === 'right' ? legendWidth(spec, opts, measure) : 0;
+    legendSide === 'right' ? Math.min(width * 0.34, legendWidth(spec, opts, measure)) : 0;
 
   const bottomReserved =
     PAD + (legendSide === 'bottom' ? legendBand : 0) + footnoteReserved;
+
+  /**
+   * Where the legend actually goes, decided here and not guessed at.
+   *
+   * `buildLegend` worked it out from `width` and `height`, which is why a top
+   * legend landed at `y = PAD` — on top of the title, because the title is
+   * also at `PAD` and the legend had no way to know. Only this function knows
+   * what furniture has already been placed, so it is the one that says.
+   */
+  const legendBox: Rect =
+    legendSide === 'top'
+      ? { x: PAD, y: top, width: width - PAD * 2, height: legendBand }
+      : legendSide === 'right'
+        ? { x: width - legendGutter + PAD, y: top, width: legendGutter - PAD * 2, height: height - top - PAD }
+        : {
+            x: PAD,
+            y: height - PAD - footnoteReserved - LEGEND_SIZE,
+            width: width - PAD * 2,
+            height: legendBand,
+          };
+
   // A legend along the top pushes everything below it down, exactly as the
-  // title does — so it is added to `top` rather than handled separately.
+  // title does.
   if (legendSide === 'top') top += legendBand;
+
+  opts = { ...opts, legendSide, legendBox };
 
   // Passed as a narrower canvas rather than threaded through nine
   // signatures: every layout already measures itself against `width`, so
@@ -1273,6 +1320,8 @@ function layoutCartesian(
   const columns = [...columnBuild.values()].sort((a, b) => a.categoryIndex - b.categoryIndex);
 
   return {
+    // A category axis has no zero to cross: the categories are a set.
+    zeroRule: null,
     // From the kind, which is the only thing that knows -- see `categoryAxis`.
     categoryAxis: transposed ? 'y' : 'x',
     columns,
@@ -1422,6 +1471,8 @@ function layoutPolar(
   });
 
   return {
+    // A polar chart's axes are rings and spokes.
+    zeroRule: null,
     // A radar has no category axis; the spokes are the categories.
     categoryAxis: 'x',
     // A radar reads by spoke, not by column: its own hit test walks the
@@ -1530,7 +1581,11 @@ function layoutField(
   for (const t of yTicks) {
     if (t < yDomain[0] || t > yDomain[1]) continue;
     const y = sy(t);
-    if (opts.showGrid) gridLines.push({ x1: plot.x, y1: y, x2: plot.x + plot.width, y2: y });
+    // Zero belongs to the baseline, which draws it at axis weight. Drawing a
+    // grid line there too stacks two rules on one pixel.
+    if (opts.showGrid && t !== 0) {
+      gridLines.push({ x1: plot.x, y1: y, x2: plot.x + plot.width, y2: y });
+    }
     axisLabels.push({
       text: formatValue(t, spec),
       x: PAD,
@@ -1543,7 +1598,10 @@ function layoutField(
   for (const t of xTicks) {
     if (t < xDomain[0] || t > xDomain[1]) continue;
     const x = sx(t);
-    if (opts.showGrid) gridLines.push({ x1: x, y1: plot.y, x2: x, y2: plot.y + plot.height });
+    // And zero on this axis belongs to `zeroRule`, for the same reason.
+    if (opts.showGrid && t !== 0) {
+      gridLines.push({ x1: x, y1: plot.y, x2: x, y2: plot.y + plot.height });
+    }
     categoryLabels.push({
       text: formatValue(t, spec),
       x: x - 30,
@@ -1560,9 +1618,10 @@ function layoutField(
     const y = sy(0);
     baseline = { x1: plot.x, y1: y, x2: plot.x + plot.width, y2: y };
   }
+  let zeroRule: ChartGridLine | null = null;
   if (xDomain[0] <= 0 && xDomain[1] >= 0) {
     const x = sx(0);
-    gridLines.push({ x1: x, y1: plot.y, x2: x, y2: plot.y + plot.height });
+    zeroRule = { x1: x, y1: plot.y, x2: x, y2: plot.y + plot.height };
   }
 
   const runs: ChartRun[] = [];
@@ -1770,6 +1829,7 @@ function layoutField(
   }
 
   return {
+    zeroRule,
     categoryAxis: 'x',
     // A field's reading is computed from the function under the pointer,
     // not looked up in a table of stored values.
@@ -1991,7 +2051,11 @@ function layoutPlot(
 
   for (const t of yTicks) {
     const y = sy(t);
-    if (opts.showGrid) gridLines.push({ x1: plot.x, y1: y, x2: plot.x + plot.width, y2: y });
+    // Zero belongs to the baseline, which draws it at axis weight. Drawing a
+    // grid line there too stacks two rules on one pixel.
+    if (opts.showGrid && t !== 0) {
+      gridLines.push({ x1: plot.x, y1: y, x2: plot.x + plot.width, y2: y });
+    }
     axisLabels.push({
       text: formatValue(t, spec),
       x: PAD,
@@ -2004,7 +2068,10 @@ function layoutPlot(
 
   for (const t of xTicks) {
     const x = sx(t);
-    if (opts.showGrid) gridLines.push({ x1: x, y1: plot.y, x2: x, y2: plot.y + plot.height });
+    // And zero on this axis belongs to `zeroRule`, for the same reason.
+    if (opts.showGrid && t !== 0) {
+      gridLines.push({ x1: x, y1: plot.y, x2: x, y2: plot.y + plot.height });
+    }
     // x labels are the *category* slot, so both painters draw them already.
     categoryLabels.push({
       text: formatValue(t, spec),
@@ -2022,9 +2089,10 @@ function layoutPlot(
     const y = sy(0);
     baseline = { x1: plot.x, y1: y, x2: plot.x + plot.width, y2: y };
   }
+  let zeroRule: ChartGridLine | null = null;
   if (xDomain[0] <= 0 && xDomain[1] >= 0) {
     const x = sx(0);
-    gridLines.push({ x1: x, y1: plot.y, x2: x, y2: plot.y + plot.height });
+    zeroRule = { x1: x, y1: plot.y, x2: x, y2: plot.y + plot.height };
   }
 
   const runs: ChartRun[] = [];
@@ -2481,6 +2549,7 @@ function layoutPlot(
   }
 
   return {
+    zeroRule,
     categoryAxis: 'x',
     // A curve's value at a point is evaluated, not looked up -- `chartTrace`
     // answers the hover here, and a stored column would be a stale second copy.
@@ -2969,6 +3038,8 @@ function layoutRadial(
       : null;
 
   return {
+    // A pie has no axes at all.
+    zeroRule: null,
     // A pie's categories are angles, not a run along an axis.
     categoryAxis: 'x',
     // A slice is its own reading; there is no second axis to column by.
@@ -3023,7 +3094,9 @@ function buildLegend(
 
   const GAP = 16;
   const out: ChartLegendEntry[] = [];
-  const side = spec.legendPosition ?? 'bottom';
+  const side = opts.legendSide ?? 'bottom';
+  const box = opts.legendBox;
+  if (!box) return [];
 
   /**
    * A column down the right, or a wrapping row.
@@ -3034,24 +3107,25 @@ function buildLegend(
    */
   if (side === 'right') {
     /**
-     * Just past the canvas the plot was given.
+     * A column in the gutter the caller reserved for it.
      *
-     * `width` here is already the *narrowed* canvas — the gutter was taken
-     * off before the plot was laid out — so the column starts where that ends
-     * rather than being measured back from it. Subtracting the column width
-     * from an already-narrowed canvas put the legend on top of the plot,
-     * which is the one thing reserving the gutter was for.
+     * Names are cut to the gutter's width rather than allowed to set it: the
+     * gutter is capped at a third of the chart, so past that the *name* gives
+     * way instead of the picture. A legend that squeezes the plot into a
+     * strip has stopped being a key and started being the subject.
      */
-    const columnX = width + PAD;
-    let y = PAD;
+    const textRoom = Math.max(24, box.width - LEGEND_SWATCH - 5);
+    let y = box.y;
     for (const e of entries) {
+      // One row per entry, and no more rows than the gutter is tall.
+      if (y + LEGEND_SIZE > box.y + box.height) break;
       out.push({
-        label: e.label,
+        label: truncateTo(e.label, textRoom, measure),
         color: e.color,
-        x: columnX,
+        x: box.x,
         y,
         swatch: LEGEND_SWATCH,
-        textX: columnX + LEGEND_SWATCH + 5,
+        textX: box.x + LEGEND_SWATCH + 5,
         fontSize: LEGEND_SIZE,
       });
       y += LEGEND_SIZE + 6;
@@ -3059,17 +3133,17 @@ function buildLegend(
     return out;
   }
 
-  let x = PAD;
-  // Top sits under the title; bottom sits in the band reserved beneath the
-  // plot. Both are the same wrapping run, started from a different line.
-  let y = side === 'top' ? PAD : height - PAD - LEGEND_SIZE;
+  let x = box.x;
+  // Both bands are the same wrapping run, started from the line the caller
+  // reserved — which for a top legend is below the title, not on it.
+  let y = box.y;
 
   for (const e of entries) {
     const textWidth = measure(e.label, LEGEND_SIZE);
     const entryWidth = LEGEND_SWATCH + 5 + textWidth;
 
-    if (x > PAD && x + entryWidth > width - PAD) {
-      x = PAD;
+    if (x > box.x && x + entryWidth > box.x + box.width) {
+      x = box.x;
       // Downward at the top and upward at the bottom, so a second row grows
       // into the space reserved for it rather than over the plot.
       y += side === 'top' ? LEGEND_SIZE + 5 : -(LEGEND_SIZE + 5);
@@ -3091,6 +3165,30 @@ function buildLegend(
 }
 
 /** The widest entry, plus its swatch and the gap to the plot. */
+/**
+ * A label cut to fit, with an ellipsis where it was cut.
+ *
+ * Character-counting would be wrong for the same reason the axis gutter is
+ * measured rather than assumed: "IIIII" and "WWWWW" are the same length and
+ * nothing like the same width. Binary search rather than a walk, because a
+ * legend of twenty entries measures a lot of substrings otherwise.
+ */
+function truncateTo(text: string, room: number, measure: Measure): string {
+  if (measure(text, LEGEND_SIZE) <= room) return text;
+
+  const ellipsis = '…';
+  let lo = 0;
+  let hi = text.length;
+  while (lo < hi) {
+    const mid = Math.ceil((lo + hi) / 2);
+    if (measure(text.slice(0, mid) + ellipsis, LEGEND_SIZE) <= room) lo = mid;
+    else hi = mid - 1;
+  }
+  // Nothing fits: one character and the mark, which still says a series is
+  // there — an empty label would read as a missing entry.
+  return lo <= 0 ? text.slice(0, 1) + ellipsis : text.slice(0, lo).trimEnd() + ellipsis;
+}
+
 function legendColumnWidth(
   entries: Array<{ label: string }>,
   measure: Measure

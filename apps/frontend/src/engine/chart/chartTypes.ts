@@ -776,6 +776,16 @@ export interface ResolvedChartOptions {
   buckets: number;
   /** The palette every mark takes its colour from. */
   palette: readonly string[];
+  /**
+   * Where the legend goes, and the band reserved for it.
+   *
+   * Filled in by `layoutChart` rather than by `resolveChartOptions`, because
+   * only the layout knows what furniture has already been placed — which is
+   * exactly what `buildLegend` was missing when it put a top legend on top of
+   * the title.
+   */
+  legendSide?: 'top' | 'bottom' | 'right' | 'none';
+  legendBox?: { x: number; y: number; width: number; height: number };
 }
 
 /**

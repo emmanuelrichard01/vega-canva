@@ -18533,9 +18533,13 @@ html[data-precise] .canvas-container[data-cursor-mode] .konvajs-content canvas {
 .cdm__sheet {
   flex: 1;
   min-height: 200px;
-  /* The gutter the rest of the dialog keeps. Vertical only: the horizontal
-     inset belongs to the first and last cells, so a sticky row label stays
-     flush with its own edge while it scrolls. */
+  /* Vertical only.
+
+     The horizontal inset belongs to the first and last *cells*, not to this
+     container: a sticky column inside a padded scroller sticks to the padding
+     box, so the row labels would sit flush at the padding edge and the data
+     would slide visibly through the gap beside them. Putting the inset on the
+     cells means the sticky column carries its own margin with it. */
   padding: var(--space-3) 0;
   overflow: auto;
   overscroll-behavior: contain;
@@ -18575,7 +18579,7 @@ html[data-precise] .canvas-container[data-cursor-mode] .konvajs-content canvas {
    outrank both of the things it overlaps. */
 .cdm__corner {
   z-index: 2;
-  padding: var(--space-2) var(--space-4);
+  padding: var(--space-2) var(--space-3) var(--space-2) var(--space-4);
 }
 
 .cdm__colHead {
@@ -18637,7 +18641,14 @@ html[data-precise] .canvas-container[data-cursor-mode] .konvajs-content canvas {
 
 /* The first column carries the dialog's gutter, so its text lands on the same
    line as the header's title and the toolbar's first button. */
+/* The first column carries the dialog's gutter, so its text lands on the
+   same line as the header's title and the toolbar's first button — and keeps
+   it while the table scrolls sideways underneath. */
 .cdm__cell--label { padding-left: var(--space-4); }
+
+/* And the last column carries it on the other side, so the delete control is
+   inset from the frame by the same amount rather than by the 8px it had. */
+.cdm__gutter { padding-right: var(--space-4) !important; }
 
 /* Numbers line up on the decimal point, which is the only reason a column of
    them can be read down rather than one at a time. */
@@ -18660,8 +18671,8 @@ html[data-precise] .canvas-container[data-cursor-mode] .konvajs-content canvas {
 
 /* The delete column: present, and quiet until the row is under the pointer. */
 .cdm__gutter {
-  width: calc(var(--space-4) + 24px);
-  padding: 0 var(--space-2) 0 0 !important;
+  width: calc(var(--space-4) + 32px);
+  padding: 0;
   text-align: center;
 }
 

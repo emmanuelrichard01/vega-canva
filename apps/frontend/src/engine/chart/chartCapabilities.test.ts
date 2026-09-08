@@ -442,3 +442,161 @@ describe('legend placement', () => {
     expect(off.plot.width).toBeGreaterThan(on.plot.width);
   });
 });
+
+/**
+ * The two ways placing the legend went wrong once it could be placed at all.
+ */
+describe('legend placement, in detail', () => {
+  it('keeps a top legend clear of the title', () => {
+    /**
+     * `buildLegend` worked its position out from `width` and `height`, so a
+     * top legend landed at `y = PAD` — which is exactly where the title is,
+     * because the title is also at `PAD`. Only the layout knows what
+     * furniture has already been placed, so the layout is what says now.
+     */
+    const l = layoutChart(
+      {
+        kind: 'bar',
+        categories: ['a'],
+        series: [{ name: 'One', values: [1] }, { name: 'Two', values: [2] }],
+        title: 'Quarterly revenue',
+        titleSize: 24,
+        legendPosition: 'top',
+        showLegend: true,
+      },
+      W,
+      H
+    );
+    const titleBottom = l.title!.y + l.title!.fontSize;
+    for (const e of l.legend) expect(e.y).toBeGreaterThanOrEqual(titleBottom);
+    // And still above the plot, which is what "top" means.
+    for (const e of l.legend) expect(e.y).toBeLessThan(l.plot.y);
+  });
+
+  it('clears the subtitle too', () => {
+    const l = layoutChart(
+      {
+        kind: 'bar',
+        categories: ['a'],
+        series: [{ name: 'One', values: [1] }, { name: 'Two', values: [2] }],
+        title: 'Revenue',
+        subtitle: 'by quarter, net of returns',
+        legendPosition: 'top',
+        showLegend: true,
+      },
+      W,
+      H
+    );
+    for (const e of l.legend) expect(e.y).toBeGreaterThanOrEqual(l.subtitle!.y);
+  });
+
+  /**
+   * The gutter was measured from the labels alone, so one long series name
+   * took half the chart and left the plot squeezed into a strip. A legend is
+   * furniture: past a third of the width the *name* gives way, not the
+   * picture.
+   */
+  it('never lets the legend take more than a third of the chart', () => {
+    const l = layoutChart(
+      {
+        kind: 'bar',
+        categories: ['a'],
+        series: [
+          { name: 'Revenue, net of returns, allowances and discounts applied', values: [1] },
+          { name: 'Cost of goods sold, fully loaded', values: [2] },
+        ],
+        legendPosition: 'right',
+        showLegend: true,
+      },
+      W,
+      H
+    );
+    /**
+     * The *legend's* share is what is capped. The plot also gives up room to
+     * the axis gutter and the padding, which it would lose with the legend
+     * anywhere — so measuring the plot against the whole width folds three
+     * costs into one number and tests none of them.
+     */
+    expect(l.legend[0].x).toBeGreaterThanOrEqual(W * 0.66 - 1);
+
+    // The names are cut to fit rather than overhanging.
+    for (const e of l.legend) {
+      expect(e.textX).toBeLessThan(W);
+      expect(e.label.length).toBeLessThan(60);
+    }
+  });
+
+  it('cuts a name with an ellipsis rather than dropping it', () => {
+    const l = layoutChart(
+      {
+        kind: 'bar',
+        categories: ['a'],
+        series: [
+          { name: 'Revenue, net of returns, allowances and discounts applied', values: [1] },
+          { name: 'B', values: [2] },
+        ],
+        legendPosition: 'right',
+        showLegend: true,
+      },
+      W,
+      H
+    );
+    expect(l.legend).toHaveLength(2);
+    expect(l.legend[0].label.endsWith('…')).toBe(true);
+    // The short one is untouched: truncation is per entry, not a global cut.
+    expect(l.legend[1].label).toBe('B');
+  });
+});
+
+/**
+ * Grid lines, and the axis that was hiding among them.
+ *
+ * The vertical zero rule had no field of its own, so it was pushed into
+ * `gridLines` — and the push was not gated on `showGrid`. Two consequences,
+ * both visible: turning the grid off left one stray vertical line down the
+ * middle of the plot, and while it was on, the y axis was drawn at the grid's
+ * opacity, which on a maths plot makes it as faint as the squares behind it.
+ */
+describe('grid lines', () => {
+  const plot: ChartSpec = {
+    kind: 'function',
+    categories: [],
+    series: [],
+    functions: [{ source: 'sin(x)' }],
+  };
+
+  it('draws none at all when the grid is off', () => {
+    expect(layoutChart({ ...plot, showGrid: false }, W, H).gridLines).toEqual([]);
+  });
+
+  it('still draws the axes when the grid is off', () => {
+    // An axis is not a grid line: it says where zero is, which stays true
+    // whether or not you want squares behind the curve.
+    const l = layoutChart({ ...plot, showGrid: false }, W, H);
+    expect(l.zeroRule).not.toBeNull();
+    expect(l.baseline).not.toBeNull();
+  });
+
+  it('keeps the axes out of the grid list when the grid is on', () => {
+    const l = layoutChart({ ...plot, showGrid: true }, W, H);
+    expect(l.gridLines.length).toBeGreaterThan(0);
+    // The zero rule is reported once, in its own field — not also as a grid
+    // line, which is what made it impossible to draw at a different weight.
+    const verticals = l.gridLines.filter((g) => Math.abs(g.x1 - g.x2) < 0.001);
+    expect(verticals.some((g) => Math.abs(g.x1 - l.zeroRule!.x1) < 0.001)).toBe(false);
+  });
+
+  it('has no zero rule where the axis never crosses zero', () => {
+    const l = layoutChart({ ...plot, xMin: 2, xMax: 8 }, W, H);
+    expect(l.zeroRule).toBeNull();
+  });
+
+  it('gives a category chart no vertical zero, because it has no zero', () => {
+    const l = layoutChart(
+      { kind: 'bar', categories: ['a', 'b'], series: [{ name: 'S', values: [1, 2] }] },
+      W,
+      H
+    );
+    expect(l.zeroRule).toBeNull();
+  });
+});
