@@ -11,9 +11,16 @@ time, where the work stopped, and what is next.
 
 > ## Read this first
 >
-> **The last session was the chart engine, end to end — see §5a-0-az.** The
-> one lesson worth carrying out of it: **ask what *reads* a field, never what
-> writes it.** Seven controls wrote a value nothing consulted, and the worst
+> **The last two sessions were the chart engine, end to end — see §5a-0-az
+> through §5a-0-bd.** The one lesson worth carrying out of them: **ask what
+> *reads* a field, never what writes it.** Its sharpest instance is §5a-0-bc,
+> where one question — "is the legend on?" — had five answers, the switch and
+> the renderer picked different ones, and the user had to click twice.
+>
+> The other half, from §5a-0-bb: **when something looks buggy, dump what it
+> actually produced before theorising.** A third of a session's guesses were
+> settled by one `console.log` of a thumbnail's markup, which showed 11px type
+> in a 70px box and one chart rendering to the empty string. Seven controls wrote a value nothing consulted, and the worst
 > of them did not do nothing — the palette recoloured the legend and left the
 > marks, so the chart and its own key disagreed. A control that half-works
 > hides better than one that is dead.
@@ -5049,6 +5056,201 @@ every native `.node` binding under `node_modules` mid-session — which takes ou
 that one is pure JavaScript. It was resolved on the machine. If it recurs,
 `rolldown-binding.win32-x64-msvc.node` and `oxlint.win32-x64-msvc.node` are the
 two it named, and that is the shape of it.
+
+## 5a-0-ba. The two popovers in the formula section
+
+Both were built in the same session that built the section, and both had the
+same fault: they were *correct* and they were *slow*, and the slowness was the
+part anyone noticed.
+
+**The number that decided the design.** Before changing anything I wrote a
+throwaway bench over `presetThumbSvg` and got:
+
+```
+TOTAL 374ms for 63 thumbnails
+  36.8ms  contour/ripple      31.2ms  contour/saddle
+  31.1ms  contour/potential   27.6ms  parametric/butterfly
+  24.9ms  heatmap/heat-peaks
+```
+
+A third of a second of blocked main thread on every open, and skewed — contour
+maps run marching squares per level over a grid, so five examples were a third
+of the total. That is not a rendering problem to shave, it is a problem of
+*paying for cards nobody has scrolled to*. Nine of sixty-three are on screen.
+
+Two changes, and they only work together:
+
+- `engine/chart/thumbCache.ts` — a session-lifetime map keyed
+  `id:WxH:theme`. Examples are static and themes are two, so a preview is a
+  pure function of that key. The second open costs nothing.
+- `hooks/useNearViewport.ts` + lazy cards — the *first* open costs nine.
+
+The cache does nothing for the first open; lazy mounting alone re-pays every
+time you scroll back up. Neither is the fix on its own, which is why both are
+there. Keyed on the example's **id**, not its spec: `allExamples()` rebuilds
+its literals every call, so identity always misses and serialising costs more
+than the render it saves.
+
+`useNearViewport` **latches**. It observes to start work, never to stop it — a
+card that un-rendered when scrolled away would throw away work already cached
+and buy a flash of skeleton on the way back.
+
+**The reference now draws.** `engine/chart/tokenSpark.ts` samples each function
+through the same parser that will evaluate it and returns an SVG path. This is
+the example browser's principle — *the preview is the thing* — applied to the
+other popover in the same section. `tanh` is the case that makes the argument:
+"hyperbolic tangent" tells you nothing unless you already know, and the note
+"the saturating S curve" is a description of a picture. The picture is eighty
+bytes. `sinc`, `gauss`, `floor` and `mod` are all chosen *because* of their
+shape, so for those the shape simply is the definition.
+
+Three things in there that look like fussiness and are not:
+
+- **A domain per function.** `exp` over −6..6 is a vertical line against the
+  axis and `asin` outside −1..1 is undefined and draws nothing at all. A test
+  asserts every spark fills more than half the box, which is what catches a
+  domain that flatters its function badly.
+- **Constants return `null`.** A flat line across a box implies `pi` varies and
+  happens to be level. Those rows set the glyph — π, e, τ, φ — instead.
+- **The pen lifts** at a non-finite sample, the same rule the plotter follows
+  at an asymptote, rather than bridging the hole with a straight line.
+
+It costs about nothing — forty-eight samples of one compiled expression, once
+per function per module lifetime — which is why there is a `Map` and no
+laziness. It is three orders of magnitude cheaper than a thumbnail and
+machinery beyond that would be machinery for its own sake.
+
+**Both popovers now take the keyboard.** Arrows move, Enter picks, and the
+cursor is one thing whichever moved it — hover and keyboard land on the same
+`[data-focused]` state. On a list of sixty-three that is the difference between
+a browser and a wall.
+
+**One invariant-7 trap to know about.** The example grid's column count lives
+in the component and is handed to CSS as `--exb-columns`. It has to: ArrowDown
+moves by `COLUMNS`, and a stylesheet that independently decided on three while
+the component said four is a down arrow that skips a row. If you change the
+popover width, change `COLUMNS` — not the CSS.
+
+**Two small things went away.** `.exref__more` (the disclosure that hid two
+thirds of the functions) and `.exb__note` (the per-card second line, replaced
+by a fixed-height footer describing whatever the cursor is on). The footer is
+always rendered for a reason: one that appears on hover moves every card above
+it and turns a steady scan into a flinch.
+
+Verified: `tsc -b`, `oxlint`, `npm run build`, and the full suite — 186 files,
+3288 tests. `tokenSpark.test.ts` and `thumbCache.test.ts` are new. What no test
+speaks for is whether thirty-one sparks at 34×16 read as a set rather than as
+noise, which is the one thing here worth looking at.
+
+## 5a-0-bb. Thumbnails were not slow, they were wrong
+
+Reported as "clustered and buggy, and I think it's causing the canvas to lag".
+Both halves were true and they had one cause.
+
+**What a card actually contained.** Dumping the markup for `revenue-quarters`
+at 124x70 settles it without any judgement call:
+
+- `font-size="11"` — in a box 70 tall. Five value labels (`$0`, `$500k`, `$1M`,
+  `$1.5M`, `$2M`) spaced **3.75px apart**, each **11px tall**. They lay across
+  one another three deep. That is the whole of the "buggy" look: not a bug
+  anywhere, just eleven-point type in a seventy-point box.
+- The marks got x=56..106 of 124 — **40% of the width**. The other 45% was the
+  gutter holding the illegible text.
+- Bars occupied y=18..33 of 70. The chart lived in the top half.
+- `tickets-channel` returned **an empty string**. A horizontal bar chart puts
+  its categories down the left; the gutter wanted 117 of the 124, the plot
+  collapsed to a zero-size rect, and the layout's empty-guard returned nothing.
+  A blank card, in the grid, in every session since it shipped.
+
+The file's own doc comment said "a thumbnail is a silhouette, not a small
+chart" and then asked `layoutChart` to fit a real chart into 124x70. It stripped
+*decoration* — title, legend, grid — and left the **axis furniture**, which is
+the part that does not shrink.
+
+**The fix, in one sentence: lay out big, strip the text, fit what is left.**
+
+1. Lay out at a reference size (360 wide, in the card's aspect). Every gutter
+   the engine reserves is correctly sized, because at 360 wide an 11px label
+   *is* small.
+2. `silhouette(layout)` empties every text-bearing field — from the laid-out
+   result, not from the spec, because that is where the complete list lives.
+3. Fit `layout.plot` to the card. Uniform scale, centred: a pie must not
+   become an oval.
+
+Step 2 is why step 1 is free — we pay for a correct layout and throw away the
+part that made it correct. The alternative is a second layout path for small
+sizes, which is the second-copy problem this codebase keeps paying for.
+
+Strokes are exempted from the fit by `vector-effect: non-scaling-stroke` on
+`.exb__thumb svg *`, or a 1.5px baseline scaled by 0.3 comes out at half a
+pixel and a line chart is a rumour.
+
+**Two tests hold it**: every example draws *something*, and no example draws a
+`<text>`. Both of the old failures were silent — an empty card looks like a
+slow card, and overlapping type looks like a rendering bug somewhere else.
+Neither would fail a test that only asked whether a string came back. Adding a
+text-bearing field to `ChartLayout` without listing it in `silhouette` now
+fails here.
+
+**On the lag.** 374ms of blocked main thread is the Konva thread, so yes. The
+cache and the lazy mounting in §5a-0-ba are what fix it; this section is why
+the cards looked wrong even once they were fast. Sampling is now clamped
+against the size a card is *displayed* at, which is the only size that can show
+the difference.
+
+## 5a-0-bc. "The legend is on but nothing shows"
+
+Reported as: the rail says Legend is on, the chart has none, and you have to
+turn it off and on again before it registers. **One question with five
+answers.**
+
+| Where | What it answered for an absent `showLegend` |
+| --- | --- |
+| `resolveChartOptions` — what the chart *draws* | `namesCategories \|\| series.length > 1` |
+| The rail's switch | `true` |
+| The panel's switch | `true` |
+| The panel's legend-position row | a fourth rule, which never mentioned heatmaps |
+| `buildColorBar` | `true` |
+
+On a single-series bar chart the switch read *on* and the renderer drew none.
+The first click wrote `false` — the value the renderer had already assumed, so
+nothing changed on screen. The second click wrote `true`, which it finally
+agreed with. Hence "off and on again".
+
+Every control now reads `resolveChartOptions(spec)`, and **writes the negation
+of what is drawn** rather than of what is stored — that second half is what
+makes the first click work. `resolveChartOptions` gained heatmap in
+`namesCategories`, because a heatmap's legend is its colour bar and that is not
+optional decoration; `buildColorBar` takes the resolved flag instead of
+re-reading the spec.
+
+`showGrid` had the same fault, found while fixing this one: the panel said
+`?? true` while the resolver says `?? !(radial || isPolar)`, so a radar showed
+Grid lit with no grid. Same fix.
+
+Nine tests in `chartCapabilities.test.ts` hold both. One thing they pin that
+looks like a bug and is not: **`isPolar` means radar and only radar**. A
+`polarPlot` is a maths plot of `r(a)` traced onto a cartesian plane, so it gets
+a grid like any other plane. The names invite exactly the wrong edit.
+
+## 5a-0-bd. Two smaller things
+
+**CSV is offered only where there is a table to be CSV of.** Gated on
+`chartCapabilities(kind).data` — the same predicate as the data sheet, because
+it is the same question. A plot's marks come from an expression: `sin(x)` has
+no rows, so "Download .csv" was offering a file of the samples the renderer
+happened to take, which is an artefact of the drawing rather than the data.
+
+**A flaky test, found by accident and worth knowing about.** `pie.test.ts`
+failed once in a full run and passed alone. Not order-dependent state:
+`nanoid`'s alphabet contains `-`, so a *wedge* id `<id>-w-<rand>` whose random
+tail begins `p-` reads as `...-w-p-...`, and the test was counting share labels
+with `id.includes('-p-')`. About one run in four thousand. The tests now pass a
+fixed diagram id and match by prefix. **If you identify diagram nodes by
+substring of an id with a `nanoid` in it, this will happen to you.**
+
+
+
 ---
 
 ## 5. Next up

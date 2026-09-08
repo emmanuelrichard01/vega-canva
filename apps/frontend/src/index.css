@@ -5607,6 +5607,17 @@ input.slider__value:focus-visible {
   outline-offset: -1px;
 }
 
+/* The variant whose content is a word rather than a glyph: shorter, because a
+   34px square around "Shadow" is a button mostly made of air, and padded
+   instead so the label sets the width. */
+.ctx-shape-btn--text {
+  height: auto;
+  min-height: 26px;
+  padding: 4px 6px;
+  font-size: var(--text-xs);
+  font-weight: 500;
+}
+
 /* Rises from whichever edge it is anchored to, so a flipped popover does not
    animate downward out of the button it belongs to. */
 @keyframes ctxPopIn {
@@ -19018,29 +19029,25 @@ html[data-precise] .canvas-container[data-cursor-mode] .konvajs-content canvas {
    holding thirty function names joined with spaces, which answered "does cbrt
    exist" and no other question.
    ───────────────────────────────────────────────────────────────────────── */
+/* A popover body: a search that stays, a list that scrolls, a note that stays.
+   The three-part frame is deliberately the same one the example browser uses —
+   two popovers opened from the same section that scrolled differently would
+   read as two different tools. */
 .exref {
   display: flex;
   flex-direction: column;
-  gap: 6px;
-  margin-top: var(--space-2);
-  padding-top: var(--space-2);
-  border-top: 1px solid var(--border-divider);
+  min-height: 0;
 }
 
 .exref__search {
   display: flex;
   align-items: center;
-  gap: 5px;
-  height: 24px;
-  padding: 0 6px;
-  border: 1px solid var(--border-divider);
-  border-radius: var(--radius-sm);
-  background: var(--surface-sunken, var(--surface-secondary));
+  gap: 6px;
+  flex: none;
+  padding: 10px 12px;
+  border-bottom: 1px solid var(--border-divider);
   color: var(--text-tertiary);
-  transition: border-color var(--motion-hover);
 }
-
-.exref__search:focus-within { border-color: var(--accent-line); }
 
 .exref__input {
   flex: 1;
@@ -19048,15 +19055,15 @@ html[data-precise] .canvas-container[data-cursor-mode] .konvajs-content canvas {
   border: 0;
   background: none;
   color: var(--text-primary);
-  font-size: var(--text-xs);
+  font-size: var(--text-sm);
   outline: none;
 }
 
 .exref__clear {
   display: grid;
   place-items: center;
-  width: 14px;
-  height: 14px;
+  width: 18px;
+  height: 18px;
   padding: 0;
   border: 0;
   border-radius: var(--radius-sm);
@@ -19070,19 +19077,31 @@ html[data-precise] .canvas-container[data-cursor-mode] .konvajs-content canvas {
 .exref__groups {
   display: flex;
   flex-direction: column;
-  gap: 6px;
-  max-height: 260px;
+  gap: var(--space-3);
+  min-height: 0;
+  padding: var(--space-3);
   overflow-y: auto;
   overscroll-behavior: contain;
 }
 
+/* Sticky, so a long run of trig keeps saying it is trig. */
 .exref__groupLabel {
-  margin: 0 0 2px;
+  position: sticky;
+  top: 0;
+  z-index: 1;
+  margin: 0 0 4px;
+  padding: 2px 0 4px;
+  background: var(--surface-primary);
   color: var(--text-tertiary);
   font-size: var(--text-2xs);
   font-weight: 600;
   letter-spacing: 0.06em;
   text-transform: uppercase;
+}
+
+.exref__group {
+  display: flex;
+  flex-direction: column;
 }
 
 .exref__list {
@@ -19092,10 +19111,15 @@ html[data-precise] .canvas-container[data-cursor-mode] .konvajs-content canvas {
 }
 
 /* The whole row inserts. A separate insert button beside a reference entry is
-   a second target for the one thing anybody wants to do with it. */
+   a second target for the one thing anybody wants to do with it.
+
+   Three columns rather than a flex run, so the sparks line up down the left
+   edge and can be read as a set. A ragged column of curves is a column you
+   scan one entry at a time, which is the thing the drawing was meant to fix. */
 .exref__token {
-  display: flex;
-  align-items: baseline;
+  display: grid;
+  grid-template-columns: 34px minmax(64px, auto) minmax(0, 1fr);
+  align-items: center;
   gap: 8px;
   width: 100%;
   padding: 3px 5px;
@@ -19107,19 +19131,57 @@ html[data-precise] .canvas-container[data-cursor-mode] .konvajs-content canvas {
   transition: background-color var(--motion-hover);
 }
 
-.exref__token:hover { background: var(--surface-hover); }
+/* Pointer and keyboard land on the same state. The cursor is one thing,
+   whichever moved it. */
+.exref__token:hover,
+.exref__token[data-focused] { background: var(--surface-hover); }
 
 .exref__token:focus-visible {
   outline: 2px solid var(--text-accent);
   outline-offset: -2px;
 }
 
+/* ── The shape of the function ──────────────────────────────────────────
+   Quiet by default: thirty-one curves at full contrast is a wall of ink, and
+   the row being read is the one worth drawing loudly. */
+.exref__spark {
+  display: grid;
+  place-items: center;
+  width: 34px;
+  height: 16px;
+  color: var(--text-tertiary);
+  opacity: 0.75;
+  transition: color var(--motion-hover), opacity var(--motion-hover);
+}
+
+.exref__spark svg {
+  display: block;
+  width: 100%;
+  height: 100%;
+  overflow: visible;
+}
+
+.exref__token:hover .exref__spark,
+.exref__token[data-focused] .exref__spark {
+  color: var(--text-accent);
+  opacity: 1;
+}
+
+/* π, e, τ, φ — set rather than drawn, because they are the value. */
+.exref__glyph {
+  font-family: var(--font-mono);
+  font-size: var(--text-xs);
+  font-style: italic;
+  line-height: 1;
+}
+
 .exref__sig {
-  flex: none;
-  min-width: 72px;
   color: var(--text-primary);
   font-family: var(--font-mono);
   font-size: var(--text-2xs);
+  overflow: hidden;
+  white-space: nowrap;
+  text-overflow: ellipsis;
 }
 
 .exref__desc {
@@ -19132,24 +19194,26 @@ html[data-precise] .canvas-container[data-cursor-mode] .konvajs-content canvas {
   text-overflow: ellipsis;
 }
 
-.exref__token:hover .exref__desc { color: var(--text-secondary); }
+.exref__token:hover .exref__desc,
+.exref__token[data-focused] .exref__desc { color: var(--text-secondary); }
 
-.exref__more {
-  align-self: flex-start;
-  padding: 2px 6px;
-  border: 0;
-  border-radius: var(--radius-sm);
-  background: none;
-  color: var(--text-accent);
-  font-size: var(--text-2xs);
-  cursor: pointer;
+.exref__empty {
+  margin: 0;
+  padding: var(--space-5) var(--space-3);
+  color: var(--text-tertiary);
+  font-size: var(--text-xs);
+  text-align: center;
 }
 
-.exref__more:hover { background: var(--surface-hover); }
-
-.exref__empty,
+/* What the reference cannot list, because it is syntax rather than a name:
+   the operators, and that a number beside a bracket multiplies. Pinned under
+   the scroll, since it is true of every entry above it. */
 .exref__note {
+  flex: none;
   margin: 0;
+  padding: 8px 12px;
+  border-top: 1px solid var(--border-divider);
+  background: var(--surface-sunken, var(--surface-secondary));
   color: var(--text-tertiary);
   font-size: var(--text-2xs);
   line-height: 1.5;
@@ -19320,12 +19384,14 @@ html[data-precise] .canvas-container[data-cursor-mode] .konvajs-content canvas {
   opacity: 0.7;
 }
 
-/* Three up. At 440px that is a 124px preview with room for a name and the one
-   line explaining what it demonstrates — which in the 260px strip could only
-   live in a tooltip. */
+/* Three up. At 452px that is a 124px preview with room for a name, where the
+   260px properties strip fitted two cramped ones.
+
+   The count comes from the component, because ArrowDown has to move by exactly
+   one row and only one of the two can be right about how wide a row is. */
 .exb__grid {
   display: grid;
-  grid-template-columns: repeat(3, minmax(0, 1fr));
+  grid-template-columns: repeat(var(--exb-columns, 3), minmax(0, 1fr));
   gap: 6px;
 }
 
@@ -19350,10 +19416,15 @@ html[data-precise] .canvas-container[data-cursor-mode] .konvajs-content canvas {
   transition: border-color var(--motion-hover), background-color var(--motion-hover);
 }
 
-.exb__pick:hover {
+/* Pointer and keyboard land on the same state: the cursor is one thing,
+   whichever moved it. */
+.exb__pick:hover,
+.exb__pick[data-focused] {
   border-color: var(--accent-line);
   background: var(--surface-hover);
 }
+
+.exb__pick[data-focused] { box-shadow: 0 0 0 1px var(--accent-line); }
 
 .exb__pick:focus-visible {
   outline: 2px solid var(--text-accent);
@@ -19373,6 +19444,72 @@ html[data-precise] .canvas-container[data-cursor-mode] .konvajs-content canvas {
   height: auto;
 }
 
+/* The preview is a real layout scaled down to fit the card — see
+   `presetThumb.ts`. Without this, a 1.5px baseline scaled by 0.3 comes out at
+   half a pixel and a line chart is a rumour. Strokes keep their authored
+   weight; only the geometry shrinks, which is what makes a silhouette read at
+   this size. */
+.exb__thumb svg * {
+  vector-effect: non-scaling-stroke;
+}
+
+/* The space a preview will take, held before it is drawn. A card that grows
+   when its chart arrives moves every card below it, which on a grid being
+   scrolled is worse than a moment of grey.
+
+   It breathes rather than sweeps: a shimmer travelling across nine cards at
+   once reads as loading *failing*, and these resolve in a frame or two. */
+.exb__skeleton {
+  display: block;
+  width: 100%;
+  border-radius: var(--radius-sm);
+  background: var(--surface-sunken, var(--surface-secondary));
+  animation: exb-breathe 1.4s ease-in-out infinite;
+}
+
+@keyframes exb-breathe {
+  0%, 100% { opacity: 1; }
+  50% { opacity: 0.55; }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .exb__skeleton { animation: none; }
+}
+
+/* One line about whatever the cursor is on. Fixed height and always present,
+   so crossing the grid with the pointer never resizes the surface under it. */
+.exb__foot {
+  display: flex;
+  align-items: baseline;
+  gap: 6px;
+  flex: none;
+  height: 30px;
+  padding: 0 12px;
+  border-top: 1px solid var(--border-divider);
+  background: var(--surface-sunken, var(--surface-secondary));
+  overflow: hidden;
+}
+
+.exb__footName {
+  flex: none;
+  max-width: 45%;
+  color: var(--text-primary);
+  font-size: var(--text-2xs);
+  font-weight: 600;
+  overflow: hidden;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+}
+
+.exb__footNote {
+  min-width: 0;
+  color: var(--text-tertiary);
+  font-size: var(--text-2xs);
+  overflow: hidden;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+}
+
 .exb__name {
   color: var(--text-primary);
   font-size: var(--text-2xs);
@@ -19381,18 +19518,6 @@ html[data-precise] .canvas-container[data-cursor-mode] .konvajs-content canvas {
   overflow: hidden;
   white-space: nowrap;
   text-overflow: ellipsis;
-}
-
-.exb__note {
-  color: var(--text-tertiary);
-  font-size: var(--text-2xs);
-  line-height: 1.3;
-  /* Two lines, then an ellipsis: enough for the one-line note without letting
-     a long one change the height of its row. */
-  display: -webkit-box;
-  -webkit-box-orient: vertical;
-  -webkit-line-clamp: 2;
-  overflow: hidden;
 }
 
 /* Adding a curve to a plot that already has one is a different act from

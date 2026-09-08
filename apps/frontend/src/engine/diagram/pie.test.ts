@@ -207,7 +207,16 @@ describe('geometry', () => {
 });
 
 describe('building the objects', () => {
-  const build = (src: string) => buildPieDiagram(parse(src).chart!, { x: 0, y: 0 }).nodes;
+  /**
+   * A fixed diagram id, so node kinds can be matched by prefix.
+   *
+   * With a generated one the ids end in `nanoid(6)`, whose alphabet contains
+   * `-` — so a random tail beginning `ls-` turns a *share* id into `…-p-ls-…`
+   * and a substring match counts it as a legend swatch. Rare, and a failure
+   * that will not reproduce on its own when it happens.
+   */
+  const build = (src: string) =>
+    buildPieDiagram(parse(src).chart!, { x: 0, y: 0 }, 'fixed').nodes;
 
   it('makes one closed path per slice', () => {
     const wedges = build(VOLDEMORT).filter((n: any) => n.type === 'path');
@@ -254,8 +263,8 @@ describe('building the objects', () => {
 
   it('gives every slice a legend swatch and a row of text', () => {
     const nodes = build(VOLDEMORT);
-    expect(nodes.filter((n: any) => n.id.includes('-ls-'))).toHaveLength(3);
-    expect(nodes.filter((n: any) => n.id.includes('-lt-'))).toHaveLength(3);
+    expect(nodes.filter((n: any) => n.id.startsWith('fixed-ls-'))).toHaveLength(3);
+    expect(nodes.filter((n: any) => n.id.startsWith('fixed-lt-'))).toHaveLength(3);
   });
 
   it('prints the share, and the raw value only when asked', () => {
@@ -362,11 +371,23 @@ describe('the share on the slice', () => {
   });
 
   it('builds a text object only for the slices that get one', () => {
-    const nodes = buildPieDiagram(parse('pie title T\n  "big" : 99\n  "sliver" : 1').chart!, {
-      x: 0,
-      y: 0,
-    }).nodes;
-    const shares = nodes.filter((n: any) => n.id.includes('-p-'));
+    /**
+     * The diagram id is fixed rather than generated, so the ids can be matched
+     * by prefix instead of by `includes('-p-')`.
+     *
+     * That substring was flaky about once in a few thousand runs, and it took
+     * a full-suite failure that would not reproduce alone to show why:
+     * `nanoid`'s alphabet contains `-`, so a *wedge* id `<id>-w-<rand>` whose
+     * random tail happens to begin `p-` reads as `…-w-p-…`, which contains
+     * `-p-`. The share count then came back 2 instead of 1 and the diagram was
+     * entirely correct. Matching the segment we actually mean cannot collide.
+     */
+    const nodes = buildPieDiagram(
+      parse('pie title T\n  "big" : 99\n  "sliver" : 1').chart!,
+      { x: 0, y: 0 },
+      'fixed'
+    ).nodes;
+    const shares = nodes.filter((n: any) => n.id.startsWith('fixed-p-'));
     expect(shares).toHaveLength(1);
     expect((shares[0] as any).text).toBe('99%');
   });

@@ -7,6 +7,8 @@ import {
   defaultChartSpec,
   defaultPlotDomain,
   isPlot,
+  isPolar,
+  resolveChartOptions,
   type ChartSpec,
 } from './chartTypes';
 import { paintLayout } from './chartSvg';
@@ -702,5 +704,125 @@ describe('radar', () => {
   it('refuses to draw fewer than three spokes', () => {
     // Two spokes is a line and one is a point; neither is a radar.
     expect(layoutChart(radar(['A', 'B']), W, H).rings).toEqual([]);
+  });
+});
+
+/**
+ * The switch reports the state of the thing it switches.
+ *
+ * The reported symptom was "legend is on but nothing shows, and I have to turn
+ * it off and on again before it registers". The cause was five answers to one
+ * question: the rail and the panel each applied `?? true` to an absent
+ * `showLegend`, `resolveChartOptions` applied
+ * `?? (namesCategories || series.length > 1)`, the legend-position row applied
+ * a fourth rule, and `buildColorBar` a fifth. On a single-series bar chart the
+ * switch read *on* and the chart drew none, so the first click wrote `false` —
+ * changing nothing visible — and only the second click wrote a value the
+ * renderer agreed with.
+ *
+ * These hold the resolver to what it must answer. Every control now asks it,
+ * so a control cannot drift from the drawing again without failing here.
+ */
+describe('showLegend has one answer', () => {
+  const one = (over: Partial<ChartSpec> = {}): ChartSpec => ({
+    ...defaultChartSpec('bar'),
+    categories: ['Q1', 'Q2'],
+    series: [{ name: 'Revenue', values: [1, 2] }],
+    ...over,
+  });
+
+  it('is off for a single unnamed series, and the toggle agrees', () => {
+    const spec = one();
+    expect(spec.showLegend).toBeUndefined();
+    expect(resolveChartOptions(spec).showLegend).toBe(false);
+    // The layout must agree with the switch, which is the whole bug.
+    expect(layoutChart(spec, W, H).legend).toEqual([]);
+  });
+
+  it('turns on with one click from the resolved state', () => {
+    const spec = one();
+    // What the control now writes: the negation of what is *drawn*, not of
+    // what is stored. Negating the stored `undefined` gave `false` — a click
+    // that changed nothing.
+    const clicked = { ...spec, showLegend: !resolveChartOptions(spec).showLegend };
+    expect(clicked.showLegend).toBe(true);
+    expect(layoutChart(clicked, W, H).legend.length).toBeGreaterThan(0);
+  });
+
+  it('is on by default wherever the legend names the categories', () => {
+    for (const kind of ['pie', 'donut', 'funnel'] as const) {
+      const spec = { ...defaultChartSpec(kind) };
+      expect(resolveChartOptions(spec).showLegend, kind).toBe(true);
+    }
+  });
+
+  it('is on by default for a heatmap, whose legend is its colour bar', () => {
+    // A heatmap has one series and no named categories, so the old rule made
+    // it `false` — which would have taken the colour bar away the moment
+    // `buildColorBar` stopped applying its own separate default.
+    const spec = defaultChartSpec('heatmap');
+    expect(resolveChartOptions(spec).showLegend).toBe(true);
+    expect(layoutChart(spec, W, H).colorBar).toBeTruthy();
+  });
+
+  it('lets the colour bar be turned off, through the same field', () => {
+    const spec = { ...defaultChartSpec('heatmap'), showLegend: false };
+    expect(layoutChart(spec, W, H).colorBar).toBeNull();
+  });
+
+  it('is on by default once there is more than one series', () => {
+    const spec = one({
+      series: [
+        { name: 'A', values: [1, 2] },
+        { name: 'B', values: [2, 3] },
+      ],
+    });
+    expect(resolveChartOptions(spec).showLegend).toBe(true);
+  });
+
+  it('lets an explicit value win over every default', () => {
+    expect(resolveChartOptions({ ...defaultChartSpec('pie'), showLegend: false }).showLegend).toBe(false);
+    expect(resolveChartOptions(one({ showLegend: true })).showLegend).toBe(true);
+  });
+});
+
+/**
+ * `showGrid` had the same shape of fault, found while fixing the legend.
+ *
+ * The panel's switch read `?? true` while the resolver reads
+ * `?? !(radial || polar)`, so a radar and a polar plot showed Grid lit with no
+ * grid drawn — the same lie, one control over.
+ */
+describe('showGrid has one answer', () => {
+  /** The field absent, which is the case the panel used to answer `true` to. */
+  const absent = (kind: ChartSpec['kind']): ChartSpec => {
+    const spec = { ...defaultChartSpec(kind) };
+    delete spec.showGrid;
+    return spec;
+  };
+
+  it('is off with no stored value on the kinds that draw no rules', () => {
+    for (const kind of ['radar', 'pie', 'donut'] as const) {
+      expect(resolveChartOptions(absent(kind)).showGrid, kind).toBe(false);
+    }
+  });
+
+  it('is on with no stored value on the kinds that do', () => {
+    for (const kind of ['bar', 'line', 'area', 'scatter'] as const) {
+      expect(resolveChartOptions(absent(kind)).showGrid, kind).toBe(true);
+    }
+  });
+
+  it('gives a polar plot a grid, because `isPolar` means radar', () => {
+    /**
+     * Two different things share the word. `isPolar` is the *chart* drawn on
+     * polar axes — one spoke per category, rings for the scale — which is the
+     * radar and only the radar. A `polarPlot` is a maths plot of `r(a)`,
+     * traced onto a cartesian plane, and a plane has a grid like any other.
+     *
+     * Worth pinning because the names invite exactly the wrong edit.
+     */
+    expect(isPolar('polarPlot')).toBe(false);
+    expect(resolveChartOptions(absent('polarPlot')).showGrid).toBe(true);
   });
 });

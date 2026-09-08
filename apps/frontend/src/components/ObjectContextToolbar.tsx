@@ -34,7 +34,7 @@ import { KindPicker } from './workspace/KindPicker';
 import { ChartKindIcon } from './workspace/chartIcons';
 import { CHART_HINTS, CHART_LABELS, chartPickerGroups } from '../engine/chart/chartKinds';
 import { setChartKind, updateChart } from '../engine/chart/chartApply';
-import { chartCapabilities, defaultPlotDomain } from '../engine/chart/chartTypes';
+import { chartCapabilities, defaultPlotDomain, resolveChartOptions } from '../engine/chart/chartTypes';
 import { chartToCsv, csvFilename, downloadCsv } from '../engine/chart/chartCsv';
 import { breakApartGrid, gridNodeOf, gridRecipe as gridRecipeFor, setGridRecipe } from '../engine/grid/gridApply';
 import {
@@ -2035,21 +2035,25 @@ export const ObjectContextToolbar: React.FC<Props> = ({ selectedId, selectedIds,
                 <div style={{ display: 'grid', gridTemplateColumns: 'repeat(5, 1fr)', gap: '4px', marginBottom: '8px' }}>
                   {TEXT_PRESETS.map((preset) => {
                     const active = isTextPresetActive(preset, typography);
+                    /**
+                     * `aria-pressed`, not a hand-painted selected state.
+                     *
+                     * These carried five inline colours: a hardcoded `#2563EB`
+                     * behind `var(--accent)`, white ink on it, and
+                     * `rgba(255,255,255,0.06)` as the resting ground — the
+                     * Two-Halves Rule broken three ways, and a resting ground
+                     * that is invisible in a light theme.
+                     *
+                     * `.ctx-shape-btn[aria-pressed='true']` already states the
+                     * selected state in tokens. The modifier carries only the
+                     * fact that these read as words rather than as glyphs.
+                     */
                     return (
                       <button
                         key={preset.id}
                         type="button"
-                        className="ctx-shape-btn"
-                        style={{
-                          fontSize: '11px',
-                          fontWeight: 500,
-                          padding: '4px 6px',
-                          background: active ? 'var(--accent, #2563EB)' : 'rgba(255,255,255,0.06)',
-                          color: active ? '#FFFFFF' : 'var(--text-primary)',
-                          borderRadius: '6px',
-                          border: 'none',
-                          cursor: 'pointer',
-                        }}
+                        className="ctx-shape-btn ctx-shape-btn--text"
+                        aria-pressed={active}
                         onClick={() => setTypography(preset.patch(typography))}
                         data-tooltip={preset.hint}
                       >
@@ -2317,14 +2321,30 @@ export const ObjectContextToolbar: React.FC<Props> = ({ selectedId, selectedIds,
               <RailPopover label="Display" trigger={<Sliders size={15} />} align="start">
                 <span className="ctx-popover__label">Display Elements</span>
                 <div className="ctx-popover__toggles">
+                  {/* Asked of the renderer, not guessed at.
+                      This switch used to read `showLegend ?? true` while the
+                      chart drew on `?? (namesCategories || series.length > 1)`
+                      — so a single-series bar chart showed the switch *on*
+                      with no legend on the board, and the first click wrote
+                      `false`, which changed nothing visible. Turning it off
+                      and on again "fixed" it because the second click finally
+                      wrote a value the renderer agreed with. */}
                   <button
                     type="button"
                     className="ctx-popover__action"
                     role="switch"
-                    aria-checked={node.chart.showLegend ?? true}
-                    onClick={() => updateChart(node.id, { ...node.chart, showLegend: !(node.chart.showLegend ?? true) })}
+                    aria-checked={resolveChartOptions(node.chart).showLegend}
+                    onClick={() =>
+                      updateChart(node.id, {
+                        ...node.chart,
+                        showLegend: !resolveChartOptions(node.chart).showLegend,
+                      })
+                    }
                   >
-                    <Check size={14} style={{ opacity: (node.chart.showLegend ?? true) ? 1 : 0 }} />
+                    <Check
+                      size={14}
+                      style={{ opacity: resolveChartOptions(node.chart).showLegend ? 1 : 0 }}
+                    />
                     Legend
                   </button>
                   {chartCapabilities(node.chart.kind).valueLabels && (
@@ -2366,7 +2386,14 @@ export const ObjectContextToolbar: React.FC<Props> = ({ selectedId, selectedIds,
                 </div>
               </RailPopover>
 
-              {/* CSV I/O Popover */}
+              {/* Only where there is a table to be CSV *of*.
+                  A plot's marks come from an expression: `sin(x)` has no rows,
+                  so "Download .csv" offered a file of the samples the renderer
+                  happened to take — an artefact of the drawing, not the data,
+                  and not something anybody asked for. Same predicate as the
+                  data sheet's, because it is the same question: a chart either
+                  has an editable table or it does not. */}
+              {chartCapabilities(node.chart.kind).data && (
               <RailPopover label="CSV Data" trigger={<Download size={15} />} align="start">
                 <span className="ctx-popover__label">Data Import / Export</span>
                 <button
@@ -2393,6 +2420,7 @@ export const ObjectContextToolbar: React.FC<Props> = ({ selectedId, selectedIds,
                   Download .csv file
                 </button>
               </RailPopover>
+              )}
             </div>
             <Divider />
           </>

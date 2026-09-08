@@ -1920,7 +1920,7 @@ function layoutField(
     categoryLabels,
     valueLabels: [],
     legend: buildPlotLegend(spec, opts, curves, width, height, measure),
-    colorBar: buildColorBar(spec, surfaceRange, plot, measure),
+    colorBar: buildColorBar(spec, opts.showLegend, surfaceRange, plot, measure),
     title,
     rings: [],
     spokes: [],
@@ -2740,13 +2740,21 @@ function robustExtent(values: number[]): Domain {
  */
 function buildColorBar(
   spec: ChartSpec,
+  showLegend: boolean,
   range: { lo: number; hi: number } | null,
   plot: Rect,
   measure: Measure
 ): ChartColorBar | null {
   if (!range || spec.kind !== 'heatmap') return null;
-  // The legend toggle governs this too: it is the legend, for this kind.
-  if (!(spec.showLegend ?? true)) return null;
+  /**
+   * The legend toggle governs this too: it *is* the legend, for this kind.
+   *
+   * Taken from the resolved options rather than re-read off the spec. Reading
+   * `spec.showLegend ?? true` here was a sixth answer to a question already
+   * answered in `resolveChartOptions`, and the two disagreed on exactly the
+   * charts where it mattered — see the note on `showLegend` there.
+   */
+  if (!showLegend) return null;
 
   const BAR_W = 10;
   const fontSize = LABEL_SIZE;

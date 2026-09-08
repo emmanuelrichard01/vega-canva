@@ -58,6 +58,7 @@ import {
   isPolar,
   isTwoVariable,
   isRadial,
+  resolveChartOptions,
   seriesColor,
   type ChartKind,
   type ChartSpec,
@@ -394,7 +395,25 @@ const LabelFields: React.FC<{
   radial: boolean;
   polar: boolean;
   plot: boolean;
-}> = ({ spec, patch, can, radial, polar, plot }) => (
+}> = ({ spec, patch, can, radial, polar, plot }) => {
+  /**
+   * What the chart will actually do, not what the spec happens to store.
+   *
+   * Every switch below used to apply its own default to an absent field —
+   * `showLegend ?? true`, `showGrid ?? true` — while `resolveChartOptions`
+   * answered `?? (namesCategories || series.length > 1)` and
+   * `?? !(radial || polar)`. Two of the three disagreed, so a single-series
+   * bar chart showed Legend lit with no legend drawn, and a radar showed Grid
+   * lit with no grid. The first click then wrote the value the switch was
+   * already displaying, which changed nothing — hence "turn it off and on
+   * again before it registers".
+   *
+   * A switch reports the state of the thing it switches. There is one answer
+   * to that, and this is where it lives.
+   */
+  const shown = resolveChartOptions(spec);
+
+  return (
   <>
     <Row label="Title">
       <input
@@ -458,14 +477,14 @@ const LabelFields: React.FC<{
     <Row label="Show">
       <ToggleRow
         options={[
-          { id: 'legend', icon: <Tag size={12} />, label: 'Legend', on: spec.showLegend ?? true },
+          { id: 'legend', icon: <Tag size={12} />, label: 'Legend', on: shown.showLegend },
           ...(can.valueLabels
             ? [
                 {
                   id: 'values',
                   icon: <Hash size={12} />,
                   label: 'Values',
-                  on: spec.showValues ?? false,
+                  on: shown.showValues,
                 },
               ]
             : []),
@@ -475,24 +494,27 @@ const LabelFields: React.FC<{
                   id: 'grid',
                   icon: <Grid3x3 size={12} />,
                   label: 'Grid',
-                  on: spec.showGrid ?? true,
+                  on: shown.showGrid,
                 },
               ]
             : []),
         ]}
+        // Written as the negation of what is *drawn*, so the first click
+        // always changes the picture. Negating the stored field instead meant
+        // a click could write the value the renderer had already assumed.
         onToggle={(id) => {
-          if (id === 'legend') patch({ showLegend: !(spec.showLegend ?? true) });
-          else if (id === 'values') patch({ showValues: !(spec.showValues ?? false) });
-          else patch({ showGrid: !(spec.showGrid ?? true) });
+          if (id === 'legend') patch({ showLegend: !shown.showLegend });
+          else if (id === 'values') patch({ showValues: !shown.showValues });
+          else patch({ showGrid: !shown.showGrid });
         }}
       />
     </Row>
 
-    {/* Only once there is a legend to place. It showed whenever the toggle
-        was on *by default*, including on the single-series charts where
-        `resolveChartOptions` suppresses the legend entirely — so the control
-        offered three positions for something not on screen. */}
-    {(spec.showLegend ?? (isRadial(spec.kind) || spec.kind === 'funnel' || spec.series.length > 1)) && (
+    {/* Only once there is a legend to place — asked of the same resolver the
+        switch above reports, rather than restating its rule a third time. The
+        restatement had already drifted: it never mentioned a heatmap, whose
+        legend is its colour bar. */}
+    {shown.showLegend && (
       <Row label="Legend">
         <SegmentedControl
           fill
@@ -558,7 +580,8 @@ const LabelFields: React.FC<{
       </Row>
     )}
   </>
-);
+  );
+};
 
 /**
  * How the mark itself is drawn.

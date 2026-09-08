@@ -799,8 +799,10 @@ export interface ResolvedChartOptions {
 export function resolveChartOptions(spec: ChartSpec): ResolvedChartOptions {
   const radial = isRadial(spec.kind);
   // A funnel and a pie both name their *categories* in the legend, so both
-  // want one even with a single series.
-  const namesCategories = radial || spec.kind === 'funnel';
+  // want one even with a single series. A heatmap's legend is its colour bar,
+  // which is not optional decoration — without it the colours mean nothing —
+  // so it defaults on too, whatever its series count says.
+  const namesCategories = radial || spec.kind === 'funnel' || spec.kind === 'heatmap';
 
   return {
     // More than one series needs a key; one series is named by the title and a
