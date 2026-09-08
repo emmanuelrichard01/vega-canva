@@ -1,6 +1,7 @@
 import { describe, it, expect } from 'vitest';
 import { TYPE_LABEL, TYPE_ORDER, nodeLabel } from './nodeLabel';
 import { NODE_TYPES, type AnyNode } from './schema';
+import { CHART_KINDS } from '../chart/chartTypes';
 
 describe('type chips', () => {
   it('offers a chip for every node type the schema declares', () => {
@@ -45,5 +46,42 @@ describe('naming a shape by what it is', () => {
 
   it('still lets a user-given title win over the derived name', () => {
     expect(nodeLabel({ ...shape({ kind: 'rect' }), title: 'Header bar' } as AnyNode)).toBe('Header bar');
+  });
+});
+
+/**
+ * Charts fell through to the bare type word for all twenty-four kinds, so a
+ * board of them was a column of rows saying "Chart" -- the failure the grid
+ * case in this file was written to fix, repeated on a node type added later.
+ */
+describe('charts', () => {
+  const chart = (over: Record<string, unknown>) =>
+    ({ id: 'c', type: 'chart', x: 0, y: 0, width: 100, height: 100, chart: over }) as never;
+
+  it('prefers the title the chart is drawn with', () => {
+    expect(nodeLabel(chart({ kind: 'bar', title: 'Revenue by quarter' }))).toBe('Revenue by quarter');
+  });
+
+  it('falls back to the kind, so no two kinds read alike', () => {
+    expect(nodeLabel(chart({ kind: 'bar' }))).toBe('Bar chart');
+    expect(nodeLabel(chart({ kind: 'pie' }))).toBe('Pie chart');
+    expect(nodeLabel(chart({ kind: 'waterfall' }))).toBe('Waterfall chart');
+  });
+
+  it('calls a plot a plot', () => {
+    expect(nodeLabel(chart({ kind: 'function' }))).toBe('Function plot');
+    expect(nodeLabel(chart({ kind: 'vectorField' }))).toBe('Vector field plot');
+    // A heatmap of F(x, y) is a plot of a function, not a chart of a table.
+    expect(nodeLabel(chart({ kind: 'heatmap' }))).toBe('Heatmap plot');
+  });
+
+  it('never calls two different kinds the same thing', () => {
+    const names = CHART_KINDS.map((kind) => nodeLabel(chart({ kind })));
+    expect(new Set(names).size).toBe(CHART_KINDS.length);
+  });
+
+  it('trims a title down rather than letting one row run away', () => {
+    const long = 'A title far longer than any row in the layers panel can show';
+    expect(nodeLabel(chart({ kind: 'bar', title: long })).length).toBeLessThanOrEqual(24);
   });
 });

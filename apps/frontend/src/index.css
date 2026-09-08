@@ -15191,7 +15191,7 @@ body[data-zen='physics'] .forces-handle { bottom: 32px; }
 }
 
 .grid-switch[data-active] {
-  border-color: var(--accent-strong, var(--brand-orange));
+  border-color: var(--accent-line);
   background: var(--accent-strong, var(--brand-orange));
 }
 
@@ -15201,7 +15201,7 @@ body[data-zen='physics'] .forces-handle { bottom: 32px; }
 }
 
 .grid-switch:focus-visible {
-  outline: 2px solid var(--accent-strong, var(--brand-orange));
+  outline: 2px solid var(--text-accent);
   outline-offset: 1px;
 }
 
@@ -15234,7 +15234,7 @@ body[data-zen='physics'] .forces-handle { bottom: 32px; }
 .grid-palette:hover { border-color: var(--border-strong); }
 
 .grid-palette:focus-visible {
-  outline: 2px solid var(--accent-strong, var(--brand-orange));
+  outline: 2px solid var(--text-accent);
   outline-offset: 1px;
 }
 
@@ -15242,7 +15242,7 @@ body[data-zen='physics'] .forces-handle { bottom: 32px; }
    colours changes the colours, which is the one thing this control must not
    do. */
 .grid-palette[data-active] {
-  border-color: var(--accent-strong, var(--brand-orange));
+  border-color: var(--accent-line);
   box-shadow: 0 0 0 1px var(--accent-strong, var(--brand-orange));
 }
 
@@ -15413,7 +15413,7 @@ body[data-zen='physics'] .forces-handle { bottom: 32px; }
 
 .grid-variations__tile--baseline[data-current] {
   border-style: solid;
-  border-color: var(--accent-strong, var(--brand-orange));
+  border-color: var(--accent-line);
 }
 
 /* A tag on the frame, not graffiti on the picture.
@@ -15437,7 +15437,7 @@ body[data-zen='physics'] .forces-handle { bottom: 32px; }
 }
 
 .grid-variations__tile:hover {
-  border-color: var(--accent-strong, var(--brand-orange));
+  border-color: var(--accent-line);
   /* Lifts rather than fills: the tile's own contents are the subject, and a
      hover colour behind them would change the thing being judged. */
   transform: translateY(-1px);
@@ -18090,11 +18090,11 @@ html[data-precise] .canvas-container[data-cursor-mode] .konvajs-content canvas {
 }
 
 .tailpad__cell:hover {
-  background: var(--surface-hover, rgb(255 255 255 / 6%));
+  background: var(--surface-hover);
 }
 
 .tailpad__cell:focus-visible {
-  outline: 2px solid var(--accent-strong, var(--brand-orange));
+  outline: 2px solid var(--text-accent);
   outline-offset: -2px;
 }
 
@@ -18107,7 +18107,7 @@ html[data-precise] .canvas-container[data-cursor-mode] .konvajs-content canvas {
 }
 
 .tailpad__cell[data-active] .tailpad__dot {
-  background: var(--accent-strong, var(--brand-orange));
+  background: var(--text-accent);
   scale: 1.6;
 }
 
@@ -18174,7 +18174,7 @@ html[data-precise] .canvas-container[data-cursor-mode] .konvajs-content canvas {
 }
 
 .kp__search:focus-within {
-  border-color: var(--accent-strong, var(--brand-orange));
+  border-color: var(--accent-line);
 }
 
 .kp__input {
@@ -18230,10 +18230,10 @@ html[data-precise] .canvas-container[data-cursor-mode] .konvajs-content canvas {
   transition: background-color var(--motion-hover), color var(--motion-hover);
 }
 
-.kp__facet:hover { background: var(--surface-hover, rgb(255 255 255 / 6%)); }
+.kp__facet:hover { background: var(--surface-hover); }
 
 .kp__facet[data-active] {
-  background: var(--surface-raised, var(--surface-primary));
+  background: var(--surface-primary);
   color: var(--text-primary);
   box-shadow: inset 0 0 0 1px var(--border-divider);
 }
@@ -18323,7 +18323,7 @@ html[data-precise] .canvas-container[data-cursor-mode] .konvajs-content canvas {
 }
 
 .kp__tile:hover {
-  background: var(--surface-hover, rgb(255 255 255 / 6%));
+  background: var(--surface-hover);
   color: var(--text-primary);
 }
 
@@ -18331,14 +18331,14 @@ html[data-precise] .canvas-container[data-cursor-mode] .konvajs-content canvas {
    arrow keys are the point of this control. */
 .kp__tile:focus-visible {
   outline: none;
-  border-color: var(--accent-strong, var(--brand-orange));
-  background: var(--surface-hover, rgb(255 255 255 / 6%));
+  border-color: var(--accent-line);
+  background: var(--surface-hover);
   color: var(--text-primary);
 }
 
 .kp__tile[data-active] {
-  background: color-mix(in srgb, var(--accent-strong, var(--brand-orange)) 14%, transparent);
-  border-color: color-mix(in srgb, var(--accent-strong, var(--brand-orange)) 40%, transparent);
+  background: var(--accent-quiet);
+  border-color: var(--accent-line);
   color: var(--text-primary);
 }
 
@@ -18440,4 +18440,484 @@ html[data-precise] .canvas-container[data-cursor-mode] .konvajs-content canvas {
   text-overflow: ellipsis;
 }
 
+/* ─────────────────────────────────────────────────────────────────────────
+   Chart data dialog
 
+   The sheet a chart's numbers are edited in, and where they come from.
+
+   This was eighty inline style objects: the same button declared six times
+   with the same nine properties, and hard-coded colours sitting beside
+   `var(--x, #fallback)` pairs whose fallbacks no longer matched the theme.
+   ───────────────────────────────────────────────────────────────────────── */
+.cdm {
+  display: flex;
+  flex-direction: column;
+  width: min(94vw, 880px);
+  max-height: 86vh;
+  border: 1px solid var(--border-divider);
+  border-radius: var(--radius-lg);
+  background: var(--surface-primary);
+  color: var(--text-primary);
+  box-shadow: 0 24px 64px rgb(0 0 0 / 32%);
+  overflow: hidden;
+}
+
+/* Head -------------------------------------------------------------------- */
+
+.cdm__head {
+  display: flex;
+  align-items: center;
+  gap: var(--space-3);
+  padding: var(--space-3) var(--space-4);
+  border-bottom: 1px solid var(--border-divider);
+}
+
+.cdm__title {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  min-width: 0;
+  flex: 1;
+  color: var(--text-primary);
+  font-size: var(--text-base);
+  font-weight: 600;
+}
+
+.cdm__title span {
+  overflow: hidden;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+}
+
+.cdm__tabs {
+  display: flex;
+  flex: none;
+  gap: 2px;
+  padding: 2px;
+  border-radius: 999px;
+  background: var(--surface-sunken, var(--surface-secondary));
+}
+
+.cdm__tab {
+  position: relative;
+  padding: 4px 12px;
+  border: 0;
+  border-radius: 999px;
+  background: none;
+  color: var(--text-secondary);
+  font-size: var(--text-xs);
+  font-weight: 500;
+  cursor: pointer;
+  transition: background-color var(--motion-hover), color var(--motion-hover);
+}
+
+.cdm__tab:hover { color: var(--text-primary); }
+
+.cdm__tab[data-active] {
+  background: var(--surface-primary);
+  color: var(--text-primary);
+  box-shadow: 0 1px 2px rgb(0 0 0 / 12%);
+}
+
+/* Says the chart is wired to something, without spending a line of chrome. */
+.cdm__pip {
+  display: inline-block;
+  width: 5px;
+  height: 5px;
+  margin-left: 5px;
+  border-radius: 50%;
+  background: var(--status-online);
+  vertical-align: middle;
+}
+
+.cdm__close {
+  display: grid;
+  place-items: center;
+  flex: none;
+  width: 26px;
+  height: 26px;
+  border: 0;
+  border-radius: var(--radius-sm);
+  background: none;
+  color: var(--text-tertiary);
+  cursor: pointer;
+  transition: background-color var(--motion-hover), color var(--motion-hover);
+}
+
+.cdm__close:hover {
+  background: var(--surface-hover);
+  color: var(--text-primary);
+}
+
+/* Toolbar ----------------------------------------------------------------- */
+
+.cdm__bar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--space-2);
+  flex-wrap: wrap;
+  padding: var(--space-2) var(--space-4);
+  border-bottom: 1px solid var(--border-divider);
+}
+
+.cdm__barGroup {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+}
+
+.cdm__btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 5px 10px;
+  border: 1px solid var(--border-divider);
+  border-radius: var(--radius-sm);
+  background: var(--surface-sunken, var(--surface-secondary));
+  color: var(--text-secondary);
+  font-size: var(--text-xs);
+  font-weight: 500;
+  white-space: nowrap;
+  cursor: pointer;
+  transition:
+    background-color var(--motion-hover),
+    border-color var(--motion-hover),
+    color var(--motion-hover);
+}
+
+.cdm__btn:hover:not(:disabled) {
+  border-color: var(--accent-line);
+  color: var(--text-primary);
+}
+
+.cdm__btn:disabled {
+  opacity: 0.45;
+  cursor: not-allowed;
+}
+
+.cdm__btn[data-active] {
+  border-color: var(--accent-line);
+  background: var(--accent-quiet);
+  color: var(--text-primary);
+}
+
+.cdm__btn--primary {
+  border-color: transparent;
+  background: var(--accent);
+  color: var(--accent-on);
+}
+
+.cdm__btn--primary:hover:not(:disabled) {
+  background: var(--accent-hover);
+  color: var(--accent-on);
+}
+
+/* Paste ------------------------------------------------------------------- */
+
+.cdm__paste {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+  padding: var(--space-3) var(--space-4);
+  border-bottom: 1px solid var(--border-divider);
+  background: var(--surface-sunken, var(--surface-secondary));
+}
+
+.cdm__pasteBox {
+  min-height: 108px;
+  padding: 10px;
+  border: 1px solid var(--border-divider);
+  border-radius: var(--radius-sm);
+  background: var(--surface-primary);
+  color: var(--text-primary);
+  font-family: var(--font-mono);
+  font-size: var(--text-xs);
+  line-height: 1.5;
+  resize: vertical;
+}
+
+.cdm__pasteBox:focus {
+  outline: none;
+  border-color: var(--accent-line);
+}
+
+.cdm__pasteActions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 6px;
+}
+
+/* The sheet --------------------------------------------------------------- */
+
+.cdm__sheet {
+  flex: 1;
+  min-height: 180px;
+  overflow: auto;
+}
+
+.cdm__table {
+  width: 100%;
+  border-collapse: separate;
+  border-spacing: 0;
+}
+
+/* The header row stays put: a table scrolled past its own headings is a grid
+   of numbers with nothing saying what they are. */
+.cdm__table thead th {
+  position: sticky;
+  top: 0;
+  z-index: 1;
+  background: var(--surface-primary);
+  border-bottom: 1px solid var(--border-divider);
+}
+
+.cdm__corner,
+.cdm__rowHead {
+  position: sticky;
+  left: 0;
+  z-index: 1;
+  min-width: 132px;
+  max-width: 200px;
+  background: var(--surface-primary);
+  border-right: 1px solid var(--border-divider);
+  text-align: left;
+  font-weight: 400;
+}
+
+/* Above the row labels, and sticky on both axes, so it has to outrank each. */
+.cdm__corner {
+  z-index: 2;
+  padding: 7px 10px;
+}
+
+.cdm__colHead {
+  display: table-cell;
+  min-width: 118px;
+  padding: 5px 8px;
+  text-align: left;
+  font-weight: 400;
+  white-space: nowrap;
+}
+
+.cdm__colHead > * { vertical-align: middle; }
+
+.cdm__seriesName {
+  width: calc(100% - 46px);
+  margin: 0 2px;
+  padding: 3px 5px;
+  border: 1px solid transparent;
+  border-radius: var(--radius-sm);
+  background: none;
+  color: var(--text-primary);
+  font-size: var(--text-xs);
+  font-weight: 600;
+}
+
+.cdm__seriesName:hover { border-color: var(--border-divider); }
+
+.cdm__seriesName:focus {
+  outline: none;
+  border-color: var(--accent-line);
+  background: var(--surface-sunken, var(--surface-secondary));
+}
+
+.cdm__cell {
+  width: 100%;
+  padding: 6px 9px;
+  border: 1px solid transparent;
+  border-radius: 0;
+  background: none;
+  color: var(--text-primary);
+  font-size: var(--text-sm);
+}
+
+/* Numbers line up on the decimal point, which is the only reason a column of
+   them can be read down rather than one at a time. */
+.cdm__cell--num {
+  font-family: var(--font-mono);
+  font-variant-numeric: tabular-nums;
+  text-align: right;
+}
+
+.cdm__cell::placeholder { color: var(--text-tertiary); }
+
+.cdm__cell:hover { background: var(--surface-hover); }
+
+.cdm__cell:focus {
+  outline: none;
+  /* Inset, so the ring sits inside the cell and does not shift the row. */
+  border-color: var(--accent-line);
+  background: var(--surface-sunken, var(--surface-secondary));
+}
+
+.cdm__table tbody td {
+  padding: 0;
+  border-bottom: 1px solid var(--border-divider);
+}
+
+.cdm__table tbody th { padding: 0; border-bottom: 1px solid var(--border-divider); }
+
+/* The delete column: present, and quiet until the row is under the pointer. */
+.cdm__gutter {
+  width: 30px;
+  padding: 0 4px !important;
+  text-align: center;
+}
+
+.cdm__rowBtn {
+  display: inline-grid;
+  place-items: center;
+  width: 22px;
+  height: 22px;
+  border: 0;
+  border-radius: var(--radius-sm);
+  background: none;
+  color: var(--text-tertiary);
+  opacity: 0;
+  cursor: pointer;
+  transition: opacity var(--motion-hover), color var(--motion-hover);
+}
+
+.cdm__table tr:hover .cdm__rowBtn,
+.cdm__rowBtn:focus-visible {
+  opacity: 1;
+}
+
+.cdm__rowBtn:hover:not(:disabled) { color: var(--status-danger); }
+
+.cdm__rowBtn:disabled { opacity: 0; pointer-events: none; }
+
+/* Source ------------------------------------------------------------------ */
+
+.cdm__source {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-3);
+  padding: var(--space-4);
+  overflow-y: auto;
+}
+
+.cdm__note {
+  display: flex;
+  align-items: flex-start;
+  gap: 8px;
+  margin: 0;
+  padding: 10px 12px;
+  border: 1px solid var(--border-divider);
+  border-radius: var(--radius-sm);
+  background: var(--surface-sunken, var(--surface-secondary));
+  color: var(--text-secondary);
+  font-size: var(--text-xs);
+  line-height: 1.5;
+}
+
+.cdm__note strong { color: var(--text-primary); }
+
+.cdm__field {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.cdm__field > span {
+  color: var(--text-secondary);
+  font-size: var(--text-xs);
+  font-weight: 500;
+}
+
+.cdm__input {
+  width: 100%;
+  padding: 7px 9px;
+  border: 1px solid var(--border-divider);
+  border-radius: var(--radius-sm);
+  background: var(--surface-sunken, var(--surface-secondary));
+  color: var(--text-primary);
+  font-size: var(--text-sm);
+}
+
+.cdm__input:focus {
+  outline: none;
+  border-color: var(--accent-line);
+}
+
+.cdm__hint {
+  margin: -6px 0 0;
+  color: var(--text-tertiary);
+  font-size: var(--text-2xs);
+  line-height: 1.5;
+}
+
+.cdm__sourceActions {
+  display: flex;
+  align-items: center;
+  gap: var(--space-3);
+}
+
+/* Foot -------------------------------------------------------------------- */
+
+.cdm__foot {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--space-3);
+  padding: var(--space-2) var(--space-4);
+  border-top: 1px solid var(--border-divider);
+}
+
+.cdm__mutedLabel {
+  color: var(--text-tertiary);
+  font-size: var(--text-2xs);
+  font-variant-numeric: tabular-nums;
+}
+
+.cdm__notice {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  margin: 0;
+  font-size: var(--text-xs);
+}
+
+.cdm__notice[data-tone='ok'] { color: var(--status-online); }
+.cdm__notice[data-tone='bad'] { color: var(--status-danger); }
+
+/* The chart rail's kind trigger: a glyph and the current kind's name.
+
+   Was an inline style object on the span. The rail has a class for the value
+   already; this is the wrapper that puts a picture beside it. */
+.ctx-trigger {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+}
+
+/* A column of toggle rows inside a rail popover.
+
+   `.ctx-popover__action` is built for a row of buttons that *do* something;
+   these are switches that hold state, so they line up left with their tick in
+   a fixed gutter rather than centring — a column of centred labels with a
+   tick that appears and disappears jumps sideways as you toggle it. */
+.ctx-popover__toggles {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  min-width: 168px;
+}
+
+.ctx-popover__toggles .ctx-popover__action {
+  justify-content: flex-start;
+  font-size: var(--text-xs);
+}
+
+/* The tick keeps its space whether or not it is showing, so nothing shifts. */
+.ctx-popover__toggles .ctx-popover__action > svg:first-child {
+  flex: none;
+  width: 14px;
+}
+
+.ctx-popover__toggles .ctx-popover__action[aria-checked='true'] {
+  background: var(--accent-quiet);
+  border-color: var(--accent-line);
+  color: var(--text-primary);
+}

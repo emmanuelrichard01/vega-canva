@@ -1,5 +1,7 @@
 import type { ChartLayout, Point } from './chartLayout';
 import { traceMathPlot, type MathTraceInfo } from './chartTrace';
+import { currentChartInk, type ChartInk } from './chartInk';
+import { seriesColor } from './chartTypes';
 
 /**
  * What is under the pointer, in a chart's own coordinate space.
@@ -51,6 +53,13 @@ export interface ChartHit {
 const REACH = 28;
 
 export interface HitOptions {
+  /**
+   * The ink the chart is being drawn in, when the caller already has it.
+   *
+   * The renderer resolves this once per frame anyway, so passing it means a
+   * hover does not ask the document for the theme on every pointer move.
+   */
+  ink?: ChartInk;
   /** Formats a value the same way the chart's own labels are formatted. */
   format: (value: number) => string;
   /** Category names, for kinds keyed on them. */
@@ -75,6 +84,21 @@ export function chartHitTest(
   point: Point,
   options: HitOptions
 ): ChartHit | null {
+  /**
+   * The accent for computed rows, resolved once.
+   *
+   * It was the literal `#06B6D4`, written out nine times -- and four of those
+   * nine were doing a different job: standing in for a curve's own colour when
+   * it had none. That fallback was also *wrong*, because `layoutChart` gives
+   * an uncoloured curve `seriesColor(undefined, i)`, so the readout's swatch
+   * was a cyan the line beside it was not drawn in.
+   *
+   * Theme-aware now, which the fixed literal could not be: cyan at full
+   * strength drops under 3:1 on a white board and the derived rows read as
+   * disabled text there.
+   */
+  const DERIVED_INK = options.ink?.derived ?? currentChartInk().derived;
+
   const { plot } = layout;
   if (plot.width <= 0 || plot.height <= 0) return null;
 
@@ -183,19 +207,19 @@ export function chartHitTest(
               {
                 name: 'F(x,y)',
                 value: mag,
-                color: curveP?.color || '#06B6D4',
+                color: curveP?.color ?? seriesColor(undefined, 0),
                 text: `⟨${Number(u.toFixed(2))}, ${Number(v.toFixed(2))}⟩`,
               },
               {
                 name: '|F|',
                 value: mag,
-                color: curveP?.color || '#06B6D4',
+                color: curveP?.color ?? seriesColor(undefined, 0),
                 text: `magnitude = ${Number(mag.toFixed(3))}`,
               },
               {
                 name: 'θ',
                 value: angleDeg,
-                color: curveP?.color || '#06B6D4',
+                color: curveP?.color ?? seriesColor(undefined, 0),
                 text: `dir = ${Number(angleDeg.toFixed(1))}°`,
               },
             ],
@@ -205,7 +229,7 @@ export function chartHitTest(
               y: yVal,
               screenPoint: { x: clampedX, y: clampedY },
               curveIndex: 0,
-              curveColor: curveP?.color || '#06B6D4',
+              curveColor: curveP?.color ?? seriesColor(undefined, 0),
               curveName: 'F(x,y)',
               slope: u !== 0 ? v / u : Infinity,
               tangentSegment: needle,
@@ -333,7 +357,7 @@ export function chartHitTest(
         entries.push({
           name: 'dy/dx',
           value: trace.slope,
-          color: '#06B6D4',
+          color: DERIVED_INK,
           text: slopeStr,
         });
 
@@ -341,7 +365,7 @@ export function chartHitTest(
           entries.push({
             name: 'Tangent',
             value: trace.slope,
-            color: '#06B6D4',
+            color: DERIVED_INK,
             text: trace.tangentEquation,
           });
         }
@@ -377,7 +401,7 @@ export function chartHitTest(
           {
             name: 'dy/dx',
             value: trace.slope,
-            color: '#06B6D4',
+            color: DERIVED_INK,
             text: Number.isFinite(trace.slope)
               ? `slope = ${Number(trace.slope.toFixed(2))}`
               : 'vertical',
@@ -388,7 +412,7 @@ export function chartHitTest(
           entries.push({
             name: 'Tangent',
             value: trace.slope,
-            color: '#06B6D4',
+            color: DERIVED_INK,
             text: trace.tangentEquation,
           });
         }
@@ -427,7 +451,7 @@ export function chartHitTest(
                 {
                   name: 'Tangent',
                   value: trace.slope,
-                  color: '#06B6D4',
+                  color: DERIVED_INK,
                   text: trace.tangentEquation,
                 },
               ]

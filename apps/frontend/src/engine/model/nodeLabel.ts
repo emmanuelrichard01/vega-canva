@@ -1,4 +1,6 @@
 import { GRID_LABELS } from '../grid/gridLayout';
+import { CHART_LABELS } from '../chart/chartKinds';
+import { isPlot } from '../chart/chartTypes';
 import { hasText, type AnyNode, type NodeType } from './schema';
 
 /**
@@ -28,6 +30,28 @@ export function nodeLabel(node: AnyNode): string {
    * the panel's whole job is telling them apart.
    */
   if (node.type === 'grid') return `${GRID_LABELS[node.grid.spec.kind]} grid`;
+  /**
+   * A chart is named by its own title, and failing that by its kind.
+   *
+   * Every one of the twenty-four kinds fell through to the bare type word, so
+   * a board carrying a revenue bar chart, a share pie and three phase
+   * portraits read as five rows saying **Chart** -- the exact failure the grid
+   * case above was written to fix, on a node type added after it.
+   *
+   * The title comes first because a chart that has one has been *named*, and
+   * a name someone chose beats a category every time. It is the chart's own
+   * title rather than `node.title`: nothing sets the node's, and the one on
+   * screen above the plot is the one a reader is matching the row against.
+   *
+   * A plot is not called a "chart" -- "Function plot" is what that object is,
+   * and "Function chart" is a thing nobody says.
+   */
+  if (node.type === 'chart') {
+    const own = node.chart.title?.trim();
+    if (own) return own.slice(0, 24);
+    const kind = CHART_LABELS[node.chart.kind];
+    return isPlot(node.chart.kind) ? `${kind} plot` : `${kind} chart`;
+  }
   const specific = specificName(node);
   if (specific) return specific;
   return `${node.type.charAt(0).toUpperCase()}${node.type.slice(1)}`;

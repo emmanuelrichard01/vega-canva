@@ -1525,22 +1525,25 @@ function normalizeChartSpec(raw: any): ChartSpec {
 
   if (raw?.dataSource && typeof raw.dataSource === 'object') {
     const ds = raw.dataSource;
-    const mode = ds.mode === 'url' || ds.mode === 'stream' ? ds.mode : 'manual';
-    spec.dataSource = {
-      mode,
-      ...(typeof ds.url === 'string' ? { url: ds.url } : {}),
-      ...(typeof ds.pollInterval === 'number' && Number.isFinite(ds.pollInterval)
-        ? { pollInterval: ds.pollInterval }
-        : {}),
-      ...(typeof ds.dataPath === 'string' ? { dataPath: ds.dataPath } : {}),
-      ...(ds.streamSpeed === 'slow' || ds.streamSpeed === 'normal' || ds.streamSpeed === 'fast'
-        ? { streamSpeed: ds.streamSpeed }
-        : {}),
+    /**
+     * `mode`, `pollInterval` and `streamSpeed` are dropped rather than
+     * carried. All three were stored and read by nothing, and the interval in
+     * particular must *not* come back: an interval in the document is an
+     * instruction to every browser in the room. See `ChartDataSource`.
+     *
+     * A document written before this loses three keys nothing consulted, so
+     * there is nothing to migrate.
+     */
+    const source: NonNullable<ChartSpec['dataSource']> = {
+      ...(typeof ds.url === 'string' ? { url: ds.url } : null),
+      ...(typeof ds.dataPath === 'string' ? { dataPath: ds.dataPath } : null),
       ...(typeof ds.lastSyncedAt === 'number' && Number.isFinite(ds.lastSyncedAt)
         ? { lastSyncedAt: ds.lastSyncedAt }
-        : {}),
-      ...(typeof ds.syncError === 'string' ? { syncError: ds.syncError } : {}),
+        : null),
+      ...(typeof ds.syncError === 'string' ? { syncError: ds.syncError } : null),
     };
+    // An empty object is not a data source; it is a key saying nothing.
+    if (Object.keys(source).length > 0) spec.dataSource = source;
   }
 
   return spec;

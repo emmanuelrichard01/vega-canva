@@ -533,13 +533,9 @@ describe('a chart spec survives normalization', () => {
     stepMode: 'before' as const,
     seedPoints: [{ x: 1, y: 2 }],
     dataSource: {
-      mode: 'url' as const,
       url: 'https://api.example.com/metrics',
-      pollInterval: 30,
       dataPath: 'data.points',
-      streamSpeed: 'normal' as const,
       lastSyncedAt: 1700000000,
-      syncError: undefined,
     },
   };
 
@@ -548,6 +544,40 @@ describe('a chart spec survives normalization', () => {
     // Compared whole rather than key by key, so a field added to the schema
     // and forgotten in the normalizer fails here.
     expect(node.chart).toEqual(full);
+  });
+
+  /**
+   * The refresh interval must not come back.
+   *
+   * It was stored here and read by nothing, and the reason it is gone is not
+   * tidiness: this object reaches every member of the room, so an interval in
+   * it is an instruction to everybody's browser to fetch a URL one person
+   * typed. It lives in session state now -- see `chartLiveSync` -- and this
+   * asserts the boundary refuses to carry it back in.
+   */
+  it('refuses to carry a refresh interval into the document', () => {
+    const node = normalizeNode({
+      id: 'c3',
+      type: 'chart',
+      chart: {
+        kind: 'bar',
+        categories: [],
+        series: [],
+        dataSource: { url: 'https://x.test/a', pollInterval: 5, mode: 'stream', streamSpeed: 'fast' },
+      },
+    }) as { chart: { dataSource?: Record<string, unknown> } };
+
+    expect(node.chart.dataSource).toEqual({ url: 'https://x.test/a' });
+  });
+
+  it('writes no data source at all when there is nothing in it', () => {
+    const node = normalizeNode({
+      id: 'c4',
+      type: 'chart',
+      chart: { kind: 'bar', categories: [], series: [], dataSource: { mode: 'manual' } },
+    }) as { chart: { dataSource?: unknown } };
+
+    expect(node.chart.dataSource).toBeUndefined();
   });
 
   it('keeps the formulae, which is the field whose loss drew empty plots', () => {

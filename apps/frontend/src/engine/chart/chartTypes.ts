@@ -600,13 +600,40 @@ export interface ChartSpec {
   sortKey?: 'series' | 'total' | 'first' | 'sum' | 'category';
 }
 
+/**
+ * Where a chart's numbers came from, when they came from somewhere else.
+ *
+ * ## What is not here any more
+ *
+ * `mode`, `pollInterval` and `streamSpeed` were all stored, all normalized,
+ * all covered by a test -- and all read by nothing whatsoever. The refresh
+ * dropdown moved a value into the document and no code ever looked at it.
+ *
+ * `pollInterval` is now session-local by design and not by omission: this
+ * object is replicated to everyone in the room, so an interval stored here
+ * would be an instruction to *every member's browser* to fetch a URL one
+ * person typed, on a schedule. See `chartLiveSync`, which owns it.
+ *
+ * `mode` was a third way of saying what `url` already says. A chart with an
+ * address is connected; one without is not, and there is no state in between
+ * for the two of them to disagree about.
+ *
+ * `streamSpeed` belonged to a simulated ticker that invented random numbers
+ * and wrote them into the shared document. Fabricated data in a real chart is
+ * not a feature.
+ */
 export interface ChartDataSource {
-  mode?: 'manual' | 'url' | 'stream';
+  /**
+   * The address, which syncs -- and which is therefore a *description* of a
+   * request rather than permission to make one. Only a local, explicit act
+   * fetches it; `chartSync` sets out why in full.
+   */
   url?: string;
-  pollInterval?: number;
+  /** Dotted path to the list of records inside a JSON payload. */
   dataPath?: string;
-  streamSpeed?: 'slow' | 'normal' | 'fast';
+  /** When the data last arrived, so a stale chart can say so. */
   lastSyncedAt?: number;
+  /** Why the last attempt failed, if it did. */
   syncError?: string;
 }
 

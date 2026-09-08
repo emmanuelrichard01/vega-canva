@@ -46,13 +46,27 @@ export interface ChartInk {
    * which on a dark board read as a bright cage drawn over the chart.
    */
   sliceEdge: string;
+  /**
+   * Readings the chart *computed*, rather than data it was given.
+   *
+   * A slope, a tangent's equation, a vector's magnitude: none of these is in
+   * anybody's table. Giving them one accent of their own is what stops a
+   * derived number in the hover readout reading as another series -- the
+   * distinction the readout exists to make.
+   *
+   * A cyan, because the series palette has no cyan in it, so a derived row can
+   * never be mistaken for the curve it was derived from.
+   */
+  derived: string;
 }
 
 /** Pure, so it can be asserted and so a worker can ask for either. */
 export function chartInkFor(dark: boolean): ChartInk {
   return dark
-    ? { chrome: '#7A8699', ink: '#C8D2E0', sliceEdge: '#18181B' }
-    : { chrome: '#98A2B3', ink: '#475569', sliceEdge: '#FFFFFF' };
+    ? { chrome: '#7A8699', ink: '#C8D2E0', sliceEdge: '#18181B', derived: '#22D3EE' }
+    : // A step darker on a white ground, where the bright cyan the dark theme
+      // uses drops under 3:1 and the derived rows read as disabled text.
+      { chrome: '#98A2B3', ink: '#475569', sliceEdge: '#FFFFFF', derived: '#0E7490' };
 }
 
 /**

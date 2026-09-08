@@ -30,6 +30,7 @@ import { requestEditOnMount } from '../engine/interaction/pendingEdit';
 import { textEditing } from '../engine/interaction/textEditing';
 import { Clock, ImageOff, ImagePlus, Palette, Shuffle } from 'lucide-react';
 import { GridKindIcon } from './workspace/gridIcons';
+import { KindPicker } from './workspace/KindPicker';
 import { ChartKindIcon } from './workspace/chartIcons';
 import { CHART_HINTS, CHART_LABELS, chartPickerGroups } from '../engine/chart/chartKinds';
 import { setChartKind, updateChart } from '../engine/chart/chartApply';
@@ -2221,36 +2222,43 @@ export const ObjectContextToolbar: React.FC<Props> = ({ selectedId, selectedIds,
           <>
             <div className="ctx-group">
               {/* Chart Kind Switcher Popover */}
+              {/*
+                The same picker the dock's Chart seat opens.
+
+                It was a separate grid of bare glyphs here, with the name and
+                the description crammed into a tooltip -- a fourth way of
+                asking "which kind" in an app that had just been reduced to
+                one. Reusing it means the rail gains keyboard navigation and
+                the preview bar for free, and cannot come to disagree with the
+                dock about what a kind is called.
+              */}
               <RailPopover
-                label="Chart Type"
+                label="Chart type"
                 trigger={
-                  <span style={{ display: 'inline-flex', alignItems: 'center', gap: 5 }}>
+                  <span className="ctx-trigger">
                     <ChartKindIcon kind={node.chart.kind} size={15} />
                     <span className="ctx-value">{CHART_LABELS[node.chart.kind]}</span>
                   </span>
                 }
                 align="start"
               >
-                <span className="ctx-popover__label">Chart Type</span>
-                {chartPickerGroups().map((group) => (
-                  <div key={group.family} className="ctx-popover__section">
-                    <span className="ctx-popover__label">{group.label}</span>
-                    <div className="ctx-shape-grid">
-                      {group.kinds.map((k) => (
-                        <button
-                          key={k}
-                          type="button"
-                          className="ctx-shape-btn"
-                          aria-pressed={node.chart.kind === k}
-                          data-tooltip={`${CHART_LABELS[k]}: ${CHART_HINTS[k]}`}
-                          onClick={() => setChartKind(node.id, node.chart, k)}
-                        >
-                          <ChartKindIcon kind={k} size={16} />
-                        </button>
-                      ))}
-                    </div>
-                  </div>
-                ))}
+                <KindPicker
+                  columns={4}
+                  tile={80}
+                  searchPlaceholder="Chart types"
+                  groups={chartPickerGroups().map((group) => ({
+                    id: group.family,
+                    label: group.label,
+                    options: group.kinds.map((k) => ({
+                      id: k,
+                      label: CHART_LABELS[k],
+                      hint: CHART_HINTS[k],
+                      icon: <ChartKindIcon kind={k} size={18} />,
+                    })),
+                  }))}
+                  value={node.chart.kind}
+                  onPick={(k) => setChartKind(node.id, node.chart, k)}
+                />
               </RailPopover>
 
               {/* Edit Data in Spreadsheet */}
@@ -2298,10 +2306,12 @@ export const ObjectContextToolbar: React.FC<Props> = ({ selectedId, selectedIds,
               {/* Quick Display Toggles */}
               <RailPopover label="Display" trigger={<Sliders size={15} />} align="start">
                 <span className="ctx-popover__label">Display Elements</span>
-                <div className="ctx-popover__list">
+                <div className="ctx-popover__toggles">
                   <button
                     type="button"
                     className="ctx-popover__action"
+                    role="switch"
+                    aria-checked={node.chart.showLegend ?? true}
                     onClick={() => updateChart(node.id, { ...node.chart, showLegend: !(node.chart.showLegend ?? true) })}
                   >
                     <Check size={14} style={{ opacity: (node.chart.showLegend ?? true) ? 1 : 0 }} />
@@ -2311,6 +2321,8 @@ export const ObjectContextToolbar: React.FC<Props> = ({ selectedId, selectedIds,
                     <button
                       type="button"
                       className="ctx-popover__action"
+                      role="switch"
+                      aria-checked={Boolean(node.chart.showValues)}
                       onClick={() => updateChart(node.id, { ...node.chart, showValues: !node.chart.showValues })}
                     >
                       <Check size={14} style={{ opacity: node.chart.showValues ? 1 : 0 }} />
@@ -2321,6 +2333,8 @@ export const ObjectContextToolbar: React.FC<Props> = ({ selectedId, selectedIds,
                     <button
                       type="button"
                       className="ctx-popover__action"
+                      role="switch"
+                      aria-checked={node.chart.showGrid ?? true}
                       onClick={() => updateChart(node.id, { ...node.chart, showGrid: !(node.chart.showGrid ?? true) })}
                     >
                       <Check size={14} style={{ opacity: (node.chart.showGrid ?? true) ? 1 : 0 }} />
@@ -2331,6 +2345,8 @@ export const ObjectContextToolbar: React.FC<Props> = ({ selectedId, selectedIds,
                     <button
                       type="button"
                       className="ctx-popover__action"
+                      role="switch"
+                      aria-checked={Boolean(node.chart.gradient)}
                       onClick={() => updateChart(node.id, { ...node.chart, gradient: !node.chart.gradient })}
                     >
                       <Check size={14} style={{ opacity: node.chart.gradient ? 1 : 0 }} />

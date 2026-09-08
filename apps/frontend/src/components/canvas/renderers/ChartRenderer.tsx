@@ -184,6 +184,9 @@ export const ChartRenderer: React.FC<Props> = ({ node }) => {
 
     setHover(
       chartHitTest(layout, p, {
+        // Already resolved for this frame's drawing; asking the document again
+        // per pointer move would be a class-list read per mouse pixel.
+        ink,
         format: (v) => formatValue(v, node.chart),
         categories: node.chart.categories,
         seriesNames: node.chart.series.map((s) => s.name),

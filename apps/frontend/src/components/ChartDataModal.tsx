@@ -1,21 +1,22 @@
-import React, { useState, useRef, useEffect } from 'react';
+import React from 'react';
 import {
-  X,
-  Plus,
-  Trash2,
+  AlertTriangle,
   ArrowLeftRight,
+  Check,
   ClipboardPaste,
   Copy,
   Download,
-  Activity,
   Globe,
+  Plus,
   RefreshCw,
   Table as TableIcon,
-  Check,
+  Trash2,
+  X,
 } from 'lucide-react';
 import { useStore } from '../hooks/useStore';
 import type { ChartNode } from '../engine/model/schema';
-import type { ChartSpec, ChartSeries, ChartDataSource } from '../engine/chart/chartTypes';
+import type { ChartSpec, ChartSeries } from '../engine/chart/chartTypes';
+import { seriesColor } from '../engine/chart/chartTypes';
 import { updateChart } from '../engine/chart/chartApply';
 import {
   chartToCsv,
@@ -25,1056 +26,614 @@ import {
   parseNumber,
   withChartData,
 } from '../engine/chart/chartCsv';
+import { POLL_INTERVALS, POLL_LABELS, syncFromUrl } from '../engine/chart/chartSync';
+import { liveStatus, setLiveInterval, subscribeLive } from '../engine/chart/chartLiveSync';
 import { ColorPickerPopover } from './ui/ColorPickerPopover';
+
+/**
+ * The chart's data, as a sheet — and where the numbers come from.
+ *
+ * ## What was wrong, and what decides the rewrite
+ *
+ * **Every keystroke was a document write.** Each character typed into a cell
+ * called `updateChart`, which is a CRDT transaction: replicated to everyone in
+ * the room, and one step on the undo stack. Typing `1250` into one cell was
+ * four edits everybody received and four presses of undo to take back. It also
+ * meant the value was parsed on every keystroke, so `-` and `1.` — the states
+ * every number passes through on the way to being typed — were parsed as
+ * nothing and thrown away, and the cell fought whoever was typing in it.
+ *
+ * So a cell holds its own text while it is being edited and commits on blur,
+ * on Enter, or on navigating away. That is what every spreadsheet does, and
+ * for these reasons rather than for taste.
+ *
+ * **It was eighty inline style objects.** The same button was declared six
+ * times with the same nine properties, colours were hard-coded beside
+ * `var(--x, #fallback)` pairs that no longer matched the theme, and nothing
+ * could be restyled without finding every copy. It is a stylesheet now.
+ */
 
 interface Props {
   nodeId: string;
   onClose: () => void;
 }
 
+type Tab = 'grid' | 'source';
+
+/** Which cell is being edited, and what is currently typed in it. */
+interface Draft {
+  row: number;
+  /** `-1` is the category column; `0..n` is a series. */
+  col: number;
+  text: string;
+}
+
 export const ChartDataModal: React.FC<Props> = ({ nodeId, onClose }) => {
   const node = useStore((s) => s.objects[nodeId]) as ChartNode | undefined;
-  const [activeTab, setActiveTab] = useState<'grid' | 'live'>('grid');
-  const [pasteText, setPasteText] = useState('');
-  const [showPasteBox, setShowPasteBox] = useState(false);
-  const [copied, setCopied] = useState(false);
-  const [syncing, setSyncing] = useState(false);
-  const [syncMessage, setSyncMessage] = useState<string | null>(null);
+  const [tab, setTab] = React.useState<Tab>('grid');
+  const [draft, setDraft] = React.useState<Draft | null>(null);
+  const [pasting, setPasting] = React.useState(false);
+  const [pasteText, setPasteText] = React.useState('');
+  const [copied, setCopied] = React.useState(false);
+  const [syncing, setSyncing] = React.useState(false);
+  const [notice, setNotice] = React.useState<{ tone: 'ok' | 'bad'; text: string } | null>(null);
 
-  // Keyboard navigation refs
-  const cellInputsRef = useRef<Map<string, HTMLInputElement>>(new Map());
+  const gridRef = React.useRef<HTMLDivElement>(null);
 
-  // Esc to close
-  useEffect(() => {
+  /**
+   * The live registry is module state, not React state.
+   *
+   * `useSyncExternalStore` rather than an effect and a copy: the registry is
+   * the truth about what is refreshing, and a mirror of it in this component
+   * would be a second answer that goes stale the moment a tick lands while the
+   * dialog is closed.
+   */
+  const live = React.useSyncExternalStore(
+    subscribeLive,
+    () => liveStatus(nodeId),
+    () => undefined
+  );
+
+  React.useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
-      if (e.key === 'Escape') {
-        if (showPasteBox) {
-          setShowPasteBox(false);
-        } else {
-          onClose();
-        }
-      }
+      if (e.key !== 'Escape') return;
+      // Escape backs out one layer at a time: the paste box, then the dialog.
+      if (pasting) {
+        e.stopPropagation();
+        setPasting(false);
+      } else onClose();
     };
     window.addEventListener('keydown', onKey);
     return () => window.removeEventListener('keydown', onKey);
-  }, [onClose, showPasteBox]);
+  }, [onClose, pasting]);
 
-  if (!node || node.type !== 'chart') {
-    return null;
-  }
+  /**
+   * Reads the chart out of the store when a tick runs, rather than closing
+   * over the spec that was current when refresh was switched on -- otherwise
+   * editing the URL leaves the timer fetching the old one forever.
+   *
+   * Above the guard below, because it is a hook: declaring it after an early
+   * return makes the hook order depend on whether the node exists, which
+   * React cannot survive.
+   */
+  const readSpec = React.useCallback((id: string) => {
+    const target = useStore.getState().objects[id];
+    return target && target.type === 'chart' ? target.chart : null;
+  }, []);
+
+  if (!node || node.type !== 'chart') return null;
 
   const spec = node.chart;
-  const categories = spec.categories || [];
-  const seriesList = spec.series || [];
+  const categories = spec.categories ?? [];
+  const series = spec.series ?? [];
 
-  const commit = (next: Partial<ChartSpec>) => {
-    updateChart(nodeId, { ...spec, ...next });
+  const commit = (next: Partial<ChartSpec>) => updateChart(nodeId, { ...spec, ...next });
+
+  const say = (tone: 'ok' | 'bad', text: string) => {
+    setNotice({ tone, text });
+    window.setTimeout(() => setNotice(null), 4000);
   };
 
-  const handleCellKeyDown = (
-    e: React.KeyboardEvent<HTMLInputElement>,
-    rowIndex: number,
-    colIndex: number, // -1 is category name, 0..N-1 is series
-    totalRows: number,
-    totalCols: number
-  ) => {
-    let nextRow = rowIndex;
-    let nextCol = colIndex;
+  // ---------------------------------------------------------------- the sheet
 
-    if (e.key === 'ArrowDown' || (e.key === 'Enter' && !e.shiftKey)) {
-      e.preventDefault();
-      nextRow = Math.min(totalRows - 1, rowIndex + 1);
-    } else if (e.key === 'ArrowUp' || (e.key === 'Enter' && e.shiftKey)) {
-      e.preventDefault();
-      nextRow = Math.max(0, rowIndex - 1);
-    } else if (e.key === 'ArrowRight' || (e.key === 'Tab' && !e.shiftKey)) {
-      if (e.key === 'Tab') e.preventDefault();
-      if (colIndex < totalCols - 1) {
-        nextCol = colIndex + 1;
-      } else if (rowIndex < totalRows - 1) {
-        nextRow = rowIndex + 1;
-        nextCol = -1;
-      }
-    } else if (e.key === 'ArrowLeft' || (e.key === 'Tab' && e.shiftKey)) {
-      if (e.key === 'Tab') e.preventDefault();
-      if (colIndex > -1) {
-        nextCol = colIndex - 1;
-      } else if (rowIndex > 0) {
-        nextRow = rowIndex - 1;
-        nextCol = totalCols - 1;
+  const cellText = (row: number, col: number): string => {
+    if (draft && draft.row === row && draft.col === col) return draft.text;
+    if (col === -1) return categories[row] ?? '';
+    const value = series[col]?.values[row];
+    return value === null || value === undefined ? '' : String(value);
+  };
+
+  /**
+   * Write the draft into the document, if it changed anything.
+   *
+   * Comparing against what is stored rather than committing unconditionally
+   * means tabbing across a row you did not edit produces no document writes at
+   * all — which is the difference between an undo stack you can use and one
+   * full of no-ops.
+   */
+  const flush = (next: Draft | null) => {
+    if (draft) {
+      const { row, col, text } = draft;
+      if (col === -1) {
+        if ((categories[row] ?? '') !== text) {
+          const nextCategories = [...categories];
+          nextCategories[row] = text;
+          commit({ categories: nextCategories });
+        }
+      } else {
+        const parsed = text.trim() === '' ? null : parseNumber(text);
+        const current = series[col]?.values[row] ?? null;
+        if (current !== parsed) {
+          commit({
+            series: series.map((s, i) =>
+              i === col
+                ? { ...s, values: s.values.with(row, parsed) }
+                : s
+            ),
+          });
+        }
       }
     }
+    setDraft(next);
+  };
 
-    if (nextRow !== rowIndex || nextCol !== colIndex) {
-      const key = `${nextRow}:${nextCol}`;
-      const target = cellInputsRef.current.get(key);
-      target?.focus();
-      target?.select();
+  const focusCell = (row: number, col: number) => {
+    gridRef.current
+      ?.querySelector<HTMLInputElement>(`[data-cell="${row}:${col}"]`)
+      ?.focus();
+  };
+
+  const onCellKey = (e: React.KeyboardEvent<HTMLInputElement>, row: number, col: number) => {
+    const lastCol = series.length - 1;
+    const move = (r: number, c: number) => {
+      e.preventDefault();
+      // Flushed before the move, so the next cell renders from the document
+      // rather than from a draft belonging to the cell just left.
+      flush(null);
+      focusCell(Math.max(0, Math.min(categories.length - 1, r)), Math.max(-1, Math.min(lastCol, c)));
+    };
+
+    switch (e.key) {
+      case 'Enter':
+        move(e.shiftKey ? row - 1 : row + 1, col);
+        break;
+      case 'ArrowDown':
+        move(row + 1, col);
+        break;
+      case 'ArrowUp':
+        move(row - 1, col);
+        break;
+      case 'Tab':
+        // Wraps to the next row's first cell, so a whole table can be typed
+        // without ever reaching for the mouse.
+        if (e.shiftKey) move(col === -1 ? row - 1 : row, col === -1 ? lastCol : col - 1);
+        else move(col === lastCol ? row + 1 : row, col === lastCol ? -1 : col + 1);
+        break;
+      case 'Escape':
+        // Abandons the edit rather than closing the dialog.
+        e.stopPropagation();
+        setDraft(null);
+        (e.target as HTMLInputElement).blur();
+        break;
+      default:
+        break;
     }
   };
 
-  // Cell updates
-  const setCategory = (index: number, val: string) => {
+  // ------------------------------------------------------------ table shape
+
+  const addRow = (at = categories.length) => {
     const nextCategories = [...categories];
-    nextCategories[index] = val;
-    commit({ categories: nextCategories });
-  };
-
-  const setCellValue = (seriesIndex: number, rowIndex: number, rawVal: string) => {
-    const num = parseNumber(rawVal);
-    const nextSeries = seriesList.map((s, si) => {
-      if (si !== seriesIndex) return s;
-      const nextValues = [...s.values];
-      nextValues[rowIndex] = num;
-      return { ...s, values: nextValues };
+    nextCategories.splice(at, 0, `Item ${categories.length + 1}`);
+    commit({
+      categories: nextCategories,
+      series: series.map((s) => ({
+        ...s,
+        values: s.values.toSpliced(at, 0, 0),
+      })),
     });
-    commit({ series: nextSeries });
   };
 
-  const setSeriesName = (seriesIndex: number, name: string) => {
-    const nextSeries = seriesList.map((s, i) => (i === seriesIndex ? { ...s, name } : s));
-    commit({ series: nextSeries });
-  };
-
-  const setSeriesColor = (seriesIndex: number, color: string) => {
-    const nextSeries = seriesList.map((s, i) => (i === seriesIndex ? { ...s, color } : s));
-    commit({ series: nextSeries });
-  };
-
-  // Add/remove rows and series
-  const addRow = () => {
-    const nextCategories = [...categories, `Item ${categories.length + 1}`];
-    const nextSeries = seriesList.map((s) => ({
-      ...s,
-      values: [...s.values, 0],
-    }));
-    commit({ categories: nextCategories, series: nextSeries });
-  };
-
-  const deleteRow = (rowIndex: number) => {
+  const deleteRow = (row: number) => {
     if (categories.length <= 1) return;
-    const nextCategories = categories.filter((_, i) => i !== rowIndex);
-    const nextSeries = seriesList.map((s) => ({
-      ...s,
-      values: s.values.filter((_, i) => i !== rowIndex),
-    }));
-    commit({ categories: nextCategories, series: nextSeries });
+    commit({
+      categories: categories.filter((_, i) => i !== row),
+      series: series.map((s) => ({ ...s, values: s.values.filter((_, i) => i !== row) })),
+    });
   };
 
   const addSeries = () => {
-    const newIndex = seriesList.length + 1;
-    const nextSeries = [
-      ...seriesList,
-      {
-        name: `Series ${newIndex}`,
-        values: categories.map(() => 0),
-      },
-    ];
-    commit({ series: nextSeries });
-  };
-
-  const deleteSeries = (seriesIndex: number) => {
-    if (seriesList.length <= 1) return;
-    const nextSeries = seriesList.filter((_, i) => i !== seriesIndex);
-    commit({ series: nextSeries });
-  };
-
-  // Transpose rows and columns
-  const transpose = () => {
-    if (categories.length === 0 || seriesList.length === 0) return;
-    const newCategories = seriesList.map((s) => s.name);
-    const newSeries: ChartSeries[] = categories.map((cat, catIdx) => ({
-      name: cat,
-      values: seriesList.map((s) => s.values[catIdx] ?? 0),
-    }));
-    commit({ categories: newCategories, series: newSeries });
-  };
-
-  // CSV I/O
-  const handleCopyCsv = () => {
-    const csv = chartToCsv(spec);
-    navigator.clipboard.writeText(csv);
-    setCopied(true);
-    setTimeout(() => setCopied(false), 1800);
-  };
-
-  const handleDownloadCsv = () => {
-    downloadCsv(spec, csvFilename(spec.title));
-  };
-
-  const handleApplyPaste = () => {
-    if (!pasteText.trim()) return;
-    const parsed = parseChartData(pasteText);
-    if (parsed.categories.length > 0 || parsed.series.length > 0) {
-      commit(withChartData(spec, parsed));
-      setShowPasteBox(false);
-      setPasteText('');
-    }
-  };
-
-  // Live Data Connector (Recommendation 5)
-  const dataSource = spec.dataSource || { mode: 'manual' };
-
-  const updateDataSource = (patch: Partial<ChartDataSource>) => {
-    commit({ dataSource: { ...dataSource, ...patch } });
-  };
-
-  const fetchRestData = async () => {
-    if (!dataSource.url) return;
-    setSyncing(true);
-    setSyncMessage(null);
-    try {
-      const res = await fetch(dataSource.url);
-      if (!res.ok) throw new Error(`HTTP ${res.status}: ${res.statusText}`);
-      const text = await res.text();
-      let parsed = parseChartData(text);
-      if (parsed.categories.length === 0 && text.startsWith('{')) {
-        const json = JSON.parse(text);
-        const dataArray = dataSource.dataPath
-          ? dataSource.dataPath.split('.').reduce((acc: any, part: string) => acc?.[part], json)
-          : json;
-        if (Array.isArray(dataArray) && dataArray.length > 0) {
-          const keys = Object.keys(dataArray[0]).filter((k) => typeof dataArray[0][k] === 'number');
-          const catKey = Object.keys(dataArray[0]).find((k) => typeof dataArray[0][k] === 'string') || 'id';
-          parsed = {
-            categories: dataArray.map((d: any) => String(d[catKey] ?? '')),
-            series: keys.map((k) => ({
-              name: k,
-              values: dataArray.map((d: any) => parseNumber(String(d[k]))),
-            })),
-          };
-        }
-      }
-      if (parsed.categories.length > 0) {
-        commit({
-          ...withChartData(spec, parsed),
-          dataSource: {
-            ...dataSource,
-            lastSyncedAt: Date.now(),
-            syncError: undefined,
-          },
-        });
-        setSyncMessage(`Successfully synced ${parsed.categories.length} records.`);
-      } else {
-        throw new Error('No valid categories or series recognized in payload');
-      }
-    } catch (err: any) {
-      const errMsg = err?.message || 'Failed to fetch REST endpoint';
-      updateDataSource({ syncError: errMsg });
-      setSyncMessage(`Sync error: ${errMsg}`);
-    } finally {
-      setSyncing(false);
-    }
-  };
-
-  // Simulated live ticker generator
-  const triggerSimulatedTick = () => {
-    if (seriesList.length === 0) return;
-    const now = new Date();
-    const timeLabel = `${now.getHours()}:${String(now.getMinutes()).padStart(2, '0')}:${String(now.getSeconds()).padStart(2, '0')}`;
-    const maxWindow = 12;
-    const nextCategories = [...categories.slice(-(maxWindow - 1)), timeLabel];
-
-    const nextSeries = seriesList.map((s) => {
-      const lastVal = Number(s.values[s.values.length - 1] ?? 100);
-      const delta = (Math.random() - 0.48) * (Math.abs(lastVal) * 0.08 || 5);
-      const nextVal = Math.round((lastVal + delta) * 100) / 100;
-      return {
-        ...s,
-        values: [...s.values.slice(-(maxWindow - 1)), nextVal],
-      };
-    });
-
     commit({
-      categories: nextCategories,
-      series: nextSeries,
-      dataSource: {
-        ...dataSource,
-        lastSyncedAt: Date.now(),
-      },
+      series: [
+        ...series,
+        { name: `Series ${series.length + 1}`, values: categories.map(() => 0) },
+      ],
     });
   };
+
+  const deleteSeries = (index: number) => {
+    if (series.length <= 1) return;
+    commit({ series: series.filter((_, i) => i !== index) });
+  };
+
+  /**
+   * Swap what names the rows for what names the columns.
+   *
+   * Genuinely useful rather than a novelty: which way round a table is
+   * decides what the chart *compares*, and getting it the wrong way round is
+   * the single most common thing wrong with a pasted spreadsheet.
+   */
+  const transpose = () => {
+    if (categories.length === 0 || series.length === 0) return;
+    const nextSeries: ChartSeries[] = categories.map((name, row) => ({
+      name,
+      values: series.map((s) => s.values[row] ?? 0),
+    }));
+    commit({ categories: series.map((s) => s.name), series: nextSeries });
+  };
+
+  // ------------------------------------------------------------------- CSV
+
+  const copyCsv = () => {
+    navigator.clipboard
+      .writeText(chartToCsv(spec))
+      .then(() => {
+        setCopied(true);
+        window.setTimeout(() => setCopied(false), 1800);
+      })
+      // Refused on an insecure origin, and a copy button that silently does
+      // nothing is worse than one that tells you to use the download instead.
+      .catch(() => say('bad', 'The clipboard is not available here — use Download instead.'));
+  };
+
+  const applyPaste = () => {
+    const parsed = parseChartData(pasteText);
+    if (parsed.categories.length === 0) {
+      say('bad', 'No table could be read from that.');
+      return;
+    }
+    commit(withChartData(spec, parsed));
+    setPasting(false);
+    setPasteText('');
+    say('ok', `Read ${parsed.categories.length} rows.`);
+  };
+
+  // ------------------------------------------------------------------ live
+
+  const source = spec.dataSource ?? {};
+  const patchSource = (patch: Partial<NonNullable<ChartSpec['dataSource']>>) =>
+    commit({ dataSource: { ...source, ...patch } });
+
+  const syncNow = async () => {
+    if (!source.url) return;
+    setSyncing(true);
+    setNotice(null);
+    const result = await syncFromUrl(source.url, source.dataPath);
+    setSyncing(false);
+
+    if (result.ok) {
+      updateChart(nodeId, {
+        ...withChartData(spec, result.data),
+        dataSource: { ...source, lastSyncedAt: Date.now(), syncError: undefined },
+      });
+      say('ok', `Synced ${result.rows} rows.`);
+    } else {
+      patchSource({ syncError: result.error });
+      say('bad', result.error);
+    }
+  };
+
+  const rows = categories.length;
 
   return (
     <div className="export-scrim" onPointerDown={onClose} role="presentation">
       <div
-        className="chart-data-modal"
+        className="cdm"
         role="dialog"
         aria-modal="true"
-        aria-label="Chart Data & Spreadsheet Grid"
+        aria-label="Chart data"
         onPointerDown={(e) => e.stopPropagation()}
-        style={{
-          width: 'min(94vw, 920px)',
-          maxHeight: '88vh',
-          display: 'flex',
-          flexDirection: 'column',
-          backgroundColor: 'var(--surface-elevated, #1e1e24)',
-          color: 'var(--text-primary, #f3f4f6)',
-          borderRadius: 12,
-          border: '1px solid var(--border-color, rgba(255,255,255,0.1))',
-          boxShadow: '0 20px 50px rgba(0,0,0,0.4)',
-          overflow: 'hidden',
-          zIndex: 1000,
-        }}
       >
-        {/* Head */}
-        <header
-          style={{
-            display: 'flex',
-            alignItems: 'center',
-            justifyContent: 'space-between',
-            padding: '16px 20px',
-            borderBottom: '1px solid var(--border-color, rgba(255,255,255,0.08))',
-          }}
-        >
-          <div style={{ display: 'flex', alignItems: 'center', gap: 12 }}>
-            <span
-              style={{
-                display: 'inline-flex',
-                alignItems: 'center',
-                justifyContent: 'center',
-                width: 32,
-                height: 32,
-                borderRadius: 8,
-                backgroundColor: 'rgba(59, 130, 246, 0.15)',
-                color: '#60A5FA',
-              }}
-            >
-              <TableIcon size={18} />
-            </span>
-            <div>
-              <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
-                <h3 style={{ margin: 0, fontSize: 16, fontWeight: 600 }}>Chart Data & Spreadsheet</h3>
-                <span
-                  style={{
-                    fontSize: 11,
-                    fontWeight: 600,
-                    textTransform: 'uppercase',
-                    padding: '2px 8px',
-                    borderRadius: 12,
-                    backgroundColor: 'rgba(255,255,255,0.08)',
-                    color: 'var(--text-secondary, #9ca3af)',
-                  }}
-                >
-                  {spec.kind}
-                </span>
-              </div>
-              <p style={{ margin: '2px 0 0', fontSize: 12, color: 'var(--text-secondary, #9ca3af)' }}>
-                {categories.length} {categories.length === 1 ? 'row' : 'rows'} · {seriesList.length}{' '}
-                {seriesList.length === 1 ? 'series' : 'series'}
-              </p>
-            </div>
+        <header className="cdm__head">
+          <div className="cdm__title">
+            <TableIcon size={15} aria-hidden />
+            <span>{spec.title?.trim() || 'Chart data'}</span>
           </div>
 
-          <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
-            {/* Tabs */}
-            <div
-              style={{
-                display: 'flex',
-                padding: 3,
-                borderRadius: 8,
-                backgroundColor: 'var(--surface-sunken, rgba(0,0,0,0.25))',
-                border: '1px solid var(--border-color, rgba(255,255,255,0.06))',
-              }}
-            >
-              <button
-                type="button"
-                className="btn-text"
-                onClick={() => setActiveTab('grid')}
-                style={{
-                  padding: '5px 12px',
-                  borderRadius: 6,
-                  fontSize: 12,
-                  fontWeight: 500,
-                  backgroundColor: activeTab === 'grid' ? 'var(--accent, #3b82f6)' : 'transparent',
-                  color: activeTab === 'grid' ? '#fff' : 'inherit',
-                  border: 'none',
-                  cursor: 'pointer',
-                }}
-              >
-                Spreadsheet
-              </button>
-              <button
-                type="button"
-                className="btn-text"
-                onClick={() => setActiveTab('live')}
-                style={{
-                  padding: '5px 12px',
-                  borderRadius: 6,
-                  fontSize: 12,
-                  fontWeight: 500,
-                  backgroundColor: activeTab === 'live' ? 'var(--accent, #3b82f6)' : 'transparent',
-                  color: activeTab === 'live' ? '#fff' : 'inherit',
-                  border: 'none',
-                  cursor: 'pointer',
-                  display: 'flex',
-                  alignItems: 'center',
-                  gap: 6,
-                }}
-              >
-                <Globe size={13} />
-                Live Connector
-              </button>
-            </div>
-
+          <div className="cdm__tabs" role="tablist">
             <button
               type="button"
-              className="btn-icon"
-              onClick={onClose}
-              aria-label="Close modal"
-              style={{
-                background: 'none',
-                border: 'none',
-                color: 'var(--text-secondary, #9ca3af)',
-                cursor: 'pointer',
-                padding: 6,
-                borderRadius: 6,
-              }}
+              role="tab"
+              aria-selected={tab === 'grid'}
+              className="cdm__tab"
+              data-active={tab === 'grid' || undefined}
+              onClick={() => setTab('grid')}
             >
-              <X size={18} />
+              Sheet
+            </button>
+            <button
+              type="button"
+              role="tab"
+              aria-selected={tab === 'source'}
+              className="cdm__tab"
+              data-active={tab === 'source' || undefined}
+              onClick={() => setTab('source')}
+            >
+              Source
+              {/* A dot rather than a word: the tab says whether this chart is
+                  wired to something without costing a second line of chrome. */}
+              {live?.interval ? <span className="cdm__pip" aria-label="refreshing" /> : null}
             </button>
           </div>
+
+          <button type="button" className="cdm__close" aria-label="Close" onClick={onClose}>
+            <X size={15} />
+          </button>
         </header>
 
-        {/* Action Bar */}
-        {activeTab === 'grid' && (
-          <div
-            style={{
-              display: 'flex',
-              alignItems: 'center',
-              justifyContent: 'space-between',
-              padding: '10px 20px',
-              borderBottom: '1px solid var(--border-color, rgba(255,255,255,0.06))',
-              backgroundColor: 'rgba(255,255,255,0.02)',
-              gap: 8,
-              flexWrap: 'wrap',
-            }}
-          >
-            <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
-              <button
-                type="button"
-                onClick={addRow}
-                className="btn-secondary"
-                style={{
-                  display: 'inline-flex',
-                  alignItems: 'center',
-                  gap: 6,
-                  padding: '6px 10px',
-                  fontSize: 12,
-                  borderRadius: 6,
-                  border: '1px solid var(--border-color, rgba(255,255,255,0.1))',
-                  cursor: 'pointer',
-                  background: 'rgba(255,255,255,0.04)',
-                  color: 'inherit',
-                }}
-              >
-                <Plus size={14} /> Add Row
-              </button>
-              <button
-                type="button"
-                onClick={addSeries}
-                className="btn-secondary"
-                style={{
-                  display: 'inline-flex',
-                  alignItems: 'center',
-                  gap: 6,
-                  padding: '6px 10px',
-                  fontSize: 12,
-                  borderRadius: 6,
-                  border: '1px solid var(--border-color, rgba(255,255,255,0.1))',
-                  cursor: 'pointer',
-                  background: 'rgba(255,255,255,0.04)',
-                  color: 'inherit',
-                }}
-              >
-                <Plus size={14} /> Add Series
-              </button>
-              <button
-                type="button"
-                onClick={transpose}
-                title="Swap rows and columns"
-                className="btn-secondary"
-                style={{
-                  display: 'inline-flex',
-                  alignItems: 'center',
-                  gap: 6,
-                  padding: '6px 10px',
-                  fontSize: 12,
-                  borderRadius: 6,
-                  border: '1px solid var(--border-color, rgba(255,255,255,0.1))',
-                  cursor: 'pointer',
-                  background: 'rgba(255,255,255,0.04)',
-                  color: 'inherit',
-                }}
-              >
-                <ArrowLeftRight size={14} /> Transpose
-              </button>
+        {tab === 'grid' ? (
+          <>
+            <div className="cdm__bar">
+              <div className="cdm__barGroup">
+                <button type="button" className="cdm__btn" onClick={() => addRow()}>
+                  <Plus size={13} /> Row
+                </button>
+                <button type="button" className="cdm__btn" onClick={addSeries}>
+                  <Plus size={13} /> Series
+                </button>
+                <button
+                  type="button"
+                  className="cdm__btn"
+                  onClick={transpose}
+                  title="Swap what names the rows for what names the columns"
+                >
+                  <ArrowLeftRight size={13} /> Transpose
+                </button>
+              </div>
+
+              <div className="cdm__barGroup">
+                <button
+                  type="button"
+                  className="cdm__btn"
+                  data-active={pasting || undefined}
+                  onClick={() => setPasting((v) => !v)}
+                >
+                  <ClipboardPaste size={13} /> Paste
+                </button>
+                <button type="button" className="cdm__btn" onClick={copyCsv}>
+                  {copied ? <Check size={13} /> : <Copy size={13} />} {copied ? 'Copied' : 'Copy'}
+                </button>
+                <button
+                  type="button"
+                  className="cdm__btn"
+                  onClick={() => downloadCsv(spec, csvFilename(spec.title))}
+                >
+                  <Download size={13} /> Download
+                </button>
+              </div>
             </div>
 
-            <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
-              <button
-                type="button"
-                onClick={() => setShowPasteBox((v) => !v)}
-                className="btn-secondary"
-                style={{
-                  display: 'inline-flex',
-                  alignItems: 'center',
-                  gap: 6,
-                  padding: '6px 10px',
-                  fontSize: 12,
-                  borderRadius: 6,
-                  border: '1px solid var(--border-color, rgba(255,255,255,0.1))',
-                  cursor: 'pointer',
-                  background: showPasteBox ? 'rgba(59, 130, 246, 0.2)' : 'rgba(255,255,255,0.04)',
-                  color: 'inherit',
-                }}
-              >
-                <ClipboardPaste size={14} /> Paste CSV / Sheets
-              </button>
-              <button
-                type="button"
-                onClick={handleCopyCsv}
-                className="btn-secondary"
-                style={{
-                  display: 'inline-flex',
-                  alignItems: 'center',
-                  gap: 6,
-                  padding: '6px 10px',
-                  fontSize: 12,
-                  borderRadius: 6,
-                  border: '1px solid var(--border-color, rgba(255,255,255,0.1))',
-                  cursor: 'pointer',
-                  background: 'rgba(255,255,255,0.04)',
-                  color: 'inherit',
-                }}
-              >
-                {copied ? <Check size={14} color="#10B981" /> : <Copy size={14} />}
-                {copied ? 'Copied' : 'Copy CSV'}
-              </button>
-              <button
-                type="button"
-                onClick={handleDownloadCsv}
-                className="btn-secondary"
-                style={{
-                  display: 'inline-flex',
-                  alignItems: 'center',
-                  gap: 6,
-                  padding: '6px 10px',
-                  fontSize: 12,
-                  borderRadius: 6,
-                  border: '1px solid var(--border-color, rgba(255,255,255,0.1))',
-                  cursor: 'pointer',
-                  background: 'rgba(255,255,255,0.04)',
-                  color: 'inherit',
-                }}
-              >
-                <Download size={14} /> Download .csv
-              </button>
-            </div>
-          </div>
-        )}
+            {pasting && (
+              <div className="cdm__paste">
+                <textarea
+                  className="cdm__pasteBox"
+                  value={pasteText}
+                  autoFocus
+                  placeholder={'Paste from a spreadsheet, or CSV:\n\nMonth,Revenue,Cost\nJan,12,8'}
+                  onChange={(e) => setPasteText(e.target.value)}
+                />
+                <div className="cdm__pasteActions">
+                  <button type="button" className="cdm__btn" onClick={() => setPasting(false)}>
+                    Cancel
+                  </button>
+                  <button
+                    type="button"
+                    className="cdm__btn cdm__btn--primary"
+                    disabled={!pasteText.trim()}
+                    onClick={applyPaste}
+                  >
+                    Replace the table
+                  </button>
+                </div>
+              </div>
+            )}
 
-        {/* Paste Area Overlay */}
-        {showPasteBox && (
-          <div
-            style={{
-              padding: '12px 20px',
-              backgroundColor: 'var(--surface-sunken, rgba(0,0,0,0.3))',
-              borderBottom: '1px solid var(--border-color, rgba(255,255,255,0.08))',
-            }}
-          >
-            <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: 6 }}>
-              <span style={{ fontSize: 12, fontWeight: 500, color: 'var(--text-secondary, #9ca3af)' }}>
-                Paste CSV or range copied from Excel / Google Sheets:
-              </span>
-              <button
-                type="button"
-                onClick={() => setShowPasteBox(false)}
-                style={{ background: 'none', border: 'none', color: '#9ca3af', cursor: 'pointer', fontSize: 12 }}
-              >
-                Cancel
-              </button>
-            </div>
-            <textarea
-              value={pasteText}
-              onChange={(e) => setPasteText(e.target.value)}
-              placeholder="Paste data here (e.g. Region&#9;Q1&#9;Q2&#10;North&#9;100&#9;150)..."
-              rows={4}
-              style={{
-                width: '100%',
-                padding: '8px 10px',
-                fontSize: 12,
-                fontFamily: 'monospace',
-                backgroundColor: 'rgba(0,0,0,0.2)',
-                border: '1px solid var(--border-color, rgba(255,255,255,0.15))',
-                borderRadius: 6,
-                color: 'inherit',
-                boxSizing: 'border-box',
-                resize: 'vertical',
-              }}
-            />
-            <div style={{ marginTop: 8, display: 'flex', justifyContent: 'flex-end', gap: 8 }}>
-              <button
-                type="button"
-                onClick={handleApplyPaste}
-                style={{
-                  padding: '6px 14px',
-                  backgroundColor: 'var(--accent, #3b82f6)',
-                  color: '#fff',
-                  border: 'none',
-                  borderRadius: 6,
-                  fontSize: 12,
-                  fontWeight: 500,
-                  cursor: 'pointer',
-                }}
-              >
-                Apply Data
-              </button>
-            </div>
-          </div>
-        )}
-
-        {/* Content Body */}
-        <div style={{ flex: 1, overflow: 'auto', padding: 20 }}>
-          {activeTab === 'grid' ? (
-            <div
-              style={{
-                border: '1px solid var(--border-color, rgba(255,255,255,0.1))',
-                borderRadius: 8,
-                overflow: 'hidden',
-                backgroundColor: 'rgba(0,0,0,0.12)',
-              }}
-            >
-              <table
-                style={{
-                  width: '100%',
-                  borderCollapse: 'collapse',
-                  fontSize: 12,
-                  textAlign: 'left',
-                }}
-              >
+            <div className="cdm__sheet" ref={gridRef}>
+              <table className="cdm__table">
                 <thead>
-                  <tr style={{ backgroundColor: 'rgba(255,255,255,0.04)', borderBottom: '1px solid rgba(255,255,255,0.1)' }}>
-                    <th style={{ width: 44, padding: '8px 12px', color: 'var(--text-secondary, #9ca3af)', fontWeight: 500 }}>
-                      #
+                  <tr>
+                    <th className="cdm__corner" scope="col">
+                      <span className="cdm__mutedLabel">Category</span>
                     </th>
-                    <th style={{ minWidth: 150, padding: '8px 12px', fontWeight: 600 }}>Category / Dimension</th>
-                    {seriesList.map((series, sIdx) => (
-                      <th
-                        key={sIdx}
-                        style={{
-                          minWidth: 130,
-                          padding: '6px 12px',
-                          fontWeight: 600,
-                          borderLeft: '1px solid rgba(255,255,255,0.06)',
-                        }}
-                      >
-                        <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 6 }}>
-                          <div style={{ display: 'flex', alignItems: 'center', gap: 6, flex: 1 }}>
-                            <ColorPickerPopover
-                              color={series.color || '#3B82F6'}
-                              onChange={(c) => setSeriesColor(sIdx, c)}
-                            />
-                            <input
-                              type="text"
-                              value={series.name}
-                              onChange={(e) => setSeriesName(sIdx, e.target.value)}
-                              aria-label={`Series ${sIdx + 1} Name`}
-                              style={{
-                                background: 'none',
-                                border: 'none',
-                                color: 'inherit',
-                                fontWeight: 600,
-                                fontSize: 12,
-                                width: '100%',
-                                padding: '2px 4px',
-                                borderRadius: 4,
-                              }}
-                            />
-                          </div>
-                          {seriesList.length > 1 && (
-                            <button
-                              type="button"
-                              onClick={() => deleteSeries(sIdx)}
-                              title="Delete this series"
-                              aria-label={`Delete series ${series.name}`}
-                              style={{
-                                background: 'none',
-                                border: 'none',
-                                color: 'var(--text-secondary, #9ca3af)',
-                                cursor: 'pointer',
-                                padding: 2,
-                              }}
-                            >
-                              <Trash2 size={13} />
-                            </button>
-                          )}
-                        </div>
+                    {series.map((s, si) => (
+                      <th key={si} scope="col" className="cdm__colHead">
+                        <ColorPickerPopover
+                          color={s.color ?? seriesColor(undefined, si)}
+                          onChange={(color) =>
+                            commit({
+                              series: series.map((x, i) => (i === si ? { ...x, color } : x)),
+                            })
+                          }
+                        />
+                        <input
+                          className="cdm__seriesName"
+                          value={s.name}
+                          aria-label={`Name of series ${si + 1}`}
+                          onChange={(e) =>
+                            commit({
+                              series: series.map((x, i) =>
+                                i === si ? { ...x, name: e.target.value } : x
+                              ),
+                            })
+                          }
+                        />
+                        <button
+                          type="button"
+                          className="cdm__rowBtn"
+                          aria-label={`Delete series ${s.name}`}
+                          disabled={series.length <= 1}
+                          onClick={() => deleteSeries(si)}
+                        >
+                          <Trash2 size={12} />
+                        </button>
                       </th>
                     ))}
-                    <th style={{ width: 40, padding: '8px' }} />
+                    <th className="cdm__gutter" />
                   </tr>
                 </thead>
                 <tbody>
-                  {categories.map((category, rIdx) => (
-                    <tr
-                      key={rIdx}
-                      style={{
-                        borderBottom: '1px solid rgba(255,255,255,0.05)',
-                        backgroundColor: rIdx % 2 === 1 ? 'rgba(255,255,255,0.015)' : 'transparent',
-                      }}
-                    >
-                      <td style={{ padding: '6px 12px', color: 'var(--text-secondary, #9ca3af)', fontSize: 11 }}>
-                        {rIdx + 1}
-                      </td>
-                      <td style={{ padding: '4px 8px' }}>
+                  {categories.map((_, row) => (
+                    <tr key={row}>
+                      <th scope="row" className="cdm__rowHead">
                         <input
-                          ref={(el) => {
-                            if (el) cellInputsRef.current.set(`${rIdx}:-1`, el);
-                          }}
-                          type="text"
-                          value={category}
-                          onChange={(e) => setCategory(rIdx, e.target.value)}
-                          onKeyDown={(e) =>
-                            handleCellKeyDown(e, rIdx, -1, categories.length, seriesList.length)
-                          }
-                          aria-label={`Row ${rIdx + 1} Category`}
-                          style={{
-                            width: '100%',
-                            boxSizing: 'border-box',
-                            padding: '6px 8px',
-                            backgroundColor: 'rgba(255,255,255,0.03)',
-                            border: '1px solid transparent',
-                            borderRadius: 4,
-                            color: 'inherit',
-                            fontSize: 12,
-                          }}
+                          className="cdm__cell cdm__cell--label"
+                          data-cell={`${row}:-1`}
+                          value={cellText(row, -1)}
+                          aria-label={`Category ${row + 1}`}
+                          onChange={(e) => setDraft({ row, col: -1, text: e.target.value })}
+                          onFocus={() => setDraft({ row, col: -1, text: categories[row] ?? '' })}
+                          onBlur={() => flush(null)}
+                          onKeyDown={(e) => onCellKey(e, row, -1)}
                         />
-                      </td>
-                      {seriesList.map((series, sIdx) => {
-                        const val = series.values[rIdx];
-                        const displayVal = typeof val === 'number' ? String(val) : '';
-                        return (
-                          <td
-                            key={sIdx}
-                            style={{
-                              padding: '4px 8px',
-                              borderLeft: '1px solid rgba(255,255,255,0.06)',
-                            }}
-                          >
-                            <input
-                              ref={(el) => {
-                                if (el) cellInputsRef.current.set(`${rIdx}:${sIdx}`, el);
-                              }}
-                              type="text"
-                              value={displayVal}
-                              onChange={(e) => setCellValue(sIdx, rIdx, e.target.value)}
-                              onKeyDown={(e) =>
-                                handleCellKeyDown(e, rIdx, sIdx, categories.length, seriesList.length)
-                              }
-                              aria-label={`Row ${rIdx + 1} Series ${series.name}`}
-                              style={{
-                                width: '100%',
-                                boxSizing: 'border-box',
-                                padding: '6px 8px',
-                                backgroundColor: 'rgba(255,255,255,0.03)',
-                                border: '1px solid transparent',
-                                borderRadius: 4,
-                                color: 'inherit',
-                                fontSize: 12,
-                                textAlign: 'right',
-                                fontFamily: 'monospace',
-                              }}
-                            />
-                          </td>
-                        );
-                      })}
-                      <td style={{ padding: '4px', textAlign: 'center' }}>
-                        {categories.length > 1 && (
-                          <button
-                            type="button"
-                            onClick={() => deleteRow(rIdx)}
-                            title="Delete this row"
-                            aria-label={`Delete row ${rIdx + 1}`}
-                            style={{
-                              background: 'none',
-                              border: 'none',
-                              color: 'var(--text-secondary, #9ca3af)',
-                              cursor: 'pointer',
-                              padding: 4,
-                              opacity: 0.6,
-                            }}
-                          >
-                            <Trash2 size={13} />
-                          </button>
-                        )}
+                      </th>
+                      {series.map((s, col) => (
+                        <td key={col}>
+                          <input
+                            className="cdm__cell cdm__cell--num"
+                            data-cell={`${row}:${col}`}
+                            inputMode="decimal"
+                            value={cellText(row, col)}
+                            aria-label={`${s.name}, ${categories[row] ?? row + 1}`}
+                            placeholder="—"
+                            onChange={(e) => setDraft({ row, col, text: e.target.value })}
+                            onFocus={() =>
+                              setDraft({
+                                row,
+                                col,
+                                text:
+                                  s.values[row] === null || s.values[row] === undefined
+                                    ? ''
+                                    : String(s.values[row]),
+                              })
+                            }
+                            onBlur={() => flush(null)}
+                            onKeyDown={(e) => onCellKey(e, row, col)}
+                          />
+                        </td>
+                      ))}
+                      <td className="cdm__gutter">
+                        <button
+                          type="button"
+                          className="cdm__rowBtn"
+                          aria-label={`Delete row ${row + 1}`}
+                          disabled={categories.length <= 1}
+                          onClick={() => deleteRow(row)}
+                        >
+                          <Trash2 size={12} />
+                        </button>
                       </td>
                     </tr>
                   ))}
                 </tbody>
               </table>
             </div>
-          ) : (
-            /* Live Data Connector Tab */
-            <div style={{ maxWidth: 640, margin: '0 auto', display: 'flex', flexDirection: 'column', gap: 20 }}>
-              <div
-                style={{
-                  padding: 16,
-                  borderRadius: 8,
-                  backgroundColor: 'rgba(255,255,255,0.03)',
-                  border: '1px solid var(--border-color, rgba(255,255,255,0.08))',
-                }}
+          </>
+        ) : (
+          <div className="cdm__source">
+            {/*
+              The security note is shown, not buried in a comment.
+
+              The URL is part of the chart and therefore reaches everyone in
+              the room. Whose browser actually makes the request is the whole
+              design of this feature, and it is the sort of thing a person is
+              entitled to know before typing an internal hostname into a
+              shared board.
+            */}
+            <p className="cdm__note">
+              <Globe size={13} aria-hidden />
+              <span>
+                The address is saved with the chart, so everyone in the room can see it. Only
+                <strong> your </strong>
+                browser fetches it — refreshing is local to you, and what everyone else receives
+                is the data that came back.
+              </span>
+            </p>
+
+            <label className="cdm__field">
+              <span>Address</span>
+              <input
+                className="cdm__input"
+                type="url"
+                value={source.url ?? ''}
+                placeholder="https://api.example.com/quarterly.csv"
+                onChange={(e) => patchSource({ url: e.target.value || undefined })}
+              />
+            </label>
+
+            <label className="cdm__field">
+              <span>Path to the records</span>
+              <input
+                className="cdm__input"
+                value={source.dataPath ?? ''}
+                placeholder="data.rows — leave empty for CSV, or JSON that is already a list"
+                onChange={(e) => patchSource({ dataPath: e.target.value || undefined })}
+              />
+            </label>
+
+            <label className="cdm__field">
+              <span>Refresh</span>
+              <select
+                className="cdm__input"
+                value={live?.interval ?? 0}
+                onChange={(e) => setLiveInterval(nodeId, Number(e.target.value), readSpec)}
               >
-                <h4 style={{ margin: '0 0 12px', fontSize: 14, fontWeight: 600 }}>Data Source Mode</h4>
-                <div style={{ display: 'grid', gridTemplateColumns: 'repeat(3, 1fr)', gap: 10 }}>
-                  {[
-                    { mode: 'manual', label: 'Static Spreadsheet', desc: 'Embedded document state' },
-                    { mode: 'url', label: 'REST API Polling', desc: 'Syncs from JSON endpoint' },
-                    { mode: 'stream', label: 'Live Stream Ticker', desc: 'Real-time telemetry' },
-                  ].map((item) => (
-                    <button
-                      key={item.mode}
-                      type="button"
-                      onClick={() => updateDataSource({ mode: item.mode as any })}
-                      style={{
-                        display: 'flex',
-                        flexDirection: 'column',
-                        alignItems: 'flex-start',
-                        padding: 12,
-                        borderRadius: 8,
-                        backgroundColor:
-                          (dataSource.mode || 'manual') === item.mode
-                            ? 'rgba(59, 130, 246, 0.15)'
-                            : 'rgba(255,255,255,0.02)',
-                        border: `1px solid ${
-                          (dataSource.mode || 'manual') === item.mode
-                            ? 'var(--accent, #3b82f6)'
-                            : 'rgba(255,255,255,0.08)'
-                        }`,
-                        color: 'inherit',
-                        cursor: 'pointer',
-                        textAlign: 'left',
-                      }}
-                    >
-                      <span style={{ fontWeight: 600, fontSize: 13, marginBottom: 4 }}>{item.label}</span>
-                      <span style={{ fontSize: 11, color: 'var(--text-secondary, #9ca3af)' }}>{item.desc}</span>
-                    </button>
-                  ))}
-                </div>
-              </div>
+                {POLL_INTERVALS.map((n) => (
+                  <option key={n} value={n}>
+                    {POLL_LABELS[n]}
+                  </option>
+                ))}
+              </select>
+            </label>
+            <p className="cdm__hint">
+              Refreshing runs in this browser, for this session. It stops when you close the
+              board, and nobody else starts fetching because you turned it on.
+            </p>
 
-              {dataSource.mode === 'url' && (
-                <div
-                  style={{
-                    padding: 16,
-                    borderRadius: 8,
-                    backgroundColor: 'rgba(255,255,255,0.03)',
-                    border: '1px solid var(--border-color, rgba(255,255,255,0.08))',
-                    display: 'flex',
-                    flexDirection: 'column',
-                    gap: 14,
-                  }}
-                >
-                  <h4 style={{ margin: 0, fontSize: 14, fontWeight: 600 }}>REST API Configuration</h4>
-                  <div>
-                    <label style={{ display: 'block', fontSize: 12, marginBottom: 4, color: '#9ca3af' }}>
-                      API URL (GET endpoint returning CSV or JSON)
-                    </label>
-                    <input
-                      type="url"
-                      value={dataSource.url || ''}
-                      onChange={(e) => updateDataSource({ url: e.target.value })}
-                      placeholder="https://api.example.com/analytics/summary"
-                      style={{
-                        width: '100%',
-                        boxSizing: 'border-box',
-                        padding: '8px 10px',
-                        borderRadius: 6,
-                        backgroundColor: 'rgba(0,0,0,0.2)',
-                        border: '1px solid var(--border-color, rgba(255,255,255,0.15))',
-                        color: 'inherit',
-                        fontSize: 13,
-                      }}
-                    />
-                  </div>
-
-                  <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 12 }}>
-                    <div>
-                      <label style={{ display: 'block', fontSize: 12, marginBottom: 4, color: '#9ca3af' }}>
-                        JSON Data Path (optional)
-                      </label>
-                      <input
-                        type="text"
-                        value={dataSource.dataPath || ''}
-                        onChange={(e) => updateDataSource({ dataPath: e.target.value })}
-                        placeholder="e.g. data.records"
-                        style={{
-                          width: '100%',
-                          boxSizing: 'border-box',
-                          padding: '8px 10px',
-                          borderRadius: 6,
-                          backgroundColor: 'rgba(0,0,0,0.2)',
-                          border: '1px solid var(--border-color, rgba(255,255,255,0.15))',
-                          color: 'inherit',
-                          fontSize: 13,
-                        }}
-                      />
-                    </div>
-                    <div>
-                      <label style={{ display: 'block', fontSize: 12, marginBottom: 4, color: '#9ca3af' }}>
-                        Poll Interval
-                      </label>
-                      <select
-                        value={dataSource.pollInterval || 0}
-                        onChange={(e) => updateDataSource({ pollInterval: Number(e.target.value) })}
-                        style={{
-                          width: '100%',
-                          boxSizing: 'border-box',
-                          padding: '8px 10px',
-                          borderRadius: 6,
-                          backgroundColor: 'rgba(0,0,0,0.2)',
-                          border: '1px solid var(--border-color, rgba(255,255,255,0.15))',
-                          color: 'inherit',
-                          fontSize: 13,
-                        }}
-                      >
-                        <option value={0}>Manual Only</option>
-                        <option value={5}>Every 5 seconds</option>
-                        <option value={15}>Every 15 seconds</option>
-                        <option value={60}>Every 1 minute</option>
-                      </select>
-                    </div>
-                  </div>
-
-                  <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginTop: 4 }}>
-                    <button
-                      type="button"
-                      disabled={syncing || !dataSource.url}
-                      onClick={fetchRestData}
-                      style={{
-                        display: 'inline-flex',
-                        alignItems: 'center',
-                        gap: 8,
-                        padding: '8px 16px',
-                        backgroundColor: 'var(--accent, #3b82f6)',
-                        color: '#fff',
-                        borderRadius: 6,
-                        border: 'none',
-                        fontSize: 13,
-                        fontWeight: 500,
-                        cursor: syncing || !dataSource.url ? 'not-allowed' : 'pointer',
-                        opacity: syncing || !dataSource.url ? 0.6 : 1,
-                      }}
-                    >
-                      <RefreshCw size={14} className={syncing ? 'spin' : ''} />
-                      {syncing ? 'Fetching...' : 'Fetch & Sync Now'}
-                    </button>
-
-                    {dataSource.lastSyncedAt && (
-                      <span style={{ fontSize: 11, color: '#9ca3af' }}>
-                        Last synced: {new Date(dataSource.lastSyncedAt).toLocaleTimeString()}
-                      </span>
-                    )}
-                  </div>
-
-                  {syncMessage && (
-                    <div
-                      style={{
-                        padding: '8px 12px',
-                        borderRadius: 6,
-                        fontSize: 12,
-                        backgroundColor: syncMessage.includes('error')
-                          ? 'rgba(239, 68, 68, 0.15)'
-                          : 'rgba(16, 185, 129, 0.15)',
-                        color: syncMessage.includes('error') ? '#EF4444' : '#10B981',
-                      }}
-                    >
-                      {syncMessage}
-                    </div>
-                  )}
-                </div>
-              )}
-
-              {dataSource.mode === 'stream' && (
-                <div
-                  style={{
-                    padding: 16,
-                    borderRadius: 8,
-                    backgroundColor: 'rgba(255,255,255,0.03)',
-                    border: '1px solid var(--border-color, rgba(255,255,255,0.08))',
-                    display: 'flex',
-                    flexDirection: 'column',
-                    gap: 14,
-                  }}
-                >
-                  <h4 style={{ margin: 0, fontSize: 14, fontWeight: 600 }}>Simulated Real-time Telemetry Stream</h4>
-                  <p style={{ margin: 0, fontSize: 12, color: 'var(--text-secondary, #9ca3af)', lineHeight: 1.5 }}>
-                    Simulates a live streaming financial ticker, server CPU monitor, or sensor feed. Pushing new data
-                    points dynamically rolls older observations off the left, keeping an active live window on the
-                    board.
-                  </p>
-
-                  <div style={{ display: 'flex', alignItems: 'center', gap: 12 }}>
-                    <button
-                      type="button"
-                      onClick={triggerSimulatedTick}
-                      style={{
-                        display: 'inline-flex',
-                        alignItems: 'center',
-                        gap: 8,
-                        padding: '8px 16px',
-                        backgroundColor: 'var(--accent, #3b82f6)',
-                        color: '#fff',
-                        borderRadius: 6,
-                        border: 'none',
-                        fontSize: 13,
-                        fontWeight: 500,
-                        cursor: 'pointer',
-                      }}
-                    >
-                      <Activity size={15} /> Push Next Live Tick
-                    </button>
-                    <span style={{ fontSize: 12, color: 'var(--text-secondary, #9ca3af)' }}>
-                      Window: rolling last 12 readings
-                    </span>
-                  </div>
-                </div>
+            <div className="cdm__sourceActions">
+              <button
+                type="button"
+                className="cdm__btn cdm__btn--primary"
+                disabled={syncing || !source.url}
+                onClick={syncNow}
+              >
+                <RefreshCw size={13} className={syncing ? 'spin' : undefined} />
+                {syncing ? 'Fetching' : 'Fetch now'}
+              </button>
+              {(live?.lastSyncedAt ?? source.lastSyncedAt) && (
+                <span className="cdm__mutedLabel">
+                  Last update {new Date(live?.lastSyncedAt ?? source.lastSyncedAt!).toLocaleTimeString()}
+                </span>
               )}
             </div>
-          )}
-        </div>
 
-        {/* Footer */}
-        <footer
-          style={{
-            display: 'flex',
-            alignItems: 'center',
-            justifyContent: 'space-between',
-            padding: '12px 20px',
-            borderTop: '1px solid var(--border-color, rgba(255,255,255,0.08))',
-            backgroundColor: 'rgba(0,0,0,0.15)',
-          }}
-        >
-          <span style={{ fontSize: 12, color: 'var(--text-secondary, #9ca3af)' }}>
-            Tip: Press <kbd style={{ padding: '2px 5px', borderRadius: 4, background: 'rgba(255,255,255,0.1)' }}>Tab</kbd> or{' '}
-            <kbd style={{ padding: '2px 5px', borderRadius: 4, background: 'rgba(255,255,255,0.1)' }}>Enter</kbd> to jump between cells.
+            {(live?.lastError ?? source.syncError) && !notice && (
+              <p className="cdm__notice" data-tone="bad">
+                <AlertTriangle size={13} aria-hidden /> {live?.lastError ?? source.syncError}
+              </p>
+            )}
+          </div>
+        )}
+
+        <footer className="cdm__foot">
+          <span className="cdm__mutedLabel">
+            {rows} {rows === 1 ? 'row' : 'rows'} · {series.length}{' '}
+            {series.length === 1 ? 'series' : 'series'}
           </span>
-          <button
-            type="button"
-            onClick={onClose}
-            style={{
-              padding: '7px 20px',
-              backgroundColor: 'var(--accent, #3b82f6)',
-              color: '#fff',
-              borderRadius: 6,
-              border: 'none',
-              fontSize: 13,
-              fontWeight: 500,
-              cursor: 'pointer',
-            }}
-          >
-            Done
-          </button>
+          {notice && (
+            <span className="cdm__notice" data-tone={notice.tone}>
+              {notice.text}
+            </span>
+          )}
         </footer>
       </div>
     </div>
