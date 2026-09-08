@@ -47,6 +47,7 @@ import { logDomainOf } from '../../engine/chart/scales';
 import { parseExpression } from '../../engine/chart/expression';
 import { RAMP_IDS, RAMP_LABELS, rampSwatches } from '../../engine/chart/colorRamps';
 import { formatValue } from '../../engine/chart/chartLayout';
+import { mathText } from '../../engine/chart/mathText';
 import { findRoots, findExtrema, integrate, type Sample } from '../../engine/chart/chartAnalysis';
 import {
   chartCapabilities,
@@ -1519,7 +1520,27 @@ const FormulaEditor: React.FC<{
                 <Trash2 size={11} />
               </button>
             </div>
-            {!result.ok && <div className="chartp-formula__error">{result.error.message}</div>}
+            {!result.ok ? (
+              <div className="chartp-formula__error">{result.error.message}</div>
+            ) : (
+              /**
+               * The formula as it will be drawn, under the box it is typed in.
+               *
+               * You edit ASCII — `x^2`, `sqrt`, `pi` — because that is what a
+               * keyboard has, and the chart shows `x²`, `√`, `π`. Without this
+               * the panel is the one place the two forms are never seen
+               * together, so the only way to check what the legend will say is
+               * to look at the legend.
+               *
+               * Hidden when the two are identical, since a line repeating the
+               * box above it is noise.
+               */
+              mathText(curve.source) !== curve.source.trim() && (
+                <div className="chartp-formula__set" aria-hidden>
+                  {mathText(curve.source)}
+                </div>
+              )
+            )}
 
             {/* Per-curve stroke width & dash style */}
             <div style={{ display: 'flex', alignItems: 'center', gap: 6, marginTop: 4, paddingLeft: 34 }}>

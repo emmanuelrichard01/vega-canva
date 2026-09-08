@@ -52,9 +52,20 @@ export interface MathTraceInfo {
   curveIndex: number;
   curveColor: string;
   curveName: string;
-  slope: number;
+  /**
+   * The slope and the tangent, where the thing under the pointer *has* one.
+   *
+   * A curve does. A surface does not: a heatmap or a contour map has a
+   * gradient — a direction and a magnitude — and no single tangent line, and
+   * an implicit plot's tangent belongs to its level set rather than to the
+   * point. Required fields forced those three kinds to invent both or return
+   * no trace at all, and they returned none: they computed the value, the
+   * gradient and the position and then dropped the geometry, so the HUD drew
+   * nothing on any of them.
+   */
+  slope?: number;
   tangentEquation?: string;
-  tangentSegment: [Point, Point];
+  tangentSegment?: [Point, Point];
   crosshair: {
     xRay: [Point, Point];
     yRay: [Point, Point];

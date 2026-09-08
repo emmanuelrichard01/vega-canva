@@ -1,6 +1,7 @@
 import React from 'react';
 import { FunctionSquare, Search, X } from 'lucide-react';
 import { PanelPopover } from './PanelPopover';
+import { mathText } from '../../engine/chart/mathText';
 import {
   EXPRESSION_TOKENS,
   tokenFor,
@@ -167,7 +168,8 @@ const TokenRow: React.FC<{
     onClick={() => onInsert(tokenFor(token, variable))}
     title={`Insert ${tokenFor(token, variable)}`}
   >
-    <code className="exref__sig">{token.signature.replace(/\bx\b/g, variable)}</code>
+    {/* Set, so the reference reads like the chart rather than like code. */}
+    <code className="exref__sig">{mathText(token.signature.replace(/\bx\b/g, variable))}</code>
     <span className="exref__desc">{token.note}</span>
   </button>
 );

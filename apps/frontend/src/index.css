@@ -17549,6 +17549,22 @@ html[data-precise] .canvas-container[data-cursor-mode] .konvajs-content canvas {
   color: var(--signal-danger);
 }
 
+/* The formula as the chart will draw it, under the box it is typed in.
+
+   You edit ASCII — `x^2`, `sqrt`, `pi` — because that is what a keyboard
+   has, and the chart shows `x²`, `√`, `π`. Quiet, and aligned to the input
+   rather than to the row, so it reads as an echo of what was typed rather
+   than as a second field. */
+.chartp-formula__set {
+  margin: 3px 0 0 38px;
+  color: var(--text-tertiary);
+  font-size: var(--text-xs);
+  line-height: 1.4;
+  overflow: hidden;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+}
+
 .chartp-help__fns {
   margin: 6px 0 0;
   font-family: var(--font-mono);

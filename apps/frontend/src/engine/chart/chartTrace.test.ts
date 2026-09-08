@@ -137,7 +137,9 @@ describe('traceMathPlot', () => {
   it('clamps tangent line segments within the plotBox bounds', () => {
     const trace = traceMathPlot(plotBox, meta, { x: 260, y: 150 });
     expect(trace).not.toBeNull();
-    const seg = trace!.tangentSegment;
+    // A curve always has one; the field is optional because a *surface*
+    // does not, and this fixture is a curve.
+    const seg = trace!.tangentSegment!;
     expect(seg[0].x).toBeGreaterThanOrEqual(plotBox.x);
     expect(seg[0].x).toBeLessThanOrEqual(plotBox.x + plotBox.width);
     expect(seg[0].y).toBeGreaterThanOrEqual(plotBox.y);

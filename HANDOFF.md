@@ -11,6 +11,13 @@ time, where the work stopped, and what is next.
 
 > ## Read this first
 >
+> **The last session was the chart engine, end to end — see §5a-0-az.** The
+> one lesson worth carrying out of it: **ask what *reads* a field, never what
+> writes it.** Seven controls wrote a value nothing consulted, and the worst
+> of them did not do nothing — the palette recoloured the legend and left the
+> marks, so the chart and its own key disagreed. A control that half-works
+> hides better than one that is dead.
+>
 > **The last session was a long bug-and-feature pass with no working browser.**
 > The Chrome extension would not connect at all, so nothing was watched: every
 > claim below is held up by a test or by arithmetic, and none of it by eye. The
@@ -4870,6 +4877,179 @@ microtask, and notifies only when a placement *changed*.
 > The hooks for it were first written after the renderer's `world.length < 4`
 > bail, which lint caught: a hook that runs on some renders and not others is
 > the one thing React cannot survive.
+
+## 5a-0-az. The chart engine, end to end
+
+The whole of this session, and the spec now carries the feature list —
+`docs/CANVAS-SPEC.md` §3b. This is only what will waste your time.
+
+**Nearly everything found was invariant 6 or invariant 7.** A control that
+wrote a field nothing read, or one answer derived in two places. Counting them
+is the fastest way to understand this section:
+
+| The control | What it did | What read it |
+| --- | --- | --- |
+| Legend position | Wrote `legendPosition` | Nothing. `buildLegend` pinned every entry to the bottom. |
+| Palette | Wrote `paletteId` | Only `buildLegend`. None of the twenty-six calls that colour a mark. |
+| Refresh interval | Wrote `pollInterval` | Nothing. |
+| Stream speed | Wrote `streamSpeed` | Nothing. |
+| Grid lines | Toggled `showGrid` | Everything except the vertical zero rule, which was pushed into `gridLines` ungated. |
+| CPU pins | Offered 2–16 | `cpuPoints` clamped at 6. |
+| Callout tails | Seven storable | Five in the picker. |
+
+The palette one is the shape to remember: it did not do *nothing*, it
+recoloured the legend and left the bars — so the chart and its own key
+disagreed about what colour a series was. **A control that half-works is
+harder to see than one that does not work at all**, and the way to find them
+is to ask what *reads* the field, never what writes it.
+
+### The two-painter rule is the architecture
+
+`chartLayout.ts` turns a spec and a box into primitives. `ChartRenderer.tsx`
+(Konva) and `chartSvg.ts` (export) both consume them and do **no arithmetic**.
+Every divergence this session came from something skipping it:
+
+- The gradient was read off `node.chart` by the renderer and was unknown to
+  the exporter, so a chart faded on the board and flat in the file.
+- The tolerance corridor was built in both painters with the same three colour
+  literals and two different opacities — 0.12 and 0.10.
+- The grid's display mode was resolved in both, with the same red literals
+  typed out twice.
+- Five HUD overlay colours were typed into both.
+
+If you are about to write a colour or a coordinate in a painter, it belongs in
+the layout instead. `chartTheme.test.ts` now reads `chartSvg.ts` as text and
+fails on any colour literal at all, for exactly this reason.
+
+### Orientation is a fact about the chart, not about a rectangle
+
+The reported bug that took longest to see: a waterfall's hover band ran
+horizontally over some bars and vertically over others, on one chart. Two
+readers each worked the orientation out from *the shape of a bar* — one asked
+whether the first bar was wider than tall, the other whether a bar was four
+times wider than tall. On a waterfall a small step **is** short and wide, so
+the answer changed bar to bar. `ChartLayout.categoryAxis` says it once.
+
+Any bar chart with a category near zero had the same bug. If a report is about
+*inconsistency within one chart*, look for a per-mark test of a per-chart fact.
+
+### CRDT writes per frame, twice
+
+Two gestures wrote a transaction per event: typing in the data sheet (one per
+keystroke, so `1250` was four edits everybody received and four undos) and
+panning a plot (one per pointer move). Both are drafted locally now and
+committed once when the gesture ends. **A wheel has no end event**, so the zoom
+settles on a timer — see `PLANE_SETTLE_MS`.
+
+The keystroke one also parsed on every character, which discarded the `-` and
+the `1.` that every number passes through on the way to being typed. The cell
+fought whoever was typing in it, which is what the report actually described.
+
+### Three plots had a readout and no HUD
+
+Reported as "I can't see the tracing HUD stuff", and the cause is worth
+knowing because it is invariant 7 wearing a type signature.
+
+`MathTraceInfo` required `slope` and `tangentSegment`. Those are properties of
+a **curve**, and three of the eight plot kinds are not curves: a heatmap and a
+contour map have a *gradient* — a direction and a magnitude — and no single
+tangent line, and an implicit plot's tangent belongs to its level set rather
+than to the point under the pointer. So `implicit`, `contour` and `heatmap`
+could not build a trace without inventing both, and they returned a readout
+with the trace field left off. The numbers appeared and nothing was drawn: no
+crosshair, no bead, no badge. Nothing said so, because the readout was right.
+
+Both fields are optional now, the two-variable branches share one crosshair
+builder, and a surface reports its gradient as the same field the vector field
+already used. `chartHitTest.test.ts` walks every plot kind and asserts a trace
+comes back, which is the check that would have caught it.
+
+**If a type forces a value that does not exist for some of its cases, the
+cases that lack it will quietly stop producing the whole object.** That is the
+shape to watch for.
+
+### What a formula is, and where it can be set
+
+`mathText.ts` renders an expression as Unicode: `x^2` → `x²`, `sqrt(x)` → `√x`,
+`abs(x)` → `|x|`, `pi` → `π`, a real minus rather than a hyphen, a
+multiplication dot rather than an asterisk. It is wired into the plot legend,
+the HUD's curve name, the panel's formula rows (under the box you type in) and
+the function reference.
+
+**KaTeX and MathJax cannot do this job, and it is worth knowing why before
+somebody adds one.** Both emit HTML. A chart's formulae are drawn by Konva's
+`Text` and by the SVG exporter's `<text>`, neither of which can render HTML —
+and `<foreignObject>` is not the escape it looks like, because most SVG
+consumers outside a browser ignore it, so an export would come back blank
+exactly where the legend used to be. That is the worst failure available here:
+the file looks right until somebody else opens it.
+
+So the canvas and the export get *typography*, which covers everything this
+expression language can express — it has no fractions, no integrals and no
+matrices in its **input**. A DOM surface could have real typesetting, and the
+properties panel is the only DOM surface in the chart tool; if KaTeX ever
+earns its place it belongs there and nowhere else, lazily loaded, and it would
+still leave `mathText` doing the work everywhere that matters.
+
+`mathText` is **display only**. It is a second *rendering* of the source, never
+a second copy of it — `mathText.test.ts` asserts that its output does **not**
+parse, so nobody is tempted to write the pretty form back into the document.
+The one place it is deliberately not applied is an error message: prettifying
+a formula that will not parse hides the typo that broke it.
+
+### The security constraint that shapes two features
+
+Chart specs replicate to everyone in the room. Twice this session that decided
+a design:
+
+1. **The expression parser refuses `eval`/`new Function`.** A formula field
+   backed by `eval` would be remote code execution across a room.
+2. **`dataSource.url` may be stored; only a local, explicit act may fetch it.**
+   The refresh interval is session state and deliberately *not* on the spec —
+   an interval beside a replicated URL is an instruction to every member's
+   browser to hit it on a schedule. `pollInterval` was on the spec, which is
+   why removing it mattered rather than being tidying.
+
+If you add anything that takes a URL, a path or an expression, ask what happens
+when it arrives on somebody else's machine.
+
+### Layering
+
+`--z-popover: 9200` is new, above `--z-dialog: 9000`. The colour picker sat at
+a bare `4000`, so opening it from inside **any** dialog put it behind that
+dialog, on the canvas, visible through the scrim and unreachable. Two rules
+were already reaching for `var(--z-popover, 99999)` — the token was intended
+and had never been defined.
+
+### What was not verified
+
+**No browser, the whole session.** Everything above is held up by a test or by
+arithmetic, and none of it by eye. The suite is green — **184 files, 3,278
+tests** — and the build and the lint are clean, so what is unverified is
+specifically *appearance*, which is exactly where the reports came from: the
+waterfall's two-way hover band, the legend positions, the corridor hidden
+behind the bars and the plane glyphs were all found by the user looking at
+them, not by a test failing.
+
+The three worth a glance first, because they are geometry a test can only
+assert the arithmetic of:
+
+- **The radar's radius.** Solved per spoke now rather than guessed, so a chart
+  with short labels should nearly fill its box. The tests pin the *ratios*;
+  whether it looks right at a real size is a different question.
+- **Value labels inside a mark.** They contrast against the bar or the slice
+  rather than against the board. The test asserts the field is *set*, not that
+  the result reads well against every palette colour.
+- **The plane lock and reset glyphs**, redrawn as paths after being built from
+  a Konva primitive that cannot draw an open arc at all.
+
+One environment note. A Windows **Application Control policy** briefly blocked
+every native `.node` binding under `node_modules` mid-session — which takes out
+`vitest`, `oxlint` and `npm run build` while leaving `tsc -b` working, since
+that one is pure JavaScript. It was resolved on the machine. If it recurs,
+`rolldown-binding.win32-x64-msvc.node` and `oxlint.win32-x64-msvc.node` are the
+two it named, and that is the shape of it.
+---
 
 ## 5. Next up
 

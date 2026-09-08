@@ -15,7 +15,16 @@ function sources(dir: string, out: string[] = []): string[] {
 }
 
 describe('the tour', () => {
-  it('points at elements that actually exist', () => {
+  /**
+   * Given room to run.
+   *
+   * It reads every source file under `src`, which is genuinely seconds of I/O
+   * and competes with a hundred and eighty other files for the disk. It passes
+   * in about three on its own and tips past the five-second default under a
+   * full run -- a fact about the runner's contention rather than about the
+   * test, so the timeout is the thing that should move.
+   */
+  it('points at elements that actually exist', { timeout: 20_000 }, () => {
     /**
      * The guarantee that makes string anchors safe.
      *
@@ -31,14 +40,31 @@ describe('the tour', () => {
     // Relative to this file rather than to the working directory, which is
     // whatever the runner happened to be started from.
     const root = join(dirname(fileURLToPath(import.meta.url)), '..', '..');
-    const code = sources(root)
-      .filter((f) => !f.endsWith('tour.test.ts'))
-      .map((f) => readFileSync(f, 'utf8'))
-      .join('\n');
+
+    /**
+     * Every anchor the source carries, gathered in one pass.
+     *
+     * This read every file and `join`ed them into a single string, then
+     * searched that string once per step. Correct, and it grew with the tree
+     * until it timed out: building a multi-megabyte string to run a dozen
+     * substring searches over it costs far more than the searches do.
+     * Collecting the anchors file by file is the same answer at a fraction of
+     * the work, and it stops creeping every time somebody adds a component.
+     */
+    const carried = new Set<string>();
+    for (const file of sources(root)) {
+      if (file.endsWith('tour.test.ts')) continue;
+      const text = readFileSync(file, 'utf8');
+      for (const match of text.matchAll(/data-tour="([^"]+)"/g)) carried.add(match[1]);
+      // A template-literal anchor is a *prefix* — `data-tour={`seat-${id}`}` —
+      // so what is recorded is the part before the interpolation.
+      for (const match of text.matchAll(/data-tour=\{`([^`$]*)/g)) carried.add(match[1]);
+    }
 
     for (const step of TOUR) {
       expect(
-        code.includes(`data-tour="${step.anchor}"`) || code.includes(`data-tour={\`${step.anchor}`),
+        carried.has(step.anchor) ||
+          [...carried].some((prefix) => prefix.length > 0 && step.anchor.startsWith(prefix)),
         `step "${step.id}" anchors to "${step.anchor}", which nothing carries`
       ).toBe(true);
     }

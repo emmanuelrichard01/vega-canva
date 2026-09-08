@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import { chartHitTest, placeReadout } from './chartHitTest';
 import { layoutChart } from './chartLayout';
-import type { ChartSpec } from './chartTypes';
+import { CHART_KINDS, defaultChartSpec, isPlot, type ChartSpec } from './chartTypes';
 
 describe('chartHitTest', () => {
   const barSpec: ChartSpec = {
@@ -409,5 +409,73 @@ describe('category axis', () => {
       if (hit?.categoryIndex !== undefined) seen.add(hit.categoryIndex);
     }
     expect(seen.size).toBe(4);
+  });
+});
+
+/**
+ * Every plot answers with a trace, which is what the HUD draws from.
+ *
+ * Three kinds did not. `implicit`, `contour` and `heatmap` computed the value,
+ * the gradient and the position under the pointer, returned a readout — and
+ * dropped the geometry, so the crosshair, the bead and the feature badge never
+ * appeared on any of them. Nothing said so: the numbers were right, and only
+ * the marks were missing.
+ *
+ * The cause was two required fields. `slope` and `tangentSegment` are
+ * properties of a *curve*, and a surface has neither — a heatmap has a
+ * gradient, and an implicit plot's tangent belongs to its level set — so those
+ * three branches could not build a trace without inventing both.
+ */
+describe('the maths HUD has something to draw', () => {
+  const W = 520;
+  const H = 340;
+
+  const probe = (kind: Parameters<typeof defaultChartSpec>[0]) => {
+    const spec = defaultChartSpec(kind);
+    const layout = layoutChart(spec, W, H);
+    const mid = {
+      x: layout.plot.x + layout.plot.width * 0.5,
+      y: layout.plot.y + layout.plot.height * 0.5,
+    };
+    return chartHitTest(layout, mid, {
+      format: (v) => String(v),
+      categories: spec.categories,
+      seriesNames: spec.series.map((s) => s.name),
+      keyedOnCategories: false,
+    });
+  };
+
+  it('traces every plot kind', () => {
+    for (const kind of CHART_KINDS) {
+      if (!isPlot(kind)) continue;
+      const hit = probe(kind);
+      expect(hit, kind).not.toBeNull();
+      expect(hit!.mathTrace, `${kind} returned a readout with nothing to draw`).toBeTruthy();
+    }
+  });
+
+  it('gives every trace the rays the crosshair is drawn from', () => {
+    for (const kind of CHART_KINDS) {
+      if (!isPlot(kind)) continue;
+      const trace = probe(kind)!.mathTrace!;
+      expect(trace.crosshair.xRay, kind).toHaveLength(2);
+      expect(trace.crosshair.yRay, kind).toHaveLength(2);
+    }
+  });
+
+  /** A surface leans; it does not have a tangent. */
+  it('gives a surface a gradient rather than a slope', () => {
+    for (const kind of ['heatmap', 'contour'] as const) {
+      const trace = probe(kind)!.mathTrace!;
+      expect(trace.fieldVector, kind).toBeTruthy();
+      expect(trace.tangentSegment, kind).toBeUndefined();
+    }
+  });
+
+  /** And a curve has a tangent, which is what its readout quotes. */
+  it('gives a curve a slope', () => {
+    const trace = probe('function')!.mathTrace!;
+    expect(typeof trace.slope).toBe('number');
+    expect(trace.tangentSegment).toBeTruthy();
   });
 });

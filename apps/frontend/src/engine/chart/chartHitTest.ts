@@ -1,6 +1,7 @@
 import type { ChartLayout, Point } from './chartLayout';
 import { traceMathPlot, type MathTraceInfo } from './chartTrace';
 import { currentChartInk, type ChartInk } from './chartInk';
+import { mathText } from './mathText';
 import { seriesColor } from './chartTypes';
 
 /**
@@ -123,6 +124,26 @@ export function chartHitTest(
       const yVal = yMin + ((plot.y + plot.height - clampedY) / plot.height) * ySpan;
       const kind = layout.mathPlot.kind;
 
+      /**
+       * The rays the HUD draws from the reading back to the axes.
+       *
+       * Identical for every two-variable kind, and it was written out inside
+       * the two branches that happened to build a trace — which is why the
+       * three that did not (`implicit`, `contour`, `heatmap`) had no HUD at
+       * all: they computed the value, the gradient and the position, returned
+       * a readout, and dropped the geometry on the floor.
+       */
+      const planeCrosshair = {
+        xRay: [
+          { x: clampedX, y: clampedY },
+          { x: clampedX, y: plot.y + plot.height },
+        ] as [Point, Point],
+        yRay: [
+          { x: clampedX, y: clampedY },
+          { x: plot.x, y: clampedY },
+        ] as [Point, Point],
+      };
+
       if (kind === 'slopeField') {
         const curve = layout.mathPlot.curves[0];
         const slope = curve ? curve.evaluate(xVal, yVal) : NaN;
@@ -163,7 +184,7 @@ export function chartHitTest(
               screenPoint: { x: clampedX, y: clampedY },
               curveIndex: 0,
               curveColor: curve.color,
-              curveName: curve.source,
+              curveName: mathText(curve.source),
               slope,
               tangentSegment: needle,
               crosshair: {
@@ -259,10 +280,26 @@ export function chartHitTest(
                 name: curve.source,
                 value: fVal,
                 color: curve.color,
-                text: `F(x,y) = ${Number(fVal.toFixed(3))}${onCurve ? ' · On Curve' : ''}`,
+                text: `F(x,y) = ${Number(fVal.toFixed(3))}${onCurve ? ' · on the curve' : ''}`,
               },
             ],
             anchor: point,
+            mathTrace: {
+              x: xVal,
+              y: yVal,
+              screenPoint: { x: clampedX, y: clampedY },
+              curveIndex: 0,
+              curveColor: curve.color,
+              curveName: mathText(curve.source),
+              crosshair: planeCrosshair,
+              // Being *on* the curve is the one thing an implicit plot can
+              // tell you that the picture cannot: the band where F is near
+              // zero is a pixel wide, and the reading is what says you are in
+              // it. Marked as a found feature, which is what the badge is for.
+              snappedFeature: onCurve
+                ? { kind: 'root', x: xVal, y: yVal, label: 'On the curve', badgeText: 'F = 0' }
+                : undefined,
+            },
           };
         }
       } else {
@@ -297,10 +334,43 @@ export function chartHitTest(
                         color: curve.color,
                         text: `gradient = ${Number(gradMag.toFixed(2))}`,
                       },
-                    ]
+                  ]
                   : []),
               ],
               anchor: point,
+              mathTrace: {
+                x: xVal,
+                y: yVal,
+                screenPoint: { x: clampedX, y: clampedY },
+                curveIndex: 0,
+                curveColor: curve.color,
+                curveName: mathText(curve.source),
+                crosshair: planeCrosshair,
+                /**
+                 * The gradient, drawn as the needle the field kinds already
+                 * use — it points the way the surface climbs, which is the
+                 * question a contour map exists to answer and the one a
+                 * heatmap's colour can only approximate.
+                 */
+                fieldVector: Number.isFinite(gradMag) && gradMag > 0
+                  ? {
+                      u: dzdx,
+                      v: dzdy,
+                      magnitude: gradMag,
+                      angleDeg: (Math.atan2(dzdy, dzdx) * 180) / Math.PI,
+                      segment: [
+                        { x: clampedX, y: clampedY },
+                        {
+                          x: clampedX + (dzdx / gradMag) * 18,
+                          // Screen y grows downward while the surface's y
+                          // grows up, so the drawn needle takes the opposite
+                          // sign or it points downhill.
+                          y: clampedY - (dzdy / gradMag) * 18,
+                        },
+                      ] as [Point, Point],
+                    }
+                  : undefined,
+              },
             };
           }
         }
@@ -349,14 +419,14 @@ export function chartHitTest(
           Math.abs(trace.parametricVelocity?.vx ?? 0) < 1e-4 &&
           Math.abs(trace.parametricVelocity?.vy ?? 0) > 1e-4;
         const slopeStr = Number.isFinite(trace.slope)
-          ? `slope = ${Number(trace.slope.toFixed(2))}`
+          ? `slope = ${Number((trace.slope ?? 0).toFixed(2))}`
           : isVert
             ? 'vertical'
             : 'undefined';
 
         entries.push({
           name: 'dy/dx',
-          value: trace.slope,
+          value: trace.slope ?? 0,
           color: DERIVED_INK,
           text: slopeStr,
         });
@@ -364,7 +434,7 @@ export function chartHitTest(
         if (trace.tangentEquation) {
           entries.push({
             name: 'Tangent',
-            value: trace.slope,
+            value: trace.slope ?? 0,
             color: DERIVED_INK,
             text: trace.tangentEquation,
           });
@@ -400,10 +470,10 @@ export function chartHitTest(
           },
           {
             name: 'dy/dx',
-            value: trace.slope,
+            value: trace.slope ?? 0,
             color: DERIVED_INK,
             text: Number.isFinite(trace.slope)
-              ? `slope = ${Number(trace.slope.toFixed(2))}`
+              ? `slope = ${Number((trace.slope ?? 0).toFixed(2))}`
               : 'vertical',
           },
         ];
@@ -411,7 +481,7 @@ export function chartHitTest(
         if (trace.tangentEquation) {
           entries.push({
             name: 'Tangent',
-            value: trace.slope,
+            value: trace.slope ?? 0,
             color: DERIVED_INK,
             text: trace.tangentEquation,
           });
@@ -427,7 +497,7 @@ export function chartHitTest(
 
       // Default 1D Cartesian function: f(x)
       const varName = layout.mathPlot.variable || 'x';
-      const slopeStr = Number(trace.slope.toFixed(2)).toString();
+      const slopeStr = Number((trace.slope ?? 0).toFixed(2)).toString();
       const xStr = Number(trace.x.toFixed(3)).toString();
       const yStr = Number(trace.y.toFixed(3)).toString();
 
@@ -442,7 +512,7 @@ export function chartHitTest(
           },
           {
             name: `f'(${varName})`,
-            value: trace.slope,
+            value: trace.slope ?? 0,
             color: trace.curveColor,
             text: `slope = ${slopeStr}`,
           },
@@ -450,7 +520,7 @@ export function chartHitTest(
             ? [
                 {
                   name: 'Tangent',
-                  value: trace.slope,
+                  value: trace.slope ?? 0,
                   color: DERIVED_INK,
                   text: trace.tangentEquation,
                 },

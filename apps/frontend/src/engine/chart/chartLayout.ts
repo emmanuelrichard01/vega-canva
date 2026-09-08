@@ -52,6 +52,7 @@ import {
 import { contourLevels, marchingSquares } from './marchingSquares';
 import { slopeField, vectorField } from './vectorField';
 import { rampColorAt } from './colorRamps';
+import { mathText } from './mathText';
 import {
   bucketize,
   isBarLike,
@@ -2799,10 +2800,18 @@ function buildPlotLegend(
     ...spec,
     kind: 'line',
     series: curves.map((c, i) => ({
-      // The expression itself is the name: it is what the reader wants to know
-      // and what the author typed, and inventing "Series 1" beside it would be
-      // a label that says less than the thing it labels.
-      name: c.error ? `${c.source} — ${c.error}` : c.source,
+      /**
+       * The expression itself is the name: it is what the reader wants to know
+       * and what the author typed, and inventing "Series 1" beside it would be
+       * a label that says less than the thing it labels.
+       *
+       * Set rather than printed, so the legend reads `x² − y²` and not
+       * `x^2 - y^2`. Display only — `mathText` is a second *rendering* of the
+       * source and never a second copy of it, so what is stored and what is
+       * parsed are untouched. An error is left in plain text: a message about
+       * a formula that will not parse should not itself be prettified.
+       */
+      name: c.error ? `${c.source} — ${c.error}` : mathText(c.source),
       values: [],
       color: c.color ?? seriesColor(undefined, i, opts.palette),
     })),
