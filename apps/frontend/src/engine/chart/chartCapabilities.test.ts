@@ -369,3 +369,76 @@ describe('the palette', () => {
     expect(layout.bars[0].color).toBe(NOT_IN_ANY_PALETTE);
   });
 });
+
+/**
+ * The legend goes where it is told.
+ *
+ * `legendPosition` was on the spec, offered by the panel and copied across
+ * the CRDT boundary — and read by nothing at all. `buildLegend` pinned every
+ * entry to the bottom of the chart regardless, so the control moved a value
+ * nobody consulted and the legend never went anywhere.
+ */
+describe('legend placement', () => {
+  const base: ChartSpec = {
+    kind: 'bar',
+    categories: ['a', 'b'],
+    series: [
+      { name: 'Revenue', values: [1, 2] },
+      { name: 'Operating cost', values: [3, 4] },
+    ],
+    showLegend: true,
+  };
+
+  const at = (position: ChartSpec['legendPosition']) =>
+    layoutChart({ ...base, legendPosition: position }, W, H);
+
+  it('puts it above the plot for "top"', () => {
+    const l = at('top');
+    expect(l.legend.length).toBe(2);
+    for (const e of l.legend) expect(e.y).toBeLessThan(l.plot.y);
+  });
+
+  it('puts it below the plot for "bottom"', () => {
+    const l = at('bottom');
+    for (const e of l.legend) expect(e.y).toBeGreaterThan(l.plot.y + l.plot.height - 1);
+  });
+
+  it('puts it beside the plot for "right", and narrows the plot to fit', () => {
+    const right = at('right');
+    const bottom = at('bottom');
+
+    for (const e of right.legend) expect(e.x).toBeGreaterThan(right.plot.x + right.plot.width);
+    // The gutter has to come out of the plot: a legend placed beside a
+    // full-width plot is a legend drawn over the data.
+    expect(right.plot.width).toBeLessThan(bottom.plot.width);
+  });
+
+  /**
+   * Measured from the labels rather than a fixed gutter, so a long series
+   * name does not hang off the edge of the chart.
+   */
+  it('gives a long name the room it needs', () => {
+    const long = layoutChart(
+      {
+        ...base,
+        legendPosition: 'right',
+        series: [
+          { name: 'Revenue, net of returns and allowances', values: [1, 2] },
+          { name: 'B', values: [3, 4] },
+        ],
+      },
+      W,
+      H
+    );
+    const short = at('right');
+    expect(long.plot.width).toBeLessThan(short.plot.width);
+    for (const e of long.legend) expect(e.x).toBeLessThan(W);
+  });
+
+  it('reserves nothing when there is no legend', () => {
+    const off = layoutChart({ ...base, showLegend: false, legendPosition: 'right' }, W, H);
+    const on = at('right');
+    expect(off.legend).toEqual([]);
+    expect(off.plot.width).toBeGreaterThan(on.plot.width);
+  });
+});

@@ -16,7 +16,7 @@ import {
 import { useStore } from '../hooks/useStore';
 import type { ChartNode } from '../engine/model/schema';
 import type { ChartSpec, ChartSeries } from '../engine/chart/chartTypes';
-import { seriesColor } from '../engine/chart/chartTypes';
+import { getPaletteColors, seriesColor } from '../engine/chart/chartTypes';
 import { updateChart } from '../engine/chart/chartApply';
 import {
   chartToCsv,
@@ -28,7 +28,7 @@ import {
 } from '../engine/chart/chartCsv';
 import { POLL_INTERVALS, POLL_LABELS, syncFromUrl } from '../engine/chart/chartSync';
 import { liveStatus, setLiveInterval, subscribeLive } from '../engine/chart/chartLiveSync';
-import { ColorPickerPopover } from './ui/ColorPickerPopover';
+import { SeriesSwatch } from './SeriesSwatch';
 
 /**
  * The chart's data, as a sheet — and where the numbers come from.
@@ -126,6 +126,11 @@ export const ChartDataModal: React.FC<Props> = ({ nodeId, onClose }) => {
   const spec = node.chart;
   const categories = spec.categories ?? [];
   const series = spec.series ?? [];
+  /**
+   * The chart's own palette, so the sheet's swatches are the colours the
+   * chart is actually drawn from and move when the palette does.
+   */
+  const palette = getPaletteColors(spec.paletteId);
 
   const commit = (next: Partial<ChartSpec>) => updateChart(nodeId, { ...spec, ...next });
 
@@ -451,8 +456,11 @@ export const ChartDataModal: React.FC<Props> = ({ nodeId, onClose }) => {
                             together by `vertical-align` and a name whose width
                             was the pixel widths of its neighbours written down. */}
                         <div className="cdm__colHeadInner">
-                        <ColorPickerPopover
-                          color={s.color ?? seriesColor(undefined, si)}
+<SeriesSwatch
+                          label={s.name || `Series ${si + 1}`}
+                          value={seriesColor(s, si, palette)}
+                          palette={palette}
+                          defaultIndex={si % Math.max(1, palette.length)}
                           onChange={(color) =>
                             commit({
                               series: series.map((x, i) => (i === si ? { ...x, color } : x)),

@@ -1,4 +1,10 @@
-import { layoutChart, approximateMeasure, type ChartLayout, type Measure } from './chartLayout';
+import {
+  layoutChart,
+  approximateMeasure,
+  TOLERANCE_FILL_OPACITY,
+  type ChartLayout,
+  type Measure,
+} from './chartLayout';
 import type { ChartSpec } from './chartTypes';
 import { rectRing, roughLoop, roughPolyline, seedFor, type SketchLevel } from '../model/rough';
 import { currentChartInk, type ChartInk } from './chartInk';
@@ -173,19 +179,24 @@ export function paintLayout(layout: ChartLayout, options: ChartSvgOptions): stri
 
   if (layout.toleranceBand) {
     const tb = layout.toleranceBand;
-    const bandHeight = Math.max(1, tb.y2 - tb.y1);
-    const color = tb.color ?? '#10B981';
+    const right = layout.plot.x + layout.plot.width;
+    const bottom = layout.plot.y + layout.plot.height;
+
     out.push(
-      `<rect x="${layout.plot.x}" y="${tb.y1}" width="${layout.plot.width}" height="${bandHeight}" fill="${color}" fill-opacity="0.1" />`
+      `<rect x="${layout.plot.x}" y="${tb.y1}" width="${layout.plot.width}" height="${Math.max(1, tb.y2 - tb.y1)}" ` +
+        `fill="${tb.color}" fill-opacity="${TOLERANCE_FILL_OPACITY}" />`
     );
-    out.push(
-      `<line x1="${layout.plot.x}" y1="${tb.y1}" x2="${layout.plot.x + layout.plot.width}" y2="${tb.y1}" stroke="${color}" stroke-width="1" stroke-dasharray="3 3" opacity="0.6" />`
-    );
-    out.push(
-      `<line x1="${layout.plot.x}" y1="${tb.y2}" x2="${layout.plot.x + layout.plot.width}" y2="${tb.y2}" stroke="${color}" stroke-width="1" stroke-dasharray="3 3" opacity="0.6" />`
-    );
+
+    // Only where the corridor really ends. A cropped edge is the axis, not a
+    // limit, and a dashed rule there claims a bound the data has not got.
+    const edge = (y: number) =>
+      `<line x1="${layout.plot.x}" y1="${y}" x2="${right}" y2="${y}" stroke="${tb.color}" stroke-width="1" stroke-dasharray="3 3" opacity="0.6" />`;
+    if (!tb.cropped || tb.y1 > layout.plot.y + 0.5) out.push(edge(tb.y1));
+    if (!tb.cropped || tb.y2 < bottom - 0.5) out.push(edge(tb.y2));
+
     if (tb.label) {
-      out.push(label(tb.label, layout.plot.x + 6, tb.y1 + 4, layout.plot.width, 'left', 9, color, '600'));
+      const l = tb.label;
+      out.push(label(l.text, l.x, l.y, l.width, l.align, l.fontSize, tb.color, '600'));
     }
   }
 

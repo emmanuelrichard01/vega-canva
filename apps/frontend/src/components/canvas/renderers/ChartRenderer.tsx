@@ -8,7 +8,7 @@ import { ThemeService } from '../../../engine/ThemeService';
 import { EXPORT_CHROME } from '../../../engine/export/chrome';
 import { currentChartInk } from '../../../engine/chart/chartInk';
 import { chartHitTest, placeReadout, type ChartHit } from '../../../engine/chart/chartHitTest';
-import { formatValue } from '../../../engine/chart/chartLayout';
+import { formatValue, TOLERANCE_FILL_OPACITY } from '../../../engine/chart/chartLayout';
 import {
   chartCapabilities,
   isRadial,
@@ -813,44 +813,56 @@ const CategoryBand: React.FC<{ hit: ChartHit | null; layout: ChartLayout; ink: C
 const ToleranceBand: React.FC<{ layout: ChartLayout }> = ({ layout }) => {
   const tb = layout.toleranceBand;
   if (!tb) return null;
-  const bandHeight = Math.max(1, tb.y2 - tb.y1);
-  const color = tb.color ?? '#10B981';
+
   return (
     <Group listening={false}>
       <Rect
         x={layout.plot.x}
         y={tb.y1}
         width={layout.plot.width}
-        height={bandHeight}
-        fill={color}
-        opacity={0.12}
+        height={Math.max(1, tb.y2 - tb.y1)}
+        fill={tb.color}
+        // From the layout, so the canvas and the file cannot disagree about
+        // it. They did: 0.12 here and 0.10 in the exporter.
+        opacity={TOLERANCE_FILL_OPACITY}
         perfectDrawEnabled={false}
       />
-      <Line
-        points={[layout.plot.x, tb.y1, layout.plot.x + layout.plot.width, tb.y1]}
-        stroke={color}
-        strokeWidth={1}
-        dash={[3, 3]}
-        opacity={0.6}
-        perfectDrawEnabled={false}
-      />
-      <Line
-        points={[layout.plot.x, tb.y2, layout.plot.x + layout.plot.width, tb.y2]}
-        stroke={color}
-        strokeWidth={1}
-        dash={[3, 3]}
-        opacity={0.6}
-        perfectDrawEnabled={false}
-      />
+      {/*
+        An edge is drawn only where the corridor actually ends.
+
+        A cropped band's cut edge is not a boundary — the range continues past
+        the axis — so drawing the same dashed rule there claims a limit that
+        is not in the data.
+      */}
+      {!tb.cropped || tb.y1 > layout.plot.y + 0.5 ? (
+        <Line
+          points={[layout.plot.x, tb.y1, layout.plot.x + layout.plot.width, tb.y1]}
+          stroke={tb.color}
+          strokeWidth={1}
+          dash={[3, 3]}
+          opacity={0.6}
+          perfectDrawEnabled={false}
+        />
+      ) : null}
+      {!tb.cropped || tb.y2 < layout.plot.y + layout.plot.height - 0.5 ? (
+        <Line
+          points={[layout.plot.x, tb.y2, layout.plot.x + layout.plot.width, tb.y2]}
+          stroke={tb.color}
+          strokeWidth={1}
+          dash={[3, 3]}
+          opacity={0.6}
+          perfectDrawEnabled={false}
+        />
+      ) : null}
       {tb.label && (
         <Text
-          text={tb.label}
-          x={layout.plot.x + 6}
-          y={tb.y1 + 4}
-          width={layout.plot.width}
-          fontSize={9}
+          text={tb.label.text}
+          x={tb.label.x}
+          y={tb.label.y}
+          width={tb.label.width}
+          fontSize={tb.label.fontSize}
           fontStyle="600"
-          fill={color}
+          fill={tb.color}
           listening={false}
         />
       )}

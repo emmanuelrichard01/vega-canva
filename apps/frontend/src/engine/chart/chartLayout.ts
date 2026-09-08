@@ -268,6 +268,16 @@ export interface ChartPolarSpoke {
   y2: number;
 }
 
+export interface ChartToleranceBand {
+  y1: number;
+  y2: number;
+  color: string;
+  /** Placed by the layout, because a thin band has no room inside it. */
+  label?: ChartLabel;
+  /** True when the corridor runs past the axis and has been cut to the plot. */
+  cropped: boolean;
+}
+
 export interface ChartReference extends ChartGridLine {
   color: string;
   /** Dashed reads as an annotation; solid reads as another series. */
@@ -331,7 +341,15 @@ export interface ChartLayout {
   /** Vertical axis unit/name label. */
   yAxisTitle?: ChartLabel | null;
   /** Shaded target corridor / tolerance band across the value axis. */
-  toleranceBand?: { y1: number; y2: number; label?: string; color?: string } | null;
+  /**
+   * The corridor a value is meant to stay inside.
+   *
+   * Carries its own label placement and whether it was cropped, so neither
+   * painter has to decide -- they disagreed about its opacity when they did
+   * (0.12 on the canvas, 0.10 in the file) and both had the same green
+   * literal typed into them.
+   */
+  toleranceBand?: ChartToleranceBand | null;
   /** Radar only: the value rings and the category spokes. */
   rings: ChartPolarRing[];
   spokes: ChartPolarSpoke[];
@@ -534,25 +552,47 @@ export function layoutChart(
     };
   }
 
-  // The legend sits in a band of its own under the plot, clear of the
-  // category labels above it.
-  const legendHeight = opts.showLegend ? LEGEND_SIZE + 16 : 0;
-  const bottomReserved = PAD + legendHeight + footnoteReserved;
+  /**
+   * The legend's band, on whichever side it is on.
+   *
+   * `legendPosition` was on the spec, offered by the panel and copied across
+   * the CRDT boundary — and read by nothing at all. `buildLegend` pinned the
+   * entries to `height - PAD - LEGEND_SIZE` regardless, so the control moved
+   * a value nobody consulted and the legend never left the bottom.
+   *
+   * Reserving the space is the half that makes it work: a legend placed on
+   * the right without narrowing the plot is a legend drawn over the data.
+   */
+  const legendSide = opts.showLegend ? (spec.legendPosition ?? 'bottom') : 'none';
+  const legendBand = legendSide === 'top' || legendSide === 'bottom' ? LEGEND_SIZE + 16 : 0;
+  const legendGutter =
+    legendSide === 'right' ? legendWidth(spec, opts, measure) : 0;
+
+  const bottomReserved =
+    PAD + (legendSide === 'bottom' ? legendBand : 0) + footnoteReserved;
+  // A legend along the top pushes everything below it down, exactly as the
+  // title does — so it is added to `top` rather than handled separately.
+  if (legendSide === 'top') top += legendBand;
+
+  // Passed as a narrower canvas rather than threaded through nine
+  // signatures: every layout already measures itself against `width`, so
+  // taking the gutter off it once is the whole change.
+  const usable = Math.max(40, width - legendGutter);
 
   let layout = isRadial(spec.kind)
-    ? layoutRadial(spec, opts, width, height, top, bottomReserved, title, measure, empty)
+    ? layoutRadial(spec, opts, usable, height, top, bottomReserved, title, measure, empty)
     : isPolar(spec.kind)
-    ? layoutPolar(spec, opts, width, height, top, bottomReserved, title, measure, empty)
+    ? layoutPolar(spec, opts, usable, height, top, bottomReserved, title, measure, empty)
     : isTwoVariable(spec.kind)
-    ? layoutField(spec, opts, width, height, top, bottomReserved, title, measure, empty)
+    ? layoutField(spec, opts, usable, height, top, bottomReserved, title, measure, empty)
     : isPlot(spec.kind)
-    ? layoutPlot(spec, opts, width, height, top, bottomReserved, title, measure, empty)
+    ? layoutPlot(spec, opts, usable, height, top, bottomReserved, title, measure, empty)
     : (() => {
         let prepared = spec;
         if (isPercentStacked(spec.kind)) {
           prepared = toPercentStack(spec);
         }
-        return layoutCartesian(prepared, opts, width, height, top, bottomReserved, title, measure, empty);
+        return layoutCartesian(prepared, opts, usable, height, top, bottomReserved, title, measure, empty);
       })();
 
   let xAxisTitle: ChartLabel | null = null;
@@ -579,19 +619,54 @@ export function layoutChart(
     };
   }
 
-  let toleranceBand: { y1: number; y2: number; label?: string; color?: string } | null = null;
+  let toleranceBand: ChartToleranceBand | null = null;
   if (spec.toleranceBand && layout.domain && !isRadial(spec.kind) && !isPolar(spec.kind)) {
     const [dMin, dMax] = layout.domain;
-    if (dMax > dMin) {
+    const lo = Math.min(spec.toleranceBand.min, spec.toleranceBand.max);
+    const hi = Math.max(spec.toleranceBand.min, spec.toleranceBand.max);
+
+    // A corridor entirely off the axis is not drawn. It can only happen when
+    // somebody has pinned the bounds themselves, since the domain otherwise
+    // widens to hold it -- and a band flattened against the edge would assert
+    // a range it does not have.
+    if (dMax > dMin && hi >= dMin && lo <= dMax) {
+      const top = layout.plot.y;
+      const bottom = layout.plot.y + layout.plot.height;
       const scaleY = (v: number) =>
-        layout.plot.y + layout.plot.height - ((v - dMin) / (dMax - dMin)) * layout.plot.height;
-      const yA = scaleY(spec.toleranceBand.max);
-      const yB = scaleY(spec.toleranceBand.min);
+        bottom - ((v - dMin) / (dMax - dMin)) * layout.plot.height;
+
+      /**
+       * Clamped to the plot.
+       *
+       * It was not, so a corridor reaching past the axis was drawn past the
+       * axis: a translucent rectangle over the title and the tick labels,
+       * which reads as a rendering fault rather than as a range.
+       */
+      const rawTop = scaleY(hi);
+      const rawBottom = scaleY(lo);
+      const y1 = Math.max(top, Math.min(bottom, rawTop));
+      const y2 = Math.max(top, Math.min(bottom, rawBottom));
+
       toleranceBand = {
-        y1: Math.min(yA, yB),
-        y2: Math.max(yA, yB),
-        label: spec.toleranceBand.label,
-        color: spec.toleranceBand.color,
+        y1,
+        y2,
+        color: spec.toleranceBand.color ?? TOLERANCE_INK,
+        cropped: rawTop < top - 0.5 || rawBottom > bottom + 0.5,
+        label: spec.toleranceBand.label
+          ? {
+              text: spec.toleranceBand.label,
+              x: layout.plot.x + PAD,
+              /**
+               * Above the corridor when it is too thin to hold the words, and
+               * inside it otherwise. A label pinned inside a four-pixel band
+               * hangs out of both edges and looks like it belongs to neither.
+               */
+              y: y2 - y1 >= LABEL_SIZE + 6 ? y1 + 3 : Math.max(layout.plot.y, y1 - LABEL_SIZE - 2),
+              width: layout.plot.width - PAD * 2,
+              align: 'left',
+              fontSize: LABEL_SIZE,
+            }
+          : undefined,
       };
     }
   }
@@ -630,7 +705,29 @@ function layoutCartesian(
   const waterfall = kind === 'waterfall' ? runningTotals(spec) : null;
 
   const extent = valueExtent(spec, { stacked, waterfall });
-  const nice = niceDomain(spec.yMin ?? extent.min, spec.yMax ?? extent.max, 5, opts.includeZero);
+
+  /**
+   * The annotations count toward the axis.
+   *
+   * A target outside the domain was silently dropped -- `buildReference`
+   * returned `null` and nothing said why -- so setting a goal of 200 on data
+   * that peaks at 100 drew no line at all. That is precisely the case a target
+   * is *for*: the whole reason to mark 200 is to see how far short you are.
+   * The tolerance corridor had the same hole, and worse, since it was not even
+   * clamped: a band above the domain was drawn over the title.
+   *
+   * So both extend the extent before the axis is chosen, exactly as another
+   * series would. An explicit `yMin`/`yMax` still wins -- somebody who typed
+   * a bound meant it, and cropping a target out of view is then their
+   * decision rather than the layout's.
+   */
+  const annotated = annotationExtent(spec, extent);
+  const nice = niceDomain(
+    spec.yMin ?? annotated.min,
+    spec.yMax ?? annotated.max,
+    5,
+    opts.includeZero
+  );
   // An explicit bound is honoured exactly: someone who typed 100 wants 100,
   // not the nearest round number above it.
   let domain: Domain = [spec.yMin ?? nice.domain[0], spec.yMax ?? nice.domain[1]];
@@ -2635,6 +2732,50 @@ function valueExtent(
  * of the plot because the real target is off the scale is a drawing that says
  * the target was met.
  */
+/**
+ * The value extent, widened to hold whatever is annotated on top of it.
+ *
+ * Separate from `valueExtent` because the two answer different questions:
+ * that one is "how big are the numbers", this one is "how much axis do we
+ * need". Keeping them apart is what stops a target line quietly changing what
+ * counts as the data's own range -- which matters for `includeZero`, for the
+ * bar baseline, and for anything else that asks about the data rather than
+ * about the picture.
+ */
+/**
+ * The corridor's default ink.
+ *
+ * One definition, where there were two: `#10B981` was typed into the Konva
+ * renderer and again into the SVG exporter, which is how they came to draw it
+ * at two different opacities without anybody noticing. Green because a
+ * tolerance corridor is the one annotation whose meaning genuinely is "this is
+ * the good region" -- unlike a delta against a target, whose sign says nothing
+ * about whether the news is good.
+ */
+export const TOLERANCE_INK = '#10B981';
+
+/** How solid the corridor's fill is, in both painters. */
+export const TOLERANCE_FILL_OPACITY = 0.12;
+
+function annotationExtent(
+  spec: ChartSpec,
+  extent: { min: number; max: number }
+): { min: number; max: number } {
+  let { min, max } = extent;
+
+  const consider = (v: number | undefined) => {
+    if (typeof v !== 'number' || !Number.isFinite(v)) return;
+    if (v < min) min = v;
+    if (v > max) max = v;
+  };
+
+  consider(spec.reference?.value);
+  consider(spec.toleranceBand?.min);
+  consider(spec.toleranceBand?.max);
+
+  return { min, max };
+}
+
 function buildReference(
   spec: ChartSpec,
   domain: Domain,
@@ -2645,6 +2786,12 @@ function buildReference(
 ): ChartReference | null {
   const ref = spec.reference;
   if (!ref || !Number.isFinite(ref.value)) return null;
+  /**
+   * Outside the domain the line is not drawn, and after `annotationExtent`
+   * that can only happen when somebody has pinned `yMin`/`yMax` themselves.
+   * Clamping instead would draw the rule along the axis and assert a value it
+   * does not have -- worse than absent, because it looks like a reading.
+   */
   if (ref.value < domain[0] || ref.value > domain[1]) return null;
 
   const at = value(ref.value);
@@ -2876,8 +3023,46 @@ function buildLegend(
 
   const GAP = 16;
   const out: ChartLegendEntry[] = [];
+  const side = spec.legendPosition ?? 'bottom';
+
+  /**
+   * A column down the right, or a wrapping row.
+   *
+   * The two are different enough to be separate loops: a column needs no
+   * wrapping and a row needs no fixed `x`, and folding them together produced
+   * a single loop with a branch in every line of it.
+   */
+  if (side === 'right') {
+    /**
+     * Just past the canvas the plot was given.
+     *
+     * `width` here is already the *narrowed* canvas — the gutter was taken
+     * off before the plot was laid out — so the column starts where that ends
+     * rather than being measured back from it. Subtracting the column width
+     * from an already-narrowed canvas put the legend on top of the plot,
+     * which is the one thing reserving the gutter was for.
+     */
+    const columnX = width + PAD;
+    let y = PAD;
+    for (const e of entries) {
+      out.push({
+        label: e.label,
+        color: e.color,
+        x: columnX,
+        y,
+        swatch: LEGEND_SWATCH,
+        textX: columnX + LEGEND_SWATCH + 5,
+        fontSize: LEGEND_SIZE,
+      });
+      y += LEGEND_SIZE + 6;
+    }
+    return out;
+  }
+
   let x = PAD;
-  let y = height - PAD - LEGEND_SIZE;
+  // Top sits under the title; bottom sits in the band reserved beneath the
+  // plot. Both are the same wrapping run, started from a different line.
+  let y = side === 'top' ? PAD : height - PAD - LEGEND_SIZE;
 
   for (const e of entries) {
     const textWidth = measure(e.label, LEGEND_SIZE);
@@ -2885,7 +3070,9 @@ function buildLegend(
 
     if (x > PAD && x + entryWidth > width - PAD) {
       x = PAD;
-      y -= LEGEND_SIZE + 5;
+      // Downward at the top and upward at the bottom, so a second row grows
+      // into the space reserved for it rather than over the plot.
+      y += side === 'top' ? LEGEND_SIZE + 5 : -(LEGEND_SIZE + 5);
     }
 
     out.push({
@@ -2901,6 +3088,37 @@ function buildLegend(
   }
 
   return out;
+}
+
+/** The widest entry, plus its swatch and the gap to the plot. */
+function legendColumnWidth(
+  entries: Array<{ label: string }>,
+  measure: Measure
+): number {
+  const widest = Math.max(0, ...entries.map((e) => measure(e.label, LEGEND_SIZE)));
+  return LEGEND_SWATCH + 5 + widest + PAD * 2;
+}
+
+/**
+ * How much width a right-hand legend needs, before the plot is laid out.
+ *
+ * Measured from the same entry list `buildLegend` will produce, rather than
+ * guessed at — a fixed gutter is either too wide for "A"/"B" or too narrow
+ * for a real series name, and the second case is a legend that overhangs the
+ * edge of the chart.
+ */
+function legendWidth(
+  spec: ChartSpec,
+  opts: ReturnType<typeof resolveChartOptions>,
+  measure: Measure
+): number {
+  if (!opts.showLegend) return 0;
+  const labels =
+    isRadial(spec.kind) || spec.kind === 'funnel'
+      ? spec.categories
+      : spec.series.map((series, i) => series.name || `Series ${i + 1}`);
+  if (labels.length === 0) return 0;
+  return legendColumnWidth(labels.map((label) => ({ label })), measure);
 }
 
 function clamp(value: number, lo: number, hi: number): number {

@@ -487,8 +487,12 @@ const LabelFields: React.FC<{
       />
     </Row>
 
-    {(spec.showLegend ?? true) && (
-      <Row label="Legend at">
+    {/* Only once there is a legend to place. It showed whenever the toggle
+        was on *by default*, including on the single-series charts where
+        `resolveChartOptions` suppresses the legend entirely — so the control
+        offered three positions for something not on screen. */}
+    {(spec.showLegend ?? (isRadial(spec.kind) || spec.kind === 'funnel' || spec.series.length > 1)) && (
+      <Row label="Legend">
         <SegmentedControl
           fill
           ariaLabel="Legend position"
@@ -505,21 +509,21 @@ const LabelFields: React.FC<{
 
     {spec.showValues && can.valueLabels && (
       <>
-        <Row label="Place">
+        <Row label="Sit" hint="Where each number sits against its mark">
           <SegmentedControl
             fill
             ariaLabel="Where value labels sit"
             value={spec.valuePlacement ?? 'auto'}
             onChange={(v) => patch({ valuePlacement: v as ChartSpec['valuePlacement'] })}
             segments={[
-              { value: 'auto', label: 'Auto' },
-              { value: 'inside', label: 'In' },
-              { value: 'outside', label: 'Out' },
-              { value: 'center', label: 'Middle' },
+              { value: 'auto', label: 'Auto', hint: 'Inside where it fits, outside where it does not' },
+              { value: 'inside', label: 'Inside' },
+              { value: 'outside', label: 'Outside' },
+              { value: 'center', label: 'Centre' },
             ]}
           />
         </Row>
-        <Row label="Read as">
+        <Row label="Show as" hint="The number, its share of the total, or both">
           <SegmentedControl
             fill
             ariaLabel="What a value label says"
@@ -539,7 +543,7 @@ const LabelFields: React.FC<{
         are the high and the low. Offered only where there is a run long enough
         for that to be true. */}
     {spec.showValues && (spec.kind === 'line' || spec.kind === 'area') && (
-      <Row label="Label">
+      <Row label="On" hint="Forty numbers on a line is a wall; the high and the low are the story">
         <SegmentedControl
           fill
           ariaLabel="Which points carry a value label"

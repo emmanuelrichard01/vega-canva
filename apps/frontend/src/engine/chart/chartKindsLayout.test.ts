@@ -308,12 +308,39 @@ describe('reference line', () => {
     expect(l.reference!.label?.text).toBe('Target');
   });
 
-  it('is dropped, not clamped, when it falls outside the axis', () => {
+  /**
+   * A target above the data widens the axis to hold it.
+   *
+   * It used to be dropped: `buildReference` returned `null` for anything
+   * outside the domain, so setting a goal of 200 on data that peaks at 100
+   * drew no line and said nothing. That is exactly the case a target is for —
+   * the whole reason to mark 200 is to see how far short you are.
+   */
+  it('widens the axis to hold a target above the data', () => {
+    const l = layoutChart(spec({ reference: { value: 400, label: 'Goal' } }), W, H);
+    expect(l.domain[1]).toBeGreaterThanOrEqual(400);
+    expect(l.reference).not.toBeNull();
+    expect(l.reference!.y1).toBeGreaterThanOrEqual(l.plot.y);
+    expect(l.reference!.y1).toBeLessThanOrEqual(l.plot.y + l.plot.height);
+  });
+
+  it('widens it downward for a target below the data too', () => {
+    const l = layoutChart(spec({ reference: { value: -250 } }), W, H);
+    expect(l.domain[0]).toBeLessThanOrEqual(-250);
+    expect(l.reference).not.toBeNull();
+  });
+
+  it('is dropped, not clamped, when a pinned axis puts it out of reach', () => {
     /**
      * A target pinned to the top of the plot because the real target is off
      * the scale is a drawing that says the target was met.
+     *
+     * With an automatic axis this no longer arises — the axis grows instead.
+     * It still arises when somebody has fixed the bounds themselves, and then
+     * cropping the target out of view is their decision rather than the
+     * layout's, so the rule must be absent rather than moved.
      */
-    const l = layoutChart(spec({ reference: { value: 9999 } }), W, H);
+    const l = layoutChart(spec({ reference: { value: 9999 }, yMax: 100 }), W, H);
     expect(l.reference).toBeNull();
   });
 });
