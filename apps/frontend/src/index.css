@@ -18557,9 +18557,22 @@ html[data-precise] .canvas-container[data-cursor-mode] .konvajs-content canvas {
   position: sticky;
   top: 0;
   z-index: 1;
-  padding: 0;
   background: var(--surface-primary);
   border-bottom: 1px solid var(--border-divider);
+}
+
+/* The column heads alone give up their padding, because their contents are a
+   flex row that carries its own.
+
+   This was `padding: 0` on every `thead th`, which at one class and two type
+   selectors outranked `.cdm__corner`'s own padding — so the corner's
+   "Category" sat flush against the frame while every other cell in that
+   column was inset by 16. A rule that reaches wider than the thing it is
+   about will eventually collide with something, and the collision is silent:
+   nothing says the padding you wrote is being overridden. */
+.cdm__table thead .cdm__colHead,
+.cdm__table thead .cdm__gutter {
+  padding: 0;
 }
 
 .cdm__corner,

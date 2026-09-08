@@ -1369,8 +1369,7 @@ function layoutPolar(
   measure: Measure,
   empty: ChartLayout
 ): ChartLayout {
-  // Room for the category names, which sit outside the outermost ring.
-  const labelRoom = Math.max(...spec.categories.map((c) => measure(c, LABEL_SIZE)), 0) + 8;
+
 
   const plot: Rect = {
     x: PAD,
@@ -1389,10 +1388,41 @@ function layoutPolar(
 
   const cx = plot.x + plot.width / 2;
   const cy = plot.y + plot.height / 2;
-  const radius = Math.max(
-    8,
-    Math.min(plot.width, plot.height) / 2 - Math.min(labelRoom, plot.width / 4)
-  );
+  /**
+   * The largest radius whose labels still fit, solved per spoke.
+   *
+   * It used to be `min(w, h) / 2 - widestLabel`: the widest name's full width
+   * taken off the radius in *every* direction, including twelve o'clock where
+   * a label needs only its own height. On a chart whose categories are words
+   * like "Reliability" that is sixty pixels off the radius on all four sides,
+   * and it is why the radar came out small — a third of the space went to
+   * clearance nothing was using.
+   *
+   * Each label sits at `radius + LABEL_GAP` along its spoke and is aligned by
+   * which side it is on, so its extent from the centre is exactly
+   * `(r + gap)·|cos θ| + halfWidth` across and `(r + gap)·|sin θ| + halfHeight`
+   * down. Both are linear in `r`, so the largest `r` that keeps every label
+   * inside the plot is a minimum over the spokes rather than a guess — and a
+   * chart with short names now gets nearly the whole box.
+   */
+  const LABEL_GAP = 10;
+  const halfHeight = LABEL_SIZE / 2;
+
+  let radius = Math.min(plot.width, plot.height) / 2 - LABEL_GAP;
+  for (let i = 0; i < n; i += 1) {
+    const angle = (i / n) * Math.PI * 2 - Math.PI / 2;
+    const cos = Math.abs(Math.cos(angle));
+    const sin = Math.abs(Math.sin(angle));
+    const width = measure(spec.categories[i] ?? '', LABEL_SIZE) + 2;
+    // Centred near the top and bottom, where the label straddles its spoke;
+    // to one side elsewhere, where it hangs off it. Decided by the angle
+    // rather than by the radius, so it does not depend on the answer.
+    const halfWidth = cos < 0.25 ? width / 2 : width;
+
+    if (cos > 1e-6) radius = Math.min(radius, (plot.width / 2 - halfWidth) / cos - LABEL_GAP);
+    if (sin > 1e-6) radius = Math.min(radius, (plot.height / 2 - halfHeight) / sin - LABEL_GAP);
+  }
+  radius = Math.max(8, radius);
 
   let max = 0;
   for (const s of spec.series) {
@@ -1433,9 +1463,24 @@ function layoutPolar(
 
   spec.series.forEach((s, si) => {
     const color = seriesColor(s, si, opts.palette);
-    const points = s.values
-      .slice(0, n)
-      .map((v, i) => pointAt(i, scale(typeof v === 'number' ? v : 0)));
+    /**
+     * One point per spoke, and never a negative radius.
+     *
+     * The domain starts at zero, so `scale` returns a negative length for a
+     * negative value — which `pointAt` then draws on the *opposite* spoke,
+     * silently reporting a value against the wrong category. Clamped to the
+     * centre, which is what a radar can honestly say about a number below its
+     * floor.
+     *
+     * Built over `n` rather than over the series' own length, so a short
+     * series is closed at the centre instead of producing a polygon with
+     * fewer corners than there are spokes.
+     */
+    const points = Array.from({ length: n }, (_, i) => {
+      const v = s.values[i];
+      const value = typeof v === 'number' && Number.isFinite(v) ? v : 0;
+      return pointAt(i, Math.max(0, scale(value)));
+    });
     if (points.length < 3) return;
 
     // Closed, because a radar's outline is a shape and not a run: leaving the
@@ -1453,12 +1498,19 @@ function layoutPolar(
   });
 
   const categoryLabels: ChartLabel[] = spec.categories.map((text, i) => {
-    const p = pointAt(i, radius + 10);
-    // The label is placed by which side of the circle its spoke points at, so
-    // it never overlaps the shape: left of the centre it is right-aligned.
-    const dx = p.x - cx;
+    const p = pointAt(i, radius + LABEL_GAP);
+    /**
+     * Placed by which side of the circle its spoke points at, so it never
+     * overlaps the shape: left of the centre it is right-aligned.
+     *
+     * Tested on the angle rather than on `|dx| < radius * 0.25`, which is the
+     * same question asked in a way that depends on the radius — and the radius
+     * is now solved *from* this decision, so asking it the other way round
+     * would be circular.
+     */
+    const cos = Math.cos(angleAt(i));
     const align: 'left' | 'center' | 'right' =
-      Math.abs(dx) < radius * 0.25 ? 'center' : dx > 0 ? 'left' : 'right';
+      Math.abs(cos) < 0.25 ? 'center' : cos > 0 ? 'left' : 'right';
     const w = measure(text, LABEL_SIZE) + 2;
     return {
       text,

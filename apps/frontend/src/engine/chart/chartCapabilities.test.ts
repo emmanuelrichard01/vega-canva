@@ -600,3 +600,107 @@ describe('grid lines', () => {
     expect(l.zeroRule).toBeNull();
   });
 });
+
+/**
+ * The radar, which came out a third smaller than it needed to be.
+ *
+ * The radius was `min(w, h) / 2 - widestLabel`: the widest name's *full width*
+ * taken off in every direction, including twelve o'clock where a label needs
+ * only its own height. On categories like "Reliability" that is sixty pixels
+ * of clearance on all four sides, most of it against nothing.
+ */
+describe('radar', () => {
+  const radar = (categories: string[], over: Partial<ChartSpec> = {}): ChartSpec => ({
+    kind: 'radar',
+    categories,
+    series: [{ name: 'Us', values: categories.map((_, i) => i + 1) }],
+    ...over,
+  });
+
+  /** The outermost ring's radius, which is what "how big is it" means here. */
+  const radiusOf = (spec: ChartSpec, w = W, h = H) => {
+    const l = layoutChart(spec, w, h);
+    return Math.max(...l.rings.map((r) => r.radius), 0);
+  };
+
+  it('fills most of the box when the names are short', () => {
+    const r = radiusOf(radar(['A', 'B', 'C', 'D', 'E']));
+    const half = Math.min(W, H) / 2;
+    // Was under half of the available half-dimension; the labels are two
+    // characters wide and were still costing the radius their full width.
+    expect(r).toBeGreaterThan(half * 0.62);
+  });
+
+  /**
+   * On a tall, narrow chart the *width* is what binds, so this is where a long
+   * name has to cost something. On a wide one it costs nothing at all — the
+   * height runs out first and the names still fit, which is the whole point
+   * of solving per direction rather than subtracting a worst case from both.
+   */
+  it('gives up room to long names where the width is what binds', () => {
+    const short = radiusOf(radar(['A', 'B', 'C', 'D', 'E', 'F']), 300, 460);
+    const long = radiusOf(
+      radar(['Reliability', 'Security', 'Support', 'Price', 'Speed', 'Docs']),
+      300,
+      460
+    );
+    expect(long).toBeLessThan(short);
+    // ...and not by the whole width of the longest name, which is what made
+    // the old radar small.
+    expect(long).toBeGreaterThan(short * 0.45);
+  });
+
+  it('costs nothing for a long name when the height binds first', () => {
+    const short = radiusOf(radar(['A', 'B', 'C', 'D', 'E', 'F']), 700, 300);
+    const long = radiusOf(
+      radar(['Reliability', 'Security', 'Support', 'Price', 'Speed', 'Docs']),
+      700,
+      300
+    );
+    expect(long).toBe(short);
+  });
+
+  it('keeps every label inside the chart', () => {
+    const l = layoutChart(
+      radar(['Reliability and uptime', 'Security', 'Support', 'Price', 'Speed', 'Docs']),
+      W,
+      H
+    );
+    for (const label of l.categoryLabels) {
+      expect(label.x).toBeGreaterThanOrEqual(-0.5);
+      expect(label.x + label.width).toBeLessThanOrEqual(W + 0.5);
+      expect(label.y).toBeGreaterThanOrEqual(-0.5);
+      expect(label.y + label.fontSize).toBeLessThanOrEqual(H + 0.5);
+    }
+  });
+
+  /**
+   * The domain starts at zero, so `scale` returns a negative length for a
+   * negative value — which `pointAt` then drew on the *opposite* spoke,
+   * reporting the value against the wrong category.
+   */
+  it('puts a value below zero at the centre, not on the far side', () => {
+    const spec = radar(['A', 'B', 'C', 'D'], {
+      series: [{ name: 'Us', values: [10, -10, 10, 10] }],
+    });
+    const l = layoutChart(spec, W, H);
+    const centre = { x: l.rings[0].cx, y: l.rings[0].cy };
+    const negative = l.dots.find((d) => d.categoryIndex === 1)!;
+    expect(Math.hypot(negative.x - centre.x, negative.y - centre.y)).toBeLessThan(1);
+  });
+
+  it('closes the shape over every spoke, even for a short series', () => {
+    const l = layoutChart(
+      radar(['A', 'B', 'C', 'D', 'E'], { series: [{ name: 'Us', values: [1, 2] }] }),
+      W,
+      H
+    );
+    // Five spokes, five points, plus the repeat that closes the ring.
+    expect(l.runs[0].points).toHaveLength(6);
+  });
+
+  it('refuses to draw fewer than three spokes', () => {
+    // Two spokes is a line and one is a point; neither is a radar.
+    expect(layoutChart(radar(['A', 'B']), W, H).rings).toEqual([]);
+  });
+});
