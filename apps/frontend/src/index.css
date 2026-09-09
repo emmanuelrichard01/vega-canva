@@ -5634,6 +5634,29 @@ input.slider__value:focus-visible {
   to   { opacity: 1; transform: translateY(0); }
 }
 
+/* A floating panel fades and does not slide.
+
+   The entrance animates `transform`, and a floating panel *uses* `transform`
+   to sit on its anchor — `placeRail` returns an edge-centre so the panel's own
+   size is applied in CSS. An animation on the same property wins for its whole
+   140ms, so the panel would appear half its width and half its height away from
+   where it belongs and then snap into place on the last frame.
+
+   After the `[data-side]` rules on purpose: those set `animation-name` at the
+   same specificity, so a float that also carries `data-side='top'` — which
+   every one of them does — would otherwise take the sliding entrance back.
+
+   Nothing is lost: the three-pixel rise reads as "this came from the button",
+   and a panel placed against the artwork did not come from the button. */
+.ctx-popover[data-float] {
+  animation-name: ctxFadeIn;
+}
+
+@keyframes ctxFadeIn {
+  from { opacity: 0; }
+  to   { opacity: 1; }
+}
+
 /* The rail is chrome over live work: at broadcast rate it must never be the
    thing that costs a frame. Under reduced motion it simply appears. */
 @media (prefers-reduced-motion: reduce) {

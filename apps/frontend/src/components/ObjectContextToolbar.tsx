@@ -285,6 +285,15 @@ import {
   ALIGN_BUTTONS,
   SHAPE_CHOICES,
 } from './toolbar/railConstants';
+import { setRailSubject } from './toolbar/railSubject';
+import { SHAPE_BY_PRESET } from './workspace/shapeCatalog';
+import {
+  SHAPE_FACETS,
+  SHAPE_GLYPH,
+  SHAPE_TILE,
+  presetForGeometry,
+  shapeGroups,
+} from './workspace/shapePicker';
 import { VectorBooleanSection } from './toolbar/VectorBooleanSection';
 import { cornerRadiiOf } from '../engine/model/cornerRadii';
 
@@ -370,6 +379,8 @@ export const ObjectContextToolbar: React.FC<Props> = ({ selectedId, selectedIds,
    * below that runs on some renders and not others.
    */
   const [otherShapesOpen, setOtherShapesOpen] = useState(false);
+  /** Which family the swapper is showing. A view, so it stays out of the document. */
+  const [swapCategory, setSwapCategory] = useState('basic');
   // So the button reads as pressed while the anchors are on screen, and can
   // close what it opened.
   const pathSelection = useSyncExternalStore(pathEdit.subscribe, pathEdit.getSnapshot, pathEdit.getSnapshot);
@@ -547,6 +558,11 @@ export const ObjectContextToolbar: React.FC<Props> = ({ selectedId, selectedIds,
         width: railRef.current?.offsetWidth || 0,
         height: railRef.current?.offsetHeight || RAIL_HEIGHT,
       };
+
+      // Published for the popovers, which must not open onto the artwork.
+      // Here rather than anywhere else because this is where both are already
+      // known, and a second computation would be a second answer.
+      setRailSubject({ subject: onScreen, bounds });
 
       const spot = placeRail(onScreen, rail, bounds, STANDOFF, lastRef.current.placement);
       const currentPlacement = spot.side;
@@ -1311,32 +1327,41 @@ export const ObjectContextToolbar: React.FC<Props> = ({ selectedId, selectedIds,
    * instead of two hundred lines in which the order is the only thing that says
    * which matters.
    */
+  /**
+   * The closed shapes, as the picker the dock uses rather than a wall of tiles.
+   *
+   * This was one flat grid of every closed shape, which was tolerable at
+   * twenty-two and stopped being so at fifty: a popover anchored to an object
+   * on the board is the worst place in the product to put an undifferentiated
+   * sheet, because it has to fit beside the thing you are editing. Categories,
+   * a search field and a line of explanation are the same three answers the
+   * dock already gives to the same question, and sharing the control is what
+   * stops the two drifting apart again.
+   *
+   * Narrower than the dock's — five columns rather than six — because this one
+   * has to be *placed*, not parked at a screen edge. See `RailPopover`.
+   */
   const closedTiles = node.type === 'shape' ? (
-    <div className="ctx-shape-grid">
-      {SHAPE_CHOICES.filter((c) => !isOpenShape(c.kind)).map((choice) => {
-        const active = node.geometry.kind === choice.kind
-          && (choice.points === undefined || node.geometry.points === choice.points);
-        return (
-          <button
-            key={`${choice.kind}-${choice.points ?? 0}`}
-            type="button"
-            className="ctx-shape-btn"
-            aria-pressed={active}
-            aria-label={choice.label}
-            data-tooltip={choice.label}
-            // Size, paint and position all survive: only the form changes,
-            // which is the whole point of a swapper rather than a
-            // delete-and-redraw. Through `swapShapeKind`, so the new kind
-            // keeps only what it can express.
-            onClick={() => updateProp({
-              geometry: swapShapeKind(node.geometry, choice.kind, choice.points),
-            })}
-          >
-            {choice.icon}
-          </button>
-        );
-      })}
-    </div>
+    <KindPicker
+      columns={5}
+      tile={SHAPE_TILE - 8}
+      search
+      searchPlaceholder="Search shapes"
+      groups={shapeGroups(swapCategory, SHAPE_GLYPH - 2)}
+      facets={SHAPE_FACETS}
+      activeFacet={swapCategory}
+      onFacet={setSwapCategory}
+      value={presetForGeometry(node.geometry)}
+      // Size, paint and position all survive: only the form changes, which is
+      // the whole point of a swapper rather than a delete-and-redraw. Through
+      // `swapShapeKind`, so the new kind keeps only what it can express.
+      onPick={(preset) => {
+        const recipe = SHAPE_BY_PRESET[preset].geometry;
+        updateProp({
+          geometry: swapShapeKind(node.geometry, recipe.kind, recipe.points),
+        });
+      }}
+    />
   ) : null;
 
   const lineTiles = node.type === 'shape' ? (
@@ -1488,6 +1513,7 @@ export const ObjectContextToolbar: React.FC<Props> = ({ selectedId, selectedIds,
               {node.type === 'shape' && (
                 <RailPopover
                   label="Change shape"
+                  float
                   trigger={
                     // A line shows itself — profile and both ends — rather
                     // than a generic dash. On a line object this button sat
