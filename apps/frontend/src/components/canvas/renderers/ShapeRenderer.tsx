@@ -605,6 +605,26 @@ export const ShapeRenderer: React.FC<Props> = React.memo(({ node, showLabel }) =
             perfectDrawEnabled={false}
           />
         ))}
+        {/*
+          The shape's own detail, sketched.
+
+          Under the outline in the markup and therefore *over* it on screen,
+          which is the order the crisp branch uses too — a rack's bays belong on
+          top of its chassis. At a lighter nib for the same reason the glyphs
+          use one: the silhouette carries the identity and the interior lines
+          qualify it, so drawing them at equal weight turns a rack into a grid.
+        */}
+        {sketch.features && (
+          <Path
+            data={sketch.features}
+            stroke={inkColor}
+            strokeWidth={Math.max(0.75, nib * 0.78)}
+            lineCap="round"
+            lineJoin="round"
+            listening={false}
+            perfectDrawEnabled={false}
+          />
+        )}
         <Path
           data={sketch.outline}
           stroke={inkColor}

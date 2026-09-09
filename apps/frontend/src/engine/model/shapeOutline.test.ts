@@ -221,9 +221,14 @@ describe('shapeFeaturePaths', () => {
       const local = shapeFeaturePaths(box(kind), 0, 0);
       const world = shapeFeaturePaths(box(kind), 250, 400);
       expect(world.length, kind).toBe(local.length);
-      // Same commands in the same order; only the numbers move.
+      // Same commands in the same order; only the numbers move. The mask has
+      // to cover exponent notation: a coordinate that lands on a floating-point
+      // hair of zero prints as `1.2e-15` locally and as a plain `0` once it has
+      // been offset, and a mask that stopped at the digits left the `e` behind
+      // and failed on a pair of identical drawings.
+      const shape = (d: string) => d.replace(/-?[\d.]+(?:e[-+]?\d+)?/gi, '#');
       for (let i = 0; i < local.length; i++) {
-        expect(world[i].replace(/-?[\d.]+/g, '#')).toBe(local[i].replace(/-?[\d.]+/g, '#'));
+        expect(shape(world[i]), kind).toBe(shape(local[i]));
       }
     }
   });
@@ -291,6 +296,28 @@ describe('a sketched shape with a hole', () => {
     // higher because a loop is drawn in several passes.
     expect((silhouette.match(/M/g) ?? []).length).toBeGreaterThan(1);
     expect(outline.length).toBeGreaterThan(0);
+  });
+
+  /**
+   * A sketched shape keeps the detail that makes it that shape.
+   *
+   * The sketch branch drew a silhouette, a shading and an outline, and the
+   * features were not among the three things `roughShape` returned — so every
+   * kind with interior lines lost them the moment a hand was applied to it. A
+   * sketched rack was a plain rounded rectangle and a sketched chip a square,
+   * and only when sketched, which is the hardest kind of gap to notice.
+   *
+   * Derived from `shapeFeatureContours` so the list cannot go stale: any kind
+   * that grows a detail is covered the day it grows one.
+   */
+  it.each(
+    CLOSED.filter((kind) => shapeFeaturePaths(box(kind, 240, 240)).length > 0)
+  )('%s keeps its interior lines when sketched', (kind) => {
+    expect(sketched(kind, 'solid').features.length).toBeGreaterThan(0);
+  });
+
+  it('draws no features for a shape that has none', () => {
+    expect(sketched('ellipse', 'solid').features).toBe('');
   });
 
   it('shades around the hole rather than through it', () => {

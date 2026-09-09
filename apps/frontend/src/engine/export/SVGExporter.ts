@@ -511,8 +511,22 @@ function shapeMarkup(node: ShapeNode, defs: SvgPaintDefs): string {
         `<path d="${sketch.fill}" fill="none" stroke="${solidFill}" stroke-width="${fillSw}" stroke-linecap="round"${place} />`
       );
     }
+    const sketchInk = stroke === 'none' ? DEFAULT_INK : stroke;
+    /**
+     * The interior lines, at the lighter nib the canvas uses.
+     *
+     * Absent from the file entirely until 2026-09-09 — the sketch branch drew
+     * a silhouette, a shading and an outline, and the features were not among
+     * the three things `roughShape` returned. So a sketched rack exported as a
+     * plain rounded rectangle and a sketched chip as a square.
+     */
+    if (sketch.features) {
+      parts.push(
+        `<path d="${sketch.features}" fill="none" stroke="${sketchInk}" stroke-width="${Math.max(0.75, nib * 0.78)}" stroke-linecap="round" stroke-linejoin="round"${place} />`
+      );
+    }
     parts.push(
-      `<path d="${sketch.outline}" fill="none" stroke="${stroke === 'none' ? DEFAULT_INK : stroke}" stroke-width="${nib}" stroke-linecap="round" stroke-linejoin="round"${place} />`
+      `<path d="${sketch.outline}" fill="none" stroke="${sketchInk}" stroke-width="${nib}" stroke-linecap="round" stroke-linejoin="round"${place} />`
     );
     parts.push('</g>');
     return parts.join('');

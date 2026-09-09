@@ -209,7 +209,9 @@ export function shapeOutline(
     case 'browser':
       return box(short * 0.055);
     case 'wallet':
-      return box(short * 0.12);
+      // Softer than the other panels, matching the reference: a billfold is a
+      // folded leather object and a tight corner reads as a card.
+      return box(short * 0.14);
     case 'mobile':
       return box(short * 0.16);
     /**

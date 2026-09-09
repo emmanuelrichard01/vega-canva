@@ -18,6 +18,7 @@ import { ellipseRing, rectRing, roughEllipse, roughLoop, roughPolyline, roughSil
 import { shapeOutline } from './shapeOutline';
 import { shapeToPath } from './shapeToPath';
 import { flattenPath, subpathsOf } from './pathGeometry';
+import { shapeFeatureContours } from './shapes/features';
 import type { Point, ShapeNode } from './schema';
 
 export interface RoughShape {
@@ -54,6 +55,22 @@ export interface RoughShape {
    * with no fill at all. Callers that *paint* it ask `fillsInterior` first.
    */
   silhouette: string;
+  /**
+   * The shape's interior lines, sketched.
+   *
+   * A cylinder's rim, a rack's bays, a chip's pins, a browser's address bar.
+   * These were simply **absent** from a sketched shape: this function returned
+   * three fields, none of them the features, and both painters take the sketch
+   * branch *instead of* the crisp one. So twenty kinds lost the detail that
+   * made them recognisable the moment a hand was applied to them — a sketched
+   * server was a plain rounded rectangle, a sketched chip was a square — and
+   * only when sketched, which is the hardest kind of gap to notice.
+   *
+   * Drawn with the same pen as the outline, at a lighter nib by the caller,
+   * because a detail drawn crisply inside a hand-drawn shape is the mixed
+   * metaphor this whole feature exists to avoid.
+   */
+  features: string;
 }
 
 
@@ -80,7 +97,7 @@ export function roughShape(
   node: Pick<ShapeNode, 'geometry' | 'width' | 'height' | 'appearance'> & { id: string },
   wantsFill: boolean
 ): RoughShape {
-  if (!node.appearance?.sketch) return { outline: '', fill: '', silhouette: '' };
+  if (!node.appearance?.sketch) return { outline: '', fill: '', silhouette: '', features: '' };
 
   const level = node.appearance.sketch;
   const style = node.appearance.fillStyle ?? 'solid';
@@ -221,11 +238,33 @@ export function roughShape(
       sketched = curvy
         ? roughLoop(ring, { seed, level, width, closed: false })
         : roughPolyline(ring, { seed, closed: false, level, width });
-      return { outline: sketched, fill: '', silhouette: '' };
+      return { outline: sketched, fill: '', silhouette: '', features: '' };
   }
+
+  /**
+   * The interior lines, drawn by the same hand as the outline.
+   *
+   * A feature is a contour, so it is flattened and wandered along exactly as a
+   * curved outline is. `roughLoop` rather than `roughPolyline` for anything
+   * carrying a control point: a flattened arc is a hundred samples and none of
+   * them is a corner, so the polyline sketcher would overshoot every one and a
+   * cylinder's rim would come out bristling — the same reason a heart and an
+   * ellipse have never gone through it.
+   */
+  const features = shapeFeatureContours(node)
+    .map((geo) => {
+      const points = flattenPath(geo);
+      if (points.length < 2) return '';
+      const curvy = geo.segments.some((seg) => seg.cp1x !== undefined || seg.cp2x !== undefined);
+      const options = { seed, level, width, closed: geo.closed };
+      return curvy ? roughLoop(points, options) : roughPolyline(points, options);
+    })
+    .filter(Boolean)
+    .join(' ');
 
   return {
     outline: sketched,
+    features,
     fill: wantsFill
       ? shapeFill(rings ?? ring, {
           seed,
