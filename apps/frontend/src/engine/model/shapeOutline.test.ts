@@ -277,7 +277,10 @@ describe('a sketched shape with a hole', () => {
         geometry: { kind },
         width: 240,
         height: 240,
-        appearance: { sketch: 'medium', fillStyle, stroke: { color: '#000', width: 2 } },
+        // The width and nothing else: `roughShape` reads it to scale the pen's
+        // wander, and reads no colour at all. A colour here would be a value
+        // the fixture states and the code under test never looks at.
+        appearance: { sketch: 'medium', fillStyle, stroke: { width: 2 } },
       } as never,
       true
     );
