@@ -757,10 +757,25 @@ export const SHAPE_KIND_VALUES = [
   'star',
   'heart',
   'diamond',
+  'right_triangle',
+  'semicircle',
   'trapezoid',
   'parallelogram',
+  'arrow_block',
+  'preparation',
+  'note',
+  'manual_input',
+  'folder',
+  'pin',
+  'plane',
+  'desktop',
+  'archive',
+  'activity',
+  'globe',
+  'hopper',
   'capsule',
   'cylinder',
+  'database',
   'cloud',
   'callout',
   'chevron',
@@ -824,6 +839,22 @@ export const MIN_STAR_POINTS = 3;
 export const MAX_STAR_POINTS = 60;
 export const MIN_STAR_RATIO = 0.05;
 export const MAX_STAR_RATIO = 1;
+
+/**
+ * What a star is when nobody has said otherwise.
+ *
+ * `0.382` is `1/φ²`, the ratio at which a five-pointed star's edges run
+ * straight through it — the pentagram every flag, rating and sticker is drawn
+ * as, and the number Figma's star tool also starts at. The default here was
+ * `0.5`, which is a legal star and a visibly stubby one: the points are barely
+ * longer than the disc they come out of.
+ *
+ * Written once because it had been written four times — in the normalizer, in
+ * the tool, in the swapper and in the renderer's fallback — and the renderer's
+ * copy was the only one a document without the field ever reached.
+ */
+export const DEFAULT_STAR_POINTS = 5;
+export const DEFAULT_STAR_RATIO = 0.382;
 
 /**
  * The bounds a polygon's side count is clamped to.
@@ -972,7 +1003,15 @@ export interface ShapeGeometry {
   armRatio?: number;
   /** Cylinder: the rim's depth, as a ratio of the height. */
   rimRatio?: number;
-  /** Chevron: the depth of the point and of the notch behind it. */
+  /**
+   * How far a side point is drawn in, as a ratio of the width.
+   *
+   * One field for four shapes, because it is one quantity: the chevron's
+   * notch, the preparation symbol's two points, the block arrow's head and the
+   * ribbon's swallowtail are all "how much of the width the point takes". A
+   * second name for it per shape would be four fields a swap has to know about
+   * and four rows the panel has to be taught, for one number.
+   */
   indent?: number;
   /** Callout: which edge the tail comes out of, and where along it. */
   tailPosition?: CalloutTail;
@@ -984,7 +1023,7 @@ export interface ShapeGeometry {
   pinCount?: number;
   /** Gear: radial cogs. */
   teeth?: number;
-  /** Server: rack units drawn across the face. */
+  /** Server: rack units drawn across the face. Database: decks in the stack. */
   shelfCount?: number;
   /**
    * What sits at each end of a line or arrow — see `EndCapKind`.

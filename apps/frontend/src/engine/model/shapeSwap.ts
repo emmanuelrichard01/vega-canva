@@ -32,7 +32,8 @@
  * that drifts.
  */
 
-import { isOpenShape, type ShapeGeometry, type ShapeKind } from './schema';
+import { DEFAULT_STAR_RATIO, isOpenShape, type ShapeGeometry, type ShapeKind } from './schema';
+import { clampParam, shapeParams } from './shapeParams';
 
 /**
  * The geometry for `kind`, carrying over only what that kind can express.
@@ -55,25 +56,48 @@ export function swapShapeKind(
     const carried = points ?? geometry.points;
     if (carried !== undefined) next.points = carried;
   }
-  // Kinds that feature an interior ratio or depth
-  if (kind === 'star' || kind === 'donut' || kind === 'badge') {
-    next.innerRatio = geometry.innerRatio ?? (kind === 'badge' ? 0.85 : 0.5);
+  // A star has a depth that is not a dial in `SHAPE_PARAMS` — the panel gives
+  // it a control of its own, bounded by the schema — so it is carried here.
+  if (kind === 'star') next.innerRatio = geometry.innerRatio ?? DEFAULT_STAR_RATIO;
+
+  /**
+   * Every parametric dial the new kind has, carried across or seeded.
+   *
+   * This was two dozen hand-written lines, one per field, each with its own
+   * `?? default` — a fourth copy of numbers that `SHAPE_PARAMS` already held,
+   * and one of them had already drifted: a chip made by *swapping* got six
+   * pins, while a chip made by *drawing* got three, because the swapper's
+   * literal and the table's fallback were different numbers.
+   *
+   * Reading the table also means a new parametric shape needs no edit here at
+   * all. Three of the kinds added in the same change as this comment —
+   * preparation, block arrow, ribbon — would otherwise each have needed a line,
+   * and a shape that swaps into a state its own panel cannot describe is the
+   * failure that line exists to prevent.
+   */
+  for (const dial of shapeParams(kind)) {
+    if (dial.field === 'points' || dial.field === 'innerRatio') {
+      // Both are already handled above, where the counts a preset carries are
+      // negotiated with the ones the old shape had.
+      if (next[dial.field] === undefined) {
+        next[dial.field] = clampParam(dial, geometry[dial.field] ?? dial.fallback);
+      }
+      continue;
+    }
+    next[dial.field] = clampParam(dial, geometry[dial.field] ?? dial.fallback);
   }
-  if (kind === 'parallelogram') next.skew = geometry.skew ?? 0.2;
-  if (kind === 'trapezoid') next.inset = geometry.inset ?? 0.2;
-  if (kind === 'chevron') next.indent = geometry.indent ?? 0.25;
-  if (kind === 'cross') next.armRatio = geometry.armRatio ?? 0.33;
-  if (kind === 'cylinder') next.rimRatio = geometry.rimRatio ?? 0.18;
+
   if (kind === 'callout') {
     next.tailPosition = geometry.tailPosition ?? 'bottom-left';
-    next.tailSize = geometry.tailSize ?? 16;
   }
-  if (kind === 'document') next.waveHeight = geometry.waveHeight ?? 0.15;
-  if (kind === 'cpu') next.pinCount = geometry.pinCount ?? 6;
-  if (kind === 'gear') {
-    next.teeth = geometry.teeth ?? (geometry.points ? Math.max(4, Math.min(24, geometry.points)) : 8);
+  // A gear's teeth and a polygon's sides are both "how many points around", so
+  // a hexagon swapped to a gear keeps its six rather than jumping to the
+  // default. The clamp is the table's, so a 60-sided polygon lands on the most
+  // teeth a gear can draw rather than on an illegal value.
+  if (kind === 'gear' && geometry.teeth === undefined && geometry.points !== undefined) {
+    const teeth = shapeParams('gear').find((p) => p.field === 'teeth');
+    if (teeth) next.teeth = clampParam(teeth, geometry.points);
   }
-  if (kind === 'server') next.shelfCount = geometry.shelfCount ?? 3;
 
   if (isOpenShape(kind)) {
     /**

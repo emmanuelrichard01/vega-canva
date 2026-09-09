@@ -17,7 +17,7 @@ import { fillsInterior, roughPolyline, seedFrom } from '../model/rough';
 import { SvgPaintDefs } from './svgPaint';
 import { assembleSvg } from './svgDocument';
 import { fetchBlob, inlineImageSources } from './inlineImages';
-import { pointsAttribute, regularPolygonPoints, shapeFeaturePaths, shapeOutline, starPoints } from '../model/shapeOutline';
+import { shapeFeaturePaths, shapeOutline } from '../model/shapeOutline';
 import { shapeToPath } from '../model/shapeToPath';
 import { defaultEndAlign } from '../model/linePath';
 import { runPoints } from '../model/lineEnds';
@@ -536,33 +536,23 @@ function shapeMarkup(node: ShapeNode, defs: SvgPaintDefs): string {
       return `<rect x="${x}" y="${y}" width="${w}" height="${h}" rx="${cornerRadiiOf(node.appearance.cornerRadius)[0]}" ${paint}${rot} />`;
     case 'ellipse':
       return `<ellipse cx="${cx}" cy="${cy}" rx="${w / 2}" ry="${h / 2}" ${paint}${rot} />`;
-    case 'polygon':
-    case 'star':
-      if (Math.max(...cornerRadiiOf(node.appearance?.cornerRadius)) > 0) {
-        const d = contourData(translatePath(shapeToPath(node), x, y));
-        return `<path d="${d}" fill-rule="evenodd" ${paint}${rot} />`;
-      }
-      return node.geometry.kind === 'star'
-        ? `<polygon points="${pointsAttribute(starPoints(cx, cy, node.geometry.points ?? 5, node.geometry.innerRatio ?? 0.5, w / 2, h / 2))}" ${paint}${rot} />`
-        : `<polygon points="${pointsAttribute(regularPolygonPoints(cx, cy, node.geometry.points ?? 3, w / 2, h / 2))}" ${paint}${rot} />`;
-
-    case 'heart':
-    case 'squircle':
-    case 'diamond':
-    case 'trapezoid':
-    case 'parallelogram':
-    case 'capsule':
-    case 'cloud':
-    case 'callout':
-    case 'chevron':
-    case 'cross':
-    case 'donut':
-    case 'badge':
-    case 'banner': {
-      const d = contourData(translatePath(shapeToPath(node), x, y));
-      return `<path d="${d}" fill-rule="evenodd" ${paint}${rot} />`;
-    }
-
+    /**
+     * Polygons and stars are no longer built here.
+     *
+     * This file's own header says the trigonometry moved to `shapeOutline` so
+     * the exporter and the renderer could not draw different hexagons — and
+     * these two branches were the ones that never made the move. They called
+     * the point generators directly and inscribed the shape in the box's
+     * ellipse, which is what those functions do; the outline now normalises
+     * the result to *fill* the box, and the two would have disagreed by the
+     * band of empty air a pentagon leaves along its bottom edge.
+     *
+     * There is nothing left for them to do that `default` does not, so they
+     * are gone rather than corrected. The same is true of the dozen curved
+     * kinds that used to be listed here individually: the list had to be
+     * extended by hand for every shape added, and `default` had always drawn
+     * them identically.
+     */
     case 'line':
     case 'arrow':
       return openShapeMarkup(node);

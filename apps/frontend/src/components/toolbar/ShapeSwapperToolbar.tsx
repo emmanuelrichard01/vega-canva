@@ -1,12 +1,7 @@
 import React from 'react';
 import { RailPopover } from './RailPopover';
 import { ShapeIcon } from '../workspace/shapeIcons';
-import {
-  SHAPE_KINDS,
-  PRESET_GEOMETRY,
-  SHAPE_LABELS,
-  type ShapePreset,
-} from '../workspace/shapePresetTypes';
+import { SHAPE_BY_PRESET, SHAPE_PRESETS, type ShapePreset } from '../workspace/shapeCatalog';
 import type { ShapeNode } from '../../engine/model/schema';
 
 export interface ShapeSwapperProps {
@@ -26,8 +21,8 @@ export const ShapeSwapper: React.FC<ShapeSwapperProps> = ({ node, onSwap }) => {
     >
       <span className="ctx-popover__label">Change shape</span>
       <div className="ctx-shape-grid">
-        {SHAPE_KINDS.map((preset: ShapePreset) => {
-          const geom = PRESET_GEOMETRY[preset];
+        {SHAPE_PRESETS.map((preset: ShapePreset) => {
+          const geom = SHAPE_BY_PRESET[preset].geometry;
           const active = geom.kind === currentKind && (!geom.points || geom.points === currentPoints);
           return (
             <button
@@ -35,8 +30,8 @@ export const ShapeSwapper: React.FC<ShapeSwapperProps> = ({ node, onSwap }) => {
               type="button"
               className="ctx-shape-chip"
               aria-pressed={active}
-              aria-label={SHAPE_LABELS[preset]}
-              data-tooltip={SHAPE_LABELS[preset]}
+              aria-label={SHAPE_BY_PRESET[preset].label}
+              data-tooltip={SHAPE_BY_PRESET[preset].label}
               onClick={() => {
                 onSwap({
                   kind: geom.kind,

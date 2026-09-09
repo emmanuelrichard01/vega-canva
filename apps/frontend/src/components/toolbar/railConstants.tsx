@@ -6,36 +6,41 @@ import {
   AlignVerticalJustifyStart, AlignVerticalJustifyCenter, AlignVerticalJustifyEnd,
 } from 'lucide-react';
 import { ShapeIcon } from '../workspace/shapeIcons';
+import { ALL_SHAPE_PRESETS, SHAPE_BY_PRESET, type ShapePreset } from '../workspace/shapeCatalog';
 import type { ShapeKind } from '../../engine/model/schema';
 import type { RailSide } from '../../engine/interaction/railPlacement';
 import type { BooleanOp } from '../../engine/model/pathBoolean';
 import type { AlignEdge } from '../../engine/model/align';
 
-export const SHAPE_CHOICES: Array<{ kind: ShapeKind; points?: number; label: string; icon: React.ReactNode }> = [
-  { kind: 'rect', label: 'Rectangle', icon: <ShapeIcon kind="rect" size={16} /> },
-  { kind: 'ellipse', label: 'Ellipse', icon: <ShapeIcon kind="ellipse" size={16} /> },
-  { kind: 'squircle', label: 'Squircle', icon: <ShapeIcon kind="squircle" size={16} /> },
-  { kind: 'capsule', label: 'Capsule (Pill)', icon: <ShapeIcon kind="capsule" size={16} /> },
-  { kind: 'diamond', label: 'Diamond', icon: <ShapeIcon kind="diamond" size={16} /> },
-  { kind: 'polygon', points: 3, label: 'Triangle', icon: <ShapeIcon kind="triangle" size={16} /> },
-  { kind: 'cylinder', label: 'Cylinder', icon: <ShapeIcon kind="cylinder" size={16} /> },
-  { kind: 'parallelogram', label: 'Parallelogram', icon: <ShapeIcon kind="parallelogram" size={16} /> },
-  { kind: 'trapezoid', label: 'Trapezoid', icon: <ShapeIcon kind="trapezoid" size={16} /> },
-  { kind: 'chevron', label: 'Chevron', icon: <ShapeIcon kind="chevron" size={16} /> },
-  { kind: 'star', points: 5, label: 'Star', icon: <ShapeIcon kind="star" size={16} /> },
-  { kind: 'heart', label: 'Heart', icon: <ShapeIcon kind="heart" size={16} /> },
-  { kind: 'cloud', label: 'Cloud', icon: <ShapeIcon kind="cloud" size={16} /> },
-  { kind: 'cross', label: 'Cross', icon: <ShapeIcon kind="cross" size={16} /> },
-  { kind: 'donut', label: 'Donut', icon: <ShapeIcon kind="donut" size={16} /> },
-  { kind: 'badge', points: 12, label: 'Badge', icon: <ShapeIcon kind="badge" size={16} /> },
-  { kind: 'callout', label: 'Callout', icon: <ShapeIcon kind="callout" size={16} /> },
-  { kind: 'banner', label: 'Banner', icon: <ShapeIcon kind="banner" size={16} /> },
-  { kind: 'polygon', points: 5, label: 'Pentagon', icon: <ShapeIcon kind="pentagon" size={16} /> },
-  { kind: 'polygon', points: 6, label: 'Hexagon', icon: <ShapeIcon kind="hexagon" size={16} /> },
-  { kind: 'polygon', points: 8, label: 'Octagon', icon: <ShapeIcon kind="octagon" size={16} /> },
-  { kind: 'line', label: 'Line', icon: <ShapeIcon kind="line" size={16} /> },
-  { kind: 'arrow', label: 'Arrow', icon: <ShapeIcon kind="arrow" size={16} /> },
-];
+/**
+ * The shapes a selected object can be turned into.
+ *
+ * Derived from the catalogue rather than listed, which is the whole point: it
+ * *was* listed, and so were the dock's shapes and the context menu's, and the
+ * three lists had drifted into three different sets with three different
+ * memberships and, in two cases, two different names for the same shape. See
+ * `shapePicker.tsx`.
+ *
+ * The open runs are kept separate because the swapper offers them separately:
+ * turning a rectangle into a line throws away everything a rectangle is, so it
+ * sits behind its own disclosure rather than in the same grid.
+ */
+export const SHAPE_CHOICES: Array<{
+  preset: ShapePreset;
+  kind: ShapeKind;
+  points?: number;
+  label: string;
+  icon: React.ReactNode;
+}> = ALL_SHAPE_PRESETS.map((preset) => {
+  const entry = SHAPE_BY_PRESET[preset];
+  return {
+    preset,
+    kind: entry.geometry.kind,
+    points: entry.geometry.points,
+    label: entry.label,
+    icon: <ShapeIcon kind={preset} size={16} />,
+  };
+});
 
 export const TYPE_LABEL: Record<string, { icon: React.ReactNode; name: string }> = {
   shape: { icon: <Square size={15} />, name: 'Shape' },

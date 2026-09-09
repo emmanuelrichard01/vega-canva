@@ -16,6 +16,8 @@ import {
   MIN_POLYGON_SIDES,
   MIN_STAR_POINTS,
   MIN_STAR_RATIO,
+  DEFAULT_STAR_POINTS,
+  DEFAULT_STAR_RATIO,
   NODE_TYPES,
   STICKY_THEMES,
   type AnyNode,
@@ -199,6 +201,31 @@ export const SHAPE_KIND_ALIASES: Record<string, { kind: ShapeKind; sides?: numbe
   hexagon: { kind: 'polygon', sides: 6 },
   heptagon: { kind: 'polygon', sides: 7 },
   octagon: { kind: 'polygon', sides: 8 },
+  right_triangle: { kind: 'right_triangle' },
+  semicircle: { kind: 'semicircle' },
+  half_circle: { kind: 'semicircle' },
+  arrow_block: { kind: 'arrow_block' },
+  block_arrow: { kind: 'arrow_block' },
+  preparation: { kind: 'preparation' },
+  note: { kind: 'note' },
+  manual_input: { kind: 'manual_input' },
+  folder: { kind: 'folder' },
+  directory: { kind: 'folder' },
+  pin: { kind: 'pin' },
+  location: { kind: 'pin' },
+  marker: { kind: 'pin' },
+  plane: { kind: 'plane' },
+  send: { kind: 'plane' },
+  paper_plane: { kind: 'plane' },
+  desktop: { kind: 'desktop' },
+  monitor: { kind: 'desktop' },
+  archive: { kind: 'archive' },
+  activity: { kind: 'activity' },
+  pulse: { kind: 'activity' },
+  globe: { kind: 'globe' },
+  world: { kind: 'globe' },
+  hopper: { kind: 'hopper' },
+  bin: { kind: 'hopper' },
   diamond: { kind: 'diamond' },
   rhombus: { kind: 'diamond' },
   decision: { kind: 'diamond' },
@@ -208,7 +235,16 @@ export const SHAPE_KIND_ALIASES: Record<string, { kind: ShapeKind; sides?: numbe
   pill: { kind: 'capsule' },
   stadium: { kind: 'capsule' },
   cylinder: { kind: 'cylinder' },
-  database: { kind: 'cylinder' },
+  /**
+   * A database is its own shape now, not another name for a drum.
+   *
+   * It had been an alias to `cylinder` for as long as the Database tile
+   * existed — while the tile's own glyph drew a *stack of disks*. So the
+   * picture, the name and the object were three different claims, and the two
+   * that a user could see agreed with each other against the one that was
+   * true. `database` draws the stack the tile has always promised.
+   */
+  database: { kind: 'database' },
   storage: { kind: 'cylinder' },
   cloud: { kind: 'cloud' },
   callout: { kind: 'callout' },
@@ -818,8 +854,8 @@ function normalizeShapeGeometry(raw: any): ShapeGeometry {
     // degenerate rather than merely ugly, and neither is recoverable from the
     // control once stored. 60 is past the point where more points read as a
     // disc at any size this canvas draws.
-    geometry.points = Math.round(clamp(num(raw?.geometry?.points, 5), MIN_STAR_POINTS, MAX_STAR_POINTS));
-    geometry.innerRatio = clamp(num(raw?.geometry?.innerRatio, 0.5), MIN_STAR_RATIO, MAX_STAR_RATIO);
+    geometry.points = Math.round(clamp(num(raw?.geometry?.points, DEFAULT_STAR_POINTS), MIN_STAR_POINTS, MAX_STAR_POINTS));
+    geometry.innerRatio = clamp(num(raw?.geometry?.innerRatio, DEFAULT_STAR_RATIO), MIN_STAR_RATIO, MAX_STAR_RATIO);
   }
 
   if (alias.kind === 'polygon') {

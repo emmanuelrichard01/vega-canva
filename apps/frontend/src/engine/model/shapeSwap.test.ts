@@ -1,3 +1,5 @@
+import { SHAPE_PARAMS } from './shapeParams';
+import { DEFAULT_STAR_RATIO, type ShapeKind } from './schema';
 import { describe, expect, it } from 'vitest';
 import { swapShapeKind } from './shapeSwap';
 import type { ShapeGeometry } from './schema';
@@ -44,7 +46,9 @@ describe('swapping between counted shapes', () => {
   });
 
   it('gives a star an inner radius when it arrives without one', () => {
-    expect(swapShapeKind({ kind: 'polygon', points: 5 }, 'star').innerRatio).toBe(0.5);
+    expect(swapShapeKind({ kind: 'polygon', points: 5 }, 'star').innerRatio).toBe(
+      DEFAULT_STAR_RATIO
+    );
   });
 
   it('takes the caller\'s count over the stored one', () => {
@@ -112,9 +116,9 @@ describe('swapping a closed shape to a line', () => {
 });
 
 describe('swapping to and from advanced parametric shapes', () => {
-  it('swaps to donut with sensible default innerRatio', () => {
+  it('swaps to donut with the hole the table describes', () => {
     const donut = swapShapeKind({ kind: 'rect' }, 'donut');
-    expect(donut).toEqual({ kind: 'donut', innerRatio: 0.5 });
+    expect(donut.innerRatio).toBe(SHAPE_PARAMS.donut!.params[0].fallback);
   });
 
   it('swaps to badge carrying count from polygon or star', () => {
@@ -132,19 +136,27 @@ describe('swapping to and from advanced parametric shapes', () => {
     expect(diamond).toEqual({ kind: 'diamond' });
   });
 
-  it('swaps to cylinder, cross, chevron, trapezoid, parallelogram with sensible defaults', () => {
-    expect(swapShapeKind({ kind: 'rect' }, 'cylinder')).toEqual({ kind: 'cylinder', rimRatio: 0.18 });
-    expect(swapShapeKind({ kind: 'rect' }, 'cross')).toEqual({ kind: 'cross', armRatio: 0.33 });
-    expect(swapShapeKind({ kind: 'rect' }, 'chevron')).toEqual({ kind: 'chevron', indent: 0.25 });
-    expect(swapShapeKind({ kind: 'rect' }, 'trapezoid')).toEqual({ kind: 'trapezoid', inset: 0.2 });
-    expect(swapShapeKind({ kind: 'rect' }, 'parallelogram')).toEqual({ kind: 'parallelogram', skew: 0.2 });
+  /**
+   * Against the table, not against a literal.
+   *
+   * These asserted the numbers by hand, and one of them had been wrong for as
+   * long as it existed: it expected six pins where a freshly drawn chip got
+   * three, so it *documented* the drift instead of catching it. A swap seeds
+   * whatever `SHAPE_PARAMS` says the shape draws untouched — that is the whole
+   * claim — and stating the number twice here would put the fourth copy back.
+   */
+  it.each(
+    Object.entries(SHAPE_PARAMS).map(([kind, group]) => [kind, group] as const)
+  )('seeds every dial %s declares, at the value the table gives', (kind, group) => {
+    const swapped = swapShapeKind({ kind: 'rect' }, kind as ShapeKind);
+    for (const dial of group.params) {
+      expect(swapped[dial.field], `${kind}.${dial.field}`).toBe(dial.fallback);
+    }
   });
 
-  it('swaps to document, cpu, gear, and server with sensible defaults', () => {
-    expect(swapShapeKind({ kind: 'rect' }, 'document')).toEqual({ kind: 'document', waveHeight: 0.15 });
-    expect(swapShapeKind({ kind: 'rect' }, 'cpu')).toEqual({ kind: 'cpu', pinCount: 6 });
-    expect(swapShapeKind({ kind: 'rect' }, 'gear')).toEqual({ kind: 'gear', teeth: 8 });
-    expect(swapShapeKind({ kind: 'rect' }, 'server')).toEqual({ kind: 'server', shelfCount: 3 });
+  it('carries a dial across a swap rather than reseeding it', () => {
+    const held = swapShapeKind({ kind: 'cylinder', rimRatio: 0.35 }, 'database');
+    expect(held.rimRatio).toBe(0.35);
   });
 });
 

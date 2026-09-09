@@ -33,15 +33,19 @@ import { isForceTool } from '../../engine/physics/forces';
 import { FRAME_PRESETS, FRAME_PRESET_GROUPS } from '../../engine/model/frames';
 import { ShapeIcon } from './shapeIcons';
 import {
-  LINE_KINDS,
-  SHAPE_LABELS,
-  SHAPE_CATEGORIES,
-  SHAPE_SEARCH_KEYWORDS,
-  SHAPE_DESCRIPTIONS,
+  LINE_PRESETS,
+  SHAPE_BY_PRESET,
   shapeToolId,
   shapeKindFromToolId,
   type ShapePreset,
-} from './shapePresetTypes';
+} from './shapeCatalog';
+import {
+  SHAPE_FACETS,
+  SHAPE_GLYPH,
+  SHAPE_TILE,
+  shapeGroups,
+  shapeOption as sharedShapeOption,
+} from './shapePicker';
 import { shortcutFor } from '../../engine/tools/shortcuts';
 import { DEMO_LENGTHS } from '../../engine/text/demoText';
 import { useStore } from '../../hooks/useStore';
@@ -685,38 +689,21 @@ export const ToolWorkspace: React.FC<Props> = ({ activeToolId, onOpenDiagram, on
 
   /**
    * The three pickers' options, built from the lists that already describe
-   * them -- `SHAPE_CATEGORIES`, `GRID_LABELS`/`GRID_HINTS` and
+   * them -- the shape catalogue, `GRID_LABELS`/`GRID_HINTS` and
    * `chartPickerGroups`. Nothing here restates a name or a sentence: a
    * picker that carried its own copy of a label is how the dock came to call
    * something by a name the panel no longer used.
    */
-  const shapeOption = React.useCallback(
-    (kind: ShapePreset) => ({
-      id: kind,
-      label: SHAPE_LABELS[kind],
-      hint: SHAPE_DESCRIPTIONS[kind] ?? '',
-      keywords: SHAPE_SEARCH_KEYWORDS[kind],
-      icon: <ShapeIcon kind={kind} size={18} />,
-    }),
+  const shapeOptionFor = React.useCallback(
+    (preset: ShapePreset) => sharedShapeOption(preset, SHAPE_GLYPH),
     []
   );
 
-  const shapePickerGroups = useMemo(() => {
-    const category = SHAPE_CATEGORIES.find((c) => c.id === shapeCategory) ?? SHAPE_CATEGORIES[0];
-    // A category with named runs shows them; one without is a single group.
-    if (category.groups && category.groups.length > 0) {
-      return category.groups.map((group) => ({
-        id: `${category.id}:${group.name}`,
-        label: group.name,
-        options: group.presets.map(shapeOption),
-      }));
-    }
-    return [{ id: category.id, options: category.presets.map(shapeOption) }];
-  }, [shapeCategory, shapeOption]);
+  const shapePickerGroups = useMemo(() => shapeGroups(shapeCategory, SHAPE_GLYPH), [shapeCategory]);
 
   const recentShapeOptions = useMemo(
-    () => recentShapes.map(shapeOption),
-    [recentShapes, shapeOption]
+    () => recentShapes.map(shapeOptionFor),
+    [recentShapes, shapeOptionFor]
   );
 
   const gridPickerGroups = useMemo(
@@ -763,7 +750,7 @@ export const ToolWorkspace: React.FC<Props> = ({ activeToolId, onOpenDiagram, on
    * prefix — the Shape seat lit up while a line was armed until this split the
    * two apart by *which* preset is in hand.
    */
-  const armedLine = armedShape && LINE_KINDS.includes(armedShape) ? armedShape : null;
+  const armedLine = armedShape && LINE_PRESETS.includes(armedShape) ? armedShape : null;
   /**
    * The preset the *Shape* seat wears — never a line.
    *
@@ -1504,10 +1491,11 @@ export const ToolWorkspace: React.FC<Props> = ({ activeToolId, onOpenDiagram, on
                   */}
                   <KindPicker
                     columns={6}
+                    tile={SHAPE_TILE}
                     search
                     searchPlaceholder="Search shapes"
                     groups={shapePickerGroups}
-                    facets={SHAPE_CATEGORIES.map((c) => ({ id: c.id, label: c.name }))}
+                    facets={SHAPE_FACETS}
                     activeFacet={shapeCategory}
                     onFacet={setShapeCategory}
                     recent={recentShapeOptions}
@@ -1545,7 +1533,7 @@ export const ToolWorkspace: React.FC<Props> = ({ activeToolId, onOpenDiagram, on
                 endEnd={(armedLine ?? lastLine) === 'arrow' ? 'arrow' : 'none'}
               />
             }
-            label={`${LINE_PROFILE_LABELS[lineProfile]} ${SHAPE_LABELS[armedLine ?? lastLine].toLowerCase()}`}
+            label={`${LINE_PROFILE_LABELS[lineProfile]} ${SHAPE_BY_PRESET[armedLine ?? lastLine].label.toLowerCase()}`}
             description="click to start, click again to finish"
             active={isLine}
             hasMenu
@@ -1567,7 +1555,7 @@ export const ToolWorkspace: React.FC<Props> = ({ activeToolId, onOpenDiagram, on
             {openMenu === 'line' && (
               <Flyout title="Line">
                 <div className="dock-flyout__grid">
-                  {LINE_KINDS.map((kind) => {
+                  {LINE_PRESETS.map((kind) => {
                     const id = shapeToolId(kind);
                     return (
                       <button
@@ -1577,8 +1565,8 @@ export const ToolWorkspace: React.FC<Props> = ({ activeToolId, onOpenDiagram, on
                         aria-checked={activeToolId === id}
                         className={`btn-icon dock-tile ${activeToolId === id ? 'active' : ''}`}
                         onClick={() => { setLastLine(kind); pick(id); }}
-                        data-tooltip={SHAPE_LABELS[kind]}
-                        aria-label={SHAPE_LABELS[kind]}
+                        data-tooltip={SHAPE_BY_PRESET[kind].label}
+                        aria-label={SHAPE_BY_PRESET[kind].label}
                       >
                         {/* Each tile shows itself under the armed profile, so
                             the two choices differ by the one thing they are

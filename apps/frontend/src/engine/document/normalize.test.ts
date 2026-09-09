@@ -2,6 +2,7 @@ import { describe, expect, it } from 'vitest';
 import { isCanonical, normalizeNode } from './normalize';
 import { MATERIAL_IDS } from '../../utils/behaviorSystem';
 import { shapeParams } from '../model/shapeParams';
+import { DEFAULT_STAR_POINTS, DEFAULT_STAR_RATIO } from '../model/schema';
 import type { ShapeNode, StickyNode, TextNode, PathNode, ImageNode, AudioNode } from '../model/schema';
 
 /**
@@ -46,8 +47,12 @@ describe('normalizeNode — legacy shapes', () => {
       (normalizeNode({ id: 'st1', type: 'shape', x: 0, y: 0, width: 10, height: 10, geometry }) as ShapeNode)
         .geometry;
 
-    it('defaults to a five-pointed star at half depth', () => {
-      expect(starOf({ kind: 'star' })).toEqual({ kind: 'star', points: 5, innerRatio: 0.5 });
+    it('defaults to the star the schema describes', () => {
+      expect(starOf({ kind: 'star' })).toEqual({
+        kind: 'star',
+        points: DEFAULT_STAR_POINTS,
+        innerRatio: DEFAULT_STAR_RATIO,
+      });
     });
 
     it('keeps values inside the range', () => {
@@ -78,7 +83,7 @@ describe('normalizeNode — legacy shapes', () => {
 
     it('falls back for non-finite values', () => {
       expect(starOf({ kind: 'star', points: NaN, innerRatio: Infinity })).toEqual({
-        kind: 'star', points: 5, innerRatio: 0.5,
+        kind: 'star', points: 5, innerRatio: DEFAULT_STAR_RATIO,
       });
     });
 

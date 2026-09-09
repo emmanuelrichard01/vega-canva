@@ -17,7 +17,7 @@
 import { shapeOutline } from './shapeOutline';
 import type { BezierGeometry, BezierSegment, Point, ShapeNode } from './schema';
 import { fromAnchors, type Anchor, type ContourGeometry } from './pathGeometry';
-import { cornerRadiiOf, fitRadii, type CornerRadii } from './cornerRadii';
+import { fitRadii, type CornerRadii } from './cornerRadii';
 
 /**
  * The magic number that makes four cubics look like a circle.
@@ -155,20 +155,22 @@ export function shapeToPath(
   switch (outline.kind) {
     case 'rect':
       /**
-       * The four radii come from the node, not from the outline.
+       * The four radii come from the outline, which has already combined the
+       * two facts that decide them.
        *
-       * `shapeOutline.radius` is the largest of the four — the one number its
-       * vocabulary can hold — and that is the right answer for the clips and
-       * hit regions it feeds. This is the real outline, so it reads the stored
-       * value directly.
+       * This used to re-read `node.appearance.cornerRadius`, on the grounds
+       * that `shapeOutline.radius` is only the largest of the four and cannot
+       * describe an independently-cornered box. That was true, and it threw
+       * away the other half of the answer: a phone, a browser window, a chip
+       * and an envelope are round-cornered because of the kind they are, and
+       * that radius is nowhere in the document. So all four of them flattened,
+       * exported, sketched and boolean'd with **square corners** while the
+       * canvas drew them round.
+       *
+       * `ShapeOutline.radii` carries all four now, fitted, with the kind's own
+       * minimum already applied — one answer instead of two partial ones.
        */
-      return rectPath(
-        outline.x,
-        outline.y,
-        outline.width,
-        outline.height,
-        cornerRadiiOf(node.appearance?.cornerRadius)
-      );
+      return rectPath(outline.x, outline.y, outline.width, outline.height, outline.radii);
     case 'ellipse':
       return ellipsePath(outline.cx, outline.cy, outline.rx, outline.ry);
     case 'polygon':

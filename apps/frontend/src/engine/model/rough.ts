@@ -827,12 +827,59 @@ function shadingProfile(prof: SketchProfile, gap: number): SketchProfile {
  * tell is always this one: a constant displacement sitting next to a variable
  * spacing.
  */
+
+/**
+ * A shape's contours, however the caller had them.
+ *
+ * Everything here used to take one ring, which is right for the shapes that
+ * have one and silently wrong for the ones that do not: a ring, a gear, a
+ * pierced key, a person and a rack are each two or more contours, and passing
+ * their concatenation as a single ring invents an edge from the end of one to
+ * the start of the next. That edge is a stray stroke across the sketched
+ * outline and a false crossing in the shading's scanline — so a sketched ring
+ * shaded straight through its own hole.
+ *
+ * Accepting both forms rather than replacing the signature keeps the callers
+ * that genuinely have one ring — a sticky's edge, the panel's specimens —
+ * saying so.
+ */
+export type Rings = readonly Point[] | readonly (readonly Point[])[];
+
+export function asRings(input: Rings): readonly (readonly Point[])[] {
+  if (input.length === 0) return [];
+  return Array.isArray((input as readonly (readonly Point[])[])[0])
+    ? (input as readonly (readonly Point[])[])
+    : [input as readonly Point[]];
+}
+
+/**
+ * Where a horizontal line at `y` crosses the rings, left to right.
+ *
+ * Even-odd by construction: the crossings of *every* contour go into one
+ * sorted list, so a hole's two crossings close the span its outer contour
+ * opened. That is the whole of hole support for shading, and it is four lines.
+ */
+function scanCrossings(rings: readonly (readonly Point[])[], y: number): number[] {
+  const out: number[] = [];
+  for (const ring of rings) {
+    for (let i = 0; i < ring.length; i++) {
+      const a = ring[i];
+      const b = ring[(i + 1) % ring.length];
+      // Half-open test, so a vertex exactly on the scanline is counted once
+      // rather than opening and closing the same span.
+      if (a.y <= y === b.y <= y) continue;
+      out.push(a.x + ((y - a.y) / (b.y - a.y)) * (b.x - a.x));
+    }
+  }
+  return out.sort((p, q) => p - q);
+}
+
 function hachurePass(
-  points: readonly Point[],
+  input: Rings,
   options: { seed: number; gap: number; angle: number; level?: SketchLevel }
 ): string {
   const { seed, gap, angle, level } = options;
-  if (points.length < 3) return '';
+  if (asRings(input).every((r) => r.length < 3)) return '';
 
   const prof = shadingProfile(profileFor(level), gap);
   const rand = rng(seed ^ 0x9e3779b9);
@@ -840,9 +887,12 @@ function hachurePass(
   const cos = Math.cos(-rad);
   const sin = Math.sin(-rad);
   // Work in a frame where the hachure runs horizontally, then rotate back.
-  const rot = points.map((p) => ({ x: p.x * cos - p.y * sin, y: p.x * sin + p.y * cos }));
-  const minY = Math.min(...rot.map((p) => p.y));
-  const maxY = Math.max(...rot.map((p) => p.y));
+  const rot = asRings(input).map((ring) =>
+    ring.map((p) => ({ x: p.x * cos - p.y * sin, y: p.x * sin + p.y * cos }))
+  );
+  const flat = rot.flat();
+  const minY = Math.min(...flat.map((p) => p.y));
+  const maxY = Math.max(...flat.map((p) => p.y));
 
   const strokes: string[] = [];
   const back = (x: number, y: number) => ({ x: x * cos + y * sin, y: -x * sin + y * cos });
@@ -870,16 +920,7 @@ function hachurePass(
   const inset = Math.min(gap * 0.22, 3);
 
   for (let y = minY + gap / 2; y < maxY; y += gap) {
-    const crossings: number[] = [];
-    for (let i = 0; i < rot.length; i++) {
-      const a = rot[i];
-      const b = rot[(i + 1) % rot.length];
-      // Half-open test, so a vertex exactly on the scanline is counted once
-      // rather than opening and closing the same span.
-      if (a.y <= y === b.y <= y) continue;
-      crossings.push(a.x + ((y - a.y) / (b.y - a.y)) * (b.x - a.x));
-    }
-    crossings.sort((p, q) => p - q);
+    const crossings = scanCrossings(rot, y);
     for (let i = 0; i + 1 < crossings.length; i += 2) {
       const lo = crossings[i] + inset + jitter(inset, rand);
       const hi = crossings[i + 1] - inset - jitter(inset, rand);
@@ -962,20 +1003,23 @@ interface Scribble {
  * in character here as they do everywhere else.
  */
 function zigzagPass(
-  points: readonly Point[],
+  input: Rings,
   options: { seed: number; gap: number; angle: number; level?: SketchLevel }
 ): string {
   const { seed, gap, angle, level } = options;
-  if (points.length < 3) return '';
+  if (asRings(input).every((r) => r.length < 3)) return '';
 
   const prof = shadingProfile(profileFor(level), gap);
   const rand = rng(seed ^ 0x9e3779b9);
   const rad = (angle * Math.PI) / 180;
   const cos = Math.cos(-rad);
   const sin = Math.sin(-rad);
-  const rot = points.map((p) => ({ x: p.x * cos - p.y * sin, y: p.x * sin + p.y * cos }));
-  const minY = Math.min(...rot.map((p) => p.y));
-  const maxY = Math.max(...rot.map((p) => p.y));
+  const rot = asRings(input).map((ring) =>
+    ring.map((p) => ({ x: p.x * cos - p.y * sin, y: p.x * sin + p.y * cos }))
+  );
+  const flat = rot.flat();
+  const minY = Math.min(...flat.map((p) => p.y));
+  const maxY = Math.max(...flat.map((p) => p.y));
 
   const strokes: string[] = [];
   const back = (x: number, y: number) => ({ x: x * cos + y * sin, y: -x * sin + y * cos });
@@ -989,16 +1033,7 @@ function zigzagPass(
   let open: Scribble[] = [];
 
   for (let y = minY + gap / 2; y < maxY; y += gap) {
-    const crossings: number[] = [];
-    for (let i = 0; i < rot.length; i++) {
-      const a = rot[i];
-      const b = rot[(i + 1) % rot.length];
-      // Half-open test, so a vertex exactly on the scanline is counted once
-      // rather than opening and closing the same span.
-      if (a.y <= y === b.y <= y) continue;
-      crossings.push(a.x + ((y - a.y) / (b.y - a.y)) * (b.x - a.x));
-    }
-    crossings.sort((p, q) => p - q);
+    const crossings = scanCrossings(rot, y);
 
     const next: Scribble[] = [];
     const taken = new Set<Scribble>();
@@ -1070,21 +1105,24 @@ function zigzagPass(
  * in GPU Canvas2D rather than parsing thousands of heavy SVG arcs.
  */
 function dotsPass(
-  points: readonly Point[],
+  input: Rings,
   options: { seed: number; gap: number; angle: number; level?: SketchLevel }
 ): string {
   const { seed, angle, level, gap } = options;
-  if (points.length < 3) return '';
+  if (asRings(input).every((r) => r.length < 3)) return '';
 
   const rand = rng(seed ^ 0x9e3779b9);
   const rad = (angle * Math.PI) / 180;
   const cos = Math.cos(-rad);
   const sin = Math.sin(-rad);
-  const rot = points.map((p) => ({ x: p.x * cos - p.y * sin, y: p.x * sin + p.y * cos }));
-  const minY = Math.min(...rot.map((p) => p.y));
-  const maxY = Math.max(...rot.map((p) => p.y));
-  const minX = Math.min(...rot.map((p) => p.x));
-  const maxX = Math.max(...rot.map((p) => p.x));
+  const rot = asRings(input).map((ring) =>
+    ring.map((p) => ({ x: p.x * cos - p.y * sin, y: p.x * sin + p.y * cos }))
+  );
+  const flat = rot.flat();
+  const minY = Math.min(...flat.map((p) => p.y));
+  const maxY = Math.max(...flat.map((p) => p.y));
+  const minX = Math.min(...flat.map((p) => p.x));
+  const maxX = Math.max(...flat.map((p) => p.x));
 
   /**
    * The spacing, from the gap it was handed — and capped by a *count*, not by
@@ -1157,14 +1195,7 @@ function dotsPass(
    */
   let row = 0;
   for (let y = minY + step * 0.6; y < maxY - step * 0.2; y += step, row++) {
-    const crossings: number[] = [];
-    for (let i = 0; i < rot.length; i++) {
-      const a = rot[i];
-      const b = rot[(i + 1) % rot.length];
-      if (a.y <= y === b.y <= y) continue;
-      crossings.push(a.x + ((y - a.y) / (b.y - a.y)) * (b.x - a.x));
-    }
-    crossings.sort((p, q) => p - q);
+    const crossings = scanCrossings(rot, y);
     const stagger = row % 2 ? step / 2 : 0;
     for (let i = 0; i + 1 < crossings.length; i += 2) {
       const xStart = crossings[i] + step * 0.4 + stagger;
@@ -1298,7 +1329,7 @@ export function gapFor(density: ShadingDensity | undefined): number {
  * thing a hand does without thinking about it.
  */
 export function shapeFill(
-  points: readonly Point[],
+  input: Rings,
   options: {
     seed: number;
     style: FillStyle;
@@ -1314,14 +1345,14 @@ export function shapeFill(
   const angle = Number.isFinite(options.angle) ? (options.angle as number) : HACHURE_ANGLE;
 
   if (style === 'zigzag') {
-    return zigzagPass(points, { seed, gap: gap * 1.2, angle, level });
+    return zigzagPass(input, { seed, gap: gap * 1.2, angle, level });
   }
 
   if (style === 'dots') {
-    return dotsPass(points, { seed, gap: gap * 1.3, angle, level });
+    return dotsPass(input, { seed, gap: gap * 1.3, angle, level });
   }
 
-  const first = hachurePass(points, { seed, gap, angle, level });
+  const first = hachurePass(input, { seed, gap, angle, level });
   if (style === 'hachure') return first;
 
   /**
@@ -1332,7 +1363,7 @@ export function shapeFill(
    * wider and a right angle off a line that is already off the diagonal keeps
    * the crossings irregular.
    */
-  const second = hachurePass(points, {
+  const second = hachurePass(input, {
     seed: seed ^ 0x5bf03635,
     gap: gap * 1.15,
     angle: angle + 90,
@@ -1362,11 +1393,25 @@ export function shapeFill(
  * along each edge. One pass, because a fill has no second pass.
  */
 export function roughSilhouette(
-  points: readonly Point[],
+  input: Rings,
   options: { seed: number; level?: SketchLevel; width?: number }
 ): string {
   const { seed, level, width } = options;
-  if (points.length < 3) return '';
+  const rings = asRings(input).filter((r) => r.length >= 3);
+  if (rings.length === 0) return '';
+  // One closed contour per ring, in the order the outline gave them — which
+  // for a compound shape is outer first and holes after, wound the other way.
+  // Both painters fill this non-zero, so opposite windings are what make the
+  // hole a hole rather than a second disc drawn on top of the first.
+  return rings.map((ring) => oneSilhouette(ring, seed, level, width)).join(' ');
+}
+
+function oneSilhouette(
+  points: readonly Point[],
+  seed: number,
+  level: SketchLevel | undefined,
+  width: number | undefined
+): string {
   // The same nib as the outline: the fill boundary and the stroke over it have
   // to stray by the same amount, or a wide pen's wander walks the drawn edge
   // off its own fill.

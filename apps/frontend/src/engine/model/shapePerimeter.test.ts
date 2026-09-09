@@ -83,7 +83,12 @@ describe('outlineOfNode', () => {
   });
 
   it('gives a real outline for a triangle, in world space', () => {
-    const out = outlineOfNode(shape('triangle'))!;
+    // A triangle is a three-sided  in this model; `triangle` is the
+    // name of the *tile*. Asking for a kind the schema does not have used to
+    // work by falling through the outline's catch-all, which is a fair thing
+    // for the renderer to do with a node from a newer build and a poor thing
+    // for a test to rely on.
+    const out = outlineOfNode(shape('polygon', { points: 3 }))!;
     expect(out.length).toBeGreaterThanOrEqual(3);
     // Offset by the node origin, not left in local coordinates.
     expect(Math.min(...out.map((p) => p.x))).toBeGreaterThanOrEqual(10);

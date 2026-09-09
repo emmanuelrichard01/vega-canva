@@ -1,10 +1,15 @@
-import { Rect, Ellipse, Line, RegularPolygon, Star, Group, Label, Tag, Text, Path } from 'react-konva';
+import { Ellipse, Line, Group, Label, Tag, Text, Path } from 'react-konva';
 import { nanoid } from 'nanoid';
 import { useStore } from '../../hooks/useStore';
 import { ThemeService } from '../ThemeService';
 import type { Tool, ToolContext } from './Tool';
 import type { ShapeGeometry } from '../model/schema';
-import { PRESET_GEOMETRY, type ShapePreset } from '../../components/workspace/shapePresetTypes';
+import {
+  placedSize,
+  presetGeometry,
+  shapeEntry,
+  type ShapePreset,
+} from '../../components/workspace/shapeCatalog';
 import { gridSnap } from '../interaction/gridSnap';
 import { constrainToAngle, lineNodeFromEndpoints, lineNodeFromVertices } from '../model/lineEnds';
 import { contourData } from '../model/pathGeometry';
@@ -24,9 +29,8 @@ import { bindCandidates } from '../model/connectorTargets';
 import { snapLineEndpoint } from '../interaction/lineMagneticSnap';
 import * as React from 'react';
 
-/** Minimum drag before a shape is sized by the drag rather than dropped at a default size. */
+/** Minimum drag before a shape is sized by the drag rather than dropped at its own proportions. */
 const MIN_DRAG = 5;
-const DEFAULT_SIZE = 120;
 
 export class ShapeTool implements Tool {
   id = 'shape';
@@ -120,7 +124,7 @@ export class ShapeTool implements Tool {
 
   /** Whether this preset draws an open run, which is what changes the gesture. */
   private isOpen(): boolean {
-    const kind = (PRESET_GEOMETRY[this.preset] ?? PRESET_GEOMETRY.rect).kind;
+    const kind = shapeEntry(this.preset).geometry.kind;
     return kind === 'line' || kind === 'arrow';
   }
 
@@ -185,23 +189,24 @@ export class ShapeTool implements Tool {
   /**
    * The geometry this preset creates.
    *
-   * The dock offers named side counts — triangle, pentagon, octagon — because
-   * nobody wants to draw a rectangle and then type "5". The document stores
-   * one `polygon` kind with a number, which is what makes the count editable
-   * afterwards rather than frozen into the shape's identity.
+   * The recipe comes from the catalogue whole rather than being rebuilt here
+   * from a kind and a side count. The dock offers named counts — triangle,
+   * pentagon, octagon — because nobody wants to draw a rectangle and then type
+   * "5", and the document stores one `polygon` kind with a number, which is
+   * what makes the count editable afterwards rather than frozen into the
+   * shape's identity. The same is true of a star's depth and a bubble's tail:
+   * they are part of what the tile promises, and the tile is where they are
+   * written down.
    */
   private geometry(): ShapeGeometry {
-    const preset = PRESET_GEOMETRY[this.preset] ?? PRESET_GEOMETRY.rect;
-    const geometry: ShapeGeometry = { kind: preset.kind };
-    if (preset.points !== undefined) geometry.points = preset.points;
-    if (preset.kind === 'star') geometry.innerRatio = 0.5;
+    const geometry = presetGeometry(this.preset);
     // The current field, not the boolean it superseded. The normalizer maps
     // the old one across for documents that already hold it, but nothing new
     // should be written in a form marked deprecated.
-    if (preset.kind === 'arrow') geometry.endEnd = 'arrow';
+    if (geometry.kind === 'arrow') geometry.endEnd = 'arrow';
     // The profile armed on the dock, written onto the node — a line is
     // finished when the gesture is, so this cannot be a decision made after.
-    if (preset.kind === 'line' || preset.kind === 'arrow') {
+    if (geometry.kind === 'line' || geometry.kind === 'arrow') {
       const { lineProfile: profile, lineWaves, lineAmplitude } = useStore.getState();
       if (profile !== 'straight') {
         geometry.lineProfile = profile;
@@ -371,10 +376,14 @@ export class ShapeTool implements Tool {
      * therefore exempt, and a too-short line is discarded below instead.
      */
     if (!this.isOpen() && (width <= MIN_DRAG || height <= MIN_DRAG)) {
-      width = DEFAULT_SIZE;
-      height = DEFAULT_SIZE;
-      x = this.startX - DEFAULT_SIZE / 2;
-      y = this.startY - DEFAULT_SIZE / 2;
+      // At the shape's own proportions, not a square — see `placedSize`. A
+      // capsule in a square box is a circle, and that is what clicking the
+      // board with the Capsule tool armed used to produce.
+      const natural = placedSize(this.preset);
+      width = natural.width;
+      height = natural.height;
+      x = this.startX - width / 2;
+      y = this.startY - height / 2;
       if (gridSnap.shouldSnap()) {
         const snapped = gridSnap.snapPoint(x, y);
         x = snapped.x;
@@ -392,7 +401,8 @@ export class ShapeTool implements Tool {
      * returns both halves: the endpoints for `geometry`, and a box that is the
      * extent of the line and its markers.
      */
-    const openGeometry = this.geometry();
+    const geometry = this.geometry();
+    const openGeometry = geometry;
     const ends = this.isOpen() ? this.endpoints() : null;
     const run = ends ? lineNodeFromEndpoints(ends.a, ends.b, openGeometry) : null;
     if (run) {
@@ -424,13 +434,24 @@ export class ShapeTool implements Tool {
          * which is the one place it cannot be undone by not choosing it. The
          * corner radius is a control in the panel and on the rail; the default
          * is the shape's own geometry, and rounding is what you add.
+         *
+         * The one exception is a tile whose whole promise is the corner —
+         * "Rounded rectangle" — which seeds one proportional to the shape it
+         * was dragged out at. Stored as the ordinary pixel value from then on,
+         * so resizing does not reshape a corner somebody has since adjusted.
          */
-        cornerRadius: 0,
+        cornerRadius: this.seededRadius(width, height),
       },
     });
 
     ctx.editor.select(nodeId);
     window.dispatchEvent(new CustomEvent('legacy_tool_change', { detail: 'select' }));
+  }
+
+  /** The radius this preset asks for at this size, or none. */
+  private seededRadius(width: number, height: number): number {
+    const ratio = shapeEntry(this.preset).cornerRadiusRatio;
+    return ratio ? Math.round(Math.min(width, height) * ratio) : 0;
   }
 
   /**
@@ -590,7 +611,6 @@ export class ShapeTool implements Tool {
 
     const fill = 'rgba(59, 130, 246, 0.25)';
     const stroke = '#3B82F6';
-    const center = { x: x + width / 2, y: y + height / 2 };
 
     /**
      * What you are about to make, in numbers.
@@ -618,33 +638,6 @@ export class ShapeTool implements Tool {
         {width > MIN_DRAG && height > MIN_DRAG ? readout : null}
       </Group>
     );
-
-    if (kind === 'rect') {
-      return withReadout(
-        <Rect x={x} y={y} width={width} height={height} fill={fill} stroke={stroke} strokeWidth={2} /* Square, like the shape this actually creates. It drew a rounded
-             preview and committed a sharp one, which is a preview that lies. */
-        cornerRadius={0} listening={false} />
-      );
-    }
-
-    if (kind === 'ellipse') {
-      return withReadout(
-        <Ellipse {...center} radiusX={width / 2} radiusY={height / 2} fill={fill} stroke={stroke} strokeWidth={2} listening={false} />
-      );
-    }
-
-    // Konva's RegularPolygon/Star take a single radius, so a non-square drag
-    // is expressed by stretching the node. This mirrors exactly what the
-    // committed shape does, so the silhouette does not change on release.
-    const base = Math.min(width, height) || 1;
-    const scaleX = width / base;
-    const scaleY = height / base;
-
-    if (kind === 'star') {
-      return withReadout(
-        <Star {...center} numPoints={5} innerRadius={base / 4} outerRadius={base / 2} scaleX={scaleX} scaleY={scaleY} fill={fill} stroke={stroke} strokeWidth={2} strokeScaleEnabled={false} listening={false} />
-      );
-    }
 
     /**
      * A line preview is the run itself — from where it was anchored to where
@@ -705,34 +698,26 @@ export class ShapeTool implements Tool {
       );
     }
 
-    if (
-      kind === 'triangle' ||
-      kind === 'pentagon' ||
-      kind === 'hexagon' ||
-      kind === 'octagon'
-    ) {
-      return withReadout(
-        <RegularPolygon
-          {...center}
-          sides={PRESET_GEOMETRY[kind as ShapePreset]?.points ?? 3}
-          radius={base / 2}
-          scaleX={scaleX}
-          scaleY={scaleY}
-          fill={fill}
-          stroke={stroke}
-          strokeWidth={2}
-          strokeScaleEnabled={false}
-          listening={false}
-        />
-      );
-    }
-
-    const geom = PRESET_GEOMETRY[kind as ShapePreset] ?? { kind: 'rect' };
+    /**
+     * Every closed shape previews through its own outline.
+     *
+     * There used to be four Konva-primitive branches above this one —
+     * rectangle, ellipse, star and the regular polygons — each rebuilding the
+     * shape a second way so the preview could use a cheaper node. They were
+     * kept in step by hand, and the comment on the rectangle's branch records
+     * what that cost the last time they fell out of step: it drew a rounded
+     * preview and committed a square one.
+     *
+     * One branch cannot disagree with itself. `shapeToPath` is what the canvas
+     * renders and what the exporter writes, so the outline under the pointer
+     * *is* the object that lands on release, including the corner radius the
+     * tile seeds and the box-filling normalisation the polygons now take.
+     */
     const dummyNode = {
-      geometry: geom,
+      geometry: this.geometry(),
       width,
       height,
-      appearance: {},
+      appearance: { cornerRadius: this.seededRadius(width, height) },
     };
     const pathD = contourData(shapeToPath(dummyNode as any));
     const featurePaths = shapeFeaturePaths(dummyNode as any, 0, 0);

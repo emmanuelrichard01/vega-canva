@@ -1,6 +1,6 @@
 import React from 'react';
 import { labelInk } from '../../../engine/model/labelInk';
-import { Circle, Ellipse, Group, Label, Line, Path, Rect, RegularPolygon, Star, Tag, Text } from 'react-konva';
+import { Circle, Ellipse, Group, Label, Line, Path, Rect, Tag, Text } from 'react-konva';
 import { DEFAULT_INK, isOpenShape, type ShapeNode } from '../../../engine/model/schema';
 import { canvasFontFamily, konvaFontStyle, konvaTextDecoration, shadowProps, shadowSpreadProps, strokeColor, strokeDashProps, strokeWidth } from './shared';
 import { useFillProps } from './useFillProps';
@@ -35,6 +35,11 @@ interface Props {
  * and a single-radius `RegularPolygon`/`Star` for the rest, so height was
  * ignored outright — a wide ellipse snapped to a circle the moment the drag
  * committed, and resizing a hexagon on one axis did nothing at all.
+ *
+ * There are three primitives left: a `Rect`, an `Ellipse`, and a `Path` for
+ * everything else. The polygon and star primitives were the last two that
+ * rebuilt a shape rather than drawing the one `shapeOutline` describes, and
+ * they went when polygons started filling their box — see the branch below.
  */
 export const ShapeRenderer: React.FC<Props> = React.memo(({ node, showLabel }) => {
   const liveTransform = useLiveTransform(node.id);
@@ -73,18 +78,13 @@ export const ShapeRenderer: React.FC<Props> = React.memo(({ node, showLabel }) =
   }, [labelFamily, labelWeight, labelItalic]);
   const w = node.width;
   const h = node.height;
-  // Gradient geometry is unit-space against the shape's *own* box, and the
-  // three primitives here do not share an origin: a Rect is drawn from its
-  // top-left, an Ellipse and a RegularPolygon from their centre. Passing the
-  // right box per branch is what keeps a top-to-bottom gradient running
-  // top-to-bottom on all three rather than starting halfway down the ellipse.
-  // Konva's polygon primitives take a single radius, so they are built on a
-  // square of the smaller dimension and stretched to the box; their gradient
-  // is measured against that square and stretched with them.
-  const base = Math.min(w, h) || 1;
+  // Gradient geometry is unit-space against the shape's *own* box, and the two
+  // primitives left here do not share an origin: a Rect and a Path are drawn
+  // from the node's top-left, an Ellipse from its centre. Passing the right box
+  // per branch is what keeps a top-to-bottom gradient running top to bottom on
+  // both rather than starting halfway down the ellipse.
   const rectFill = useFillProps(node.appearance, { x: 0, y: 0, width: w, height: h }, '#4F46E5');
   const ellipseFill = useFillProps(node.appearance, { x: -w / 2, y: -h / 2, width: w, height: h }, '#4F46E5');
-  const polygonFill = useFillProps(node.appearance, { x: -base / 2, y: -base / 2, width: base, height: base }, '#4F46E5');
   const stroke = strokeColor(node.appearance);
   const sw = strokeWidth(node.appearance);
   const radius = liveTransform?.cornerRadius ?? node.appearance?.cornerRadius ?? 0;
@@ -730,61 +730,31 @@ export const ShapeRenderer: React.FC<Props> = React.memo(({ node, showLabel }) =
         {...dashProps}
       />
     );
-  } else if (
-    node.geometry.kind === 'polygon' &&
-    Math.max(...cornerRadiiOf(radius)) === 0
-  ) {
-    const scaleX = w / base;
-    const scaleY = h / base;
-    shape = (
-      <RegularPolygon
-        x={w / 2}
-        y={h / 2}
-        scaleX={scaleX}
-        scaleY={scaleY}
-        sides={node.geometry.points ?? 3}
-        radius={base / 2}
-        {...polygonFill}
-        {...shadow}
-        stroke={primitiveStroke}
-        strokeWidth={sw}
-        strokeScaleEnabled={false}
-        {...dashProps}
-      />
-    );
-  } else if (
-    node.geometry.kind === 'star' &&
-    Math.max(...cornerRadiiOf(radius)) === 0
-  ) {
-    const scaleX = w / base;
-    const scaleY = h / base;
-    shape = (
-      <Star
-        x={w / 2}
-        y={h / 2}
-        scaleX={scaleX}
-        scaleY={scaleY}
-        numPoints={node.geometry.points ?? 5}
-        innerRadius={(base / 2) * (node.geometry.innerRatio ?? 0.5)}
-        outerRadius={base / 2}
-        {...polygonFill}
-        {...shadow}
-        stroke={primitiveStroke}
-        strokeWidth={sw}
-        strokeScaleEnabled={false}
-        {...dashProps}
-      />
-    );
   } else {
-    // All advanced vector shapes (squircle, heart, diamond, triangle, trapezoid,
-    // parallelogram, capsule, cylinder, cloud, callout, chevron, cross, donut, badge, banner)
-    // as well as rounded polygons and stars render through `shapeToPath`.
+    /**
+     * Everything else draws its own outline.
+     *
+     * Two Konva primitives used to sit here — `RegularPolygon` and `Star` —
+     * each rebuilding the shape from a side count and a single radius, on a
+     * square, stretched to the box. That was a faithful copy of what
+     * `shapeOutline` did at the time and it stopped being one the moment
+     * polygons were normalised to *fill* their box: the primitive would have
+     * drawn the inscribed hexagon while the inside stroke, the inner shadow,
+     * the hit region, the sketch and the exported file all drew the fitted
+     * one. A stroke sliding out from under its own shape is precisely the
+     * failure `shapeOutline`'s header describes.
+     *
+     * `Path` costs nothing next to them and removes the branch. It also fixes
+     * a smaller thing the primitives forced: their gradient was measured
+     * against the intermediate square and stretched with it, so a
+     * top-to-bottom gradient on a wide hexagon did not run top to bottom.
+     */
     const pathD = contourData(shapeToPath(effectiveNode));
     const mainPath = (
       <Path
         data={pathD}
         fillRule="evenodd"
-        {...polygonFill}
+        {...rectFill}
         {...shadow}
         stroke={primitiveStroke}
         strokeWidth={sw}

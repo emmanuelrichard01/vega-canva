@@ -21,7 +21,7 @@ import { deletePickedVertex } from '../engine/interaction/lineVertexActions';
 import { contourData } from '../engine/model/pathGeometry';
 import { RULER_SIZE, Rulers } from './canvas/Rulers';
 import { tickStep } from '../engine/interaction/rulerTicks';
-import { ALL_SHAPE_PRESETS } from './workspace/shapePresetTypes';
+import { ALL_SHAPE_PRESETS } from './workspace/shapeCatalog';
 import { ObjectRenderer } from "./ObjectRenderer";
 import { PresenceRenderer } from "../engine/presence/PresenceRenderer";
 import { presenceManager } from "../engine/presence/PresenceManager";

@@ -123,10 +123,33 @@ export const SHAPE_PARAMS: Partial<Record<ShapeKind, ShapeParamGroup>> = {
   ] },
   trapezoid: { label: 'Trapezoid', params: [PERCENT('inset', 'Top inset', [0.05, 0.45, 0.05], 0.2, 'How far the top edge is drawn in')] },
   chevron: { label: 'Chevron', params: [PERCENT('indent', 'Notch', [0.05, 0.5, 0.05], 0.25, 'Depth of the point and the notch behind it')] },
-  cross: { label: 'Cross', params: [PERCENT('armRatio', 'Arm width', [0.1, 0.8, 0.05], 0.33)] },
-  cylinder: { label: 'Cylinder', params: [PERCENT('rimRatio', 'Rim', [0.05, 0.4, 0.02], 0.18, 'How much of an ellipse the top reads as')] },
+  preparation: { label: 'Preparation', params: [PERCENT('indent', 'Point', [0.05, 0.5, 0.05], 0.2, 'How far the two side points are drawn in')] },
+  arrow_block: { label: 'Block arrow', params: [PERCENT('indent', 'Head', [0.2, 0.7, 0.05], 0.4, 'The head, as a share of the length')] },
+  banner: { label: 'Ribbon', params: [PERCENT('indent', 'Swallowtail', [0.05, 0.3, 0.05], 0.15, 'How deep the notch is cut into each end')] },
+  manual_input: { label: 'Manual input', params: [PERCENT('indent', 'Slope', [0.05, 0.5, 0.05], 0.2, 'How far the top edge drops on the left')] },
+  cross: { label: 'Cross', params: [PERCENT('armRatio', 'Arm width', [0.1, 0.8, 0.05], 0.35, 'Arm thickness, against the shorter side')] },
+  /**
+   * A 5% grain, not 2%.
+   *
+   * The range was 5% to 40% in steps of 2, which is seventeen and a half
+   * steps — so the stepper could reach 39% and never 40%, its own stated
+   * maximum. A range that is not a whole number of steps has an end nobody can
+   * get to; `shapeParams.test.ts` now holds every dial to that.
+   */
+  cylinder: { label: 'Cylinder', params: [PERCENT('rimRatio', 'Rim', [0.05, 0.4, 0.05], 0.2, 'How much of an ellipse the top reads as')] },
+  database: { label: 'Database', params: [
+    COUNT('shelfCount', 'Decks', [2, 5], 3, 'Disks drawn down the stack'),
+    PERCENT('rimRatio', 'Rim', [0.05, 0.4, 0.05], 0.15, 'How much of an ellipse each disk reads as'),
+  ] },
   document: { label: 'Document', params: [PERCENT('waveHeight', 'Wave', [0.05, 0.35, 0.02], 0.15, 'Amplitude of the torn bottom edge')] },
-  donut: { label: 'Donut', params: [PERCENT('innerRatio', 'Hole', [0.1, 0.9, 0.05], 0.5, 'The hole, as a share of the outer radius')] },
+  /**
+   * The hole was two numbers: 50% here and 55% inside the geometry, which is
+   * the one the board actually drew. The table wins on principle and the
+   * geometry wins on the value -- 55% is the ring people were looking at, and
+   * moving every existing donut to correct a number nobody could see would be
+   * the worse of the two changes.
+   */
+  donut: { label: 'Ring', params: [PERCENT('innerRatio', 'Hole', [0.1, 0.9, 0.05], 0.55, 'The hole, as a share of the outer radius')] },
   callout: { label: 'Callout', params: [
     {
       field: 'tailSize',
@@ -144,8 +167,8 @@ export const SHAPE_PARAMS: Partial<Record<ShapeKind, ShapeParamGroup>> = {
   ] },
   cpu: { label: 'Processor', params: [COUNT('pinCount', 'Pins per side', [2, 6], 3, 'Contacts on each edge of the package')] },
   gear: { label: 'Gear', params: [COUNT('teeth', 'Teeth', [4, 24], 8)] },
-  server: { label: 'Server rack', params: [COUNT('shelfCount', 'Bays', [2, 6], 3, 'Rack units drawn across the face')] },
-  badge: { label: 'Badge', params: [
+  server: { label: 'Server rack', params: [COUNT('shelfCount', 'Bays', [2, 6], 3, 'Rack units stacked down the face')] },
+  badge: { label: 'Seal', params: [
     COUNT('points', 'Scallops', [6, 36], 12),
     {
       field: 'innerRatio',
@@ -154,7 +177,7 @@ export const SHAPE_PARAMS: Partial<Record<ShapeKind, ShapeParamGroup>> = {
       min: 0.55,
       max: 0.95,
       step: 0.05,
-      fallback: 0.82,
+      fallback: 0.8,
       unit: 'depth',
     },
   ] },

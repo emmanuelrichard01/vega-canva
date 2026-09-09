@@ -1,328 +1,215 @@
 import React from 'react';
 
 /**
- * Shape glyphs, defined once.
+ * A shape's glyph, drawn by the same code that draws the shape.
  *
- * Hand-authored geometry SVG primitives matching Figma/Illustrator standards.
- * They inherit `currentColor` and take their size from the caller.
+ * ## Why there is no artwork in this file any more
  *
- * Where a shape's canvas geometry changed (cloud, callout, banner, shield,
- * badge, key, wallet, capsule), the icon was redrawn to match the new outline
- * so the flyout preview and the canvas shape are visually identical.
+ * There were forty hand-drawn SVG paths here, one per shape, maintained beside
+ * the geometry they were pictures of. Five of them derived from the real
+ * outline and the other thirty-five did not, so the set could only drift — and
+ * it had:
+ *
+ *   - the **Database** glyph drew a stack of three disks; the tile created a
+ *     plain cylinder;
+ *   - the **Seal** glyph was a smooth rosette; the board drew a jagged
+ *     sunburst, because the outline used a straight-sided fallback the icon
+ *     did not;
+ *   - the **Key** glyph had a round bow with a hole in it; the board drew a
+ *     diamond with a comb attached;
+ *   - the **Ring** glyph showed two concentric circles; the board drew a
+ *     lens.
+ *
+ * Every one of those is the same defect: a picture of a shape is not a fact
+ * about the shape, it is a *second* fact, and the two were free to disagree. A
+ * user cannot find that out except by drawing the thing and being surprised.
+ *
+ * So the glyph is now the shape. `shapeToPath` gives the outline the canvas
+ * fills and the exporter writes; `shapeFeaturePaths` gives the interior lines.
+ * The tile draws them at 24 units instead of 240, and that is the only
+ * difference between the picture and the object.
+ *
+ * ## What that costs, and what it buys
+ *
+ * It costs a path evaluation per glyph instead of a literal, which for a set of
+ * fifty tiles is nothing and is memoised anyway. It buys three things that were
+ * previously impossible: a new shape needs no icon, a change to a shape cannot
+ * leave its icon behind, and the details each shape draws — a rack's bays, a
+ * chip's pins, a browser's address bar — simplify by themselves at glyph size,
+ * because every one of them is a share of the box held between a floor and a
+ * ceiling.
  */
 
+import { shapeToPath } from '../../engine/model/shapeToPath';
+import { shapeFeaturePaths } from '../../engine/model/shapeOutline';
+import { contourData } from '../../engine/model/pathGeometry';
+import type { ShapeKind, ShapeNode } from '../../engine/model/schema';
 import {
-  heartAnchors,
-  squircleAnchors,
-  cloudAnchors,
-  shieldAnchors,
-  badgeAnchors,
-} from '../../engine/model/shapeOutline';
-import { fromAnchors, pathData } from '../../engine/model/pathGeometry';
-import type { ShapePreset } from './shapePresetTypes';
-import type { ShapeKind } from '../../engine/model/schema';
+  SHAPE_BY_PRESET,
+  presetForKind,
+  type ShapePreset,
+} from './shapeCatalog';
 
 interface ShapeIconProps {
   /**
-   * Any shape kind, not only the ones the toolbar offers.
+   * A preset, or a bare kind.
    *
-   * The two lists overlap without containing each other: the toolbar offers
-   * `triangle`, `pentagon`, `hexagon` and `octagon`, which are all one
-   * `polygon` kind at different side counts, and `polygon` itself is a kind
-   * you can hold but not place. A panel showing the icon for the *selected*
-   * shape is keyed by kind; the toolbar is keyed by preset. The table below
-   * falls back to a rectangle for anything it has no drawing of, which it
-   * always did -- the type just stopped pretending the gap was impossible.
+   * The dock is keyed by preset — a pentagon and a hexagon are two tiles and
+   * one kind. The properties panel and the swapper are keyed by kind, because
+   * they describe a node that already exists and no longer remembers which
+   * tile placed it. Both arrive here, and a kind is resolved to the first
+   * preset that makes it.
    */
   kind: ShapePreset | ShapeKind;
   size?: number;
 }
 
-/** One stroke weight across the whole set, so no shape reads heavier than its neighbours. */
-const STROKE = 2;
+/**
+ * The glyph is drawn at board size and scaled down by the browser.
+ *
+ * ## Why 96 units and not 24
+ *
+ * `shapeFeaturePaths` sizes every interior detail as a share of the box held
+ * between a floor and a ceiling, and the floors are in world units because
+ * that is the only thing they can be: a rack's indicator lamp must not vanish
+ * on a 60-unit shape. Drawing the glyph in a 21-unit box put every one of
+ * those floors in charge — a browser's title bar is `max(h × 0.2, 12)`, which
+ * at 21 units is **more than half the shape**, and a terminal's prompt started
+ * past its own centre line.
+ *
+ * So the glyph is drawn at a size a real shape is drawn at, and the `<svg>`
+ * scales the result to 18 or 24 CSS pixels. Nothing about the drawing changes;
+ * only the viewport does. That is stronger parity than the small viewbox ever
+ * had — the tile is now a photograph of the object at a distance rather than a
+ * separate small drawing of it — and it removes a whole class of defect that
+ * could only ever appear in the toolbar.
+ */
+const VIEWBOX = 96;
+/** How much of it the artwork may use, leaving room for the stroke's own width. */
+const CONTENT = 84;
 
-/** Helper: generate a pathData glyph from anchors, offset into a 24×24 viewbox. */
-function anchorGlyph(
-  anchors: Array<{ x: number; y: number; inX?: number; inY?: number; outX?: number; outY?: number }>,
-  closed: boolean,
-  offsetX = STROKE,
-  offsetY = STROKE,
-): string {
-  return pathData(
-    fromAnchors(
-      anchors.map((a) => ({
-        x: a.x + offsetX,
-        y: a.y + offsetY,
-        inX: (a.inX ?? a.x) + offsetX,
-        inY: (a.inY ?? a.y) + offsetY,
-        outX: (a.outX ?? a.x) + offsetX,
-        outY: (a.outY ?? a.y) + offsetY,
-      })),
-      closed
-    )
-  );
+/**
+ * Two weights, not one.
+ *
+ * The silhouette carries the identity and the interior lines qualify it, so
+ * they are not peers: a rack drawn with its bays at the same weight as its
+ * chassis reads as a grid, and a chip reads as a waffle. The ratio is the same
+ * one the canvas produces naturally at size, which is why a glyph and the
+ * object it places look like the same drawing.
+ */
+const SCALE = VIEWBOX / 24;
+const OUTLINE_STROKE = 1.75 * SCALE;
+const FEATURE_STROKE = 1.35 * SCALE;
+
+/** An open run has no interior, and its head is drawn by the renderer, not the outline. */
+const RUNS: ReadonlySet<string> = new Set(['line', 'arrow']);
+
+interface Glyph {
+  outline: string;
+  features: readonly string[];
 }
 
-const BOX = 24 - STROKE * 2;
+const cache = new Map<ShapePreset, Glyph>();
+
+function glyphFor(preset: ShapePreset): Glyph {
+  const cached = cache.get(preset);
+  if (cached) return cached;
+
+  const entry = SHAPE_BY_PRESET[preset];
+  const [gw, gh] = entry.glyph ?? [20, 20];
+  // The artwork's own proportions, scaled to fill the content square and
+  // centred in the viewbox. A capsule stays a capsule and a phone stays a
+  // phone; nothing is squashed into a square to make the grid tidy.
+  const scale = CONTENT / Math.max(gw, gh);
+  const w = gw * scale;
+  const h = gh * scale;
+  const ox = (VIEWBOX - w) / 2;
+  const oy = (VIEWBOX - h) / 2;
+
+  const node = {
+    geometry: entry.geometry,
+    width: w,
+    height: h,
+    // The same ratio the tool seeds a real one with, applied to the glyph's
+    // own shorter side — so the corner in the tile is the corner you get.
+    appearance: entry.cornerRadiusRatio
+      ? { cornerRadius: Math.min(w, h) * entry.cornerRadiusRatio }
+      : undefined,
+  } as Pick<ShapeNode, 'geometry' | 'width' | 'height' | 'appearance'>;
+
+  const glyph: Glyph = {
+    outline: translate(contourData(shapeToPath(node)), ox, oy),
+    features: shapeFeaturePaths(node, ox, oy),
+  };
+  cache.set(preset, glyph);
+  return glyph;
+}
 
 /**
- * The heart glyph, from the same anchors the canvas draws.
+ * Move a path by an offset.
+ *
+ * `shapeToPath` works in the node's own box, which starts at its corner —
+ * everything downstream of it draws inside a group that has already been moved
+ * there. A glyph has no group, so the numbers are shifted here. Every command
+ * this produces is `M`/`C`/`Z` with absolute coordinate pairs, which is why a
+ * pairwise walk is enough and no path parser is needed.
  */
-const heartGlyph = anchorGlyph(heartAnchors(BOX, BOX), true);
-
-/**
- * The squircle glyph, from the same continuous-curvature anchors the canvas draws.
- */
-const squircleGlyph = anchorGlyph(squircleAnchors(BOX, BOX), true);
-
-/**
- * The cloud glyph, from the same asymmetric bumps the canvas draws.
- */
-const cloudGlyph = anchorGlyph(cloudAnchors(BOX, BOX), true);
-
-/**
- * The shield glyph, from the same curved-side anchors the canvas draws.
- */
-const shieldGlyph = anchorGlyph(shieldAnchors(BOX, BOX), true);
-
-/**
- * The badge/seal glyph, from the same smooth-scallop anchors the canvas draws.
- */
-const badgeGlyph = anchorGlyph(
-  badgeAnchors(BOX / 2 + STROKE, BOX / 2 + STROKE, 12, 0.9, BOX / 2, BOX / 2),
-  true,
-  0,
-  0,
-);
-
-/** The regular polygon glyphs, generated so the set cannot drift by hand. */
-function polygonGlyph(sides: number): React.ReactNode {
-  const pts = Array.from({ length: sides }, (_, i) => {
-    const a = (i * 2 * Math.PI) / sides - Math.PI / 2;
-    return `${(12 + 10 * Math.cos(a)).toFixed(2)} ${(12 + 10 * Math.sin(a)).toFixed(2)}`;
+function translate(d: string, dx: number, dy: number): string {
+  let index = 0;
+  return d.replace(/-?\d*\.?\d+(?:e[-+]?\d+)?/gi, (n) => {
+    const shifted = parseFloat(n) + (index++ % 2 === 0 ? dx : dy);
+    return shifted.toFixed(3);
   });
-  return <polygon points={pts.join(' ')} />;
 }
 
-const PATHS: Partial<Record<ShapePreset | ShapeKind, React.ReactNode>> &
-  Record<ShapePreset, React.ReactNode> = {
-  rect: <rect x="3" y="3" width="18" height="18" rx="2" ry="2" />,
-  ellipse: <circle cx="12" cy="12" r="9" />,
-  squircle: <path d={squircleGlyph} />,
-  /* Clean stadium capsule — proper semicircular ends, no flat spots. */
-  capsule: <rect x="3" y="6" width="18" height="12" rx="6" ry="6" />,
-  diamond: <polygon points="12 3 21 12 12 21 3 12" />,
-  triangle: polygonGlyph(3),
-  cylinder: (
-    <g>
-      <ellipse cx="12" cy="6" rx="9" ry="3.2" />
-      <path d="M 3 6 L 3 18 A 9 3.2 0 0 0 21 18 L 21 6" />
-    </g>
-  ),
-  parallelogram: <polygon points="7 4 21 4 17 20 3 20" />,
-  trapezoid: <polygon points="6 4 18 4 21 20 3 20" />,
-  chevron: <polygon points="3 4 16 4 21 12 16 20 3 20 8 12" />,
-  star: (
-    <polygon points="12 2 15.09 8.26 22 9.27 17 14.14 18.18 21.02 12 17.77 5.82 21.02 7 14.14 2 9.27 8.91 8.26 12 2" />
-  ),
-  heart: <path d={heartGlyph} />,
-
-  /* Cloud: organic asymmetric bumps matching the canvas cloud. */
-  cloud: <path d={cloudGlyph} />,
-
-  cross: <polygon points="9 3 15 3 15 9 21 9 21 15 15 15 15 21 9 21 9 15 3 15 3 9 9 9" />,
-
-  /* Donut: updated inner radius to 0.55 to match canvas. */
-  donut: (
-    <g>
-      <circle cx="12" cy="12" r="9" />
-      <circle cx="12" cy="12" r="5" />
-    </g>
-  ),
-
-  /* Badge: smooth scalloped rosette from the same anchor generator. */
-  badge: <path d={badgeGlyph} />,
-
-  /* Callout: rounded-rect body with a curved tail (speech bubble). */
-  callout: (
-    <path d="M 4 3 C 2.9 3 2 3.9 2 5 V 15 C 2 16.1 2.9 17 4 17 H 7 L 5 21 L 11 17 H 20 C 21.1 17 22 16.1 22 15 V 5 C 22 3.9 21.1 3 20 3 Z" />
-  ),
-
-  /* Banner: folded ribbon with notched sides and tail folds. */
-  banner: (
-    <g>
-      {/* Main ribbon body */}
-      <polygon points="2 5 22 5 19 10 22 15 2 15 5 10" />
-      {/* Left tail fold */}
-      <polygon points="4 15 4 18 7 15" opacity="0.5" />
-      {/* Right tail fold */}
-      <polygon points="20 15 20 18 17 15" opacity="0.5" />
-    </g>
-  ),
-
-  pentagon: polygonGlyph(5),
-  hexagon: polygonGlyph(6),
-  octagon: polygonGlyph(8),
-  document: (
-    <path d="M 4 3 H 20 V 17 C 17.5 19 14.5 15.5 12 17.5 C 9.5 19.5 6.5 16 4 17.5 Z" />
-  ),
-  predefined_process: (
-    <g>
-      <rect x="3" y="4" width="18" height="16" rx="2" />
-      <line x1="7" y1="4" x2="7" y2="20" />
-      <line x1="17" y1="4" x2="17" y2="20" />
-    </g>
-  ),
-  summing_junction: (
-    <g>
-      <circle cx="12" cy="12" r="9" />
-      <line x1="12" y1="3" x2="12" y2="21" />
-      <line x1="3" y1="12" x2="21" y2="12" />
-    </g>
-  ),
-  or_gate: (
-    <path d="M 4 4 C 11 5 16 8 20 12 C 16 16 11 19 4 20 C 7 15 7 9 4 4 Z" />
-  ),
-  and_gate: (
-    <path d="M 4 4 H 12 A 8 8 0 0 1 12 20 H 4 Z" />
-  ),
-  internal_storage: (
-    <g>
-      <rect x="3" y="4" width="18" height="16" rx="2" />
-      <line x1="3" y1="8" x2="21" y2="8" />
-      <line x1="8" y1="8" x2="8" y2="20" />
-    </g>
-  ),
-  delay: (
-    <path d="M 4 4 H 13 A 8 8 0 0 1 13 20 H 4 Z" />
-  ),
-  database: (
-    <g>
-      <ellipse cx="12" cy="5" rx="8" ry="3" />
-      <path d="M 4 5 V 12 C 4 13.7 7.6 15 12 15 C 16.4 15 20 13.7 20 12 V 5" />
-      <path d="M 4 12 V 19 C 4 20.7 7.6 22 12 22 C 16.4 22 20 20.7 20 19 V 12" />
-    </g>
-  ),
-  /* Server: stacked rounded rects with indicator LEDs and slots. */
-  server: (
-    <g>
-      <rect x="3" y="3" width="18" height="7" rx="2" />
-      <rect x="3" y="14" width="18" height="7" rx="2" />
-      <circle cx="6.5" cy="6.5" r="1" fill="currentColor" />
-      <circle cx="6.5" cy="17.5" r="1" fill="currentColor" />
-      <line x1="12" y1="6.5" x2="17" y2="6.5" />
-      <line x1="12" y1="17.5" x2="17" y2="17.5" />
-    </g>
-  ),
-  /* CPU: clean IC package with fewer pins. */
-  cpu: (
-    <g>
-      <rect x="5" y="5" width="14" height="14" rx="2" />
-      <rect x="8.5" y="8.5" width="7" height="7" rx="1" />
-      <line x1="9" y1="1" x2="9" y2="4" />
-      <line x1="12" y1="1" x2="12" y2="4" />
-      <line x1="15" y1="1" x2="15" y2="4" />
-      <line x1="9" y1="20" x2="9" y2="23" />
-      <line x1="12" y1="20" x2="12" y2="23" />
-      <line x1="15" y1="20" x2="15" y2="23" />
-      <line x1="1" y1="9" x2="4" y2="9" />
-      <line x1="1" y1="12" x2="4" y2="12" />
-      <line x1="1" y1="15" x2="4" y2="15" />
-      <line x1="20" y1="9" x2="23" y2="9" />
-      <line x1="20" y1="12" x2="23" y2="12" />
-      <line x1="20" y1="15" x2="23" y2="15" />
-    </g>
-  ),
-  mobile: (
-    <g>
-      <rect x="6" y="2" width="12" height="20" rx="3" />
-      <line x1="10" y1="5" x2="14" y2="5" />
-      <line x1="10" y1="19" x2="14" y2="19" />
-    </g>
-  ),
-  terminal: (
-    <g>
-      <rect x="3" y="4" width="18" height="16" rx="2" />
-      <polyline points="7 10 10 13 7 16" />
-      <line x1="13" y1="16" x2="17" y2="16" />
-    </g>
-  ),
-  browser: (
-    <g>
-      <rect x="3" y="4" width="18" height="16" rx="2" />
-      <line x1="3" y1="9" x2="21" y2="9" />
-      <circle cx="6" cy="6.5" r="0.75" fill="currentColor" />
-      <circle cx="8.5" cy="6.5" r="0.75" fill="currentColor" />
-      <rect x="11.5" y="5.5" width="7.5" height="2" rx="1" />
-    </g>
-  ),
-  /* Shield: curved Bézier sides matching the canvas. */
-  shield: <path d={shieldGlyph} />,
-
-  /* Key: circular bow with toothed shaft. */
-  key: (
-    <g>
-      <circle cx="7.5" cy="12" r="4.5" />
-      <circle cx="7.5" cy="12" r="1.75" />
-      <path d="M 12 11 H 18 V 15 H 16.5 V 13 H 15 V 15 H 13.5 V 13 H 12" />
-      <line x1="18" y1="11" x2="21" y2="11" />
-      <line x1="21" y1="11" x2="21" y2="15" />
-      <line x1="21" y1="15" x2="18" y2="15" />
-    </g>
-  ),
-  bolt: (
-    <polygon points="13 2 4 13 11 13 9 22 20 10 13 10" />
-  ),
-  /* Package: isometric cube with internal crease lines. */
-  package: (
-    <g>
-      <polygon points="12 2 21 7 21 17 12 22 3 17 3 7" />
-      <polyline points="3 7 12 12 21 7" />
-      <line x1="12" y1="12" x2="12" y2="22" />
-    </g>
-  ),
-  mail: (
-    <g>
-      <rect x="3" y="5" width="18" height="14" rx="2" />
-      <polyline points="3 7 12 13 21 7" />
-    </g>
-  ),
-  user: (
-    <g>
-      <circle cx="12" cy="7" r="4" />
-      <path d="M 5 21 C 5 16.5 8 14 12 14 C 16 14 19 16.5 19 21" />
-    </g>
-  ),
-  gear: (
-    <g>
-      <circle cx="12" cy="12" r="3" />
-      <path d="M 19.4 15 A 1.65 1.65 0 0 0 19.7 16.8 L 20 17.3 A 2 2 0 0 1 17.3 20 L 16.8 19.7 A 1.65 1.65 0 0 0 15 19.4 A 1.65 1.65 0 0 0 13.6 20.6 L 13.5 21.2 A 2 2 0 0 1 9.5 21.2 L 9.4 20.6 A 1.65 1.65 0 0 0 8 19.4 A 1.65 1.65 0 0 0 6.2 19.7 L 5.7 20 A 2 2 0 0 1 3 17.3 L 3.3 16.8 A 1.65 1.65 0 0 0 3 15 A 1.65 1.65 0 0 0 1.8 13.6 L 1.2 13.5 A 2 2 0 0 1 1.2 9.5 L 1.8 9.4 A 1.65 1.65 0 0 0 3 8 A 1.65 1.65 0 0 0 2.7 6.2 L 2.4 5.7 A 2 2 0 0 1 5.1 3 L 5.6 3.3 A 1.65 1.65 0 0 0 7.4 3 A 1.65 1.65 0 0 0 8.8 1.8 L 8.9 1.2 A 2 2 0 0 1 12.9 1.2 L 13 1.8 A 1.65 1.65 0 0 0 14.4 3 A 1.65 1.65 0 0 0 16.2 2.7 L 16.7 2.4 A 2 2 0 0 1 19.4 5.1 L 19.1 5.6 A 1.65 1.65 0 0 0 19.4 7.4 A 1.65 1.65 0 0 0 20.6 8.8 L 21.2 8.9 A 2 2 0 0 1 21.2 12.9 L 20.6 13 A 1.65 1.65 0 0 0 19.4 14.4 Z" />
-    </g>
-  ),
-  /* Wallet: rounded body with clasp pocket bump. */
-  wallet: (
-    <g>
-      <path d="M 3 6 C 3 4.9 3.9 4 5 4 H 19 C 20.1 4 21 4.9 21 6 V 8 H 17 C 15.3 8 14 9.3 14 11 C 14 12.7 15.3 14 17 14 H 21 V 18 C 21 19.1 20.1 20 19 20 H 5 C 3.9 20 3 19.1 3 18 Z" />
-      <circle cx="17.5" cy="11" r="1" fill="currentColor" />
-    </g>
-  ),
-  line: <path d="M4 20 L20 4" />,
-  arrow: <path d="M4 20 L20 4 M20 4 L13 5 M20 4 L19 11" />,
+/** The two open runs, which have no interior and no silhouette to draw. */
+const RUN_GLYPHS: Record<string, React.ReactNode> = {
+  line: <path d="M14 82 L82 14" />,
+  arrow: <path d="M14 82 L82 14 M82 14 L54.4 18.8 M82 14 L77.2 41.6" />,
 };
 
-export const ShapeIcon: React.FC<ShapeIconProps> = ({ kind, size = 18 }) => (
-  <svg
-    width={size}
-    height={size}
-    viewBox="0 0 24 24"
-    fill="none"
-    stroke="currentColor"
-    strokeWidth={STROKE}
-    strokeLinejoin="round"
-    strokeLinecap="round"
-    aria-hidden="true"
-    focusable="false"
-  >
-    {PATHS[kind] ?? PATHS.rect}
-  </svg>
-);
+export const ShapeIcon: React.FC<ShapeIconProps> = ({ kind, size = 18 }) => {
+  const preset: ShapePreset =
+    kind in SHAPE_BY_PRESET ? (kind as ShapePreset) : presetForKind(kind as ShapeKind);
+
+  const body = RUNS.has(preset) ? (
+    RUN_GLYPHS[preset]
+  ) : (
+    <ShapeGlyph preset={preset} />
+  );
+
+  return (
+    <svg
+      width={size}
+      height={size}
+      viewBox={`0 0 ${VIEWBOX} ${VIEWBOX}`}
+      fill="none"
+      stroke="currentColor"
+      strokeWidth={OUTLINE_STROKE}
+      strokeLinejoin="round"
+      strokeLinecap="round"
+      aria-hidden="true"
+      focusable="false"
+    >
+      {body}
+    </svg>
+  );
+};
+
+const ShapeGlyph: React.FC<{ preset: ShapePreset }> = ({ preset }) => {
+  const glyph = React.useMemo(() => glyphFor(preset), [preset]);
+  return (
+    <>
+      {/*
+        `evenodd`, so a ring, a gear's bore and a key's pierced bow read as
+        holes rather than as a second outline sitting inside the first. It
+        matters even with no fill: a shape whose hole is not declared is a
+        shape whose hole is not there once somebody fills the tile.
+      */}
+      <path d={glyph.outline} fillRule="evenodd" />
+      {glyph.features.map((d, i) => (
+        <path key={i} d={d} strokeWidth={FEATURE_STROKE} />
+      ))}
+    </>
+  );
+};

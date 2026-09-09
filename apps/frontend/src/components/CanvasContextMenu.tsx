@@ -1,14 +1,37 @@
 import React, { useEffect, useLayoutEffect, useRef, useState } from 'react';
 import {
-  Circle, Copy, ClipboardPaste, FileCode2, ImageDown, Minus, MousePointerSquareDashed,
-  MoveRight, Square, Star, Trash2, Triangle, BringToFront, SendToBack, Shapes, Workflow, Code2,
-  Group, Ungroup, Lock, Unlock, Eye, EyeOff, PenTool, Download, Spline,
-  AlignStartVertical, AlignCenterVertical, AlignEndVertical,
-  AlignStartHorizontal, AlignCenterHorizontal, AlignEndHorizontal,
-  AlignHorizontalSpaceAround, AlignVerticalSpaceAround, ImagePlus, ImageOff,
+  Copy,
+  ClipboardPaste,
+  FileCode2,
+  ImageDown,
+  MousePointerSquareDashed,
+  Trash2,
+  BringToFront,
+  SendToBack,
+  Workflow,
+  Code2,
+  Group,
+  Ungroup,
+  Lock,
+  Unlock,
+  Eye,
+  EyeOff,
+  PenTool,
+  Download,
+  Spline,
+  AlignStartVertical,
+  AlignCenterVertical,
+  AlignEndVertical,
+  AlignStartHorizontal,
+  AlignCenterHorizontal,
+  AlignEndHorizontal,
+  AlignHorizontalSpaceAround,
+  AlignVerticalSpaceAround,
+  ImagePlus,
+  ImageOff,
 } from 'lucide-react';
 import type { AnyNode, ShapeKind } from '../engine/model/schema';
-import { ShapeIcon } from './workspace/shapeIcons';
+import { SHAPE_CHOICES } from './toolbar/railConstants';
 import { resolveAffordances, type AffordanceId } from '../engine/selection/affordances';
 import { copyLabel, exportLabel, exportScope } from '../engine/export/exportScope';
 import type { AlignEdge, DistributeAxis } from '../engine/model/align';
@@ -71,33 +94,14 @@ interface Props {
 /**
  * The shapes a selection can be swapped between.
  *
- * The same seven the floating toolbar offers, and deliberately the same list:
- * a swapper that knew about a shape the toolbar did not — or the reverse —
- * would make what you can turn a box into depend on where you asked.
+ * The same list the floating toolbar offers, and now literally the same list.
+ * This file's copy was twenty-one entries where the toolbar had twenty-two,
+ * with a different membership — no pentagon or octagon here, no hexagon there —
+ * and generic Lucide glyphs for a third of them, so a rectangle was a Lucide
+ * square in this menu and the real outline in the rail. The docstring above
+ * already said the two must not diverge; saying it is not what stops them.
  */
-const SWAP_CHOICES: Array<{ kind: ShapeKind; points?: number; label: string; icon: React.ReactNode }> = [
-  { kind: 'rect', label: 'Rectangle', icon: <Square size={15} /> },
-  { kind: 'ellipse', label: 'Ellipse', icon: <Circle size={15} /> },
-  { kind: 'squircle', label: 'Squircle', icon: <ShapeIcon kind="squircle" size={15} /> },
-  { kind: 'capsule', label: 'Capsule', icon: <ShapeIcon kind="capsule" size={15} /> },
-  { kind: 'diamond', label: 'Diamond', icon: <ShapeIcon kind="diamond" size={15} /> },
-  { kind: 'polygon', points: 3, label: 'Triangle', icon: <Triangle size={15} /> },
-  { kind: 'cylinder', label: 'Cylinder', icon: <ShapeIcon kind="cylinder" size={15} /> },
-  { kind: 'parallelogram', label: 'Parallelogram', icon: <ShapeIcon kind="parallelogram" size={15} /> },
-  { kind: 'trapezoid', label: 'Trapezoid', icon: <ShapeIcon kind="trapezoid" size={15} /> },
-  { kind: 'chevron', label: 'Chevron', icon: <ShapeIcon kind="chevron" size={15} /> },
-  { kind: 'star', points: 5, label: 'Star', icon: <Star size={15} /> },
-  { kind: 'heart', label: 'Heart', icon: <ShapeIcon kind="heart" size={15} /> },
-  { kind: 'cloud', label: 'Cloud', icon: <ShapeIcon kind="cloud" size={15} /> },
-  { kind: 'cross', label: 'Cross', icon: <ShapeIcon kind="cross" size={15} /> },
-  { kind: 'donut', label: 'Donut', icon: <ShapeIcon kind="donut" size={15} /> },
-  { kind: 'badge', points: 12, label: 'Badge', icon: <ShapeIcon kind="badge" size={15} /> },
-  { kind: 'callout', label: 'Callout', icon: <ShapeIcon kind="callout" size={15} /> },
-  { kind: 'banner', label: 'Banner', icon: <ShapeIcon kind="banner" size={15} /> },
-  { kind: 'polygon', points: 6, label: 'Hexagon', icon: <Shapes size={15} /> },
-  { kind: 'line', label: 'Line', icon: <Minus size={15} /> },
-  { kind: 'arrow', label: 'Arrow', icon: <MoveRight size={15} /> },
-];
+const SWAP_CHOICES = SHAPE_CHOICES;
 
 /**
  * The commands this menu can run, keyed by the affordance that offers them.

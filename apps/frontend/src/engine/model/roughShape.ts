@@ -17,7 +17,7 @@
 import { ellipseRing, rectRing, roughEllipse, roughLoop, roughPolyline, roughSilhouette, seedFor, shapeFill } from './rough';
 import { shapeOutline } from './shapeOutline';
 import { shapeToPath } from './shapeToPath';
-import { flattenPath } from './pathGeometry';
+import { flattenPath, subpathsOf } from './pathGeometry';
 import type { Point, ShapeNode } from './schema';
 
 export interface RoughShape {
@@ -101,6 +101,12 @@ export function roughShape(
   // there, so the hachure reaches the drawn edge instead of stopping short of
   // it on a coarse ring.
   let ring: Point[];
+  /**
+   * The shape as its contours, for the shading and the fill boundary.
+   *
+   * Defaults to the single ring, which is what all but five kinds have.
+   */
+  let rings: Point[][] | null = null;
   let sketched: string;
 
   switch (outline.kind) {
@@ -143,15 +149,29 @@ export function roughShape(
       sketched = roughPolyline(ring, { seed, level, width });
       break;
 
-    case 'bezier':
-      // Flattened for the *shading*, which needs edges to cross — but drawn
-      // with `roughLoop`, not `roughPolyline`. A flattened curve is a hundred
-      // tiny segments and none of them is a corner, so the polyline sketcher
-      // overshot a hundred times and a heart came out bristling. Same reason
-      // an ellipse has never gone through it.
-      ring = flattenPath(outline.geometry);
-      sketched = roughLoop(ring, { seed, level, width });
+    case 'bezier': {
+      /**
+       * One ring per contour, not one ring for the shape.
+       *
+       * Flattened for the *shading*, which needs edges to cross — but drawn
+       * with `roughLoop`, not `roughPolyline`. A flattened curve is a hundred
+       * tiny segments and none of them is a corner, so the polyline sketcher
+       * overshot a hundred times and a heart came out bristling. Same reason
+       * an ellipse has never gone through it.
+       *
+       * And **per contour**, because `flattenPath` on a compound shape returns
+       * the concatenation of its contours. Handing that to a loop sketcher
+       * draws a stroke from the end of the outer ring to the start of the
+       * hole, and handing it to the scanline puts a false edge across the
+       * shape — so a sketched ring, gear, key, person or rack came out with a
+       * stray line through it and shading that ignored its own hole. There are
+       * five compound kinds now and there was one when this was written.
+       */
+      rings = subpathsOf(outline.geometry).map((sub) => flattenPath(sub));
+      ring = rings.flat();
+      sketched = rings.map((r) => roughLoop(r, { seed, level, width })).join(' ');
       break;
+    }
 
     case 'open':
       // A line has no interior, so it is drawn as an open run and never
@@ -207,7 +227,7 @@ export function roughShape(
   return {
     outline: sketched,
     fill: wantsFill
-      ? shapeFill(ring, {
+      ? shapeFill(rings ?? ring, {
           seed,
           style,
           level,
@@ -222,6 +242,6 @@ export function roughShape(
     // as a filled one does — it simply does not paint it. See the field's own
     // note: the caller decides whether this gets painted, and `fillsInterior`
     // is the question it asks.
-    silhouette: wantsFill ? roughSilhouette(ring, { seed, level, width }) : '',
+    silhouette: wantsFill ? roughSilhouette(rings ?? ring, { seed, level, width }) : '',
   };
 }

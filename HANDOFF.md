@@ -11,6 +11,22 @@ time, where the work stopped, and what is next.
 
 > ## Read this first
 >
+> **The last session rebuilt the shape set from the geometry up — see
+> §5a-0-be.** Two lessons worth carrying out of it. The first is the oldest one
+> here in a new costume: **most of the shapes were described twice**, once with
+> curves and once as a straight-sided fallback, and the dispatcher called the
+> fallback while the toolbar called the curves — so the picture and the object
+> had disagreed for the life of the feature and no test could see it, because
+> every one of those defects is a *correct* list of points describing the wrong
+> shape. A coordinate test cannot see a missing curve. Assert the property
+> instead: "does every shape fill its box" found five defects in one run.
+>
+> The second: **a picture of a thing is not a fact about the thing, it is a
+> second fact.** Thirty-five icons were hand-drawn beside the geometry they
+> were pictures of, and the Database tile drew a stack of disks for a recipe
+> that made a plain cylinder. Deriving the glyph from the geometry removed the
+> whole class.
+>
 > **The last two sessions were the chart engine, end to end — see §5a-0-az
 > through §5a-0-bd.** The one lesson worth carrying out of them: **ask what
 > *reads* a field, never what writes it.** Its sharpest instance is §5a-0-bc,
@@ -5252,6 +5268,133 @@ substring of an id with a `nanoid` in it, this will happen to you.**
 
 
 ---
+
+## 5a-0-be. The shape set, rebuilt from the geometry up
+
+The user's report was "the design is so bad, a 1/10, even the icons are bad".
+Every specific complaint turned out to be one of **three** structural faults,
+and none of them was a drawing that had been done badly.
+
+### 1. Most shapes were written twice, and the dispatcher called the wrong one
+
+`shapeOutline.ts` had a `…Anchors()` per shape that described it with curves,
+and a `…Points()` beside it that kept the anchor positions and threw the
+curves away. The dispatcher called `…Points()` **every time**. So:
+
+- the seal drew as a jagged sunburst;
+- the ribbon as a box with a bite out of it;
+- the speech bubble with square corners and a wedge for a tail;
+- the key's round bow as a **diamond** with a comb attached;
+- the shield as a flat pentagon with no curves at all.
+
+The toolbar called the *other* one, so the tile showed the smooth version of
+each. A user could only find out by drawing the thing and being surprised.
+
+The fallbacks are **deleted**, not corrected. A second description of a shape
+is the defect; fixing both copies postpones it.
+
+### 2. A hole is a ring wound the other way, and it was hand-written twice
+
+The donut's hole and the gear's bore each carried their own set of anchors with
+the in and out handles swapped end for end. Both drew a **diamond**. There is
+one `ellipseContour(cx, cy, rx, ry, 'ccw')` now and nothing else in the set
+draws a ring.
+
+The general lesson, and the reason `shapes/pen.ts` exists: the anchor form is
+right for an *editor*, which drags one anchor's two handles, and a trap for an
+*author*, because a curve's two controls are written on two different objects.
+A pen takes both controls of one curve on the line that draws it, exactly as
+SVG's `C` does, so a curve is either right or wrong where you can see it.
+
+### 3. Every icon was a second, independent drawing of its shape
+
+Thirty-five of forty were hand-authored SVG maintained beside the geometry they
+were pictures of. The **Database** tile is the one that shows what that costs:
+its glyph drew a stack of three disks, its recipe created a plain `cylinder`,
+and both had shipped that way for as long as the tile existed.
+
+`ShapeIcon` renders the catalogue recipe through `shapeToPath` — the same
+function the canvas fills and the exporter writes. There is no artwork in
+`shapeIcons.tsx` any more. A new shape needs no icon, and a change to a shape
+cannot leave its icon behind.
+
+**It renders at 96 units and lets the browser scale it down.** At 24 the
+interior details' floors took over: a browser's title bar is
+`max(h × 0.2, 12)`, which in a 21-unit box is more than half the shape, and a
+terminal's prompt started past its own centre line. Drawing at board size and
+shrinking the viewport is stronger parity, not weaker — the tile is a
+photograph of the object rather than a small separate drawing of it.
+
+### What else the rebuild found
+
+Each of these was found by a test written against a *property*, not a
+coordinate — see the note at the top of `shapeOutline.test.ts` for why the old
+suite passed against every one of the defects above.
+
+- **The polygons did not fill their own box.** Inscribed in a circle, so a
+  triangle used three quarters of its height and a pentagon left a band of air
+  along the bottom. That band belonged to the object as far as selection,
+  snapping, culling and connectors were concerned, so an arrow aimed at a
+  pentagon's lower edge landed in it. `fitToBox` normalises them, and a test
+  holds **every** kind to it at three aspect ratios.
+- **`shapeToPath` dropped the radius a shape *is*.** It rebuilt the four
+  corners from `appearance.cornerRadius` alone, so a phone, a browser window,
+  a chip and an envelope flattened, exported, sketched and boolean'd with
+  **square corners** while the canvas drew them round. `ShapeOutline.rect`
+  carries all four radii now, with the kind's own minimum already applied.
+- **The SVG exporter still built polygons and stars itself.** This file's own
+  header says the trigonometry moved to `shapeOutline` so the two painters
+  could not draw different hexagons; those two branches never made the move,
+  and would have disagreed with the renderer the moment polygons started
+  filling their box.
+- **The renderer's Konva `RegularPolygon`/`Star` fast paths** were the same
+  problem one layer up, and went for the same reason. They also measured their
+  gradient against an intermediate square, so a top-to-bottom gradient on a
+  wide hexagon did not run top to bottom.
+- **Sketch and shading ignored holes.** Every sketcher took one ring. Five
+  kinds are compound, and passing their concatenation as a single ring invents
+  an edge from the end of one contour to the start of the next — a stray stroke
+  across the outline and a false crossing in the scanline, so a sketched ring
+  shaded straight through its own hole.
+- **Three parametric defaults had drifted**, exactly as `shapeParams.ts`'s own
+  docstring warned: an untouched ring drew a 55% hole under a control reading
+  50%, an untouched seal a 90% scallop under one reading 82%, and a chip made
+  by *swapping* got six pins where one made by *drawing* got three. Every
+  geometry function reads the table now and none states a default.
+- **A dial could not reach its own maximum.** The cylinder's rim ran 5% to 40%
+  in steps of 2 — seventeen and a half steps — so the stepper stopped at 39%
+  and the number printed as the limit was unreachable. Four fallbacks sat off
+  their own grid for the same reason. A test holds every dial to both.
+- **Three surfaces had three different shape lists.** The dock offered
+  forty-two, the rail twenty-two and the context menu twenty-one, with
+  different membership, one shape under two names ("Capsule" and
+  "Capsule (Pill)") and generic Lucide glyphs for a third of the menu's. The
+  menu's own docstring said a swapper that knew about a shape the toolbar did
+  not would be a bug. It was one.
+- **A click placed every shape in a square box.** A capsule in a square box is
+  a circle. Placement now uses each shape's declared proportions.
+
+### The reference
+
+The user pasted FigJam's shapes sidebar mid-session and asked for parity. The
+cloud, shield, wallet, mobile, server, terminal and package were re-authored
+against its construction — a cloud is one big lobe, a shoulder and a flat base,
+not a ring of eight equal bumps; a shield has straight tapering sides, not
+Béziers; a rack is separate units, not rules across one box — and Folder,
+Manual input, Location, Send, Desktop, Globe, Archive, Storage and Activity
+were added from its roster. **The path strings were not copied**: they are a
+paid asset library, and a fixed 48×48 path cannot stretch with a node box,
+carry a fill, or scale its own detail. Said to the user in one line at the
+time, and recorded here because it is the kind of decision that gets re-made.
+
+### What is not verified
+
+The dock flyout was **watched working** in the running app — six category tabs,
+the glyphs, the preview bar, arming a tool — which is more than the last three
+sessions managed. What was not watched: placing each shape by drag, the
+contextual rail's swapper, the context menu's, sketch and shading on a compound
+shape, and the SVG export of any of it. All are covered by tests; none has been
+seen.
 
 ## 5. Next up
 

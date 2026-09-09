@@ -8,12 +8,13 @@ import {
   fromDisplay,
   paramValue,
   shapeParamLabel,
-  shapeParams,
   toDisplay,
   type ShapeParam,
 } from './shapeParams';
-import { cpuPoints } from './shapeOutline';
-import { SHAPE_KIND_VALUES } from './schema';
+import { shapeFeaturePaths } from './shapeOutline';
+import { shapeToPath } from './shapeToPath';
+import { contourData } from './pathGeometry';
+import { SHAPE_KIND_VALUES, type ShapeKind } from './schema';
 
 const every: ShapeParam[] = Object.values(SHAPE_PARAMS).flatMap((g) => [...g.params]);
 
@@ -102,19 +103,79 @@ describe('clamping', () => {
  * asserts against the *drawing* rather than against the number -- a test on
  * the constants alone would have passed the whole time the bug was there.
  */
-describe('a dial offers only what the shape draws', () => {
-  const pins = shapeParams('cpu')[0];
-
-  it('changes the silhouette at every step it offers', () => {
-    const counts = new Set<number>();
-    for (let n = pins.min; n <= pins.max; n += pins.step) {
-      counts.add(cpuPoints(200, 200, n).length);
-    }
-    expect(counts.size).toBe((pins.max - pins.min) / pins.step + 1);
+describe('a dial can reach both of its own ends', () => {
+  /**
+   * A range that is not a whole number of steps has a maximum nobody can get
+   * to. The cylinder's rim ran 5% to 40% in steps of 2, which is seventeen and
+   * a half — so the stepper stopped at 39% and the number printed beside it as
+   * the limit was unreachable.
+   */
+  it.each(
+    Object.entries(SHAPE_PARAMS).flatMap(([kind, group]) =>
+      group.params.map((p) => [`${kind}.${p.field}`, p] as const)
+    )
+  )('%s divides evenly, with its default on the grain', (_name, dial) => {
+    const steps = (dial.max - dial.min) / dial.step;
+    expect(Math.abs(steps - Math.round(steps))).toBeLessThan(1e-9);
+    const offGrid = (dial.fallback - dial.min) / dial.step;
+    expect(Math.abs(offGrid - Math.round(offGrid))).toBeLessThan(1e-9);
+    expect(dial.fallback).toBeGreaterThanOrEqual(dial.min);
+    expect(dial.fallback).toBeLessThanOrEqual(dial.max);
   });
+});
 
-  it('draws the default when asked for nothing', () => {
-    expect(cpuPoints(200, 200)).toEqual(cpuPoints(200, 200, pins.fallback));
+describe('a dial offers only what the shape draws', () => {
+  /**
+   * Every dial, on every shape, across its whole range.
+   *
+   * This used to test the CPU's pins alone, because the CPU's pins were the one
+   * that had been caught: sixteen offered, six drawn. That is the general
+   * defect, not a fact about chips — a control whose top half does nothing is
+   * reachable by any shape whose geometry clamps tighter than its table — so
+   * the test is now the general one.
+   *
+   * Against the *drawing*, and against the whole drawing: several dials move
+   * only the interior lines, and a test that watched the silhouette would have
+   * called a rack's bay count dead.
+   */
+  const drawing = (kind: ShapeKind, field: string, value: number) => {
+    const node = {
+      geometry: { kind, [field]: value },
+      width: 400,
+      height: 300,
+      appearance: {},
+    } as never;
+    return contourData(shapeToPath(node)) + '|' + shapeFeaturePaths(node).join('|');
+  };
+
+  for (const [kind, group] of Object.entries(SHAPE_PARAMS)) {
+    for (const dial of group.params) {
+      it(`${kind}.${dial.field} changes the shape at every step it offers`, () => {
+        const seen = new Set<string>();
+        for (let n = dial.min; n <= dial.max + 1e-9; n += dial.step) {
+          seen.add(drawing(kind as ShapeKind, dial.field, n));
+        }
+        const steps = Math.round((dial.max - dial.min) / dial.step) + 1;
+        expect(seen.size).toBe(steps);
+      });
+    }
+  }
+
+  it('draws the table default when the document says nothing', () => {
+    for (const [kind, group] of Object.entries(SHAPE_PARAMS)) {
+      for (const dial of group.params) {
+        const bare = {
+          geometry: { kind },
+          width: 400,
+          height: 300,
+          appearance: {},
+        } as never;
+        expect(
+          contourData(shapeToPath(bare)) + '|' + shapeFeaturePaths(bare).join('|'),
+          `${kind}.${dial.field}`
+        ).toBe(drawing(kind as ShapeKind, dial.field, dial.fallback));
+      }
+    }
   });
 });
 

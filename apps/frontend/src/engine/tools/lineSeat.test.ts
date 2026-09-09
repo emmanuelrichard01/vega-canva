@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import { LINE_SEAT, TOOL_FOR_KEY, TOOL_SHORTCUTS, lineSeatFor } from './shortcuts';
-import { LINE_KINDS, shapeToolId } from '../../components/workspace/shapePresetTypes';
+import { LINE_PRESETS as LINE_KINDS, shapeToolId } from '../../components/workspace/shapeCatalog';
 
 describe('the line key', () => {
   it('is bound at all, which it was not', () => {

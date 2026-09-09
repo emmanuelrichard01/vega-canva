@@ -18161,11 +18161,18 @@ html[data-precise] .canvas-container[data-cursor-mode] .konvajs-content canvas {
   margin: 0;
   padding: 4px 2px 3px;
   background: var(--surface-primary);
-  color: var(--text-tertiary);
-  font-size: var(--text-2xs);
+  color: var(--text-secondary);
+  /* Sentence case at the Label role, not uppercase micro-type.
+
+     DESIGN.md's typography rule is that tracking is never applied below 16px,
+     and an 11px uppercase run needs tracking to be legible at all — so an
+     uppercase header of this size cannot obey the rule and be readable at the
+     same time. This one was 10px uppercase with 0.06em added, which is the
+     exact combination the rule exists to prevent, and it sat directly above
+     the 10px sentence-case tile labels it was supposed to be grouping: two
+     type treatments doing one job, and the quieter one easier to read. */
+  font-size: var(--text-xs);
   font-weight: 600;
-  letter-spacing: 0.06em;
-  text-transform: uppercase;
 }
 
 .kp__count {
