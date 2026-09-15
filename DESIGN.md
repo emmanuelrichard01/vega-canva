@@ -119,9 +119,9 @@ a surface the tools rest on rather than a hole between panels. Panels are quiet
 grey; the work is the only thing allowed to be colourful.
 
 The brand appears rarely and always on purpose. One warm orange, sampled from
-the logomark rather than chosen from a palette, marks exactly three kinds of
-moment: the single primary action on a screen, the state that is currently
-armed, and wherever keyboard focus is. It never decorates, never appears twice
+the logomark rather than chosen from a palette, marks exactly two kinds of
+moment: the single primary action on a screen, and the state that is currently
+armed. Focus is **not** one of them — see the focus rule below. It never decorates, never appears twice
 on one control, and never takes a job a neutral could do. Its scarcity is what
 makes it read as identity rather than as theming.
 
@@ -157,7 +157,7 @@ a single sampled orange does all the signalling.
   (8.50:1). White on the orange is 2.13:1, and is the single most common way an
   orange button goes wrong.
 - **Burnt Amber** (`#B45309`): the accent *as a foreground* on light surfaces —
-  accent text, armed icons, indicator dots, the focus ring (5.02:1). On dark
+  accent text, armed icons, indicator dots (5.02:1). On dark
   surfaces this role flips to Vega Orange itself (8.32:1), because legibility is
   a fact about the background, not about the brand.
 
@@ -424,6 +424,25 @@ get their own rules.
   numbers. Fit the specimen to a fixed box — the ratio is the information, the
   absolute size is not.
 
+### Tables and sheets
+
+- **Content is light; chrome follows the theme.** A table's cells are content,
+  so they stay light on a dark board, and so does anything that pictures them —
+  gallery thumbnails sit on fixed light paper. The editing chrome around them
+  (gutters, toolbar, menus) takes the theme's tokens.
+- **Selection is ink.** A range is a quiet ink wash with a crisp ink border on
+  the focused cell — never the accent, which would read as a state that is on.
+- **Chrome holds its screen size.** Anything drawn *around* content that the
+  camera scales — column letters, row numbers, resize handles — is sized in
+  screen pixels, and toolbars are placed against the far side of it, not
+  against the content's edge.
+- **One editing surface at a time.** While a table's cells are open, the
+  object's own contextual rail stands down; two toolbars for one object is two
+  answers to "where do I click".
+- **Show the thing itself.** An example is drawn by the same painter as the
+  board, so a card cannot promise a merge, a tint or a column the table does
+  not have.
+
 ### Navigation
 
 Category filters are pill tabs carrying a count, filtering in place rather than
@@ -454,8 +473,14 @@ then shows a picture that appears nowhere except on the card.
 - **Do** give a screen exactly one accent-filled control.
 - **Do** derive control padding from one of the three heights.
 - **Do** declare elevation once — border or shadow, never both.
-- **Do** let the global `:focus-visible` ring do the work; it is accent coloured
-  and it is the most repeated branded moment in the product.
+- **Do** let the global `:focus-visible` ring do the work, and keep it
+  **neutral**. It was accent coloured and billed as the most repeated branded
+  moment in the product; the owner overruled that on 2026-09-15 — an amber ring
+  on every search box and field reads as a warning, not as "you are here". Use
+  `--focus-ring-color` (graphite) for the keyboard ring and
+  `--focus-field-color` (a quieter tone, 1.5px) for text fields, which take
+  focus on every click. Never paint focus with `--accent`, `--text-accent` or
+  `--accent-line`; the accent stays for armed and selected *states*.
 - **Do** re-declare a theme-dependent token in `.dark-theme` rather than
   aliasing it on `:root`. Custom properties substitute against the element they
   are *declared* on, so an alias silently freezes the light-mode value.
