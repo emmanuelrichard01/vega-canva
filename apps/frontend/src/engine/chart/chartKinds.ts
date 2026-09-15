@@ -37,7 +37,16 @@ export const CHART_LABELS: Record<ChartKind, string> = {
   contour: 'Contour',
   slopeField: 'Slope field',
   vectorField: 'Vector field',
-  heatmap: 'Heatmap',
+  // "Heatmap", said plainly, means a table of values painted by size — the
+  // one every analytics tool calls by that name. The formula surface is
+  // renamed for what it is, so the word means one thing in this picker.
+  heatmap: 'Surface map',
+  matrix: 'Heatmap',
+  timeline: 'Timeline',
+  boxPlot: 'Box plot',
+  density: 'Density',
+  treemap: 'Treemap',
+  network: 'Network',
 };
 
 /**
@@ -75,12 +84,18 @@ export const CHART_HINTS: Record<ChartKind, string> = {
   slopeField: "dy/dx, as a direction at every point",
   vectorField: 'a vector at every point of the plane',
   heatmap: 'a surface, painted by value',
+  matrix: 'a value at every row and column',
+  timeline: 'when things happen, and how long they take',
+  boxPlot: 'the median and spread of each group',
+  density: 'the smoothed shape of a distribution',
+  treemap: 'parts of a whole, as areas',
+  network: 'what connects to what, and how strongly',
 };
 
 export const FAMILY_LABELS: Record<ChartFamily, string> = {
   comparison: 'Compare',
   trend: 'Over a run',
-  distribution: 'Relationship',
+  distribution: 'Spread & correlation',
   partToWhole: 'Parts of a whole',
   specialist: 'Specialist',
   plot: 'Maths',
@@ -106,18 +121,24 @@ export const CHART_PICKER_ORDER: ChartKind[] = [
   'barHorizontal',
   'stackedBar',
   'stackedBar100',
+  'matrix',
   'line',
   'step',
   'area',
   'stackedArea',
+  'timeline',
   'scatter',
   'bubble',
   'histogram',
+  'boxPlot',
+  'density',
   'pie',
   'donut',
   'funnel',
+  'treemap',
   'waterfall',
   'radar',
+  'network',
   'function',
   'parametric',
   'polarPlot',

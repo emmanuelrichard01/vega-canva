@@ -284,6 +284,75 @@ const GLYPHS: Record<ChartKind, React.ReactNode> = {
       )}
     </>
   ),
+  // A table painted by size: cells with gaps, and a header rule, where the
+  // surface map beside it is one continuous field.
+  matrix: (
+    <>
+      <path d="M 12 14 H 88" stroke="currentColor" strokeWidth={6} strokeLinecap="round" opacity={0.3} />
+      {[0, 1, 2].map((r) =>
+        [0, 1, 2, 3].map((c) => (
+          <rect
+            key={`${r}-${c}`}
+            x={12 + c * 20}
+            y={26 + r * 22}
+            width={17}
+            height={19}
+            rx={3}
+            fill="currentColor"
+            opacity={0.16 + (((r * 3 + c * 5) % 7) / 6) * 0.7}
+          />
+        ))
+      )}
+    </>
+  ),
+  timeline: (
+    <>
+      <Bar x={12} y={14} w={34} h={14} />
+      <Bar x={32} y={36} w={40} h={14} dim />
+      <Bar x={56} y={58} w={32} h={14} />
+      <path d="M 10 86 H 90" fill="none" stroke="currentColor" strokeWidth={5} opacity={0.28} />
+    </>
+  ),
+  boxPlot: (
+    <>
+      <Stroke d="M 30 12 V 30 M 30 70 V 88 M 22 12 H 38 M 22 88 H 38" />
+      <rect x={18} y={30} width={24} height={40} rx={3} fill="currentColor" fillOpacity={0.28} stroke="currentColor" strokeWidth={6} opacity={0.85} />
+      <Stroke d="M 18 50 H 42" />
+      <Stroke d="M 70 22 V 40 M 70 66 V 82 M 62 22 H 78 M 62 82 H 78" dim />
+      <rect x={58} y={40} width={24} height={26} rx={3} fill="currentColor" fillOpacity={0.16} stroke="currentColor" strokeWidth={6} opacity={0.45} />
+    </>
+  ),
+  density: (
+    <>
+      <Stroke d="M 8 84 C 24 84 26 24 40 24 S 58 84 74 84" fill />
+      <Stroke d="M 28 84 C 44 84 48 44 62 44 S 80 84 92 84" fill dim />
+    </>
+  ),
+  treemap: (
+    <>
+      <rect x={10} y={10} width={44} height={80} rx={4} fill="currentColor" opacity={0.85} />
+      <rect x={58} y={10} width={32} height={46} rx={4} fill="currentColor" opacity={0.55} />
+      <rect x={58} y={60} width={15} height={30} rx={4} fill="currentColor" opacity={0.38} />
+      <rect x={77} y={60} width={13} height={30} rx={4} fill="currentColor" opacity={0.24} />
+    </>
+  ),
+  network: (
+    <>
+      <path
+        d="M 24 28 L 52 50 L 78 24 M 52 50 L 34 78 M 52 50 L 76 74 M 24 28 L 34 78"
+        fill="none"
+        stroke="currentColor"
+        strokeWidth={5}
+        strokeLinecap="round"
+        opacity={0.4}
+      />
+      <Dot x={52} y={50} r={11} />
+      <Dot x={24} y={28} r={8} dim />
+      <Dot x={78} y={24} r={8} />
+      <Dot x={34} y={78} r={8} />
+      <Dot x={76} y={74} r={8} dim />
+    </>
+  ),
 };
 
 export const ChartKindIcon: React.FC<{ kind: ChartKind; size?: number }> = ({ kind, size = 16 }) => (

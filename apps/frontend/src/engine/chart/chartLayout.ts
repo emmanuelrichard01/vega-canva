@@ -54,9 +54,19 @@ import { slopeField, vectorField } from './vectorField';
 import { rampColorAt } from './colorRamps';
 import { mathText } from './mathText';
 import {
+  layoutBoxPlot,
+  layoutDensity,
+  layoutMatrix,
+  layoutNetwork,
+  layoutTimeline,
+  layoutTreemap,
+} from './chartLayoutKinds';
+import {
   bucketize,
   isBarLike,
   isContinuous,
+  isSampleKind,
+  legendNamesCategories,
   isPercentStacked,
   isPolar,
   isIsotropic,
@@ -110,6 +120,14 @@ export interface ChartBar extends Rect {
   rounded?: boolean;
   /** Custom corner radius in pixels. */
   cornerRadius?: number;
+  /**
+   * How solid the fill is. Absent is opaque.
+   *
+   * A box plot's box is a translucent bar with its outline drawn as a run, so
+   * the median line inside it can be seen — an opaque box would hide the one
+   * mark the chart exists to show.
+   */
+  opacity?: number;
 }
 
 export interface ChartRun {
@@ -122,6 +140,8 @@ export interface ChartRun {
   width?: number;
   /** Dash style. */
   style?: 'solid' | 'dashed' | 'dotted';
+  /** How present the stroke is. Absent is full: a network's links and a rug's ticks are quieter than a series. */
+  opacity?: number;
 }
 
 /**
@@ -421,12 +441,12 @@ export interface ChartLayout {
  * board, so its edge is where it meets somebody else's work, and a mark
  * running to the boundary reads as clipped even when it is not.
  */
-const PAD = 18;
+export const PAD = 18;
 /** Big enough to be a title, not so big it competes with the marks. */
 const TITLE_SIZE = 16;
 /** The gap under the title: a full step, so the title owns a band of its own. */
 const TITLE_GAP = 14;
-const LABEL_SIZE = 11;
+export const LABEL_SIZE = 11;
 const LEGEND_SIZE = 11;
 const LEGEND_SWATCH = 10;
 /**
@@ -436,7 +456,7 @@ const LEGEND_SWATCH = 10;
  * edge and the axis read as one dense column of ink rather than as numbers
  * beside a chart.
  */
-const TICK_GAP = 8;
+export const TICK_GAP = 8;
 
 /**
  * Lay a chart out inside `width` x `height`, in node-local coordinates.
@@ -515,7 +535,13 @@ export function layoutChart(
 
   // Sorting is a view, applied before layout and never written back --
   // see `sortSpec`. Done here so every kind gets it for free.
-  const spec = sortSpec(normalizeSpec(aggregated));
+  // Box and density plots keep their raw samples: normalising would cut every
+  // series to the length of an empty category list. The histogram has already
+  // been bucketed into categories above, so it normalises like anything else.
+  const spec =
+    isSampleKind(rawSpec.kind) && rawSpec.kind !== 'histogram'
+      ? rawSpec
+      : sortSpec(normalizeSpec(aggregated));
   let opts = resolveChartOptions(spec);
 
   const empty: ChartLayout = {
@@ -642,7 +668,24 @@ export function layoutChart(
   // taking the gutter off it once is the whole change.
   const usable = Math.max(40, width - legendGutter);
 
-  let layout = isRadial(spec.kind)
+  const extra =
+    spec.kind === 'boxPlot'
+      ? layoutBoxPlot
+      : spec.kind === 'density'
+        ? layoutDensity
+        : spec.kind === 'treemap'
+          ? layoutTreemap
+          : spec.kind === 'network'
+            ? layoutNetwork
+            : spec.kind === 'timeline'
+              ? layoutTimeline
+              : spec.kind === 'matrix'
+                ? layoutMatrix
+                : null;
+
+  let layout = extra
+    ? extra(spec, opts, usable, height, top, bottomReserved, title, measure, empty)
+    : isRadial(spec.kind)
     ? layoutRadial(spec, opts, usable, height, top, bottomReserved, title, measure, empty)
     : isPolar(spec.kind)
     ? layoutPolar(spec, opts, usable, height, top, bottomReserved, title, measure, empty)
@@ -683,7 +726,15 @@ export function layoutChart(
   }
 
   let toleranceBand: ChartToleranceBand | null = null;
-  if (spec.toleranceBand && layout.domain && !isRadial(spec.kind) && !isPolar(spec.kind)) {
+  // A band is a range on a *vertical* value axis; the kinds whose domain runs
+  // across, or is not a value axis at all, have nowhere for one to go.
+  const bandless =
+    spec.kind === 'density' ||
+    spec.kind === 'treemap' ||
+    spec.kind === 'network' ||
+    spec.kind === 'timeline' ||
+    spec.kind === 'matrix';
+  if (spec.toleranceBand && layout.domain && !bandless && !isRadial(spec.kind) && !isPolar(spec.kind)) {
     const [dMin, dMax] = layout.domain;
     const lo = Math.min(spec.toleranceBand.min, spec.toleranceBand.max);
     const hi = Math.max(spec.toleranceBand.min, spec.toleranceBand.max);
@@ -2933,7 +2984,7 @@ function annotationExtent(
   return { min, max };
 }
 
-function buildReference(
+export function buildReference(
   spec: ChartSpec,
   domain: Domain,
   plot: Rect,
@@ -3166,7 +3217,7 @@ function layoutRadial(
  * puts a series name off the edge of the object, where it is not merely ugly
  * but missing.
  */
-function buildLegend(
+export function buildLegend(
   spec: ChartSpec,
   opts: ReturnType<typeof resolveChartOptions>,
   width: number,
@@ -3178,7 +3229,7 @@ function buildLegend(
   // A pie's and a funnel's legend name their *categories*: both draw one
   // series whose points are the things being compared. Everything else names
   // its series.
-  const entries = isRadial(spec.kind) || spec.kind === 'funnel'
+  const entries = legendNamesCategories(spec.kind)
     ? spec.categories.map((label, i) => ({
         label,
         color: seriesColor({ name: '', values: [], color: spec.series[0]?.color }, i, opts.palette),
@@ -3307,7 +3358,7 @@ function legendWidth(
 ): number {
   if (!opts.showLegend) return 0;
   const labels =
-    isRadial(spec.kind) || spec.kind === 'funnel'
+    legendNamesCategories(spec.kind)
       ? spec.categories
       : spec.series.map((series, i) => series.name || `Series ${i + 1}`);
   if (labels.length === 0) return 0;

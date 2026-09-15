@@ -38,22 +38,28 @@ export const CHART_KINDS = [
   'barHorizontal',
   'stackedBar',
   'stackedBar100',
+  'matrix',
   // Trend
   'line',
   'step',
   'area',
   'stackedArea',
+  'timeline',
   // Relationship and distribution
   'scatter',
   'bubble',
   'histogram',
+  'boxPlot',
+  'density',
   // Part to whole
   'pie',
   'donut',
   'funnel',
+  'treemap',
   // Specialist
   'waterfall',
   'radar',
+  'network',
   // Plots: a formula rather than a table. These read `functions` and ignore
   // `categories` and `series` entirely -- see `ChartSpec.functions`.
   'function',
@@ -113,6 +119,12 @@ export const CHART_FAMILY_OF: Record<ChartKind, ChartFamily> = {
   slopeField: 'field',
   vectorField: 'field',
   heatmap: 'field',
+  matrix: 'comparison',
+  timeline: 'trend',
+  boxPlot: 'distribution',
+  density: 'distribution',
+  treemap: 'partToWhole',
+  network: 'specialist',
 };
 
 export type ChartKind = (typeof CHART_KINDS)[number];
@@ -188,6 +200,35 @@ export function encodesMagnitude(kind: ChartKind): boolean {
 /** Bars that touch, because the categories are a continuum and not a set. */
 export function isContinuous(kind: ChartKind): boolean {
   return kind === 'histogram';
+}
+
+/**
+ * Each series is a bag of raw samples, and the chart *summarises* it.
+ *
+ * The histogram's model, extended to the box plot and the density plot: the
+ * categories are empty and every series is one group's readings. They are laid
+ * out before `normalizeSpec`, which would otherwise cut every series down to
+ * the length of an empty category list and draw nothing — the fault the
+ * histogram already had once.
+ */
+export function isSampleKind(kind: ChartKind): boolean {
+  return kind === 'histogram' || kind === 'boxPlot' || kind === 'density';
+}
+
+/**
+ * Kinds whose legend names the *categories* rather than the series.
+ *
+ * A pie and a funnel draw one series whose points are the things compared;
+ * a treemap's tiles, a network's nodes and a timeline's rows are the same.
+ */
+export function legendNamesCategories(kind: ChartKind): boolean {
+  return (
+    isRadial(kind) ||
+    kind === 'funnel' ||
+    kind === 'treemap' ||
+    kind === 'network' ||
+    kind === 'timeline'
+  );
 }
 
 /**
@@ -802,12 +843,21 @@ export function resolveChartOptions(spec: ChartSpec): ResolvedChartOptions {
   // want one even with a single series. A heatmap's legend is its colour bar,
   // which is not optional decoration — without it the colours mean nothing —
   // so it defaults on too, whatever its series count says.
-  const namesCategories = radial || spec.kind === 'funnel' || spec.kind === 'heatmap';
+  const namesCategories =
+    radial || spec.kind === 'funnel' || spec.kind === 'heatmap' || spec.kind === 'matrix';
+  // Kinds that name their own marks — a box plot's groups sit on the axis, a
+  // treemap's tiles and a network's nodes carry their names, a timeline's rows
+  // are labelled in the gutter — so a key would say everything twice.
+  const selfLabelled =
+    spec.kind === 'boxPlot' ||
+    spec.kind === 'treemap' ||
+    spec.kind === 'network' ||
+    spec.kind === 'timeline';
 
   return {
     // More than one series needs a key; one series is named by the title and a
     // legend of one entry is a label pretending to be a control.
-    showLegend: spec.showLegend ?? (namesCategories || spec.series.length > 1),
+    showLegend: spec.showLegend ?? (selfLabelled ? false : namesCategories || spec.series.length > 1),
     showGrid: spec.showGrid ?? !(radial || isPolar(spec.kind)),
     showValues: spec.showValues ?? false,
     includeZero: spec.includeZero ?? encodesMagnitude(spec.kind),
@@ -923,6 +973,49 @@ export function defaultPlotDomain(kind: ChartKind): {
 }
 
 export function chartCapabilities(kind: ChartKind): ChartCapabilities {
+  /**
+   * The kinds that draw neither against a category axis nor from a formula,
+   * answered whole rather than through the general rules below — each rule
+   * there is phrased for bars and lines, and a network or a treemap would pass
+   * half of them by accident. `chartCapabilities.test.ts` holds every answer
+   * here against what the layout draws.
+   */
+  const none = {
+    data: true,
+    valueLabels: false,
+    valueAxis: false,
+    numberFormat: false,
+    reference: false,
+    sort: false,
+    curved: false,
+    seriesColors: false,
+    lockPlane: false,
+    gridLines: false,
+    gradient: false,
+  };
+  switch (kind) {
+    // One box per group, against a value axis that can carry a target.
+    case 'boxPlot':
+      return { ...none, valueAxis: true, numberFormat: true, reference: true, seriesColors: true, gridLines: true };
+    // The value runs along x; the height is a density nobody reads a number off.
+    case 'density':
+      return { ...none, numberFormat: true, seriesColors: true, gridLines: true };
+    // Tiles coloured by item, each able to carry its value.
+    case 'treemap':
+      return { ...none, valueLabels: true, numberFormat: true };
+    // Edges may be drawn straight or curved; nothing else here is numeric.
+    case 'network':
+      return { ...none, curved: true };
+    // A time axis that can carry a "today" line, and rows that can be ordered.
+    case 'timeline':
+      return { ...none, valueLabels: true, numberFormat: true, reference: true, sort: true, gridLines: true };
+    // A value in every cell; rows can be ordered by the first column.
+    case 'matrix':
+      return { ...none, valueLabels: true, numberFormat: true, sort: true };
+    default:
+      break;
+  }
+
   const radial = isRadial(kind);
   const polar = isPolar(kind);
   const plot = isPlot(kind);
@@ -1256,6 +1349,95 @@ export function defaultChartSpec(kind: ChartKind = 'bar'): ChartSpec {
         ],
         buckets: 8,
         valueSuffix: 'ms',
+      };
+
+    case 'boxPlot':
+      return {
+        kind,
+        title: 'Response time by region',
+        // Raw readings per group, like a histogram: the chart finds the
+        // quartiles itself, so the numbers can be pasted straight from a log.
+        categories: [],
+        series: [
+          { name: 'EU', values: [88, 94, 101, 104, 108, 112, 115, 118, 121, 124, 128, 131, 135, 140, 146, 152, 160, 171, 188, 240] },
+          { name: 'US', values: [72, 78, 83, 86, 90, 93, 97, 99, 102, 106, 109, 113, 117, 121, 126, 133, 139, 150, 166, 205] },
+          { name: 'APAC', values: [120, 128, 134, 141, 147, 152, 158, 163, 169, 174, 181, 188, 194, 203, 212, 224, 238, 255, 280, 340] },
+        ],
+        valueSuffix: 'ms',
+      };
+
+    case 'density':
+      return {
+        kind,
+        title: 'Session length, by cohort',
+        categories: [],
+        series: [
+          { name: 'New', values: [3, 4, 4, 5, 5, 6, 6, 6, 7, 7, 7, 8, 8, 8, 9, 9, 10, 10, 11, 12, 13, 14, 16, 18, 21] },
+          { name: 'Returning', values: [9, 11, 12, 13, 14, 15, 15, 16, 16, 17, 17, 18, 18, 19, 19, 20, 21, 22, 23, 24, 26, 27, 29, 31, 34] },
+        ],
+        valueSuffix: ' min',
+      };
+
+    case 'treemap':
+      return {
+        kind,
+        title: 'Where the budget goes',
+        categories: ['Engineering', 'Sales', 'Marketing', 'Support', 'Design', 'Finance', 'Legal', 'Facilities'],
+        series: [{ name: 'Spend', values: [420, 260, 180, 120, 95, 70, 40, 35] }],
+        valuePrefix: '$',
+        valueSuffix: 'k',
+        showValues: true,
+      };
+
+    case 'network': {
+      // An adjacency table: row i, column j is the weight of the link between
+      // them. Square, so it pastes from any matrix and reads in the sheet.
+      const people = ['Ana', 'Ben', 'Cleo', 'Dev', 'Eli', 'Fay', 'Gus'];
+      const links = [
+        [0, 3, 2, 0, 1, 0, 0],
+        [3, 0, 4, 1, 0, 0, 0],
+        [2, 4, 0, 2, 0, 1, 0],
+        [0, 1, 2, 0, 3, 0, 1],
+        [1, 0, 0, 3, 0, 2, 0],
+        [0, 0, 1, 0, 2, 0, 3],
+        [0, 0, 0, 1, 0, 3, 0],
+      ];
+      return {
+        kind,
+        title: 'Who works with whom',
+        categories: people,
+        series: people.map((name, i) => ({ name, values: links[i] })),
+      };
+    }
+
+    case 'timeline':
+      return {
+        kind,
+        title: 'Launch plan',
+        categories: ['Research', 'Design', 'Build', 'Beta', 'Launch', 'Retrospective'],
+        // Start and end: a row with no end is a milestone, drawn as a point.
+        series: [
+          { name: 'Start', values: [1, 3, 6, 12, 16, 17] },
+          { name: 'End', values: [4, 7, 14, 16, null, 18] },
+        ],
+        valuePrefix: 'W',
+        xAxisLabel: 'Week',
+        reference: { value: 9, label: 'Today' },
+      };
+
+    case 'matrix':
+      return {
+        kind,
+        title: 'Tickets by weekday and hour',
+        categories: ['Mon', 'Tue', 'Wed', 'Thu', 'Fri'],
+        series: [
+          { name: '9am', values: [12, 18, 15, 14, 9] },
+          { name: '11am', values: [28, 34, 30, 27, 22] },
+          { name: '1pm', values: [19, 22, 25, 21, 16] },
+          { name: '3pm', values: [31, 38, 35, 33, 20] },
+          { name: '5pm', values: [15, 17, 16, 14, 8] },
+        ],
+        showValues: true,
       };
 
     case 'pie':

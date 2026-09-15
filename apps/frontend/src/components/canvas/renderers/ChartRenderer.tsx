@@ -18,8 +18,11 @@ import {
   chartCapabilities,
   isRadial,
   isPlot,
+  isSampleKind,
+  legendNamesCategories,
   defaultPlotDomain,
 } from '../../../engine/chart/chartTypes';
+import { hachure, SKETCH_FONT, SKETCH_FONT_SCALE } from '../../../engine/chart/chartSketch';
 import { updateChart } from '../../../engine/chart/chartApply';
 import { useStore } from '../../../hooks/useStore';
 import { canvasPlateFill } from '../../../engine/ThemeService';
@@ -261,9 +264,14 @@ export const ChartRenderer: React.FC<Props> = ({ node }) => {
         // per pointer move would be a class-list read per mouse pixel.
         ink,
         format: (v) => formatValue(v, node.chart),
-        categories: node.chart.categories,
+        // A box plot's groups are its series; there is no category list to
+        // name the box under the pointer, so the series names stand in.
+        categories:
+          isSampleKind(node.chart.kind) && node.chart.kind !== 'histogram'
+            ? node.chart.series.map((s) => s.name)
+            : node.chart.categories,
         seriesNames: node.chart.series.map((s) => s.name),
-        keyedOnCategories: isRadial(node.chart.kind) || node.chart.kind === 'funnel',
+        keyedOnCategories: legendNamesCategories(node.chart.kind),
       })
     );
   };
@@ -351,7 +359,7 @@ export const ChartRenderer: React.FC<Props> = ({ node }) => {
         fill="rgba(0,0,0,0)"
         perfectDrawEnabled={false}
       />
-      <Chrome layout={layout} ink={ink} />
+      <Chrome layout={layout} ink={ink} sketch={sketch} seed={seed} />
       <CategoryBand hit={hover} layout={layout} ink={ink} />
       {/* Under the marks: a guide drawn over the data hides the thing it is
           helping you read. Bars have the band instead — two indicators for
@@ -377,7 +385,7 @@ export const ChartRenderer: React.FC<Props> = ({ node }) => {
       <MathHUD hit={hover} ink={ink} />
       <ToleranceEdges layout={layout} />
       <Reference layout={layout} />
-      <Labels layout={layout} ink={ink} />
+      <Labels layout={layout} ink={ink} sketch={sketch} />
       {isPlot(node.chart.kind) && (
         <PlaneChrome
           node={node}
@@ -1079,40 +1087,59 @@ const MathHUD: React.FC<{ hit: ChartHit | null; ink: ChartInk }> = ({ hit, ink }
 };
 
 /** Grid rules, the zero baseline, and nothing that carries a value. */
-const Chrome: React.FC<{ layout: ChartLayout; ink: ChartInk }> = ({ layout, ink }) => (
-  <>
-    {layout.gridLines.map((g, i) => (
-      <Line
-        key={`g${i}`}
-        points={[g.x1, g.y1, g.x2, g.y2]}
+/**
+ * The furniture: grid, axes, a radar's rings.
+ *
+ * Sketched charts draw these by hand too. Only the marks were sketched before,
+ * so a hand-drawn bar stood on a ruler-straight axis under ruler-straight
+ * gridlines — which reads as a filter applied to part of the picture rather
+ * than as one drawing. The grid takes the lightest hand so it stays behind the
+ * data; the axes take the chart's own.
+ */
+const Chrome: React.FC<{ layout: ChartLayout; ink: ChartInk; sketch?: SketchLevel; seed: number }> = ({
+  layout,
+  ink,
+  sketch,
+  seed,
+}) => {
+  const rule = (key: string, n: number, x1: number, y1: number, x2: number, y2: number, width: number, opacity = 1) =>
+    sketch ? (
+      <Path
+        key={key}
+        data={roughPolyline([{ x: x1, y: y1 }, { x: x2, y: y2 }], {
+          seed: seed + 900 + n * 7,
+          level: width > 1 ? sketch : 'light',
+          closed: false,
+        })}
         stroke={ink.chrome}
-        strokeWidth={1}
-        opacity={0.35}
+        strokeWidth={width}
+        opacity={opacity}
+        lineCap="round"
         listening={false}
         perfectDrawEnabled={false}
       />
-    ))}
+    ) : (
+      <Line
+        key={key}
+        points={[x1, y1, x2, y2]}
+        stroke={ink.chrome}
+        strokeWidth={width}
+        opacity={opacity}
+        listening={false}
+        perfectDrawEnabled={false}
+      />
+    );
+
+  return (
+  <>
+    {layout.gridLines.map((g, i) => rule(`g${i}`, i, g.x1, g.y1, g.x2, g.y2, 1, 0.35))}
     {/* The vertical axis, at the same weight as the horizontal one. It used
         to be filed among the grid lines, which drew it at their opacity — so
         on a maths plot the y axis was as faint as the squares behind it. */}
-    {layout.zeroRule && (
-      <Line
-        points={[layout.zeroRule.x1, layout.zeroRule.y1, layout.zeroRule.x2, layout.zeroRule.y2]}
-        stroke={ink.chrome}
-        strokeWidth={1.5}
-        listening={false}
-        perfectDrawEnabled={false}
-      />
-    )}
-    {layout.baseline && (
-      <Line
-        points={[layout.baseline.x1, layout.baseline.y1, layout.baseline.x2, layout.baseline.y2]}
-        stroke={ink.chrome}
-        strokeWidth={1.5}
-        listening={false}
-        perfectDrawEnabled={false}
-      />
-    )}
+    {layout.zeroRule &&
+      rule('zero', 97, layout.zeroRule.x1, layout.zeroRule.y1, layout.zeroRule.x2, layout.zeroRule.y2, 1.5)}
+    {layout.baseline &&
+      rule('base', 98, layout.baseline.x1, layout.baseline.y1, layout.baseline.x2, layout.baseline.y2, 1.5)}
 
     {/*
       Radar's spokes and rings. Rings are polygons rather than circles: they
@@ -1143,7 +1170,8 @@ const Chrome: React.FC<{ layout: ChartLayout; ink: ChartInk }> = ({ layout, ink 
       />
     ))}
   </>
-);
+  );
+};
 
 /**
  * The reference rule, above the marks.
@@ -1298,40 +1326,62 @@ const Marks: React.FC<{
           : (b.rounded ?? true)
           ? Math.min(3, b.width / 6)
           : 0;
-      return sketch ? (
-        <Path
-          key={`b${i}`}
-          // The pen is handed the bar's own outline, so a sketched bar is the
-          // same rectangle the crisp one is — drawn by hand, not approximated
-          // by a different shape. `rectRing` is the ring `ShapeRenderer`
-          // sketches from, so a bar and a rectangle are drawn by one pen.
-          data={roughLoop(
-            rectRing(b.width, b.height).map((p) => ({ x: p.x + b.x, y: p.y + b.y })),
-            // Each mark gets its own seed offset, or every bar on the chart
-            // would carry an identical wobble and read as a repeated texture
-            // rather than as a hand.
-            { seed: seed + i * 17, level: sketch }
-          )}
-          fill={b.color}
-          stroke={b.color}
-          strokeWidth={1.4}
-          opacity={isDimmed ? 0.32 : 0.92}
-          listening={false}
-          perfectDrawEnabled={false}
-        />
-      ) : (
-        <Rect
-          key={`b${i}`}
-          x={b.x}
-          y={b.y}
-          width={b.width}
-          height={b.height}
-          fill={b.color}
-          cornerRadius={cornerR}
-          opacity={isDimmed ? 0.32 : 1}
-          listening={false}
-          perfectDrawEnabled={false}
-        />
+      const own = b.opacity ?? 1;
+      if (!sketch) {
+        return (
+          <Rect
+            key={`b${i}`}
+            x={b.x}
+            y={b.y}
+            width={b.width}
+            height={b.height}
+            fill={b.color}
+            cornerRadius={cornerR}
+            opacity={(isDimmed ? 0.32 : 1) * own}
+            listening={false}
+            perfectDrawEnabled={false}
+          />
+        );
+      }
+      // The pen is handed the bar's own outline, so a sketched bar is the
+      // same rectangle the crisp one is — drawn by hand, not approximated by
+      // a different shape. Each mark gets its own seed offset, or every bar
+      // would carry an identical wobble and read as a texture, not a hand.
+      const outline = roughLoop(
+        rectRing(b.width, b.height).map((p) => ({ x: p.x + b.x, y: p.y + b.y })),
+        { seed: seed + i * 17, level: sketch }
+      );
+      const dim = isDimmed ? 0.32 : 1;
+      // A heat cell's colour *is* its value, so it stays solid under the pen.
+      if (b.rounded === false) {
+        return (
+          <Path
+            key={`b${i}`}
+            data={outline}
+            fill={b.color}
+            stroke={b.color}
+            strokeWidth={1.4}
+            opacity={0.92 * dim * own}
+            listening={false}
+            perfectDrawEnabled={false}
+          />
+        );
+      }
+      // Everything else is hatched: a pale wash, diagonal strokes, and the
+      // outline gone over once — what a marker on a whiteboard does.
+      return (
+        <Group key={`b${i}`} listening={false} opacity={dim * own}>
+          <Path data={outline} fill={b.color} opacity={0.16} perfectDrawEnabled={false} />
+          <Path
+            data={hachure(b, seed + i * 17)}
+            stroke={b.color}
+            strokeWidth={1.1}
+            lineCap="round"
+            opacity={0.85}
+            perfectDrawEnabled={false}
+          />
+          <Path data={outline} stroke={b.color} strokeWidth={1.6} lineJoin="round" perfectDrawEnabled={false} />
+        </Group>
       );
     })}
 
@@ -1371,7 +1421,7 @@ const Marks: React.FC<{
           data={roughPolyline(r.points, { seed: seed + i * 31, level: sketch, closed: false })}
           stroke={r.color}
           strokeWidth={r.width ?? 2.5}
-          opacity={runFocus(hoveredSeriesIndex, r.seriesIndex)}
+          opacity={runFocus(hoveredSeriesIndex, r.seriesIndex) * (r.opacity ?? 1)}
           lineCap="round"
           lineJoin="round"
           listening={false}
@@ -1388,7 +1438,7 @@ const Marks: React.FC<{
           strokeWidth={
             (r.width ?? 2.5) * (hoveredSeriesIndex === r.seriesIndex ? 1.35 : 1)
           }
-          opacity={runFocus(hoveredSeriesIndex, r.seriesIndex)}
+          opacity={runFocus(hoveredSeriesIndex, r.seriesIndex) * (r.opacity ?? 1)}
           dash={r.style === 'dashed' ? [6, 4] : r.style === 'dotted' ? [2, 3] : undefined}
           lineCap="round"
           lineJoin="round"
@@ -1620,7 +1670,24 @@ const Marks: React.FC<{
   </>
 );
 
-const Labels: React.FC<{ layout: ChartLayout; ink: ChartInk }> = ({ layout, ink }) => (
+/**
+ * Every word on the chart.
+ *
+ * In sketch mode they are lettered by hand — Caveat, a size up, bold — so the
+ * whole chart reads as one drawing. The *boxes* are the layout's, unchanged:
+ * the same titles, ticks and values in the same places, which is the promise
+ * the sketch treatment makes. Only the hand changes.
+ */
+const Labels: React.FC<{ layout: ChartLayout; ink: ChartInk; sketch?: SketchLevel }> = ({ layout, ink, sketch }) => {
+  const font = sketch ? SKETCH_FONT : undefined;
+  const k = sketch ? SKETCH_FONT_SCALE : 1;
+  const weight = (w: string | undefined) => (sketch ? 'bold' : w);
+  // A hatched fill is a pale wash, so a label "on" one reads against the
+  // board, not against the mark's full colour.
+  const hatched = Boolean(sketch) && layout.bars.some((b) => b.rounded !== false);
+  const on = (l: ChartLabel, fallback: string) => (l.on ? (hatched ? ink.ink : contrastInk(l.on)) : fallback);
+
+  return (
   <>
     {layout.title && (
       <Text
@@ -1628,8 +1695,9 @@ const Labels: React.FC<{ layout: ChartLayout; ink: ChartInk }> = ({ layout, ink 
         x={layout.title.x}
         y={layout.title.y}
         width={layout.title.width}
-        fontSize={layout.title.fontSize}
-        fontStyle="600"
+        fontSize={layout.title.fontSize * k}
+        fontFamily={font}
+        fontStyle={weight('600')}
         fill={ink.ink}
         listening={false}
       />
@@ -1641,7 +1709,9 @@ const Labels: React.FC<{ layout: ChartLayout; ink: ChartInk }> = ({ layout, ink 
         x={layout.subtitle.x}
         y={layout.subtitle.y}
         width={layout.subtitle.width}
-        fontSize={layout.subtitle.fontSize}
+        fontSize={layout.subtitle.fontSize * k}
+        fontFamily={font}
+        fontStyle={weight(undefined)}
         fill={ink.chrome}
         listening={false}
       />
@@ -1653,7 +1723,9 @@ const Labels: React.FC<{ layout: ChartLayout; ink: ChartInk }> = ({ layout, ink 
         x={layout.footnote.x}
         y={layout.footnote.y}
         width={layout.footnote.width}
-        fontSize={layout.footnote.fontSize}
+        fontSize={layout.footnote.fontSize * k}
+        fontFamily={font}
+        fontStyle={weight(undefined)}
         fill={ink.chrome}
         listening={false}
       />
@@ -1666,8 +1738,9 @@ const Labels: React.FC<{ layout: ChartLayout; ink: ChartInk }> = ({ layout, ink 
         y={layout.xAxisTitle.y}
         width={layout.xAxisTitle.width}
         align={layout.xAxisTitle.align}
-        fontSize={layout.xAxisTitle.fontSize}
-        fontStyle="600"
+        fontSize={layout.xAxisTitle.fontSize * k}
+        fontFamily={font}
+        fontStyle={weight('600')}
         fill={ink.chrome}
         listening={false}
       />
@@ -1679,8 +1752,9 @@ const Labels: React.FC<{ layout: ChartLayout; ink: ChartInk }> = ({ layout, ink 
         x={layout.yAxisTitle.x}
         y={layout.yAxisTitle.y}
         rotation={-90}
-        fontSize={layout.yAxisTitle.fontSize}
-        fontStyle="600"
+        fontSize={layout.yAxisTitle.fontSize * k}
+        fontFamily={font}
+        fontStyle={weight('600')}
         fill={ink.chrome}
         listening={false}
       />
@@ -1694,8 +1768,11 @@ const Labels: React.FC<{ layout: ChartLayout; ink: ChartInk }> = ({ layout, ink 
         y={l.y}
         width={l.width}
         align={l.align}
-        fontSize={l.fontSize}
-        fill={ink.chrome}
+        fontSize={l.fontSize * k}
+        fontFamily={font}
+        fontStyle={weight(undefined)}
+        // A name inside a tile — a treemap's — reads against the tile.
+        fill={on(l, ink.chrome)}
         listening={false}
       />
     ))}
@@ -1708,12 +1785,13 @@ const Labels: React.FC<{ layout: ChartLayout; ink: ChartInk }> = ({ layout, ink 
         y={l.y}
         width={l.width}
         align={l.align}
-        fontSize={l.fontSize}
-        fontStyle="600"
+        fontSize={l.fontSize * k}
+        fontFamily={font}
+        fontStyle={weight('600')}
         // Against the mark when the label sits on one, and against the board
         // otherwise. `ink.ink` for everything meant a number inside a dark bar
         // was dark on dark, and inside a pale one in dark mode, pale on pale.
-        fill={labelInk(l, ink)}
+        fill={sketch ? on(l, ink.ink) : labelInk(l, ink)}
         listening={false}
       />
     ))}
@@ -1767,14 +1845,17 @@ const Labels: React.FC<{ layout: ChartLayout; ink: ChartInk }> = ({ layout, ink 
           text={e.label}
           x={e.textX}
           y={e.y - 1}
-          fontSize={e.fontSize}
+          fontSize={e.fontSize * k}
+          fontFamily={font}
+          fontStyle={weight(undefined)}
           fill={ink.ink}
           listening={false}
         />
       </React.Fragment>
     ))}
   </>
-);
+  );
+};
 
 /** Konva wants a flat number array; the layout speaks in points. */
 function flatten(points: Array<{ x: number; y: number }>): number[] {

@@ -303,7 +303,9 @@ describe('the palette', () => {
       // scale, not a set of series, so the categorical palette has nothing to
       // colour there. That is a different colour source rather than a control
       // being ignored, which is why it is exempt here and `gridLines` was not.
-      if (kind === 'heatmap') continue;
+      // The heat table (`matrix`) is the same: its cells are coloured by value
+      // on a ramp, not by series.
+      if (kind === 'heatmap' || kind === 'matrix') continue;
       const base = defaultChartSpec(kind);
       // Explicit per-series colours would mask the palette, which is correct
       // behaviour and not what this is testing.

@@ -1,6 +1,6 @@
 import { PLOT_PRESETS, specFromPreset } from './plotPresets';
 import { CHART_LABELS } from './chartKinds';
-import { isPlot, type ChartKind, type ChartSpec } from './chartTypes';
+import { defaultChartSpec, isPlot, type ChartKind, type ChartSpec } from './chartTypes';
 
 /**
  * A chart you can start from, for every kind.
@@ -370,6 +370,186 @@ export const DATA_EXAMPLES: ChartExample[] = [
       ramp: 'magma',
       rampReversed: true,
     },
+  },
+
+  // ── Grouped comparison ────────────────────────────────────────────────
+  {
+    id: 'grouped-quarters',
+    name: 'Grouped by quarter',
+    note: 'several series side by side, compared within each category',
+    kind: 'bar',
+    spec: {
+      kind: 'bar',
+      title: 'Revenue by product line',
+      categories: ['Q1', 'Q2', 'Q3', 'Q4'],
+      series: [
+        { name: 'Core', values: [182, 204, 231, 268] },
+        { name: 'Add-ons', values: [64, 78, 91, 110] },
+        { name: 'Services', values: [42, 45, 51, 49] },
+      ],
+      ...money,
+      valueSuffix: 'k',
+    },
+  },
+
+  // ── Heat tables ───────────────────────────────────────────────────────
+  {
+    id: 'weekday-hours',
+    name: 'Weekday × hour',
+    note: 'where the load concentrates, read in one glance',
+    kind: 'matrix',
+    spec: defaultChartSpec('matrix'),
+  },
+  {
+    id: 'correlation-matrix',
+    name: 'Correlation matrix',
+    note: 'a diverging ramp, because −1 and +1 are different in kind',
+    kind: 'matrix',
+    spec: {
+      kind: 'matrix',
+      title: 'How the measures move together',
+      categories: ['Height', 'Weight', 'Age', 'Sleep', 'Steps'],
+      series: [
+        { name: 'Height', values: [1, 0.72, 0.08, -0.04, 0.12] },
+        { name: 'Weight', values: [0.72, 1, 0.31, -0.18, -0.26] },
+        { name: 'Age', values: [0.08, 0.31, 1, -0.22, -0.41] },
+        { name: 'Sleep', values: [-0.04, -0.18, -0.22, 1, 0.19] },
+        { name: 'Steps', values: [0.12, -0.26, -0.41, 0.19, 1] },
+      ],
+      ramp: 'diverging',
+      decimals: 2,
+      compactNumbers: false,
+      showValues: true,
+    },
+  },
+
+  // ── Time ──────────────────────────────────────────────────────────────
+  {
+    id: 'launch-plan',
+    name: 'Launch plan',
+    note: 'phases as spans, a milestone as a point, and a line for today',
+    kind: 'timeline',
+    spec: defaultChartSpec('timeline'),
+  },
+  {
+    id: 'physics-century',
+    name: 'A century of physics',
+    note: 'eras on a shared axis, so overlap is visible',
+    kind: 'timeline',
+    spec: {
+      kind: 'timeline',
+      title: 'Physics, 1900–2000',
+      categories: ['Quantum theory', 'Relativity', 'Nuclear physics', 'Standard Model', 'Cosmology'],
+      series: [
+        { name: 'Start', values: [1900, 1905, 1932, 1961, 1964] },
+        { name: 'End', values: [1927, 1916, 1954, 1978, 1998] },
+      ],
+      compactNumbers: false,
+      showValues: true,
+    },
+  },
+
+  // ── Distributions ─────────────────────────────────────────────────────
+  {
+    id: 'latency-regions',
+    name: 'Latency by region',
+    note: 'medians, quartiles and outliers, side by side',
+    kind: 'boxPlot',
+    spec: defaultChartSpec('boxPlot'),
+  },
+  {
+    id: 'exam-scores',
+    name: 'Scores by class',
+    note: 'the same mean hiding very different spreads',
+    kind: 'boxPlot',
+    spec: {
+      kind: 'boxPlot',
+      title: 'Exam scores',
+      categories: [],
+      series: [
+        { name: 'Class A', values: [61, 64, 66, 68, 69, 70, 71, 72, 72, 73, 74, 75, 76, 78, 80] },
+        { name: 'Class B', values: [38, 45, 52, 58, 63, 67, 71, 74, 78, 82, 86, 90, 93, 96, 99] },
+        { name: 'Class C', values: [55, 60, 63, 67, 70, 72, 73, 74, 75, 77, 79, 81, 84, 88, 97] },
+      ],
+      reference: { value: 72, label: 'Pass' },
+    },
+  },
+  {
+    id: 'session-cohorts',
+    name: 'Two cohorts',
+    note: 'overlapping distributions, each smoothed',
+    kind: 'density',
+    spec: defaultChartSpec('density'),
+  },
+  {
+    id: 'normal-vs-skewed',
+    name: 'Normal against skewed',
+    note: 'a bell beside a long tail — what a mean alone cannot say',
+    kind: 'density',
+    spec: {
+      kind: 'density',
+      title: 'Symmetric and skewed samples',
+      categories: [],
+      series: [
+        { name: 'Symmetric', values: [42, 45, 46, 47, 48, 48, 49, 49, 50, 50, 50, 51, 51, 52, 52, 53, 54, 55, 57, 58] },
+        { name: 'Skewed', values: [31, 32, 33, 33, 34, 34, 35, 35, 36, 37, 38, 40, 42, 45, 49, 54, 60, 67, 75, 86] },
+      ],
+    },
+  },
+
+  // ── Hierarchies and relationships ─────────────────────────────────────
+  {
+    id: 'budget-tree',
+    name: 'Budget by team',
+    note: 'area is the quantity, so the big spenders are the big tiles',
+    kind: 'treemap',
+    spec: defaultChartSpec('treemap'),
+  },
+  {
+    id: 'market-share',
+    name: 'Market share',
+    note: 'many parts of one whole, where a pie would run out of room',
+    kind: 'treemap',
+    spec: {
+      kind: 'treemap',
+      title: 'Browser share',
+      categories: ['Chrome', 'Safari', 'Edge', 'Firefox', 'Samsung', 'Opera', 'Other'],
+      series: [{ name: 'Share', values: [64.7, 18.6, 5.2, 2.8, 2.5, 2.2, 4] }],
+      valueSuffix: '%',
+      decimals: 1,
+      compactNumbers: false,
+      showValues: true,
+    },
+  },
+  {
+    id: 'team-graph',
+    name: 'Collaboration graph',
+    note: 'weighted links, laid out so close collaborators sit close',
+    kind: 'network',
+    spec: defaultChartSpec('network'),
+  },
+  {
+    id: 'graph-theory',
+    name: 'Cycle and hub',
+    note: 'a ring of six joined to one centre: a wheel graph',
+    kind: 'network',
+    spec: (() => {
+      const nodes = ['Hub', 'A', 'B', 'C', 'D', 'E', 'F'];
+      const n = nodes.length;
+      const at = (i: number, j: number) => {
+        if (i === j) return 0;
+        if (i === 0 || j === 0) return 2;
+        const d = Math.abs(i - j);
+        return d === 1 || d === n - 2 ? 1 : 0;
+      };
+      return {
+        kind: 'network' as const,
+        title: 'Wheel graph W₇',
+        categories: nodes,
+        series: nodes.map((name, i) => ({ name, values: nodes.map((_, j) => at(i, j)) })),
+        curved: true,
+      };
+    })(),
   },
 ];
 

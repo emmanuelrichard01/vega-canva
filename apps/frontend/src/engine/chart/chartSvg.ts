@@ -9,6 +9,7 @@ import type { ChartSpec } from './chartTypes';
 import { contrastInk } from '../model/color';
 import { rectRing, roughLoop, roughPolyline, seedFor, type SketchLevel } from '../model/rough';
 import { currentChartInk, type ChartInk } from './chartInk';
+import { hachure, SKETCH_FONT, SKETCH_FONT_SCALE } from './chartSketch';
 
 /**
  * The second painter.
@@ -57,7 +58,8 @@ function label(
   align: 'left' | 'center' | 'right',
   fontSize: number,
   fill: string,
-  weight = '400'
+  weight = '400',
+  font = FONT
 ): string {
   const { anchor, dx } = anchorFor(align);
   // The layout gives a box and an alignment; SVG wants an anchor point. The
@@ -69,7 +71,7 @@ function label(
   // layout's `y` is a top edge, so the baseline is one cap-height down and
   // 0.8em is the reliable approximation of that.
   const ty = y + fontSize * 0.8;
-  return `<text x="${tx}" y="${ty}" text-anchor="${anchor}" font-family="${esc(FONT)}" font-size="${fontSize}" font-weight="${weight}" fill="${fill}">${esc(text)}</text>`;
+  return `<text x="${tx}" y="${ty}" text-anchor="${anchor}" font-family="${esc(font)}" font-size="${fontSize}" font-weight="${weight}" fill="${fill}">${esc(text)}</text>`;
 }
 
 /**
@@ -114,6 +116,8 @@ function slicePath(
 export interface ChartSvgOptions {
   /** Node id, so the sketch seed matches the one on screen exactly. */
   id: string;
+  /** A flat area's fill opacity, from the spec; the board's own default otherwise. */
+  areaOpacity?: number;
   sketch?: SketchLevel;
   sketchSeed?: number;
   /** Injected so the exporter can measure with a real font when it has one. */
@@ -136,7 +140,7 @@ export function chartToSvg(
   options: ChartSvgOptions
 ): string {
   const layout = layoutChart(spec, width, height, options.measure ?? approximateMeasure);
-  return paintLayout(layout, options);
+  return paintLayout(layout, { ...options, areaOpacity: options.areaOpacity ?? spec.areaOpacity });
 }
 
 /** Split out so a test can paint a layout it built itself. */
@@ -147,24 +151,42 @@ export function paintLayout(layout: ChartLayout, options: ChartSvgOptions): stri
   const out: string[] = [];
   const sketch = options.sketch;
   const seed = seedFor(options.id, options.sketchSeed);
+  /**
+   * Sketch letters in the hand, a size up. A fill is hatched — a pale wash
+   * under strokes — wherever the bar is not a heat cell, so a label placed
+   * "on" a hatched mark actually sits on something near the board's colour.
+   */
+  const font = sketch ? SKETCH_FONT : FONT;
+  const scale = sketch ? SKETCH_FONT_SCALE : 1;
+  const hatched = Boolean(sketch) && layout.bars.some((b) => b.rounded !== false);
+  const lab = (
+    text: string,
+    x: number,
+    y: number,
+    width: number,
+    align: 'left' | 'center' | 'right',
+    fontSize: number,
+    fill: string,
+    weight = '400'
+  ) => label(text, x, y, width, align, fontSize * scale, fill, sketch ? '700' : weight, font);
+  const onInk = (on: string | undefined, fallback: string) =>
+    on ? (hatched ? ink.ink : contrastInk(on)) : fallback;
 
-  for (const g of layout.gridLines) {
-    out.push(
-      `<line x1="${g.x1}" y1="${g.y1}" x2="${g.x2}" y2="${g.y2}" stroke="${ink.chrome}" stroke-width="1" opacity="0.35" />`
-    );
-  }
+  /** A chrome rule: straight when clean, drawn by hand when sketched. */
+  const rule = (x1: number, y1: number, x2: number, y2: number, n: number, width: number, opacity = 1) =>
+    sketch
+      ? `<path d="${roughPolyline([{ x: x1, y: y1 }, { x: x2, y: y2 }], { seed: seed + 900 + n * 7, level: width > 1 ? sketch : 'light', closed: false })}" fill="none" stroke="${ink.chrome}" stroke-width="${width}" stroke-linecap="round" opacity="${opacity}" />`
+      : `<line x1="${x1}" y1="${y1}" x2="${x2}" y2="${y2}" stroke="${ink.chrome}" stroke-width="${width}"${opacity < 1 ? ` opacity="${opacity}"` : ''} />`;
+
+  layout.gridLines.forEach((g, i) => out.push(rule(g.x1, g.y1, g.x2, g.y2, i, 1, 0.35)));
   // The vertical axis, at the horizontal one's weight — see `zeroRule`.
   if (layout.zeroRule) {
     const z = layout.zeroRule;
-    out.push(
-      `<line x1="${z.x1}" y1="${z.y1}" x2="${z.x2}" y2="${z.y2}" stroke="${ink.chrome}" stroke-width="1.5" />`
-    );
+    out.push(rule(z.x1, z.y1, z.x2, z.y2, 97, 1.5));
   }
   if (layout.baseline) {
     const b = layout.baseline;
-    out.push(
-      `<line x1="${b.x1}" y1="${b.y1}" x2="${b.x2}" y2="${b.y2}" stroke="${ink.chrome}" stroke-width="1.5" />`
-    );
+    out.push(rule(b.x1, b.y1, b.x2, b.y2, 98, 1.5));
   }
 
   /**
@@ -194,14 +216,22 @@ export function paintLayout(layout: ChartLayout, options: ChartSvgOptions): stri
   }
 
   layout.bars.forEach((b, i) => {
+    const op = b.opacity ?? 1;
     if (sketch) {
       const d = roughLoop(
         rectRing(b.width, b.height).map((p) => ({ x: p.x + b.x, y: p.y + b.y })),
         { seed: seed + i * 17, level: sketch }
       );
-      out.push(
-        `<path d="${d}" fill="${b.color}" stroke="${b.color}" stroke-width="1.4" opacity="0.92" />`
-      );
+      if (b.rounded === false) {
+        // A heat cell's colour *is* its value, so it stays solid.
+        out.push(`<path d="${d}" fill="${b.color}" stroke="${b.color}" stroke-width="1.4" opacity="${0.92 * op}" />`);
+      } else {
+        out.push(`<path d="${d}" fill="${b.color}" fill-opacity="${0.16 * op}" stroke="none" />`);
+        out.push(
+          `<path d="${hachure(b, seed + i * 17)}" fill="none" stroke="${b.color}" stroke-width="1.1" stroke-linecap="round" opacity="${0.85 * op}" />`
+        );
+        out.push(`<path d="${d}" fill="none" stroke="${b.color}" stroke-width="1.6" stroke-linejoin="round" opacity="${op}" />`);
+      }
     } else {
       const r =
         b.cornerRadius !== undefined
@@ -211,7 +241,7 @@ export function paintLayout(layout: ChartLayout, options: ChartSvgOptions): stri
           : 0;
       const rx = r > 0 ? ` rx="${r}"` : '';
       out.push(
-        `<rect x="${b.x}" y="${b.y}" width="${b.width}" height="${b.height}"${rx} fill="${b.color}" />`
+        `<rect x="${b.x}" y="${b.y}" width="${b.width}" height="${b.height}"${rx} fill="${b.color}"${op < 1 ? ` fill-opacity="${op}"` : ''} />`
       );
     }
   });
@@ -230,7 +260,9 @@ export function paintLayout(layout: ChartLayout, options: ChartSvgOptions): stri
   layout.areas.forEach((a, i) => {
     const points = a.polygon.map((p) => `${p.x},${p.y}`).join(' ');
     if (!a.gradient) {
-      out.push(`<polygon points="${points}" fill="${a.color}" opacity="0.22" />`);
+      // The panel's fill opacity, which the board already honoured — the
+      // export hard-coded 0.22, so a 60% area drew at 22% in the file.
+      out.push(`<polygon points="${points}" fill="${a.color}" opacity="${options.areaOpacity ?? 0.22}" />`);
       return;
     }
     const id = `${options.id}-areafill-${i}`;
@@ -254,14 +286,15 @@ export function paintLayout(layout: ChartLayout, options: ChartSvgOptions): stri
         : r.style === 'dotted'
         ? ' stroke-dasharray="2 3"'
         : '';
+    const runOp = r.opacity !== undefined && r.opacity < 1 ? ` opacity="${r.opacity}"` : '';
     if (sketch) {
       const d = roughPolyline(r.points, { seed: seed + i * 31, level: sketch, closed: false });
       out.push(
-        `<path d="${d}" fill="none" stroke="${r.color}" stroke-width="${strokeW}" stroke-linecap="round" stroke-linejoin="round" />`
+        `<path d="${d}" fill="none" stroke="${r.color}" stroke-width="${strokeW}" stroke-linecap="round" stroke-linejoin="round"${runOp} />`
       );
     } else {
       out.push(
-        `<polyline points="${r.points.map((p) => `${p.x},${p.y}`).join(' ')}" fill="none" stroke="${r.color}" stroke-width="${strokeW}"${dash} stroke-linecap="round" stroke-linejoin="round" />`
+        `<polyline points="${r.points.map((p) => `${p.x},${p.y}`).join(' ')}" fill="none" stroke="${r.color}" stroke-width="${strokeW}"${dash} stroke-linecap="round" stroke-linejoin="round"${runOp} />`
       );
     }
   });
@@ -349,7 +382,7 @@ export function paintLayout(layout: ChartLayout, options: ChartSvgOptions): stri
     if (!tb.cropped || tb.y2 < bottom - 0.5) out.push(edge(tb.y2));
     if (tb.label) {
       const l = tb.label;
-      out.push(label(l.text, l.x, l.y, l.width, l.align, l.fontSize, tb.color, '600'));
+      out.push(lab(l.text, l.x, l.y, l.width, l.align, l.fontSize, tb.color, '600'));
     }
   }
 
@@ -359,40 +392,42 @@ export function paintLayout(layout: ChartLayout, options: ChartSvgOptions): stri
       `<line x1="${r.x1}" y1="${r.y1}" x2="${r.x2}" y2="${r.y2}" stroke="${r.color}" stroke-width="1.5"${r.dashed ? ' stroke-dasharray="5 4"' : ''} />`
     );
     if (r.label) {
-      out.push(label(r.label.text, r.label.x, r.label.y, r.label.width, r.label.align, r.label.fontSize, r.color, '600'));
+      out.push(lab(r.label.text, r.label.x, r.label.y, r.label.width, r.label.align, r.label.fontSize, r.color, '600'));
     }
   }
 
   if (layout.title) {
     const t = layout.title;
-    out.push(label(t.text, t.x, t.y, t.width, t.align, t.fontSize, ink.ink, '600'));
+    out.push(lab(t.text, t.x, t.y, t.width, t.align, t.fontSize, ink.ink, '600'));
   }
   if (layout.subtitle) {
     const s = layout.subtitle;
-    out.push(label(s.text, s.x, s.y, s.width, s.align, s.fontSize, ink.chrome, '400'));
+    out.push(lab(s.text, s.x, s.y, s.width, s.align, s.fontSize, ink.chrome, '400'));
   }
   if (layout.footnote) {
     const f = layout.footnote;
-    out.push(label(f.text, f.x, f.y, f.width, f.align, f.fontSize, ink.chrome, '400'));
+    out.push(lab(f.text, f.x, f.y, f.width, f.align, f.fontSize, ink.chrome, '400'));
   }
   if (layout.xAxisTitle) {
     const xa = layout.xAxisTitle;
-    out.push(label(xa.text, xa.x - xa.width / 2, xa.y, xa.width, xa.align, xa.fontSize, ink.chrome, '600'));
+    out.push(lab(xa.text, xa.x - xa.width / 2, xa.y, xa.width, xa.align, xa.fontSize, ink.chrome, '600'));
   }
   if (layout.yAxisTitle) {
     const ya = layout.yAxisTitle;
     out.push(
-      `<text x="${ya.x}" y="${ya.y}" transform="rotate(-90 ${ya.x} ${ya.y})" text-anchor="middle" font-family="${esc(FONT)}" font-size="${ya.fontSize}" font-weight="600" fill="${ink.chrome}">${esc(ya.text)}</text>`
+      `<text x="${ya.x}" y="${ya.y}" transform="rotate(-90 ${ya.x} ${ya.y})" text-anchor="middle" font-family="${esc(font)}" font-size="${ya.fontSize * scale}" font-weight="600" fill="${ink.chrome}">${esc(ya.text)}</text>`
     );
   }
   for (const l of [...layout.axisLabels, ...layout.categoryLabels]) {
-    out.push(label(l.text, l.x, l.y, l.width, l.align, l.fontSize, ink.chrome));
+    // A name inside a tile — a treemap's, a heat table's — reads against the
+    // tile, like a value label does.
+    out.push(lab(l.text, l.x, l.y, l.width, l.align, l.fontSize, onInk(l.on, ink.chrome)));
   }
   for (const l of layout.valueLabels) {
     // Against the mark it sits on, or the board when it sits on nothing --
     // the same rule the canvas follows, read from the same field.
-    const fill = l.on ? contrastInk(l.on) : ink.ink;
-    out.push(label(l.text, l.x, l.y, l.width, l.align, l.fontSize, fill, '600'));
+    const fill = onInk(l.on, ink.ink);
+    out.push(lab(l.text, l.x, l.y, l.width, l.align, l.fontSize, fill, '600'));
   }
   /**
    * The colour scale, from the same stops the canvas uses.
@@ -418,7 +453,7 @@ export function paintLayout(layout: ChartLayout, options: ChartSvgOptions): stri
         `fill="url(#${id})" stroke="${ink.chrome}" stroke-width="0.5" />`
     );
     for (const tick of bar.ticks) {
-      out.push(label(tick.text, bar.textX, tick.y, 0, 'left', bar.fontSize, ink.ink));
+      out.push(lab(tick.text, bar.textX, tick.y, 0, 'left', bar.fontSize, ink.ink));
     }
   }
 
@@ -426,7 +461,7 @@ export function paintLayout(layout: ChartLayout, options: ChartSvgOptions): stri
     out.push(
       `<rect x="${e.x}" y="${e.y}" width="${e.swatch}" height="${e.swatch}" rx="2" fill="${e.color}" />`
     );
-    out.push(label(e.label, e.textX, e.y - 1, 0, 'left', e.fontSize, ink.ink));
+    out.push(lab(e.label, e.textX, e.y - 1, 0, 'left', e.fontSize, ink.ink));
   }
 
   return out.join('');
