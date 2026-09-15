@@ -3,6 +3,8 @@ import type { NewNodeInput } from '../document/mutations';
 import type { AnyNode, StickyTheme } from '../model/schema';
 import { buildPreview, MAX_ITEMS_RICH, type BoardPreview } from '../model/boardPreview';
 import { previewColorOf, previewPointsOf } from '../model/previewPaint';
+import { SCIENCE_TEMPLATES } from './scienceTemplates';
+import { TABLE_TEMPLATES } from './tableTemplates';
 
 /**
  * Boards that already have something on them.
@@ -41,10 +43,11 @@ import { previewColorOf, previewPointsOf } from '../model/previewPaint';
  * "connectors and frames". A row of thirteen ungrouped cards is also a row
  * nobody reads to the end.
  */
-export type TemplateCategory = 'diagrams' | 'thinking' | 'design' | 'art' | 'physics';
+export type TemplateCategory = 'diagrams' | 'thinking' | 'design' | 'art' | 'physics' | 'science';
 
 export const CATEGORIES: Array<{ id: TemplateCategory; label: string }> = [
   { id: 'diagrams', label: 'Charts & flows' },
+  { id: 'science', label: 'Science & maths' },
   { id: 'design', label: 'Web & social' },
   { id: 'thinking', label: 'Thinking' },
   { id: 'art', label: 'Illustration' },
@@ -192,7 +195,7 @@ const link = (
 const hue = (t: number, saturation = 68, lightness = 62): string =>
   `hsl(${Math.round(((t % 1) + 1) % 1 * 360)}, ${saturation}%, ${lightness}%)`;
 
-export const TEMPLATES: Template[] = [
+const BASE_TEMPLATES: Template[] = [
   {
     id: 'bloom',
     featured: true,
@@ -2068,6 +2071,9 @@ export const TEMPLATES: Template[] = [
  * thirty nodes and ignore it entirely.
  */
 const PREVIEW_NODE_LIMIT = 150;
+
+/** The science and maths boards live in their own file; see `scienceTemplates.ts`. */
+export const TEMPLATES: Template[] = [...BASE_TEMPLATES, ...SCIENCE_TEMPLATES, ...TABLE_TEMPLATES];
 
 export const templateById = (id: string): Template | undefined =>
   TEMPLATES.find((t) => t.id === id);
