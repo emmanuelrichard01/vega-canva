@@ -377,18 +377,19 @@
    clipped mid-word. The input grows sideways instead (TableEditor). */
 .tbled__input { white-space: pre; }
 
-/* The formula bar — docked to the toolbar, never over the grid (see
-   TableEditor). Two lines: the formula with its references in their outline
-   colours and the result beside it; then whatever helps next — functions that
-   match, the signature being filled in, or the keys. Every run is one line
-   and cuts with an ellipsis, so nothing in here ever wraps. */
+/* The formula help — beside the cell being written, never on it (placement is
+   TableEditor's `fxPlace`). Two lines: the formula with its references in
+   their outline colours and the result beside it; then whatever helps next —
+   functions that match, the signature being filled in, or the keys. Every run
+   is one line and cuts with an ellipsis, so nothing in here ever wraps. */
 .tbled-fxbar {
   position: fixed;
   z-index: 8003;
   display: flex;
   flex-direction: column;
   gap: 2px;
-  width: min(520px, calc(100vw - 16px));
+  width: min(440px, calc(100vw - 16px));
+  transition: opacity var(--motion-hover);
   padding: 6px 8px;
   border-radius: var(--radius-lg);
   background: var(--surface-elevated);
@@ -399,6 +400,13 @@
 
 @media (prefers-reduced-motion: reduce) {
   .tbled-fxbar { animation: none; }
+}
+
+/* Clicking cells into a formula: the help fades and lets the pointer through,
+   so it can never sit on the cell being aimed at. */
+.tbled-fxbar[data-picking] {
+  opacity: 0.25;
+  pointer-events: none;
 }
 
 .tbled-fxbar__line {

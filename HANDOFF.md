@@ -5584,12 +5584,19 @@ tool's cursor, and "smoother, faster".
   no example computes to an error. The gallery marks calculating tables `fx`,
   filters by "Uses formulas" and finds tables by function name. A fourth
   board, the finance planner, is built from them.
-- **The formula help moved off the grid** after the owner reported it in the
-  way. It opened under the cell on `=` and covered the cells a formula wants
-  to click; it is now a bar docked to the toolbar (the formula with coloured
-  references, the result, then suggestions as chips or the signature). The
-  cell input stays one line and grows sideways — it had wrapped inside the
-  row height and clipped. An incomplete formula reads as "…", not a red error.
+- **The formula help sits beside the cell being written, never on it.** It
+  took three tries, on the owner's reports: first it opened under the cell
+  on `=` whatever the formula read, covering the cells it wanted clicked;
+  then it docked to the toolbar, clear of the grid but far from the typing.
+  Now `fxPlace` tries below, above, right and left of the input and takes
+  the first that fits on screen — reordered so a formula reading cells below
+  opens it above them (and reading cells right keeps it off that side), and
+  skipping any spot the toolbar holds. It is measured every render, and it
+  fades and lets the pointer through while references are being clicked in.
+  It shows the formula with coloured references, the result, then
+  suggestions as chips or the signature. The cell input stays one line and
+  grows sideways — it had wrapped inside the row height and clipped. An
+  incomplete formula reads as "…", not a red error.
 
 Verified by `npm run build` and Node checks (formulas, fitting, moves); the
 Vitest files `tableFit.test.ts` and `tableFormula.test.ts` hold the same

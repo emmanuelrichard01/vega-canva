@@ -386,6 +386,8 @@ const Editor: React.FC<{ node: TableNode; onClose: () => void }> = ({ node, onCl
   const lastInsert = React.useRef<{ start: number; end: number } | null>(null);
   /** The cell a reference drag started on. */
   const refDrag = React.useRef<{ r: number; c: number } | null>(null);
+  /** While references are being clicked in, the help steps back so it can never be in the way. */
+  const [picking, setPicking] = React.useState(false);
 
   const draft = sheet.edit?.draft ?? '';
   const writingFormula = Boolean(sheet.edit) && draft.startsWith('=');
@@ -469,9 +471,11 @@ const Editor: React.FC<{ node: TableNode; onClose: () => void }> = ({ node, onCl
     sheet.setDraft(`${draft.slice(0, from)}${name}${draft.slice(to)}`);
     lastInsert.current = { start: from, end: from + name.length };
     refDrag.current = { r, c };
+    setPicking(true);
     moveCaret(from + name.length);
     const up = () => {
       refDrag.current = null;
+      setPicking(false);
       window.removeEventListener('pointerup', up);
     };
     window.addEventListener('pointerup', up);
@@ -797,25 +801,6 @@ const Editor: React.FC<{ node: TableNode; onClose: () => void }> = ({ node, onCl
       ? { ...hint, kind: 'insert' }
       : null;
 
-  /**
-   * The formula bar docks to the toolbar — above it, or under it when the
-   * toolbar has flipped below the table — and never sits over the grid.
-   *
-   * It began as a panel under the cell, opened by the `=` itself, and covered
-   * exactly the cells a formula wants to click: the row below, the column
-   * beside. Docked to the chrome, every cell stays reachable while a formula
-   * is written, and it is in screen space so its type never scales.
-   */
-  const FX_GAP = 6;
-  const FX_H = 72;
-  const barAboveTable = above >= 8;
-  const fxStyle: React.CSSProperties =
-    barAboveTable && barTop - FX_GAP - FX_H >= 8
-      ? { left: barLeft, bottom: window.innerHeight - (barTop - FX_GAP) }
-      : barAboveTable
-        ? { left: barLeft, top: top + node.height * zoom + BELOW_REACH + CLEARANCE }
-        : { left: barLeft, top: barTop + BAR_H + FX_GAP };
-
   /** The formula being typed, each reference in the colour its cells are outlined in. */
   const echo: React.ReactNode[] = [];
   if (writingFormula) {
@@ -847,6 +832,63 @@ const Editor: React.FC<{ node: TableNode; onClose: () => void }> = ({ node, onCl
         )
       )
     : 0;
+
+  // ---- where the formula help goes ------------------------------------------
+
+  /**
+   * Beside the cell being written — never on it.
+   *
+   * Four spots around the input, in screen space so the help's type never
+   * scales: below, above, right, left. The first that fits on screen wins, so
+   * the help follows the cell wherever it is on the board and at any zoom.
+   * Two things reorder them. A formula reading cells *below* the one being
+   * written opens the help above, and one reading cells to the right keeps
+   * off that side, so the outlined cells being clicked stay in view. And a
+   * spot the toolbar already occupies is skipped.
+   *
+   * History, because both earlier answers were wrong: it first opened under
+   * the cell on `=` whatever the formula read, covering the cells it wanted
+   * clicked; then it docked to the toolbar, clear of the grid but nowhere
+   * near what was being typed. Measured each render, so a second line of
+   * suggestions moves it rather than pushing it off screen.
+   */
+  const fxRef = React.useRef<HTMLDivElement>(null);
+  const [fxSize, setFxSize] = React.useState({ w: 440, h: 72 });
+  React.useLayoutEffect(() => {
+    const el = fxRef.current;
+    if (!el) return;
+    const w = el.offsetWidth;
+    const h = el.offsetHeight;
+    if (Math.abs(w - fxSize.w) > 1 || Math.abs(h - fxSize.h) > 1) setFxSize({ w, h });
+  });
+  const fxPlace = (() => {
+    if (!editBox) return null;
+    const a = { left: left + editBox.left * zoom, top: top + editBox.top * zoom, width: editWidth * zoom, height: editBox.height * zoom };
+    const vw = window.innerWidth;
+    const vh = window.innerHeight;
+    const gap = 8;
+    const m = 8;
+    const { w, h } = fxSize;
+    const bar = { left: barLeft, top: barTop, right: barLeft + (barRef.current?.offsetWidth ?? 720), bottom: barTop + BAR_H };
+    const clearOfBar = (x: number, y: number) => x + w <= bar.left || x >= bar.right || y + h <= bar.top || y >= bar.bottom;
+    const cx = (x: number) => Math.max(m, Math.min(vw - w - m, x));
+    const cy = (y: number) => Math.max(m, Math.min(vh - h - m, y));
+    const spots = {
+      below: { left: cx(a.left), top: a.top + a.height + gap, side: 'below', fits: a.top + a.height + gap + h <= vh - m },
+      above: { left: cx(a.left), top: a.top - gap - h, side: 'above', fits: a.top - gap - h >= m },
+      right: { left: a.left + a.width + gap, top: cy(a.top), side: 'right', fits: a.left + a.width + gap + w <= vw - m },
+      left: { left: a.left - gap - w, top: cy(a.top), side: 'left', fits: a.left - gap - w >= m },
+    };
+    const readsBelow = refBoxes.some((b) => b.box.top >= editBox.top + editBox.height - 0.5);
+    const readsRight = refBoxes.some((b) => b.box.left >= editBox.left + editWidth - 0.5);
+    const order: Array<keyof typeof spots> = readsBelow
+      ? ['above', 'right', 'left', 'below']
+      : readsRight
+        ? ['below', 'above', 'left', 'right']
+        : ['below', 'above', 'right', 'left'];
+    const candidates = order.map((k) => spots[k]);
+    return candidates.find((s) => s.fits && clearOfBar(s.left, s.top)) ?? candidates.find((s) => s.fits) ?? spots.below;
+  })();
 
   return createPortal(
     <>
@@ -1303,10 +1345,13 @@ const Editor: React.FC<{ node: TableNode; onClose: () => void }> = ({ node, onCl
         <textarea {...sheet.sinkProps} />
       </div>
 
-      {writingFormula && (
+      {writingFormula && fxPlace && (
         <div
+          ref={fxRef}
           className="tbled-fxbar"
-          style={fxStyle}
+          data-side={fxPlace.side}
+          data-picking={picking || undefined}
+          style={{ left: fxPlace.left, top: fxPlace.top }}
           role="group"
           aria-label="Formula"
           // Keeps the caret in the cell: nothing in here takes focus.
