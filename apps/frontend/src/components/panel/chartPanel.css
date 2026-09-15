@@ -2019,7 +2019,7 @@
   background: #0F172A;
   color: #FFFFFF;
   font-family: var(--font-mono);
-  font-size: 10px;
+  font-size: var(--text-2xs);
   font-style: italic;
   font-weight: var(--weight-semibold);
   line-height: 16px;
