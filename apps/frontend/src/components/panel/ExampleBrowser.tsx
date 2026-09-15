@@ -1,52 +1,58 @@
 import React from 'react';
-import { LayoutGrid, Plus, Search, X } from 'lucide-react';
+import { CornerDownLeft, LayoutGrid, Plus, Search, X } from 'lucide-react';
 import { exampleGroups, type ChartExample } from '../../engine/chart/chartExamples';
 import { thumbFor, thumbReady } from '../../engine/chart/thumbCache';
+import { CHART_LABELS, FAMILY_LABELS, chartPickerGroups } from '../../engine/chart/chartKinds';
+import { CHART_FAMILY_OF, type ChartFamily, type ChartKind, type ChartSpec } from '../../engine/chart/chartTypes';
 import { ThemeService } from '../../engine/ThemeService';
 import { useNearViewport } from '../../hooks/useNearViewport';
+import { ChartKindIcon } from '../workspace/chartIcons';
 import { PanelPopover } from './PanelPopover';
-import type { ChartKind, ChartSpec } from '../../engine/chart/chartTypes';
 
 /**
  * Start from an example.
  *
- * ## What it costs, and what that bought
+ * ## Shape: a rail and a grid
+ *
+ * The template browsers this is measured against — Miro's, FigJam's,
+ * Lucidchart's — all settle on the same arrangement, because it is the one
+ * that scales: categories down the left, pictures on the right, search
+ * across the top. Sixty-odd examples in one scrolling column made the
+ * current kind's own examples the only ones anybody saw, and the rest were a
+ * scroll away from being discovered.
+ *
+ * The rail opens on **For this chart** — the current kind and its family —
+ * because that is what most visits want, and every other family is one press
+ * away. Search always covers everything: somebody typing "tan" means the
+ * curve wherever it lives.
+ *
+ * ## What a card promises
  *
  * Every card is a real chart, laid out by `layoutChart` and painted by
- * `chartToSvg` — the same pair the export uses, so a card cannot advertise a
- * shape the example does not produce. That fidelity is the point, and it is
- * not free: **sixty-three thumbnails is 374ms of blocked main thread**,
- * measured, with a contour map at ~35ms on its own because marching squares
- * runs per level over a grid.
+ * `chartToSvg`, so a card cannot advertise a shape the example does not
+ * produce. A card of a *different* kind carries that kind's glyph, and the
+ * footer says "Switches to Waterfall" — picking an example is also how people
+ * change kind, and it should never do so by surprise.
  *
- * Paying that on every open is what made it feel heavy, and two changes remove
- * it between them:
+ * ## What it costs
  *
- * - **Cards render when they are nearly on screen**, not when the list is
- *   built. Nine of sixty-three are visible, so the first open pays for nine.
- * - **`thumbCache` keeps them for the session**, so the second open pays for
- *   nothing at all. The examples are static and the themes are two; a preview
- *   is a pure function of `(id, dark)`.
- *
- * Neither works alone: the cache does nothing for the first open, and lazy
- * mounting alone re-pays every time you scroll back up.
+ * Sixty-three thumbnails is ~374ms of main thread. Cards render when nearly
+ * on screen, and `thumbCache` keeps them for the session, so the first open
+ * pays for what is visible and the second for nothing.
  *
  * ## Keyboard
  *
- * Arrows move, Enter picks, Escape closes — it had none of that, which on a
- * list of sixty-three is the difference between a browser and a wall. The
- * cursor is also what the footer describes, so moving it *narrates* itself,
- * the same trick the dock's `KindPicker` uses.
+ * Arrows move, Enter uses, Shift+Enter adds a plot's curves to the current
+ * one, Escape closes. The cursor is also what the footer describes.
  */
 
 interface Props {
   kind: ChartKind;
   onPick: (spec: ChartSpec) => void;
   /**
-   * Add this example's curves rather than replacing the chart.
-   *
-   * Only where it means something: a formula can join a plot that already has
-   * one, and a table of quarterly revenue cannot join anything.
+   * Add this example's curves rather than replacing the chart. Only where it
+   * means something: a formula can join a plot that already has one, and a
+   * table of quarterly revenue cannot join anything.
    */
   onAddCurves?: (curves: Array<{ source: string; color?: string }>) => void;
 }
@@ -54,6 +60,8 @@ interface Props {
 const THUMB_W = 124;
 const THUMB_H = 70;
 const COLUMNS = 3;
+
+type Filter = 'suggested' | 'all' | ChartFamily;
 
 export const ExampleButton: React.FC<Props> = ({ kind, onPick, onAddCurves }) => {
   const groups = React.useMemo(() => exampleGroups(kind), [kind]);
@@ -63,8 +71,9 @@ export const ExampleButton: React.FC<Props> = ({ kind, onPick, onAddCurves }) =>
   return (
     <PanelPopover
       title="Start from an example"
-      width={452}
+      width={600}
       icon={<LayoutGrid size={12} aria-hidden />}
+      tooltip="Start from a finished chart"
       label={
         <>
           Examples
@@ -76,6 +85,7 @@ export const ExampleButton: React.FC<Props> = ({ kind, onPick, onAddCurves }) =>
     >
       {(close) => (
         <ExampleBrowser
+          current={kind}
           groups={groups}
           onPick={(spec) => {
             onPick(spec);
@@ -89,6 +99,7 @@ export const ExampleButton: React.FC<Props> = ({ kind, onPick, onAddCurves }) =>
                 }
               : undefined
           }
+          onClose={close}
         />
       )}
     </PanelPopover>
@@ -96,43 +107,69 @@ export const ExampleButton: React.FC<Props> = ({ kind, onPick, onAddCurves }) =>
 };
 
 const ExampleBrowser: React.FC<{
+  current: ChartKind;
   groups: ReturnType<typeof exampleGroups>;
   onPick: (spec: ChartSpec) => void;
   onAddCurves?: (curves: Array<{ source: string; color?: string }>) => void;
-}> = ({ groups, onPick, onAddCurves }) => {
+  onClose: () => void;
+}> = ({ current, groups, onPick, onAddCurves, onClose }) => {
+  const family = CHART_FAMILY_OF[current];
   const [query, setQuery] = React.useState('');
+  const [filter, setFilter] = React.useState<Filter>('suggested');
   const [cursor, setCursor] = React.useState(0);
   const scrollRef = React.useRef<HTMLDivElement>(null);
-  // Once per render of the browser rather than once per card: the answer is
-  // the same for all sixty-three and it is a class-list read each time.
+  // Once per render rather than once per card: the answer is the same for
+  // every card and it is a class-list read each time.
   const dark = ThemeService.isDarkMode();
   const trimmed = query.trim().toLowerCase();
 
-  const shown = React.useMemo(() => {
-    if (!trimmed) return groups;
-    return groups
-      .map((g) => ({
-        ...g,
-        examples: g.examples.filter(
-          (e) =>
-            e.name.toLowerCase().includes(trimmed) ||
-            e.note.toLowerCase().includes(trimmed) ||
-            g.label.toLowerCase().includes(trimmed) ||
-            // The formulae too: somebody searching `tan` means the curve, and
-            // its name is "Tangent" while its expression is what they typed.
-            (e.spec.functions ?? []).some((f) => f.source.toLowerCase().includes(trimmed))
-        ),
-      }))
-      .filter((g) => g.examples.length > 0);
-  }, [groups, trimmed]);
-
-  /** Everything on screen in reading order, which is what an arrow key moves through. */
-  const flat = React.useMemo(
-    () => shown.flatMap((g) => g.examples.map((example) => ({ example, group: g }))),
-    [shown]
+  const inFilter = React.useCallback(
+    (k: ChartKind, f: Filter) =>
+      f === 'all' ? true : f === 'suggested' ? k === current || CHART_FAMILY_OF[k] === family : CHART_FAMILY_OF[k] === f,
+    [current, family]
   );
 
-  // A search that now matches fewer must not leave the cursor past the end.
+  const matches = React.useCallback(
+    (e: ChartExample, label: string) =>
+      !trimmed ||
+      e.name.toLowerCase().includes(trimmed) ||
+      e.note.toLowerCase().includes(trimmed) ||
+      label.toLowerCase().includes(trimmed) ||
+      // The formulae too: somebody searching `tan` means the curve, and its
+      // name is "Tangent" while its expression is what they typed.
+      (e.spec.functions ?? []).some((f) => f.source.toLowerCase().includes(trimmed)),
+    [trimmed]
+  );
+
+  /** The rail: the suggestion, everything, then each family that has examples. */
+  const rail = React.useMemo(() => {
+    const count = (f: Filter) =>
+      groups.filter((g) => inFilter(g.kind, f)).reduce((n, g) => n + g.examples.filter((e) => matches(e, g.label)).length, 0);
+    const families = chartPickerGroups()
+      .map((g) => g.family)
+      .filter((f) => groups.some((g) => CHART_FAMILY_OF[g.kind] === f));
+    return [
+      { id: 'suggested' as Filter, label: 'For this chart', count: count('suggested') },
+      { id: 'all' as Filter, label: 'All examples', count: count('all') },
+      ...families.map((f) => ({ id: f as Filter, label: FAMILY_LABELS[f], count: count(f) })),
+    ];
+  }, [groups, inFilter, matches]);
+
+  // A search always covers everything; the rail then reports where the
+  // matches are rather than hiding most of them.
+  const effective: Filter = trimmed ? 'all' : filter;
+
+  const shown = React.useMemo(
+    () =>
+      groups
+        .filter((g) => inFilter(g.kind, effective))
+        .map((g) => ({ ...g, examples: g.examples.filter((e) => matches(e, g.label)) }))
+        .filter((g) => g.examples.length > 0),
+    [groups, inFilter, matches, effective]
+  );
+
+  const flat = React.useMemo(() => shown.flatMap((g) => g.examples), [shown]);
+
   React.useEffect(() => {
     setCursor((c) => Math.min(c, Math.max(0, flat.length - 1)));
   }, [flat.length]);
@@ -140,145 +177,181 @@ const ExampleBrowser: React.FC<{
   const move = (delta: number) => {
     setCursor((c) => {
       const next = Math.max(0, Math.min(flat.length - 1, c + delta));
-      scrollRef.current
-        ?.querySelector<HTMLElement>(`[data-at="${next}"]`)
-        ?.scrollIntoView({ block: 'nearest' });
+      scrollRef.current?.querySelector<HTMLElement>(`[data-at="${next}"]`)?.scrollIntoView({ block: 'nearest' });
       return next;
     });
   };
 
+  const choose = (filterId: Filter) => {
+    setFilter(filterId);
+    setQuery('');
+    setCursor(0);
+    scrollRef.current?.scrollTo({ top: 0 });
+  };
+
   const onKeyDown = (e: React.KeyboardEvent) => {
-    switch (e.key) {
-      case 'ArrowRight':
-        e.preventDefault();
-        move(1);
-        break;
-      case 'ArrowLeft':
-        e.preventDefault();
-        move(-1);
-        break;
-      case 'ArrowDown':
-        e.preventDefault();
-        move(COLUMNS);
-        break;
-      case 'ArrowUp':
-        e.preventDefault();
-        move(-COLUMNS);
-        break;
-      case 'Home':
-        e.preventDefault();
-        move(-flat.length);
-        break;
-      case 'End':
-        e.preventDefault();
-        move(flat.length);
-        break;
-      case 'Enter': {
-        const chosen = flat[cursor];
-        if (chosen) {
-          e.preventDefault();
-          onPick(chosen.example.spec);
-        }
-        break;
-      }
-      default:
-        break;
+    // The rail's own buttons keep their native arrow behaviour.
+    if ((e.target as HTMLElement).closest('.exb__rail')) return;
+    const keys: Record<string, () => void> = {
+      ArrowRight: () => move(1),
+      ArrowLeft: () => move(-1),
+      ArrowDown: () => move(COLUMNS),
+      ArrowUp: () => move(-COLUMNS),
+      Home: () => move(-flat.length),
+      End: () => move(flat.length),
+    };
+    if (keys[e.key]) {
+      e.preventDefault();
+      keys[e.key]();
+      return;
+    }
+    if (e.key === 'Enter') {
+      const chosen = flat[cursor];
+      if (!chosen) return;
+      e.preventDefault();
+      if (e.shiftKey && onAddCurves && chosen.spec.functions?.length) onAddCurves(chosen.spec.functions);
+      else onPick(chosen.spec);
     }
   };
 
   const described = flat[cursor];
+  const canAdd = Boolean(onAddCurves && described?.spec.functions?.length);
   let index = -1;
 
   return (
     <div className="exb" onKeyDown={onKeyDown}>
-      <div className="exb__search">
-        <Search size={12} aria-hidden />
-        <input
-          className="exb__input"
-          value={query}
-          autoFocus
-          placeholder="Search examples"
-          aria-label="Search examples"
-          onChange={(e) => {
-            setQuery(e.target.value);
-            setCursor(0);
-          }}
-        />
-        {query && (
-          <button
-            type="button"
-            className="exb__clear"
-            aria-label="Clear the search"
-            onClick={() => setQuery('')}
-          >
-            <X size={11} />
-          </button>
+      <header className="exb__head">
+        <div className="exb__search">
+          <Search size={14} aria-hidden />
+          <input
+            className="exb__input"
+            value={query}
+            autoFocus
+            placeholder={`Search ${rail[1].count} examples`}
+            aria-label="Search examples"
+            onChange={(e) => {
+              setQuery(e.target.value);
+              setCursor(0);
+            }}
+          />
+          {query && (
+            <button type="button" className="exb__clear" aria-label="Clear the search" onClick={() => setQuery('')}>
+              <X size={12} />
+            </button>
+          )}
+        </div>
+        <button type="button" className="exb__close" aria-label="Close" onClick={onClose}>
+          <X size={14} />
+        </button>
+      </header>
+
+      <div className="exb__body">
+        <nav className="exb__rail" aria-label="Example categories">
+          {rail.map((r, i) => (
+            <React.Fragment key={r.id}>
+              {i === 2 && <span className="exb__railRule" aria-hidden="true" />}
+              <button
+                type="button"
+                className="exb__railItem"
+                aria-current={effective === r.id || undefined}
+                disabled={r.count === 0}
+                onClick={() => choose(r.id)}
+              >
+                <span className="exb__railLabel">{r.label}</span>
+                <span className="exb__railCount">{r.count}</span>
+              </button>
+            </React.Fragment>
+          ))}
+        </nav>
+
+        {flat.length === 0 ? (
+          // Quotes what was typed, so the reader sees the typo rather than
+          // only that something failed.
+          <div className="exb__empty">
+            <p>Nothing matches “{query}”.</p>
+            <button type="button" className="chartp-link" onClick={() => setQuery('')}>
+              Clear the search
+            </button>
+          </div>
+        ) : (
+          <div className="exb__scroll" ref={scrollRef}>
+            {shown.map((group) => (
+              <section className="exb__group" key={group.kind}>
+                <h5 className="exb__groupLabel">
+                  <ChartKindIcon kind={group.kind} size={14} />
+                  <span>{group.label}</span>
+                  {group.kind === current && <span className="exb__current">Current</span>}
+                  <span className="exb__count">{group.examples.length}</span>
+                </h5>
+                {/* The grid is told its columns by the same constant ArrowDown
+                    moves by; two places deciding that independently is a down
+                    arrow that skips or repeats a row. */}
+                <div className="exb__grid" style={{ '--exb-columns': COLUMNS } as React.CSSProperties}>
+                  {group.examples.map((example) => {
+                    index += 1;
+                    const at = index;
+                    return (
+                      <ExampleCard
+                        key={example.id}
+                        example={example}
+                        dark={dark}
+                        at={at}
+                        focused={at === cursor}
+                        onFocus={() => setCursor(at)}
+                        onPick={() => onPick(example.spec)}
+                        onAdd={
+                          onAddCurves && example.spec.functions?.length
+                            ? () => onAddCurves(example.spec.functions!)
+                            : undefined
+                        }
+                      />
+                    );
+                  })}
+                </div>
+              </section>
+            ))}
+          </div>
         )}
       </div>
 
-      {flat.length === 0 ? (
-        // Quotes what was typed, so the reader sees the typo rather than only
-        // that something failed.
-        <p className="exb__empty">Nothing matches “{query}”.</p>
-      ) : (
-        <div className="exb__scroll" ref={scrollRef}>
-          {shown.map((group) => (
-            <section className="exb__group" key={group.kind}>
-              <h5 className="exb__groupLabel">
-                {group.label}
-                <span className="exb__count">{group.examples.length}</span>
-              </h5>
-              {/* The grid is told how many columns to draw by the same constant
-                  ArrowDown moves by. Two places deciding that independently is
-                  a down arrow that skips or repeats a row. */}
-              <div
-                className="exb__grid"
-                style={{ '--exb-columns': COLUMNS } as React.CSSProperties}
-              >
-                {group.examples.map((example) => {
-                  index += 1;
-                  const at = index;
-                  return (
-                    <ExampleCard
-                      key={example.id}
-                      example={example}
-                      dark={dark}
-                      at={at}
-                      focused={at === cursor}
-                      onFocus={() => setCursor(at)}
-                      onPick={() => onPick(example.spec)}
-                      onAdd={
-                        onAddCurves && example.spec.functions?.length
-                          ? () => onAddCurves(example.spec.functions!)
-                          : undefined
-                      }
-                    />
-                  );
-                })}
-              </div>
-            </section>
-          ))}
-        </div>
-      )}
-
       {/**
-       * One line about whatever the cursor is on.
+       * One line about whatever the cursor is on, and the keys that act on it.
        *
-       * Fixed height, always rendered, so the surface does not resize as the
+       * Fixed height, always rendered, so the surface never resizes as the
        * pointer crosses it — a footer that appears on hover moves every card
        * above it and turns a steady scan into a flinch.
        */}
       <footer className="exb__foot">
-        {described ? (
-          <>
-            <span className="exb__footName">{described.example.name}</span>
-            <span className="exb__footNote">{described.example.note}</span>
-          </>
-        ) : (
-          <span className="exb__footNote">
-            {flat.length} to choose from — arrows to move, Enter to use one
+        <div className="exb__footText">
+          {described ? (
+            <>
+              <span className="exb__footName">{described.name}</span>
+              <span className="exb__footNote">
+                {described.kind !== current ? `Switches to ${CHART_LABELS[described.kind]} · ` : ''}
+                {described.note}
+              </span>
+            </>
+          ) : (
+            <span className="exb__footNote">Nothing to show</span>
+          )}
+        </div>
+        <div className="exb__keys" aria-hidden="true">
+          <span className="exb__key">
+            <kbd>
+              <CornerDownLeft size={10} />
+            </kbd>
+            Use
           </span>
-        )}
+          {canAdd && (
+            <span className="exb__key">
+              <kbd>⇧</kbd>
+              <kbd>
+                <CornerDownLeft size={10} />
+              </kbd>
+              Add
+            </span>
+          )}
+        </div>
       </footer>
     </div>
   );
@@ -294,11 +367,8 @@ const ExampleCard = React.memo<{
   onAdd?: () => void;
 }>(({ example, dark, at, focused, onFocus, onPick, onAdd }) => {
   /**
-   * Already paid for, or waiting to be seen.
-   *
-   * A cached preview renders immediately — there is nothing to defer and a
-   * skeleton would be a flash of nothing in front of a value we already hold.
-   * Everything else waits until it is nearly on screen.
+   * Already paid for, or waiting to be seen. A cached preview renders at once
+   * — a skeleton would be a flash of nothing in front of a value we hold.
    */
   const cached = thumbReady(example.id, THUMB_W, THUMB_H, dark);
   const [ref, near] = useNearViewport<HTMLDivElement>({ enabled: !cached });
@@ -315,6 +385,7 @@ const ExampleCard = React.memo<{
         type="button"
         className="exb__pick"
         data-focused={focused || undefined}
+        aria-label={`${example.name}. ${example.note}`}
         onMouseEnter={onFocus}
         onFocus={onFocus}
         onClick={onPick}
@@ -332,8 +403,7 @@ const ExampleCard = React.memo<{
               dangerouslySetInnerHTML={{ __html: markup }}
             />
           ) : (
-            // Holds the exact space the chart will take, so nothing reflows
-            // when it arrives.
+            // Holds the exact space the chart will take, so nothing reflows.
             <span className="exb__skeleton" style={{ aspectRatio: `${THUMB_W} / ${THUMB_H}` }} />
           )}
         </span>
@@ -347,10 +417,10 @@ const ExampleCard = React.memo<{
           type="button"
           className="exb__add"
           aria-label={`Add ${example.name} to this plot`}
-          title="Add to this plot instead of replacing it"
+          data-tooltip="Add to this plot"
           onClick={onAdd}
         >
-          <Plus size={11} />
+          <Plus size={12} />
         </button>
       )}
     </div>

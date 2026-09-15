@@ -1,0 +1,2267 @@
+/* ===========================================================================
+   CHART PROPERTIES PANEL
+   ---------------------------------------------------------------------------
+   Its own file, beside the components it styles. It was ~900 lines spread
+   across four places in `index.css`, 1,900 lines apart — two of which were
+   lost whole once to an edit that searched for the next section marker and
+   did not find one. A surface this size is easier to keep coherent where it
+   can be read in one sitting.
+
+   Prefixed `chartp-`, not `cp-`: the colour picker owns `cp-`, and a prefix
+   collision has no compiler and no test. `kcat` is the kind catalogue,
+   `pnpop` the popover shell, `exb` the example browser, `exref` the
+   function reference.
+
+   Rows are NOT defined here. Every label/control pair is `.prop-row` through
+   `Row`, so chart rows share the inspector's 84px label column.
+
+   The vocabulary, so every control in the panel speaks one language:
+   - Fields are 28px on `--surface-hover`, `--radius-sm`, and show focus on
+     the field rather than on the input inside it — the stepper's rule.
+   - An armed toggle, a current preset and a chosen tile all take
+     `--accent-quiet` with an `--accent-line` edge: "this one is on".
+   - A chosen *segment* is raised (surface + shadow-sm), as SegmentedControl
+     draws it — a segment is a position, not a state.
+   - Hairlines are 1px, always. Elevation is declared once: floating
+     surfaces take a shadow, in-flow tiles a border.
+   =========================================================================== */
+
+.chartp {
+  display: flex;
+  flex-direction: column;
+}
+
+/* A row given no label (a strip of shortcuts under the row it serves) must
+   not spend the stacked row's label line on nothing. */
+.chartp .prop-row__label:empty {
+  display: none;
+}
+
+/* --- the type card -------------------------------------------------------- */
+
+.chartp-type {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  margin-bottom: var(--space-1);
+}
+
+.chartp-type__card {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  width: 100%;
+  padding: 7px 10px 7px 7px;
+  border: 1px solid var(--border-strong);
+  border-radius: var(--radius-lg);
+  background: var(--surface-primary);
+  color: var(--text-primary);
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
+  transition: background-color var(--motion-hover), border-color var(--motion-hover);
+}
+
+.chartp-type__card:hover { background: var(--surface-hover); }
+.chartp-type__card[data-open] { border-color: var(--accent-line); }
+
+.chartp-type__glyph {
+  display: grid;
+  place-items: center;
+  flex: none;
+  width: 38px;
+  height: 38px;
+  border-radius: var(--radius-md);
+  background: var(--surface-hover);
+  color: var(--text-primary);
+}
+
+.chartp-type__text {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  flex: 1;
+  min-width: 0;
+  line-height: 1.25;
+}
+
+.chartp-type__name {
+  font-size: var(--text-base);
+  font-weight: var(--weight-semibold);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.chartp-type__hint {
+  color: var(--text-tertiary);
+  font-size: var(--text-xs);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.chartp-type__caret {
+  flex: none;
+  color: var(--text-tertiary);
+  transition: color var(--motion-hover);
+}
+
+.chartp-type__card:hover .chartp-type__caret { color: var(--text-secondary); }
+
+/* The kind's siblings: one press each, because almost every change of kind
+   is sideways within a family. A track like SegmentedControl's, so it reads
+   as one choice. */
+.chartp-siblings {
+  display: flex;
+  gap: 2px;
+  padding: 2px;
+  border-radius: var(--radius-md);
+  background: var(--surface-hover);
+}
+
+.chartp-siblings__item {
+  display: grid;
+  place-items: center;
+  flex: 1 1 0;
+  min-width: 0;
+  height: 30px;
+  padding: 0;
+  border: 0;
+  border-radius: var(--radius-sm);
+  background: transparent;
+  color: var(--text-tertiary);
+  cursor: pointer;
+  transition: background-color var(--motion-hover), color var(--motion-hover), box-shadow var(--motion-hover);
+}
+
+.chartp-siblings__item:hover { color: var(--text-primary); }
+
+.chartp-siblings__item[aria-checked='true'] {
+  background: var(--surface-primary);
+  color: var(--text-primary);
+  box-shadow: var(--shadow-sm);
+}
+
+/* Clean or sketch, under the type card: the drawing style is the second
+   thing somebody decides about a chart, after what kind it is. */
+.chartp-mode {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  margin-top: 2px;
+}
+
+/* --- groups --------------------------------------------------------------- */
+
+/* A hairline and a sentence-case heading, not a disclosure. The whole section
+   already sits inside the panel's `Chart` accordion. More space above a
+   heading than below it, so a heading belongs to what follows. */
+.chartp-group {
+  display: flex;
+  flex-direction: column;
+  padding-top: 14px;
+  margin-top: 12px;
+  border-top: 1px solid var(--border-divider);
+}
+
+.chartp-type + .chartp-group {
+  margin-top: 10px;
+}
+
+.chartp-group__head {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  min-height: 24px;
+  margin-bottom: 8px;
+}
+
+.chartp-group__icon {
+  display: flex;
+  flex: none;
+  color: var(--text-tertiary);
+}
+
+.chartp-group__label {
+  margin: 0;
+  flex: 1;
+  min-width: 0;
+  color: var(--text-primary);
+  font-size: var(--text-xs);
+  font-weight: var(--weight-semibold);
+  letter-spacing: normal;
+}
+
+.chartp-group__actions {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  flex: none;
+}
+
+.chartp-group__body {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+/* A heading inside a group: a word and a rule to the edge. Sentence case at
+   600 — the uppercase run it replaces needed tracking to be legible at 10px,
+   which DESIGN.md rules out below 16px. */
+.chartp-subhead {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-height: 22px;
+  margin-top: 8px;
+}
+
+.chartp-subhead__label {
+  flex: none;
+  color: var(--text-secondary);
+  font-size: var(--text-xs);
+  font-weight: var(--weight-semibold);
+}
+
+.chartp-subhead__rule {
+  flex: 1;
+  height: 1px;
+  background: var(--border-divider);
+}
+
+/* Rows that only mean something while the row above is on. The guide is the
+   stronger hairline, because it is the only thing saying they belong. */
+.chartp-dependent {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  margin: 0 0 2px 5px;
+  padding-left: 11px;
+  border-left: 1px solid var(--border-strong);
+}
+
+.chartp-dependent .prop-row {
+  grid-template-columns: 68px minmax(0, 1fr);
+}
+
+.chartp-note {
+  margin: 2px 0 0;
+  color: var(--text-tertiary);
+  font-size: var(--text-xs);
+  line-height: 1.45;
+  overflow-wrap: anywhere;
+}
+
+/* Key caps, for the places a key is the instruction. */
+.chartp kbd,
+.exb kbd,
+.exref kbd {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-width: 16px;
+  height: 16px;
+  padding: 0 4px;
+  border: 1px solid var(--border-strong);
+  border-radius: var(--radius-sm);
+  background: var(--surface-primary);
+  color: var(--text-secondary);
+  font-family: var(--font-mono);
+  font-size: var(--text-2xs);
+  font-weight: var(--weight-semibold);
+  line-height: 1;
+  vertical-align: 1px;
+}
+
+/* Visually hidden, for announcements that have a visible twin. */
+.chartp-sr {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  overflow: hidden;
+  clip: rect(0 0 0 0);
+  white-space: nowrap;
+}
+
+/* --- fields --------------------------------------------------------------- */
+
+/* One field shape for the whole panel: the stepper's. The inputs in this
+   section had a class, `panel-input`, that no stylesheet defined — so the
+   title, axis names, prefixes and every optional bound rendered as the
+   browser's own white box with a 2px inset border. */
+.chartp-num,
+.chartp-text {
+  display: flex;
+  align-items: center;
+  flex: 1;
+  min-width: 0;
+  height: var(--control-h-sm);
+  border: 1px solid transparent;
+  border-radius: var(--radius-sm);
+  background: var(--surface-hover);
+  cursor: text;
+  transition: border-color var(--motion-hover), background-color var(--motion-hover);
+}
+
+.chartp-num:hover,
+.chartp-text:hover { border-color: var(--border-strong); }
+
+/* Focus is drawn on the field, at its resting radius, as the stepper does. */
+.chartp-num:focus-within,
+.chartp-text:focus-within {
+  outline: 1.5px solid var(--focus-field-color);
+  outline-offset: 0;
+  background: var(--surface-primary);
+}
+
+.chartp-num__input,
+.chartp-text__input {
+  flex: 1;
+  width: 0;
+  min-width: 0;
+  height: 100%;
+  padding: 0 8px;
+  border: 0;
+  background: transparent;
+  color: var(--text-primary);
+  font: inherit;
+  font-size: var(--text-sm);
+}
+
+.chartp-num__input:focus-visible,
+.chartp-text__input:focus-visible { outline: none; }
+
+.chartp-num__input::placeholder,
+.chartp-text__input::placeholder { color: var(--text-tertiary); }
+
+.chartp-num__input {
+  font-family: var(--font-mono);
+  font-variant-numeric: tabular-nums;
+}
+
+.chartp-text[data-mono] .chartp-text__input { font-family: var(--font-mono); }
+
+/* A mark attached to the field — `min`, `from`, `a` — not a label to read. */
+.chartp-num__glyph,
+.chartp-glyphtext {
+  flex: none;
+  color: var(--text-tertiary);
+  font-size: var(--text-2xs);
+  font-weight: var(--weight-semibold);
+  line-height: 1;
+  user-select: none;
+}
+
+.chartp-num__glyph { padding-left: 8px; }
+.chartp-num__glyph + .chartp-num__input { padding-left: 5px; }
+
+.chartp-num__suffix {
+  flex: none;
+  padding-right: 8px;
+  color: var(--text-tertiary);
+  font-family: var(--font-mono);
+  font-size: var(--text-2xs);
+}
+
+/* Two fields read against each other, one line. */
+.chartp-pair {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
+  gap: 6px;
+  width: 100%;
+}
+
+.chartp-inline {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  width: 100%;
+  min-width: 0;
+}
+
+.chartp-inline__fixed {
+  display: flex;
+  flex: none;
+  width: 62px;
+}
+
+/* --- toggles, chips, buttons --------------------------------------------- */
+
+.chartp-chips {
+  display: grid;
+  grid-template-columns: repeat(var(--chips-columns, 3), minmax(0, 1fr));
+  gap: 4px;
+  width: 100%;
+}
+
+.chartp-chip {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  min-width: 0;
+  height: 30px;
+  padding: 0 8px;
+  border: 1px solid var(--border-strong);
+  border-radius: var(--radius-md);
+  background: transparent;
+  color: var(--text-secondary);
+  font: inherit;
+  font-size: var(--text-xs);
+  font-weight: var(--weight-medium);
+  cursor: pointer;
+  transition: background-color var(--motion-hover), border-color var(--motion-hover), color var(--motion-hover);
+}
+
+.chartp-chip:hover { background: var(--surface-hover); color: var(--text-primary); }
+
+.chartp-chip[aria-pressed='true'] {
+  border-color: var(--accent-line);
+  background: var(--accent-quiet);
+  color: var(--text-primary);
+}
+
+.chartp-chip__icon {
+  display: flex;
+  flex: none;
+  color: var(--text-tertiary);
+  transition: color var(--motion-hover);
+}
+
+.chartp-chip[aria-pressed='true'] .chartp-chip__icon { color: var(--text-accent); }
+
+.chartp-chip__label {
+  min-width: 0;
+  overflow: hidden;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+}
+
+/* Shortcuts that set a value and say when it is the one set. */
+.chartp-quick {
+  display: flex;
+  gap: 4px;
+  width: 100%;
+}
+
+.chartp-quick__item {
+  flex: 1 1 0;
+  min-width: 0;
+  height: 26px;
+  padding: 0 4px;
+  border: 1px solid var(--border-strong);
+  border-radius: var(--radius-sm);
+  background: transparent;
+  color: var(--text-secondary);
+  font: inherit;
+  font-size: var(--text-xs);
+  font-weight: var(--weight-medium);
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+  cursor: pointer;
+  transition: background-color var(--motion-hover), border-color var(--motion-hover), color var(--motion-hover);
+}
+
+.chartp-quick__item:hover { background: var(--surface-hover); color: var(--text-primary); }
+
+.chartp-quick__item[aria-pressed='true'] {
+  border-color: var(--accent-line);
+  background: var(--accent-quiet);
+  color: var(--text-primary);
+}
+
+.chartp-iconbtn {
+  display: grid;
+  place-items: center;
+  flex: none;
+  width: 24px;
+  height: 24px;
+  padding: 0;
+  border: 0;
+  border-radius: var(--radius-sm);
+  background: transparent;
+  color: var(--text-tertiary);
+  cursor: pointer;
+  transition: background-color var(--motion-hover), color var(--motion-hover);
+}
+
+.chartp-iconbtn:hover:not(:disabled) { background: var(--surface-hover); color: var(--text-primary); }
+.chartp-iconbtn:disabled { opacity: 0.4; cursor: not-allowed; }
+
+.chartp-add {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  width: 100%;
+  height: var(--control-h-sm);
+  padding: 0 10px;
+  border: 1px dashed var(--border-strong);
+  border-radius: var(--radius-md);
+  background: transparent;
+  color: var(--text-secondary);
+  font: inherit;
+  font-size: var(--text-xs);
+  font-weight: var(--weight-medium);
+  cursor: pointer;
+  transition: background-color var(--motion-hover), color var(--motion-hover), border-color var(--motion-hover);
+}
+
+.chartp-add:hover {
+  border-style: solid;
+  background: var(--surface-hover);
+  color: var(--text-primary);
+}
+
+.chartp-add svg { flex: none; color: var(--text-tertiary); }
+
+.chartp-addrow {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(0, 1fr));
+  gap: 6px;
+  margin-top: 4px;
+}
+
+/* An inline text action: "Back to auto", "Use palette", "Clear". */
+.chartp-link {
+  flex: none;
+  padding: 0;
+  border: 0;
+  background: none;
+  color: var(--text-accent);
+  font: inherit;
+  font-size: var(--text-xs);
+  font-weight: var(--weight-medium);
+  cursor: pointer;
+  text-underline-offset: 2px;
+}
+
+.chartp-link:hover { text-decoration: underline; }
+
+/* A line under the controls, aligned to the control column. */
+.chartp-caption {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 8px;
+  min-height: 18px;
+  margin-top: -2px;
+  padding-left: 92px;
+  color: var(--text-tertiary);
+  font-size: var(--text-xs);
+  font-variant-numeric: tabular-nums;
+}
+
+.chartp-switch {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  color: var(--text-tertiary);
+}
+
+/* A native select in the field shape: the platform's own menu, in our box. */
+.chartp-select {
+  flex: 1;
+  width: 100%;
+  min-width: 0;
+  height: var(--control-h-sm);
+  padding: 0 24px 0 8px;
+  border: 1px solid transparent;
+  border-radius: var(--radius-sm);
+  background:
+    url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='10' height='6'%3E%3Cpath d='M1 1l4 4 4-4' fill='none' stroke='%236B7280' stroke-width='1.5' stroke-linecap='round' stroke-linejoin='round'/%3E%3C/svg%3E")
+      no-repeat right 8px center,
+    var(--surface-hover);
+  color: var(--text-primary);
+  font: inherit;
+  font-size: var(--text-sm);
+  appearance: none;
+  cursor: pointer;
+}
+
+.chartp-select:hover { border-color: var(--border-strong); }
+.chartp-select:focus-visible { box-shadow: none; outline: 1.5px solid var(--focus-field-color); outline-offset: 0; }
+
+/* --- table section -------------------------------------------------------- */
+
+.tblthemes {
+  display: grid;
+  grid-template-columns: repeat(5, minmax(0, 1fr));
+  gap: 4px;
+  width: 100%;
+}
+
+.tbltheme {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 4px;
+  min-width: 0;
+  padding: 4px 2px 5px;
+  border: 1px solid transparent;
+  border-radius: var(--radius-md);
+  background: transparent;
+  font: inherit;
+  cursor: pointer;
+  transition: background-color var(--motion-hover), border-color var(--motion-hover);
+}
+
+.tbltheme:hover { background: var(--surface-hover); }
+
+.tbltheme[aria-checked='true'] {
+  border-color: var(--accent-line);
+  background: var(--accent-quiet);
+}
+
+.tbltheme__svg { display: block; width: 100%; height: auto; }
+
+.tbltheme__name {
+  color: var(--text-secondary);
+  font-size: var(--text-2xs);
+  font-weight: var(--weight-medium);
+}
+
+.tbltheme[aria-checked='true'] .tbltheme__name { color: var(--text-primary); }
+
+.tblcols {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.tblcol {
+  display: grid;
+  grid-template-columns: 18px minmax(0, 1fr) 96px;
+  align-items: center;
+  gap: 6px;
+}
+
+.tblcol__letter {
+  color: var(--text-tertiary);
+  font-size: var(--text-2xs);
+  font-weight: var(--weight-semibold);
+  text-align: center;
+}
+
+.tblcol__name {
+  color: var(--text-primary);
+  font-size: var(--text-sm);
+  overflow: hidden;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+}
+
+/* --- plane tools ---------------------------------------------------------- */
+
+.chartp-tools {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 6px;
+  margin-top: 2px;
+}
+
+.chartp-tool {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  height: var(--control-h-sm);
+  padding: 0 8px;
+  border: 1px solid var(--border-strong);
+  border-radius: var(--radius-md);
+  background: transparent;
+  color: var(--text-secondary);
+  font: inherit;
+  font-size: var(--text-xs);
+  font-weight: var(--weight-medium);
+  cursor: pointer;
+  transition: background-color var(--motion-hover), border-color var(--motion-hover), color var(--motion-hover);
+}
+
+.chartp-tool:hover { background: var(--surface-hover); color: var(--text-primary); }
+
+/* Locked is a state that is on, so it takes the armed treatment — not red.
+   It was a danger-red fill, which read as an error the plot was in. */
+.chartp-tool[aria-pressed='true'] {
+  border-color: var(--accent-line);
+  background: var(--accent-quiet);
+  color: var(--text-primary);
+}
+
+/* --- number preview ------------------------------------------------------- */
+
+.chartp-preview {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  height: 30px;
+  padding: 0 10px;
+  border: 1px solid var(--border-divider);
+  border-radius: var(--radius-md);
+  color: var(--text-tertiary);
+  font-family: var(--font-mono);
+  font-variant-numeric: tabular-nums;
+  overflow: hidden;
+  white-space: nowrap;
+}
+
+.chartp-preview__raw { font-size: var(--text-2xs); }
+
+.chartp-preview__out {
+  color: var(--text-primary);
+  font-size: var(--text-sm);
+  font-weight: var(--weight-semibold);
+}
+
+.chartp-preview__sep {
+  flex: none;
+  width: 1px;
+  height: 12px;
+  margin: 0 4px;
+  background: var(--border-strong);
+}
+
+/* --- items and readouts --------------------------------------------------- */
+
+.chartp-annot {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.chartp-annot + .chartp-annot { margin-top: 8px; }
+
+.chartp-item {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-height: var(--control-h-sm);
+}
+
+.chartp-item__glyph {
+  display: flex;
+  flex: none;
+  color: var(--text-secondary);
+}
+
+.chartp-item__title {
+  flex: 1;
+  min-width: 0;
+  color: var(--text-primary);
+  font-size: var(--text-sm);
+  font-weight: var(--weight-semibold);
+  overflow: hidden;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+}
+
+.chartp-item__meta {
+  flex: none;
+  max-width: 45%;
+  color: var(--text-tertiary);
+  font-family: var(--font-mono);
+  font-size: var(--text-xs);
+  font-variant-numeric: tabular-nums;
+  overflow: hidden;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+}
+
+.chartp-readout {
+  display: grid;
+  grid-template-columns: 84px minmax(0, 1fr);
+  align-items: start;
+  gap: 8px;
+}
+
+.chartp-readout__label {
+  padding-top: 3px;
+  color: var(--text-secondary);
+  font-size: var(--text-xs);
+}
+
+.chartp-readout__value {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px;
+  min-width: 0;
+}
+
+.chartp-readout__none {
+  padding-top: 3px;
+  color: var(--text-tertiary);
+  font-size: var(--text-xs);
+}
+
+/* A found value you can take away: press to copy. */
+.chartp-value {
+  height: 22px;
+  padding: 0 7px;
+  border: 1px solid var(--border-strong);
+  border-radius: var(--radius-pill);
+  background: var(--surface-primary);
+  color: var(--text-primary);
+  font-family: var(--font-mono);
+  font-size: var(--text-2xs);
+  font-variant-numeric: tabular-nums;
+  cursor: copy;
+  transition: border-color var(--motion-hover), background-color var(--motion-hover);
+}
+
+.chartp-value:hover { border-color: var(--accent-line); background: var(--accent-quiet); }
+
+.chartp-integral {
+  color: var(--text-secondary);
+  font-family: var(--font-mono);
+  font-size: var(--text-xs);
+}
+
+.chartp-integral strong { color: var(--text-primary); font-weight: var(--weight-semibold); }
+
+.chartp-toast {
+  align-self: flex-start;
+  margin-left: 92px;
+  color: var(--text-secondary);
+  font-size: var(--text-xs);
+}
+
+/* --- palettes and colour -------------------------------------------------- */
+
+.chartp-palettes {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 6px;
+  width: 100%;
+}
+
+.chartp-palette {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  min-width: 0;
+  padding: 6px;
+  border: 1px solid var(--border-strong);
+  border-radius: var(--radius-md);
+  background: transparent;
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
+  transition: background-color var(--motion-hover), border-color var(--motion-hover), box-shadow var(--motion-hover);
+}
+
+.chartp-palette:hover { background: var(--surface-hover); }
+
+.chartp-palette[aria-checked='true'] {
+  border-color: var(--accent-line);
+  box-shadow: inset 0 0 0 1px var(--accent-line);
+}
+
+/* Hard stops, no gap: six colours read as one ribbon, which is how a
+   palette is recognised — by its run, not by any one swatch. */
+.chartp-palette__ribbon {
+  display: flex;
+  height: 14px;
+  border-radius: var(--radius-sm);
+  overflow: hidden;
+}
+
+.chartp-palette__ribbon > span { flex: 1; min-width: 0; }
+
+.chartp-palette__name {
+  color: var(--text-secondary);
+  font-size: var(--text-xs);
+  font-weight: var(--weight-medium);
+  overflow: hidden;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+}
+
+.chartp-palette[aria-checked='true'] .chartp-palette__name { color: var(--text-primary); }
+
+.chartp-key {
+  flex: none;
+  width: 10px;
+  height: 10px;
+  border-radius: var(--radius-sm);
+  box-shadow: inset 0 0 0 1px rgb(0 0 0 / 12%);
+}
+
+.chartp-serieslist {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.chartp-seriesrow {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  min-height: 30px;
+}
+
+.chartp-seriesrow__name {
+  flex: 1;
+  min-width: 0;
+  color: var(--text-primary);
+  font-size: var(--text-sm);
+  overflow: hidden;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+}
+
+.chartp-seriesrow__tag {
+  flex: none;
+  padding-right: 4px;
+  color: var(--text-tertiary);
+  font-size: var(--text-2xs);
+}
+
+.chartp-slices {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px;
+}
+
+.chartp-slice {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  max-width: 100%;
+  height: 24px;
+  padding: 0 9px 0 7px;
+  border-radius: var(--radius-pill);
+  background: var(--surface-hover);
+  color: var(--text-secondary);
+  font-size: var(--text-xs);
+}
+
+.chartp-slice__name {
+  min-width: 0;
+  overflow: hidden;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+}
+
+/* The colormap, shown rather than named. Twelve hard stops rather than a CSS
+   gradient, because these ramps turn corners: viridis's ends alone are a
+   purple-to-yellow fade with none of the green that makes it readable. */
+.chartp-ramps {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 6px;
+  width: 100%;
+}
+
+.chartp-ramp {
+  display: flex;
+  flex-direction: column;
+  gap: 5px;
+  min-width: 0;
+  padding: 6px;
+  border: 1px solid var(--border-strong);
+  border-radius: var(--radius-md);
+  background: transparent;
+  font: inherit;
+  cursor: pointer;
+  transition: background-color var(--motion-hover), border-color var(--motion-hover), box-shadow var(--motion-hover);
+}
+
+.chartp-ramp:hover { background: var(--surface-hover); }
+
+.chartp-ramp[aria-checked='true'] {
+  border-color: var(--accent-line);
+  box-shadow: inset 0 0 0 1px var(--accent-line);
+}
+
+.chartp-ramp__strip {
+  display: flex;
+  height: 12px;
+  border-radius: var(--radius-sm);
+  overflow: hidden;
+}
+
+.chartp-ramp__strip > span { flex: 1; min-width: 0; }
+
+.chartp-ramp__name {
+  color: var(--text-secondary);
+  font-size: var(--text-xs);
+  text-align: left;
+  overflow: hidden;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+}
+
+.chartp-ramp[aria-checked='true'] .chartp-ramp__name { color: var(--text-primary); }
+
+/* --- data ----------------------------------------------------------------- */
+
+/* The spreadsheet as the one labelled entry, then five one-shot icons. */
+.chartp-databar {
+  display: flex;
+  align-items: center;
+  gap: 2px;
+  padding: 2px;
+  border-radius: var(--radius-md);
+  background: var(--surface-hover);
+}
+
+.chartp-databar__open {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  flex: 1;
+  min-width: 0;
+  height: 26px;
+  padding: 0 8px;
+  border: 0;
+  border-radius: var(--radius-sm);
+  background: var(--surface-primary);
+  color: var(--text-primary);
+  box-shadow: var(--shadow-sm);
+  font: inherit;
+  font-size: var(--text-xs);
+  font-weight: var(--weight-medium);
+  white-space: nowrap;
+  cursor: pointer;
+}
+
+.chartp-databar__open span { overflow: hidden; text-overflow: ellipsis; }
+.chartp-databar__open svg { flex: none; color: var(--text-secondary); }
+.chartp-databar__open:hover svg { color: var(--text-primary); }
+
+.chartp-databar__sep {
+  flex: none;
+  width: 1px;
+  height: 16px;
+  margin: 0 2px;
+  background: var(--border-strong);
+}
+
+.chartp-databar .chartp-iconbtn:hover:not(:disabled) { background: var(--surface-primary); }
+
+.chartp-datafoot {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 8px;
+  min-height: 16px;
+  color: var(--text-tertiary);
+  font-size: var(--text-2xs);
+  font-variant-numeric: tabular-nums;
+}
+
+.chartp-datafoot__notice {
+  color: var(--text-secondary);
+  font-weight: var(--weight-medium);
+  white-space: nowrap;
+}
+
+.chartp-grid {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+/* A wide table scrolls sideways inside its own box, never the panel. */
+.chartp-grid__scroll {
+  margin: 0 -2px;
+  padding: 2px;
+  overflow-x: auto;
+  overscroll-behavior-x: contain;
+}
+
+.chartp-grid__table {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  width: max-content;
+  min-width: 100%;
+}
+
+.chartp-grid__row {
+  display: grid;
+  grid-template-columns: var(--grid-cols);
+  align-items: center;
+  gap: 2px;
+}
+
+/* The label column stays put while the numbers scroll past it. */
+.chartp-grid__row > :first-child {
+  position: sticky;
+  left: 0;
+  z-index: 1;
+}
+
+.chartp-grid__row--head { margin-bottom: 2px; }
+
+.chartp-grid__corner {
+  padding-left: 7px;
+  background: var(--surface-primary);
+  color: var(--text-tertiary);
+  font-size: var(--text-2xs);
+  font-weight: var(--weight-semibold);
+  line-height: 24px;
+}
+
+.chartp-grid__headcell {
+  position: relative;
+  display: flex;
+  align-items: center;
+  gap: 5px;
+  min-width: 0;
+  padding-left: 6px;
+}
+
+.chartp-grid__head {
+  flex: 1;
+  width: 0;
+  min-width: 0;
+  height: 24px;
+  padding: 0 4px;
+  border: 1px solid transparent;
+  border-radius: var(--radius-sm);
+  background: transparent;
+  color: var(--text-secondary);
+  font: inherit;
+  font-size: var(--text-xs);
+  font-weight: var(--weight-semibold);
+  text-overflow: ellipsis;
+}
+
+.chartp-grid__head:hover { border-color: var(--border-strong); }
+.chartp-grid__head:focus { background: var(--surface-primary); color: var(--text-primary); }
+
+.chartp-grid__cell {
+  width: 100%;
+  min-width: 0;
+  height: 26px;
+  padding: 0 7px;
+  border: 1px solid transparent;
+  border-radius: var(--radius-sm);
+  background-color: var(--surface-primary);
+  /* Two layers so the sticky label cell is opaque over scrolled numbers:
+     `--surface-hover` is translucent, and alone it would let them show
+     through. */
+  background-image: linear-gradient(var(--surface-hover), var(--surface-hover));
+  color: var(--text-primary);
+  font-family: var(--font-mono);
+  font-size: var(--text-sm);
+  font-variant-numeric: tabular-nums;
+  text-align: right;
+  transition: border-color var(--motion-hover);
+}
+
+.chartp-grid__cell--label {
+  font-family: inherit;
+  font-size: var(--text-xs);
+  font-variant-numeric: normal;
+  text-align: left;
+}
+
+.chartp-grid__cell:hover { border-color: var(--border-strong); }
+.chartp-grid__cell:focus { background-image: none; }
+
+.chartp-grid__cell[data-invalid] {
+  border-color: var(--signal-danger);
+  color: color-mix(in srgb, var(--signal-danger) 70%, var(--text-primary));
+}
+
+/* Remove affordances: present to keyboard and pointer, quiet otherwise. */
+.chartp-grid__drop {
+  display: grid;
+  place-items: center;
+  flex: none;
+  width: 16px;
+  height: 16px;
+  padding: 0;
+  border: 0;
+  border-radius: var(--radius-sm);
+  background: transparent;
+  color: var(--text-tertiary);
+  opacity: 0;
+  cursor: pointer;
+  transition: opacity var(--motion-hover), background-color var(--motion-hover), color var(--motion-hover);
+}
+
+.chartp-grid__drop--row { width: 24px; height: 24px; }
+
+.chartp-grid__headcell:hover .chartp-grid__drop,
+.chartp-grid__headcell:focus-within .chartp-grid__drop,
+.chartp-grid__row:hover .chartp-grid__drop--row,
+.chartp-grid__row:focus-within .chartp-grid__drop--row,
+.chartp-grid__drop:focus-visible { opacity: 1; }
+
+.chartp-grid__drop:hover { background: var(--surface-hover); color: var(--text-primary); }
+
+@media (hover: none) {
+  .chartp-grid__drop { opacity: 1; }
+}
+
+.chartp-samples {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.chartp-samples__field {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.chartp-samples__head {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  min-height: 24px;
+}
+
+.chartp-samples__rename {
+  flex: 1;
+  min-width: 0;
+  height: 24px;
+  padding: 0 4px;
+  border: 1px solid transparent;
+  border-radius: var(--radius-sm);
+  background: transparent;
+  color: var(--text-primary);
+  font: inherit;
+  font-size: var(--text-xs);
+  font-weight: var(--weight-semibold);
+}
+
+.chartp-samples__rename:hover { border-color: var(--border-strong); }
+.chartp-samples__rename:focus { background: var(--surface-primary); }
+
+.chartp-samples__name {
+  color: var(--text-secondary);
+  font-size: var(--text-xs);
+  font-weight: var(--weight-semibold);
+}
+
+.chartp-samples__input {
+  min-height: 84px;
+  padding: 8px;
+  border: 1px solid transparent;
+  border-radius: var(--radius-md);
+  background: var(--surface-hover);
+  color: var(--text-primary);
+  font-family: var(--font-mono);
+  font-size: var(--text-sm);
+  font-variant-numeric: tabular-nums;
+  line-height: 1.5;
+  resize: vertical;
+}
+
+.chartp-samples__input:hover { border-color: var(--border-strong); }
+.chartp-samples__input:focus { background: var(--surface-primary); }
+
+.chartp-samples__stats {
+  color: var(--text-tertiary);
+  font-size: var(--text-2xs);
+  font-variant-numeric: tabular-nums;
+}
+
+/* --- formulae ------------------------------------------------------------- */
+
+/* The two references a formula is written with, as a bar of their own: side
+   by side on the heading they were wider than the heading. */
+.chartp-fxbar {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 6px;
+}
+
+.chartp-fxbar .pnpop__trigger {
+  justify-content: center;
+  width: 100%;
+  height: var(--control-h-sm);
+}
+
+.chartp-fxlist {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.chartp-fx {
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+}
+
+.chartp-fx__line {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+}
+
+.chartp-fx__line > .cp-trigger { margin-right: 2px; }
+
+.chartp-fx__nokey { display: none; }
+
+.chartp-fx__field {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  flex: 1;
+  min-width: 0;
+  height: 30px;
+  padding: 0 8px;
+  border: 1px solid transparent;
+  border-radius: var(--radius-md);
+  background: var(--surface-hover);
+  cursor: text;
+  transition: border-color var(--motion-hover), background-color var(--motion-hover);
+}
+
+.chartp-fx__field:hover { border-color: var(--border-strong); }
+
+.chartp-fx__field:focus-within {
+  outline: 1.5px solid var(--focus-field-color);
+  outline-offset: 0;
+  background: var(--surface-primary);
+}
+
+.chartp-fx[data-invalid] .chartp-fx__field { border-color: var(--signal-danger); }
+
+.chartp-fx__prefix {
+  flex: none;
+  color: var(--text-tertiary);
+  font-family: var(--font-mono);
+  font-size: var(--text-xs);
+  white-space: nowrap;
+  user-select: none;
+}
+
+/* A formula is read character by character, and a proportional face makes
+   l1I and O0 ambiguous exactly where it matters most. */
+.chartp-fx__input {
+  flex: 1;
+  width: 0;
+  min-width: 0;
+  height: 100%;
+  padding: 0;
+  border: 0;
+  background: transparent;
+  color: var(--text-primary);
+  font-family: var(--font-mono);
+  font-size: var(--text-sm);
+}
+
+.chartp-fx__input:focus-visible { outline: none; }
+.chartp-fx__input::placeholder { color: var(--text-tertiary); }
+
+.chartp-fx[data-hidden] .chartp-fx__input,
+.chartp-fx[data-hidden] .chartp-fx__prefix {
+  color: var(--text-tertiary);
+  text-decoration: line-through;
+  text-decoration-color: var(--border-strong);
+}
+
+.chartp-fx__meta {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-height: 22px;
+}
+
+/* Aligned to the field when a colour key sits left of it. */
+.chartp-fx__line:has(.cp-trigger) + .chartp-fx__meta { padding-left: 30px; }
+
+.chartp-fx__echo {
+  flex: 1;
+  min-width: 0;
+  color: var(--text-tertiary);
+  font-size: var(--text-sm);
+  overflow: hidden;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+}
+
+/* Pure danger red is 3.8:1 on white — under AA for 11px text — so the
+   message is the red pulled toward the ink. */
+.chartp-fx__error {
+  flex: 1;
+  min-width: 0;
+  color: color-mix(in srgb, var(--signal-danger) 72%, var(--text-primary));
+  font-size: var(--text-xs);
+  line-height: 1.35;
+}
+
+.chartp-fx__stroke {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  flex: none;
+  margin-left: auto;
+}
+
+.chartp-fx__dashes {
+  display: flex;
+  gap: 1px;
+  padding: 1px;
+  border-radius: var(--radius-sm);
+  background: var(--surface-hover);
+}
+
+.chartp-fx__dash {
+  display: grid;
+  place-items: center;
+  width: 24px;
+  height: 22px;
+  padding: 0;
+  border: 0;
+  border-radius: var(--radius-sm);
+  background: transparent;
+  color: var(--text-tertiary);
+  cursor: pointer;
+  transition: background-color var(--motion-hover), color var(--motion-hover);
+}
+
+.chartp-fx__dash:hover { color: var(--text-primary); }
+
+.chartp-fx__dash[aria-checked='true'] {
+  background: var(--surface-primary);
+  color: var(--text-primary);
+  box-shadow: var(--shadow-sm);
+}
+
+.chartp-fx__weight { display: flex; width: 58px; }
+.chartp-fx__weight .stepper { height: 24px; }
+
+/* ===========================================================================
+   Panel popovers
+   A surface wide enough to design in, opened from the panel. Declared once:
+   the float shadow, which carries its own hairline ring.
+   =========================================================================== */
+
+.pnpop__trigger {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  height: 24px;
+  padding: 0 8px;
+  border: 1px solid var(--border-strong);
+  border-radius: var(--radius-md);
+  background: transparent;
+  color: var(--text-secondary);
+  font: inherit;
+  font-size: var(--text-xs);
+  font-weight: var(--weight-medium);
+  white-space: nowrap;
+  cursor: pointer;
+  transition: background-color var(--motion-hover), border-color var(--motion-hover), color var(--motion-hover);
+}
+
+.pnpop__trigger:hover { background: var(--surface-hover); color: var(--text-primary); }
+
+.pnpop__trigger[data-open] {
+  border-color: var(--accent-line);
+  background: var(--accent-quiet);
+  color: var(--text-primary);
+}
+
+.pnpop__trigger svg { flex: none; color: var(--text-tertiary); }
+.pnpop__trigger[data-open] svg { color: var(--text-accent); }
+
+/* The count is the promise: "Examples 60" says what is behind the lid. */
+.pnpop__count {
+  padding: 0 5px;
+  border-radius: var(--radius-pill);
+  background: var(--surface-hover);
+  color: var(--text-tertiary);
+  font-size: var(--text-2xs);
+  font-variant-numeric: tabular-nums;
+  line-height: 16px;
+}
+
+.pnpop__trigger[data-open] .pnpop__count { background: var(--surface-primary); color: var(--text-primary); }
+
+.pnpop {
+  position: fixed;
+  z-index: var(--z-popover);
+  display: flex;
+  flex-direction: column;
+  max-height: min(76vh, 620px);
+  border-radius: var(--radius-xl);
+  background: var(--surface-elevated);
+  box-shadow: var(--shadow-float), var(--shadow-lg);
+  overflow: hidden;
+  /* The one authored motion: a short settle into place from an already
+     visible start, so a frozen frame is still the surface, never nothing. */
+  animation: pnpop-settle 180ms var(--ease-settle);
+  transform-origin: top center;
+}
+
+@keyframes pnpop-settle {
+  from { transform: translateY(-4px) scale(0.985); }
+  to { transform: none; }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .pnpop { animation: none; }
+}
+
+/* --- the kind catalogue --------------------------------------------------- */
+
+.kcat {
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+}
+
+.kcat__scroll {
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+  min-height: 0;
+  padding: 12px;
+  overflow-y: auto;
+  overscroll-behavior: contain;
+}
+
+.kcat__group {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.kcat__label {
+  margin: 0;
+  padding-left: 4px;
+  color: var(--text-secondary);
+  font-size: var(--text-xs);
+  font-weight: var(--weight-semibold);
+}
+
+.kcat__grid {
+  display: grid;
+  grid-template-columns: repeat(var(--kcat-columns, 4), minmax(0, 1fr));
+  gap: 4px;
+}
+
+.kcat__tile {
+  position: relative;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 6px;
+  min-width: 0;
+  padding: 10px 4px 8px;
+  border: 1px solid transparent;
+  border-radius: var(--radius-md);
+  background: transparent;
+  color: var(--text-secondary);
+  font: inherit;
+  cursor: pointer;
+  transition: background-color var(--motion-hover), border-color var(--motion-hover), color var(--motion-hover);
+}
+
+.kcat__tile:hover,
+.kcat__tile[data-focused] {
+  background: var(--surface-hover);
+  color: var(--text-primary);
+}
+
+.kcat__tile:focus-visible {
+  box-shadow: none;
+  outline: 2px solid var(--focus-ring-color);
+  outline-offset: -2px;
+}
+
+.kcat__tile[data-current] {
+  border-color: var(--accent-line);
+  background: var(--accent-quiet);
+  color: var(--text-primary);
+}
+
+.kcat__glyph { display: flex; }
+
+.kcat__name {
+  max-width: 100%;
+  font-size: var(--text-xs);
+  font-weight: var(--weight-medium);
+  line-height: 1.2;
+  text-align: center;
+  overflow: hidden;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+}
+
+.kcat__check {
+  position: absolute;
+  top: 5px;
+  right: 5px;
+  color: var(--text-accent);
+}
+
+.kcat__foot,
+.exb__foot {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  flex: none;
+  height: 40px;
+  padding: 0 14px;
+  border-top: 1px solid var(--border-divider);
+  overflow: hidden;
+}
+
+.kcat__foot { gap: 8px; }
+
+.kcat__footName,
+.exb__footName {
+  flex: none;
+  max-width: 45%;
+  color: var(--text-primary);
+  font-size: var(--text-sm);
+  font-weight: var(--weight-semibold);
+  overflow: hidden;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+}
+
+.kcat__footHint,
+.exb__footNote {
+  min-width: 0;
+  color: var(--text-tertiary);
+  font-size: var(--text-xs);
+  overflow: hidden;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+}
+
+/* --- shared popover head -------------------------------------------------- */
+
+.exb__head {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  flex: none;
+  padding: 10px 10px 10px 12px;
+  border-bottom: 1px solid var(--border-divider);
+}
+
+.exb__search {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex: 1;
+  min-width: 0;
+  height: var(--control-h-md);
+  padding: 0 8px 0 10px;
+  border: 1px solid transparent;
+  border-radius: var(--radius-md);
+  background: var(--surface-hover);
+  color: var(--text-tertiary);
+  transition: border-color var(--motion-hover), background-color var(--motion-hover);
+}
+
+.exb__search:focus-within {
+  outline: 1.5px solid var(--focus-field-color);
+  outline-offset: 0;
+  background: var(--surface-primary);
+}
+
+.exb__input {
+  flex: 1;
+  min-width: 0;
+  border: 0;
+  background: none;
+  color: var(--text-primary);
+  font: inherit;
+  font-size: var(--text-base);
+}
+
+.exb__input:focus-visible { outline: none; }
+.exb__input::placeholder { color: var(--text-tertiary); }
+
+.exb__clear,
+.exb__close {
+  display: grid;
+  place-items: center;
+  flex: none;
+  width: 20px;
+  height: 20px;
+  padding: 0;
+  border: 0;
+  border-radius: var(--radius-sm);
+  background: none;
+  color: var(--text-tertiary);
+  cursor: pointer;
+  transition: background-color var(--motion-hover), color var(--motion-hover);
+}
+
+.exb__close { width: 28px; height: 28px; }
+
+.exb__clear:hover,
+.exb__close:hover { background: var(--surface-hover); color: var(--text-primary); }
+
+/* --- the example browser -------------------------------------------------- */
+
+.exb {
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+  container-type: inline-size;
+}
+
+/* A fixed height, so the surface does not resize as a category is chosen and
+   the pointer is not left over a different card than it was aimed at. */
+.exb__body {
+  display: grid;
+  grid-template-columns: 164px minmax(0, 1fr);
+  height: min(452px, calc(76vh - 100px));
+  min-height: 0;
+}
+
+.exb__rail {
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
+  padding: 8px;
+  border-right: 1px solid var(--border-divider);
+  overflow-y: auto;
+}
+
+.exb__railRule {
+  height: 1px;
+  margin: 6px 6px;
+  background: var(--border-divider);
+}
+
+.exb__railItem {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  flex: none;
+  height: 30px;
+  padding: 0 10px;
+  border: 0;
+  border-radius: var(--radius-md);
+  background: transparent;
+  color: var(--text-secondary);
+  font: inherit;
+  font-size: var(--text-sm);
+  text-align: left;
+  cursor: pointer;
+  transition: background-color var(--motion-hover), color var(--motion-hover);
+}
+
+.exb__railItem:hover:not(:disabled) { background: var(--surface-hover); color: var(--text-primary); }
+.exb__railItem:disabled { opacity: 0.45; cursor: default; }
+
+/* A filter, not the page's primary action: an inked ground, as DESIGN.md
+   sets for category tabs, so it never competes with the accent. */
+.exb__railItem[aria-current] {
+  background: var(--text-primary);
+  color: var(--surface-primary);
+  font-weight: var(--weight-medium);
+}
+
+.exb__railLabel {
+  min-width: 0;
+  overflow: hidden;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+}
+
+.exb__railCount {
+  flex: none;
+  color: inherit;
+  font-size: var(--text-2xs);
+  font-variant-numeric: tabular-nums;
+  opacity: 0.7;
+}
+
+.exb__scroll {
+  display: flex;
+  flex-direction: column;
+  gap: 18px;
+  min-height: 0;
+  padding: 0 14px 16px;
+  overflow-y: auto;
+  overscroll-behavior: contain;
+}
+
+.exb__group {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+/* Sticky, so the run being scrolled keeps saying what kind it is. */
+.exb__groupLabel {
+  position: sticky;
+  top: 0;
+  z-index: 2;
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  margin: 0;
+  padding: 12px 0 6px;
+  background: var(--surface-elevated);
+  color: var(--text-primary);
+  font-size: var(--text-xs);
+  font-weight: var(--weight-semibold);
+}
+
+.exb__groupLabel svg { flex: none; color: var(--text-tertiary); }
+
+.exb__current {
+  padding: 1px 6px;
+  border-radius: var(--radius-pill);
+  background: var(--accent-quiet);
+  color: var(--text-primary);
+  font-size: var(--text-2xs);
+  font-weight: var(--weight-semibold);
+}
+
+.exb__count {
+  margin-left: auto;
+  color: var(--text-tertiary);
+  font-weight: var(--weight-medium);
+  font-variant-numeric: tabular-nums;
+}
+
+.exb__grid {
+  display: grid;
+  grid-template-columns: repeat(var(--exb-columns, 3), minmax(0, 1fr));
+  gap: 12px 10px;
+}
+
+.exb__card {
+  position: relative;
+  display: flex;
+  min-width: 0;
+}
+
+.exb__pick {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  width: 100%;
+  min-width: 0;
+  padding: 0;
+  border: 0;
+  background: none;
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
+}
+
+.exb__pick:focus-visible { box-shadow: none; outline: none; }
+
+/* The artwork is the card: a hairline at rest, a lift on approach. Border at
+   rest and shadow on hover is one elevation changing, not two declared. */
+.exb__thumb {
+  display: block;
+  border: 1px solid var(--border-strong);
+  border-radius: var(--radius-md);
+  background: var(--surface-primary);
+  overflow: hidden;
+  transition: border-color var(--motion-hover), box-shadow var(--motion-hover), transform var(--motion-hover);
+}
+
+.exb__pick:hover .exb__thumb,
+.exb__pick[data-focused] .exb__thumb {
+  border-color: var(--accent-line);
+  box-shadow: var(--shadow-md);
+}
+
+.exb__pick:focus-visible .exb__thumb {
+  outline: 2px solid var(--focus-ring-color);
+  outline-offset: 2px;
+}
+
+.exb__thumb svg {
+  display: block;
+  width: 100%;
+  height: auto;
+}
+
+/* Strokes keep their authored weight; only the geometry shrinks, which is
+   what makes a silhouette read at this size. */
+.exb__thumb svg * { vector-effect: non-scaling-stroke; }
+
+.exb__skeleton {
+  display: block;
+  width: 100%;
+  background: var(--surface-hover);
+  animation: exb-breathe 1.4s ease-in-out infinite;
+}
+
+@keyframes exb-breathe {
+  0%, 100% { opacity: 1; }
+  50% { opacity: 0.55; }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .exb__skeleton { animation: none; }
+  .exb__thumb { transition: none; }
+}
+
+.exb__name {
+  padding: 0 2px;
+  color: var(--text-secondary);
+  font-size: var(--text-xs);
+  font-weight: var(--weight-medium);
+  line-height: 1.3;
+  overflow: hidden;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+}
+
+.exb__pick:hover .exb__name,
+.exb__pick[data-focused] .exb__name { color: var(--text-primary); }
+
+/* Adding a plot's curves is a different act from replacing the chart. Quiet
+   until the card is approached, because replacing is still the primary. */
+.exb__add {
+  position: absolute;
+  top: 6px;
+  right: 6px;
+  display: grid;
+  place-items: center;
+  width: 24px;
+  height: 24px;
+  padding: 0;
+  border: 0;
+  border-radius: var(--radius-md);
+  background: var(--surface-primary);
+  color: var(--text-secondary);
+  box-shadow: var(--shadow-md);
+  opacity: 0;
+  cursor: pointer;
+  transition: opacity var(--motion-hover), color var(--motion-hover);
+}
+
+.exb__card:hover .exb__add,
+.exb__card:focus-within .exb__add { opacity: 1; }
+
+.exb__add:hover { color: var(--text-accent); }
+
+@media (hover: none) {
+  .exb__add { opacity: 1; }
+}
+
+.exb__footText {
+  display: flex;
+  align-items: baseline;
+  gap: 8px;
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+}
+
+.exb__keys {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  flex: none;
+}
+
+.exb__key {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  color: var(--text-tertiary);
+  font-size: var(--text-xs);
+}
+
+.exb__empty {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  padding: var(--space-8) var(--space-4);
+  color: var(--text-tertiary);
+  font-size: var(--text-sm);
+  text-align: center;
+}
+
+.exb__empty p { margin: 0; }
+
+/* Tables are wide documents, not squares: each card is a sheet of paper with
+   the whole table set on it. The paper is fixed light because a table's cells
+   are content — they are light on the board in either theme, and a thumbnail
+   that inverted them would be a picture of a different table. */
+.exb--tables .exb__thumb {
+  display: grid;
+  place-items: center;
+  aspect-ratio: 16 / 10;
+  padding: 10px;
+  background: #F8FAFC;
+}
+
+.exb--tables .exb__thumb svg {
+  width: 100%;
+  height: 100%;
+}
+
+/* Pushes the gallery trigger to the far end of the table databar. */
+.chartp-databar__end {
+  display: inline-flex;
+  margin-left: auto;
+}
+
+/* A narrow window: the rail becomes a strip of filters above the grid. */
+@container (max-width: 500px) {
+  .exb__body { grid-template-columns: minmax(0, 1fr); grid-template-rows: auto minmax(0, 1fr); }
+  .exb__rail {
+    flex-direction: row;
+    padding: 6px 8px;
+    border-right: 0;
+    border-bottom: 1px solid var(--border-divider);
+    overflow-x: auto;
+  }
+  .exb__railRule { display: none; }
+  .exb__railItem { height: 28px; }
+  .exb__keys { display: none; }
+}
+
+/* --- the function reference ----------------------------------------------- */
+
+.exref {
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+}
+
+.exref__var {
+  flex: none;
+  padding: 2px 7px;
+  border-radius: var(--radius-pill);
+  background: var(--surface-primary);
+  color: var(--text-tertiary);
+  font-size: var(--text-2xs);
+  white-space: nowrap;
+}
+
+.exref__var em {
+  color: var(--text-primary);
+  font-family: var(--font-mono);
+  font-weight: var(--weight-semibold);
+}
+
+.exref__groups {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  min-height: 0;
+  max-height: 400px;
+  padding: 0 8px 10px;
+  overflow-y: auto;
+  overscroll-behavior: contain;
+}
+
+.exref__group { display: flex; flex-direction: column; }
+
+/* Sticky, so a long run of trig keeps saying it is trig. */
+.exref__groupLabel {
+  position: sticky;
+  top: 0;
+  z-index: 1;
+  margin: 0;
+  padding: 10px 8px 4px;
+  background: var(--surface-elevated);
+  color: var(--text-secondary);
+  font-size: var(--text-xs);
+  font-weight: var(--weight-semibold);
+}
+
+.exref__list {
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
+}
+
+/* The whole row inserts. The sparks share a left edge so they are read as a
+   set; two lines, so the note is never cut to the half that does not say
+   what the function is for. */
+.exref__token {
+  display: grid;
+  grid-template-columns: 44px minmax(0, 1fr);
+  align-items: center;
+  gap: 10px;
+  width: 100%;
+  padding: 6px 8px;
+  border: 0;
+  border-radius: var(--radius-md);
+  background: none;
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
+  transition: background-color var(--motion-hover);
+}
+
+.exref__token:hover,
+.exref__token[data-focused] { background: var(--surface-hover); }
+
+.exref__token:focus-visible {
+  box-shadow: none;
+  outline: 2px solid var(--focus-ring-color);
+  outline-offset: -2px;
+}
+
+.exref__spark {
+  display: grid;
+  place-items: center;
+  width: 44px;
+  height: 26px;
+  padding: 3px 4px;
+  border: 1px solid var(--border-strong);
+  border-radius: var(--radius-sm);
+  color: var(--text-tertiary);
+  transition: color var(--motion-hover), border-color var(--motion-hover);
+}
+
+.exref__spark svg {
+  display: block;
+  width: 100%;
+  height: 100%;
+  overflow: visible;
+}
+
+.exref__token:hover .exref__spark,
+.exref__token[data-focused] .exref__spark {
+  border-color: var(--accent-line);
+  color: var(--text-accent);
+}
+
+/* π, e, τ, φ — set rather than drawn, because they are the value. */
+.exref__glyph {
+  color: var(--text-secondary);
+  font-family: var(--font-mono);
+  font-size: var(--text-sm);
+  font-style: italic;
+  line-height: 1;
+}
+
+.exref__text {
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
+  min-width: 0;
+}
+
+.exref__sig {
+  color: var(--text-primary);
+  font-family: var(--font-mono);
+  font-size: var(--text-sm);
+  overflow: hidden;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+}
+
+.exref__desc {
+  color: var(--text-tertiary);
+  font-size: var(--text-xs);
+  line-height: 1.35;
+  overflow: hidden;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+}
+
+.exref__token:hover .exref__desc,
+.exref__token[data-focused] .exref__desc { color: var(--text-secondary); }
+
+/* The entry under the cursor, large enough to read its shape, and exactly
+   what Enter will write. */
+.exref__detail {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  flex: none;
+  height: 66px;
+  padding: 0 14px;
+  border-top: 1px solid var(--border-divider);
+}
+
+.exref__bigspark {
+  display: grid;
+  place-items: center;
+  flex: none;
+  width: 84px;
+  height: 44px;
+  padding: 5px 6px;
+  border: 1px solid var(--border-strong);
+  border-radius: var(--radius-md);
+  color: var(--text-accent);
+}
+
+.exref__bigspark svg { display: block; width: 100%; height: 100%; overflow: visible; }
+
+.exref__axis {
+  stroke: var(--border-strong);
+  stroke-width: 1;
+  vector-effect: non-scaling-stroke;
+  stroke-dasharray: 2 2;
+}
+
+.exref__bigglyph {
+  color: var(--text-primary);
+  font-family: var(--font-mono);
+  font-size: var(--text-md);
+  font-style: italic;
+}
+
+.exref__detailText {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  flex: 1;
+  min-width: 0;
+}
+
+.exref__detailSig {
+  color: var(--text-primary);
+  font-family: var(--font-mono);
+  font-size: var(--text-base);
+  font-weight: var(--weight-semibold);
+  overflow: hidden;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+}
+
+.exref__detailNote {
+  display: -webkit-box;
+  color: var(--text-secondary);
+  font-size: var(--text-xs);
+  line-height: 1.35;
+  overflow: hidden;
+  -webkit-line-clamp: 2;
+  -webkit-box-orient: vertical;
+}
+
+.exref__insert {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  flex: none;
+  color: var(--text-tertiary);
+  font-size: var(--text-xs);
+}
+
+.exref__insert code {
+  max-width: 96px;
+  padding: 2px 6px;
+  border-radius: var(--radius-sm);
+  background: var(--surface-hover);
+  color: var(--text-primary);
+  font-family: var(--font-mono);
+  font-size: var(--text-xs);
+  overflow: hidden;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+}
+
+.exref__done {
+  color: var(--text-accent);
+  font-weight: var(--weight-semibold);
+}

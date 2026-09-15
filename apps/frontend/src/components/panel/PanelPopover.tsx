@@ -28,6 +28,12 @@ import { PORTAL_SURFACE_ATTR } from '../ui/portalSurface';
  * `PORTAL_SURFACE_ATTR` is the shared answer to that, and its own file
  * documents the bug it was written for. This carries the marker for the same
  * reason.
+ *
+ * ## One trigger vocabulary, two shapes
+ *
+ * Most triggers are the small labelled chip on a section heading. The chart
+ * type is the exception — the whole type card is the trigger — so the class
+ * is overridable rather than a second popover being written for one caller.
  */
 
 interface Props {
@@ -37,13 +43,36 @@ interface Props {
   title: string;
   width: number;
   children: React.ReactNode | ((close: () => void) => React.ReactNode);
-  /** Marks the trigger as the active one while the surface is open. */
   icon?: React.ReactNode;
+  /** Replaces the chip styling, for a trigger that is a whole card. */
+  triggerClassName?: string;
+  /** The trigger's accessible name, when its visible label is not one. */
+  triggerLabel?: string;
+  /** A one-line hint on the trigger, through the app's tooltip layer. */
+  tooltip?: string;
+  /**
+   * Which trigger edge the surface lines up with.
+   *
+   * `end` (the default) suits a chip at the right of a heading: the panel is
+   * pinned to the window's right edge, so a surface that grows leftward stays
+   * on screen. A full-width trigger reads better with its left edges aligned.
+   */
+  align?: 'start' | 'end';
 }
 
-export const PanelPopover: React.FC<Props> = ({ label, title, width, children, icon }) => {
+export const PanelPopover: React.FC<Props> = ({
+  label,
+  title,
+  width,
+  children,
+  icon,
+  triggerClassName = 'pnpop__trigger',
+  triggerLabel,
+  tooltip,
+  align = 'end',
+}) => {
   const [open, setOpen] = React.useState(false);
-  const [at, setAt] = React.useState<{ top: number; left: number } | null>(null);
+  const [at, setAt] = React.useState<{ top: number; left: number; width: number } | null>(null);
   const triggerRef = React.useRef<HTMLButtonElement>(null);
   const surfaceRef = React.useRef<HTMLDivElement>(null);
 
@@ -53,30 +82,30 @@ export const PanelPopover: React.FC<Props> = ({ label, title, width, children, i
    * reason: the panel is pinned to one edge of the window, so a surface wider
    * than it will always want to run off that edge.
    *
-   * Re-run on scroll *and* on capture, because the panel scrolls inside itself
-   * and a `fixed` surface does not move with it.
+   * The width is clamped too, so a narrow window gets a narrower surface
+   * rather than one whose far edge is off screen. Re-run on scroll *and* on
+   * capture, because the panel scrolls inside itself and a `fixed` surface
+   * does not move with it.
    */
   React.useLayoutEffect(() => {
     if (!open) return;
     const place = () => {
       const trigger = triggerRef.current?.getBoundingClientRect();
       if (!trigger) return;
-      const height = surfaceRef.current?.offsetHeight ?? 380;
       const margin = 8;
+      const w = Math.min(width, window.innerWidth - margin * 2);
+      const height = surfaceRef.current?.offsetHeight ?? 380;
 
-      let top = trigger.bottom + margin;
-      if (top + height > window.innerHeight - margin) top = trigger.top - height - margin;
+      let top = trigger.bottom + 6;
+      if (top + height > window.innerHeight - margin) top = trigger.top - height - 6;
       top = Math.min(top, Math.max(margin, window.innerHeight - height - margin));
       top = Math.max(margin, top);
 
-      // Right-aligned to the trigger rather than centred: the panel is on the
-      // right-hand edge, so a centred surface is half off-screen before the
-      // clamp has anything to say about it.
-      let left = trigger.right - width;
-      left = Math.min(left, window.innerWidth - width - margin);
+      let left = align === 'start' ? trigger.left : trigger.right - w;
+      left = Math.min(left, window.innerWidth - w - margin);
       left = Math.max(margin, left);
 
-      setAt({ top, left });
+      setAt({ top, left, width: w });
     };
     place();
     window.addEventListener('resize', place);
@@ -85,7 +114,7 @@ export const PanelPopover: React.FC<Props> = ({ label, title, width, children, i
       window.removeEventListener('resize', place);
       window.removeEventListener('scroll', place, true);
     };
-  }, [open, width]);
+  }, [open, width, align]);
 
   React.useEffect(() => {
     if (!open) return;
@@ -110,15 +139,22 @@ export const PanelPopover: React.FC<Props> = ({ label, title, width, children, i
     };
   }, [open]);
 
+  const close = React.useCallback(() => {
+    setOpen(false);
+    triggerRef.current?.focus();
+  }, []);
+
   return (
     <>
       <button
         ref={triggerRef}
         type="button"
-        className="pnpop__trigger"
+        className={triggerClassName}
         data-open={open || undefined}
         aria-expanded={open}
         aria-haspopup="dialog"
+        aria-label={triggerLabel}
+        data-tooltip={open ? undefined : tooltip}
         onClick={() => setOpen((v) => !v)}
       >
         {icon}
@@ -126,17 +162,22 @@ export const PanelPopover: React.FC<Props> = ({ label, title, width, children, i
       </button>
 
       {open &&
-        at &&
         createPortal(
           <div
             ref={surfaceRef}
             className="pnpop"
             role="dialog"
             aria-label={title}
-            style={{ top: at.top, left: at.left, width }}
+            // Measured once off screen, then placed: a first paint at 0,0
+            // flashed the surface in the corner of the window for a frame.
+            style={
+              at
+                ? { top: at.top, left: at.left, width: at.width }
+                : { top: -9999, left: -9999, width, visibility: 'hidden' }
+            }
             {...{ [PORTAL_SURFACE_ATTR]: 'panel-popover' }}
           >
-            {typeof children === 'function' ? children(() => setOpen(false)) : children}
+            {typeof children === 'function' ? children(close) : children}
           </div>,
           document.body
         )}

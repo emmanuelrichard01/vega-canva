@@ -34,8 +34,22 @@ import { KindPicker } from './workspace/KindPicker';
 import { ChartKindIcon } from './workspace/chartIcons';
 import { CHART_HINTS, CHART_LABELS, chartPickerGroups } from '../engine/chart/chartKinds';
 import { setChartKind, updateChart } from '../engine/chart/chartApply';
-import { chartCapabilities, defaultPlotDomain, resolveChartOptions } from '../engine/chart/chartTypes';
-import { chartToCsv, csvFilename, downloadCsv } from '../engine/chart/chartCsv';
+import {
+  CHART_AGENCY_PALETTES,
+  chartCapabilities,
+  defaultPlotDomain,
+  getPaletteColors,
+  isSampleKind,
+  resolveChartOptions,
+} from '../engine/chart/chartTypes';
+import { chartToCsv, csvFilename, downloadCsv, parseChartData, withChartData } from '../engine/chart/chartCsv';
+import {
+  FileUp as RailImportIcon,
+  PenLine as RailSketchIcon,
+  PanelTop as RailLegendTop,
+  PanelBottom as RailLegendBottom,
+  PanelRight as RailLegendRight,
+} from 'lucide-react';
 import { breakApartGrid, gridNodeOf, gridRecipe as gridRecipeFor, setGridRecipe } from '../engine/grid/gridApply';
 import {
   fillGridWithImages,
@@ -384,6 +398,16 @@ export const ObjectContextToolbar: React.FC<Props> = ({ selectedId, selectedIds,
   // So the button reads as pressed while the anchors are on screen, and can
   // close what it opened.
   const pathSelection = useSyncExternalStore(pathEdit.subscribe, pathEdit.getSnapshot, pathEdit.getSnapshot);
+  /**
+   * A table's cells are open on the board.
+   *
+   * The editor brings its own toolbar — formatting, rows, sort — and two rails
+   * over one table is two answers to "what can I do here", one of them about
+   * the object and one about its cells. The object rail steps back while the
+   * cells are open and returns the moment they close (Done, Escape or a click
+   * away), exactly as the transform handles do.
+   */
+  const tableEditing = useStore((s) => s.tableEditNodeId);
   const editingPath = pathSelection?.nodeId ?? null;
   /** How many anchors are picked, which is what the anchor rail is gated on. */
   const pickedAnchors = pathSelection?.anchors.length ?? 0;
@@ -1268,7 +1292,7 @@ export const ObjectContextToolbar: React.FC<Props> = ({ selectedId, selectedIds,
   }
 
   // --------------------------------------------------------------- single rail
-  if (!liveNode) return null;
+  if (!liveNode || tableEditing) return null;
   const node = liveNode;
   const isCropping = cropping?.nodeId === node.id;
   const isReframing = reframing?.nodeId === node.id;
@@ -2314,7 +2338,7 @@ export const ObjectContextToolbar: React.FC<Props> = ({ selectedId, selectedIds,
               {chartCapabilities(node.chart.kind).lockPlane && (
                 <>
                   <RailButton
-                    label={node.chart.lockPlane ? 'Unlock Plane' : 'Lock Plane'}
+                    label={node.chart.lockPlane ? 'Unlock plane' : 'Lock plane'}
                     hint={
                       node.chart.lockPlane
                         ? 'Plane is locked against accidental zoom/pan'
@@ -2343,9 +2367,72 @@ export const ObjectContextToolbar: React.FC<Props> = ({ selectedId, selectedIds,
                 </>
               )}
 
-              {/* Quick Display Toggles */}
+              {/*
+                The palette, shown as itself.
+
+                A chart's colour is a *palette* — one colour per series — and
+                it lived only in the panel, three sections down. The trigger
+                is the current palette's own strip, so the rail says what the
+                chart is coloured with before anyone opens it.
+              */}
+              <RailPopover
+                label="Palette"
+                trigger={
+                  <span className="ctx-ribbon" aria-hidden="true">
+                    {getPaletteColors(node.chart.paletteId).slice(0, 4).map((c, i) => (
+                      <i key={i} style={{ background: c }} />
+                    ))}
+                  </span>
+                }
+                align="start"
+              >
+                {(close) => (
+                  <>
+                    <span className="ctx-popover__label">Palette</span>
+                    <div className="ctx-palettes">
+                      {CHART_AGENCY_PALETTES.map((p) => (
+                        <button
+                          key={p.id}
+                          type="button"
+                          className="ctx-palette"
+                          aria-pressed={(node.chart.paletteId ?? 'default') === p.id}
+                          onClick={() => {
+                            updateChart(node.id, { ...node.chart, paletteId: p.id === 'default' ? undefined : p.id });
+                            close();
+                          }}
+                        >
+                          <span className="ctx-palette__ribbon" aria-hidden="true">
+                            {p.colors.slice(0, 6).map((c, i) => (
+                              <i key={i} style={{ background: c }} />
+                            ))}
+                          </span>
+                          <span className="ctx-palette__name">{p.label}</span>
+                          {(node.chart.paletteId ?? 'default') === p.id && <Check size={13} />}
+                        </button>
+                      ))}
+                    </div>
+                  </>
+                )}
+              </RailPopover>
+
+              {/* Clean or sketch in one press — the chart's whole hand, with
+                  every value, label and axis kept where it was. */}
+              <RailButton
+                label={node.appearance?.sketch ? 'Make it clean' : 'Sketch it'}
+                hint={node.appearance?.sketch ? 'Back to the precise, presentation look' : 'Hand-drawn for whiteboarding — the data is unchanged'}
+                pressed={Boolean(node.appearance?.sketch)}
+                onClick={() =>
+                  editor.updateNode(node.id, {
+                    appearance: { ...(node.appearance ?? {}), sketch: node.appearance?.sketch ? undefined : 'medium' },
+                  })
+                }
+              >
+                <RailSketchIcon size={15} />
+              </RailButton>
+
+              {/* What the chart shows, each switch reporting what is *drawn*. */}
               <RailPopover label="Display" trigger={<Sliders size={15} />} align="start">
-                <span className="ctx-popover__label">Display Elements</span>
+                <span className="ctx-popover__label">Show</span>
                 <div className="ctx-popover__toggles">
                   {/* Asked of the renderer, not guessed at.
                       This switch used to read `showLegend ?? true` while the
@@ -2378,10 +2465,12 @@ export const ObjectContextToolbar: React.FC<Props> = ({ selectedId, selectedIds,
                       type="button"
                       className="ctx-popover__action"
                       role="switch"
-                      aria-checked={Boolean(node.chart.showValues)}
-                      onClick={() => updateChart(node.id, { ...node.chart, showValues: !node.chart.showValues })}
+                      aria-checked={resolveChartOptions(node.chart).showValues}
+                      onClick={() =>
+                        updateChart(node.id, { ...node.chart, showValues: !resolveChartOptions(node.chart).showValues })
+                      }
                     >
-                      <Check size={14} style={{ opacity: node.chart.showValues ? 1 : 0 }} />
+                      <Check size={14} style={{ opacity: resolveChartOptions(node.chart).showValues ? 1 : 0 }} />
                       Value labels
                     </button>
                   )}
@@ -2390,10 +2479,15 @@ export const ObjectContextToolbar: React.FC<Props> = ({ selectedId, selectedIds,
                       type="button"
                       className="ctx-popover__action"
                       role="switch"
-                      aria-checked={node.chart.showGrid ?? true}
-                      onClick={() => updateChart(node.id, { ...node.chart, showGrid: !(node.chart.showGrid ?? true) })}
+                      // The resolver's answer, not `?? true`: that default was the
+                      // same lie the legend switch told — a radar showed Grid on
+                      // with no grid drawn, and the first click changed nothing.
+                      aria-checked={resolveChartOptions(node.chart).showGrid}
+                      onClick={() =>
+                        updateChart(node.id, { ...node.chart, showGrid: !resolveChartOptions(node.chart).showGrid })
+                      }
                     >
-                      <Check size={14} style={{ opacity: (node.chart.showGrid ?? true) ? 1 : 0 }} />
+                      <Check size={14} style={{ opacity: resolveChartOptions(node.chart).showGrid ? 1 : 0 }} />
                       Grid lines
                     </button>
                   )}
@@ -2406,10 +2500,31 @@ export const ObjectContextToolbar: React.FC<Props> = ({ selectedId, selectedIds,
                       onClick={() => updateChart(node.id, { ...node.chart, gradient: !node.chart.gradient })}
                     >
                       <Check size={14} style={{ opacity: node.chart.gradient ? 1 : 0 }} />
-                      Smooth gradient fill
+                      Fade the fill
                     </button>
                   )}
                 </div>
+                {resolveChartOptions(node.chart).showLegend && (
+                  <>
+                    <span className="ctx-popover__label">Legend</span>
+                    <SegmentedControl
+                      fill
+                      ariaLabel="Legend position"
+                      value={node.chart.legendPosition === 'none' ? 'bottom' : node.chart.legendPosition ?? 'bottom'}
+                      onChange={(v) =>
+                        updateChart(node.id, {
+                          ...node.chart,
+                          legendPosition: v === 'bottom' ? undefined : (v as 'top' | 'right'),
+                        })
+                      }
+                      segments={[
+                        { value: 'top', label: 'Top', icon: <RailLegendTop size={15} />, hint: 'Above the plot' },
+                        { value: 'bottom', label: 'Bottom', icon: <RailLegendBottom size={15} />, hint: 'Below the plot' },
+                        { value: 'right', label: 'Right', icon: <RailLegendRight size={15} />, hint: 'Beside the plot' },
+                      ]}
+                    />
+                  </>
+                )}
               </RailPopover>
 
               {/* Only where there is a table to be CSV *of*.
@@ -2420,8 +2535,8 @@ export const ObjectContextToolbar: React.FC<Props> = ({ selectedId, selectedIds,
                   data sheet's, because it is the same question: a chart either
                   has an editable table or it does not. */}
               {chartCapabilities(node.chart.kind).data && (
-              <RailPopover label="CSV Data" trigger={<Download size={15} />} align="start">
-                <span className="ctx-popover__label">Data Import / Export</span>
+              <RailPopover label="Data as CSV" trigger={<Download size={15} />} align="start">
+                <span className="ctx-popover__label">CSV</span>
                 <button
                   type="button"
                   className="ctx-popover__action"
@@ -2435,7 +2550,7 @@ export const ObjectContextToolbar: React.FC<Props> = ({ selectedId, selectedIds,
                   }}
                 >
                   <Copy size={14} />
-                  Copy CSV to clipboard
+                  Copy as CSV
                 </button>
                 <button
                   type="button"
@@ -2443,8 +2558,33 @@ export const ObjectContextToolbar: React.FC<Props> = ({ selectedId, selectedIds,
                   onClick={() => downloadCsv(node.chart, csvFilename(node.chart.title))}
                 >
                   <Download size={14} />
-                  Download .csv file
+                  Download CSV
                 </button>
+                {/* The way in, beside the ways out: a rail that could export
+                    the data but not take it in sent people to the sheet for
+                    the one step that most often starts a chart. Sample kinds
+                    read columns as groups, which the sheet's import handles. */}
+                {!isSampleKind(node.chart.kind) && (
+                  <button
+                    type="button"
+                    className="ctx-popover__action"
+                    onClick={() => {
+                      const input = document.createElement('input');
+                      input.type = 'file';
+                      input.accept = '.csv,.tsv,.txt,text/csv,text/tab-separated-values,text/plain';
+                      input.onchange = async () => {
+                        const file = input.files?.[0];
+                        if (!file) return;
+                        const data = parseChartData(await file.text());
+                        if (data.categories.length > 0) updateChart(node.id, withChartData(node.chart, data));
+                      };
+                      input.click();
+                    }}
+                  >
+                    <RailImportIcon size={14} />
+                    Import a CSV file…
+                  </button>
+                )}
               </RailPopover>
               )}
             </div>
