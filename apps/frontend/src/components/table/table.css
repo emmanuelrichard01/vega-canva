@@ -1,0 +1,372 @@
+/* ===========================================================================
+   TABLE EDITOR — a table's cells, open over the board.
+
+   The grid is laid out at the node's own size and scaled by the camera, so
+   every cell sits on its drawn cell at any zoom. Only interaction chrome is
+   drawn here: the text, the selection, the gutters. Rules and fills stay on
+   the canvas underneath.
+   =========================================================================== */
+
+.tbled {
+  position: fixed;
+  z-index: 8000;
+  transform-origin: 0 0;
+  font-family: Inter, system-ui, -apple-system, sans-serif;
+  user-select: none;
+}
+
+.tbled__grid {
+  position: absolute;
+  inset: 0;
+}
+
+.tbled__cell {
+  position: absolute;
+  box-sizing: border-box;
+  display: flex;
+  align-items: center;
+  overflow: hidden;
+  cursor: cell;
+  line-height: 1.25;
+}
+
+.tbled__text {
+  min-width: 0;
+  overflow: hidden;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+}
+
+/* The selection: a quiet wash across the range, and one crisp cell — in ink,
+   not the accent. A table's cells are always light (they are content, not
+   chrome), so the ink is fixed rather than a theme token that would turn
+   white on a dark board. */
+.tbled__range {
+  position: absolute;
+  box-sizing: border-box;
+  border: 1px solid rgb(30 41 59 / 55%);
+  background: rgb(30 41 59 / 8%);
+  pointer-events: none;
+}
+
+.tbled__focus {
+  position: absolute;
+  box-sizing: border-box;
+  border: 2px solid #1E293B;
+  border-radius: 2px;
+  pointer-events: none;
+}
+
+.tbled__input {
+  position: absolute;
+  box-sizing: border-box;
+  margin: 0;
+  border: 2px solid #1E293B;
+  border-radius: 2px;
+  background: #FFFFFF;
+  color: #0F172A;
+  font: inherit;
+  line-height: 1.35;
+  resize: none;
+  overflow: hidden;
+  box-shadow: 0 6px 18px -6px rgb(15 23 42 / 25%);
+  outline: none;
+  z-index: 1;
+}
+
+/* Letters above, numbers down the side: select a column or a row.
+
+   The grid scales with the camera, but the gutters are chrome, not content,
+   so they hold one *screen* size at every zoom: each length is multiplied by
+   `--inv` (1 / zoom). At 300% a camera-scaled gutter was a 54px slab crowding
+   the toolbar; at 25% it was 4px letters nobody could hit. The screen-space
+   figures here are the ones `TableEditor` places the toolbar against —
+   `GUTTER_REACH` there is `--gutter-gap + --gutter-size`. */
+.tbled {
+  --gutter-gap: 8px;
+  --gutter-size: 20px;
+}
+
+.tbled__cols,
+.tbled__rows {
+  position: absolute;
+}
+
+.tbled__cols {
+  left: 0;
+  right: 0;
+  top: calc((var(--gutter-gap) + var(--gutter-size)) * -1 * var(--inv, 1));
+  height: calc(var(--gutter-size) * var(--inv, 1));
+}
+
+.tbled__rows {
+  top: 0;
+  bottom: 0;
+  left: calc((var(--gutter-gap) + var(--gutter-size) + 6px) * -1 * var(--inv, 1));
+  width: calc((var(--gutter-size) + 6px) * var(--inv, 1));
+}
+
+.tbled__colhead,
+.tbled__rowhead {
+  position: absolute;
+  box-sizing: border-box;
+  display: grid;
+  place-items: center;
+  border-radius: calc(5px * var(--inv, 1));
+  background: var(--surface-elevated);
+  color: var(--text-tertiary);
+  box-shadow: 0 0 0 calc(1px * var(--inv, 1)) var(--border-strong) inset;
+  font-size: calc(10.5px * var(--inv, 1));
+  font-weight: 600;
+  font-variant-numeric: tabular-nums;
+  cursor: pointer;
+}
+
+.tbled__colhead {
+  top: 0;
+  height: 100%;
+  border: 0 solid transparent;
+  border-width: 0 calc(1.5px * var(--inv, 1));
+}
+
+.tbled__rowhead {
+  left: 0;
+  width: 100%;
+  border: 0 solid transparent;
+  border-width: calc(1.5px * var(--inv, 1)) 0;
+}
+
+.tbled__colhead:hover,
+.tbled__rowhead:hover { color: var(--text-primary); }
+
+.tbled__colhead[data-selected],
+.tbled__rowhead[data-selected] {
+  background: var(--surface-active);
+  color: var(--text-primary);
+}
+
+/* Drag a column's edge to give it more of the width. */
+.tbled__resize {
+  position: absolute;
+  top: calc(-2px * var(--inv, 1));
+  right: calc(-5px * var(--inv, 1));
+  width: calc(10px * var(--inv, 1));
+  height: calc(var(--gutter-size) * var(--inv, 1) + 4px * var(--inv, 1));
+  cursor: col-resize;
+  z-index: 1;
+}
+
+.tbled__resize::after {
+  content: '';
+  position: absolute;
+  left: calc(4px * var(--inv, 1));
+  top: calc(3px * var(--inv, 1));
+  bottom: calc(3px * var(--inv, 1));
+  width: calc(2px * var(--inv, 1));
+  border-radius: 1px;
+  background: transparent;
+  transition: background-color var(--motion-hover);
+}
+
+.tbled__resize:hover::after { background: var(--text-secondary); }
+
+/* The keyboard's home while no cell is being typed into. */
+.sheet-sink {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  padding: 0;
+  border: 0;
+  opacity: 0;
+  pointer-events: none;
+  resize: none;
+  overflow: hidden;
+}
+
+/* --- the toolbar ---------------------------------------------------------- */
+
+.tbled-bar {
+  position: fixed;
+  z-index: 8001;
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  height: 42px;
+  padding: 0 6px;
+  border-radius: var(--radius-xl);
+  background: var(--surface-elevated);
+  box-shadow: var(--shadow-float), var(--shadow-lg);
+  white-space: nowrap;
+  animation: tbled-settle 180ms var(--ease-settle);
+}
+
+@keyframes tbled-settle {
+  from { transform: translateY(4px); }
+  to { transform: none; }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .tbled-bar { animation: none; }
+}
+
+.tbled-bar__group {
+  display: flex;
+  align-items: center;
+  gap: 1px;
+}
+
+.tbled-bar__sep {
+  width: 1px;
+  height: 20px;
+  margin: 0 3px;
+  background: var(--border-strong);
+}
+
+.tbled-tool {
+  position: relative;
+  display: inline-grid;
+  place-items: center;
+  grid-auto-flow: column;
+  gap: 3px;
+  min-width: 30px;
+  height: 30px;
+  padding: 0 6px;
+  border: 0;
+  border-radius: var(--radius-md);
+  background: transparent;
+  color: var(--text-secondary);
+  cursor: pointer;
+  transition: background-color var(--motion-hover), color var(--motion-hover);
+}
+
+.tbled-tool:hover:not(:disabled) { background: var(--surface-hover); color: var(--text-primary); }
+.tbled-tool[aria-pressed='true'] { background: var(--accent-quiet); color: var(--text-primary); }
+.tbled-tool[data-tone='danger']:hover:not(:disabled) { color: color-mix(in srgb, var(--signal-danger) 75%, var(--text-primary)); }
+.tbled-tool:disabled { opacity: 0.4; cursor: not-allowed; }
+
+.tbled-bar__chip {
+  width: 10px;
+  height: 10px;
+  border-radius: 3px;
+  box-shadow: inset 0 0 0 1px var(--border-strong);
+}
+
+.tbled-bar__meta {
+  padding: 0 6px;
+  color: var(--text-tertiary);
+  font-size: var(--text-xs);
+  font-variant-numeric: tabular-nums;
+}
+
+.tbled-bar__done {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  height: 30px;
+  padding: 0 12px;
+  border: 1px solid var(--border-strong);
+  border-radius: var(--radius-md);
+  background: transparent;
+  color: var(--text-primary);
+  font: inherit;
+  font-size: var(--text-sm);
+  font-weight: var(--weight-medium);
+  cursor: pointer;
+}
+
+.tbled-bar__done:hover { background: var(--surface-hover); }
+
+.tbled-bar__pop { position: relative; }
+
+.tbled-menu {
+  position: absolute;
+  top: calc(100% + 8px);
+  left: 0;
+  z-index: 2;
+  padding: 8px;
+  border-radius: var(--radius-lg);
+  background: var(--surface-elevated);
+  box-shadow: var(--shadow-float), var(--shadow-lg);
+}
+
+.tbled-menu--swatches {
+  display: grid;
+  grid-template-columns: repeat(5, 22px);
+  gap: 6px;
+}
+
+.tbled-swatch {
+  width: 22px;
+  height: 22px;
+  padding: 0;
+  border: 0;
+  border-radius: 6px;
+  box-shadow: inset 0 0 0 1px rgb(15 23 42 / 14%);
+  cursor: pointer;
+}
+
+.tbled-swatch[aria-pressed='true'] { box-shadow: 0 0 0 2px var(--surface-elevated), 0 0 0 3.5px var(--text-primary); }
+
+.tbled-swatch--none {
+  background:
+    linear-gradient(to top right, transparent calc(50% - 1px), #EF4444 calc(50% - 1px), #EF4444 calc(50% + 1px), transparent calc(50% + 1px)),
+    #FFFFFF;
+}
+
+.tbled-menu--filter {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  width: 240px;
+}
+
+.tbled-filter {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  height: 32px;
+  padding: 0 8px;
+  border-radius: var(--radius-md);
+  background: var(--surface-hover);
+}
+
+.tbled-filter:focus-within { outline: 1.5px solid var(--focus-field-color); outline-offset: 0; }
+
+.tbled-filter__col {
+  flex: none;
+  max-width: 80px;
+  color: var(--text-tertiary);
+  font-size: var(--text-xs);
+  font-weight: var(--weight-semibold);
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.tbled-filter input {
+  flex: 1;
+  min-width: 0;
+  border: 0;
+  background: none;
+  color: var(--text-primary);
+  font: inherit;
+  font-size: var(--text-sm);
+}
+
+.tbled-filter input:focus-visible { outline: none; }
+
+.tbled-menu__action {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  align-self: flex-start;
+  padding: 4px 6px;
+  border: 0;
+  border-radius: var(--radius-sm);
+  background: none;
+  color: var(--text-secondary);
+  font: inherit;
+  font-size: var(--text-xs);
+  cursor: pointer;
+}
+
+.tbled-menu__action:hover { background: var(--surface-hover); color: var(--text-primary); }

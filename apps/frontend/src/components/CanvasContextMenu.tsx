@@ -29,7 +29,19 @@ import {
   AlignVerticalSpaceAround,
   ImagePlus,
   ImageOff,
+  FileDown,
+  FileUp,
+  Table2,
+  TextCursorInput,
 } from 'lucide-react';
+import { useStore } from '../hooks/useStore';
+import { cameraSystem } from '../engine/CameraSystem';
+import {
+  copyTableCsv,
+  createTableFromCsvFile,
+  exportTableCsv,
+  importCsvIntoTable,
+} from '../engine/table/tableApply';
 import type { AnyNode, ShapeKind } from '../engine/model/schema';
 import { SHAPE_CHOICES } from './toolbar/railConstants';
 import { resolveAffordances, type AffordanceId } from '../engine/selection/affordances';
@@ -329,6 +341,13 @@ export const CanvasContextMenu: React.FC<Props> = ({
   const isDiagram = hasSelection && selected.some((n) => n.type === 'shape');
   const dropped = selected.length - diagramParts.length;
   const typeName = selected[0]?.type;
+  /** One table under the pointer: its cells, and its data in and out as CSV. */
+  const table = selected.length === 1 && selected[0].type === 'table' ? selected[0] : null;
+  /** Where on the board the menu was opened, for a table made from a file. */
+  const boardPoint = () => {
+    const rect = document.querySelector('.konvajs-content')?.getBoundingClientRect();
+    return cameraSystem.screenToWorld(target.x - (rect?.left ?? 0), target.y - (rect?.top ?? 0));
+  };
 
   const Item: React.FC<{
     icon: React.ReactNode;
@@ -367,6 +386,24 @@ export const CanvasContextMenu: React.FC<Props> = ({
           <Item icon={<Copy size={15} />} label="Copy" shortcut="Ctrl C" onClick={actions.copy} />
           <Item icon={<Copy size={15} />} label="Duplicate" shortcut="Ctrl D" onClick={actions.duplicate} />
           <div className="ctxmenu__rule" role="separator" />
+
+          {/* A table's own commands lead: editing its cells, and its data in
+              and out as CSV — the one format every other tool speaks. */}
+          {table && table.type === 'table' && (
+            <>
+              <div className="ctxmenu__heading">Table</div>
+              <Item
+                icon={<TextCursorInput size={15} />}
+                label="Edit cells"
+                shortcut="Dbl-click"
+                onClick={() => useStore.getState().setTableEditNodeId(table.id)}
+              />
+              <Item icon={<FileUp size={15} />} label="Import CSV…" onClick={() => void importCsvIntoTable(table)} />
+              <Item icon={<FileDown size={15} />} label="Export as CSV" onClick={() => exportTableCsv(table.table)} />
+              <Item icon={<Copy size={15} />} label="Copy as CSV" onClick={() => void copyTableCsv(table.table)} />
+              <div className="ctxmenu__rule" role="separator" />
+            </>
+          )}
 
           {canSwap && (
             <>
@@ -544,6 +581,17 @@ export const CanvasContextMenu: React.FC<Props> = ({
             label="Select all"
             shortcut="Ctrl A"
             onClick={actions.selectAll}
+          />
+          {/* CSV straight to a table, where the menu was opened. */}
+          <Item
+            icon={<Table2 size={15} />}
+            label="Import CSV as table…"
+            onClick={() => {
+              const at = boardPoint();
+              void createTableFromCsvFile(at).then((id) => {
+                if (id) window.dispatchEvent(new CustomEvent('requestSelectNodes', { detail: { ids: [id] } }));
+              });
+            }}
           />
           <div className="ctxmenu__rule" role="separator" />
           <Item icon={<ImageDown size={15} />} label={copyLabel(scope, 'PNG')} onClick={() => actions.copyPng(ids)} />

@@ -11,6 +11,7 @@ import {
   Square,
   StickyNote,
   Type,
+  Table2,
   type LucideIcon,
 } from 'lucide-react';
 import type { NodeType } from '../../engine/model/schema';
@@ -42,6 +43,7 @@ export const TYPE_ICON: Record<NodeType, LucideIcon> = {
   frame: Frame,
   grid: LayoutGrid,
   chart: BarChart3,
+  table: Table2,
   text: Type,
   shape: Square,
   path: PenLine,

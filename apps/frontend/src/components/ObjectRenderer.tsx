@@ -33,6 +33,7 @@ import { PathRenderer } from './canvas/renderers/PathRenderer';
 import { ShapeRenderer } from './canvas/renderers/ShapeRenderer';
 import { GridRenderer } from './canvas/renderers/GridRenderer';
 import { ChartRenderer } from './canvas/renderers/ChartRenderer';
+import { TableRenderer } from './canvas/renderers/TableRenderer';
 import { chartCapabilities } from '../engine/chart/chartTypes';
 import { StickyRenderer } from './canvas/renderers/StickyRenderer';
 import { FrameRenderer } from './canvas/renderers/FrameRenderer';
@@ -881,6 +882,10 @@ export const ObjectRenderer = React.memo(
       if (node.type === 'chart' && chartCapabilities(node.chart.kind).data) {
         useStore.getState().setChartDataModalNodeId(node.id);
       }
+      // A table is edited where it is: its cells open on the board, in place.
+      if (node.type === 'table') {
+        useStore.getState().setTableEditNodeId(node.id);
+      }
     }, [isSelected, node, objId, onSelect]);
 
     const handleCommit = useCallback(
@@ -1424,5 +1429,8 @@ const NodeContent: React.FC<{ node: AnyNode; isEditing: boolean; stageScale?: nu
 
     case 'chart':
       return <ChartRenderer node={node} />;
+
+    case 'table':
+      return <TableRenderer node={node} />;
   }
 };

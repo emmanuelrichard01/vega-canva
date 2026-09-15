@@ -15,4 +15,5 @@ export * from './CommentTool';
 export * from './FrameTool';
 export * from './GridTool';
 export * from './ChartTool';
+export * from './TableTool';
 export * from './ConnectorTool';

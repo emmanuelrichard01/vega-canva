@@ -156,6 +156,22 @@ objectRegistry.register({
 });
 
 objectRegistry.register({
+  type: 'table',
+  capabilities: {
+    /**
+     * Opacity and the sketch block, as for a chart, and for the same reason:
+     * a table's colours are a *theme* — header, body, stripe, rules — set in
+     * the Table section, and one fill swatch cannot answer that. The sketch
+     * block reaches `TableRenderer`, which draws its rules by hand, hatches
+     * its fills and letters its cells in the sketch face.
+     */
+    supportsOpacity: true,
+    supportsEdgeEffects: true,
+  },
+  defaultProperties: () => ({ width: 600, height: 144 }),
+});
+
+objectRegistry.register({
   type: 'grid',
   capabilities: {
     /**

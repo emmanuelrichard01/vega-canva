@@ -2,6 +2,7 @@ import type { AnyNode } from './schema';
 import { paintColor } from './paint';
 import { connectorPoints } from './connector';
 import { THEMES } from './stickyThemes';
+import { getPaletteColors } from '../chart/chartTypes';
 
 /**
  * What colour a node is, in a thumbnail.
@@ -34,6 +35,14 @@ export function previewColorOf(node: AnyNode): string {
     const paint = (node as { appearance?: { fill?: unknown[] } }).appearance?.fill?.[0];
     return paint ? paintColor(paint as never, '#FFFFFF') : '#FFFFFF';
   }
+
+  /**
+   * A chart is its palette's leading colour, and a table the pale rule colour
+   * its body mostly is. Both fell through to the generic slate, so a board of
+   * charts drew on its card as a row of identical grey slabs.
+   */
+  if (node.type === 'chart') return getPaletteColors(node.chart.paletteId)[0] ?? '#2563EB';
+  if (node.type === 'table') return '#E2E8F0';
 
   const paint = (node as { appearance?: { fill?: unknown[]; stroke?: { color?: string } } }).appearance;
   const fill = paint?.fill?.[0];

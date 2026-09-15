@@ -303,6 +303,9 @@ interface StoreState {
    */
   chartDataModalNodeId: string | null;
   setChartDataModalNodeId: (id: string | null) => void;
+  /** The table whose cells are open for editing on the board, if any. */
+  tableEditNodeId: string | null;
+  setTableEditNodeId: (id: string | null) => void;
   /** Currently entered / isolated group ID for nested group editing. */
   enteredGroupId: string | null;
   setEnteredGroupId: (id: string | null) => void;
@@ -731,6 +734,8 @@ export const useStore = create<StoreState>((set) => ({
   setFlattenConfirmNodeId: (flattenConfirmNodeId) => set({ flattenConfirmNodeId }),
   chartDataModalNodeId: null,
   setChartDataModalNodeId: (chartDataModalNodeId) => set({ chartDataModalNodeId }),
+  tableEditNodeId: null,
+  setTableEditNodeId: (tableEditNodeId) => set({ tableEditNodeId }),
   enteredGroupId: null,
   setEnteredGroupId: (enteredGroupId) => set({ enteredGroupId }),
 }));

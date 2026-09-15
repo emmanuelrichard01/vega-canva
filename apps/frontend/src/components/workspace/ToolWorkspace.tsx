@@ -4,6 +4,9 @@ import { KindPicker } from './KindPicker';
 import { ChartKindIcon } from './chartIcons';
 import { CHART_HINTS, CHART_LABELS, chartPickerGroups } from '../../engine/chart/chartKinds';
 import { ChartTool } from '../../engine/tools/ChartTool';
+import { TableTool } from '../../engine/tools/TableTool';
+import { TABLE_EXAMPLES, TABLE_EXAMPLE_CATEGORIES } from '../../engine/table/tableExamples';
+import { TableThumb } from '../table/TableThumb';
 import { GRID_HINTS, GRID_KINDS, GRID_LABELS } from '../../engine/grid/gridLayout';
 import { dockDefaults } from '../../engine/workspace/dockDefaults';
 import {
@@ -22,7 +25,7 @@ import { gridDefaults } from '../../engine/grid/gridDefaults';
 import { switchKind } from '../../engine/grid/gridBuild';
 import {
   BarChart3, MousePointer2, MousePointerClick, LayoutGrid, Hand, Pen, PenTool as PenToolIcon, Type, Square, StickyNote, MessageSquare, ImageIcon, Mic, Sparkles, Frame, Eraser, Workflow, MoreVertical, TextQuote } from 'lucide-react';
-import { Check, Minus, Move, RotateCcw, SeparatorVertical, Spline, Undo2 } from 'lucide-react';
+import { Check, Minus, Move, RotateCcw, SeparatorVertical, Spline, Table2, Undo2 } from 'lucide-react';
 import { SegmentedControl } from '../ui/SegmentedControl';
 import { SketchLevelIcon } from '../panel/sketchIcons';
 import type { PencilNib } from '../../engine/model/rough';
@@ -387,7 +390,7 @@ const MORE_SEAT = DOCK_SEATS.length;
  * unlabelled row nobody can identify.
  */
 const SEAT_LABEL: Record<DockSeat, string> = {
-  chart: 'Chart',
+  chart: 'Chart', table: 'Table',
   select: 'Select', directSelect: 'Direct select', hand: 'Hand',
   draw: 'Draw', eraser: 'Eraser',
   type: 'Type', shape: 'Shape', line: 'Line',
@@ -418,6 +421,7 @@ const SEAT_TOOL: Partial<Record<DockSeat, string>> = {
   frame: 'frame',
   grid: 'grid',
   chart: 'chart',
+  table: 'table',
   connector: 'connector',
   sticky: 'sticky',
   image: 'image',
@@ -429,7 +433,7 @@ const SEAT_GLYPH: Record<DockSeat, React.ReactNode> = {
   select: <MousePointer2 size={16} />, directSelect: <MousePointerClick size={16} />, hand: <Hand size={16} />,
   draw: <Pen size={16} />, eraser: <Eraser size={16} />,
   type: <Type size={16} />, shape: <Square size={16} />, line: <Minus size={16} />,
-  frame: <Frame size={16} />, grid: <LayoutGrid size={16} />, chart: <BarChart3 size={16} />, connector: <Spline size={16} />, sticky: <StickyNote size={16} />,
+  frame: <Frame size={16} />, grid: <LayoutGrid size={16} />, chart: <BarChart3 size={16} />, table: <Table2 size={16} />, connector: <Spline size={16} />, sticky: <StickyNote size={16} />,
   image: <ImageIcon size={16} />, audio: <Mic size={16} />, forces: <Sparkles size={16} />,
 };
 
@@ -505,7 +509,7 @@ export const ToolWorkspace: React.FC<Props> = ({ activeToolId, onOpenDiagram, on
   /** Editing the dock is a mode, and a loud one -- see `dock-editing`. */
   const [editing, setEditing] = useState(false);
 
-  type DockMenu = 'pen' | 'shape' | 'line' | 'frame' | 'grid' | 'chart' | 'eraser' | 'block' | 'more';
+  type DockMenu = 'pen' | 'shape' | 'line' | 'frame' | 'grid' | 'chart' | 'table' | 'eraser' | 'block' | 'more';
   const [pinnedMenu, setPinnedMenu] = useState<DockMenu | null>(null);
   const [hoveredMenu, setHoveredMenu] = useState<DockMenu | null>(null);
   const [shapeCategory, setShapeCategory] = useState<string>('basic');
@@ -733,6 +737,34 @@ export const ToolWorkspace: React.FC<Props> = ({ activeToolId, onOpenDiagram, on
           icon: <ChartKindIcon kind={kind} size={20} />,
         })),
       })),
+    []
+  );
+
+  /**
+   * A blank table first, then the examples by what they are for.
+   *
+   * Each tile is the example itself in miniature — header row, tints, merges —
+   * cropped to its top-left, because that is the part of a table people
+   * recognise it by.
+   */
+  const tablePickerOptions = useMemo(
+    () => [
+      {
+        id: 'start',
+        options: [{ id: 'blank', label: 'Blank table', hint: 'rows follow the drag; cells open to type', icon: <Table2 size={20} /> }],
+      },
+      ...TABLE_EXAMPLE_CATEGORIES.map((cat) => ({
+        id: cat.id,
+        label: cat.label,
+        options: TABLE_EXAMPLES.filter((e) => e.category === cat.id).map((e) => ({
+          id: e.id,
+          label: e.name,
+          hint: e.note,
+          keywords: e.spec.cells[0] ?? [],
+          icon: <TableThumb example={e} crop className="dock-tablethumb" />,
+        })),
+      })),
+    ],
     []
   );
 
@@ -1838,6 +1870,37 @@ export const ToolWorkspace: React.FC<Props> = ({ activeToolId, onOpenDiagram, on
                   }}
                 />
                             </Flyout>
+            )}
+          </DockButton>
+        </div>
+
+        {/* Table. Beside Chart: the two are where data lives on a board, and a
+            table is often the step before the chart. The flyout answers the
+            chart's question in table terms — blank, or a finished one to
+            start from — and arms the tool for the next drag. */}
+        <div {...hoverProps('table')} className="dock-slot-wrap" {...seatChrome('table')}>
+          <DockButton
+            {...seatProps('table', true)}
+            icon={<Table2 size={17} />} label="Table" toolId="table"
+            description="rows, columns, CSV"
+            active={activeToolId === 'table'} hasMenu menuOpen={openMenu === 'table'}
+            onClick={() => toggleMenu('table')}
+          >
+            {openMenu === 'table' && (
+              <Flyout title="Table" wide>
+                <KindPicker
+                  columns={4}
+                  tile={104}
+                  search
+                  searchPlaceholder="Tables, or a column like “owner”"
+                  groups={tablePickerOptions}
+                  value={TableTool.preset}
+                  onPick={(id) => {
+                    TableTool.preset = id;
+                    pick('table');
+                  }}
+                />
+              </Flyout>
             )}
           </DockButton>
         </div>

@@ -35,6 +35,7 @@ import { DEFAULT_INK } from '../model/schema';
 import { computeContentBounds } from './bounds';
 import { exportIds, exportIdSet } from './exportScope';
 import { chartToSvg } from '../chart/chartSvg';
+import { tableToSvg } from '../table/tableSvg';
 import { cornerRadiiOf, fitRadii, isPerCorner, roundedRectPath } from '../model/cornerRadii';
 
 /**
@@ -856,6 +857,18 @@ export class SVGExporter implements Exporter {
         case 'chart': {
           parts.push(
             `<g transform="translate(${node.x} ${node.y})">${chartToSvg(node.chart, node.width, node.height, {
+              id: node.id,
+              sketch: node.appearance?.sketch,
+              sketchSeed: node.appearance?.sketchSeed,
+            })}</g>`
+          );
+          break;
+        }
+
+        /** A table, from the same layout `TableRenderer` paints. */
+        case 'table': {
+          parts.push(
+            `<g transform="translate(${node.x} ${node.y})">${tableToSvg(node.table, node.width, node.height, {
               id: node.id,
               sketch: node.appearance?.sketch,
               sketchSeed: node.appearance?.sketchSeed,

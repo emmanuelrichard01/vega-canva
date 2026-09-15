@@ -31,6 +31,8 @@ const MermaidModal = lazy(() => loadMermaid().then(m => ({ default: m.MermaidMod
 const CommandPalette = lazy(() => loadPalette().then(m => ({ default: m.CommandPalette })));
 const FlattenShapeModal = lazy(() => loadFlatten().then(m => ({ default: m.FlattenShapeModal })));
 const ChartDataModal = lazy(() => loadChartData().then(m => ({ default: m.ChartDataModal })));
+const loadTableEditor = () => import('../table/TableEditor');
+const TableEditor = lazy(() => loadTableEditor().then(m => ({ default: m.TableEditor })));
 
 /**
  * Fetch the cheap dialogs once the board has stopped being busy.
@@ -138,6 +140,8 @@ export const RoomModals: React.FC<RoomModalsProps> = ({
   const flattenNodeId = useStore((s) => s.flattenConfirmNodeId);
   const chartDataModalNodeId = useStore((s) => s.chartDataModalNodeId);
   const setChartDataModalNodeId = useStore((s) => s.setChartDataModalNodeId);
+  const tableEditNodeId = useStore((s) => s.tableEditNodeId);
+  const setTableEditNodeId = useStore((s) => s.setTableEditNodeId);
 
   React.useEffect(warmDialogs, []);
 
@@ -202,6 +206,13 @@ export const RoomModals: React.FC<RoomModalsProps> = ({
             nodeId={chartDataModalNodeId}
             onClose={() => setChartDataModalNodeId(null)}
           />
+        )}
+      </Suspense>
+
+      {/* The table's cells, open in place over the board. */}
+      <Suspense fallback={null}>
+        {tableEditNodeId && (
+          <TableEditor key={tableEditNodeId} nodeId={tableEditNodeId} onClose={() => setTableEditNodeId(null)} />
         )}
       </Suspense>
     </>

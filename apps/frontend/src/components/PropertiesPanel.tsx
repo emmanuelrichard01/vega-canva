@@ -17,6 +17,7 @@ import { APPEARANCE_TYPES } from '../engine/objects/appearanceTypes';
 import { resolveAffordances, type AffordanceId } from '../engine/selection/affordances';
 import { GridSection } from './panel/GridSection';
 import { ChartSection } from './panel/ChartSection';
+import { TableSection } from './panel/TableSection';
 import { gridNodeOf } from '../engine/grid/gridApply';
 import { objectRegistry } from '../engine/objects';
 import {
@@ -676,6 +677,12 @@ export const PropertiesPanel: React.FC<PropertiesPanelProps> = ({ selectedIds, o
       {node.type === 'chart' && (
         <Accordion title="Chart" icon={<BarChart3 size={13} />} defaultOpen>
           <ChartSection node={node} />
+        </Accordion>
+      )}
+
+      {node.type === 'table' && (
+        <Accordion title="Table" icon={TYPE_ICONS.table} defaultOpen>
+          <TableSection node={node} />
         </Accordion>
       )}
 

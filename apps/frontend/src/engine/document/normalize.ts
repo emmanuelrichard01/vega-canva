@@ -1,5 +1,6 @@
 import { normalizeRecipe } from '../grid/gridNode';
 import { isChartKind, type ChartKind, type ChartSeries, type ChartSpec } from '../chart/chartTypes';
+import { normalizeTableSpec } from '../table/tableTypes';
 import { LIST_STYLES } from '../model/schema';
 import { CALLOUT_TAILS, clampParam, shapeParams } from '../model/shapeParams';
 import { CYCLE_UNITS } from '../text/colorCycle';
@@ -1284,6 +1285,15 @@ export function normalizeNode(raw: any, id?: string): AnyNode {
         ...base,
         type: 'chart',
         chart: normalizeChartSpec(raw?.chart),
+        appearance: normalizeAppearance(raw),
+      };
+
+    /** A table's grid, made rectangular and total — see `normalizeTableSpec`. */
+    case 'table':
+      return {
+        ...base,
+        type: 'table',
+        table: normalizeTableSpec(raw?.table),
         appearance: normalizeAppearance(raw),
       };
 

@@ -51,6 +51,7 @@ export const NODE_TYPES = [
   'connector',
   'grid',
   'chart',
+  'table',
 ] as const;
 
 export type NodeType = (typeof NODE_TYPES)[number];
@@ -64,6 +65,8 @@ export type { GridRecipe } from '../grid/gridBuild';
 import type { GridRecipe } from '../grid/gridBuild';
 export type { ChartSpec, ChartKind, ChartSeries } from '../chart/chartTypes';
 import type { ChartSpec } from '../chart/chartTypes';
+export type { TableSpec } from '../table/tableTypes';
+import type { TableSpec } from '../table/tableTypes';
 
 /**
  * Current schema revision, stamped into document metadata by the migration.
@@ -1486,6 +1489,20 @@ export interface ChartNode extends BaseNode {
   appearance?: Appearance;
 }
 
+/**
+ * A table: rows and columns of cells, typed, styled and sortable.
+ *
+ * `appearance` carries only the sketch treatment. A table's colours are its
+ * theme's, set in the Table section, for the reason a chart's are its palette:
+ * a single fill swatch cannot answer a question that has a header, a body and
+ * a stripe in it.
+ */
+export interface TableNode extends BaseNode {
+  type: 'table';
+  table: TableSpec;
+  appearance?: Appearance;
+}
+
 export type AnyNode =
   | TextNode
   | ShapeNode
@@ -1497,7 +1514,8 @@ export type AnyNode =
   | FrameNode
   | ConnectorNode
   | GridNode
-  | ChartNode;
+  | ChartNode
+  | TableNode;
 
 // ---------------------------------------------------------------------------
 // Narrowing helpers
