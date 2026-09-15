@@ -1,4 +1,4 @@
-import { cellKey, type CellStyle, type CellType, type TableSpec, type TableTheme } from './tableTypes';
+import { cellKey, type CellStyle, type CellType, type ColourRule, type TableSpec, type TableTheme } from './tableTypes';
 
 /**
  * Tables you can start from.
@@ -6,15 +6,24 @@ import { cellKey, type CellStyle, type CellType, type TableSpec, type TableTheme
  * ## The same rule as the chart examples
  *
  * Every one is a table somebody actually keeps — a tracker, a budget, a
- * pricing grid, a timetable, a lab notebook — with plausible content, typed
- * columns and the formatting a finished one would have: status cells tinted by
- * meaning, a totals row set in bold, a group header merged across the columns
- * it names. Placeholder grids of "Column 1" teach nothing; a finished table
- * shows in one glance what the tool can do *and* what the table is for.
+ * pricing grid, a timetable, a grade book — with plausible content, typed
+ * columns and the formatting a finished one would have. Placeholder grids of
+ * "Column 1" teach nothing; a finished table shows in one glance what the tool
+ * can do *and* what the table is for.
+ *
+ * ## They compute
+ *
+ * A budget's variance, an invoice's amounts, a scorecard's weighted totals and
+ * a grade book's averages are **formulas** (`tableFormula.ts`), so changing a
+ * number changes everything that depends on it — the difference between a
+ * picture of a spreadsheet and one. Statuses are coloured by **rules**
+ * (`ColourRule`), not by fixed fills, so typing "Done" into a tracker turns
+ * the cell green and a grade that drops below the pass mark turns its result
+ * amber on its own.
  *
  * Built in code rather than stored, for the reason `templates.ts` gives: a
- * schema change fails the build here instead of shipping twenty malformed
- * tables to whoever opens the gallery next.
+ * schema change fails the build here instead of shipping malformed tables to
+ * whoever opens the gallery next.
  */
 
 export type TableExampleCategory = 'plan' | 'money' | 'compare' | 'people' | 'schedule' | 'science';
@@ -25,7 +34,7 @@ export const TABLE_EXAMPLE_CATEGORIES: Array<{ id: TableExampleCategory; label: 
   { id: 'compare', label: 'Comparison' },
   { id: 'people', label: 'Teams' },
   { id: 'schedule', label: 'Schedules' },
-  { id: 'science', label: 'Science' },
+  { id: 'science', label: 'Teaching & science' },
 ];
 
 export interface TableExample {
@@ -41,19 +50,27 @@ export interface TableExample {
 // Builders
 // ---------------------------------------------------------------------------
 
+const GREEN = { fill: '#DCFCE7', color: '#166534' };
+const BLUE = { fill: '#DBEAFE', color: '#1E40AF' };
+const VIOLET = { fill: '#EDE9FE', color: '#5B21B6' };
+const AMBER = { fill: '#FEF3C7', color: '#92400E' };
+const RED = { fill: '#FEE2E2', color: '#991B1B' };
+const GREY = { fill: '#F1F5F9', color: '#475569' };
+
 /** The status vocabulary, tinted by meaning, shared by every tracker. */
-const STATUS: Record<string, CellStyle> = {
-  Done: { fill: '#DCFCE7', color: '#166534' },
-  Shipped: { fill: '#DCFCE7', color: '#166534' },
-  'On track': { fill: '#DCFCE7', color: '#166534' },
-  'In progress': { fill: '#DBEAFE', color: '#1E40AF' },
-  Review: { fill: '#EDE9FE', color: '#5B21B6' },
-  'At risk': { fill: '#FEF3C7', color: '#92400E' },
-  Blocked: { fill: '#FEE2E2', color: '#991B1B' },
-  'Not started': { fill: '#F1F5F9', color: '#475569' },
-  High: { fill: '#FEE2E2', color: '#991B1B' },
-  Medium: { fill: '#FEF3C7', color: '#92400E' },
-  Low: { fill: '#DCFCE7', color: '#166534' },
+const STATUS: Record<string, { fill: string; color: string }> = {
+  Done: GREEN,
+  Shipped: GREEN,
+  'On track': GREEN,
+  'Closed won': GREEN,
+  'In progress': BLUE,
+  Review: VIOLET,
+  'At risk': AMBER,
+  Blocked: RED,
+  'Not started': GREY,
+  High: RED,
+  Medium: AMBER,
+  Low: GREEN,
 };
 
 interface Draft {
@@ -63,8 +80,10 @@ interface Draft {
   theme?: TableTheme;
   accent?: string;
   firstColumn?: boolean;
-  /** Columns whose words carry a status colour. */
+  /** Columns whose words carry a status colour — as live rules, one per status present. */
   statusCols?: number[];
+  /** Rules beyond the status vocabulary: thresholds, formula results. */
+  rules?: ColourRule[];
   /** Rows set in bold with a tint — totals, subtotals. */
   totalRows?: number[];
   /** Rows that head a group: merged across, tinted. */
@@ -82,13 +101,22 @@ function table(d: Draft): TableSpec {
   const cells = d.rows.map((r) => Array.from({ length: cols }, (_, c) => r[c] ?? ''));
   const styles: Record<string, CellStyle> = { ...(d.styles ?? {}) };
   const merges = [...(d.merges ?? [])];
+  const rules: ColourRule[] = [...(d.rules ?? [])];
+
+  const centreCol = (c: number) =>
+    cells.forEach((_, r) => {
+      if (r > 0) styles[cellKey(r, c)] = { ...(styles[cellKey(r, c)] ?? {}), align: 'center' };
+    });
 
   for (const c of d.statusCols ?? []) {
+    const seen = new Set<string>();
     cells.forEach((row, r) => {
-      if (r === 0) return;
-      const s = STATUS[row[c]];
-      if (s) styles[cellKey(r, c)] = { ...s, align: 'center' };
+      const v = row[c];
+      if (r === 0 || !STATUS[v] || seen.has(v)) return;
+      seen.add(v);
+      rules.push({ col: c, when: v, ...STATUS[v] });
     });
+    centreCol(c);
   }
   for (const r of d.totalRows ?? []) {
     for (let c = 0; c < cols; c++) styles[cellKey(r, c)] = { ...(styles[cellKey(r, c)] ?? {}), bold: true, fill: '#F1F5F9' };
@@ -97,12 +125,7 @@ function table(d: Draft): TableSpec {
     merges.push({ r, c: 0, rs: 1, cs: cols });
     styles[cellKey(r, 0)] = { bold: true, fill: '#EEF2FF', color: '#3730A3' };
   }
-  for (const c of d.centre ?? []) {
-    cells.forEach((_, r) => {
-      if (r === 0) return;
-      styles[cellKey(r, c)] = { ...(styles[cellKey(r, c)] ?? {}), align: 'center' };
-    });
-  }
+  for (const c of d.centre ?? []) centreCol(c);
 
   return {
     cells,
@@ -116,8 +139,12 @@ function table(d: Draft): TableSpec {
     ...(merges.length ? { merges } : null),
     ...(d.sort ? { sort: d.sort } : null),
     ...(d.currency ? { currency: d.currency } : null),
+    ...(rules.length ? { rules } : null),
   };
 }
+
+/** One formula per row, `{n}` replaced by the row's number. */
+const perRow = (formula: string, n: number) => formula.replace(/\{n\}/g, String(n));
 
 const YES = '✓';
 const NO = '—';
@@ -163,7 +190,7 @@ export const TABLE_EXAMPLES: TableExample[] = [
         ['Dark mode for embeds', '3', 'Medium', 'Leo', 'Review'],
         ['Keyboard shortcuts sheet', '2', 'Low', 'Ana', 'Done'],
         ['Offline indicator', '3', 'Medium', 'Maya', 'In progress'],
-        ['Total', '21', '', '', ''],
+        ['Total', '=SUM(B1:B5)', '', '', '=COUNTIF(E1:E5,"Done")&" of 5 done"'],
       ],
       types: ['text', 'number', 'text', 'text', 'text'],
       widths: [2.2, 0.7, 0.9, 0.9, 1.1],
@@ -184,7 +211,7 @@ export const TABLE_EXAMPLES: TableExample[] = [
         ['Delight new teams', 'Activation within 7 days', '60%', '48%', '70%'],
         ['', 'Time to first board', '3 min', '4.2 min', '60%'],
         ['', 'Onboarding NPS', '50', '44', '75%'],
-        ['Grow revenue', 'Net new ARR', '$240k', '$171k', '65%'],
+        ['Grow revenue', 'Net new ARR', '$240k', '$171k', '55%'],
         ['', 'Expansion rate', '115%', '109%', '55%'],
         ['Ship reliably', 'Uptime', '99.95%', '99.97%', '95%'],
         ['', 'P1 incidents', '≤ 2', '1', '90%'],
@@ -201,28 +228,77 @@ export const TABLE_EXAMPLES: TableExample[] = [
         [cellKey(4, 0)]: { bold: true, fill: '#ECFDF5', color: '#065F46' },
         [cellKey(6, 0)]: { bold: true, fill: '#FFF7ED', color: '#9A3412' },
       },
+      // Confidence is read, not typed: below 60% is a conversation to have.
+      rules: [
+        { col: 4, when: '<60%', ...AMBER },
+        { col: 4, when: '>=90%', ...GREEN },
+      ],
+      centre: [4],
       theme: 'grid',
     }),
   },
   {
     id: 'risk-register',
     name: 'Risk register',
-    note: 'likelihood times impact, so the worst risks sort to the top',
+    note: 'likelihood times impact, computed, so the worst risks sort to the top',
     category: 'plan',
     spec: table({
       rows: [
         ['Risk', 'Likelihood', 'Impact', 'Score', 'Mitigation', 'Owner'],
-        ['Vendor API deprecated', 'Medium', 'High', '12', 'Abstract behind an adapter', 'Sam'],
-        ['Key engineer leaves', 'Low', 'High', '8', 'Pair on every critical path', 'Maya'],
-        ['Launch slips past event', 'High', 'Medium', '12', 'Cut scope to the core flow', 'Ana'],
-        ['Data residency request', 'Medium', 'Medium', '9', 'EU region on the roadmap', 'Priya'],
-        ['Cost overrun on hosting', 'Low', 'Low', '4', 'Budget alerts at 80%', 'Leo'],
+        ...[
+          ['Vendor API deprecated', 'Medium', 'High', 'Abstract behind an adapter', 'Sam'],
+          ['Key engineer leaves', 'Low', 'High', 'Pair on every critical path', 'Maya'],
+          ['Launch slips past event', 'High', 'Medium', 'Cut scope to the core flow', 'Ana'],
+          ['Data residency request', 'Medium', 'Medium', 'EU region on the roadmap', 'Priya'],
+          ['Cost overrun on hosting', 'Low', 'Low', 'Budget alerts at 80%', 'Leo'],
+        ].map(([risk, l, i, m, o], k) => [
+          risk,
+          l,
+          i,
+          perRow('=IF(B{n}="High",3,IF(B{n}="Medium",2,1))*IF(C{n}="High",3,IF(C{n}="Medium",2,1))', k + 1),
+          m,
+          o,
+        ]),
       ],
       types: ['text', 'text', 'text', 'number', 'text', 'text'],
       widths: [1.7, 0.9, 0.8, 0.6, 2, 0.8],
       statusCols: [1, 2],
+      rules: [
+        { col: 3, when: '>=6', ...RED, bold: true },
+        { col: 3, when: '>=3', ...AMBER },
+      ],
+      centre: [3],
       sort: { col: 3, dir: 'desc' },
+    }),
+  },
+  {
+    id: 'inventory',
+    name: 'Inventory',
+    note: 'stock against reorder points, flagged the moment it dips',
+    category: 'plan',
+    spec: table({
+      rows: [
+        ['Item', 'In stock', 'Reorder at', 'Unit cost', 'Stock value', 'Status'],
+        ...[
+          ['Oat milk (1 L)', '42', '30', '1.35'],
+          ['Espresso beans (kg)', '8', '12', '18.50'],
+          ['Paper cups (100)', '65', '40', '6.20'],
+          ['Lids (100)', '22', '40', '4.10'],
+          ['Vanilla syrup', '14', '6', '7.80'],
+          ['Pastry boxes (50)', '31', '20', '9.40'],
+        ].map((row, k) => [...row, perRow('=B{n}*D{n}', k + 1), perRow('=IF(B{n}<=C{n},"Reorder","OK")', k + 1)]),
+        ['Total', '=SUM(B1:B6)', '', '', '=SUM(E1:E6)', '=COUNTIF(F1:F6,"Reorder")&" to order"'],
+      ],
+      types: ['text', 'number', 'number', 'currency', 'currency', 'text'],
+      widths: [1.7, 0.8, 0.8, 0.9, 1, 1],
+      rules: [
+        { col: 5, when: 'Reorder', ...RED, bold: true },
+        { col: 5, when: 'OK', ...GREEN },
+      ],
+      centre: [5],
+      totalRows: [7],
       theme: 'clean',
+      accent: '#0891B2',
     }),
   },
 
@@ -230,28 +306,29 @@ export const TABLE_EXAMPLES: TableExample[] = [
   {
     id: 'monthly-budget',
     name: 'Monthly budget',
-    note: 'plan against actual, with the variance and each line’s share',
+    note: 'plan against actual — variance, totals and shares all computed',
     category: 'money',
     spec: table({
       rows: [
         ['Category', 'Budget', 'Actual', 'Variance', 'Share'],
-        ['Salaries', '48000', '48000', '0', '62%'],
-        ['Cloud hosting', '6500', '7240', '-740', '9%'],
-        ['Software', '3200', '2980', '220', '4%'],
-        ['Marketing', '9000', '8150', '850', '11%'],
-        ['Travel', '2500', '3110', '-610', '4%'],
-        ['Office', '7800', '7800', '0', '10%'],
-        ['Total', '77000', '77280', '-280', '100%'],
+        ...[
+          ['Salaries', '48000', '48000'],
+          ['Cloud hosting', '6500', '7240'],
+          ['Software', '3200', '2980'],
+          ['Marketing', '9000', '8150'],
+          ['Travel', '2500', '3110'],
+          ['Office', '7800', '7800'],
+        ].map((row, k) => [...row, perRow('=B{n}-C{n}', k + 1), perRow('=C{n}/C$7', k + 1)]),
+        ['Total', '=SUM(B1:B6)', '=SUM(C1:C6)', '=SUM(D1:D6)', '=SUM(E1:E6)'],
       ],
       types: ['text', 'currency', 'currency', 'currency', 'percent'],
       widths: [1.5, 1, 1, 1, 0.8],
       totalRows: [7],
-      styles: {
-        [cellKey(2, 3)]: { color: '#B91C1C' },
-        [cellKey(5, 3)]: { color: '#B91C1C' },
-        [cellKey(4, 3)]: { color: '#15803D' },
-        [cellKey(3, 3)]: { color: '#15803D' },
-      },
+      // Over budget in red, under in green — and they swap the moment an actual changes.
+      rules: [
+        { col: 3, when: '<0', color: '#B91C1C', bold: true },
+        { col: 3, when: '>0', color: '#15803D' },
+      ],
       theme: 'bold',
       accent: '#059669',
     }),
@@ -259,18 +336,20 @@ export const TABLE_EXAMPLES: TableExample[] = [
   {
     id: 'invoice',
     name: 'Invoice',
-    note: 'line items, then subtotal, tax and total set under the amounts',
+    note: 'line items that multiply out, then subtotal, tax and total',
     category: 'money',
     spec: table({
       rows: [
         ['Item', 'Qty', 'Unit price', 'Amount'],
-        ['Brand workshop (half day)', '1', '1800', '1800'],
-        ['Design system audit', '1', '2400', '2400'],
-        ['Component build, per component', '12', '350', '4200'],
-        ['Documentation site', '1', '1500', '1500'],
-        ['Subtotal', '', '', '9900'],
-        ['VAT 20%', '', '', '1980'],
-        ['Total due', '', '', '11880'],
+        ...[
+          ['Brand workshop (half day)', '1', '1800'],
+          ['Design system audit', '1', '2400'],
+          ['Component build, per component', '12', '350'],
+          ['Documentation site', '1', '1500'],
+        ].map((row, k) => [...row, perRow('=B{n}*C{n}', k + 1)]),
+        ['Subtotal', '', '', '=SUM(D1:D4)'],
+        ['VAT 20%', '', '', '=D5*20%'],
+        ['Total due', '', '', '=D5+D6'],
       ],
       types: ['text', 'number', 'currency', 'currency'],
       widths: [2.6, 0.6, 1, 1],
@@ -296,17 +375,100 @@ export const TABLE_EXAMPLES: TableExample[] = [
     category: 'money',
     spec: table({
       rows: [
-        ['Deal', 'Stage', 'Value', 'Probability', 'Close date'],
-        ['Northwind — enterprise', 'Negotiation', '84000', '70%', '2026-05-14'],
-        ['Contoso — renewal', 'Proposal', '36000', '60%', '2026-05-30'],
-        ['Fabrikam — pilot', 'Discovery', '12000', '25%', '2026-06-20'],
-        ['Tailspin — expansion', 'Closed won', '52000', '100%', '2026-04-28'],
-        ['Litware — new logo', 'Qualified', '28000', '40%', '2026-06-05'],
+        ['Deal', 'Stage', 'Value', 'Probability', 'Weighted', 'Close date'],
+        ...[
+          ['Northwind — enterprise', 'Negotiation', '84000', '70%', '2026-05-14'],
+          ['Contoso — renewal', 'Proposal', '36000', '60%', '2026-05-30'],
+          ['Fabrikam — pilot', 'Discovery', '12000', '25%', '2026-06-20'],
+          ['Tailspin — expansion', 'Closed won', '52000', '100%', '2026-04-28'],
+          ['Litware — new logo', 'Qualified', '28000', '40%', '2026-06-05'],
+        ].map(([deal, stage, value, p, date], k) => [deal, stage, value, p, perRow('=C{n}*D{n}', k + 1), date]),
       ],
-      types: ['text', 'text', 'currency', 'percent', 'date'],
-      widths: [1.8, 1.1, 1, 0.9, 1],
-      sort: { col: 2, dir: 'desc' },
+      types: ['text', 'text', 'currency', 'percent', 'currency', 'date'],
+      widths: [1.8, 1.1, 1, 0.9, 1, 1],
+      statusCols: [1],
+      sort: { col: 4, dir: 'desc' },
       theme: 'striped',
+    }),
+  },
+  {
+    id: 'savings-plan',
+    name: 'Savings plan',
+    note: 'each year starts where the last ended, growing at 5%',
+    category: 'money',
+    spec: table({
+      rows: [
+        ['Year', 'Start', 'Added', 'Growth (5%)', 'End'],
+        ['2026', '10000', '6000', '=B1*5%', '=B1+C1+D1'],
+        ...[2, 3, 4, 5].map((n) => [
+          String(2025 + n),
+          `=E${n - 1}`,
+          n < 4 ? '6000' : '7000',
+          perRow('=B{n}*5%', n),
+          perRow('=B{n}+C{n}+D{n}', n),
+        ]),
+        ['Five years', '', '=SUM(C1:C5)', '=SUM(D1:D5)', '=E5'],
+      ],
+      types: ['text', 'currency', 'currency', 'currency', 'currency'],
+      widths: [0.8, 1, 1, 1, 1.1],
+      totalRows: [6],
+      styles: { [cellKey(6, 4)]: { bold: true, fill: '#DCFCE7', color: '#166534' } },
+      theme: 'striped',
+      accent: '#059669',
+    }),
+  },
+  {
+    id: 'break-even',
+    name: 'Break-even',
+    note: 'where revenue overtakes fixed costs plus the cost of each unit',
+    category: 'money',
+    spec: table({
+      rows: [
+        ['Units sold', 'Revenue ($24)', 'Costs ($12k + $9)', 'Profit', 'Position'],
+        ...['0', '400', '800', '1200', '1600', '2000'].map((u, k) => [
+          u,
+          perRow('=A{n}*24', k + 1),
+          perRow('=12000+A{n}*9', k + 1),
+          perRow('=B{n}-C{n}', k + 1),
+          perRow('=IF(D{n}>=0,"Profit","Loss")', k + 1),
+        ]),
+      ],
+      types: ['number', 'currency', 'currency', 'currency', 'text'],
+      widths: [0.9, 1.1, 1.2, 1, 0.9],
+      rules: [
+        { col: 4, when: 'Profit', ...GREEN },
+        { col: 4, when: 'Loss', ...RED },
+        { col: 3, when: '<0', color: '#B91C1C' },
+      ],
+      centre: [4],
+      theme: 'grid',
+    }),
+  },
+  {
+    id: 'unit-economics',
+    name: 'Unit economics',
+    note: 'lifetime value, payback and LTV : CAC, worked out from four inputs',
+    category: 'money',
+    spec: table({
+      rows: [
+        ['Metric', 'Value', 'How it is worked out'],
+        ['Revenue per user / month ($)', '48', 'Input'],
+        ['Gross margin', '78%', 'Input'],
+        ['Monthly churn', '2.5%', 'Input'],
+        ['Cost to acquire a customer ($)', '420', 'Input'],
+        ['Lifetime value ($)', '=ROUND(B1*B2/B3,0)', 'Revenue × margin ÷ churn'],
+        ['LTV : CAC', '=ROUND(B5/B4,1)&" : 1"', 'Healthy above 3 : 1'],
+        ['Payback (months)', '=ROUND(B4/(B1*B2),1)', 'Cost to acquire ÷ monthly gross profit'],
+      ],
+      types: ['text', 'text', 'text'],
+      widths: [1.8, 0.9, 2],
+      styles: {
+        ...Object.fromEntries([1, 2, 3, 4].map((r) => [cellKey(r, 1), { fill: '#FEF9C3', align: 'right' as const }])),
+        ...Object.fromEntries([5, 6, 7].map((r) => [cellKey(r, 1), { bold: true, align: 'right' as const }])),
+        ...Object.fromEntries([1, 2, 3, 4].map((r) => [cellKey(r, 2), { color: '#64748B', italic: true }])),
+      },
+      firstColumn: true,
+      theme: 'clean',
     }),
   },
 
@@ -343,7 +505,7 @@ export const TABLE_EXAMPLES: TableExample[] = [
   {
     id: 'vendor-scorecard',
     name: 'Vendor scorecard',
-    note: 'weighted criteria, so the decision can be defended',
+    note: 'weighted criteria, totalled by SUMPRODUCT, so the decision can be defended',
     category: 'compare',
     spec: table({
       rows: [
@@ -353,12 +515,14 @@ export const TABLE_EXAMPLES: TableExample[] = [
         ['Security and compliance', '20%', '5', '4', '3'],
         ['Support quality', '15%', '4', '3', '4'],
         ['Roadmap alignment', '10%', '3', '5', '2'],
-        ['Weighted score', '100%', '3.85', '4.30', '3.55'],
+        ['Weighted score', '=SUM(B1:B5)', '=SUMPRODUCT($B1:$B5,C1:C5)', '=SUMPRODUCT($B1:$B5,D1:D5)', '=SUMPRODUCT($B1:$B5,E1:E5)'],
       ],
       types: ['text', 'percent', 'number', 'number', 'number'],
       widths: [2, 0.8, 0.8, 0.8, 0.8],
       totalRows: [6],
       centre: [2, 3, 4],
+      // Scores of 5 stand out; the winner is marked on the total.
+      rules: [2, 3, 4].map((col) => ({ col, when: '5', ...GREEN })),
       styles: { [cellKey(6, 3)]: { bold: true, fill: '#DCFCE7', color: '#166534', align: 'center' } },
       theme: 'grid',
     }),
@@ -375,16 +539,18 @@ export const TABLE_EXAMPLES: TableExample[] = [
         ['Works offline', YES, NO, NO, NO],
         ['Charts from data', YES, 'Partial', NO, 'Partial'],
         ['Maths and scientific plots', YES, NO, NO, NO],
-        ['Physics simulation', YES, NO, NO, NO],
+        ['Formulas in tables', YES, NO, NO, NO],
         ['Hand-drawn sketch mode', YES, NO, YES, NO],
         ['Enterprise SSO', 'Roadmap', YES, YES, YES],
       ],
       types: ['text', 'text', 'text', 'text', 'text'],
       widths: [2.2, 0.8, 0.8, 0.8, 0.8],
       centre: [1, 2, 3, 4],
-      styles: Object.fromEntries(
-        [1, 2, 3, 4, 5, 6, 7].map((r) => [cellKey(r, 1), { fill: '#EFF6FF', bold: true, align: 'center' as const }])
-      ),
+      rules: [1, 2, 3, 4].flatMap((col) => [
+        { col, when: YES, color: '#15803D', bold: true },
+        { col, when: 'Partial', color: '#A16207' },
+      ]),
+      styles: Object.fromEntries([1, 2, 3, 4, 5, 6, 7].map((r) => [cellKey(r, 1), { fill: '#EFF6FF', align: 'center' as const }])),
       theme: 'minimal',
     }),
   },
@@ -405,19 +571,21 @@ export const TABLE_EXAMPLES: TableExample[] = [
         ['Privacy review', 'R', '', 'C', '', 'A'],
         ['Launch comms', 'A', 'R', 'I', 'I', 'C'],
       ];
-      const tint: Record<string, CellStyle> = {
-        R: { fill: '#DBEAFE', color: '#1E40AF', bold: true },
-        A: { fill: '#FEF3C7', color: '#92400E', bold: true },
+      // Rules rather than fills: reassigning a letter recolours it.
+      const paint: Record<string, Omit<ColourRule, 'col' | 'when'>> = {
+        R: { ...BLUE, bold: true },
+        A: { ...AMBER, bold: true },
         C: { fill: '#F3E8FF', color: '#6B21A8' },
-        I: { fill: '#F1F5F9', color: '#475569' },
+        I: GREY,
       };
-      const styles: Record<string, CellStyle> = {};
-      rows.forEach((row, r) =>
-        row.forEach((v, c) => {
-          if (r > 0 && c > 0 && tint[v]) styles[cellKey(r, c)] = { ...tint[v], align: 'center' };
-        })
-      );
-      return table({ rows, types: rows[0].map(() => 'text' as CellType), widths: [2, 1, 1, 1.1, 0.8, 0.8], styles, theme: 'grid' });
+      return table({
+        rows,
+        types: rows[0].map(() => 'text' as CellType),
+        widths: [2, 1, 1, 1.1, 0.8, 0.8],
+        rules: [1, 2, 3, 4, 5].flatMap((col) => Object.entries(paint).map(([when, p]) => ({ col, when, ...p }))),
+        centre: [1, 2, 3, 4, 5],
+        theme: 'grid',
+      });
     })(),
   },
   {
@@ -525,6 +693,34 @@ export const TABLE_EXAMPLES: TableExample[] = [
     })(),
   },
   {
+    id: 'habit-tracker',
+    name: 'Habit tracker',
+    note: 'ticks across the week, counted and turned into a rate',
+    category: 'schedule',
+    spec: table({
+      rows: [
+        ['Habit', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat', 'Sun', 'Done', 'Rate'],
+        ...[
+          ['Walk 8,000 steps', YES, YES, '', YES, YES, YES, ''],
+          ['Read 20 pages', YES, '', YES, YES, '', YES, YES],
+          ['No phone after 10', '', YES, YES, '', YES, '', YES],
+          ['Drink 2 L of water', YES, YES, YES, YES, YES, YES, YES],
+          ['Stretch', '', '', YES, '', YES, '', ''],
+        ].map((row, k) => [...row, perRow(`=COUNTIF(B{n}:H{n},"${YES}")`, k + 1), perRow('=ROUND(I{n}/7,2)', k + 1)]),
+      ],
+      types: ['text', 'text', 'text', 'text', 'text', 'text', 'text', 'text', 'number', 'percent'],
+      widths: [1.8, 0.5, 0.5, 0.5, 0.5, 0.5, 0.5, 0.5, 0.6, 0.7],
+      centre: [1, 2, 3, 4, 5, 6, 7, 8, 9],
+      rules: [
+        ...[1, 2, 3, 4, 5, 6, 7].map((col) => ({ col, when: YES, ...GREEN })),
+        { col: 9, when: '>=80%', ...GREEN, bold: true },
+        { col: 9, when: '<50%', ...AMBER },
+      ],
+      theme: 'clean',
+      accent: '#16A34A',
+    }),
+  },
+  {
     id: 'content-calendar',
     name: 'Content calendar',
     note: 'what goes out, where, and whether it is ready',
@@ -565,23 +761,65 @@ export const TABLE_EXAMPLES: TableExample[] = [
     }),
   },
 
-  // ── Science ─────────────────────────────────────────────────────────────
+  // ── Teaching & science ──────────────────────────────────────────────────
+  {
+    id: 'grade-book',
+    name: 'Grade book',
+    note: 'averages and pass marks worked out as you enter results',
+    category: 'science',
+    spec: table({
+      rows: [
+        ['Student', 'Test 1', 'Test 2', 'Project', 'Average', 'Result'],
+        ...[
+          ['Amara', '82', '88', '91'],
+          ['Ben', '64', '71', '68'],
+          ['Chloe', '93', '95', '89'],
+          ['Dev', '58', '62', '74'],
+          ['Elif', '77', '84', '80'],
+          ['Farah', '88', '79', '94'],
+        ].map((row, k) => [...row, perRow('=ROUND(AVERAGE(B{n}:D{n}),1)', k + 1), perRow('=IF(E{n}>=70,"Pass","Retake")', k + 1)]),
+        [
+          'Class',
+          '=ROUND(AVERAGE(B1:B6),1)',
+          '=ROUND(AVERAGE(C1:C6),1)',
+          '=ROUND(AVERAGE(D1:D6),1)',
+          '=ROUND(AVERAGE(E1:E6),1)',
+          '=COUNTIF(F1:F6,"Pass")&" of "&COUNTA(A1:A6)&" pass"',
+        ],
+      ],
+      types: ['text', 'number', 'number', 'number', 'number', 'text'],
+      widths: [1.2, 0.8, 0.8, 0.8, 0.9, 1.1],
+      rules: [
+        { col: 5, when: 'Pass', ...GREEN },
+        { col: 5, when: 'Retake', ...AMBER, bold: true },
+        ...[1, 2, 3].map((col) => ({ col, when: '<60', color: '#B91C1C' })),
+      ],
+      centre: [5],
+      totalRows: [7],
+      firstColumn: true,
+      theme: 'clean',
+      accent: '#7C3AED',
+    }),
+  },
   {
     id: 'lab-notebook',
     name: 'Lab notebook',
-    note: 'measurements with units in the headings and a note per sample',
+    note: 'measurements in, density worked out, a note per sample',
     category: 'science',
     spec: table({
       rows: [
         ['Sample', 'Mass (g)', 'Volume (mL)', 'Density (g/mL)', 'Temp (°C)', 'Notes'],
-        ['A1 — copper', '44.8', '5.0', '8.96', '21.4', 'Clean cut'],
-        ['A2 — aluminium', '13.5', '5.0', '2.70', '21.5', ''],
-        ['A3 — steel', '39.3', '5.0', '7.86', '21.3', 'Slight rust'],
-        ['A4 — brass', '42.6', '5.0', '8.52', '21.6', 'Repeat tomorrow'],
-        ['A5 — lead', '56.7', '5.0', '11.34', '21.4', ''],
+        ...[
+          ['A1 — copper', '44.8', '5.0', '21.4', 'Clean cut'],
+          ['A2 — aluminium', '13.5', '5.0', '21.5', ''],
+          ['A3 — steel', '39.3', '5.0', '21.3', 'Slight rust'],
+          ['A4 — brass', '42.6', '5.0', '21.6', 'Repeat tomorrow'],
+          ['A5 — lead', '56.7', '5.0', '21.4', ''],
+        ].map(([s, m, v, t, note], k) => [s, m, v, perRow('=ROUND(B{n}/C{n},2)', k + 1), t, note]),
       ],
       types: ['text', 'number', 'number', 'number', 'number', 'text'],
       widths: [1.4, 0.8, 0.9, 1, 0.8, 1.3],
+      styles: Object.fromEntries([1, 2, 3, 4, 5].map((r) => [cellKey(r, 3), { bold: true, fill: '#F0F9FF' }])),
       firstColumn: true,
       theme: 'grid',
     }),
@@ -634,3 +872,6 @@ export const TABLE_EXAMPLES: TableExample[] = [
 ];
 
 export const tableExampleById = (id: string) => TABLE_EXAMPLES.find((e) => e.id === id);
+
+/** Whether an example computes — for the gallery's badge and filter. */
+export const usesFormulas = (spec: TableSpec) => spec.cells.some((row) => row.some((v) => v.length > 1 && v[0] === '='));

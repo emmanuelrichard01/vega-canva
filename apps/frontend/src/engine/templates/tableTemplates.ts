@@ -123,6 +123,35 @@ export const TABLE_TEMPLATES: Template[] = [
       ]),
   },
   {
+    id: 'tbl-finance-planner',
+    category: 'thinking',
+    name: 'Finance planner',
+    blurb: 'A budget, a savings plan, a break-even and the unit economics — every number computed from its inputs.',
+    teaches: ['Formulas', 'Colour rules', 'Tables', 'Charts'],
+    build: () =>
+      board('Money, worked out', 'Change any input and every total, variance and verdict on the board follows.', 'Q3 plan', [
+        [
+          { label: 'This month', table: example('monthly-budget') },
+          { label: 'Savings, five years out', table: example('savings-plan') },
+        ],
+        [
+          { label: 'Break-even', table: example('break-even') },
+          {
+            label: 'Profit by units sold',
+            h: 280,
+            chart: plot('bar', {
+              title: 'Profit by units sold',
+              subtitle: 'break-even at 800 units',
+              categories: ['0', '400', '800', '1200', '1600', '2000'],
+              series: [{ name: 'Profit', values: [-12000, -6000, 0, 6000, 12000, 18000] }],
+              yAxisLabel: 'USD',
+            }),
+          },
+          { label: 'Unit economics', table: example('unit-economics') },
+        ],
+      ]),
+  },
+  {
     id: 'tbl-teaching-week',
     category: 'science',
     name: 'Science teaching week',
@@ -132,6 +161,7 @@ export const TABLE_TEMPLATES: Template[] = [
       board('Year 10 science — week 6', 'The timetable, Tuesday’s density practical, and the tables beside it.', 'Week 6', [
         [
           { label: 'Timetable', table: example('timetable') },
+          { label: 'Grade book', table: example('grade-book') },
           { label: 'Units and conversions', table: example('unit-conversions') },
         ],
         [

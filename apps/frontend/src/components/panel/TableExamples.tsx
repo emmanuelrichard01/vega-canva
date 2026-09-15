@@ -4,6 +4,7 @@ import { PanelPopover } from './PanelPopover';
 import {
   TABLE_EXAMPLES,
   TABLE_EXAMPLE_CATEGORIES,
+  usesFormulas,
   type TableExample,
   type TableExampleCategory,
 } from '../../engine/table/tableExamples';
@@ -27,7 +28,13 @@ import { TableThumb } from '../table/TableThumb';
 
 const COLUMNS = 3;
 
-type Filter = 'all' | TableExampleCategory;
+type Filter = 'all' | 'formulas' | TableExampleCategory;
+
+/** Computed once: which examples calculate, and the formulas a search can match. */
+const COMPUTES = new Set(TABLE_EXAMPLES.filter((e) => usesFormulas(e.spec)).map((e) => e.id));
+const FORMULA_TEXT = new Map(
+  TABLE_EXAMPLES.map((e) => [e.id, e.spec.cells.flatMap((row) => row.filter((v) => v[0] === '=')).join(' ').toLowerCase()])
+);
 
 const copy = (spec: TableSpec): TableSpec => JSON.parse(JSON.stringify(spec)) as TableSpec;
 
@@ -68,25 +75,30 @@ const TableExampleBrowser: React.FC<{ onPick: (spec: TableSpec) => void; onClose
       !trimmed ||
       e.name.toLowerCase().includes(trimmed) ||
       e.note.toLowerCase().includes(trimmed) ||
-      (e.spec.cells[0] ?? []).some((h) => h.toLowerCase().includes(trimmed)),
+      (e.spec.cells[0] ?? []).some((h) => h.toLowerCase().includes(trimmed)) ||
+      // A function name finds the tables that use it: "sumif", "average".
+      (FORMULA_TEXT.get(e.id) ?? '').includes(trimmed),
     [trimmed]
   );
 
   const effective: Filter = trimmed ? 'all' : filter;
+  const inFilter = (e: TableExample, f: Filter) => f === 'all' || (f === 'formulas' ? COMPUTES.has(e.id) : e.category === f);
 
   const rail = React.useMemo(() => {
-    const count = (f: Filter) => TABLE_EXAMPLES.filter((e) => (f === 'all' || e.category === f) && matches(e)).length;
+    const count = (f: Filter) => TABLE_EXAMPLES.filter((e) => inFilter(e, f) && matches(e)).length;
     return [
       { id: 'all' as Filter, label: 'All examples', count: count('all') },
+      { id: 'formulas' as Filter, label: 'Uses formulas', count: count('formulas') },
       ...TABLE_EXAMPLE_CATEGORIES.map((c) => ({ id: c.id as Filter, label: c.label, count: count(c.id) })),
     ];
   }, [matches]);
 
   const shown = React.useMemo(
     () =>
-      TABLE_EXAMPLE_CATEGORIES.filter((c) => effective === 'all' || c.id === effective)
-        .map((c) => ({ ...c, examples: TABLE_EXAMPLES.filter((e) => e.category === c.id && matches(e)) }))
-        .filter((g) => g.examples.length > 0),
+      TABLE_EXAMPLE_CATEGORIES.map((c) => ({
+        ...c,
+        examples: TABLE_EXAMPLES.filter((e) => e.category === c.id && inFilter(e, effective) && matches(e)),
+      })).filter((g) => g.examples.length > 0),
     [effective, matches]
   );
 
@@ -163,7 +175,7 @@ const TableExampleBrowser: React.FC<{ onPick: (spec: TableSpec) => void; onClose
         <nav className="exb__rail" aria-label="Table example categories">
           {rail.map((r, i) => (
             <React.Fragment key={r.id}>
-              {i === 1 && <span className="exb__railRule" aria-hidden="true" />}
+              {i === 2 && <span className="exb__railRule" aria-hidden="true" />}
               <button
                 type="button"
                 className="exb__railItem"
@@ -211,6 +223,11 @@ const TableExampleBrowser: React.FC<{ onPick: (spec: TableSpec) => void; onClose
                         >
                           <span className="exb__thumb">
                             <TableThumb example={example} />
+                            {COMPUTES.has(example.id) && (
+                              <span className="exb__badge" aria-label="Uses formulas">
+                                fx
+                              </span>
+                            )}
                           </span>
                           <span className="exb__name">{example.name}</span>
                         </button>
@@ -231,6 +248,7 @@ const TableExampleBrowser: React.FC<{ onPick: (spec: TableSpec) => void; onClose
               <span className="exb__footName">{described.name}</span>
               <span className="exb__footNote">
                 {described.note} · {described.spec.cells.length} rows × {described.spec.columns.length} columns
+                {COMPUTES.has(described.id) ? ' · calculates' : ''}
               </span>
             </>
           ) : (

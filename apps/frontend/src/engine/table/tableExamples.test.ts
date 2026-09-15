@@ -4,6 +4,7 @@ import { normalizeTableSpec } from './tableTypes';
 import { layoutTable } from './tableLayout';
 import { tableToSvg } from './tableSvg';
 import { TABLE_TEMPLATES } from '../templates/tableTemplates';
+import { evaluateCell, isErr } from './tableFormula';
 
 /**
  * The gallery's promises.
@@ -37,6 +38,20 @@ describe('table examples', () => {
     expect(n.cells).toEqual(e.spec.cells);
     expect(n.sort).toEqual(e.spec.sort);
     expect(n.theme).toBe(e.spec.theme);
+  });
+
+  it.each(TABLE_EXAMPLES.map((e) => [e.id, e] as const))('%s keeps its colour rules through normalisation', (_, e) => {
+    expect(normalizeTableSpec(e.spec).rules ?? []).toEqual(e.spec.rules ?? []);
+  });
+
+  it.each(TABLE_EXAMPLES.map((e) => [e.id, e] as const))('%s computes without a single error', (_, e) => {
+    // An example that ships `#REF!` is a broken promise in the gallery.
+    const spec = normalizeTableSpec(e.spec);
+    spec.cells.forEach((row, r) =>
+      row.forEach((raw, c) => {
+        if (raw[0] === '=') expect(isErr(evaluateCell(spec, r, c)), `${e.id} ${r}:${c} ${raw}`).toBe(false);
+      })
+    );
   });
 
   it.each(TABLE_EXAMPLES.map((e) => [e.id, e] as const))('%s lays out and paints, clean and sketched', (_, e) => {
