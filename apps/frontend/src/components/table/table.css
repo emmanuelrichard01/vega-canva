@@ -9,7 +9,11 @@
 
 .tbled {
   position: fixed;
-  z-index: 8000;
+  /* A board layer, not app chrome: the side panels, the dock and the radar
+     all sit above it, exactly as they sit above the canvas it overlays. It was
+     8000 — above the tour — and painted a table's cells over the Properties
+     panel wherever the table ran beneath it. */
+  z-index: var(--z-canvas-overlay);
   transform-origin: 0 0;
   font-family: Inter, system-ui, -apple-system, sans-serif;
   user-select: none;
@@ -384,7 +388,7 @@
    is one line and cuts with an ellipsis, so nothing in here ever wraps. */
 .tbled-fxbar {
   position: fixed;
-  z-index: 8003;
+  z-index: calc(var(--z-canvas-overlay) + 2);
   display: flex;
   flex-direction: column;
   gap: 2px;
@@ -620,7 +624,7 @@
 
 .tbled-ctx {
   position: fixed;
-  z-index: 8002;
+  z-index: var(--z-context-menu);
   display: flex;
   flex-direction: column;
   min-width: 224px;
@@ -700,7 +704,9 @@
 
 .tbled-bar {
   position: fixed;
-  z-index: 8001;
+  /* The table's own toolbar belongs to the board too; TableEditor keeps it
+     inside the free area between the side panels so it is never covered. */
+  z-index: calc(var(--z-canvas-overlay) + 1);
   display: flex;
   align-items: center;
   gap: 4px;

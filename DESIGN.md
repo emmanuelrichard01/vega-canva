@@ -436,6 +436,11 @@ get their own rules.
   camera scales — column letters, row numbers, resize handles — is sized in
   screen pixels, and toolbars are placed against the far side of it, not
   against the content's edge.
+- **What overlays the board stays under the app.** An editor laid over an
+  object is part of the board, so it takes `--z-canvas-overlay` and the
+  panels, dock and radar cover it as they cover the canvas. Its own chrome
+  keeps inside the free area between the panels rather than climbing over
+  them; only menus and dialogs rise above.
 - **One editing surface at a time.** While a table's cells are open, the
   object's own contextual rail stands down; two toolbars for one object is two
   answers to "where do I click".

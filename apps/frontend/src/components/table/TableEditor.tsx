@@ -239,7 +239,17 @@ const Editor: React.FC<{ node: TableNode; onClose: () => void }> = ({ node, onCl
   // clears the add-a-row strip instead.
   const above = top - GUTTER_REACH - CLEARANCE - BAR_H;
   const barTop = above < 8 ? top + node.height * zoom + BELOW_REACH + CLEARANCE : above;
-  const barLeft = Math.max(8, left - ROW_GUTTER_REACH);
+  // The board's free area, between the side panels. The editor is a board
+  // layer, so the panels sit above it and would cover anything placed under
+  // them; the toolbar and the formula help keep inside this span instead.
+  const sidePanels = Array.from(document.querySelectorAll<HTMLElement>('.hierarchy-panel, .context-inspector'))
+    .map((el) => el.getBoundingClientRect())
+    .filter((r) => r.width > 0 && r.height > 0);
+  const freeLeft = Math.max(8, ...sidePanels.filter((r) => r.left < window.innerWidth / 2).map((r) => r.right + 8));
+  const freeRight = Math.min(window.innerWidth - 8, ...sidePanels.filter((r) => r.left >= window.innerWidth / 2).map((r) => r.left - 8));
+  const barRef = React.useRef<HTMLDivElement>(null);
+  const barWidth = barRef.current?.offsetWidth ?? 720;
+  const barLeft = Math.max(freeLeft, Math.min(left - ROW_GUTTER_REACH, freeRight - barWidth));
 
   // Only the rows near the viewport, in whole chunks.
   const firstRow = Math.max(0, (Math.floor(-top / zoom / rowH / CHUNK) - 1) * CHUNK);
@@ -756,7 +766,6 @@ const Editor: React.FC<{ node: TableNode; onClose: () => void }> = ({ node, onCl
 
   // ---- leaving --------------------------------------------------------------
 
-  const barRef = React.useRef<HTMLDivElement>(null);
   React.useEffect(() => {
     const onDown = (e: PointerEvent) => {
       const t = e.target as Element | null;
@@ -864,20 +873,20 @@ const Editor: React.FC<{ node: TableNode; onClose: () => void }> = ({ node, onCl
   const fxPlace = (() => {
     if (!editBox) return null;
     const a = { left: left + editBox.left * zoom, top: top + editBox.top * zoom, width: editWidth * zoom, height: editBox.height * zoom };
-    const vw = window.innerWidth;
     const vh = window.innerHeight;
     const gap = 8;
     const m = 8;
     const { w, h } = fxSize;
-    const bar = { left: barLeft, top: barTop, right: barLeft + (barRef.current?.offsetWidth ?? 720), bottom: barTop + BAR_H };
-    const clearOfBar = (x: number, y: number) => x + w <= bar.left || x >= bar.right || y + h <= bar.top || y >= bar.bottom;
-    const cx = (x: number) => Math.max(m, Math.min(vw - w - m, x));
+    // What the help must not land on: the toolbar, and the side panels.
+    const blocks = [{ left: barLeft, top: barTop, right: barLeft + barWidth, bottom: barTop + BAR_H }, ...sidePanels];
+    const clear = (x: number, y: number) => blocks.every((b) => x + w <= b.left || x >= b.right || y + h <= b.top || y >= b.bottom);
+    const cx = (x: number) => Math.max(freeLeft, Math.min(freeRight - w, x));
     const cy = (y: number) => Math.max(m, Math.min(vh - h - m, y));
     const spots = {
       below: { left: cx(a.left), top: a.top + a.height + gap, side: 'below', fits: a.top + a.height + gap + h <= vh - m },
       above: { left: cx(a.left), top: a.top - gap - h, side: 'above', fits: a.top - gap - h >= m },
-      right: { left: a.left + a.width + gap, top: cy(a.top), side: 'right', fits: a.left + a.width + gap + w <= vw - m },
-      left: { left: a.left - gap - w, top: cy(a.top), side: 'left', fits: a.left - gap - w >= m },
+      right: { left: a.left + a.width + gap, top: cy(a.top), side: 'right', fits: a.left + a.width + gap + w <= freeRight },
+      left: { left: a.left - gap - w, top: cy(a.top), side: 'left', fits: a.left - gap - w >= freeLeft },
     };
     const readsBelow = refBoxes.some((b) => b.box.top >= editBox.top + editBox.height - 0.5);
     const readsRight = refBoxes.some((b) => b.box.left >= editBox.left + editWidth - 0.5);
@@ -887,7 +896,7 @@ const Editor: React.FC<{ node: TableNode; onClose: () => void }> = ({ node, onCl
         ? ['below', 'above', 'left', 'right']
         : ['below', 'above', 'right', 'left'];
     const candidates = order.map((k) => spots[k]);
-    return candidates.find((s) => s.fits && clearOfBar(s.left, s.top)) ?? candidates.find((s) => s.fits) ?? spots.below;
+    return candidates.find((s) => s.fits && clear(s.left, s.top)) ?? candidates.find((s) => s.fits) ?? spots.below;
   })();
 
   return createPortal(

@@ -5597,6 +5597,13 @@ tool's cursor, and "smoother, faster".
   suggestions as chips or the signature. The cell input stays one line and
   grows sideways — it had wrapped inside the row height and clipped. An
   incomplete formula reads as "…", not a red error.
+- **The editor is a board layer.** Its grid, toolbar and formula help sat at
+  z-index 8000–8003 — above the tour — so a table running under the
+  Properties panel painted its cells over it. They are on
+  `--z-canvas-overlay` now, under every panel, as the canvas they overlay
+  is; the toolbar and the formula help read the side panels' rects and keep
+  inside the free span between them. Only the right-click menu stays high,
+  on `--z-context-menu`.
 
 Verified by `npm run build` and Node checks (formulas, fitting, moves); the
 Vitest files `tableFit.test.ts` and `tableFormula.test.ts` hold the same
