@@ -59,6 +59,9 @@ a grading line item.
 11. As a user, I can export the canvas to PNG, SVG, or JSON.
 12. As a user, I can replay a room's session from the beginning
     ("Time Travel").
+13. As a user, I can put data on the board as a chart or a table, edit it in
+    a spreadsheet, bring it in and take it out as CSV, and start from a
+    finished example.
 
 ## Non-functional requirements
 

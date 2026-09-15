@@ -83,7 +83,7 @@ it.
 
 ## 3b. Charts, graphs and plots
 
-Twenty-four kinds over one layout and two painters. `chartLayout.ts` turns a
+Thirty kinds over one layout and two painters. `chartLayout.ts` turns a
 `ChartSpec` and a box into primitives; the Konva renderer and the SVG exporter
 both consume them and do no arithmetic of their own. That rule is this
 section's whole architecture, and every entry below that reads as a bug was a
@@ -92,6 +92,7 @@ place it had been broken.
 | Item | Status | Notes |
 | --- | --- | --- |
 | Data charts | **Shipped** | Bar, horizontal bar, stacked and 100% stacked, line, step, area, stacked area, scatter, bubble, histogram, pie, donut, funnel, waterfall, radar. Each opens with data whose *shape* is the reason the kind exists — a funnel arrives as a funnel of realistic stages — because a default is the first explanation of what the tool does. `normalizeSpec` rectangularises the series before layout, so no mark builder carries a bounds check and a short series cannot shift every later value under the wrong category. |
+| Spread, hierarchy and relationships | **Shipped** | Box plot, density, treemap, network, timeline and a category heatmap (`matrix`), in `chartLayoutKinds.ts`. Box plot, histogram and density are *sample kinds* — they read raw samples, so they skip `normalizeSpec`, which exists to rectangularise one-value-per-category series. The treemap is squarified; the network is Fruchterman–Reingold from a **seeded** start with curved edges, so every member of a room sees the same graph rather than their own shuffle. The two-variable `heatmap` is labelled **Surface map** since the category heatmap arrived: two entries called "heatmap" in one picker is one of them lying. |
 | Maths plots | **Shipped** | Function, parametric, polar, implicit, contour, slope field, vector field, heatmap. Expressions are parsed by `expression.ts`, which deliberately avoids `eval`/`new Function`: **a chart spec lives in the CRDT and replicates to every member of a room**, so a formula field backed by `eval` would be a remote code execution channel. Adaptive sampling with discontinuity detection breaks a curve at its asymptotes instead of drawing through them; two-variable kinds use marching squares with centre evaluation for the ambiguous saddle. |
 | Heatmap surface | **Shipped** | Filled cells emitted as `ChartBar`s so both painters draw them with the rectangle code they already have, overlapping by half a pixel because adjacent rects at fractional coordinates leave a hairline that reads as a grid drawn over the surface. Perceptually uniform ramps only — a rainbow invents banding and reverses lightness in the middle — and reversible, for the surfaces where more is worse. A **colour bar** sits inside the plot's right edge: a heatmap without one shows structure and no way to read a value off it. |
 | The hover reading | **Shipped** | `ChartLayout.columns` is the model: one entry per category with every series' reading at it, built from the source values in the same pass that places the marks. It replaced hit-testing whatever a kind *drew* — bars, or dots — under which **an area chart answered nothing at all**, since it emits neither. A crosshair casts the pointer onto the plot: vertical on a cartesian chart, whose reading is a column, and both axes on a two-variable plot, whose reading is a point. The focused run thickens and the rest recede. |
@@ -107,8 +108,26 @@ place it had been broken.
 | Expression reference | **Shipped** | Every function the parser knows, each **drawn** as a sparkline sampled through that same parser — so `tanh` shows the saturating S rather than asserting one, and `sinc`, `gauss`, `floor` and `mod`, which are all chosen *because* of their shape, show the thing they are chosen for. The domain is per function, since one window flatters none of them; a constant draws nothing and sets its glyph instead, because a flat line across a box would imply π varies and happens to be level. The whole row inserts, and inserting is not the signature: `atan2(y, x)` documents two arguments while `atan2(x, 1)` is what a single-variable plot can actually parse. |
 | CSV | **Shipped** | Import by paste or file, export by copy or download, through one parser shared with the remote reader — so a pasted CSV and a fetched one cannot be read differently. Records-shaped JSON gathers columns across every row and prefers a name-ish label column; both were wrong before, so a sparse first record dropped a column for the whole table and a payload carrying an `id` produced a chart labelled with UUIDs. Offered only where there is a table to be CSV *of* — the same predicate as the data sheet, since it is the same question; a plot has no rows, so the download was serving the samples the renderer happened to take. |
 | Theme | **Shipped** | Every colour a chart draws resolves through `chartInk` per theme, including the maths HUD's per-feature accents and the computed overlays — trendline, density curve, streamlines — which had been five literals typed into *both* painters separately. A test reads the SVG painter as text and fails on any colour literal at all, because the defect is the source carrying a colour rather than any particular one being wrong. |
-| Sketch mode | **Shipped** | Charts honour the board's hand-drawn level like every other object, through the same `rough*` helpers. |
-| **Not built** | **Absent** | Trellis and small multiples, dual axes, a log scale on the category axis, error bars, box plots, candlesticks, and animation between kinds. |
+| Sketch mode | **Shipped** | Charts honour the board's hand-drawn level like every other object, through the same `rough*` helpers — and keep their data. Marks are hachured (not heat cells, where a hatch would be a pattern rather than a value), rules go rough, and labels take a hand font (`SKETCH_FONT`, Caveat at ×1.3). Every label, tick and axis survives; a label inside a hatched mark takes board ink, since the mark is now mostly paper. Both painters share `chartSketch.ts`. |
+| Data sheet interaction | **Shipped** | The sheet runs on `useSheet`, the model the table editor shares: ranges, fill, a formula bar, selection statistics, row insert/delete/sort, transpose that keeps blanks, CSV import and replace-from-clipboard, and a live preview painted by `chartToSvg`. Clipboard goes through a hidden textarea — the only way to native copy and paste without a `contenteditable` grid. |
+| **Not built** | **Absent** | Trellis and small multiples, dual axes, a log scale on the category axis, error bars, candlesticks, animation between kinds, and making a chart *from* a table object. |
+
+## 3c. Tables
+
+A node type of its own (`TableNode`), on the chart's rule: `tableLayout.ts`
+produces the geometry, and `TableRenderer` and `tableSvg.ts` paint it.
+
+| Item | Status | Notes |
+| --- | --- | --- |
+| Table object | **Shipped** | Drag to size — rows follow the drag at a readable height — or click for four by four. One Konva `Shape` per table, culled to the viewport, so a 2,000-row table costs its visible rows. |
+| Cell editing | **Shipped** | A DOM grid over the drawn table, scaled by the camera so each cell sits on its drawn cell; the column letters and row numbers hold one screen size at every zoom. Type, Tab/Enter navigation, ranges, block paste from any spreadsheet, and a toolbar for bold, italic, alignment, fill, merge, rows and columns, sort and filter. The object's contextual rail stands down while it is open. |
+| Types and formatting | **Shipped** | Text, number, currency, percent, date, inferred on request and applied as a view: the text typed is never rewritten. |
+| Sort and filter | **Shipped** | Views over the stored rows, with **Make it the order** to commit one. Merges apply only in the identity view, because a merge across sorted rows spans rows that are no longer neighbours. |
+| Themes | **Shipped** | Clean, striped, grid, minimal, bold, with one accent colour. |
+| CSV | **Shipped** | Import, export and copy from the panel and the right-click menu; **Import CSV as table…** on bare board. Uses the chart's delimited parser. |
+| Sketch mode | **Shipped** | Rough rules and the hand font; every cell kept. |
+| Examples and templates | **Shipped** | Nineteen finished tables in six categories (`tableExamples.ts`), in the panel's gallery and the dock's Table flyout, each drawn as itself by `tableToSvg`. Three board templates are built from the same specs. |
+| **Not built** | **Absent** | Formulas in cells, per-row heights, wrapped text (long text is cut with an ellipsis), conditional formatting, and per-cell presence for two editors. |
 
 ## 4. Vector and path manipulation
 

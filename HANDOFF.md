@@ -11,7 +11,15 @@ time, where the work stopped, and what is next.
 
 > ## Read this first
 >
-> **The last session rebuilt the shape set from the geometry up — see
+> **The last session added tables, six chart kinds and table examples,
+> rebuilt the data sheet, and turned focus from amber to ink — see
+> §5a-0-bf.** None of it was seen in a browser, and **no Vitest suite could
+> start** (`spawn UNKNOWN`, in the sandbox and out of it), so its contracts
+> are held by `npm run build` and by Node scripts that import the engine
+> directly. Run both suites before building on it: they are the first real
+> test of about a third of that work.
+>
+> **The session before rebuilt the shape set from the geometry up — see
 > §5a-0-be.** Two lessons worth carrying out of it. The first is the oldest one
 > here in a new costume: **most of the shapes were described twice**, once with
 > curves and once as a straight-sided fallback, and the dispatcher called the
@@ -124,7 +132,7 @@ it disagrees with them, they are right and this is stale.
 
 | | |
 | --- | --- |
-| Branch | `main`, level with `origin/main`. `grid-slots-and-notices`, `rebuild/time-travel-and-physics` and `session-2` are history, not workspaces |
+| Branch | `charts-tables-sheet` (§5a-0-bf), branched from `main` at `56729d1` and not yet merged. `grid-slots-and-notices`, `rebuild/time-travel-and-physics` and `session-2` are history, not workspaces |
 | Deployed | **live**: Vercel (`vscanva.vercel.app`) → Render (`vega-canva.onrender.com`) → Neon → Cloudflare R2 → Sentry |
 | Typecheck | clean via `npm run build` |
 | Tests | **2945** across 165 files (frontend, 1 skipped — see `BENCH` below); **92** across 10 files (server) |
@@ -5396,6 +5404,133 @@ contextual rail's swapper, the context menu's, sketch and shading on a compound
 shape, and the SVG export of any of it. All are covered by tests; none has been
 seen.
 
+## 5a-0-bf. Tables, six chart kinds, one spreadsheet, and focus in ink
+
+Branch `charts-tables-sheet`. Four sessions of work in one push, done on the
+standing instruction to build fast: the chart panel and its two popovers
+redesigned, then "advanced charts and graphs", then a table object, then a
+pass of fixes the owner reported against it.
+
+### What exists now
+
+- **Thirty chart kinds.** Six new, in `chartLayoutKinds.ts`: box plot,
+  density, treemap (squarified), network (Fruchterman–Reingold from a seeded
+  start, so everybody in a room sees the same graph), timeline, and a
+  category **heatmap** (`matrix`) with its own colour bar. The old `heatmap`
+  — a surface over two variables — is labelled **Surface map** now, because
+  two things called "heatmap" in one picker is one of them lying. Box plot,
+  histogram and density are *sample kinds*: they read raw samples, so they
+  skip `normalizeSpec` (`isSampleKind`), whose job is rectangularising
+  category series they do not have.
+- **Sketch mode keeps the data.** Hachured marks (not heat cells — a hatched
+  heat cell is a pattern, not a value), rough rules, and the hand font
+  (`SKETCH_FONT`, Caveat at ×1.3 because it runs small). Labels, axes and
+  ticks are kept; a label *inside* a hatched mark takes board ink, since the
+  mark's fill is now mostly paper.
+- **The chart panel, rewritten** (`ChartSection.tsx`, `chartPanelParts.tsx`,
+  `chartSpecimens.tsx`, `chartPanel.css`): a kind header with a portalled
+  catalogue, drawing style, a data grid with block paste, the formula editor
+  with caret-aware insert, and one group per concern. `chartPanelCoverage`
+  holds the group order. The example browser is a rail and a grid; the
+  expression reference has a detail footer.
+- **The chart rail** gained palettes, a sketch toggle, CSV import and a
+  display popover that reads *resolved* values (the §5a-0-bc lesson).
+- **One spreadsheet** — `components/sheet/useSheet.ts` — shared by the chart
+  data sheet and the table editor: selection, ranges, fill, clipboard through
+  a hidden textarea sink (the only way to get native copy/paste without a
+  contenteditable grid), and keyboard. `ChartDataModal` on top of it has a
+  formula bar, selection statistics, row insert/delete/sort, transpose that
+  keeps blanks, and a live preview drawn by `chartToSvg`.
+- **Tables**, a new node type (`TableNode { table: TableSpec }`):
+  - `tableTypes.ts` — the spec and its normaliser. `cells: string[][]` is the
+    table *as typed*; types, alignment, formatting, sort and filter are views
+    applied at layout time and never written back, the same rule as a
+    chart's sort.
+  - `tableModel.ts` — every edit as a pure function over a spec (insert and
+    delete shift styles and merges; merges only apply in the identity view,
+    because a merge across sorted rows spans rows that are no longer
+    neighbours). CSV in and out through the chart's `parseDelimited`.
+  - `tableLayout.ts` → `TableRenderer` (one Konva `Shape`, viewport-culled)
+    and `tableSvg.ts` (export and thumbnails), the chart's one-layout rule.
+  - `TableEditor` — a DOM grid over the drawn table, scaled by the camera,
+    with a toolbar (bold, italic, alignment, fill, merge, rows and columns,
+    sort, filter). While it is open, the object's contextual rail stands down
+    (`tableEditNodeId`) and comes back on Done — two toolbars for one object
+    is two answers to "where do I click".
+  - `TableSection` in the panel; a Table section in the context menu (edit,
+    import, export, copy as CSV) and **Import CSV as table…** on bare board.
+- **Table examples** — `tableExamples.ts`, nineteen finished tables in six
+  categories (tracker, backlog, OKRs, risk register, budget, invoice,
+  pipeline, pricing tiers, vendor scorecard, competitive matrix, RACI,
+  directory, leaderboard, timetable, content calendar, agenda, lab notebook,
+  element data, unit conversions), each with typed columns, status tints,
+  merges and totals rows. Reached from the panel (**Examples** in the table
+  databar, a searchable gallery that also searches column headings) and from
+  the dock, where the Table seat now has a flyout: **Blank table** first,
+  then every example as its own thumbnail. Picking one arms the tool
+  (`TableTool.preset`, the `ChartTool.kind` pattern); a drag sets the width
+  and the rows keep a readable height.
+- **Templates.** Four science boards (`scienceTemplates.ts`, each drawn
+  twice — presentation and whiteboard sketch) and three table boards
+  (`tableTemplates.ts`: a project operating review, a pricing review, a
+  science teaching week), built from the gallery's own specs so the two
+  cannot describe one tracker two ways.
+- **Focus is ink, not amber.** The owner asked for the amber ring to go
+  everywhere. `--focus-ring-color` is `--text-secondary`; text fields take a
+  1.5px `--focus-field-color` (`--text-tertiary`). Sheet and grid selection
+  is ink too. `DESIGN.md` no longer calls focus "the most repeated branded
+  moment" — that is overruled, not revised.
+- **Native `<select>` menus follow the theme** — `color-scheme` on `:root`
+  and `.dark-theme`, plus option colours — which is what fixed the dark-on-dark
+  dropdowns in the properties panel.
+
+### The one lesson
+
+**The fourth instance of invariant 9, in a new costume.** The table editor's
+toolbar was placed 58px above the *table's* edge, while the column letters
+above that edge were scaled by the camera. At 100% they sat 6px under the
+bar; zoomed in, they vanished behind it. The gutters are chrome, so they now
+hold one screen size at every zoom (`--inv` in `table.css`) and the bar is
+measured to the far side of *them* (`GUTTER_REACH` in `TableEditor`). The
+tell was the same as last time: a report about clearance that a bigger
+number would only have fixed at one zoom.
+
+### What was verified, and how
+
+- `npm run build`: clean.
+- Vitest: **could not start** — `spawn UNKNOWN` from esbuild's service, in
+  and out of the sandbox. `chartCapabilities.test.ts` and
+  `chartPanelCoverage.test.ts` were updated for the new kinds and groups but
+  have not been *run*. The palette test exempts `matrix`, whose colour is a
+  ramp.
+- Node scripts importing the engine through a type-stripping loader: all
+  thirty kinds lay out inside their box with no `NaN`, both empty and full;
+  capabilities match what each layout draws; the table model's edits (insert,
+  delete, merge, sort, filter, CSV round trip) hold; every science and table
+  template's charts draw and tables lay out; all nineteen examples normalise
+  **losslessly** (no merge, style, column or sort dropped) and paint clean
+  and sketched. These scripts are not in the repo — `tableExamples.test.ts`
+  is the one that was carried over.
+- **Nothing was seen.** The Chrome extension never connected.
+
+### Look at these first, by eye
+
+1. The table editor at 50%, 100% and 300%: the gutters, the toolbar's
+   clearance, and the toolbar flipping below the table near the top edge.
+2. The dock's Table flyout: thumbnails cropped to their top-left at 60×36.
+3. The network and treemap kinds with their default data, clean and
+   sketched, and the timeline's "Today" rule.
+4. The minimal table theme on a dark board — its contrast was fixed once by
+   report already.
+5. `ChartDataModal`'s preview beside a wide sheet.
+
+### Not built
+
+Formulas in table cells, per-row heights, wrapped cell text (long text is cut
+with an ellipsis), conditional formatting rules, and per-cell presence for
+two people editing one table. A chart cannot yet be made *from* a table
+object — the obvious next join, since both sides already speak CSV.
+
 ## 5. Next up
 
 ### 5a-0. The four things to do first
@@ -5896,3 +6031,22 @@ Physics, templates and the product shell (newest):
 | `components/HelpModal.tsx` | the shortcut reference. Its tool rows are derived; the rest is hand-written and has drifted before — see §4a-ii. |
 | `Home.tsx` | the rooms page: rail, stage, boards and templates as separate views |
 | `DESIGN.md` | the token layers and the named rules. Read before touching `index.css`. |
+
+Charts, tables and the sheet (newest — see §5a-0-bf):
+
+| File | What it owns |
+| --- | --- |
+| `engine/chart/chartTypes.ts` | the spec, the kinds, `resolveChartOptions`, `chartCapabilities`, `defaultChartSpec`. Every control asks this file. |
+| `engine/chart/chartLayout.ts` | spec + box → primitives. The painters do no arithmetic. |
+| `engine/chart/chartLayoutKinds.ts` | box plot, density, treemap, network, timeline, heatmap matrix |
+| `engine/chart/chartSketch.ts` | hachure and the hand font, shared by both painters |
+| `engine/chart/chartExamples.ts` | the chart gallery |
+| `engine/table/tableTypes.ts` | `TableSpec` and `normalizeTableSpec`. Pure. |
+| `engine/table/tableModel.ts` | every table edit, the view (sort/filter), CSV. Pure. |
+| `engine/table/tableLayout.ts` · `tableSvg.ts` | one layout, painted by `TableRenderer` and by export |
+| `engine/table/tableApply.ts` | the document side: create, update (height follows rows), CSV files |
+| `engine/table/tableExamples.ts` | the nineteen table examples |
+| `engine/templates/scienceTemplates.ts` · `tableTemplates.ts` | the science and table boards |
+| `components/sheet/useSheet.ts` | the spreadsheet interaction model both grids share |
+| `components/table/TableEditor.tsx` | cells on the board, the editing toolbar |
+| `components/panel/ChartSection.tsx` · `TableSection.tsx` | the two data objects' panels |

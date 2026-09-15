@@ -186,6 +186,19 @@ object can want both.
 | `comment` | `text`, `author`, `resolved: boolean` |
 | `frame` | `appearance`, `safeArea?`, `layout?` |
 | `connector` | `from: ConnectorEnd`, `to: ConnectorEnd`, `routing: Routing`, `appearance?`, `endStart?`, `endEnd?`, `label?` |
+| `chart` | `chart: ChartSpec` — `kind` (thirty, see `engine/chart/chartTypes.ts`), `categories`, `series`, `functions?`, axes, labels, palette, reference line — `appearance?` (only `sketch` is read) |
+| `table` | `table: TableSpec` — `cells: string[][]`, `columns: { width, type, align? }[]`, `header`, `firstColumn?`, `theme`, `accent?`, `fontSize`, `styles?`, `merges?`, `sort?`, `filter?`, `currency?` — `appearance?` (only `sketch` is read) |
+
+`TableSpec.cells` is the table **as typed**: rows of raw strings, row 0 the
+header when `header` is on. Column `type`, alignment, number formatting, `sort`
+and `filter` are *views* applied at layout time and never written back, so
+turning one off returns exactly what was entered. It is positional rather than
+keyed by column id because a table's relationship with the outside world is
+CSV, and CSV is positional. Column `width`s are **weights** that share the
+node's width; rows share its height evenly, which keeps `width`/`height` the
+only bounds. `styles` is keyed `"row:col"` against `cells`, and `merges` are
+`{ r, c, rs, cs }` blocks anchored at their top-left cell — `normalizeTableSpec`
+drops any that overlap or run off the grid rather than drawing a cell twice.
 
 `ShapeKind` is `rect | ellipse | polygon | star | line | arrow`. `polygon`
 replaced the separate `triangle` and `hexagon` kinds, which were two hard-coded

@@ -88,7 +88,12 @@ scrubbable waveform; comment threads with replies, mentions, resolve, per-person
 unread state and an inbox; presence (cursors with tool badges, selection name
 tags, off-screen edge markers, radar/minimap with viewport rectangles); physics
 with per-object materials; Time Travel over a session timeline; PNG, SVG and JSON
-export; offline editing via IndexedDB.
+export; offline editing via IndexedDB. Data objects: charts in thirty kinds —
+business charts, statistical spreads, hierarchies, networks and timelines, and
+mathematical plots from typed expressions — and tables with typed columns,
+merges, sorting, filtering and CSV in and out, both edited through one shared
+spreadsheet and both drawable in the hand-drawn sketch style without losing a
+value. Finished examples and board templates exist for both.
 
 Durable constraints future work must preserve:
 

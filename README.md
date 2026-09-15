@@ -111,6 +111,8 @@ AudioNode     src, durationMs, waveform, author, transcript?
 FrameNode     appearance, safeArea?, layout?
 ConnectorNode from, to, routing, appearance?, endStart?, endEnd?, endScale?, label?
 CommentNode   text, author, resolved
+ChartNode     chart (ChartSpec), appearance?
+TableNode     table (TableSpec), appearance?
 ```
 
 `parentId` and `frameId` answer different questions and are deliberately not
@@ -1086,6 +1088,58 @@ reports an anchor only for a drag *Konva* started, so during our own rotation
 it answers `''` and the readout showed width and height — the two numbers a
 rotation does not change. The gesture publishes a sticky anchor instead.
 
+### Charts — `engine/chart/`
+
+Thirty kinds in seven families, over **one layout and two painters**.
+`layoutChart` turns a `ChartSpec` and a box into primitives — bars, runs,
+areas, dots, slices, labels — and `ChartRenderer` (Konva) and `chartSvg`
+(export, thumbnails, the data sheet's preview) paint them without doing any
+arithmetic of their own. Every defect this engine has had was a place that
+rule was broken.
+
+- **Data charts**: bar, stacked, line, step, area, scatter, bubble, pie,
+  donut, funnel, waterfall, radar and more — plus box plot, histogram and
+  density, which read raw *samples* rather than one value per category.
+- **Hierarchy and relationships**: treemap (squarified), network (a seeded
+  force layout, so everyone in a room sees the same graph), timeline, and a
+  category heatmap with its own colour bar.
+- **Maths**: function, parametric, polar, implicit, contour, slope and vector
+  fields, and a surface map. Expressions are parsed, never `eval`ed — a chart
+  spec replicates to every member of a room.
+
+`chartCapabilities` decides which panel controls each kind shows, and tests
+hold it against what the layout actually draws, so a control cannot offer a
+setting the chart ignores. **Sketch mode** keeps the data: hachured marks,
+rough rules and a hand font, with every label and axis still there.
+
+### Tables — `engine/table/`
+
+A real grid, not a pile of text boxes. `cells: string[][]` is the table **as
+typed**; column types (text, number, currency, percent, date), alignment,
+formatting, sorting and filtering are *views* applied at layout time and never
+written back — so turning a sort off gives back exactly what was entered, and
+a CSV round-trips byte for byte. Merges, per-cell bold/italic/colour/fill, five
+themes with one accent colour, and sketch mode.
+
+Double-click a table (or press **Edit cells**) and a spreadsheet opens over it
+on the board: type, Tab and Enter through cells, drag ranges, paste blocks from
+any spreadsheet, merge, insert and delete rows and columns, sort and filter.
+CSV comes in and goes out through the properties panel, the right-click menu,
+and **Import CSV as table…** on the empty board.
+
+**Nineteen finished examples** — tracker, budget, invoice, pricing tiers,
+RACI, risk register, timetable, lab notebook and more — are one click away in
+the panel's gallery and in the dock's Table flyout, and three board templates
+are built around them.
+
+### The spreadsheet — `components/sheet/useSheet.ts`
+
+One interaction model for both grids — the chart's data sheet and the table
+editor — so selection, ranges, fill, clipboard and keys behave the same in
+both. Copy and paste go through a hidden textarea, which is the only way to
+get the browser's native clipboard without making the whole grid
+`contenteditable`.
+
 ### The Properties panel — `components/panel/`
 
 Two rules carry most of it.
@@ -1312,6 +1366,11 @@ Two token layers, and only two: **primitives** (raw values, no meaning) and
 only. Includes a type scale, space scale, radius scale, elevation ramp, one global
 `:focus-visible` ring, and `prefers-reduced-motion` handling.
 
+Focus is drawn in **ink, never the accent**: `--focus-ring-color` (graphite) for
+the keyboard ring and a quieter 1.5px `--focus-field-color` for text fields.
+The accent is kept for states that are *on* — a pressed chip, the current tile —
+so a focused search box never reads as a selected one.
+
 All six text roles meet WCAG AA contrast in both themes. The theme follows the OS
 preference until the user chooses, then persists.
 
@@ -1332,6 +1391,9 @@ apps/
         presence/    awareness state: one writer, one reader, one frame loop
                      + the radar's projection and painter
         diagram/     Mermaid in and out — flowchart, sequence and pie engines
+        chart/       chart spec, one layout, the SVG painter, examples
+        table/       table spec, edits, layout, SVG, CSV, examples
+        templates/   boards that start full, built from typed node inputs
         text/        layout, measurement, the highlight ribbon, demo copy,
                      and the second font path: glyph outlines for convert-to-path
         physics/     the simulation, force specs, shared in-flight state
@@ -1346,6 +1408,9 @@ apps/
         cursor/      tool cursor modes, remote cursor rendering
       components/
         canvas/      renderers, node editor, shared transformer
+        panel/       the Properties panel, including the chart and table sections
+        sheet/       the spreadsheet interaction model both data grids share
+        table/       the table editor that opens over a table on the board
         workspace/   header, tool dock, presence avatars
         ui/          primitives (Switch, NumberStepper, colour picker, …)
       hooks/         store, sync binding, breakpoints, focus trap, virtualization
