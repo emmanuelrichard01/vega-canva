@@ -380,16 +380,21 @@ const DataDialog: React.FC<{
 
   const fmt = (n: number) => n.toLocaleString(undefined, { maximumFractionDigits: 4 });
 
+  // The preview is the one expensive thing on this sheet — a whole chart laid
+  // out and serialised — and it can trail the grid by a frame without anyone
+  // noticing. Deferred, a burst of typing or a paste never waits on it: React
+  // renders the grid first and redraws the preview when it has time.
+  const previewSpec = React.useDeferredValue(spec);
   const previewMarkup = React.useMemo(
     () =>
       preview
-        ? chartToSvg(spec, 340, 230, {
+        ? chartToSvg(previewSpec, 340, 230, {
             id: `${nodeId}-sheet`,
             sketch: node.appearance?.sketch,
             sketchSeed: node.appearance?.sketchSeed,
           })
         : '',
-    [preview, spec, nodeId, node.appearance?.sketch, node.appearance?.sketchSeed]
+    [preview, previewSpec, nodeId, node.appearance?.sketch, node.appearance?.sketchSeed]
   );
 
   // ------------------------------------------------------------------- CSV

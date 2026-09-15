@@ -321,6 +321,16 @@ export function useSheet(model: SheetModel) {
     edit,
     inRange,
     select,
+    /**
+     * Put the cursor on a cell the sheet does not have yet — a row or column
+     * that arrives with the next render. Unclamped, like `appendRow`; the
+     * clamp above catches it if it never arrives.
+     */
+    place: (p: SheetPos) => {
+      setAnchor(p);
+      setFocus(p);
+      sinkRef.current?.focus({ preventScroll: true });
+    },
     begin,
     commit,
     cancel,

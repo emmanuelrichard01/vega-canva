@@ -185,7 +185,15 @@ const GLYPHS: Record<string, string> = {
    * bars is five strokes and closes up into a solid block.
    */
   chart: '<path d="M6 20V13M12 20V5M18 20V9"/>',
-  frame: '<path d="M4 8h16M4 16h16M8 4v16M16 4v16"/>',
+  /**
+   * A box, its header rule and one column rule — three strokes.
+   *
+   * Grid's glyph is a box quartered through the middle; a table is told apart
+   * by the rule sitting high (the header) and the column rule sitting left
+   * (the label column), which is also how a table is recognised at any size.
+   */
+  table: '<path d="M4 5h16v14H4zM4 10h16M10 10v9"/>',
+  frame:'<path d="M4 8h16M4 16h16M8 4v16M16 4v16"/>',
   image: '<path d="M3.5 5h17v14h-17zM3.5 16l5-5 4 4 3-3 5 5"/>',
   audio: '<path d="M12 3a3 3 0 0 1 3 3v5a3 3 0 0 1-6 0V6a3 3 0 0 1 3-3zM5.5 11a6.5 6.5 0 0 0 13 0"/>',
   'direct-select': '<path d="M5 18C6 10 11 8 19 5"/><circle cx="5" cy="18" r="2.6"/><circle cx="19" cy="5" r="2.6"/>',

@@ -1,12 +1,12 @@
 import React from 'react';
-import { ClipboardCopy, Columns3, FileDown, FileUp, Funnel, Palette, Rows3, TextCursorInput } from 'lucide-react';
+import { ClipboardCopy, Columns3, FileDown, FileUp, Funnel, Paintbrush, Palette, Plus, Rows3, TextCursorInput, X } from 'lucide-react';
 import './chartPanel.css';
 import { NumberStepper } from '../ui/NumberStepper';
 import { SegmentedControl } from '../ui/SegmentedControl';
 import { Switch } from '../ui/Switch';
 import { ColorPickerPopover } from '../ui/ColorPickerPopover';
 import { Row } from './panelPrimitives';
-import { Group, IconAction, Note, TextField } from './chartPanelParts';
+import { AddButton, Group, IconAction, Note, TextField } from './chartPanelParts';
 import { TableExampleButton } from './TableExamples';
 import { useStore } from '../../hooks/useStore';
 import { editor } from '../../engine/api/EditorAPI';
@@ -16,6 +16,7 @@ import * as M from '../../engine/table/tableModel';
 import {
   copyTableCsv,
   exportTableCsv,
+  fitTableColumns,
   importCsvIntoTable,
   updateTable,
 } from '../../engine/table/tableApply';
@@ -26,9 +27,22 @@ import {
   TABLE_THEMES,
   TABLE_THEME_LABELS,
   type CellType,
+  type ColourRule,
   type TableSpec,
   type TableTheme,
 } from '../../engine/table/tableTypes';
+
+/** The paints a rule offers: six tints that each hold their text at AA, and two inks for a quieter mark. */
+const RULE_PAINTS: Array<{ label: string; fill?: string; color: string }> = [
+  { label: 'Green', fill: '#DCFCE7', color: '#166534' },
+  { label: 'Amber', fill: '#FEF3C7', color: '#92400E' },
+  { label: 'Red', fill: '#FEE2E2', color: '#991B1B' },
+  { label: 'Blue', fill: '#DBEAFE', color: '#1E40AF' },
+  { label: 'Violet', fill: '#EDE9FE', color: '#5B21B6' },
+  { label: 'Grey', fill: '#F1F5F9', color: '#475569' },
+  { label: 'Red text', color: '#B91C1C' },
+  { label: 'Green text', color: '#15803D' },
+];
 import { columnLetter } from '../sheet/useSheet';
 
 /**
@@ -68,6 +82,29 @@ export const TableSection: React.FC<{ node: TableNode }> = ({ node }) => {
   };
 
   const heading = (c: number) => (spec.header ? spec.cells[0]?.[c]?.trim() : '') || `Column ${columnLetter(c)}`;
+
+  const setRule = (i: number, p: Partial<ColourRule>) =>
+    patch({ rules: (spec.rules ?? []).map((r, j) => (j === i ? { ...r, ...p } : r)) });
+  /**
+   * A new rule starts on the column most like a status — the fewest distinct
+   * values — and on its most common value, so it colours something the moment
+   * it exists and the person edits a working rule rather than a blank one.
+   */
+  const addRule = () => {
+    const body = spec.cells.slice(spec.header ? 1 : 0);
+    let best = { col: 0, when: '>0', distinct: Infinity };
+    spec.columns.forEach((_, c) => {
+      const counts = new Map<string, number>();
+      for (const row of body) {
+        const v = row[c]?.trim();
+        if (v && v[0] !== '=') counts.set(v, (counts.get(v) ?? 0) + 1);
+      }
+      if (counts.size < 2 || counts.size >= best.distinct) return;
+      const top = [...counts.entries()].sort((a, b) => b[1] - a[1])[0][0];
+      best = { col: c, when: top, distinct: counts.size };
+    });
+    patch({ rules: [...(spec.rules ?? []), { col: best.col, when: best.when, ...RULE_PAINTS[0] }] });
+  };
 
   return (
     <div className="chartp">
@@ -151,6 +188,23 @@ export const TableSection: React.FC<{ node: TableNode }> = ({ node }) => {
         <Row label="Columns">
           <NumberStepper value={cols} min={1} max={60} aria-label="Columns" onChange={setCols} />
         </Row>
+        <Row label="Grow to fit" hint="Columns widen to show what you type, up to a limit">
+          <Switch
+            checked={spec.autoFit !== false}
+            onChange={(on) => patch({ autoFit: on ? undefined : false })}
+            label="Grow columns to fit"
+          />
+        </Row>
+        <button
+          type="button"
+          className="chartp-link"
+          onClick={() => {
+            if (!fitTableColumns(node)) say('Every column already fits');
+          }}
+        >
+          Fit every column to its content
+        </button>
+        <Note>In the cells, double-click a column’s edge to fit it, or drag a selected letter or number to move it.</Note>
       </Group>
 
       <Group label="Columns" icon={<Columns3 size={14} />}>
@@ -199,6 +253,59 @@ export const TableSection: React.FC<{ node: TableNode }> = ({ node }) => {
             <TextField label="Currency symbol" placeholder="$" value={spec.currency} onChange={(currency) => patch({ currency })} />
           </Row>
         )}
+      </Group>
+
+      <Group label="Colour rules" icon={<Paintbrush size={14} />}>
+        {(spec.rules?.length ?? 0) > 0 && (
+          <div className="tblrules">
+            {(spec.rules ?? []).map((rule, i) => (
+              <div className="tblrule" key={i}>
+                <select
+                  className="chartp-select"
+                  aria-label="Column the rule reads"
+                  value={rule.col}
+                  onChange={(e) => setRule(i, { col: Number(e.target.value) })}
+                >
+                  {spec.columns.map((_, c) => (
+                    <option key={c} value={c}>
+                      {heading(c)}
+                    </option>
+                  ))}
+                </select>
+                <TextField label="When the value is" placeholder="Done, >100, <0" mono value={rule.when} onChange={(v) => setRule(i, { when: v ?? '' })} />
+                <div className="tblrule__foot">
+                  <div className="tblrule__paints" role="radiogroup" aria-label="Colour">
+                    {RULE_PAINTS.map((p) => (
+                      <button
+                        key={p.label}
+                        type="button"
+                        role="radio"
+                        aria-checked={rule.fill === p.fill && rule.color === p.color}
+                        aria-label={p.label}
+                        data-tooltip={p.label}
+                        className="tblrule__paint"
+                        style={{ background: p.fill ?? '#FFFFFF', color: p.color }}
+                        onClick={() => setRule(i, { fill: p.fill, color: p.color })}
+                      >
+                        A
+                      </button>
+                    ))}
+                  </div>
+                  <IconAction label="Remove this rule" onClick={() => patch({ rules: spec.rules?.filter((_, j) => j !== i) })}>
+                    <X size={13} />
+                  </IconAction>
+                </div>
+              </div>
+            ))}
+          </div>
+        )}
+        <AddButton icon={<Plus size={13} />} onClick={addRule}>
+          Add a colour rule
+        </AddButton>
+        <Note>
+          Colours every cell in a column whose value matches — a word like <b>Done</b>, or a comparison like <b>&gt;100</b> or <b>&lt;0</b>. It
+          follows edits and formula results.
+        </Note>
       </Group>
 
       <Group label="View" icon={<Funnel size={14} />}>

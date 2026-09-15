@@ -85,6 +85,10 @@
 .tbled {
   --gutter-gap: 8px;
   --gutter-size: 20px;
+  /* The insert lanes, past the gutters. TableEditor's GUTTER_REACH and
+     ROW_GUTTER_REACH are these sums; change one, change the other. */
+  --lane-gap: 4px;
+  --lane-size: 18px;
 }
 
 .tbled__cols,
@@ -169,6 +173,507 @@
 }
 
 .tbled__resize:hover::after { background: var(--text-secondary); }
+
+/* A whole selected column or row can be picked up and moved. */
+.tbled__colhead[data-movable],
+.tbled__rowhead[data-movable] { cursor: grab; }
+.tbled[data-dragging] .tbled__colhead,
+.tbled[data-dragging] .tbled__rowhead,
+.tbled[data-dragging] .tbled__cell { cursor: grabbing; }
+
+/* --- inserting --------------------------------------------------------------
+
+   A lane past each gutter with a dot on every boundary. The dots are faint and
+   only there while the pointer is over the table, so they read as texture
+   rather than as twenty buttons; the one under the pointer opens into a `+`
+   and a line across the table says where the new row or column will go.
+   Every length is screen-sized through --inv, like the gutters. */
+
+.tbled__lane { position: absolute; }
+
+.tbled__lane--cols {
+  left: 0;
+  right: 0;
+  top: calc((var(--gutter-gap) + var(--gutter-size) + var(--lane-gap) + var(--lane-size)) * -1 * var(--inv, 1));
+  height: calc(var(--lane-size) * var(--inv, 1));
+}
+
+.tbled__lane--rows {
+  top: 0;
+  bottom: 0;
+  left: calc((var(--gutter-gap) + var(--gutter-size) + 6px + var(--lane-gap) + var(--lane-size)) * -1 * var(--inv, 1));
+  width: calc(var(--lane-size) * var(--inv, 1));
+}
+
+.tbled__ins {
+  position: absolute;
+  display: grid;
+  place-items: center;
+  width: calc(24px * var(--inv, 1));
+  height: calc(24px * var(--inv, 1));
+  padding: 0;
+  border: 0;
+  background: none;
+  cursor: pointer;
+  transform: translate(-50%, -50%);
+}
+
+.tbled__ins[data-axis='col'] { top: 50%; }
+.tbled__ins[data-axis='row'] { left: 50%; }
+
+.tbled__insdot {
+  display: grid;
+  place-items: center;
+  width: calc(5px * var(--inv, 1));
+  height: calc(5px * var(--inv, 1));
+  border-radius: 50%;
+  background: var(--text-tertiary);
+  color: transparent;
+  opacity: 0;
+  transition:
+    width 120ms var(--ease-settle),
+    height 120ms var(--ease-settle),
+    opacity var(--motion-hover),
+    background-color var(--motion-hover);
+}
+
+.tbled__insdot svg {
+  width: calc(12px * var(--inv, 1));
+  height: calc(12px * var(--inv, 1));
+  stroke-width: 2.5;
+}
+
+.tbled:hover .tbled__insdot { opacity: 0.5; }
+
+.tbled__ins:hover .tbled__insdot,
+.tbled__ins:focus-visible .tbled__insdot {
+  width: calc(18px * var(--inv, 1));
+  height: calc(18px * var(--inv, 1));
+  background: var(--text-primary);
+  color: var(--surface-primary);
+  opacity: 1;
+  box-shadow: 0 calc(2px * var(--inv, 1)) calc(6px * var(--inv, 1)) rgb(15 23 42 / 22%);
+}
+
+/* The line where the new row or column goes — or where a dragged one lands.
+   Ink, not the accent: it is a preview of structure, not a state that is on. */
+.tbled__guide {
+  position: absolute;
+  z-index: 2;
+  border-radius: 1px;
+  background: #1E293B;
+  pointer-events: none;
+}
+
+.tbled__guide[data-axis='col'] {
+  top: calc(-4px * var(--inv, 1));
+  bottom: calc(-4px * var(--inv, 1));
+  width: calc(2px * var(--inv, 1));
+  transform: translateX(-50%);
+}
+
+.tbled__guide[data-axis='row'] {
+  left: calc(-4px * var(--inv, 1));
+  right: calc(-4px * var(--inv, 1));
+  height: calc(2px * var(--inv, 1));
+  transform: translateY(-50%);
+}
+
+.tbled__guide[data-kind='move'][data-axis='col'] { width: calc(3px * var(--inv, 1)); }
+.tbled__guide[data-kind='move'][data-axis='row'] { height: calc(3px * var(--inv, 1)); }
+
+/* The block being dragged, lifted in place. */
+.tbled__lifted {
+  position: absolute;
+  box-sizing: border-box;
+  border: calc(1px * var(--inv, 1)) dashed rgb(30 41 59 / 50%);
+  background: rgb(30 41 59 / 9%);
+  pointer-events: none;
+}
+
+/* Add at the end. The button starts flush with the table, so the pointer never
+   crosses a gap that would drop the table's hover on the way to it; the
+   visible pill sits a little way out inside it. */
+.tbled__append {
+  position: absolute;
+  display: flex;
+  padding: 0;
+  border: 0;
+  background: none;
+  cursor: pointer;
+}
+
+.tbled__append[data-axis='col'] {
+  top: 0;
+  bottom: 0;
+  left: 100%;
+  width: calc(24px * var(--inv, 1));
+  padding-left: calc(6px * var(--inv, 1));
+}
+
+.tbled__append[data-axis='row'] {
+  left: 0;
+  right: 0;
+  top: 100%;
+  height: calc(24px * var(--inv, 1));
+  padding-top: calc(6px * var(--inv, 1));
+}
+
+.tbled__appendpill {
+  display: grid;
+  flex: 1;
+  place-items: center;
+  border-radius: calc(6px * var(--inv, 1));
+  background: color-mix(in srgb, var(--text-primary) 6%, transparent);
+  color: var(--text-secondary);
+  opacity: 0;
+  transition: opacity var(--motion-hover), background-color var(--motion-hover), color var(--motion-hover);
+}
+
+.tbled__append[data-axis='col'] .tbled__appendpill { width: calc(16px * var(--inv, 1)); flex: none; }
+.tbled__append[data-axis='row'] .tbled__appendpill { height: calc(16px * var(--inv, 1)); }
+
+.tbled__appendpill svg {
+  width: calc(13px * var(--inv, 1));
+  height: calc(13px * var(--inv, 1));
+}
+
+.tbled:hover .tbled__appendpill { opacity: 1; }
+
+.tbled__append:hover .tbled__appendpill {
+  background: color-mix(in srgb, var(--text-primary) 13%, transparent);
+  color: var(--text-primary);
+}
+
+/* No hover on touch: show the affordances rather than hide them forever. */
+@media (hover: none) {
+  .tbled__insdot { opacity: 0.5; }
+  .tbled__appendpill { opacity: 1; }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .tbled__insdot { transition: none; }
+}
+
+/* --- formulas ---------------------------------------------------------------- */
+
+/* A formula is code: set it in mono while it is being written. */
+.tbled__input[data-formula] {
+  font-family: var(--font-mono);
+}
+
+/* The cells a formula reads, in the colour of its reference. Content-space,
+   like the selection: the cells under it are always light. */
+.tbled__refbox {
+  position: absolute;
+  z-index: 1;
+  box-sizing: border-box;
+  border: calc(2px * var(--inv, 1)) solid var(--ref);
+  background: color-mix(in srgb, var(--ref) 10%, transparent);
+  pointer-events: none;
+}
+
+/* One line while editing, always: text that wraps inside a fixed row height is
+   clipped mid-word. The input grows sideways instead (TableEditor). */
+.tbled__input { white-space: pre; }
+
+/* The formula bar — docked to the toolbar, never over the grid (see
+   TableEditor). Two lines: the formula with its references in their outline
+   colours and the result beside it; then whatever helps next — functions that
+   match, the signature being filled in, or the keys. Every run is one line
+   and cuts with an ellipsis, so nothing in here ever wraps. */
+.tbled-fxbar {
+  position: fixed;
+  z-index: 8003;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  width: min(520px, calc(100vw - 16px));
+  padding: 6px 8px;
+  border-radius: var(--radius-lg);
+  background: var(--surface-elevated);
+  box-shadow: var(--shadow-float), var(--shadow-lg);
+  font-size: var(--text-sm);
+  animation: tbled-settle 120ms var(--ease-settle);
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .tbled-fxbar { animation: none; }
+}
+
+.tbled-fxbar__line {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
+  min-height: 28px;
+}
+
+.tbled-fxbar__line--aid {
+  min-height: 26px;
+  padding-top: 4px;
+  border-top: 1px solid var(--border-divider);
+}
+
+.tbled-fxbar__fx {
+  display: grid;
+  flex: none;
+  place-items: center;
+  width: 22px;
+  height: 20px;
+  border-radius: var(--radius-sm);
+  background: var(--surface-hover);
+  color: var(--text-secondary);
+  font-family: var(--font-mono);
+  font-size: 11px;
+  font-style: italic;
+  font-weight: var(--weight-semibold);
+}
+
+.tbled-fxbar__echo {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  color: var(--text-primary);
+  font-family: var(--font-mono);
+  font-size: var(--text-sm);
+  white-space: pre;
+  text-overflow: ellipsis;
+}
+
+.tbled-fxbar__ref { font-weight: 700; }
+
+.tbled-fxbar__placeholder {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  color: var(--text-tertiary);
+  white-space: nowrap;
+  text-overflow: ellipsis;
+}
+
+.tbled-fxbar__result {
+  flex: none;
+  max-width: 40%;
+  overflow: hidden;
+  padding: 1px 8px;
+  border-radius: var(--radius-pill);
+  background: var(--surface-hover);
+  color: var(--text-primary);
+  font-family: var(--font-mono);
+  font-size: var(--text-xs);
+  line-height: 18px;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+}
+
+.tbled-fxbar__result[data-tone='pending'] { color: var(--text-tertiary); }
+.tbled-fxbar__result[data-tone='error'] { color: color-mix(in srgb, var(--signal-danger) 80%, var(--text-primary)); }
+
+.tbled-fxbar__chips {
+  display: flex;
+  flex: 0 1 auto;
+  gap: 2px;
+  min-width: 0;
+  overflow: hidden;
+}
+
+.tbled-fxbar__chip {
+  flex: none;
+  height: 22px;
+  padding: 0 8px;
+  border: 0;
+  border-radius: var(--radius-sm);
+  background: transparent;
+  color: var(--text-secondary);
+  font-family: var(--font-mono);
+  font-size: var(--text-xs);
+  font-weight: var(--weight-semibold);
+  cursor: pointer;
+}
+
+.tbled-fxbar__chip:hover { background: var(--surface-hover); color: var(--text-primary); }
+.tbled-fxbar__chip[aria-selected='true'] { background: var(--text-primary); color: var(--surface-primary); }
+
+.tbled-fxbar__doc {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  color: var(--text-tertiary);
+  font-size: var(--text-xs);
+  white-space: nowrap;
+  text-overflow: ellipsis;
+}
+
+.tbled-fxbar__key {
+  flex: none;
+  padding: 0 5px;
+  border: 1px solid var(--border-strong);
+  border-radius: var(--radius-sm);
+  color: var(--text-tertiary);
+  font-family: var(--font-mono);
+  font-size: 10px;
+  line-height: 16px;
+}
+
+.tbled-fxbar__sig {
+  display: flex;
+  flex: 1;
+  align-items: baseline;
+  gap: 8px;
+  min-width: 0;
+}
+
+.tbled-fxbar__sig code {
+  flex: none;
+  max-width: 65%;
+  overflow: hidden;
+  color: var(--text-secondary);
+  font-family: var(--font-mono);
+  font-size: var(--text-xs);
+  white-space: nowrap;
+  text-overflow: ellipsis;
+}
+
+.tbled-fxbar__sig b {
+  color: var(--text-primary);
+  font-weight: 700;
+}
+
+.tbled-fx__opt {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  min-height: 30px;
+  padding: 0 8px;
+  border: 0;
+  border-radius: var(--radius-md);
+  background: none;
+  color: var(--text-primary);
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
+}
+
+.tbled-fx__opt:hover,
+.tbled-fx__opt[aria-selected='true'] { background: var(--surface-hover); }
+
+.tbled-fx__name {
+  flex: none;
+  min-width: 84px;
+  font-family: var(--font-mono);
+  font-size: var(--text-xs);
+  font-weight: var(--weight-semibold);
+}
+
+.tbled-fx__optdoc {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  color: var(--text-tertiary);
+  font-size: var(--text-xs);
+  white-space: nowrap;
+  text-overflow: ellipsis;
+}
+
+/* Toolbar menus that are lists: rows and columns, number formats, functions. */
+.tbled-menu--list {
+  display: flex;
+  flex-direction: column;
+  min-width: 232px;
+  padding: 6px;
+}
+
+.tbled-menu--fx {
+  width: 300px;
+  max-height: min(420px, 60vh);
+  overflow-y: auto;
+  overscroll-behavior: contain;
+}
+
+.tbled-menu__label {
+  padding: 6px 10px 4px;
+  color: var(--text-tertiary);
+  font-size: var(--text-xs);
+  font-weight: var(--weight-semibold);
+}
+
+/* A text colour is picked by reading it: each swatch is the letter in that ink. */
+.tbled-swatch--ink {
+  display: grid;
+  place-items: center;
+  background: #FFFFFF;
+  font-size: 13px;
+  font-weight: 700;
+  line-height: 1;
+}
+
+/* --- the right-click menu --------------------------------------------------- */
+
+.tbled-ctx {
+  position: fixed;
+  z-index: 8002;
+  display: flex;
+  flex-direction: column;
+  min-width: 224px;
+  padding: 6px;
+  border-radius: var(--radius-lg);
+  background: var(--surface-elevated);
+  box-shadow: var(--shadow-float), var(--shadow-lg);
+  font-size: var(--text-sm);
+  animation: tbled-settle 140ms var(--ease-settle);
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .tbled-ctx { animation: none; }
+}
+
+.tbled-ctx__head {
+  padding: 6px 10px 6px;
+  overflow: hidden;
+  color: var(--text-tertiary);
+  font-size: var(--text-xs);
+  font-weight: var(--weight-semibold);
+  white-space: nowrap;
+  text-overflow: ellipsis;
+  max-width: 260px;
+}
+
+.tbled-ctx__item {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  height: 30px;
+  padding: 0 10px;
+  border: 0;
+  border-radius: var(--radius-md);
+  background: none;
+  color: var(--text-primary);
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
+}
+
+.tbled-ctx__item svg { flex: none; color: var(--text-tertiary); }
+.tbled-ctx__item:hover:not(:disabled) { background: var(--surface-hover); }
+.tbled-ctx__item:disabled { opacity: 0.45; cursor: default; }
+.tbled-ctx__item[data-pressed] svg { color: var(--text-primary); }
+.tbled-ctx__item[data-tone='danger'] { color: color-mix(in srgb, var(--signal-danger) 80%, var(--text-primary)); }
+.tbled-ctx__item[data-tone='danger'] svg { color: inherit; }
+
+.tbled-ctx__label { flex: 1; min-width: 0; white-space: nowrap; }
+
+.tbled-ctx__hint {
+  flex: none;
+  color: var(--text-tertiary);
+  font-size: var(--text-xs);
+}
+
+.tbled-ctx__sep {
+  height: 1px;
+  margin: 4px 6px;
+  background: var(--border-divider);
+}
 
 /* The keyboard's home while no cell is being typed into. */
 .sheet-sink {

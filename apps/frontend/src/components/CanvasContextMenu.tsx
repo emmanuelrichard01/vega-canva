@@ -32,6 +32,7 @@ import {
   FileDown,
   FileUp,
   Table2,
+  UnfoldHorizontal,
   TextCursorInput,
 } from 'lucide-react';
 import { useStore } from '../hooks/useStore';
@@ -40,6 +41,7 @@ import {
   copyTableCsv,
   createTableFromCsvFile,
   exportTableCsv,
+  fitTableColumns,
   importCsvIntoTable,
 } from '../engine/table/tableApply';
 import type { AnyNode, ShapeKind } from '../engine/model/schema';
@@ -398,6 +400,7 @@ export const CanvasContextMenu: React.FC<Props> = ({
                 shortcut="Dbl-click"
                 onClick={() => useStore.getState().setTableEditNodeId(table.id)}
               />
+              <Item icon={<UnfoldHorizontal size={15} />} label="Fit columns to content" onClick={() => fitTableColumns(table)} />
               <Item icon={<FileUp size={15} />} label="Import CSV…" onClick={() => void importCsvIntoTable(table)} />
               <Item icon={<FileDown size={15} />} label="Export as CSV" onClick={() => exportTableCsv(table.table)} />
               <Item icon={<Copy size={15} />} label="Copy as CSV" onClick={() => void copyTableCsv(table.table)} />

@@ -64,18 +64,38 @@ function buildSketch(layout: TableLayout, seed: number, level: SketchLevel): Ske
   };
 }
 
+/**
+ * Fitted strings, kept across frames.
+ *
+ * Every pan and zoom redraws each visible cell, and measuring the same text at
+ * the same width again — a binary search of `measureText` calls when it is too
+ * long — was most of the cost of a frame on a large table. The room is floored
+ * to half a pixel so the key is stable and the answer is never wider than the
+ * room it was fitted to.
+ */
+const fitCache = new Map<string, string>();
+
 /** Text cut to a width with an ellipsis, measured with the real font. */
 function fitText(ctx: CanvasRenderingContext2D, text: string, room: number): string {
-  if (room <= 4) return '';
-  if (ctx.measureText(text).width <= room) return text;
-  let lo = 0;
-  let hi = text.length;
-  while (lo < hi) {
-    const mid = Math.ceil((lo + hi) / 2);
-    if (ctx.measureText(text.slice(0, mid) + '…').width <= room) lo = mid;
-    else hi = mid - 1;
+  if (room <= 4 || !text) return '';
+  const r = Math.floor(room * 2) / 2;
+  const key = `${ctx.font}${r}${text}`;
+  const hit = fitCache.get(key);
+  if (hit !== undefined) return hit;
+  let out = text;
+  if (ctx.measureText(text).width > r) {
+    let lo = 0;
+    let hi = text.length;
+    while (lo < hi) {
+      const mid = Math.ceil((lo + hi) / 2);
+      if (ctx.measureText(text.slice(0, mid) + '…').width <= r) lo = mid;
+      else hi = mid - 1;
+    }
+    out = lo <= 0 ? '' : `${text.slice(0, lo).trimEnd()}…`;
   }
-  return lo <= 0 ? '' : `${text.slice(0, lo).trimEnd()}…`;
+  if (fitCache.size > 20000) fitCache.clear();
+  fitCache.set(key, out);
+  return out;
 }
 
 function roundRectPath(ctx: CanvasRenderingContext2D, w: number, h: number, r: number) {
