@@ -5524,12 +5524,84 @@ number would only have fixed at one zoom.
    report already.
 5. `ChartDataModal`'s preview beside a wide sheet.
 
+### Then: tables that fit, insert, move and calculate
+
+A second pass on the owner's asks — "do I have to size every column by hand",
+the FigJam `+` between rows and columns, formulas, text colour, the table
+tool's cursor, and "smoother, faster".
+
+- **Columns fit their content.** `tableFit.ts` measures with the renderer's
+  own font (`tableMeasure.ts`), not a character count, so a fitted column is
+  exactly as wide as the ellipsis test needs. Typing widens a column in the
+  same undo step as the text (`updateTableGrowing`, capped at `GROW_MAX`;
+  `autoFit: false` turns it off in the panel). Double-click a column edge to
+  fit it; the toolbar, the panel and the context menu fit them all; CSV
+  imports arrive fitted. The table now grows by whole *columns* the way it
+  always grew by rows (`widthFor`), so adding one never squeezes the rest.
+- **Structure is direct.** Insert lanes past the gutters carry a dot on every
+  boundary that opens into a `+` and draws where the row or column will go;
+  strips on the right and bottom edges add one at the end. A selected whole
+  column or row drags to a new place (`moveCols`/`moveRows` carry styles,
+  intact merges, the sort and the filter). Right-click a letter, a number or
+  a cell. The last column's edge resizes the table.
+- **Formulas** — `tableFormula.ts`. Excel's grammar and precedence, ~35
+  functions (maths, statistics, logic, text, COUNTIF/SUMIF/AVERAGEIF),
+  evaluated by a parser, never `eval`, because table text replicates to the
+  whole room. References use the gutter's labels (with a header row, `B1` is
+  the first data row) and are rewritten when rows and columns are inserted,
+  deleted, moved or committed from a view; a deleted target becomes `#REF!`.
+  Cycles give `#CYCLE!`; errors draw in red; sort and filter read results;
+  CSV exports results. Results are memoised per spec object.
+- **The formula editor**: suggestions as you type a name (Tab completes), the
+  signature of the call the caret is in with the current argument in bold, a
+  live result before committing, the cells a formula reads outlined in
+  colour, and click or drag on the grid to write a reference. Σ in the toolbar
+  is AutoSum (the numbers above the cursor) plus every function.
+- **Text colour and number format** are in the toolbar; the six insert and
+  delete buttons folded into one "Rows and columns" menu, since the lanes and
+  the right-click menu now carry them.
+- **Speed.** The editor re-rendered every cell on every camera frame; the grid
+  is now a memoised component fed only the rows near the viewport, in chunks,
+  so a pan reconciles nothing until it crosses one. `TableRenderer` caches
+  fitted text across frames (a pan was mostly repeated `measureText`), and the
+  data sheet's chart preview is deferred so typing never waits on it.
+- **A real bug**: the cell input selected all on focus, so an edit begun by a
+  keystroke selected that keystroke and the second one replaced it. The caret
+  now goes to the end.
+- **The table tool's cursor** fell through to the select arrow — the class of
+  miss `toolCursor.ts` already documents five times. It takes the crosshair
+  and a table badge now.
+- **Colour rules** (`ColourRule`, conditional formatting): a column, a
+  COUNTIF-style criterion (`Done`, `>100`, `<0`) and a paint, read against the
+  cell's *value*, so a status recolours when it is retyped and a formula's
+  verdict recolours when its inputs change. Rules follow their column through
+  inserts, deletes and moves. Edited in the panel's "Colour rules" group.
+- **The examples compute.** Twenty-five now (six new: savings plan,
+  break-even, unit economics, inventory, habit tracker, grade book); the
+  budget's variance and shares, the invoice's amounts, the scorecard's
+  SUMPRODUCT totals, the risk scores and the lab densities are formulas, and
+  every status tint is a live rule rather than a fixed fill. A test asserts
+  no example computes to an error. The gallery marks calculating tables `fx`,
+  filters by "Uses formulas" and finds tables by function name. A fourth
+  board, the finance planner, is built from them.
+- **The formula help moved off the grid** after the owner reported it in the
+  way. It opened under the cell on `=` and covered the cells a formula wants
+  to click; it is now a bar docked to the toolbar (the formula with coloured
+  references, the result, then suggestions as chips or the signature). The
+  cell input stays one line and grows sideways — it had wrapped inside the
+  row height and clipped. An incomplete formula reads as "…", not a red error.
+
+Verified by `npm run build` and Node checks (formulas, fitting, moves); the
+Vitest files `tableFit.test.ts` and `tableFormula.test.ts` hold the same
+assertions and have not been run here.
+
 ### Not built
 
-Formulas in table cells, per-row heights, wrapped cell text (long text is cut
-with an ellipsis), conditional formatting rules, and per-cell presence for
-two people editing one table. A chart cannot yet be made *from* a table
-object — the obvious next join, since both sides already speak CSV.
+Per-row heights, wrapped cell text (long text is cut with an ellipsis),
+rules that colour a whole row, references between tables, relative
+references that adjust when a formula is pasted or filled, and per-cell
+presence for two people editing one table. A chart cannot yet be made *from* a table object —
+the obvious next join, since both sides already speak CSV.
 
 ## 5. Next up
 
@@ -6043,9 +6115,11 @@ Charts, tables and the sheet (newest — see §5a-0-bf):
 | `engine/chart/chartExamples.ts` | the chart gallery |
 | `engine/table/tableTypes.ts` | `TableSpec` and `normalizeTableSpec`. Pure. |
 | `engine/table/tableModel.ts` | every table edit, the view (sort/filter), CSV. Pure. |
+| `engine/table/tableFormula.ts` | formulas: parser, evaluator, functions, reference rewriting. Pure, no `eval`. |
+| `engine/table/tableFit.ts` · `tableMeasure.ts` | columns sized to content, measured with the renderer's font |
 | `engine/table/tableLayout.ts` · `tableSvg.ts` | one layout, painted by `TableRenderer` and by export |
 | `engine/table/tableApply.ts` | the document side: create, update (height follows rows), CSV files |
-| `engine/table/tableExamples.ts` | the nineteen table examples |
+| `engine/table/tableExamples.ts` | the twenty-five table examples, most of them computing |
 | `engine/templates/scienceTemplates.ts` · `tableTemplates.ts` | the science and table boards |
 | `components/sheet/useSheet.ts` | the spreadsheet interaction model both grids share |
 | `components/table/TableEditor.tsx` | cells on the board, the editing toolbar |

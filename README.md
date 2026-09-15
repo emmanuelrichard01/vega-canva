@@ -1127,10 +1127,26 @@ any spreadsheet, merge, insert and delete rows and columns, sort and filter.
 CSV comes in and goes out through the properties panel, the right-click menu,
 and **Import CSV as table…** on the empty board.
 
-**Nineteen finished examples** — tracker, budget, invoice, pricing tiers,
-RACI, risk register, timetable, lab notebook and more — are one click away in
-the panel's gallery and in the dock's Table flyout, and three board templates
-are built around them.
+**Columns fit what is in them** — typing widens a column, double-clicking its
+edge fits it, and CSV arrives fitted — measured with the board's own font, so a
+fitted column never cuts its last letter. A `+` opens on every row and column
+boundary as the pointer arrives, whole rows and columns drag to new places, and
+every letter, number and cell has a right-click menu.
+
+**Cells take formulas**: `=SUM(C2:C9)`, `=IF(D2>100,"Over","OK")`,
+`=SUMIF(A2:A9,"Done",B2:B9)`, with Excel's grammar and about thirty-five
+functions. They are parsed and evaluated here — never `eval`ed, since a table
+replicates to everyone in the room — and their references follow their cells
+when rows and columns move. While a formula is typed, the cells it reads are
+outlined in colour, clicking the grid writes references, and a panel suggests
+functions and previews the result.
+
+**Twenty-five finished examples** — tracker, budget, invoice, savings plan,
+break-even, grade book, inventory, RACI, timetable, lab notebook and more —
+are one click away in the panel's gallery and in the dock's Table flyout, and
+four board templates are built around them. Most of them calculate, and their
+statuses are coloured by **colour rules** — a column, a condition like `Done`
+or `<0`, and a paint — so a cell recolours itself when its value changes.
 
 ### The spreadsheet — `components/sheet/useSheet.ts`
 

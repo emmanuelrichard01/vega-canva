@@ -442,6 +442,13 @@ get their own rules.
 - **Show the thing itself.** An example is drawn by the same painter as the
   board, so a card cannot promise a merge, a tint or a column the table does
   not have.
+- **Affordances wait for the pointer.** The insert dots on every boundary are
+  faint and appear only while the pointer is over the table; the one under it
+  opens into a `+` and draws where the row or column will go. Twenty always-on
+  buttons would be louder than the content they sit around.
+- **A formula is code.** It is set in `--font-mono` while written, and the
+  cells it reads are outlined in a fixed sequence of reference colours — the
+  spreadsheet convention, kept so nothing has to be learned.
 
 ### Navigation
 

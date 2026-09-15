@@ -187,10 +187,12 @@ object can want both.
 | `frame` | `appearance`, `safeArea?`, `layout?` |
 | `connector` | `from: ConnectorEnd`, `to: ConnectorEnd`, `routing: Routing`, `appearance?`, `endStart?`, `endEnd?`, `label?` |
 | `chart` | `chart: ChartSpec` — `kind` (thirty, see `engine/chart/chartTypes.ts`), `categories`, `series`, `functions?`, axes, labels, palette, reference line — `appearance?` (only `sketch` is read) |
-| `table` | `table: TableSpec` — `cells: string[][]`, `columns: { width, type, align? }[]`, `header`, `firstColumn?`, `theme`, `accent?`, `fontSize`, `styles?`, `merges?`, `sort?`, `filter?`, `currency?` — `appearance?` (only `sketch` is read) |
+| `table` | `table: TableSpec` — `cells: string[][]`, `columns: { width, type, align? }[]`, `header`, `firstColumn?`, `theme`, `accent?`, `fontSize`, `styles?`, `merges?`, `sort?`, `filter?`, `currency?`, `autoFit?` (absent is on), `rules?: { col, when, fill?, color?, bold? }[]` (colour rules, first match wins) — `appearance?` (only `sketch` is read) |
 
 `TableSpec.cells` is the table **as typed**: rows of raw strings, row 0 the
-header when `header` is on. Column `type`, alignment, number formatting, `sort`
+header when `header` is on. A cell whose text starts with `=` is a formula;
+the formula text is what is stored, and its result is computed on read and
+never written back (`engine/table/tableFormula.ts`). Column `type`, alignment, number formatting, `sort`
 and `filter` are *views* applied at layout time and never written back, so
 turning one off returns exactly what was entered. It is positional rather than
 keyed by column id because a table's relationship with the outside world is
