@@ -1,4 +1,5 @@
 import { parseDelimited } from '../chart/chartCsv';
+import { evaluateCell, isErr, isFormula, rewriteRefs, type FValue } from './tableFormula';
 import {
   cellKey,
   CELL_TYPES,
@@ -93,6 +94,7 @@ const numberFormat = new Intl.NumberFormat(undefined, { maximumFractionDigits: 6
 export function formatCell(spec: TableSpec, r: number, c: number): string {
   const raw = spec.cells[r]?.[c] ?? '';
   if (spec.header && r === 0) return raw;
+  if (isFormula(raw)) return formatValue(spec, c, evaluateCell(spec, r, c));
   const type = spec.columns[c]?.type ?? 'text';
   if (type === 'text' || raw.trim() === '') return raw;
   if (type === 'date') {
@@ -112,6 +114,39 @@ export function formatCell(spec: TableSpec, r: number, c: number): string {
   return numberFormat.format(n);
 }
 
+/**
+ * A formula's result, shown through its column's type. A percent column shows
+ * a computed fraction as a percentage — `=B2/B3` giving 0.62 reads 62% — which
+ * is how every spreadsheet treats a computed share.
+ */
+function formatValue(spec: TableSpec, c: number, v: FValue): string {
+  if (isErr(v)) return v.err;
+  if (v === null) return '';
+  if (typeof v === 'boolean') return v ? 'TRUE' : 'FALSE';
+  if (typeof v === 'string') return v;
+  const type = spec.columns[c]?.type ?? 'text';
+  if (type === 'currency') {
+    const body = Math.abs(v).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+    return `${v < 0 ? '−' : ''}${spec.currency ?? '$'}${body}`;
+  }
+  if (type === 'percent') return `${numberFormat.format(v * 100)}%`;
+  return numberFormat.format(v);
+}
+
+/**
+ * What sorting and filtering read for a cell: its text — or, for a formula,
+ * its result in the units the cell displays, so a computed column sorts by
+ * the numbers on screen rather than by how its formulas are spelled.
+ */
+export function valueText(spec: TableSpec, r: number, c: number): string {
+  const raw = spec.cells[r]?.[c] ?? '';
+  if (!isFormula(raw)) return raw;
+  const v = evaluateCell(spec, r, c);
+  if (isErr(v) || v === null) return '';
+  if (typeof v === 'number') return String(spec.columns[c]?.type === 'percent' ? v * 100 : v);
+  return typeof v === 'boolean' ? (v ? 'TRUE' : 'FALSE') : v;
+}
+
 /** Left for words, right for numbers — unless the cell or column says otherwise. */
 export function alignFor(spec: TableSpec, r: number, c: number): CellAlign {
   const own = spec.styles?.[cellKey(r, c)]?.align;
@@ -119,6 +154,8 @@ export function alignFor(spec: TableSpec, r: number, c: number): CellAlign {
   if (spec.columns[c]?.align) return spec.columns[c].align!;
   const type = spec.columns[c]?.type ?? 'text';
   if (spec.header && r === 0) return type === 'text' || type === 'date' ? 'left' : 'right';
+  // A formula that computes a number reads as a number, even in a text column.
+  if (type === 'text' && isFormula(spec.cells[r]?.[c] ?? '') && typeof evaluateCell(spec, r, c) === 'number') return 'right';
   return type === 'text' || type === 'date' ? 'left' : 'right';
 }
 
@@ -136,7 +173,7 @@ export function alignFor(spec: TableSpec, r: number, c: number): CellAlign {
 function passes(spec: TableSpec, r: number): boolean {
   const f = spec.filter;
   if (!f) return true;
-  const raw = spec.cells[r]?.[f.col] ?? '';
+  const raw = valueText(spec, r, f.col);
   const q = f.query.trim();
   const type = spec.columns[f.col]?.type ?? 'text';
   if (type !== 'text') {
@@ -166,8 +203,8 @@ function passes(spec: TableSpec, r: number): boolean {
 }
 
 function compare(spec: TableSpec, a: number, b: number, col: number): number {
-  const ra = spec.cells[a]?.[col] ?? '';
-  const rb = spec.cells[b]?.[col] ?? '';
+  const ra = valueText(spec, a, col);
+  const rb = valueText(spec, b, col);
   // Empty last whichever way round: a blank is missing, not small.
   if (ra.trim() === '' && rb.trim() === '') return 0;
   if (ra.trim() === '') return 1;
@@ -194,8 +231,8 @@ export function viewRows(spec: TableSpec): number[] {
   if (spec.sort) {
     const { col, dir } = spec.sort;
     const blanksLast = (a: number, b: number) => {
-      const ea = (spec.cells[a]?.[col] ?? '').trim() === '';
-      const eb = (spec.cells[b]?.[col] ?? '').trim() === '';
+      const ea = valueText(spec, a, col).trim() === '';
+      const eb = valueText(spec, b, col).trim() === '';
       if (ea !== eb) return ea ? 1 : -1;
       const d = compare(spec, a, b, col);
       return dir === 'desc' ? -d : d;
@@ -213,9 +250,11 @@ export function applyView(spec: TableSpec): TableSpec {
   const order = viewRows(spec);
   const hidden = spec.cells.map((_, r) => r).filter((r) => !order.includes(r));
   const rows = [...order, ...hidden];
+  const inv: number[] = [];
+  rows.forEach((old, i) => (inv[old] = i));
   return {
     ...spec,
-    cells: rows.map((r) => [...spec.cells[r]]),
+    cells: reref(spec, rows.map((r) => [...spec.cells[r]]), 'row', (i) => inv[i] ?? i),
     styles: remapStyles(spec.styles, (r, c) => [rows.indexOf(r), c]),
     merges: undefined,
     sort: undefined,
@@ -277,19 +316,57 @@ function shift(spec: TableSpec, axis: 'row' | 'col', at: number, delta: number):
   return { styles, merges: merges.length ? merges : undefined };
 }
 
+/**
+ * Keep formulas pointing at the same cells when rows or columns move under
+ * them — why `=SUM(B2:B9)` still sums the same prices after a row goes in
+ * above them. A reference to a deleted cell becomes `#REF!`; a range that
+ * loses an end shrinks to what is left (`rewriteRefs`).
+ */
+function reref(spec: TableSpec, cells: string[][], axis: 'row' | 'col', map: (i: number) => number): string[][] {
+  const same = (i: number) => i;
+  let changed = false;
+  const next = cells.map((row) => {
+    let hit = false;
+    const out = row.map((v) => {
+      if (!isFormula(v)) return v;
+      const w = `=${rewriteRefs(v.slice(1), spec.header, axis === 'row' ? map : same, axis === 'col' ? map : same)}`;
+      if (w !== v) hit = true;
+      return w;
+    });
+    if (hit) changed = true;
+    return hit ? out : row;
+  });
+  return changed ? next : cells;
+}
+
+/** Colour rules follow their column; a rule on a deleted column goes with it. */
+function remapRules(rules: TableSpec['rules'], map: (c: number) => number): TableSpec['rules'] {
+  if (!rules) return undefined;
+  const out = rules.flatMap((rule) => {
+    const c = map(rule.col);
+    return c < 0 ? [] : [{ ...rule, col: c }];
+  });
+  return out.length ? out : undefined;
+}
+
 const blankRow = (cols: number) => Array.from({ length: cols }, () => '');
 
 export function insertRows(spec: TableSpec, at: number, count = 1): TableSpec {
   if (rowCount(spec) + count > MAX_ROWS) return spec;
   const cells = [...spec.cells];
   cells.splice(at, 0, ...Array.from({ length: count }, () => blankRow(colCount(spec))));
-  return { ...spec, cells, ...shift(spec, 'row', at, count) };
+  return { ...spec, cells: reref(spec, cells, 'row', (r) => (r >= at ? r + count : r)), ...shift(spec, 'row', at, count) };
 }
 
 export function deleteRows(spec: TableSpec, from: number, count = 1): TableSpec {
   // A table keeps at least one row; an empty grid has nowhere to type.
   if (rowCount(spec) - count < 1) return spec;
-  const cells = spec.cells.filter((_, r) => r < from || r >= from + count);
+  const cells = reref(
+    spec,
+    spec.cells.filter((_, r) => r < from || r >= from + count),
+    'row',
+    (r) => (r < from ? r : r < from + count ? -1 : r - count)
+  );
   const next = { ...spec, cells, ...shift(spec, 'row', from, -count) };
   // The header is row 0; deleting it promotes the next row, which is the
   // spreadsheet reading and never loses anything the person can see.
@@ -308,7 +385,8 @@ export function insertCols(spec: TableSpec, at: number, count = 1): TableSpec {
   const shifted = shift(spec, 'col', at, count);
   const sort = spec.sort && spec.sort.col >= at ? { ...spec.sort, col: spec.sort.col + count } : spec.sort;
   const filter = spec.filter && spec.filter.col >= at ? { ...spec.filter, col: spec.filter.col + count } : spec.filter;
-  return { ...spec, cells, columns, ...shifted, sort, filter };
+  const map = (c: number) => (c >= at ? c + count : c);
+  return { ...spec, cells: reref(spec, cells, 'col', map), columns, ...shifted, sort, filter, rules: remapRules(spec.rules, map) };
 }
 
 export function deleteCols(spec: TableSpec, from: number, count = 1): TableSpec {
@@ -319,7 +397,83 @@ export function deleteCols(spec: TableSpec, from: number, count = 1): TableSpec 
   const shifted = shift(spec, 'col', from, -count);
   const fix = <T extends { col: number }>(v: T | undefined): T | undefined =>
     !v ? v : v.col >= from && v.col < from + count ? undefined : v.col >= from + count ? { ...v, col: v.col - count } : v;
-  return { ...spec, cells, columns, ...shifted, sort: fix(spec.sort), filter: fix(spec.filter) };
+  const map = (c: number) => (c < from ? c : c < from + count ? -1 : c - count);
+  const moved = reref(spec, cells, 'col', map);
+  return { ...spec, cells: moved, columns, ...shifted, sort: fix(spec.sort), filter: fix(spec.filter), rules: remapRules(spec.rules, map) };
+}
+
+// ---------------------------------------------------------------------------
+// Moving rows and columns
+// ---------------------------------------------------------------------------
+
+/**
+ * The order after moving the block `from..to` to stand before index `before`
+ * (0..n), as `order[newIndex] = oldIndex` — or null when it would not move.
+ */
+export function moveOrder(n: number, from: number, to: number, before: number): number[] | null {
+  if (from < 0 || to >= n || from > to || before < 0 || before > n) return null;
+  if (before >= from && before <= to + 1) return null;
+  const all = Array.from({ length: n }, (_, i) => i);
+  const block = all.slice(from, to + 1);
+  const rest = all.filter((i) => i < from || i > to);
+  rest.splice(before > to ? before - block.length : before, 0, ...block);
+  return rest;
+}
+
+/**
+ * Put rows or columns in a new order, carrying everything attached to them.
+ *
+ * Styles follow their cells, and a sort or filter follows its column. A merge
+ * survives only if the cells it spans are still neighbours afterwards: moving
+ * one column out of the middle of a merged heading leaves two halves that are
+ * no longer one block, and drawing them as one would cover a column that has
+ * nothing to do with them.
+ */
+function permute(spec: TableSpec, axis: 'row' | 'col', order: number[]): TableSpec {
+  const inv: number[] = [];
+  order.forEach((old, i) => (inv[old] = i));
+  const cells = reref(
+    spec,
+    axis === 'row' ? order.map((o) => spec.cells[o]) : spec.cells.map((row) => order.map((o) => row[o])),
+    axis,
+    (i) => inv[i] ?? i
+  );
+  const columns = axis === 'col' ? order.map((o) => spec.columns[o]) : spec.columns;
+  const styles = remapStyles(spec.styles, (r, c) => (axis === 'row' ? [inv[r], c] : [r, inv[c]]));
+  const merges: TableMerge[] = [];
+  for (const m of spec.merges ?? []) {
+    const start = axis === 'row' ? m.r : m.c;
+    const span = axis === 'row' ? m.rs : m.cs;
+    const spots = Array.from({ length: span }, (_, i) => inv[start + i]).sort((a, b) => a - b);
+    if (spots[spots.length - 1] - spots[0] !== span - 1) continue;
+    merges.push(axis === 'row' ? { ...m, r: spots[0] } : { ...m, c: spots[0] });
+  }
+  const follow = <T extends { col: number }>(v: T | undefined): T | undefined =>
+    v && axis === 'col' ? { ...v, col: inv[v.col] } : v;
+  return {
+    ...spec,
+    cells,
+    columns,
+    styles,
+    merges: merges.length ? merges : undefined,
+    sort: follow(spec.sort),
+    filter: follow(spec.filter),
+    rules: axis === 'col' ? remapRules(spec.rules, (c) => inv[c] ?? c) : spec.rules,
+  };
+}
+
+/** Move columns `from..to` to stand before column `before`. */
+export function moveCols(spec: TableSpec, from: number, to: number, before: number): TableSpec {
+  const order = moveOrder(colCount(spec), from, to, before);
+  return order ? permute(spec, 'col', order) : spec;
+}
+
+/** Move rows `from..to` to stand before row `before`. The header row stays on top. */
+export function moveRows(spec: TableSpec, from: number, to: number, before: number): TableSpec {
+  const floor = spec.header ? 1 : 0;
+  if (from < floor || before < floor) return spec;
+  const order = moveOrder(rowCount(spec), from, to, before);
+  return order ? permute(spec, 'row', order) : spec;
 }
 
 // ---------------------------------------------------------------------------
@@ -499,10 +653,16 @@ export function tableFromCsv(text: string, base?: Partial<TableSpec>): TableSpec
 
 const quote = (v: string) => (/[",\n\r]/.test(v) ? `"${v.replace(/"/g, '""')}"` : v);
 
-/** The table as CSV: the stored cells, or only the rows the view shows. */
+/**
+ * The table as CSV: the stored cells, or only the rows the view shows.
+ *
+ * A formula goes out as its result, as it does from every spreadsheet: CSV has
+ * no formulas, and `=SUM(B2:B9)` in a file read by something else is a string
+ * that looks like a bug.
+ */
 export function tableToCsv(spec: TableSpec, viewOnly = false): string {
   const rows = viewOnly ? viewRows(spec) : spec.cells.map((_, r) => r);
-  return rows.map((r) => spec.cells[r].map(quote).join(',')).join('\r\n');
+  return rows.map((r) => spec.cells[r].map((v, c) => quote(isFormula(v) ? formatCell(spec, r, c) : v)).join(',')).join('\r\n');
 }
 
 export function downloadTableCsv(spec: TableSpec, filename: string): void {

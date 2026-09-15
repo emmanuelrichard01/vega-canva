@@ -1,5 +1,8 @@
 import { alignFor, formatCell, isIdentityView, mergeAt, viewRows } from './tableModel';
-import { cellKey, DEFAULT_ACCENT, type CellAlign, type TableSpec, type TableTheme } from './tableTypes';
+import { cellKey, DEFAULT_ACCENT, type CellAlign, type ColourRule, type TableSpec, type TableTheme } from './tableTypes';
+import { evaluateCell, isFormula, ruleTest, type FValue } from './tableFormula';
+
+const ERROR_TEXT = /^#(?:REF!|DIV\/0!|NAME\?|VALUE!|CYCLE!|ERROR!|NUM!|N\/A)$/;
 
 /**
  * A table turned into boxes, lines and strings somebody can paint.
@@ -198,6 +201,22 @@ export function layoutTable(spec: TableSpec, width: number, height: number): Tab
   const segments: TableSegment[] = [];
   const cols = spec.columns.length;
 
+  // Colour rules by column, their tests built once per layout. A rule reads
+  // the cell's value — a formula's result included — so it recolours with
+  // every edit; the first that matches wins, as in every spreadsheet.
+  const rulesByCol = new Map<number, Array<{ test: (v: FValue) => boolean; rule: ColourRule }>>();
+  for (const rule of spec.rules ?? []) {
+    const list = rulesByCol.get(rule.col) ?? [];
+    list.push({ test: ruleTest(rule.when), rule });
+    rulesByCol.set(rule.col, list);
+  }
+  const ruleFor = (r: number, c: number): ColourRule | undefined => {
+    const list = rulesByCol.get(c);
+    if (!list) return undefined;
+    const v = evaluateCell(spec, r, c);
+    return v === null ? undefined : list.find((x) => x.test(v))?.rule;
+  };
+
   rows.forEach((r, vr) => {
     const header = spec.header && r === 0;
     const zebraFill = !header && ink.zebra && (vr - (spec.header ? 1 : 0)) % 2 === 1 ? ink.zebra : null;
@@ -216,9 +235,16 @@ export function layoutTable(spec: TableSpec, width: number, height: number): Tab
       }
       const style = spec.styles?.[cellKey(r, c)];
       const firstCol = !header && spec.firstColumn && c === 0;
+      const text = formatCell(spec, r, c);
+      // A formula that failed says so in red — `#REF!` in body ink reads as
+      // data, and it is the one value in the table that is not.
+      const errored = !header && isFormula(spec.cells[r]?.[c] ?? '') && ERROR_TEXT.test(text);
+      const rule = header ? undefined : ruleFor(r, c);
       const fill =
+        rule?.fill ??
         style?.fill ??
         (header ? ink.headerFill : firstCol ? ink.firstCol ?? ink.headerFill : zebraFill);
+      const painted = Boolean(rule?.fill ?? style?.fill);
       cells.push({
         r,
         c,
@@ -227,11 +253,11 @@ export function layoutTable(spec: TableSpec, width: number, height: number): Tab
         y: vr * rowH,
         w,
         h,
-        text: formatCell(spec, r, c),
+        text,
         align: alignFor(spec, r, c),
-        bold: style?.bold ?? (header || Boolean(firstCol)),
+        bold: rule?.bold ?? style?.bold ?? (header || Boolean(firstCol)),
         italic: style?.italic ?? false,
-        color: style?.color ?? (header ? ink.headerText : fill && style?.fill ? inkOn(fill) : ink.text),
+        color: rule?.color ?? style?.color ?? (errored ? '#B91C1C' : header ? ink.headerText : fill && painted ? inkOn(fill) : ink.text),
         fill,
         header,
         ...(header && spec.sort?.col === c ? { sort: spec.sort.dir } : null),

@@ -71,6 +71,22 @@ export interface TableMerge {
   cs: number;
 }
 
+/**
+ * A colour rule: cells in a column whose value matches `when` take its paint.
+ *
+ * `when` is a COUNTIF-style criterion — `Done`, `>100`, `<>Open`, `<0` — read
+ * against the cell's *value*, a formula's result included, so the colour
+ * follows every edit. A status typed as a fixed fill goes stale the moment the
+ * status changes; a rule cannot. Conditional formatting, in spreadsheet terms.
+ */
+export interface ColourRule {
+  col: number;
+  when: string;
+  fill?: string;
+  color?: string;
+  bold?: boolean;
+}
+
 export interface TableSort {
   col: number;
   dir: 'asc' | 'desc';
@@ -99,6 +115,14 @@ export interface TableSpec {
   filter?: TableFilter;
   /** The symbol written before a currency column's values. */
   currency?: string;
+  /**
+   * Whether columns widen to show what is typed into them. Absent is on —
+   * cut-off text is the thing people least expect a table to do to them —
+   * and `false` keeps every column exactly where it was put.
+   */
+  autoFit?: boolean;
+  /** Colour rules, first match wins. */
+  rules?: ColourRule[];
 }
 
 export const DEFAULT_ACCENT = '#2563EB';
@@ -200,6 +224,19 @@ export function normalizeTableSpec(raw: unknown): TableSpec {
     merges.push({ r, c, rs, cs });
   }
 
+  // An empty `when` is kept — it is a rule being typed, and it matches nothing
+  // — so clearing the field does not delete the rule under the person's hands.
+  const rules: ColourRule[] = [];
+  for (const rule of Array.isArray(src.rules) ? src.rules.slice(0, 40) : []) {
+    if (!isObj(rule) || !Number.isInteger(rule.col) || (rule.col as number) < 0 || (rule.col as number) >= cols) continue;
+    if (typeof rule.when !== 'string') continue;
+    const r: ColourRule = { col: rule.col as number, when: rule.when.slice(0, 80) };
+    if (color(rule.fill)) r.fill = color(rule.fill);
+    if (color(rule.color)) r.color = color(rule.color);
+    if (rule.bold === true) r.bold = true;
+    rules.push(r);
+  }
+
   const sort =
     isObj(src.sort) && Number.isInteger(src.sort.col) && (src.sort.col as number) >= 0 && (src.sort.col as number) < cols
       ? { col: src.sort.col as number, dir: src.sort.dir === 'desc' ? ('desc' as const) : ('asc' as const) }
@@ -230,5 +267,7 @@ export function normalizeTableSpec(raw: unknown): TableSpec {
     ...(sort ? { sort } : null),
     ...(filter ? { filter } : null),
     ...(typeof src.currency === 'string' && src.currency.trim() ? { currency: src.currency.trim().slice(0, 3) } : null),
+    ...(src.autoFit === false ? { autoFit: false } : null),
+    ...(rules.length ? { rules } : null),
   };
 }
