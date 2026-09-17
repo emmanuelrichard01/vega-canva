@@ -68,6 +68,8 @@ export const EXTENSION_TYPES: Record<string, string> = {
   '.mp3': 'audio/mpeg',
   '.m4a': 'audio/mp4',
   '.aac': 'audio/aac',
+  // Favicons kept by link previews. Never accepted as an upload.
+  '.ico': 'image/x-icon',
 };
 
 /** Whether an upload is one we will store at all. */

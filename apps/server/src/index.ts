@@ -5,7 +5,7 @@ import express from "express";
 import cors from "cors";
 import multer from "multer";
 import multerS3 from "multer-s3";
-import { S3Client, CreateBucketCommand, GetObjectCommand, HeadBucketCommand } from "@aws-sdk/client-s3";
+import { S3Client, CreateBucketCommand, GetObjectCommand, HeadBucketCommand, PutObjectCommand } from "@aws-sdk/client-s3";
 import path from "path";
 import { nanoid } from "nanoid";
 import { timingSafeEqual } from "crypto";
@@ -18,6 +18,9 @@ import { readConnectionClaim } from "./connection";
 import { mintShareToken, verifyShareToken, explainFailure, MAX_TTL_SECONDS, type ShareRole } from "./shareToken";
 import { RoomActivity } from "./roomActivity";
 import { rateLimit } from "./rateLimit";
+import { createUnfurler, UnfurlError } from "./unfurl";
+import { checkFetchableUrl } from "./safeFetch";
+import type { SniffedImage } from "./unfurlParse";
 import { HistoryBuffer, KnownRooms, type PendingUpdate } from "./historyBuffer";
 import {
   checkRoomStorageQuota,
@@ -478,6 +481,82 @@ app.get("/rooms/:roomId/media/:mediaKey", requireRoom, async (req: any, res: any
     }
     console.error("Error streaming media from S3:", err);
     res.status(500).json({ error: "Failed to fetch media stream" });
+  }
+});
+
+/**
+ * Keep a link preview's picture as room media.
+ *
+ * The same accounting as an upload — room quota, global ceiling, a
+ * `media_refs` row so the reaper deletes it with the board — because a picture
+ * that arrived by unfurl costs exactly what an uploaded one does. The bytes
+ * were already identified by `sniffImage`, so the extension (and therefore the
+ * type the media route serves) comes from their content, not from the site.
+ */
+const storeUnfurlImage = async (roomId: string, bytes: Buffer, image: SniffedImage, apiBase: string): Promise<string | null> => {
+  const size = bytes.length;
+  const roomCheck = await checkRoomStorageQuota(pool, roomId, size, config.quotas.maxRoomBytes);
+  if (!roomCheck.allowed) return null;
+  const globalCheck = await checkGlobalStorageQuota(pool, size, config.quotas.maxGlobalBytes);
+  if (!globalCheck.allowed) return null;
+
+  const mediaId = nanoid();
+  const objectName = `${mediaId}${image.ext}`;
+  const storageKey = `${roomId}/${objectName}`;
+  const url = `${apiBase}/rooms/${roomId}/media/${objectName}`;
+  try {
+    await s3.send(new PutObjectCommand({ Bucket: s3Bucket, Key: storageKey, Body: bytes, ContentType: image.mime }));
+    await pool.query(`INSERT INTO rooms (id) VALUES ($1) ON CONFLICT (id) DO NOTHING`, [roomId]);
+    await pool.query(
+      `INSERT INTO media_refs (id, room_id, url, mime_type, size_bytes, storage_key) VALUES ($1, $2, $3, $4, $5, $6)`,
+      [mediaId, roomId, url, image.mime, size, storageKey]
+    );
+    return url;
+  } catch (err) {
+    console.warn("Could not keep a link preview image:", err);
+    await cleanupFailedMedia(s3, s3Bucket, storageKey, pool, mediaId);
+    return null;
+  }
+};
+
+/**
+ * Link previews: title, description and pictures for a URL on a board.
+ *
+ * Every outbound request goes through `safeFetch`, which is where the SSRF
+ * rules live; this route only validates the shape of the request, applies its
+ * own rate limit (a preview is several outbound fetches, so it is dearer than
+ * an ordinary request), and turns failures into a sentence the card can show.
+ * The answer is always 200 with `{ meta }` or a 4xx/5xx with `{ error }`.
+ */
+const unfurlLimiter = rateLimit(20, 0.5); // 20 bursts, one preview every two seconds after
+/** Configured, or learned from the first request — see `publicApiBase` on why configured is right. */
+let unfurlApiBase = config.publicApiUrl || '';
+const unfurler = createUnfurler({
+  store: (roomId, bytes, image) => storeUnfurlImage(roomId, bytes, image, unfurlApiBase),
+});
+
+app.get("/rooms/:roomId/unfurl", requireRoom, unfurlLimiter, async (req: any, res: any) => {
+  const roomId = sanitizeRoomId(req.params.roomId);
+  const raw = typeof req.query.url === 'string' ? req.query.url.trim() : '';
+  if (!roomId || !raw || raw.length > 2048) {
+    return res.status(400).json({ error: "A web address is needed" });
+  }
+  let url: string;
+  try {
+    url = checkFetchableUrl(raw).href;
+  } catch (err: any) {
+    return res.status(422).json({ error: err?.message ?? "That address cannot be previewed" });
+  }
+  if (!unfurlApiBase) unfurlApiBase = publicApiBase(req);
+
+  try {
+    const meta = await unfurler.unfurl(roomId, url);
+    res.setHeader("Cache-Control", "private, max-age=600");
+    res.json({ meta });
+  } catch (err: any) {
+    if (err instanceof UnfurlError) return res.status(err.status).json({ error: err.message });
+    logger.warn("Link preview failed", { url, error: String(err?.message ?? err) });
+    res.status(502).json({ error: "That page could not be previewed" });
   }
 });
 
