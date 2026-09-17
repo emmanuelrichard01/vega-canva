@@ -455,6 +455,44 @@ get their own rules.
   cells it reads are outlined in a fixed sequence of reference colours — the
   spreadsheet convention, kept so nothing has to be learned.
 
+### Code blocks
+
+- **Code is for reading on a board, not an IDE.** Highlighting, line numbers,
+  wrap, marked lines, folding and a filename; typing help limited to what
+  keeps a snippet tidy (indent, pairs, comment, move lines). No run, no lint.
+- **Content is light or dark by choice, not by theme.** A block's theme
+  (Midnight, Daylight, Dusk, Paper) is a property of the block, like a sticky's
+  paper; it does not follow the app theme. Every theme's tokens hold AA
+  contrast against its ground, and a test keeps them there.
+- **One grid, three painters.** The canvas, the DOM editor and the SVG export
+  place every character at `column × measured character width`, so the caret
+  sits on the glyph it edits and an export matches the board.
+- **Themes are previewed as code.** The theme picker shows a real highlighted
+  line per theme. The chosen one is ringed in ink, never accent.
+- **Guess strictly, undo in one press.** A paste becomes a block only for a
+  fence or unmistakable code texture, and the notice offers "Paste as text".
+- **One editing surface at a time**, as for tables: while the editor is open
+  the object rail stands down and its own bar carries language, theme and Done.
+
+### Links
+
+- **The preview lives in the document.** Whoever places a link fetches the
+  preview once; collaborators draw the same card from the board. Pictures are
+  copied into the room's media store, so a card cannot change under a board and
+  opening one does not announce its viewers to third parties.
+- **Four displays, chosen by shape.** Compact bar, picture beside, picture
+  above, player. Left on auto, the card's proportions pick; pressing one pins
+  it and snaps the card to that layout's natural size.
+- **Players are posters until asked.** An embed is a still with a play mark;
+  a double-click or Enter mounts one sandboxed frame, and Escape or a click
+  away gives the board back. Only allowlisted providers embed.
+- **A failed preview is still a card**: the address, the provider's initial,
+  the reason, and "double-click to open".
+- **The server fetches as a stranger.** Every outbound request resolves
+  through a guard that refuses private, loopback, link-local and metadata
+  addresses at connect time, re-checks every redirect, caps bytes after
+  decompression, and identifies images by their bytes, not their headers.
+
 ### The tool dock
 
 The main toolbar, bottom-centre. It answers one question — what is in my hand
@@ -514,6 +552,95 @@ The main toolbar, bottom-centre. It answers one question — what is in my hand
   marker below already says which tool is armed, so a raised tint marks a
   selected swatch or tile. The padlock pressed is a state that is on, which is
   what the accent is for.
+
+### Menus and the contextual rail
+
+The rail answers "what can I change about this" in one glance; the menu answers
+"what else can I do with it" in one list. Neither is a second properties panel.
+
+- **One command list, two doors.** Right-click and the rail's `⋯` open the same
+  menu (`components/menu/canvasMenu.tsx`), in the same order. A command is added
+  there once, never to one door. Its shortcut is written once, in
+  `menu/shortcuts.ts`, and bound to the same action the row runs: a shortcut
+  shown on a row is a promise.
+- **Specific first, destructive last.** What only this selection can do leads
+  (edit cells, edit points, change shape). The clipboard follows as one row of
+  icons. Style, arrangement, structure, finding, and the ways out (copy as,
+  export) come next. Delete comes last, alone, red only when reached.
+- **Nest, don't lengthen.** Anything with four or more siblings of equal weight
+  is a submenu (Order, Copy as, Select). Anything chosen by picture is a picker
+  panel in a submenu, not glyphs laid inline. The menu should fit on a laptop
+  screen without scrolling.
+- **Menus behave like desktop menus.** They open down and right of the pointer,
+  flipping rather than sliding under it. Up/Down, Home/End, Right/Left in and
+  out of submenus, type-ahead, Escape back out, focus restored on close. Moving
+  diagonally toward an open submenu never loses it. Shift+F10 and the Menu key
+  open it without a pointer.
+- **Say why, on the row.** A disabled row carries its reason as a second line
+  ("Copy a style from another object first"); a row with a caveat says it
+  ("4 of 5 objects are boxes and arrows"). A row never silently does part of
+  what it says.
+- **The rail is a toolbar.** `role="toolbar"`, arrows along it, Alt+F10 onto it.
+  Its popovers behave as a menu bar: with one open, moving to another trigger
+  opens that one, without replaying the entrance.
+- **Popovers keep themselves placed.** They re-place whenever they change size
+  and, when floating, whenever the board moves. When neither side can hold one
+  whole, it scrolls on the side away from the artwork rather than spilling onto
+  it (`anchoredPopover`).
+- **A locked selection gets a locked rail.** It shows that it is locked, offers
+  Unlock, Comment and the `⋯`, and nothing that would restyle it.
+- **Contextual means conditional.** Paste style appears on the rail only while a
+  copied style would change the selection, wearing the colour it brings. It is
+  hidden, not greyed out, the rest of the time, because it is the second half
+  of a gesture already in progress.
+
+### Colour
+
+Every colour decision goes through one picker, `ColorPanel`, placed by one
+rule, `useFloatingPanel`.
+
+- **One floating surface, never two.** A gradient stop's colour is edited under
+  the bar, in the fill panel, not in a popover opened from it.
+- **It opens beside what it is choosing for.** From the Properties panel it
+  opens toward the board, not over the rows adjusted next. From the rail it
+  keeps clear of the selected object: the colour has to be seen on it.
+- **The preview is the control.** Gradient geometry is handles on the preview
+  (endpoints, centre, size, sweep start), with an editable number on it for
+  the exact value and the keyboard. Clicking the bar adds a stop in the colour
+  already there. Dragging a stop off the bar removes it.
+- **Selection is ink.** A check on a swatch, an ink ring on a stop, a ramp step
+  or a preset. The accent is not used for "this one".
+- **Say what it will look like.** Before and after in one chip (the old half
+  reverts). Contrast and its WCAG grade wherever the surface is known, which
+  for text is the shape's own fill or the board.
+- **Take colour in any form.** HEX, RGB, HSL and CSS names, pasted or typed.
+  The format shown is the reader's choice and is remembered.
+- **Board colours before anyone else's.** "This board" lists the colours in use,
+  most used first. Recent is per person and lives in the browser.
+
+### The header
+
+- **Three questions, left to right.** Which board and is it safe (mark, name,
+  save state); what can I do across the board (history, search, view); who is
+  here and how does work leave (people, comments, export, share). The middle
+  stays empty.
+- **The board has a menu, on its name.** Rename, copy link, share, export,
+  view, history, search, shortcuts, tour, home.
+- **Settings are menu rows with switches.** Toggling one keeps the menu open.
+  On is ink.
+- **Controls report state.** Undo and Redo disable when there is nothing to do.
+  A button that opens a panel looks pressed while the panel is open.
+- **Everyone is reachable.** The overflow count opens the roster. A live dot
+  marks whoever is doing something.
+
+### Help
+
+- **Press a key to find it.** Any shortcut pressed on the Help page is looked up
+  and shown, never passed to the board.
+- **Keycaps are this machine's.** ⌘ ⇧ ⌥ on a Mac, words elsewhere.
+- **The keyboard map is generated.** Tools from `TOOL_SHORTCUTS`, commands from
+  `SHORTCUTS`, one layer per modifier, switched by holding the modifier. A key
+  is never hand-labelled in the map.
 
 ### Navigation
 

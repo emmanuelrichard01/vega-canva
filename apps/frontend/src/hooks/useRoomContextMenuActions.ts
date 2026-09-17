@@ -1,4 +1,4 @@
-import { useCallback } from 'react';
+import { useCallback, useMemo } from 'react';
 import type { CanvasContextMenuActions, ContextTarget } from '../components/CanvasContextMenu';
 import type { AnyNode, ShapeGeometry, ShapeKind } from '../engine/model/schema';
 import type { AlignEdge, DistributeAxis } from '../engine/model/align';
@@ -10,7 +10,7 @@ import {
 } from '../engine/clipboard/clipboard';
 import { looksLikeSvg } from '../engine/clipboard/svgImport';
 import { deleteNodesWithFrames } from '../engine/interaction/frameMembership';
-import { nextZIndex, lowestZIndex, applyNodePatches } from '../engine/document';
+import { applyNodePatches } from '../engine/document';
 // The scope helpers are pure and tiny and belong with the canvas; the export
 // engine behind `ExportService` is 440kB and is fetched when it is used. See
 // the note in `vite.config.ts` about which of these ship with the board.
@@ -20,13 +20,24 @@ import { editor } from '../engine/api/EditorAPI';
 import { isLineLike } from '../engine/model/lineEnds';
 import { lineEdit } from '../engine/interaction/lineEdit';
 import { pathEdit } from '../engine/interaction/pathEdit';
-import { textToPath, flattenToPath } from '../engine/document/vectorOps';
+import { textToPath, flattenToPath, outlineStrokeOf } from '../engine/document/vectorOps';
 import { breakApartGrid } from '../engine/grid/gridApply';
 import { fillGridWithImages, releaseSlots } from '../engine/grid/gridSlotApply';
 import type { CopyResult } from './useRoomClipboard';
 import { alignSelection, distributeSelection } from '../engine/model/align';
 import { swapShapeKind } from '../engine/model/shapeSwap';
 import { cameraSystem } from '../engine/CameraSystem';
+import { restackSelection, type RestackOp } from '../engine/model/restack';
+import { applyStylePatches, extractStyle, styleClipboard } from '../engine/model/styleClipboard';
+import { kindNoun, matchingIds } from '../engine/model/selectMatching';
+import { clientToWorld } from '../engine/interaction/clientToWorld';
+import { addShapeAt, addStickyAt, addTextAt } from '../engine/interaction/quickCreate';
+import { engineEvents } from '../engine/EventBus';
+import { createTableFromCsvFile } from '../engine/table/tableApply';
+import type { ShapePreset } from '../components/workspace/shapeCatalog';
+import { createCode } from '../engine/code/codeApply';
+import { CodeTool } from '../engine/tools/CodeTool';
+import { useStore } from './useStore';
 
 export interface UseRoomContextMenuActionsOptions {
   selectedIds: string[];
@@ -36,7 +47,11 @@ export interface UseRoomContextMenuActionsOptions {
   localTitle: string;
   clipboardRef: React.MutableRefObject<ClipboardPayload | null>;
   copySelection: (event?: ClipboardEvent) => CopyResult;
-  pasteObjects: (payload: ClipboardPayload, at?: { x: number; y: number }) => void;
+  pasteObjects: (
+    payload: ClipboardPayload,
+    at?: { x: number; y: number },
+    options?: { quiet?: boolean }
+  ) => void;
   pasteSvg: (text: string) => void;
   pasteText: (rawText: string, at?: { x: number; y: number }) => void;
   showToast: (msg: string) => void;
@@ -46,6 +61,17 @@ export interface UseRoomContextMenuActionsOptions {
   setDiagramReplacing: (id: string | null) => void;
   setDiagramReplaceIds: (ids: string[]) => void;
   setDiagramOpen: (open: boolean) => void;
+}
+
+/** Where on the board "here" is: the menu's spot, or the middle of the view. */
+function spotOf(target: ContextTarget | null): { x: number; y: number } {
+  if (target && !target.viaKeyboard) return clientToWorld(target.x, target.y);
+  const stage = typeof document !== 'undefined'
+    ? document.querySelector('.konvajs-content')?.getBoundingClientRect()
+    : null;
+  return stage
+    ? clientToWorld(stage.left + stage.width / 2, stage.top + stage.height / 2)
+    : cameraSystem.screenToWorld(window.innerWidth / 2, window.innerHeight / 2);
 }
 
 export function useRoomContextMenuActions({
@@ -67,9 +93,26 @@ export function useRoomContextMenuActions({
   setDiagramReplaceIds,
   setDiagramOpen,
 }: UseRoomContextMenuActionsOptions): CanvasContextMenuActions {
+  const selectedNodes = useCallback(
+    () => selectedIds.map((id) => diagramObjects[id]).filter(Boolean) as AnyNode[],
+    [selectedIds, diagramObjects]
+  );
+
   const handleCopy = useCallback(() => {
     void copySelection();
   }, [copySelection]);
+
+  /**
+   * Cut removes exactly what it copied — the same rule the `cut` event keeps.
+   * `writeClipboard` refuses comment pins, so deleting the whole selection would
+   * destroy a pin that never reached the clipboard.
+   */
+  const handleCut = useCallback(() => {
+    const { written, ids } = copySelection();
+    if (!written || ids.length === 0) return;
+    deleteNodesWithFrames(ids);
+    setSelectedIds(selectedIds.filter((id) => !ids.includes(id)));
+  }, [copySelection, selectedIds, setSelectedIds]);
 
   /**
    * Paste, from the menu rather than from a keystroke.
@@ -80,19 +123,23 @@ export function useRoomContextMenuActions({
    * only fall back to the real clipboard when there had been none. So copying
    * in one tab and right-click-pasting in another gave you that tab's older
    * copy instead of what you had just taken, while Ctrl+V in the same spot gave
-   * the right thing. Two paths, two answers, and the wrong one silently winning
-   * whenever both had something to say.
+   * the right thing. The system clipboard is the shared truth; the ref is a
+   * cache for when it cannot be read (Firefox's permission prompt, Safari
+   * outside a gesture).
    *
-   * The system clipboard is the shared truth; the ref is a cache for when it
-   * cannot be read, which is a real case — Firefox gates `readText` behind a
-   * permission prompt and Safari refuses it outside a user gesture in some
-   * contexts. Asking it first and falling back keeps the menu working there
-   * without letting it disagree with the keyboard anywhere else.
+   * ## Where it lands
+   *
+   * At the pointer, when the menu was opened at one — measured from the stage,
+   * not the window. It used to hand `clientX` straight to `screenToWorld`,
+   * which takes stage coordinates, so every "Paste here" landed a ruler's width
+   * up and to the left of where it was asked for. Opened from the rail or the
+   * keyboard there is no "here", and the paste takes the keyboard's rule:
+   * beside the original when it is on screen.
    */
   const handlePaste = useCallback(async () => {
-    const at = contextTarget
-      ? cameraSystem.screenToWorld(contextTarget.x, contextTarget.y)
-      : cameraSystem.screenToWorld(window.innerWidth / 2, window.innerHeight / 2);
+    const at = contextTarget && !contextTarget.viaKeyboard
+      ? clientToWorld(contextTarget.x, contextTarget.y)
+      : undefined;
 
     try {
       const text = await navigator.clipboard?.readText?.();
@@ -107,7 +154,7 @@ export function useRoomContextMenuActions({
           return;
         }
         if (text.trim()) {
-          pasteText(text, at);
+          pasteText(text, at ?? spotOf(null));
           return;
         }
       }
@@ -119,39 +166,52 @@ export function useRoomContextMenuActions({
     if (clipboardRef.current) pasteObjects(clipboardRef.current, at);
   }, [contextTarget, clipboardRef, pasteObjects, pasteSvg, pasteText]);
 
+  /**
+   * Duplicate through the clipboard's paste, not `createNode` per object.
+   *
+   * The rail and the keyboard cloned each node with its fields intact — which
+   * copies a connector still bound to the *originals'* ids and a group member
+   * still pointing at the original group. `pasteNodes` remaps both. Quiet,
+   * because "Pasted 3 objects" is the wrong sentence for a duplicate and the
+   * new selection already says what happened.
+   */
   const handleDuplicate = useCallback(() => {
-    const nodes = selectedIds.map((id) => diagramObjects[id]).filter(Boolean) as AnyNode[];
-    const payload = writeClipboard(nodes);
+    const payload = writeClipboard(selectedNodes());
     if (!payload) return;
-    pasteObjects(payload, offsetOrigin(payload));
-  }, [selectedIds, diagramObjects, pasteObjects]);
+    pasteObjects(payload, offsetOrigin(payload), { quiet: true });
+  }, [selectedNodes, pasteObjects]);
 
   const handleRemove = useCallback(() => {
     deleteNodesWithFrames(selectedIds);
     setSelectedIds([]);
   }, [selectedIds, setSelectedIds]);
 
-  const handleBringToFront = useCallback(() => {
-    const top = nextZIndex();
-    applyNodePatches(selectedIds.map((id, i) => ({ id, changes: { zIndex: top + i } })));
-  }, [selectedIds]);
-
-  const handleSendToBack = useCallback(() => {
-    const bottom = lowestZIndex();
-    applyNodePatches(
-      selectedIds.map((id, i) => ({ id, changes: { zIndex: bottom - selectedIds.length + i } }))
-    );
-  }, [selectedIds]);
+  const handleRestack = useCallback(
+    (op: RestackOp) => {
+      const patches = restackSelection(Object.values(diagramObjects), selectedIds, op);
+      if (patches.length > 0) applyNodePatches(patches);
+      else if (op === 'forward' || op === 'backward') {
+        showToast(op === 'forward' ? 'Nothing overlapping above it' : 'Nothing overlapping below it');
+      }
+    },
+    [diagramObjects, selectedIds, showToast]
+  );
 
   const handleSelectAll = useCallback(() => {
     setSelectedIds(Object.keys(diagramObjects));
   }, [diagramObjects, setSelectedIds]);
 
-  const handleSelectAllOfType = useCallback(() => {
-    const type = diagramObjects[selectedIds[0]]?.type;
-    if (!type) return;
-    setSelectedIds(Object.values(diagramObjects).filter((n) => n.type === type).map((n) => n.id));
-  }, [diagramObjects, selectedIds, setSelectedIds]);
+  const handleSelectMatching = useCallback(
+    (mode: 'kind' | 'style') => {
+      const seeds = selectedNodes();
+      if (seeds.length === 0) return;
+      const ids = matchingIds(Object.values(diagramObjects), seeds, mode);
+      setSelectedIds(ids);
+      const added = ids.length - seeds.length;
+      if (added === 0) showToast('Nothing else on the board matches');
+    },
+    [selectedNodes, diagramObjects, setSelectedIds, showToast]
+  );
 
   const handleCopyPng = useCallback(
     async (ids: string[]) => {
@@ -159,8 +219,8 @@ export function useRoomContextMenuActions({
       const { ExportService } = await import('../engine/export');
       const result = await ExportService.copy('png', {
         ...scopeOptions(scope),
-        stage: (window as any)._konva_stage,
-      });
+        stage: (window as unknown as { _konva_stage?: unknown })._konva_stage,
+      } as never);
       showToast(result.ok ? `Copied ${scope.subject} as PNG` : result.message!);
     },
     [diagramObjects, localTitle, showToast]
@@ -185,26 +245,24 @@ export function useRoomContextMenuActions({
   );
 
   const handleCopyMermaid = useCallback(() => {
-    const selected = selectedIds.map((id) => diagramObjects[id]).filter(Boolean);
+    const selected = selectedNodes();
     if (!canEmitDiagram(selected)) return;
-    void navigator.clipboard.writeText(diagramToMermaid(selected));
-  }, [selectedIds, diagramObjects]);
+    // Said, because a copy that shows nothing is indistinguishable from one
+    // that failed — and this one can fail, outside a secure origin.
+    navigator.clipboard
+      .writeText(diagramToMermaid(selected))
+      .then(() => showToast('Copied as Mermaid'))
+      .catch(() => showToast('The clipboard refused the copy'));
+  }, [selectedNodes, showToast]);
 
   const handleEditMermaid = useCallback(() => {
-    const selected = selectedIds.map((id) => diagramObjects[id]).filter(Boolean);
+    const selected = selectedNodes();
     if (!canEmitDiagram(selected)) return;
     setDiagramSource(diagramToMermaid(selected));
     setDiagramReplacing(diagramIdOf(selected.find((n) => diagramIdOf(n)) ?? selected[0]) ?? null);
     setDiagramReplaceIds(selected.map((n) => n.id));
     setDiagramOpen(true);
-  }, [
-    selectedIds,
-    diagramObjects,
-    setDiagramSource,
-    setDiagramReplacing,
-    setDiagramReplaceIds,
-    setDiagramOpen,
-  ]);
+  }, [selectedNodes, setDiagramSource, setDiagramReplacing, setDiagramReplaceIds, setDiagramOpen]);
 
   const handleGroup = useCallback(() => {
     if (selectedIds.length > 1) editor.groupNodes(selectedIds);
@@ -251,6 +309,12 @@ export function useRoomContextMenuActions({
     if (newId) land(newId);
   }, [selectedIds, diagramObjects, setSelectedIds, showToast]);
 
+  const handleOutlineStroke = useCallback(() => {
+    if (selectedIds.length !== 1) return;
+    const id = outlineStrokeOf(selectedIds[0]);
+    if (id) setSelectedIds([id]);
+  }, [selectedIds, setSelectedIds]);
+
   const handleBreakApart = useCallback(() => {
     if (selectedIds.length !== 1) return;
     const ids = breakApartGrid(selectedIds[0]);
@@ -260,16 +324,13 @@ export function useRoomContextMenuActions({
   /**
    * Put the selected pictures into the selected grid.
    *
-   * The affordance guarantees exactly one grid and at least one picture, so
-   * this does not re-litigate that — it only has to decide the **order**, and
-   * it takes the order the pictures are stacked in rather than the order they
-   * were clicked. Stacking order is what the Layers panel shows and what the
-   * board looks like; selection order is invisible and is whatever a marquee
-   * happened to sweep up, so two people making the same selection two ways
-   * would otherwise get two different arrangements.
+   * Stacking order, not click order: it is what the Layers panel shows and what
+   * the board looks like, so two people making the same selection two ways get
+   * the same arrangement. And it says what did not fit, rather than leaving the
+   * three that overflowed to be counted.
    */
   const handleFillGrid = useCallback(() => {
-    const nodes = selectedIds.map((id) => diagramObjects[id]).filter(Boolean) as AnyNode[];
+    const nodes = selectedNodes();
     const grid = nodes.find((n) => n.type === 'grid');
     if (!grid) return;
 
@@ -281,63 +342,55 @@ export function useRoomContextMenuActions({
     const { placed, overflow } = fillGridWithImages(grid.id, images);
     if (placed > 0) setSelectedIds(images.filter((id) => !overflow.includes(id)));
 
-    /**
-     * Say what happened, including the part that did not.
-     *
-     * Filling nine of twelve and saying nothing is the quiet partial success
-     * this codebase has been bitten by before — the three that did not fit are
-     * still selected and still on the board, and the only way to find out
-     * would be to count.
-     */
     if (placed === 0) showToast('No free modules in that grid');
-    else if (overflow.length > 0) {
-      showToast(
-        `Placed ${placed}, and ${overflow.length} did not fit`
-      );
-    } else {
-      showToast(`Placed ${placed} image${placed === 1 ? '' : 's'}`);
-    }
-  }, [selectedIds, diagramObjects, setSelectedIds, showToast]);
+    else if (overflow.length > 0) showToast(`Placed ${placed}, and ${overflow.length} did not fit`);
+    else showToast(`Placed ${placed} image${placed === 1 ? '' : 's'}`);
+  }, [selectedNodes, setSelectedIds, showToast]);
 
-  /** Take the selected pictures and captions back out of their modules. */
   const handleReleaseFromGrid = useCallback(() => {
     releaseSlots(selectedIds);
   }, [selectedIds]);
 
   const handleAlign = useCallback(
-    (edge: AlignEdge) => {
-      const nodes = selectedIds.map((id) => diagramObjects[id]).filter(Boolean) as AnyNode[];
-      applyNodePatches(alignSelection(nodes, edge));
-    },
-    [selectedIds, diagramObjects]
+    (edge: AlignEdge) => applyNodePatches(alignSelection(selectedNodes(), edge)),
+    [selectedNodes]
   );
 
   const handleDistribute = useCallback(
-    (axis: DistributeAxis) => {
-      const nodes = selectedIds.map((id) => diagramObjects[id]).filter(Boolean) as AnyNode[];
-      applyNodePatches(distributeSelection(nodes, axis));
+    (axis: DistributeAxis) => applyNodePatches(distributeSelection(selectedNodes(), axis)),
+    [selectedNodes]
+  );
+
+  /** Each object mirrors in place; one transaction, so one undo. */
+  const handleFlip = useCallback(
+    (axis: 'horizontal' | 'vertical') => {
+      const key = axis === 'horizontal' ? 'scaleX' : 'scaleY';
+      applyNodePatches(
+        selectedNodes()
+          .filter((n) => !n.locked)
+          .map((n) => ({ id: n.id, changes: { [key]: -((n[key] as number) || 1) } }))
+      );
     },
-    [selectedIds, diagramObjects]
+    [selectedNodes]
   );
 
   const handleToggleLock = useCallback(() => {
-    const nodes = selectedIds.map((id) => diagramObjects[id]).filter(Boolean) as AnyNode[];
+    const nodes = selectedNodes();
     const locked = nodes.length > 0 && nodes.every((n) => n.locked);
     applyNodePatches(nodes.map((n) => ({ id: n.id, changes: { locked: !locked } })));
-  }, [selectedIds, diagramObjects]);
+  }, [selectedNodes]);
 
   const handleHide = useCallback(() => {
-    const nodes = selectedIds.map((id) => diagramObjects[id]).filter(Boolean) as AnyNode[];
+    const nodes = selectedNodes();
     const hidden = nodes.length > 0 && nodes.every((n) => n.hidden);
     applyNodePatches(nodes.map((n) => ({ id: n.id, changes: { hidden: !hidden } })));
-  }, [selectedIds, diagramObjects]);
+  }, [selectedNodes]);
 
   const handleSwapShape = useCallback(
     (kind: ShapeKind, points?: number) => {
       applyNodePatches(
-        selectedIds
-          .map((id) => diagramObjects[id])
-          .filter((n): n is AnyNode => Boolean(n) && n.type === 'shape')
+        selectedNodes()
+          .filter((n) => n.type === 'shape')
           .map((n) => ({
             id: n.id,
             changes: {
@@ -350,34 +403,149 @@ export function useRoomContextMenuActions({
           }))
       );
     },
-    [selectedIds, diagramObjects]
+    [selectedNodes]
   );
 
-  return {
-    copy: handleCopy,
-    paste: handlePaste,
-    duplicate: handleDuplicate,
-    remove: handleRemove,
-    bringToFront: handleBringToFront,
-    sendToBack: handleSendToBack,
-    selectAll: handleSelectAll,
-    selectAllOfType: handleSelectAllOfType,
-    copyPng: handleCopyPng,
-    copySvg: handleCopySvg,
-    exportSelection: handleExportSelection,
-    copyMermaid: handleCopyMermaid,
-    editMermaid: handleEditMermaid,
-    group: handleGroup,
-    ungroup: handleUngroup,
-    editLinePoints: handleEditLinePoints,
-    'to-path': handleToPath,
-    'break-apart': handleBreakApart,
-    fillGrid: handleFillGrid,
-    releaseFromGrid: handleReleaseFromGrid,
-    align: handleAlign,
-    distribute: handleDistribute,
-    toggleLock: handleToggleLock,
-    hide: handleHide,
-    swapShape: handleSwapShape,
-  };
+  const handleCopyStyle = useCallback(() => {
+    const [source] = selectedNodes();
+    if (!source) return;
+    styleClipboard.set(extractStyle(source));
+    showToast(`Copied the ${kindNoun(source, false)}’s style`);
+  }, [selectedNodes, showToast]);
+
+  const handlePasteStyle = useCallback(() => {
+    const style = styleClipboard.get();
+    if (!style) return;
+    const patches = applyStylePatches(selectedNodes(), style);
+    if (patches.length > 0) applyNodePatches(patches);
+  }, [selectedNodes]);
+
+  const handleComment = useCallback(() => {
+    const [node] = selectedNodes();
+    if (!node) return;
+    engineEvents.emit('CommentDraftRequested', { x: node.x + node.width, y: node.y, objectId: node.id });
+  }, [selectedNodes]);
+
+  const handleZoomToSelection = useCallback(() => {
+    editor.zoomToNodes(selectedNodes());
+  }, [selectedNodes]);
+
+  const handleZoomToFit = useCallback(() => editor.zoomToFit(), []);
+
+  /** 100%, about the middle of what you are looking at — not a jump to the origin. */
+  const handleZoomReset = useCallback(() => {
+    const centre = spotOf(null);
+    const stage = document.querySelector('.konvajs-content')?.getBoundingClientRect();
+    const w = stage?.width ?? window.innerWidth;
+    const h = stage?.height ?? window.innerHeight;
+    cameraSystem.setPose(w / 2 - centre.x, h / 2 - centre.y, 1);
+  }, []);
+
+  const handleAddSticky = useCallback(() => {
+    addStickyAt(spotOf(contextTarget));
+  }, [contextTarget]);
+
+  const handleAddText = useCallback(() => {
+    addTextAt(spotOf(contextTarget));
+  }, [contextTarget]);
+
+  const handleAddShape = useCallback(
+    (preset: ShapePreset) => {
+      addShapeAt(preset, spotOf(contextTarget));
+    },
+    [contextTarget]
+  );
+
+  const handleAddComment = useCallback(() => {
+    const at = spotOf(contextTarget);
+    engineEvents.emit('CommentDraftRequested', { x: at.x, y: at.y });
+  }, [contextTarget]);
+
+  const handleRenderDiagram = useCallback(
+    (source: string) => {
+      setDiagramSource(source);
+      setDiagramReplacing(null);
+      setDiagramReplaceIds([]);
+      setDiagramOpen(true);
+    },
+    [setDiagramSource, setDiagramReplacing, setDiagramReplaceIds, setDiagramOpen]
+  );
+
+  const handleAddCode = useCallback(() => {
+    const at = spotOf(contextTarget);
+    const id = createCode(at, '', { language: CodeTool.language });
+    setSelectedIds([id]);
+    useStore.getState().setCodeEditNodeId(id);
+  }, [contextTarget, setSelectedIds]);
+
+  const handleAddLink = useCallback(() => {
+    const at = spotOf(contextTarget);
+    const client = contextTarget && !contextTarget.viaKeyboard ? { clientX: contextTarget.x, clientY: contextTarget.y } : { clientX: window.innerWidth / 2, clientY: window.innerHeight / 2 };
+    useStore.getState().setLinkComposer({ ...client, ...at });
+  }, [contextTarget]);
+
+  const handleImportCsvTable = useCallback(() => {
+    void createTableFromCsvFile(spotOf(contextTarget)).then((id) => {
+      if (id) setSelectedIds([id]);
+    });
+  }, [contextTarget, setSelectedIds]);
+
+  return useMemo(
+    () => ({
+      copy: handleCopy,
+      cut: handleCut,
+      paste: handlePaste,
+      duplicate: handleDuplicate,
+      remove: handleRemove,
+      restack: handleRestack,
+      bringToFront: () => handleRestack('front'),
+      sendToBack: () => handleRestack('back'),
+      selectAll: handleSelectAll,
+      selectAllOfType: () => handleSelectMatching('kind'),
+      selectMatching: handleSelectMatching,
+      copyPng: handleCopyPng,
+      copySvg: handleCopySvg,
+      exportSelection: handleExportSelection,
+      copyMermaid: handleCopyMermaid,
+      editMermaid: handleEditMermaid,
+      group: handleGroup,
+      ungroup: handleUngroup,
+      editLinePoints: handleEditLinePoints,
+      'to-path': handleToPath,
+      outlineStroke: handleOutlineStroke,
+      'break-apart': handleBreakApart,
+      fillGrid: handleFillGrid,
+      releaseFromGrid: handleReleaseFromGrid,
+      align: handleAlign,
+      distribute: handleDistribute,
+      flip: handleFlip,
+      toggleLock: handleToggleLock,
+      hide: handleHide,
+      swapShape: handleSwapShape,
+      copyStyle: handleCopyStyle,
+      pasteStyle: handlePasteStyle,
+      comment: handleComment,
+      zoomToSelection: handleZoomToSelection,
+      zoomToFit: handleZoomToFit,
+      zoomReset: handleZoomReset,
+      addSticky: handleAddSticky,
+      addText: handleAddText,
+      addShape: handleAddShape,
+      addComment: handleAddComment,
+      importCsvTable: handleImportCsvTable,
+      renderDiagram: handleRenderDiagram,
+      addCode: handleAddCode,
+      addLink: handleAddLink,
+    }),
+    [
+      handleCopy, handleCut, handlePaste, handleDuplicate, handleRemove, handleRestack,
+      handleSelectAll, handleSelectMatching, handleCopyPng, handleCopySvg, handleExportSelection,
+      handleCopyMermaid, handleEditMermaid, handleGroup, handleUngroup, handleEditLinePoints,
+      handleToPath, handleOutlineStroke, handleBreakApart, handleFillGrid, handleReleaseFromGrid,
+      handleAlign, handleDistribute, handleFlip, handleToggleLock, handleHide, handleSwapShape,
+      handleCopyStyle, handlePasteStyle, handleComment, handleZoomToSelection, handleZoomToFit,
+      handleZoomReset, handleAddSticky, handleAddText, handleAddShape, handleAddComment,
+      handleImportCsvTable, handleRenderDiagram, handleAddCode, handleAddLink,
+    ]
+  );
 }

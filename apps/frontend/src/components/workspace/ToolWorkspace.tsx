@@ -26,7 +26,7 @@ import {
 import { gridDefaults } from '../../engine/grid/gridDefaults';
 import { switchKind } from '../../engine/grid/gridBuild';
 import {
-  BarChart3, MousePointer2, MousePointerClick, LayoutGrid, Pen, PenTool as PenToolIcon, Type, Square, StickyNote, MessageSquare, ImageIcon, Mic, Sparkles, Frame, Eraser, Workflow, MoreVertical, TextQuote } from 'lucide-react';
+  BarChart3, MousePointer2, MousePointerClick, LayoutGrid, Pen, PenTool as PenToolIcon, Type, Square, StickyNote, MessageSquare, ImageIcon, Mic, Sparkles, Frame, Eraser, Workflow, MoreVertical, TextQuote, Code2, Link2 } from 'lucide-react';
 import { Check, Lock, LockOpen, Minus, Move, RotateCcw, SeparatorVertical, Spline, Table2, Undo2 } from 'lucide-react';
 import { SegmentedControl } from '../ui/SegmentedControl';
 import { SketchLevelIcon } from '../panel/sketchIcons';
@@ -533,6 +533,16 @@ export const ToolWorkspace: React.FC<Props> = ({ activeToolId, onOpenDiagram, on
       id: 'comment', icon: <MessageSquare size={16} />, label: 'Comment',
       description: 'pin a note to a point or an object',
       isActive: (t) => t === 'comment', run: () => setTool('comment'),
+    },
+    {
+      id: 'code', icon: <Code2 size={16} />, label: 'Code block',
+      description: 'highlighted code, editable in place',
+      isActive: (t) => t === 'code', run: () => setTool('code'),
+    },
+    {
+      id: 'link', icon: <Link2 size={16} />, label: 'Link',
+      description: 'a card, or a player for videos and Figma',
+      isActive: (t) => t === 'link', run: () => setTool('link'),
     },
     {
       id: 'diagram', icon: <Workflow size={16} />, label: 'Diagram from code',

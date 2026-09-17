@@ -3,8 +3,7 @@ import React, { useRef, useState, useEffect, useCallback, useMemo, useSyncExtern
 import { Stage, Layer, Circle, Group, Path } from "react-konva";
 import Konva from "konva";
 import { selectionWithin } from '../engine/model/groupTree';
-import { updateNode, applyNodePatches, nextZIndex, lowestZIndex } from '../engine/document';
-import { nanoid } from 'nanoid';
+import { updateNode, applyNodePatches } from '../engine/document';
 import { useStore } from '../hooks/useStore';
 import { FORCE_SPECS, canLatch, isForceTool } from '../engine/physics/forces';
 import { editor } from '../engine/api/EditorAPI';
@@ -55,7 +54,7 @@ const DRAWING_TOOLS = new Set([
 const isDrawingTool = (toolId: string) => DRAWING_TOOLS.has(toolId) || toolId.startsWith('frame-');
 import { cursorModeForTool, LocalCursor } from '../engine/cursor';
 import { GestureOverlay } from "./GestureOverlay";
-import { ToolManager, SelectTool, ShapeTool, TextTool, StickyTool, AudioTool, PenTool, BezierPenTool, HandTool, EraserTool, CommentTool, FrameTool, GridTool, ChartTool, TableTool, ConnectorTool } from '../engine/tools';
+import { ToolManager, SelectTool, ShapeTool, TextTool, StickyTool, AudioTool, PenTool, BezierPenTool, HandTool, EraserTool, CommentTool, FrameTool, GridTool, ChartTool, TableTool, CodeTool, LinkTool, ConnectorTool } from '../engine/tools';
 import { canSelectWith } from '../engine/tools/shortcuts';
 import { DirectSelectTool } from '../engine/tools/DirectSelectTool';
 
@@ -92,6 +91,7 @@ import { slotReframe } from '../engine/interaction/slotReframe';
 import { textEditing } from '../engine/interaction/textEditing';
 import { FRAME_PRESETS } from '../engine/model/frames';
 import { deleteNodesWithFrames } from '../engine/interaction/frameMembership';
+import { activateLink } from '../engine/link/linkApply';
 
 interface CanvasProps {
   activeTool: string;
@@ -490,6 +490,17 @@ export const Canvas: React.FC<CanvasProps> = ({ activeTool, selectedIds, setSele
           lineEdit.begin(only.id);
           return;
         }
+        // Enter opens what double-click opens: the code editor, or the link.
+        if (only?.type === 'code' && !only.locked) {
+          e.preventDefault();
+          useStore.getState().setCodeEditNodeId(only.id);
+          return;
+        }
+        if (only?.type === 'link') {
+          e.preventDefault();
+          activateLink(only);
+          return;
+        }
       }
 
       if (e.key === 'Escape') {
@@ -504,57 +515,10 @@ export const Canvas: React.FC<CanvasProps> = ({ activeTool, selectedIds, setSele
         setSelectedIds([]);
         return;
       }
-      if ((e.metaKey || e.ctrlKey) && e.key === 'd') {
-        e.preventDefault();
-        // Duplicate from the canonical store rather than the raw Y.Map, so a
-        // clone of a legacy node is written back in the current schema.
-        const store = useStore.getState().objects;
-        const newIds = selectedIds.map(id => {
-          const obj = store[id];
-          if (!obj) return null;
-          const cloneId = nanoid();
-          editor.createNode({ ...obj, id: cloneId, x: obj.x + 20, y: obj.y + 20 });
-          return cloneId;
-        }).filter(Boolean) as string[];
-        setSelectedIds(newIds);
-        return;
-      }
-      // These used to read `o.zIndex` off the Y.Map instances returned by
-      // objectsMap.values(). A Y.Map exposes its fields through .get(), not as
-      // plain properties, so every read was `undefined || 0` — meaning maxZ
-      // and minZ were *always* 0 and both shortcuts assigned a fixed 1,2,3…
-      // regardless of what was actually on the canvas. nextZIndex/
-      // lowestZIndex read the document correctly.
-      if ((e.metaKey || e.ctrlKey) && e.shiftKey && e.key === ']') {
-        e.preventDefault();
-        const top = nextZIndex();
-        selectedIds.forEach((id, i) => updateNode(id, { zIndex: top + i }));
-        return;
-      }
-      if ((e.metaKey || e.ctrlKey) && e.shiftKey && e.key === '[') {
-        e.preventDefault();
-        const bottom = lowestZIndex();
-        selectedIds.forEach((id, i) => updateNode(id, { zIndex: bottom - selectedIds.length + i }));
-        return;
-      }
-      if ((e.metaKey || e.ctrlKey) && !e.shiftKey && e.key === ']') {
-        e.preventDefault();
-        const store = useStore.getState().objects;
-        selectedIds.forEach((id) => {
-          const currentZ = (store[id]?.zIndex ?? 0) as number;
-          updateNode(id, { zIndex: currentZ + 1 });
-        });
-        return;
-      }
-      if ((e.metaKey || e.ctrlKey) && !e.shiftKey && e.key === '[') {
-        e.preventDefault();
-        const store = useStore.getState().objects;
-        selectedIds.forEach((id) => {
-          const currentZ = (store[id]?.zIndex ?? 0) as number;
-          updateNode(id, { zIndex: Math.max(0, currentZ - 1) });
-        });
-        return;
-      }
+      // Duplicate and the four restacks are bound in `useSelectionCommandKeys`,
+      // to the same actions the menu runs. The copies that lived here cloned
+      // connectors still bound to the originals and stepped `zIndex` by one
+      // past ties -- see that hook.
       if ((e.metaKey || e.ctrlKey) && e.shiftKey && e.key.toLowerCase() === 'g') {
         e.preventDefault();
         editor.ungroupNodes(selectedIds);
@@ -1100,6 +1064,8 @@ export const Canvas: React.FC<CanvasProps> = ({ activeTool, selectedIds, setSele
     tm.registerTool(new GridTool());
     tm.registerTool(new ChartTool());
     tm.registerTool(new TableTool());
+    tm.registerTool(new CodeTool());
+    tm.registerTool(new LinkTool());
     FRAME_PRESETS.forEach((preset) => tm.registerTool(new FrameTool(preset.id)));
     return tm;
   }, []);

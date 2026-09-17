@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { inflate, placeRail, selectionHull, type Bounds, type Rect } from './railPlacement';
+import { anchoredPopover, inflate, placeRail, selectionHull, type Bounds, type Rect } from './railPlacement';
 
 /** A 1000 × 800 window with the panels and the dock taken out of it. */
 const BOUNDS: Bounds = { top: 64, right: 712, bottom: 724, left: 288 };
@@ -218,5 +218,36 @@ describe('placeRail', () => {
     expect(placeRail(subject, RAIL, BOUNDS, STANDOFF)).toEqual(
       placeRail(subject, RAIL, BOUNDS, STANDOFF)
     );
+  });
+});
+
+describe('anchoredPopover', () => {
+  // A rail at y 300..340 with the object below it, from 380 to 700.
+  const trigger = { top: 300, bottom: 340 };
+  const subject = { top: 380, bottom: 700 };
+
+  it('opens away from the object when it fits there', () => {
+    expect(anchoredPopover(trigger, subject, 200, 'top', 800)).toEqual({ side: 'top' });
+  });
+
+  it('does not open across the object just because the window has room below', () => {
+    // 284px clean above, 400px of window below that is mostly the object.
+    const result = anchoredPopover(trigger, subject, 360, 'top', 900);
+    expect(result).toEqual({ side: 'top', maxHeight: 284 });
+  });
+
+  it('takes the other side when that side is clear and fits', () => {
+    const low = { top: 40, bottom: 80 };
+    const above = { top: 0, bottom: 30 };
+    expect(anchoredPopover(low, above, 300, 'top', 800)).toEqual({ side: 'bottom' });
+  });
+
+  it('falls back to the larger side of the window, scrolling, when nothing is clean', () => {
+    // 84px above, 2px between the rail and the object: neither is usable, so
+    // the window's larger side wins even though it is over the object.
+    const cramped = anchoredPopover({ top: 100, bottom: 140 }, { top: 150, bottom: 780 }, 500, 'top', 800);
+    expect(cramped).toEqual({ side: 'bottom' });
+    const tiny = anchoredPopover({ top: 100, bottom: 140 }, { top: 150, bottom: 780 }, 500, 'top', 400);
+    expect(tiny).toEqual({ side: 'bottom', maxHeight: 244 });
   });
 });

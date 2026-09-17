@@ -7,7 +7,9 @@ import React, {
   useState,
   useSyncExternalStore,
 } from 'react';
-import { Search, Sparkles, X } from 'lucide-react';
+import { Keyboard, Search, Sparkles, X } from 'lucide-react';
+import { KeyboardMap } from './learn/KeyboardMap';
+import { capsFor, comboFromEvent, comboToSpec, combosInSpec } from './menu/shortcuts';
 import { useFocusTrap } from '../hooks/useFocusTrap';
 import { TOOL_SHORTCUTS } from '../engine/tools/shortcuts';
 import { TOOL_NAMES } from '../engine/tools/toolNames';
@@ -127,7 +129,10 @@ function buildSections(): Section[] {
         { keys: 'Double-click', what: 'Go inside: text, line points, path anchors, image crop' },
         { keys: 'Enter', what: 'Edit selected text or note, or open a line’s points' },
         { keys: 'Alt + Drag', what: 'Duplicate the object instead of moving it' },
-        { keys: 'Right-click', what: 'Context menu with type-actions & alignment' },
+        { keys: 'Right-click', what: 'Everything the selection can do, or add something where you clicked' },
+        { keys: 'Shift + F10', what: 'Open that menu from the keyboard (or the Menu key)' },
+        { keys: 'Alt + F10', what: 'Move the keyboard onto the selection’s toolbar' },
+        { keys: 'Shift + 2', what: 'Zoom to the selection' },
       ],
     },
     {
@@ -148,10 +153,14 @@ function buildSections(): Section[] {
         { keys: 'Delete / Backspace', what: 'Delete selection (frames take contents)' },
         { keys: 'Arrows', what: 'Nudge selection by 1 pixel' },
         { keys: 'Shift + Arrows', what: 'Nudge selection by 10 pixels' },
-        { keys: `${MOD} + ]`, what: 'Bring selection forward one step' },
-        { keys: `${MOD} + [`, what: 'Send selection backward one step' },
+        { keys: `${MOD} + ]`, what: 'Bring forward, past the next object it overlaps' },
+        { keys: `${MOD} + [`, what: 'Send backward, under the next object it overlaps' },
         { keys: `${MOD} + Shift + ]`, what: 'Bring selection to front' },
         { keys: `${MOD} + Shift + [`, what: 'Send selection to back' },
+        { keys: `${MOD} + Alt + C`, what: 'Copy the selected object’s style' },
+        { keys: `${MOD} + Alt + V`, what: 'Paste that style onto the selection' },
+        { keys: `${MOD} + Shift + L`, what: 'Lock or unlock the selection' },
+        { keys: `${MOD} + Shift + H`, what: 'Hide or show the selection' },
       ],
     },
     {
@@ -257,6 +266,34 @@ function buildSections(): Section[] {
       rows: [
         { keys: `${MOD} + Shift + E`, what: 'Export the selection: six formats, with a preview' },
         { keys: 'Right-click', what: 'Copy as PNG or SVG, and Export from the same menu' },
+      ],
+    },
+    {
+      id: 'code',
+      group: 'Content',
+      tab: 'Code',
+      title: 'Code blocks',
+      blurb: 'Paste a snippet or a fenced ``` block and it arrives as code, language detected.',
+      rows: [
+        { keys: 'Enter', what: 'Open the selected block (or double-click it)' },
+        { keys: 'Tab / Shift + Tab', what: 'Indent or outdent the line or selection' },
+        { keys: `${MOD} + /`, what: 'Comment or uncomment the lines' },
+        { keys: 'Alt + ↑ / ↓', what: 'Move the lines up or down' },
+        { keys: 'Click a line number', what: 'Mark that line, to point at it on the board' },
+        { keys: `Esc or ${MOD} + Enter`, what: 'Done (a block left empty removes itself)' },
+      ],
+    },
+    {
+      id: 'links',
+      group: 'Content',
+      tab: 'Links',
+      title: 'Links',
+      blurb: 'Paste a web address anywhere on the board and it becomes a card.',
+      rows: [
+        { keys: 'Enter', what: 'Open the selected link, or play a video or design in place' },
+        { keys: 'Rail', what: 'Compact, picture beside, picture above, or player' },
+        { keys: 'Esc', what: 'Stop a player and give the board back' },
+        { keys: 'After a paste', what: '“Paste as text” turns the card back into words' },
       ],
     },
     {
@@ -427,6 +464,34 @@ const Highlight: React.FC<{ text: string; q: string }> = ({ text, q }) => {
 
 const TIPS_TAB = 'tips';
 const ALL_TAB = 'all';
+const KEYBOARD_TAB = 'keyboard';
+
+/**
+ * Keys a search field needs for itself.
+ *
+ * The finder listens even while the search field has focus — it has focus the
+ * moment this page opens, so a finder that stepped aside for it would never
+ * run. These are the combinations that mean something to the text in the field
+ * and are left to it.
+ */
+const FIELD_KEYS = new Set(['mod+a', 'mod+c', 'mod+v', 'mod+x', 'mod+z', 'mod+y', 'mod+shift+z', 'mod+backspace', 'mod+delete', 'mod+arrowleft', 'mod+arrowright', 'alt+backspace', 'alt+arrowleft', 'alt+arrowright', 'mod+shift+arrowleft', 'mod+shift+arrowright']);
+
+/** One written shortcut as keycaps, alternatives separated. */
+const Keys: React.FC<{ written: string }> = ({ written }) => (
+  <>
+    {written.split(/\s+\/\s+/).map((alt, ai) => (
+      <React.Fragment key={alt + ai}>
+        {ai > 0 && <span className="help-or">or</span>}
+        {capsFor(alt).map((k, ki) => (
+          <React.Fragment key={k + ki}>
+            {ki > 0 && <span className="help-plus">+</span>}
+            <kbd>{k}</kbd>
+          </React.Fragment>
+        ))}
+      </React.Fragment>
+    ))}
+  </>
+);
 
 interface Props {
   open: boolean;
@@ -494,6 +559,10 @@ export const HelpModal: React.FC<Props> = ({ open, onClose }) => {
   const [query, setQuery] = useState('');
   const [activeTab, setActiveTab] = useState(ALL_TAB);
   const panelRef = useFocusTrap(open, onClose);
+  /** The last shortcut pressed to look it up, and what it turned out to be. */
+  const [found, setFound] = useState<{ combo: string; hits: Array<{ section: Section; row: Shortcut }> } | null>(null);
+  /** The row the finder jumped to, marked for a moment so the eye lands on it. */
+  const [flash, setFlash] = useState<string | null>(null);
 
   /**
    * Begin a walkthrough, and get out of its way.
@@ -613,6 +682,7 @@ export const HelpModal: React.FC<Props> = ({ open, onClose }) => {
   const categories = useMemo<Category[]>(
     () => [
       { id: ALL_TAB, label: 'Everything', group: null, count: totalRows + matchedTips.length },
+      { id: KEYBOARD_TAB, label: 'Keyboard map', group: null, count: -1 },
       ...GROUPS.flatMap((group) =>
         matched
           .filter((s) => s.group === group)
@@ -624,7 +694,7 @@ export const HelpModal: React.FC<Props> = ({ open, onClose }) => {
   );
 
   const visibleSections = useMemo(() => {
-    if (activeTab === TIPS_TAB) return [];
+    if (activeTab === TIPS_TAB || activeTab === KEYBOARD_TAB) return [];
     const scoped =
       activeTab === ALL_TAB ? matched : matched.filter((s) => s.id === activeTab);
     return scoped.filter((s) => s.rows.length > 0);
@@ -632,7 +702,8 @@ export const HelpModal: React.FC<Props> = ({ open, onClose }) => {
 
   const visibleTips = activeTab === ALL_TAB || activeTab === TIPS_TAB ? matchedTips : [];
 
-  const nothingMatched = visibleSections.length === 0 && visibleTips.length === 0;
+  const nothingMatched =
+    activeTab !== KEYBOARD_TAB && visibleSections.length === 0 && visibleTips.length === 0;
 
   /**
    * How many matches there are outside the category being looked at.
@@ -662,9 +733,30 @@ export const HelpModal: React.FC<Props> = ({ open, onClose }) => {
     paneRef.current?.scrollTo({ top: 0 });
   }, [activeTab]);
 
+  /**
+   * Bring the found row into view, after the reset above has run.
+   *
+   * Declared second on purpose: effects run in order, so a category change and
+   * a found row arriving together scroll to the row rather than to the top.
+   */
+  useEffect(() => {
+    if (!flash) return;
+    paneRef.current?.querySelector<HTMLElement>('[data-flash]')?.scrollIntoView({ block: 'center' });
+    const t = window.setTimeout(() => setFlash(null), 1800);
+    return () => window.clearTimeout(t);
+  }, [flash, activeTab]);
+
+  /** Typing a search ends a lookup; a stale "you pressed" above new results would be noise. */
+  useEffect(() => {
+    if (query) setFound(null);
+  }, [query]);
+
   /** Re-open on Everything, so the panel never reappears mid-filter. */
   useEffect(() => {
-    if (open) setActiveTab(ALL_TAB);
+    if (open) {
+      setActiveTab(ALL_TAB);
+      setFound(null);
+    }
   }, [open]);
 
   /**
@@ -691,13 +783,44 @@ export const HelpModal: React.FC<Props> = ({ open, onClose }) => {
    * Modified keys are left alone, because this is also the screen where
    * somebody is most likely to be *trying* a shortcut to see what it does.
    */
-  const onPanelKeyDown = useCallback((e: React.KeyboardEvent) => {
-    if (e.metaKey || e.ctrlKey || e.altKey) return;
-    if (e.key.length !== 1) return;
-    const el = document.activeElement?.tagName;
-    if (el === 'INPUT' || el === 'TEXTAREA') return;
-    searchRef.current?.focus();
-  }, []);
+  const onPanelKeyDown = useCallback(
+    (e: React.KeyboardEvent) => {
+      const el = document.activeElement?.tagName;
+      const inField = el === 'INPUT' || el === 'TEXTAREA';
+
+      /**
+       * Press a shortcut to find out what it does.
+       *
+       * This is the screen where somebody is most likely to be *trying* a key
+       * to see what it does — and that used to fall through to the board
+       * behind the dialog, or do nothing. Any combination with a modifier, or
+       * Shift on a number, is looked up instead: the page says what it is and
+       * scrolls to it, and the board never sees the key.
+       */
+      const combo = comboFromEvent(e);
+      const modified = e.metaKey || e.ctrlKey || e.altKey || (e.shiftKey && /^Digit/.test(e.code));
+      if (combo && modified && !(inField && FIELD_KEYS.has(combo))) {
+        e.preventDefault();
+        e.stopPropagation();
+        const hits = sections.flatMap((s) =>
+          s.rows.filter((r) => combosInSpec(r.keys).includes(combo)).map((r) => ({ section: s, row: r }))
+        );
+        setFound({ combo, hits });
+        if (hits.length > 0 && activeTab !== KEYBOARD_TAB) {
+          setQuery('');
+          setActiveTab(hits[0].section.id);
+          setFlash(hits[0].row.keys + hits[0].row.what);
+        }
+        return;
+      }
+
+      if (e.metaKey || e.ctrlKey || e.altKey) return;
+      if (e.key.length !== 1) return;
+      if (inField) return;
+      searchRef.current?.focus();
+    },
+    [sections, activeTab]
+  );
 
   /**
    * Up and down move through the rail, which a row of pills never offered.
@@ -792,7 +915,7 @@ export const HelpModal: React.FC<Props> = ({ open, onClose }) => {
                     ?.focus();
                 }
               }}
-              placeholder="Search shortcuts and tips"
+              placeholder="Search, or press any shortcut to look it up"
               aria-label="Search shortcuts and tips"
               autoFocus
             />
@@ -815,6 +938,28 @@ export const HelpModal: React.FC<Props> = ({ open, onClose }) => {
               by category; this is the one number that answers "is it in here
               at all", which is the question a query with no results leaves
               hanging. */}
+          {found && !q && (
+            <div className="help-finder" role="status" data-hit={found.hits.length > 0 || undefined}>
+              <span className="help-finder__keys">
+                <Keys written={comboToSpec(found.combo)} />
+              </span>
+              {found.hits.length > 0 ? (
+                <span className="help-finder__what">
+                  {found.hits[0].row.what}
+                  <span className="help-finder__where">
+                    {found.hits[0].section.title}
+                    {found.hits.length > 1 && ` · and ${found.hits.length - 1} more`}
+                  </span>
+                </span>
+              ) : (
+                <span className="help-finder__what help-finder__what--none">Nothing is bound to this yet.</span>
+              )}
+              <button type="button" className="help-modal__clear" onClick={() => setFound(null)} aria-label="Dismiss">
+                <X size={12} />
+              </button>
+            </div>
+          )}
+
           {q && (
             <p className="help-modal__tally" role="status">
               {totalRows + matchedTips.length === 0
@@ -865,6 +1010,9 @@ export const HelpModal: React.FC<Props> = ({ open, onClose }) => {
                       q && cat.count === 0 ? 'is-empty' : ''
                     }`}
                   >
+                    {cat.id === KEYBOARD_TAB && (
+                      <Keyboard size={12} className="help-rail__mark" aria-hidden />
+                    )}
                     {cat.id === TIPS_TAB && (
                       <Sparkles size={12} className="help-rail__mark" aria-hidden />
                     )}
@@ -878,7 +1026,7 @@ export const HelpModal: React.FC<Props> = ({ open, onClose }) => {
                       * and the rail should read as a table of contents rather
                       * than as a spreadsheet.
                       */}
-                    {q && <span className="help-rail__count">{cat.count}</span>}
+                    {q && cat.count >= 0 && <span className="help-rail__count">{cat.count}</span>}
                   </button>
                 </React.Fragment>
               );
@@ -895,10 +1043,11 @@ export const HelpModal: React.FC<Props> = ({ open, onClose }) => {
               // the next. It is the answer to the whole pane, so the pane
               // stops being columns while it is showing one.
               className={`help-modal__cols ${single ? 'is-single' : ''} ${
-                nothingMatched ? 'is-blank' : ''
+                nothingMatched || activeTab === KEYBOARD_TAB ? 'is-blank' : ''
               }`}
               key={activeTab}
             >
+              {activeTab === KEYBOARD_TAB && <KeyboardMap />}
               {visibleSections.map((section, i) => (
                 <section
                   key={section.id}
@@ -921,17 +1070,19 @@ export const HelpModal: React.FC<Props> = ({ open, onClose }) => {
                        * Right-aligning the keys also puts them on a common
                        * edge, which is what makes a long list scannable at all.
                        */
-                      <div key={row.keys + row.what} className="help-row">
+                      <div
+                        key={row.keys + row.what}
+                        className="help-row"
+                        data-flash={flash === row.keys + row.what || undefined}
+                      >
                         <dt>
                           <Highlight text={row.what} q={q} />
                         </dt>
+                        {/* Keycaps for this machine: ⌘ ⇧ ⌥ on a Mac. The words
+                            were right on one platform and a translation job on
+                            the other. */}
                         <dd>
-                          {row.keys.split(' + ').map((k, ki) => (
-                            <React.Fragment key={k + ki}>
-                              {ki > 0 && <span className="help-plus">+</span>}
-                              <kbd>{k}</kbd>
-                            </React.Fragment>
-                          ))}
+                          <Keys written={row.keys} />
                         </dd>
                       </div>
                     ))}

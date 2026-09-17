@@ -29,6 +29,7 @@ import { Accordion, Row, SubGroup, ToggleButton } from '../panelPrimitives';
 import { shortFont } from '../panelHelpers';
 import { EffectSpecimen, VerticalAlignGlyph } from '../typeGlyphs';
 import { ColorPickerPopover } from '../../ui/ColorPickerPopover';
+import { boardSurface, textSurface } from '../../../engine/model/textSurface';
 import { EyedropperButton } from '../../ui/EyedropperButton';
 import { FontSelector } from '../../ui/FontSelector';
 import { FontWeightSelect } from '../../ui/FontWeightSelect';
@@ -256,6 +257,9 @@ export const TypographySection: React.FC<TypographySectionProps> = ({
               color={typography.color}
               mixed={sharedType((t) => t.color).mixed}
               onChange={(color) => setTypography({ color })}
+              // Measured against what the words sit on: the shape's own fill
+              // for a label, the board for a text box.
+              contrastAgainst={textSurface(node, boardSurface())}
             />
             <EyedropperButton
               label="Pick a text colour from the screen"

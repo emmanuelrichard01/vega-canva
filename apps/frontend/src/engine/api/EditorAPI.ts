@@ -7,6 +7,7 @@ import { planGroup, planUngroup, rootGroupOf } from '../model/groupTree';
 import { useStore } from '../../hooks/useStore';
 import { cameraSystem } from '../CameraSystem';
 import { fitPose, type FitBounds } from '../cameraFit';
+import { selectionBounds } from '../model/selection';
 
 /**
  * The world box every visible node occupies, or `null` on an empty board.
@@ -181,6 +182,23 @@ export class EditorAPI {
 
     const pose = fitPose(bounds, cameraSystem.width, cameraSystem.height, {
       ...cameraSystem.zoomLimits,
+    });
+    if (pose) cameraSystem.setPose(pose.x, pose.y, pose.zoom);
+  }
+
+  /**
+   * Frame just these objects.
+   *
+   * Capped at 200% rather than the camera's own ceiling: fitting a single note
+   * to the screen at 500% is technically a fit and practically a lost place on
+   * the board, with nothing around it to say where you are.
+   */
+  zoomToNodes(nodes: readonly AnyNode[]) {
+    const bounds = selectionBounds(nodes);
+    if (!bounds) return;
+    const pose = fitPose(bounds, cameraSystem.width, cameraSystem.height, {
+      ...cameraSystem.zoomLimits,
+      maxZoom: Math.min(2, cameraSystem.zoomLimits.maxZoom),
     });
     if (pose) cameraSystem.setPose(pose.x, pose.y, pose.zoom);
   }

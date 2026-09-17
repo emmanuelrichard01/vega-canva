@@ -5,8 +5,10 @@ vi.mock('react', () => {
   return {
     default: {
       useCallback: (fn: any) => fn,
+      useMemo: (fn: any) => fn(),
     },
     useCallback: (fn: any) => fn,
+    useMemo: (fn: any) => fn(),
   };
 });
 
@@ -76,12 +78,17 @@ describe('useRoomContextMenuActions', () => {
     expect(setSelectedIds).toHaveBeenCalledWith([]);
   });
 
-  it('handles bringToFront and sendToBack', () => {
+  it('restacks by the drawn order, touching only what moves', () => {
     const setSelectedIds = vi.fn();
+    const box = { x: 0, y: 0, width: 10, height: 10, rotation: 0, scaleX: 1, scaleY: 1 };
+    const diagramObjects = {
+      n1: { ...box, id: 'n1', zIndex: 1 },
+      n2: { ...box, id: 'n2', zIndex: 2 },
+    } as unknown as Record<string, AnyNode>;
     const actions = useRoomContextMenuActions({
       selectedIds: ['n1'],
       setSelectedIds,
-      diagramObjects: {},
+      diagramObjects,
       contextTarget: null,
       localTitle: 'Test Board',
       clipboardRef: { current: null },
@@ -98,14 +105,15 @@ describe('useRoomContextMenuActions', () => {
       setDiagramOpen: vi.fn(),
     });
 
+    // n1 sits under n2, so to the front means just above n2.
     actions.bringToFront();
     expect(mockPatches.length).toBe(1);
-    expect(mockPatches[0].changes.zIndex).toBe(10);
+    expect(mockPatches[0]).toEqual({ id: 'n1', changes: { zIndex: 3 } });
 
+    // Already at the back: nothing to write, and no undo step for nothing.
     mockPatches.length = 0;
     actions.sendToBack();
-    expect(mockPatches.length).toBe(1);
-    expect(mockPatches[0].changes.zIndex).toBe(-11);
+    expect(mockPatches.length).toBe(0);
   });
 
   it('handles group and ungroup', () => {

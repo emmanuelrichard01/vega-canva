@@ -324,3 +324,52 @@ export function placeRail(
       return { x: bounds.left + rail.width, y: midY, side: 'left', clear: false };
   }
 }
+
+/**
+ * Which way a popover hung off a rail button opens, and how tall it may grow.
+ *
+ * ## Why this is not "whichever side has more room"
+ *
+ * The room that matters is the room that does not cross the artwork. A rail
+ * above an object has the whole window above it and a sliver between itself
+ * and the object below; a popover that measured the window would happily open
+ * downward across the thing being edited whenever the window was short.
+ *
+ * So each side is measured to the nearer of the window edge and the object, the
+ * side away from the object is preferred, and when neither side can hold the
+ * panel whole it *scrolls* on the side away from the object rather than spilling
+ * onto it — provided that side has a usable amount of room. Only when there is
+ * no clean room anywhere does it take the larger side of the window regardless.
+ *
+ * Pure, so the rule can be asserted; re-run whenever the panel changes size,
+ * which is what lets a popover that grows — a disclosure opening, shading
+ * options appearing — keep itself on screen instead of overflowing it.
+ */
+export function anchoredPopover(
+  trigger: { top: number; bottom: number },
+  subject: { top: number; bottom: number } | null,
+  panelHeight: number,
+  preferred: 'top' | 'bottom',
+  viewportHeight: number,
+  margin = 8,
+  gap = 8
+): { side: 'top' | 'bottom'; maxHeight?: number } {
+  const fullAbove = trigger.top - gap - margin;
+  const fullBelow = viewportHeight - trigger.bottom - gap - margin;
+  const clean = {
+    top: subject && subject.bottom <= trigger.top ? Math.min(fullAbove, trigger.top - subject.bottom - gap) : fullAbove,
+    bottom: subject && subject.top >= trigger.bottom ? Math.min(fullBelow, subject.top - trigger.bottom - gap) : fullBelow,
+  };
+  const other = preferred === 'top' ? 'bottom' : 'top';
+
+  if (clean[preferred] >= panelHeight) return { side: preferred };
+  if (clean[other] >= panelHeight) return { side: other };
+
+  const USABLE = 160;
+  if (clean[preferred] >= USABLE) return { side: preferred, maxHeight: Math.floor(clean[preferred]) };
+  if (clean[other] >= USABLE) return { side: other, maxHeight: Math.floor(clean[other]) };
+
+  const side = fullAbove >= fullBelow ? 'top' : 'bottom';
+  const room = side === 'top' ? fullAbove : fullBelow;
+  return room < panelHeight ? { side, maxHeight: Math.max(0, Math.floor(room)) } : { side };
+}

@@ -25,6 +25,8 @@ import {
 } from '../../engine/interaction/selectionTransform';
 import { claimCursor } from '../../engine/cursor/cursorOverride';
 import { RotateZones } from './RotateZones';
+import { layoutCode, measureCharWidth } from '../../engine/code/codeLayout';
+import { CODE_FONT } from '../../engine/code/codeThemes';
 
 interface Props {
   selectedIds: string[];
@@ -583,6 +585,31 @@ export const SelectionTransformer: React.FC<Props> = ({ selectedIds, stageRef })
             height: Math.max(MIN_SIZE, Math.ceil(laid.height)),
           });
         }
+      }
+
+      /**
+       * Code is re-flowed, never stretched, and its height is its lines.
+       *
+       * The same argument as the paragraph above: monospace code distorted by
+       * a scale is unreadable, and a code block's height is not a choice but a
+       * consequence of how many lines it has at this width. A corner drag
+       * scales the type instead, which is how you make a snippet readable
+       * from across the room.
+       */
+      if (node.type === 'code' && start.type === 'code' && !rotating) {
+        const scale = from.width > 0 ? moved.to.width / from.width : 1;
+        const scaleY = from.height > 0 ? moved.to.height / from.height : 1;
+        let spec = start.code;
+        let width = placed.width;
+        if (CORNERS.has(anchor) && uniformDrag(scale, scaleY)) {
+          const fontSize = Math.round(Math.max(8, Math.min(48, start.code.fontSize * Math.abs(scale))));
+          spec = { ...start.code, fontSize };
+          width = start.width * (fontSize / start.code.fontSize);
+          extra.code = spec;
+        }
+        width = Math.max(180, width);
+        const laid = layoutCode(spec, width, measureCharWidth(spec.fontSize, CODE_FONT));
+        placed = placeParagraph(placed, { width, height: laid.height });
       }
 
       out.push({ id, node, start, placed, extra });

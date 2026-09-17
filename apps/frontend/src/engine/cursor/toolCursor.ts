@@ -113,6 +113,9 @@ const BY_TOOL: Record<string, CursorMode> = {
   // the next drag selects, when it draws a table whose rows follow the drag.
   // The chart's reasoning exactly, and the same miss as the five above.
   table: 'draw',
+  // A code block is placed like a table, and a link like a comment: at a spot.
+  code: 'draw',
+  link: 'place',
   text: 'text',
   eraser: 'erase',
   sticky: 'note',

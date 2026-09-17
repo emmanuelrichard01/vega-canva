@@ -172,6 +172,33 @@ objectRegistry.register({
 });
 
 objectRegistry.register({
+  type: 'code',
+  capabilities: {
+    /**
+     * Opacity and shadow. A code block's colours are its *theme* — ground,
+     * gutter and eighteen token colours tuned to hold contrast together — so a
+     * single fill swatch could only break that, and the Code section offers
+     * the four themes instead.
+     */
+    supportsOpacity: true,
+    supportsShadow: true,
+    supportsComments: true,
+  },
+  defaultProperties: () => ({ width: 520, height: 200 }),
+});
+
+objectRegistry.register({
+  type: 'link',
+  capabilities: {
+    /** A card is a clipping of someone else's page: it keeps its own paper. */
+    supportsOpacity: true,
+    supportsShadow: true,
+    supportsComments: true,
+  },
+  defaultProperties: () => ({ width: 520, height: 144 }),
+});
+
+objectRegistry.register({
   type: 'grid',
   capabilities: {
     /**

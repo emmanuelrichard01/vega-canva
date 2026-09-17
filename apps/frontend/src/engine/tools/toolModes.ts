@@ -69,7 +69,8 @@ export function isLockable(toolId: string): boolean {
     toolId === 'sticky' ||
     toolId === 'chart' ||
     toolId === 'grid' ||
-    toolId === 'table'
+    toolId === 'table' ||
+    toolId === 'code'
   );
 }
 
@@ -82,7 +83,7 @@ export function isLockable(toolId: string): boolean {
  * go of the key would then pull the tool out from under whatever just opened.
  */
 export function isSpringable(toolId: string): boolean {
-  return !['text', 'sticky', 'image', 'audio', 'comment', 'chart', 'table'].includes(toolId);
+  return !['text', 'sticky', 'image', 'audio', 'comment', 'chart', 'table', 'code', 'link'].includes(toolId);
 }
 
 /**

@@ -34,6 +34,12 @@ import { ShapeRenderer } from './canvas/renderers/ShapeRenderer';
 import { GridRenderer } from './canvas/renderers/GridRenderer';
 import { ChartRenderer } from './canvas/renderers/ChartRenderer';
 import { TableRenderer } from './canvas/renderers/TableRenderer';
+import { CodeRenderer } from './canvas/renderers/CodeRenderer';
+import { LinkRenderer } from './canvas/renderers/LinkRenderer';
+import { layoutCode as layoutCodeBlock, measureCharWidth } from '../engine/code/codeLayout';
+import { CODE_FONT } from '../engine/code/codeThemes';
+import { updateCode } from '../engine/code/codeApply';
+import { activateLink } from '../engine/link/linkApply';
 import { chartCapabilities } from '../engine/chart/chartTypes';
 import { StickyRenderer } from './canvas/renderers/StickyRenderer';
 import { FrameRenderer } from './canvas/renderers/FrameRenderer';
@@ -886,6 +892,28 @@ export const ObjectRenderer = React.memo(
       if (node.type === 'table') {
         useStore.getState().setTableEditNodeId(node.id);
       }
+      /**
+       * Code opens where it is, too — except on its fold, where the gesture
+       * means "show me the rest" and unfolds the block instead.
+       */
+      if (node.type === 'code' && !node.locked) {
+        const stage = e?.target?.getStage?.();
+        const pointer = stage?.getPointerPosition?.();
+        const world = pointer ? cameraSystem.screenToWorld(pointer.x, pointer.y) : null;
+        const laid = layoutCodeBlock(node.code, node.width, measureCharWidth(node.code.fontSize, CODE_FONT));
+        if (world && laid.hidden > 0 && world.y - node.y > node.height - laid.metrics.footerHeight) {
+          updateCode(node, { maxLines: null });
+        } else {
+          useStore.getState().setCodeEditNodeId(node.id);
+        }
+      }
+      /**
+       * A link goes where it points; an embed comes alive instead. Opening a
+       * page is the thing a double-click on a card has meant since bookmarks,
+       * and a player that opened a new tab rather than playing would be the
+       * wrong reading of the same gesture.
+       */
+      if (node.type === 'link') activateLink(node);
     }, [isSelected, node, objId, onSelect]);
 
     const handleCommit = useCallback(
@@ -1432,5 +1460,11 @@ const NodeContent: React.FC<{ node: AnyNode; isEditing: boolean; stageScale?: nu
 
     case 'table':
       return <TableRenderer node={node} />;
+
+    case 'code':
+      return <CodeRenderer node={node} />;
+
+    case 'link':
+      return <LinkRenderer node={node} />;
   }
 };

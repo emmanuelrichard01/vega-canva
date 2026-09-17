@@ -36,6 +36,8 @@ import { computeContentBounds } from './bounds';
 import { exportIds, exportIdSet } from './exportScope';
 import { chartToSvg } from '../chart/chartSvg';
 import { tableToSvg } from '../table/tableSvg';
+import { codeToSvg } from '../code/codeSvg';
+import { linkToSvg } from '../link/linkSvg';
 import { cornerRadiiOf, fitRadii, isPerCorner, roundedRectPath } from '../model/cornerRadii';
 
 /**
@@ -876,6 +878,16 @@ export class SVGExporter implements Exporter {
           );
           break;
         }
+
+        /** Code as real text, one tspan per coloured run. */
+        case 'code':
+          parts.push(`<g transform="translate(${node.x} ${node.y})">${codeToSvg(node.code, node.width, node.height, node.id)}</g>`);
+          break;
+
+        /** A link as its card, and as a link. An embed exports as its poster. */
+        case 'link':
+          parts.push(`<g transform="translate(${node.x} ${node.y})">${linkToSvg(node.link, node.width, node.height, node.id)}</g>`);
+          break;
 
         case 'comment':
           break;

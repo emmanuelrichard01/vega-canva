@@ -38,6 +38,7 @@ import { startGridSlotSync } from './engine/grid/gridSlotApply';
 import { notify } from './engine/ui/notices';
 import { useRoomClipboard } from './hooks/useRoomClipboard';
 import { useRoomContextMenuActions } from './hooks/useRoomContextMenuActions';
+import { useSelectionCommandKeys } from './hooks/useSelectionCommandKeys';
 
 const TimeTravelBar = lazy(() => import('./components/TimeTravelBar').then((m) => ({ default: m.TimeTravelBar })));
 const ForcesBar = lazy(() => import('./components/ForcesBar').then((m) => ({ default: m.ForcesBar })));
@@ -396,6 +397,16 @@ export default function Room() {
     setDiagramReplaceIds,
     setDiagramOpen,
   });
+
+  // The menu's shortcuts, bound to the menu's own actions. See the hook.
+  useSelectionCommandKeys({
+    actions: contextActions,
+    selectedIds,
+    objects: diagramObjects,
+    canEdit,
+    openMenu: setContextTarget,
+  });
+
 
   /**
    * Sweep folders that no longer hold anything.
@@ -994,6 +1005,8 @@ export default function Room() {
       case 'text':
       case 'comment':
       case 'shape-rect':
+      case 'code':
+      case 'link':
         selectTool(actionId);
         break;
 
@@ -1305,7 +1318,7 @@ export default function Room() {
         setContextTarget={setContextTarget}
         diagramObjects={diagramObjects}
         contextActions={contextActions}
-        canPaste={true}
+        canEdit={canEdit}
         showHelp={showHelp}
         setShowHelp={setShowHelp}
         diagramOpen={diagramOpen}
@@ -1390,6 +1403,9 @@ export default function Room() {
             onHideUi={() => setIsUiVisible(false)}
             onToggleTimeline={() => setShowTimeTravel(v => !v)}
             onToggleComments={() => setShowInbox(v => !v)}
+            commentsOpen={showInbox}
+            timelineOpen={showTimeTravel}
+            onOpenCommands={() => setShowCommandPalette(true)}
             commentUnread={unreadCount(comments, commentMarks, myAuthorId)}
             onTogglePanels={() => setPanelsOpen(v => !v)}
           />
@@ -1548,6 +1564,7 @@ export default function Room() {
           selectedIds={selectedIds}
           onDeselect={() => setSelectedIds([])}
           sidebarsVisible={isUiVisible}
+          menuActions={contextActions}
         />
       )}
 

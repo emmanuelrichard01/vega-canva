@@ -2,7 +2,7 @@ import React, { useEffect, useMemo, useRef, useState } from 'react';
 import {
   Clock, Download, Layers as LayersIcon, MessageSquare, Mic, MousePointer2,
   PenLine, Play, Search, Share2, Sparkles, Square, StickyNote, Type,
-  Code2, HelpCircle, ArrowLeft,
+  Code2, HelpCircle, ArrowLeft, Link2,
 } from 'lucide-react';
 import { HandIcon } from './workspace/HandIcon';
 import { motion } from 'framer-motion';
@@ -173,6 +173,8 @@ export const CommandPalette: React.FC<CommandPaletteProps> = ({ onClose, onSelec
       { id: 'sticky', label: 'Add sticky note', group: 'Create', icon: <StickyNote size={16} />, shortcut: key('sticky'), perform: run('sticky') },
       { id: 'text', label: 'Add text', group: 'Create', icon: <Type size={16} />, shortcut: key('text'), perform: run('text') },
       { id: 'shape-rect', label: 'Add rectangle', group: 'Create', icon: <Square size={16} />, shortcut: key('shape'), perform: run('shape-rect') },
+      { id: 'code', label: 'Add code block', detail: 'Highlighted code you can edit on the board', group: 'Create', icon: <Code2 size={16} />, perform: run('code') },
+      { id: 'link', label: 'Add link', detail: 'A card, or a player for videos, Figma and Spotify', group: 'Create', icon: <Link2 size={16} />, perform: run('link') },
       { id: 'comment', label: 'Add comment', group: 'Create', icon: <MessageSquare size={16} />, shortcut: key('comment'), perform: run('comment') },
 
       { id: 'select', label: 'Select tool', group: 'Tools', icon: <MousePointer2 size={16} />, shortcut: key('select'), perform: run('select') },

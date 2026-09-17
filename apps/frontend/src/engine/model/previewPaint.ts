@@ -43,6 +43,9 @@ export function previewColorOf(node: AnyNode): string {
    */
   if (node.type === 'chart') return getPaletteColors(node.chart.paletteId)[0] ?? '#2563EB';
   if (node.type === 'table') return '#E2E8F0';
+  // A code block is its theme's ground; a link card is paper.
+  if (node.type === 'code') return node.code.theme === 'daylight' ? '#F6F8FA' : node.code.theme === 'paper' ? '#F1EADC' : '#161B24';
+  if (node.type === 'link') return '#FFFFFF';
 
   const paint = (node as { appearance?: { fill?: unknown[]; stroke?: { color?: string } } }).appearance;
   const fill = paint?.fill?.[0];

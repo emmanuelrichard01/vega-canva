@@ -16,3 +16,20 @@ import React from 'react';
  * components alone.
  */
 export const RailSideContext = React.createContext<'top' | 'bottom'>('bottom');
+
+/**
+ * Which of the rail's popovers is open, shared by all of them.
+ *
+ * Each popover used to own its open state, so the rail had no idea one was
+ * open and nothing could behave like a menu bar: open Stroke, slide along to
+ * Sketch, and Sketch should simply be open. With one owner for the answer, a
+ * popover can ask "is one of my siblings open?" and take over from it as the
+ * pointer or the arrow keys arrive — and opening one closes the other by
+ * construction rather than by an outside-click race.
+ *
+ * `null` outside a rail, where a popover keeps its own state as before.
+ */
+export const RailPopoverGroup = React.createContext<{
+  openId: string | null;
+  setOpenId: React.Dispatch<React.SetStateAction<string | null>>;
+} | null>(null);

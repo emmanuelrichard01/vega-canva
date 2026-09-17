@@ -25,6 +25,12 @@ import {
 } from '../engine/clipboard/clipboard';
 import { importSvg } from '../engine/clipboard/svgImport';
 import { createPastedTextNode } from '../engine/clipboard/externalText';
+import { parseLink } from '../engine/link/linkProviders';
+import { createLink } from '../engine/link/linkApply';
+import { looksLikeCode, parseFence } from '../engine/code/codeDetect';
+import { createCode } from '../engine/code/codeApply';
+import { languageById } from '../engine/code/codeLanguages';
+import { deleteNodesWithFrames } from '../engine/interaction/frameMembership';
 import { cameraSystem } from '../engine/CameraSystem';
 import { doc, applyGroupPlan } from '../engine/document';
 import { editor } from '../engine/api/EditorAPI';
@@ -128,7 +134,7 @@ export function useRoomClipboard({
   );
 
   const pasteObjects = useCallback(
-    (payload: ClipboardPayload, at?: { x: number; y: number }) => {
+    (payload: ClipboardPayload, at?: { x: number; y: number }, options?: { quiet?: boolean }) => {
       /**
        * With no pointer behind it, a paste lands beside the original when the
        * original is on screen and in the middle of the view when it is not.
@@ -154,7 +160,7 @@ export function useRoomClipboard({
         nodes.forEach((node) => editor.createNode(node as never));
       });
       setSelectedIds(ids);
-      showToast(`Pasted ${ids.length} object${ids.length === 1 ? '' : 's'}`);
+      if (!options?.quiet) showToast(`Pasted ${ids.length} object${ids.length === 1 ? '' : 's'}`);
     },
     [setSelectedIds, showToast]
   );
@@ -195,7 +201,8 @@ export function useRoomClipboard({
     [setSelectedIds, showToast, viewportCentre]
   );
 
-  const pasteText = useCallback(
+  /** Text as a text box, whatever it looks like. The escape hatch below. */
+  const pastePlainText = useCallback(
     (rawText: string, at?: { x: number; y: number }) => {
       const centre = at ?? viewportCentre();
       const node = createPastedTextNode(rawText, centre);
@@ -205,6 +212,59 @@ export function useRoomClipboard({
       showToast('Pasted text');
     },
     [setSelectedIds, showToast, viewportCentre]
+  );
+
+  /**
+   * Text, read for what it is.
+   *
+   * A web address becomes a link card, a fenced or unmistakably-code snippet
+   * becomes a code block, and everything else a text box. The guesses are made
+   * strictly — see `parseLink` and `looksLikeCode` — and each one says what it
+   * did with a one-press way back to plain text, so a wrong guess costs a click
+   * rather than an undo and a re-paste.
+   *
+   * Both ways in — Ctrl+V and the menu's Paste — call this, so they cannot
+   * come to disagree about what a pasted URL is.
+   */
+  const pasteText = useCallback(
+    (rawText: string, at?: { x: number; y: number }) => {
+      const centre = at ?? viewportCentre();
+      const undoAs = (id: string) => ({
+        label: 'Paste as text',
+        run: () => {
+          deleteNodesWithFrames([id]);
+          pastePlainText(rawText, centre);
+        },
+      });
+
+      const link = parseLink(rawText);
+      if (link) {
+        const id = createLink(rawText, centre);
+        if (id) {
+          setSelectedIds([id]);
+          notify({ message: `Pasted a link to ${link.host}`, action: undoAs(id) });
+          return;
+        }
+      }
+
+      const fence = parseFence(rawText);
+      const detected = fence ? null : looksLikeCode(rawText);
+      if (fence || detected) {
+        const source = (fence?.source ?? rawText).replace(/\r\n?/g, '\n').replace(/\n+$/, '');
+        const id = createCode(centre, source, {
+          ...(fence?.language ? { language: fence.language } : {}),
+          ...(fence?.filename ? { filename: fence.filename } : {}),
+        });
+        setSelectedIds([id]);
+        const node = useStore.getState().objects[id];
+        const label = node && node.type === 'code' ? languageById(node.code.language).label : 'code';
+        notify({ message: `Pasted as a ${label} code block`, action: undoAs(id) });
+        return;
+      }
+
+      pastePlainText(rawText, centre);
+    },
+    [setSelectedIds, viewportCentre, pastePlainText]
   );
 
   return {

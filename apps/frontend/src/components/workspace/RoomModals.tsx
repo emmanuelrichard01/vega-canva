@@ -33,6 +33,9 @@ const FlattenShapeModal = lazy(() => loadFlatten().then(m => ({ default: m.Flatt
 const ChartDataModal = lazy(() => loadChartData().then(m => ({ default: m.ChartDataModal })));
 const loadTableEditor = () => import('../table/TableEditor');
 const TableEditor = lazy(() => loadTableEditor().then(m => ({ default: m.TableEditor })));
+const CodeEditor = lazy(() => import('../code/CodeEditor').then(m => ({ default: m.CodeEditor })));
+const EmbedLayer = lazy(() => import('../link/EmbedLayer').then(m => ({ default: m.EmbedLayer })));
+const LinkComposer = lazy(() => import('../link/LinkComposer').then(m => ({ default: m.LinkComposer })));
 
 /**
  * Fetch the cheap dialogs once the board has stopped being busy.
@@ -86,7 +89,8 @@ export interface RoomModalsProps {
   setContextTarget: (target: ContextTarget | null) => void;
   diagramObjects: Record<string, AnyNode>;
   contextActions: CanvasContextMenuActions;
-  canPaste: boolean;
+  /** Viewers get the menu's ways to look and take away, not the ways to change. */
+  canEdit: boolean;
 
   showHelp: boolean;
   setShowHelp: (open: boolean) => void;
@@ -114,7 +118,7 @@ export const RoomModals: React.FC<RoomModalsProps> = ({
   setContextTarget,
   diagramObjects,
   contextActions,
-  canPaste,
+  canEdit,
   showHelp,
   setShowHelp,
   diagramOpen,
@@ -141,6 +145,9 @@ export const RoomModals: React.FC<RoomModalsProps> = ({
   const chartDataModalNodeId = useStore((s) => s.chartDataModalNodeId);
   const setChartDataModalNodeId = useStore((s) => s.setChartDataModalNodeId);
   const tableEditNodeId = useStore((s) => s.tableEditNodeId);
+  const codeEditNodeId = useStore((s) => s.codeEditNodeId);
+  const embedActiveNodeId = useStore((s) => s.embedActiveNodeId);
+  const linkComposerOpen = useStore((s) => Boolean(s.linkComposer));
   const setTableEditNodeId = useStore((s) => s.setTableEditNodeId);
 
   React.useEffect(warmDialogs, []);
@@ -167,7 +174,7 @@ export const RoomModals: React.FC<RoomModalsProps> = ({
         onClose={() => setContextTarget(null)}
         objects={diagramObjects}
         actions={contextActions}
-        canPaste={canPaste}
+        canEdit={canEdit}
         allObjects={diagramObjects}
       />
 
@@ -214,6 +221,15 @@ export const RoomModals: React.FC<RoomModalsProps> = ({
         {tableEditNodeId && (
           <TableEditor key={tableEditNodeId} nodeId={tableEditNodeId} onClose={() => setTableEditNodeId(null)} />
         )}
+      </Suspense>
+
+      {/* A code block's source, open in place; the one live embed; the link field. */}
+      <Suspense fallback={null}>
+        {codeEditNodeId && (
+          <CodeEditor key={codeEditNodeId} nodeId={codeEditNodeId} onClose={() => useStore.getState().setCodeEditNodeId(null)} />
+        )}
+        {embedActiveNodeId && <EmbedLayer />}
+        {linkComposerOpen && <LinkComposer />}
       </Suspense>
     </>
   );

@@ -1,6 +1,6 @@
 import React from 'react';
 import {
-  Square, Type, ImageIcon, StickyNote, Mic, MessageSquare, PenLine, Layers, BarChart2,
+  Square, Type, ImageIcon, StickyNote, Mic, MessageSquare, PenLine, Layers, BarChart2, Code2, Link2, Table2,
   SquaresUnite, SquaresSubtract, SquaresIntersect, SquaresExclude,
   AlignHorizontalJustifyStart, AlignHorizontalJustifyCenter, AlignHorizontalJustifyEnd,
   AlignVerticalJustifyStart, AlignVerticalJustifyCenter, AlignVerticalJustifyEnd,
@@ -52,6 +52,9 @@ export const TYPE_LABEL: Record<string, { icon: React.ReactNode; name: string }>
   path: { icon: <PenLine size={15} />, name: 'Path' },
   frame: { icon: <Layers size={15} />, name: 'Frame' },
   chart: { icon: <BarChart2 size={15} />, name: 'Chart' },
+  table: { icon: <Table2 size={15} />, name: 'Table' },
+  code: { icon: <Code2 size={15} />, name: 'Code' },
+  link: { icon: <Link2 size={15} />, name: 'Link' },
 };
 
 export const BOOLEAN_BUTTONS: Record<BooleanOp, { icon: React.ReactNode; label: string }> = {

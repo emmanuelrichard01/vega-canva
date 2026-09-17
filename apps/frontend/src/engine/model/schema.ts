@@ -52,6 +52,8 @@ export const NODE_TYPES = [
   'grid',
   'chart',
   'table',
+  'code',
+  'link',
 ] as const;
 
 export type NodeType = (typeof NODE_TYPES)[number];
@@ -67,6 +69,10 @@ export type { ChartSpec, ChartKind, ChartSeries } from '../chart/chartTypes';
 import type { ChartSpec } from '../chart/chartTypes';
 export type { TableSpec } from '../table/tableTypes';
 import type { TableSpec } from '../table/tableTypes';
+export type { CodeSpec } from '../code/codeTypes';
+import type { CodeSpec } from '../code/codeTypes';
+export type { LinkSpec, LinkMeta, LinkDisplay } from '../link/linkTypes';
+import type { LinkSpec } from '../link/linkTypes';
 
 /**
  * Current schema revision, stamped into document metadata by the migration.
@@ -1503,6 +1509,27 @@ export interface TableNode extends BaseNode {
   appearance?: Appearance;
 }
 
+/**
+ * Code on the board: source, the language it is read as, and how it is shown.
+ * See `engine/code/codeTypes.ts`. `appearance` carries opacity and shadow only;
+ * a code block's colours are its theme's.
+ */
+export interface CodeNode extends BaseNode {
+  type: 'code';
+  code: CodeSpec;
+  appearance?: Appearance;
+}
+
+/**
+ * A URL as a card, a chip or an embed. See `engine/link/linkTypes.ts` for why
+ * the preview is stored in the document rather than fetched per viewer.
+ */
+export interface LinkNode extends BaseNode {
+  type: 'link';
+  link: LinkSpec;
+  appearance?: Appearance;
+}
+
 export type AnyNode =
   | TextNode
   | ShapeNode
@@ -1515,7 +1542,9 @@ export type AnyNode =
   | ConnectorNode
   | GridNode
   | ChartNode
-  | TableNode;
+  | TableNode
+  | CodeNode
+  | LinkNode;
 
 // ---------------------------------------------------------------------------
 // Narrowing helpers

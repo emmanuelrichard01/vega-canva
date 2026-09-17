@@ -58,6 +58,25 @@ export function nodeLabel(node: AnyNode): string {
     const size = `${node.table.cells.length}×${node.table.columns.length}`;
     return head ? `${head.trim().slice(0, 16)} table` : `Table ${size}`;
   }
+  /** Code is named by its file, or by the language and the first line that says something. */
+  if (node.type === 'code') {
+    if (node.code.filename) return node.code.filename.slice(0, 28);
+    const first = node.code.source
+      .split('\n')
+      .map((l) => l.trim())
+      .find((l) => l && !/^(\/\/|#|\/\*|--|<!--)/.test(l));
+    return first ? first.slice(0, 26) : 'Code block';
+  }
+  /** A link is named by its page title, then by where it points. */
+  if (node.type === 'link') {
+    const title = node.link.meta?.title?.trim();
+    if (title) return title.slice(0, 28);
+    try {
+      return new URL(node.link.url).hostname.replace(/^www\./, '');
+    } catch {
+      return 'Link';
+    }
+  }
   const specific = specificName(node);
   if (specific) return specific;
   return `${node.type.charAt(0).toUpperCase()}${node.type.slice(1)}`;
@@ -164,6 +183,8 @@ export const TYPE_LABEL: Record<NodeType, string> = {
   grid: 'Grids',
   chart: 'Charts',
   table: 'Tables',
+  code: 'Code',
+  link: 'Links',
 };
 
 /**
@@ -176,5 +197,5 @@ export const TYPE_ORDER: NodeType[] = [
   // A chart is scaffolding's opposite -- it is the content -- but it sits
   // beside 'grid' because both are composite objects people look for by shape
   // rather than by the words inside them.
-  'frame', 'grid', 'chart', 'table', 'text', 'shape', 'path', 'connector', 'image', 'sticky', 'audio', 'comment',
+  'frame', 'grid', 'chart', 'table', 'code', 'link', 'text', 'shape', 'path', 'connector', 'image', 'sticky', 'audio', 'comment',
 ];

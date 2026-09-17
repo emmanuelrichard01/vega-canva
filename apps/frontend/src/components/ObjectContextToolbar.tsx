@@ -3,9 +3,9 @@ import { motion, AnimatePresence } from 'framer-motion';
 import {
   AlignCenter,
   AlignHorizontalSpaceAround, AlignJustify, AlignLeft, AlignRight,
-  AlignVerticalSpaceAround, Bold, BringToFront, Copy, Crop, Download,
-  Droplet, FlipHorizontal, FlipVertical, Group, Italic, List, ListOrdered, Layers, Lock, Menu,
-  MessageSquarePlus, Minus, PenLine, Pin, Scissors, SendToBack, SmilePlus,
+  AlignVerticalSpaceAround, Bold, Copy, CopyPlus, Crop, Download,
+  Droplet, Group, Italic, List, ListOrdered, Layers, Lock,
+  MessageSquarePlus, Minus, PenLine, Pin, SmilePlus,
   Square, Waypoints, Radius, WandSparkles, ChevronRight,
   Strikethrough, Trash2, Type, Underline, Ungroup, Unlock,
   Check, Sliders, Table as TableIcon, RotateCcw,
@@ -13,7 +13,7 @@ import {
 import { TEXT_PRESETS, isTextPresetActive } from './panel/textEffectPresets';
 
 import {
-  applyNodePatches, localAuthorId, lowestZIndex, nextZIndex, toggleReaction, updateNodes,
+  applyNodePatches, localAuthorId, toggleReaction, updateNodes,
 } from '../engine/document';
 import { useStore } from '../hooks/useStore';
 import { cameraSystem } from '../engine/CameraSystem';
@@ -68,11 +68,10 @@ import {
   setMultiplePathsAnchorMode,
   setPickedAnchorMode,
 } from '../engine/interaction/pathAnchorActions';
-import { applyBoolean, booleanPlans as plansFor, canVectorize, flattenToPath, outlineStrokeOf } from '../engine/document/vectorOps';
+import { applyBoolean, booleanPlans as plansFor, flattenToPath } from '../engine/document/vectorOps';
 import { booleanPreview } from '../engine/interaction/booleanPreview';
 import { deleteNodesWithFrames } from '../engine/interaction/frameMembership';
 import { editor } from '../engine/api/EditorAPI';
-import { nanoid } from 'nanoid';
 import { ColorPickerPopover } from './ui/ColorPickerPopover';
 import { FillEditor } from './ui/FillEditor';
 import { SegmentedControl } from './ui/SegmentedControl';
@@ -310,6 +309,15 @@ import {
 } from './workspace/shapePicker';
 import { VectorBooleanSection } from './toolbar/VectorBooleanSection';
 import { cornerRadiiOf } from '../engine/model/cornerRadii';
+import { RailMenuButton } from './toolbar/RailBase';
+import { CodeRailSection } from './toolbar/CodeRailSection';
+import { LinkRailSection } from './toolbar/LinkRailSection';
+import { selectionMenu, type CanvasContextMenuActions } from './menu/canvasMenu';
+import { canPasteStyle, styleClipboard, type StyleSnapshot } from '../engine/model/styleClipboard';
+import { kindNoun } from '../engine/model/selectMatching';
+import { SHORTCUTS, withShortcut } from './menu/shortcuts';
+import { PaintRoller } from 'lucide-react';
+import { boardSurface, textSurface } from '../engine/model/textSurface';
 
 /**
  * The names, from the one module that holds them.
@@ -329,9 +337,31 @@ interface Props {
   onDeselect: () => void;
   /** Whether the side panels and bottom dock are on screen. */
   sidebarsVisible?: boolean;
+  /**
+   * The board's commands — the same object the right-click menu runs.
+   *
+   * The rail's `⋯` opens that menu, and its Duplicate and Paste style run those
+   * actions, so a command reached from here and from a right-click cannot do
+   * two different things.
+   */
+  menuActions: CanvasContextMenuActions;
 }
 
-export const ObjectContextToolbar: React.FC<Props> = ({ selectedId, selectedIds, onDeselect, sidebarsVisible = true }) => {
+/** "3 shapes, 2 connectors" — what a multiple selection is made of. */
+function describeMix(nodes: readonly AnyNode[]): string {
+  const counts = new Map<string, { node: AnyNode; n: number }>();
+  for (const node of nodes) {
+    const entry = counts.get(node.type);
+    if (entry) entry.n += 1;
+    else counts.set(node.type, { node, n: 1 });
+  }
+  return [...counts.values()]
+    .sort((a, b) => b.n - a.n)
+    .map(({ node, n }) => `${n} ${kindNoun(node, n !== 1)}`)
+    .join(', ');
+}
+
+export const ObjectContextToolbar: React.FC<Props> = ({ selectedId, selectedIds, onDeselect, sidebarsVisible = true, menuActions }) => {
   /**
    * The rail's position is written to the DOM, never to React state.
    *
@@ -408,6 +438,8 @@ export const ObjectContextToolbar: React.FC<Props> = ({ selectedId, selectedIds,
    * away), exactly as the transform handles do.
    */
   const tableEditing = useStore((s) => s.tableEditNodeId);
+  /** The same for a code block: its editor's bar holds language, theme, wrap and Done. */
+  const codeEditing = useStore((s) => s.codeEditNodeId);
   const editingPath = pathSelection?.nodeId ?? null;
   /** How many anchors are picked, which is what the anchor rail is gated on. */
   const pickedAnchors = pathSelection?.anchors.length ?? 0;
@@ -446,6 +478,8 @@ export const ObjectContextToolbar: React.FC<Props> = ({ selectedId, selectedIds,
 
   const liveNode = useStore((state) => (activeId ? state.objects[activeId] : undefined));
   const allObjects = useStore((state) => state.objects);
+  /** What Copy style last took, so the rail can offer to put it here. */
+  const copiedStyle = useSyncExternalStore(styleClipboard.subscribe, styleClipboard.get, styleClipboard.get);
   /** The group tree, so the grid rail re-renders when a grid is re-laid. */
 
   useEffect(() => {
@@ -723,21 +757,103 @@ export const ObjectContextToolbar: React.FC<Props> = ({ selectedId, selectedIds,
 
   if ((!activeId && !isBulk) || !isVisible) return null;
 
+  /**
+   * The `⋯`: the right-click menu for what the rail is showing.
+   *
+   * Built when it opens rather than on every render, because the rail renders
+   * whenever the selection's objects change — which during a drag is every
+   * frame — and the menu is only wanted when somebody asks for it.
+   */
+  const moreButton = (nodes: AnyNode[]) => (
+    <RailMenuButton
+      entries={() =>
+        selectionMenu({
+          nodes,
+          allObjects,
+          actions: menuActions,
+          canEdit: true,
+          style: styleClipboard.get(),
+          atPointer: false,
+        })
+      }
+    />
+  );
+
+  /**
+   * Paste style, on the rail only while it would do something here.
+   *
+   * The format painter's second half is the one that wants to be one click
+   * away: you copy a style once and put it on a run of objects, each selected
+   * in turn. So the button appears the moment a style is on the clipboard and
+   * the selection can take it, wearing the colour it will bring — and stays
+   * off the rail the rest of the time, including on the object it came from.
+   */
+  const pasteStyleButton = (nodes: AnyNode[], style: StyleSnapshot | null) =>
+    style && !(nodes.length === 1 && nodes[0].id === style.sourceId) && canPasteStyle(nodes, style) ? (
+      <RailButton
+        label="Paste style"
+        hint={withShortcut(
+          `Paste the copied ${kindNoun({ type: style.sourceType } as AnyNode, false)} style`,
+          SHORTCUTS.pasteStyle
+        )}
+        onClick={menuActions.pasteStyle}
+      >
+        <span className="ctx-paste-style">
+          <PaintRoller size={16} />
+          {style.swatch && <i style={{ background: style.swatch }} aria-hidden="true" />}
+        </span>
+      </RailButton>
+    ) : null;
+
+  /**
+   * A locked selection gets a rail that says so, and one way out.
+   *
+   * The full rail over a locked object offered fill, stroke, font and a shape
+   * swapper for something that could not be dragged — two answers to "can I
+   * change this". Miro's answer is the one taken: a locked object shows that it
+   * is locked and how to unlock it, and everything else waits behind that one
+   * press. The `⋯` is still there, because copying, exporting and commenting on
+   * a locked object are all things it is for.
+   */
+  const lockedRail = (key: string, chip: React.ReactNode, label: string, nodes: AnyNode[]) => (
+    <AnimatePresence>
+      <Rail id={`${key}-locked`} label={label} placement={placement} clear={clear} anchorRef={anchorRef} ref={railRef}>
+        {chip}
+        <Divider />
+        <span
+          className="ctx-locked"
+          data-tooltip={nodes.length === 1 ? 'Locked, so it cannot be moved or restyled' : 'All locked, so they cannot be moved or restyled'}
+        >
+          <Lock size={13} aria-hidden="true" />
+          Locked
+        </span>
+        <RailButton label="Unlock" hint={withShortcut('Unlock to edit', SHORTCUTS.lock)} onClick={menuActions.toggleLock}>
+          <Unlock size={16} />
+        </RailButton>
+        <Divider />
+        {nodes.length === 1 && (
+          <RailButton label="Comment" onClick={menuActions.comment}>
+            <MessageSquarePlus size={16} />
+          </RailButton>
+        )}
+        {moreButton(nodes)}
+      </Rail>
+    </AnimatePresence>
+  );
+
   // ---------------------------------------------------------------- union rail
   if (isBulk) {
     const bulkNodes = bulkIds.map((id) => allObjects[id]).filter(Boolean) as AnyNode[];
-
-    const restack = (dir: 'front' | 'back') => {
-      const base = dir === 'front' ? nextZIndex() : lowestZIndex() - bulkIds.length;
-      const ordered = [...bulkNodes].sort((a, b) => a.zIndex - b.zIndex);
-      applyNodePatches(ordered.map((n, i) => ({ id: n.id, changes: { zIndex: base + i } })));
-    };
-
-    const duplicate = () => {
-      bulkNodes.forEach((node) => {
-        editor.createNode({ ...(node as unknown as Record<string, unknown>), id: nanoid(), x: node.x + 20, y: node.y + 20 } as never);
-      });
-    };
+    const countChip = (
+      <span className="ctx-kind" data-tooltip={describeMix(bulkNodes)}>
+        <Layers size={15} />
+        {bulkNodes.length}
+      </span>
+    );
+    const railLabel = `${bulkNodes.length} objects`;
+    if (bulkNodes.length > 0 && bulkNodes.every((n) => n.locked)) {
+      return lockedRail('union', countChip, railLabel, bulkNodes);
+    }
 
     /**
      * What this selection affords, resolved once.
@@ -806,8 +922,8 @@ export const ObjectContextToolbar: React.FC<Props> = ({ selectedId, selectedIds,
 
     return (
       <AnimatePresence>
-        <Rail id="union" placement={placement} clear={clear} anchorRef={anchorRef} ref={railRef}>
-          <span className="ctx-kind"><Layers size={15} />{bulkNodes.length}</span>
+        <Rail id="union" label={railLabel} placement={placement} clear={clear} anchorRef={anchorRef} ref={railRef}>
+          {countChip}
           <Divider />
 
           {/**
@@ -1123,9 +1239,9 @@ export const ObjectContextToolbar: React.FC<Props> = ({ selectedId, selectedIds,
           {/* Zone A — structure. */}
           <div className="ctx-group">
             {bulkAffords('ungroup') ? (
-              <RailButton label="Ungroup" hint="Ungroup (Cmd+Shift+G)" onClick={() => editor.ungroupNodes(bulkIds)}><Ungroup size={16} /></RailButton>
+              <RailButton label="Ungroup" hint={withShortcut('Ungroup', SHORTCUTS.ungroup)} onClick={() => editor.ungroupNodes(bulkIds)}><Ungroup size={16} /></RailButton>
             ) : (
-              <RailButton label="Group" hint="Group (Cmd+G)" onClick={() => editor.groupNodes(bulkIds)}><Group size={16} /></RailButton>
+              <RailButton label="Group" hint={withShortcut('Group', SHORTCUTS.group)} onClick={() => editor.groupNodes(bulkIds)}><Group size={16} /></RailButton>
             )}
             {bulkAffords('boolean') && (
               <VectorBooleanSection
@@ -1277,14 +1393,18 @@ export const ObjectContextToolbar: React.FC<Props> = ({ selectedId, selectedIds,
           </div>
           <Divider />
 
-          {/* Zone D — bulk management. */}
+          {/* Zone D — bulk management. Restacking moved into the `⋯`, where
+              it has all four steps rather than two, and where its order is the
+              same one the keyboard uses. */}
           <div className="ctx-group">
-            <RailButton label="Bring to front" onClick={() => restack('front')}><BringToFront size={16} /></RailButton>
-            <RailButton label="Send to back" onClick={() => restack('back')}><SendToBack size={16} /></RailButton>
-            <RailButton label="Duplicate" hint="Duplicate (Cmd+D)" onClick={duplicate}><Copy size={16} /></RailButton>
-            <RailButton label="Delete" hint="Delete (Del)" danger onClick={() => { deleteNodesWithFrames(bulkIds); onDeselect(); }}>
+            {pasteStyleButton(bulkNodes, copiedStyle)}
+            <RailButton label="Duplicate" hint={withShortcut('Duplicate', SHORTCUTS.duplicate)} onClick={menuActions.duplicate}>
+              <CopyPlus size={16} />
+            </RailButton>
+            <RailButton label="Delete" hint={withShortcut('Delete', SHORTCUTS.delete)} danger onClick={() => { deleteNodesWithFrames(bulkIds); onDeselect(); }}>
               <Trash2 size={16} />
             </RailButton>
+            {moreButton(bulkNodes)}
           </div>
         </Rail>
       </AnimatePresence>
@@ -1292,11 +1412,24 @@ export const ObjectContextToolbar: React.FC<Props> = ({ selectedId, selectedIds,
   }
 
   // --------------------------------------------------------------- single rail
-  if (!liveNode || tableEditing) return null;
+  if (!liveNode || tableEditing || codeEditing) return null;
   const node = liveNode;
   const isCropping = cropping?.nodeId === node.id;
   const isReframing = reframing?.nodeId === node.id;
-  const kind = TYPE_LABEL[node.type] ?? { icon: <Square size={15} />, name: node.type };
+  const baseKind = TYPE_LABEL[node.type] ?? { icon: <Square size={15} />, name: node.type };
+  /**
+   * A shape is named for what it is — Diamond, Cylinder, Arrow — not "Shape".
+   *
+   * Every one of the sixty kinds said the same word, which told you nothing the
+   * outline on the board had not already; the name is the one fact the chip
+   * could add, and the catalogue already has it.
+   */
+  const kind =
+    node.type === 'shape'
+      ? { ...baseKind, name: SHAPE_BY_PRESET[presetForGeometry(node.geometry)]?.label ?? baseKind.name }
+      : baseKind;
+  const kindChip = <span className="ctx-kind">{kind.icon}{kind.name}</span>;
+  if (node.locked) return lockedRail(node.id, kindChip, kind.name, [node]);
 
   const updateProp = (updates: Record<string, unknown>) => editor.updateNode(node.id, updates);
 
@@ -1516,8 +1649,8 @@ export const ObjectContextToolbar: React.FC<Props> = ({ selectedId, selectedIds,
 
   return (
     <AnimatePresence>
-      <Rail id={node.id} placement={placement} clear={clear} anchorRef={anchorRef} ref={railRef}>
-        <span className="ctx-kind">{kind.icon}{kind.name}</span>
+      <Rail id={node.id} label={kind.name} placement={placement} clear={clear} anchorRef={anchorRef} ref={railRef}>
+        {kindChip}
         <Divider />
 
         {/* ------------------------------------- shapes, paths and connectors */}
@@ -2140,7 +2273,11 @@ export const ObjectContextToolbar: React.FC<Props> = ({ selectedId, selectedIds,
                   </div>
                 )}
               </RailPopover>
-              <ColorPickerPopover color={typography.color} onChange={(color) => setTypography({ color })} />
+              <ColorPickerPopover
+                color={typography.color}
+                onChange={(color) => setTypography({ color })}
+                contrastAgainst={textSurface(node, boardSurface())}
+              />
             </div>
             <Divider />
           </>
@@ -2592,6 +2729,10 @@ export const ObjectContextToolbar: React.FC<Props> = ({ selectedId, selectedIds,
           </>
         )}
 
+        {/* ------------------------------------------------------ code, link */}
+        {node.type === 'code' && <CodeRailSection node={node} onRenderDiagram={menuActions.renderDiagram} />}
+        {node.type === 'link' && <LinkRailSection node={node} />}
+
         {/* ----------------------------------------------------------- sticky */}
         {node.type === 'sticky' && (
           <>
@@ -2667,62 +2808,19 @@ export const ObjectContextToolbar: React.FC<Props> = ({ selectedId, selectedIds,
               onChange={(v) => updateProp({ opacity: v / 100 })}
             />
           </RailPopover>
+          <RailButton label="Comment" onClick={menuActions.comment}>
+            <MessageSquarePlus size={16} />
+          </RailButton>
+          {pasteStyleButton([node], copiedStyle)}
           <RailButton
-            label="Comment"
-            onClick={() => engineEvents.emit('CommentDraftRequested', { x: node.x + node.width, y: node.y, objectId: node.id })}
-          ><MessageSquarePlus size={16} /></RailButton>
-          <RailButton
-            label="Duplicate" hint="Duplicate (Cmd+D)"
-            onClick={() => editor.createNode({ ...(node as unknown as Record<string, unknown>), id: nanoid(), x: node.x + 20, y: node.y + 20 } as never)}
-          ><Copy size={16} /></RailButton>
+            label="Duplicate"
+            hint={withShortcut('Duplicate', SHORTCUTS.duplicate)}
+            onClick={menuActions.duplicate}
+          ><CopyPlus size={16} /></RailButton>
 
-          {/* Everything that is real but rarely reached for. An overflow menu
-              rather than eight more buttons: the rail is glanceable only while
-              it stays scannable, and a row nobody can parse is not faster than
-              the panel it exists to replace. */}
-          <RailPopover label="More actions" trigger={<Menu size={16} />} align="end">
-            <button className="ctx-menu-item" onClick={() => updateProp({ scaleX: -node.scaleX })}>
-              <FlipHorizontal size={15} /> Flip horizontal
-            </button>
-            <button className="ctx-menu-item" onClick={() => updateProp({ scaleY: -node.scaleY })}>
-              <FlipVertical size={15} /> Flip vertical
-            </button>
-            <button className="ctx-menu-item" onClick={() => updateProp({ zIndex: nextZIndex() })}>
-              <BringToFront size={15} /> Bring to front <span className="ctx-menu-item__key">⌘⇧]</span>
-            </button>
-            <button className="ctx-menu-item" onClick={() => updateProp({ zIndex: lowestZIndex() - 1 })}>
-              <SendToBack size={15} /> Send to back <span className="ctx-menu-item__key">⌘⇧[</span>
-            </button>
-            <button className="ctx-menu-item" onClick={() => updateProp({ locked: !node.locked })}>
-              {node.locked ? <Unlock size={15} /> : <Lock size={15} />} {node.locked ? 'Unlock' : 'Lock'}
-              <span className="ctx-menu-item__key">⌘⇧L</span>
-            </button>
-            {node.type === 'shape' && canVectorize(node) && (
-              <button
-                className="ctx-menu-item"
-                onClick={() => {
-                  const id = flattenToPath(node.id);
-                  if (id) {
-                    editor.select(id);
-                    if (typeof window !== 'undefined') {
-                      window.dispatchEvent(new CustomEvent('legacy_tool_change', { detail: 'direct-select' }));
-                    }
-                    pathEdit.enter(id);
-                  }
-                }}
-              >
-                <VectorEditIcon size={15} /> Flatten to path
-              </button>
-            )}
-            {canVectorize(node) && strokeWidth > 0 && (
-              <button className="ctx-menu-item" onClick={() => { const id = outlineStrokeOf(node.id); if (id) editor.select(id); }}>
-                <Scissors size={15} /> Outline stroke
-              </button>
-            )}
-            <button className="ctx-menu-item ctx-menu-item--danger" onClick={() => { deleteNodesWithFrames([node.id]); onDeselect(); }}>
-              <Trash2 size={15} /> Delete <span className="ctx-menu-item__key">Del</span>
-            </button>
-          </RailPopover>
+          {/* Everything real but rarely reached for, as the same menu a
+              right-click opens. See `RailMenuButton`. */}
+          {moreButton([node])}
         </div>
       </Rail>
     </AnimatePresence>

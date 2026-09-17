@@ -306,6 +306,15 @@ interface StoreState {
   /** The table whose cells are open for editing on the board, if any. */
   tableEditNodeId: string | null;
   setTableEditNodeId: (id: string | null) => void;
+  /** The code block whose source is open on the board. */
+  codeEditNodeId: string | null;
+  setCodeEditNodeId: (id: string | null) => void;
+  /** The link whose embed is live. One at a time: an iframe is a whole page. */
+  embedActiveNodeId: string | null;
+  setEmbedActiveNodeId: (id: string | null) => void;
+  /** Where the Link tool was clicked, waiting for a URL. Screen and world points. */
+  linkComposer: { clientX: number; clientY: number; x: number; y: number; replaceId?: string } | null;
+  setLinkComposer: (at: { clientX: number; clientY: number; x: number; y: number; replaceId?: string } | null) => void;
   /** Currently entered / isolated group ID for nested group editing. */
   enteredGroupId: string | null;
   setEnteredGroupId: (id: string | null) => void;
@@ -736,6 +745,12 @@ export const useStore = create<StoreState>((set) => ({
   setChartDataModalNodeId: (chartDataModalNodeId) => set({ chartDataModalNodeId }),
   tableEditNodeId: null,
   setTableEditNodeId: (tableEditNodeId) => set({ tableEditNodeId }),
+  codeEditNodeId: null,
+  setCodeEditNodeId: (codeEditNodeId) => set({ codeEditNodeId }),
+  embedActiveNodeId: null,
+  setEmbedActiveNodeId: (embedActiveNodeId) => set({ embedActiveNodeId }),
+  linkComposer: null,
+  setLinkComposer: (linkComposer) => set({ linkComposer }),
   enteredGroupId: null,
   setEnteredGroupId: (enteredGroupId) => set({ enteredGroupId }),
 }));

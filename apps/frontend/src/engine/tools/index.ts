@@ -16,4 +16,6 @@ export * from './FrameTool';
 export * from './GridTool';
 export * from './ChartTool';
 export * from './TableTool';
+export * from './CodeTool';
+export * from './LinkTool';
 export * from './ConnectorTool';
