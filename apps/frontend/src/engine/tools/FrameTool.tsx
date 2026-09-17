@@ -2,6 +2,7 @@ import { Group, Rect, Text } from 'react-konva';
 import { nanoid } from 'nanoid';
 import * as React from 'react';
 import type { Tool, ToolContext } from './Tool';
+import { finishCreation } from './toolModes';
 import { useStore } from '../../hooks/useStore';
 import { DEFAULT_FRAME, frameBoxFromDrag, framePreset, nextFrameName } from '../model/frames';
 import { captureExistingIntoFrame } from '../interaction/frameMembership';
@@ -113,7 +114,7 @@ export class FrameTool implements Tool {
     captureExistingIntoFrame(nodeId);
 
     ctx.editor.select(nodeId);
-    window.dispatchEvent(new CustomEvent('legacy_tool_change', { detail: 'select' }));
+    finishCreation();
   }
 
   onKeyDown(ctx: ToolContext, e: KeyboardEvent) {

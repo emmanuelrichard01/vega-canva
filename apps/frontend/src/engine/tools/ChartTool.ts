@@ -1,4 +1,5 @@
 import type { Tool, ToolContext } from './Tool';
+import { finishCreation } from './toolModes';
 import {
   CHART_DEFAULT_SIZE,
   CHART_MIN_SIZE,
@@ -82,7 +83,7 @@ export class ChartTool implements Tool {
       window.dispatchEvent(new CustomEvent('requestSelectNodes', { detail: { ids: [id] } }));
     }
 
-    window.dispatchEvent(new CustomEvent('legacy_tool_change', { detail: 'select' }));
+    finishCreation();
   }
 
   onKeyDown(ctx: ToolContext, e: KeyboardEvent) {

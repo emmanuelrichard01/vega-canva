@@ -2,6 +2,7 @@ import { useEffect } from 'react';
 import { undoManager } from '../engine/document';
 import { useStore } from './useStore';
 import { LINE_SEAT, TOOL_FOR_KEY, lineSeatFor } from '../engine/tools/shortcuts';
+import { toolModes } from '../engine/tools/toolModes';
 import { editor } from '../engine/api/EditorAPI';
 import { cameraSystem } from '../engine/CameraSystem';
 
@@ -52,6 +53,17 @@ export function useRoomShortcuts({
   setActiveTool,
   openExport,
 }: RoomShortcutsOptions) {
+  /**
+   * The armed tool, told to the lock and the key-hold.
+   *
+   * From here because every route to a tool -- the dock, a key, the palette, a
+   * lesson -- ends in `activeTool` changing, so this is the one place that sees
+   * all of them. See `toolModes`.
+   */
+  useEffect(() => {
+    toolModes.syncActive(activeTool);
+  }, [activeTool]);
+
   // Escape closes overlay panels in compact mode
   useEffect(() => {
     if (!isCompact || !panelsOpen) return;
@@ -217,13 +229,32 @@ export function useRoomShortcuts({
 
       const key = e.key.toLowerCase();
 
+      /**
+       * Keep the armed tool after it has placed something. `Q` because that
+       * is Excalidraw's padlock, and it is free here. See `toolModes`.
+       */
+      if (key === 'q') {
+        toolModes.toggleLock();
+        return;
+      }
+
       const tool = TOOL_FOR_KEY[key];
       if (tool) {
+        /**
+         * A held key repeats, and every repeat used to arm the tool again --
+         * harmless for most, and for the line key it flipped between line and
+         * arrow a dozen times a second. Only the first press is a press.
+         */
+        if (e.repeat) return;
         // The line key arms a *seat*, and pressing it again switches within
         // it — line and arrow differ only by which end carries a head, share
         // one dock button, and there is no second mnemonic letter free. See
         // `lineSeatFor`.
-        selectTool(LINE_SEAT.includes(tool) ? lineSeatFor(activeTool) : tool);
+        const next = LINE_SEAT.includes(tool) ? lineSeatFor(activeTool) : tool;
+        // A tap arms the tool, as it always has; whether this was a *hold*
+        // is only known when the key comes back up.
+        toolModes.beginHold(key, next, activeTool, performance.now());
+        selectTool(next);
         return;
       }
 
@@ -296,14 +327,38 @@ export function useRoomShortcuts({
       if (custom.detail) selectTool(custom.detail);
     };
 
+    /**
+     * Letting go of a held tool key puts back the tool it interrupted.
+     *
+     * Not filtered for text fields the way keydown is: the hold began on the
+     * board, and a key that comes up somewhere else is still that key coming
+     * up. Leaving the hold open would re-arm the old tool on some later,
+     * unrelated release.
+     */
+    const handleKeyUp = (e: KeyboardEvent) => {
+      const back = toolModes.endHold(e.key.toLowerCase(), performance.now());
+      if (back) selectTool(back);
+    };
+
+    // A keyup that happens in another window never arrives here, so leaving
+    // the window counts as letting go.
+    const handleBlur = () => {
+      const back = toolModes.releaseAll(performance.now());
+      if (back) selectTool(back);
+    };
+
     if (typeof window !== 'undefined') {
       window.addEventListener('keydown', handleKeyDown);
+      window.addEventListener('keyup', handleKeyUp);
+      window.addEventListener('blur', handleBlur);
       window.addEventListener('legacy_tool_change', handleToolChange);
     }
 
     return () => {
       if (typeof window !== 'undefined') {
         window.removeEventListener('keydown', handleKeyDown);
+        window.removeEventListener('keyup', handleKeyUp);
+        window.removeEventListener('blur', handleBlur);
         window.removeEventListener('legacy_tool_change', handleToolChange);
       }
     };

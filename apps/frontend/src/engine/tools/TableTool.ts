@@ -1,4 +1,5 @@
 import type { Tool, ToolContext } from './Tool';
+import { finishCreation } from './toolModes';
 import { createTable, tableSizeFor, TABLE_MIN_SIZE, TABLE_ROW_H } from '../table/tableApply';
 import { defaultTableSpec, type TableSpec } from '../table/tableTypes';
 import { tableExampleById } from '../table/tableExamples';
@@ -89,7 +90,7 @@ export class TableTool implements Tool {
       window.dispatchEvent(new CustomEvent('requestSelectNodes', { detail: { ids: [id] } }));
       if (!example) useStore.getState().setTableEditNodeId(id);
     }
-    window.dispatchEvent(new CustomEvent('legacy_tool_change', { detail: 'select' }));
+    finishCreation();
   }
 
   onKeyDown(ctx: ToolContext, e: KeyboardEvent) {

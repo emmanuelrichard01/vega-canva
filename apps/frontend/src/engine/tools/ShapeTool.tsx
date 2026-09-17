@@ -3,6 +3,7 @@ import { nanoid } from 'nanoid';
 import { useStore } from '../../hooks/useStore';
 import { ThemeService } from '../ThemeService';
 import type { Tool, ToolContext } from './Tool';
+import { finishCreation } from './toolModes';
 import type { ShapeGeometry } from '../model/schema';
 import {
   placedSize,
@@ -445,7 +446,7 @@ export class ShapeTool implements Tool {
     });
 
     ctx.editor.select(nodeId);
-    window.dispatchEvent(new CustomEvent('legacy_tool_change', { detail: 'select' }));
+    finishCreation();
   }
 
   /** The radius this preset asks for at this size, or none. */
@@ -493,7 +494,7 @@ export class ShapeTool implements Tool {
     });
 
     ctx.editor.select(nodeId);
-    window.dispatchEvent(new CustomEvent('legacy_tool_change', { detail: 'select' }));
+    finishCreation();
   }
 
   onKeyDown(ctx: ToolContext, e: KeyboardEvent) {

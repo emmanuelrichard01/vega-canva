@@ -5,6 +5,9 @@ import {
   ArrowLeftRight,
   ArrowRight,
   ArrowUpNarrowWide,
+  Boxes,
+  CircleDashed,
+  Share2,
   ClipboardPaste,
   Copy,
   Eye,
@@ -627,7 +630,7 @@ const DataPanel: React.FC<{ node: ChartNode } & FieldProps> = ({ node, spec, pat
       {/* How the table is read, for the kinds whose table is not a plain
           category-by-series grid. Said once, where the numbers are typed. */}
       {spec.kind === 'network' && (
-        <Note>Each row lists one node's links: a number under another node joins the two, and its size is the link's weight.</Note>
+        <Note>Each row lists one node's links: a number under another node joins the two, and its size is the link's weight. One-way links run from the row to the column.</Note>
       )}
       {spec.kind === 'timeline' && (
         <Note>The first column is where each row starts and the second where it ends. Leave the end empty for a milestone.</Note>
@@ -1214,18 +1217,47 @@ const MarkFields: React.FC<FieldProps> = ({ spec, patch }) => {
       {/* Never for `step`: a staircase asserts the value did *not* slide
           between readings, and rounding it states the opposite. */}
       {can.curved && (
-        <Row label="Shape">
+        <Row label={kind === 'network' ? 'Links' : 'Shape'}>
           <SegmentedControl
             fill
             ariaLabel="How the run is joined"
             value={spec.curved ? 'curved' : 'straight'}
             onChange={(v) => patch({ curved: v === 'curved' ? true : undefined })}
             segments={[
-              { value: 'straight', label: 'Straight', icon: <CurveStraight />, hint: 'Straight — joins the readings directly' },
-              { value: 'curved', label: 'Curved', icon: <CurveSmooth />, hint: 'Curved — smooths through the readings' },
+              { value: 'straight', label: 'Straight', icon: <CurveStraight />, hint: kind === 'network' ? 'Straight — links run direct' : 'Straight — joins the readings directly' },
+              { value: 'curved', label: 'Curved', icon: <CurveSmooth />, hint: kind === 'network' ? 'Curved — links bow, and cross less' : 'Curved — smooths through the readings' },
             ]}
           />
         </Row>
+      )}
+
+      {kind === 'network' && (
+        <>
+          <Row label="Layout" hint="How the nodes are placed">
+            <SegmentedControl
+              fill
+              ariaLabel="Network layout"
+              value={spec.networkLayout ?? 'force'}
+              onChange={(v) => patch({ networkLayout: v === 'ring' ? 'ring' : undefined })}
+              segments={[
+                { value: 'force', label: 'Force', icon: <Share2 size={14} />, hint: 'Force — close collaborators sit close' },
+                { value: 'ring', label: 'Ring', icon: <CircleDashed size={14} />, hint: 'Ring — every node on one circle, grouped' },
+              ]}
+            />
+          </Row>
+          <Row label="Direction" hint="Whether a link runs one way">
+            <SegmentedControl
+              fill
+              ariaLabel="Link direction"
+              value={spec.directed ? 'one' : 'two'}
+              onChange={(v) => patch({ directed: v === 'one' ? true : undefined })}
+              segments={[
+                { value: 'two', label: 'Two-way', icon: <ArrowLeftRight size={14} />, hint: 'Two-way — a row and its column are one link' },
+                { value: 'one', label: 'One-way', icon: <ArrowRight size={14} />, hint: 'One-way — each row lists where its links go, drawn as arrows' },
+              ]}
+            />
+          </Row>
+        </>
       )}
 
       {kind === 'step' && (
@@ -1857,6 +1889,21 @@ const ColourFields: React.FC<FieldProps & { can: ReturnType<typeof chartCapabili
       </Row>
 
       {(spec.kind === 'heatmap' || spec.kind === 'matrix') && <RampPicker spec={spec} patch={patch} />}
+
+      {spec.kind === 'network' && (
+        <Row label="Colour by" hint="Groups are found from the links; a node's own colour applies when each node is coloured">
+          <SegmentedControl
+            fill
+            ariaLabel="Colour nodes by"
+            value={spec.networkColor === 'node' ? 'node' : 'group'}
+            onChange={(v) => patch({ networkColor: v === 'node' ? 'node' : undefined })}
+            segments={[
+              { value: 'group', label: 'Group', icon: <Boxes size={14} />, hint: 'Group — who clusters together, with bridges in grey' },
+              { value: 'node', label: 'Node', icon: <Palette size={14} />, hint: 'Node — every node its own colour' },
+            ]}
+          />
+        </Row>
+      )}
 
       {can.gradient && (
         <Row label="Fill" hint="Fade the area toward the baseline">

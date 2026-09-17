@@ -455,6 +455,66 @@ get their own rules.
   cells it reads are outlined in a fixed sequence of reference colours — the
   spreadsheet convention, kept so nothing has to be learned.
 
+### The tool dock
+
+The main toolbar, bottom-centre. It answers one question — what is in my hand
+— and everything below serves that answer.
+
+- **One marker, handed from seat to seat.** The armed tool is shown by a single
+  ink marker that travels to its seat on the shared exponential settle
+  (`PUCK_GLIDE`, 320ms). It is the dock's one authored motion, and it is there
+  because a keyboard switch happens without anyone looking at the dock: a
+  marker that moves shows where the tool went, where a fill that switches off
+  in one place and on in another has to be found. Reduced motion places it.
+- **The marker has three states, and each is a shape, not a colour.** Filled
+  for armed. Hollow for *held* on its key, which ends when the key comes up.
+  A padlock on the right shoulder for *kept*, which ends when anything else is
+  armed. The left shoulder is edit mode's remove badge and the bottom-right is
+  the menu dot, so the corners never overlap.
+- **Arm here, adjust there — and "here" stays up.** A shelf rises above the
+  dock, centred on it, while a tool that has next-gesture decisions is armed: a
+  note's colour, the pencil's nib and size, the pen's weight, the eraser's
+  size, a line's head, path and profile, a recent few shapes. Decisions about
+  the *next* mark go on the shelf; behaviour set once (smoothing, keep
+  selected) stays in the seat's flyout; the object's own properties stay on the
+  panel and the rail. The shelf stands down while any flyout is open or the
+  dock is being edited — two panels over one dock is two answers to "where do
+  I click".
+- **Anything above the dock is placed from `--dock-h`.** Coaches, notices and
+  banners already were; the shelf raises the value while it is up, so they
+  clear it without knowing it exists. A new surface in that band takes its
+  `bottom` from the token, never from a number.
+- **A tool stays in hand by choice, never by default.** Placing tools hand the
+  board back to Select after one object. `Q`, or a double-click on the armed
+  seat, keeps the tool. The lock belongs to the *seat* — changing from a
+  rectangle to a diamond, or from A4 to a slide, keeps it — and ends when
+  another seat is armed. Holding a tool key for 300ms makes it temporary:
+  let go and the previous tool returns. A tap is exactly what it always was.
+- **A seat with choices: click arms, resting opens small.** Shape, Frame, Grid,
+  Chart and Table each wear the choice they will make — the last shape, size,
+  system, chart or table — and a click arms exactly that. Resting on the seat
+  opens a single row: a fixed few choices (never recents, which reshuffle under
+  the pointer; the current choice takes the last slot if it is not among them),
+  then More, then the padlock. More grows the full sheet *upward* from the row
+  at the same width, so nothing under the pointer moves. The padlock on a seat
+  that is not armed arms it and keeps it in one click. These seats put nothing
+  on the shelf — that would be the same row twice. Touch opens the menu by
+  tapping the armed seat; the keyboard, by Up on the seat.
+- **One sheet for choosing a kind** (`DockSheet`). Sections on one scroll, never
+  tabs; each choice once. Icon tiles where the picture is the identity
+  (shapes), captioned cards where the name is needed too (grids, charts,
+  tables). One line of words at the foot for whatever is under the pointer or
+  the keyboard. A searchable sheet holds a fixed height so a search never
+  resizes the panel under the pointer. Frame keeps its three columns, because
+  its groups *are* its columns.
+- **Drag off the dock only what needs no size.** A note can be pulled off its
+  seat onto the board, because a note's size is not a decision. A shape would
+  still need a size and a preset, which is the drag the tool already is.
+- **The current choice on the shelf is neutral; kept armed is accent.** The ink
+  marker below already says which tool is armed, so a raised tint marks a
+  selected swatch or tile. The padlock pressed is a state that is on, which is
+  what the accent is for.
+
 ### Navigation
 
 Category filters are pill tabs carrying a count, filtering in place rather than

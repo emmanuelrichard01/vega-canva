@@ -311,48 +311,66 @@ function cross(gap: number, arm: number, p: CursorPalette, accent?: string): str
 }
 
 /**
- * The open hand — four fingers and a thumb.
+ * The open hand — four fingers and a thumb, in a 24-unit box.
  *
- * The one it replaces had **three fingers**. Reading its path makes it plain:
- * three arcs off the palm, at `8→12`, `12→16` and `16→20`, and a fourth column
- * that was the thumb doing double duty. At 28px nobody counts fingers, but the
- * silhouette of a three-fingered hand is subtly wrong in a way people see
- * without being able to name — and it is the one cursor in the set that every
- * competing tool draws the same way, so it is also the most compared.
+ * ## One drawing, two uses
  *
- * Built as a single closed silhouette rather than a palm plus finger shapes,
- * because the drawing method here outlines whatever it is given: separate
- * subpaths would each get their own outline and the hand would come out with
- * seams through it.
+ * The dock's Hand seat and this pointer are the same hand, so they are the
+ * same path: the dock *strokes* it (see `HandIcon`), and the pointer fills it
+ * and outlines it. They used to be two drawings -- a stock icon on the seat and
+ * this art under the pointer -- and they disagreed about how many fingers a
+ * hand has, how wide they are and where the thumb goes, which is the "picture
+ * as a second fact" failure `HANDOFF.md` keeps finding.
  *
- * The valleys between the fingers do the separating, so this needs no knuckle
- * lines. The three-fingered version did — that is what they were compensating
- * for.
+ * ## Why the previous one looked wrong
+ *
+ * Its fingers were separated by valleys 0.35 units wide, under an outline 1.7
+ * wide -- so the outline filled every valley and the four fingers fused into a
+ * mitten with ridges on it. The thumb was a round bulb hung off the palm, and
+ * the whole hand sat below and left of the box's centre, which is the hotspot.
+ *
+ * ## How this one is built
+ *
+ * Four fingers of equal width on one knuckle line, their tips on a gentle arch
+ * (middle highest, little finger lowest), a palm that is a quarter circle into
+ * the heel, and a thumb that leaves the palm on one straight axis and ends in
+ * a round tip. The fingers are separated by *zero-width* slits: the outline
+ * runs down between two fingers to the knuckle line and back up the same line,
+ * which encloses no area -- so the fill is one piece -- and draws exactly one
+ * separating line. Real gaps would need a width the outline cannot leave open
+ * at this size; slits need none.
  */
-const OPEN_HAND =
-  'M8.4 15.5V7.7a1.3 1.3 0 0 1 2.6 0v2.9h.35V6.2a1.3 1.3 0 0 1 2.6 0v4.4h.35V7.1a1.3 1.3 0 0 1 2.6 0v4.3h.35V9.5a1.18 1.18 0 0 1 2.35 0v8.7c0 4.2-2.6 6.6-6.1 6.6-3.3 0-5.15-2-5.15-5.2v-1.4c-1.4.8-3.2 0-3.6-1.6-.4-1.6.8-3 2.2-3 .6 0 1.1.2 1.4.5z';
+export const HAND_OPEN =
+  'M6.5 13.2V7a1.5 1.5 0 0 1 3 0v4V5.5a1.5 1.5 0 0 1 3 0V11V6.5a1.5 1.5 0 0 1 3 0V11V9a1.5 1.5 0 0 1 3 0v5.5a6.5 6.5 0 0 1-6.5 6.5c-2.2 0-4.02-1.17-5.13-2.59L2.56 12.89a1.45 1.45 0 0 1 2.28-1.78z';
 
 /**
  * The closed hand, for a pan in progress.
  *
- * A fist, with the four fingers reading as the curled row along its top edge
- * and the thumb across the front. Those separations *are* drawn here, because
- * on a fist there are no valleys in the silhouette to do it — the difference
- * between a fist and a rounded blob is entirely in them.
+ * The same palm, with the fingers curled down to stubs above the knuckle line
+ * and the thumb drawn in along the same axis. The heel and the hotspot stay
+ * exactly where they were, so the hand reads as *closing* rather than as being
+ * swapped for a different picture. The thumb has to come in: left out at full
+ * length beside curled fingers, the first version read as a baseball glove.
  */
-const CLOSED_HAND =
-  'M7.8 15.2c0-1.2 1-2 2.2-2h7.4c1.5 0 2.6 1.1 2.6 2.6v2.6c0 3.8-2.7 6.3-6.3 6.3-3.4 0-5.9-2.4-5.9-5.8v-.7c-1.2.4-2.5-.2-2.9-1.4-.3-1 .4-2 1.5-2 .5 0 1 .1 1.4.4z';
+export const HAND_CLOSED =
+  'M6.5 14.1V10.5a1.5 1.5 0 0 1 3 0V12V10a1.5 1.5 0 0 1 3 0V12V10.3a1.5 1.5 0 0 1 3 0V12V11a1.5 1.5 0 0 1 3 0v3.5a6.5 6.5 0 0 1-6.5 6.5c-2.2 0-4.29-.68-5.21-1.86L3.46 14.89a1.45 1.45 0 0 1 2.28-1.78z';
 
-/** The curled fingers on the fist, which the silhouette alone cannot show. */
-const FIST_KNUCKLES = 'M10.4 13.3v2.4M13.0 13.2v2.5M15.6 13.2v2.5M18.0 13.6v2.1';
+/**
+ * Seats the 24-unit hand in the pointer's box, centred on the hotspot.
+ *
+ * The hand's own bounds centre on about (11.2, 12.5); at 1.12 that lands on
+ * the box's middle, and it makes the fingers wide enough that each keeps a
+ * visible body inside its outline. Stroke widths below are divided by the
+ * scale so the outline matches the arrow's weight rather than growing with it.
+ */
+const HAND_FIT = 'translate(1.5 0) scale(1.12)';
 
-function hand(d: string, knuckles: string, p: CursorPalette): string {
+function hand(d: string, p: CursorPalette): string {
   return (
-    `<path d="${d}" fill="${p.body}" stroke="${p.body}" stroke-width="4.4" stroke-linejoin="round"/>` +
-    `<path d="${d}" fill="${p.body}" stroke="${p.edge}" stroke-width="1.7" stroke-linejoin="round"/>` +
-    (knuckles
-      ? `<path d="${knuckles}" stroke="${p.edge}" stroke-width="1.3" stroke-linecap="round" opacity="0.55"/>`
-      : '')
+    `<g transform="${HAND_FIT}">` +
+    `<path d="${d}" fill="${p.body}" stroke="${p.body}" stroke-width="3.9" stroke-linejoin="round"/>` +
+    `<path d="${d}" fill="${p.body}" stroke="${p.edge}" stroke-width="1.35" stroke-linejoin="round"/>` +
+    `</g>`
   );
 }
 
@@ -430,12 +448,12 @@ export function cursorVisual(
       return at(
         CENTRE,
         svgWrap(
-          `<g class="cursor-hand-open">${hand(OPEN_HAND, '', pal)}</g>` +
-            `<g class="cursor-hand-closed">${hand(CLOSED_HAND, FIST_KNUCKLES, pal)}</g>`
+          `<g class="cursor-hand-open">${hand(HAND_OPEN, pal)}</g>` +
+            `<g class="cursor-hand-closed">${hand(HAND_CLOSED, pal)}</g>`
         )
       );
     case 'grab':
-      return at(CENTRE, svgWrap(hand(CLOSED_HAND, FIST_KNUCKLES, pal)));
+      return at(CENTRE, svgWrap(hand(HAND_CLOSED, pal)));
     case 'aim':
       return at(CENTRE, svgWrap(cross(3.4, 7, pal, accent)));
     case 'erase':

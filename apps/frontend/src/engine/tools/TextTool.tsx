@@ -2,6 +2,7 @@ import * as React from 'react';
 import { Rect } from 'react-konva';
 import { nanoid } from 'nanoid';
 import type { Tool, ToolContext } from './Tool';
+import { finishCreation } from './toolModes';
 import { ThemeService } from '../ThemeService';
 import { DEFAULT_TYPOGRAPHY } from '../model/schema';
 import { requestEditOnMount } from '../interaction/pendingEdit';
@@ -118,7 +119,7 @@ export class TextTool implements Tool {
     });
 
     ctx.editor.select(id);
-    window.dispatchEvent(new CustomEvent('legacy_tool_change', { detail: 'select' }));
+    finishCreation();
   }
 
   onKeyDown(ctx: ToolContext, e: KeyboardEvent) {

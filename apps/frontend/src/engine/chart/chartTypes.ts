@@ -350,6 +350,24 @@ export interface ChartSpec {
   /** Smooth the run through its points instead of joining them straight. */
   curved?: boolean;
   /**
+   * Network only: how the nodes are placed. Absent is `force`, where close
+   * collaborators sit close; `ring` puts every node on one circle, grouped,
+   * which makes every link comparable at the cost of distance meaning anything.
+   */
+  networkLayout?: 'force' | 'ring';
+  /**
+   * Network only: absent colours each node by the group it falls in, found
+   * from the links (see `networkGroups`), with links between groups in grey;
+   * `node` gives every node its own colour, which is where a node's own colour
+   * from the Colour section applies.
+   */
+  networkColor?: 'group' | 'node';
+  /**
+   * Network only: read the table one way, row → column, and draw arrows. Absent
+   * reads each pair as one two-way link at the larger of its two weights.
+   */
+  directed?: boolean;
+  /**
    * How many buckets a histogram divides its range into. Clamped 2..60.
    *
    * Visible and editable rather than derived by a rule like Sturges', because
@@ -1003,9 +1021,10 @@ export function chartCapabilities(kind: ChartKind): ChartCapabilities {
     // Tiles coloured by item, each able to carry its value.
     case 'treemap':
       return { ...none, valueLabels: true, numberFormat: true };
-    // Edges may be drawn straight or curved; nothing else here is numeric.
+    // Links may be straight or curved, and carry their weight as a formatted
+    // number when values are on.
     case 'network':
-      return { ...none, curved: true };
+      return { ...none, curved: true, valueLabels: true, numberFormat: true };
     // A time axis that can carry a "today" line, and rows that can be ordered.
     case 'timeline':
       return { ...none, valueLabels: true, numberFormat: true, reference: true, sort: true, gridLines: true };
@@ -1392,15 +1411,22 @@ export function defaultChartSpec(kind: ChartKind = 'bar'): ChartSpec {
     case 'network': {
       // An adjacency table: row i, column j is the weight of the link between
       // them. Square, so it pastes from any matrix and reads in the sheet.
-      const people = ['Ana', 'Ben', 'Cleo', 'Dev', 'Eli', 'Fay', 'Gus'];
+      //
+      // Two teams and the few people who bridge them, so the first thing a new
+      // network shows is what the chart is for: who clusters, and who connects
+      // the clusters. It was seven people in one loose ring, which drew as a
+      // tangle with nothing to find in it.
+      const people = ['Ana', 'Ben', 'Cleo', 'Dev', 'Eli', 'Fay', 'Gus', 'Hana', 'Ivo'];
       const links = [
-        [0, 3, 2, 0, 1, 0, 0],
-        [3, 0, 4, 1, 0, 0, 0],
-        [2, 4, 0, 2, 0, 1, 0],
-        [0, 1, 2, 0, 3, 0, 1],
-        [1, 0, 0, 3, 0, 2, 0],
-        [0, 0, 1, 0, 2, 0, 3],
-        [0, 0, 0, 1, 0, 3, 0],
+        [0, 4, 3, 2, 0, 0, 0, 0, 0],
+        [4, 0, 3, 0, 0, 0, 0, 0, 0],
+        [3, 3, 0, 2, 0, 1, 0, 0, 0],
+        [2, 0, 2, 0, 2, 0, 0, 0, 0],
+        [0, 0, 0, 2, 0, 4, 3, 0, 0],
+        [0, 0, 1, 0, 4, 0, 3, 2, 0],
+        [0, 0, 0, 0, 3, 3, 0, 3, 1],
+        [0, 0, 0, 0, 0, 2, 3, 0, 2],
+        [0, 0, 0, 0, 0, 0, 1, 2, 0],
       ];
       return {
         kind,

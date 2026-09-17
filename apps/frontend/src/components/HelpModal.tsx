@@ -69,10 +69,17 @@ const OTHER_MOD = MOD === 'Cmd' ? 'Ctrl' : 'Cmd';
 const OTHER_PLATFORM = MOD === 'Cmd' ? 'On Windows and Linux' : 'On a Mac';
 
 function buildSections(): Section[] {
-  const tools: Shortcut[] = Object.entries(TOOL_SHORTCUTS).map(([id, key]) => ({
-    keys: key,
-    what: TOOL_NAMES[id] ?? id,
-  }));
+  const tools: Shortcut[] = [
+    ...Object.entries(TOOL_SHORTCUTS).map(([id, key]) => ({
+      keys: key,
+      what: TOOL_NAMES[id] ?? id,
+    })),
+    // Written here rather than in the map above because neither is a tool:
+    // they change how long the tool in your hand stays there. Both are bound
+    // in `useRoomShortcuts`; see `toolModes` for the rules.
+    { keys: 'Q', what: 'Keep the armed tool after it places something (or double-click its seat)' },
+    { keys: 'Hold a tool key', what: 'Use that tool, then let go to go back to the last one' },
+  ];
 
   return [
     {
@@ -102,7 +109,6 @@ function buildSections(): Section[] {
         { keys: 'Shift + 1', what: 'Fit everything on screen' },
         { keys: `${MOD} + 1`, what: 'Zoom to fit all objects' },
         { keys: `${MOD} + K`, what: 'Command palette & search' },
-        { keys: `${MOD} + P`, what: 'Command palette alternative' },
         { keys: '?', what: 'Open keyboard shortcuts & help' },
         { keys: '\\', what: 'Toggle Zen mode: hide or show panels' },
       ],

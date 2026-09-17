@@ -1,9 +1,10 @@
 import React, { useEffect, useMemo, useRef, useState } from 'react';
 import {
-  Clock, Download, Hand, Layers as LayersIcon, MessageSquare, Mic, MousePointer2,
+  Clock, Download, Layers as LayersIcon, MessageSquare, Mic, MousePointer2,
   PenLine, Play, Search, Share2, Sparkles, Square, StickyNote, Type,
   Code2, HelpCircle, ArrowLeft,
 } from 'lucide-react';
+import { HandIcon } from './workspace/HandIcon';
 import { motion } from 'framer-motion';
 import { provider } from '../engine/document';
 /**
@@ -175,7 +176,7 @@ export const CommandPalette: React.FC<CommandPaletteProps> = ({ onClose, onSelec
       { id: 'comment', label: 'Add comment', group: 'Create', icon: <MessageSquare size={16} />, shortcut: key('comment'), perform: run('comment') },
 
       { id: 'select', label: 'Select tool', group: 'Tools', icon: <MousePointer2 size={16} />, shortcut: key('select'), perform: run('select') },
-      { id: 'hand', label: 'Hand tool', group: 'Tools', icon: <Hand size={16} />, shortcut: key('hand'), perform: run('hand') },
+      { id: 'hand', label: 'Hand tool', group: 'Tools', icon: <HandIcon size={16} />, shortcut: key('hand'), perform: run('hand') },
       { id: 'tidy', label: 'Tidy up canvas', detail: 'Cluster objects by colour', group: 'Tools', icon: <Sparkles size={16} />, perform: run('tidy') },
       { id: 'diagram', label: 'Diagram from code', detail: 'Write a flowchart in Mermaid, or read a selected one back out', group: 'Tools', icon: <Code2 size={16} />, perform: run('diagram') },
       { id: 'help', label: 'Keyboard shortcuts & help', group: 'Tools', icon: <HelpCircle size={16} />, shortcut: '?', perform: run('help') },

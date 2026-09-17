@@ -620,20 +620,137 @@ export function layoutTreemap(
 // Network
 // ---------------------------------------------------------------------------
 
+/** One link. Directed charts read it as `i` → `j`. */
+interface NetworkEdge {
+  i: number;
+  j: number;
+  w: number;
+}
+
 /**
- * Nodes and weighted links, laid out by force.
+ * Links between groups, and nodes with no links at all.
  *
- * Fruchterman–Reingold from a circle, fully deterministic: no random start, a
- * fixed number of cooling steps. The same table always draws the same graph —
- * which on a shared board matters more than a marginally better layout, since
- * two collaborators must see one picture, and a chart that reshuffles on every
- * redraw cannot be annotated.
+ * A mid slate rather than a theme token: the layout does not know the board it
+ * lands on, and this reads as "quieter than the colours" on light and dark
+ * alike, which is the whole of its job.
+ */
+export const NETWORK_NEUTRAL = '#94A3B8';
+
+/**
+ * Which nodes belong together.
  *
- * The data is an adjacency table: row *i*, column *j* is the weight of the
- * link between them, read symmetrically (the larger of the two directions),
- * so it pastes from any matrix and edits in the ordinary sheet. A node's size
- * is its weighted degree — how connected it is — and a link's weight is its
- * thickness.
+ * ## Why groups at all
+ *
+ * The network used to give every node its own palette colour, so a graph of
+ * nine people was nine unrelated colours -- a legend of names, and no answer to
+ * the question a network is drawn to answer, which is *what clusters*. The
+ * force layout already puts close collaborators near each other; colouring by
+ * group says so outright, and makes the links *between* groups -- the bridges,
+ * usually the interesting ones -- stand out by being the grey ones.
+ *
+ * ## How
+ *
+ * The local-moving phase of Louvain: each node in turn joins whichever
+ * neighbouring group raises modularity most, until nothing moves. One level,
+ * no aggregation -- boards hold tens of nodes, not thousands, and the first
+ * level already finds the groups a person would circle. Fixed visiting order
+ * and ties broken toward staying put, so it is **deterministic**: two
+ * collaborators see the same colours, which matters more on a shared board
+ * than a marginally better partition.
+ *
+ * Groups are numbered by size, then weight, then first member, so the largest
+ * takes the palette's first colour. Nodes with no links get -1.
+ */
+export function networkGroups(n: number, edges: readonly NetworkEdge[]): number[] {
+  const adj = Array.from({ length: n }, () => new Map<number, number>());
+  for (const e of edges) {
+    if (e.i === e.j || e.w <= 0) continue;
+    adj[e.i].set(e.j, (adj[e.i].get(e.j) ?? 0) + e.w);
+    adj[e.j].set(e.i, (adj[e.j].get(e.i) ?? 0) + e.w);
+  }
+  const k = adj.map((m) => [...m.values()].reduce((a, b) => a + b, 0));
+  const twoM = k.reduce((a, b) => a + b, 0);
+  const community = Array.from({ length: n }, (_, i) => i);
+  const total = k.slice();
+
+  if (twoM > 0) {
+    for (let pass = 0; pass < 40; pass++) {
+      let moved = false;
+      for (let i = 0; i < n; i++) {
+        if (k[i] === 0) continue;
+        const own = community[i];
+        total[own] -= k[i];
+        const into = new Map<number, number>();
+        for (const [j, w] of adj[i]) into.set(community[j], (into.get(community[j]) ?? 0) + w);
+        let best = own;
+        let bestGain = (into.get(own) ?? 0) - (total[own] * k[i]) / twoM;
+        for (const [c, w] of into) {
+          const gain = w - (total[c] * k[i]) / twoM;
+          if (gain > bestGain + 1e-9) {
+            best = c;
+            bestGain = gain;
+          }
+        }
+        total[best] += k[i];
+        community[i] = best;
+        if (best !== own) moved = true;
+      }
+      if (!moved) break;
+    }
+  }
+
+  const members = new Map<number, number[]>();
+  community.forEach((c, i) => {
+    if (k[i] > 0) members.set(c, [...(members.get(c) ?? []), i]);
+  });
+  const weight = (list: number[]) => list.reduce((s, i) => s + k[i], 0);
+  const ordered = [...members.values()].sort(
+    (a, b) => b.length - a.length || weight(b) - weight(a) || a[0] - b[0]
+  );
+  const out = new Array<number>(n).fill(-1);
+  ordered.forEach((list, g) => list.forEach((i) => (out[i] = g)));
+  return out;
+}
+
+/**
+ * Nodes and weighted links.
+ *
+ * ## The table
+ *
+ * An adjacency table: row *i*, column *j* is the weight of the link between
+ * them, so it pastes from any matrix and edits in the ordinary sheet. Two-way
+ * (the default) reads the pair symmetrically, the larger of the two
+ * directions. **One-way** (`directed`) reads row → column and draws an arrow
+ * per direction that exists; a pair linked both ways gets two arrows bowed to
+ * opposite sides rather than one line with two heads, because the two weights
+ * are usually different and a single line can only be one thickness.
+ *
+ * ## What each mark means
+ *
+ * A node's size is its weighted degree -- how connected it is. Its colour is
+ * its group (see `networkGroups`), or its own colour with `networkColor:
+ * 'node'`. A link's thickness is its weight; a link inside a group takes the
+ * group's colour and a link between groups is grey, drawn first so the groups
+ * sit on top of their bridges. With values on, each link carries its weight.
+ *
+ * ## Placement
+ *
+ * **Force** (the default): Fruchterman–Reingold, fully deterministic -- a
+ * fixed start and a fixed number of cooling steps, so the same table always
+ * draws the same graph and a chart on a shared board can be annotated. It
+ * starts from a circle ordered by group, so groups begin together instead of
+ * having to find each other; links inside a group pull harder than bridges;
+ * and it runs in a box shaped like the plot, so a wide chart gets a wide graph
+ * instead of a round one floating in the middle.
+ *
+ * **Ring**: every node on one ellipse, grouped and most-connected first --
+ * the arrangement that makes every link comparable, at the cost of proximity
+ * meaning anything. Curved links bow toward the centre, the way a chord
+ * diagram's do.
+ *
+ * Either way a final pass pushes apart any nodes that still overlap, and each
+ * name sits on the side of its node away from the middle of the graph, where
+ * the links are not.
  */
 export function layoutNetwork(
   spec: ChartSpec,
@@ -655,29 +772,87 @@ export function layoutNetwork(
   const n = spec.categories.length;
   if (n === 0 || plot.width < 8 || plot.height < 8) return { ...empty, title };
 
+  const directed = spec.directed === true;
+  const ring = spec.networkLayout === 'ring';
+  const byNode = spec.networkColor === 'node';
+  const nameOf = (i: number) => spec.categories[i] || `Node ${i + 1}`;
+
   const cell = (i: number, j: number) => {
     const v = spec.series[i]?.values[j];
     return finite(v) ? Math.abs(v) : 0;
   };
-  const edges: Array<{ i: number; j: number; w: number }> = [];
+
+  // The structure: one link per linked pair, at the heavier direction.
+  const links: NetworkEdge[] = [];
   for (let i = 0; i < n; i++) {
     for (let j = i + 1; j < n; j++) {
       const w = Math.max(cell(i, j), cell(j, i));
-      if (w > 0) edges.push({ i, j, w });
+      if (w > 0) links.push({ i, j, w });
     }
   }
-  const maxW = Math.max(1e-9, ...edges.map((e) => e.w));
 
-  // Positions in a unit square, starting on a circle.
-  const pos = Array.from({ length: n }, (_, i) => {
-    const a = (i / n) * Math.PI * 2 - Math.PI / 2;
-    return { x: 0.5 + 0.35 * Math.cos(a), y: 0.5 + 0.35 * Math.sin(a) };
+  // What is drawn: the links, or one arrow per direction that exists.
+  const drawn: Array<NetworkEdge & { mutual: boolean }> = [];
+  if (directed) {
+    for (let i = 0; i < n; i++) {
+      for (let j = i + 1; j < n; j++) {
+        const there = cell(i, j);
+        const back = cell(j, i);
+        const mutual = there > 0 && back > 0;
+        if (there > 0) drawn.push({ i, j, w: there, mutual });
+        if (back > 0) drawn.push({ i: j, j: i, w: back, mutual });
+      }
+    }
+  } else {
+    for (const e of links) drawn.push({ ...e, mutual: false });
+  }
+  const maxW = Math.max(1e-9, ...drawn.map((e) => e.w));
+  const maxLink = Math.max(1e-9, ...links.map((e) => e.w));
+
+  const group = networkGroups(n, links);
+  const groupCount = Math.max(-1, ...group) + 1;
+  const sameGroup = (a: number, b: number) => group[a] >= 0 && group[a] === group[b];
+
+  const degree = Array.from({ length: n }, (_, i) =>
+    links.reduce((sum, e) => sum + (e.i === i || e.j === i ? e.w : 0), 0)
+  );
+  const maxDeg = Math.max(0, ...degree);
+
+  // Node sizes scale with the room and the count, within limits.
+  const largest = clampTo(Math.min(plot.width, plot.height) / (4 + 2.2 * Math.sqrt(n)), 9, 20);
+  const radius = degree.map((d) =>
+    maxDeg > 0 ? 5 + (largest - 5) * Math.sqrt(d / maxDeg) : Math.min(largest, 8)
+  );
+  const maxR = Math.max(...radius);
+
+  const NAME_H = 13;
+  const mx = maxR + 6;
+  const my = maxR + NAME_H + 6;
+  const avail: Rect = {
+    x: plot.x + mx,
+    y: plot.y + my,
+    width: Math.max(1, plot.width - mx * 2),
+    height: Math.max(1, plot.height - my * 2),
+  };
+  const aspect = clampTo(avail.width / avail.height, 0.6, 2.2);
+
+  // Around the circle by group, most connected first within each.
+  const groupKey = (i: number) => (group[i] < 0 ? groupCount : group[i]);
+  const around = Array.from({ length: n }, (_, i) => i).sort(
+    (a, b) => groupKey(a) - groupKey(b) || degree[b] - degree[a] || a - b
+  );
+  const pos: Point[] = new Array(n);
+  around.forEach((node, slot) => {
+    const a = (slot / n) * Math.PI * 2 - Math.PI / 2;
+    const r = ring ? 0.5 : 0.35;
+    pos[node] = { x: aspect / 2 + r * aspect * Math.cos(a), y: 0.5 + r * Math.sin(a) };
   });
-  if (n > 2) {
-    const k = Math.sqrt(1 / n) * 0.9;
-    const ITER = 220;
+
+  if (!ring && n > 2) {
+    const k = Math.sqrt(aspect / n) * 0.9;
+    const ITER = 300;
     for (let it = 0; it < ITER; it++) {
-      const temp = 0.08 * (1 - it / ITER) + 0.002;
+      const temp = 0.1 * (1 - it / ITER) + 0.002;
       const disp = pos.map(() => ({ x: 0, y: 0 }));
       for (let i = 0; i < n; i++) {
         for (let j = i + 1; j < n; j++) {
@@ -691,11 +866,13 @@ export function layoutNetwork(
           disp[j].y -= (dy / d) * f;
         }
       }
-      for (const e of edges) {
+      for (const e of links) {
         const dx = pos[e.i].x - pos[e.j].x;
         const dy = pos[e.i].y - pos[e.j].y;
         const d = Math.max(0.01, Math.hypot(dx, dy));
-        const f = ((d * d) / k) * (0.4 + 0.6 * (e.w / maxW));
+        // Inside a group pulls harder than across one, so groups read as
+        // groups and their bridges stretch.
+        const f = ((d * d) / k) * (0.35 + 0.65 * (e.w / maxLink)) * (sameGroup(e.i, e.j) ? 1.2 : 0.7);
         disp[e.i].x -= (dx / d) * f;
         disp[e.i].y -= (dy / d) * f;
         disp[e.j].x += (dx / d) * f;
@@ -704,8 +881,8 @@ export function layoutNetwork(
       for (let i = 0; i < n; i++) {
         // A gentle pull to the centre, so a disconnected node does not drift
         // off and leave the rest of the graph squeezed into a corner.
-        disp[i].x += (0.5 - pos[i].x) * 0.5;
-        disp[i].y += (0.5 - pos[i].y) * 0.5;
+        disp[i].x += (aspect / 2 - pos[i].x) * 0.4;
+        disp[i].y += (0.5 - pos[i].y) * 0.4;
         const len = Math.max(1e-9, Math.hypot(disp[i].x, disp[i].y));
         const step = Math.min(len, temp);
         pos[i].x += (disp[i].x / len) * step;
@@ -714,90 +891,191 @@ export function layoutNetwork(
     }
   }
 
-  const degree = Array.from({ length: n }, (_, i) =>
-    edges.reduce((sum, e) => sum + (e.i === i || e.j === i ? e.w : 0), 0)
-  );
-  const maxDeg = Math.max(0, ...degree);
-  const radius = degree.map((d) => (maxDeg > 0 ? 6 + 11 * Math.sqrt(d / maxDeg) : 8));
-  const maxR = Math.max(...radius);
-
-  // Fit the graph into the plot, leaving room for the largest node and the
-  // names under the nodes.
+  // Fit into the room left for nodes and names. Stretching is allowed a
+  // little, so a wide plot is used, but not so much that distance stops
+  // meaning distance.
   const xs = pos.map((p) => p.x);
   const ys = pos.map((p) => p.y);
   const bx = Math.min(...xs);
   const by = Math.min(...ys);
   const bw = Math.max(1e-6, Math.max(...xs) - bx);
   const bh = Math.max(1e-6, Math.max(...ys) - by);
-  const mx = maxR + 4;
-  const myTop = maxR + 4;
-  const myBottom = maxR + LABEL_SIZE + 8;
-  const availW = Math.max(1, plot.width - mx * 2);
-  const availH = Math.max(1, plot.height - myTop - myBottom);
-  const s = n === 1 ? 0 : Math.min(availW / bw, availH / bh);
-  const offX = plot.x + mx + (availW - bw * s) / 2;
-  const offY = plot.y + myTop + (availH - bh * s) / 2;
-  const P = pos.map((p) => (n === 1
-    ? { x: plot.x + plot.width / 2, y: plot.y + plot.height / 2 }
-    : { x: offX + (p.x - bx) * s, y: offY + (p.y - by) * s }));
+  const fitScale = Math.min(avail.width / bw, avail.height / bh);
+  const sx = Math.min(avail.width / bw, fitScale * 1.35);
+  const sy = Math.min(avail.height / bh, fitScale * 1.35);
+  const P: Point[] = pos.map((p) =>
+    n === 1
+      ? { x: plot.x + plot.width / 2, y: plot.y + plot.height / 2 }
+      : {
+          x: avail.x + (avail.width - bw * sx) / 2 + (p.x - bx) * sx,
+          y: avail.y + (avail.height - bh * sy) / 2 + (p.y - by) * sy,
+        }
+  );
 
-  const colorOf = (i: number) => seriesColor({ name: '', values: [], color: spec.series[i]?.color }, i, opts.palette);
+  // No two nodes on top of each other.
+  for (let pass = 0; pass < 60; pass++) {
+    let moved = false;
+    for (let i = 0; i < n; i++) {
+      for (let j = i + 1; j < n; j++) {
+        const dx = P[i].x - P[j].x;
+        const dy = P[i].y - P[j].y;
+        const d = Math.hypot(dx, dy);
+        const want = radius[i] + radius[j] + 6;
+        if (d >= want) continue;
+        const angle = (i * 2.399963 + j) % (Math.PI * 2);
+        const ux = d > 1e-6 ? dx / d : Math.cos(angle);
+        const uy = d > 1e-6 ? dy / d : Math.sin(angle);
+        const push = (want - d) / 2;
+        P[i] = { x: P[i].x + ux * push, y: P[i].y + uy * push };
+        P[j] = { x: P[j].x - ux * push, y: P[j].y - uy * push };
+        moved = true;
+      }
+    }
+    for (let i = 0; i < n; i++) {
+      P[i] = {
+        x: clampTo(P[i].x, plot.x + radius[i] + 2, plot.x + plot.width - radius[i] - 2),
+        y: clampTo(P[i].y, plot.y + radius[i] + 2, plot.y + plot.height - radius[i] - 2),
+      };
+    }
+    if (!moved) break;
+  }
+
+  const groupColor = (g: number) => (g < 0 ? NETWORK_NEUTRAL : seriesColor(undefined, g, opts.palette));
+  const nodeColor = (i: number) =>
+    byNode ? seriesColor({ name: '', values: [], color: spec.series[i]?.color }, i, opts.palette) : groupColor(group[i]);
   const inside = (p: Point) => ({
     x: clampTo(p.x, plot.x, plot.x + plot.width),
     y: clampTo(p.y, plot.y, plot.y + plot.height),
   });
+  const toward = (from: Point, to: Point) => {
+    const d = Math.max(1e-6, Math.hypot(to.x - from.x, to.y - from.y));
+    return { x: (to.x - from.x) / d, y: (to.y - from.y) / d };
+  };
+  const quad = (a: Point, c: Point, b: Point, t: number) => {
+    const q = 1 - t;
+    return { x: q * q * a.x + 2 * q * t * c.x + t * t * b.x, y: q * q * a.y + 2 * q * t * c.y + t * t * b.y };
+  };
+  const middle = { x: plot.x + plot.width / 2, y: plot.y + plot.height / 2 };
 
-  const runs: ChartRun[] = edges.map((e) => {
+  // Bridges first, lighter first, so groups and heavy links sit on top.
+  const order = drawn
+    .map((e, index) => ({ e, index }))
+    .sort(
+      (a, b) =>
+        Number(sameGroup(a.e.i, a.e.j)) - Number(sameGroup(b.e.i, b.e.j)) ||
+        a.e.w - b.e.w ||
+        a.index - b.index
+    );
+
+  const runs: ChartRun[] = [];
+  const valueLabels: ChartLabel[] = [];
+  for (const { e } of order) {
     const a = P[e.i];
     const b = P[e.j];
     const len = Math.max(1e-6, Math.hypot(b.x - a.x, b.y - a.y));
     const ux = (b.x - a.x) / len;
     const uy = (b.y - a.y) / len;
-    const start = { x: a.x + ux * radius[e.i], y: a.y + uy * radius[e.i] };
-    const end = { x: b.x - ux * radius[e.j], y: b.y - uy * radius[e.j] };
-    let points: Point[] = [start, end];
-    if (spec.curved) {
-      // A quadratic bend off the straight line, sampled: curved links read as
-      // relationships rather than as a wiring diagram, and cross less.
-      const c = { x: (a.x + b.x) / 2 - uy * len * 0.18, y: (a.y + b.y) / 2 + ux * len * 0.18 };
-      points = Array.from({ length: 17 }, (_, k) => {
-        const t = k / 16;
-        const q = 1 - t;
-        return inside({
-          x: q * q * start.x + 2 * q * t * c.x + t * t * end.x,
-          y: q * q * start.y + 2 * q * t * c.y + t * t * end.y,
-        });
+
+    // Where the link bows through, if it bows.
+    let ctrl: Point | null = null;
+    if (ring && spec.curved) {
+      const mid = { x: (a.x + b.x) / 2, y: (a.y + b.y) / 2 };
+      // A third of the way in: enough to lift a link off the rim, not so much
+      // that two neighbours are joined by a loop through the middle.
+      ctrl = { x: mid.x + (middle.x - mid.x) * 0.3, y: mid.y + (middle.y - mid.y) * 0.3 };
+    } else if (spec.curved || e.mutual) {
+      // The perpendicular follows the direction of travel, so the two arrows
+      // of a mutual pair bow to opposite sides by construction.
+      const bend = e.mutual ? 0.2 : 0.18;
+      ctrl = { x: (a.x + b.x) / 2 - uy * len * bend, y: (a.y + b.y) / 2 + ux * len * bend };
+    }
+
+    const gap = directed ? 2 : 0;
+    const out = toward(a, ctrl ?? b);
+    const into = toward(ctrl ?? a, b);
+    const start = { x: a.x + out.x * radius[e.i], y: a.y + out.y * radius[e.i] };
+    const end = { x: b.x - into.x * (radius[e.j] + gap), y: b.y - into.y * (radius[e.j] + gap) };
+    const points = ctrl
+      ? Array.from({ length: 17 }, (_, s) => inside(quad(start, ctrl as Point, end, s / 16)))
+      : [start, end];
+
+    const color = byNode ? nodeColor(e.i) : sameGroup(e.i, e.j) ? groupColor(group[e.i]) : NETWORK_NEUTRAL;
+    const strokeWidth = Math.min(5, 1 + 3.5 * (e.w / maxW));
+    const opacity = byNode ? 0.5 : 0.6;
+    runs.push({ points, color, seriesIndex: e.i, width: strokeWidth, opacity });
+
+    if (directed) {
+      // A chevron rather than a filled head: it is drawn by the same run
+      // painter as the link, so the board, the SVG and the sketch pen all
+      // draw it without learning a new mark.
+      const size = 5 + strokeWidth * 1.3;
+      const wing = (angle: number) => ({
+        x: end.x - size * (into.x * Math.cos(angle) - into.y * Math.sin(angle)),
+        y: end.y - size * (into.x * Math.sin(angle) + into.y * Math.cos(angle)),
+      });
+      runs.push({
+        points: [inside(wing(0.45)), inside(end), inside(wing(-0.45))],
+        color,
+        seriesIndex: e.i,
+        width: Math.max(1.5, strokeWidth * 0.85),
+        opacity: Math.min(1, opacity + 0.3),
       });
     }
-    return {
-      points,
-      color: colorOf(e.i),
-      seriesIndex: e.i,
-      width: 1 + 3 * (e.w / maxW),
-      opacity: 0.5,
-    };
-  });
+
+    if (opts.showValues && drawn.length <= 80) {
+      const at = ctrl ? quad(start, ctrl, end, 0.5) : { x: (start.x + end.x) / 2, y: (start.y + end.y) / 2 };
+      const LABEL_W = 56;
+      valueLabels.push({
+        text: fit(formatValue(e.w, spec), LABEL_W, 10, measure),
+        x: clampTo(at.x - LABEL_W / 2, 0, Math.max(0, width - LABEL_W)),
+        y: at.y - 7,
+        width: LABEL_W,
+        align: 'center',
+        fontSize: 10,
+      });
+    }
+  }
 
   const dots: ChartDot[] = P.map((p, i) => ({
     x: p.x,
     y: p.y,
     radius: radius[i],
-    color: colorOf(i),
+    color: nodeColor(i),
     seriesIndex: i,
     categoryIndex: i,
     value: degree[i],
     shape: 'circle',
   }));
 
+  // Each name on the side of its node away from the middle of the graph.
+  const centreY = P.reduce((s, p) => s + p.y, 0) / n;
   const LW = 104;
-  const categoryLabels: ChartLabel[] = P.map((p, i) => ({
-    text: fit(spec.categories[i] || `Node ${i + 1}`, LW, 10, measure),
-    x: clampTo(p.x - LW / 2, 0, Math.max(0, width - LW)),
-    y: Math.min(p.y + radius[i] + 3, height - 12),
-    width: LW,
-    align: 'center',
-    fontSize: 10,
-  }));
+  const categoryLabels: ChartLabel[] = P.map((p, i) => {
+    const above = n > 1 && p.y < centreY - 1;
+    return {
+      text: fit(nameOf(i), LW, 10, measure),
+      x: clampTo(p.x - LW / 2, 0, Math.max(0, width - LW)),
+      y: above ? Math.max(0, p.y - radius[i] - 3 - NAME_H) : Math.min(p.y + radius[i] + 3, height - 12),
+      width: LW,
+      align: 'center',
+      fontSize: 10,
+    };
+  });
+
+  // Coloured by group, the key names the groups -- each by its most connected
+  // member -- rather than listing every node in the colour of its group.
+  const legendSpec: ChartSpec =
+    byNode || groupCount === 0
+      ? spec
+      : {
+          ...spec,
+          categories: Array.from({ length: groupCount }, (_, g) => {
+            const list = group.map((gi, i) => (gi === g ? i : -1)).filter((i) => i >= 0);
+            const hub = list.reduce((best, i) => (degree[i] > degree[best] ? i : best), list[0]);
+            return list.length > 1 ? `${nameOf(hub)} +${list.length - 1}` : nameOf(hub);
+          }),
+          series: [{ name: '', values: [] }],
+        };
 
   return {
     ...empty,
@@ -805,7 +1083,8 @@ export function layoutNetwork(
     runs,
     dots,
     categoryLabels,
-    legend: buildLegend(spec, opts, width, height, measure),
+    valueLabels,
+    legend: buildLegend(legendSpec, opts, width, height, measure),
     title,
     domain: [0, maxDeg || 1],
     categoryAxis: 'x',

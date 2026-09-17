@@ -1,5 +1,6 @@
 import React from 'react';
 import type { Tool, ToolContext } from './Tool';
+import { finishCreation } from './toolModes';
 import { createGrid } from '../grid/gridApply';
 import { gridDefaults } from '../grid/gridDefaults';
 import { GridPreview } from './GridPreview';
@@ -93,7 +94,7 @@ export class GridTool implements Tool {
       window.dispatchEvent(new CustomEvent('requestSelectNodes', { detail: { ids: [id] } }));
     }
 
-    window.dispatchEvent(new CustomEvent('legacy_tool_change', { detail: 'select' }));
+    finishCreation();
   }
 
   onKeyDown(ctx: ToolContext, e: KeyboardEvent) {

@@ -1,6 +1,8 @@
-import React, { useCallback, useEffect, useRef, useState, useSyncExternalStore, useMemo } from 'react';
+import React, { useCallback, useEffect, useId, useLayoutEffect, useRef, useState, useSyncExternalStore, useMemo } from 'react';
+import { createPortal } from 'react-dom';
+import { AnimatePresence, MotionConfig, motion, type Transition } from 'framer-motion';
 import { GridKindIcon } from './gridIcons';
-import { KindPicker } from './KindPicker';
+import { DockSheet, type SheetSection } from './DockSheet';
 import { ChartKindIcon } from './chartIcons';
 import { CHART_HINTS, CHART_LABELS, chartPickerGroups } from '../../engine/chart/chartKinds';
 import { ChartTool } from '../../engine/tools/ChartTool';
@@ -24,8 +26,8 @@ import {
 import { gridDefaults } from '../../engine/grid/gridDefaults';
 import { switchKind } from '../../engine/grid/gridBuild';
 import {
-  BarChart3, MousePointer2, MousePointerClick, LayoutGrid, Hand, Pen, PenTool as PenToolIcon, Type, Square, StickyNote, MessageSquare, ImageIcon, Mic, Sparkles, Frame, Eraser, Workflow, MoreVertical, TextQuote } from 'lucide-react';
-import { Check, Minus, Move, RotateCcw, SeparatorVertical, Spline, Table2, Undo2 } from 'lucide-react';
+  BarChart3, MousePointer2, MousePointerClick, LayoutGrid, Pen, PenTool as PenToolIcon, Type, Square, StickyNote, MessageSquare, ImageIcon, Mic, Sparkles, Frame, Eraser, Workflow, MoreVertical, TextQuote } from 'lucide-react';
+import { Check, Lock, LockOpen, Minus, Move, RotateCcw, SeparatorVertical, Spline, Table2, Undo2 } from 'lucide-react';
 import { SegmentedControl } from '../ui/SegmentedControl';
 import { SketchLevelIcon } from '../panel/sketchIcons';
 import type { PencilNib } from '../../engine/model/rough';
@@ -35,6 +37,7 @@ import { LineSpecimen } from '../panel/lineSpecimen';
 import { isForceTool } from '../../engine/physics/forces';
 import { FRAME_PRESETS, FRAME_PRESET_GROUPS } from '../../engine/model/frames';
 import { ShapeIcon } from './shapeIcons';
+import { HandIcon } from './HandIcon';
 import {
   LINE_PRESETS,
   SHAPE_BY_PRESET,
@@ -42,18 +45,35 @@ import {
   shapeKindFromToolId,
   type ShapePreset,
 } from './shapeCatalog';
-import {
-  SHAPE_FACETS,
-  SHAPE_GLYPH,
-  SHAPE_TILE,
-  shapeGroups,
-  shapeOption as sharedShapeOption,
-} from './shapePicker';
+import { ShapeSheet } from './ShapeSheet';
+import { SeatMenu, type QuickChoice } from './SeatMenu';
 import { shortcutFor } from '../../engine/tools/shortcuts';
 import { DEMO_LENGTHS } from '../../engine/text/demoText';
 import { useStore } from '../../hooks/useStore';
 import { Slider } from '../ui/Slider';
 import { Switch } from '../ui/Switch';
+import { isLockable, lockFamily, toolModes } from '../../engine/tools/toolModes';
+import { placeSticky, STICKY_SIZE } from '../../engine/tools/StickyTool';
+import { THEMES } from '../../engine/model/stickyThemes';
+import { STICKY_THEMES, type StickyTheme } from '../../engine/model/schema';
+import { cameraSystem } from '../../engine/CameraSystem';
+import { editor } from '../../engine/api/EditorAPI';
+import { canUseTool } from '../../engine/model/permissions';
+
+/**
+ * How the active-tool marker travels from seat to seat.
+ *
+ * The dock's one authored motion, and the reason there is a single marker at
+ * all: the active seat used to be its own inverted fill, so changing tool was
+ * one fill going out and another coming on somewhere else, and the eye had to
+ * go and find it. A marker that travels shows *where* the tool went -- which
+ * is the question a keyboard switch leaves open, since nobody looked at the
+ * dock to press `E`.
+ *
+ * The same exponential settle every other surface uses, so it decelerates and
+ * never rebounds; `MotionConfig` below hands it to the reduced-motion setting.
+ */
+const PUCK_GLIDE: Transition = { type: 'tween', duration: 0.32, ease: [0.16, 1, 0.3, 1] };
 
 /**
  * The tool dock.
@@ -128,8 +148,20 @@ const DockButton = React.forwardRef<
      * unsafe and stops people using it.
      */
     editing?: boolean;
+    /** The dock's one active-tool marker, handed to whichever seat is active. See `PUCK_GLIDE`. */
+    puckId?: string;
+    /** The armed tool is kept after each use. See `toolModes`. */
+    locked?: boolean;
+    /** Keep the armed tool, or stop keeping it. Wired to a double-click on the active seat. */
+    onToggleLock?: () => void;
+    /**
+     * Open this seat's menu on purpose: Up from the keyboard, or a tap on the
+     * seat while it is armed on a device with no hover -- which is the only way
+     * touch reaches a menu that opens on rest.
+     */
+    onOpenMenu?: () => void;
   }
->(({ icon, label, description, toolId, active, onClick, hasMenu, menuOpen, tabIndex, children, seat, onRemove, onPointerDown, editing }, ref) => {
+>(({ icon, label, description, toolId, active, onClick, hasMenu, menuOpen, tabIndex, children, seat, onRemove, onPointerDown, editing, puckId, locked, onToggleLock, onOpenMenu }, ref) => {
   const key = toolId ? shortcutFor(toolId) : undefined;
   /**
    * Three separate things, kept separate.
@@ -157,8 +189,10 @@ const DockButton = React.forwardRef<
   const tooltipDesc = description
     ? description.charAt(0).toUpperCase() + description.slice(1)
     : undefined;
-  /* A screen reader has no second line to put it on, so it gets one phrase. */
-  const ariaLabel = description ? `${label}, ${description}` : label;
+  const kept = active && Boolean(locked);
+  /* A screen reader has no second line to put it on, so it gets one phrase --
+     and the padlock, which it cannot see either. */
+  const ariaLabel = `${description ? `${label}, ${description}` : label}${kept ? ', kept armed' : ''}`;
 
   return (
     <div className={hasMenu ? 'dock-slot dock-slot--menu' : 'dock-slot'} {...seat}>
@@ -185,7 +219,23 @@ const DockButton = React.forwardRef<
         aria-pressed={active}
         aria-haspopup={hasMenu ? 'menu' : undefined}
         aria-expanded={hasMenu ? menuOpen : undefined}
-        onClick={editing ? undefined : onClick}
+        onClick={
+          editing
+            ? undefined
+            : () => {
+                if (active && onOpenMenu && !window.matchMedia('(hover: hover)').matches) onOpenMenu();
+                else onClick();
+              }
+        }
+        onKeyDown={
+          onOpenMenu && !editing
+            ? (e) => {
+                if (e.key !== 'ArrowUp') return;
+                e.preventDefault();
+                onOpenMenu();
+              }
+            : undefined
+        }
         onPointerDown={onPointerDown}
         // Suppressed while the menu is open: a tooltip and the flyout it
         // belongs to occupy the same space above the button, and the tooltip
@@ -197,8 +247,27 @@ const DockButton = React.forwardRef<
         aria-label={ariaLabel}
         data-label={label}
         tabIndex={tabIndex}
+        /* Sketch's and Illustrator's gesture for keeping an insert tool: a
+           double-click on the seat that holds it. The first click of the pair
+           arms the tool if it was not armed, so one double-click on a cold
+           seat arms it *and* keeps it. `Q` does the same from the keyboard. */
+        onDoubleClick={!editing && active && onToggleLock ? onToggleLock : undefined}
       >
+        {active && puckId && (
+          <motion.span
+            layoutId={puckId}
+            initial={false}
+            className="dock-puck"
+            aria-hidden="true"
+            transition={PUCK_GLIDE}
+          />
+        )}
         {icon}
+        {kept && (
+          <span className="dock-lock" aria-hidden="true">
+            <Lock strokeWidth={3} />
+          </span>
+        )}
         {hasMenu && <span className="dock-more__dot" aria-hidden="true" />}
       </button>
       {children}
@@ -215,14 +284,21 @@ DockButton.displayName = 'DockButton';
  * themselves. The gap below it is padding rather than margin so the pointer can
  * travel from button to menu without crossing dead space and closing it.
  */
-const Flyout: React.FC<{ title: string; children: React.ReactNode; wide?: boolean }> = ({
+const Flyout: React.FC<{
+  title: string;
+  children: React.ReactNode;
+  wide?: boolean;
+  /** No title row: the seat menus, whose row says what they are. The title stays the accessible name. */
+  bare?: boolean;
+}> = ({
   title,
   children,
   wide,
+  bare,
 }) => (
   <div role="menu" className="dock-flyout" aria-label={title}>
     <div className={`panel-surface dock-flyout__panel ${wide ? 'dock-flyout__panel--wide' : ''}`}>
-      <div className="dock-flyout__title" role="presentation">{title}</div>
+      {!bare && <div className="dock-flyout__title" role="presentation">{title}</div>}
       {children}
     </div>
   </div>
@@ -306,7 +382,7 @@ const AspectGlyph: React.FC<{ width: number; height: number }> = ({ width, heigh
   );
 };
 
-const NibSize: React.FC<{
+const ShelfSize: React.FC<{
   label: string;
   value: number;
   min: number;
@@ -324,21 +400,22 @@ const NibSize: React.FC<{
     arrives already knowing.
 
     The preview stays: a number alone tells you nothing about what a "6" draws,
-    and this is a property whose whole meaning is visual.
+    and this is a property whose whole meaning is visual. It lived in the Draw
+    and Eraser flyouts as `NibSize`; it lives on the shelf now, which is shown
+    for as long as the tool is in your hand rather than for as long as the
+    pointer happens to be over its seat.
   */
-  <div className="dock-nib" onPointerDown={(e) => e.stopPropagation()}>
-    <div className="dock-nib__row">
-      <span className="dock-nib__preview" aria-hidden="true">
-        <span
-          style={{
-            // Clamped so the preview stays inside its slot at any size.
-            width: Math.min(20, Math.max(2, value)),
-            height: Math.min(20, Math.max(2, value)),
-          }}
-        />
-      </span>
-      <Slider label={label} value={value} min={min} max={max} unit="px" onChange={onChange} />
-    </div>
+  <div className="shelf-size">
+    <span className="shelf-size__preview" aria-hidden="true">
+      <span
+        style={{
+          // Clamped so the preview stays inside its slot at any size.
+          width: Math.min(20, Math.max(2, value)),
+          height: Math.min(20, Math.max(2, value)),
+        }}
+      />
+    </span>
+    <Slider label={label} value={value} min={min} max={max} unit="px" onChange={onChange} />
   </div>
 );
 
@@ -430,7 +507,7 @@ const SEAT_TOOL: Partial<Record<DockSeat, string>> = {
 };
 
 const SEAT_GLYPH: Record<DockSeat, React.ReactNode> = {
-  select: <MousePointer2 size={16} />, directSelect: <MousePointerClick size={16} />, hand: <Hand size={16} />,
+  select: <MousePointer2 size={16} />, directSelect: <MousePointerClick size={16} />, hand: <HandIcon size={16} />,
   draw: <Pen size={16} />, eraser: <Eraser size={16} />,
   type: <Type size={16} />, shape: <Square size={16} />, line: <Minus size={16} />,
   frame: <Frame size={16} />, grid: <LayoutGrid size={16} />, chart: <BarChart3 size={16} />, table: <Table2 size={16} />, connector: <Spline size={16} />, sticky: <StickyNote size={16} />,
@@ -483,6 +560,18 @@ export const ToolWorkspace: React.FC<Props> = ({ activeToolId, onOpenDiagram, on
   const lastForce = useStore((s) => s.lastForce);
   const eraserSize = useStore((s) => s.eraserSize);
   const setEraserSize = useStore((s) => s.setEraserSize);
+  const stickyTheme = useStore((s) => s.stickyTheme);
+  const setStickyTheme = useStore((s) => s.setStickyTheme);
+
+  /** The lock and the key-hold, for the seat and the shelf. See `toolModes`. */
+  const modes = useSyncExternalStore(toolModes.subscribe, toolModes.getSnapshot, toolModes.getSnapshot);
+  const lockedHere = modes.locked !== null && modes.locked === lockFamily(activeToolId);
+  const heldHere = modes.held !== null && modes.held === activeToolId;
+  const toggleLock = () => {
+    toolModes.toggleLock();
+  };
+  /** One marker per dock: there is a second dock in focus mode. */
+  const puckId = `dock-puck${useId()}`;
 
   /**
    * The dock's grouped tools share one menu model.
@@ -509,11 +598,21 @@ export const ToolWorkspace: React.FC<Props> = ({ activeToolId, onOpenDiagram, on
   /** Editing the dock is a mode, and a loud one -- see `dock-editing`. */
   const [editing, setEditing] = useState(false);
 
-  type DockMenu = 'pen' | 'shape' | 'line' | 'frame' | 'grid' | 'chart' | 'table' | 'eraser' | 'block' | 'more';
+  type DockMenu = 'pen' | 'shape' | 'frame' | 'grid' | 'chart' | 'table' | 'block' | 'more';
   const [pinnedMenu, setPinnedMenu] = useState<DockMenu | null>(null);
   const [hoveredMenu, setHoveredMenu] = useState<DockMenu | null>(null);
-  const [shapeCategory, setShapeCategory] = useState<string>('basic');
-  const [recentShapes, setRecentShapes] = useState<ShapePreset[]>(['rect', 'ellipse', 'squircle', 'diamond', 'star']);
+  const [lastShape, setLastShape] = useState<ShapePreset>('rect');
+  /**
+   * What the Chart, Table and Frame seats wear, and so what a click on each
+   * arms: the choice used last. (Grid reads its own from `gridDefaults`.) Local
+   * state for the reason `lastShape` is -- a memory of a gesture, not a fact
+   * about the board.
+   */
+  type ChartKindId = typeof ChartTool.kind;
+  type GridKindId = (typeof GRID_KINDS)[number];
+  const [lastChart, setLastChart] = useState<ChartKindId>(ChartTool.kind);
+  const [lastTable, setLastTable] = useState<string>(TableTool.preset);
+  const [lastFrame, setLastFrame] = useState<string>('frame');
 
   /**
    * While the dock is being edited, only the drawer opens.
@@ -661,6 +760,11 @@ export const ToolWorkspace: React.FC<Props> = ({ activeToolId, onOpenDiagram, on
   const onToolbarKeyDown = (e: React.KeyboardEvent) => {
     const keys = ['ArrowRight', 'ArrowLeft', 'Home', 'End'];
     if (!keys.includes(e.key)) return;
+    // Arrows inside a flyout or on the shelf belong to the control that has
+    // them -- a slider, a segmented choice. The dock took them first, so the
+    // Smoothing slider in the Draw flyout could not be moved from the keyboard
+    // at all: every arrow moved focus to another seat instead.
+    if ((e.target as HTMLElement).closest?.('.dock-flyout, .tool-shelf')) return;
     const live = buttonsRef.current.filter(Boolean) as HTMLButtonElement[];
     if (live.length === 0) return;
     e.preventDefault();
@@ -687,8 +791,70 @@ export const ToolWorkspace: React.FC<Props> = ({ activeToolId, onOpenDiagram, on
   };
 
   const pickShape = (kind: ShapePreset) => {
-    setRecentShapes((prev) => [kind, ...prev.filter((k) => k !== kind)].slice(0, 5));
+    setLastShape(kind);
     pick(shapeToolId(kind));
+    // Closed on the pick even when the sheet was opened by hover -- the choice
+    // is made, and a sheet left open over the board covers where it will go.
+    setHoveredMenu(null);
+  };
+
+  /** Picks for the other seats with sheets. Each arms, and closes a hovered menu. */
+  const pickChart = (kind: ChartKindId) => {
+    // Remembered on the tool and armed, so this is a choice about the next
+    // drag rather than thirty tools that would each need registering.
+    ChartTool.kind = kind;
+    setLastChart(kind);
+    pick('chart');
+    setHoveredMenu(null);
+  };
+
+  const pickGrid = (kind: GridKindId) => {
+    gridDefaults.remember(switchKind(gridDefaults.forBox({ x: 0, y: 0, width: 0, height: 0 }), kind));
+    pick('grid');
+    setHoveredMenu(null);
+  };
+
+  const pickTable = (id: string) => {
+    TableTool.preset = id;
+    setLastTable(id);
+    pick('table');
+    setHoveredMenu(null);
+  };
+
+  const pickFrame = (id: string) => {
+    setLastFrame(id);
+    pick(id);
+    setHoveredMenu(null);
+  };
+
+  /**
+   * A seat menu's padlock: keep the seat's current choice armed.
+   *
+   * Pressed on a seat that is not armed, it arms it too -- a padlock that
+   * locked nothing until you went and clicked the seat would be a control that
+   * does half its job. Armed with `setTool` rather than a pick, so the menu
+   * stays open and shows the padlock go down. The lock is set *before* the tool
+   * arrives -- see `toolModes.keep`.
+   */
+  const seatLocked = (toolId: string) => modes.locked !== null && modes.locked === lockFamily(toolId);
+  const lockSeat = (toolId: string, arm: () => void) => {
+    if (seatLocked(toolId)) {
+      toolModes.keep(toolId, false);
+      return;
+    }
+    toolModes.keep(toolId, true);
+    if (lockFamily(activeToolId) !== lockFamily(toolId)) arm();
+  };
+
+  /**
+   * Open a seat's menu from the keyboard (Up on the seat) or from a tap on an
+   * armed seat where there is no hover, and put focus in its row.
+   */
+  const openSeatMenu = (menu: DockMenu) => {
+    setPinnedMenu(menu);
+    window.setTimeout(() => {
+      dockRef.current?.querySelector<HTMLElement>('.dock-flyout .seat-menu__tile')?.focus();
+    }, 0);
   };
 
   /**
@@ -698,43 +864,83 @@ export const ToolWorkspace: React.FC<Props> = ({ activeToolId, onOpenDiagram, on
    * picker that carried its own copy of a label is how the dock came to call
    * something by a name the panel no longer used.
    */
-  const shapeOptionFor = React.useCallback(
-    (preset: ShapePreset) => sharedShapeOption(preset, SHAPE_GLYPH),
-    []
-  );
+  /**
+   * The fixed few each seat menu opens with, and how any choice becomes a
+   * tile. Fixed rather than recent -- see `SeatMenu`. Chosen as the ones a
+   * board reaches for first; everything else is one press of More away.
+   */
+  const QUICK_SHAPES: ShapePreset[] = ['rect', 'rounded_rect', 'ellipse', 'triangle', 'diamond', 'star'];
+  const QUICK_CHARTS: ChartKindId[] = ['bar', 'line', 'area', 'pie', 'scatter'];
+  const QUICK_GRIDS: GridKindId[] = ['columns', 'modular', 'bento', 'masonry', 'golden'];
+  const QUICK_FRAMES = ['frame', 'frame-desktop', 'frame-tablet', 'frame-phone', 'frame-a4', 'frame-slide'];
+  const QUICK_TABLES = [
+    'blank',
+    ...TABLE_EXAMPLE_CATEGORIES.slice(0, 3).flatMap((cat) => {
+      const first = TABLE_EXAMPLES.find((e) => e.category === cat.id);
+      return first ? [first.id] : [];
+    }),
+  ];
 
-  const shapePickerGroups = useMemo(() => shapeGroups(shapeCategory, SHAPE_GLYPH), [shapeCategory]);
+  const shapeTile = (p: ShapePreset): QuickChoice<ShapePreset> => ({
+    id: p,
+    label: SHAPE_BY_PRESET[p].label,
+    icon: <ShapeIcon kind={p} size={18} />,
+  });
+  const chartTile = (k: ChartKindId): QuickChoice<ChartKindId> => ({
+    id: k,
+    label: CHART_LABELS[k],
+    icon: <ChartKindIcon kind={k} size={18} />,
+  });
+  const gridTile = (k: GridKindId): QuickChoice<GridKindId> => ({
+    id: k,
+    label: GRID_LABELS[k],
+    icon: <GridKindIcon kind={k} size={18} />,
+  });
+  const tableTile = (id: string): QuickChoice<string> => {
+    const example = TABLE_EXAMPLES.find((e) => e.id === id);
+    return example
+      ? { id, label: example.name, icon: <TableThumb example={example} crop className="dock-tablethumb dock-tablethumb--mini" /> }
+      : { id: 'blank', label: 'Blank table', icon: <Table2 size={18} /> };
+  };
+  const frameTile = (id: string): QuickChoice<string> => {
+    const preset = FRAME_PRESETS.find((p) => `frame-${p.id}` === id);
+    return preset
+      ? { id, label: preset.label, detail: `${preset.width} × ${preset.height}`, icon: <AspectGlyph width={preset.width} height={preset.height} /> }
+      : { id: 'frame', label: 'Custom size', detail: 'drag to size', icon: <Frame size={16} /> };
+  };
 
-  const recentShapeOptions = useMemo(
-    () => recentShapes.map(shapeOptionFor),
-    [recentShapes, shapeOptionFor]
-  );
-
-  const gridPickerGroups = useMemo(
+  /**
+   * The sheets' contents, built from the lists that already describe them --
+   * `GRID_LABELS`/`GRID_HINTS`, `chartPickerGroups` and the table examples.
+   * Nothing here restates a name or a sentence: a picker that carried its own
+   * copy of a label is how the dock came to call something by a name the panel
+   * no longer used.
+   */
+  const gridSections = useMemo<SheetSection<GridKindId>[]>(
     () => [
       {
         id: 'systems',
-        options: GRID_KINDS.map((kind) => ({
+        items: GRID_KINDS.map((kind) => ({
           id: kind,
           label: GRID_LABELS[kind],
           hint: GRID_HINTS[kind],
-          icon: <GridKindIcon kind={kind} size={20} />,
+          icon: <GridKindIcon kind={kind} size={28} />,
         })),
       },
     ],
     []
   );
 
-  const chartPickerOptions = useMemo(
+  const chartSections = useMemo<SheetSection<ChartKindId>[]>(
     () =>
       chartPickerGroups().map((group) => ({
         id: group.family,
         label: group.label,
-        options: group.kinds.map((kind) => ({
+        items: group.kinds.map((kind) => ({
           id: kind,
           label: CHART_LABELS[kind],
           hint: CHART_HINTS[kind],
-          icon: <ChartKindIcon kind={kind} size={20} />,
+          icon: <ChartKindIcon kind={kind} size={24} />,
         })),
       })),
     []
@@ -743,20 +949,22 @@ export const ToolWorkspace: React.FC<Props> = ({ activeToolId, onOpenDiagram, on
   /**
    * A blank table first, then the examples by what they are for.
    *
-   * Each tile is the example itself in miniature — header row, tints, merges —
+   * Each card is the example itself in miniature — header row, tints, merges —
    * cropped to its top-left, because that is the part of a table people
    * recognise it by.
    */
-  const tablePickerOptions = useMemo(
+  const tableSections = useMemo<SheetSection<string>[]>(
     () => [
       {
         id: 'start',
-        options: [{ id: 'blank', label: 'Blank table', hint: 'rows follow the drag; cells open to type', icon: <Table2 size={20} /> }],
+        items: [
+          { id: 'blank', label: 'Blank table', hint: 'Rows follow the drag; cells open to type', icon: <Table2 size={22} /> },
+        ],
       },
       ...TABLE_EXAMPLE_CATEGORIES.map((cat) => ({
         id: cat.id,
         label: cat.label,
-        options: TABLE_EXAMPLES.filter((e) => e.category === cat.id).map((e) => ({
+        items: TABLE_EXAMPLES.filter((e) => e.category === cat.id).map((e) => ({
           id: e.id,
           label: e.name,
           hint: e.note,
@@ -768,7 +976,10 @@ export const ToolWorkspace: React.FC<Props> = ({ activeToolId, onOpenDiagram, on
     []
   );
 
-  const armedShape = shapeKindFromToolId(activeToolId);
+  // `R` arms the bare `shape` id, which the canvas resolves to a rectangle --
+  // so the seat and the shelf say rectangle too, rather than nothing.
+  const armedShape: ShapePreset | null =
+    activeToolId === 'shape' ? 'rect' : shapeKindFromToolId(activeToolId);
   /**
    * Which of the two the seat wears when neither is armed.
    *
@@ -793,10 +1004,19 @@ export const ToolWorkspace: React.FC<Props> = ({ activeToolId, onOpenDiagram, on
    * like it held something it did not.
    */
   const armedBoxShape = armedShape && !armedLine ? armedShape : null;
+  /** What the Shape seat wears, and so what clicking it arms: the armed shape, or the last one used. */
+  const seatShape: ShapePreset = armedBoxShape ?? lastShape;
   const isShape = activeToolId.startsWith('shape') && !armedLine;
   const isLine = Boolean(armedLine);
   const isFrame = activeToolId === 'frame' || activeToolId.startsWith('frame-');
   const isPen = ['pen', 'bezier-pen'].includes(activeToolId);
+  /** The frame a click on the seat draws: the armed one, or the last one picked. */
+  const currentFrame = isFrame ? activeToolId : lastFrame;
+  const framePresetNow = FRAME_PRESETS.find((p) => `frame-${p.id}` === currentFrame);
+  const frameChoice = framePresetNow
+    ? { label: framePresetNow.label, detail: `${framePresetNow.width} × ${framePresetNow.height}` }
+    : { label: 'Custom size', detail: 'drag to size' };
+  const tableName = TABLE_EXAMPLES.find((e) => e.id === lastTable)?.name ?? 'Blank table';
 
   /**
    * Where each button sits along the arrow-key run.
@@ -987,6 +1207,9 @@ export const ToolWorkspace: React.FC<Props> = ({ activeToolId, onOpenDiagram, on
       onPointerDown: editing ? beginSeatDrag(id) : undefined,
       onRemove: editing ? () => dockDefaults.set(hideSeat(layoutRef.current, id)) : undefined,
       editing,
+      puckId,
+      locked: lockedHere,
+      onToggleLock: toggleLock,
     };
   };
 
@@ -994,6 +1217,9 @@ export const ToolWorkspace: React.FC<Props> = ({ activeToolId, onOpenDiagram, on
   const moreSeatProps = () => ({
     ref: registerButton(MORE_SEAT),
     tabIndex: focusIndex === MORE_SEAT ? 0 : -1,
+    // The drawer wears the marker while a tool from it is armed, like any
+    // other seat -- see `activeExtra`.
+    puckId,
   });
 
   /**
@@ -1158,11 +1384,322 @@ export const ToolWorkspace: React.FC<Props> = ({ activeToolId, onOpenDiagram, on
     dockDefaults.set(addSeparator(layoutRef.current, Math.max(0, order.length - 1)));
   };
 
+  /* --------------------------------------------------------------- the shelf */
+
+  /**
+   * The armed tool's options, on a tray above the dock.
+   *
+   * ## What was wrong with keeping them in the flyouts
+   *
+   * A flyout opens when the pointer rests on a seat and closes when it leaves,
+   * which is exactly backwards for these: the pencil's size, the eraser's
+   * width, a note's colour, a line's profile are what you change *between*
+   * strokes, with your eye and the pointer on the board. Every change meant
+   * going back down to the dock, hovering, waiting out the intent delay,
+   * adjusting, and going back up. And a note's colour could not be chosen
+   * before placing one at all -- it was whatever you last used, changed after
+   * the fact on the object's own rail.
+   *
+   * FigJam's answer is a tray that rises from the toolbar while a tool is in
+   * hand, and that is the right answer here too, for a reason already written
+   * into the Line flyout: **arm here, adjust there**. The shelf is the "arm
+   * here" half made visible for as long as it applies. The panel and the rail
+   * remain the "adjust there" half, for the object once it exists.
+   *
+   * ## What is on it
+   *
+   * Only decisions about the *next* gesture: a note's colour, the pencil's nib
+   * and size, the pen's weight, the eraser's size, a line's head, path and
+   * profile, a shape from the recent few. Behaviour you set once -- smoothing,
+   * keep selected -- stays in the flyout, which is the split that flyout's
+   * own comment already drew between "the mark" and "the tool".
+   *
+   * And the padlock, for any tool that places one object and hands the board
+   * back. It is where the lock can be *seen* as well as toggled: `Q` and a
+   * double-click on the seat are fast, and neither says it exists.
+   *
+   * ## When it stands down
+   *
+   * While any flyout is open, and while the dock is being edited. Two panels
+   * stacked above one dock is two answers to "where do I click".
+   */
+  const shelfName =
+    activeToolId === 'sticky' ? 'Note'
+    : activeToolId === 'pen' ? 'Pencil'
+    : activeToolId === 'bezier-pen' ? 'Pen'
+    : activeToolId === 'eraser' ? 'Eraser'
+    : isLine ? 'Line'
+    : isShape ? 'Shape'
+    : isFrame ? 'Frame'
+    : activeToolId === 'text' ? 'Text'
+    : activeToolId === 'grid' ? 'Grid'
+    : activeToolId === 'chart' ? 'Chart'
+    : activeToolId === 'table' ? 'Table'
+    : null;
+
+  let shelfBody: React.ReactNode = null;
+  if (activeToolId === 'sticky') {
+    shelfBody = (
+      <div className="shelf-swatches" role="radiogroup" aria-label="Note colour">
+        {STICKY_THEMES.map((id) => {
+          const name = id[0].toUpperCase() + id.slice(1);
+          return (
+            <button
+              key={id}
+              type="button"
+              role="radio"
+              aria-checked={id === stickyTheme}
+              aria-label={name}
+              data-tooltip={name}
+              className="shelf-swatch"
+              style={{ background: THEMES[id].bg, borderColor: THEMES[id].edge }}
+              onClick={() => setStickyTheme(id as StickyTheme)}
+            />
+          );
+        })}
+      </div>
+    );
+  } else if (activeToolId === 'pen') {
+    shelfBody = (
+      <>
+        {/* Which nib is in the pencil. A tool setting rather than an object
+            one, because a stroke is finished the moment the pen lifts —
+            deciding afterwards means drawing a line, selecting it and changing
+            it, every time.
+
+            Called "Nib" rather than "Stroke". A stroke has a colour and a
+            weight of its own on every pencil mark — see `PenTool`'s appearance
+            — so four *textures* under that word would name the wrong thing. */}
+        <SegmentedControl
+          ariaLabel="Pencil nib"
+          value={pencilNib}
+          onChange={(v) => setPencilNib(v as PencilNib)}
+          segments={[
+            { value: 'smooth', label: 'Smooth', hint: 'One continuous, tapered line', icon: <Minus size={14} /> },
+            { value: 'light', label: 'Drawn', hint: 'Gone over once, by hand', icon: <SketchLevelIcon level="light" /> },
+            { value: 'medium', label: 'Sketched', hint: 'Gone over twice', icon: <SketchLevelIcon level="medium" /> },
+            { value: 'heavy', label: 'Scribbled', hint: 'Twice, and past every turn', icon: <SketchLevelIcon level="heavy" /> },
+          ]}
+        />
+        <span className="dock-rule" aria-hidden="true" />
+        <ShelfSize label="Size" value={penSize} min={1} max={60} onChange={setPenSize} />
+      </>
+    );
+  } else if (activeToolId === 'bezier-pen') {
+    shelfBody = (
+      <ShelfSize label="Weight" value={penStrokeWidth} min={1} max={40} onChange={setPenStrokeWidth} />
+    );
+  } else if (activeToolId === 'eraser') {
+    // A width, the same unit the pencil's own Size means. It was read as a
+    // radius once, so the tip was twice the number shown and the top of the
+    // range was unreachable in practice.
+    shelfBody = <ShelfSize label="Size" value={eraserSize} min={4} max={120} onChange={setEraserSize} />;
+  } else if (isLine) {
+    const lineKind = armedLine ?? lastLine;
+    shelfBody = (
+      <>
+        {/* Each choice shows itself under the armed profile, so the two differ
+            by the one thing they choose between — a head or no head. */}
+        <SegmentedControl
+          ariaLabel="Line or arrow"
+          value={lineKind}
+          onChange={(v) => {
+            setLastLine(v as ShapePreset);
+            pick(shapeToolId(v as ShapePreset));
+          }}
+          segments={LINE_PRESETS.map((kind) => ({
+            value: kind,
+            label: SHAPE_BY_PRESET[kind].label,
+            hint: SHAPE_BY_PRESET[kind].label,
+            icon: <LineSpecimen profile={lineProfile} endEnd={kind === 'arrow' ? 'arrow' : 'none'} />,
+          }))}
+        />
+        <span className="dock-rule" aria-hidden="true" />
+        {/* The decision nobody could find: a line can be two points or a run
+            of corners, and the gesture decides which. The hint says the
+            gesture outright, which is the part that actually teaches. */}
+        <SegmentedControl
+          ariaLabel="Line path"
+          value={lineSmooth ? 'rounded' : 'corners'}
+          onChange={(v) => {
+            setLineSmooth(v === 'rounded');
+            pick(shapeToolId(lineKind));
+          }}
+          segments={[
+            { value: 'corners', label: 'Corners', hint: 'Sharp turns. Click once per corner, Enter to finish', icon: <LineSpecimen run="corners" /> },
+            { value: 'rounded', label: 'Rounded', hint: 'The corners are curved away', icon: <LineSpecimen run="rounded" /> },
+          ]}
+        />
+        <span className="dock-rule" aria-hidden="true" />
+        {/* A profile is defined along one run from A to B, so it applies to
+            two-point lines; the group says so rather than hiding on a guess
+            about what you are about to draw. */}
+        <SegmentedControl
+          ariaLabel="Line style, for two-point lines"
+          value={lineProfile}
+          onChange={(v) => {
+            setLineProfile(v as LineProfile);
+            pick(shapeToolId(lineKind));
+          }}
+          segments={LINE_PROFILES.map((profile) => ({
+            value: profile,
+            label: LINE_PROFILE_LABELS[profile],
+            hint: LINE_PROFILE_LABELS[profile],
+            icon: <LineProfileIcon profile={profile} />,
+          }))}
+        />
+      </>
+    );
+  }
+
+  // Shape, Frame, Grid, Chart and Table carry their padlock in their own seat
+  // menu -- see `SeatMenu` -- so the shelf only keeps it for Text and Note.
+  const hasSeatMenu = isShape || isFrame || ['chart', 'grid', 'table'].includes(activeToolId);
+  const shelfLock = isLockable(activeToolId) && !hasSeatMenu ? (
+    <button
+      type="button"
+      className="btn-icon shelf-btn shelf-lock"
+      aria-pressed={lockedHere}
+      aria-label={lockedHere ? 'Stop keeping this tool armed' : 'Keep this tool armed'}
+      data-tooltip={lockedHere ? 'Kept armed (Q)' : 'Keep armed (Q)'}
+      data-tooltip-desc={
+        lockedHere
+          ? 'It stays in your hand after each one. Esc hands back to Select'
+          : 'Place several in a row without coming back to the dock'
+      }
+      onClick={toggleLock}
+    >
+      {lockedHere ? <Lock size={15} /> : <LockOpen size={15} />}
+    </button>
+  ) : null;
+
+  const showShelf =
+    !editing && openMenu === null && shelfName !== null && (shelfBody !== null || shelfLock !== null);
+
+  /* ----------------------------------------------------- a note off the pad */
+
+  /**
+   * Drag a note off the dock and put it down where you let go.
+   *
+   * ## Why only the note
+   *
+   * It is the one seat whose glyph is the object itself, at a size that does
+   * not need deciding: a note is 200 by 200 and sits where it is put. A shape
+   * dragged off the dock would still need a size and a preset, which is a
+   * drag on the board with the tool -- the gesture that already exists. So the
+   * note gets the pad-of-paper gesture and nothing pretends to.
+   *
+   * ## Why it starts only upward
+   *
+   * Sliding sideways along the dock is how people cross it, and the seat's
+   * ordinary job is to be clicked. A carry begins when the pointer has lifted
+   * clear of the dock (`CARRY_LIFT`), so a click that wobbles is still a click.
+   *
+   * ## What it looks like
+   *
+   * Over the board the ghost is the note at the size it will land at, at the
+   * current zoom -- a preview of the result, not of the button. Over the
+   * chrome, where letting go puts nothing down, it shrinks to a token. Its
+   * position is written straight to the element on every move, never through
+   * React state, for the same reason the presence layer does it.
+   */
+  const CARRY_LIFT = 12;
+  const [carry, setCarry] = useState<StickyTheme | null>(null);
+  const ghostRef = useRef<HTMLDivElement>(null);
+  const carryPoint = useRef({ x: 0, y: 0 });
+  /** Set for the click that follows the release of a carry -- see the seat. */
+  const carryEnded = useRef(false);
+
+  const placeGhost = (x: number, y: number) => {
+    carryPoint.current = { x, y };
+    const el = ghostRef.current;
+    if (!el) return;
+    const onBoard = Boolean(document.elementFromPoint(x, y)?.closest('.konvajs-content'));
+    const size = onBoard ? Math.min(240, Math.max(40, STICKY_SIZE * cameraSystem.zoom)) : 44;
+    el.style.width = `${size}px`;
+    el.style.height = `${size}px`;
+    // Centred on the pointer by its own size, so a size change does not move it.
+    el.style.transform = `translate(${x}px, ${y}px) translate(-50%, -50%)`;
+    el.dataset.over = onBoard ? 'board' : 'chrome';
+  };
+
+  // The ghost's first frame, once it exists to be placed.
+  useLayoutEffect(() => {
+    if (carry) placeGhost(carryPoint.current.x, carryPoint.current.y);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [carry]);
+
+  const beginStickyCarry = (e: React.PointerEvent) => {
+    if (e.button !== 0 || !canUseTool('sticky')) return;
+    const button = e.currentTarget as HTMLElement;
+    const pointerId = e.pointerId;
+    const originY = e.clientY;
+    let carrying = false;
+
+    const move = (ev: PointerEvent) => {
+      if (ev.pointerId !== pointerId) return;
+      if (!carrying) {
+        if (originY - ev.clientY < CARRY_LIFT) return;
+        carrying = true;
+        // Captured, so the board under the pointer sees none of this: no hover
+        // outlines, no marquee from the select tool.
+        try { button.setPointerCapture(pointerId); } catch { /* already released */ }
+        carryPoint.current = { x: ev.clientX, y: ev.clientY };
+        setPinnedMenu(null);
+        setHoveredMenu(null);
+        setCarry(useStore.getState().stickyTheme);
+        return;
+      }
+      placeGhost(ev.clientX, ev.clientY);
+    };
+
+    const finish = (ev: PointerEvent | null) => {
+      window.removeEventListener('pointermove', move);
+      window.removeEventListener('pointerup', up);
+      window.removeEventListener('pointercancel', cancel);
+      window.removeEventListener('keydown', onKey, true);
+      if (!carrying) return;
+      // A captured pointer's click lands on the seat; this keeps it from
+      // arming the tool the note was just dragged out of.
+      carryEnded.current = true;
+      window.setTimeout(() => { carryEnded.current = false; }, 0);
+      try { button.releasePointerCapture(pointerId); } catch { /* already released */ }
+      setCarry(null);
+      if (!ev) return;
+
+      const stage = document.elementFromPoint(ev.clientX, ev.clientY)?.closest('.konvajs-content');
+      if (!stage) return;
+      const box = stage.getBoundingClientRect();
+      const world = cameraSystem.screenToWorld(ev.clientX - box.left, ev.clientY - box.top);
+      if (!Number.isFinite(world.x) || !Number.isFinite(world.y)) return;
+      placeSticky(editor, world.x, world.y);
+    };
+
+    const up = (ev: PointerEvent) => {
+      if (ev.pointerId === pointerId) finish(ev);
+    };
+    const cancel = () => finish(null);
+    const onKey = (ev: KeyboardEvent) => {
+      if (ev.key !== 'Escape' || !carrying) return;
+      ev.stopPropagation();
+      finish(null);
+    };
+
+    window.addEventListener('pointermove', move);
+    window.addEventListener('pointerup', up);
+    window.addEventListener('pointercancel', cancel);
+    window.addEventListener('keydown', onKey, true);
+  };
+
 
   return (
+    <MotionConfig reducedMotion="user">
     <div
       ref={dockRef}
       className="tool-dock panel-surface"
+      // Held on its key rather than armed -- the marker goes hollow. See
+      // `toolModes`.
+      data-held={heldHere || undefined}
       // The walkthrough finds its anchors by this attribute rather than by a
       // ref threaded down from `Room`. See `engine/learn/tour.ts`; a test fails
       // if a step names an anchor nothing carries.
@@ -1174,6 +1711,24 @@ export const ToolWorkspace: React.FC<Props> = ({ activeToolId, onOpenDiagram, on
       aria-orientation="horizontal"
       onKeyDown={onToolbarKeyDown}
     >
+      <AnimatePresence>
+        {showShelf && (
+          <motion.div
+            key="shelf"
+            className="tool-shelf panel-surface"
+            role="group"
+            aria-label={`${shelfName} options`}
+            initial={{ opacity: 0, y: 6 }}
+            animate={{ opacity: 1, y: 0 }}
+            exit={{ opacity: 0, y: 6 }}
+            transition={{ duration: 0.2, ease: [0.16, 1, 0.3, 1] }}
+          >
+            {shelfBody}
+            {shelfBody !== null && shelfLock && <span className="dock-rule" aria-hidden="true" />}
+            {shelfLock}
+          </motion.div>
+        )}
+      </AnimatePresence>
       {/**
         * The separators, rendered from the layout rather than written between
         * the groups.
@@ -1237,7 +1792,7 @@ export const ToolWorkspace: React.FC<Props> = ({ activeToolId, onOpenDiagram, on
         />
         <DockButton
           {...seatProps('hand')}
-          icon={<Hand size={17} />} label="Hand" toolId="hand"
+          icon={<HandIcon />} label="Hand" toolId="hand"
           description="pan the board"
           active={activeToolId === 'hand'} onClick={() => setTool('hand')}
         />
@@ -1287,7 +1842,7 @@ export const ToolWorkspace: React.FC<Props> = ({ activeToolId, onOpenDiagram, on
                       looking like it applied to whatever you did next. An
                       empty list of two tools is the honest first state: pick
                       one, then it tells you about it. */}
-                  {isPen && <div className="flyout-rule" role="presentation" />}
+                  {activeToolId === 'pen' && <div className="flyout-rule" role="presentation" />}
                   {/*
                     The settings get their own width.
 
@@ -1303,58 +1858,25 @@ export const ToolWorkspace: React.FC<Props> = ({ activeToolId, onOpenDiagram, on
                     everything that wants any of it, and widening it moved
                     three unrelated flyouts.
                   */}
-                  {!isPen ? null : (
+                  {/*
+                    The **mark** moved to the shelf; the **behaviour** stayed.
+
+                    This flyout held two groups with a rule between them: what
+                    the mark looks like (size, nib) and how the tool behaves
+                    while you use it (smoothing, keep selected). The comment
+                    that drew that line also said when each is reached -- the
+                    mark every time you decide what you are drawing, the
+                    behaviour once and then never again.
+
+                    That is the split between the shelf and the flyout exactly.
+                    The shelf is on screen for as long as the pencil is in your
+                    hand, so the thing you change stroke to stroke is where your
+                    eye already is; the flyout is a hover away, which is right
+                    for something you set once. The Pen's stroke weight went
+                    the same way, which leaves it with nothing under the rule.
+                  */}
+                  {activeToolId !== 'pen' ? null : (
                   <div className="draw-settings">
-                  {activeToolId === 'bezier-pen' ? (
-                    <NibSize
-                      label="Stroke weight"
-                      value={penStrokeWidth}
-                      min={1}
-                      max={40}
-                      onChange={setPenStrokeWidth}
-                    />
-                  ) : (
-                    <>
-                      {/*
-                        Two groups, and the rule between them is the whole
-                        arrangement.
-
-                        Above it: what the **mark** looks like — how thick it
-                        is and what kind of line it is. Below it: how the
-                        **tool** behaves while you use it. They were one
-                        undifferentiated stack of four, which is the shape that
-                        makes somebody read all of them to find the one they
-                        want, and the two halves are reached at completely
-                        different times: the mark is set when you decide what
-                        you are drawing, the behaviour once and then never
-                        again.
-                      */}
-                      <NibSize label="Size" value={penSize} min={1} max={60} onChange={setPenSize} />
-                      {/* Which nib is in the pencil. A tool setting rather than
-                          an object one, because a stroke is finished the moment
-                          the pen lifts — deciding afterwards means drawing a
-                          line, selecting it and changing it, every time.
-
-                          Called "Nib" rather than "Stroke". A stroke now has a
-                          colour and a weight of its own on every pencil mark —
-                          see `PenTool`'s appearance — so a segmented control of
-                          four *textures* under that word named the wrong
-                          thing twice over. */}
-                      <div className="flyout-field">
-                        <span className="flyout-field__label">Nib</span>
-                        <SegmentedControl
-                          ariaLabel="Pencil nib"
-                          value={pencilNib}
-                          onChange={(v) => setPencilNib(v as PencilNib)}
-                          segments={[
-                            { value: 'smooth', label: 'Smooth', hint: 'One continuous, tapered line', icon: <Minus size={14} /> },
-                            { value: 'light', label: 'Drawn', hint: 'Gone over once, by hand', icon: <SketchLevelIcon level="light" /> },
-                            { value: 'medium', label: 'Sketched', hint: 'Gone over twice', icon: <SketchLevelIcon level="medium" /> },
-                            { value: 'heavy', label: 'Scribbled', hint: 'Twice, and past every turn', icon: <SketchLevelIcon level="heavy" /> },
-                          ]}
-                        />
-                      </div>
-                      <div className="flyout-rule" role="presentation" />
                       {/*
                         Fidelity, which the tool has always had and never
                         offered.
@@ -1400,8 +1922,6 @@ export const ToolWorkspace: React.FC<Props> = ({ activeToolId, onOpenDiagram, on
                           tooltip="Leave the stroke you just drew selected"
                         />
                       </div>
-                    </>
-                  )}
                   </div>
                   )}
                 </Flyout>
@@ -1409,31 +1929,17 @@ export const ToolWorkspace: React.FC<Props> = ({ activeToolId, onOpenDiagram, on
             </DockButton>
         </div>
 
-        <div {...hoverProps('eraser')} className="dock-slot-wrap" {...seatChrome('eraser')}>
-            <DockButton
-              {...seatProps('eraser', true)}
-              icon={<Eraser size={17} />} label="Eraser" toolId="eraser"
-              description="[ and ] resize it"
-              active={activeToolId === 'eraser'} hasMenu menuOpen={openMenu === 'eraser'}
-              onClick={() => { setTool('eraser'); toggleMenu('eraser'); }}
-            >
-              {openMenu === 'eraser' && (
-                <Flyout title="Eraser">
-                  {/* A width, the same unit the pencil's own Size means --
-                      it was read as a radius, so the tip was twice the number
-                      shown and the top of the range was unreachable in
-                      practice. */}
-                  {/* "Size", not "Eraser size" -- the flyout is already
-                      titled Eraser, and the pencil's own control next door
-                      says Size. The longer label was what the row ran out of
-                      width for. It is a width, the same unit the pencil means:
-                      it was read as a radius, so the tip was twice the number
-                      shown. */}
-                  <NibSize label="Size" value={eraserSize} min={4} max={120} onChange={setEraserSize} />
-                </Flyout>
-              )}
-            </DockButton>
-        </div>
+        {/* No flyout. Its one setting, the size, is on the shelf while the
+            eraser is armed, and `[` / `]` change it from the keyboard -- a
+            menu holding a single slider put the thing you adjust mid-erase a
+            hover away from where you were erasing. */}
+        <DockButton
+          {...seatProps('eraser')}
+          icon={<Eraser size={17} />} label="Eraser" toolId="eraser"
+          description="[ and ] resize it"
+          active={activeToolId === 'eraser'}
+          onClick={() => setTool('eraser')}
+        />
       </div>
 
       {/* Create. The old dock put seven buttons in one undifferentiated run
@@ -1504,39 +2010,40 @@ export const ToolWorkspace: React.FC<Props> = ({ activeToolId, onOpenDiagram, on
           </DockButton>
         </div>
 
-        <div {...hoverProps('shape')} className="dock-slot-wrap" {...seatChrome('shape')}>
-            <DockButton
-              {...seatProps('shape', true)}
-              icon={armedBoxShape ? <ShapeIcon kind={armedBoxShape} size={18} /> : <Square size={18} />}
-              label="Shape" toolId="shape" active={isShape}
-              hasMenu menuOpen={openMenu === 'shape'} onClick={() => toggleMenu('shape')}
-            >
-              {openMenu === 'shape' && (
-                <Flyout title="Shapes" wide>
-                  {/*
-                    Forty shapes as a sheet of glyphs, six across.
+        {/* Shapes. Click arms the shape the seat is wearing -- the last one
+            used. Resting on the seat opens its menu: a row of the common few
+            and the padlock, with every shape one press of More away. See
+            `SeatMenu`.
 
-                    The glyph is the identity here -- nobody reads "octagon",
-                    they see eight sides -- so the tile is mostly picture and
-                    the sentence lives in the preview bar, once, for whatever
-                    the pointer or the keyboard is on.
-                  */}
-                  <KindPicker
-                    columns={6}
-                    tile={SHAPE_TILE}
-                    search
-                    searchPlaceholder="Search shapes"
-                    groups={shapePickerGroups}
-                    facets={SHAPE_FACETS}
-                    activeFacet={shapeCategory}
-                    onFacet={setShapeCategory}
-                    recent={recentShapeOptions}
-                    value={armedBoxShape ?? null}
-                    onPick={pickShape}
-                  />
-                                </Flyout>
-              )}
-            </DockButton>
+            The click used to open a menu and arm nothing, so the commonest
+            act on this seat, drawing another of the same, cost a trip through
+            a menu; and a double-click to keep the tool had nothing to keep. */}
+        <div {...hoverProps('shape')} className="dock-slot-wrap" {...seatChrome('shape')}>
+          <DockButton
+            {...seatProps('shape', true)}
+            icon={<ShapeIcon kind={seatShape} size={18} />}
+            label="Shape" toolId="shape"
+            description={SHAPE_BY_PRESET[seatShape].label}
+            active={isShape}
+            hasMenu
+            menuOpen={openMenu === 'shape'}
+            onClick={() => pick(shapeToolId(seatShape))}
+            onOpenMenu={() => openSeatMenu('shape')}
+          >
+            {openMenu === 'shape' && (
+              <Flyout title="Shapes" bare>
+                <SeatMenu
+                  noun="shapes"
+                  quick={QUICK_SHAPES.map(shapeTile)}
+                  current={shapeTile(seatShape)}
+                  onPick={pickShape}
+                  locked={seatLocked(shapeToolId(seatShape))}
+                  onLock={() => lockSeat(shapeToolId(seatShape), () => setTool(shapeToolId(seatShape)))}
+                  sheet={<ShapeSheet value={armedBoxShape} onPick={pickShape} focusSearch />}
+                />
+              </Flyout>
+            )}
+          </DockButton>
         </div>
 
         {/* Line and arrow, paired the way the pencil and the pen are.
@@ -1549,281 +2056,133 @@ export const ToolWorkspace: React.FC<Props> = ({ activeToolId, onOpenDiagram, on
             gesture in the hand — and the dock describes gestures.
 
             The seat wears whichever of the two was used last, so switching
-            between them costs one click rather than a trip through a menu. */}
-        <div {...hoverProps('line')} className="dock-slot-wrap" {...seatChrome('line')}>
+            between them costs one click rather than a trip through a menu.
+
+            It has no flyout any more. Everything the flyout held -- line or
+            arrow, corners or rounded, the profile -- decides what the *next*
+            line comes out as, which is exactly what the shelf is for: it rises
+            the moment the seat is armed and keeps those three choices in view
+            while you draw, where the flyout kept them a hover away and closed
+            them the moment you reached for the board. The sentence that taught
+            the gesture is the seat's description now, and the hint on Corners. */}
+        <DockButton
+          {...seatProps('line')}
+          /* The line it will draw — profile *and* head — not a generic
+             dash. The seat already changed glyph for line versus arrow, and
+             the profile is the same kind of fact about the same gesture; a
+             seat that showed a straight dash and then drew a coil would be
+             lying about what pressing it does. Generated from `linePoints`
+             and `endCapShape`, so it cannot drift from the result. */
+          icon={
+            <LineSpecimen
+              profile={lineProfile}
+              endEnd={(armedLine ?? lastLine) === 'arrow' ? 'arrow' : 'none'}
+            />
+          }
+          label={`${LINE_PROFILE_LABELS[lineProfile]} ${SHAPE_BY_PRESET[armedLine ?? lastLine].label.toLowerCase()}`}
+          description="drag, or click once per corner"
+          active={isLine}
+          onClick={() => pick(shapeToolId(armedLine ?? lastLine))}
+        />
+
+        {/*
+          Frame, Grid, Chart and Table follow Shape exactly: click arms the
+          choice the seat wears (the size, system, chart or table used last);
+          resting opens a row of the common few with More and the padlock; the
+          full sheet grows upward from the row on request. See `SeatMenu`.
+        */}
+
+        {/* Frames. The choice is a size: what a *click* on the board produces.
+            Dragging always sizes by hand. Expanded, it keeps its three
+            columns rather than a scroll, because its groups *are* its columns
+            -- Screen, Social, Print side by side, so a Story and an A4 are
+            compared at a glance. */}
+        <div {...hoverProps('frame')} className="dock-slot-wrap" {...seatChrome('frame')}>
           <DockButton
-            {...seatProps('line', true)}
-            /* The line it will draw — profile *and* head — not a generic
-               dash. The seat already changed glyph for line versus arrow, and
-               the profile is the same kind of fact about the same gesture; a
-               seat that showed a straight dash and then drew a coil would be
-               lying about what pressing it does. Generated from `linePoints`
-               and `endCapShape`, so it cannot drift from the result. */
-            icon={
-              <LineSpecimen
-                profile={lineProfile}
-                endEnd={(armedLine ?? lastLine) === 'arrow' ? 'arrow' : 'none'}
-              />
-            }
-            label={`${LINE_PROFILE_LABELS[lineProfile]} ${SHAPE_BY_PRESET[armedLine ?? lastLine].label.toLowerCase()}`}
-            description="click to start, click again to finish"
-            active={isLine}
-            hasMenu
-            menuOpen={openMenu === 'line'}
-            /**
-             * Arms the tool as well as opening the menu.
-             *
-             * It only opened the menu, so the seat lit up while nothing was
-             * armed — you could pick a style, close the flyout, click the
-             * board and have a marquee appear, because Select was still the
-             * active tool the whole time. A seat that looks armed and is not
-             * is the worst of the three states.
-             *
-             * This is what the eraser seat already did; the line seat was the
-             * one that did not.
-             */
-            onClick={() => { pick(shapeToolId(armedLine ?? lastLine)); toggleMenu('line'); }}
+            {...seatProps('frame', true)}
+            icon={<Frame size={17} />} label="Frame" toolId="frame"
+            description={frameChoice.detail ? `${frameChoice.label}, ${frameChoice.detail}` : frameChoice.label}
+            active={isFrame} hasMenu menuOpen={openMenu === 'frame'}
+            onClick={() => pick(currentFrame)}
+            onOpenMenu={() => openSeatMenu('frame')}
           >
-            {openMenu === 'line' && (
-              <Flyout title="Line">
-                <div className="dock-flyout__grid">
-                  {LINE_PRESETS.map((kind) => {
-                    const id = shapeToolId(kind);
-                    return (
-                      <button
-                        key={kind}
-                        type="button"
-                        role="menuitemradio"
-                        aria-checked={activeToolId === id}
-                        className={`btn-icon dock-tile ${activeToolId === id ? 'active' : ''}`}
-                        onClick={() => { setLastLine(kind); pick(id); }}
-                        data-tooltip={SHAPE_BY_PRESET[kind].label}
-                        aria-label={SHAPE_BY_PRESET[kind].label}
-                      >
-                        {/* Each tile shows itself under the armed profile, so
-                            the two choices differ by the one thing they are
-                            choosing between — a head or no head. */}
-                        <LineSpecimen profile={lineProfile} endEnd={kind === 'arrow' ? 'arrow' : 'none'} />
-                      </button>
-                    );
-                  })}
-                </div>
-                {/*
-                  The second decision, and the one nobody could find.
-
-                  A line can be two points or a **run of corners**, and which
-                  you get is decided by the gesture — drag, or click once per
-                  corner. That is the right way for it to work and a hopeless
-                  way for it to be discovered: the tool made two-point lines for
-                  the whole life of this project, so nobody has any reason to
-                  try clicking. A tile is how they find out.
-
-                  It is a real choice as well as a signpost. Picking Rounded
-                  decides what the *next* run comes out as, the same way the
-                  profile beside it decides the next line's shape — and the
-                  caption under it says the gesture outright, which is the part
-                  that actually teaches.
-                */}
-                <div className="flyout-rule" role="presentation" />
-                <div className="flyout-field">
-                  <span className="flyout-field__label">Path</span>
-                  <SegmentedControl
-                    ariaLabel="Line path"
-                    value={lineSmooth ? 'rounded' : 'corners'}
-                    onChange={(v) => {
-                      setLineSmooth(v === 'rounded');
-                      pick(shapeToolId(armedLine ?? lastLine));
-                    }}
-                    segments={[
-                      {
-                        value: 'corners',
-                        label: 'Corners',
-                        hint: 'Sharp turns',
-                        icon: <LineSpecimen run="corners" />,
-                      },
-                      {
-                        value: 'rounded',
-                        label: 'Rounded',
-                        hint: 'The corners are curved away',
-                        icon: <LineSpecimen run="rounded" />,
-                      },
-                    ]}
-                  />
-                </div>
-                <p className="flyout-note">
-                  <strong>Drag</strong> for a straight line, or <strong>click once per
-                  corner</strong> and press Enter to finish.
-                </p>
-
-                {/* What the run does between its two ends.
-                    Here rather than only in the inspector for the same reason
-                    the nib is: you decide what kind of line you are drawing
-                    before you draw it, and the two questions — does it have a
-                    head, and what shape does it make — belong side by side.
-
-                    A profile is defined along *one* run from A to B, so it has
-                    nothing to say about a line with corners. Rather than gate
-                    it — the gesture decides which you get, and the flyout is
-                    open before the gesture happens — the whole group stays and
-                    the note above says which one it applies to. Hiding a
-                    control on a guess about what you are *about* to draw would
-                    be worse than a caption. */}
-                <div className="flyout-rule" role="presentation" />
-                <div className="flyout-field">
-                  <span className="flyout-field__label">
-                    Style
-                    <span className="flyout-field__aside">two-point lines</span>
-                  </span>
-                  <SegmentedControl
-                    ariaLabel="Line style"
-                    value={lineProfile}
-                    /**
-                     * Picking a style arms the tool as well as setting it.
-                     *
-                     * Choosing "wavy" is already a statement that you are about
-                     * to draw a wavy line — making you then click Line or Arrow
-                     * to confirm it is a second question with the same answer.
-                     * The seat wears whichever of the two was used last, so
-                     * there is always one armed; switching between them stays a
-                     * single click for the times you do want the other.
-                     */
-                    onChange={(v) => {
-                      setLineProfile(v as LineProfile);
-                      pick(shapeToolId(armedLine ?? lastLine));
-                    }}
-                    segments={LINE_PROFILES.map((profile) => ({
-                      value: profile,
-                      label: LINE_PROFILE_LABELS[profile],
-                      hint: LINE_PROFILE_LABELS[profile],
-                      icon: <LineProfileIcon profile={profile} />,
-                    }))}
-                  />
-                </div>
-                {/*
-                  The counts are not here, and that is a change.
-
-                  "Repeats" and "Wave height" were sliders in this flyout, on
-                  the reasoning that a profile without a count is half a choice.
-                  True, and the wrong place to spend it: a flyout that opens
-                  under the pointer while you are *about to draw* should hold
-                  the decisions that change what the next gesture makes, and
-                  nothing else. Two sliders whose effect you cannot see yet made
-                  a four-item menu into a small control panel — busy at the
-                  moment of least attention, and offering precision about a line
-                  that does not exist.
-
-                  They live in the properties panel and on the rail, where the
-                  line is on screen and the number moves something you can see.
-                  Which is the general rule this flyout should have followed
-                  from the start: **arm here, adjust there**.
-                */}
+            {openMenu === 'frame' && (
+              <Flyout title="Frame size" bare>
+                <SeatMenu
+                  noun="sizes"
+                  quick={QUICK_FRAMES.map(frameTile)}
+                  current={frameTile(currentFrame)}
+                  onPick={pickFrame}
+                  locked={seatLocked(currentFrame)}
+                  onLock={() => lockSeat(currentFrame, () => setTool(currentFrame))}
+                  sheet={
+                    <div className="frame-picker">
+                      {FRAME_PRESET_GROUPS.map((group) => (
+                        <div className="frame-picker__col" key={group}>
+                          <div className="dock-flyout__group" role="presentation">{group}</div>
+                          {FRAME_PRESETS.filter((p) => p.group === group).map((preset) => (
+                            <button
+                              key={preset.id}
+                              type="button"
+                              className="frame-chip"
+                              data-active={currentFrame === `frame-${preset.id}` || undefined}
+                              onClick={() => pickFrame(`frame-${preset.id}`)}
+                              aria-label={`${preset.label}, ${preset.width} by ${preset.height}`}
+                            >
+                              <AspectGlyph width={preset.width} height={preset.height} />
+                              <span className="frame-chip__text">
+                                <span className="frame-chip__label">{preset.label}</span>
+                                <span className="frame-chip__size">
+                                  {preset.width} × {preset.height}
+                                </span>
+                              </span>
+                            </button>
+                          ))}
+                        </div>
+                      ))}
+                    </div>
+                  }
+                />
               </Flyout>
             )}
           </DockButton>
         </div>
 
-        {/* Frames. The flyout is a size picker rather than a tool switcher:
-            every entry draws a frame, and the one you pick decides what a
-            *click* produces. Dragging always sizes it by hand. */}
-        <div {...hoverProps('frame')} className="dock-slot-wrap" {...seatChrome('frame')}>
-            <DockButton
-              {...seatProps('frame', true)}
-              icon={<Frame size={17} />} label="Frame" toolId="frame"
-              description="a bounded region with a size"
-              active={isFrame} hasMenu menuOpen={openMenu === 'frame'}
-              onClick={() => toggleMenu('frame')}
-            >
-              {openMenu === 'frame' && (
-                <Flyout title="Frame size" wide>
-                  {/*
-                    Three columns, not a longer scroll.
-
-                    Sixteen sizes in three groups came to twenty rows behind a
-                    scrollbar, so comparing a Story with an A4 meant scrolling
-                    between two things that belong on one short menu.
-
-                    Widening alone would not have fixed it: a wider single
-                    column is still twenty rows. What the width *buys* is
-                    columns, and the groups already were the columns — Screen,
-                    Social, Print, five or six each, all visible at once.
-
-                    And with the room, each size can show its **shape**. A
-                    picker of sizes is scanned by proportion far faster than it
-                    is read by numbers: "the tall one" is how anybody thinks
-                    about this, and a rectangle at the preset's own ratio
-                    answers it without being read at all.
-                  */}
-                  <FlyoutItem
-                    icon={<Frame size={15} />} label="Custom" detail="drag"
-                    active={activeToolId === 'frame'} onClick={() => pick('frame')}
-                    description="drag to size"
-                  />
-                  <div className="frame-picker">
-                    {FRAME_PRESET_GROUPS.map((group) => (
-                      <div className="frame-picker__col" key={group}>
-                        <div className="dock-flyout__group" role="presentation">{group}</div>
-                        {FRAME_PRESETS.filter((p) => p.group === group).map((preset) => (
-                          <button
-                            key={preset.id}
-                            type="button"
-                            className="frame-chip"
-                            data-active={activeToolId === `frame-${preset.id}` || undefined}
-                            onClick={() => pick(`frame-${preset.id}`)}
-                            aria-label={`${preset.label}, ${preset.width} by ${preset.height}`}
-                          >
-                            <AspectGlyph width={preset.width} height={preset.height} />
-                            <span className="frame-chip__text">
-                              <span className="frame-chip__label">{preset.label}</span>
-                              <span className="frame-chip__size">
-                                {preset.width} × {preset.height}
-                              </span>
-                            </span>
-                          </button>
-                        ))}
-                      </div>
-                    ))}
-                  </div>
-                </Flyout>
-              )}
-            </DockButton>
-        </div>
-
         {/* Grid. Beside Frame because both answer "where does everything go"
             — a frame bounds a composition, a grid divides one — and because
             drawing a grid inside a frame you have just drawn is the sequence
-            people actually perform. The flyout picks the system before the
-            drag, so the preview under the pointer is already the right one. */}
+            people actually perform. The seat wears the system it will draw.
+            Expanded: twelve captioned cards and no search, because filtering
+            twelve pictures you can already see is slower than looking. */}
         <div {...hoverProps('grid')} className="dock-slot-wrap" {...seatChrome('grid')}>
           <DockButton
             {...seatProps('grid', true)}
-            icon={<LayoutGrid size={17} />} label="Grid" toolId="grid"
-            description="lay out a composition"
+            icon={<GridKindIcon kind={gridKind} size={18} />} label="Grid" toolId="grid"
+            description={GRID_LABELS[gridKind]}
             active={activeToolId === 'grid'} hasMenu menuOpen={openMenu === 'grid'}
-            onClick={() => toggleMenu('grid')}
+            onClick={() => pick('grid')}
+            onOpenMenu={() => openSeatMenu('grid')}
           >
             {openMenu === 'grid' && (
-              <Flyout title="Grid system" wide>
-                {/*
-                  Twelve systems, two across, each name beside its schematic.
-
-                  No search, no category tabs and no preset chips. All three
-                  were chrome over a list short enough to read at a glance:
-                  filtering twelve pictures you can already see is slower than
-                  looking at them, and a category tab changed the panel's size
-                  under the pointer. The names carry it.
-                */}
-                <KindPicker
-                  dense
-                  columns={2}
-                  searchPlaceholder="Grid systems"
-                  groups={gridPickerGroups}
-                  value={gridKind}
-                  onPick={(kind) => {
-                    gridDefaults.remember(
-                      switchKind(gridDefaults.forBox({ x: 0, y: 0, width: 0, height: 0 }), kind)
-                    );
-                    pick('grid');
-                  }}
+              <Flyout title="Grid system" bare>
+                <SeatMenu
+                  noun="grids"
+                  quick={QUICK_GRIDS.map(gridTile)}
+                  current={gridTile(gridKind)}
+                  onPick={pickGrid}
+                  locked={seatLocked('grid')}
+                  onLock={() => lockSeat('grid', () => setTool('grid'))}
+                  sheet={
+                    <DockSheet
+                      variant="card"
+                      columns={3}
+                      width={318}
+                      sections={gridSections}
+                      value={gridKind}
+                      onPick={pickGrid}
+                      idle="Pick a system, then drag it out on the board"
+                    />
+                  }
                 />
               </Flyout>
             )}
@@ -1831,74 +2190,85 @@ export const ToolWorkspace: React.FC<Props> = ({ activeToolId, onOpenDiagram, on
         </div>
 
         {/* Chart. Beside Grid because both are composite objects built from a
-            drag rather than drawn stroke by stroke, and because the flyout is
-            answering the same shape of question -- which system, before the
-            gesture, so the thing that lands is already the right one. */}
+            drag, and the menu asks the same shape of question -- which kind,
+            before the gesture. Expanded, grouped by the question a chart
+            answers: nobody arrives wanting "a stacked area", they arrive
+            wanting to show how a total split up over time. */}
         <div {...hoverProps('chart')} className="dock-slot-wrap" {...seatChrome('chart')}>
           <DockButton
             {...seatProps('chart', true)}
-            icon={<BarChart3 size={17} />} label="Chart" toolId="chart"
-            description="bars, lines, pies"
+            icon={<ChartKindIcon kind={lastChart} size={18} />} label="Chart" toolId="chart"
+            description={CHART_LABELS[lastChart]}
             active={activeToolId === 'chart'} hasMenu menuOpen={openMenu === 'chart'}
-            onClick={() => toggleMenu('chart')}
+            onClick={() => pickChart(lastChart)}
+            onOpenMenu={() => openSeatMenu('chart')}
           >
             {openMenu === 'chart' && (
-              <Flyout title="Chart type" wide>
-                {/*
-                  Twenty-four kinds in seven families, four across.
-
-                  They were laid out as seven columns of chips, each chip
-                  carrying its own hint -- which made the flyout as wide as
-                  the board and truncated most of the hints anyway. Grouping
-                  by the *question being asked* is kept, because nobody
-                  arrives wanting "a stacked area"; they arrive wanting to
-                  show how a total split up over time.
-                */}
-                <KindPicker
-                  columns={4}
-                  tile={88}
-                  searchPlaceholder="Chart types"
-                  groups={chartPickerOptions}
-                  value={ChartTool.kind}
-                  onPick={(kind) => {
-                    // Remembering the pick and arming the tool, the way the
-                    // grid flyout does, so this is a choice about the next
-                    // drag rather than twenty-four tools that would each need
-                    // registering and each need a key.
-                    ChartTool.kind = kind;
-                    pick('chart');
-                  }}
+              <Flyout title="Chart type" bare>
+                <SeatMenu
+                  noun="charts"
+                  quick={QUICK_CHARTS.map(chartTile)}
+                  current={chartTile(lastChart)}
+                  onPick={pickChart}
+                  locked={seatLocked('chart')}
+                  onLock={() => lockSeat('chart', () => { ChartTool.kind = lastChart; setTool('chart'); })}
+                  sheet={
+                    <DockSheet
+                      variant="card"
+                      columns={4}
+                      width={344}
+                      height={320}
+                      searchPlaceholder="Search charts"
+                      sections={chartSections}
+                      value={lastChart}
+                      onPick={pickChart}
+                      focusSearch
+                      idle="Pick what the chart should show, then drag it out"
+                    />
+                  }
                 />
-                            </Flyout>
+              </Flyout>
             )}
           </DockButton>
         </div>
 
         {/* Table. Beside Chart: the two are where data lives on a board, and a
-            table is often the step before the chart. The flyout answers the
-            chart's question in table terms — blank, or a finished one to
-            start from — and arms the tool for the next drag. */}
+            table is often the step before the chart. Blank first, then the
+            finished examples by what they are for, each drawn in miniature by
+            the board's own painter. */}
         <div {...hoverProps('table')} className="dock-slot-wrap" {...seatChrome('table')}>
           <DockButton
             {...seatProps('table', true)}
             icon={<Table2 size={17} />} label="Table" toolId="table"
-            description="rows, columns, CSV"
+            description={tableName}
             active={activeToolId === 'table'} hasMenu menuOpen={openMenu === 'table'}
-            onClick={() => toggleMenu('table')}
+            onClick={() => pickTable(lastTable)}
+            onOpenMenu={() => openSeatMenu('table')}
           >
             {openMenu === 'table' && (
-              <Flyout title="Table" wide>
-                <KindPicker
-                  columns={4}
-                  tile={104}
-                  search
-                  searchPlaceholder="Tables, or a column like “owner”"
-                  groups={tablePickerOptions}
-                  value={TableTool.preset}
-                  onPick={(id) => {
-                    TableTool.preset = id;
-                    pick('table');
-                  }}
+              <Flyout title="Table" bare>
+                <SeatMenu
+                  noun="tables"
+                  wideTiles
+                  quick={QUICK_TABLES.map(tableTile)}
+                  current={tableTile(lastTable)}
+                  onPick={pickTable}
+                  locked={seatLocked('table')}
+                  onLock={() => lockSeat('table', () => { TableTool.preset = lastTable; setTool('table'); })}
+                  sheet={
+                    <DockSheet
+                      variant="card"
+                      columns={3}
+                      width={360}
+                      height={340}
+                      searchPlaceholder="Tables, or a column like “owner”"
+                      sections={tableSections}
+                      value={lastTable}
+                      onPick={pickTable}
+                      focusSearch
+                      idle="Start blank, or from a finished table"
+                    />
+                  }
                 />
               </Flyout>
             )}
@@ -1914,10 +2284,20 @@ export const ToolWorkspace: React.FC<Props> = ({ activeToolId, onOpenDiagram, on
           description="join two objects"
           active={activeToolId === 'connector'} onClick={() => setTool('connector')}
         />
+        {/* Click arms the note tool; drag one straight up off the seat and it
+            lands where you let go. FigJam's pad of notes -- and the one seat
+            where the thing on the button is the thing you get, so pulling it
+            out is the gesture people try first. See `beginStickyCarry`. */}
         <DockButton
           {...seatProps('sticky')}
+          onPointerDown={editing ? beginSeatDrag('sticky') : beginStickyCarry}
           icon={<StickyNote size={17} />} label="Sticky" toolId="sticky"
-          active={activeToolId === 'sticky'} onClick={() => setTool('sticky')}
+          description="click to arm, or drag one onto the board"
+          active={activeToolId === 'sticky'}
+          onClick={() => {
+            // The click that ends a carry is not a request for the tool.
+            if (!carryEnded.current) setTool('sticky');
+          }}
         />
       </div>
 
@@ -2089,5 +2469,15 @@ export const ToolWorkspace: React.FC<Props> = ({ activeToolId, onOpenDiagram, on
       </div>
 
     </div>
+    {carry && createPortal(
+      <div
+        ref={ghostRef}
+        className="sticky-ghost"
+        aria-hidden="true"
+        style={{ background: THEMES[carry].bg, borderColor: THEMES[carry].edge }}
+      />,
+      document.body
+    )}
+    </MotionConfig>
   );
 };

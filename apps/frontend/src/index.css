@@ -4533,75 +4533,101 @@ input.slider__value:focus-visible {
   white-space: nowrap;
 }
 
-/* ------------------------------------------------------------------ nib size */
+/* ----------------------------------------------------------------- the shelf */
 
-.dock-nib {
-  display: flex;
-  flex-direction: column;
-  gap: 6px;
-  padding: var(--space-2);
-  /* Its own compartment. A slider sitting flush against a list of choices reads
-     as another choice; the rule says it is a setting for the ones above. */
-  margin-top: var(--space-1);
-  border-top: 1px solid var(--border-divider);
-}
-
-.dock-nib__head {
+/**
+ * The armed tool's options, on a tray above the dock. See the `shelf` comment
+ * in `ToolWorkspace`.
+ *
+ * Centred on the dock rather than on the seat, so switching between two tools
+ * that both have options changes what is on the tray and not where the tray
+ * is -- the eye comes back to one place. Forty pixels tall, the dock's own
+ * height, so the two read as one instrument in two tiers.
+ */
+.tool-shelf {
+  position: absolute;
+  bottom: calc(100% + var(--space-2));
+  left: 50%;
+  /* `translate`, not `transform`: the entrance animates transform, and
+     centring with it is the trap DESIGN.md names. */
+  translate: -50% 0;
+  z-index: 10;
   display: flex;
   align-items: center;
-  justify-content: space-between;
-  gap: var(--space-3);
+  gap: 2px;
+  padding: var(--space-1);
+  max-width: calc(100vw - 2 * var(--gutter));
+  white-space: nowrap;
 }
 
-.dock-nib__label {
-  font-size: var(--text-2xs);
-  font-weight: var(--weight-semibold);
-  letter-spacing: 0.08em;
-  text-transform: uppercase;
-  color: var(--text-tertiary);
+/* Every band above the dock -- the coaches, the notices, the flatten banner --
+   is placed from `--dock-h`, which nothing had ever set. One declaration moves
+   all of them clear of the tray while it is up, and back when it goes. */
+body:has(.tool-shelf) { --dock-h: 112px; }
+
+.tool-shelf .dock-rule { margin: 0 var(--space-1); }
+
+/* Kept armed is a state that is on -- which is what the accent is for. */
+.tool-shelf .shelf-lock[aria-pressed='true'],
+.tool-shelf .shelf-lock[aria-pressed='true']:hover {
+  background: var(--accent-quiet);
+  color: var(--text-accent);
 }
 
-.dock-nib__value {
-  font-family: var(--font-mono);
-  font-size: var(--text-xs);
-  font-variant-numeric: tabular-nums;
-  color: var(--text-secondary);
+.shelf-swatches {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 0 6px;
 }
 
-.dock-nib__row {
+/* A note's colour, shown as the paper itself. 24px, the smallest target that
+   still clears the minimum, and square-ish like the note rather than round
+   like a colour dot, because a note is what you are choosing. */
+.shelf-swatch {
+  width: 24px;
+  height: 24px;
+  padding: 0;
+  border: 1px solid;
+  border-radius: var(--radius-md);
+  cursor: pointer;
+  transition: transform var(--motion-hover), box-shadow var(--motion-hover);
+}
+
+.shelf-swatch:hover { transform: translateY(-1px); }
+
+/* The current colour carries an ink ring standing off the paper, the way a
+   colour well marks its value: on the swatch, not beside it. */
+.shelf-swatch[aria-checked='true'] {
+  box-shadow: 0 0 0 2px var(--surface-elevated), 0 0 0 3.5px var(--text-primary);
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .shelf-swatch:hover { transform: none; }
+}
+
+/* A size, previewed as the dot it draws beside the slider that sets it. */
+.shelf-size {
   display: flex;
   align-items: center;
   gap: var(--space-2);
-  /* A label, a track and a typable readout on one line do not fit the dock's
-     default 172px panel, and the label is what gave -- so the row sets its own
-     floor and the panel grows to it. A flyout may be wider; none may be too
-     narrow to read. */
-  min-width: 208px;
-  /* The same insets `.flyout-field` uses, so the nib row sits on the flyout's
-     rhythm rather than a few pixels off it. It carried its own caption block
-     before and the difference was invisible; with the caption gone it is the
-     only row in the group that would start somewhere else. */
-  padding: 6px 8px 2px;
+  width: 212px;
+  padding: 0 var(--space-2) 0 var(--space-1);
 }
 
-/* The slider takes the rest of the row beside the preview.
-
-   Its label column shrinks to the word rather than holding the panel's 68px
-   rail: a flyout is narrower than the inspector, and there is only one slider
-   in it, so the column that keeps a *stack* of labels aligned is buying
-   nothing here and would take a third of the row. */
-.dock-nib__row .slider {
+/* The slider takes the rest of the row beside the preview. Its label column
+   shrinks to the word rather than holding the inspector's 68px rail: there is
+   one slider here and no stack of labels to keep aligned. */
+.shelf-size .slider {
   flex: 1;
   min-width: 0;
-  grid-template-columns: auto minmax(0, 1fr) 40px;
-  gap: var(--space-2);
 }
 
-.dock-nib__row .slider__label { font-size: var(--text-xs); }
+.shelf-size .slider__label { font-size: var(--text-xs); }
 
 /* The control previews itself: a number alone tells you nothing about what a
    "6" draws, and this is a property whose whole meaning is visual. */
-.dock-nib__preview {
+.shelf-size__preview {
   width: 22px;
   height: 22px;
   flex-shrink: 0;
@@ -4610,9 +4636,239 @@ input.slider__value:focus-visible {
   justify-content: center;
 }
 
-.dock-nib__preview > span {
+.shelf-size__preview > span {
   border-radius: 50%;
   background: var(--text-primary);
+}
+
+/* ---------------------------------------------------------- a carried note */
+
+/**
+ * A note being dragged off the dock.
+ *
+ * At the size it will land at while it is over the board, and shrunk to a
+ * token over the chrome, where letting go puts nothing down. Tilted two
+ * degrees, because it has been picked up; flat again under reduced motion,
+ * where nothing should look like it is in motion.
+ */
+.sticky-ghost {
+  position: fixed;
+  left: 0;
+  top: 0;
+  z-index: var(--z-tooltip);
+  width: 44px;
+  height: 44px;
+  border: 1px solid;
+  border-radius: 10px;
+  box-shadow: 0 14px 28px -10px rgba(0, 0, 0, 0.3);
+  pointer-events: none;
+  rotate: -2deg;
+  transition:
+    width 140ms var(--ease-settle),
+    height 140ms var(--ease-settle),
+    opacity 140ms var(--ease-settle);
+}
+
+.sticky-ghost[data-over='chrome'] { opacity: 0.72; }
+
+@media (prefers-reduced-motion: reduce) {
+  .sticky-ghost { transition: none; rotate: 0deg; }
+}
+
+/* ------------------------------------------------------------- dock sheet */
+
+/* A seat's sheet: Shape, Grid, Chart, Table. See `DockSheet` -- sections on
+   one scroll, icon tiles or captioned cards, one line of words at the foot. */
+.dock-sheet {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+  max-width: calc(100vw - 2 * var(--gutter) - 16px);
+}
+
+.dock-sheet__search {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  height: 28px;
+  padding: 0 var(--space-2);
+  border: 1px solid var(--border-divider);
+  border-radius: var(--radius-sm);
+  background: var(--surface-secondary);
+  color: var(--text-tertiary);
+  transition: border-color var(--motion-hover);
+}
+
+/* A field shows focus by its border, in the neutral field tone. */
+.dock-sheet__search:focus-within { border-color: var(--focus-field-color); }
+
+.dock-sheet__search input {
+  flex: 1;
+  min-width: 0;
+  height: 100%;
+  padding: 0;
+  border: 0;
+  background: transparent;
+  color: var(--text-primary);
+  font: inherit;
+  font-size: var(--text-sm);
+  outline: none;
+}
+
+.dock-sheet__search input::-webkit-search-cancel-button { display: none; }
+
+/* The height, when there is one, is set inline: a searchable sheet holds it so
+   filtering never resizes the panel under the pointer. */
+.dock-sheet__body {
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  scrollbar-width: thin;
+}
+
+.dock-sheet__grid {
+  display: grid;
+  grid-template-columns: repeat(var(--sheet-cols), minmax(0, 1fr));
+  gap: 2px;
+}
+
+.dock-sheet .dock-flyout__group { padding-left: 2px; }
+
+.tool-dock .dock-sheet__tile {
+  width: auto;
+  height: 36px;
+  border-radius: var(--radius-sm);
+}
+
+.dock-sheet__pic {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  pointer-events: none;
+}
+
+/* Cards: the picture over its name, for choices known by name as much as by
+   shape -- a grid system, a chart kind, a finished table. */
+.tool-dock .dock-sheet[data-variant='card'] .dock-sheet__tile {
+  height: auto;
+  display: flex;
+  flex-direction: column;
+  align-items: stretch;
+  gap: 4px;
+  padding: 6px 4px 5px;
+}
+
+.dock-sheet[data-variant='card'] .dock-sheet__pic { height: 40px; }
+
+.dock-sheet__label {
+  font-size: var(--text-xs);
+  line-height: 1.3;
+  text-align: center;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.dock-sheet__empty {
+  margin: var(--space-6) auto 0;
+  max-width: 26ch;
+  text-align: center;
+  font-size: var(--text-sm);
+  color: var(--text-tertiary);
+}
+
+/* The one line of words: the name, and what it is for. */
+.dock-sheet__foot {
+  display: flex;
+  align-items: baseline;
+  gap: var(--space-2);
+  min-height: 26px;
+  padding: var(--space-2) 2px 0;
+  border-top: 1px solid var(--border-divider);
+  font-size: var(--text-xs);
+  white-space: nowrap;
+  overflow: hidden;
+}
+
+.dock-sheet__name {
+  flex-shrink: 0;
+  font-weight: var(--weight-semibold);
+  color: var(--text-primary);
+}
+
+.dock-sheet__hint {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  color: var(--text-tertiary);
+}
+
+/* -------------------------------------------------------------- seat menu */
+
+/* A seat's menu: a row of the common few, More, and the padlock, with the full
+   sheet growing upward above it. See `SeatMenu`. */
+/* The row hugs its buttons and sits centred under a wider sheet; the panel is
+   centred on its seat, so a centred row does not move when the sheet opens. */
+.seat-menu {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: var(--space-2);
+  max-width: calc(100vw - 2 * var(--gutter) - 16px);
+}
+
+.seat-menu__sheet {
+  align-self: stretch;
+  padding-bottom: var(--space-2);
+  border-bottom: 1px solid var(--border-divider);
+}
+
+.seat-menu__row {
+  display: flex;
+  align-items: center;
+  gap: 2px;
+}
+
+.seat-menu__quick {
+  display: flex;
+  align-items: center;
+  gap: 2px;
+  min-width: 0;
+}
+
+/* Choices on one side, the controls for the menu and the tool on the other:
+   a hairline says so in 9px where empty space took a hundred. */
+.seat-menu__rule {
+  flex: none;
+  width: 1px;
+  height: 20px;
+  margin: 0 var(--space-1);
+  background: var(--border-divider);
+}
+
+.tool-dock .seat-menu__tile {
+  width: 36px;
+  height: 36px;
+  border-radius: var(--radius-sm);
+}
+
+.tool-dock .seat-menu__tile[data-wide] { width: 52px; }
+
+.tool-dock .seat-menu__more[aria-expanded='true'] {
+  background: var(--surface-active);
+  color: var(--text-primary);
+}
+
+/* Kept armed is a state that is on -- which is what the accent is for. */
+.tool-dock .seat-menu__lock[aria-pressed='true'],
+.tool-dock .seat-menu__lock[aria-pressed='true']:hover {
+  background: var(--accent-quiet);
+  color: var(--text-accent);
+}
+
+/* A table example small enough to sit in the row. */
+.dock-tablethumb.dock-tablethumb--mini {
+  width: 40px;
+  height: 24px;
 }
 
 /* ---------------------------------------------------------------------------
@@ -6004,6 +6260,76 @@ input.slider__value:focus-visible {
 }
 
 .tool-dock .btn-icon.active .dock-more__dot { opacity: 0.9; }
+
+/* ---------------------------------------------------------- the dock marker */
+
+/**
+ * One active-tool marker, handed from seat to seat. See `PUCK_GLIDE`.
+ *
+ * The active seat's ink fill used to be the button's own background, so each
+ * seat had one and a tool change switched one off and another on. The fill
+ * now belongs to a single element that travels, and the button behind it goes
+ * clear. Drawn inside the button's own stacking context, below the glyph, so
+ * the icon keeps the reversed colour the rule above gives it.
+ */
+.tool-dock .dock-btn {
+  position: relative;
+  isolation: isolate;
+}
+
+.tool-dock .btn-icon.dock-btn.active:not([role='menuitemradio']),
+.tool-dock .btn-icon.dock-btn.active:not([role='menuitemradio']):hover {
+  background: transparent;
+}
+
+.dock-puck {
+  position: absolute;
+  inset: 0;
+  z-index: -1;
+  border-radius: inherit;
+  background: var(--text-primary);
+  pointer-events: none;
+}
+
+/* Held on its key rather than armed: the same marker, hollow. Letting go of
+   the key takes the tool back, and an outline says "for now" without a word. */
+.tool-dock[data-held] .dock-puck {
+  background: transparent;
+  box-shadow: inset 0 0 0 1.5px var(--text-primary);
+}
+
+.tool-dock[data-held] .btn-icon.dock-btn.active:not([role='menuitemradio']) {
+  color: var(--text-primary);
+}
+
+/**
+ * Kept armed. See `toolModes`.
+ *
+ * On the right shoulder, because the others are spoken for -- the left one is
+ * the edit mode's remove badge, the bottom-right is the menu dot -- and built
+ * like that remove badge: a small disc ringed in the dock's own colour so it
+ * reads as sitting on the seat rather than floating near it.
+ */
+.dock-lock {
+  position: absolute;
+  top: -4px;
+  right: -4px;
+  display: grid;
+  place-items: center;
+  width: 14px;
+  height: 14px;
+  border: 1.5px solid var(--surface-elevated);
+  border-radius: 50%;
+  background: var(--text-primary);
+  color: var(--surface-primary);
+  pointer-events: none;
+}
+
+/* Out-ranks `.dock-btn svg`, which sizes every glyph in the dock to 18px. */
+.tool-dock .dock-btn .dock-lock svg {
+  width: 8px;
+  height: 8px;
+}
 
 /* -------------------------------------------------------------- focus mode */
 
@@ -17112,7 +17438,7 @@ html[data-precise] .canvas-container[data-cursor-mode] .konvajs-content canvas {
    the column that buys alignment elsewhere buys nothing and costs a third of
    the track. */
 .draw-settings .slider,
-.dock-nib__row .slider {
+.shelf-size .slider {
   grid-template-columns: auto minmax(0, 1fr) 44px;
   gap: var(--space-2);
 }

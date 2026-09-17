@@ -551,6 +551,33 @@ export const DATA_EXAMPLES: ChartExample[] = [
       };
     })(),
   },
+  {
+    id: 'handoff-flow',
+    name: 'Hand-offs between teams',
+    note: 'one-way links: each arrow is a hand-off, thicker for more of them',
+    kind: 'network',
+    spec: (() => {
+      const teams = ['Sales', 'Solutions', 'Legal', 'Finance', 'Delivery', 'Support'];
+      // Row → column: how many hand-offs go from one team to the other.
+      const out = [
+        [0, 5, 2, 0, 0, 0],
+        [1, 0, 1, 0, 4, 0],
+        [0, 0, 0, 3, 0, 0],
+        [0, 0, 0, 0, 2, 0],
+        [0, 1, 0, 0, 0, 5],
+        [2, 1, 0, 0, 0, 0],
+      ];
+      return {
+        kind: 'network' as const,
+        title: 'Hand-offs between teams',
+        categories: teams,
+        series: teams.map((name, i) => ({ name, values: out[i] })),
+        directed: true,
+        curved: true,
+        showValues: true,
+      };
+    })(),
+  },
 ];
 
 /** Every example, from both sources, as one list. */

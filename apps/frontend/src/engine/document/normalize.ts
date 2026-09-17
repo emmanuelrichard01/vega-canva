@@ -1423,6 +1423,9 @@ function normalizeChartSpec(raw: any): ChartSpec {
   num('innerRadius');
   num('buckets');
   bool('curved');
+  if (raw?.networkLayout === 'ring') spec.networkLayout = 'ring';
+  if (raw?.networkColor === 'node') spec.networkColor = 'node';
+  bool('directed');
   if (
     raw?.sort === 'valueDesc' ||
     raw?.sort === 'valueAsc' ||

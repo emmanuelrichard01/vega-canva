@@ -5617,6 +5617,153 @@ references that adjust when a formula is pasted or filled, and per-cell
 presence for two people editing one table. A chart cannot yet be made *from* a table object —
 the obvious next join, since both sides already speak CSV.
 
+## 5a-0-bg. The tool dock: one marker, a shelf, a lock, a held key, and a hand
+
+Branch `charts-tables-sheet`, one session, on the owner's brief to take the
+main toolbar to the FigJam / Miro / Excalidraw / Lucidchart bar and then to
+move fast. `DESIGN.md` has a new **The tool dock** section with the rules;
+this is what was built and what was and was not seen.
+
+### What exists now
+
+- **`engine/tools/toolModes.ts`** — two ways a tool stays in hand. **Kept
+  armed** (`Q`, or double-click the armed seat): placing tools no longer hand
+  back to Select after each object. The lock belongs to one tool and ends when
+  anything else is armed, Escape included. **Held** (a tool key down ≥ 300ms):
+  letting go re-arms the tool it interrupted, and restores that tool's lock.
+  Not for tools that open something on use (text, note, image, audio, comment,
+  chart, table). The nine `legacy_tool_change → 'select'` dispatches in the
+  placing tools are now one `finishCreation()`, which is why a lock could
+  exist at all. `useRoomShortcuts` syncs the armed tool into it, binds `Q`,
+  `keyup` and `blur`, and **ignores key repeat** — a held `L` used to flip
+  line/arrow a dozen times a second.
+- **One active-tool marker** (`.dock-puck`, `PUCK_GLIDE`), a framer
+  `layoutId` element handed from seat to seat instead of each seat owning an
+  ink fill. Hollow while held; a padlock badge on the right shoulder while
+  kept. `MotionConfig reducedMotion="user"` places it.
+- **The shelf** (`.tool-shelf`), FigJam's tray: the armed tool's next-gesture
+  choices above the dock — note colour (8 papers; choosing a note's colour
+  *before* placing it was impossible), pencil nib + size, pen weight, eraser
+  size, line head/path/profile, five recent shapes plus "All shapes", and the
+  padlock for any placing tool. **The Eraser and Line flyouts are gone** (their
+  contents moved); the Draw flyout keeps only behaviour (smoothing, keep
+  selected). It stands down while a flyout is open or the dock is edited.
+  `body:has(.tool-shelf)` sets `--dock-h`, which every band above the dock
+  (coach, walk, notices, flatten banner) already read and nothing had set.
+- **Drag a note off the dock** (`beginStickyCarry`). Starts only once the
+  pointer lifts 12px clear, captures the pointer, shows a ghost at the note's
+  landing size for the current zoom (a token over chrome), and drops through
+  `placeSticky` — now shared with `StickyTool` so both gestures make the same
+  note. Escape cancels. Notes only, on purpose: see `DESIGN.md`.
+- **Arrow keys inside flyouts and the shelf** go to the control; the dock's
+  roving focus was taking them, so the Smoothing slider was keyboard-dead.
+- **The hand is one drawing.** `HAND_OPEN` / `HAND_CLOSED` in
+  `cursorVisual.ts` are stroked by the dock (`HandIcon`, also in the command
+  palette) and filled by the pointer. The old pointer's 0.35-unit finger
+  valleys sat under a 1.7 outline and fused into a mitten; fingers are now
+  split by zero-width slits, the thumb leaves on one axis, the fist tucks it
+  in, and the hand is centred on its hotspot.
+- Help lists `Q` and the hold; the stale `Ctrl/Cmd + P` row (deliberately
+  unbound) is gone.
+
+### Seen, and not seen
+
+- `npm run build` passes. `toolModes.test.ts`, 13 cases, passes under plain
+  Node with a small describe/it shim (`node` strips the types); Vitest still
+  cannot start (`spawn UNKNOWN`), and **`useRoomShortcuts.test.ts` was not
+  run** — its new paths are `Q`, `keyup`, `blur` and the repeat guard.
+- In the running app, read from the DOM: the shelf per tool (Note, Pencil,
+  Eraser contents correct), the marker on the armed seat, `Q` setting the lock
+  and badge, a hold setting `data-held` after 300ms.
+- **Not seen:** the release restoring the tool (unit-tested only), the note
+  drag end to end (the offscreen renderer stopped answering mid-script), the
+  marker actually gliding (rAF never fires offscreen), and the shelf's exit —
+  framer's exit cannot finish offscreen, so a stale shelf stays in the DOM
+  *there*. Watch these first in a real window.
+- The hand art was checked by rendering old and new at 1× and 4×, light and
+  dark, with headless Edge from a scratch HTML page — no Chrome extension.
+
+### Open
+
+- The dock still wraps to a second row on narrow windows; a priority-plus
+  overflow into More is the obvious next step and would matter more now that
+  the shelf rides above it.
+
+### Later the same session: the seats with choices, and their sheets
+
+- **Shape, Frame, Grid, Chart and Table now click to arm** the choice the seat
+  wears (last shape / size / system / chart / table); resting opens the sheet.
+  They used to open a menu and arm nothing, which is also why double-click
+  could not keep them. The shelf carries recents (shapes, charts, grids) or a
+  chip naming the current table / frame size, plus the way into the sheet.
+- **`DockSheet`** replaces `KindPicker` in the dock (the rail's shape swapper
+  still uses `KindPicker`): sections on one scroll instead of tabs, each choice
+  once, icon tiles (shapes, 8 across) or captioned cards (grids 3, charts 4,
+  tables 3), a one-line foot, fixed height when searchable, arrow keys by drawn
+  position, and typing on a tile goes to the search instead of the tool keys.
+  `ShapeSheet` is a thin wrapper. Frame keeps its three-column size picker.
+- **The lock is keyed on the seat** (`lockFamily`): every `shape-*` preset and
+  the bare `shape` that `R` arms are one seat, every `frame-*` size another,
+  line/arrow a third. Before this, switching rectangle → ellipse on the shelf
+  silently dropped a kept Shape tool. `toolModes.test.ts` covers it (17 cases,
+  passing under the Node shim).
+- **Checked:** Room forces Select only after an image upload; every placing
+  tool clears its overlay on commit, not only on deactivate; objects are not
+  draggable under a drawing tool — so a kept tool survives its own new
+  selection.
+- **Not seen in a browser:** any of the sheets, the new seat clicks, the shelf
+  chips. `npm run build` passes; that is the whole of the verification.
+
+### Later again: seat menus open small
+
+On the owner's suggestion. Resting on Shape, Frame, Grid, Chart or Table now
+opens `SeatMenu`: one row of a fixed few choices (plus the current choice in
+the last slot when it is not one of them), then More, then the padlock. More
+grows the full sheet *upward* from the row -- the flyout hangs by its bottom
+edge and both states share one width, so nothing under the pointer moves --
+and puts the caret in its search. The padlock on a seat that is not armed arms
+it and keeps it in one click (`toolModes.keep`, which sets the lock by seat
+before the room's state catches up; covered by a test, 18 passing).
+
+Those five seats no longer put anything on the shelf -- it would have been the
+same row twice. The shelf keeps pencil, pen, eraser, line and note, and the
+padlock for Text and Note. On a device with no hover, tapping an armed seat
+opens its menu; from the keyboard, Up on a seat does. Recent lists for shapes,
+charts and grids are gone (fixed rows teach position; recents reshuffle).
+
+Not seen in a browser. `npm run build` and a forced `tsc -b` pass.
+
+### Later again: the Network chart
+
+- **Groups.** `networkGroups` (one deterministic level of Louvain) finds who
+  clusters. Nodes take their group's colour, links inside a group take it too,
+  links between groups are grey and drawn first; the legend names each group
+  by its most connected member ("Ana +3"). `networkColor: 'node'` restores a
+  colour per node, which is where a node's own colour applies.
+- **One-way links** (`directed`): the table reads row → column, each direction
+  is its own link with a chevron head (a run, so the board, SVG and sketch pen
+  draw it unchanged), and a pair linked both ways bows to opposite sides.
+- **Ring layout** (`networkLayout: 'ring'`), grouped and most-connected first;
+  curved links bow a third of the way toward the centre.
+- **Force layout** starts from a circle ordered by group, pulls harder inside
+  groups than across, runs in a box shaped like the plot, then a pass pushes
+  overlapping nodes apart. Names sit on the side away from the graph's middle.
+- **Values on** writes each link's weight (capabilities: `valueLabels`,
+  `numberFormat`). The default network is now two teams and their bridges; a
+  one-way "Hand-offs between teams" example was added. Panel: Links / Layout /
+  Direction under Marks, Colour by under Colour. `normalize.ts` keeps the three
+  new fields.
+- **Seen:** rendered through `chartToSvg` in Node and photographed with
+  headless Edge (force, legend, ring, one-way, per-node). `chartNetwork.test.ts`
+  (10 cases) passes, with 151 existing chart and tool tests.
+
+**Engine tests do run here now**, without Vitest: a Node loader in the session
+scratchpad mapped `vitest` to a small shim and extensionless imports to `.ts`
+(`node --import register.mjs run-tests.mjs <files>`). Pure `.ts` suites run;
+anything importing `.tsx` does not. Worth committing as a script if it keeps
+being needed — the two failures it reports (`expect.arrayContaining`,
+`toBeTypeOf`) are matchers the shim lacks, not product bugs.
+
 ## 5. Next up
 
 ### 5a-0. The four things to do first
