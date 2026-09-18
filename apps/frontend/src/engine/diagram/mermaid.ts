@@ -46,7 +46,23 @@ export type MermaidShape =
   | 'parallelogram_inv'
   | 'trapezoid'
   | 'trapezoid_inv'
-  | 'flag';
+  | 'flag'
+  /**
+   * The shapes that only Mermaid 11's `A@{ shape: … }` form can ask for.
+   *
+   * Everything above has a bracket spelling and has had one for years. These
+   * have no brackets left to give them — that is precisely why Mermaid added a
+   * named form — and each is here because this canvas already draws the real
+   * flowchart symbol for it. Nothing was added to the list for the sake of
+   * completeness: a name with no faithful geometry behind it would be a
+   * rectangle wearing a label, which is what `SHAPE_SPECS` spent years being.
+   */
+  | 'document'
+  | 'internal_storage'
+  | 'delay'
+  | 'manual_input'
+  | 'card'
+  | 'triangle';
 
 export interface NodeStyle {
   fill?: string;
@@ -237,6 +253,52 @@ function cleanLabel(raw: string): string {
 /**
  * One `A[Label]` token, or a bare `A`, optionally with inline `:::className`.
  */
+/**
+ * The body of a Mermaid 11 `@{ … }` block, as key/value pairs.
+ *
+ * Tolerant in the two ways real documents need. Values may be bare, single- or
+ * double-quoted, and the block may carry keys this parser does not act on
+ * (`icon`, `form`, `pos`) — those are read and ignored rather than treated as
+ * a syntax error, because a diagram that uses one is not malformed, it is just
+ * using a feature this canvas has no equivalent for.
+ */
+function readAtBlock(body: string): Record<string, string> {
+  const out: Record<string, string> = {};
+  // A quoted value may contain commas, so the split is on commas *outside*
+  // quotes rather than on every comma. `label: "Reserve, then ship"` is the
+  // case that breaks a naive split, and it is a perfectly ordinary label.
+  const parts: string[] = [];
+  let depth = '';
+  let current = '';
+  for (const ch of body) {
+    if (depth) {
+      if (ch === depth) depth = '';
+      current += ch;
+      continue;
+    }
+    if (ch === '"' || ch === "'") {
+      depth = ch;
+      current += ch;
+      continue;
+    }
+    if (ch === ',') {
+      parts.push(current);
+      current = '';
+      continue;
+    }
+    current += ch;
+  }
+  parts.push(current);
+
+  for (const part of parts) {
+    const at = part.indexOf(':');
+    if (at < 0) continue;
+    const key = part.slice(0, at).trim().toLowerCase();
+    if (key) out[key] = cleanLabel(part.slice(at + 1));
+  }
+  return out;
+}
+
 function readSingleNode(src: string): { node: MermaidNode; length: number; inlineClass?: string } | null {
   const keyMatch = /^\s*([A-Za-z0-9_]+)/.exec(src);
   if (!keyMatch) return null;
@@ -247,6 +309,33 @@ function readSingleNode(src: string): { node: MermaidNode; length: number; inlin
   let shape: MermaidShape = 'rect';
   let label = key;
   let consumed = cursor;
+
+  /*
+   * Mermaid 11's named form, checked before the brackets.
+   *
+   * It has to come first: `@{` is not one of the bracket openers, but the `{`
+   * inside it is, and a node read bracket-first would take `A@{ shape: cyl }`
+   * as a diamond labelled "shape: cyl". That is the failure this ordering
+   * exists to prevent, and it is silent.
+   */
+  if (rest.startsWith('@{')) {
+    const close = rest.indexOf('}', 2);
+    if (close !== -1) {
+      const fields = readAtBlock(rest.slice(2, close));
+      const named = fields.shape ? shapeForName(fields.shape) : undefined;
+      if (named) shape = named;
+      label = fields.label || key;
+      consumed = cursor + close + 1;
+
+      const afterBlock = src.slice(consumed);
+      const classAfter = /^:::([A-Za-z0-9_]+)/.exec(afterBlock);
+      return {
+        node: { key, label, shape },
+        length: consumed + (classAfter ? classAfter[0].length : 0),
+        ...(classAfter ? { inlineClass: classAfter[1] } : {}),
+      };
+    }
+  }
 
   for (const form of NODE_FORMS) {
     if (!rest.startsWith(form.open)) continue;
@@ -639,6 +728,15 @@ const SHAPE_BRACKETS: Record<MermaidShape, [string, string]> = {
   trapezoid: ['[/', '\\]'],
   trapezoid_inv: ['[\\', '/]'],
   flag: ['>', ']'],
+  // The named-only shapes never reach this table — `declare` sends them to the
+  // `@{ … }` form first — but the record is total over `MermaidShape`, and a
+  // missing entry would mean a new shape silently emitting as a rectangle.
+  document: ['[', ']'],
+  internal_storage: ['[', ']'],
+  delay: ['[', ']'],
+  manual_input: ['[', ']'],
+  card: ['[', ']'],
+  triangle: ['[', ']'],
 };
 
 const LINE_TOKENS: Record<EdgeLine, { arrow: string; plain: string; bidir: string }> = {
@@ -650,6 +748,30 @@ const LINE_TOKENS: Record<EdgeLine, { arrow: string; plain: string; bidir: strin
 function quoteLabel(label: string): string {
   const flat = label.replace(/\n/g, '<br>');
   return /["'[\]{}()<>|=-]/.test(flat) ? `"${flat.replace(/"/g, "'")}"` : flat;
+}
+
+/**
+ * One node's declaration, in whichever form can express its shape.
+ *
+ * Brackets where there are brackets, because that is what almost every
+ * flowchart in the world is written in and rewriting `A[Step]` as
+ * `A@{ shape: rect, label: "Step" }` would be this tool making somebody's
+ * source stranger than they left it.
+ *
+ * The named form only for the shapes that have no bracket spelling at all,
+ * which is exactly the set Mermaid 11 added it for.
+ */
+function declare(node: MermaidNode): string {
+  if (isNamedOnly(node.shape)) {
+    return `${node.key}@{ shape: ${SHAPE_TO_NAME[node.shape]}, label: "${quoteInner(node.label)}" }`;
+  }
+  const [open, close] = SHAPE_BRACKETS[node.shape] || ['[', ']'];
+  return `${node.key}${open}${quoteLabel(node.label)}${close}`;
+}
+
+/** A label for inside the quotes the named form always writes. */
+function quoteInner(label: string): string {
+  return label.replace(/\n/g, '<br>').replace(/"/g, "'");
 }
 
 export function keyFor(index: number): string {
@@ -672,8 +794,7 @@ export function emitMermaid(graph: MermaidGraph): string {
       for (const k of sub.nodeKeys) {
         const node = graph.nodes.find((n) => n.key === k);
         if (node) {
-          const [open, close] = SHAPE_BRACKETS[node.shape] || ['[', ']'];
-          lines.push(`        ${node.key}${open}${quoteLabel(node.label)}${close}`);
+          lines.push(`        ${declare(node)}`);
           declared.add(node.key);
           assignedKeys.add(node.key);
           if (node.style && Object.keys(node.style).length > 0) styledNodes.push(node);
@@ -685,16 +806,14 @@ export function emitMermaid(graph: MermaidGraph): string {
     // Top-level unclustered nodes
     for (const node of graph.nodes) {
       if (!assignedKeys.has(node.key)) {
-        const [open, close] = SHAPE_BRACKETS[node.shape] || ['[', ']'];
-        lines.push(`    ${node.key}${open}${quoteLabel(node.label)}${close}`);
+        lines.push(`    ${declare(node)}`);
         declared.add(node.key);
         if (node.style && Object.keys(node.style).length > 0) styledNodes.push(node);
       }
     }
   } else {
     for (const node of graph.nodes) {
-      const [open, close] = SHAPE_BRACKETS[node.shape] || ['[', ']'];
-      lines.push(`    ${node.key}${open}${quoteLabel(node.label)}${close}`);
+      lines.push(`    ${declare(node)}`);
       declared.add(node.key);
       if (node.style && Object.keys(node.style).length > 0) styledNodes.push(node);
     }
@@ -843,7 +962,104 @@ export const SHAPE_SPECS: Record<MermaidShape, ShapeSpec> = {
   trapezoid: { kind: 'trapezoid', params: { inset: 0.2 } },
   trapezoid_inv: { kind: 'trapezoid', params: { inset: -0.2 } },
   flag: { kind: 'banner', params: { indent: 0.15 } },
+
+  // -- Mermaid 11's named shapes, where the canvas has the real symbol ------
+  document: { kind: 'document' },
+  internal_storage: { kind: 'internal_storage' },
+  delay: { kind: 'delay' },
+  manual_input: { kind: 'manual_input' },
+  card: { kind: 'note' },
+  triangle: { kind: 'polygon', points: 3 },
 };
+
+/**
+ * Mermaid 11's shape names, and the ones it kept as synonyms.
+ *
+ * ## Why a table of names rather than one name per shape
+ *
+ * Mermaid deliberately gives most shapes several names — a semantic one
+ * (`decision`), a shape one (`diam`), and often a flowchart-textbook one
+ * (`question`) — because people reach for whichever vocabulary they already
+ * have. A parser that accepted only one of the three would reject valid
+ * Mermaid and, worse, reject it *silently enough* that the reader would assume
+ * the shape was unsupported rather than misspelled.
+ *
+ * So every alias Mermaid documents for a shape this canvas can draw is here.
+ * Names for shapes it cannot draw are deliberately absent: `hourglass`,
+ * `fork`, `brace` and the rest have no faithful geometry here, and mapping
+ * them to a near-enough rectangle is how the old `SHAPE_SPECS` made four
+ * different symbols into one diamond. An unknown name is reported, not
+ * guessed.
+ *
+ * ## The second test a name has to pass: can it hold a label?
+ *
+ * `cross-circ` and `com-link` are also absent, and they are the interesting
+ * omissions because this canvas draws both of them well. A node in a flowchart
+ * exists to carry words, and those two are *annotation* symbols: the circle's X
+ * runs corner to corner through the middle of it, and the bolt is a thin
+ * diagonal stroke. With a centred label — which is the only way this builder
+ * places one — the X crosses the text and the bolt runs behind it.
+ *
+ * Both were wired up, drawn and looked at before being ruled out rather than
+ * assumed unsuitable. The rule is the same one that governs the geometry: a
+ * shape that cannot do the job honestly is worse than a name politely refused.
+ */
+const SHAPE_ALIASES: Record<string, MermaidShape> = {
+  // Process
+  rect: 'rect', proc: 'rect', process: 'rect', rectangle: 'rect',
+  // Rounded
+  rounded: 'round', event: 'round',
+  // Terminal
+  stadium: 'stadium', pill: 'stadium', terminal: 'stadium',
+  // Subprocess
+  subproc: 'subroutine', subprocess: 'subroutine', subroutine: 'subroutine',
+  'framed-rectangle': 'subroutine', 'fr-rect': 'subroutine',
+  // Database
+  cyl: 'database', cylinder: 'database', database: 'database', db: 'database',
+  // Circles
+  circle: 'circle', circ: 'circle',
+  'dbl-circ': 'double_circle', 'double-circle': 'double_circle',
+  // Decision
+  diam: 'diamond', diamond: 'diamond', decision: 'diamond', question: 'diamond',
+  // Preparation
+  hex: 'hexagon', hexagon: 'hexagon', prepare: 'hexagon',
+  // Data (parallelograms)
+  'lean-r': 'parallelogram', 'lean-right': 'parallelogram', 'in-out': 'parallelogram',
+  'lean-l': 'parallelogram_inv', 'lean-left': 'parallelogram_inv', 'out-in': 'parallelogram_inv',
+  // Trapezoids. `trap-b` has its base at the bottom, so it is the wide-bottom
+  // form; `trap-t` is its inverse. Getting these the wrong way round is the
+  // single easiest mistake here, and it is silent.
+  'trap-b': 'trapezoid', 'trapezoid-bottom': 'trapezoid', priority: 'trapezoid',
+  'trap-t': 'trapezoid_inv', 'trapezoid-top': 'trapezoid_inv', manual: 'trapezoid_inv',
+  // Asymmetric
+  odd: 'flag', 'rect-left-inv-arrow': 'flag', flag: 'flag', 'paper-tape': 'flag',
+  // Named-only shapes
+  doc: 'document', document: 'document',
+  'win-pane': 'internal_storage', 'window-pane': 'internal_storage', 'internal-storage': 'internal_storage',
+  delay: 'delay', 'half-rounded-rectangle': 'delay',
+  'manual-input': 'manual_input', 'sl-rect': 'manual_input', 'sloped-rectangle': 'manual_input',
+  'notch-rect': 'card', card: 'card', 'notched-rectangle': 'card',
+  tri: 'triangle', triangle: 'triangle', extract: 'triangle',
+};
+
+/** The name to write back out, one per shape rather than one per alias. */
+const SHAPE_TO_NAME: Partial<Record<MermaidShape, string>> = {
+  document: 'doc',
+  internal_storage: 'win-pane',
+  delay: 'delay',
+  manual_input: 'manual-input',
+  card: 'notch-rect',
+  triangle: 'tri',
+};
+
+/** Whether a shape can only be written with Mermaid 11's named form. */
+const isNamedOnly = (shape: MermaidShape): boolean => shape in SHAPE_TO_NAME;
+
+export const shapeForName = (name: string): MermaidShape | undefined =>
+  SHAPE_ALIASES[name.trim().toLowerCase()];
+
+/** Every name the `@{ shape: … }` form accepts, for the error that lists them. */
+export const knownShapeNames = (): string[] => Object.keys(SHAPE_ALIASES).sort();
 
 /**
  * A board shape, written back as the mermaid form that produces it.
@@ -872,6 +1088,13 @@ export function shapeFromCanvas(
   if (kind === 'predefined_process') return 'subroutine';
   if (kind === 'preparation') return 'hexagon';
   if (kind === 'banner') return 'flag';
+  // The named-only shapes, read back as themselves so a board drawn with the
+  // shape tool emits Mermaid 11 rather than a rectangle.
+  if (kind === 'document') return 'document';
+  if (kind === 'internal_storage') return 'internal_storage';
+  if (kind === 'delay') return 'delay';
+  if (kind === 'manual_input') return 'manual_input';
+  if (kind === 'note') return 'card';
   /*
    * The mirrored forms are told apart by the sign of the dial, and a shape
    * drawn with the tool rather than by this converter carries no dial at all.
@@ -886,6 +1109,7 @@ export function shapeFromCanvas(
     return (geometry.inset ?? paramFallback('trapezoid', 'inset')) < 0 ? 'trapezoid_inv' : 'trapezoid';
   }
   if (kind === 'polygon') {
+    if (geometry.points === 3) return 'triangle';
     if (geometry.points === 4) return 'diamond';
     if (geometry.points === 6) return 'hexagon';
     if (geometry.points === 5) return 'flag';
