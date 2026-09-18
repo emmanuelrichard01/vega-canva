@@ -61,6 +61,31 @@ export interface LinkSpec {
   requestedAt?: number;
   /** A short reason, shown on a card whose preview could not be fetched. */
   error?: string;
+  /**
+   * Automatic retries are spent for this address. Only a person starts another.
+   *
+   * ## Why this is in the document and not in the tab
+   *
+   * The retry *schedule* is a per-tab concern — it is a timer, and a timer
+   * belongs to whoever is waiting on it. Giving up is not: it is a conclusion
+   * about the link, reached by evidence, and every tab that opens this board
+   * would otherwise re-derive it from scratch and spend its own three attempts
+   * discovering what the last four tabs already found out. On a board with a
+   * handful of dead links, that is a burst of pointless outbound work on every
+   * single open, forever.
+   *
+   * ## Why a flag and not a count
+   *
+   * A counter in a CRDT is two tabs writing `3` over each other's `4`. This is
+   * a value that is only ever set to one thing, so concurrent writers agree by
+   * construction and last-writer-wins is harmless. The per-tab budget still
+   * drives the backoff; the document records only the terminal state.
+   *
+   * Absent — never `false` — so the ordinary card carries no field for it.
+   * Cleared by a manual refresh, by pointing the card somewhere else, and by
+   * the browser coming back online, which is genuinely new information.
+   */
+  gaveUp?: true;
 }
 
 const isObj = (v: unknown): v is Record<string, unknown> => typeof v === 'object' && v !== null;
@@ -98,5 +123,8 @@ export function normalizeLinkSpec(raw: unknown): LinkSpec {
       : null,
     requestedAt: num(src.requestedAt),
     error: str(src.error, 160),
+    // `|| undefined` for the same reason `imagePending` has it: the field is
+    // absent or true, so a document that has never given up carries nothing.
+    gaveUp: src.gaveUp === true || undefined,
   };
 }

@@ -128,6 +128,22 @@ export interface UnfurlResult {
 
 export interface Unfurler {
   unfurl(roomId: string, url: string): Promise<UnfurlResult>;
+  /**
+   * The finished preview, if this room already has one. No fetching, no waiting.
+   *
+   * Exists so the route can answer a repeat without spending anybody's rate
+   * limit on it. A preview is answered in two parts, so a link costs two
+   * requests — and the second is, by construction, a request for something
+   * already in memory: it does no outbound work, touches nobody else's server,
+   * and cannot be used to make this one do either. Charging for it meant the
+   * limit had to be set for twice the traffic it was protecting against, and a
+   * board of links still queued behind it.
+   *
+   * Only *finished* previews are here. `cache` is written when the pictures
+   * settle, so a preview still collecting its image is a miss and is charged —
+   * which is right, because that request is the one doing the work.
+   */
+  peek(roomId: string, url: string): LinkPreview | null;
 }
 
 /**
@@ -588,6 +604,11 @@ export function createUnfurler(deps: {
   }
 
   return {
+    peek(roomId, url) {
+      const hit = cache.get(`${roomId}\n${url}`);
+      return hit && now() - hit.at < ttl ? hit.preview : null;
+    },
+
     async unfurl(roomId, url) {
       const key = `${roomId}\n${url}`;
       const hit = cache.get(key);

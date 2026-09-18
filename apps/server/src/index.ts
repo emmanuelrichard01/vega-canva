@@ -17,7 +17,7 @@ import { checkRoomId, sanitizeRoomId } from "./rooms";
 import { readConnectionClaim } from "./connection";
 import { mintShareToken, verifyShareToken, explainFailure, MAX_TTL_SECONDS, type ShareRole } from "./shareToken";
 import { RoomActivity } from "./roomActivity";
-import { rateLimit } from "./rateLimit";
+import { createRateLimiter, rateLimit } from "./rateLimit";
 import { createUnfurler, UnfurlError } from "./unfurl";
 import { createOriginCheck } from "./cors";
 import { checkFetchableUrl } from "./safeFetch";
@@ -577,18 +577,36 @@ const storeUnfurlImage = async (roomId: string, bytes: Buffer, image: SniffedIma
  * an ordinary request), and turns failures into a sentence the card can show.
  * The answer is always 200 with `{ meta }` or a 4xx/5xx with `{ error }`.
  */
-// A preview is now answered in two parts — words, then picture — so a link
-// costs up to two requests where it used to cost one. The second is a cache
-// hit that does no outbound work, so the budget rises rather than the cards
-// queueing behind a limit set for the old shape.
-const unfurlLimiter = rateLimit(40, 1); // 40 bursts, one preview a second after
+/**
+ * The preview limit, and why it is spent by hand rather than as middleware.
+ *
+ * What this protects is **outbound work**: a preview is up to four requests
+ * aimed at somebody else's infrastructure, and an unmetered endpoint that
+ * fetches arbitrary URLs is a machine for pointing this server at other
+ * people. A request answered from memory does none of that. It cannot reach
+ * anyone, cannot cost bandwidth beyond its own response, and cannot be used to
+ * make this server do either.
+ *
+ * As middleware the limiter could not tell those apart, so every repeat was
+ * charged like a fetch. That matters because a preview is answered in two
+ * parts — words, then picture — so the ordinary life of one link is two
+ * requests, the second of which is *by construction* a cache hit. Half the
+ * budget was being spent on work that had already been done, and the limit had
+ * been raised to compensate rather than to permit more actual fetching.
+ *
+ * So the route peeks first and only takes a token when it is about to do
+ * something. The numbers below are now a statement about real outbound load:
+ * sixty links pasted at once, then two new ones a second, which is faster than
+ * anybody pastes and slower than anybody could abuse.
+ */
+const unfurlLimiter = createRateLimiter(60, 2);
 /** Configured, or learned from the first request — see `publicApiBase` on why configured is right. */
 let unfurlApiBase = config.publicApiUrl || '';
 const unfurler = createUnfurler({
   store: (roomId, bytes, image) => storeUnfurlImage(roomId, bytes, image, unfurlApiBase),
 });
 
-app.get("/rooms/:roomId/unfurl", requireRoom, unfurlLimiter, async (req: any, res: any) => {
+app.get("/rooms/:roomId/unfurl", requireRoom, async (req: any, res: any) => {
   const roomId = sanitizeRoomId(req.params.roomId);
   const raw = typeof req.query.url === 'string' ? req.query.url.trim() : '';
   if (!roomId || !raw || raw.length > 2048) {
@@ -601,6 +619,26 @@ app.get("/rooms/:roomId/unfurl", requireRoom, unfurlLimiter, async (req: any, re
     return res.status(422).json({ error: err?.message ?? "That address cannot be previewed" });
   }
   if (!unfurlApiBase) unfurlApiBase = publicApiBase(req);
+
+  /*
+   * Already known: answer without charging. This is the second half of every
+   * two-part preview and every re-open of a board, and none of it touches
+   * anybody else's server. See `unfurlLimiter`.
+   */
+  const known = unfurler.peek(roomId, url);
+  if (known) {
+    res.setHeader("Cache-Control", "private, max-age=600");
+    return res.json({ meta: known, pending: false });
+  }
+
+  // Past here the request may do real outbound work, so it pays for one.
+  const clientId = String(req.ip || req.socket?.remoteAddress || 'unknown');
+  if (!(await unfurlLimiter.takeAsync(clientId))) {
+    // The client backs off on its own, but saying so is what lets a proxy or a
+    // future client be cleverer than a fixed delay.
+    res.setHeader("Retry-After", "5");
+    return res.status(429).json({ error: "Too many previews at once. Please try again shortly." });
+  }
 
   try {
     const { preview, pending } = await unfurler.unfurl(roomId, url);

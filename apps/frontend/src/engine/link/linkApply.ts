@@ -66,6 +66,15 @@ interface PreviewResponse {
   /** The words are final and a picture is still coming. Ask once more to collect it. */
   pending?: boolean;
   error?: string;
+  /**
+   * Whether asking again could plausibly give a different answer.
+   *
+   * The difference between "this address is not a web page" and "the preview
+   * service was restarting". Both leave the same card, and only one of them is
+   * worth a second request — retrying a 422 forever is noise aimed at our own
+   * server on behalf of a link that will never unfurl.
+   */
+  retryable?: boolean;
 }
 
 async function fetchPreview(url: string, timeoutMs = 22_000): Promise<PreviewResponse> {
@@ -78,14 +87,160 @@ async function fetchPreview(url: string, timeoutMs = 22_000): Promise<PreviewRes
     // A 404 with no JSON error is a server that predates link previews, not a
     // missing page — the page's own 404 comes back as `{ error }`.
     if (res.status === 404 && !body.error) return { error: 'This server does not have link previews yet' };
-    if (res.status === 429) return { error: 'Too many previews at once. Try again in a moment' };
-    if (!res.ok) return { error: body.error ?? `The preview service answered ${res.status}` };
+    if (res.status === 429) {
+      // The one failure that is *expected* in normal use: paste forty links at
+      // once and the limiter refuses the tail of them. Those cards are not
+      // broken, they are queued, and the retry below is what makes that true.
+      return { error: 'Too many previews at once. Trying again shortly', retryable: true };
+    }
+    if (!res.ok) {
+      /*
+       * 4xx is the server's considered answer about this address — not a web
+       * page, a blocked host, a page that does not exist. 5xx is the service
+       * having a bad moment, which is exactly what a retry is for.
+       */
+      return { error: body.error ?? `The preview service answered ${res.status}`, retryable: res.status >= 500 };
+    }
     return body;
   } catch {
-    return { error: 'The preview service could not be reached' };
+    // Aborted, offline, DNS, TLS, a proxy in the way. None of these say
+    // anything about the link itself.
+    return { error: 'The preview service could not be reached', retryable: true };
   } finally {
     clearTimeout(timer);
   }
+}
+
+/**
+ * When to try a failed preview again.
+ *
+ * ## Why an errored card used to stay errored forever
+ *
+ * `ensurePreview` returns early unless the status is `loading`, so the only
+ * route out of `error` was somebody noticing the card and choosing "Refresh
+ * preview". That made every *transient* failure permanent: a server restart
+ * mid-paste, a rate limit on a bulk paste, a dropped connection, a board opened
+ * while the API was still waking up. The link was fine and the card was dead,
+ * and nothing in the interface suggested that pressing anything would help.
+ *
+ * ## Why these three numbers
+ *
+ * The first is short, because the failures worth catching quickly — a 429 from
+ * pasting a boardful at once, a blip — are over in seconds.
+ *
+ * The second clears **the server's own failure cache**. `unfurl.ts` remembers a
+ * refusal for `FAILURE_TTL_MS` (60s) so a dead link is not re-chased on every
+ * paste, which means an earlier retry is answered from that memory rather than
+ * by a real attempt. Seventy seconds is the first moment a page-level failure
+ * gets genuinely re-tried, and the two numbers are related on purpose: if that
+ * TTL moves, this should move with it.
+ *
+ * The last is a long shot for a site that was having an outage.
+ *
+ * Three attempts, then it stops and the manual refresh is the remaining route.
+ * An unbounded retry is a background loop pointed at somebody else's server,
+ * multiplied by everyone with the board open.
+ */
+const RETRY_DELAYS_MS = [8_000, 70_000, 240_000];
+
+/**
+ * The waiting timer and the spent budget, kept apart.
+ *
+ * They have different lifetimes, and conflating them is a retry loop: the timer
+ * is cancelled every time a fetch begins — including the fetch the timer itself
+ * just triggered — so a single record holding both would have its attempt count
+ * wiped on the way into every retry, and every retry would be the first one,
+ * eight seconds apart, forever.
+ *
+ * The count belongs to *the URL in this node*, and only a new address or a
+ * success is allowed to clear it.
+ */
+const retryTimers = new Map<string, number>();
+const retryBudget = new Map<string, { url: string; attempts: number }>();
+
+/** Stop a pending retry, without forgiving the ones already spent. */
+function clearRetryTimer(id: string): void {
+  const timer = retryTimers.get(id);
+  if (timer === undefined) return;
+  window.clearTimeout(timer);
+  retryTimers.delete(id);
+}
+
+/** Stop retrying and wipe the slate: a success, a new address, or a manual refresh. */
+function forgetRetries(id: string): void {
+  clearRetryTimer(id);
+  retryBudget.delete(id);
+}
+
+/**
+ * Put a failed card back in the queue, once the wait is up.
+ *
+ * It does not fetch. It sets the node back to `loading` and lets the ordinary
+ * path take over, which matters when several people have the board open: going
+ * through `loading` means the existing claim (`requestedAt`, `CLAIM_MS`) still
+ * decides who actually fetches, so five tabs retrying produce one request. A
+ * forced fetch from each of them would produce five.
+ */
+function scheduleRetry(id: string, url: string): void {
+  const spent = retryBudget.get(id);
+  // A different address in the same node is a different question: start over.
+  const attempts = spent && spent.url === url ? spent.attempts : 0;
+  const wait = RETRY_DELAYS_MS[attempts];
+  if (wait === undefined) {
+    /*
+     * Out of attempts. Recorded on the node rather than only here, so the next
+     * tab to open this board does not spend its own three discovering the same
+     * thing — see `gaveUp` in `linkTypes.ts`. The card keeps what it has and
+     * the manual refresh remains.
+     */
+    const node = liveNode(id);
+    if (node && node.link.url === url && !node.link.gaveUp) {
+      applyNodePatches([{ id, changes: { link: { ...node.link, gaveUp: true } } }]);
+    }
+    return;
+  }
+
+  clearRetryTimer(id);
+  // Counted when the retry is *booked*, not when it runs, so a timer that is
+  // cancelled by something else still costs an attempt. Otherwise a card that
+  // keeps being nudged could book the first delay indefinitely.
+  retryBudget.set(id, { url, attempts: attempts + 1 });
+
+  const timer = window.setTimeout(() => {
+    retryTimers.delete(id);
+    const node = liveNode(id);
+    // Gone, pointed elsewhere, or somebody already fixed it by hand.
+    if (!node || node.link.url !== url || node.link.status !== 'error') return;
+    applyNodePatches([
+      { id, changes: { link: { ...node.link, status: 'loading', requestedAt: undefined, error: undefined } } },
+    ]);
+  }, wait);
+
+  retryTimers.set(id, timer);
+}
+
+/**
+ * Coming back online is worth one more try, whatever the count had reached.
+ *
+ * A board opened on a train, or while the API was still starting, can exhaust
+ * every attempt against a network that was never going to answer. The moment
+ * the browser says it is back is new information, and it is the one event that
+ * justifies resetting the budget rather than spending from it.
+ */
+if (typeof window !== 'undefined') {
+  window.addEventListener('online', () => {
+    const { objects } = useStore.getState();
+    for (const [id, node] of Object.entries(objects)) {
+      if (node.type !== 'link' || node.link.status !== 'error') continue;
+      forgetRetries(id);
+      // Being back on the network is new evidence about every failure, so a
+      // card that gave up while offline is given its budget back too.
+      if (node.link.gaveUp) {
+        applyNodePatches([{ id, changes: { link: { ...node.link, gaveUp: undefined } } }]);
+      }
+      scheduleRetry(id, node.link.url);
+    }
+  });
 }
 
 /** How long until someone else's claim on a fetch may be taken over, in ms. */
@@ -114,6 +269,11 @@ export async function ensurePreview(id: string, force = false): Promise<void> {
   // it has had time to go stale — see `claimRemaining`.
   if (!force && claimRemaining(link) > 0) return;
 
+  // A fetch is under way, so a timer waiting to start one is redundant — but
+  // the attempts already spent are not forgiven here, or the retry that just
+  // fired would reset its own budget and the backoff would never advance.
+  clearRetryTimer(id);
+
   inFlight.add(id);
   applyNodePatches([{ id, changes: { link: { ...link, status: 'loading', requestedAt: Date.now(), error: undefined } } }]);
 
@@ -126,6 +286,11 @@ export async function ensurePreview(id: string, force = false): Promise<void> {
       applyNodePatches([
         { id, changes: { link: { ...failed.link, status: 'error', requestedAt: undefined, error: result.error ?? 'No preview' } } },
       ]);
+      // A failure that could go the other way next time gets a next time. One
+      // that could not — a blocked address, a page that does not exist — keeps
+      // the card it has, and "Refresh preview" remains for anyone who disagrees.
+      // A link somebody already gave up on is not re-litigated by every tab.
+      if (result.retryable && !failed.link.gaveUp) scheduleRetry(id, failed.link.url);
     }
     return;
   }
@@ -145,15 +310,109 @@ export async function ensurePreview(id: string, force = false): Promise<void> {
 function write(id: string, incoming: Omit<LinkMeta, 'fetchedAt'>, imagePending: boolean): void {
   const node = liveNode(id);
   if (!node) return;
+  // It worked. Whatever it took to get here is not held against the next
+  // failure, which may be years and a hundred edits away.
+  forgetRetries(id);
   const meta: LinkMeta = { ...incoming, imagePending: imagePending || undefined, fetchedAt: Date.now() };
   const changes: Record<string, unknown> = {
-    link: { ...node.link, status: 'ready', meta, requestedAt: undefined, error: undefined },
+    // `gaveUp` goes with the error it belonged to. A card that has a preview
+    // has no conclusion left to carry, and leaving the flag on would deny the
+    // next failure — possibly years and a hundred edits away — its retries.
+    link: { ...node.link, status: 'ready', meta, requestedAt: undefined, error: undefined, gaveUp: undefined },
   };
   // A vertical card sized for a picture that turned out not to exist gives the
   // empty space back — but only once we know there is no picture coming.
   const resolved = resolveDisplay(node.link.display, node.width, node.height, Boolean(providerFor(node.link.url).embed));
   if (resolved === 'vertical' && !meta.image && !imagePending && node.height > 200) changes.height = 176;
   applyNodePatches([{ id, changes }]);
+}
+
+/* ------------------------------------------------------------------ staleness */
+
+/**
+ * How old a preview may be before it is worth asking the page again.
+ *
+ * A card is a copy of somebody else's page, taken once. Pages get retitled,
+ * rewritten and taken down, and `meta.fetchedAt` has been recorded since
+ * previews existed with nothing ever reading it — so a card fetched a year ago
+ * described a year-old page and said so to nobody.
+ *
+ * Thirty days rather than something eager. The failure this guards against is
+ * slow (a stale headline), and the failure an eager refresh *causes* is not: a
+ * new picture is stored as new room media against the room's quota, so a board
+ * that refreshes often accumulates orphaned images. Monthly is often enough to
+ * matter and rare enough that almost no board ever pays for it.
+ */
+const STALE_AFTER_MS = 30 * 24 * 60 * 60 * 1000;
+
+/**
+ * At most this many stale cards are refreshed per tab, per session.
+ *
+ * A board is allowed to hold three hundred links. Opening it must not become
+ * three hundred outbound fetches, however old they are, and the rate limiter
+ * refusing the tail of them is not a substitute for not asking.
+ */
+const STALE_BUDGET = 8;
+let staleBudget = STALE_BUDGET;
+
+/** Nodes this tab has already considered, so a re-render is not a second look. */
+const staleSeen = new Set<string>();
+
+/**
+ * Freshen a preview that has aged out, without the card ever showing it.
+ *
+ * ## Why this does not go through `ensurePreview`
+ *
+ * That path sets the node to `loading`, which is right for a card that has
+ * nothing to show and wrong for one that does: the card would drop its title
+ * and picture for a skeleton, on open, for a page that is almost certainly
+ * unchanged. A refresh nobody asked for must be invisible unless it succeeds.
+ *
+ * So this fetches quietly and writes only on success. A failure leaves the
+ * existing card exactly as it was — the old preview is better than an error
+ * about a refresh the reader never requested — and does not schedule retries,
+ * because there is nothing broken to retry.
+ *
+ * The claim is still taken, so one collaborator does this rather than all of
+ * them, and the stagger keeps a boardful from arriving as a burst.
+ */
+export function refreshIfStale(id: string): void {
+  if (staleBudget <= 0 || staleSeen.has(id)) return;
+  const node = liveNode(id);
+  if (!node) return;
+  const { link } = node;
+  if (link.status !== 'ready' || !link.meta) return;
+  // `fetchedAt` is 0 on a preview written before it was recorded. That is not
+  // evidence of age, so it is left alone rather than treated as ancient.
+  if (!link.meta.fetchedAt || Date.now() - link.meta.fetchedAt < STALE_AFTER_MS) return;
+  // Somebody else is already on it.
+  if (claimRemaining(link) > 0) return;
+
+  staleSeen.add(id);
+  staleBudget--;
+
+  // Spread over a minute, so a board of aged links does not open as a burst
+  // against the preview limit — or against the sites being previewed.
+  window.setTimeout(() => {
+    void (async () => {
+      const current = liveNode(id);
+      if (!current || current.link.url !== link.url || current.link.status !== 'ready') return;
+      // Claimed only now, so the mark is fresh when the fetch actually starts.
+      applyNodePatches([{ id, changes: { link: { ...current.link, requestedAt: Date.now() } } }]);
+
+      const result = await fetchPreview(link.url);
+      const after = liveNode(id);
+      if (!after || after.link.url !== link.url) return;
+
+      if (!result.meta) {
+        // Quietly put the claim down. The card keeps the preview it had.
+        applyNodePatches([{ id, changes: { link: { ...after.link, requestedAt: undefined } } }]);
+        return;
+      }
+      write(id, result.meta, result.pending === true);
+      if (result.pending) void collectImage(id, link.url);
+    })();
+  }, Math.random() * 60_000);
 }
 
 /**
@@ -205,12 +464,21 @@ export function setLinkDisplay(node: LinkNode, display: LinkDisplay): void {
 export function replaceLinkUrl(node: LinkNode, rawUrl: string): boolean {
   const parsed = parseLink(rawUrl);
   if (!parsed) return false;
-  applyNodePatches([{ id: node.id, changes: { link: { ...node.link, url: parsed.url.href, status: 'loading', meta: null, requestedAt: undefined } } }]);
+  // A new address is a new question, so it gets the full retry budget rather
+  // than whatever the previous one had left.
+  forgetRetries(node.id);
+  applyNodePatches([{ id: node.id, changes: { link: { ...node.link, url: parsed.url.href, status: 'loading', meta: null, requestedAt: undefined, gaveUp: undefined } } }]);
   void ensurePreview(node.id, true);
   return true;
 }
 
 export function refreshPreview(node: LinkNode): void {
+  // Asked for by hand, which outranks both a budget this tab spent on its own
+  // and a conclusion some other tab reached and wrote down.
+  forgetRetries(node.id);
+  if (node.link.gaveUp) {
+    applyNodePatches([{ id: node.id, changes: { link: { ...node.link, gaveUp: undefined } } }]);
+  }
   void ensurePreview(node.id, true);
 }
 

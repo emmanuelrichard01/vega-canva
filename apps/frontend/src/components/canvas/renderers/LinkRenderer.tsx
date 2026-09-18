@@ -5,7 +5,7 @@ import type { LinkNode } from '../../../engine/model/schema';
 import { coverCrop, DESC_LINE, layoutLinkCard, resolveDisplay, TITLE_LINE } from '../../../engine/link/linkLayout';
 import { providerFor, siteDomain } from '../../../engine/link/linkProviders';
 import { LINK_CARD } from '../../../engine/link/linkStyle';
-import { claimRemaining, ensurePreview } from '../../../engine/link/linkApply';
+import { claimRemaining, ensurePreview, refreshIfStale } from '../../../engine/link/linkApply';
 import { useStore } from '../../../hooks/useStore';
 
 /**
@@ -43,7 +43,13 @@ export const LinkRenderer: React.FC<{ node: LinkNode }> = ({ node }) => {
 
   // Fill in the preview, now or once someone else's stale claim lapses.
   React.useEffect(() => {
-    if (link.status !== 'loading') return;
+    if (link.status !== 'loading') {
+      // A card that already has a preview is the only one that can have an
+      // *old* one. Bounded, staggered and invisible unless it succeeds — see
+      // `refreshIfStale`.
+      refreshIfStale(node.id);
+      return;
+    }
     const wait = claimRemaining(link);
     if (wait === 0) {
       void ensurePreview(node.id);

@@ -3,15 +3,21 @@
  *
  * ## What this protects
  *
- * The two REST routes. Uploads cost object storage and bandwidth; the history
+ * Three REST routes. Uploads cost object storage and bandwidth; the history
  * endpoint reads and serialises up to `MAX_UPDATES_PER_ROOM` rows of binary
- * data per call, which is cheap once and expensive in a loop.
+ * data per call, which is cheap once and expensive in a loop; and link
+ * previews aim outbound requests at addresses a stranger chose.
+ *
+ * The preview route uses `createRateLimiter` directly rather than the
+ * middleware below, because it is the one that can tell in advance whether a
+ * request will do any of the work being protected against — a preview it has
+ * already fetched is answered from memory and charged nothing. See the note on
+ * `unfurlLimiter` in `index.ts`.
  *
  * ## Where the buckets actually live: in this process
  *
- * **Nothing passes a Redis client.** `index.ts` constructs both limiters as
- * `rateLimit(30, 1)` and `rateLimit(60, 2)`, so every request takes the
- * in-memory path and the Lua below is unreachable. Run two instances behind a
+ * **Nothing passes a Redis client**, so every request takes the in-memory path
+ * and the Lua below is unreachable. Run two instances behind a
  * load balancer and a client gets one full allowance per instance, which is
  * the usual way a limiter quietly stops limiting: nothing fails, the numbers
  * are simply wrong, and only in the deployment where it matters most.

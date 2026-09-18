@@ -538,6 +538,82 @@ describe('createUnfurler', () => {
     expect(iconCalls).toHaveLength(1);
   });
 
+  it('peeks at a finished preview without fetching, so a repeat costs no budget', async () => {
+    let calls = 0;
+    const unfurler = createUnfurler({
+      fetch: async (url) => {
+        calls++;
+        if (url.endsWith('/a')) return ok(url, '<head><title>Known</title></head>');
+        return ok(url, '', 'text/plain', 404);
+      },
+      store: async () => null,
+    });
+
+    // Nothing known yet: a peek must not fetch, and must not invent an answer.
+    expect(unfurler.peek('r', 'https://acme.test/a')).toBeNull();
+    expect(calls).toBe(0);
+
+    const { pending } = await unfurler.unfurl('r', 'https://acme.test/a');
+    expect(pending).toBe(false);
+    const spent = calls;
+
+    const known = unfurler.peek('r', 'https://acme.test/a');
+    expect(known?.title).toBe('Known');
+    // The whole point: the repeat did no work at all.
+    expect(calls).toBe(spent);
+  });
+
+  it('keeps one room\'s preview out of another\'s peek', async () => {
+    // The stored pictures are room media, so the cache is per room and the
+    // peek has to be too — otherwise a room could serve a neighbour's card.
+    const unfurler = createUnfurler({
+      fetch: async (url) => ok(url, '<head><title>Shared</title></head>'),
+      store: async () => null,
+    });
+    await unfurler.unfurl('room-a', 'https://acme.test/x');
+    expect(unfurler.peek('room-a', 'https://acme.test/x')).not.toBeNull();
+    expect(unfurler.peek('room-b', 'https://acme.test/x')).toBeNull();
+  });
+
+  it('does not peek at a preview whose picture is still coming', async () => {
+    /**
+     * A pending preview is not in the finished cache, so the collecting
+     * request is a miss and is charged — which is right, because that request
+     * is the one still doing the work. Serving it from a peek would hand back
+     * the picture-less card for the rest of the TTL.
+     */
+    let release: (() => void) | null = null;
+    const held = new Promise<void>((resolve) => {
+      release = resolve;
+    });
+    const unfurler = createUnfurler({
+      graceMs: 0,
+      fetch: async (url) => {
+        if (url.endsWith('/shot.png')) {
+          await held;
+          return ok(url, png(1200, 630), 'image/png');
+        }
+        return ok(url, '<head><title>T</title><meta property="og:image" content="/shot.png"></head>');
+      },
+      store: async () => 'https://api.test/shot.png',
+    });
+
+    const first = await unfurler.unfurl('r', 'https://acme.test/a');
+    expect(first.pending).toBe(true);
+    expect(unfurler.peek('r', 'https://acme.test/a')).toBeNull();
+
+    release!();
+    /*
+     * Waited for rather than assumed. With no grace the call above returns
+     * without waiting on the picture, so the finished card reaches the cache a
+     * few microtasks later — asserting straight after the release reads the
+     * cache before `dress` has written to it, which is a racing test rather
+     * than a real failure.
+     */
+    await new Promise((resolve) => setTimeout(resolve, 10));
+    expect(unfurler.peek('r', 'https://acme.test/a')?.image).toBe('https://api.test/shot.png');
+  });
+
   it('shares one fetch between simultaneous requests', async () => {
     let calls = 0;
     const unfurler = createUnfurler({

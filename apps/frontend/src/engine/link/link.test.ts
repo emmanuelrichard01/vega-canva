@@ -83,4 +83,30 @@ describe('spec', () => {
     expect(s.meta?.image).toBeUndefined();
     expect(s.meta?.title).toBe('T');
   });
+
+  it('carries "gave up" across the document boundary, and only as true', () => {
+    /**
+     * It is the one retry fact that is shared. The schedule is a timer and
+     * belongs to a tab; the conclusion is about the link and belongs to the
+     * board, or every tab that opens it re-spends three attempts discovering
+     * what the last four already found out.
+     */
+    expect(normalizeLinkSpec({ url: 'https://a.test', gaveUp: true }).gaveUp).toBe(true);
+  });
+
+  it('never stores a false "gave up", so an ordinary card carries no field', () => {
+    // Same rule as `imagePending`: absent or true. A `false` in the document is
+    // a value that means the same as nothing and costs a field on every link.
+    for (const raw of [false, 0, '', 'yes', null, undefined]) {
+      expect(normalizeLinkSpec({ url: 'https://a.test', gaveUp: raw }).gaveUp, String(raw)).toBeUndefined();
+    }
+  });
+
+  it('records when a preview was fetched, since staleness is measured from it', () => {
+    // `refreshIfStale` reads this. A preview written before the field existed
+    // normalises to 0, which it treats as "no evidence of age" rather than as
+    // ancient — so an old board does not refetch every link on open.
+    expect(normalizeLinkSpec({ url: 'https://a.test', meta: { fetchedAt: 1700000000000 } }).meta?.fetchedAt).toBe(1700000000000);
+    expect(normalizeLinkSpec({ url: 'https://a.test', meta: { title: 'T' } }).meta?.fetchedAt).toBe(0);
+  });
 });
