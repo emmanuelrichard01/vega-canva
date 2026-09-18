@@ -310,6 +310,13 @@ describe('every walkthrough can be finished', () => {
       node('frame-1', { type: 'frame' }),
       node('in-frame', { frameId: 'frame-1' }),
       node('path-1', { type: 'path' }),
+      // A card that finished unfurling, for `unfurled`.
+      node('link-1', {
+        type: 'link',
+        link: { url: 'https://a.test', display: 'auto', status: 'ready' },
+      } as Partial<AnyNode>),
+      // Present in `before` below and at a different place here, for `moved`.
+      node('mover', { x: 400 }),
       node('route', {
         geometry: { kind: 'line', vertices: [{ x: 0, y: 0 }, { x: 5, y: 5 }, { x: 9, y: 1 }] },
       } as Partial<AnyNode>),
@@ -322,10 +329,24 @@ describe('every walkthrough can be finished', () => {
     ['shape-a', 'shape-b']
   );
 
+  /**
+   * The board as it was, holding exactly one node: the one that has since
+   * moved.
+   *
+   * It cannot be `digest({})`. `moved` asks whether something that was already
+   * here has changed position, and against an empty digest nothing ever was —
+   * so the observation would be unsatisfiable by construction and the test
+   * would report the product broken.
+   *
+   * It must also hold *only* `mover`, because every other observation here
+   * asks what is **new**, and a node listed in `before` is not new.
+   */
+  const before = digest({ mover: node('mover') as never });
+
   for (const walk of WALKTHROUGHS) {
     it(`${walk.lesson} has no step that cannot be reached`, () => {
       walk.steps.forEach((at, i) => {
-        expect(satisfied(at.observe, empty, board), `${walk.lesson} step ${i}`).toBe(true);
+        expect(satisfied(at.observe, before, board), `${walk.lesson} step ${i}`).toBe(true);
       });
     });
   }

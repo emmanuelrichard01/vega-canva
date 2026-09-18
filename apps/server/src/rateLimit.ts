@@ -14,29 +14,36 @@
  * already fetched is answered from memory and charged nothing. See the note on
  * `unfurlLimiter` in `index.ts`.
  *
- * ## Where the buckets actually live: in this process
+ * ## Where the buckets live
  *
- * **Nothing passes a Redis client**, so every request takes the in-memory path
- * and the Lua below is unreachable. Run two instances behind a
+ * In Redis when `REDIS_HOST` is set, and in this process otherwise.
+ *
+ * This paragraph used to say that nothing ever passed a client, so the Lua
+ * below was unreachable and every limit was per-process. `index.ts` builds one
+ * from config now — see `redisClient.ts` — and hands it to all three limiters,
+ * so the note below about what happens without one is a description of the
+ * single-instance deployment rather than of every deployment.
+ *
+ * It is still worth stating plainly, because it is the failure that does not
+ * announce itself. Run two instances behind a
  * load balancer and a client gets one full allowance per instance, which is
  * the usual way a limiter quietly stops limiting: nothing fails, the numbers
  * are simply wrong, and only in the deployment where it matters most.
  *
- * That is correct for the current deployment -- one Render instance -- and it
- * is written down here because the paragraph that used to sit in this spot
- * claimed the opposite. It said all instances "share the exact same rate
- * limit allowances", which was true of the Lua script and false of the
- * server, and it replaced an accurate warning. The code got no safer; the
- * document that told the truth was the thing that changed.
+ * A paragraph here once claimed the opposite -- that all instances "share the
+ * exact same rate limit allowances" -- which was true of the Lua script and
+ * false of the server, and it replaced an accurate warning. The code got no
+ * safer; the document that told the truth was the thing that changed. It is
+ * true now, and it is true because the wiring exists, not because the sentence
+ * was rewritten.
  *
- * ## Turning the Redis path on
+ * ## What happens when Redis goes away
  *
- * Pass a client to `rateLimit(...)`. The Lua below is a correct atomic token
- * bucket and is covered by tests; only the wiring is missing. Do it in the
- * same change as horizontal scaling, not after -- and construct a client from
- * config rather than reaching into the Hocuspocus Redis extension's private
- * `.pub` field, which is what `quota.ts` currently does and what will break
- * silently on a library upgrade.
+ * Each limiter falls back to its own memory for the duration, which is the
+ * right failure: an outage should make the limits per-instance again, not
+ * refuse traffic. `takeAsync` catches and degrades, and the client itself
+ * fails commands fast rather than queueing them, so a limiter never waits on a
+ * connection that is not coming back.
  *
  * The WebSocket path is not limited at all. Connection cost is bounded by
  * Hocuspocus and by the document itself, and a per-message limiter on a CRDT

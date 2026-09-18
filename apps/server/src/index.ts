@@ -20,6 +20,7 @@ import { RoomActivity } from "./roomActivity";
 import { createRateLimiter, rateLimit } from "./rateLimit";
 import { createUnfurler, UnfurlError } from "./unfurl";
 import { createOriginCheck } from "./cors";
+import { createSharedRedis } from "./redisClient";
 import { checkFetchableUrl } from "./safeFetch";
 import type { SniffedImage } from "./unfurlParse";
 import { registerShareRoutes } from "./share/routes";
@@ -145,8 +146,33 @@ app.use(express.json());
 
 // Per-process, which is correct for one instance and silently wrong for many.
 // See the note in `rateLimit.ts`.
-const mediaUploadLimiter = rateLimit(30, 1); // 30 bursts, 1 upload per second refill
-const historyLimiter = rateLimit(60, 2);     // 60 bursts, 2 requests per second refill
+/**
+ * The connection the limits and the quota share, when there is one.
+ *
+ * Built here, above everything that needs it, from config rather than from the
+ * Hocuspocus extension's private internals. `rateLimit.ts` has asked for this
+ * in its own header since it was written: without it every limiter is
+ * per-process, so two instances behind a load balancer give each client two
+ * full allowances and the limit quietly stops limiting — nothing fails, the
+ * numbers are simply wrong, and only in the deployment where it matters.
+ *
+ * `null` on a single-instance deployment, which is the honest answer there:
+ * one process's memory *is* the shared state when there is one process.
+ */
+const sharedRedis = createSharedRedis(
+  { host: config.redisHost, port: config.redisPort },
+  (message, meta) => logger.warn(message, meta)
+);
+if (sharedRedis) {
+  // The distributed IP quota, from a client of its own rather than from
+  // `(extension as any).pub` — which works until a library upgrade returns
+  // undefined, at which point the quota silently becomes per-instance.
+  ipDailyTracker.setRedis(sharedRedis as never);
+  logger.info('Shared Redis connected: limits and IP quotas are cluster-wide');
+}
+
+const mediaUploadLimiter = rateLimit(30, 1, sharedRedis, 'rl:media'); // 30 bursts, 1 upload per second refill
+const historyLimiter = rateLimit(60, 2, sharedRedis, 'rl:history');   // 60 bursts, 2 requests per second refill
 
 /**
  * Compare a supplied token against the configured one without leaking its
@@ -599,7 +625,7 @@ const storeUnfurlImage = async (roomId: string, bytes: Buffer, image: SniffedIma
  * sixty links pasted at once, then two new ones a second, which is faster than
  * anybody pastes and slower than anybody could abuse.
  */
-const unfurlLimiter = createRateLimiter(60, 2);
+const unfurlLimiter = createRateLimiter(60, 2, sharedRedis, 'rl:unfurl');
 /** Configured, or learned from the first request — see `publicApiBase` on why configured is right. */
 let unfurlApiBase = config.publicApiUrl || '';
 const unfurler = createUnfurler({
@@ -807,10 +833,15 @@ if (process.env.REDIS_HOST) {
     host: process.env.REDIS_HOST,
   });
   extensions.push(redisExtension);
-  if ((redisExtension as any).pub || (redisExtension as any).redis) {
-    ipDailyTracker.setRedis((redisExtension as any).pub || (redisExtension as any).redis);
-  }
-  console.log("Redis extension enabled (multi-instance fan-out and distributed IP quotas)");
+  /*
+   * The IP quota used to be given `(redisExtension as any).pub` here. It has
+   * its own connection now — see `sharedRedis` above — so the extension is left
+   * to the one job it is for, which is fanning document updates and awareness
+   * between instances. Reading a library's private field worked right up until
+   * it returned `undefined`, and the failure was silent: the quota fell back to
+   * memory and stopped being shared.
+   */
+  console.log("Redis extension enabled (multi-instance document fan-out)");
 }
 
 extensions.push(

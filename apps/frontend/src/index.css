@@ -11315,6 +11315,144 @@ html.dark-theme,
   98%,100% { opacity: 0; transform: none; }
 }
 
+/* --- boolean: the four results, against the two shapes that made them ----
+   A four-beat carousel. Each result holds for most of its beat and crosses
+   over quickly, because the thing being compared is four *states*, not the
+   transitions between them -- a slow morph would spend most of the loop
+   showing a shape that is not any of the four answers. */
+.demo__bool {
+  opacity: 0;
+  animation: demoBool 10s var(--ease-settle) infinite;
+}
+.demo__bool--0 { animation-delay: 0s; }
+.demo__bool--1 { animation-delay: 2.5s; }
+.demo__bool--2 { animation-delay: 5s; }
+.demo__bool--3 { animation-delay: 7.5s; }
+
+@keyframes demoBool {
+  0%          { opacity: 0; }
+  3%, 22%     { opacity: 1; }
+  25%, 100%   { opacity: 0; }
+}
+
+/* --- pen: the same anchors, clicked and then dragged --------------------- */
+
+/* The two runs cross-fade rather than morphing. `d` is not reliably animatable
+   from CSS, and the point is the comparison anyway: these are two readings of
+   one set of anchors, not a shape changing into another shape. */
+.demo__pen { animation: demoPenSwap 5.6s var(--ease-settle) infinite; }
+.demo__pen--corner { animation-name: demoPenCorner; }
+.demo__pen--smooth { animation-name: demoPenSmooth; }
+
+@keyframes demoPenCorner {
+  0%, 38%   { opacity: 1; }
+  46%, 92%  { opacity: 0; }
+  100%      { opacity: 1; }
+}
+@keyframes demoPenSmooth {
+  0%, 38%   { opacity: 0; }
+  46%, 92%  { opacity: 1; }
+  100%      { opacity: 0; }
+}
+
+/* The handle arrives with the curve, because it is what caused it. Scaled from
+   the middle so it reads as being pulled out of the anchor rather than sliding
+   in from the side. */
+.demo__handle {
+  opacity: 0;
+  transform-box: fill-box;
+  transform-origin: center;
+  animation: demoPenHandle 5.6s var(--ease-settle) infinite;
+}
+
+@keyframes demoPenHandle {
+  0%, 38%   { opacity: 0; transform: scaleX(0.1); }
+  52%, 92%  { opacity: 1; transform: scaleX(1); }
+  100%      { opacity: 0; transform: scaleX(0.1); }
+}
+
+/* --- sizing: three ways a text box decides its own size ------------------ */
+.demo__size {
+  opacity: 0;
+  animation: demoSize 9s var(--ease-settle) infinite;
+}
+.demo__size--auto-w { animation-delay: 0s; }
+.demo__size--auto-h { animation-delay: 3s; }
+.demo__size--fixed  { animation-delay: 6s; }
+
+@keyframes demoSize {
+  0%         { opacity: 0; }
+  4%, 29%    { opacity: 1; }
+  33%, 100%  { opacity: 0; }
+}
+
+/* The beat that earns the scene: on a fixed box the *type* scales. Anchored to
+   the box's middle so it grows where the text is rather than drifting out of
+   the frame it is fixed inside. */
+.demo__size-type {
+  transform-box: fill-box;
+  transform-origin: center;
+  animation: demoTypeScale 9s var(--ease-settle) infinite;
+  animation-delay: 6s;
+}
+
+@keyframes demoTypeScale {
+  0%, 6%     { transform: scale(1); }
+  22%, 33%   { transform: scale(1.35); }
+  40%, 100%  { transform: scale(1); }
+}
+
+/* --- unfurl: an address becoming a card --------------------------------- */
+
+/* The bar shrinks away from its centre as the card opens over it, which is the
+   shape of what actually happens: the text is replaced in place, not pushed
+   aside. */
+.demo__url {
+  transform-box: fill-box;
+  transform-origin: center;
+  animation: demoUrlGo 6s var(--ease-settle) infinite;
+}
+.demo__card {
+  opacity: 0;
+  transform-box: fill-box;
+  transform-origin: center;
+  animation: demoCardIn 6s var(--ease-settle) infinite;
+}
+
+@keyframes demoUrlGo {
+  0%, 22%    { opacity: 1; transform: scaleX(1); }
+  34%, 88%   { opacity: 0; transform: scaleX(0.5); }
+  100%       { opacity: 1; transform: scaleX(1); }
+}
+@keyframes demoCardIn {
+  0%, 26%    { opacity: 0; transform: scale(0.94); }
+  40%, 88%   { opacity: 1; transform: scale(1); }
+  100%       { opacity: 0; transform: scale(0.94); }
+}
+
+/* --- code-shapes: code standing up as objects ---------------------------- */
+
+/* Each part lands on its own beat. Arriving together would read as one picture
+   fading in, which is the opposite of the claim -- that what you get is
+   separate objects rather than a rendering of them. */
+.demo__built-a,
+.demo__built-b,
+.demo__built-link {
+  opacity: 0;
+  transform-box: fill-box;
+  transform-origin: center;
+  animation: demoBuild 6s var(--ease-settle) infinite;
+}
+.demo__built-a { animation-delay: 0.3s; }
+.demo__built-b { animation-delay: 0.9s; }
+.demo__built-link { animation-delay: 1.5s; }
+
+@keyframes demoBuild {
+  0%         { opacity: 0; transform: scale(0.7); }
+  8%, 72%    { opacity: 1; transform: scale(1); }
+  84%, 100%  { opacity: 0; transform: scale(0.7); }
+}
+
 @media (prefers-reduced-motion: reduce) {
   /* Every scene resolves to its finished state rather than freezing mid-way:
      a half-drawn line with the animation stopped is a picture of a bug. */
@@ -11327,6 +11465,24 @@ html.dark-theme,
   .demo__cursor--route { transform: translate(144px, 26px); }
   .demo__cursor--field,
   .demo__field { transform: translate(84px, 46px); }
+
+  /* A carousel has no single finished state, so each resolves to the frame
+     that carries its lesson: the *result* of a boolean rather than its
+     operands, the curve rather than the corners it is being contrasted with,
+     and the card rather than the address it replaced. */
+  .demo__bool { opacity: 0; }
+  .demo__bool--2 { opacity: 1; }
+  .demo__pen--corner { opacity: 0; }
+  .demo__pen--smooth,
+  .demo__handle { opacity: 1; transform: none; }
+  .demo__size { opacity: 0; }
+  .demo__size--auto-h { opacity: 1; }
+  .demo__size-type { transform: none; }
+  .demo__url { opacity: 0; }
+  .demo__card,
+  .demo__built-a,
+  .demo__built-b,
+  .demo__built-link { opacity: 1; transform: none; }
 }
 
 /* ===========================================================================

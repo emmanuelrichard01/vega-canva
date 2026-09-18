@@ -29,6 +29,10 @@ export const TOOL_NAMES: Record<string, string> = {
   text: 'Text',
   shape: 'Shape',
   'shape-line': 'Line / Arrow: press again to switch',
+  // The other half of the line seat. It has no key of its own — the line key
+  // toggles between the two — but it is a tool the coach can teach, and a tool
+  // the reference cannot name is a tool with two half-descriptions.
+  'shape-arrow': 'Arrow: press the line key again to switch back',
   frame: 'Frame',
   grid: 'Grid: lay out a composition',
   chart: 'Chart: bars, lines, pies',

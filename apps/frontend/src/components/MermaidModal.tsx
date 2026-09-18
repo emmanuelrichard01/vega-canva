@@ -112,8 +112,20 @@ flowchart LR
         M --> N(((Double circle)))
     end
 
+    %% Mermaid 11 named shapes. These have no bracket spelling at all, which
+    %% is why the "@{ shape: ... }" form exists. Most accept several names:
+    %% "doc" and "document" are the same shape, as are "tri" and "triangle".
+    subgraph Named ["Named shapes (@{ shape: ... })"]
+        O@{ shape: doc, label: "Document" } --> P@{ shape: win-pane, label: "Internal storage" }
+        P --> Q@{ shape: delay, label: "Delay" }
+        Q --> R@{ shape: manual-input, label: "Manual input" }
+        R --> S@{ shape: notch-rect, label: "Card" }
+        S --> T@{ shape: tri, label: "Extract" }
+    end
+
     D --> E
-    H --> I`,
+    H --> I
+    N --> O`,
   },
   {
     id: 'architecture',
