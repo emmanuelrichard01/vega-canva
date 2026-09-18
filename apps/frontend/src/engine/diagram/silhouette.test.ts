@@ -101,7 +101,9 @@ describe('the preview cannot disagree with the board', () => {
   it('uses a real flowchart symbol for each shape rather than a near-enough one', () => {
     // The mappings that were previously rect/polygon approximations.
     expect(SHAPE_SPECS.subroutine.kind).toBe('predefined_process');
-    expect(SHAPE_SPECS.database.kind).toBe('database');
+    // A drum, not the shelved `database` kind: mermaid draws `[(text)]` as one
+    // cylinder, and the stack's decks cross the label at every box size.
+    expect(SHAPE_SPECS.database.kind).toBe('cylinder');
     expect(SHAPE_SPECS.hexagon.kind).toBe('preparation');
     expect(SHAPE_SPECS.stadium.kind).toBe('capsule');
     expect(SHAPE_SPECS.diamond.kind).toBe('diamond');

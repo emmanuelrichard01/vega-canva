@@ -137,7 +137,7 @@ export const LESSONS: readonly Lesson[] = [
     id: 'chart-data',
     trigger: { on: 'tool', tools: ['chart'] },
     title: 'A chart is a spreadsheet you can see',
-    gist: 'The numbers behind a chart are a real sheet — select a range, paste a block in from Excel or Sheets, and watch the chart redraw beside them as you type.',
+    gist: 'The numbers behind a chart are a real sheet. Select a range, paste a block in from Excel or Sheets, and watch the chart redraw beside them as you type.',
     steps: [
       {
         act: 'Place a chart, then double-click it',
@@ -390,7 +390,7 @@ export const LESSONS: readonly Lesson[] = [
     id: 'link-card',
     trigger: { on: 'library' },
     title: 'A pasted address becomes a card',
-    gist: 'Paste a URL onto the board and it unfurls into a card with the page’s own title, summary and picture — fetched by the server, so opening a board never announces its viewers to the sites it links.',
+    gist: 'Paste a URL onto the board and it unfurls into a card with the page’s own title, summary and picture. The server fetches it, so opening a board never announces its viewers to the sites it links.',
     steps: [
       { act: 'Paste a web address onto the board', gives: 'A card that fills itself in, rather than a line of blue text' },
       {
@@ -460,6 +460,23 @@ export const lessonForTool = (toolId: string): Lesson | undefined => BY_TOOL.get
  * single key, and says nothing rather than picking one of six.
  */
 export function keyFor(lesson: Lesson): string | undefined {
-  if (lesson.trigger.on !== 'tool' || lesson.trigger.tools.length !== 1) return undefined;
-  return TOOL_SHORTCUTS[lesson.trigger.tools[0]];
+  if (lesson.trigger.on !== 'tool' || lesson.trigger.tools.length === 0) return undefined;
+
+  /**
+   * One key, however many tools share it.
+   *
+   * The rule used to be "exactly one tool", which was the same thing while
+   * every lesson named one. It stopped being the same thing when the line
+   * lesson took both halves of its seat: `shape-line` and `shape-arrow` are
+   * two tools on one key, and requiring a single tool made the lesson that
+   * teaches that seat the one lesson unable to say which key opens it.
+   *
+   * The six force fields still get nothing, which is the case this guard was
+   * written for: they share no key, so there is no single answer and picking
+   * one of six would be worse than silence.
+   */
+  const keys = new Set(
+    lesson.trigger.tools.map((tool) => TOOL_SHORTCUTS[tool]).filter(Boolean)
+  );
+  return keys.size === 1 ? [...keys][0] : undefined;
 }

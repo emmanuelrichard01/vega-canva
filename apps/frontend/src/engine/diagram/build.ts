@@ -85,7 +85,9 @@ const MIN_BOX = { width: 96, height: 56 };
 function measureSize(
   label: string,
   square: boolean,
-  typography: { fontSize: number; fontFamily: string; lineHeight: number; letterSpacing: number }
+  typography: { fontSize: number; fontFamily: string; lineHeight: number; letterSpacing: number },
+  /** Room the shape itself needs, on top of the text. See `ShapeSpec.extraHeight`. */
+  extraHeight = 0
 ): { width: number; height: number } {
   const measure = measurerFor(typography as never);
   const common = {
@@ -107,7 +109,7 @@ function measureSize(
   // Then measure again at the width it will really get -- the pass that knows
   // how many lines the cap above just created.
   const wrapped = layoutText({ ...common, wrap: 'word', width: width - LABEL_PAD_X });
-  const height = Math.max(MIN_BOX.height, Math.ceil(wrapped.height) + LABEL_PAD_Y);
+  const height = Math.max(MIN_BOX.height, Math.ceil(wrapped.height) + LABEL_PAD_Y) + extraHeight;
 
   // A diamond or a circle with a 3:1 box reads as a lozenge, not as the symbol
   // mermaid asked for, so those are squared off to their larger side.
@@ -154,7 +156,12 @@ export function diagramNodeSizes(
   return new Map(
     graph.nodes.map((node) => [
       node.key,
-      measureSize(node.label, Boolean(SHAPE_SPECS[node.shape]?.square), typography),
+      measureSize(
+        node.label,
+        Boolean(SHAPE_SPECS[node.shape]?.square),
+        typography,
+        SHAPE_SPECS[node.shape]?.extraHeight
+      ),
     ])
   );
 }

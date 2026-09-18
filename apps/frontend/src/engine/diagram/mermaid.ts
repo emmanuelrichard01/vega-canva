@@ -747,6 +747,15 @@ export interface ShapeSpec {
   cornerRadius?: number;
   square?: boolean;
   /**
+   * Headroom a shape needs beyond what its label measures.
+   *
+   * A few kinds spend part of their box on something that is not interior: a
+   * cylinder's rim arcs across the top, and a label centred in the raw box
+   * sits under it. The text measurement cannot know that — it measures text —
+   * so the shape declares what it costs.
+   */
+  extraHeight?: number;
+  /**
    * The kind's own dials, as `shapeParams.ts` names them.
    *
    * A trapezoid's `inset` and a parallelogram's `skew` are what make those two
@@ -802,9 +811,24 @@ export const SHAPE_SPECS: Record<MermaidShape, ShapeSpec> = {
   // The double-barred process symbol, bars included — `shapeFeatureContours`
   // draws them, on the board as well as in the preview.
   subroutine: { kind: 'predefined_process' },
-  // A stack of decks, which is what a database symbol is. `cylinder` is the
-  // single-rimmed drum; `database` is the one with shelves.
-  database: { kind: 'database' },
+  /**
+   * A drum, not a stack.
+   *
+   * `database` — the shelved kind — was the first choice here, for looking
+   * richer. It is wrong twice. Mermaid draws `[(text)]` as a single cylinder,
+   * so the stack is less faithful than it looks; and its decks are drawn
+   * *through the whole body*, so at every box size a deck rim runs straight
+   * across the label. A 140x56 box centres its text at y=28 and the second
+   * deck reaches y=30.
+   *
+   * The drum has one rim, and a shallower one than the default: the rim is a
+   * *fraction of the height*, so a taller box grows the rim with it and extra
+   * headroom alone never wins. At the stock 0.2 the rim reaches `0.4h` while a
+   * centred 14px label starts at `0.5h - 9`, which needs a box over 90px tall
+   * before the two clear. At 0.12 they clear from 35px up, which is every box
+   * this builds. The small headroom is for the descenders.
+   */
+  database: { kind: 'cylinder', params: { rimRatio: 0.12 }, extraHeight: 8 },
   diamond: { kind: 'diamond', square: true },
   circle: { kind: 'ellipse', square: true },
   double_circle: { kind: 'ellipse', square: true },

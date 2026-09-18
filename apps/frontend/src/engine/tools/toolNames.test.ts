@@ -1,6 +1,6 @@
 import { describe, it, expect } from 'vitest';
 import { TOOL_NAMES } from './toolNames';
-import { TOOL_SHORTCUTS } from './shortcuts';
+import { LINE_SEAT, TOOL_SHORTCUTS } from './shortcuts';
 
 describe('TOOL_NAMES', () => {
   it('names every tool that has a shortcut', () => {
@@ -12,8 +12,34 @@ describe('TOOL_NAMES', () => {
   });
 
   it('does not name a tool that has no shortcut to advertise', () => {
-    const orphans = Object.keys(TOOL_NAMES).filter((id) => !TOOL_SHORTCUTS[id]);
+    /**
+     * Except the second half of a shared seat.
+     *
+     * The rule this guards is "a name here is a name the help screen can put
+     * beside a key", and it held while every named tool owned a key. It stopped
+     * holding when the line lesson took both halves of its seat: `shape-arrow`
+     * is a real tool the coach teaches and the reference must be able to name,
+     * and it has no key of its own because the line key toggles between the
+     * two. `lessons.test.ts` requires it to be named; this required it not to
+     * be. Both cannot be satisfied, so the exception is written down rather
+     * than one of them being quietly dropped.
+     *
+     * `LINE_SEAT` rather than a literal, so the exemption cannot outlive the
+     * seat that justifies it.
+     */
+    const sharesASeat = new Set(LINE_SEAT);
+    const orphans = Object.keys(TOOL_NAMES).filter(
+      (id) => !TOOL_SHORTCUTS[id] && !sharesASeat.has(id)
+    );
     expect(orphans).toEqual([]);
+  });
+
+  it('names both halves of a seat that two tools share', () => {
+    // The other direction: a seat whose second tool has no name is a tool the
+    // coach can teach and the reference can only call by its internal id.
+    for (const id of LINE_SEAT) {
+      expect(TOOL_NAMES[id], `${id} has no name`).toBeTruthy();
+    }
   });
 
   it('gives each tool a distinct key', () => {
