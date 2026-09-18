@@ -121,7 +121,12 @@ export const SHAPE_PARAMS: Partial<Record<ShapeKind, ShapeParamGroup>> = {
   parallelogram: { label: 'Parallelogram', params: [
     PERCENT('skew', 'Slant', [-0.45, 0.45, 0.05], 0.2, 'Which way the sides lean, and how far'),
   ] },
-  trapezoid: { label: 'Trapezoid', params: [PERCENT('inset', 'Top inset', [0.05, 0.45, 0.05], 0.2, 'How far the top edge is drawn in')] },
+  /**
+   * Signed, like the parallelogram's slant above it and for the same reason:
+   * the sign picks which edge is the short one, so one dial draws both the
+   * upright trapezoid and its inverse instead of only ever the upright.
+   */
+  trapezoid: { label: 'Trapezoid', params: [PERCENT('inset', 'Taper', [-0.45, 0.45, 0.05], 0.2, 'Which edge is drawn in, and how far')] },
   chevron: { label: 'Chevron', params: [PERCENT('indent', 'Notch', [0.05, 0.5, 0.05], 0.25, 'Depth of the point and the notch behind it')] },
   preparation: { label: 'Preparation', params: [PERCENT('indent', 'Point', [0.05, 0.5, 0.05], 0.2, 'How far the two side points are drawn in')] },
   arrow_block: { label: 'Block arrow', params: [PERCENT('indent', 'Head', [0.2, 0.7, 0.05], 0.4, 'The head, as a share of the length')] },

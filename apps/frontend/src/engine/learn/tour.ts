@@ -102,6 +102,41 @@ export const TOUR: readonly TourStep[] = [
   },
 ];
 
+/**
+ * The next step in the direction of travel whose element is actually there,
+ * or `null` if there is none that way.
+ *
+ * ## Why this is not `next()` / `back()` in the component
+ *
+ * The skip used to be `heading === 1 ? tourState.next() : tourState.back()`,
+ * one step at a time, and it strands the tour whenever the skipping runs out
+ * of room going backwards: `back()` at step 0 is a no-op, so a missing anchor
+ * there left the index at 0 for good. Nothing re-rendered, the card had no
+ * anchor so it rendered nothing, and the tour was **running and invisible** —
+ * with its key handler still mounted, swallowing Escape and the arrow keys on
+ * behalf of a dialog that was not on screen.
+ *
+ * It is reachable: press Back onto the dock's step with the dock hidden, which
+ * focus mode and a narrow window both do.
+ *
+ * Pure and tested for the reason `placeCard` below is: it is the sort of index
+ * arithmetic that reads correctly in source and is wrong at one end of its
+ * range, and the end it is wrong at is the one nobody opens the tour to try.
+ *
+ * `present` is passed in rather than queried here so the rule can be checked
+ * without a document. The component passes a `document.querySelector` probe.
+ */
+export function nextVisibleStep(
+  from: number,
+  direction: 1 | -1,
+  present: (anchor: string) => boolean
+): number | null {
+  for (let at = from; at >= 0 && at < TOUR.length; at += direction) {
+    if (present(TOUR[at].anchor)) return at;
+  }
+  return null;
+}
+
 /* ------------------------------------------------------------- placement -- */
 
 export interface Box {

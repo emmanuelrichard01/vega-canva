@@ -78,7 +78,28 @@ export type Observation =
   /** Some node that has joined a frame since the step began. */
   | { of: 'framed' }
   /** At least this many objects selected right now. */
-  | { of: 'selected'; min: number };
+  | { of: 'selected'; min: number }
+  /**
+   * A link card that has finished unfurling.
+   *
+   * Distinct from `{ of: 'created', type: 'link' }` because the two are
+   * different moments and the step's words are about the later one: a link
+   * node exists the instant the address is pasted, and for a second or so
+   * afterwards it is a grey skeleton. A step that says "it fills itself in"
+   * and advances before anything has filled in teaches that the product is
+   * fast rather than that it works.
+   */
+  | { of: 'unfurled' }
+  /**
+   * A node that has moved since the step began.
+   *
+   * The only observation here about changing something rather than making it,
+   * and it exists for the one gesture that proves a generated diagram is real
+   * objects: drag a box and its arrows follow. Nothing else demonstrates that,
+   * because the claim is precisely that the arrows were never given
+   * coordinates.
+   */
+  | { of: 'moved' };
 
 /**
  * What the board looked like when a step began.
@@ -94,6 +115,15 @@ export interface Digest {
   ids: ReadonlySet<string>;
   /** Of those, the ones that already belonged to a frame. */
   framed: ReadonlySet<string>;
+  /**
+   * Where each of them was, as `"x,y"`.
+   *
+   * A string rather than the node or a point, for the reason the set of ids is
+   * a set of ids: this has to be able to sit in memory for as long as somebody
+   * leaves a walkthrough open on a five-hundred object board, and two numbers
+   * per node is the least that can answer "has anything moved".
+   */
+  at: ReadonlyMap<string, string>;
 }
 
 export interface Snapshot {
@@ -104,11 +134,13 @@ export interface Snapshot {
 export function digest(objects: Readonly<Record<string, AnyNode>>): Digest {
   const ids = new Set<string>();
   const framed = new Set<string>();
+  const at = new Map<string, string>();
   for (const [id, node] of Object.entries(objects)) {
     ids.add(id);
     if (node.frameId) framed.add(id);
+    at.set(id, `${Math.round(node.x)},${Math.round(node.y)}`);
   }
-  return { ids, framed };
+  return { ids, framed, at };
 }
 
 /** The nodes that have appeared since the digest was taken. */
@@ -162,6 +194,36 @@ export function satisfied(observe: Observation, before: Digest, now: Snapshot): 
 
     case 'selected':
       return now.selected.length >= observe.min;
+
+    case 'unfurled':
+      /**
+       * A *new* card that has finished. Fresh rather than any card, so a board
+       * that already has links on it cannot satisfy the step before it has
+       * been read — the same reasoning the digest exists for — and `ready`
+       * rather than merely present, because the step's words are about the
+       * card filling itself in.
+       */
+      return fresh(now, before).some((n) => n.type === 'link' && n.link?.status === 'ready');
+
+    case 'moved':
+      /**
+       * Something that was already here and is no longer where it was.
+       *
+       * Restricted to nodes present in the digest on purpose: a node created
+       * during this step has no previous position, and counting it would make
+       * "drag one of its boxes" satisfiable by drawing a new one.
+       *
+       * A connector is excluded because it has no position of its own — its
+       * box is derived from its endpoints on every read, so it "moves"
+       * whenever anything it is joined to does, which is exactly the effect
+       * the step is asking the reader to *cause* rather than evidence of them
+       * having caused it.
+       */
+      return Object.entries(now.objects).some(([id, node]) => {
+        if (node.type === 'connector') return false;
+        const was = before.at.get(id);
+        return was !== undefined && was !== `${Math.round(node.x)},${Math.round(node.y)}`;
+      });
   }
 }
 
@@ -183,8 +245,20 @@ export interface WalkStep {
 export interface Walkthrough {
   /** The lesson whose words this performs. */
   lesson: string;
-  /** The tool it arms when it starts. */
-  tool: string;
+  /**
+   * The tool it arms when it starts, if arming one is the right opening move.
+   *
+   * `Room` reads this. It was declared and read by nothing for the life of the
+   * feature, which meant every walkthrough opened with an unspoken
+   * prerequisite: "drag from the edge of a box" cannot be done until the
+   * connector tool is armed, and the card does not say to arm it — being shown
+   * rather than told is the entire point.
+   *
+   * Absent for the two that begin in a dialog. Arming a canvas tool and then
+   * covering the canvas is worse than arming nothing, because the reader is
+   * left holding something irrelevant when the dialog closes.
+   */
+  tool?: string;
   steps: readonly WalkStep[];
 }
 
@@ -254,6 +328,41 @@ export const WALKTHROUGHS: readonly Walkthrough[] = [
     steps: [
       { step: 0, observe: { of: 'created', type: 'path' } },
       { step: 3, observe: { of: 'created', type: 'path' } },
+    ],
+  },
+  {
+    /**
+     * The claim this exists to prove is not "you can write mermaid". It is
+     * that what lands is **real objects** — and the only way to show that is
+     * to have somebody drag one and watch the arrows follow, which is why the
+     * second step is the move rather than the copy-back.
+     *
+     * No tool: the diagram dialog is opened from the library and the menu, and
+     * arming a canvas tool before it would leave the reader armed with
+     * something irrelevant behind a dialog.
+     */
+    lesson: 'diagram-code',
+    steps: [
+      // Both ends bound is what a generated diagram always produces and a
+      // hand-drawn box never accidentally does, so it is the honest proof that
+      // a diagram — rather than a shape — arrived.
+      { step: 0, observe: { of: 'connected' } },
+      { step: 1, observe: { of: 'moved' } },
+    ],
+  },
+  {
+    /**
+     * Two steps rather than the lesson's three: the third is about the card's
+     * display menu, which changes a field on an object that already exists and
+     * is not distinguishable from any other edit by looking at the document.
+     * An observation that cannot tell the gesture apart from its neighbours
+     * would advance on the wrong one, which is the failure `Observation` is
+     * deliberately narrow to avoid.
+     */
+    lesson: 'link-card',
+    steps: [
+      { step: 0, observe: { of: 'unfurled' } },
+      { step: 1, observe: { of: 'selected', min: 1 } },
     ],
   },
 ];

@@ -127,8 +127,48 @@ export const LESSONS: readonly Lesson[] = [
     ],
   },
   {
+    /**
+     * The chart tool had no lesson at all, which was the largest hole in this
+     * table: it is the one tool where placing it is the easy part and every
+     * question after that — where do the numbers come from, how do I get my
+     * own in, what are the expression tokens — is unguessable from the canvas.
+     * Grid, which is comparable in depth, has had one all along.
+     */
+    id: 'chart-data',
+    trigger: { on: 'tool', tools: ['chart'] },
+    title: 'A chart is a spreadsheet you can see',
+    gist: 'The numbers behind a chart are a real sheet — select a range, paste a block in from Excel or Sheets, and watch the chart redraw beside them as you type.',
+    steps: [
+      {
+        act: 'Place a chart, then double-click it',
+        gives: 'Its data as a spreadsheet, with the chart live beside it',
+      },
+      {
+        act: 'Paste a block copied from Excel or Sheets',
+        gives: 'Real rows and columns, not one cell of text. A single value pasted over a range fills it',
+      },
+      {
+        act: 'Select some numbers',
+        gives: 'Their sum, average, count, smallest and largest, along the bottom',
+      },
+      {
+        act: 'Leave a cell empty rather than typing 0',
+        gives: 'A gap in the line. A missing reading is not a measured nought, and the chart draws the difference',
+      },
+    ],
+  },
+  {
     id: 'line-route',
-    trigger: { on: 'tool', tools: ['shape-line'] },
+    /**
+     * Both halves of the line seat, because they are one gesture.
+     *
+     * This listed `shape-line` alone, and the lesson's own third step is
+     * "press the line key again — the same seat switches between Line and
+     * Arrow". So following the instruction the card gave you dismissed the
+     * card: the Arrow tool raised nothing, even though clicking once per
+     * corner means exactly the same thing with it. `LINE_SEAT` is the pair.
+     */
+    trigger: { on: 'tool', tools: ['shape-line', 'shape-arrow'] },
     title: 'A line can turn corners',
     gist: 'Dragging gives you a straight line, which is the obvious half. Clicking once per corner gives you a route, and any segment of it can be bent into an arc afterwards.',
     demo: 'route',
@@ -330,7 +370,37 @@ export const LESSONS: readonly Lesson[] = [
     gist: 'A flowchart written as code becomes real, editable boxes and arrows, and a diagram you drew by hand can be read back out as code.',
     steps: [
       { act: 'Write a flowchart in Mermaid', gives: 'Real objects on the board, not a picture of them' },
+      {
+        act: 'Drag one of its boxes',
+        gives: 'The arrows follow, because they were joined to the box rather than drawn between two points',
+      },
       { act: 'Select a diagram and copy it as Mermaid', gives: 'The same flowchart, as text you can paste anywhere' },
+    ],
+  },
+  {
+    /**
+     * A link is the one object here that nothing arms a tool for — it is made
+     * by pasting an address onto the board — so there is no moment at which
+     * the product could raise this, and `library` is where it belongs.
+     *
+     * It earns a lesson because the two things worth knowing about it are both
+     * invisible: that a bare URL becomes a card at all, and that the card can
+     * be turned into a player in place rather than a link you leave to follow.
+     */
+    id: 'link-card',
+    trigger: { on: 'library' },
+    title: 'A pasted address becomes a card',
+    gist: 'Paste a URL onto the board and it unfurls into a card with the page’s own title, summary and picture — fetched by the server, so opening a board never announces its viewers to the sites it links.',
+    steps: [
+      { act: 'Paste a web address onto the board', gives: 'A card that fills itself in, rather than a line of blue text' },
+      {
+        act: 'Double-click a video, track or Figma file',
+        gives: 'It plays where it sits, instead of taking you somewhere else',
+      },
+      {
+        act: 'Use the card’s menu to change how it sits',
+        gives: 'The same link as a wide card, a tall one, or a single compact row',
+      },
     ],
   },
   {

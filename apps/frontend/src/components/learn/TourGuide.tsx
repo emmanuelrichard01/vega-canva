@@ -2,7 +2,7 @@ import React, { useCallback, useEffect, useLayoutEffect, useState, useSyncExtern
 import { createPortal } from 'react-dom';
 import { ArrowLeft, ArrowRight, X } from 'lucide-react';
 import { tourState } from '../../engine/learn/tourState';
-import { placeCard, TOUR, type Box, type Placement } from '../../engine/learn/tour';
+import { nextVisibleStep, placeCard, TOUR, type Box, type Placement } from '../../engine/learn/tour';
 import { pointerPath, ringBox, ringPath } from '../../engine/learn/tourSketch';
 import { roughEllipse, roughPolyline, seedFrom } from '../../engine/model/rough';
 
@@ -107,8 +107,23 @@ export const TourGuide: React.FC = () => {
     const el = document.querySelector(`[data-tour="${TOUR[step].anchor}"]`);
     if (!el) {
       setAnchor(null);
-      if (heading === 1) tourState.next();
-      else tourState.back();
+      /**
+       * Skip to the next step that is actually on screen — or end the tour if
+       * there is none that way. `nextVisibleStep` carries the reasoning and
+       * the bug this replaces.
+       *
+       * The direction of travel is honoured: somebody pressing Back through a
+       * step that has gone should keep going back rather than be bounced
+       * forward past what they were returning to.
+       */
+      const onward = nextVisibleStep(step + heading, heading, (a) =>
+        Boolean(document.querySelector(`[data-tour="${a}"]`))
+      );
+      // Nothing left to point at in the direction being travelled. Ending is
+      // the honest outcome: a tour with no visible subject has nothing to say,
+      // and leaving it running is the invisible-dialog bug.
+      if (onward === null) tourState.stop();
+      else tourState.goTo(onward);
       return;
     }
     const box = boxOf(el);
@@ -389,8 +404,14 @@ export const TourOffer: React.FC<{ visible: boolean }> = ({ visible }) => {
 
       <div className="tour-offer__body">
         <p className="tour-offer__title">First time here?</p>
+        {/* The count comes from the table, not from the sentence. "six steps"
+            was written out, and the reference panel's own button already says
+            `Take the {TOUR.length}-step tour` — so the two would have
+            disagreed the moment a step was added, with the prose version being
+            the one nobody would think to update. Same fault `toolNames.ts`
+            opens by describing, in the copy rather than in a binding. */}
         <p className="tour-offer__text">
-          Twenty seconds, six steps, and you will know where everything is.
+          Twenty seconds, {TOUR.length} steps, and you will know where everything is.
         </p>
       </div>
 

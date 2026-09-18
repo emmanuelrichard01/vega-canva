@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { TOOL_SHORTCUTS } from '../tools/shortcuts';
+import { LINE_SEAT, TOOL_SHORTCUTS } from '../tools/shortcuts';
 import { TOOL_NAMES } from '../tools/toolNames';
 import { FORCE_IDS } from '../physics/forces';
 import { keyFor, LESSONS, lessonById, lessonForTool, type Lesson } from './lessons';
@@ -18,13 +18,88 @@ describe('the lesson list', () => {
      * the only way to find out is to arm every tool by hand. `toolNames.ts`
      * documents four rows of exactly this rot in the help screen it replaced.
      */
-    const real = new Set([...Object.keys(TOOL_SHORTCUTS), ...FORCE_IDS]);
+    /**
+     * `LINE_SEAT` as well as the shortcut map. `shape-arrow` is a real tool
+     * with no key of its own — it shares the line seat, and the line key
+     * toggles between the two — so a set built from `TOOL_SHORTCUTS` alone
+     * calls it fictional. That is what kept the line lesson naming only half
+     * of the seat it teaches.
+     */
+    const real = new Set([...Object.keys(TOOL_SHORTCUTS), ...LINE_SEAT, ...FORCE_IDS]);
     for (const lesson of LESSONS) {
       if (lesson.trigger.on !== 'tool') continue;
       for (const tool of lesson.trigger.tools) {
         expect(real, `${lesson.id} names "${tool}"`).toContain(tool);
       }
     }
+  });
+
+  /**
+   * Every tool either teaches something or is named here as needing nothing.
+   *
+   * ## Why the exemptions are a list rather than an absence
+   *
+   * The table above checks that no lesson names a tool that does not exist. It
+   * cannot see the opposite and more likely rot: a **tool** that names no
+   * lesson. That failure is silent in exactly the way this codebase keeps
+   * warning about — nothing is broken, nothing logs, the tool simply never
+   * explains itself, and the only way to find out is to arm all eighteen by
+   * hand and watch for a card.
+   *
+   * It had already happened twice. `chart` — the one tool where placing it is
+   * the easy part and everything after it is unguessable — had no lesson at
+   * all, while `grid`, which is comparable in depth, had one from the start.
+   * And `shape-arrow` was missed because it has no key of its own, so the
+   * line lesson taught one half of a seat whose own third step tells you to
+   * switch to the other half.
+   *
+   * So silence has to be *declared*. Adding a tool without a lesson now fails
+   * here, and the fix is either to write the lesson or to add the tool to this
+   * list with a reason — which is a decision someone made rather than one that
+   * happened.
+   */
+  it('has a lesson for every tool whose gesture is not obvious', () => {
+    /** Tools that need no lesson, and why each one does not. */
+    const NEEDS_NONE: Record<string, string> = {
+      select: 'Click a thing to select it. There is no second meaning to teach.',
+      hand: 'Drag to pan. The cursor already says so.',
+      eraser: 'Drag across what you want gone.',
+      pen: 'Freehand: press and draw. The Bézier pen is the one with a gesture, and it has `pen-anchors`.',
+      shape: 'Drag out a box. The shape *vocabulary* is a panel, taught where it is chosen rather than on arming the tool.',
+    };
+
+    const taught = new Set<string>();
+    for (const lesson of LESSONS) {
+      if (lesson.trigger.on !== 'tool') continue;
+      for (const tool of lesson.trigger.tools) taught.add(tool);
+    }
+
+    const tools = [...new Set([...Object.keys(TOOL_SHORTCUTS), ...LINE_SEAT])];
+    const unexplained = tools.filter((t) => !taught.has(t) && !(t in NEEDS_NONE));
+    expect(
+      unexplained,
+      `these tools raise nothing and are not listed as needing nothing: ${unexplained.join(', ')}`
+    ).toEqual([]);
+
+    // And the exemption list may not outlive its tools, or it becomes a place
+    // where a deleted tool's excuse sits forever looking like a decision.
+    for (const exempt of Object.keys(NEEDS_NONE)) {
+      expect(tools, `"${exempt}" is exempted but is not a tool`).toContain(exempt);
+      expect(taught, `"${exempt}" is exempted but has a lesson`).not.toContain(exempt);
+    }
+  });
+
+  it('teaches the whole of a seat that holds two tools', () => {
+    // The line seat toggles between Line and Arrow on one key, and the lesson
+    // for it says so in its own steps. Teaching only the half you happened to
+    // start on means following that instruction dismisses the card.
+    const taught = new Set<string>();
+    for (const lesson of LESSONS) {
+      if (lesson.trigger.on !== 'tool') continue;
+      for (const tool of lesson.trigger.tools) taught.add(tool);
+    }
+    const covered = LINE_SEAT.filter((t) => taught.has(t));
+    expect(covered.length === 0 || covered.length === LINE_SEAT.length, `the line seat is half-taught: ${covered.join(', ')}`).toBe(true);
   });
 
   it('gives every tool at most one lesson', () => {

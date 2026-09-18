@@ -7,7 +7,7 @@ import React, {
   useState,
   useSyncExternalStore,
 } from 'react';
-import { Keyboard, Search, Sparkles, X } from 'lucide-react';
+import { Check, Keyboard, Search, Sparkles, X } from 'lucide-react';
 import { KeyboardMap } from './learn/KeyboardMap';
 import { capsFor, comboFromEvent, comboToSpec, combosInSpec } from './menu/shortcuts';
 import { useFocusTrap } from '../hooks/useFocusTrap';
@@ -297,6 +297,30 @@ function buildSections(): Section[] {
       ],
     },
     {
+      id: 'diagrams',
+      group: 'Content',
+      tab: 'Diagrams',
+      title: 'Diagrams from code',
+      blurb:
+        'Flowcharts, sequence diagrams and pie charts written as Mermaid, arriving as real objects you can then move and restyle.',
+      rows: [
+        { keys: `${MOD} + K`, what: 'Find “Diagram from code” to open the editor' },
+        { keys: `${MOD} + Enter`, what: 'Add the diagram to the board without leaving the editor' },
+        { keys: 'Tab', what: 'Indent, inside the code editor' },
+        { keys: 'Scroll', what: 'Zoom the preview, with no modifier' },
+        { keys: 'F', what: 'Fit the preview to the panel (when the caret is not in the code)' },
+        { keys: '+ / − / 0', what: 'Zoom the preview in, out, and back to 100%' },
+        {
+          keys: 'Right-click a diagram',
+          what: 'Edit as Mermaid, or copy it back out as code',
+        },
+        {
+          keys: 'Right-click a code block',
+          what: 'Render as diagram, if the snippet is Mermaid',
+        },
+      ],
+    },
+    {
       id: 'stickies',
       group: 'Content',
       tab: 'Notes',
@@ -393,6 +417,18 @@ const LessonCard: React.FC<{ lesson: Lesson; onWalk: (id: string) => void }> = (
     learnState.getSnapshot,
     learnState.getSnapshot
   );
+  /**
+   * Which walkthroughs have been finished.
+   *
+   * Subscribed rather than read once, because finishing one happens on the
+   * board while this panel is closed — and the panel is reopened, not
+   * remounted, by a reader coming back to see what else there is.
+   */
+  const { done } = useSyncExternalStore(
+    walkthroughState.subscribe,
+    walkthroughState.getSnapshot,
+    walkthroughState.getSnapshot
+  );
   const key = keyFor(lesson);
   /**
    * Whether this lesson can be *performed* as well as read.
@@ -402,14 +438,43 @@ const LessonCard: React.FC<{ lesson: Lesson; onWalk: (id: string) => void }> = (
    * which lessons are walkable would be wrong the first time one was added.
    */
   const walkable = isWalkable(lesson.id);
+  /**
+   * Whether it has been performed, all the way through.
+   *
+   * `walkthroughState` has recorded this since walkthroughs existed — written
+   * on completion, persisted, and filtered against the real table on read —
+   * and **nothing displayed it**. So the one thing a reader might want from
+   * this library on a second visit, which is to see what they have already
+   * done, was being carefully maintained and never shown.
+   *
+   * Distinct from `learned` beside it, and the difference is the point.
+   * `learned` retires a coach mark on weak evidence — some object appeared
+   * after the tool was picked up. This is the strong claim: every step was
+   * observed, one at a time, in order. A card that has both says two true
+   * things; a card that has only `learned` says the coach mark has stopped
+   * offering, which is not the same as having done it.
+   */
+  const performed = walkable && done.includes(lesson.id);
 
   return (
-    <article className="help-lesson" data-known={learned.includes(lesson.id) || undefined}>
+    <article
+      className="help-lesson"
+      data-known={learned.includes(lesson.id) || undefined}
+      data-performed={performed || undefined}
+    >
       {lesson.demo && <LessonDemo demo={lesson.demo} />}
       <div className="help-lesson__body">
         <h4 className="help-lesson__title">
           {lesson.title}
           {key && <kbd>{key}</kbd>}
+          {/* Marked on the card rather than only on the button, so the state is
+              visible while scanning the library rather than only once the eye
+              has reached the control at the bottom of one card. */}
+          {performed && (
+            <span className="help-lesson__done" title="You have completed this walkthrough">
+              <Check size={11} aria-hidden /> Done
+            </span>
+          )}
         </h4>
         <p className="help-lesson__gist">{lesson.gist}</p>
         <dl className="help-lesson__steps">
@@ -426,10 +491,15 @@ const LessonCard: React.FC<{ lesson: Lesson; onWalk: (id: string) => void }> = (
           choose to start: raising one unasked is the wizard this product has
           twice decided against. The coach mark is what arrives uninvited, and
           it is one glance rather than five steps.
+
+          The label says which of the two offers this is. "Walk me through it"
+          to somebody who has already walked through it reads as the product
+          not having noticed, and the button is never withdrawn — a reference
+          you cannot re-read is not a reference.
         */}
         {walkable && (
           <button type="button" className="help-lesson__walk" onClick={() => onWalk(lesson.id)}>
-            Walk me through it
+            {performed ? 'Do it again' : 'Walk me through it'}
           </button>
         )}
       </div>
