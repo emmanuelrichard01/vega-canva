@@ -185,12 +185,57 @@ shapes had no case. `trapezoid`, `trapezoid_inv` and `flag` fell through, so
 for the same source, side by side, the board drew a polygon and the preview
 drew a rectangle.
 
-`silhouetteFor` derives the base outline from `SHAPE_SPECS` — the table
-`build.ts` already used — so a shape added there cannot silently become a
-rectangle here. Ornament the canvas has no vocabulary for (the double-circle
-ring, subroutine bars, database lid) is drawn *on top of* that base rather
-than instead of it, which is the distinction that keeps an addition from
-becoming a substitution.
+`silhouetteFor` closed that, and has since been taken further: it no longer
+*derives* an outline from `SHAPE_SPECS`, it builds the node `build.ts` would
+build and asks `shapeToPath` — the same function the canvas renderer and the
+SVG exporter use. Interior detail comes from `shapeFeatureContours`, the
+canvas's own answer, asked for the same node.
+
+There is no second description of a shape anywhere now, so the preview can only
+be wrong in the way the board is wrong. That is the only version of this
+guarantee worth having; the first version still had the preview drawing
+"ornament" the board did not, which is a smaller gap of the same kind.
+
+### 5.1b The shapes themselves were the larger fault — done
+
+Fixing the *preview* left the deeper problem untouched for a while:
+`SHAPE_SPECS` mapped every mermaid shape onto `rect`, `ellipse` or `polygon`,
+because those were the only kinds the old preview could draw. A four-point
+regular polygon is a **diamond**, so `parallelogram`, `parallelogram_inv`,
+`trapezoid` and `trapezoid_inv` — mermaid's two I/O symbols and two
+manual-operation symbols — all rendered as the decision symbol. The hexagon was
+pointy-topped rather than the flat-topped preparation symbol, and a
+subroutine's bars and a database's rims existed *only* in the preview.
+
+The canvas had correct geometry for all of them the whole time. They map onto
+it now: `predefined_process`, `cylinder`, `preparation`, `capsule`, `diamond`,
+`trapezoid`, `parallelogram`. A trapezoid's taper is signed, as a
+parallelogram's slant already was, so `[/A\]` and `[\A/]` stop being one
+picture.
+
+`silhouette.test.ts` asserts the property that was missing rather than the
+mapping: no two mermaid shapes may produce the same drawing, outline *and*
+interior. The single admitted pair is `circle`/`double_circle`, because mermaid
+draws a ring inside the second and no canvas kind does.
+
+### 5.1c Mermaid 11's named shapes — done
+
+The bracket forms are the whole of mermaid's old vocabulary and they ran out:
+there is no bracket spelling for a document, a delay, a manual input or an
+internal-storage box, which is why mermaid 11 added
+`A@{ shape: doc, label: "…" }`. This canvas drew all of those correctly and
+nothing could ask for them.
+
+Six more shapes, reachable by 61 names — mermaid gives most shapes a semantic
+name, a shape name and a textbook name, and accepting only one would reject
+valid source. `@{` is parsed **before** the brackets, because `{` is itself a
+bracket opener and a node read bracket-first takes `A@{ shape: cyl }` as a
+diamond labelled "shape: cyl".
+
+Two names mermaid supports are deliberately refused even though the canvas
+draws them well: `cross-circ` and `com-link`. A flowchart node exists to carry
+words, and those are annotation symbols — the circle's X runs through its own
+label and the bolt sits behind it.
 
 ### 5.2 Elbow smoothing — done
 
@@ -205,12 +250,25 @@ corners on one short segment would otherwise each eat more than half of it,
 cross, and turn the elbow inside out, which is the failure mode of every naive
 corner-rounder.
 
-### 5.3 Sequence diagrams — still the next substantial piece
+### 5.3 Sequence diagrams — done, and pie charts with them
 
 The most-asked-for type by a distance, and a genuinely different layout —
-lifelines and ordered messages, not a DAG, so dagre does not apply. Tractable
-because the parser is well-structured and now carries 79 tests across the
-engine. One real diagram type beats claiming fourteen.
+lifelines and ordered messages, not a DAG, so dagre does not apply. `sequence.ts`
+carries its own parser and its own table-style layout for exactly that reason,
+`buildSequence.ts` puts it on the board, and `sequenceEmit.ts` reads it back.
+Pie charts followed, on the same split: `pie.ts` lays out wedges as paths
+because a wedge is not a shape kind.
+
+`MermaidModal` dispatches on the source rather than on a mode the reader has to
+set — `looksLikeSequence` and `looksLikePie` before the flowchart parser —
+because mermaid already says which it is on its first line, and asking twice is
+a way for the two answers to disagree.
+
+One real diagram type beat claiming fourteen, and three real ones beat one.
+`classDiagram`, `stateDiagram`, `erDiagram`, `gantt`, `journey` and `mindmap`
+are still refused **by name**, which is the honest answer: the error says which
+three work rather than failing with a parse complaint about syntax the parser
+was never going to understand.
 
 ### 5.4 Re-layout in place — still open
 
@@ -223,15 +281,18 @@ attached survive an edit.
 There is nowhere else in the product that says what any of this syntax does,
 so the templates are it. All six used to be the same diagram: boxes, arrows,
 subgraphs. Between them they demonstrated none of `classDef`, dotted or thick
-edges, `&` fan-out, or ten of the fourteen shapes.
+edges, `&` fan-out, or ten of the shapes.
 
-Each now teaches something the others do not and opens with a `%%` note saying
-what. The new **Shape Reference** shows all fourteen shapes, each labelled
-with the syntax that makes it. `templates.test.ts` holds the set: every one
-parses, none strands a node with no way in or out, and between them they cover
-every shape, every line kind and at least one `classDef`. A template that does
-not parse is a worse first impression than no template, in the feature's own
-words.
+There are fourteen now, spanning all three engines, and each teaches something
+the others do not and opens with a `%%` note saying what. The **Shape
+Reference** shows every shape labelled with the syntax that makes it, including
+a `Named shapes` group for the six that only mermaid 11's `@{ shape: … }` form
+can ask for. `templates.test.ts` holds the set: every one parses, none strands
+a node with no way in or out, and between them they cover **every** shape, every
+line kind and at least one `classDef`. A template that does not parse is a worse
+first impression than no template, in the feature's own words — and the
+every-shape assertion is what stops a shape being added to the table and never
+shown to anybody.
 
 ### On the UI
 

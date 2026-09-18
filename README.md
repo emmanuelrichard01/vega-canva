@@ -276,9 +276,19 @@ renders an SVG. That matters: an SVG is one opaque picture on a canvas whose
 entire point is that everything on it is editable, and it is also why the
 dependency is not worth over a megabyte.
 
+Parsing into *this* vocabulary only pays if the vocabulary is used. It was not,
+for a long time: every shape resolved to a rectangle, an ellipse or a regular
+polygon, and since a four-point regular polygon is a diamond, mermaid's two I/O
+symbols and two manual-operation symbols all drew as the decision symbol. They
+map onto the canvas's real flowchart geometry now — `predefined_process`,
+`cylinder`, `preparation`, `capsule`, `trapezoid`, `parallelogram` — and
+`silhouette.test.ts` asserts the property that was actually missing: **no two
+mermaid shapes may draw alike.**
+
 | Module | Responsibility |
 | --- | --- |
-| `mermaid.ts` | Flowchart parser and emitter. Bracket shapes, both edge-label syntaxes, `style`/`classDef` directives, and the five themes. Pure. |
+| `mermaid.ts` | Flowchart parser and emitter. Bracket shapes **and Mermaid 11's `A@{ shape: … }` named form** (61 aliases), both edge-label syntaxes, `style`/`classDef` directives, and the five themes. Pure. |
+| `silhouette.ts` | The one description of a shape. Builds the node `build.ts` would build and asks `shapeToPath` — the same function the renderer and the exporter use — so the modal's preview cannot disagree with the board. Pure. |
 | `layout.ts` | Layered (Sugiyama) placement via dagre — plus the anchors extracted from its edge routes, which is what stops a fan-out from crossing itself. Pure. |
 | `build.ts` | Graph to canvas nodes, and any selection back to source. |
 | `sequence.ts` | Sequence parser and timeline layout: participants, every arrow form, notes, self-messages, and blocks (`loop`, `alt`/`else`, `opt`, `par`) nested to any depth. Pure. |

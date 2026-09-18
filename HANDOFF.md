@@ -1960,8 +1960,11 @@ That is the one to fix before sharing a link with anybody.
    largest single risk in the system.
 2. **Nothing is ever deleted** -- no room TTL, no S3 lifecycle, no orphan
    reaping. `last_active_at` is written and never read.
-3. **Rate limiting is per-process**, so it stops limiting the moment there is
-   more than one instance. Must move to Redis in the same change as scaling out.
+3. ~~**Rate limiting is per-process**, so it stops limiting the moment there is
+   more than one instance.~~ **Done** — see §4k-4. All three limiters and the IP
+   quota take a Redis client built from `REDIS_HOST`, and fall back to memory
+   rather than refusing traffic when it is unreachable. Still per-process when
+   `REDIS_HOST` is unset, which is correct for one instance and silent on two.
 4. No load testing. The batching is reasoned, not benchmarked.
 
 ## 4g. Going live, and the diagram engine
@@ -5764,6 +5767,124 @@ anything importing `.tsx` does not. Worth committing as a script if it keeps
 being needed — the two failures it reports (`expect.arrayContaining`,
 `toBeTypeOf`) are matchers the shim lacks, not product bugs.
 
+## 4aa. The deploy, the sites that refused us, and the shapes that were all one diamond
+
+A session that started as "improve the lessons, the help modal, the mermaid tool
+and the link previews" and hit two production faults on the way in.
+
+### The build was broken on `main`
+
+`apps/server` imports fontkit's **types**, but `@types/fontkit` was declared only
+in the *frontend's* devDependencies. It hoists to the root on a dev machine, so
+`tsc` found it here and not on Render, where the server workspace installs on its
+own. Every other `@types/*` the server uses is already in its own dependencies;
+this one was missed.
+
+Worth keeping as a shape: **a dependency that resolves only by hoisting is a
+dependency you have not declared.** It bit twice in one session — the second time
+as `ioredis`, in §4k-4 below.
+
+### CORS answered a refusal with a 500
+
+`callback(new Error('Origin not allowed by CORS'))` is what the `cors` README
+spells, and it is wrong in a way that only shows in production: `cors` hands the
+error to `next()`, Express turns it into a **500 with a stack trace**, and the
+stack goes to the log once per request. That was the wall of
+`Error: Origin not allowed by CORS` in Render's log.
+
+Three faults at once — wrong status (a disallowed origin is not a server fault),
+a flooded log, and *it never said which origin was refused*. The one fact needed
+to fix a misconfigured deployment was the one fact the stack trace left out.
+
+`callback(null, false)` now: no `Access-Control-Allow-Origin` header, which is
+the entire enforcement mechanism, plus one rate-limited line naming the origin.
+Origins compare as browsers serialise them, so a trailing slash or a capital in
+`ALLOWED_ORIGINS` no longer silently rejects a deployment's own traffic;
+`https://*.vercel.app` covers preview builds; an unparseable entry fails at boot
+naming itself.
+
+### Link previews: blocked, pictureless, and slow
+
+Three separate causes, found by reading `unfurl.ts` against the complaint.
+
+1. **Bot-managed sites** (claude.ai, chatgpt.com) answer 403 from an edge WAF
+   before the origin is consulted. A refusal on 403/429/451/503 is retried
+   **once** with the headers a browser really sends — `Sec-Fetch-*` and
+   `sec-ch-ua` included, because a "Chrome" without them is refused just as
+   readily. 404 and 401 are *not* retried: those are honest answers.
+2. **Missing `og:image`** was usually a perfectly valid URL answering 403 to a
+   request that arrived from nowhere. Pictures now carry the page as their
+   `Referer`, which is what makes a hotlink-protected CDN serve the file.
+3. **Slowness** was the icon leg, paid once per URL. A favicon belongs to the
+   *site*, so twelve links to one site paid it twelve times — and it is
+   frequently the slowest leg, because a page that declares no icon costs two
+   guesses to establish that. Cached per origin now.
+
+Then the two things that made a failure permanent:
+
+- **A failed card never retried.** `ensurePreview` returns early unless the
+  status is `loading`, so the only route out of `error` was a human noticing and
+  choosing "Refresh preview". Every *transient* failure was therefore permanent:
+  a restart mid-paste, a 429 on a bulk paste, a dropped connection. Failures are
+  classified now — 4xx believed, 5xx/429/network retried at 8s, 70s, 240s. The
+  70 is not arbitrary: `unfurl.ts` remembers a refusal for `FAILURE_TTL_MS`
+  (60s), so an earlier retry is answered from that memory rather than by a real
+  attempt.
+- **Giving up was a conclusion every tab reached alone.** The retry budget is a
+  timer and belongs to a tab; the *conclusion* is about the link and belongs to
+  the board, or every new tab re-spends three attempts learning it. `gaveUp` is
+  a flag rather than a count, because a counter in a CRDT is two tabs writing 3
+  over each other's 4.
+
+And the limiter was spending half its budget on work already done: a preview is
+answered in two parts, so one link is two requests and the second is *by
+construction* a cache hit. `Unfurler.peek` answers those without charging.
+
+### The shapes were all one diamond
+
+The largest single defect in the session, and invisible from the code.
+`SHAPE_SPECS` mapped every mermaid shape onto `rect`, `ellipse` or `polygon`,
+because those were the only kinds the preview could draw. **A four-point regular
+polygon is a diamond**, so `parallelogram`, `parallelogram_inv`, `trapezoid` and
+`trapezoid_inv` — two I/O symbols and two manual-operation symbols — all rendered
+as the decision symbol. The hexagon was pointy-topped instead of the flat-topped
+preparation symbol. A subroutine's bars and a database's rims existed *only* in
+the preview, so the board drew neither.
+
+The canvas had correct geometry for every one of them the whole time. See
+`docs/DIAGRAM-ENGINE.md` §5.1b and §5.1c for the mapping and for Mermaid 11's
+named-shape form, which makes six more of the canvas's symbols reachable.
+
+Two lessons worth carrying:
+
+- **The preview no longer describes shapes at all.** It builds the node
+  `build.ts` would build and asks `shapeToPath`. One description means it can
+  only be wrong in the way the board is wrong.
+- **Assert the property, not the mapping.** `silhouette.test.ts` requires that no
+  two mermaid shapes draw alike. That is the thing that was false; a test of the
+  table would have passed against the broken table.
+
+### Running the tests found five more faults
+
+Vitest cannot start here at all — `esbuild.exe` returns *Permission denied* even
+outside the sandbox — so the suite had never run against any of this. The shim
+approach recorded at the end of §5a-0 works and was rebuilt: compile the real
+test files to CJS, map `vitest` onto `node:test`, and make unknown matchers
+**throw** rather than pass.
+
+It caught: a lesson silently losing its keyboard badge (`keyFor` required exactly
+one *tool*, which stopped meaning one *key* when the line lesson took both halves
+of its seat); `shape-arrow` having no name; two em-dashes in reader-facing copy;
+a walkthrough fixture that could not satisfy two of its own observations; and a
+stale assertion. Plus a defect shipped earlier the same session — mermaid's
+`[(Database)]` mapped to the shelved `database` kind, whose decks are drawn
+through the whole body, so a rim ran across the label at every size.
+
+**Diff the failures against a baseline worktree.** Most of what the shim reports
+is the shim (`vi.fn`, `import.meta`, missing matchers); without a baseline run
+there is no way to tell those from a regression.
+
+
 ## 5. Next up
 
 ### 5a-0. The four things to do first
@@ -5795,6 +5916,11 @@ being needed — the two failures it reports (`expect.arrayContaining`,
    thing to check by eye is the block frames: their extents come from which
    participants each block mentions, which is arithmetic no test can confirm
    reads well.
+
+   *Still outstanding.* §4aa rebuilt the flowchart shapes and looked at all
+   twenty by eye, and added the Mermaid 11 named form, but the **sequence and
+   pie previews are still the thing nobody has looked at**. The flowchart pass
+   does not cover them: they have their own layout and their own preview layer.
 4. **Confirm the zoom buttons respond to a real mouse.** They were broken by
    pointer capture and fixed structurally; the fix could not be verified here
    because synthetic pointer events do not reach this tab at all. A capture
@@ -5816,6 +5942,11 @@ broken; all of it is unwatched.
   wiring — transaction, replace-in-place, selection — still has never run, and
   it now has two more branches in it (sequence and pie) that have never run
   either.
+
+  *§4aa:* the diagram suite runs now — 242 pass, including the Mermaid 11
+  named-shape form — and all twenty shapes were rendered and looked at. The
+  `Room` wiring is still the unwatched part, and so are the sequence and pie
+  previews.
 - **Connector label placement.** The algorithm is covered, including the
   fan-out case that motivated it, but it has never been *seen* — and the thing
   worth seeing is whether a label that has stepped perpendicular off its run
@@ -6262,6 +6393,14 @@ Physics, templates and the product shell (newest):
 | `engine/tools/toolNames.ts` | what each tool is *called* on the help screen, tested against the bindings |
 | `engine/tools/nudge.ts` | what an arrow keypress means, in world units. Pure, tested. |
 | `components/HelpModal.tsx` | the shortcut reference. Its tool rows are derived; the rest is hand-written and has drifted before — see §4a-ii. |
+| `engine/learn/lessons.ts` | the verbs, and which tool raises each. Every tool either has one or is named in `lessons.test.ts` as needing none. |
+| `engine/learn/walkthrough.ts` | a lesson performed rather than read: the observations, as data, and which lesson each walkthrough refers into |
+| `engine/learn/tour.ts` | where things live, and `nextVisibleStep` — the skip that stops a tour running invisibly when an anchor is gone. Pure, tested. |
+| `components/learn/LessonDemo.tsx` | eleven looping SVG scenes, one per gesture whose words cannot carry it. Transform and opacity only; resolves under `prefers-reduced-motion`. |
+| `engine/diagram/silhouette.ts` | the bridge that stops the mermaid preview describing a shape twice — it asks `shapeToPath` for the node `build.ts` would build |
+| `engine/link/linkApply.ts` | placing links and filling them in: the claim, the classified retry with backoff, and the bounded stale refresh |
+| `server/src/cors.ts` | who may call the API, and why a refusal is `false` rather than an `Error`. Pure, tested. |
+| `server/src/redisClient.ts` | the one connection the limits and the IP quota share, built from config rather than from a library's private field |
 | `Home.tsx` | the rooms page: rail, stage, boards and templates as separate views |
 | `DESIGN.md` | the token layers and the named rules. Read before touching `index.css`. |
 
