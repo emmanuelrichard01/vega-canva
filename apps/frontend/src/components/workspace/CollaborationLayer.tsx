@@ -1,9 +1,11 @@
 import React, { useRef, useState, useSyncExternalStore } from 'react';
+import { Radio } from 'lucide-react';
 import { provider } from '../../engine/document';
 import { Avatar } from '../ui/Avatar';
 import { ProfileEditor } from '../ProfileEditor';
 import { useRoomState } from '../../hooks/useSync';
 import { followMode } from '../../engine/presence/followMode';
+import { presenceManager } from '../../engine/presence/PresenceManager';
 import type { ActivityKind } from '../../engine/presence/collaborators';
 import { Menu } from '../menu/Menu';
 import type { MenuEntry } from '../menu/menuModel';
@@ -53,6 +55,11 @@ export const CollaborationLayer: React.FC = () => {
   const [roster, setRoster] = useState<DOMRect | null>(null);
   const justClosed = useRef(0);
   const followingId = useSyncExternalStore(followMode.subscribe, followMode.getSnapshot, followMode.getSnapshot);
+  const spotlighting = useSyncExternalStore(
+    presenceManager.subscribeSpotlight,
+    presenceManager.isSpotlighting,
+    presenceManager.isSpotlighting
+  );
 
   const me = provider.awareness?.clientID;
   const people: Person[] = Array.from(awarenessUsers.entries())
@@ -78,6 +85,31 @@ export const CollaborationLayer: React.FC = () => {
 
   const rosterEntries = (): MenuEntry[] => [
     { kind: 'heading', id: 'h', label: `${people.length} ${people.length === 1 ? 'person' : 'people'} on this board` },
+    /*
+     * "Look at what I am looking at", from the place you already came to think
+     * about the people in the room.
+     *
+     * It belongs here and not on a floating chip: it is used once or twice in
+     * a session, and a canvas that grows a permanent button for every
+     * occasional action stops being a canvas. Everyone else gets an offer they
+     * can take in one tap — never a camera move they did not ask for. See
+     * `PresenceStage`.
+     */
+    ...(people.length > 1
+      ? [
+          {
+            kind: 'item',
+            id: 'spotlight',
+            label: spotlighting ? 'Stop showing your view' : 'Show everyone your view',
+            icon: <Radio size={15} aria-hidden />,
+            detail: spotlighting
+              ? 'They were offered a one-tap ride here'
+              : 'Offers everyone a one-tap ride to what you are looking at',
+            onSelect: () => presenceManager.setSpotlight(!spotlighting),
+          } satisfies MenuEntry,
+          { kind: 'separator', id: 'sep-spotlight' } satisfies MenuEntry,
+        ]
+      : []),
     ...people.map<MenuEntry>((p) => ({
       kind: 'item',
       id: String(p.clientId),

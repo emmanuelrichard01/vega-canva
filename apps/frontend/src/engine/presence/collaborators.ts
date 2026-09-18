@@ -129,6 +129,20 @@ export interface Collaborator {
   throws: Point[];
   /** Live cursor reaction emoji */
   reaction?: { emoji: string; timestamp: number } | null;
+  /**
+   * The `clientId` whose view *they* are locked to, or `null`.
+   *
+   * Which is how you find out anyone is watching you: see `spotlight.ts`.
+   */
+  following: number | null;
+  /**
+   * When they offered their view to the room, epoch ms, or `null`.
+   *
+   * Flattened to the timestamp rather than kept as the `{ at }` object it
+   * travels as, because every reader wants to know how old it is and none of
+   * them want to reach through a wrapper to find out.
+   */
+  spotlightAt: number | null;
 }
 
 const FALLBACK_COLOR = '#6B7280';
@@ -227,6 +241,8 @@ export function readCollaborators(
       selection: Array.isArray(state.selection) ? state.selection : [],
       throws: readThrows(state.throws),
       reaction: state.reaction && typeof state.reaction.emoji === 'string' ? state.reaction : null,
+      following: Number.isFinite(state.following) ? (state.following as number) : null,
+      spotlightAt: Number.isFinite(state.spotlight?.at) ? (state.spotlight.at as number) : null,
     });
   });
 
@@ -252,6 +268,10 @@ export function readCollaborators(
  * `selection` is in here for the same reason from the other direction: remote
  * selection outlines *are* React output, and someone selecting an object is a
  * deliberate act a handful of times a minute, not a stream.
+ *
+ * `following` and `spotlightAt` belong here on both counts: each changes when
+ * somebody makes a decision — a handful of times a session — and each drives
+ * something React draws, the audience count and the invitation banner.
  */
 export function rosterSignature(list: Collaborator[]): string {
   return list
@@ -259,7 +279,9 @@ export function rosterSignature(list: Collaborator[]): string {
       (c) =>
         `${c.clientId}:${c.name}:${c.color}:${c.activity ?? ''}:${c.tool ?? ''}:${
           c.away ? 1 : 0
-        }:${c.cursor ? 1 : 0}:${c.reaction?.emoji ?? ''}:${c.selection.join(',')}`
+        }:${c.cursor ? 1 : 0}:${c.reaction?.emoji ?? ''}:${c.following ?? ''}:${
+          c.spotlightAt ?? ''
+        }:${c.selection.join(',')}`
     )
     .join('|');
 }

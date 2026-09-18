@@ -16,9 +16,12 @@
  * a session that reopens still attached to someone who left is a canvas that
  * appears frozen.
  *
- * (Broadcasting "N people are following you" back to the leader is a real
- * feature and deliberately not this one. It would ride awareness, through
- * `PresenceManager`, which is the only writer.)
+ * The one thing that *is* broadcast is the bare fact of it. "N people are
+ * following you" cannot be worked out by the leader — viewport overlap would
+ * count anyone looking at the same corner — so the follower announces it, and
+ * like every other ephemeral field it goes out through `PresenceManager`,
+ * which remains the only writer of awareness. See `spotlight.ts` for what is
+ * made of it.
  *
  * ## Why the camera is driven from the frame loop
  *
@@ -33,6 +36,7 @@
 import { cameraSystem } from '../CameraSystem';
 import { smoothingFactor } from '../cursor/remoteCursor';
 import { collaboratorStore } from './collaboratorStore';
+import { presenceManager } from './PresenceManager';
 import { easePose, followPose, poseWasDisturbed, type CameraPose } from './followCamera';
 
 /** Why a follow ended. Only `manual` and `left` are surfaced to the user. */
@@ -114,6 +118,10 @@ function stop(reason: FollowEndReason) {
   lastWritten = null;
   detachFrame?.();
   detachFrame = null;
+  // Say so before telling this tab's own listeners: a leader watching their
+  // audience shrink should not learn about it a broadcast later than the
+  // person who left.
+  presenceManager.updateFollowing(null);
   emit();
 }
 
@@ -143,6 +151,7 @@ export const followMode = {
     lastWritten = null;
     detachFrame?.();
     detachFrame = collaboratorStore.onFrame(tick);
+    presenceManager.updateFollowing(clientId);
     emit();
   },
 

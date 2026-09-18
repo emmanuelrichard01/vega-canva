@@ -35,6 +35,19 @@ export interface LinkMeta {
   author?: string;
   /** What the page says it is: `article`, `video.other`, `profile`. */
   type?: string;
+  /**
+   * The words arrived; the picture has not yet.
+   *
+   * A preview is answered in two parts, because reading a page takes about a
+   * second and fetching its picture can take ten. The card draws its title and
+   * description straight away and holds the space the picture will occupy,
+   * rather than either sitting as a skeleton until everything is ready or
+   * laying itself out as a text card and then jumping when the picture lands.
+   *
+   * Absent — never `false` — once the question is settled, so the document
+   * carries no field for the ordinary case. See `linkApply.ts`.
+   */
+  imagePending?: boolean;
   /** When this preview was fetched, epoch ms. */
   fetchedAt: number;
 }
@@ -79,6 +92,7 @@ export function normalizeLinkSpec(raw: unknown): LinkSpec {
           themeColor: typeof m.themeColor === 'string' && /^#[0-9a-f]{3,8}$/i.test(m.themeColor) ? m.themeColor : undefined,
           author: str(m.author, 120),
           type: str(m.type, 40),
+          imagePending: m.imagePending === true || undefined,
           fetchedAt: num(m.fetchedAt) ?? 0,
         }
       : null,

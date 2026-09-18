@@ -3,6 +3,7 @@ import type { NewNodeInput } from '../document/mutations';
 import { defaultChartSpec, type ChartSpec } from '../chart/chartTypes';
 import type { TableSpec } from '../table/tableTypes';
 import type { Template } from './templates';
+import { INK_SOFT, INK_STRONG } from './templateKit';
 
 /**
  * Science and maths, each board drawn twice.
@@ -32,7 +33,7 @@ export const title = (x: number, y: number, text: string, fontSize = 40): NewNod
   height: fontSize * 1.5,
   text,
   resize: 'width',
-  typography: { fontSize, fontWeight: 700, color: '#0F172A' },
+  typography: { fontSize, fontWeight: 700, color: INK_STRONG },
 });
 
 export const caption = (x: number, y: number, text: string): NewNodeInput => ({
@@ -44,7 +45,7 @@ export const caption = (x: number, y: number, text: string): NewNodeInput => ({
   height: 30,
   text,
   resize: 'width',
-  typography: { fontSize: 18, fontWeight: 500, color: '#475569' },
+  typography: { fontSize: 18, fontWeight: 500, color: INK_SOFT },
 });
 
 export const frame = (x: number, y: number, width: number, height: number, name: string): NewNodeInput => ({

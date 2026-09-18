@@ -2,6 +2,28 @@ import { FetchRefused, safeFetch, type SafeFetchOptions, type SafeFetchResult } 
 import { cleanText, decodeHtml, parseHtmlMeta, sniffImage, textFromEmbedHtml, type SniffedImage } from './unfurlParse';
 
 /**
+ * # Why a link preview is answered in two parts
+ *
+ * Unfurling one link is up to four round trips to somebody else's
+ * infrastructure: an oEmbed endpoint, the page, its picture, its icon. The
+ * picture is the slowest of them by a wide margin — it is the only one
+ * measured in megabytes — and it is also the only one the card can be read
+ * without. Waiting for all four before answering meant a card sat as a grey
+ * skeleton for the length of the *worst* leg, and a board of ten links sat
+ * there together.
+ *
+ * So the words are answered as soon as they are known and the pictures keep
+ * going in the background: `{ preview, pending: true }` says "this is the
+ * card, there is a picture coming, ask again". The client draws the title and
+ * description immediately — which is the whole card for most links — and the
+ * picture arrives into the same node a moment later.
+ *
+ * A fast site never sees this: the pictures are given a short grace to finish
+ * before the answer goes out, so a quick page still resolves in one request
+ * with `pending: false`.
+ */
+
+/**
  * A link's preview, as the board stores it.
  *
  * The client writes this into the document once and every collaborator draws
@@ -81,25 +103,92 @@ function youTubeId(url: string): string | null {
   }
 }
 
-export interface Unfurler {
-  unfurl(roomId: string, url: string): Promise<LinkPreview>;
+export interface UnfurlResult {
+  preview: LinkPreview;
+  /** The words are final; a picture is still on its way. Ask again to collect it. */
+  pending: boolean;
 }
 
-export function createUnfurler(deps: { fetch?: Fetcher; store: ImageStore; now?: () => number; ttlMs?: number; maxEntries?: number }): Unfurler {
+export interface Unfurler {
+  unfurl(roomId: string, url: string): Promise<UnfurlResult>;
+}
+
+/**
+ * What a page said about itself, before anything was stored for a room.
+ *
+ * Room-independent by construction, which is the point: reading and parsing
+ * somebody's HTML is the same work whichever board the link was dropped on,
+ * so it is done once and shared. Only the *pictures* are per-room, because a
+ * stored picture is room media — counted against that room's quota, deleted
+ * with that room.
+ */
+interface PageText {
+  preview: LinkPreview;
+  /** Remote picture candidates, best first. */
+  images: string[];
+  /** Remote icon candidates, the page's own declarations first. */
+  icons: string[];
+  /** The link was itself a picture, and these are its bytes — already fetched, not to be fetched twice. */
+  inline?: { bytes: Buffer; image: SniffedImage };
+}
+
+/** How long a refusal is remembered, so a dead link is not re-chased on every paste. */
+const FAILURE_TTL_MS = 60_000;
+/**
+ * The largest picture whose bytes ride along in the shared page cache.
+ *
+ * A link that points straight at an image has already paid to download it, so
+ * the second board to use that link should not pay again. Past this size the
+ * saving is not worth the resident memory — hundreds of cached pages each
+ * holding three megabytes is a leak with a plausible excuse.
+ */
+const INLINE_CACHE_BYTES = 512 * 1024;
+/** How long the pictures may take before the words are sent on without them. */
+const GRACE_MS = 600;
+
+export function createUnfurler(deps: {
+  fetch?: Fetcher;
+  store: ImageStore;
+  now?: () => number;
+  ttlMs?: number;
+  maxEntries?: number;
+  /** How long the pictures are waited for before answering with words alone. `0` answers immediately. */
+  graceMs?: number;
+}): Unfurler {
   const fetcher = deps.fetch ?? safeFetch;
   const now = deps.now ?? Date.now;
   const ttl = deps.ttlMs ?? 10 * 60 * 1000;
   const maxEntries = deps.maxEntries ?? 500;
+  const graceMs = deps.graceMs ?? GRACE_MS;
+
   /**
-   * Finished previews by room and URL, and the ones in progress.
+   * Finished previews by room and URL, and the picture work in progress.
    *
-   * Keyed by room because the stored pictures are the room's: the same URL
-   * previewed in two boards is two copies, each counted against its own quota
-   * and deleted with its own board. The in-flight map means two collaborators
-   * (or one impatient double paste) share a single fetch.
+   * Keyed by room because the stored pictures are the room's. The in-flight
+   * map means two collaborators (or one impatient double paste) share a single
+   * fetch.
    */
   const cache = new Map<string, { at: number; preview: LinkPreview }>();
-  const inFlight = new Map<string, Promise<LinkPreview>>();
+  const assetWork = new Map<string, Promise<LinkPreview>>();
+
+  /**
+   * The page itself, by URL and across rooms.
+   *
+   * The expensive half of an unfurl is reading somebody else's HTML, and it
+   * does not depend on which board asked. Sharing it means the second board to
+   * link an article — or the same board after a restart of the room cache —
+   * pays for the pictures only. Failures are remembered too, briefly: a URL
+   * that has just refused to load will refuse again, and re-chasing it on
+   * every paste is how one dead link makes a whole board feel slow.
+   */
+  const textCache = new Map<string, { at: number; text: PageText }>();
+  const textWork = new Map<string, Promise<PageText>>();
+  const failures = new Map<string, { at: number; error: UnfurlError }>();
+
+  /** Oldest first, since a Map iterates in insertion order. */
+  const trim = (map: Map<string, unknown>, limit = maxEntries) => {
+    while (map.size > limit) map.delete(map.keys().next().value as string);
+  };
 
   async function fetchJson<T>(url: string): Promise<T | null> {
     try {
@@ -143,9 +232,43 @@ export function createUnfurler(deps: { fetch?: Fetcher; store: ImageStore; now?:
     }
   }
 
-  async function build(roomId: string, url: string): Promise<LinkPreview> {
+  /**
+   * The first candidate that turns out to be a real picture.
+   *
+   * Tried a couple at a time rather than all at once, which is the difference
+   * between a thorough preview and a small flood aimed at whoever was linked:
+   * a page can declare five pictures and four icons, and firing nine requests
+   * at a site to decorate one card is not a reasonable thing to do to it. Two
+   * at a time keeps the common case — one good candidate, one spare — as fast
+   * as it ever was, and only a page whose first choices are broken pays for a
+   * second round.
+   */
+  async function firstImage(candidates: string[], kind: 'picture' | 'icon', width = 2) {
+    const seen = new Set<string>();
+    const queue = candidates.filter((u) => Boolean(u) && !seen.has(u) && Boolean(seen.add(u)));
+    for (let i = 0; i < queue.length; i += width) {
+      const batch = await Promise.all(queue.slice(i, i + width).map((u) => fetchImage(u, kind)));
+      const found = batch.find(Boolean);
+      if (found) return found;
+    }
+    return null;
+  }
+
+  /** Drop the empties, so the document holds only what was found. */
+  const tidy = (preview: LinkPreview): LinkPreview =>
+    Object.fromEntries(Object.entries(preview).filter(([, v]) => v !== undefined && v !== '')) as LinkPreview;
+
+  /**
+   * Read the page and everything it says about itself. No storing, no room.
+   *
+   * Throws `UnfurlError` for the two cases worth telling somebody about — a
+   * page that cannot be reached and a page that does not exist. Everything
+   * else degrades: a site that turns robots away still has a domain and an
+   * icon, and that is a better card than an apology.
+   */
+  async function readPage(url: string): Promise<PageText> {
     const provider = OEMBED.find((p) => p.match.test(url));
-    const oembed = provider ? await fetchJson<OEmbed>(provider.endpoint(url)) : null;
+    let oembed = provider ? await fetchJson<OEmbed>(provider.endpoint(url)) : null;
 
     let page: SafeFetchResult | null = null;
     let pageError: unknown = null;
@@ -177,9 +300,11 @@ export function createUnfurler(deps: { fetch?: Fetcher; store: ImageStore; now?:
 
     const finalUrl = page?.url ?? url;
     const host = new URL(finalUrl).hostname.replace(/^www\./, '');
+    const origin = new URL(finalUrl).origin;
     const preview: LinkPreview = {};
-    let imageUrl: string | undefined;
-    let iconCandidates: string[] = [];
+    let images: string[] = [];
+    let icons: string[] = [];
+    let inline: PageText['inline'];
 
     if (page && page.status < 400) {
       const type = page.contentType.split(';')[0].trim();
@@ -201,15 +326,29 @@ export function createUnfurler(deps: { fetch?: Fetcher; store: ImageStore; now?:
           author: meta.author,
           type: meta.type,
         });
-        imageUrl = meta.image;
-        iconCandidates = meta.icons.map((i) => i.href);
-      } else if (type.startsWith('image/')) {
-        // The link *is* a picture: it is its own preview.
-        const image = sniffImage(page.body);
-        if (image && !page.truncated) {
-          const stored = await deps.store(roomId, page.body, image);
-          if (stored) Object.assign(preview, { image: stored, imageWidth: image.width, imageHeight: image.height });
+        images = meta.images;
+        icons = meta.icons.slice(0, 3).map((i) => i.href);
+
+        /*
+         * The page's own oEmbed endpoint, but only when the page was thin.
+         *
+         * A site that declares one is saying where the real answer lives, and
+         * for a great many CMS-backed pages that is the difference between a
+         * title alone and a title with a summary and a thumbnail. It costs a
+         * round trip, so it is only spent when the markup did not already
+         * answer: a page with a good description and a picture has nothing to
+         * gain here.
+         */
+        if (meta.oembed && (!preview.description || images.length === 0)) {
+          const found = await fetchJson<OEmbed>(meta.oembed);
+          if (found) oembed = found;
         }
+      } else if (type.startsWith('image/')) {
+        // The link *is* a picture: it is its own preview. The bytes are already
+        // here, so they travel with the text rather than being fetched twice.
+        const image = sniffImage(page.body);
+        if (image && !page.truncated) inline = { bytes: page.body, image };
+        images = [finalUrl];
         preview.title = cleanText(fileName, 200);
         preview.type = 'image';
       } else if (type === 'application/pdf') {
@@ -226,55 +365,124 @@ export function createUnfurler(deps: { fetch?: Fetcher; store: ImageStore; now?:
       preview.author = cleanText(oembed.author_name, 80) ?? preview.author;
       preview.siteName = cleanText(oembed.provider_name, 80) ?? provider?.site ?? preview.siteName;
       preview.description = preview.description ?? cleanText(oembed.description, 320) ?? textFromEmbedHtml(oembed.html);
-      imageUrl = imageUrl ?? oembed.thumbnail_url;
+      if (oembed.thumbnail_url) images = [...images, oembed.thumbnail_url];
       // X's oEmbed has no title; the post's words are the card.
       if (provider?.site === 'X' && !oembed.title) {
         preview.title = oembed.author_name ? `${cleanText(oembed.author_name, 80)} on X` : 'Post on X';
       }
     }
 
-    // Every picture candidate at once, in priority order; the first good one wins.
-    // YouTube's largest still leads when there is one, ahead of the letterboxed 480×360.
+    // YouTube's largest still leads when there is one, ahead of the letterboxed 480x360.
     const ytId = /youtu/.test(host) ? youTubeId(finalUrl) : null;
-    const origin = new URL(finalUrl).origin;
-    const imageCandidates = [ytId ? `https://i.ytimg.com/vi/${ytId}/maxresdefault.jpg` : undefined, imageUrl].filter(Boolean) as string[];
-    const icons = [...new Set([...iconCandidates.slice(0, 2), `${origin}/apple-touch-icon.png`, `${origin}/favicon.ico`])];
-    const [images, favicons] = await Promise.all([
-      Promise.all(imageCandidates.map((u) => fetchImage(u, 'picture'))),
-      Promise.all(icons.map((u) => fetchImage(u, 'icon'))),
+    if (ytId) images = [`https://i.ytimg.com/vi/${ytId}/maxresdefault.jpg`, ...images];
+
+    if (!preview.title && !preview.description) preview.title = host;
+
+    return {
+      preview: tidy(preview),
+      images,
+      // The page's own declarations first: a site that names its icon is right
+      // about it, and the two guesses after it are only worth a request when
+      // it did not. Four icon fetches for every card was most of the tail.
+      icons: [...icons, `${origin}/apple-touch-icon.png`, `${origin}/favicon.ico`],
+      inline,
+    };
+  }
+
+  /**
+   * Give a room's copy of a page its pictures.
+   *
+   * Everything here is per-room and so cannot be shared: a stored picture is
+   * room media, counted against that room's quota and deleted with that room.
+   * It never throws — a card without a picture is still a card, and a quota
+   * that has run out is not something the reader can act on.
+   */
+  async function dress(roomId: string, text: PageText): Promise<LinkPreview> {
+    const preview: LinkPreview = { ...text.preview };
+
+    const [picture, icon] = await Promise.all([
+      text.inline ? Promise.resolve(text.inline) : firstImage(text.images, 'picture'),
+      firstImage(text.icons, 'icon'),
     ]);
-    if (preview.image === undefined) {
-      const image = await keep(roomId, images.find(Boolean) ?? null);
-      if (image) Object.assign(preview, { image: image.url, imageWidth: image.width, imageHeight: image.height });
-    }
-    const favicon = await keep(roomId, favicons.find(Boolean) ?? null);
+
+    const kept = await keep(roomId, picture);
+    if (kept) Object.assign(preview, { image: kept.url, imageWidth: kept.width, imageHeight: kept.height });
+    const favicon = await keep(roomId, icon);
     if (favicon) preview.favicon = favicon.url;
 
-    if (!preview.title && !preview.description && !preview.image) {
-      preview.title = host;
-    }
-    // Drop the empties, so the document holds only what was found.
-    return Object.fromEntries(Object.entries(preview).filter(([, v]) => v !== undefined && v !== '')) as LinkPreview;
+    return tidy(preview);
+  }
+
+  /** Wait a moment for the pictures, then stop waiting. `null` means "not yet". */
+  function withGrace(work: Promise<LinkPreview>, ms: number): Promise<LinkPreview | null> {
+    if (ms <= 0) return Promise.resolve(null);
+    let timer: ReturnType<typeof setTimeout>;
+    // Deliberately a plain, referenced timer. It is cleared the moment the race
+    // settles, so it can hold the loop open for `ms` and no longer — and an
+    // `unref`'d one would let a process whose only pending work is this grace
+    // exit in the middle of answering.
+    const lapsed = new Promise<null>((resolve) => {
+      timer = setTimeout(() => resolve(null), ms);
+    });
+    return Promise.race([work, lapsed]).finally(() => clearTimeout(timer));
+  }
+
+  /** The page, from whichever of the three places already has it. */
+  async function getText(url: string): Promise<PageText> {
+    const failed = failures.get(url);
+    if (failed && now() - failed.at < FAILURE_TTL_MS) throw failed.error;
+
+    const hit = textCache.get(url);
+    if (hit && now() - hit.at < ttl) return hit.text;
+
+    const pending = textWork.get(url);
+    if (pending) return pending;
+
+    const work = readPage(url)
+      .then((text) => {
+        // The bytes of a linked picture ride along to save a fetch, but they are
+        // not worth a megabyte of shared cache each; past that, the URL alone.
+        const light = text.inline && text.inline.bytes.length > INLINE_CACHE_BYTES ? { ...text, inline: undefined } : text;
+        textCache.set(url, { at: now(), text: light });
+        trim(textCache);
+        return text;
+      })
+      .catch((err) => {
+        if (err instanceof UnfurlError) {
+          failures.set(url, { at: now(), error: err });
+          trim(failures, 200);
+        }
+        throw err;
+      })
+      .finally(() => textWork.delete(url));
+    textWork.set(url, work);
+    return work;
   }
 
   return {
     async unfurl(roomId, url) {
       const key = `${roomId}\n${url}`;
       const hit = cache.get(key);
-      if (hit && now() - hit.at < ttl) return hit.preview;
-      const pending = inFlight.get(key);
-      if (pending) return pending;
+      if (hit && now() - hit.at < ttl) return { preview: hit.preview, pending: false };
 
-      const work = build(roomId, url)
-        .then((preview) => {
-          cache.set(key, { at: now(), preview });
-          // Oldest first, since a Map iterates in insertion order.
-          while (cache.size > maxEntries) cache.delete(cache.keys().next().value as string);
-          return preview;
-        })
-        .finally(() => inFlight.delete(key));
-      inFlight.set(key, work);
-      return work;
+      const text = await getText(url);
+
+      let work = assetWork.get(key);
+      if (!work) {
+        work = dress(roomId, text)
+          // A picture that could not be had leaves the words, which are the card.
+          .catch(() => text.preview)
+          .then((preview) => {
+            cache.set(key, { at: now(), preview });
+            trim(cache);
+            return preview;
+          })
+          .finally(() => assetWork.delete(key));
+        assetWork.set(key, work);
+      }
+
+      const finished = await withGrace(work, graceMs);
+      return finished ? { preview: finished, pending: false } : { preview: text.preview, pending: true };
     },
   };
 }

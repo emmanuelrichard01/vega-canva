@@ -3,8 +3,15 @@ import type { NewNodeInput } from '../document/mutations';
 import type { AnyNode, StickyTheme } from '../model/schema';
 import { buildPreview, MAX_ITEMS_RICH, type BoardPreview } from '../model/boardPreview';
 import { previewColorOf, previewPointsOf } from '../model/previewPaint';
+import {
+  BRAND, BRAND_INK, HAIRLINE, HUE, INK, INK_FAINT, INK_MID, INK_SOFT, INK_STRONG,
+  layer, PAPER, PAPER_SOFT, RULE, SIGNAL_BAD, SIGNAL_OK, TINT,
+} from './templateKit';
 import { SCIENCE_TEMPLATES } from './scienceTemplates';
 import { TABLE_TEMPLATES } from './tableTemplates';
+import { SYSTEM_TEMPLATES } from './systemTemplates';
+import { WORK_TEMPLATES } from './workTemplates';
+import { ART_TEMPLATES } from './artTemplates';
 
 /**
  * Boards that already have something on them.
@@ -43,15 +50,34 @@ import { TABLE_TEMPLATES } from './tableTemplates';
  * "connectors and frames". A row of thirteen ungrouped cards is also a row
  * nobody reads to the end.
  */
-export type TemplateCategory = 'diagrams' | 'thinking' | 'design' | 'art' | 'physics' | 'science';
+export type TemplateCategory =
+  | 'systems'
+  | 'work'
+  | 'diagrams'
+  | 'thinking'
+  | 'design'
+  | 'art'
+  | 'physics'
+  | 'science';
 
-export const CATEGORIES: Array<{ id: TemplateCategory; label: string }> = [
-  { id: 'diagrams', label: 'Charts & flows' },
-  { id: 'science', label: 'Science & maths' },
-  { id: 'design', label: 'Web & social' },
-  { id: 'thinking', label: 'Thinking' },
-  { id: 'art', label: 'Illustration' },
-  { id: 'physics', label: 'Physics' },
+/**
+ * The order these appear in, which is an editorial decision and not an
+ * alphabetical one.
+ *
+ * `systems` and `work` lead because they are the boards somebody would
+ * actually keep — an architecture, a quarter, a launch. What follows is
+ * ordered by how far it sits from ordinary work, ending at the generative
+ * boards, which are the ones people open last and enjoy most.
+ */
+export const CATEGORIES: Array<{ id: TemplateCategory; label: string; blurb: string }> = [
+  { id: 'systems', label: 'Systems & architecture', blurb: 'How real things actually work, drawn properly.' },
+  { id: 'work', label: 'Teams & planning', blurb: 'The boards a team keeps open for a quarter.' },
+  { id: 'diagrams', label: 'Charts & flows', blurb: 'Process, hierarchy and the arrows between them.' },
+  { id: 'science', label: 'Science & maths', blurb: 'Plots, distributions and data, twice — crisp and hand-drawn.' },
+  { id: 'thinking', label: 'Thinking', blurb: 'Workshops, retros and the wall you think at.' },
+  { id: 'design', label: 'Web & social', blurb: 'Layouts, kits and the pieces of a brand.' },
+  { id: 'art', label: 'Illustration', blurb: 'Drawing with objects, by hand and by formula.' },
+  { id: 'physics', label: 'Physics', blurb: 'Boards that move when you push them.' },
 ];
 
 export interface Template {
@@ -139,7 +165,7 @@ const box = (
    * is a label nobody can read. The first build of these templates shipped
    * exactly that.
    */
-  typography: { fontSize: 18, fontWeight: 600, color: '#1F2937', align: 'center', verticalAlign: 'middle' },
+  typography: { fontSize: 18, fontWeight: 600, color: INK, align: 'center', verticalAlign: 'middle' },
   ...extra,
 });
 
@@ -152,7 +178,7 @@ const label = (x: number, y: number, text: string, fontSize = 28): NewNodeInput 
   height: fontSize * 1.6,
   text,
   resize: 'width',
-  typography: { fontSize, fontWeight: 700, color: '#161616' },
+  typography: { fontSize, fontWeight: 700, color: BRAND_INK },
 });
 
 const frame = (x: number, y: number, width: number, height: number, title: string): NewNodeInput => ({
@@ -181,7 +207,7 @@ const link = (
   to: { nodeId: toId, port: 'auto' },
   routing: 'orthogonal',
   endEnd: 'arrow',
-  appearance: { stroke: { color: '#64748B', width: 2, cap: 'round' } },
+  appearance: { stroke: { color: HUE.slate, width: 2, cap: 'round' } },
   ...extra,
 });
 
@@ -203,7 +229,7 @@ const BASE_TEMPLATES: Template[] = [
     name: 'Bloom',
     blurb: 'Five hundred shapes on a phyllotaxis spiral. Built to exercise the force tools.',
     teaches: ['Forces', 'Radar', 'Physics'],
-    objectCount: 500,
+    objectCount: 502,
     build: (limit) => {
       /**
        * Phyllotaxis — the arrangement a sunflower uses.
@@ -304,7 +330,7 @@ const BASE_TEMPLATES: Template[] = [
     name: 'Wave field',
     blurb: 'One thousand tiles on a sine surface. Demonstrates rendering and culling at scale.',
     teaches: ['Culling', 'Zoom', 'Performance'],
-    objectCount: 1000,
+    objectCount: 1002,
     build: (limit) => {
       // Kept proportional when trimmed, so the thumbnail is the same surface
       // at lower resolution rather than a corner of it.
@@ -355,7 +381,7 @@ const BASE_TEMPLATES: Template[] = [
     name: 'Org chart',
     blurb: 'A small company, four disciplines deep, wired throughout with 68 live connectors.',
     teaches: ['Connectors at scale', 'Layout'],
-    objectCount: 137,
+    objectCount: 139,
     build: (limit) => {
       /**
        * Deep rather than wide, and staffed rather than numbered.
@@ -381,7 +407,7 @@ const BASE_TEMPLATES: Template[] = [
 
       const ORG: Fn[] = [
         {
-          name: 'Engineering', tint: '#DBEAFE',
+          name: 'Engineering', tint: TINT.blue,
           teams: [
             { name: 'Platform', people: ['Ada', 'Ravi', 'Mei', 'Tom', 'Iris', 'Kojo', 'Lena'] },
             { name: 'Client', people: ['Sam', 'Priya', 'Noor', 'Eli', 'Dana', 'Hugo', 'Maya'] },
@@ -395,14 +421,14 @@ const BASE_TEMPLATES: Template[] = [
           ],
         },
         {
-          name: 'Product', tint: '#DCFCE7',
+          name: 'Product', tint: TINT.green,
           teams: [
             { name: 'Growth', people: ['Ana', 'Theo', 'Suri', 'Cleo', 'Marc', 'Yuki', 'Rosa'] },
             { name: 'Core', people: ['Ivo', 'Nell', 'Omar', 'Tess', 'Gus', 'Sena', 'Ada B.'] },
           ],
         },
         {
-          name: 'Operations', tint: '#FEF3C7',
+          name: 'Operations', tint: TINT.amber,
           teams: [
             { name: 'People', people: ['Rune', 'Asha', 'Milo', 'Wren', 'Jonas', 'Efe', 'Tara'] },
             { name: 'Finance', people: ['Cass', 'Deniz', 'Rui', 'Alba', 'Nils', 'Sena B.', 'Ove'] },
@@ -439,8 +465,8 @@ const BASE_TEMPLATES: Template[] = [
       ];
 
       // ---- the root ------------------------------------------------------
-      const root = box(-130, -TIER_H * 2, 260, 96, 'Chief Executive', '#E0E7FF', {
-        typography: { fontSize: 20, fontWeight: 700, color: '#1F2937', align: 'center', verticalAlign: 'middle' },
+      const root = box(-130, -TIER_H * 2, 260, 96, 'Chief Executive', TINT.indigo, {
+        typography: { fontSize: 20, fontWeight: 700, color: INK, align: 'center', verticalAlign: 'middle' },
       });
       boxes.push(root);
 
@@ -452,7 +478,7 @@ const BASE_TEMPLATES: Template[] = [
         const right = teamX(f * 2 + 1) + TEAM_W;
         const node = box(
           (left + right) / 2 - 110, -TIER_H, 220, 78, fn.name, fn.tint,
-          { typography: { fontSize: 18, fontWeight: 700, color: '#1F2937', align: 'center', verticalAlign: 'middle' } }
+          { typography: { fontSize: 18, fontWeight: 700, color: INK, align: 'center', verticalAlign: 'middle' } }
         );
         boxes.push(node);
         links.push(link(root.id as string, node.id as string, { endEnd: 'none' }));
@@ -464,7 +490,7 @@ const BASE_TEMPLATES: Template[] = [
       teams.forEach((team, t) => {
         const x = teamX(t);
         const teamNode = box(x, 0, TEAM_W, 70, team.name, team.fn.tint, {
-          typography: { fontSize: 16, fontWeight: 600, color: '#1F2937', align: 'center', verticalAlign: 'middle' },
+          typography: { fontSize: 16, fontWeight: 600, color: INK, align: 'center', verticalAlign: 'middle' },
         });
         boxes.push(teamNode);
         links.push(link(fnNodes[Math.floor(t / 2)].id as string, teamNode.id as string, { endEnd: 'none' }));
@@ -472,8 +498,8 @@ const BASE_TEMPLATES: Template[] = [
         if (!withPeople) return;
         team.people.forEach((person, k) => {
           const personNode = box(
-            x + 20, 118 + k * (PERSON_H + PERSON_GAP), TEAM_W - 40, PERSON_H, person, '#F8FAFC',
-            { typography: { fontSize: 15, fontWeight: 500, color: '#334155', align: 'center', verticalAlign: 'middle' } }
+            x + 20, 118 + k * (PERSON_H + PERSON_GAP), TEAM_W - 40, PERSON_H, person, PAPER_SOFT,
+            { typography: { fontSize: 15, fontWeight: 500, color: INK_MID, align: 'center', verticalAlign: 'middle' } }
           );
           boxes.push(personNode);
           links.push(link(teamNode.id as string, personNode.id as string, { endEnd: 'none' }));
@@ -481,7 +507,7 @@ const BASE_TEMPLATES: Template[] = [
       });
 
       // Wires first, then the tree, then the titles on top.
-      return [...links, ...boxes, ...labels];
+      return layer([...links, ...boxes, ...labels]);
     },
   },
   {
@@ -490,7 +516,7 @@ const BASE_TEMPLATES: Template[] = [
     name: 'Landing page',
     blurb: 'A composed desktop page at 1440: nav, split hero, feature row, footer.',
     teaches: ['Frames', 'Layout', 'Export'],
-    objectCount: 74,
+    objectCount: 64,
     build: () => {
       /**
        * A wireframe that is actually laid out.
@@ -512,10 +538,10 @@ const BASE_TEMPLATES: Template[] = [
       const M = 80;                    // page margin
       const COL = PAGE - M * 2;        // content width
 
-      const INK = '#0F172A';
-      const MUTED = '#94A3B8';
-      const LINE = '#E2E8F0';
-      const CARD = '#F8FAFC';
+      const INK = INK_STRONG;
+      const MUTED = INK_FAINT;
+      const LINE = HAIRLINE;
+      const CARD = PAPER_SOFT;
 
       /** A plain filled block — the wireframe's stand-in for a picture. */
       const plate = (x: number, y: number, w: number, h: number, c: string, r = 16): NewNodeInput =>
@@ -536,13 +562,13 @@ const BASE_TEMPLATES: Template[] = [
         frame(0, 0, PAGE, 1980, 'Desktop 1440'),
 
         // ---- navigation ------------------------------------------------
-        plate(0, 0, PAGE, 88, '#FFFFFF', 0),
-        plate(M, 28, 32, 32, '#F3A024', 10),
+        plate(0, 0, PAGE, 88, PAPER, 0),
+        plate(M, 28, 32, 32, BRAND, 10),
         rule(M + 46, 38, 84, INK),
         rule(PAGE - M - 470, 40, 70, MUTED),
         rule(PAGE - M - 370, 40, 62, MUTED),
         rule(PAGE - M - 280, 40, 78, MUTED),
-        button(PAGE - M - 160, 16, 160, 'Sign up', INK, '#FFFFFF'),
+        button(PAGE - M - 160, 16, 160, 'Sign up', INK, PAPER),
         plate(0, 88, PAGE, 1, LINE, 0),
 
         // ---- hero: text left, picture right ----------------------------
@@ -550,8 +576,8 @@ const BASE_TEMPLATES: Template[] = [
         label(M, 268, 'in one place.', 62),
         label(M, 380, 'One sentence that says what this does and who it is for,', 21),
         label(M, 414, 'without saying "seamless" or "leverage".', 21),
-        button(M, 480, 190, 'Get started', '#F3A024', '#161616'),
-        button(M + 210, 480, 170, 'See a demo', '#FFFFFF', INK),
+        button(M, 480, 190, 'Get started', BRAND, BRAND_INK),
+        button(M + 210, 480, 170, 'See a demo', PAPER, INK),
 
         // The asymmetric half. A hero split down the middle reads as a table;
         // 40/60 gives the headline room and still leaves the image dominant.
@@ -559,7 +585,7 @@ const BASE_TEMPLATES: Template[] = [
         plate(740, 210, 340, 180, '#C7D2FE'),
         plate(740, 410, 160, 160, '#A5B4FC'),
         plate(920, 410, 160, 160, '#DDD6FE'),
-        plate(1100, 210, 220, 360, '#E0E7FF'),
+        plate(1100, 210, 220, 360, TINT.indigo),
 
         // ---- features ---------------------------------------------------
         label(M, 720, 'Three things it does well', 38),
@@ -569,7 +595,7 @@ const BASE_TEMPLATES: Template[] = [
       // Cards, each with its own mark — so the row reads as three things
       // rather than as three copies of one thing.
       const CARD_W = (COL - 40 * 2) / 3;
-      const MARKS = ['#F3A024', '#10B981', '#6366F1'];
+      const MARKS = [BRAND, SIGNAL_OK, HUE.indigo];
       [0, 1, 2].forEach((i) => {
         const x = M + i * (CARD_W + 40);
         nodes.push(plate(x, 860, CARD_W, 320, CARD));
@@ -585,11 +611,11 @@ const BASE_TEMPLATES: Template[] = [
         plate(M, 1260, COL, 280, INK, 24),
         label(M + 60, 1330, 'Ready when you are.', 40),
         label(M + 60, 1400, 'One line about starting, with no pricing invented.', 20),
-        button(PAGE - M - 260, 1360, 200, 'Start free', '#F3A024', '#161616'),
+        button(PAGE - M - 260, 1360, 200, 'Start free', BRAND, BRAND_INK),
 
         // ---- footer ------------------------------------------------------
         plate(0, 1620, PAGE, 1, LINE, 0),
-        plate(M, 1680, 32, 32, '#F3A024', 10),
+        plate(M, 1680, 32, 32, BRAND, 10),
         rule(M + 46, 1690, 84, INK),
         rule(M, 1760, 210, MUTED),
       );
@@ -630,25 +656,25 @@ const BASE_TEMPLATES: Template[] = [
       // The tall one anchors the left column at full height.
       frame(0, 0, 1080, 1920, 'Story 1080 x 1920'),
       box(90, 760, 900, 260, 'Your headline', '#BFDBFE', {
-        typography: { fontSize: 64, fontWeight: 700, color: '#161616', align: 'center', verticalAlign: 'middle' },
+        typography: { fontSize: 64, fontWeight: 700, color: BRAND_INK, align: 'center', verticalAlign: 'middle' },
       }),
-      box(90, 1060, 900, 96, 'A supporting line', '#FFFFFF', {
-        typography: { fontSize: 28, fontWeight: 500, color: '#475569', align: 'center', verticalAlign: 'middle' },
+      box(90, 1060, 900, 96, 'A supporting line', PAPER, {
+        typography: { fontSize: 28, fontWeight: 500, color: INK_SOFT, align: 'center', verticalAlign: 'middle' },
       }),
 
       // The two landscape formats stack against it, bottom-aligned to the
       // same baseline so the three read as one set rather than three offcuts.
       frame(1180, 0, 1080, 1080, 'Square post 1080'),
       box(1270, 320, 900, 220, 'Your headline', '#FDE68A', {
-        typography: { fontSize: 64, fontWeight: 700, color: '#161616', align: 'center', verticalAlign: 'middle' },
+        typography: { fontSize: 64, fontWeight: 700, color: BRAND_INK, align: 'center', verticalAlign: 'middle' },
       }),
-      box(1270, 590, 900, 96, 'A supporting line', '#FFFFFF', {
-        typography: { fontSize: 28, fontWeight: 500, color: '#475569', align: 'center', verticalAlign: 'middle' },
+      box(1270, 590, 900, 96, 'A supporting line', PAPER, {
+        typography: { fontSize: 28, fontWeight: 500, color: INK_SOFT, align: 'center', verticalAlign: 'middle' },
       }),
 
       frame(1180, 1180, 1500, 500, 'Banner 1500 x 500'),
       box(1260, 1350, 1340, 160, 'Your headline', '#FBCFE8', {
-        typography: { fontSize: 56, fontWeight: 700, color: '#161616', align: 'center', verticalAlign: 'middle' },
+        typography: { fontSize: 56, fontWeight: 700, color: BRAND_INK, align: 'center', verticalAlign: 'middle' },
       }),
     ],
   },
@@ -671,7 +697,7 @@ const BASE_TEMPLATES: Template[] = [
         label(0, -140, 'Visits this week', 38),
         // The axis is a shape like everything else, which is the point: this
         // chart is not a widget, it is objects you can grab.
-        box(-20, BASE, data.length * (BAR + GAP) + 20, 3, '', '#CBD5E1'),
+        box(-20, BASE, data.length * (BAR + GAP) + 20, 3, '', RULE),
         ...data.flatMap(([day, value], i) => {
           const x = i * (BAR + GAP);
           return [
@@ -722,7 +748,7 @@ const BASE_TEMPLATES: Template[] = [
     name: 'Domino wall',
     blurb: 'Two hundred tiles in staggered courses, for testing shockwave and throws.',
     teaches: ['Shockwave', 'Throws', 'Materials'],
-    objectCount: 200,
+    objectCount: 202,
     build: (limit) => {
       const COLS = 20;
       const FULL_ROWS = 10;
@@ -753,23 +779,121 @@ const BASE_TEMPLATES: Template[] = [
     id: 'mindmap',
     category: 'diagrams',
     name: 'Mind map',
-    blurb: 'A radial map with curved connectors from a central node.',
-    teaches: ['Radial layout', 'Curved routing', 'Connectors'],
+    blurb: 'Three levels, six branches and the four cross-links that stop it being a list in a circle.',
+    teaches: ['Radial layout', 'Curved routing', 'Cross-links'],
     build: () => {
-      const centre = box(-110, -45, 220, 90, 'Big idea', '#FDE68A');
-      const branches = ['Research', 'Design', 'Build', 'Launch', 'Measure', 'Iterate'];
-      const tints = ['#DBEAFE', '#DCFCE7', '#FBD2E1', '#DDD5F8', '#FDDBBF', '#C3E1FA'];
-      const nodes: NewNodeInput[] = [centre];
+      /**
+       * A mind map with a second level, and with the thing that actually
+       * makes one useful.
+       *
+       * The previous board was a centre and six labels — which is a
+       * hub-and-spoke diagram, and it is what every mind map template ships
+       * because it is the part that is easy to draw. It teaches the connector
+       * tool and nothing about mapping: six words arranged in a circle carry
+       * exactly the same information as six words in a column.
+       *
+       * The value of a mind map appears at the **third level**, where the
+       * branches get specific enough to disagree with each other, and in the
+       * **cross-links** — the arrows between branches that say "this is the
+       * same problem as that". Those are the lines somebody actually learns
+       * something from, and they are the reason a map is not an outline.
+       *
+       * The subject is a real one with real tensions in it, because an
+       * abstract map ("Idea → Thing A, Thing B") cannot have cross-links: you
+       * cannot connect two things that do not mean anything.
+       */
+      const nodes: NewNodeInput[] = [];
 
-      branches.forEach((name, i) => {
-        const angle = (i / branches.length) * Math.PI * 2 - Math.PI / 2;
-        const node = box(Math.cos(angle) * 430 - 85, Math.sin(angle) * 330 - 35, 170, 70, name, tints[i]);
+      const centre = box(-130, -55, 260, 110, 'Why is the\nboard slow?', '#FDE68A', {
+        appearance: { fill: [{ type: 'solid', color: '#FDE68A' }], cornerRadius: 55 },
+        typography: { fontSize: 20, fontWeight: 700, color: INK, align: 'center', verticalAlign: 'middle' },
+      });
+      nodes.push(centre);
+
+      /** A branch, its tint, and the leaves hanging off it. */
+      const BRANCHES: Array<{ name: string; tint: string; leaves: string[] }> = [
+        { name: 'Too many objects', tint: TINT.blue, leaves: ['Nothing is culled', 'Every node re-renders', 'Off-screen still drawn'] },
+        { name: 'Each object costs too much', tint: TINT.green, leaves: ['Shadows are per-node', 'Text measured every frame', 'Sketch paths rebuilt'] },
+        { name: 'The browser', tint: '#FBD2E1', leaves: ['One canvas, one thread', 'GC pauses on pan', 'Retina = 4× pixels'] },
+        { name: 'The network', tint: '#DDD5F8', leaves: ['Awareness at 15Hz', 'Big CRDT updates', 'Images load late'] },
+        { name: 'It only feels slow', tint: '#FDDBBF', leaves: ['No loading state', 'Input lag, not FPS', 'Jank at the start of a drag'] },
+        { name: 'The machine', tint: '#C3E1FA', leaves: ['Four-year-old laptop', 'Integrated graphics', 'Forty other tabs'] },
+      ];
+
+      const branchNodes: NewNodeInput[] = [];
+      const leafByBranch: NewNodeInput[][] = [];
+
+      BRANCHES.forEach((branch, i) => {
+        const angle = (i / BRANCHES.length) * Math.PI * 2 - Math.PI / 2;
+        const bx = Math.cos(angle) * 470;
+        const by = Math.sin(angle) * 380;
+        const node = box(bx - 110, by - 42, 220, 84, branch.name, branch.tint, {
+          typography: { fontSize: 16, fontWeight: 650, color: INK, align: 'center', verticalAlign: 'middle' },
+        });
+        branchNodes.push(node);
         nodes.push(node);
         // Curved: a radial diagram drawn with right angles reads as a circuit
         // board rather than as branches.
         nodes.push(link(centre.id as string, node.id as string, { routing: 'curved', endEnd: 'circle' }));
+
+        // The leaves fan outward from the branch, along the same ray.
+        const leaves: NewNodeInput[] = [];
+        branch.leaves.forEach((text, j) => {
+          const spread = (j - (branch.leaves.length - 1) / 2) * 0.34;
+          const la = angle + spread;
+          const leaf = box(
+            Math.cos(la) * 860 - 95,
+            Math.sin(la) * 700 - 30,
+            190,
+            60,
+            text,
+            PAPER_SOFT,
+            {
+              appearance: { fill: [{ type: 'solid', color: PAPER_SOFT }], cornerRadius: 10, stroke: { color: branch.tint, width: 2 } },
+              typography: { fontSize: 13, fontWeight: 500, color: INK_MID, align: 'center', verticalAlign: 'middle' },
+            }
+          );
+          leaves.push(leaf);
+          nodes.push(leaf);
+          nodes.push(
+            link(node.id as string, leaf.id as string, {
+              routing: 'curved',
+              endEnd: 'none',
+              appearance: { stroke: { color: RULE, width: 1.5, cap: 'round' } },
+            })
+          );
+        });
+        leafByBranch.push(leaves);
       });
-      return nodes;
+
+      /*
+       * The cross-links — the whole reason to draw this as a map.
+       *
+       * Each one connects two leaves on *different* branches that turn out to
+       * be the same problem seen from two sides. Dashed and unarrowed,
+       * because they are not causation, they are recognition.
+       */
+      const tie = (a: NewNodeInput, b: NewNodeInput, text: string) =>
+        link(a.id as string, b.id as string, {
+          routing: 'curved',
+          endEnd: 'none',
+          label: text,
+          appearance: { stroke: { color: INK_FAINT, width: 1.5, cap: 'round', dash: [7, 6] } },
+        });
+
+      nodes.push(
+        tie(leafByBranch[0][2], leafByBranch[1][0], 'same fix'),
+        tie(leafByBranch[2][2], leafByBranch[5][1], 'same cause'),
+        tie(leafByBranch[4][1], leafByBranch[3][0], 'measured wrong'),
+        tie(leafByBranch[1][1], leafByBranch[4][2], 'felt here')
+      );
+
+      nodes.push(
+        label(-1180, -1080, 'Mind map', 44),
+        label(-1180, -1024, 'Six branches, eighteen leaves, and four dashed ties between branches — which is where the thinking is.', 17)
+      );
+
+      return layer(nodes);
     },
   },
   {
@@ -802,24 +926,24 @@ const BASE_TEMPLATES: Template[] = [
         box(x, y, 190, 66, text, fill, { appearance: { fill: [{ type: 'solid', color: fill }], cornerRadius: 33 } });
 
       const decide = (x: number, y: number, text: string) =>
-        box(x, y, 230, 170, text, '#FEF3C7', {
+        box(x, y, 230, 170, text, TINT.amber, {
           geometry: { kind: 'polygon', points: 4 },
-          typography: { fontSize: 15, fontWeight: 600, color: '#1F2937', align: 'center', verticalAlign: 'middle' },
+          typography: { fontSize: 15, fontWeight: 600, color: INK, align: 'center', verticalAlign: 'middle' },
         });
 
       const COL = 420;
 
-      const start  = term(COL + 20, 0, 'Idea', '#E0E7FF');
-      const draft  = box(COL, 130, 230, 84, 'Write the spec', '#DBEAFE');
+      const start  = term(COL + 20, 0, 'Idea', TINT.indigo);
+      const draft  = box(COL, 130, 230, 84, 'Write the spec', TINT.blue);
       const review = decide(COL, 274, 'Signed off?');
-      const build  = box(COL, 500, 230, 84, 'Build it', '#DCFCE7');
+      const build  = box(COL, 500, 230, 84, 'Build it', TINT.green);
       const tests  = decide(COL, 634, 'Tests pass?');
       const fix    = box(COL + 330, 634, 210, 84, 'Fix it', '#FEE2E2');
-      const ship   = box(COL, 860, 230, 84, 'Ship it', '#DBEAFE');
-      const done   = term(COL + 20, 994, 'Done', '#E0E7FF');
-      const park   = box(COL - 340, 274, 210, 84, 'Park it', '#F1F5F9');
+      const ship   = box(COL, 860, 230, 84, 'Ship it', TINT.blue);
+      const done   = term(COL + 20, 994, 'Done', TINT.indigo);
+      const park   = box(COL - 340, 274, 210, 84, 'Park it', TINT.slate);
 
-      return [
+      return layer([
         label(COL - 360, -140, 'Flowchart', 44),
         label(COL - 360, -86, 'Two of these arrows travel back up the page. Drag a box and watch them solve.', 17),
 
@@ -844,7 +968,7 @@ const BASE_TEMPLATES: Template[] = [
         link(park.id as string, draft.id as string, { label: 'revise', routing: 'curved' }),
 
         link(ship.id as string, done.id as string),
-      ];
+      ]);
     },
   },
   {
@@ -928,7 +1052,7 @@ const BASE_TEMPLATES: Template[] = [
         nodes.push({
           id: nanoid(), type: 'text', x: x + 34, y: 54,
           width: LANE_W - 68, height: 22, text: lane.hint, resize: 'width',
-          typography: { fontSize: 15, fontWeight: 500, color: '#64748B' },
+          typography: { fontSize: 15, fontWeight: 500, color: HUE.slate },
         });
 
         lane.ideas.forEach(([text, theme, tags, votes], k) => {
@@ -1021,7 +1145,7 @@ const BASE_TEMPLATES: Template[] = [
         nodes.push({
           id: nanoid(), type: 'text', x: x + 32, y: 54,
           width: COL_W - 64, height: 22, text: column.hint, resize: 'width',
-          typography: { fontSize: 15, fontWeight: 500, color: '#64748B' },
+          typography: { fontSize: 15, fontWeight: 500, color: HUE.slate },
         });
 
         column.cards.forEach(([text, votes, tags], k) => {
@@ -1046,7 +1170,7 @@ const BASE_TEMPLATES: Template[] = [
     name: 'Take the tour',
     blurb: 'A specimen sheet: nine plates covering fills, type, notes, routing, strokes and materials.',
     teaches: ['Every object type', 'Paint model', 'Materials'],
-    objectCount: 96,
+    objectCount: 87,
     build: () => {
       /**
        * A specimen sheet, not a sampler.
@@ -1091,7 +1215,15 @@ const BASE_TEMPLATES: Template[] = [
         return frame(p.x, p.y, PW, PH, title);
       };
 
-      /** A caption inside a plate, in the plate's own coordinates. */
+      /**
+       * A caption inside a plate, in the plate's own coordinates.
+       *
+       * Its width is a **column**, not a paragraph. It was 260 against a
+       * 190-wide column, so the third caption in every row — "Triangle",
+       * "Arrow", "Radial" — ran 60 units past the plate's right edge and was
+       * cut off by it: a frame clips whatever it owns, and these are inside
+       * one. Wide enough for the longest word on the sheet and no wider.
+       */
       const note = (col: number, row: number, dx: number, dy: number, text: string): NewNodeInput => {
         const p = at(col, row);
         return {
@@ -1099,11 +1231,11 @@ const BASE_TEMPLATES: Template[] = [
           type: 'text',
           x: p.x + dx,
           y: p.y + dy,
-          width: 260,
+          width: 170,
           height: 20,
           text,
           resize: 'width',
-          typography: { fontSize: 13, fontWeight: 500, color: '#64748B' },
+          typography: { fontSize: 13, fontWeight: 500, color: HUE.slate },
         };
       };
 
@@ -1156,11 +1288,11 @@ const BASE_TEMPLATES: Template[] = [
       // ---------------------------------------------------- 2. fills ------
       nodes.push(plate(1, 0, '2 · Every kind of fill'));
       const STOPS = [
-        { offset: 0, color: '#F3A024' },
-        { offset: 1, color: '#6366F1' },
+        { offset: 0, color: BRAND },
+        { offset: 1, color: HUE.indigo },
       ];
       const FILLS: Array<[string, Record<string, unknown>]> = [
-        ['Solid', { type: 'solid', color: '#F3A024' }],
+        ['Solid', { type: 'solid', color: BRAND }],
         ['Linear', { type: 'linear', from: { x: 0, y: 0 }, to: { x: 1, y: 1 }, stops: STOPS }],
         ['Radial', { type: 'radial', center: { x: 0.5, y: 0.5 }, radius: 0.72, stops: STOPS }],
         ['Conic', { type: 'conic', center: { x: 0.5, y: 0.5 }, angle: 0, stops: STOPS }],
@@ -1182,15 +1314,15 @@ const BASE_TEMPLATES: Template[] = [
           width: 520, height: 40, text, resize: 'width', typography,
         });
         nodes.push(
-          t(64, 'Regular 34', { fontSize: 34, fontWeight: 400, color: '#0F172A' }),
-          t(120, 'Semibold 34', { fontSize: 34, fontWeight: 700, color: '#0F172A' }),
-          t(176, 'Italic, underlined', { fontSize: 24, fontWeight: 400, italic: true, underline: true, color: '#0F172A' }),
-          t(220, 'Struck through', { fontSize: 24, fontWeight: 400, strikethrough: true, color: '#64748B' }),
+          t(64, 'Regular 34', { fontSize: 34, fontWeight: 400, color: INK_STRONG }),
+          t(120, 'Semibold 34', { fontSize: 34, fontWeight: 700, color: INK_STRONG }),
+          t(176, 'Italic, underlined', { fontSize: 24, fontWeight: 400, italic: true, underline: true, color: INK_STRONG }),
+          t(220, 'Struck through', { fontSize: 24, fontWeight: 400, strikethrough: true, color: HUE.slate }),
           // Shown in upper case, still stored as written — change the case
           // control back and the original text is intact.
-          t(264, 'Shown in upper case', { fontSize: 24, fontWeight: 600, textCase: 'upper', color: '#0F172A' }),
-          t(312, 'Letter-spaced and loose', { fontSize: 20, fontWeight: 400, letterSpacing: 3, lineHeight: 1.8, color: '#64748B' }),
-          t(370, 'Centred', { fontSize: 20, fontWeight: 500, align: 'center', color: '#64748B' }),
+          t(264, 'Shown in upper case', { fontSize: 24, fontWeight: 600, textCase: 'upper', color: INK_STRONG }),
+          t(312, 'Letter-spaced and loose', { fontSize: 20, fontWeight: 400, letterSpacing: 3, lineHeight: 1.8, color: HUE.slate }),
+          t(370, 'Centred', { fontSize: 20, fontWeight: 500, align: 'center', color: HUE.slate }),
         );
       }
 
@@ -1223,7 +1355,7 @@ const BASE_TEMPLATES: Template[] = [
       {
         const p = at(1, 1);
         const pair = (dy: number, routing: string, endEnd: string, name: string) => {
-          const a = box(p.x + 40, p.y + dy, 110, 62, 'From', '#DBEAFE');
+          const a = box(p.x + 40, p.y + dy, 110, 62, 'From', TINT.blue);
           const b = box(p.x + 380, p.y + dy, 110, 62, 'To', '#FEE2E2');
           return [
             a, b,
@@ -1242,10 +1374,10 @@ const BASE_TEMPLATES: Template[] = [
       nodes.push(plate(2, 1, '6 · Strokes'));
       {
         const STROKES: Array<[string, Record<string, unknown>]> = [
-          ['Hairline', { color: '#0F172A', width: 1 }],
-          ['Heavy', { color: '#0F172A', width: 8 }],
-          ['Dashed', { color: '#0F172A', width: 3, dash: [14, 10] }],
-          ['Dotted, round cap', { color: '#0F172A', width: 5, dash: [0, 14], cap: 'round' }],
+          ['Hairline', { color: INK_STRONG, width: 1 }],
+          ['Heavy', { color: INK_STRONG, width: 8 }],
+          ['Dashed', { color: INK_STRONG, width: 3, dash: [14, 10] }],
+          ['Dotted, round cap', { color: INK_STRONG, width: 5, dash: [0, 14], cap: 'round' }],
           ['Round join', { color: '#4F46E5', width: 7, join: 'round' }],
           ['Mitred join', { color: '#4F46E5', width: 7, join: 'miter' }],
         ];
@@ -1253,7 +1385,7 @@ const BASE_TEMPLATES: Template[] = [
           const dx = 40 + (i % 2) * 280;
           const dy = 70 + Math.floor(i / 2) * 130;
           nodes.push(swatch(2, 1, dx, dy, 220, 78, {
-            fill: [{ type: 'solid', color: '#FFFFFF' }],
+            fill: [{ type: 'solid', color: PAPER }],
             stroke,
             cornerRadius: i >= 4 ? 0 : 10,
           }, i >= 4 ? { geometry: { kind: 'polygon', points: 3 } } : {}));
@@ -1265,8 +1397,8 @@ const BASE_TEMPLATES: Template[] = [
       nodes.push(plate(0, 2, '7 · Materials'));
       {
         const MATERIALS: Array<[string, string]> = [
-          ['feather', '#DCFCE7'], ['paper', '#DBEAFE'], ['rubber', '#FBD2E1'],
-          ['wood', '#FEF3C7'], ['stone', '#E2E8F0'],
+          ['feather', TINT.green], ['paper', TINT.blue], ['rubber', '#FBD2E1'],
+          ['wood', TINT.amber], ['stone', HAIRLINE],
         ];
         MATERIALS.forEach(([material, fill], i) => {
           const dx = 40 + (i % 3) * 190;
@@ -1274,7 +1406,7 @@ const BASE_TEMPLATES: Template[] = [
           nodes.push(swatch(0, 2, dx, dy, 130, 110, {
             fill: [{ type: 'solid', color: fill }],
             cornerRadius: 14,
-          }, { material, text: material, typography: { fontSize: 15, fontWeight: 600, color: '#0F172A', align: 'center', verticalAlign: 'middle' } }));
+          }, { material, text: material, typography: { fontSize: 15, fontWeight: 600, color: INK_STRONG, align: 'center', verticalAlign: 'middle' } }));
         });
         nodes.push(note(0, 2, 40, 400, 'Arm a force, then flick one. Stone barely moves; a feather sails.'));
       }
@@ -1283,11 +1415,11 @@ const BASE_TEMPLATES: Template[] = [
       nodes.push(plate(1, 2, '8 · Depth and blending'));
       {
         nodes.push(
-          swatch(1, 2, 60, 90, 190, 190, { fill: [{ type: 'solid', color: '#F3A024' }], cornerRadius: 20 }),
+          swatch(1, 2, 60, 90, 190, 190, { fill: [{ type: 'solid', color: BRAND }], cornerRadius: 20 }),
           // Overlapping, half-transparent, and multiplied — three different
           // ways of being "on top of" something, shown together.
-          swatch(1, 2, 170, 150, 190, 190, { fill: [{ type: 'solid', color: '#6366F1', opacity: 0.75 }], cornerRadius: 20 }),
-          swatch(1, 2, 280, 210, 190, 190, { fill: [{ type: 'solid', color: '#10B981' }], cornerRadius: 20, blendMode: 'multiply' }),
+          swatch(1, 2, 170, 150, 190, 190, { fill: [{ type: 'solid', color: HUE.indigo, opacity: 0.75 }], cornerRadius: 20 }),
+          swatch(1, 2, 280, 210, 190, 190, { fill: [{ type: 'solid', color: SIGNAL_OK }], cornerRadius: 20, blendMode: 'multiply' }),
           note(1, 2, 60, 420, 'Stacking order, layer opacity, and a multiply blend.'),
         );
       }
@@ -1306,15 +1438,15 @@ const BASE_TEMPLATES: Template[] = [
             ...frame(p.x + 50, p.y + 120, 340, 210, 'Artboard 340 x 210'),
             safeArea: { top: 24, right: 24, bottom: 24, left: 24 },
           },
-          box(p.x + 100, p.y + 170, 240, 110, 'Clipped to the frame', '#DBEAFE', {
-            typography: { fontSize: 15, fontWeight: 600, color: '#1F2937', align: 'center', verticalAlign: 'middle' },
+          box(p.x + 100, p.y + 170, 240, 110, 'Clipped to the frame', TINT.blue, {
+            typography: { fontSize: 15, fontWeight: 600, color: INK, align: 'center', verticalAlign: 'middle' },
           }),
           note(2, 2, 50, 356, 'A frame owns what is inside it: move it and its contents travel.'),
           note(2, 2, 50, 392, 'Export this one on its own at 1x, 2x or 3x.'),
         );
       }
 
-      return nodes;
+      return layer(nodes);
     },
   },
   {
@@ -1324,7 +1456,7 @@ const BASE_TEMPLATES: Template[] = [
     name: 'Halftone',
     blurb: 'A lit sphere printed as a thousand dots, each sized by how much light falls on it.',
     teaches: ['Scale', 'Colour', 'Generative'],
-    objectCount: 1000,
+    objectCount: 1020,
     build: (limit) => {
       /**
        * The oldest trick in print, done with real objects.
@@ -1408,7 +1540,7 @@ const BASE_TEMPLATES: Template[] = [
     name: 'A year of anything',
     blurb: 'Fifty-three weeks as a grid of days. Recolour a square and you have a record.',
     teaches: ['Data as objects', 'Grid', 'Colour'],
-    objectCount: 371,
+    objectCount: 373,
     build: (limit) => {
       /**
        * The contribution grid, rebuilt as editable objects.
@@ -1469,7 +1601,7 @@ const BASE_TEMPLATES: Template[] = [
     name: 'Chord map',
     blurb: 'Twenty-four nodes on a ring, wired to each other with a hundred curved connectors.',
     teaches: ['Curved routing', 'Connectors at scale'],
-    objectCount: 120,
+    objectCount: 96,
     build: (limit) => {
       /**
        * Every connector re-routing at once.
@@ -1503,7 +1635,7 @@ const BASE_TEMPLATES: Template[] = [
           geometry: { kind: 'ellipse' },
           appearance: { fill: [{ type: 'solid', color: hue(i / COUNT, 62, 60) }] },
           text: String(i + 1),
-          typography: { fontSize: 22, fontWeight: 700, color: '#161616', align: 'center', verticalAlign: 'middle' },
+          typography: { fontSize: 22, fontWeight: 700, color: BRAND_INK, align: 'center', verticalAlign: 'middle' },
         };
         ring.push(node);
         nodes.push(node);
@@ -1531,7 +1663,7 @@ const BASE_TEMPLATES: Template[] = [
           drawn += 1;
         }
       }
-      return nodes;
+      return layer(nodes);
     },
   },
   {
@@ -1711,7 +1843,7 @@ const BASE_TEMPLATES: Template[] = [
     name: 'Interface kit',
     blurb: 'Buttons, fields, swatches and type at real sizes: a page of parts to build from.',
     teaches: ['Frames', 'Type scale', 'Colour'],
-    objectCount: 96,
+    objectCount: 36,
     build: () => {
       /**
        * The board a designer opens on day one.
@@ -1733,8 +1865,8 @@ const BASE_TEMPLATES: Template[] = [
 
       // ---- palette -------------------------------------------------------
       nodes.push(label(60, 44, 'Palette', 22));
-      const RAMP = ['#0F172A', '#334155', '#64748B', '#94A3B8', '#CBD5E1', '#E2E8F0', '#F1F5F9'];
-      const ACCENT = ['#F3A024', '#EF4444', '#10B981', '#3B82F6', '#8B5CF6', '#EC4899'];
+      const RAMP = [INK_STRONG, INK_MID, HUE.slate, INK_FAINT, RULE, HAIRLINE, TINT.slate];
+      const ACCENT = [BRAND, SIGNAL_BAD, SIGNAL_OK, HUE.blue, HUE.violet, HUE.pink];
       RAMP.forEach((c, i) => {
         nodes.push(box(60 + i * 92, 92, 80, 80, '', c, { appearance: { fill: [{ type: 'solid', color: c }], cornerRadius: 12 } }));
       });
@@ -1757,9 +1889,9 @@ const BASE_TEMPLATES: Template[] = [
       nodes.push(label(660, 312, 'Controls', 22));
       // The three heights the system actually has, drawn at those heights.
       const BUTTONS: Array<[string, number, string, string]> = [
-        ['Primary  38', 38, '#F3A024', '#161616'],
-        ['Secondary  32', 32, '#F1F5F9', '#0F172A'],
-        ['Small  28', 28, '#FFFFFF', '#334155'],
+        ['Primary  38', 38, BRAND, BRAND_INK],
+        ['Secondary  32', 32, TINT.slate, INK_STRONG],
+        ['Small  28', 28, PAPER, INK_MID],
       ];
       let by = 356;
       BUTTONS.forEach(([text, h, fill, ink]) => {
@@ -1773,18 +1905,18 @@ const BASE_TEMPLATES: Template[] = [
       // Fields, at the same widths, so a form laid out from these lines up.
       nodes.push(label(660, 520, 'Fields', 22));
       ['Label', 'Placeholder', 'Filled value'].forEach((text, i) => {
-        nodes.push(box(660, 564 + i * 60, 480, 44, text, '#FFFFFF', {
-          appearance: { fill: [{ type: 'solid', color: '#FFFFFF' }], cornerRadius: 8, stroke: { color: '#CBD5E1', width: 1 } },
-          typography: { fontSize: 14, fontWeight: 400, color: '#64748B', align: 'left', verticalAlign: 'middle' },
+        nodes.push(box(660, 564 + i * 60, 480, 44, text, PAPER, {
+          appearance: { fill: [{ type: 'solid', color: PAPER }], cornerRadius: 8, stroke: { color: RULE, width: 1 } },
+          typography: { fontSize: 14, fontWeight: 400, color: HUE.slate, align: 'left', verticalAlign: 'middle' },
         }));
       });
 
       // ---- chips ---------------------------------------------------------
       nodes.push(label(60, 640, 'Chips', 22));
       ['Draft', 'In review', 'Shipped', 'Blocked'].forEach((text, i) => {
-        nodes.push(box(60 + i * 130, 684, 116, 32, text, ['#E2E8F0', '#FEF3C7', '#DCFCE7', '#FEE2E2'][i], {
-          appearance: { fill: [{ type: 'solid', color: ['#E2E8F0', '#FEF3C7', '#DCFCE7', '#FEE2E2'][i] }], cornerRadius: 999 },
-          typography: { fontSize: 12, fontWeight: 600, color: '#334155', align: 'center', verticalAlign: 'middle' },
+        nodes.push(box(60 + i * 130, 684, 116, 32, text, [HAIRLINE, TINT.amber, TINT.green, '#FEE2E2'][i], {
+          appearance: { fill: [{ type: 'solid', color: [HAIRLINE, TINT.amber, TINT.green, '#FEE2E2'][i] }], cornerRadius: 999 },
+          typography: { fontSize: 12, fontWeight: 600, color: INK_MID, align: 'center', verticalAlign: 'middle' },
         }));
       });
 
@@ -1797,7 +1929,7 @@ const BASE_TEMPLATES: Template[] = [
     name: 'Pachinko',
     blurb: 'A pin board with walls and bins. Latch Drop above it and watch the balls sort themselves.',
     teaches: ['Locked obstacles', 'Latched force', 'Collisions'],
-    objectCount: 200,
+    objectCount: 146,
     build: (limit) => {
       /**
        * A board built to be knocked over.
@@ -1837,7 +1969,7 @@ const BASE_TEMPLATES: Template[] = [
       const nodes: NewNodeInput[] = [];
 
       /** Locked furniture: walls, floor, dividers. Collided against, never moved. */
-      const fixture = (x: number, y: number, w: number, h: number, color = '#CBD5E1'): NewNodeInput => ({
+      const fixture = (x: number, y: number, w: number, h: number, color = RULE): NewNodeInput => ({
         id: nanoid(), type: 'shape', x, y, width: w, height: h,
         geometry: { kind: 'rect' },
         appearance: { fill: [{ type: 'solid', color }], cornerRadius: 6 },
@@ -1858,7 +1990,7 @@ const BASE_TEMPLATES: Template[] = [
             width: PEG,
             height: PEG,
             geometry: { kind: 'ellipse' },
-            appearance: { fill: [{ type: 'solid', color: '#94A3B8' }] },
+            appearance: { fill: [{ type: 'solid', color: INK_FAINT }] },
             material: 'stone',
             locked: true,
           });
@@ -1879,7 +2011,7 @@ const BASE_TEMPLATES: Template[] = [
       const BINS = 9;
       const binWidth = fieldWidth / BINS;
       for (let i = 1; i < BINS; i += 1) {
-        nodes.push(fixture(-halfWidth + i * binWidth - 6, fieldBottom + 90, 12, 190, '#E2E8F0'));
+        nodes.push(fixture(-halfWidth + i * binWidth - 6, fieldBottom + 90, 12, 190, HAIRLINE));
       }
 
       // ---- the hopper ---------------------------------------------------
@@ -1973,7 +2105,7 @@ const BASE_TEMPLATES: Template[] = [
       const QUADRANTS: Array<[number, number, string, string]> = [
         [0, 0, 'Quick win: do it now', '#F0FDF4'],
         [Q + COL_GAP, 0, 'Big bet: plan it properly', '#EFF6FF'],
-        [0, Q + ROW_GAP, 'Fill-in: when there is room', '#F8FAFC'],
+        [0, Q + ROW_GAP, 'Fill-in: when there is room', PAPER_SOFT],
         [Q + COL_GAP, Q + ROW_GAP, 'Thankless: say no', '#FEF2F2'],
       ];
 
@@ -1981,13 +2113,13 @@ const BASE_TEMPLATES: Template[] = [
       const axis = (x: number, y: number, w: number, h: number): NewNodeInput => ({
         id: nanoid(), type: 'shape', x, y, width: w, height: h,
         geometry: { kind: 'rect' },
-        appearance: { fill: [{ type: 'solid', color: '#94A3B8' }], cornerRadius: 3 },
+        appearance: { fill: [{ type: 'solid', color: INK_FAINT }], cornerRadius: 3 },
       });
 
       /** An axis end-stop, set small and spaced so it reads as a scale mark. */
       const tick = (x: number, y: number, text: string): NewNodeInput => ({
         id: nanoid(), type: 'text', x, y, width: 260, height: 22, text, resize: 'width',
-        typography: { fontSize: 16, fontWeight: 700, color: '#64748B', letterSpacing: 2, textCase: 'upper' },
+        typography: { fontSize: 16, fontWeight: 700, color: HUE.slate, letterSpacing: 2, textCase: 'upper' },
       });
 
       const nodes: NewNodeInput[] = [
@@ -2072,8 +2204,23 @@ const BASE_TEMPLATES: Template[] = [
  */
 const PREVIEW_NODE_LIMIT = 150;
 
-/** The science and maths boards live in their own file; see `scienceTemplates.ts`. */
-export const TEMPLATES: Template[] = [...BASE_TEMPLATES, ...SCIENCE_TEMPLATES, ...TABLE_TEMPLATES];
+/**
+ * Every board in the gallery, in the order the "All" view falls back to.
+ *
+ * Split across files by *what they are*, not to keep any one file short:
+ * `systemTemplates` are real architectures, `workTemplates` the boards a team
+ * keeps, `artTemplates` the drawings, and the two data files the plots and
+ * tables. A new board goes in the file whose subject it shares, and nowhere
+ * needs editing but that file and this line.
+ */
+export const TEMPLATES: Template[] = [
+  ...SYSTEM_TEMPLATES,
+  ...WORK_TEMPLATES,
+  ...BASE_TEMPLATES,
+  ...SCIENCE_TEMPLATES,
+  ...TABLE_TEMPLATES,
+  ...ART_TEMPLATES,
+];
 
 export const templateById = (id: string): Template | undefined =>
   TEMPLATES.find((t) => t.id === id);

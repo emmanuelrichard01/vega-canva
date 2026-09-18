@@ -37,7 +37,7 @@ export const LinkRenderer: React.FC<{ node: LinkNode }> = ({ node }) => {
   const provider = React.useMemo(() => providerFor(link.url), [link.url]);
   const display = resolveDisplay(link.display, node.width, node.height, Boolean(provider.embed));
   const meta = link.meta;
-  const [image] = useImage(meta?.image ?? '', 'anonymous');
+  const [image, imageStatus] = useImage(meta?.image ?? '', 'anonymous');
   const [favicon] = useImage(meta?.favicon ?? '', 'anonymous');
   const active = useStore((s) => s.embedActiveNodeId === node.id);
 
@@ -54,7 +54,20 @@ export const LinkRenderer: React.FC<{ node: LinkNode }> = ({ node }) => {
   }, [link, node.id]);
 
   const hasImage = Boolean(meta?.image && image);
-  const layout = layoutLinkCard(display, node.width, node.height, display === 'embed' ? true : hasImage, Boolean(meta?.description));
+  /**
+   * Whether this card has a picture *coming*, which is not the same question as
+   * whether it has one now.
+   *
+   * The layout used to be decided by "is the picture decoded yet", so every
+   * card with a picture laid itself out twice — once as a text card in the
+   * moment before the bytes arrived, then again with the picture — and visibly
+   * jumped between the two. Now the slot is reserved the instant we know a
+   * picture is coming, whether that is because the server is still fetching it
+   * (`imagePending`) or because it has given us the address and the browser is
+   * decoding it. Only a picture that has actually *failed* gives its space back.
+   */
+  const expectsImage = Boolean(meta?.imagePending) || (Boolean(meta?.image) && imageStatus !== 'failed');
+  const layout = layoutLinkCard(display, node.width, node.height, display === 'embed' ? true : expectsImage, Boolean(meta?.description));
   const loading = link.status === 'loading';
   const failed = link.status === 'error';
   const domain = siteDomain(link.url);
@@ -112,7 +125,25 @@ export const LinkRenderer: React.FC<{ node: LinkNode }> = ({ node }) => {
           )}
         </Group>
       )}
-      {loading && !hasImage && display !== 'embed' && <Rect width={media.width} height={media.height} fill={LINK_CARD.skeleton} />}
+      {/*
+        * The picture's place while it is on its way.
+        *
+        * Tinted with the site's own colour rather than left grey: the card
+        * already knows whose page this is by the time the picture is still
+        * coming, and a faint wash of the brand reads as "loading this site"
+        * where a grey rectangle reads as "something is broken". The same
+        * treatment the embed poster uses, at a quarter of the strength.
+        */}
+      {!hasImage && expectsImage && display !== 'embed' && (
+        <Rect
+          width={media.width}
+          height={media.height}
+          fillLinearGradientStartPoint={{ x: 0, y: 0 }}
+          fillLinearGradientEndPoint={{ x: media.width, y: media.height }}
+          fillLinearGradientColorStops={[0, LINK_CARD.skeleton, 1, provider.accent]}
+          opacity={0.22}
+        />
+      )}
     </Group>
   ) : null;
 

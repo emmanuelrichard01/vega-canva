@@ -152,6 +152,8 @@ describe('rosterSignature', () => {
     away: false,
     selection: [],
     throws: [],
+    following: null,
+    spotlightAt: null,
     ...over,
   });
 

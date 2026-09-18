@@ -21,6 +21,7 @@ import { rateLimit } from "./rateLimit";
 import { createUnfurler, UnfurlError } from "./unfurl";
 import { checkFetchableUrl } from "./safeFetch";
 import type { SniffedImage } from "./unfurlParse";
+import { registerShareRoutes } from "./share/routes";
 import { HistoryBuffer, KnownRooms, type PendingUpdate } from "./historyBuffer";
 import {
   checkRoomStorageQuota,
@@ -528,7 +529,11 @@ const storeUnfurlImage = async (roomId: string, bytes: Buffer, image: SniffedIma
  * an ordinary request), and turns failures into a sentence the card can show.
  * The answer is always 200 with `{ meta }` or a 4xx/5xx with `{ error }`.
  */
-const unfurlLimiter = rateLimit(20, 0.5); // 20 bursts, one preview every two seconds after
+// A preview is now answered in two parts — words, then picture — so a link
+// costs up to two requests where it used to cost one. The second is a cache
+// hit that does no outbound work, so the budget rises rather than the cards
+// queueing behind a limit set for the old shape.
+const unfurlLimiter = rateLimit(40, 1); // 40 bursts, one preview a second after
 /** Configured, or learned from the first request — see `publicApiBase` on why configured is right. */
 let unfurlApiBase = config.publicApiUrl || '';
 const unfurler = createUnfurler({
@@ -550,14 +555,28 @@ app.get("/rooms/:roomId/unfurl", requireRoom, unfurlLimiter, async (req: any, re
   if (!unfurlApiBase) unfurlApiBase = publicApiBase(req);
 
   try {
-    const meta = await unfurler.unfurl(roomId, url);
-    res.setHeader("Cache-Control", "private, max-age=600");
-    res.json({ meta });
+    const { preview, pending } = await unfurler.unfurl(roomId, url);
+    // A card still waiting on its picture must not be cached: the very next
+    // request is the one that collects it, and a cached "no picture yet" would
+    // be the answer for the next ten minutes.
+    res.setHeader("Cache-Control", pending ? "no-store" : "private, max-age=600");
+    res.json({ meta: preview, pending });
   } catch (err: any) {
     if (err instanceof UnfurlError) return res.status(err.status).json({ error: err.message });
     logger.warn("Link preview failed", { url, error: String(err?.message ?? err) });
     res.status(502).json({ error: "That page could not be previewed" });
   }
+});
+
+// Share cards: the picture and words a board link unfurls into. See `share/routes.ts`.
+registerShareRoutes(app, {
+  pool,
+  shareSecret: config.shareSecret,
+  minRoomIdLength: config.minRoomIdLength,
+  limiter: rateLimit(60, 1),
+  // A board re-describes itself at most every few seconds while people work.
+  uploadLimiter: rateLimit(20, 0.2),
+  apiBase: publicApiBase,
 });
 
 // History endpoint for Time Travel session replay with rate limiting

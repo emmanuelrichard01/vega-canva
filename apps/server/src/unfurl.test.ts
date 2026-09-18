@@ -155,6 +155,76 @@ describe('parseHtmlMeta', () => {
     expect(bad.image).toBeUndefined();
   });
 
+  it('offers every picture the page declares, best first and without repeats', () => {
+    const meta = parseHtmlMeta(
+      `<head>
+        <meta property="og:image" content="https://cdn.test/og.png">
+        <meta name="twitter:image" content="https://cdn.test/tw.png">
+        <meta name="twitter:image:src" content="https://cdn.test/og.png">
+        <link rel="image_src" href="/legacy.png">
+        <meta name="msapplication-TileImage" content="/tile.png">
+      </head>`,
+      'https://site.test/a'
+    );
+    expect(meta.images).toEqual([
+      'https://cdn.test/og.png',
+      'https://cdn.test/tw.png',
+      'https://site.test/legacy.png',
+      'https://site.test/tile.png',
+    ]);
+    expect(meta.image).toBe(meta.images[0]);
+  });
+
+  it('reads structured data when the page has no Open Graph, and never over it', () => {
+    const ld = `<script type="application/ld+json">${JSON.stringify({
+      '@context': 'https://schema.org',
+      '@graph': [
+        { '@type': 'WebSite', publisher: { name: 'Acme Press' } },
+        {
+          '@type': 'NewsArticle',
+          headline: 'A headline from structured data',
+          description: 'The summary the page only told a search engine.',
+          image: ['https://cdn.test/ld.jpg'],
+          author: { '@type': 'Person', name: 'Ada Lovelace' },
+        },
+      ],
+    })}</script>`;
+    const bare = parseHtmlMeta(`<head><title>Tab title</title></head><body>${ld}</body>`, 'https://site.test/a');
+    expect(bare.description).toBe('The summary the page only told a search engine.');
+    expect(bare.author).toBe('Ada Lovelace');
+    expect(bare.siteName).toBe('Acme Press');
+    expect(bare.images).toContain('https://cdn.test/ld.jpg');
+    // `<title>` is still the page's own statement of its name, so it wins.
+    expect(bare.title).toBe('Tab title');
+
+    const stated = parseHtmlMeta(`<head><meta property="og:description" content="What the page says for sharing"></head>${ld}`, 'https://site.test/a');
+    expect(stated.description).toBe('What the page says for sharing');
+  });
+
+  it('skips a malformed ld+json block rather than the ones after it', () => {
+    const meta = parseHtmlMeta(
+      `<head></head><body>
+        <script type="application/ld+json">{ "broken": , }</script>
+        <script type="application/ld+json">{"@type":"Article","name":"The good one"}</script>
+      </body>`,
+      'https://site.test/a'
+    );
+    expect(meta.title).toBe('The good one');
+  });
+
+  it('finds the tags when they sit outside a head that closed too early', () => {
+    const meta = parseHtmlMeta(
+      '<html><head><title>Shell</title></head><body><div><meta property="og:title" content="Injected later"></div></body></html>',
+      'https://site.test/a'
+    );
+    expect(meta.title).toBe('Injected later');
+  });
+
+  it('notes the page’s own oEmbed endpoint', () => {
+    const meta = parseHtmlMeta('<head><link rel="alternate" type="application/json+oembed" href="/wp-json/oembed/1.0/embed?url=x"></head>', 'https://site.test/a');
+    expect(meta.oembed).toBe('https://site.test/wp-json/oembed/1.0/embed?url=x');
+  });
+
   it('uses <title> when there is no og:title, and caps long text', () => {
     const meta = parseHtmlMeta(`<head><title>  A   title\n here </title><meta name="description" content="${'word '.repeat(200)}"></head>`, 'https://x.test/');
     expect(meta.title).toBe('A title here');
@@ -238,7 +308,7 @@ describe('createUnfurler', () => {
       },
     });
 
-    const preview = await unfurler.unfurl('room-1', 'https://acme.test/post');
+    const { preview } = await unfurler.unfurl('room-1', 'https://acme.test/post');
     expect(preview).toMatchObject({ title: 'Post', image: 'https://api.test/media/1.png', imageWidth: 1200, favicon: 'https://api.test/media/2.png' });
     expect(stored).toEqual(['.png', '.png']);
 
@@ -253,7 +323,7 @@ describe('createUnfurler', () => {
         url.endsWith('/px.png') ? ok(url, png(1, 1), 'image/png') : url.endsWith('/p') ? ok(url, '<head><title>T</title><meta property="og:image" content="/px.png"></head>') : ok(url, '', 'text/plain', 404),
       store: async () => 'https://api.test/m.png',
     });
-    const preview = await unfurler.unfurl('r', 'https://acme.test/p');
+    const { preview } = await unfurler.unfurl('r', 'https://acme.test/p');
     expect(preview.image).toBeUndefined();
   });
 
@@ -269,7 +339,7 @@ describe('createUnfurler', () => {
     expect((error as Error).message).toBe('That page does not exist');
 
     const shy = createUnfurler({ fetch: async (url) => ok(url, 'denied', 'text/html', 403), store: async () => null });
-    expect((await shy.unfurl('r', 'https://www.acme.test/x')).title).toBe('acme.test');
+    expect((await shy.unfurl('r', 'https://www.acme.test/x')).preview.title).toBe('acme.test');
   });
 
   it('uses oEmbed for providers whose pages are poor sources', async () => {
@@ -284,10 +354,103 @@ describe('createUnfurler', () => {
       },
       store: async () => null,
     });
-    const preview = await unfurler.unfurl('r', 'https://www.youtube.com/watch?v=abc123xyz');
+    const { preview } = await unfurler.unfurl('r', 'https://www.youtube.com/watch?v=abc123xyz');
     expect(preview).toMatchObject({ title: 'A talk', author: 'Channel', siteName: 'YouTube' });
     expect(fetched.includes('https://www.youtube.com/watch?v=abc123xyz')).toBe(false);
     expect(fetched.includes('https://i.ytimg.com/vi/abc123xyz/maxresdefault.jpg')).toBe(true);
+  });
+
+  it('answers with the words while a slow picture is still coming, then with the picture', async () => {
+    let release: () => void = () => {};
+    const held = new Promise<void>((resolve) => {
+      release = resolve;
+    });
+    const unfurler = createUnfurler({
+      graceMs: 10,
+      fetch: async (url) => {
+        if (url.endsWith('/slow.png')) {
+          await held;
+          return ok(url, png(1200, 630), 'image/png');
+        }
+        if (url.endsWith('/article')) {
+          return ok(url, '<head><title>An article</title><meta property="og:description" content="Worth reading"><meta property="og:image" content="/slow.png"></head>');
+        }
+        return ok(url, '', 'text/plain', 404);
+      },
+      store: async () => 'https://api.test/stored.png',
+    });
+
+    const first = await unfurler.unfurl('r', 'https://acme.test/article');
+    expect(first.pending).toBe(true);
+    expect(first.preview).toMatchObject({ title: 'An article', description: 'Worth reading' });
+    expect(first.preview.image).toBeUndefined();
+
+    release();
+    const second = await unfurler.unfurl('r', 'https://acme.test/article');
+    expect(second.pending).toBe(false);
+    expect(second.preview.image).toBe('https://api.test/stored.png');
+  });
+
+  it('falls back to the next picture when the first one will not load', async () => {
+    const unfurler = createUnfurler({
+      fetch: async (url) => {
+        if (url.endsWith('/a')) {
+          return ok(url, '<head><meta property="og:image" content="/gone.png"><meta name="twitter:image" content="/spare.png"><title>T</title></head>');
+        }
+        if (url.endsWith('/spare.png')) return ok(url, png(800, 600), 'image/png');
+        return ok(url, 'no', 'text/plain', 403);
+      },
+      store: async () => 'https://api.test/spare.png',
+    });
+    const { preview } = await unfurler.unfurl('r', 'https://acme.test/a');
+    expect(preview.image).toBe('https://api.test/spare.png');
+  });
+
+  it('asks for the icons the page named, and guesses only when they fail', async () => {
+    const asked: string[] = [];
+    const unfurler = createUnfurler({
+      fetch: async (url) => {
+        asked.push(url);
+        if (url.endsWith('/a')) return ok(url, '<head><title>T</title><link rel="icon" href="/named.png"></link></head>');
+        if (url.endsWith('/named.png')) return ok(url, png(64, 64), 'image/png');
+        return ok(url, '', 'text/plain', 404);
+      },
+      store: async () => 'https://api.test/icon.png',
+    });
+    const { preview } = await unfurler.unfurl('r', 'https://acme.test/a');
+    expect(preview.favicon).toBe('https://api.test/icon.png');
+    expect(asked.some((u) => u.endsWith('/favicon.ico'))).toBe(false);
+  });
+
+  it('reads a page once for every room that links it', async () => {
+    let pages = 0;
+    const unfurler = createUnfurler({
+      fetch: async (url) => {
+        if (url.endsWith('/shared')) {
+          pages++;
+          return ok(url, '<head><title>Shared</title></head>');
+        }
+        return ok(url, '', 'text/plain', 404);
+      },
+      store: async () => null,
+    });
+    await unfurler.unfurl('room-a', 'https://acme.test/shared');
+    await unfurler.unfurl('room-b', 'https://acme.test/shared');
+    expect(pages).toBe(1);
+  });
+
+  it('remembers a refusal briefly rather than chasing it again', async () => {
+    let attempts = 0;
+    const unfurler = createUnfurler({
+      fetch: async (url) => {
+        attempts++;
+        return ok(url, 'gone', 'text/html', 404);
+      },
+      store: async () => null,
+    });
+    await expect(unfurler.unfurl('r', 'https://acme.test/gone')).rejects.toBeInstanceOf(UnfurlError);
+    await expect(unfurler.unfurl('r', 'https://acme.test/gone')).rejects.toBeInstanceOf(UnfurlError);
+    expect(attempts).toBe(1);
   });
 
   it('shares one fetch between simultaneous requests', async () => {

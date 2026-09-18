@@ -1,5 +1,6 @@
 import { provider } from '../document';
 import type { ActivityKind } from './collaborators';
+import { SPOTLIGHT_MS } from './spotlight';
 import type { PresenceState } from "./PresenceTypes";
 
 /**
@@ -24,8 +25,13 @@ class PresenceEngine {
     selection: [],
     tool: 'select',
     activity: null,
-    status: 'online'
+    status: 'online',
+    following: null,
+    spotlight: null
   };
+
+  private spotlightTimeout: ReturnType<typeof setTimeout> | null = null;
+  private spotlightListeners = new Set<() => void>();
 
   private pendingUpdate = false;
   private lastUpdateTime = 0;
@@ -142,6 +148,77 @@ class PresenceEngine {
     this.resetIdleTimer();
     this.scheduleUpdate();
   }
+
+  /**
+   * Say whose view this client is locked to, or that it is nobody's.
+   *
+   * Written by `followMode` and nothing else. It is the follower who knows
+   * they are following, so it is the follower who says so — the alternative,
+   * a leader inferring an audience from viewport overlap, would count anyone
+   * who happened to be looking at the same corner of the board.
+   *
+   * Deliberately not throttled behind an equality check alone: this changes a
+   * handful of times a session, and it changing is exactly when the leader's
+   * "following you" count needs to be right.
+   */
+  public updateFollowing(clientId: number | null) {
+    if (this.localState.following === clientId) return;
+    this.localState.following = clientId;
+    this.scheduleUpdate();
+  }
+
+  /**
+   * Offer everyone else a one-tap ride to this view, and withdraw it.
+   *
+   * ## Why this invites rather than takes
+   *
+   * Miro's "Bring everyone to me" moves other people's cameras outright.
+   * That works there because a board has a host and a meeting has a floor.
+   * This product's whole permission model is "the link is the key": everyone
+   * in the room is equally entitled to it, so there is nobody whose click
+   * should be allowed to seize four other people's screens mid-sentence. An
+   * offer that can be taken in one tap costs the presenter almost nothing and
+   * costs everyone else nothing at all when they are busy.
+   *
+   * ## Why it expires
+   *
+   * A spotlight is a sentence, not a setting. Left standing it becomes a
+   * banner everyone learns to ignore, and it would outlive a presenter whose
+   * tab is throttled by the browser mid-presentation.
+   */
+  public setSpotlight(on: boolean) {
+    if (this.spotlightTimeout) {
+      clearTimeout(this.spotlightTimeout);
+      this.spotlightTimeout = null;
+    }
+    if (Boolean(this.localState.spotlight) === on) return;
+    this.localState.spotlight = on ? { at: Date.now() } : null;
+    this.resetIdleTimer();
+    this.scheduleUpdate();
+    this.spotlightListeners.forEach((fn) => fn());
+    if (!on) return;
+    this.spotlightTimeout = setTimeout(() => {
+      this.spotlightTimeout = null;
+      this.setSpotlight(false);
+    }, SPOTLIGHT_MS);
+  }
+
+  /**
+   * Whether this client is currently offering its view, and a way to hear
+   * about it changing.
+   *
+   * Two surfaces need this — the chip that reports the audience and the menu
+   * entry that raises the offer — and the offer can also lapse on its own
+   * timer, so neither of them can own the flag. `useSyncExternalStore` reads
+   * it straight from the one place that knows, rather than each holding a copy
+   * that the expiry would leave stale.
+   */
+  public isSpotlighting = (): boolean => Boolean(this.localState.spotlight);
+
+  public subscribeSpotlight = (listener: () => void): (() => void) => {
+    this.spotlightListeners.add(listener);
+    return () => this.spotlightListeners.delete(listener);
+  };
 
   /**
    * Broadcast an ephemeral emoji reaction attached to the user's cursor.

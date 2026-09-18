@@ -63,13 +63,15 @@ export function createLink(rawUrl: string, at: { x: number; y: number }, options
 
 interface PreviewResponse {
   meta?: Omit<LinkMeta, 'fetchedAt'>;
+  /** The words are final and a picture is still coming. Ask once more to collect it. */
+  pending?: boolean;
   error?: string;
 }
 
-async function fetchPreview(url: string): Promise<PreviewResponse> {
+async function fetchPreview(url: string, timeoutMs = 22_000): Promise<PreviewResponse> {
   const endpoint = `${API_BASE}/rooms/${encodeURIComponent(roomId ?? 'global')}/unfurl?url=${encodeURIComponent(url)}`;
   const controller = new AbortController();
-  const timer = setTimeout(() => controller.abort(), 22_000);
+  const timer = setTimeout(() => controller.abort(), timeoutMs);
   try {
     const res = await fetch(endpoint, { signal: controller.signal });
     const body = (await res.json().catch(() => ({}))) as PreviewResponse;
@@ -117,22 +119,62 @@ export async function ensurePreview(id: string, force = false): Promise<void> {
 
   const result = await fetchPreview(link.url);
   inFlight.delete(id);
-  const now = liveNode(id);
-  if (!now) return;
 
-  if (result.meta) {
-    const meta: LinkMeta = { ...result.meta, fetchedAt: Date.now() };
-    const changes: Record<string, unknown> = { link: { ...now.link, status: 'ready', meta, requestedAt: undefined, error: undefined } };
-    // A vertical card sized for a picture that turned out not to exist gives
-    // the empty space back.
-    const resolved = resolveDisplay(now.link.display, now.width, now.height, Boolean(providerFor(now.link.url).embed));
-    if (resolved === 'vertical' && !meta.image && now.height > 200) changes.height = 176;
-    applyNodePatches([{ id, changes }]);
-  } else {
-    applyNodePatches([
-      { id, changes: { link: { ...now.link, status: 'error', requestedAt: undefined, error: result.error ?? 'No preview' } } },
-    ]);
+  if (!result.meta) {
+    const failed = liveNode(id);
+    if (failed) {
+      applyNodePatches([
+        { id, changes: { link: { ...failed.link, status: 'error', requestedAt: undefined, error: result.error ?? 'No preview' } } },
+      ]);
+    }
+    return;
   }
+
+  write(id, result.meta, result.pending === true);
+  if (result.pending) void collectImage(id, link.url);
+}
+
+/**
+ * Put a preview into the document, sizing the card to what actually arrived.
+ *
+ * `imagePending` is the difference between "this card has no picture" and
+ * "this card's picture has not landed yet", and the two look nothing alike: the
+ * first reflows the card to a text layout, the second holds the space and
+ * shimmers. Guessing wrong in either direction is a card that jumps.
+ */
+function write(id: string, incoming: Omit<LinkMeta, 'fetchedAt'>, imagePending: boolean): void {
+  const node = liveNode(id);
+  if (!node) return;
+  const meta: LinkMeta = { ...incoming, imagePending: imagePending || undefined, fetchedAt: Date.now() };
+  const changes: Record<string, unknown> = {
+    link: { ...node.link, status: 'ready', meta, requestedAt: undefined, error: undefined },
+  };
+  // A vertical card sized for a picture that turned out not to exist gives the
+  // empty space back — but only once we know there is no picture coming.
+  const resolved = resolveDisplay(node.link.display, node.width, node.height, Boolean(providerFor(node.link.url).embed));
+  if (resolved === 'vertical' && !meta.image && !imagePending && node.height > 200) changes.height = 176;
+  applyNodePatches([{ id, changes }]);
+}
+
+/**
+ * Collect the picture the server said was still coming.
+ *
+ * The second request is cheap on the server — the work is already running and
+ * this only waits on it — so the one thing that matters here is not letting it
+ * become noise. It runs once, it is abandoned if the card has gone or been
+ * pointed somewhere else meanwhile, and if the picture never arrives the card
+ * simply keeps the words it already has rather than reverting to an error: a
+ * titled card with no picture is a good card, and it is already on screen.
+ */
+async function collectImage(id: string, url: string): Promise<void> {
+  const result = await fetchPreview(url, 25_000);
+  const node = liveNode(id);
+  if (!node || node.link.url !== url) return;
+  if (!result.meta) {
+    if (node.link.meta?.imagePending) write(id, node.link.meta, false);
+    return;
+  }
+  write(id, result.meta, false);
 }
 
 /** Change how a link is shown, snapping the box to what that display wants. */

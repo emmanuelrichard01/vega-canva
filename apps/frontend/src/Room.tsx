@@ -15,6 +15,9 @@ import { ObjectContextToolbar } from './components/ObjectContextToolbar';
 import { PropertiesPanel } from './components/PropertiesPanel';
 import { LayersPanel } from './components/LayersPanel';
 import { useRoomPermissions } from './hooks/useRoomPermissions';
+import { useShareCard } from './hooks/useShareCard';
+import { useDocumentHead } from './hooks/useDocumentHead';
+import { previewsHidden } from './engine/share/shareCard';
 import { useAuth } from './hooks/useAuth';
 import { doc, provider, metadataMap, deleteNode, localAuthorId, publishLocalIdentity, applyGroupPlan } from './engine/document';
 import { useRoomState } from './hooks/useSync';
@@ -25,6 +28,7 @@ import { editor } from './engine/api/EditorAPI';
 import { emptyGroups } from './engine/model/groupTree';
 import { PresenceEdgeMarkers } from './components/PresenceEdgeMarkers';
 import { FollowIndicator } from './components/FollowIndicator';
+import { PresenceStage } from './components/PresenceStage';
 import { isForceTool, type ForceId } from './engine/physics/forces';
 import { calculateLayout, animateToLayout, type LayoutMode } from './utils/spatialLayout';
 import { Mic, TriangleAlert } from 'lucide-react';
@@ -773,7 +777,7 @@ export default function Room() {
       fileInputRef.current.click();
     }
   };
-  const { roomId, status, metadata, awarenessUsers } = useRoomState();
+  const { roomId, status, metadata, awarenessUsers, synced } = useRoomState();
 
   /**
    * Frame the board when it opens, rather than inheriting the last one's view.
@@ -842,6 +846,15 @@ export default function Room() {
       localStorage.setItem('recentWorkspaces', JSON.stringify(updated));
     } catch { /* corrupt localStorage entry — not worth surfacing */ }
   }, [roomId, metadata?.name, localTitle]);
+
+  /**
+   * What this board looks like from outside it: the card its link unfurls
+   * into when shared, and the browser tab — its name, and a mark on the icon
+   * when comments are waiting.
+   */
+  const boardName = metadata?.name || localTitle || 'Untitled Workspace';
+  useShareCard({ roomId, name: boardName, hidden: previewsHidden(metadata), synced, canEdit });
+  useDocumentHead({ title: boardName, unread: unreadCount(comments, commentMarks, myAuthorId), indexable: false });
 
   // Title editing lives entirely in WorkspaceShell now, which holds its own
   // draft state and only calls back on commit — so this no longer needs to
@@ -1500,6 +1513,12 @@ export default function Room() {
             to explain it reads as a broken app — presentation mode most of
             all, where it would be least expected. */}
         <FollowIndicator />
+
+        {/* The return path: who is watching *you*, and anyone asking to be
+            watched. Outside `isUiVisible` for exactly the reason above — it is
+            people, not chrome — and never more so than in presentation mode,
+            which is where knowing you have an audience matters most. */}
+        <PresenceStage />
 
         {/* Teaches the core gesture on a blank canvas, and gets out of the way
             the moment anything exists. */}

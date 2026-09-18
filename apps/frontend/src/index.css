@@ -102,7 +102,7 @@
   --green-500: #10B981;
 
   /* ---------- PRIMITIVES: brand ----------
-     Sampled from `public/VEGA LOGO LIGHT/LOGOMARK.png` rather than guessed, so
+     Sampled from `brand-masters/VEGA LOGO LIGHT/LOGOMARK.png` rather than guessed, so
      the accent in the interface is the same orange as the artwork instead of
      "about the same". It is close to amber-500 (#F59E0B) and deliberately not
      merged with it: amber is a *palette* value the UI uses for history and
@@ -4164,6 +4164,235 @@ textarea:focus-visible {
 }
 
 /* ---------------------------------------------------------------------------
+   THE STAGE — presence, pointed the other way
+
+   Everything above tells you where other people are. These two tell you what
+   the room is doing about *you*: who is watching, and who is asking to be
+   watched. Both are transient, both are answers to a question you could not
+   otherwise ask, and neither is allowed to become permanent furniture — which
+   is why the chip appears only with an audience and the invitation lapses on
+   its own.
+
+   They sit on the opposite side of the screen from the follow chip on purpose:
+   the follow chip is about a camera that is moving *now* and belongs under the
+   header where the eye already is, while these are about other people and can
+   wait at the bottom, out of the working area.
+   --------------------------------------------------------------------------- */
+
+.stage-chip {
+  position: fixed;
+  bottom: 84px;
+  left: 50%;
+  z-index: 901;
+  display: flex;
+  align-items: center;
+  gap: var(--space-3);
+  max-width: min(92vw, 420px);
+  padding: var(--space-2) var(--space-2) var(--space-2) var(--space-3);
+  border-radius: var(--radius-pill);
+  transform: translateX(-50%);
+  animation: stageChipIn var(--motion-nav) both;
+}
+
+/* Rises from the edge it sits against, which is the direction it came from.
+   `translateX` is carried through both keyframes because the element is
+   centred with it — see the note on `followChipIn`. */
+@keyframes stageChipIn {
+  from { opacity: 0; transform: translateX(-50%) translateY(8px); }
+  to { opacity: 1; transform: translateX(-50%) translateY(0); }
+}
+
+/* Overlapped, the way an avatar row is: three faces read as a group at a
+   glance, where three separate discs read as three separate facts. */
+.stage-chip__faces {
+  display: flex;
+  flex: 0 0 auto;
+}
+
+.stage-chip__face {
+  position: relative;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 22px;
+  height: 22px;
+  margin-left: -7px;
+  border-radius: 50%;
+  box-shadow: 0 0 0 2px var(--surface-primary);
+  font-size: var(--text-2xs);
+  font-weight: var(--weight-bold);
+  letter-spacing: 0;
+}
+
+.stage-chip__face:first-child { margin-left: 0; }
+
+/* Earlier faces sit *on top* of later ones.
+   Siblings paint in document order, so the default stack buries the leading
+   avatar under the one after it and clips the very initials that identify it —
+   which, with two-letter initials in a 22px disc, is most of them. Every
+   avatar row worth copying stacks the other way. */
+.stage-chip__face:nth-child(1) { z-index: 3; }
+.stage-chip__face:nth-child(2) { z-index: 2; }
+.stage-chip__face:nth-child(3) { z-index: 1; }
+
+.stage-chip__label {
+  min-width: 0;
+  overflow: hidden;
+  font-size: var(--text-base);
+  color: var(--text-secondary);
+  white-space: nowrap;
+  text-overflow: ellipsis;
+}
+
+/* The person is the content of the sentence; "is following you" is the frame
+   around it. Same rule as the follow chip's own label. */
+.stage-chip__label strong {
+  font-weight: var(--weight-semibold);
+  color: var(--text-primary);
+}
+
+.stage-chip__quiet { color: var(--text-tertiary); }
+
+.stage-chip__present {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  flex: 0 0 auto;
+  padding: 3px var(--space-3);
+  border: none;
+  border-radius: var(--radius-pill);
+  background: var(--surface-secondary);
+  color: var(--text-primary);
+  font-family: inherit;
+  font-size: var(--text-sm);
+  font-weight: var(--weight-medium);
+  cursor: pointer;
+  transition: background var(--motion-hover);
+}
+
+.stage-chip__present:hover { background: var(--surface-active); }
+
+/* ---------------------------------------------------------------------------
+   The invitation.
+
+   A question, not a notification — so it is placed where the answer will
+   appear (under the header, where the follow chip lands) rather than in the
+   corner where dismissible things go, and it is tinted with the asker's own
+   identity colour so that accepting it and the state it produces are visibly
+   the same thing.
+   --------------------------------------------------------------------------- */
+
+.stage-invite {
+  position: fixed;
+  top: 72px;
+  left: 50%;
+  z-index: 902;
+  display: flex;
+  align-items: center;
+  gap: var(--space-3);
+  max-width: min(92vw, 460px);
+  padding: var(--space-2) var(--space-2) var(--space-2) var(--space-4);
+  border-radius: var(--radius-pill);
+  transform: translateX(-50%);
+  animation: followChipIn var(--motion-nav) both;
+}
+
+/* A slow, single-element pulse in the asker's colour. It is the only moving
+   thing in this component: an invitation has to catch an eye that is looking
+   somewhere else, and one small pulse does that where a whole animated chip
+   would make the board feel urgent. */
+.stage-invite__pulse {
+  position: relative;
+  flex: 0 0 auto;
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background: var(--person, var(--text-accent));
+}
+
+.stage-invite__pulse::after {
+  content: '';
+  position: absolute;
+  inset: -4px;
+  border: 1.5px solid var(--person, var(--text-accent));
+  border-radius: 50%;
+  animation: stageInvitePulse 2s var(--ease-settle) infinite;
+}
+
+@keyframes stageInvitePulse {
+  0% { opacity: 0.55; transform: scale(0.7); }
+  70%, 100% { opacity: 0; transform: scale(1.5); }
+}
+
+.stage-invite__label {
+  min-width: 0;
+  overflow: hidden;
+  font-size: var(--text-base);
+  color: var(--text-secondary);
+  white-space: nowrap;
+  text-overflow: ellipsis;
+}
+
+.stage-invite__label strong {
+  font-weight: var(--weight-semibold);
+  color: var(--text-primary);
+}
+
+/* The one affirmative button in this pair, so it carries the weight. Its
+   ground is the person's colour at a tint rather than the accent: the offer is
+   theirs, and the accent in this app means "the app is suggesting this". */
+.stage-invite__go {
+  flex: 0 0 auto;
+  padding: 4px var(--space-3);
+  border: 1px solid color-mix(in srgb, var(--person, var(--text-accent)) 40%, transparent);
+  border-radius: var(--radius-pill);
+  background: color-mix(in srgb, var(--person, var(--text-accent)) 14%, var(--surface-primary));
+  color: var(--text-primary);
+  font-family: inherit;
+  font-size: var(--text-sm);
+  font-weight: var(--weight-semibold);
+  cursor: pointer;
+  transition: background var(--motion-hover), border-color var(--motion-hover);
+}
+
+.stage-invite__go:hover {
+  background: color-mix(in srgb, var(--person, var(--text-accent)) 24%, var(--surface-primary));
+  border-color: color-mix(in srgb, var(--person, var(--text-accent)) 60%, transparent);
+}
+
+.stage-invite__no {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  flex: 0 0 auto;
+  width: 26px;
+  height: 26px;
+  border: none;
+  border-radius: 50%;
+  background: transparent;
+  color: var(--text-tertiary);
+  cursor: pointer;
+  transition: background var(--motion-hover), color var(--motion-hover);
+}
+
+.stage-invite__no:hover { background: var(--surface-hover); color: var(--text-primary); }
+
+/* A pulse that never stops is the one animation most likely to be actively
+   unwelcome. The dot stays, so the invitation still reads. */
+@media (prefers-reduced-motion: reduce) {
+  .stage-chip,
+  .stage-invite { animation: none; }
+  .stage-invite__pulse::after { animation: none; opacity: 0.4; }
+}
+
+/* On a phone the two would stack over the working area, so they give up the
+   parts that are decoration: the overlapping faces and the names. */
+@media (max-width: 640px) {
+  .stage-chip { bottom: 72px; }
+  .stage-chip__faces { display: none; }
+}
+
+/* ---------------------------------------------------------------------------
    SLIDER
 
    The three ranges already in this app are bare `input[type="range"]` elements
@@ -5862,6 +6091,23 @@ body:has(.tool-shelf) { --dock-h: 112px; }
   color: var(--text-tertiary);
 }
 
+/* A word at the end of a row that qualifies it — "Newest first" beside Last
+   opened — rather than naming a key. */
+.ctx-menu-item__hint {
+  margin-left: auto;
+  padding-left: var(--space-4);
+  font-size: var(--text-2xs);
+  color: var(--text-tertiary);
+}
+
+/* Holds the tick's place in a group of choices, so the labels sit on one
+   line whichever is chosen and nothing slides sideways as you switch. */
+.ctx-menu-item__gap {
+  display: block;
+  width: 15px;
+  flex: none;
+}
+
 /* The shape swapper's grid — geometry shown, never named. A 3-across grid of
    drawn shapes is read at a glance; a dropdown listing "Ellipse, Polygon,
    Star" has to be parsed. */
@@ -7198,6 +7444,83 @@ body:has(.tool-shelf) { --dock-h: 112px; }
 
 .lstage__titles { min-width: 0; }
 
+/* ## The controls, in one row beside what they act on
+
+   Search used to hide behind a magnifier on the rail, and order and layout
+   were not offered at all. The three sit together now: the field takes the
+   space, and the two small controls sit at the end where they are found when
+   looked for and ignored when not. */
+.lstage__tools {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  flex: 0 1 auto;
+  min-width: 0;
+}
+
+.lstage__sort { position: relative; }
+
+.lstage__sort .lrail__menu {
+  top: calc(100% + 6px);
+  right: 0;
+  left: auto;
+  bottom: auto;
+  min-width: 212px;
+}
+
+/* A quiet control for a quiet decision: the page's furniture, not its work. */
+.lbtn {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  height: var(--control-h-lg);
+  padding: 0 var(--space-3);
+  border: 1px solid var(--border-divider);
+  border-radius: var(--radius-lg);
+  background: var(--surface-primary);
+  color: var(--text-secondary);
+  font-family: inherit;
+  font-size: var(--text-sm);
+  font-weight: var(--weight-medium);
+  white-space: nowrap;
+  cursor: pointer;
+  transition: border-color var(--motion-hover), color var(--motion-hover), background-color var(--motion-hover);
+}
+
+.lbtn:hover { border-color: var(--border-strong); color: var(--text-primary); }
+
+.lbtn:focus-visible {
+  outline: 2px solid var(--focus-ring-color);
+  outline-offset: 1px;
+}
+
+/* The pair is one control, so it is drawn as one: a single outline with a
+   hairline between the two halves. */
+.lstage__layout {
+  display: inline-flex;
+  border: 1px solid var(--border-divider);
+  border-radius: var(--radius-lg);
+  overflow: hidden;
+}
+
+.lstage__layout .lbtn {
+  height: calc(var(--control-h-lg) - 2px);
+  border: none;
+  border-radius: 0;
+  background: transparent;
+}
+
+.lstage__layout .lbtn + .lbtn { box-shadow: inset 1px 0 0 var(--border-divider); }
+
+.lbtn--icon { padding: 0 var(--space-3); }
+
+/* Which one you are in is marked in ink, never in the accent: it is a state of
+   the page, not an action waiting to be taken. */
+.lbtn[aria-pressed='true'] {
+  background: var(--surface-active, var(--surface-hover));
+  color: var(--text-primary);
+}
+
 .lstage__title {
   margin: 0;
   font-size: clamp(26px, 2.4vw, 34px);
@@ -7221,20 +7544,31 @@ body:has(.tool-shelf) { --dock-h: 112px; }
   align-items: center;
   gap: var(--space-2);
   flex-shrink: 0;
-  width: min(300px, 34vw);
-  height: 40px;
+  width: min(320px, 38vw);
+  height: var(--control-h-lg);
   padding: 0 var(--space-3);
   border: 1px solid var(--border-divider);
-  border-radius: var(--radius-pill);
+  border-radius: var(--radius-lg);
   background: var(--surface-primary);
   color: var(--text-tertiary);
-  animation: libSeek 240ms var(--ease-settle) both;
+  transition: border-color var(--motion-hover);
 }
 
-@keyframes libSeek {
-  from { opacity: 0; transform: translateX(10px); }
-  to   { opacity: 1; transform: none; }
+/* The key that focuses it, shown until it has focus — a hint on the control
+   rather than a shortcut somebody has to be told about. */
+.lstage__search kbd {
+  flex: none;
+  min-width: 17px;
+  padding: 1px 5px;
+  border-radius: 5px;
+  background: var(--surface-secondary);
+  color: var(--text-tertiary);
+  font-family: var(--font-mono, ui-monospace, monospace);
+  font-size: var(--text-2xs);
+  text-align: center;
 }
+
+.lstage__search:focus-within kbd { visibility: hidden; }
 
 .lstage__search:focus-within { border-color: var(--focus-field-color); }
 
@@ -7378,81 +7712,6 @@ body:has(.tool-shelf) { --dock-h: 112px; }
 
 .lchip.is-on span { color: color-mix(in srgb, var(--surface-primary) 65%, transparent); }
 
-/* ## The way across, as a tile
-   The seam was a full-width button under the boards grid: a bar the width of
-   the page carrying a heading, a sentence and an arrow, for a link. That is a
-   lot of furniture to cross a room, and it read as a banner, which is the one
-   shape on a page people have trained themselves to skip.
-
-   As a tile it is the size and shape of its neighbours, it sits where the eye
-   is already travelling, and the dashed edge says the only thing that needs
-   saying: this one is not a board. */
-/* Built like a board card, because it stands in a row of them: a 16:10 picture
-   area, then the name and its line on the page beneath. It was one block with
-   the words inside the picture, so its title sat where the other cards' art
-   was and the row had two baselines. */
-.xtile {
-  display: flex;
-  flex-direction: column;
-  background: transparent;
-  border: none;
-  padding: 0;
-  text-align: left;
-  cursor: pointer;
-}
-
-.xtile__art {
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  aspect-ratio: 16 / 10;
-  border-radius: var(--radius-xl);
-  border: 1px dashed var(--border-strong);
-  background: transparent;
-  color: var(--text-tertiary);
-  transition:
-    border-color var(--motion-hover),
-    background-color var(--motion-hover),
-    color var(--motion-hover),
-    transform var(--motion-hover);
-}
-
-.xtile:hover .xtile__art {
-  transform: translateY(-3px);
-  border-color: var(--accent);
-  background: color-mix(in srgb, var(--accent) 6%, transparent);
-  color: var(--accent-strong, var(--brand-orange));
-}
-
-.xtile:focus-visible { outline: none; }
-
-.xtile:focus-visible .xtile__art {
-  border-color: var(--focus-ring-color);
-  box-shadow: 0 0 0 3px color-mix(in srgb, var(--focus-ring-color) 35%, transparent);
-}
-
-/* The same padding as `.tcard__body` and `.bcard__body`, so the three sit on
-   one baseline. */
-.xtile__body { padding: var(--space-3) 2px 0; }
-
-.xtile__name {
-  display: block;
-  font-size: var(--text-md);
-  font-weight: var(--weight-semibold);
-  color: var(--text-primary);
-}
-
-.xtile__sub {
-  display: block;
-  margin-top: 3px;
-  font-size: var(--text-sm);
-  color: var(--text-tertiary);
-}
-
-@media (prefers-reduced-motion: reduce) {
-  .xtile__art { transition: none; }
-  .xtile:hover .xtile__art { transform: none; }
-}
 
 /* Flat, deliberately.
    A soft two-stop wash was tried at the top of this page to give it the
@@ -7864,6 +8123,55 @@ body:has(.tool-shelf) { --dock-h: 112px; }
    before a shorthand that covers it is always dead code. */
 .stage__subhead--spaced { margin-top: var(--space-12); }
 
+/* ---------------------------------------------------------------------------
+   GALLERY SECTIONS
+
+   The gallery was one flat grid, which is right at a dozen boards and a wall
+   at forty: nothing to look at first, no way to skim for a kind of board, and
+   no signal that an architecture diagram and a page of hand-drawn shapes are
+   different sorts of thing.
+
+   A section is a real heading, one line of what it is for, and its own grid.
+   Unlike `.stage__subhead` — a small uppercase label whose whole job is to be
+   ignored — these are meant to be read, so they are set at content size and
+   given the air to say so.
+   --------------------------------------------------------------------------- */
+
+.tsection {
+  /* The gap between sections is the only thing separating two grids of the
+     same cards, so it is deliberately larger than any gap inside one. */
+  margin-top: var(--space-12);
+}
+
+.tsection:first-of-type { margin-top: var(--space-8); }
+
+.tsection__head {
+  display: flex;
+  align-items: flex-end;
+  justify-content: space-between;
+  gap: var(--space-4);
+  margin-bottom: var(--space-4);
+}
+
+.tsection__title {
+  margin: 0;
+  font-size: var(--text-lg);
+  font-weight: 650;
+  letter-spacing: -0.015em;
+  color: var(--text-primary);
+}
+
+.tsection__blurb {
+  margin: 3px 0 0;
+  font-size: var(--text-md);
+  color: var(--text-secondary);
+}
+
+/* On a phone the count button and the heading would fight for one line. */
+@media (max-width: 560px) {
+  .tsection__head { flex-direction: column; align-items: flex-start; }
+}
+
 .stage__error {
   margin-bottom: var(--space-5);
   padding: var(--space-3) var(--space-4);
@@ -7935,6 +8243,58 @@ body:has(.tool-shelf) { --dock-h: 112px; }
   text-align: left;
 }
 
+/* ## The same four, twice the size
+
+   On an empty library they are the screen, so they are a column of rows with
+   room to explain themselves. Above a full one they are a strip: four equal
+   tiles across the top, the sentence under each name kept because it is the
+   difference between "Open a link" as a guess and as an instruction, but
+   smaller, and with no arrow — a row of four arrows all pointing right is
+   decoration that reads as a to-do list. */
+.starts--strip {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: var(--space-3);
+  margin: 0 0 var(--space-8);
+}
+
+.starts--strip .start {
+  padding: var(--space-3);
+  border-radius: var(--radius-lg);
+  background: var(--surface-primary);
+}
+
+.starts--strip .start__icon {
+  width: 30px;
+  height: 30px;
+  border-radius: var(--radius-md);
+}
+
+.starts--strip .start__name { font-size: var(--text-sm); }
+
+.starts--strip .start__sub {
+  font-size: var(--text-xs);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+/* The accent marks the blank board, whichever layout it is in — `:first-child`
+   was doing that job and would move if the order ever changed. */
+.start[data-primary] .start__icon {
+  background: var(--accent-quiet, color-mix(in srgb, var(--accent) 14%, transparent));
+  color: var(--accent-strong, var(--brand-orange));
+}
+
+@media (max-width: 1080px) {
+  .starts--strip { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+}
+
+@media (max-width: 560px) {
+  .starts--strip { grid-template-columns: 1fr; }
+  .starts--strip .start__sub { display: none; }
+}
+
 .start {
   display: flex;
   align-items: center;
@@ -7974,13 +8334,9 @@ body:has(.tool-shelf) { --dock-h: 112px; }
   color: var(--text-secondary);
 }
 
-/* The first of the three is the one worth trying first, so it is the one that
-   carries the accent. Three identical rows is a page that has declined to
-   advise, which on an empty screen is the one thing it is for. */
-.start:first-child .start__icon {
-  background: var(--accent-quiet, color-mix(in srgb, var(--accent) 14%, transparent));
-  color: var(--accent-strong, var(--brand-orange));
-}
+/* One of the four is the one worth trying first, so it is the one that carries
+   the accent. Four identical rows is a page that has declined to advise, which
+   on an empty screen is the one thing it is for. See `.start[data-primary]`. */
 
 /* Explicit, not inherited. `.stage__empty` centres everything in it, which is
    right for a sentence and wrong for a row whose icon is on one edge and whose
@@ -8228,28 +8584,172 @@ body:has(.tool-shelf) { --dock-h: 112px; }
 
 .bcard__meta { font-size: var(--text-xs); color: var(--text-tertiary); }
 
-.bcard__remove {
+/* ## What a board offers, behind one button
+
+   It was a single `X` that appeared on hover — the most destructive thing on
+   the page as the only thing on the card, and nothing at all for the two
+   ordinary wants: take the link, open it beside what you are doing. One `⋯`
+   holds all three, in that order, with removal last and marked. */
+.bcard__tools {
   position: absolute;
   top: var(--space-2);
   right: var(--space-2);
   display: flex;
+  gap: 4px;
+  opacity: 0;
+  transition: opacity var(--motion-hover);
+}
+
+.bcard:hover .bcard__tools,
+.bcard:focus-within .bcard__tools,
+.bcard[data-open] .bcard__tools { opacity: 1; }
+
+.bcard__tool {
+  display: flex;
   align-items: center;
   justify-content: center;
-  width: 26px;
-  height: 26px;
+  width: 28px;
+  height: 28px;
   border: none;
   border-radius: var(--radius-md);
   background: var(--surface-primary);
-  color: var(--text-tertiary);
+  color: var(--text-secondary);
   cursor: pointer;
-  opacity: 0;
-  box-shadow: var(--shadow-sm);
-  transition: opacity var(--motion-hover), color var(--motion-hover);
+  box-shadow: var(--shadow-sm), inset 0 0 0 1px var(--border-divider);
+  transition: color var(--motion-hover), background-color var(--motion-hover);
 }
 
-.bcard:hover .bcard__remove,
-.bcard__remove:focus-visible { opacity: 1; }
-.bcard__remove:hover { color: var(--status-danger); }
+.bcard__tool:hover { color: var(--text-primary); background: var(--surface-hover); }
+
+.bcard__tool:focus-visible {
+  outline: 2px solid var(--focus-ring-color);
+  outline-offset: 1px;
+}
+
+/* Hung off the card's own corner, so it opens beside the thing it acts on
+   rather than at the pointer. */
+.bcard__menu {
+  position: absolute;
+  top: 38px;
+  right: var(--space-2);
+  z-index: 6;
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
+  min-width: 208px;
+  padding: 5px;
+  border-radius: var(--radius-lg);
+  cursor: default;
+}
+
+/* ## The list
+
+   The same board, for the question a grid cannot answer: which of forty is
+   called "Q3". A row is a small picture, a name that can run long, and the
+   date in a column that lines up down the page — which is the whole point of a
+   list and is why the date is tabular here and not in the grid. */
+.blist {
+  display: flex;
+  flex-direction: column;
+  border-radius: var(--radius-xl);
+  box-shadow: inset 0 0 0 1px var(--border-divider);
+  overflow: hidden;
+}
+
+.bcard--list {
+  flex-direction: row;
+  align-items: center;
+  gap: var(--space-3);
+  height: 52px;
+  padding: 0 var(--space-3);
+  border-radius: 0;
+  transition: background-color var(--motion-hover);
+}
+
+.bcard--list + .bcard--list { box-shadow: inset 0 1px 0 var(--border-divider); }
+
+.bcard--list:hover { background: var(--surface-hover); }
+
+.bcard--list .bcard__art {
+  flex: none;
+  width: 60px;
+  aspect-ratio: 16 / 10;
+  border-radius: var(--radius-md);
+  border-bottom: none;
+}
+
+/* The picture does not lift in a row: the row itself is the target. */
+.bcard--list:hover .bcard__art { transform: none; box-shadow: inset 0 0 0 1px var(--border-divider); }
+
+.bcard--list:focus-visible { outline: 2px solid var(--focus-ring-color); outline-offset: -2px; }
+.bcard--list:focus-visible .bcard__art { box-shadow: inset 0 0 0 1px var(--border-divider); }
+
+.bcard--list .bcard__body {
+  flex-direction: row;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: var(--space-4);
+  padding: 0;
+}
+
+.bcard--list .bcard__name {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.bcard--list .bcard__meta {
+  flex: none;
+  text-align: right;
+  white-space: nowrap;
+  font-variant-numeric: tabular-nums;
+}
+
+/* At 60px the caption in an empty board's cover is unreadable anyway, and it
+   turns the one empty row into the noisiest thing in the list. */
+.bcard--list .cover__hint { display: none; }
+
+.bcard--list .bcard__tools {
+  position: static;
+  margin-left: var(--space-1);
+}
+
+.bcard--list .bcard__menu { top: calc(100% - 4px); right: var(--space-3); }
+
+/* A row on a narrow screen drops the date rather than squeezing the name. */
+@media (max-width: 620px) {
+  .bcard--list .bcard__meta { display: none; }
+}
+
+/* ## Grouped by when you last had it open
+
+   The heading is small and quiet — it labels a stretch of the grid, it is not
+   a section title competing with the page's own. */
+.lgroup + .lgroup { margin-top: var(--space-8); }
+
+.lgroup__head {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  margin: 0 0 var(--space-3);
+  font-size: var(--text-xs);
+  font-weight: var(--weight-semibold);
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  color: var(--text-tertiary);
+}
+
+.lgroup__count {
+  padding: 1px 6px;
+  border-radius: 999px;
+  background: var(--surface-secondary);
+  font-size: var(--text-2xs);
+  letter-spacing: 0;
+  font-variant-numeric: tabular-nums;
+  color: var(--text-tertiary);
+}
 
 /* ------------------------------------------------------------- narrow ----- */
 
@@ -13233,6 +13733,166 @@ body[data-zen='physics'] .forces-handle { bottom: 32px; }
   margin-top: 2px;
 }
 
+/* ---------------------------------------------------------- link preview
+
+   The card a pasted link unfurls into, shown before the link goes anywhere.
+   Laid out the way chat apps lay unfurls out — a rule down the left, the site,
+   a bold title, a line of description, labelled facts, then the picture — so
+   it reads as "the preview" without dressing up as any one app.
+
+   The dialog grows by the height of the picture, so the panel scrolls on a
+   short screen rather than pushing its own close button out of reach. */
+.share__panel {
+  max-height: calc(100dvh - 2 * var(--space-4));
+  overflow-y: auto;
+  overscroll-behavior: contain;
+}
+
+.share__unfurl {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+}
+
+.share__unfurl-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--space-3);
+}
+
+.share__unfurl-title {
+  margin: 0;
+  font-size: var(--text-sm);
+  font-weight: var(--weight-semibold);
+  color: var(--text-primary);
+}
+
+.share__unfurl-toggle {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-2);
+  font-size: var(--text-sm);
+  color: var(--text-secondary);
+  cursor: pointer;
+  user-select: none;
+}
+
+.share__unfurl-toggle.is-locked {
+  cursor: default;
+  opacity: 0.6;
+}
+
+.share__unfurl-toggle.is-locked .grid-switch {
+  cursor: default;
+}
+
+.unfurl {
+  display: grid;
+  gap: 3px;
+  margin: 0;
+  padding: var(--space-1) 0 var(--space-1) var(--space-3);
+  border-left: 3px solid var(--border-divider);
+  min-width: 0;
+}
+
+.unfurl__site {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-size: var(--text-xs);
+  font-weight: var(--weight-semibold);
+  color: var(--text-secondary);
+}
+
+.unfurl__site img {
+  border-radius: 3px;
+}
+
+.unfurl__title {
+  font-size: var(--text-base);
+  font-weight: var(--weight-semibold);
+  line-height: 1.35;
+  color: var(--text-primary);
+  overflow-wrap: anywhere;
+}
+
+.unfurl__desc {
+  margin: 0;
+  font-size: var(--text-sm);
+  line-height: 1.45;
+  color: var(--text-secondary);
+}
+
+.unfurl__facts {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 2px var(--space-5);
+  margin: 2px 0 0;
+  font-size: var(--text-xs);
+  line-height: 1.5;
+}
+
+.unfurl__facts dt {
+  font-weight: var(--weight-semibold);
+  color: var(--text-secondary);
+}
+
+.unfurl__facts dd {
+  margin: 0;
+  color: var(--text-tertiary);
+}
+
+/* Held at the picture's own proportion from the first frame, so the dialog
+   does not jump when it arrives; a quiet wash stands in until it does. */
+.unfurl__image {
+  position: relative;
+  margin-top: var(--space-2);
+  aspect-ratio: 1200 / 630;
+  max-width: 100%;
+  border-radius: var(--radius-lg);
+  overflow: hidden;
+  background: var(--surface-sunken, var(--surface-secondary));
+  box-shadow: inset 0 0 0 1px var(--border-divider);
+}
+
+.unfurl__image:not(.is-loaded)::after {
+  content: '';
+  position: absolute;
+  inset: 0;
+  background: linear-gradient(100deg, transparent 20%, color-mix(in srgb, var(--surface-primary) 60%, transparent) 50%, transparent 80%);
+  background-size: 220% 100%;
+  animation: unfurlWash 1.4s ease-in-out infinite;
+}
+
+.unfurl__image img {
+  display: block;
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+  opacity: 0;
+  transition: opacity 220ms var(--ease-settle);
+}
+
+.unfurl__image.is-loaded img {
+  opacity: 1;
+}
+
+@keyframes unfurlWash {
+  from { background-position: 120% 0; }
+  to { background-position: -120% 0; }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .unfurl__image:not(.is-loaded)::after { animation: none; }
+  .unfurl__image img { transition: none; }
+}
+
+.share__hint-icon {
+  vertical-align: -1px;
+  margin-right: 5px;
+}
+
 /* Which mode the link opens in. A preference, not a permission -- the copy
    under it says so, and `engine/model/permissions.ts` says why.
 
@@ -13269,10 +13929,129 @@ body[data-zen='physics'] .forces-handle { bottom: 32px; }
 
 .share__mode:hover { background: var(--surface-hover); color: var(--text-secondary); }
 
-.share__mode[aria-pressed='true'] {
+/* `aria-checked`, because these three are a radio group: one choice, three
+   answers, arrow keys between them. They were `aria-pressed` buttons, which
+   announces three independent toggles. */
+.share__mode[aria-checked='true'] {
   border-color: var(--accent);
   background: var(--accent-soft, var(--surface-hover));
   color: var(--text-primary);
+}
+
+/* ---------------------------------------------------------------------------
+   Handing the link over by other means: a code for a phone, the system's own
+   share sheet, and the date a restricted link stops working.
+   --------------------------------------------------------------------------- */
+
+/* Sits inside the link field, so "copy it" and "point a phone at it" read as
+   two ways to do the same thing rather than two features. */
+.share__qr-toggle {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: var(--control-h-sm);
+  height: var(--control-h-sm);
+  flex-shrink: 0;
+  border: none;
+  border-radius: var(--radius-md);
+  background: transparent;
+  color: var(--text-tertiary);
+  cursor: pointer;
+  transition: background-color var(--motion-hover), color var(--motion-hover);
+}
+
+.share__qr-toggle:hover:not(:disabled) { background: var(--surface-hover); color: var(--text-primary); }
+.share__qr-toggle[aria-pressed='true'] { background: var(--surface-active); color: var(--text-primary); }
+.share__qr-toggle:disabled { opacity: 0.45; cursor: default; }
+
+.share__qr {
+  display: flex;
+  align-items: center;
+  gap: var(--space-4);
+  padding: var(--space-3);
+  border: 1px solid var(--border-divider);
+  border-radius: var(--radius-lg);
+  background: var(--surface-secondary);
+  animation: shareQrIn var(--motion-nav) both;
+}
+
+@keyframes shareQrIn {
+  from { opacity: 0; transform: translateY(-4px); }
+  to { opacity: 1; transform: translateY(0); }
+}
+
+/* A fixed white tile whatever the theme: a scanner needs dark-on-light, and a
+   code that inverts in dark mode is a decoration. The radius is the card's
+   own, and the code carries its own quiet zone inside the SVG. */
+.share-qr {
+  flex: 0 0 auto;
+  width: 116px;
+  height: 116px;
+  border-radius: var(--radius-md);
+  background: #ffffff;
+}
+
+.share__qr-note {
+  margin: 0;
+  font-size: var(--text-sm);
+  line-height: 1.5;
+  color: var(--text-secondary);
+}
+
+.share__system {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: var(--space-2);
+  height: var(--control-h-md);
+  border: 1px solid var(--border-divider);
+  border-radius: var(--radius-lg);
+  background: var(--surface-primary);
+  color: var(--text-primary);
+  font-family: inherit;
+  font-size: var(--text-md);
+  font-weight: var(--weight-semibold);
+  cursor: pointer;
+  transition: background-color var(--motion-hover);
+}
+
+.share__system:hover { background: var(--surface-hover); }
+
+/* Quieter than the control it explains, and pushed to the far end so the
+   select and its consequence are not competing for the same reading. */
+.share__expiry-date {
+  margin-left: auto;
+  font-size: var(--text-sm);
+  color: var(--text-tertiary);
+  white-space: nowrap;
+}
+
+/* Under the title, where a subtitle goes — it is context for the whole
+   dialog, not a control in it. */
+.share__present {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  margin: 5px 0 0;
+  font-size: var(--text-sm);
+  color: var(--text-secondary);
+}
+
+.share__present-dot {
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: var(--signal-online, #10B981);
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .share__qr { animation: none; }
+}
+
+/* The code and its sentence stack rather than shrink: below this width the
+   code would drop under the size a camera reliably reads. */
+@media (max-width: 420px) {
+  .share__qr { flex-direction: column; align-items: flex-start; }
 }
 
 /* ---------------------------------------------------------------------------
@@ -19734,3 +20513,40 @@ html[data-precise] .canvas-container[data-cursor-mode] .konvajs-content canvas {
   background: var(--surface-active);
 }
 
+
+/* ------------------------------------------------------- the seam, at the end
+
+   A library of six boards leaves most of a large screen empty, and what filled
+   it before was nothing: the page simply stopped. Four real templates, drawn by
+   the same component as every other picture here, answer "what else is there"
+   and give the page a foot. Quieter than the boards above it — a hairline, a
+   small heading, and smaller pictures — because it is an offer, not the work. */
+.lseam {
+  margin-top: var(--space-12);
+  padding-top: var(--space-8);
+  border-top: 1px solid var(--border-divider);
+}
+
+.lseam__head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--space-4);
+  margin-bottom: var(--space-4);
+}
+
+.lseam__title {
+  margin: 0;
+  font-size: var(--text-md);
+  font-weight: var(--weight-semibold);
+  letter-spacing: -0.01em;
+  color: var(--text-primary);
+}
+
+.tgrid--seam {
+  grid-template-columns: repeat(auto-fill, minmax(208px, 1fr));
+  row-gap: var(--space-5);
+}
+
+.tgrid--seam .tcard__blurb { display: none; }
+.tgrid--seam .tcard__name { font-size: var(--text-sm); }

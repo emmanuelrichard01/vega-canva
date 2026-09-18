@@ -2,10 +2,10 @@ import React, { useEffect, useMemo, useRef, useState } from 'react';
 import { useAuth } from './hooks/useAuth';
 import { nanoid } from 'nanoid';
 import {
-  AlertTriangle, ArrowRight, ChevronDown, ChevronRight, Compass, Download, FileText, Layers, Link2, LogOut, Plus,
-  Trash2,
+  AlertTriangle, Check, ChevronDown, ChevronRight, Compass, Download, LayoutGrid, Layers, Link2, LogOut, Plus,
+  Rows3, Trash2,
   Search, Sparkles, Undo2,
-  SquarePen, UploadCloud, X,
+  UploadCloud, X,
 } from 'lucide-react';
 import { parseDocumentExport } from './engine/export/DocumentImport';
 import {
@@ -19,6 +19,15 @@ import {
   type Template, type TemplateCategory,
 } from './engine/templates/templates';
 import { WorkspaceCover } from './components/WorkspaceCover';
+import { BoardTile, type BoardLayout } from './components/home/BoardTile';
+import { QuickStart } from './components/home/QuickStart';
+import {
+  BOARD_SORTS,
+  groupBoards,
+  sortBoards,
+  whenOpened,
+  type BoardSort,
+} from './engine/room/boardShelf';
 import { AuthModal } from './components/AuthModal';
 import { Logo } from './components/ui/Logo';
 import { Avatar } from './components/ui/Avatar';
@@ -80,6 +89,9 @@ const REMOVED_KEY = 'vega_removed_workspaces';
  */
 const REMOVED_LIMIT = 500;
 const VIEW_KEY = 'vega_home_view';
+/** How the library is laid out and ordered. A preference, so it is remembered. */
+const LAYOUT_KEY = 'vega_home_layout';
+const SORT_KEY = 'vega_home_sort';
 
 /** Which half of the library the stage is showing. */
 type View = 'boards' | 'templates';
@@ -105,6 +117,9 @@ function initialView(): View {
    * It also stops the front door moving between the first visit and the second,
    * which is the sort of thing nobody can name and everybody feels.
    */
+  // An explicit `?view=templates` wins: the install shortcut and shared links use it.
+  const asked = new URLSearchParams(window.location.search).get('view');
+  if (asked === 'boards' || asked === 'templates') return asked;
   const remembered = localStorage.getItem(VIEW_KEY);
   if (remembered === 'boards' || remembered === 'templates') return remembered;
   return 'boards';
@@ -157,6 +172,26 @@ export const Home: React.FC = () => {
   const [view, setView] = useState<View>(initialView);
   const [category, setCategory] = useState<TemplateCategory | null>(null);
   const [query, setQuery] = useState('');
+  /**
+   * How the boards are shown, and in what order.
+   *
+   * Two real answers to two different questions. A grid answers "which one was
+   * that" — you recognise a board by its shape long before its name — and a
+   * list answers "where is the one called X" once there are more boards than
+   * pictures anyone can scan. Both are remembered, because it is a way of
+   * working rather than a thing you choose per visit.
+   */
+  const [layout, setLayout] = useState<BoardLayout>(
+    () => (localStorage.getItem(LAYOUT_KEY) === 'list' ? 'list' : 'grid')
+  );
+  const [sort, setSort] = useState<BoardSort>(
+    () => (localStorage.getItem(SORT_KEY) === 'name' ? 'name' : 'recent')
+  );
+  const [sortOpen, setSortOpen] = useState(false);
+  /** Which board card has its menu open, so only one ever does. */
+  const [boardMenu, setBoardMenu] = useState<string | null>(null);
+  /** The board whose link was just copied, for the two seconds it says so. */
+  const [copiedBoard, setCopiedBoard] = useState<string | null>(null);
   const [removedRooms, setRemovedRooms] = useState<RemovedWorkspace[]>([]);
   const [shelfOpen, setShelfOpen] = useState(false);
   const [joinLink, setJoinLink] = useState('');
@@ -165,16 +200,6 @@ export const Home: React.FC = () => {
   const [joinOpen, setJoinOpen] = useState(false);
   const [recentRooms, setRecentRooms] = useState<RecentWorkspace[]>([]);
   const [restoreError, setRestoreError] = useState<string | null>(null);
-  /**
-   * Whether the search field is showing.
-   *
-   * Revealed rather than permanent. The field is the second thing on this page
-   * and a permanent one sat above the first: a library is a wall of pictures,
-   * and the answer to "which of these" is usually to look rather than to type.
-   * It stays out while there is a query, so a filtered grid never loses the
-   * control that filtered it.
-   */
-  const [seeking, setSeeking] = useState(false);
   /** The account menu: identity and the session, and nothing else. */
   const [meOpen, setMeOpen] = useState(false);
   /**
@@ -219,6 +244,7 @@ export const Home: React.FC = () => {
   const meRef = useRef<HTMLDivElement>(null);
   const newRef = useRef<HTMLDivElement>(null);
   const joinRef = useRef<HTMLInputElement>(null);
+  const sortRef = useRef<HTMLDivElement>(null);
   const stageRef = useRef<HTMLElement>(null);
   /**
    * How many dragenters are outstanding.
@@ -242,6 +268,8 @@ export const Home: React.FC = () => {
   }, []);
 
   useEffect(() => { localStorage.setItem(VIEW_KEY, view); }, [view]);
+  useEffect(() => { localStorage.setItem(LAYOUT_KEY, layout); }, [layout]);
+  useEffect(() => { localStorage.setItem(SORT_KEY, sort); }, [sort]);
 
   /**
    * `/` puts the caret in the search field.
@@ -261,10 +289,8 @@ export const Home: React.FC = () => {
       const el = document.activeElement?.tagName;
       if (el === 'INPUT' || el === 'TEXTAREA') return;
       e.preventDefault();
-      setSeeking(true);
-      // After the field exists. `setSeeking` renders it; focusing in the same
-      // tick would aim at an element that is not there yet.
-      window.setTimeout(() => searchRef.current?.focus(), 0);
+      searchRef.current?.focus();
+      searchRef.current?.select();
     };
     window.addEventListener('keydown', onKey);
     return () => window.removeEventListener('keydown', onKey);
@@ -279,12 +305,16 @@ export const Home: React.FC = () => {
    * and the second menu was added by copying the first.
    */
   useEffect(() => {
-    if (!meOpen && !newOpen) return;
-    const closeAll = () => { setMeOpen(false); setNewOpen(false); };
+    if (!meOpen && !newOpen && !sortOpen && !boardMenu) return;
+    const closeAll = () => { setMeOpen(false); setNewOpen(false); setSortOpen(false); setBoardMenu(null); };
     const onDown = (e: PointerEvent) => {
       const t = e.target as Node;
       if (meOpen && !meRef.current?.contains(t)) setMeOpen(false);
       if (newOpen && !newRef.current?.contains(t)) setNewOpen(false);
+      if (sortOpen && !sortRef.current?.contains(t)) setSortOpen(false);
+      // A card's menu lives inside the card, so anything outside *that card*
+      // closes it — including a click on the next card, which then opens its own.
+      if (boardMenu && !(t instanceof Element && t.closest(`.bcard[href$="/${boardMenu}"]`))) setBoardMenu(null);
     };
     const onKey = (e: KeyboardEvent) => { if (e.key === 'Escape') closeAll(); };
     window.addEventListener('pointerdown', onDown);
@@ -293,7 +323,7 @@ export const Home: React.FC = () => {
       window.removeEventListener('pointerdown', onDown);
       window.removeEventListener('keydown', onKey);
     };
-  }, [meOpen, newOpen]);
+  }, [meOpen, newOpen, sortOpen, boardMenu]);
 
   // Switching views starts a new screen, so it starts at the top of one.
   useEffect(() => { stageRef.current?.scrollTo({ top: 0 }); }, [view]);
@@ -315,11 +345,14 @@ export const Home: React.FC = () => {
     const q = query.trim().toLowerCase();
     let list = category ? TEMPLATES.filter((t) => t.category === category) : TEMPLATES;
     if (q) {
-      // Name, blurb and what it teaches. Searching the name alone means
-      // "physics" finds nothing, which is the obvious thing to type.
-      list = list.filter((t) =>
-        `${t.name} ${t.blurb} ${t.teaches.join(' ')}`.toLowerCase().includes(q)
-      );
+      // Name, blurb, what it teaches, and the name of the section it sits in.
+      // Searching the name alone means "physics" finds nothing, which is the
+      // obvious thing to type — and so is "architecture", which is a category
+      // rather than a word on any card.
+      list = list.filter((t) => {
+        const section = CATEGORIES.find((c) => c.id === t.category)?.label ?? '';
+        return `${t.name} ${t.blurb} ${t.teaches.join(' ')} ${section}`.toLowerCase().includes(q);
+      });
     }
     return list;
   }, [category, query]);
@@ -340,11 +373,36 @@ export const Home: React.FC = () => {
     [showFeatured, matchedTemplates]
   );
 
+  /**
+   * Four templates to show at the end of the boards.
+   *
+   * Picked once and kept for the session rather than rotated per render: a row
+   * that reshuffles while you look at it is a row you cannot point at. The
+   * showcase boards lead, because they are the ones that answer "what can this
+   * thing actually do" in one picture.
+   */
+  const suggestedTemplates = useMemo(() => {
+    const featuredFirst = [...TEMPLATES].sort((a, b) => Number(Boolean(b.featured)) - Number(Boolean(a.featured)));
+    return featuredFirst.slice(0, 4);
+  }, []);
+
   const matchedRooms = useMemo(() => {
     const q = query.trim().toLowerCase();
-    const sorted = [...recentRooms].sort((a, b) => b.lastAccessed - a.lastAccessed);
-    return q ? sorted.filter((r) => r.name.toLowerCase().includes(q)) : sorted;
-  }, [recentRooms, query]);
+    const ordered = sortBoards(recentRooms, sort);
+    return q ? ordered.filter((r) => r.name.toLowerCase().includes(q)) : ordered;
+  }, [recentRooms, query, sort]);
+
+  /**
+   * The boards under headings of when they were last open.
+   *
+   * Only where a heading earns its place: ordered by name, or filtered by a
+   * search, the grouping would be arbitrary, so the grid is flat and the
+   * answer to "why is it in this order" is the control that says so.
+   */
+  const boardGroups = useMemo(
+    () => (sort === 'recent' && !query.trim() ? groupBoards(matchedRooms) : [{ id: 'today' as const, label: '', boards: matchedRooms }]),
+    [matchedRooms, sort, query]
+  );
 
   // ---------------------------------------------------------------- actions
   const openBoard = () => { window.location.href = `/room/${nanoid(10)}`; };
@@ -539,10 +597,7 @@ export const Home: React.FC = () => {
    * point of an undo; putting it at the top makes the list reorder itself as a
    * consequence of a mistake being corrected.
    */
-  const removeRoom = (e: React.MouseEvent, room: RecentWorkspace) => {
-    e.preventDefault();
-    e.stopPropagation();
-
+  const removeRoom = (room: RecentWorkspace) => {
     const index = recentRooms.findIndex((r) => r.id === room.id);
     if (index < 0) return;
 
@@ -624,7 +679,14 @@ export const Home: React.FC = () => {
    * that, restoring it to the grid first is a detour through a state you did
    * not want.
    */
-  const copyAddress = async (room: RemovedWorkspace) => {
+  const copyBoardLink = (room: RecentWorkspace) => {
+    void copyAddress(room).then(() => {
+      setCopiedBoard(room.id);
+      window.setTimeout(() => setCopiedBoard((id) => (id === room.id ? null : id)), 1800);
+    });
+  };
+
+  const copyAddress = async (room: RecentWorkspace) => {
     const url = `${window.location.origin}/room/${room.id}`;
     try {
       await navigator.clipboard.writeText(url);
@@ -695,15 +757,6 @@ export const Home: React.FC = () => {
     });
   };
 
-  const formatDate = (ts: number) => {
-    const d = new Date(ts);
-    const age = Date.now() - ts;
-    if (age < 86400000) return `today at ${d.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}`;
-    if (age < 172800000) return 'yesterday';
-    if (age < 604800000) return `${Math.floor(age / 86400000)} days ago`;
-    return d.toLocaleDateString();
-  };
-
   // The same honest onboarding screen everywhere, rather than a second
   // "enter your name" screen that slowly drifts from the first.
   if (!user) return <AuthModal />;
@@ -756,24 +809,70 @@ export const Home: React.FC = () => {
             Clear search
           </button>
         </div>
-      ) : (
+      ) : showFeatured ? (
+        /*
+         * The whole gallery, in sections.
+         *
+         * ## Why this stopped being one grid
+         *
+         * It was a single flat grid, which was the right answer at thirteen
+         * boards and stopped being one somewhere around thirty. Forty-odd
+         * cards in one run is a wall: there is no first thing to look at, no
+         * way to skim for the kind of board you want, and no signal that a
+         * board about a data pipeline and a board of hand-drawn shapes are
+         * different sorts of thing. People scroll to the bottom, see nothing
+         * they recognise, and leave.
+         *
+         * Sections fix that with the structure that was already there and
+         * only being used as a filter. Each category gets a heading, a line
+         * saying what it is for, and its own grid — so the page can be
+         * *read* rather than scanned, and the categories teach what is here
+         * instead of merely narrowing it.
+         *
+         * The chips above still filter, and a filtered or searched view still
+         * renders as one flat grid, because somebody who has narrowed the
+         * gallery has already said what they want and does not need it
+         * re-grouped underneath them.
+         */
         <>
           {featured.length > 0 && (
             <>
               {/* Named rather than labelled "Featured", which is a marketing
-                  word. These three are here for one reason and it is
-                  checkable by opening them. */}
-              {/* Says the actual claim rather than gesturing at it. "Built to be
-                  opened at scale" is the kind of phrase that sounds like it
-                  means something — scale of what, and opened by whom? The
-                  number is the point, so the heading is the number. */}
+                  word. These are here for one reason and it is checkable by
+                  opening them: the number is the claim, so the number is the
+                  heading. */}
               <h3 className="stage__subhead">Built at scale</h3>
               <div className="tgrid tgrid--featured">{featured.map(templateCard)}</div>
-              <h3 className="stage__subhead stage__subhead--spaced">Start your work here</h3>
             </>
           )}
-          <div className="tgrid">{rest.map(templateCard)}</div>
+
+          {CATEGORIES.map((c) => {
+            const inCategory = rest.filter((t) => t.category === c.id);
+            if (inCategory.length === 0) return null;
+            return (
+              <section key={c.id} className="tsection">
+                <header className="tsection__head">
+                  <div>
+                    <h3 className="tsection__title">{c.label}</h3>
+                    <p className="tsection__blurb">{c.blurb}</p>
+                  </div>
+                  {/* Only past the point where the section is long enough that
+                      seeing it alone is worth a click. Below that the button
+                      would just re-render what is already on screen. */}
+                  {inCategory.length > 4 && (
+                    <button type="button" className="lbtn" onClick={() => goTemplates(c.id)}>
+                      {inCategory.length}
+                      <ChevronRight size={14} aria-hidden="true" />
+                    </button>
+                  )}
+                </header>
+                <div className="tgrid">{inCategory.map(templateCard)}</div>
+              </section>
+            );
+          })}
         </>
+      ) : (
+        <div className="tgrid">{rest.map(templateCard)}</div>
       )}
     </>
   );
@@ -795,117 +894,90 @@ export const Home: React.FC = () => {
    * screen could be certain about — a person restoring a backup necessarily
    * has no boards yet, so this is the screen they land on.
    */
+  /**
+   * The library itself: how to start one, and the ones you have.
+   *
+   * ## The four openings lead, always
+   *
+   * They used to appear only on the empty state — the screen a person sees
+   * once — and to sit, the rest of the time, behind a `+` menu, a nav icon and
+   * an account menu. So the page that opens every session began with a dashed
+   * "Browse templates" tile in the first card slot: a hole where a board
+   * should be, and the first thing the eye landed on. The openings are a strip
+   * above the grid now, the same four in the same order, quiet enough to skim
+   * past and impossible to hunt for.
+   *
+   * ## And the boards are grouped by when you last had them open
+   *
+   * Which is the order a library is actually kept in. A flat grid makes the
+   * four boards you touched this morning look exactly like the one from March.
+   * See `boardShelf.ts` for when a heading earns its place.
+   */
   const boardsBody = !hasRooms ? (
     <div className="stage__empty stage__empty--start">
       <h3>Nothing here yet</h3>
-      <p>Boards you open on this device collect here. Four ways to get the first one.</p>
-      <div className="starts">
-        <button type="button" className="start" onClick={() => goTemplates(null)}>
-          <span className="start__icon"><FileText size={18} aria-hidden="true" /></span>
-          <span className="start__text">
-            <span className="start__name">Start from a template</span>
-            <span className="start__sub">{TEMPLATES.length} boards that open already filled in</span>
-          </span>
-          <ArrowRight size={15} className="start__go" aria-hidden="true" />
-        </button>
-        <button type="button" className="start" onClick={openBoard}>
-          <span className="start__icon"><SquarePen size={18} aria-hidden="true" /></span>
-          <span className="start__text">
-            <span className="start__name">Open a blank board</span>
-            <span className="start__sub">An empty canvas with no edges</span>
-          </span>
-          <ArrowRight size={15} className="start__go" aria-hidden="true" />
-        </button>
-        <button type="button" className="start" onClick={() => openJoin()}>
-          <span className="start__icon"><Link2 size={18} aria-hidden="true" /></span>
-          <span className="start__text">
-            <span className="start__name">Open a link</span>
-            <span className="start__sub">Somebody has shared a board with you</span>
-          </span>
-          <ArrowRight size={15} className="start__go" aria-hidden="true" />
-        </button>
-        {/*
-          The fourth, and the one that was missing for the longest.
-          Somebody restoring a backup is *by definition* somebody with no
-          boards — a new device, a cleared browser — so this screen is the one
-          they are standing on, and until now it was the one screen with
-          nothing for them to aim at. The three cards named the three ways in
-          and quietly left out the way that brought them here.
-        */}
-        <button type="button" className="start" onClick={() => restoreInputRef.current?.click()}>
-          <span className="start__icon"><UploadCloud size={18} aria-hidden="true" /></span>
-          <span className="start__text">
-            <span className="start__name">Restore a backup</span>
-            <span className="start__sub">Or drop the file anywhere on this page</span>
-          </span>
-          <ArrowRight size={15} className="start__go" aria-hidden="true" />
-        </button>
-      </div>
-    </div>
-  ) : matchedRooms.length === 0 ? (
-    // A filter matching nothing is a different screen from having no boards,
-    // and saying so is the difference between "there is nothing here" and
-    // "nothing here *matches*".
-    <div className="stage__empty">
-      <Search size={22} aria-hidden="true" />
-      <h3>No boards match “{query.trim()}”</h3>
-      <p>Try a different name, or clear the search.</p>
-      <button type="button" className="stage__ghost" onClick={() => setQuery('')}>
-        Clear search
-      </button>
+      <p>Four ways to get the first one.</p>
+      <QuickStart
+        size="full"
+        templateCount={TEMPLATES.length}
+        onBlank={openBoard}
+        onTemplates={() => goTemplates(null)}
+        onJoin={() => openJoin()}
+        onRestore={() => restoreInputRef.current?.click()}
+      />
     </div>
   ) : (
-    <div className="tgrid">
-      {/**
-        * The way into the other half, as a tile in the grid rather than a band
-        * beneath it.
-        *
-        * It was a full-width button under the boards: a horizontal bar the
-        * width of the page, carrying a heading, a sentence and an arrow, for a
-        * link. That is a lot of furniture to cross a room, and it read as a
-        * banner, which is the one thing on a page people have trained
-        * themselves not to look at.
-        *
-        * As a tile it is the same size and shape as the things beside it, it
-        * sits where the eye is already travelling, and it needs two words
-        * because its neighbours have explained the context. The dashed edge is
-        * the only difference, and it says the one thing that matters: this one
-        * is not a board.
-        */}
-      {/* Built like a board card, because it stands in a row of them: a 16:10
-          picture area, then the name and the line under it on the page. It was
-          one block with its words inside the picture, so its title sat where
-          the other cards' pictures were and the row had two baselines. */}
-      <button type="button" className="xtile" onClick={() => goTemplates(null)}>
-        <span className="xtile__art" aria-hidden="true">
-          <Compass size={23} />
-        </span>
-        <span className="xtile__body">
-          <span className="xtile__name">Browse templates</span>
-          <span className="xtile__sub">{TEMPLATES.length} boards, already filled in</span>
-        </span>
-      </button>
+    <>
+      {!query.trim() && (
+        <QuickStart
+          size="strip"
+          templateCount={TEMPLATES.length}
+          onBlank={openBoard}
+          onTemplates={() => goTemplates(null)}
+          onJoin={() => openJoin()}
+          onRestore={() => restoreInputRef.current?.click()}
+        />
+      )}
 
-      {matchedRooms.map((room) => (
-        <a key={room.id} className="bcard" href={`/room/${room.id}`}>
-          <span className="bcard__art">
-            <WorkspaceCover workspaceId={room.id} name={room.name} />
-          </span>
-          <span className="bcard__body">
-            <span className="bcard__name">{room.name}</span>
-            <span className="bcard__meta">Opened {formatDate(room.lastAccessed)}</span>
-          </span>
-          <button
-            className="bcard__remove"
-            onClick={(e) => removeRoom(e, room)}
-            aria-label={`Remove ${room.name} from this device`}
-            data-tooltip="Remove from this device"
-          >
-            <X size={15} />
+      {matchedRooms.length === 0 ? (
+        // A filter matching nothing is a different screen from having no
+        // boards, and saying so is the difference between "there is nothing
+        // here" and "nothing here *matches*".
+        <div className="stage__empty">
+          <Search size={22} aria-hidden="true" />
+          <h3>No boards match “{query.trim()}”</h3>
+          <p>Try a different name, or clear the search.</p>
+          <button type="button" className="stage__ghost" onClick={() => setQuery('')}>
+            Clear search
           </button>
-        </a>
-      ))}
-    </div>
+        </div>
+      ) : (
+        boardGroups.map((group) => (
+          <section key={group.id} className="lgroup">
+            {group.label && (
+              <h2 className="lgroup__head">
+                {group.label}
+                <span className="lgroup__count">{group.boards.length}</span>
+              </h2>
+            )}
+            <div className={group.boards.length && layout === 'list' ? 'blist' : 'tgrid'}>
+              {group.boards.map((room) => (
+                <BoardTile
+                  key={room.id}
+                  board={room}
+                  layout={layout}
+                  openMenu={boardMenu}
+                  onMenu={setBoardMenu}
+                  copied={copiedBoard === room.id}
+                  onCopyLink={copyBoardLink}
+                  onRemove={(board) => removeRoom(board)}
+                />
+              ))}
+            </div>
+          </section>
+        ))
+      )}
+    </>
   );
 
   return (
@@ -1062,17 +1134,6 @@ export const Home: React.FC = () => {
         </div>
 
         <span className="lrail__spacer" />
-
-        <button
-          type="button"
-          className={`lrail__item${seeking || query ? ' is-on' : ''}`}
-          onClick={() => { setSeeking(true); window.setTimeout(() => searchRef.current?.focus(), 0); }}
-          data-tooltip="Search  /"
-          data-tooltip-pos="right"
-          aria-label="Search boards and templates"
-        >
-          <Search size={18} aria-hidden="true" />
-        </button>
 
         {/* Identity and the session, and nothing else.
             Opening a link and restoring a backup lived here for a while and
@@ -1243,9 +1304,18 @@ export const Home: React.FC = () => {
               </p>
             </div>
 
-            {/* Revealed rather than always there. The field is the second thing
-                on this page and it should not sit above the first. */}
-            {(seeking || query) && (
+            {/*
+              The controls for what is under them, in one row.
+
+              Search was behind a magnifier on the rail, and order and layout
+              were not offered at all — so a library of thirty boards had one
+              order, no way to say otherwise, and a filter you had to know was
+              there. All three live here now, beside the grid they act on, in
+              the order they are reached for: find one, then change how they
+              are arranged. `/` still puts the caret in the field.
+            */}
+            <div className="lstage__tools">
+              {(view === 'templates' || hasRooms) && (
               <label className="lstage__search">
                 <Search size={15} aria-hidden="true" />
                 <input
@@ -1253,17 +1323,78 @@ export const Home: React.FC = () => {
                   type="search"
                   value={query}
                   onChange={(e) => setQuery(e.target.value)}
-                  onBlur={() => { if (!query) setSeeking(false); }}
-                  placeholder="Search boards and templates"
+                  placeholder={view === 'boards' ? 'Search your boards' : 'Search templates'}
                   aria-label="Search boards and templates"
                 />
-                {query && (
+                {query ? (
                   <button type="button" onClick={() => { setQuery(''); searchRef.current?.focus(); }} aria-label="Clear search">
                     <X size={14} />
                   </button>
+                ) : (
+                  <kbd aria-hidden="true">/</kbd>
                 )}
               </label>
-            )}
+              )}
+
+              {view === 'boards' && hasRooms && (
+                <>
+                  <div className="lstage__sort" ref={sortRef}>
+                    <button
+                      type="button"
+                      className="lbtn"
+                      aria-haspopup="menu"
+                      aria-expanded={sortOpen}
+                      onClick={() => { setSortOpen((o) => !o); setBoardMenu(null); }}
+                    >
+                      {BOARD_SORTS.find((s) => s.id === sort)?.label}
+                      <ChevronDown size={13} aria-hidden="true" />
+                    </button>
+                    {sortOpen && (
+                      <div className="lrail__menu ctx-popover" role="menu">
+                        {BOARD_SORTS.map((option) => (
+                          <button
+                            key={option.id}
+                            type="button"
+                            className="ctx-menu-item"
+                            role="menuitemradio"
+                            aria-checked={sort === option.id}
+                            onClick={() => { setSort(option.id); setSortOpen(false); }}
+                          >
+                            {sort === option.id ? <Check size={15} /> : <span className="ctx-menu-item__gap" />}
+                            {option.label}
+                            <span className="ctx-menu-item__hint">{option.hint}</span>
+                          </button>
+                        ))}
+                      </div>
+                    )}
+                  </div>
+
+                  {/* Two layouts, one control. Pressed says which you are in. */}
+                  <div className="lstage__layout" role="group" aria-label="How boards are shown">
+                    <button
+                      type="button"
+                      className="lbtn lbtn--icon"
+                      aria-pressed={layout === 'grid'}
+                      onClick={() => setLayout('grid')}
+                      data-tooltip="Grid"
+                      aria-label="Show boards as a grid"
+                    >
+                      <LayoutGrid size={15} aria-hidden="true" />
+                    </button>
+                    <button
+                      type="button"
+                      className="lbtn lbtn--icon"
+                      aria-pressed={layout === 'list'}
+                      onClick={() => setLayout('list')}
+                      data-tooltip="List"
+                      aria-label="Show boards as a list"
+                    >
+                      <Rows3 size={15} aria-hidden="true" />
+                    </button>
+                  </div>
+                </>
+              )}
+            </div>
           </header>
 
           {/* The categories, beside the grid they filter. A row across the top
@@ -1298,6 +1429,7 @@ export const Home: React.FC = () => {
           )}
 
           {view === 'boards' ? boardsBody : templatesBody}
+
 
           {/**
             * The shelf: boards taken off this device, and the way back.
@@ -1334,7 +1466,7 @@ export const Home: React.FC = () => {
                     {removedRooms.map((room) => (
                       <li key={room.id} className="shelf__row">
                         <span className="shelf__name">{room.name}</span>
-                        <span className="shelf__when">Removed {formatDate(room.removedAt)}</span>
+                        <span className="shelf__when">Removed {whenOpened(room.removedAt)}</span>
                         {/*
                           Three things a person wants from a row here, in the
                           order they are worth offering: put it back, take the
@@ -1372,6 +1504,30 @@ export const Home: React.FC = () => {
                   </ul>
                 </>
               )}
+            </section>
+          )}
+
+          {/*
+            The way into the gallery, at the end of the boards.
+
+            A library of six boards leaves most of a 1440px screen empty, and
+            what filled it before was nothing — the page simply stopped. Four
+            real templates, drawn by the same component as everything else on
+            this page, are both the answer to "what else is here" and a better
+            use of the space than air. They appear only when there are boards
+            and nothing is being searched: on an empty library the openings
+            above already lead here, and during a search this is noise.
+          */}
+          {view === 'boards' && hasRooms && !query.trim() && (
+            <section className="lseam">
+              <header className="lseam__head">
+                <h2 className="lseam__title">Start from a template</h2>
+                <button type="button" className="lbtn" onClick={() => goTemplates(null)}>
+                  All {TEMPLATES.length}
+                  <ChevronRight size={14} aria-hidden="true" />
+                </button>
+              </header>
+              <div className="tgrid tgrid--seam">{suggestedTemplates.map(templateCard)}</div>
             </section>
           )}
         </div>

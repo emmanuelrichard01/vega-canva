@@ -55,4 +55,24 @@ export interface PresenceState {
   activity: import('./collaborators').ActivityKind | null;
   status: 'online' | 'away';
   reaction?: { emoji: string; timestamp: number } | null;
+  /**
+   * Whose view this client's camera is locked to, or `null`.
+   *
+   * Following is a way of *looking*, so it deliberately lives outside the
+   * document — but it is worth announcing, and only the follower can announce
+   * it. Without this the leader has no way to know anyone is there: they talk
+   * over a board while three people watch, or worse, they pan away from what
+   * they were showing because nothing told them anyone was looking. "Two
+   * people are following you" is made of exactly this field, counted.
+   */
+  following: number | null;
+  /**
+   * "I am showing something — come and look."
+   *
+   * The timestamp is the offer, not a duration: a spotlight goes stale on its
+   * own (see `SPOTLIGHT_MS`) so that a presenter who forgets to switch it off,
+   * or whose tab is throttled mid-sentence, does not leave a standing summons
+   * on everyone else's screen for the rest of the session.
+   */
+  spotlight?: { at: number } | null;
 }

@@ -1,10 +1,14 @@
-import React, { useCallback, useEffect, useState } from 'react';
-import { AlertCircle, Check, Clock, Copy, Hash, Info, Link as LinkIcon, X, MessageSquare, Edit3, Eye } from 'lucide-react';
+import React, { useCallback, useEffect, useRef, useState } from 'react';
+import { AlertCircle, Check, Clock, Copy, Hash, Info, Link as LinkIcon, QrCode, Share2, X, MessageSquare, Edit3, Eye } from 'lucide-react';
 import { formatRoomCode, roomCodeFor } from '../engine/room/roomCode';
 import { useFocusTrap } from '../hooks/useFocusTrap';
 import { inviteMintUrl } from '../utils/endpoints';
-import { roomId as currentRoomId } from '../engine/document/doc';
+import { metadataMap, roomId as currentRoomId } from '../engine/document/doc';
+import { useRoomState } from '../hooks/useSync';
+import { copyLink, shareLink, shareSheetWorthwhile } from '../engine/share/copyLink';
 import type { RoomRole } from '../engine/model/permissions';
+import { LinkPreview } from './share/LinkPreview';
+import { ShareQr } from './share/ShareQr';
 
 interface ShareModalProps {
   onClose: () => void;
@@ -42,6 +46,27 @@ const EXPIRIES: ReadonlyArray<{ id: string; label: string; seconds: number }> = 
   { id: '30d', label: '30 days', seconds: 30 * 24 * 60 * 60 },
 ];
 
+/**
+ * "7 days" as the day it actually stops working.
+ *
+ * A duration is what you choose; a date is what you need afterwards. "Expires
+ * in 30 days" told from the moment of choosing is a fact about a moment
+ * nobody will remember, and it is the wrong half of the sentence to keep —
+ * the question people come back with is "is that link still good", and
+ * "Tuesday 14 October" answers it where "30 days" does not.
+ */
+function expiryDate(seconds: number): string | null {
+  if (!seconds) return null;
+  const when = new Date(Date.now() + seconds * 1000);
+  const sameYear = when.getFullYear() === new Date().getFullYear();
+  return when.toLocaleDateString(undefined, {
+    weekday: seconds <= 7 * 24 * 60 * 60 ? 'long' : undefined,
+    day: 'numeric',
+    month: 'long',
+    year: sameYear ? undefined : 'numeric',
+  });
+}
+
 type MintState =
   | { kind: 'idle' }
   | { kind: 'working' }
@@ -55,7 +80,14 @@ export const ShareModal: React.FC<ShareModalProps> = ({ onClose }) => {
   const [mint, setMint] = useState<MintState>({ kind: 'idle' });
   const [copied, setCopied] = useState<Copied>(null);
   const [failed, setFailed] = useState(false);
+  const [showQr, setShowQr] = useState(false);
   const dialogRef = useFocusTrap(true, onClose);
+  const modesRef = useRef<HTMLDivElement>(null);
+  const { awarenessUsers } = useRoomState();
+  // The board's name travels with a copied link, so that pasting into Slack or
+  // a document gives its title rather than an opaque address. See `copyLink`.
+  const boardName = metadataMap.get('name')?.toString().trim() || 'Untitled Workspace';
+  const here = Array.from(awarenessUsers.values()).filter((u: { user?: unknown }) => u?.user).length;
 
   const roomId = currentRoomId;
   const fullAccessLink = `${window.location.origin}/room/${roomId}`;
@@ -111,19 +143,54 @@ export const ShareModal: React.FC<ShareModalProps> = ({ onClose }) => {
     void requestLink();
   }, [requestLink]);
 
-  const copy = (what: 'link' | 'code', text: string) => {
-    navigator.clipboard.writeText(text).then(
-      () => {
-        setFailed(false);
-        setCopied(what);
-        window.setTimeout(() => setCopied((c) => (c === what ? null : c)), 2200);
-      },
-      () => setFailed(true)
-    );
+  const confirm = (what: 'link' | 'code') => {
+    setFailed(false);
+    setCopied(what);
+    window.setTimeout(() => setCopied((c) => (c === what ? null : c)), 2200);
+  };
+
+  /**
+   * The link, as a titled link where that is understood and a plain URL
+   * everywhere else. The room code stays plain text, because it is a code —
+   * there is nothing for a title to attach to.
+   */
+  const copy = async (what: 'link' | 'code', text: string) => {
+    const outcome = what === 'link' ? await copyLink(text, boardName) : await plainCopy(text);
+    if (outcome === 'failed') setFailed(true);
+    else confirm(what);
+  };
+
+  const plainCopy = async (text: string) => {
+    try {
+      await navigator.clipboard.writeText(text);
+      return 'plain' as const;
+    } catch {
+      return 'failed' as const;
+    }
   };
 
   const mode = MODES.find((m) => m.id === selectedRole)!;
   const linkReady = !needsToken || mint.kind === 'ready';
+  const expiresOn = needsToken ? expiryDate(expiry.seconds) : null;
+
+  /**
+   * Arrow keys across the three modes.
+   *
+   * They are one choice with three answers, which is a radio group, and a
+   * radio group is arrow-navigable everywhere else in every application a
+   * person has ever used. Three adjacent buttons that each need their own Tab
+   * stop is the version of this that passes an automated check and fails a
+   * person using the keyboard.
+   */
+  const onModeKeys = (event: React.KeyboardEvent) => {
+    const step = event.key === 'ArrowRight' || event.key === 'ArrowDown' ? 1 : event.key === 'ArrowLeft' || event.key === 'ArrowUp' ? -1 : 0;
+    if (!step) return;
+    event.preventDefault();
+    const index = MODES.findIndex((m) => m.id === selectedRole);
+    const next = MODES[(index + step + MODES.length) % MODES.length];
+    setSelectedRole(next.id);
+    modesRef.current?.querySelector<HTMLButtonElement>(`[data-role="${next.id}"]`)?.focus();
+  };
 
   return (
     <div className="share" onClick={onClose}>
@@ -136,7 +203,25 @@ export const ShareModal: React.FC<ShareModalProps> = ({ onClose }) => {
         onClick={(e) => e.stopPropagation()}
       >
         <div className="share__head">
-          <h2 id="share-title" className="share__title">Share this board</h2>
+          <div>
+            <h2 id="share-title" className="share__title">Share this board</h2>
+            {/*
+              * Who is already here.
+              *
+              * Sharing is a social act and this dialog was the one place in the
+              * app that did not know it: you could send an edit link to four
+              * people while four people were already drawing on the board, and
+              * nothing here said so. It is also the honest framing for the
+              * warning at the foot — "the link is the key" means rather more
+              * when the room is not empty.
+              */}
+            {here > 1 && (
+              <p className="share__present">
+                <span className="share__present-dot" aria-hidden="true" />
+                {here} people are on this board right now
+              </p>
+            )}
+          </div>
           <button className="share__close" onClick={onClose} aria-label="Close">
             <X size={16} />
           </button>
@@ -145,14 +230,27 @@ export const ShareModal: React.FC<ShareModalProps> = ({ onClose }) => {
         {/* The choice and its explanation are one unit: the panel's own flex
             gap sets the rhythm between sections, and these two are a section. */}
         <div className="share__choice">
-        <div className="share__modes" role="group" aria-label="What the link allows">
+        {/* A radio group, because it is one choice with three answers. The
+            roving tab stop keeps it to a single Tab stop and makes the arrow
+            keys work, which is what every other radio group in every
+            application already does. */}
+        <div
+          ref={modesRef}
+          className="share__modes"
+          role="radiogroup"
+          aria-label="What the link allows"
+          onKeyDown={onModeKeys}
+        >
           {MODES.map(({ id, label, Icon }) => (
             <button
               key={id}
               type="button"
-              // `aria-pressed` alone drives the lit state, in CSS. A parallel
+              role="radio"
+              data-role={id}
+              // `aria-checked` alone drives the lit state, in CSS. A parallel
               // `is-active` class would be a second copy of the same fact.
-              aria-pressed={selectedRole === id}
+              aria-checked={selectedRole === id}
+              tabIndex={selectedRole === id ? 0 : -1}
               className="share__mode"
               onClick={() => setSelectedRole(id)}
             >
@@ -181,9 +279,23 @@ export const ShareModal: React.FC<ShareModalProps> = ({ onClose }) => {
             onFocus={(e) => e.currentTarget.select()}
             onClick={(e) => e.currentTarget.select()}
           />
+          {/* The code beside the link, not in a menu: handing a board to a
+              phone or a room screen is the second most common way this dialog
+              is used, and it is the one that cannot be done by copying. */}
+          <button
+            type="button"
+            className="share__qr-toggle"
+            aria-pressed={showQr}
+            aria-label={showQr ? 'Hide the QR code' : 'Show a QR code for this link'}
+            disabled={!linkReady}
+            onClick={() => setShowQr((on) => !on)}
+            title="Open on a phone"
+          >
+            <QrCode size={15} aria-hidden="true" />
+          </button>
           <button
             className={`share__copy${copied === 'link' ? ' is-copied' : ''}`}
-            onClick={() => copy('link', link)}
+            onClick={() => void copy('link', link)}
             disabled={!linkReady}
             aria-live="polite"
           >
@@ -191,6 +303,30 @@ export const ShareModal: React.FC<ShareModalProps> = ({ onClose }) => {
             {copied === 'link' ? 'Copied' : 'Copy'}
           </button>
         </div>
+
+        {showQr && linkReady && (
+          <div className="share__qr">
+            <ShareQr url={link} label={mode.label.toLowerCase()} />
+            <p className="share__qr-note">
+              Point a phone camera at this to open the board — it carries the
+              same {mode.label.toLowerCase()} access as the link above.
+            </p>
+          </div>
+        )}
+
+        {/* Only where it beats the copy button that is already here: on a
+            phone, sharing means picking a thread, and the operating system is
+            much better at that than a dialog is. */}
+        {shareSheetWorthwhile() && linkReady && (
+          <button
+            type="button"
+            className="share__system"
+            onClick={() => void shareLink(link, boardName)}
+          >
+            <Share2 size={14} aria-hidden="true" />
+            Share with an app
+          </button>
+        )}
 
         {/* Only a signed link can carry an expiry, so the control appears
             exactly where it means something. */}
@@ -209,6 +345,9 @@ export const ShareModal: React.FC<ShareModalProps> = ({ onClose }) => {
                 <option key={option.id} value={option.id}>{option.label}</option>
               ))}
             </select>
+            {/* The date, not the duration. "30 days" is the choice; "14
+                October" is the thing anybody will need to know later. */}
+            {expiresOn && <span className="share__expiry-date">until {expiresOn}</span>}
           </div>
         )}
 
@@ -241,7 +380,7 @@ export const ShareModal: React.FC<ShareModalProps> = ({ onClose }) => {
               />
               <button
                 className={`share__copy${copied === 'code' ? ' is-copied' : ''}`}
-                onClick={() => copy('code', formatRoomCode(code))}
+                onClick={() => void copy('code', formatRoomCode(code))}
                 aria-live="polite"
               >
                 {copied === 'code' ? <Check size={14} /> : <Copy size={14} />}
@@ -262,6 +401,8 @@ export const ShareModal: React.FC<ShareModalProps> = ({ onClose }) => {
             yourself.
           </p>
         )}
+
+        <LinkPreview role={selectedRole} />
 
         <p className="share__caveat">
           <Info size={13} aria-hidden="true" />
