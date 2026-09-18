@@ -186,8 +186,19 @@ function scheduleRetry(id: string, url: string): void {
   // A different address in the same node is a different question: start over.
   const attempts = spent && spent.url === url ? spent.attempts : 0;
   const wait = RETRY_DELAYS_MS[attempts];
-  // Out of attempts. The card keeps what it has and the manual refresh remains.
-  if (wait === undefined) return;
+  if (wait === undefined) {
+    /*
+     * Out of attempts. Recorded on the node rather than only here, so the next
+     * tab to open this board does not spend its own three discovering the same
+     * thing — see `gaveUp` in `linkTypes.ts`. The card keeps what it has and
+     * the manual refresh remains.
+     */
+    const node = liveNode(id);
+    if (node && node.link.url === url && !node.link.gaveUp) {
+      applyNodePatches([{ id, changes: { link: { ...node.link, gaveUp: true } } }]);
+    }
+    return;
+  }
 
   clearRetryTimer(id);
   // Counted when the retry is *booked*, not when it runs, so a timer that is
@@ -222,6 +233,11 @@ if (typeof window !== 'undefined') {
     for (const [id, node] of Object.entries(objects)) {
       if (node.type !== 'link' || node.link.status !== 'error') continue;
       forgetRetries(id);
+      // Being back on the network is new evidence about every failure, so a
+      // card that gave up while offline is given its budget back too.
+      if (node.link.gaveUp) {
+        applyNodePatches([{ id, changes: { link: { ...node.link, gaveUp: undefined } } }]);
+      }
       scheduleRetry(id, node.link.url);
     }
   });
@@ -273,7 +289,8 @@ export async function ensurePreview(id: string, force = false): Promise<void> {
       // A failure that could go the other way next time gets a next time. One
       // that could not — a blocked address, a page that does not exist — keeps
       // the card it has, and "Refresh preview" remains for anyone who disagrees.
-      if (result.retryable) scheduleRetry(id, failed.link.url);
+      // A link somebody already gave up on is not re-litigated by every tab.
+      if (result.retryable && !failed.link.gaveUp) scheduleRetry(id, failed.link.url);
     }
     return;
   }
@@ -298,13 +315,104 @@ function write(id: string, incoming: Omit<LinkMeta, 'fetchedAt'>, imagePending: 
   forgetRetries(id);
   const meta: LinkMeta = { ...incoming, imagePending: imagePending || undefined, fetchedAt: Date.now() };
   const changes: Record<string, unknown> = {
-    link: { ...node.link, status: 'ready', meta, requestedAt: undefined, error: undefined },
+    // `gaveUp` goes with the error it belonged to. A card that has a preview
+    // has no conclusion left to carry, and leaving the flag on would deny the
+    // next failure — possibly years and a hundred edits away — its retries.
+    link: { ...node.link, status: 'ready', meta, requestedAt: undefined, error: undefined, gaveUp: undefined },
   };
   // A vertical card sized for a picture that turned out not to exist gives the
   // empty space back — but only once we know there is no picture coming.
   const resolved = resolveDisplay(node.link.display, node.width, node.height, Boolean(providerFor(node.link.url).embed));
   if (resolved === 'vertical' && !meta.image && !imagePending && node.height > 200) changes.height = 176;
   applyNodePatches([{ id, changes }]);
+}
+
+/* ------------------------------------------------------------------ staleness */
+
+/**
+ * How old a preview may be before it is worth asking the page again.
+ *
+ * A card is a copy of somebody else's page, taken once. Pages get retitled,
+ * rewritten and taken down, and `meta.fetchedAt` has been recorded since
+ * previews existed with nothing ever reading it — so a card fetched a year ago
+ * described a year-old page and said so to nobody.
+ *
+ * Thirty days rather than something eager. The failure this guards against is
+ * slow (a stale headline), and the failure an eager refresh *causes* is not: a
+ * new picture is stored as new room media against the room's quota, so a board
+ * that refreshes often accumulates orphaned images. Monthly is often enough to
+ * matter and rare enough that almost no board ever pays for it.
+ */
+const STALE_AFTER_MS = 30 * 24 * 60 * 60 * 1000;
+
+/**
+ * At most this many stale cards are refreshed per tab, per session.
+ *
+ * A board is allowed to hold three hundred links. Opening it must not become
+ * three hundred outbound fetches, however old they are, and the rate limiter
+ * refusing the tail of them is not a substitute for not asking.
+ */
+const STALE_BUDGET = 8;
+let staleBudget = STALE_BUDGET;
+
+/** Nodes this tab has already considered, so a re-render is not a second look. */
+const staleSeen = new Set<string>();
+
+/**
+ * Freshen a preview that has aged out, without the card ever showing it.
+ *
+ * ## Why this does not go through `ensurePreview`
+ *
+ * That path sets the node to `loading`, which is right for a card that has
+ * nothing to show and wrong for one that does: the card would drop its title
+ * and picture for a skeleton, on open, for a page that is almost certainly
+ * unchanged. A refresh nobody asked for must be invisible unless it succeeds.
+ *
+ * So this fetches quietly and writes only on success. A failure leaves the
+ * existing card exactly as it was — the old preview is better than an error
+ * about a refresh the reader never requested — and does not schedule retries,
+ * because there is nothing broken to retry.
+ *
+ * The claim is still taken, so one collaborator does this rather than all of
+ * them, and the stagger keeps a boardful from arriving as a burst.
+ */
+export function refreshIfStale(id: string): void {
+  if (staleBudget <= 0 || staleSeen.has(id)) return;
+  const node = liveNode(id);
+  if (!node) return;
+  const { link } = node;
+  if (link.status !== 'ready' || !link.meta) return;
+  // `fetchedAt` is 0 on a preview written before it was recorded. That is not
+  // evidence of age, so it is left alone rather than treated as ancient.
+  if (!link.meta.fetchedAt || Date.now() - link.meta.fetchedAt < STALE_AFTER_MS) return;
+  // Somebody else is already on it.
+  if (claimRemaining(link) > 0) return;
+
+  staleSeen.add(id);
+  staleBudget--;
+
+  // Spread over a minute, so a board of aged links does not open as a burst
+  // against the preview limit — or against the sites being previewed.
+  window.setTimeout(() => {
+    void (async () => {
+      const current = liveNode(id);
+      if (!current || current.link.url !== link.url || current.link.status !== 'ready') return;
+      // Claimed only now, so the mark is fresh when the fetch actually starts.
+      applyNodePatches([{ id, changes: { link: { ...current.link, requestedAt: Date.now() } } }]);
+
+      const result = await fetchPreview(link.url);
+      const after = liveNode(id);
+      if (!after || after.link.url !== link.url) return;
+
+      if (!result.meta) {
+        // Quietly put the claim down. The card keeps the preview it had.
+        applyNodePatches([{ id, changes: { link: { ...after.link, requestedAt: undefined } } }]);
+        return;
+      }
+      write(id, result.meta, result.pending === true);
+      if (result.pending) void collectImage(id, link.url);
+    })();
+  }, Math.random() * 60_000);
 }
 
 /**
@@ -359,14 +467,18 @@ export function replaceLinkUrl(node: LinkNode, rawUrl: string): boolean {
   // A new address is a new question, so it gets the full retry budget rather
   // than whatever the previous one had left.
   forgetRetries(node.id);
-  applyNodePatches([{ id: node.id, changes: { link: { ...node.link, url: parsed.url.href, status: 'loading', meta: null, requestedAt: undefined } } }]);
+  applyNodePatches([{ id: node.id, changes: { link: { ...node.link, url: parsed.url.href, status: 'loading', meta: null, requestedAt: undefined, gaveUp: undefined } } }]);
   void ensurePreview(node.id, true);
   return true;
 }
 
 export function refreshPreview(node: LinkNode): void {
-  // Asked for by hand, which outranks a budget this tab spent on its own.
+  // Asked for by hand, which outranks both a budget this tab spent on its own
+  // and a conclusion some other tab reached and wrote down.
   forgetRetries(node.id);
+  if (node.link.gaveUp) {
+    applyNodePatches([{ id: node.id, changes: { link: { ...node.link, gaveUp: undefined } } }]);
+  }
   void ensurePreview(node.id, true);
 }
 
