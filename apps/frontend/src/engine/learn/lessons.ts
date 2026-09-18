@@ -54,12 +54,38 @@ export interface LessonStep {
  *
  * A gesture drawing is expensive to make well and several lessons are about
  * the *same* gesture at bottom -- clicking a sequence of points builds a line
- * and builds a path. Six scenes cover the six gestures nobody can guess, and a
- * lesson with no demo is a lesson whose steps are enough on their own, which is
- * most of them. An animation that adds nothing is worse than none: it takes the
- * eye first and then does not repay it.
+ * and builds a path. A lesson with no demo is a lesson whose steps are enough
+ * on their own, which is still most of them. An animation that adds nothing is
+ * worse than none: it takes the eye first and then does not repay it.
+ *
+ * ## The test a scene has to pass
+ *
+ * The words have to be *unable* to carry it. `boolean-shapes` is the clearest
+ * case in the list and says so in its own gist -- "four words for four results
+ * nobody can tell apart from the words" -- and `pen-anchors`, `text-box`,
+ * `link-card` and `diagram-code` fail the same way for the same reason: each
+ * turns on a difference between two pictures ("smooth" against "corner", type
+ * that reflows against type that scales, an address against a card, code
+ * against objects) and a sentence naming both is a sentence you have to
+ * imagine.
+ *
+ * The ones still without a scene fail the test in the other direction. A
+ * comment is a pin and a thread, a voice note is a waveform, a frame is a box:
+ * the words already put the right picture in your head, so a drawing would only
+ * confirm it. `offline` has no gesture at all.
  */
-export type DemoId = 'route' | 'fill-grid' | 'reframe' | 'bind' | 'field' | 'chain';
+export type DemoId =
+  | 'route'
+  | 'fill-grid'
+  | 'reframe'
+  | 'bind'
+  | 'field'
+  | 'chain'
+  | 'boolean'
+  | 'pen'
+  | 'sizing'
+  | 'unfurl'
+  | 'code-shapes';
 
 /**
  * What raises a lesson on the canvas.
@@ -274,6 +300,7 @@ export const LESSONS: readonly Lesson[] = [
     trigger: { on: 'tool', tools: ['bezier-pen'] },
     title: 'Curves come from dragging, not from clicking',
     gist: 'A click places a corner. Pressing and dragging places a smooth point and pulls its handles out as you go, which is the whole difference between a polygon and a curve.',
+    demo: 'pen',
     steps: [
       { act: 'Click', gives: 'A corner point' },
       { act: 'Press and drag', gives: 'A smooth point, with the curve bending to follow your drag' },
@@ -303,6 +330,7 @@ export const LESSONS: readonly Lesson[] = [
     trigger: { on: 'tool', tools: ['text'] },
     title: 'Three ways a text box can size itself',
     gist: 'Whether the box follows the words or the words follow the box is a setting, and it changes what dragging a corner means.',
+    demo: 'sizing',
     steps: [
       { act: 'Auto width', gives: 'The box is as wide as the longest line, and never wraps' },
       { act: 'Auto height', gives: 'It wraps at the width you set and grows downward as you type' },
@@ -355,6 +383,7 @@ export const LESSONS: readonly Lesson[] = [
     trigger: { on: 'library' },
     title: 'Combine shapes, and see it before you commit',
     gist: 'Union, Subtract, Intersect and Exclude are four words for four results nobody can tell apart from the words.',
+    demo: 'boolean',
     steps: [
       { act: 'Select two or more shapes', gives: 'The four operations appear on the floating toolbar' },
       {
@@ -368,6 +397,7 @@ export const LESSONS: readonly Lesson[] = [
     trigger: { on: 'library' },
     title: 'Diagrams go both ways',
     gist: 'A flowchart written as code becomes real, editable boxes and arrows, and a diagram you drew by hand can be read back out as code.',
+    demo: 'code-shapes',
     steps: [
       { act: 'Write a flowchart in Mermaid', gives: 'Real objects on the board, not a picture of them' },
       {
@@ -391,6 +421,7 @@ export const LESSONS: readonly Lesson[] = [
     trigger: { on: 'library' },
     title: 'A pasted address becomes a card',
     gist: 'Paste a URL onto the board and it unfurls into a card with the page’s own title, summary and picture. The server fetches it, so opening a board never announces its viewers to the sites it links.',
+    demo: 'unfurl',
     steps: [
       { act: 'Paste a web address onto the board', gives: 'A card that fills itself in, rather than a line of blue text' },
       {

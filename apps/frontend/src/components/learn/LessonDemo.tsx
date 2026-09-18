@@ -283,6 +283,245 @@ const ChainDemo: React.FC = () => (
   </svg>
 );
 
+/**
+ * Two discs, and the four things the boolean operations do to them.
+ *
+ * This is the scene with the strongest claim on existing: `boolean-shapes` says
+ * in its own gist that these are "four words for four results nobody can tell
+ * apart from the words", and a lesson that admits its words do not work is a
+ * lesson asking for a picture.
+ *
+ * ## Why the ghosts stay
+ *
+ * Each result is shown against a faint outline of *both* original discs, so
+ * what was removed is as visible as what was kept. Without them, Subtract and
+ * Intersect are both "a crescent-ish shape" and Exclude is an unreadable pair
+ * of blobs; with them, every frame reads as the same two circles with a
+ * different part of them filled, which is exactly what the operations are.
+ *
+ * ## Why masks rather than four drawn paths
+ *
+ * The lens where two circles meet is a pair of elliptical arcs whose geometry
+ * depends on the radii and the overlap. Written as path data it is four
+ * hand-solved `A` commands that are wrong the moment anybody nudges a circle.
+ * A mask lets the browser do the arithmetic from the same two circles the
+ * ghosts are drawn from, so the result cannot disagree with the outlines it is
+ * shown against.
+ */
+const A = { cx: 68, cy: 48, r: 26 };
+const B = { cx: 100, cy: 48, r: 26 };
+
+const BooleanDemo: React.FC = () => (
+  <svg viewBox={`0 0 ${VIEW.w} ${VIEW.h}`} className="demo" aria-hidden="true">
+    <defs>
+      {/* White keeps, black cuts. Each mask is the same two circles, combined
+          the way the operation it is named for combines them. */}
+      <mask id="demoBoolSubtract">
+        <circle cx={A.cx} cy={A.cy} r={A.r} fill="#fff" />
+        <circle cx={B.cx} cy={B.cy} r={B.r} fill="#000" />
+      </mask>
+      <mask id="demoBoolExclude">
+        <circle cx={A.cx} cy={A.cy} r={A.r} fill="#fff" />
+        <circle cx={B.cx} cy={B.cy} r={B.r} fill="#fff" />
+        {/* The lens, knocked back out of the union. */}
+        <g mask="url(#demoBoolLens)">
+          <rect x="0" y="0" width={VIEW.w} height={VIEW.h} fill="#000" />
+        </g>
+      </mask>
+      <mask id="demoBoolLens">
+        <circle cx={A.cx} cy={A.cy} r={A.r} fill="#fff" />
+      </mask>
+      <clipPath id="demoBoolIntersect">
+        <circle cx={A.cx} cy={A.cy} r={A.r} />
+      </clipPath>
+    </defs>
+
+    {/* What the operands were, under every result. */}
+    {[A, B].map((c, i) => (
+      <circle
+        key={i}
+        cx={c.cx}
+        cy={c.cy}
+        r={c.r}
+        fill="none"
+        stroke="var(--text-primary)"
+        strokeWidth="1.25"
+        strokeDasharray="3 3"
+        opacity="0.3"
+      />
+    ))}
+
+    {/* Union: both, as one body. */}
+    <g className="demo__bool demo__bool--0" fill="var(--accent)">
+      <circle cx={A.cx} cy={A.cy} r={A.r} />
+      <circle cx={B.cx} cy={B.cy} r={B.r} />
+    </g>
+    {/* Subtract: the first, less the second. */}
+    <g className="demo__bool demo__bool--1">
+      <circle cx={A.cx} cy={A.cy} r={A.r} fill="var(--accent)" mask="url(#demoBoolSubtract)" />
+    </g>
+    {/* Intersect: only where they agree. */}
+    <g className="demo__bool demo__bool--2" clipPath="url(#demoBoolIntersect)">
+      <circle cx={B.cx} cy={B.cy} r={B.r} fill="var(--accent)" />
+    </g>
+    {/* Exclude: everything except where they agree. */}
+    <g className="demo__bool demo__bool--3">
+      <rect x="0" y="0" width={VIEW.w} height={VIEW.h} fill="var(--accent)" mask="url(#demoBoolExclude)" />
+    </g>
+  </svg>
+);
+
+/**
+ * The same three points, as corners and then as a curve.
+ *
+ * The pen's undiscoverable half is that *click* and *drag* place the same
+ * anchor and mean different things, and neither word carries the difference:
+ * "smooth" and "corner" are descriptions of a picture.
+ *
+ * So both runs are drawn through identical anchors and cross-faded, with the
+ * handle growing out of the middle anchor as the corner rounds. The handle is
+ * the causal part — the curve is what a handle *is* — so it appears on the same
+ * beat rather than as decoration afterwards.
+ */
+const PenDemo: React.FC = () => (
+  <svg viewBox={`0 0 ${VIEW.w} ${VIEW.h}`} className="demo" aria-hidden="true">
+    {/* Clicked: straight runs into a hard corner. */}
+    <path
+      className="demo__pen demo__pen--corner"
+      d="M30 68 L84 28 L138 68"
+      fill="none"
+      stroke="var(--accent)"
+      strokeWidth="3"
+      strokeLinecap="round"
+      strokeLinejoin="round"
+    />
+    {/* Dragged: the same anchors, with a tangent through the middle one. */}
+    <path
+      className="demo__pen demo__pen--smooth"
+      d="M30 68 C 52 28, 116 28, 138 68"
+      fill="none"
+      stroke="var(--accent)"
+      strokeWidth="3"
+      strokeLinecap="round"
+    />
+    {/* The handle that made the difference. */}
+    <g className="demo__handle">
+      <line x1="54" y1="33" x2="114" y2="33" stroke="var(--text-primary)" strokeWidth="1.25" opacity="0.5" />
+      {[54, 114].map((x) => (
+        <circle key={x} cx={x} cy="33" r="3" fill="var(--surface-primary)" stroke="var(--text-primary)" strokeWidth="1.5" />
+      ))}
+    </g>
+    {/* The anchors, which never move. That is the point being made. */}
+    {[
+      [30, 68],
+      [84, 28],
+      [138, 68],
+    ].map(([x, y], i) => (
+      <rect key={i} x={x - 3.5} y={y - 3.5} width="7" height="7" fill="var(--surface-primary)" stroke="var(--accent)" strokeWidth="2" />
+    ))}
+  </svg>
+);
+
+/**
+ * A box that follows the words, and words that follow the box.
+ *
+ * Three modes, three beats, and the third is the one worth the animation:
+ * dragging a corner on a fixed box **scales the type** instead of reflowing it,
+ * which is a sentence people read twice and a picture they read once.
+ *
+ * The lines stand in for text rather than spelling any, so nothing here needs
+ * translating and the shapes stay legible at 168px wide.
+ */
+const SizingDemo: React.FC = () => (
+  <svg viewBox={`0 0 ${VIEW.w} ${VIEW.h}`} className="demo" aria-hidden="true">
+    <g className="demo__size demo__size--auto-w">
+      <rect x="20" y="36" width="52" height="24" rx="3" fill="none" stroke="var(--accent)" strokeWidth="2" />
+      <rect x="27" y="45" width="38" height="6" rx="3" fill="var(--accent)" opacity="0.75" />
+    </g>
+    <g className="demo__size demo__size--auto-h">
+      <rect x="44" y="24" width="80" height="48" rx="3" fill="none" stroke="var(--accent)" strokeWidth="2" />
+      {[32, 44, 56].map((y, i) => (
+        <rect key={y} x="52" y={y} width={i === 2 ? 40 : 64} height="6" rx="3" fill="var(--accent)" opacity="0.75" />
+      ))}
+    </g>
+    <g className="demo__size demo__size--fixed">
+      <rect x="44" y="24" width="80" height="48" rx="3" fill="none" stroke="var(--accent)" strokeWidth="2" />
+      {/* Scaled about the box's own middle, so the type grows where the text
+          sits rather than drifting out of the frame it is fixed inside. */}
+      <g className="demo__size-type">
+        {[38, 52].map((y, i) => (
+          <rect key={y} x="54" y={y} width={i === 1 ? 38 : 60} height="6" rx="3" fill="var(--accent)" opacity="0.75" />
+        ))}
+      </g>
+    </g>
+  </svg>
+);
+
+/**
+ * An address becoming a card.
+ *
+ * The claim in `link-card` is that a pasted URL stops being text, and the whole
+ * of it happens in the second after the paste — which is precisely the second
+ * nobody is looking, because they are still moving the pointer away.
+ *
+ * The bar is the address; the picture block and the two lines are what arrives
+ * in its place. The card is drawn at the proportions the real horizontal card
+ * uses, so the demo is a small true picture of the result rather than a
+ * suggestion of one.
+ */
+const UnfurlDemo: React.FC = () => (
+  <svg viewBox={`0 0 ${VIEW.w} ${VIEW.h}`} className="demo" aria-hidden="true">
+    {/* The pasted address, before. */}
+    <g className="demo__url">
+      <rect x="30" y="43" width="108" height="10" rx="5" fill="var(--text-primary)" opacity="0.25" />
+    </g>
+    {/* The card, after. */}
+    <g className="demo__card">
+      <rect x="26" y="26" width="116" height="44" rx="6" fill="var(--surface-primary)" stroke="var(--border-strong)" strokeWidth="1.5" />
+      <rect x="26" y="26" width="40" height="44" fill="var(--accent)" opacity="0.85" />
+      {/* The picture's own corner, so the block reads as an image and not as a
+          coloured panel. */}
+      <path d="M26 62 L40 50 L52 62 Z" fill="var(--surface-primary)" opacity="0.5" />
+      <circle cx="56" cy="38" r="4" fill="var(--surface-primary)" opacity="0.6" />
+      <rect x="74" y="36" width="54" height="6" rx="3" fill="var(--text-primary)" opacity="0.65" />
+      <rect x="74" y="48" width="38" height="5" rx="2.5" fill="var(--text-primary)" opacity="0.3" />
+    </g>
+  </svg>
+);
+
+/**
+ * Lines of code standing up as boxes and an arrow.
+ *
+ * `diagram-code` claims the result is "real objects on the board, not a picture
+ * of them", and the only way to show *real* is to show them arriving as
+ * separate things: the two boxes land on their own beats and the arrow is drawn
+ * between them afterwards, because that is the order the builder works in and
+ * the order that reads as construction rather than as a slide transition.
+ */
+const CodeShapesDemo: React.FC = () => (
+  <svg viewBox={`0 0 ${VIEW.w} ${VIEW.h}`} className="demo" aria-hidden="true">
+    {/* The source, which stays put: the code does not go anywhere. */}
+    <g opacity="0.45">
+      {[
+        [22, 30, 40],
+        [22, 44, 28],
+        [22, 58, 34],
+      ].map(([x, y, w], i) => (
+        <rect key={i} x={x} y={y} width={w} height="6" rx="3" fill="var(--text-primary)" opacity="0.5" />
+      ))}
+    </g>
+
+    <g className="demo__built">
+      <rect className="demo__built-a" x="84" y="24" width="46" height="22" rx="4" fill="var(--accent)" opacity="0.9" />
+      <rect className="demo__built-b" x="84" y="58" width="46" height="22" rx="4" fill="var(--accent)" opacity="0.7" />
+      <g className="demo__built-link">
+        <line x1="107" y1="46" x2="107" y2="54" stroke="var(--text-primary)" strokeWidth="2" strokeLinecap="round" />
+        <path d="M107 58 L103.5 51 L110.5 51 Z" fill="var(--text-primary)" />
+      </g>
+    </g>
+  </svg>
+);
+
 const SCENES: Record<DemoId, React.FC> = {
   route: RouteDemo,
   'fill-grid': FillGridDemo,
@@ -290,6 +529,11 @@ const SCENES: Record<DemoId, React.FC> = {
   bind: BindDemo,
   field: FieldDemo,
   chain: ChainDemo,
+  boolean: BooleanDemo,
+  pen: PenDemo,
+  sizing: SizingDemo,
+  unfurl: UnfurlDemo,
+  'code-shapes': CodeShapesDemo,
 };
 
 export const LessonDemo: React.FC<{ demo: DemoId }> = ({ demo }) => {
