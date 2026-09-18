@@ -36,6 +36,19 @@ export interface SafeFetchOptions {
   accept?: string;
   /** Keep the first `maxBytes` and stop, rather than failing. For HTML, whose head is all we read. */
   truncate?: boolean;
+  /**
+   * Who to say we are. Defaults to `USER_AGENT`, the honest bot string.
+   *
+   * `unfurl.ts` supplies `BROWSER_USER_AGENT` on a second attempt at a page
+   * that turned the bot away — see `BROWSER_HEADERS` for why that is a
+   * reasonable thing for a link preview to do, and what it deliberately is
+   * not.
+   */
+  userAgent?: string;
+  /** Extra request headers. Merged over the defaults; `undefined` removes one. */
+  headers?: Record<string, string | undefined>;
+  /** A `Referer` to send. Some CDNs serve images only to their own page. */
+  referer?: string;
 }
 
 export interface SafeFetchResult {
@@ -56,6 +69,59 @@ export class FetchRefused extends Error {
 }
 
 export const USER_AGENT = 'Mozilla/5.0 (compatible; VegaLinkPreview/1.0; +https://vega.app/bot)';
+
+/**
+ * What to say on a second attempt at a page that turned the bot away.
+ *
+ * ## Why this exists
+ *
+ * A large and growing share of the web answers an unrecognised User-Agent with
+ * a 403 from a bot-management edge — Cloudflare, Akamai, DataDome — before the
+ * origin is ever consulted. `claude.ai` and `chatgpt.com` both do. The page is
+ * public, the person pasting the link is looking at it in their own browser,
+ * and the card comes back as a bare domain with no title because a WAF made a
+ * decision about a string.
+ *
+ * So a refusal is retried once with the headers a browser actually sends. This
+ * is what every link unfurler does, and it is a reasonable thing to do:
+ *
+ *  - The request is **user-initiated**, for **one public URL** that a person
+ *    has just pasted, at **human pace**. It is not a crawl.
+ *  - Everything else stays exactly as restrictive: the SSRF guard, the port
+ *    and scheme rules, the byte caps, the timeout, the redirect checks. This
+ *    changes a header, not what may be reached.
+ *  - It is a **second** attempt, not the first. A site that answers the honest
+ *    bot string never sees this, which keeps us identifiable to everyone who
+ *    is willing to talk to a preview bot.
+ *
+ * What it deliberately is not: it does not run JavaScript, does not carry
+ * cookies or credentials, does not touch anything behind a login, and does not
+ * retry a 404 or a 401 — a page that says "this does not exist" or "you must
+ * log in" is answering honestly and is believed the first time.
+ */
+export const BROWSER_USER_AGENT =
+  'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36';
+
+/**
+ * The rest of what a browser sends, which is increasingly what is checked.
+ *
+ * Bot management fingerprints the *shape* of a request, not only its
+ * User-Agent: a "Chrome" with no `Sec-Fetch-*` headers and no `sec-ch-ua` is a
+ * script claiming to be Chrome, and is refused as readily as an honest bot. So
+ * the retry either presents a coherent browser request or there is no point
+ * making it at all.
+ */
+export const BROWSER_HEADERS: Record<string, string> = {
+  'Accept-Language': 'en-US,en;q=0.9',
+  'Upgrade-Insecure-Requests': '1',
+  'Sec-Fetch-Dest': 'document',
+  'Sec-Fetch-Mode': 'navigate',
+  'Sec-Fetch-Site': 'none',
+  'Sec-Fetch-User': '?1',
+  'sec-ch-ua': '"Chromium";v="131", "Not_A Brand";v="24", "Google Chrome";v="131"',
+  'sec-ch-ua-mobile': '?0',
+  'sec-ch-ua-platform': '"macOS"',
+};
 
 /** Throws `FetchRefused` for any URL this module will not open. */
 export function checkFetchableUrl(raw: string): URL {
@@ -99,9 +165,37 @@ function decode(stream: Readable, encoding: string | undefined): Readable {
   }
 }
 
-function requestOnce(url: URL, options: Required<Omit<SafeFetchOptions, 'maxRedirects'>>, signal: AbortSignal) {
+interface RequestOptions {
+  accept: string;
+  maxBytes: number;
+  truncate: boolean;
+  userAgent: string;
+  headers: Record<string, string | undefined>;
+  referer?: string;
+}
+
+function requestOnce(url: URL, options: RequestOptions, signal: AbortSignal) {
   return new Promise<{ status: number; headers: http.IncomingHttpHeaders; body: Buffer; truncated: boolean }>((resolve, reject) => {
     const client = url.protocol === 'https:' ? https : http;
+    /**
+     * Caller headers last, so they can override a default or drop it by
+     * naming it `undefined`. Anything that would change *who* the request is
+     * is not settable this way — there is no cookie and no authorization
+     * header here, and `safeFetch` never adds one.
+     */
+    const headers: Record<string, string> = {};
+    const base: Record<string, string | undefined> = {
+      'User-Agent': options.userAgent,
+      Accept: options.accept,
+      'Accept-Encoding': 'gzip, deflate, br',
+      'Accept-Language': 'en;q=0.9, *;q=0.5',
+      ...(options.referer ? { Referer: options.referer } : {}),
+      ...options.headers,
+    };
+    for (const [name, value] of Object.entries(base)) {
+      if (value !== undefined) headers[name] = value;
+    }
+
     const req = client.request(
       url,
       {
@@ -109,12 +203,7 @@ function requestOnce(url: URL, options: Required<Omit<SafeFetchOptions, 'maxRedi
         lookup: lookup as never,
         agent: false,
         signal,
-        headers: {
-          'User-Agent': USER_AGENT,
-          Accept: options.accept,
-          'Accept-Encoding': 'gzip, deflate, br',
-          'Accept-Language': 'en;q=0.9, *;q=0.5',
-        },
+        headers,
       },
       (res) => {
         const status = res.statusCode ?? 0;
@@ -173,15 +262,18 @@ function requestOnce(url: URL, options: Required<Omit<SafeFetchOptions, 'maxRedi
 }
 
 export async function safeFetch(raw: string, opts: SafeFetchOptions = {}): Promise<SafeFetchResult> {
-  const options = {
-    timeoutMs: opts.timeoutMs ?? 8000,
+  const timeoutMs = opts.timeoutMs ?? 8000;
+  const options: RequestOptions = {
     maxBytes: opts.maxBytes ?? 2 * 1024 * 1024,
     accept: opts.accept ?? '*/*',
     truncate: opts.truncate ?? false,
+    userAgent: opts.userAgent ?? USER_AGENT,
+    headers: opts.headers ?? {},
+    ...(opts.referer ? { referer: opts.referer } : {}),
   };
   const maxRedirects = opts.maxRedirects ?? 4;
   const controller = new AbortController();
-  const timer = setTimeout(() => controller.abort(), options.timeoutMs);
+  const timer = setTimeout(() => controller.abort(), timeoutMs);
 
   try {
     let url = checkFetchableUrl(raw);

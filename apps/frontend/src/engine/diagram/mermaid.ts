@@ -25,6 +25,7 @@
  */
 
 import type { ShapeKind } from '../model/schema';
+import { paramFallback } from '../model/shapes/params';
 
 // ---------------------------------------------------------------------------
 // The intermediate form
@@ -745,37 +746,125 @@ export interface ShapeSpec {
   points?: number;
   cornerRadius?: number;
   square?: boolean;
+  /**
+   * The kind's own dials, as `shapeParams.ts` names them.
+   *
+   * A trapezoid's `inset` and a parallelogram's `skew` are what make those two
+   * shapes *those shapes* rather than a quadrilateral, and a negative value is
+   * the mirrored form — which is exactly what mermaid's reversed brackets ask
+   * for. Written here rather than left to the shape's fallback so that
+   * `[/A\]` and `[\A/]` cannot come out as the same picture.
+   */
+  params?: Record<string, number>;
 }
 
+/**
+ * A mermaid shape, as a shape this canvas actually has.
+ *
+ * ## What this table used to say, and why it was wrong
+ *
+ * Every entry here was once one of three kinds — `rect`, `ellipse` or
+ * `polygon` — because those were the only ones the preview could draw. The
+ * cost was severe and invisible from the code:
+ *
+ *  - `parallelogram`, `parallelogram_inv`, `trapezoid` and `trapezoid_inv`
+ *    were all `polygon` with four points, and a four-point regular polygon is
+ *    a **diamond**. Four distinct shapes in mermaid's vocabulary — the two I/O
+ *    symbols and the two manual-operation symbols — all drew as the decision
+ *    symbol. A flowchart whose every data node looked like a branch.
+ *  - `hexagon` was a six-point regular polygon, which is **pointy-topped**.
+ *    The flowchart hexagon is flat-topped with points on the sides; that is a
+ *    different symbol, and the canvas has it as `preparation`.
+ *  - `subroutine` and `database` were a plain and a slightly-rounded
+ *    rectangle. The bars and the cylinder rims existed only in the preview's
+ *    own SVG, so the board drew neither: what you previewed was not what you
+ *    inserted.
+ *
+ * The canvas has had real flowchart geometry for all of these the whole time —
+ * `predefined_process`, `cylinder`, `preparation`, `trapezoid`,
+ * `parallelogram` — with correct contours, interior features and parametric
+ * dials. This table was the only thing standing between mermaid and them.
+ *
+ * ## The one shape still approximated
+ *
+ * `double_circle` maps to a plain ellipse. Mermaid draws a ring inside the
+ * circle and no canvas kind does; a `donut` would cut a hole through it.
+ * Inserting the outer circle alone is the honest approximation, and
+ * `silhouette.ts` makes the preview show exactly that rather than drawing a
+ * ring the board will not produce.
+ */
 export const SHAPE_SPECS: Record<MermaidShape, ShapeSpec> = {
   rect: { kind: 'rect' },
   round: { kind: 'rect', cornerRadius: 10 },
-  stadium: { kind: 'rect', cornerRadius: 999 },
-  subroutine: { kind: 'rect' },
-  database: { kind: 'rect', cornerRadius: 6 },
-  diamond: { kind: 'polygon', points: 4, square: true },
+  // A real capsule, whose ends are semicircles by construction rather than a
+  // rectangle with a radius large enough to look like one.
+  stadium: { kind: 'capsule' },
+  // The double-barred process symbol, bars included — `shapeFeatureContours`
+  // draws them, on the board as well as in the preview.
+  subroutine: { kind: 'predefined_process' },
+  // A stack of decks, which is what a database symbol is. `cylinder` is the
+  // single-rimmed drum; `database` is the one with shelves.
+  database: { kind: 'database' },
+  diamond: { kind: 'diamond', square: true },
   circle: { kind: 'ellipse', square: true },
   double_circle: { kind: 'ellipse', square: true },
-  hexagon: { kind: 'polygon', points: 6 },
-  parallelogram: { kind: 'polygon', points: 4 },
-  parallelogram_inv: { kind: 'polygon', points: 4 },
-  trapezoid: { kind: 'polygon', points: 4 },
-  trapezoid_inv: { kind: 'polygon', points: 4 },
-  flag: { kind: 'polygon', points: 5 },
+  // Flat-topped, points on the sides: the preparation symbol.
+  hexagon: { kind: 'preparation' },
+  // `[/A/]` leans right, `[\A\]` leans left. Same shape, mirrored — which is
+  // what the sign of `skew` means.
+  parallelogram: { kind: 'parallelogram', params: { skew: 0.2 } },
+  parallelogram_inv: { kind: 'parallelogram', params: { skew: -0.2 } },
+  // `[/A\]` narrows towards the top, `[\A/]` widens towards it. Same shape,
+  // flipped — which is what the sign of `inset` means.
+  trapezoid: { kind: 'trapezoid', params: { inset: 0.2 } },
+  trapezoid_inv: { kind: 'trapezoid', params: { inset: -0.2 } },
+  flag: { kind: 'banner', params: { indent: 0.15 } },
 };
 
-export function shapeFromCanvas(kind: ShapeKind, points?: number, cornerRadius?: number): MermaidShape {
+/**
+ * A board shape, written back as the mermaid form that produces it.
+ *
+ * The inverse of `SHAPE_SPECS`, and it has to stay one: a diagram that does not
+ * survive a round trip through code silently changes geometry, which is worse
+ * than refusing to convert. `build.test.ts` walks every `MermaidShape` through
+ * `SHAPE_SPECS` and back through here and asserts it arrives as itself.
+ *
+ * `geometry` rather than a handful of loose fields, because the mirrored forms
+ * are told apart by the *sign* of a dial — a trapezoid tapering up is
+ * `[/A\]` and one tapering down is `[\A/]` — and a signature taking only
+ * `points` and `cornerRadius` could not see that.
+ */
+export function shapeFromCanvas(
+  geometry: { kind: ShapeKind; points?: number; skew?: number; inset?: number },
+  cornerRadius?: number
+): MermaidShape {
+  const { kind } = geometry;
   if (kind === 'ellipse') return 'circle';
   if (kind === 'squircle') return 'round';
   if (kind === 'diamond') return 'diamond';
-  if (kind === 'cylinder') return 'database';
+  // Both drum and stack read back as mermaid's one database symbol.
+  if (kind === 'cylinder' || kind === 'database') return 'database';
   if (kind === 'capsule') return 'stadium';
-  if (kind === 'parallelogram') return 'parallelogram';
-  if (kind === 'trapezoid') return 'trapezoid';
+  if (kind === 'predefined_process') return 'subroutine';
+  if (kind === 'preparation') return 'hexagon';
+  if (kind === 'banner') return 'flag';
+  /*
+   * The mirrored forms are told apart by the sign of the dial, and a shape
+   * drawn with the tool rather than by this converter carries no dial at all.
+   * `paramFallback` is what the renderer itself falls back to in that case, so
+   * reading it here is what keeps a hand-drawn parallelogram from emitting as
+   * the mirrored form it is not.
+   */
+  if (kind === 'parallelogram') {
+    return (geometry.skew ?? paramFallback('parallelogram', 'skew')) < 0 ? 'parallelogram_inv' : 'parallelogram';
+  }
+  if (kind === 'trapezoid') {
+    return (geometry.inset ?? paramFallback('trapezoid', 'inset')) < 0 ? 'trapezoid_inv' : 'trapezoid';
+  }
   if (kind === 'polygon') {
-    if (points === 4) return 'diamond';
-    if (points === 6) return 'hexagon';
-    if (points === 5) return 'flag';
+    if (geometry.points === 4) return 'diamond';
+    if (geometry.points === 6) return 'hexagon';
+    if (geometry.points === 5) return 'flag';
     return 'rect';
   }
   if (kind === 'rect') {

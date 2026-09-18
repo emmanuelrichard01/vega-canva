@@ -29,6 +29,15 @@
         ],
         "createdAt": "2026-09-17T23:57:17.104Z",
         "reason": "Board content: fills and ink of objects drawn on a user's canvas, not app chrome. Structural vocabulary is named in templateKit.ts; the rest are per-board artwork palettes. templates.test.ts asserts 4.5:1 on every label."
+      },
+      {
+        "rule": "design-system-color",
+        "value": "*",
+        "files": [
+          "apps/frontend/src/components/MermaidModal.tsx"
+        ],
+        "createdAt": "2026-09-18T06:20:38.803Z",
+        "reason": "User confirmed: Mermaid template source strings. Every value is a classDef fill/stroke inside the 'architecture' and 'pipeline' sample diagrams a reader edits in the code editor - board content demonstrating Mermaid's own styling syntax, not app chrome. Same category as the engine/templates entry."
       }
     ]
   }

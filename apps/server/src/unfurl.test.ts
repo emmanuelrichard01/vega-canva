@@ -453,6 +453,91 @@ describe('createUnfurler', () => {
     expect(attempts).toBe(1);
   });
 
+  it('asks again as a browser when a page turns the bot away, and uses what it gets', async () => {
+    const agents: string[] = [];
+    const unfurler = createUnfurler({
+      fetch: async (url, options) => {
+        agents.push(options?.userAgent ?? 'default');
+        // A bot-managed edge: anything that is not a browser gets a 403.
+        if (!options?.userAgent?.includes('Chrome')) return ok(url, 'blocked', 'text/html', 403);
+        return ok(url, '<head><title>The real page</title><meta property="og:description" content="Words"></head>');
+      },
+      store: async () => null,
+    });
+
+    const { preview } = await unfurler.unfurl('r', 'https://walled.test/article');
+    expect(preview.title).toBe('The real page');
+    expect(preview.description).toBe('Words');
+    // The honest string is always tried first; the browser one is the retry.
+    expect(agents[0]).toBe('default');
+    expect(agents[1]).toContain('Chrome');
+  });
+
+  it('keeps the plain card when a page refuses the browser too', async () => {
+    const unfurler = createUnfurler({
+      fetch: async (url) => ok(url, 'blocked', 'text/html', 403),
+      store: async () => null,
+    });
+    const { preview } = await unfurler.unfurl('r', 'https://walled.test/article');
+    expect(preview.title).toBe('walled.test');
+  });
+
+  it('does not retry an honest 404', async () => {
+    let calls = 0;
+    const unfurler = createUnfurler({
+      fetch: async (url) => {
+        calls++;
+        return ok(url, 'gone', 'text/html', 404);
+      },
+      store: async () => null,
+    });
+    await expect(unfurler.unfurl('r', 'https://acme.test/gone')).rejects.toBeInstanceOf(UnfurlError);
+    expect(calls).toBe(1);
+  });
+
+  it('sends the page as the referer when fetching its picture', async () => {
+    let imageReferer: string | undefined;
+    const unfurler = createUnfurler({
+      fetch: async (url, options) => {
+        if (url.endsWith('/a')) {
+          return ok(url, '<head><title>T</title><meta property="og:image" content="/shot.png"></head>');
+        }
+        if (url.endsWith('/shot.png')) {
+          imageReferer = options?.referer;
+          return ok(url, png(1200, 630), 'image/png');
+        }
+        return ok(url, '', 'text/plain', 404);
+      },
+      store: async () => 'https://api.test/shot.png',
+    });
+
+    await unfurler.unfurl('r', 'https://acme.test/a');
+    expect(imageReferer).toBe('https://acme.test/a');
+  });
+
+  it('fetches a site icon once however many of its pages are linked', async () => {
+    const iconCalls: string[] = [];
+    const unfurler = createUnfurler({
+      fetch: async (url) => {
+        if (url.endsWith('/icon.png')) {
+          iconCalls.push(url);
+          return ok(url, png(64, 64), 'image/png');
+        }
+        if (url.endsWith('.ico') || url.endsWith('apple-touch-icon.png')) {
+          return ok(url, '', 'text/plain', 404);
+        }
+        return ok(url, '<head><title>T</title><link rel="icon" href="/icon.png"></head>');
+      },
+      store: async () => 'https://api.test/icon.png',
+    });
+
+    const one = await unfurler.unfurl('r', 'https://acme.test/first');
+    const two = await unfurler.unfurl('r', 'https://acme.test/second');
+    expect(one.preview.favicon).toBe('https://api.test/icon.png');
+    expect(two.preview.favicon).toBe('https://api.test/icon.png');
+    expect(iconCalls).toHaveLength(1);
+  });
+
   it('shares one fetch between simultaneous requests', async () => {
     let calls = 0;
     const unfurler = createUnfurler({

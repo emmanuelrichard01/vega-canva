@@ -1,4 +1,11 @@
-import { FetchRefused, safeFetch, type SafeFetchOptions, type SafeFetchResult } from './safeFetch';
+import {
+  BROWSER_HEADERS,
+  BROWSER_USER_AGENT,
+  FetchRefused,
+  safeFetch,
+  type SafeFetchOptions,
+  type SafeFetchResult,
+} from './safeFetch';
 import { cleanText, decodeHtml, parseHtmlMeta, sniffImage, textFromEmbedHtml, type SniffedImage } from './unfurlParse';
 
 /**
@@ -62,6 +69,16 @@ const ICON_BYTES = 256 * 1024;
 const HTML_BYTES = 768 * 1024;
 /** Below this on either side, a "preview image" is a spacer or a tracking pixel. */
 const MIN_IMAGE_SIDE = 80;
+
+/**
+ * Statuses that mean "a bot was turned away", rather than "there is nothing here".
+ *
+ * 403 is the bot-management refusal proper. 429 is the same edge deciding a
+ * preview is rate abuse. 451 is served by some WAFs as a blanket refusal
+ * rather than for its actual legal meaning. 503 is Cloudflare's interstitial,
+ * which is a challenge page and not an outage.
+ */
+const RETRY_AS_BROWSER = new Set([403, 429, 451, 503]);
 
 interface OEmbed {
   title?: string;
@@ -130,6 +147,10 @@ interface PageText {
   icons: string[];
   /** The link was itself a picture, and these are its bytes — already fetched, not to be fetched twice. */
   inline?: { bytes: Buffer; image: SniffedImage };
+  /** The page the pictures were declared on, after redirects. Sent as their `Referer`. */
+  pageUrl: string;
+  /** That page's origin. The key the icon is shared under — see `iconCache`. */
+  origin: string;
 }
 
 /** How long a refusal is remembered, so a dead link is not re-chased on every paste. */
@@ -185,6 +206,28 @@ export function createUnfurler(deps: {
   const textWork = new Map<string, Promise<PageText>>();
   const failures = new Map<string, { at: number; error: UnfurlError }>();
 
+  /**
+   * A site's icon, by origin, across every URL and every room.
+   *
+   * A favicon is a property of the *site*, not of the page — twelve links to
+   * twelve GitHub issues share one — and the icon leg was being paid twelve
+   * times. Worse, it was frequently the slowest leg: the page's own `<link
+   * rel=icon>` is often missing, so both guesses (`/apple-touch-icon.png`,
+   * then `/favicon.ico`) get tried, and a site that answers neither quickly
+   * spends the whole grace window doing it. That is the "a board of links
+   * feels slow" complaint, and most of it was this.
+   *
+   * The bytes are held rather than the stored URL, because storing is
+   * per-room: the room still gets its own copy in its own media store,
+   * counted against its own quota. What is shared is the *fetch*.
+   *
+   * A miss is cached too, as `null`. A site with no icon is the case that
+   * costs two requests to establish, so it is the case most worth not
+   * establishing again.
+   */
+  const iconCache = new Map<string, { at: number; found: { bytes: Buffer; image: SniffedImage } | null }>();
+  const iconWork = new Map<string, Promise<{ bytes: Buffer; image: SniffedImage } | null>>();
+
   /** Oldest first, since a Map iterates in insertion order. */
   const trim = (map: Map<string, unknown>, limit = maxEntries) => {
     while (map.size > limit) map.delete(map.keys().next().value as string);
@@ -205,12 +248,44 @@ export function createUnfurler(deps: {
    * a picture is still a card. Not stored yet — candidates are fetched side by
    * side and only the one chosen is kept, so a losing favicon costs no quota.
    */
-  async function fetchImage(url: string | undefined, kind: 'picture' | 'icon') {
+  /**
+   * Fetch a picture and check it is one.
+   *
+   * `referer` is the page that declared the picture, and sending it is what
+   * makes a hotlink-protected CDN serve the file at all. This was a large
+   * share of the cards that arrived with a title and no image: the `og:image`
+   * was perfectly valid and the CDN answered 403 to a request that arrived
+   * from nowhere. Browsers send this header when they load the same image on
+   * the same page, so it is the honest value rather than a pretended one.
+   *
+   * A refusal is retried as a browser for the same reason the page is — image
+   * CDNs sit behind the same bot management the pages do.
+   */
+  async function fetchImage(url: string | undefined, kind: 'picture' | 'icon', referer?: string) {
     if (!url) return null;
     const maxBytes = kind === 'icon' ? ICON_BYTES : IMAGE_BYTES;
     const minSide = kind === 'icon' ? 16 : MIN_IMAGE_SIDE;
+    const accept = 'image/webp,image/png,image/jpeg,image/gif,image/*;q=0.8';
+
+    const attempt = (extra: SafeFetchOptions) =>
+      fetcher(url, { maxBytes, timeoutMs: 5000, accept, ...extra });
+
     try {
-      const res = await fetcher(url, { maxBytes, timeoutMs: 5000, accept: 'image/webp,image/png,image/jpeg,image/gif,image/*;q=0.8' });
+      let res = await attempt(referer ? { referer } : {});
+      if (res.status !== 200 && RETRY_AS_BROWSER.has(res.status)) {
+        try {
+          res = await attempt({
+            ...(referer ? { referer } : {}),
+            userAgent: BROWSER_USER_AGENT,
+            // A picture is a sub-resource, not a navigation: `Sec-Fetch-Dest`
+            // says `image` here where the page said `document`. A browser
+            // sending `navigate` for a .jpg is a tell.
+            headers: { ...BROWSER_HEADERS, 'Sec-Fetch-Dest': 'image', 'Sec-Fetch-Mode': 'no-cors', 'Sec-Fetch-Site': 'cross-site', 'Sec-Fetch-User': undefined, 'Upgrade-Insecure-Requests': undefined },
+          });
+        } catch {
+          return null;
+        }
+      }
       if (res.status !== 200) return null;
       const image = sniffImage(res.body);
       // An .ico is a favicon, never a preview picture.
@@ -243,11 +318,11 @@ export function createUnfurler(deps: {
    * as it ever was, and only a page whose first choices are broken pays for a
    * second round.
    */
-  async function firstImage(candidates: string[], kind: 'picture' | 'icon', width = 2) {
+  async function firstImage(candidates: string[], kind: 'picture' | 'icon', referer?: string, width = 2) {
     const seen = new Set<string>();
     const queue = candidates.filter((u) => Boolean(u) && !seen.has(u) && Boolean(seen.add(u)));
     for (let i = 0; i < queue.length; i += width) {
-      const batch = await Promise.all(queue.slice(i, i + width).map((u) => fetchImage(u, kind)));
+      const batch = await Promise.all(queue.slice(i, i + width).map((u) => fetchImage(u, kind, referer)));
       const found = batch.find(Boolean);
       if (found) return found;
     }
@@ -274,15 +349,43 @@ export function createUnfurler(deps: {
     let pageError: unknown = null;
     // A good oEmbed answer is the whole preview; the page is only read without one.
     if (!oembed?.title) {
-      try {
-        page = await fetcher(url, {
+      const read = (extra: SafeFetchOptions = {}) =>
+        fetcher(url, {
           maxBytes: HTML_BYTES,
           truncate: true,
           timeoutMs: 6000,
           accept: 'text/html,application/xhtml+xml;q=0.9,*/*;q=0.5',
+          ...extra,
         });
+
+      try {
+        page = await read();
       } catch (err) {
         pageError = err;
+      }
+
+      /**
+       * A bot-managed refusal is asked again as a browser.
+       *
+       * `BROWSER_USER_AGENT` in `safeFetch.ts` carries the full reasoning. The
+       * short version: these four statuses are what an edge WAF returns to an
+       * unrecognised User-Agent before the origin is consulted, and the page
+       * behind them is one the person pasting the link can read perfectly well
+       * in their own browser.
+       *
+       * `404` and `401` are not in the list on purpose. Those are honest
+       * answers — the page is gone, or it needs a login we do not have — and
+       * asking again in a costume does not change either fact.
+       */
+      if (page && RETRY_AS_BROWSER.has(page.status)) {
+        try {
+          const second = await read({ userAgent: BROWSER_USER_AGENT, headers: BROWSER_HEADERS });
+          // Only if it actually did better. A site that refuses both ways
+          // keeps its first answer, whose status the caller reasons about.
+          if (second.status < 400) page = second;
+        } catch {
+          /* The first answer stands. */
+        }
       }
     }
 
@@ -386,6 +489,8 @@ export function createUnfurler(deps: {
       // it did not. Four icon fetches for every card was most of the tail.
       icons: [...icons, `${origin}/apple-touch-icon.png`, `${origin}/favicon.ico`],
       inline,
+      pageUrl: finalUrl,
+      origin,
     };
   }
 
@@ -397,12 +502,35 @@ export function createUnfurler(deps: {
    * It never throws — a card without a picture is still a card, and a quota
    * that has run out is not something the reader can act on.
    */
+  /** The site's icon, fetched once per origin and shared by every link to it. */
+  function siteIcon(text: PageText): Promise<{ bytes: Buffer; image: SniffedImage } | null> {
+    const key = text.origin;
+    const hit = iconCache.get(key);
+    // Icons are cached for longer than pages: a site changes its article every
+    // hour and its favicon every few years.
+    if (hit && now() - hit.at < ttl * 6) return Promise.resolve(hit.found);
+
+    const pending = iconWork.get(key);
+    if (pending) return pending;
+
+    const work = firstImage(text.icons, 'icon', text.pageUrl)
+      .then((found) => {
+        iconCache.set(key, { at: now(), found });
+        trim(iconCache, 300);
+        return found;
+      })
+      .catch(() => null)
+      .finally(() => iconWork.delete(key));
+    iconWork.set(key, work);
+    return work;
+  }
+
   async function dress(roomId: string, text: PageText): Promise<LinkPreview> {
     const preview: LinkPreview = { ...text.preview };
 
     const [picture, icon] = await Promise.all([
-      text.inline ? Promise.resolve(text.inline) : firstImage(text.images, 'picture'),
-      firstImage(text.icons, 'icon'),
+      text.inline ? Promise.resolve(text.inline) : firstImage(text.images, 'picture', text.pageUrl),
+      siteIcon(text),
     ]);
 
     const kept = await keep(roomId, picture);

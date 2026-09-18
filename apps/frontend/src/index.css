@@ -17829,6 +17829,35 @@ body[data-zen='physics'] .forces-handle { bottom: 32px; }
   color: var(--text-primary);
 }
 
+/* ## "Done", on a lesson whose walkthrough has been completed
+   Quieter than the button beside it and quieter than the title it follows: it
+   is a state, not an action and not a heading. The tick and the word together
+   rather than the tick alone, because `[data-known]` above already puts a bare
+   ✓ on this same line for the weaker claim -- two ticks a few pixels apart,
+   meaning different things, is worse than saying which is which.
+
+   `--status-online` is the same ink the weaker mark uses, so the pair reads as
+   one scale of progress rather than as two unrelated signals. */
+.help-lesson__done {
+  display: inline-flex;
+  align-items: center;
+  gap: 3px;
+  padding: 1px 6px;
+  border-radius: var(--radius-sm);
+  background: color-mix(in srgb, var(--status-online, var(--accent)) 12%, transparent);
+  color: var(--status-online, var(--accent));
+  font-size: var(--text-2xs);
+  font-weight: var(--weight-medium);
+  /* Baseline-aligned titles put a flex chip's own baseline in the wrong place;
+     this holds it on the line the title actually sits on. */
+  align-self: center;
+  white-space: nowrap;
+}
+
+/* A performed lesson already carries its own "Done" chip, so the weaker tick
+   that `[data-known]` adds would be a second, vaguer claim on the same line. */
+.help-lesson[data-performed] .help-lesson__title::after { content: none; }
+
 /* ===========================================================================
    OUR POINTER ART, AS REAL CSS CURSORS
    ---------------------------------------------------------------------------

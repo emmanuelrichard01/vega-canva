@@ -247,6 +247,9 @@ export function buildDiagram(
       geometry: {
         kind: spec.kind,
         ...(spec.points !== undefined ? { points: spec.points } : {}),
+        // The kind's dials — a trapezoid's taper, a parallelogram's slant.
+        // Without these the two mirrored forms of each collapse into one.
+        ...(spec.params ?? {}),
       },
       appearance: {
         fill: [{ type: 'solid', color: fillColor }],
@@ -446,11 +449,7 @@ export function diagramToMermaid(
       return {
         key: keyOf.get(node.id)!,
         label: (node.text ?? '').trim() || keyOf.get(node.id)!,
-        shape: shapeFromCanvas(
-          node.geometry.kind,
-          node.geometry.points,
-          cornerRadiiOf(node.appearance?.cornerRadius)[0]
-        ),
+        shape: shapeFromCanvas(node.geometry, cornerRadiiOf(node.appearance?.cornerRadius)[0]),
         ...(Object.keys(style).length > 0 ? { style } : {}),
       };
     }),

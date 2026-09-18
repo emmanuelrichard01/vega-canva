@@ -2,7 +2,7 @@ import { describe, expect, it } from 'vitest';
 import { readFileSync, readdirSync, statSync } from 'node:fs';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { placeCard, TOUR, TOUR_GAP, type TourSide } from './tour';
+import { nextVisibleStep, placeCard, TOUR, TOUR_GAP, type TourSide } from './tour';
 
 /** Every source file under `src`, so an anchor can be looked for in all of them. */
 function sources(dir: string, out: string[] = []): string[] {
@@ -87,6 +87,49 @@ describe('the tour', () => {
       expect(step.body.length, step.id).toBeLessThanOrEqual(140);
       expect(step.body, step.id).not.toContain('—');
       expect(step.title, step.id).not.toContain('—');
+    }
+  });
+});
+
+describe('nextVisibleStep', () => {
+  const all = () => true;
+  const none = () => false;
+  const only = (...anchors: string[]) => (a: string) => anchors.includes(a);
+
+  it('stays put when the step it is asked about is present', () => {
+    expect(nextVisibleStep(0, 1, all)).toBe(0);
+    expect(nextVisibleStep(3, -1, all)).toBe(3);
+  });
+
+  it('skips a run of absent steps going forward', () => {
+    const last = TOUR.length - 1;
+    expect(nextVisibleStep(0, 1, only(TOUR[last].anchor))).toBe(last);
+  });
+
+  it('skips a run of absent steps going back', () => {
+    // The direction is honoured: pressing Back through steps that have gone
+    // keeps going back rather than bouncing forward past what was being
+    // returned to.
+    expect(nextVisibleStep(TOUR.length - 1, -1, only(TOUR[0].anchor))).toBe(0);
+  });
+
+  it('gives up rather than running off either end', () => {
+    /**
+     * The stranding bug. `back()` at step 0 was a no-op, so a missing anchor
+     * there left the tour running with nothing on screen and its key handler
+     * still swallowing Escape. `null` is what lets the caller end it instead.
+     */
+    expect(nextVisibleStep(-1, -1, all)).toBeNull();
+    expect(nextVisibleStep(TOUR.length, 1, all)).toBeNull();
+    expect(nextVisibleStep(0, -1, none)).toBeNull();
+    expect(nextVisibleStep(0, 1, none)).toBeNull();
+  });
+
+  it('finds nothing when no anchor is on screen, in either direction', () => {
+    // Focus mode takes every panel at once, which is exactly this.
+    for (let i = 0; i < TOUR.length; i++) {
+      expect(nextVisibleStep(i, 1, none), `${i} forward`).toBeNull();
+      expect(nextVisibleStep(i, -1, none), `${i} back`).toBeNull();
     }
   });
 });

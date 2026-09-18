@@ -272,14 +272,37 @@ export function parallelogramContour(w: number, h: number, skew: number): Contou
   );
 }
 
+/**
+ * A trapezoid, drawn from whichever edge is the short one.
+ *
+ * The sign of `inset` chooses the edge, exactly as the sign of a
+ * parallelogram's `skew` chooses which way it leans: positive draws the top in
+ * (wide base, the manual-operation symbol), negative draws the bottom in (wide
+ * top, its inverse).
+ *
+ * The range used to be positive-only, which made the two forms the same
+ * picture. Mermaid distinguishes them — `[/A\]` against `[\A/]` — and so does
+ * every flowchart notation that has them, so a shape that could not tell them
+ * apart could not draw either faithfully.
+ */
 export function trapezoidContour(w: number, h: number, inset: number): ContourGeometry {
-  const t = clamp(inset, 0.05, 0.45);
-  return polygonContour([
-    { x: w * t, y: 0 },
-    { x: w * (1 - t), y: 0 },
-    { x: w, y: h },
-    { x: 0, y: h },
-  ]);
+  const t = clamp(inset, -0.45, 0.45);
+  const d = Math.abs(t) * w;
+  return polygonContour(
+    t >= 0
+      ? [
+          { x: d, y: 0 },
+          { x: w - d, y: 0 },
+          { x: w, y: h },
+          { x: 0, y: h },
+        ]
+      : [
+          { x: 0, y: 0 },
+          { x: w, y: 0 },
+          { x: w - d, y: h },
+          { x: d, y: h },
+        ]
+  );
 }
 
 export function chevronContour(w: number, h: number, indent: number): ContourGeometry {

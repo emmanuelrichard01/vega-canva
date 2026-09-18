@@ -69,6 +69,7 @@ describe('a walkthrough refers to a lesson rather than restating it', () => {
     // stale. A walkthrough that arms a tool the dock does not have is the same
     // failure wearing a different hat.
     for (const walk of WALKTHROUGHS) {
+      if (!walk.tool) continue;
       expect(TOOL_SHORTCUTS[walk.tool], `"${walk.tool}" is not a tool`).toBeDefined();
     }
   });
@@ -78,11 +79,29 @@ describe('a walkthrough refers to a lesson rather than restating it', () => {
     // the walkthrough beside it teaches another -- two surfaces disagreeing
     // about what you are doing.
     for (const walk of WALKTHROUGHS) {
+      if (!walk.tool) continue;
       const trigger = lessonById(walk.lesson)!.trigger;
       expect(trigger.on, walk.lesson).toBe('tool');
       if (trigger.on === 'tool') {
         expect(trigger.tools, walk.lesson).toContain(walk.tool);
       }
+    }
+  });
+
+  it('arms a tool for every walkthrough that begins on the board', () => {
+    /**
+     * The other half of the rule above, and the one that was missing while
+     * `tool` was read by nothing: a walkthrough whose first step is a gesture
+     * on the canvas must arm the tool that gesture needs, or its opening
+     * instruction has a silent prerequisite.
+     *
+     * A lesson triggered by a tool is, by definition, one of those. A
+     * `library` lesson begins in a dialog and correctly arms nothing.
+     */
+    for (const walk of WALKTHROUGHS) {
+      const trigger = lessonById(walk.lesson)!.trigger;
+      if (trigger.on !== 'tool') continue;
+      expect(walk.tool, `${walk.lesson} begins on the board and arms nothing`).toBeTruthy();
     }
   });
 
@@ -104,8 +123,11 @@ describe('a walkthrough refers to a lesson rather than restating it', () => {
     expect([...unwalkable()].sort()).toEqual(
       [
         'boolean-shapes',
+        // Its steps are a paste and a selection stat — neither is a fact the
+        // document holds afterwards, and the opener would need somebody to go
+        // and find a spreadsheet, which is why `image-reframe` is here too.
+        'chart-data',
         'comment-thread',
-        'diagram-code',
         'direct-select',
         'forces',
         'grid-content',
@@ -213,6 +235,59 @@ describe('selected', () => {
     const observe: Observation = { of: 'selected', min: 2 };
     expect(satisfied(observe, empty, snap([node('a'), node('b')], ['a', 'b']))).toBe(true);
     expect(satisfied(observe, empty, snap([node('a'), node('b')], ['a']))).toBe(false);
+  });
+});
+
+describe('unfurled', () => {
+  const observe: Observation = { of: 'unfurled' };
+  const link = (id: string, status: string) =>
+    node(id, { type: 'link', link: { url: 'https://x.test', display: 'auto', status } } as Partial<AnyNode>);
+
+  it('waits for the card to fill in rather than for it to appear', () => {
+    // The step's words are "a card that fills itself in". A link node exists
+    // the instant the address is pasted and is a grey skeleton for a moment
+    // afterwards; advancing then teaches that the product is fast, not that it
+    // works.
+    expect(satisfied(observe, empty, snap([link('a', 'loading')]))).toBe(false);
+    expect(satisfied(observe, empty, snap([link('a', 'ready')]))).toBe(true);
+  });
+
+  it('ignores a card that was already on the board', () => {
+    const before = digest({ a: link('a', 'ready') });
+    expect(satisfied(observe, before, snap([link('a', 'ready')]))).toBe(false);
+  });
+
+  it('does not accept a card that failed', () => {
+    expect(satisfied(observe, empty, snap([link('a', 'error')]))).toBe(false);
+  });
+});
+
+describe('moved', () => {
+  const observe: Observation = { of: 'moved' };
+
+  it('holds when something that was here has been dragged', () => {
+    const before = digest({ a: node('a') });
+    expect(satisfied(observe, before, snap([node('a', { x: 40 })]))).toBe(true);
+  });
+
+  it('ignores something that has not moved', () => {
+    const before = digest({ a: node('a') });
+    expect(satisfied(observe, before, snap([node('a')]))).toBe(false);
+  });
+
+  it('does not accept drawing a new object as having moved one', () => {
+    // A node created during the step has no previous position. Counting it
+    // would make "drag one of its boxes" satisfiable by drawing another.
+    const before = digest({ a: node('a') });
+    expect(satisfied(observe, before, snap([node('a'), node('b', { x: 900 })]))).toBe(false);
+  });
+
+  it('ignores a connector, which moves because its endpoints did', () => {
+    // A connector's box is derived from what it joins, so it shifts whenever
+    // they do — that is the effect the step asks the reader to cause, not
+    // evidence that they caused it.
+    const before = digest({ c: node('c', { type: 'connector' }) });
+    expect(satisfied(observe, before, snap([node('c', { type: 'connector', x: 40 })]))).toBe(false);
   });
 });
 

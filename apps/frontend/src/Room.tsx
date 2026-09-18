@@ -65,6 +65,7 @@ import { LessonCoach } from './components/learn/LessonCoach';
 import { WalkthroughGuide } from './components/learn/WalkthroughGuide';
 import { TourGuide, TourOffer } from './components/learn/TourGuide';
 import { tourState } from './engine/learn/tourState';
+import { walkthroughState } from './engine/learn/walkthroughState';
 import { learnState } from './engine/learn/learnState';
 import { buildPreview, savePreview } from './engine/model/boardPreview';
 import { previewColorOf, previewPointsOf } from './engine/model/previewPaint';
@@ -644,6 +645,35 @@ export default function Room() {
     tourState.getSnapshot
   );
   const tourSettled = tour.seen && tour.step === null;
+
+  /**
+   * Arm the tool a walkthrough is about, the moment it starts.
+   *
+   * `Walkthrough.tool` has always said it was "the tool it arms when it
+   * starts" and nothing read it, so the first step of every walkthrough had a
+   * silent prerequisite it never mentioned: "drag from the edge of a box" is
+   * not a thing you can do until the connector tool is armed, and the card
+   * does not say to arm it — the whole point of the walkthrough is that you
+   * are being shown rather than told.
+   *
+   * Here rather than in `HelpModal`, which is where a walkthrough is started
+   * from, because this is where the armed tool actually lives. A dialog
+   * reaching into `toolManager` directly would set the engine's tool and leave
+   * the dock's highlight pointing at the old one.
+   *
+   * Keyed on the walkthrough itself so it fires once per start, not on every
+   * step: re-arming on each advance would take the tool away from somebody who
+   * had deliberately switched to Select to move what they had just made.
+   */
+  const walkStarted = useSyncExternalStore(
+    walkthroughState.subscribe,
+    walkthroughState.getSnapshot,
+    walkthroughState.getSnapshot
+  ).walk;
+
+  useEffect(() => {
+    if (walkStarted?.tool) setActiveTool(walkStarted.tool);
+  }, [walkStarted]);
 
   const [dockRevealed, setDockRevealed] = useState(false);
   const dockHideTimer = useRef<number | null>(null);

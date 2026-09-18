@@ -19,6 +19,7 @@ import { mintShareToken, verifyShareToken, explainFailure, MAX_TTL_SECONDS, type
 import { RoomActivity } from "./roomActivity";
 import { rateLimit } from "./rateLimit";
 import { createUnfurler, UnfurlError } from "./unfurl";
+import { createOriginCheck } from "./cors";
 import { checkFetchableUrl } from "./safeFetch";
 import type { SniffedImage } from "./unfurlParse";
 import { registerShareRoutes } from "./share/routes";
@@ -81,17 +82,64 @@ if (config.trustProxy !== null) {
  * `readConfig` refuses to start without an explicit list. See `config.ts`.
  */
 const allowedOrigins = config.allowedOrigins;
+const originAllowed = createOriginCheck(allowedOrigins);
+
+/**
+ * One line per refused origin per window, rather than one per request.
+ *
+ * A refusal is worth saying once — it is almost always a deployment pointed at
+ * the wrong API, and the `Origin` is the whole diagnosis. It is not worth
+ * saying four hundred times, which is what a scanner in a loop or a broken
+ * client's retry does to a log that reports every one.
+ */
+const REFUSAL_LOG_WINDOW_MS = 10 * 60 * 1000;
+const refusalLoggedAt = new Map<string, number>();
+function noteRefusedOrigin(origin: string): void {
+  const now = Date.now();
+  const last = refusalLoggedAt.get(origin);
+  if (last !== undefined && now - last < REFUSAL_LOG_WINDOW_MS) return;
+  // Bounded: a scanner rotating its Origin cannot grow this without limit.
+  if (refusalLoggedAt.size > 256) refusalLoggedAt.clear();
+  refusalLoggedAt.set(origin, now);
+  logger.warn('Cross-origin request refused', {
+    origin,
+    hint: 'Add this origin to ALLOWED_ORIGINS if it is one of yours.',
+  });
+}
 
 app.use(cors({
+  /**
+   * `false`, never an `Error`.
+   *
+   * Handing `cors` an error makes Express answer 500 and log a stack trace for
+   * what is a routine, correctly-handled refusal — see the header of
+   * `cors.ts`. Answering `false` simply omits the
+   * `Access-Control-Allow-Origin` header, which is what actually stops the
+   * calling page from reading the response.
+   */
   origin: (origin, callback) => {
-    if (allowedOrigins === '*' || !origin) {
+    // No `Origin` header at all is a same-origin request, a server-to-server
+    // call, or a health check. There is no browser to protect, and nothing to
+    // grant: CORS is not an authentication mechanism and the routes behind it
+    // do their own checks.
+    if (!origin) {
       callback(null, true);
-    } else if (Array.isArray(allowedOrigins) && allowedOrigins.includes(origin)) {
-      callback(null, true);
-    } else {
-      callback(new Error('Origin not allowed by CORS'));
+      return;
     }
-  }
+    if (originAllowed(origin)) {
+      callback(null, true);
+      return;
+    }
+    noteRefusedOrigin(origin);
+    callback(null, false);
+  },
+  credentials: false,
+  // Named explicitly so a preflight can be cached. Without `maxAge` a browser
+  // re-asks before every non-simple request, which doubles the request count
+  // on an API that is mostly PUTs and JSON POSTs.
+  methods: ['GET', 'HEAD', 'PUT', 'POST', 'DELETE', 'OPTIONS'],
+  allowedHeaders: ['Content-Type', 'Authorization', 'X-Requested-With'],
+  maxAge: 86400,
 }));
 app.use(express.json());
 

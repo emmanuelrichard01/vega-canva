@@ -17,6 +17,8 @@
  * five minutes; a server that boots on a known password is an incident.
  */
 
+import { parseOriginRule } from './cors';
+
 /** The credentials committed to this repository for local development. */
 const DEV_SECRETS = new Set([
   'canva_password',
@@ -184,6 +186,22 @@ export function readConfig(): Config {
   if (originList) {
     allowedOrigins = originList.split(',').map((o) => o.trim()).filter(Boolean);
     if (allowedOrigins.length === 0) problems.push('ALLOWED_ORIGINS was set but empty.');
+    /**
+     * An entry that cannot be parsed is refused at startup rather than at
+     * request time.
+     *
+     * The failure it prevents is the quiet one: an origin written without its
+     * scheme (`app.example.com`) or as a bare `*` matches nothing, so the
+     * deployment starts, looks configured, and refuses every request its own
+     * frontend makes. Naming the entry here turns a confusing outage into a
+     * boot message that says which line to fix.
+     */
+    for (const entry of allowedOrigins) {
+      if (parseOriginRule(entry)) continue;
+      problems.push(
+        `ALLOWED_ORIGINS entry "${entry}" is not an origin. Write the scheme too — "https://app.example.com" — or "https://*.example.com" for preview deployments.`
+      );
+    }
   } else if (production) {
     problems.push(
       'ALLOWED_ORIGINS is required in production. A wildcard lets any site on the internet call this API with a visitor\u2019s browser.'

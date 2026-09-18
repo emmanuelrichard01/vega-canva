@@ -1,7 +1,7 @@
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { ensureFontLoaded } from '../engine/text/measure';
 import { DEFAULT_TYPOGRAPHY } from '../engine/model/schema';
-import { silhouetteFor, clampRadius } from '../engine/diagram/silhouette';
+import { silhouetteFor } from '../engine/diagram/silhouette';
 import {
   X,
   Check,
@@ -1734,7 +1734,23 @@ export const MermaidModal: React.FC<Props> = ({
 };
 
 /**
- * Renders SVG silhouette matching the exact MermaidShape with active Theme palette
+ * One node of the preview, drawn from the board's own geometry.
+ *
+ * Everything here is a `<path>` now, and every path comes from
+ * `silhouetteFor`, which builds the node `build.ts` would build and asks
+ * `shapeToPath` for its outline — the same function the canvas renderer and
+ * the SVG exporter use.
+ *
+ * What stood here was a hand-written SVG approximation per shape: a `<rect>`
+ * with a radius for a stadium, an arc-and-ellipse pair for a cylinder, two
+ * `<line>`s for a subroutine's bars, and a regular-polygon helper for
+ * everything with corners. That helper is why four different mermaid shapes
+ * previewed as the same diamond — a four-point regular polygon *is* a diamond
+ * — and the shapes it did not cover fell through to a rectangle.
+ *
+ * The translation to the node's place is a group transform rather than
+ * coordinates baked into the path, because `shapeToPath` answers in the node's
+ * own local box, exactly as the canvas draws it.
  */
 function renderPreviewShape(
   node: MermaidNode,
@@ -1748,89 +1764,23 @@ function renderPreviewShape(
   const stroke = node.style?.stroke || theme.primaryStroke;
   const strokeWidth = node.style?.strokeWidth || (renderStyle === 'sketch' ? 2 : 1.75);
 
-  const shape = node.shape;
+  const sil = silhouetteFor(node.shape, p.width, p.height);
 
-  /**
-   * The outline comes from `silhouetteFor`, which derives it from
-   * `SHAPE_SPECS` -- the same table `build.ts` uses to make canvas nodes.
-   *
-   * This used to be a `switch (shape)` with `case 'rect': default:` at the
-   * bottom, and three of the fourteen shapes had no case: `trapezoid`,
-   * `trapezoid_inv` and `flag` fell through, so the board drew a polygon and
-   * the preview drew a rectangle for the same source. A preview that
-   * disagrees with the result is worse than no preview.
-   */
-  const sil = silhouetteFor(shape);
-  const cx = p.x + p.width / 2;
-  const cy = p.y + p.height / 2;
-  const paint = { fill, stroke, strokeWidth };
-
-  if (sil.kind === 'ellipse') {
-    return (
-      <g>
-        <ellipse cx={cx} cy={cy} rx={p.width / 2} ry={p.height / 2} {...paint} />
-        {sil.ornament === 'ring' && (
-          <ellipse
-            cx={cx}
-            cy={cy}
-            rx={p.width / 2 - 4}
-            ry={p.height / 2 - 4}
-            fill="none"
-            stroke={stroke}
-            strokeWidth={1.25}
-          />
-        )}
-      </g>
-    );
-  }
-
-  if (sil.kind === 'polygon') {
-    return <polygon points={polygonPoints(p, sil.points)} {...paint} />;
-  }
-
-  if (sil.ornament === 'cylinder') {
-    return (
-      <g>
-        <path
-          d={`M ${p.x} ${p.y + 10} A ${p.width / 2} 10 0 0 0 ${p.x + p.width} ${p.y + 10} L ${p.x + p.width} ${p.y + p.height - 10} A ${p.width / 2} 10 0 0 1 ${p.x} ${p.y + p.height - 10} Z`}
-          {...paint}
-        />
-        <ellipse cx={cx} cy={p.y + 10} rx={p.width / 2} ry={9} {...paint} />
-      </g>
-    );
-  }
-
-  const rx = clampRadius(sil.cornerRadius, p.width, p.height);
   return (
-    <g>
-      <rect x={p.x} y={p.y} width={p.width} height={p.height} rx={rx} {...paint} />
-      {sil.ornament === 'bars' && (
-        <>
-          <line x1={p.x + 8} y1={p.y} x2={p.x + 8} y2={p.y + p.height} stroke={stroke} strokeWidth={strokeWidth} />
-          <line
-            x1={p.x + p.width - 8}
-            y1={p.y}
-            x2={p.x + p.width - 8}
-            y2={p.y + p.height}
-            stroke={stroke}
-            strokeWidth={strokeWidth}
-          />
-        </>
-      )}
+    <g transform={`translate(${p.x}, ${p.y})`}>
+      <path d={sil.d} fill={fill} stroke={stroke} strokeWidth={strokeWidth} strokeLinejoin="round" />
+      {/* Interior detail — a subroutine's bars, a database's decks — stroked
+          and never filled, which is how the canvas draws them too. */}
+      {sil.features.map((d, i) => (
+        <path
+          key={i}
+          d={d}
+          fill="none"
+          stroke={stroke}
+          strokeWidth={strokeWidth}
+          strokeLinecap="round"
+        />
+      ))}
     </g>
   );
-}
-
-function polygonPoints(
-  p: { x: number; y: number; width: number; height: number },
-  sides: number
-): string {
-  const cx = p.x + p.width / 2;
-  const cy = p.y + p.height / 2;
-  const rx = p.width / 2;
-  const ry = p.height / 2;
-  return Array.from({ length: sides }, (_, i) => {
-    const angle = (i / sides) * Math.PI * 2 - Math.PI / 2;
-    return `${cx + Math.cos(angle) * rx},${cy + Math.sin(angle) * ry}`;
-  }).join(' ');
 }
