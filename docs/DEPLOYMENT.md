@@ -83,10 +83,10 @@ page somebody fixes in five minutes.
 | --- | --- | --- |
 | `POSTGRES_USER` / `POSTGRES_PASSWORD` / `POSTGRES_DB` | yes | |
 | `S3_ACCESS_KEY` / `S3_SECRET_KEY` | yes | |
-| `ALLOWED_ORIGINS` | yes | Comma separated. No wildcard. |
+| `ALLOWED_ORIGINS` | yes | Comma separated. A leading-label wildcard is allowed for preview hosts (`https://*.vercel.app`); a bare `*` is not. Entries are compared as browsers spell an origin, so a trailing slash or a capital is forgiven. An entry that is not an origin fails at boot, naming itself. |
 | `PUBLIC_API_URL` | yes | Written into documents as the address of uploaded media. Changing it later orphans media in boards written before the change. |
 | `TRUST_PROXY` | if behind a proxy | Hop count. Wrong either way breaks rate limiting. |
-| `REDIS_HOST` | only for >1 instance | Without it, instances do not share documents or awareness. |
+| `REDIS_HOST` | only for >1 instance | Without it, instances share neither documents and awareness nor rate limits and IP quotas. |
 | `SHARE_SECRET` | no | Signs invite links. Without it, only full-access links can be offered. Rotating it revokes every outstanding invite — the only revocation there is. |
 | `AUTH_SECRET` | no | One shared token. Not authorization. The client sends it as `VITE_AUTH_SECRET`; set both or neither, or every client is refused. |
 | `SENTRY_DSN` | no | Error tracking. `/readyz` reports `errorTracking` — trust that, not the log line. |
@@ -285,11 +285,22 @@ the system.
    (`roomActivity.ts`), so a board people read and never edit no longer looks
    dormant. Before that fix it was the row most likely to be collected.
 
-3. **Rate limiting is per-process.** Run two instances and each client gets a
-   full allowance per instance. `rateLimit.ts` contains a correct, tested
-   Redis token bucket, but **no call site passes a client**, so every request
-   takes the in-memory path. Correct for one Render instance; wire it up in
-   the same change as horizontal scaling, not after.
+3. **Rate limiting follows `REDIS_HOST`.** Set it and all three limiters — media
+   upload, room history, link preview — share one token bucket across every
+   instance, along with the per-IP storage quota. Leave it unset and each
+   process keeps its own buckets, which is correct for one instance and quietly
+   wrong for two: each client would get a full allowance per instance, nothing
+   would fail, and the numbers would simply be wrong.
+
+   This was previously wired the other way round — the Redis bucket existed and
+   **no call site passed a client** — so the note here used to say the limits
+   were per-process unconditionally. They are not any more, but the failure is
+   still silent if `REDIS_HOST` is missing on a multi-instance deployment, so it
+   stays on this list.
+
+   If Redis goes away at runtime the limiters fall back to memory rather than
+   refusing traffic, and log one line per thirty seconds rather than one per
+   reconnect.
 
 4. **Object storage durability.** MinIO on one volume is one disk.
 

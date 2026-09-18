@@ -464,7 +464,7 @@ restarting at each heading.
 | 7 | Once people use it | Real accounts: magic link plus OAuth | §2.2 |
 | 8 | ~~Once people use it~~ **done** | Per-board roles, enforced at the WebSocket layer | §2.3 |
 | 9 | Once people use it | The bundle split, measured both ways | §1.2 |
-| 10 | When it hurts | Redis-backed rate limiting, in the same change as a second instance | §3 |
+| 10 | ~~When it hurts~~ **done** | Redis-backed rate limiting and IP quotas, on `REDIS_HOST` | §3 |
 | 11 | When it hurts | Presigned media URLs instead of proxying bytes | §3 |
 | 12 | When it hurts | A compaction story for long-lived documents | §1.3 |
 
