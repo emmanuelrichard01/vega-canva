@@ -1,5 +1,55 @@
-import { defineConfig } from 'vite';
+import { defineConfig, loadEnv, type Plugin } from 'vite';
 import react from '@vitejs/plugin-react';
+
+/**
+ * Where the site lives, for every absolute URL a crawler reads.
+ *
+ * Canonical links, `og:url`, `og:image` and the sitemap all have to be
+ * absolute, and none of them can be derived from the page at runtime —
+ * crawlers read the HTML before any script runs. `VITE_SITE_URL` overrides it
+ * for a preview deployment or a custom domain.
+ */
+const DEFAULT_SITE_URL = 'https://vscanva.vercel.app';
+
+/**
+ * Put the site URL into `index.html`, and write `robots.txt` and `sitemap.xml`.
+ *
+ * ## Why boards are not disallowed in robots.txt
+ *
+ * A board's address is its key, so boards must never be *indexed* — but
+ * disallowing `/room/` in robots.txt is the wrong way to say so, twice over.
+ * A disallowed URL can still be indexed from links to it, just without its
+ * content, because the crawler is forbidden from fetching the page that would
+ * have told it not to. And X and LinkedIn honour robots.txt for link previews,
+ * so it would take the card off every board shared there. Boards are kept out
+ * of search with an `X-Robots-Tag: noindex` header instead (`vercel.json`),
+ * which every search engine honours and no unfurler cares about.
+ */
+function siteMeta(siteUrl: string): Plugin {
+  const site = siteUrl.replace(/\/+$/, '');
+  return {
+    name: 'vega-site-meta',
+    transformIndexHtml: (html) => html.replaceAll('%SITE_URL%', site),
+    generateBundle() {
+      this.emitFile({
+        type: 'asset',
+        fileName: 'robots.txt',
+        source: `User-agent: *\nAllow: /\n\nSitemap: ${site}/sitemap.xml\n`,
+      });
+      this.emitFile({
+        type: 'asset',
+        fileName: 'sitemap.xml',
+        // One public page. Boards are private by address, and the dashboard's
+        // two views are the same URL.
+        source:
+          '<?xml version="1.0" encoding="UTF-8"?>\n' +
+          '<urlset xmlns="http://www.sitemaps.org/schemas/sitemap/0.9">\n' +
+          `  <url><loc>${site}/</loc><changefreq>weekly</changefreq><priority>1.0</priority></url>\n` +
+          '</urlset>\n',
+      });
+    },
+  };
+}
 
 /**
  * Modules under `engine/export/` that the live canvas legitimately shares, and
@@ -11,8 +61,8 @@ const EXPORT_SHARED =
   /\/engine\/export\/(chrome|DocumentImport|restoreDocument|pendingRestore|exportScope|renderScope|isolate)\./;
 
 // https://vite.dev/config/
-export default defineConfig({
-  plugins: [react()],
+export default defineConfig(({ mode }) => ({
+  plugins: [react(), siteMeta(loadEnv(mode, process.cwd(), 'VITE_').VITE_SITE_URL || DEFAULT_SITE_URL)],
   build: {
     /**
      * The Konva vendor chunk sits at ~490 kB gzipped and cannot be split
@@ -122,4 +172,4 @@ export default defineConfig({
       },
     },
   },
-});
+}));

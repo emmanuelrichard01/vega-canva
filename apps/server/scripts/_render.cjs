@@ -1,0 +1,20 @@
+const fs = require('fs');
+const { boardCardSvg, siteCardSvg, privateCardSvg } = require('../dist/share/cardSvg');
+const { svgToPng } = require('../dist/share/raster');
+const out = process.argv[2];
+(async () => {
+  const items = [];
+  for (let i = 0; i < 6; i++) items.push({ x: 0.02 + i * 0.16, y: 0.05, w: 0.13, h: 0.2, c: ['#FFE9A8','#BCEBD7','#C3E1FA','#FBD2E1','#DDD5F8','#FDDBBF'][i], r: 0.08 });
+  items.push({ x: 0, y: 0.35, w: 1, h: 0.62, c: '#FFFFFF', k: 1, r: 0.02 });
+  items.push({ x: 0.05, y: 0.42, w: 0.4, h: 0.06, c: '#161616', t: 1, fs: 0.05 });
+  items.push({ x: 0.1, y: 0.55, w: 0.2, h: 0.18, c: '#DBEAFE' , r: 0.1});
+  items.push({ x: 0.55, y: 0.55, w: 0.2, h: 0.2, c: '#F59E0B', o: 1 });
+  items.push({ x: 0.3, y: 0.64, w: 0.25, h: 0.01, c: '#64748B', l: [0.3, 0.64, 0.55, 0.65] });
+  items.push({ x: 0.8, y: 0.5, w: 0.15, h: 0.2, c: '#EF4444', s: 'star', p: 5, ir: 0.45 });
+  const card = { name: 'Q3 Planning — Sprint čćšž retro & roadmap for the platform team', hidden: false, preview: { ratio: 1.5, total: 128, items } };
+  fs.writeFileSync(out + '/card-board.png', await svgToPng(boardCardSvg(card)));
+  fs.writeFileSync(out + '/card-empty.png', await svgToPng(boardCardSvg({ name: 'Untitled Workspace', hidden: false, preview: { ratio: 1, total: 0, items: [] } })));
+  fs.writeFileSync(out + '/card-private.png', await svgToPng(privateCardSvg()));
+  fs.writeFileSync(out + '/card-site.png', await svgToPng(siteCardSvg({ domain: 'vscanva.vercel.app' })));
+  console.log('ok');
+})().catch((e) => { console.error(e); process.exit(1); });

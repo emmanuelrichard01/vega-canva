@@ -93,6 +93,14 @@ page somebody fixes in five minutes.
 | `MIN_ROOM_ID_LENGTH` | no | Default 8. Lower only to keep older short-id boards reachable. |
 | `HISTORY_FLUSH_MS` | no | Default 1000. See §4. |
 
+On the frontend's host (Vercel):
+
+| Variable | Required | Notes |
+| --- | --- | --- |
+| `VITE_API_URL` | yes | The sync server. Also what the share-card functions ask for a board's name and picture. |
+| `VITE_SITE_URL` | in production | The site's own address, baked into `canonical`, `og:url`, `og:image` and `sitemap.xml` at build time. Defaults to `https://vscanva.vercel.app`; set it for any other domain, or every shared link points at the wrong host. |
+| `SHARE_API_URL` | no | Overrides `VITE_API_URL` for the share functions alone, when the crawler-facing server is not the sync server. |
+
 `docker-compose.yml` is **development only** — published data stores, committed
 credentials, no TLS. `docker-compose.prod.yml` is the deployable shape.
 
@@ -188,7 +196,49 @@ with different schemas and the same version number.
 
 ---
 
-## 6. Health
+## 6. Share cards, and what crawlers see
+
+A board link pasted into Slack, iMessage, Teams, X or Discord unfurls into the
+board's own name, how much is on it, what the link allows, and a picture of the
+board. Four pieces, each able to fail without taking the others down:
+
+1. **The board publishes itself.** `useShareCard` sends `PUT /rooms/:id/card` —
+   the name, and the same summary the dashboard draws its covers from — twelve
+   seconds after the board goes quiet, and again on page hide. Only from a
+   synced client that can edit, so a tab that has not synced cannot replace a
+   real board's card with an empty one.
+2. **The server keeps it and draws it.** `room_cards` (migration 4) holds one
+   row per room. `GET /cards/room/:id` answers the facts and `…/image.png`
+   draws 1200×630 with resvg, cached in memory by room and version. Everything
+   a client sent is checked again on the way out: colours must match a CSS
+   colour grammar, numbers are clamped to known ranges, and the name is drawn
+   as glyph outlines — there is no text node in the picture to break out of.
+3. **The crawler gets HTML.** `vercel.json` rewrites `/room/:id` and `/i/:token`
+   to `api/share.ts` **only for known crawler user agents**; everyone else gets
+   the app. That function asks the server for the facts within 3.5 seconds and
+   falls back to a generic card, so a sleeping server costs detail, never the
+   unfurl itself.
+4. **The picture comes from the site's own edge.** `api/card-image.ts` proxies
+   the server's PNG with the card's version in the URL, so it can cache for a
+   year and an edited board is simply a different URL.
+
+Two rules hold the privacy line. An **invite card never names its room**: its
+JSON and its image URL are keyed by the token, because an unfurl of a view link
+must not become a way to learn the edit link. And any board can switch previews
+off — Share → Link preview — which clears the name and picture from the server
+rather than hiding them, leaving every unfurl generic.
+
+Boards are kept out of search with `X-Robots-Tag: noindex` on `/room/` and
+`/i/`, **not** with `robots.txt`: a disallowed URL can still be indexed without
+its content, and X and LinkedIn honour `robots.txt` for previews, which would
+take the picture off every shared link.
+
+`apps/server/scripts/brand-assets.ts` draws every icon and both static share
+images from one vector mark. Rerun it after changing the mark or the card.
+
+---
+
+## 7. Health
 
 - `GET /healthz` — liveness. Deliberately checks nothing else: a liveness probe
   that touches the database turns a recoverable dependency outage into a
@@ -199,7 +249,7 @@ with different schemas and the same version number.
 
 ---
 
-## 7. What is still missing
+## 8. What is still missing
 
 Ranked. None of this is done, and the first one is the largest single risk in
 the system.

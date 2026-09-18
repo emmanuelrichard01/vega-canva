@@ -32,6 +32,8 @@ COPY --from=builder /app/package.json ./
 COPY --from=builder /app/package-lock.json ./
 COPY --from=builder /app/apps/server/package.json ./apps/server/
 COPY --from=builder /app/apps/server/dist ./apps/server/dist
+# The typeface share cards are set in. Read at runtime from `dist/../assets`.
+COPY --from=builder /app/apps/server/assets ./apps/server/assets
 
 # Runtime dependencies only. The builder's tree carries typescript, tsx and
 # vitest, none of which should exist on a running server: every one of them is

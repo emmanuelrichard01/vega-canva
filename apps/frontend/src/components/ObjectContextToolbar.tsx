@@ -1734,7 +1734,9 @@ export const ObjectContextToolbar: React.FC<Props> = ({ selectedId, selectedIds,
                       <span className="ctx-popover__label">Shape</span>
                       {closedTiles}
                       {shapeCounts}
-                      {otherFamily('Convert to a line', lineTiles)}
+                      {/* No "Convert to a line" here: a shape that becomes a
+                          line loses its fill, radius and interior, and the
+                          line tool is one key away for anyone who wants one. */}
                     </>
                   )}
 

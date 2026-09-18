@@ -493,6 +493,57 @@ get their own rules.
   addresses at connect time, re-checks every redirect, caps bytes after
   decompression, and identifies images by their bytes, not their headers.
 
+### The library
+
+- **The ways in lead the page.** The four openings — blank, template, link,
+  backup — are a strip above the boards, and the same four, larger, when there
+  are none. They were spread across a `+` menu, a nav icon and an account menu,
+  and written out only on the screen you see once.
+- **No hole in the grid.** The first card slot is a board. The dashed "browse
+  templates" tile that used to sit there was the first thing the eye landed on
+  and the one thing in the row that was not work.
+- **Grouped by when you last had it open**, which is the order a library is
+  actually kept in — but only past the size where a heading earns its place.
+- **Find, then arrange.** Search, order and layout sit in one row beside the
+  grid they act on. Search was behind a magnifier on the rail; order and layout
+  were not offered at all.
+- **Two layouts for two questions.** A grid answers "which one was that" — a
+  board is recognised by its shape long before its name. A list answers "where
+  is the one called X". Both are remembered.
+- **One voice for dates.** "32 minutes ago", "yesterday", "27 Aug" — coarse,
+  and a date once counting days stops helping. Three formats in one row is what
+  happens when the rule is written inline.
+- **The card's actions are behind one button.** Take the link, open it beside
+  what you are doing, take it off this device — in that order, with removal
+  last and marked. It used to be a bare `X`: the most destructive thing on the
+  page as the only thing on the card.
+- **The page has a foot.** Four real templates close the boards view, because a
+  small library leaves most of a large screen empty and what filled it before
+  was nothing.
+
+### The brand, and the link card
+
+- **One mark, drawn once.** The logomark is geometry (`share/brand.ts`), and
+  every favicon, app icon and share image is rendered from it. Cutting icons
+  from rasters by hand is how the installed app kept an older logo while the
+  browser tab showed the current one.
+- **An icon states its own context.** The SVG favicon carries a dark-mode tile
+  so the mark keeps an edge on a dark tab strip; the maskable icon sits inside
+  Android's safe circle; the Apple touch icon is opaque, because iOS paints
+  transparency black.
+- **A shared link shows the board, not the product.** A board's card is its
+  name, what is on it, and the same silhouette its dashboard cover draws —
+  which means someone in a chat thread can tell the retro from the architecture
+  diagram before reading a word.
+- **A card claims nothing.** Cursors and names appear only on the site's own
+  card, which is openly an illustration. A real board's card shows the board.
+- **The tab is a surface.** A board names itself in the tab and marks its icon
+  when comments are waiting, because a board spends most of its life in a
+  background tab.
+- **Sharing shows what will be shared.** The Share dialog draws the real card,
+  and the one control beside it turns the board's name and picture off for
+  every unfurl.
+
 ### The tool dock
 
 The main toolbar, bottom-centre. It answers one question — what is in my hand

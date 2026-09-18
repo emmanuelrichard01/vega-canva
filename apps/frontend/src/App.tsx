@@ -6,6 +6,19 @@ import { useStore } from './hooks/useStore';
 import { RouteLoader } from './components/ui/Loading';
 import { NoticeLayer } from './components/ui/NoticeLayer';
 import { SpeedInsights } from '@vercel/speed-insights/react';
+import { nanoid } from 'nanoid';
+
+/**
+ * `/new` opens a fresh board.
+ *
+ * An address to type, bookmark or pin — the app's install shortcut uses it —
+ * the way `figma.new` and `docs.new` work. Replaced rather than pushed, so Back
+ * returns to wherever the person was before, not to a URL that would make
+ * another board.
+ */
+if (window.location.pathname === '/new' || window.location.pathname === '/new/') {
+  window.location.replace(`/room/${nanoid(10)}`);
+}
 
 const Room = lazy(() => import('./Room'));
 const Home = lazy(() => import('./Home').then((m) => ({ default: m.Home })));
@@ -33,6 +46,12 @@ function App() {
   useEffect(() => {
     document.body.classList.toggle('dark-theme', darkTheme);
     document.documentElement.style.colorScheme = darkTheme ? 'dark' : 'light';
+    // The browser's own chrome — the address bar on Android, the title bar of
+    // an installed app — follows the theme chosen here, not only the OS one
+    // `index.html` guesses from. Same two grounds as the boot shell.
+    document
+      .querySelectorAll<HTMLMetaElement>('meta[name="theme-color"]')
+      .forEach((meta) => meta.setAttribute('content', darkTheme ? '#18181B' : '#FFFFFF'));
   }, [darkTheme]);
 
   return (

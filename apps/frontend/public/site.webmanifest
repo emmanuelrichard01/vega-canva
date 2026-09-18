@@ -1,21 +1,41 @@
 {
+  "id": "/",
   "name": "Vega Studio",
   "short_name": "Vega",
+  "description": "The real-time whiteboard for thinking together: sticky notes, flowcharts, code, charts and voice notes on one infinite board, and it keeps working offline.",
+  "start_url": "/?source=pwa",
+  "scope": "/",
+  "display": "standalone",
+  "display_override": ["window-controls-overlay", "standalone"],
+  "orientation": "any",
+  "lang": "en",
+  "dir": "ltr",
+  "background_color": "#FFFFFF",
+  "theme_color": "#FFFFFF",
+  "categories": ["productivity", "design", "business", "education"],
   "icons": [
+    { "src": "/icons/icon-192.png", "sizes": "192x192", "type": "image/png", "purpose": "any" },
+    { "src": "/icons/icon-512.png", "sizes": "512x512", "type": "image/png", "purpose": "any" },
+    { "src": "/icons/maskable-192.png", "sizes": "192x192", "type": "image/png", "purpose": "maskable" },
+    { "src": "/icons/maskable-512.png", "sizes": "512x512", "type": "image/png", "purpose": "maskable" },
+    { "src": "/favicon.svg", "sizes": "any", "type": "image/svg+xml", "purpose": "any" }
+  ],
+  "shortcuts": [
     {
-      "src": "/web-app-manifest-192x192.png",
-      "sizes": "192x192",
-      "type": "image/png",
-      "purpose": "maskable"
+      "name": "New board",
+      "short_name": "New",
+      "description": "Open a fresh, empty board",
+      "url": "/new",
+      "icons": [{ "src": "/icons/icon-192.png", "sizes": "192x192", "type": "image/png" }]
     },
     {
-      "src": "/web-app-manifest-512x512.png",
-      "sizes": "512x512",
-      "type": "image/png",
-      "purpose": "maskable"
+      "name": "Browse templates",
+      "short_name": "Templates",
+      "description": "Start from a retro, a roadmap, a flowchart and more",
+      "url": "/?view=templates",
+      "icons": [{ "src": "/icons/icon-192.png", "sizes": "192x192", "type": "image/png" }]
     }
   ],
-  "theme_color": "#ffffff",
-  "background_color": "#ffffff",
-  "display": "standalone"
+  "launch_handler": { "client_mode": ["focus-existing", "auto"] },
+  "prefer_related_applications": false
 }

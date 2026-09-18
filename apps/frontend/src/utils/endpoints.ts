@@ -31,3 +31,10 @@ export const mediaUploadUrl = (roomId: string) => `${API_BASE}/rooms/${roomId}/m
 /** Where a share link is minted. Only the server can sign one. */
 export const inviteMintUrl = (roomId: string) => `${API_BASE}/rooms/${roomId}/invite`;
 export const roomHistoryUrl = (roomId: string) => `${API_BASE}/rooms/${roomId}/history`;
+
+/** Where a board describes itself for link previews. See `hooks/useShareCard.ts`. */
+export const shareCardUrl = (roomId: string) => `${API_BASE}/rooms/${encodeURIComponent(roomId)}/card`;
+
+/** The picture a board link unfurls into, as the sync server draws it. */
+export const shareCardImageUrl = (roomId: string, version?: string) =>
+  `${API_BASE}/cards/room/${encodeURIComponent(roomId)}/image.png${version ? `?v=${encodeURIComponent(version)}` : ''}`;

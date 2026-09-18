@@ -128,6 +128,22 @@ const MIGRATIONS: Migration[] = [
         ADD COLUMN IF NOT EXISTS created_at TIMESTAMPTZ DEFAULT NOW();
     `,
   },
+  {
+    id: 4,
+    name: 'keep what a board shows when its link is shared',
+    sql: `
+      -- A board's name and the silhouette of its contents, as its own clients
+      -- last described them, for the card a link unfurls into. One row per
+      -- room, replaced on every upload, and gone with the room.
+      CREATE TABLE room_cards (
+        room_id TEXT PRIMARY KEY REFERENCES rooms(id) ON DELETE CASCADE,
+        name TEXT NOT NULL DEFAULT '',
+        hidden BOOLEAN NOT NULL DEFAULT FALSE,
+        preview JSONB,
+        updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+      );
+    `,
+  },
 ];
 
 /** Postgres advisory lock id. Arbitrary, but must be stable across versions. */

@@ -595,7 +595,8 @@ const lineCache = new Map<string, Token[][]>();
  * asks for the same answer on every frame a block is on screen.
  */
 export function tokenize(source: string, languageId: string): Token[][] {
-  const cacheKey = `${languageId} ${source}`;
+  // A separator no language id can contain, so `ts` + `x…` never collides with `tsx` + `…`.
+  const cacheKey = `${languageId}${String.fromCharCode(0)}${source}`;
   const hit = lineCache.get(cacheKey);
   if (hit) return hit;
 

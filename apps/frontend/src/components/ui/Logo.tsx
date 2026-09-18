@@ -17,7 +17,7 @@ import { useStore } from '../../hooks/useStore';
  *
  * ## Why it points at `/brand/` and not at the masters
  *
- * The masters in `VEGA LOGO LIGHT|DARK/` are print-scale — the logomark is
+ * The masters in `apps/frontend/brand-masters/` are print-scale — the logomark is
  * 3580px wide and 92KB, and it was being drawn at 26px.
  * `scripts/generate-brand-assets.py` regenerates
  * display-sized derivatives from them (mark 92KB → 4.9KB), trimming the

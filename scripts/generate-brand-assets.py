@@ -12,8 +12,10 @@ import io
 import os
 from PIL import Image
 
-SRC = 'apps/frontend/public'
-OUT = os.path.join(SRC, 'brand')
+# The masters live outside `public/` so the deploy does not ship ~900KB of
+# print artwork nobody's browser asks for.
+SRC = 'apps/frontend/brand-masters'
+OUT = 'apps/frontend/public/brand'
 os.makedirs(OUT, exist_ok=True)
 
 # Height in CSS pixels the piece is actually drawn at, doubled for retina.
@@ -49,17 +51,7 @@ for variant_dir, suffix in (('VEGA LOGO LIGHT', 'light'), ('VEGA LOGO DARK', 'da
         after = os.path.getsize(out_path)
         report.append(f'{stem}-{suffix}.png  {target_w}x{target_h}  {before/1024:.0f}KB -> {after/1024:.1f}KB')
 
-# A small, honest favicon from the light mark — the one that reads on the
-# browser's own chrome, which is light far more often than not.
-fav = Image.open(os.path.join(SRC, 'VEGA LOGO LIGHT', 'LOGOMARK.png')).convert('RGBA')
-bbox = fav.getbbox()
-if bbox:
-    fav = fav.crop(bbox)
-# Square canvas with the mark centred, so it is not stretched into the tile.
-side = max(fav.size)
-square = Image.new('RGBA', (side, side), (0, 0, 0, 0))
-square.paste(fav, ((side - fav.size[0]) // 2, (side - fav.size[1]) // 2), fav)
-square.resize((64, 64), Image.LANCZOS).save(os.path.join(OUT, 'favicon-64.png'), 'PNG', optimize=True)
-report.append(f"favicon-64.png  64x64  {os.path.getsize(os.path.join(OUT,'favicon-64.png'))/1024:.1f}KB")
+# Favicons, app icons and the share image are no longer cut from these rasters.
+# They are drawn from the vector mark by `apps/server/scripts/brand-assets.ts`.
 
-print('\n'.join(report))
+print(chr(10).join(report))

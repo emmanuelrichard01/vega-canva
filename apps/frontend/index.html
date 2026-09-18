@@ -2,11 +2,100 @@
 <html lang="en">
   <head>
     <meta charset="UTF-8" />
-    <!-- 2.2KB, generated from the logomark. This replaced a 762KB
-         `/favicon.svg` — a print-scale asset shipped to draw 16 pixels. -->
-    <link rel="icon" type="image/png" sizes="64x64" href="/brand/favicon-64.png" />
+    <title>Vega Studio — The real-time whiteboard for thinking together</title>
+    <meta name="description" content="Draw, diagram and decide together on one infinite board. Sticky notes, flowcharts, code, charts and voice notes, live with your team — and it works offline." />
+    <meta name="application-name" content="Vega Studio" />
+    <meta name="theme-color" media="(prefers-color-scheme: light)" content="#FFFFFF" />
+    <meta name="theme-color" media="(prefers-color-scheme: dark)" content="#18181B" />
+    <meta name="color-scheme" content="light dark" />
+    <meta name="format-detection" content="telephone=no" />
+    <link rel="canonical" href="%SITE_URL%/" />
+
+    <!-- Icons, all drawn from the vector mark by
+         `apps/server/scripts/brand-assets.ts`.
+
+         SVG first: it is one request at every density, and it carries its own
+         dark-mode tile so the mark keeps an edge on a dark tab strip. The ICO
+         is for everything that ignores SVG favicons, the 96px PNG is the size
+         Google shows beside a search result, and the touch icon is opaque
+         because iOS paints transparency black. -->
+    <link rel="icon" href="/favicon.svg" type="image/svg+xml" />
+    <link rel="icon" href="/favicon.ico" sizes="32x32" />
+    <link rel="icon" href="/favicon-96x96.png" type="image/png" sizes="96x96" />
     <link rel="apple-touch-icon" href="/apple-touch-icon.png" />
     <link rel="manifest" href="/site.webmanifest" />
+    <meta name="apple-mobile-web-app-title" content="Vega" />
+    <meta name="apple-mobile-web-app-capable" content="yes" />
+    <meta name="mobile-web-app-capable" content="yes" />
+    <meta name="apple-mobile-web-app-status-bar-style" content="default" />
+
+    <!-- How a link to the site looks when it is shared.
+
+         Board links get their own card — the board's name and a picture of
+         it — from `api/share.ts`, which answers link unfurlers directly; see
+         `vercel.json`. Everything else, starting with the home page, is this. -->
+    <meta property="og:type" content="website" />
+    <meta property="og:site_name" content="Vega Studio" />
+    <meta property="og:url" content="%SITE_URL%/" />
+    <meta property="og:title" content="Vega Studio — The real-time whiteboard for thinking together" />
+    <meta property="og:description" content="Diagrams, sticky notes, code, charts and voice notes on one infinite board, live with your team. Works offline. No account needed." />
+    <meta property="og:image" content="%SITE_URL%/og-image.png" />
+    <meta property="og:image:type" content="image/png" />
+    <meta property="og:image:width" content="1200" />
+    <meta property="og:image:height" content="630" />
+    <meta property="og:image:alt" content="Vega Studio: a board with a flowchart, sticky notes, a code block and a chart, with two collaborators' cursors on it." />
+    <meta property="og:locale" content="en_US" />
+    <meta name="twitter:card" content="summary_large_image" />
+    <meta name="twitter:title" content="Vega Studio — The real-time whiteboard for thinking together" />
+    <meta name="twitter:description" content="Diagrams, sticky notes, code, charts and voice notes on one infinite board, live with your team. Works offline." />
+    <meta name="twitter:image" content="%SITE_URL%/og-image.png" />
+    <meta name="twitter:image:alt" content="Vega Studio: a board with a flowchart, sticky notes, a code block and a chart." />
+
+    <!-- What search engines can read without running the app.
+
+         Only facts: the product is a web app, it is free to use, it runs in a
+         browser, and these are its features. No ratings, no review counts and no
+         organisation details, because there are none to cite — structured data
+         that invents them is the fastest way to lose rich results altogether. -->
+    <script type="application/ld+json">
+      {
+        "@context": "https://schema.org",
+        "@graph": [
+          {
+            "@type": "WebSite",
+            "@id": "%SITE_URL%/#website",
+            "url": "%SITE_URL%/",
+            "name": "Vega Studio",
+            "alternateName": "Vega",
+            "inLanguage": "en"
+          },
+          {
+            "@type": "WebApplication",
+            "@id": "%SITE_URL%/#app",
+            "name": "Vega Studio",
+            "url": "%SITE_URL%/",
+            "image": "%SITE_URL%/og-image.png",
+            "applicationCategory": "DesignApplication",
+            "applicationSubCategory": "Collaborative whiteboard",
+            "operatingSystem": "Any (web browser)",
+            "browserRequirements": "Requires JavaScript and a modern browser.",
+            "isAccessibleForFree": true,
+            "description": "A real-time collaborative whiteboard: an infinite canvas for sticky notes, flowcharts, code blocks, charts, tables and voice notes, with live cursors, comments, time travel and offline editing.",
+            "featureList": [
+              "Real-time collaboration with live cursors and presence",
+              "Sticky notes, shapes, connectors and flowcharts",
+              "Code blocks with syntax highlighting",
+              "Link cards and embedded videos and designs",
+              "Charts and tables with formulas",
+              "Voice notes and threaded comments",
+              "Offline editing that merges when you reconnect",
+              "Export to PNG, SVG, PDF and JSON"
+            ],
+            "isPartOf": { "@id": "%SITE_URL%/#website" }
+          }
+        ]
+      }
+    </script>
     <!--
       Zoom stays available.
 
@@ -21,7 +110,6 @@
       for the same reason.
     -->
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-    <title>Vega Studio</title>
     <!-- Board faces, and only the ones that are not already in the bundle.
 
          This asked for eleven families. Six of them -- Inter, Roboto, Space
