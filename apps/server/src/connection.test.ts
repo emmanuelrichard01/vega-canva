@@ -112,3 +112,22 @@ describe('readConnectionClaim: invite tokens', () => {
     expect(readConnectionClaim(JSON.stringify({ invite: '' })).invite).toBeUndefined();
   });
 });
+
+describe('readConnectionClaim: session tokens', () => {
+  it('passes a session token through without deciding', () => {
+    const claim = readConnectionClaim(
+      JSON.stringify({ role: 'editor', sessionToken: 'payload.sig' })
+    );
+    expect(claim.sessionToken).toBe('payload.sig');
+  });
+
+  it('has no sessionToken when none was sent', () => {
+    expect(readConnectionClaim(JSON.stringify({ role: 'viewer' })).sessionToken).toBeUndefined();
+    expect(readConnectionClaim('bare-token').sessionToken).toBeUndefined();
+  });
+
+  it('ignores non-string session tokens', () => {
+    expect(readConnectionClaim(JSON.stringify({ sessionToken: 12345 })).sessionToken).toBeUndefined();
+    expect(readConnectionClaim(JSON.stringify({ sessionToken: '' })).sessionToken).toBeUndefined();
+  });
+});

@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import { nanoid } from 'nanoid';
 import { getColorForUser } from '../engine/presence/ColorPalette';
 import { AuthContext, type User } from './useAuth';
@@ -15,6 +15,26 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
     const savedGuest = sessionStorage.getItem('vega_guest');
     return savedGuest ? JSON.parse(savedGuest) : null;
   });
+
+  useEffect(() => {
+    if (typeof window === 'undefined') return;
+    const apiBase = (import.meta.env.VITE_API_URL as string) || '';
+    fetch(`${apiBase}/api/session`, { credentials: 'include' })
+      .then((res) => (res.ok ? res.json() : null))
+      .then((data) => {
+        if (!data?.user?.id) return;
+        if (data.token) {
+          try {
+            localStorage.setItem('vega_session_token', data.token);
+          } catch {
+            // Storage quota or private browsing: ignore
+          }
+        }
+      })
+      .catch(() => {
+        // Offline or server unreachable: preserve local identity
+      });
+  }, []);
 
   const login = (name: string, color: string) => {
     const id = nanoid();
@@ -63,6 +83,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
   const logout = () => {
     localStorage.removeItem('vega_user');
     sessionStorage.removeItem('vega_guest');
+    localStorage.removeItem('vega_session_token');
     setUser(null);
   };
 

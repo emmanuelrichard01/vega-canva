@@ -15,6 +15,13 @@ import { readConfig } from "./config";
 import { isAllowedUpload, safeExtension, serveAs } from "./media";
 import { checkRoomId, sanitizeRoomId } from "./rooms";
 import { readConnectionClaim } from "./connection";
+import {
+  mintSessionToken,
+  verifySessionToken,
+  readSessionFromRequest,
+  serializeSessionCookie,
+  type SessionPayload,
+} from "./session";
 import { mintShareToken, verifyShareToken, explainFailure, MAX_TTL_SECONDS, type ShareRole } from "./shareToken";
 import { RoomActivity } from "./roomActivity";
 import { createRateLimiter, rateLimit } from "./rateLimit";
@@ -135,15 +142,57 @@ app.use(cors({
     noteRefusedOrigin(origin);
     callback(null, false);
   },
-  credentials: false,
+  credentials: true,
   // Named explicitly so a preflight can be cached. Without `maxAge` a browser
   // re-asks before every non-simple request, which doubles the request count
   // on an API that is mostly PUTs and JSON POSTs.
   methods: ['GET', 'HEAD', 'PUT', 'POST', 'DELETE', 'OPTIONS'],
-  allowedHeaders: ['Content-Type', 'Authorization', 'X-Requested-With'],
+  allowedHeaders: ['Content-Type', 'Authorization', 'X-Requested-With', 'X-Session-Token'],
   maxAge: 86400,
 }));
 app.use(express.json());
+
+const sessionSecret = config.shareSecret || config.authSecret || 'vega-anonymous-session-secret';
+
+/**
+ * Durable anonymous identity middleware (docs/GOING-LIVE.md §2.1).
+ * Extracts existing session from Cookie or header, or issues a new signed session cookie.
+ */
+app.use((req: any, res: any, next: any) => {
+  const existing = readSessionFromRequest(req, sessionSecret);
+  if (existing.session && existing.token) {
+    req.sessionUser = existing.session;
+    req.sessionToken = existing.token;
+  } else {
+    const token = mintSessionToken(sessionSecret);
+    const verified = verifySessionToken(token, sessionSecret);
+    if (verified.ok) {
+      req.sessionUser = verified.session;
+      req.sessionToken = token;
+      const isSecure = Boolean(req.secure || req.headers['x-forwarded-proto'] === 'https');
+      res.setHeader('Set-Cookie', serializeSessionCookie(token, { isSecure }));
+    }
+  }
+  next();
+});
+
+/**
+ * Durable anonymous identity endpoint (docs/GOING-LIVE.md §2.1).
+ * Returns the visitor's verified stable user id and signed session token.
+ */
+app.get('/api/session', (req: any, res: any) => {
+  if (!req.sessionUser) {
+    return res.status(500).json({ error: 'Session initialization failed' });
+  }
+  res.json({
+    user: {
+      id: req.sessionUser.uid,
+      isAnonymous: req.sessionUser.anon,
+      createdAt: req.sessionUser.iat * 1000,
+    },
+    token: req.sessionToken,
+  });
+});
 
 // Per-process, which is correct for one instance and silently wrong for many.
 // See the note in `rateLimit.ts`.
@@ -426,13 +475,14 @@ app.post("/rooms/:roomId/media", requireRoom, mediaUploadLimiter, (req: any, res
   const mediaId = objectName.split('.')[0];
   const fileSize = req.file.size;
   const clientIp = String(req.ip || req.socket?.remoteAddress || 'unknown');
+  const uploaderKey = req.sessionUser?.uid ? `user:${req.sessionUser.uid}` : clientIp;
 
-  // 1. Enforce IP Daily Upload Quota (distributed with async Redis support)
-  const ipCheck = await ipDailyTracker.checkAsync(clientIp, fileSize, config.quotas.maxIpDailyBytes);
+  // 1. Enforce Daily Upload Quota (keyed by durable user session, falling back to IP)
+  const ipCheck = await ipDailyTracker.checkAsync(uploaderKey, fileSize, config.quotas.maxIpDailyBytes);
   if (!ipCheck.allowed) {
     await cleanupFailedMedia(s3, s3Bucket, storageKey);
     return res.status(413).json({
-      error: `Daily upload limit of ${formatBytes(config.quotas.maxIpDailyBytes)} exceeded for this IP. Currently used: ${formatBytes(ipCheck.currentBytes)}.`,
+      error: `Daily upload limit of ${formatBytes(config.quotas.maxIpDailyBytes)} exceeded. Currently used: ${formatBytes(ipCheck.currentBytes)}.`,
     });
   }
 
@@ -477,8 +527,8 @@ app.post("/rooms/:roomId/media", requireRoom, mediaUploadLimiter, (req: any, res
       [mediaId, roomId, url, req.file.mimetype, fileSize, storageKey]
     );
 
-    // Record upload for IP rate tracking (async with Redis clustering support)
-    await ipDailyTracker.recordAsync(clientIp, fileSize);
+    // Record upload for user/IP rate tracking (async with Redis clustering support)
+    await ipDailyTracker.recordAsync(uploaderKey, fileSize);
 
     res.json({ id: mediaId, url, mimeType: req.file.mimetype, sizeBytes: fileSize });
   } catch (err) {
@@ -919,7 +969,7 @@ const server = new Hocuspocus({
    * Validate and authenticate incoming document connection requests.
    * Ensures room IDs are structurally valid and prevents malformed room queries.
    */
-  onAuthenticate: async ({ documentName, token, requestParameters }: any) => {
+  onAuthenticate: async ({ documentName, token, requestParameters, requestHeaders }: any) => {
     /**
      * The access model, stated plainly.
      *
@@ -1009,9 +1059,22 @@ const server = new Hocuspocus({
       throw new Error("A signed invite link is required to access this board.");
     }
 
+    // Durable anonymous identity (docs/GOING-LIVE.md Stage 2.1)
+    let sessionUser: SessionPayload | null = null;
+    if (claim.sessionToken) {
+      const verified = verifySessionToken(claim.sessionToken, sessionSecret);
+      if (verified.ok) sessionUser = verified.session;
+    }
+    if (!sessionUser && requestHeaders) {
+      const parsed = readSessionFromRequest({ headers: requestHeaders }, sessionSecret);
+      if (parsed.session) sessionUser = parsed.session;
+    }
+    const userId = sessionUser?.uid || nanoid();
+
     return {
       user: {
-        id: nanoid(),
+        id: userId,
+        isAnonymous: sessionUser?.anon ?? true,
         room: documentName,
         role,
         via,

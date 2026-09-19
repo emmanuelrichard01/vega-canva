@@ -46,6 +46,11 @@ export interface ConnectionClaim {
    * it, and the caller checks the room binding as well as the signature.
    */
   invite?: string;
+  /**
+   * A signed session token identifying the visitor (GOING-LIVE.md Stage 2.1).
+   * Verified by the caller using `verifySessionToken`.
+   */
+  sessionToken?: string;
 }
 
 /** Spellings accepted for each mode, so a hand-typed URL behaves. */
@@ -74,6 +79,7 @@ export function readConnectionClaim(token: unknown, queryRole?: unknown): Connec
   let role: DeclaredRole = 'editor';
   let secret: unknown = token;
   let invite: string | undefined;
+  let sessionToken: string | undefined;
 
   if (typeof token === 'string') {
     let parsed: unknown;
@@ -88,6 +94,7 @@ export function readConnectionClaim(token: unknown, queryRole?: unknown): Connec
       const body = parsed as Record<string, unknown>;
       role = toRole(body.role) ?? role;
       if (typeof body.invite === 'string' && body.invite) invite = body.invite;
+      if (typeof body.sessionToken === 'string' && body.sessionToken) sessionToken = body.sessionToken;
       // A JSON token that carries no secret leaves `secret` undefined rather
       // than the JSON itself, so a deployment with AUTH_SECRET set rejects it
       // instead of comparing the whole envelope against the secret.
@@ -95,5 +102,10 @@ export function readConnectionClaim(token: unknown, queryRole?: unknown): Connec
     }
   }
 
-  return { role: toRole(queryRole) ?? role, secret, ...(invite ? { invite } : {}) };
+  return {
+    role: toRole(queryRole) ?? role,
+    secret,
+    ...(invite ? { invite } : {}),
+    ...(sessionToken ? { sessionToken } : {}),
+  };
 }
