@@ -33,4 +33,15 @@ export const APPEARANCE_TYPES: ReadonlySet<string> = new Set([
    * test's list of appearance-gated capabilities was one short.
    */
   'chart',
+  /**
+   * A table, for the same reason a chart is here: it declares
+   * `supportsEdgeEffects` and `TableRenderer` honours it, drawing its rules
+   * with `roughPolyline` and lettering its cells in the sketch face.
+   *
+   * It was missing, so the Sketch section never rendered for a table and the
+   * one appearance a table actually has could not be reached — the `connector`
+   * failure this file's header describes, committed again on a different type.
+   * Found by CI on its first run, which is the whole argument for having one.
+   */
+  'table',
 ]);

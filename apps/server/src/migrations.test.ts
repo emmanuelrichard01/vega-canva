@@ -75,13 +75,24 @@ describe('migrate', () => {
   });
 
   it('skips what is already recorded, so it is safe to run on every boot', async () => {
+    /**
+     * "Everything after the first two", derived — not the literal `[3]`.
+     *
+     * That literal was correct when there were three migrations and silently
+     * wrong the moment a fourth was added: `migrate` returned `[3, 4]`, which
+     * is exactly right, and the test failed on the only migration it had no
+     * opinion about. A test that has to be edited every time the thing it
+     * guards grows is a test that will be edited carelessly.
+     */
     const { pool, log } = fakePool({ applied: [1, 2] });
+    const pending = MIGRATIONS.filter((m) => m.id > 2).map((m) => m.id);
 
     const applied = await migrate(pool);
 
-    expect(applied).toEqual([3]);
+    expect(applied).toEqual(pending);
     expect(log).not.toContain('RUN 1');
-    expect(log).toContain('RUN 3');
+    expect(log).not.toContain('RUN 2');
+    for (const id of pending) expect(log, `migration ${id}`).toContain(`RUN ${id}`);
   });
 
   it('does nothing at all when the database is up to date', async () => {

@@ -3,6 +3,8 @@ import {
   chromeVisual,
   CURSOR_SIZE,
   cursorVisual,
+  HAND_CLOSED,
+  HAND_OPEN,
   PRECISION_REACH,
   moveVisual,
   penVisual,
@@ -297,13 +299,32 @@ describe('the hand has five digits', () => {
    */
   const open = cursorVisual('pan', 'hand', ACCENT).svg;
 
+  /**
+   * Fingertips, by their own radius.
+   *
+   * Both hands end at the wrist with an arc too, at radius `1.45` — so a
+   * pattern loose enough to match "any arc" counts five and a test asserting
+   * four fails on a hand that has exactly four fingers. The tips are `1.5`,
+   * and naming that is the difference between counting fingers and counting
+   * curves.
+   */
+  const fingertips = (d: string) => (d.match(/a1\.5 1\.5 0 0 1/g) ?? []).length;
+
   it('draws four finger tips', () => {
-    // Each fingertip is an arc command; the thumb is a curve, not an arc. The
-    // silhouette is drawn twice — a halo pass and an outline pass — so the
-    // count is taken from one `d` rather than from the whole markup.
-    const d = /<path d="(M8\.4 15\.5[^"]*)"/.exec(open)?.[1] ?? '';
-    expect(d, 'the open hand should be in the markup').not.toBe('');
-    expect((d.match(/a1\.\d+ 1\.\d+ 0 0 1/g) ?? []).length).toBe(4);
+    /**
+     * Counted from `HAND_OPEN` itself, not from a coordinate.
+     *
+     * This matched the markup against a literal `M8.4 15.5`, so when the hand
+     * was redrawn — it opens `M6.5 13.2` now — the regex found nothing, the
+     * captured `d` was empty, and the test failed on its own first assertion
+     * rather than on the thing it is about. A test pinned to the first two
+     * numbers of a path breaks every time the art is touched, and says
+     * nothing useful when it does.
+     *
+     * Each fingertip is an arc command; the thumb is a curve, not an arc.
+     */
+    expect(open, 'the open hand should be in the markup').toContain(HAND_OPEN);
+    expect(fingertips(HAND_OPEN), 'four fingertips').toBe(4);
   });
 
   it('needs no knuckle lines, because the valleys separate the fingers', () => {
@@ -314,8 +335,25 @@ describe('the hand has five digits', () => {
     expect(openOnly).not.toContain('opacity="0.55"');
   });
 
-  it('still marks the curled fingers on the fist, which has no valleys', () => {
-    expect(cursorVisual('grab', 'hand', ACCENT).svg).toContain('opacity="0.55"');
+  it('curls the fingers on the fist rather than reusing the open hand', () => {
+    /**
+     * This asserted `opacity="0.55"`, which was the knuckle strokes the
+     * three-fingered fist needed to show where its fingers ended. The redrawn
+     * fist encodes the curl in `HAND_CLOSED` itself and the separate marks
+     * were removed with the art that needed them — so the only
+     * `opacity="0.55"` left in this module belongs to the **eraser**, and the
+     * assertion was one small edit away from passing for the wrong reason.
+     *
+     * What the fist actually promises is that it is a different hand from the
+     * open one, with its fingers stopped short. Both are checked against the
+     * path, which is where that fact lives.
+     */
+    const fist = cursorVisual('grab', 'hand', ACCENT).svg;
+    expect(fist).toContain(HAND_CLOSED);
+    expect(fist).not.toContain(HAND_OPEN);
+    // Four fingers still, each one curled: the fist stops them above the
+    // knuckle line rather than reaching up the palm.
+    expect(fingertips(HAND_CLOSED), 'four fingertips').toBe(4);
   });
 });
 

@@ -2,6 +2,7 @@ import { describe, it, expect } from 'vitest';
 import { TYPE_LABEL, TYPE_ORDER, nodeLabel } from './nodeLabel';
 import { NODE_TYPES, type AnyNode } from './schema';
 import { CHART_KINDS } from '../chart/chartTypes';
+import { CHART_LABELS } from '../chart/chartKinds';
 
 describe('type chips', () => {
   it('offers a chip for every node type the schema declares', () => {
@@ -69,10 +70,25 @@ describe('charts', () => {
   });
 
   it('calls a plot a plot', () => {
-    expect(nodeLabel(chart({ kind: 'function' }))).toBe('Function plot');
-    expect(nodeLabel(chart({ kind: 'vectorField' }))).toBe('Vector field plot');
-    // A heatmap of F(x, y) is a plot of a function, not a chart of a table.
-    expect(nodeLabel(chart({ kind: 'heatmap' }))).toBe('Heatmap plot');
+    /**
+     * The *suffix* is the rule; the name in front of it belongs to
+     * `CHART_LABELS` and is read from there.
+     *
+     * This spelled the names out, and one of them drifted: `heatmap` was
+     * renamed to "Surface map" when `matrix` took the word "Heatmap" — a
+     * deliberate change, documented where it was made, because "heatmap" said
+     * plainly means a table of values painted by size. The test kept asserting
+     * the old string and so failed over a rename it had no opinion about.
+     *
+     * Asking `CHART_LABELS` means this can only fail for the thing it is
+     * actually about: a plot being called a chart, or the reverse.
+     */
+    expect(nodeLabel(chart({ kind: 'function' }))).toBe(`${CHART_LABELS.function} plot`);
+    expect(nodeLabel(chart({ kind: 'vectorField' }))).toBe(`${CHART_LABELS.vectorField} plot`);
+    // A surface of F(x, y) is a plot of a function, not a chart of a table.
+    expect(nodeLabel(chart({ kind: 'heatmap' }))).toBe(`${CHART_LABELS.heatmap} plot`);
+    // And the table of values it was renamed away from is a chart, not a plot.
+    expect(nodeLabel(chart({ kind: 'matrix' }))).toBe(`${CHART_LABELS.matrix} chart`);
   });
 
   it('never calls two different kinds the same thing', () => {

@@ -21,10 +21,27 @@ describe('whenOpened', () => {
   });
 
   it('becomes a date once counting days stops helping', () => {
-    expect(whenOpened(ago(40 * DAY), NOW)).toMatch(/^\d+ \w+$/);
+    /**
+     * A day and a month, in whichever order the reader's locale puts them.
+     *
+     * This asserted `/^\d+ \w+$/` — day before month — and therefore passed
+     * only on a machine whose locale writes dates that way. `whenOpened` calls
+     * `toLocaleDateString(undefined, …)`, which deliberately follows the
+     * *viewer's* locale, so on `en-US` it returns "Aug 8" and the test failed
+     * on a date that is perfectly correct for the person reading it.
+     *
+     * The ordering was never the requirement. What the function promises is a
+     * short date — a numeric day and an abbreviated month, no weekday, no time
+     * — so that is what is checked, in either order.
+     */
+    const recent = whenOpened(ago(40 * DAY), NOW);
+    expect(recent, 'a numeric day').toMatch(/\d{1,2}/);
+    expect(recent, 'an abbreviated month').toMatch(/[A-Za-z]{3}/);
+    expect(recent, 'and nothing else').toMatch(/^[\w\s.,]+$/);
+
     // A different year says so; the same year does not need to.
     expect(whenOpened(ago(400 * DAY), NOW)).toMatch(/2025/);
-    expect(whenOpened(ago(40 * DAY), NOW)).not.toMatch(/2026/);
+    expect(recent).not.toMatch(/2026/);
   });
 
   it('never counts backwards when a clock disagrees', () => {
