@@ -1,6 +1,7 @@
-import React from 'react';
+import React, { useMemo } from 'react';
 import { Check, Copy, ExternalLink, MoreHorizontal, X } from 'lucide-react';
 import { WorkspaceCover } from '../WorkspaceCover';
+import { loadPreview } from '../../engine/model/boardPreview';
 import { whenOpened, type ShelfBoard } from '../../engine/room/boardShelf';
 
 export type BoardLayout = 'grid' | 'list';
@@ -40,19 +41,56 @@ export const BoardTile: React.FC<Props> = ({ board, layout, openMenu, onMenu, on
     event.stopPropagation();
   };
 
+  /**
+   * The board's own summary, read once here and handed down.
+   *
+   * `WorkspaceCover` already loads this to draw the picture. Reading it in the
+   * parent and passing it through the prop the gallery uses means one
+   * `localStorage` hit and one parse per card rather than two, and it gives the
+   * card access to the one fact the summary holds that the picture cannot
+   * state: how much is on the board.
+   *
+   * The `null` / empty distinction survives the handoff — `WorkspaceCover`
+   * treats a supplied `null` exactly as it treats its own failed load, so "not
+   * opened on this device" and "opened, and empty" stay two different answers.
+   */
+  const preview = useMemo(() => loadPreview(board.id), [board.id]);
+
+  /**
+   * How much is on it, where that is known.
+   *
+   * A date was the card's only fact, so a grid of six boards offered six
+   * timestamps and nothing else to tell them apart — and the stated reason the
+   * grid exists is that a board is recognised before it is read. The count is
+   * the cheapest true thing the summary already holds, and it is the difference
+   * between a retro with nine notes and an architecture diagram with four
+   * hundred objects.
+   *
+   * Omitted rather than shown as zero when there is no summary: a board this
+   * device has never opened has an unknown size, and "0 objects" would be a
+   * confident wrong answer of exactly the kind the cover placeholder exists to
+   * avoid.
+   */
+  const total = preview?.total;
+
   return (
     <a className={`bcard bcard--${layout}`} href={`/room/${board.id}`} data-open={open || undefined}>
       <span className="bcard__art">
-        <WorkspaceCover workspaceId={board.id} name={board.name} />
+        <WorkspaceCover workspaceId={board.id} name={board.name} preview={preview} />
       </span>
 
       <span className="bcard__body">
         <span className="bcard__name">{board.name}</span>
         {/* In a row the dates line up in their own column, so the word that
             labels them would repeat down the page; in a grid each date stands
-            alone under a name and needs it. */}
+            alone under a name and needs it — unless the count is leading, in
+            which case "22 minutes ago" after it reads as recency without help. */}
         <span className="bcard__meta">
-          {layout === 'list' ? whenOpened(board.lastAccessed) : `Opened ${whenOpened(board.lastAccessed)}`}
+          {layout === 'list'
+            ? whenOpened(board.lastAccessed)
+            : total === undefined
+              ? `Opened ${whenOpened(board.lastAccessed)}`
+              : `${total.toLocaleString()} object${total === 1 ? '' : 's'} · ${whenOpened(board.lastAccessed)}`}
         </span>
       </span>
 

@@ -48,8 +48,21 @@ import { roughEllipse, roughPolyline, seedFrom } from '../../engine/model/rough'
 
 const BEAT_MS = 7000;
 
+/**
+ * There is no eyebrow here, and there should never be one again.
+ *
+ * Each beat carried one — "The surface", "The people" — set in brand orange
+ * above the title. Two separate rules in this project forbid exactly that, and
+ * DESIGN.md's own No Eyebrow Rule cites *this element* as the instance that
+ * shipped: an uppercase kicker labels the heading instead of saying anything
+ * the heading does not, and brand orange as text on a light ground measures
+ * about 2.1:1, which the Don'ts list forbids outright.
+ *
+ * "The surface" over "A canvas with no edges" is the heading's own subject read
+ * back to it. Deleting it costs no information and returns the beat to one
+ * claim, which is what a beat is.
+ */
 interface Beat {
-  eyebrow: string;
   title: string;
   body: string;
   art: React.ReactNode;
@@ -283,25 +296,21 @@ const Handmade: React.FC = () => (
 
 const BEATS: readonly Beat[] = [
   {
-    eyebrow: 'The surface',
     title: 'A canvas with no edges',
     body: 'No page to fill, no artboard to fit inside, no zoom that runs out. Put something down anywhere and keep going in any direction.',
     art: <Edgeless />,
   },
   {
-    eyebrow: 'The people',
     title: 'Everyone, at the same time',
     body: 'Send the link and they are in. No account, nothing to accept. You see their cursor, their name, and what they are holding.',
     art: <Together />,
   },
   {
-    eyebrow: 'The work',
     title: 'It keeps working offline',
     body: 'Edits made with the network down merge when you come back. Nobody has to be told their afternoon was overwritten.',
     art: <Durable />,
   },
   {
-    eyebrow: 'The look',
     title: 'Ruled, or drawn by hand',
     body: 'Any shape can be sketched instead of drafted, and everyone on the board sees the same strokes. This one was drawn by the app.',
     art: <Handmade />,
@@ -373,7 +382,6 @@ export const AuthShowcase: React.FC = () => {
               aria-hidden={state === 'active' ? undefined : true}
             >
               <div className="showcase__frame">{b.art}</div>
-              <p className="showcase__eyebrow">{b.eyebrow}</p>
               <h2 className="showcase__title">{b.title}</h2>
               <p className="showcase__body">{b.body}</p>
             </div>

@@ -383,7 +383,11 @@ export const Home: React.FC = () => {
    */
   const suggestedTemplates = useMemo(() => {
     const featuredFirst = [...TEMPLATES].sort((a, b) => Number(Boolean(b.featured)) - Number(Boolean(a.featured)));
-    return featuredFirst.slice(0, 4);
+    // Five, not four: the seam now shares the board grid's column basis, and a
+    // wide window lays that out as five tracks. Four cards left the last track
+    // of the row empty, which reads as a missing card rather than as a choice.
+    // Narrower windows drop to four or three tracks and simply wrap.
+    return featuredFirst.slice(0, 5);
   }, []);
 
   const matchedRooms = useMemo(() => {
@@ -914,30 +918,32 @@ export const Home: React.FC = () => {
    * See `boardShelf.ts` for when a heading earns its place.
    */
   const boardsBody = !hasRooms ? (
-    <div className="stage__empty stage__empty--start">
-      <h3>Nothing here yet</h3>
-      <p>Four ways to get the first one.</p>
-      <QuickStart
-        size="full"
-        templateCount={TEMPLATES.length}
-        onBlank={openBoard}
-        onTemplates={() => goTemplates(null)}
-        onJoin={() => openJoin()}
-        onRestore={() => restoreInputRef.current?.click()}
-      />
-    </div>
+    <QuickStart
+      templateCount={TEMPLATES.length}
+      onBlank={openBoard}
+      onTemplates={() => goTemplates(null)}
+      onJoin={() => openJoin()}
+      onRestore={() => restoreInputRef.current?.click()}
+    />
   ) : (
     <>
-      {!query.trim() && (
-        <QuickStart
-          size="strip"
-          templateCount={TEMPLATES.length}
-          onBlank={openBoard}
-          onTemplates={() => goTemplates(null)}
-          onJoin={() => openJoin()}
-          onRestore={() => restoreInputRef.current?.click()}
-        />
-      )}
+      {/*
+        The openings strip that used to sit here is gone.
+
+        It was four equal tiles — icon, name, one line of explanation — in a row
+        above the boards, and it was the first thing the eye landed on every
+        session. Three things were wrong with it. It is the shape this project's
+        own craft floor names first among the layouts to refuse: same-size cards
+        of icon plus heading plus text, used as page structure. It put chrome
+        above the work on a page whose only job is to show the work. And it
+        stated four actions at equal weight, three of which are rare, while the
+        common one already had a button.
+
+        All four openings still exist and none of them moved further away: the
+        blank board and the two homeless ones are the split control in the
+        header, and templates is a destination on the rail. The strip was the
+        fourth copy of a thing that only ever needed one.
+      */}
 
       {matchedRooms.length === 0 ? (
         // A filter matching nothing is a different screen from having no
@@ -1018,86 +1024,19 @@ export const Home: React.FC = () => {
         </a>
 
         {/*
-          The one front door, and the only accent on the rail — now with the
-          other three ways in behind it. See `newOpen` for why they belong
-          here rather than behind the avatar.
+          The rail navigates and nothing else.
 
-          A **split** control, not a menu button: the primary click still opens
-          a blank board with nothing in the way, and the caret is a separate
-          target for the rest. Turning the whole button into a menu would make
-          the most common action on the page cost two clicks in order to make
-          three rare ones cost one, which is the trade backwards.
+          It used to carry the accent-filled `+` as well, which put two orange
+          things in one viewport — the button and the mark against the current
+          destination — and the One Front Door Rule says a screen gets exactly
+          one accent-filled control. When two things are the accent, neither is
+          primary and the colour has become theming.
 
-          The caret is also reachable by right-clicking the `+` itself, because
-          a 14px target on a rail is fine as a second way in and thin as the
-          only one.
+          The front door moved to the stage header, beside the grid it fills,
+          where a "New board" button is both a wider target and a named one.
+          That leaves this column as what its own heading already claimed it
+          was: the page's *edge*. Brand, two destinations, and you.
         */}
-        <div className="lrail__start" ref={newRef}>
-          <button
-            type="button"
-            className="lrail__new"
-            onClick={openBoard}
-            onContextMenu={(e) => { e.preventDefault(); setNewOpen((o) => !o); }}
-            data-tooltip="New board"
-            data-tooltip-pos="right"
-            aria-label="New board"
-          >
-            <Plus size={19} aria-hidden="true" />
-          </button>
-
-          <button
-            type="button"
-            className="lrail__start-more"
-            onClick={() => { setMeOpen(false); setNewOpen((o) => !o); }}
-            aria-haspopup="menu"
-            aria-expanded={newOpen}
-            aria-label="More ways to start a board"
-          >
-            <ChevronDown size={11} aria-hidden="true" />
-          </button>
-
-          {newOpen && (
-            <div className="lrail__menu lrail__menu--start ctx-popover" role="menu">
-              {/*
-                Exactly the openings with no home of their own — which is two,
-                not four.
-
-                A first draft listed all four here, and that was the same
-                mistake in a tidier costume. **Templates is already a permanent
-                destination on this rail**, one icon below: naming it again
-                inside the menu re-scatters the thing the menu exists to
-                gather, and a menu carrying an item you can reach without it
-                teaches people it is a grab-bag rather than a specific set.
-
-                **Blank board** goes for the same reason and a sharper one. The
-                caret sits *on* the `+`, so this reads as "and more ways" —
-                naming the button's own action inside its own menu tells
-                somebody what they just clicked.
-
-                What is left is what was actually homeless: a file you have,
-                and a link somebody sent. No rule between them. Two short items
-                separated by a divider is three rows for two actions, and the
-                make/join distinction is legible without one.
-              */}
-              <button
-                type="button"
-                className="ctx-menu-item"
-                role="menuitem"
-                onClick={() => { setNewOpen(false); restoreInputRef.current?.click(); }}
-              >
-                <UploadCloud size={15} /> From a backup file
-              </button>
-              <button
-                type="button"
-                className="ctx-menu-item"
-                role="menuitem"
-                onClick={() => { setNewOpen(false); setView('boards'); openJoin(); }}
-              >
-                <Link2 size={15} /> Open a link
-              </button>
-            </div>
-          )}
-        </div>
 
         <div className="lrail__nav">
           <button
@@ -1288,6 +1227,18 @@ export const Home: React.FC = () => {
             </p>
           )}
 
+          {/*
+            No header at all on an empty library.
+
+            It used to render regardless, so the first screen carried "Your
+            boards" at 30px over a lede explaining where boards collect, above
+            an empty state that then said the same thing again in its own
+            heading — the page titled a collection that did not exist, and said
+            it twice. With nothing to search, sort or lay out, the whole band is
+            three controls acting on nothing plus a second copy of the button
+            already at the centre of the screen.
+          */}
+          {(view === 'templates' || hasRooms) && (
           <header className="lstage__head">
             <div className="lstage__titles">
               <h1 className="lstage__title">
@@ -1295,9 +1246,7 @@ export const Home: React.FC = () => {
               </h1>
               <p className="lstage__lede">
                 {view === 'boards'
-                  ? hasRooms
-                    ? `${recentRooms.length} on this device, kept in your browser rather than in an account.`
-                    : 'Boards you open on this device collect here.'
+                  ? `${recentRooms.length} on this device, kept in your browser rather than in an account.`
                   : category
                     ? `${matchedTemplates.length} board${matchedTemplates.length === 1 ? '' : 's'}, each one editable the moment it opens.`
                     : 'Working boards, already filled in. Open one and change anything in it.'}
@@ -1315,7 +1264,6 @@ export const Home: React.FC = () => {
               are arranged. `/` still puts the caret in the field.
             */}
             <div className="lstage__tools">
-              {(view === 'templates' || hasRooms) && (
               <label className="lstage__search">
                 <Search size={15} aria-hidden="true" />
                 <input
@@ -1334,7 +1282,6 @@ export const Home: React.FC = () => {
                   <kbd aria-hidden="true">/</kbd>
                 )}
               </label>
-              )}
 
               {view === 'boards' && hasRooms && (
                 <>
@@ -1394,8 +1341,75 @@ export const Home: React.FC = () => {
                   </div>
                 </>
               )}
+
+              {/*
+                The page's one front door, at the end of the row.
+
+                ## Why it is here and not on the rail
+
+                It was a 38px accent square at the top of the rail, which made
+                the most common action on the page an unlabelled icon in the
+                furniture, and put the accent on the rail twice over — see the
+                note there. Here it is named, it is the widest target in the
+                header, and it sits at the end of the controls in the order
+                they are reached for: find what exists, arrange it, or make a
+                new one.
+
+                ## Still a split control, for the same reason as before
+
+                A plain click opens a blank board with no menu in the way. The
+                caret is a separate target for the two openings that have no
+                home of their own — a file you already have, and a link
+                somebody sent. Templates is not in the list: it is a permanent
+                destination on the rail, and a menu that repeats what sits one
+                click away teaches people it is a grab-bag.
+              */}
+              <div className="lstage__new" ref={newRef}>
+                <button
+                  type="button"
+                  className="lstage__new-go"
+                  onClick={openBoard}
+                  onContextMenu={(e) => { e.preventDefault(); setNewOpen((o) => !o); }}
+                >
+                  <Plus size={16} aria-hidden="true" />
+                  <span className="lstage__new-label">New board</span>
+                </button>
+
+                <button
+                  type="button"
+                  className="lstage__new-more"
+                  onClick={() => { setMeOpen(false); setNewOpen((o) => !o); }}
+                  aria-haspopup="menu"
+                  aria-expanded={newOpen}
+                  aria-label="More ways to start a board"
+                >
+                  <ChevronDown size={13} aria-hidden="true" />
+                </button>
+
+                {newOpen && (
+                  <div className="lrail__menu lstage__new-menu ctx-popover" role="menu">
+                    <button
+                      type="button"
+                      className="ctx-menu-item"
+                      role="menuitem"
+                      onClick={() => { setNewOpen(false); restoreInputRef.current?.click(); }}
+                    >
+                      <UploadCloud size={15} /> From a backup file
+                    </button>
+                    <button
+                      type="button"
+                      className="ctx-menu-item"
+                      role="menuitem"
+                      onClick={() => { setNewOpen(false); setView('boards'); openJoin(); }}
+                    >
+                      <Link2 size={15} /> Open a link
+                    </button>
+                  </div>
+                )}
+              </div>
             </div>
           </header>
+          )}
 
           {/* The categories, beside the grid they filter. A row across the top
               of a wall of pictures reads as a filter; the same five as a column

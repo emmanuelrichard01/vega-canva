@@ -103,6 +103,47 @@ export const AuthModal: React.FC = () => {
       <AuthShowcase />
 
       <div className="auth__pane">
+        {/*
+          Appearance, in the corner, out of the form.
+
+          It sat between the name field and Continue — the only control in the
+          column that was not about who you are, placed in the middle of the one
+          decision the screen exists to collect. A preference about the app's
+          chrome is not a step in signing in, and putting it in the path made it
+          read as one.
+
+          Icon-only here where it was named before. The earlier note was right
+          that two icons in a track mid-form leave their subject to be guessed
+          at; in the top corner of a window a sun and a moon are the least
+          ambiguous control in software, and the group keeps its accessible
+          name either way.
+
+          No tooltips on the two. A tooltip that says "Light" over a sun is the
+          icon read back, and the pressed state already says which one is on —
+          so it would be a hover-delayed label for a control nobody is
+          uncertain about. `aria-label` still names each for anyone not seeing
+          the glyph, which is the case that actually needed covering.
+        */}
+        <div className="auth__theme" role="radiogroup" aria-label="Appearance">
+          {([
+            [false, 'Light', <Sun size={15} aria-hidden key="s" />],
+            [true, 'Dark', <Moon size={15} aria-hidden key="m" />],
+          ] as const).map(([dark, label, icon]) => (
+            <button
+              key={label}
+              type="button"
+              role="radio"
+              aria-checked={darkTheme === dark}
+              aria-label={label}
+              className="auth__theme-option"
+              data-active={darkTheme === dark || undefined}
+              onClick={() => setDarkTheme(dark)}
+            >
+              {icon}
+            </button>
+          ))}
+        </div>
+
       <div className="auth__card">
         {/* The wordmark, not the stacked lockup.
             This is still a brand moment, but it is now a brand moment beside
@@ -110,11 +151,18 @@ export const AuthModal: React.FC = () => {
             carries the product's argument. A 104px stacked mark on top of a
             form, next to that, is the identity said twice at two sizes. The
             wordmark is a line above a line, which is the shape the column
-            wants. */}
-        <Logo piece="wordmark" size={30} alt="Vega Studio" />
+            wants.
+
+            Sized down from 30 and given its own space below rather than the
+            card's shared gap. At 30 it was a second headline stacked on the
+            real one, and an even gap above and below made the masthead and the
+            heading read as two lines of one block. A masthead is not a heading
+            for the thing under it: it carries more air beneath it than between
+            the heading and its own lede. */}
+        <Logo piece="wordmark" size={22} alt="Vega Studio" className="auth__mark" />
 
         <div>
-          <h1 className="auth__title">What should people call you?</h1>
+          <h1 className="auth__title">What&rsquo;s your name?</h1>
           {/* The honest version of what used to be "start collaborating with
               your team in real-time" — which describes every product in this
               category and tells a first-time visitor nothing. This says what
@@ -123,9 +171,18 @@ export const AuthModal: React.FC = () => {
               about the product -- no accounts, a link is the invitation --
               which the panel beside it now spends a whole beat on. Repeating
               it here made the form argue for the product instead of asking its
-              question. */}
+              question.
+
+              Shortened again, and made true. The heading was "What should
+              people call you?" over "Your name and colour are how everyone
+              else on the board sees you" — an indirect question and a
+              seventeen-word answer to it. Worse, it promised a colour: there is
+              no colour control on this screen, the presence colour is assigned,
+              and naming it here sends people looking for a picker that does not
+              exist. The question is the shortest form of itself and the line
+              under it says only what it can deliver. */}
           <p className="auth__lede">
-            Your name and colour are how everyone else on the board sees you.
+            It&rsquo;s how everyone else on the board sees you.
           </p>
         </div>
 
@@ -160,15 +217,25 @@ export const AuthModal: React.FC = () => {
             * The same `grid-switch` the panels use, so there is one switch in
             * this product rather than one per screen.
             */}
+          {/*
+            The switch and its label on one line, with no box round them.
+
+            It was a bordered card holding a two-line label — the name, then a
+            sentence that changed with the state — which made it the second
+            framed control in a column containing one field, and read as a
+            second thing to fill in. This system declares elevation once per
+            surface and does not nest surfaces; a switch row is a row.
+
+            The explanatory sentence went with the box, because it was the third
+            sentence on this screen about where the name is kept: the lede says
+            what the name is *for*, the footnote says it lives in the browser
+            rather than in an account, and this one said "you come back as the
+            same person on this browser" — the footnote's own claim, restated
+            two rows above it. The footnote now carries both states, so nothing
+            was lost.
+          */}
           <label className="auth__remember">
-            <span className="auth__remember-label">
-              Remember me on this device
-              <span className="auth__remember-hint">
-                {remember
-                  ? 'You come back as the same person on this browser.'
-                  : 'This session ends when the tab closes.'}
-              </span>
-            </span>
+            <span className="auth__remember-label">Remember me on this device</span>
             <button
               type="button"
               role="switch"
@@ -181,46 +248,24 @@ export const AuthModal: React.FC = () => {
             </button>
           </label>
 
-          {/* Below the field and above the action, which is the order these
-              are decided in: the name is what the screen is for, the look is a
-              preference you form while looking at the page, and Continue is
-              the end of both. */}
-          {/* Named, because two icons in a track is a control whose subject
-              has to be guessed at. */}
-          <p className="auth__look-label">Appearance</p>
-          <div className="auth__look" role="radiogroup" aria-label="Appearance">
-            {([
-              [false, 'Light', <Sun size={14} aria-hidden key="s" />],
-              [true, 'Dark', <Moon size={14} aria-hidden key="m" />],
-            ] as const).map(([dark, label, icon]) => (
-              <button
-                key={label}
-                type="button"
-                role="radio"
-                aria-checked={darkTheme === dark}
-                className="auth__look-option"
-                data-active={darkTheme === dark || undefined}
-                onClick={() => setDarkTheme(dark)}
-              >
-                {icon}
-                {label}
-              </button>
-            ))}
-          </div>
-
           <button type="submit" className="auth__submit" disabled={!ready}>
             {ready ? 'Continue' : 'Enter a name to continue'}
             {ready && <ArrowRight size={17} />}
           </button>
+
+          {/* Inside the form, under the action it qualifies. It used to sit
+              outside the card, which put it the same distance from Continue as
+              Continue was from the switch — so the sentence about what
+              Continue does floated free of it. It answers a question asked
+              after deciding to continue, so it stays last; it belongs to the
+              button, not to the page. */}
+          <p className="auth__footnote">
+            {remember
+              ? 'Your name is kept in this browser, not in an account.'
+              : 'This session ends when you close the tab.'}
+          </p>
         </form>
       </div>
-
-      {/* Exactly what the two code paths above do, said plainly. Below the
-          action rather than above it, because it answers a question people ask
-          after deciding to continue rather than before it. */}
-      <p className="auth__footnote">
-        Your name is kept in this browser, not in an account.
-      </p>
       </div>
     </div>
   );
