@@ -1,0 +1,88 @@
+name: Checks
+
+# Nothing in this repository ran its own tests until this file existed.
+#
+# Both workspaces carry a `test` script and thousands of assertions, and the
+# only workflow here was the nightly database backup -- so every suite was run
+# by whoever happened to run it locally, or not at all. A session that could
+# not start Vitest (an unrelated local fault) found five real faults by
+# executing those same test files another way: a lesson silently losing its
+# keyboard badge, a tool the reference could not name, copy that broke a
+# documented house rule, a fixture that could not satisfy two of its own
+# assertions, and a shipped rendering defect.
+#
+# None of those were visible to typechecking, and none of them would have
+# reached anybody's screen as an error. They were found because something ran
+# the tests. That is the entire argument for this file.
+#
+# Typecheck *and* build, not just build: `tsc -b` covers the test files, which
+# the production `tsc` configs exclude, so a broken test would otherwise only
+# surface as a failing assertion rather than as a compile error naming the line.
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+
+# A superseded run on the same branch is wasted minutes; the newest commit is
+# the only one whose answer anybody acts on. Never applied to `main` pushes,
+# where each commit's result is a record worth keeping.
+concurrency:
+  group: checks-${{ github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+permissions:
+  contents: read
+
+jobs:
+  checks:
+    name: ${{ matrix.workspace }}
+    runs-on: ubuntu-latest
+    strategy:
+      # Both report, always. Failing fast here would hide a server fault behind
+      # a frontend one and cost a second push to find it.
+      fail-fast: false
+      matrix:
+        workspace: [frontend, server]
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          # Matches the version Render builds on, so a syntax or stdlib
+          # difference shows up here rather than in a deploy.
+          node-version: '24'
+          cache: npm
+
+      # The root install, because this is an npm workspace: installing inside
+      # one of them alone leaves the hoisted dependencies out, which is the
+      # exact failure that broke the server build on `@types/fontkit`.
+      - name: Install
+        run: npm ci
+
+      - name: Typecheck
+        working-directory: apps/${{ matrix.workspace }}
+        # `tsc -b` on the frontend covers the test files; the server's build
+        # config excludes them, so they are checked explicitly below.
+        run: npx tsc -b --pretty false
+
+      # The server's build config excludes `*.test.ts`, so nothing else checks
+      # them. `bundler` resolution rather than `node16` on purpose: this has to
+      # agree with how Vitest resolves, and `node16` refuses the ESM `yjs`
+      # import that Vitest loads without complaint — a red build over a file
+      # that is perfectly fine.
+      - name: Typecheck tests (server)
+        if: matrix.workspace == 'server'
+        working-directory: apps/server
+        run: >-
+          npx tsc --noEmit --target es2022 --module esnext --moduleResolution bundler
+          --esModuleInterop --strict --skipLibCheck --types node src/*.test.ts
+
+      - name: Test
+        working-directory: apps/${{ matrix.workspace }}
+        run: npm test
+
+      - name: Build
+        working-directory: apps/${{ matrix.workspace }}
+        run: npm run build
