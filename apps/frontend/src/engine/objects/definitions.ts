@@ -175,13 +175,24 @@ objectRegistry.register({
   type: 'code',
   capabilities: {
     /**
-     * Opacity and shadow. A code block's colours are its *theme* — ground,
-     * gutter and eighteen token colours tuned to hold contrast together — so a
-     * single fill swatch could only break that, and the Code section offers
-     * the four themes instead.
+     * Opacity. A code block's colours are its *theme* — ground, gutter and
+     * eighteen token colours tuned to hold contrast together — so a single
+     * fill swatch could only break that, and the Code section offers the four
+     * themes instead.
+     *
+     * `supportsShadow` was declared here and **nothing ever drew one**:
+     * `CodeRenderer` has no `shadowColor` or `shadowBlur`, and the Effects
+     * section that would have offered the control is gated on
+     * `APPEARANCE_TYPES`, which this type is not in. So the capability was a
+     * promise no code path kept, and it was invisible precisely because the
+     * second gate hid the first.
+     *
+     * Removed rather than honoured, because a control that does nothing is
+     * worse than an absent one. Put it back in the same change that teaches
+     * `CodeRenderer` to cast a shadow — and add `code` to `APPEARANCE_TYPES`
+     * in that change, or it still will not appear.
      */
     supportsOpacity: true,
-    supportsShadow: true,
     supportsComments: true,
   },
   defaultProperties: () => ({ width: 520, height: 200 }),
@@ -190,9 +201,16 @@ objectRegistry.register({
 objectRegistry.register({
   type: 'link',
   capabilities: {
-    /** A card is a clipping of someone else's page: it keeps its own paper. */
+    /**
+     * A card is a clipping of someone else's page: it keeps its own paper.
+     *
+     * `supportsShadow` was declared and never drawn — `LinkRenderer` paints its
+     * own ground, border and media block and has no shadow anywhere, and the
+     * Effects section is gated on `APPEARANCE_TYPES`, which `link` is not in.
+     * See the note on `code` above: same promise, same two gates, same reason
+     * nobody noticed.
+     */
     supportsOpacity: true,
-    supportsShadow: true,
     supportsComments: true,
   },
   defaultProperties: () => ({ width: 520, height: 144 }),
