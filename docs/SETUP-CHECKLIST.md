@@ -55,9 +55,20 @@ paid-plan change and reasonable to defer — but not to be vague about.
 
 ---
 
-## Done
-
+## Local developer notes
+- [x] **Windows Defender & esbuild false-positives.** Windows Defender heuristic
+  scanners occasionally flag native Go binaries in `@esbuild/win32-x64/esbuild.exe`
+  with a false-positive `spawn UNKNOWN`. A self-healing script `scripts/ensure-esbuild.js`
+  automatically enables the WebAssembly fallback (`esbuild-wasm`) on `npm install`
+  so Vitest and Vite run smoothly without requiring Administrator elevation.
+  Developers who prefer native execution speed can run in an elevated PowerShell:
+  `Add-MpPreference -ExclusionPath "<repo-path>"`.
+- [x] **Scheduled Room Reaper.** Available via `npm run reap` (dry-run) and
+  `npm run reap:apply` in `apps/server`, automated weekly via
+  `.github/workflows/reap.yml`, and triggerable remotely via `POST /admin/reap`.
 - [x] **`SHARE_SECRET` on Render.** Set 2026-09-02, which switches on the
+  restricted share roles. Set `ENFORCE_SHARE_TOKENS=true` when public unsigned
+  access should be completely disabled.
   restricted share roles. Nothing else needs the value — it stays server-side,
   and there is no `VITE_` counterpart to add.
   **Verify once the deploy that carries the invite route is green:**

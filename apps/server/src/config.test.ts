@@ -15,7 +15,7 @@ const KEYS = [
   'POSTGRES_DB', 'DB_POOL_MAX', 'S3_ENDPOINT', 'S3_BUCKET', 'S3_ACCESS_KEY',
   'S3_SECRET_KEY', 'REDIS_HOST', 'REDIS_PORT', 'AUTH_SECRET',
   'MIN_ROOM_ID_LENGTH', 'MAX_ROOM_STORAGE_BYTES', 'MAX_IP_DAILY_STORAGE_BYTES',
-  'MAX_GLOBAL_STORAGE_BYTES', 'ROOM_TTL_DAYS', 'SENTRY_DSN',
+  'MAX_GLOBAL_STORAGE_BYTES', 'ROOM_TTL_DAYS', 'SENTRY_DSN', 'ENFORCE_SHARE_TOKENS',
 ];
 
 let saved: Record<string, string | undefined> = {};
@@ -58,6 +58,7 @@ describe('development', () => {
     expect(config.quotas.maxGlobalBytes).toBe(10 * 1024 * 1024 * 1024);
     expect(config.roomTtlDays).toBe(90);
     expect(config.sentryDsn).toBeNull();
+    expect(config.enforceShareTokens).toBe(false);
   });
 });
 

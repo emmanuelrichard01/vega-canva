@@ -1,0 +1,57 @@
+name: Storage Reaper
+
+on:
+  schedule:
+    # Run every Sunday at 03:00 UTC
+    - cron: '0 3 * * 0'
+  workflow_dispatch:
+    inputs:
+      dry_run:
+        description: 'Perform dry run inspection without deleting data'
+        required: true
+        type: boolean
+        default: true
+      days:
+        description: 'Inactivity threshold in days'
+        required: true
+        type: string
+        default: '90'
+
+jobs:
+  reap:
+    name: Reap Inactive Rooms & Media
+    runs-on: ubuntu-latest
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '24'
+          cache: npm
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Run Reaper
+        working-directory: apps/server
+        env:
+          POSTGRES_HOST: ${{ secrets.POSTGRES_HOST }}
+          POSTGRES_PORT: ${{ secrets.POSTGRES_PORT || '5432' }}
+          POSTGRES_DB: ${{ secrets.POSTGRES_DB || 'vega_canva' }}
+          POSTGRES_USER: ${{ secrets.POSTGRES_USER }}
+          POSTGRES_PASSWORD: ${{ secrets.POSTGRES_PASSWORD }}
+          POSTGRES_SSL: ${{ secrets.POSTGRES_SSL || 'true' }}
+          S3_ENDPOINT: ${{ secrets.S3_ENDPOINT || secrets.R2_ENDPOINT }}
+          S3_BUCKET: ${{ secrets.S3_BUCKET || 'vega-canva-media' }}
+          S3_ACCESS_KEY: ${{ secrets.S3_ACCESS_KEY || secrets.R2_ACCESS_KEY_ID }}
+          S3_SECRET_KEY: ${{ secrets.S3_SECRET_KEY || secrets.R2_SECRET_ACCESS_KEY }}
+          ROOM_TTL_DAYS: ${{ github.event.inputs.days || '90' }}
+        run: |
+          if [ "${{ github.event.inputs.dry_run }}" = "false" ]; then
+            echo "Executing destructive reap..."
+            npm run reap:apply
+          else
+            echo "Executing dry-run reap inspection..."
+            npm run reap
+          fi

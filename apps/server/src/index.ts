@@ -33,6 +33,7 @@ import {
   cleanupFailedMedia,
 } from "./quota";
 import { logger, initServerObservability, isErrorTrackingActive } from "./observability";
+import { reapInactiveRooms } from "./reaper";
 
 const config = readConfig();
 initServerObservability(config.sentryDsn);
@@ -820,6 +821,39 @@ app.get("/rooms/:roomId/history", requireRoom, historyLimiter, async (req, res) 
 });
 
 /**
+ * Administrative maintenance endpoint: reap inactive rooms and orphaned S3 media.
+ * Guarded by AUTH_SECRET if configured.
+ */
+app.post("/admin/reap", historyLimiter, async (req: any, res: any) => {
+  const authHeader = req.headers["authorization"] || "";
+  const token = authHeader.startsWith("Bearer ")
+    ? authHeader.slice(7)
+    : (req.query?.token || req.body?.token);
+
+  if (config.authSecret && !secretMatches(token, config.authSecret)) {
+    return res.status(401).json({ error: "Unauthorized: valid AUTH_SECRET required." });
+  }
+
+  const daysRequested = Number(req.body?.days ?? req.query?.days);
+  const maxAgeDays = Number.isFinite(daysRequested) && daysRequested > 0
+    ? daysRequested
+    : config.roomTtlDays;
+  const dryRun = req.body?.dryRun === true || req.query?.dryRun === "true";
+
+  try {
+    const result = await reapInactiveRooms(pool, s3, s3Bucket, {
+      maxAgeDays,
+      dryRun,
+    });
+    logger.info("Admin reap executed", { ...result });
+    res.json(result);
+  } catch (err: any) {
+    logger.error("Admin reap failed", { error: err?.message });
+    res.status(500).json({ error: err?.message || "Reap failed" });
+  }
+});
+
+/**
  * Redis is only required to fan out updates/awareness across *multiple* sync-server
  * instances. A single instance (the demo and hackathon setup) doesn't need it, and
  * when Redis isn't running ioredis emits an unhandled error event on every retry —
@@ -971,6 +1005,8 @@ const server = new Hocuspocus({
       }
       role = verified.payload.o;
       via = 'invite';
+    } else if (config.enforceShareTokens) {
+      throw new Error("A signed invite link is required to access this board.");
     }
 
     return {

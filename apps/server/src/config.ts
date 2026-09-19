@@ -152,6 +152,8 @@ export interface Config {
   authSecret: string | null;
   /** Signs invite links. Absent means invite links cannot be offered. */
   shareSecret: string | null;
+  /** When true, unsigned direct room-id connections are rejected. */
+  enforceShareTokens: boolean;
   /**
    * The shortest room id this server will serve.
    *
@@ -254,6 +256,7 @@ export function readConfig(): Config {
      * a restriction it cannot enforce.
      */
     shareSecret: process.env.SHARE_SECRET || null,
+    enforceShareTokens: process.env.ENFORCE_SHARE_TOKENS === 'true',
     minRoomIdLength: env.int('MIN_ROOM_ID_LENGTH', 8),
     quotas: {
       maxRoomBytes: env.int('MAX_ROOM_STORAGE_BYTES', 200 * 1024 * 1024), // 200MB

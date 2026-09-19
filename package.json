@@ -8,6 +8,15 @@
   ],
   "scripts": {
     "dev": "npm run dev --workspaces",
-    "build": "npm run build --workspaces"
+    "build": "npm run build --workspaces",
+    "test": "npm run test --workspaces",
+    "lint": "npm run lint -w apps/frontend",
+    "postinstall": "node scripts/ensure-esbuild.js"
+  },
+  "devDependencies": {
+    "esbuild-wasm": "^0.28.2"
+  },
+  "overrides": {
+    "esbuild": "$esbuild-wasm"
   }
 }

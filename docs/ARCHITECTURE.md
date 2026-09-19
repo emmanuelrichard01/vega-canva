@@ -308,9 +308,10 @@ codebase that no longer exists.
    objects", which HTML5 audio synced through Yjs satisfies. No WebRTC has
    entered the codebase.
 
-   One caveat that is *not* covered by this decision: voice notes are still
-   base64 inside the Yjs document rather than in object storage, which
-   contradicts bottleneck #4 above. That is outstanding work, not a deferral.
+   Audio recordings are streamed out-of-band directly to the server media proxy
+   and object storage (MinIO/R2) via `offlineMediaQueue` and `mediaUploadUrl`,
+   keeping only lightweight URL references in the CRDT document and resolving
+   bottleneck #4. Live WebRTC spatial voice remains a considered, deferred feature.
 
 5. **Live LLM Canvas Assistant** — **still deferred.**
    A freeform LLM mutating the CRDT live carries latency, an external failure
