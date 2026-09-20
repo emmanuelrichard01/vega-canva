@@ -16,7 +16,7 @@ import type { TableExample } from '../../engine/table/tableExamples';
 
 const cache = new Map<string, { markup: string; width: number; height: number }>();
 
-export function tableThumb(example: TableExample) {
+function tableThumb(example: TableExample) {
   let hit = cache.get(example.id);
   if (!hit) {
     const { width, height } = tableSizeFor(example.spec);

@@ -2,7 +2,7 @@ import { nanoid } from 'nanoid';
 import type { NewNodeInput } from '../document/mutations';
 import type { Template } from './templates';
 import {
-  band, box, caption, chain, chart, code, curve, dashed, decision, fillOf, frame, glyph, HAIRLINE,
+  band, box, caption, chain, chart, code, curve, dashed, decision, fillOf, frame, glyph,
   heading, HUE, iconRow, INK, layer, link, note, pill, plot, sketched, sticky, strokeOf, table, terminator,
   TINT, title, zone, type Tint,
 } from './templateKit';

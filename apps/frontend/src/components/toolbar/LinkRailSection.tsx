@@ -6,7 +6,7 @@ import { RailButton, Divider } from './RailBase';
 import { providerFor } from '../../engine/link/linkProviders';
 import { resolveDisplay } from '../../engine/link/linkLayout';
 import { openLink, refreshPreview, setLinkDisplay } from '../../engine/link/linkApply';
-import type { LinkDisplay } from '../../engine/link/linkTypes';
+import { LINK_DISPLAY_LABELS, type LinkDisplay } from '../../engine/link/linkTypes';
 import { openLinkComposerFor } from '../link/openLinkComposer';
 
 /**
@@ -48,12 +48,6 @@ export const LinkDisplayIcon: React.FC<{ display: Exclude<LinkDisplay, 'auto'> }
   </svg>
 );
 
-export const LINK_DISPLAY_LABELS: Record<Exclude<LinkDisplay, 'auto'>, string> = {
-  compact: 'Compact',
-  horizontal: 'Card, picture beside',
-  vertical: 'Card, picture above',
-  embed: 'Player',
-};
 
 /**
  * What a selected link puts on the rail: how it is shown, and where it goes.

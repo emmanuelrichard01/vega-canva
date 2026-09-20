@@ -58,7 +58,7 @@ export function fitPose(
   viewportHeight: number,
   options: FitOptions = {}
 ): CameraPose | null {
-  const { padding = DEFAULT_PADDING, minZoom = 0.05, maxZoom = 5 } = options;
+  const { minZoom = 0.05, maxZoom = 5 } = options;
 
   if (!(viewportWidth > 0) || !(viewportHeight > 0)) return null;
   if (!Number.isFinite(bounds.x) || !Number.isFinite(bounds.y)) return null;

@@ -574,10 +574,10 @@ const BASE_TEMPLATES: Template[] = [
       const M = 80;
       const COL = PAGE - M * 2; // 1280
 
-      const plate = (x: number, y: number, w: number, h: number, c: string, r = 0): NewNodeInput =>
+      const plate = (x: number, y: number, w: number, h: number, c: string, _r = 0): NewNodeInput =>
         box(x, y, w, h, '', c, { appearance: { fill: [{ type: 'solid', color: c }], stroke: { color: strokeOf(c), width: 1.5 }, cornerRadius: 0 } });
 
-      const btn = (x: number, y: number, w: number, text: string, fill: string, ink: string, r = 0): NewNodeInput =>
+      const btn = (x: number, y: number, w: number, text: string, fill: string, ink: string, _r = 0): NewNodeInput =>
         box(x, y, w, 48, text, fill, {
           appearance: { fill: [{ type: 'solid', color: fill }], stroke: { color: strokeOf(fill), width: 1.5 }, cornerRadius: 0 },
           typography: { fontSize: 14, fontWeight: 700, color: ink, align: 'center', verticalAlign: 'middle' },

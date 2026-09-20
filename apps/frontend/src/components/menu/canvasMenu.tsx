@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React from 'react';
 import {
   AlignCenterHorizontal,
   AlignCenterVertical,
@@ -79,14 +79,8 @@ import {
   importCsvIntoTable,
 } from '../../engine/table/tableApply';
 import { useStore } from '../../hooks/useStore';
-import { KindPicker } from '../workspace/KindPicker';
-import {
-  SHAPE_FACETS,
-  SHAPE_GLYPH,
-  SHAPE_TILE,
-  presetForGeometry,
-  shapeGroups,
-} from '../workspace/shapePicker';
+import { presetForGeometry } from '../workspace/shapePicker';
+import { StyleSwatch, ShapeSwapPanel, AddShapePanel } from './CanvasMenuPanels';
 import { SHAPE_BY_PRESET, type ShapePreset } from '../workspace/shapeCatalog';
 import { SHAPE_CHOICES } from '../toolbar/railConstants';
 import { tidy, type MenuEntry } from './menuModel';
@@ -100,8 +94,8 @@ import { FOLD_AT } from '../toolbar/CodeRailSection';
 import { providerFor, siteDomain } from '../../engine/link/linkProviders';
 import { resolveDisplay } from '../../engine/link/linkLayout';
 import { openLink, refreshPreview, setLinkDisplay } from '../../engine/link/linkApply';
-import type { LinkDisplay } from '../../engine/link/linkTypes';
-import { LINK_DISPLAY_LABELS, LinkDisplayIcon } from '../toolbar/LinkRailSection';
+import { LINK_DISPLAY_LABELS, type LinkDisplay } from '../../engine/link/linkTypes';
+import { LinkDisplayIcon } from '../toolbar/LinkRailSection';
 import { openLinkComposerFor } from '../link/openLinkComposer';
 import { notify } from '../../engine/ui/notices';
 import { SHORTCUTS } from './shortcuts';
@@ -378,41 +372,7 @@ function linkEntries(node: LinkNode): MenuEntry[] {
   ].filter(Boolean) as MenuEntry[];
 }
 
-/** The swatch beside Paste style: what is on the style clipboard, as a colour. */
-const StyleSwatch: React.FC<{ color: string | null }> = ({ color }) =>
-  color ? <span className="menu__swatch" style={{ background: color }} aria-hidden="true" /> : null;
 
-/**
- * The shape swapper, as the dock's own picker.
- *
- * The menu used to lay every shape out inline — sixty glyphs, most of the
- * menu's height, for a choice most right-clicks are not about. Behind a
- * submenu it costs one row, and it gains the dock's categories and search.
- */
-const ShapeSwapPanel: React.FC<{
-  value: ShapePreset | null;
-  onPick: (preset: ShapePreset) => void;
-}> = ({ value, onPick }) => {
-  const [facet, setFacet] = useState(() =>
-    value ? SHAPE_FACETS.find((f) => shapeGroups(f.id).some((g) => g.options.some((o) => o.id === value)))?.id ?? 'basic' : 'basic'
-  );
-  return (
-    <div className="menu__picker">
-      <KindPicker
-        columns={5}
-        tile={SHAPE_TILE - 8}
-        search
-        searchPlaceholder="Search shapes"
-        groups={shapeGroups(facet, SHAPE_GLYPH - 2)}
-        facets={SHAPE_FACETS}
-        activeFacet={facet}
-        onFacet={setFacet}
-        value={value}
-        onPick={onPick}
-      />
-    </div>
-  );
-};
 
 export function selectionMenu(input: CanvasMenuInput): MenuEntry[] {
   const { nodes, allObjects, actions: a, canEdit, style, atPointer } = input;
@@ -764,26 +724,7 @@ export function selectionMenu(input: CanvasMenuInput): MenuEntry[] {
   ]);
 }
 
-/** The picker behind "Add shape here": the dock's own sheet, placing where you clicked. */
-const AddShapePanel: React.FC<{ onPick: (preset: ShapePreset) => void }> = ({ onPick }) => {
-  const [facet, setFacet] = useState('basic');
-  return (
-    <div className="menu__picker">
-      <KindPicker
-        columns={5}
-        tile={SHAPE_TILE - 8}
-        search
-        searchPlaceholder="Search shapes"
-        groups={shapeGroups(facet, SHAPE_GLYPH - 2)}
-        facets={SHAPE_FACETS}
-        activeFacet={facet}
-        onFacet={setFacet}
-        value={null}
-        onPick={onPick}
-      />
-    </div>
-  );
-};
+
 
 export function boardMenu(input: CanvasMenuInput): MenuEntry[] {
   const { actions: a, canEdit, atPointer, allObjects } = input;

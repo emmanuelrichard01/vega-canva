@@ -16,7 +16,6 @@ import {
 import { contrastInk } from '../../../engine/model/color';
 import {
   chartCapabilities,
-  isRadial,
   isPlot,
   isSampleKind,
   legendNamesCategories,

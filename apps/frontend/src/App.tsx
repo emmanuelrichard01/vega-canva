@@ -6,6 +6,7 @@ import { useStore } from './hooks/useStore';
 import { RouteLoader } from './components/ui/Loading';
 import { NoticeLayer } from './components/ui/NoticeLayer';
 import { SpeedInsights } from '@vercel/speed-insights/react';
+import { Analytics } from '@vercel/analytics/react';
 import { nanoid } from 'nanoid';
 
 /**
@@ -73,6 +74,7 @@ function App() {
           z-index can lift it out. See `TooltipLayer`. */}
       <TooltipLayer />
       <SpeedInsights />
+      <Analytics />
     </AuthProvider>
   );
 }

@@ -20,6 +20,13 @@ export type ResolvedLinkDisplay = Exclude<LinkDisplay, 'auto'>;
 
 export const LINK_DISPLAYS: readonly LinkDisplay[] = ['auto', 'compact', 'horizontal', 'vertical', 'embed'];
 
+export const LINK_DISPLAY_LABELS: Record<ResolvedLinkDisplay, string> = {
+  compact: 'Compact',
+  horizontal: 'Card, picture beside',
+  vertical: 'Card, picture above',
+  embed: 'Player',
+};
+
 export type LinkStatus = 'loading' | 'ready' | 'error';
 
 export interface LinkMeta {

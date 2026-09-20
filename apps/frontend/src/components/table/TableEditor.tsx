@@ -864,12 +864,29 @@ const Editor: React.FC<{ node: TableNode; onClose: () => void }> = ({ node, onCl
   const fxRef = React.useRef<HTMLDivElement>(null);
   const [fxSize, setFxSize] = React.useState({ w: 440, h: 72 });
   React.useLayoutEffect(() => {
+    if (!writingFormula) return;
     const el = fxRef.current;
     if (!el) return;
-    const w = el.offsetWidth;
-    const h = el.offsetHeight;
-    if (Math.abs(w - fxSize.w) > 1 || Math.abs(h - fxSize.h) > 1) setFxSize({ w, h });
-  });
+    if (typeof ResizeObserver === 'undefined') {
+      const w = el.offsetWidth;
+      const h = el.offsetHeight;
+      setFxSize((prev) => (Math.abs(w - prev.w) > 1 || Math.abs(h - prev.h) > 1 ? { w, h } : prev));
+      return;
+    }
+    const observer = new ResizeObserver((entries) => {
+      const entry = entries[0];
+      if (!entry) return;
+      const { width, height } = entry.contentRect;
+      setFxSize((prev) => {
+        if (Math.abs(width - prev.w) > 1 || Math.abs(height - prev.h) > 1) {
+          return { w: width, h: height };
+        }
+        return prev;
+      });
+    });
+    observer.observe(el);
+    return () => observer.disconnect();
+  }, [writingFormula]);
   const fxPlace = (() => {
     if (!editBox) return null;
     const a = { left: left + editBox.left * zoom, top: top + editBox.top * zoom, width: editWidth * zoom, height: editBox.height * zoom };
