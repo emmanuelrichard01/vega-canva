@@ -413,8 +413,12 @@ export function evaluateCell(spec: TableSpec, r: number, c: number): FValue {
 }
 
 function cellValue(ctx: Ctx, r: number, c: number): FValue {
-  const raw = ctx.spec.cells[r]?.[c];
-  if (raw === undefined) return fail('#REF!');
+  const rawVal = ctx.spec.cells[r]?.[c] as unknown;
+  if (rawVal === undefined) return fail('#REF!');
+  const raw =
+    typeof rawVal === 'object' && rawVal !== null
+      ? String((rawVal as { value?: unknown; text?: unknown }).value ?? (rawVal as { text?: unknown }).text ?? '')
+      : String(rawVal ?? '');
   if (!isFormula(raw)) return literal(raw, ctx.spec.columns[c]?.type ?? 'text');
   const k = r * KEY + c;
   const hit = ctx.memo.get(k);

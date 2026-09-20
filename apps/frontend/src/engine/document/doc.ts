@@ -79,7 +79,7 @@ export const onSyncedChange = (cb: (synced: boolean) => void) => {
  *   whole of what it can mean.
  */
 const AUTH_SECRET = import.meta.env.VITE_AUTH_SECRET as string | undefined;
-const sessionToken = typeof localStorage !== 'undefined' ? localStorage.getItem('vega_session_token') : null;
+const sessionToken = typeof localStorage !== 'undefined' && typeof localStorage.getItem === 'function' ? localStorage.getItem('vega_session_token') : null;
 
 const connectionToken = JSON.stringify({
   role: getRoomRole(),

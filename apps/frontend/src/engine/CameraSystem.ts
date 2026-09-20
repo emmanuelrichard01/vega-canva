@@ -34,6 +34,94 @@ export class CameraSystem {
     return { minZoom: this.minZoom, maxZoom: this.maxZoom };
   }
 
+  private animFrameId: number | null = null;
+
+  /**
+   * Immediately abort any active camera animation.
+   * Called on any manual user camera interaction (pan, zoom, wheel, setPose)
+   * so the user never fights an ongoing programmatic transition.
+   */
+  cancelAnimation() {
+    if (this.animFrameId !== null) {
+      if (typeof cancelAnimationFrame !== 'undefined') {
+        cancelAnimationFrame(this.animFrameId);
+      } else if (typeof window !== 'undefined' && window.cancelAnimationFrame) {
+        window.cancelAnimationFrame(this.animFrameId);
+      } else {
+        clearTimeout(this.animFrameId);
+      }
+      this.animFrameId = null;
+    }
+  }
+
+  isAnimating(): boolean {
+    return this.animFrameId !== null;
+  }
+
+  /**
+   * Smoothly ease the camera to the target pose using a quartic ease-out deceleration curve.
+   * Cancels automatically if any manual camera movement occurs.
+   */
+  animateTo(
+    targetX: number,
+    targetY: number,
+    targetZoom: number,
+    options?: {
+      duration?: number;
+      easing?: (t: number) => number;
+      onComplete?: () => void;
+    }
+  ): () => void {
+    this.cancelAnimation();
+
+    if (!Number.isFinite(targetX) || !Number.isFinite(targetY) || !Number.isFinite(targetZoom)) {
+      return () => {};
+    }
+
+    const clampedZoom = Math.max(this.minZoom, Math.min(targetZoom, this.maxZoom));
+    const duration = options?.duration ?? 450;
+    const easeFn = options?.easing ?? ((t: number) => 1 - Math.pow(1 - t, 4));
+    const onComplete = options?.onComplete;
+
+    if (duration <= 0) {
+      this.setPose(targetX, targetY, clampedZoom);
+      onComplete?.();
+      return () => {};
+    }
+
+    const startX = this.x;
+    const startY = this.y;
+    const startZoom = this.zoom;
+    const startTime = (typeof performance !== 'undefined' && performance.now) ? performance.now() : Date.now();
+
+    const scheduleFrame = (cb: (time: number) => void): number => {
+      if (typeof requestAnimationFrame !== 'undefined') return requestAnimationFrame(cb);
+      if (typeof window !== 'undefined' && window.requestAnimationFrame) return window.requestAnimationFrame(cb);
+      return setTimeout(() => cb((typeof performance !== 'undefined' && performance.now) ? performance.now() : Date.now()), 16) as unknown as number;
+    };
+
+    const tick = (now: number) => {
+      const elapsed = now - startTime;
+      const progress = Math.min(1, Math.max(0, elapsed / duration));
+      const ease = easeFn(progress);
+
+      this.x = startX + (targetX - startX) * ease;
+      this.y = startY + (targetY - startY) * ease;
+      this.zoom = startZoom + (clampedZoom - startZoom) * ease;
+      this.emitChange();
+
+      if (progress < 1) {
+        this.animFrameId = scheduleFrame(tick);
+      } else {
+        this.animFrameId = null;
+        onComplete?.();
+      }
+    };
+
+    this.animFrameId = scheduleFrame(tick);
+    return () => this.cancelAnimation();
+  }
+
   /**
    * Assign a pose directly, clamped, emitting one change.
    *
@@ -44,6 +132,7 @@ export class CameraSystem {
    * means.
    */
   setPose(x: number, y: number, zoom: number) {
+    this.cancelAnimation();
     if (!Number.isFinite(x) || !Number.isFinite(y) || !Number.isFinite(zoom)) return;
     this.x = x;
     this.y = y;
@@ -66,6 +155,7 @@ export class CameraSystem {
   }
 
   pan(dx: number, dy: number) {
+    this.cancelAnimation();
     this.x -= dx;
     this.y -= dy;
     this.emitChange();
@@ -73,6 +163,7 @@ export class CameraSystem {
 
   /** Pan by adding the delta (for drag-based panning where direction matches movement) */
   panBy(dx: number, dy: number) {
+    this.cancelAnimation();
     this.x += dx;
     this.y += dy;
     this.emitChange();
@@ -121,6 +212,7 @@ export class CameraSystem {
    * quantising a pinch to 1.1x steps feels broken on a trackpad or tablet.
    */
   zoomBy(factor: number, screenX: number, screenY: number) {
+    this.cancelAnimation();
     const oldZoom = this.zoom;
 
     // World position currently under the anchor point.

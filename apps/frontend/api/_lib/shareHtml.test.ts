@@ -7,7 +7,7 @@ const meta = (html: string, key: string) => html.match(new RegExp(`(?:property|n
 describe('shareHtml', () => {
   it("describes a board by its own name and contents", () => {
     const html = shareHtml({ kind: 'room', id: 'abc123', site, reachable: true, facts: { found: true, name: 'Q3 retro', total: 128, version: 'lx9' } });
-    expect(meta(html, 'og:title')).toBe('Q3 retro · Vega Studio');
+    expect(meta(html, 'og:title')).toBe('Q3 retro | Vega Studio');
     expect(meta(html, 'og:url')).toBe(`${site}/room/abc123`);
     expect(meta(html, 'og:image')).toBe(`${site}/api/card-image?kind=room&amp;id=abc123&amp;v=lx9`);
     expect(meta(html, 'twitter:data1')).toBe('128 objects on the board');

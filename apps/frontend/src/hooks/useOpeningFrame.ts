@@ -63,73 +63,85 @@ export function useOpeningFrame(roomId: string | undefined): void {
     framed.current = null;
 
     let cancelled = false;
-
-    /** Declared before `attempt`, which calls it. */
     let stop = () => {};
+    let debounceTimer: ReturnType<typeof setTimeout> | null = null;
 
-    const attempt = () => {
+    const performFit = () => {
       if (cancelled || framed.current === roomId) return;
-      // The viewport has to be real. `width`/`height` default to 800x600,
-      // which would otherwise be framed against as though it were a window.
       if (!cameraSystem.measured) return;
 
       const bounds = editor.contentBounds();
-      if (!bounds) return; // Nothing yet — an empty board, or still loading.
+      if (!bounds) return;
 
-      /**
-       * Stand down *before* moving the camera, not after.
-       *
-       * `setPose` emits `CameraChanged` synchronously, and this listens for
-       * `CameraChanged` — so fitting from inside the handler re-entered this
-       * function before the "done" flag was set, fitted again, and recursed
-       * until the stack blew. The camera never ended up fitted at all, which
-       * is how a re-entrancy bug disguises itself as a feature that does
-       * nothing.
-       *
-       * Marking done first makes the re-entrant call a no-op, and removing the
-       * listeners first means there is no re-entrant call to make.
-       */
+      // Mark framed and detach listeners BEFORE calling zoomToFit, so
+      // CameraChanged emitted by zoomToFit cannot re-trigger anything.
       framed.current = roomId;
       stop();
+
       editor.zoomToFit();
+      if (typeof window !== 'undefined') {
+        window.dispatchEvent(new CustomEvent('boardArriving'));
+      }
     };
 
-    /**
-     * Content can arrive before this mounts or long after it, and it does not
-     * announce itself — so both edges are covered: try now, and try again on
-     * every scene change until one of them has something to frame.
-     */
-    const onScene = () => attempt();
-    // `VisibleSetUpdated` is the one that fires once the scene graph has
-    // actually processed what arrived; `ObjectAdded` catches the first node on
-    // a board being created here rather than loaded; `CameraChanged` covers
-    // the case where the content was already there and only the *viewport*
-    // was still missing.
+    const attempt = (immediate = false) => {
+      if (cancelled || framed.current === roomId) return;
+      if (!cameraSystem.measured) return;
+
+      const bounds = editor.contentBounds();
+      if (!bounds) return;
+
+      if (immediate) {
+        performFit();
+        return;
+      }
+
+      if (debounceTimer) clearTimeout(debounceTimer);
+      debounceTimer = setTimeout(() => {
+        performFit();
+      }, 75);
+    };
+
+    const onScene = () => attempt(false);
     const WATCH = ['VisibleSetUpdated', 'ObjectAdded', 'CameraChanged'] as const;
     for (const event of WATCH) engineEvents.on(event, onScene);
 
-    stop = () => {
-      for (const event of WATCH) engineEvents.off(event, onScene);
+    const onUserInteraction = () => {
+      // Stand down immediately if user starts interacting manually
+      framed.current = roomId;
+      stop();
     };
 
-    attempt();
+    if (typeof window !== 'undefined') {
+      window.addEventListener('pointerdown', onUserInteraction, { passive: true, capture: true });
+      window.addEventListener('wheel', onUserInteraction, { passive: true, capture: true });
+    }
 
-    /**
-     * The empty-board case, which has no first content to wait for.
-     *
-     * Left alone it would leave the listeners armed for the life of the room,
-     * and the first object anyone drew would then yank the camera to frame it.
-     * So after a grace period long enough for a document to load, an empty
-     * board is put at the origin and the framing is considered done.
-     */
+    stop = () => {
+      if (debounceTimer) {
+        clearTimeout(debounceTimer);
+        debounceTimer = null;
+      }
+      for (const event of WATCH) engineEvents.off(event, onScene);
+      if (typeof window !== 'undefined') {
+        window.removeEventListener('pointerdown', onUserInteraction);
+        window.removeEventListener('wheel', onUserInteraction);
+      }
+    };
+
+    // If content is already present and viewport is measured on mount, frame immediately
+    if (editor.contentBounds() && cameraSystem.measured) {
+      attempt(true);
+    }
+
     const settle = setTimeout(() => {
       if (cancelled || framed.current === roomId) return;
       if (!editor.contentBounds()) {
-        // Same order, for the same reason: `setPose` emits into the listeners
-        // this is about to remove.
         framed.current = roomId;
         stop();
         cameraSystem.setPose(0, 0, 1);
+      } else {
+        performFit();
       }
     }, 2500);
 

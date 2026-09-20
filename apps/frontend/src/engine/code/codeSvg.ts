@@ -38,6 +38,10 @@ export function codeToSvg(spec: CodeSpec, width: number, height: number, id: str
       parts.push(
         `<text x="${m.padX + m.gutterWidth - m.fontSize}" y="${baseline}" text-anchor="end" dominant-baseline="central" font-family="${esc(CODE_FONT)}" font-size="${m.fontSize}" fill="${row.highlighted ? theme.highlightBar : theme.gutter}">${row.lineNumber}</text>`
       );
+    } else if (spec.lineNumbers && !row.first) {
+      parts.push(
+        `<text x="${m.padX + m.gutterWidth - m.fontSize}" y="${baseline}" text-anchor="end" dominant-baseline="central" font-family="${esc(CODE_FONT)}" font-size="${Math.round(m.fontSize * 0.82)}" fill="${theme.gutter}">↳</text>`
+      );
     }
     const spans = row.tokens
       .map((t) => `<tspan fill="${theme.tokens[t.kind]}"${t.kind === 'comment' ? ' font-style="italic"' : ''}>${esc(t.text)}</tspan>`)

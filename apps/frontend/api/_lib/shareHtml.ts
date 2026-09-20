@@ -56,7 +56,7 @@ export function shareHtml({ kind, id, site, facts, reachable }: ShareInput): str
   const url = `${site}${path}`;
   const access = kind === 'room' ? ACCESS.editor : facts?.role ? ACCESS[facts.role] : null;
 
-  const title = facts ? `${facts.name} · Vega Studio` : 'A board on Vega Studio';
+  const title = facts ? `${facts.name} | Vega Studio` : 'A board on Vega Studio';
   const contents = facts
     ? facts.total === 0
       ? 'An empty board'

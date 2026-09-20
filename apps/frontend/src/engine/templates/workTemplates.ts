@@ -2,7 +2,7 @@ import type { NewNodeInput } from '../document/mutations';
 import type { Template } from './templates';
 import {
   band, box, BRAND, BRAND_INK, caption, chart, dashed, frame, HAIRLINE, heading, HUE, INK,
-  INK_MID, INK_SOFT, layer, link, note, PAPER, pill, plot, RULE, sticky, table, TINT, title,
+  INK_MID, INK_SOFT, layer, link, note, PAPER, pill, plot, RULE, sticky, strokeOf, table, TINT, title,
 } from './templateKit';
 
 /**
@@ -39,7 +39,7 @@ const column = (
   items: string[],
   width = 220
 ): NewNodeInput[] => {
-  const out: NewNodeInput[] = [heading(x, y, name, 17)];
+  const out: NewNodeInput[] = [heading(x, y, name, 17, width)];
   items.forEach((text, i) => {
     out.push(sticky(x, y + 42 + i * (width * 0.62 + 14), text, theme, { width, height: width * 0.62 }));
   });
@@ -50,10 +50,12 @@ export const WORK_TEMPLATES: Template[] = [
   // -------------------------------------------------------------------------
   {
     id: 'work-quarter',
+    featured: true,
     category: 'work',
     name: 'Q3 planning wall',
     blurb: 'A quarter mid-flight: three bets, the capacity they cost, and the two things already slipping.',
     teaches: ['Planning', 'Capacity', 'Charts'],
+    objectCount: 42,
     build: () => {
       const nodes: NewNodeInput[] = [];
       nodes.push(
@@ -72,10 +74,10 @@ export const WORK_TEMPLATES: Template[] = [
       const betNodes = BETS.map(([name, claim, metric, tint], i) => {
         const x = i * 520;
         const card = box(x, 30, 470, 150, '', tint as never, {
-          appearance: { fill: [{ type: 'solid', color: tint === 'green' ? TINT.green : tint === 'amber' ? TINT.amber : TINT.rose }], cornerRadius: 16 },
+          appearance: { fill: [{ type: 'solid', color: tint === 'green' ? TINT.green : tint === 'amber' ? TINT.amber : TINT.rose }], stroke: { color: strokeOf(tint as never), width: 1.5 }, cornerRadius: 0 },
         });
         return { card, extras: [
-          heading(x + 24, 52, name, 18),
+          heading(x + 24, 52, name, 18, 420),
           note(x + 24, 86, claim, 420, 15, INK),
           pill(x + 24, 134, 200, metric, tint as never),
         ] };
@@ -128,24 +130,28 @@ export const WORK_TEMPLATES: Template[] = [
           0,
           1044,
           {
+            header: true,
+            theme: 'clean',
+            fontSize: 12,
             columns: [
-              { id: 'c1', name: 'Risk', width: 380 },
-              { id: 'c2', name: 'Owner', width: 120 },
-              { id: 'c3', name: 'Likelihood', width: 120 },
-              { id: 'c4', name: 'If it happens', width: 300 },
-              { id: 'c5', name: 'Doing about it', width: 300 },
+              { width: 1.8, type: 'text' },
+              { width: 0.9, type: 'text' },
+              { width: 0.9, type: 'text', align: 'center' },
+              { width: 1.6, type: 'text' },
+              { width: 1.8, type: 'text' },
             ],
             cells: [
+              ['Risk Item', 'Owner', 'Likelihood', 'Impact If Triggered', 'Mitigation Plan'],
               ['SSO vendor review slips past Q3', 'Priya', 'High', 'Bet 3 moves to Q4 entirely', 'Booked review for wk 8, not wk 11'],
               ['Culling regresses text rendering', 'Sam', 'Medium', 'Perf bet lands, quality drops', 'Visual diff on 40 boards in CI'],
               ['Two people leave in the same month', 'Alex', 'Low', 'Everything slips one sprint', 'No single-owner workstreams'],
-              ['Activation metric is measuring the wrong thing', 'Jo', 'Medium', 'We optimise a number nobody feels', 'Five user sessions, wk 7'],
-            ].map((r) => r.map((v) => ({ value: v }))),
-          } as never,
+              ['Activation metric measures wrong thing', 'Jo', 'Medium', 'Optimise number nobody feels', 'Five user sessions, wk 7'],
+            ],
+          },
           1220,
           180
         ),
-        note(0, 1250, 'A risk with no owner and no action is a worry, not a risk. Both columns are the point of the table.', 1220, 15)
+        note(0, 1250, 'Every risk requires a named owner and concrete mitigation to remain actionable.', 1220, 15)
       );
 
       return layer(nodes);
@@ -209,7 +215,7 @@ export const WORK_TEMPLATES: Template[] = [
           nodes.push(
             box(x + 40 + j * 130, 164, size, size, '', d.palette[2], {
               geometry: { kind: 'squircle' },
-              appearance: { fill: [{ type: 'solid', color: d.palette[2] }], cornerRadius: size * 0.28 },
+              appearance: { fill: [{ type: 'solid', color: d.palette[2] }], stroke: { color: strokeOf(d.palette[2]), width: 1.5 }, cornerRadius: 0 },
             }),
             note(x + 40 + j * 130, 164 + size + 8, `${size}px`, 80, 11, INK_SOFT)
           );
@@ -220,7 +226,7 @@ export const WORK_TEMPLATES: Template[] = [
         d.palette.forEach((c, j) => {
           nodes.push(
             box(x + 40 + j * 130, 318, 116, 76, '', c, {
-              appearance: { fill: [{ type: 'solid', color: c }], cornerRadius: 10 },
+              appearance: { fill: [{ type: 'solid', color: c }], stroke: { color: strokeOf(c), width: 1.5 }, cornerRadius: 0 },
             }),
             note(x + 40 + j * 130, 400, c, 116, 11, INK_SOFT)
           );
@@ -254,11 +260,11 @@ export const WORK_TEMPLATES: Template[] = [
         nodes.push(heading(x + 40, 660, 'In use', 14));
         nodes.push(
           box(x + 40, 690, 300, 150, 'Your board,\nshared.', d.palette[1], {
-            appearance: { fill: [{ type: 'solid', color: d.palette[1] }], cornerRadius: 14, stroke: { color: d.palette[4], width: 1 } },
+            appearance: { fill: [{ type: 'solid', color: d.palette[1] }], cornerRadius: 0, stroke: { color: d.palette[4], width: 1 } },
             typography: { fontSize: 26, fontWeight: 700, color: d.palette[0], align: 'left', verticalAlign: 'middle' },
           }),
           box(x + 360, 690, 300, 150, 'Your board,\nshared.', d.palette[0], {
-            appearance: { fill: [{ type: 'solid', color: d.palette[0] }], cornerRadius: 14 },
+            appearance: { fill: [{ type: 'solid', color: d.palette[0] }], stroke: { color: strokeOf(d.palette[0]), width: 1.5 }, cornerRadius: 0 },
             typography: { fontSize: 26, fontWeight: 700, color: d.palette[1], align: 'left', verticalAlign: 'middle' },
           })
         );
@@ -302,7 +308,7 @@ export const WORK_TEMPLATES: Template[] = [
       ];
       COLS.forEach(([name, sub, tint], i) => {
         nodes.push(band(i * 540, -10, 500, 760, tint, 0.5));
-        nodes.push(heading(i * 540 + 24, 16, name, 22), note(i * 540 + 24, 50, sub, 440, 14));
+        nodes.push(heading(i * 540 + 24, 16, name, 22, 450), note(i * 540 + 24, 50, sub, 440, 14));
       });
 
       const card = (col: number, slot: number, name: string, who: string) => {
@@ -310,9 +316,9 @@ export const WORK_TEMPLATES: Template[] = [
         const y = 90 + slot * 118;
         return {
           shape: box(x, y, 450, 96, '', PAPER, {
-            appearance: { fill: [{ type: 'solid', color: PAPER }], cornerRadius: 12, stroke: { color: HAIRLINE, width: 1 } },
+            appearance: { fill: [{ type: 'solid', color: PAPER }], cornerRadius: 0, stroke: { color: HAIRLINE, width: 1 } },
           }),
-          bits: [heading(x + 18, y + 18, name, 17), note(x + 18, y + 48, who, 400, 13, INK_SOFT)],
+          bits: [heading(x + 18, y + 18, name, 17, 410), note(x + 18, y + 48, who, 400, 13, INK_SOFT)],
         };
       };
 
@@ -409,8 +415,8 @@ export const WORK_TEMPLATES: Template[] = [
       THEMES.forEach(([name, meaning, count, tint], i) => {
         const y = 20 + i * 220;
         nodes.push(
-          box(620, y, 620, 190, '', tint, { appearance: { fill: [{ type: 'solid', color: tint }], cornerRadius: 14 } }),
-          heading(646, y + 22, name, 20),
+          box(620, y, 620, 190, '', tint, { appearance: { fill: [{ type: 'solid', color: tint }], stroke: { color: strokeOf(tint), width: 1.5 }, cornerRadius: 0 } }),
+          heading(646, y + 22, name, 20, 560),
           note(646, y + 56, meaning, 560, 15, INK),
           pill(646, y + 130, 190, `${count} of 12 people`, 'slate')
         );
@@ -428,9 +434,9 @@ export const WORK_TEMPLATES: Template[] = [
           const y = 20 + i * 220;
           return [
             box(1320, y, 520, 190, '', PAPER, {
-              appearance: { fill: [{ type: 'solid', color: PAPER }], cornerRadius: 14, stroke: { color: HAIRLINE, width: 1 } },
+              appearance: { fill: [{ type: 'solid', color: PAPER }], cornerRadius: 0, stroke: { color: HAIRLINE, width: 1 } },
             }),
-            heading(1346, y + 22, '→ ' + action, 17),
+            heading(1346, y + 22, '→ ' + action, 17, 470),
             note(1346, y + 96, `From: ${theme}`, 460, 13, INK_SOFT),
           ];
         })
@@ -488,7 +494,7 @@ export const WORK_TEMPLATES: Template[] = [
         items.forEach(([start, span, text]) => {
           nodes.push(
             box(start * COL, y + 44, span * COL - 20, 84, text, PAPER, {
-              appearance: { fill: [{ type: 'solid', color: PAPER }], cornerRadius: 10, stroke: { color: RULE, width: 1 } },
+              appearance: { fill: [{ type: 'solid', color: PAPER }], cornerRadius: 0, stroke: { color: RULE, width: 1 } },
               typography: { fontSize: 14, fontWeight: 600, color: INK, align: 'center', verticalAlign: 'middle' },
             })
           );
@@ -517,23 +523,27 @@ export const WORK_TEMPLATES: Template[] = [
           1420,
           824,
           {
+            header: true,
+            theme: 'clean',
+            fontSize: 12,
             columns: [
-              { id: 'c1', name: 'Channel', width: 180 },
-              { id: 'c2', name: 'Reach', width: 110 },
-              { id: 'c3', name: 'Opened', width: 110 },
-              { id: 'c4', name: 'Stuck', width: 100 },
+              { width: 1.5, type: 'text' },
+              { width: 1.0, type: 'text', align: 'right' },
+              { width: 1.0, type: 'text', align: 'right' },
+              { width: 0.9, type: 'text', align: 'right' },
             ],
             cells: [
+              ['Channel', 'Reach', 'Opened', 'Conversion'],
               ['Design newsletters', '18,400', '4,900', '31%'],
               ['Community post', '11,800', '2,200', '19%'],
               ['Socials', '9,100', '1,180', '9%'],
               ['Direct / word of mouth', '1,900', '360', '44%'],
-            ].map((r) => r.map((v) => ({ value: v }))),
-          } as never,
+            ],
+          },
           520,
           180
         ),
-        note(1420, 1030, 'Word of mouth is the smallest channel and the only good one. Every launch discovers this and every launch is surprised.', 520, 14)
+        note(1420, 1030, 'Direct word of mouth yields highest retention (44% conversion) despite smaller initial reach.', 520, 14)
       );
 
       return layer(nodes);

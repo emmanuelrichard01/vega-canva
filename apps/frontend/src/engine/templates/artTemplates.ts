@@ -2,7 +2,7 @@ import { nanoid } from 'nanoid';
 import type { NewNodeInput } from '../document/mutations';
 import type { Template } from './templates';
 import {
-  BRAND, BRAND_INK, caption, hue, INK, INK_SOFT, layer, note, rng, sticky, title,
+  BRAND, BRAND_INK, caption, hue, INK, INK_SOFT, layer, note, rng, sticky, strokeOf, title,
 } from './templateKit';
 
 /**
@@ -70,7 +70,7 @@ const doodle = (
     fill: [],
     stroke: { color, width: 2.4, cap: 'round', join: 'round' },
     sketch,
-    cornerRadius: 8,
+    cornerRadius: 0,
   },
 });
 
@@ -204,7 +204,8 @@ export const ART_TEMPLATES: Template[] = [
         geometry: { kind: 'rect' },
         appearance: {
           fill: [{ type: 'solid', color: BRAND }],
-          cornerRadius: 5,
+          stroke: { color: strokeOf(BRAND), width: 1 },
+          cornerRadius: 0,
           sketch: 'light',
         },
       } as never);
@@ -279,7 +280,7 @@ export const ART_TEMPLATES: Template[] = [
     name: 'Composition',
     blurb: 'A poster built from sixty flat shapes on a strict grid — no gradients, no effects, just placement.',
     teaches: ['Layout', 'Colour', 'Layering'],
-    objectCount: 47,
+    objectCount: 38,
     build: (limit) => {
       /**
        * The argument here is that a canvas tool is a design tool.
@@ -307,11 +308,11 @@ export const ART_TEMPLATES: Template[] = [
         width: COLS * UNIT + 120,
         height: ROWS * UNIT + 120,
         geometry: { kind: 'rect' },
-        appearance: { fill: [{ type: 'solid', color: '#F7F3EC' }], cornerRadius: 0 },
+        appearance: { fill: [{ type: 'solid', color: '#F7F3EC' }], stroke: { color: 'rgba(28,25,23,0.18)', width: 1 }, cornerRadius: 0 },
       } as never);
 
       let made = 0;
-      for (let r = 0; r < ROWS; r += 1) {
+      for (let r = 0; r < ROWS - 2; r += 1) {
         for (let c = 0; c < COLS; c += 1) {
           if (made >= budget) break;
           const roll = random();
@@ -335,7 +336,11 @@ export const ART_TEMPLATES: Template[] = [
             height: UNIT - 12,
             rotation: kind === 'semicircle' || kind === 'right_triangle' ? Math.floor(random() * 4) * 90 : 0,
             geometry: { kind },
-            appearance: { fill: [{ type: 'solid', color }], cornerRadius: kind === 'rect' ? 2 : 0 },
+            appearance: {
+              fill: [{ type: 'solid', color }],
+              stroke: { color: 'rgba(28,25,23,0.2)', width: 1 },
+              cornerRadius: 0,
+            },
           } as never);
           made += 1;
         }
@@ -351,7 +356,7 @@ export const ART_TEMPLATES: Template[] = [
           width: COLS * UNIT + 120,
           height: 6,
           geometry: { kind: 'rect' },
-          appearance: { fill: [{ type: 'solid', color: '#1C1917' }] },
+          appearance: { fill: [{ type: 'solid', color: '#1C1917' }], stroke: { color: '#1C1917', width: 1 }, cornerRadius: 0 },
         } as never,
         {
           id: nanoid(),
@@ -455,14 +460,14 @@ export const ART_TEMPLATES: Template[] = [
           appearance: {
             fill: [{ type: 'solid', color: tile.color }],
             stroke: { color: 'rgba(28,25,23,0.22)', width: 1 },
-            cornerRadius: 4,
+            cornerRadius: 0,
           },
         } as never);
       }
 
       nodes.push(
         title(-560, -520, 'Isometric stack'),
-        caption(-560, -456, 'One rectangle each, rotated 45° and squashed to 58%. Drag any tile straight out of the stack.', 520)
+        caption(-560, -446, 'One rectangle each, rotated 45° and squashed to 58%. Drag any tile straight out of the stack.', 520)
       );
 
       return layer(nodes);
@@ -513,7 +518,7 @@ export const ART_TEMPLATES: Template[] = [
 
       const nodes: NewNodeInput[] = [
         title(0, -180, 'Ideas, unsorted'),
-        caption(0, -116, 'Forty notes, eight colours, nobody has tidied them yet. This is the honest state of a wall.', 820),
+        caption(0, -106, 'Forty notes, eight colours, nobody has tidied them yet. This is the honest state of a wall.', 820),
       ];
 
       // The wall is bigger than the note count needs, because a scatter that
@@ -526,6 +531,7 @@ export const ART_TEMPLATES: Template[] = [
             width: NOTE,
             height: NOTE,
             rotation: (random() - 0.5) * 9,
+            appearance: (i % 3 === 0) ? { sketch: 'light' } : undefined,
           })
         );
       });

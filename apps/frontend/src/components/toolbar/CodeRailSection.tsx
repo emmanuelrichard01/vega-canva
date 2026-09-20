@@ -1,5 +1,5 @@
 import React from 'react';
-import { Check, ChevronDown, Copy, FoldVertical, ListOrdered, SquarePen, Sparkles, UnfoldVertical, Workflow, WrapText } from 'lucide-react';
+import { Check, ChevronDown, Copy, FoldHorizontal, FoldVertical, ListOrdered, SquarePen, Sparkles, UnfoldVertical, Workflow, WrapText } from 'lucide-react';
 import type { CodeNode } from '../../engine/model/schema';
 import { useStore } from '../../hooks/useStore';
 import { RailButton, RailMenuButton, Divider } from './RailBase';
@@ -8,7 +8,7 @@ import { CODE_THEMES } from '../../engine/code/codeThemes';
 import { CODE_THEME_IDS } from '../../engine/code/codeTypes';
 import { languageById } from '../../engine/code/codeLanguages';
 import { tokenize } from '../../engine/code/codeTokenize';
-import { updateCode } from '../../engine/code/codeApply';
+import { fitCodeWidth, updateCode } from '../../engine/code/codeApply';
 import { languageMenuEntries, pickCodeLanguage } from '../code/codeMenus';
 import { withShortcut } from '../menu/shortcuts';
 
@@ -95,6 +95,9 @@ export const CodeRailSection: React.FC<{ node: CodeNode; onRenderDiagram: (sourc
         </RailButton>
         <RailButton label="Wrap long lines" pressed={code.wrap} onClick={() => updateCode(node, { wrap: !code.wrap })}>
           <WrapText size={16} />
+        </RailButton>
+        <RailButton label="Fit width to code" hint="Fit block width to longest line" onClick={() => fitCodeWidth(node)}>
+          <FoldHorizontal size={16} />
         </RailButton>
         <RailButton label="Line numbers" pressed={code.lineNumbers} onClick={() => updateCode(node, { lineNumbers: !code.lineNumbers })}>
           <ListOrdered size={16} />

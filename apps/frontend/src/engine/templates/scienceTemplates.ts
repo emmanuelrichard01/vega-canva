@@ -113,6 +113,7 @@ const plot = (kind: ChartSpec['kind'], over: Partial<ChartSpec>): ChartSpec => (
 export const SCIENCE_TEMPLATES: Template[] = [
   {
     id: 'sci-functions',
+    featured: true,
     category: 'science',
     name: 'Functions & waves',
     blurb: 'Curves, coordinate systems and waves — clean beside a whiteboard sketch.',

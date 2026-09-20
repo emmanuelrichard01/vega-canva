@@ -30,9 +30,9 @@ describe('share card payload', () => {
 
 describe('the tab', () => {
   it('names the board, and counts what is waiting', () => {
-    expect(tabTitle('Q3 retro')).toBe('Q3 retro · Vega Studio');
-    expect(tabTitle('Q3 retro', 3)).toBe('(3) Q3 retro · Vega Studio');
-    expect(tabTitle('Q3 retro', 240)).toBe('(99+) Q3 retro · Vega Studio');
+    expect(tabTitle('Q3 retro')).toBe('Q3 retro | Vega Studio');
+    expect(tabTitle('Q3 retro', 3)).toBe('(3) Q3 retro | Vega Studio');
+    expect(tabTitle('Q3 retro', 240)).toBe('(99+) Q3 retro | Vega Studio');
     expect(tabTitle('  ')).toBe('Vega Studio');
   });
 

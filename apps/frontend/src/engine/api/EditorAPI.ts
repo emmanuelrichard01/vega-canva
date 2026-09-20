@@ -6,7 +6,7 @@ import { applyGroupPlan, provider, type NewNodeInput } from '../document';
 import { planGroup, planUngroup, rootGroupOf } from '../model/groupTree';
 import { useStore } from '../../hooks/useStore';
 import { cameraSystem } from '../CameraSystem';
-import { fitPose, type FitBounds } from '../cameraFit';
+import { fitPose, type FitBounds, type FitOptions } from '../cameraFit';
 import { selectionBounds } from '../model/selection';
 
 /**
@@ -176,14 +176,29 @@ export class EditorAPI {
     return sceneBounds();
   }
 
-  zoomToFit() {
+  zoomToFit(options?: FitOptions & { smooth?: boolean; duration?: number; onComplete?: () => void }) {
     const bounds = sceneBounds();
     if (!bounds) return; // Empty scene
 
     const pose = fitPose(bounds, cameraSystem.width, cameraSystem.height, {
       ...cameraSystem.zoomLimits,
+      paddingLeft: 80,
+      paddingRight: 80,
+      paddingTop: 64,
+      paddingBottom: 110,
+      ...options,
     });
-    if (pose) cameraSystem.setPose(pose.x, pose.y, pose.zoom);
+    if (!pose) return;
+
+    if (options?.smooth) {
+      cameraSystem.animateTo(pose.x, pose.y, pose.zoom, {
+        duration: options.duration ?? 450,
+        onComplete: options.onComplete,
+      });
+    } else {
+      cameraSystem.setPose(pose.x, pose.y, pose.zoom);
+      options?.onComplete?.();
+    }
   }
 
   /**
@@ -193,14 +208,26 @@ export class EditorAPI {
    * to the screen at 500% is technically a fit and practically a lost place on
    * the board, with nothing around it to say where you are.
    */
-  zoomToNodes(nodes: readonly AnyNode[]) {
+  zoomToNodes(nodes: readonly AnyNode[], options?: { smooth?: boolean; duration?: number }) {
     const bounds = selectionBounds(nodes);
     if (!bounds) return;
     const pose = fitPose(bounds, cameraSystem.width, cameraSystem.height, {
       ...cameraSystem.zoomLimits,
+      paddingLeft: 80,
+      paddingRight: 80,
+      paddingTop: 64,
+      paddingBottom: 110,
       maxZoom: Math.min(2, cameraSystem.zoomLimits.maxZoom),
     });
-    if (pose) cameraSystem.setPose(pose.x, pose.y, pose.zoom);
+    if (!pose) return;
+
+    if (options?.smooth) {
+      cameraSystem.animateTo(pose.x, pose.y, pose.zoom, {
+        duration: options.duration ?? 400,
+      });
+    } else {
+      cameraSystem.setPose(pose.x, pose.y, pose.zoom);
+    }
   }
 
   // --- Utilities --- //

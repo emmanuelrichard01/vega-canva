@@ -82,6 +82,72 @@ function sliceTokens(tokens: Token[], from: number, to: number): Token[] {
   return out;
 }
 
+/**
+ * Break a logical line of tokens into visual rows that fit within `columns`.
+ *
+ * Rather than chopping mid-word at column boundaries, wrapping is token- and
+ * word-boundary aware:
+ * 1. Prefer breaking after whitespace (spaces, tabs) at or before `columns`.
+ * 2. If no whitespace exists in the available span, break after punctuation or
+ *    operators (`,`, `;`, `(`, `)`, `[`, `]`, `{`, `}`, `.`, `=`, etc.).
+ * 3. Fall back to column boundary only when an unbroken token/URL exceeds the column limit.
+ */
+export function wrapTokens(tokens: Token[], columns: number): Token[][] {
+  const length = tokens.reduce((n, t) => n + t.text.length, 0);
+  if (length <= columns) return [tokens];
+
+  const fullText = tokens.map((t) => t.text).join('');
+  const out: Token[][] = [];
+  let start = 0;
+
+  while (start < fullText.length) {
+    if (fullText.length - start <= columns) {
+      out.push(sliceTokens(tokens, start, fullText.length));
+      break;
+    }
+
+    const maxEnd = start + columns;
+    let breakAt = -1;
+
+    // 1. Look for whitespace boundary in (start, maxEnd]
+    if (fullText[maxEnd] === ' ') {
+      breakAt = maxEnd + 1;
+    } else {
+      for (let i = maxEnd - 1; i > start; i--) {
+        if (fullText[i] === ' ' || fullText[i] === '\t') {
+          if (i - start >= Math.min(6, Math.floor(columns * 0.25))) {
+            breakAt = i + 1;
+            break;
+          }
+        }
+      }
+    }
+
+    // 2. If no whitespace break, check for punctuation / delimiter / operator
+    if (breakAt === -1) {
+      const PUNCT_BREAKS = new Set([',', ';', '(', ')', '[', ']', '{', '}', '.', '=', '+', '-', '*', '/', '&', '|', ':', '?', '!']);
+      for (let i = maxEnd - 1; i > start; i--) {
+        if (PUNCT_BREAKS.has(fullText[i])) {
+          if (i - start >= Math.min(8, Math.floor(columns * 0.35))) {
+            breakAt = i + 1;
+            break;
+          }
+        }
+      }
+    }
+
+    // 3. Fallback: hard break at columns
+    if (breakAt === -1 || breakAt <= start || breakAt > maxEnd + 1) {
+      breakAt = maxEnd;
+    }
+
+    out.push(sliceTokens(tokens, start, breakAt));
+    start = breakAt;
+  }
+
+  return out.length > 0 ? out : [tokens];
+}
+
 export function layoutCode(spec: CodeSpec, width: number, charWidth?: number): CodeLayout {
   const lines = tokenize(spec.source, languageById(spec.language).id);
   const metrics = codeMetrics(spec, lines.length, charWidth);
@@ -98,13 +164,12 @@ export function layoutCode(spec: CodeSpec, width: number, charWidth?: number): C
   let y = contentTop;
   for (let i = 0; i < shown; i++) {
     const tokens = lines[i];
-    const length = tokens.reduce((n, t) => n + t.text.length, 0);
-    const chunks = spec.wrap && length > columns ? Math.ceil(length / columns) : 1;
-    for (let c = 0; c < chunks; c++) {
+    const visualChunks = spec.wrap ? wrapTokens(tokens, columns) : [tokens];
+    for (let c = 0; c < visualChunks.length; c++) {
       rows.push({
         lineNumber: i + 1,
         first: c === 0,
-        tokens: chunks === 1 ? tokens : sliceTokens(tokens, c * columns, (c + 1) * columns),
+        tokens: visualChunks[c],
         y,
         highlighted: highlighted.has(i + 1),
       });

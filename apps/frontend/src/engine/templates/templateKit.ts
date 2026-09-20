@@ -155,12 +155,12 @@ export const caption = (x: number, y: number, text: string, width = 760): NewNod
 });
 
 /** A heading over a group of things. */
-export const heading = (x: number, y: number, text: string, fontSize = 24): NewNodeInput => ({
+export const heading = (x: number, y: number, text: string, fontSize = 24, width = 520): NewNodeInput => ({
   id: nanoid(),
   type: 'text',
   x,
   y,
-  width: 520,
+  width,
   height: fontSize * 1.5,
   text,
   resize: 'width',
@@ -201,6 +201,143 @@ type Extra = Record<string, unknown>;
  * `TINT`; the first build of these templates shipped white-on-cream labels
  * across four boards.
  */
+export const fillOf = (tint: Tint | string): string => (tint in TINT ? TINT[tint as Tint] : tint);
+
+function hexToRgb(hex: string): [number, number, number] | null {
+  const h = hex.replace('#', '');
+  const full = h.length === 3 ? h.split('').map((x) => x + x).join('') : h.slice(0, 6);
+  if (full.length !== 6 || !/^[0-9a-fA-F]{6}$/.test(full)) return null;
+  const n = parseInt(full, 16);
+  return [(n >> 16) & 255, (n >> 8) & 255, n & 255];
+}
+
+function rgbToHex(r: number, g: number, b: number): string {
+  const clamp = (v: number) => Math.max(0, Math.min(255, Math.round(v)));
+  const toHex = (v: number) => clamp(v).toString(16).padStart(2, '0');
+  return `#${toHex(r)}${toHex(g)}${toHex(b)}`.toUpperCase();
+}
+
+function rgbToHsl(r: number, g: number, b: number): [number, number, number] {
+  r /= 255; g /= 255; b /= 255;
+  const max = Math.max(r, g, b);
+  const min = Math.min(r, g, b);
+  let h = 0;
+  let s = 0;
+  const l = (max + min) / 2;
+
+  if (max !== min) {
+    const d = max - min;
+    s = l > 0.5 ? d / (2 - max - min) : d / (max + min);
+    switch (max) {
+      case r: h = (g - b) / d + (g < b ? 6 : 0); break;
+      case g: h = (b - r) / d + 2; break;
+      case b: h = (r - g) / d + 4; break;
+    }
+    h /= 6;
+  }
+  return [h * 360, s, l];
+}
+
+function hslToRgb(h: number, s: number, l: number): [number, number, number] {
+  h = ((h % 360) + 360) % 360 / 360;
+  let r: number, g: number, b: number;
+
+  if (s === 0) {
+    r = g = b = l;
+  } else {
+    const hue2rgb = (p: number, q: number, t: number) => {
+      if (t < 0) t += 1;
+      if (t > 1) t -= 1;
+      if (t < 1/6) return p + (q - p) * 6 * t;
+      if (t < 1/2) return q;
+      if (t < 2/3) return p + (q - p) * (2/3 - t) * 6;
+      return p;
+    };
+    const q = l < 0.5 ? l * (1 + s) : l + s - l * s;
+    const p = 2 * l - q;
+    r = hue2rgb(p, q, h + 1/3);
+    g = hue2rgb(p, q, h);
+    b = hue2rgb(p, q, h - 1/3);
+  }
+  return [r * 255, g * 255, b * 255];
+}
+
+export function luminance(hex: string): number | null {
+  const rgb = hexToRgb(hex);
+  if (!rgb) return null;
+  const lin = (v: number) => {
+    const s = v / 255;
+    return s <= 0.03928 ? s / 12.92 : ((s + 0.055) / 1.055) ** 2.4;
+  };
+  return 0.2126 * lin(rgb[0]) + 0.7152 * lin(rgb[1]) + 0.0722 * lin(rgb[2]);
+}
+
+export function contrast(a: string, b: string): number {
+  const la = luminance(a);
+  const lb = luminance(b);
+  if (la === null || lb === null) return 1;
+  const [hi, lo] = la > lb ? [la, lb] : [lb, la];
+  return (hi + 0.05) / (lo + 0.05);
+}
+
+/** Harmonious, low-contrast stroke tones that are slightly darker than the fill. */
+export const TINT_STROKE: Record<Tint, string> = {
+  slate: '#CBD5E1',   // slate-300 on slate-100 (#F1F5F9)
+  indigo: '#C7D2FE',  // indigo-200 on indigo-100 (#E0E7FF)
+  blue: '#BFDBFE',    // blue-200 on blue-100 (#DBEAFE)
+  sky: '#BAE6FD',     // sky-200 on sky-100 (#E0F2FE)
+  teal: '#99F6E4',    // teal-200 on teal-100 (#CCFBF1)
+  green: '#BBF7D0',   // green-200 on green-100 (#DCFCE7)
+  lime: '#D9F99D',    // lime-200 on lime-100 (#ECFCCB)
+  amber: '#FDE68A',   // amber-200 on amber-100 (#FEF3C7)
+  orange: '#FED7AA',  // orange-200 on orange-100 (#FFEDD5)
+  rose: '#FECDD3',    // rose-200 on rose-100 (#FFE4E6)
+  pink: '#FBCFE8',    // pink-200 on pink-100 (#FCE7F3)
+  violet: '#DDD6FE',  // violet-200 on violet-100 (#EDE9FE)
+  stone: '#E7E5E4',   // stone-200 on stone-100 (#EFEDE9)
+};
+
+export const strokeOf = (tint: Tint | string): string => {
+  if (tint in TINT_STROKE) return TINT_STROKE[tint as Tint];
+  if (tint in TINT) return TINT_STROKE[tint as Tint];
+
+  const hex = typeof tint === 'string' ? tint.toUpperCase() : '';
+  if (hex === '#FFFFFF' || hex === PAPER || hex === '#F8FAFC' || hex === PAPER_SOFT) return HAIRLINE;
+  if (hex === '#0F172A' || hex === '#020617') return '#1E293B';
+  if (hex === '#1E293B') return '#334155';
+  if (hex === '#F1F5F9' || hex === '#E2E8F0') return '#CBD5E1';
+  if (hex === '#E0E7FF') return '#C7D2FE';
+  if (hex === '#DBEAFE') return '#BFDBFE';
+  if (hex === '#E0F2FE') return '#BAE6FD';
+  if (hex === '#CCFBF1') return '#99F6E4';
+  if (hex === '#DCFCE7') return '#BBF7D0';
+  if (hex === '#ECFCCB') return '#D9F99D';
+  if (hex === '#FEF3C7') return '#FDE68A';
+  if (hex === '#FFEDD5') return '#FED7AA';
+  if (hex === '#FFE4E6' || hex === '#FEE2E2') return '#FECDD3';
+  if (hex === '#FCE7F3') return '#FBCFE8';
+  if (hex === '#EDE9FE') return '#DDD6FE';
+  if (hex === '#EFEDE9') return '#E7E5E4';
+  if (hex === BRAND || hex === '#F3A024') return '#D97706';
+
+  const rgb = hexToRgb(tint);
+  if (rgb) {
+    const [h, s, l] = rgbToHsl(...rgb);
+    if (l > 0.20) {
+      const targetL = Math.max(0.05, l - 0.11);
+      const targetS = Math.min(1, s * 1.05);
+      const [r2, g2, b2] = hslToRgb(h, targetS, targetL);
+      return rgbToHex(r2, g2, b2);
+    } else {
+      const targetL = Math.min(0.28, l + 0.08);
+      const [r2, g2, b2] = hslToRgb(h, s, targetL);
+      return rgbToHex(r2, g2, b2);
+    }
+  }
+
+  return tint;
+};
+
 export const box = (
   x: number,
   y: number,
@@ -209,22 +346,56 @@ export const box = (
   text: string,
   tint: Tint | string = 'slate',
   extra: Extra = {}
-): NewNodeInput => ({
-  id: nanoid(),
-  type: 'shape',
-  x,
-  y,
-  width,
-  height,
-  geometry: { kind: 'rect' },
-  appearance: { fill: [{ type: 'solid', color: fillOf(tint) }], cornerRadius: 12 },
-  text,
-  typography: { fontSize: 16, fontWeight: 600, color: INK, align: 'center', verticalAlign: 'middle' },
-  ...extra,
-});
+): NewNodeInput => {
+  const defaultFontSize = height <= 54 ? 12 : height <= 84 ? 13 : 15;
+  const strokeColor = strokeOf(tint);
+  const extraAppearance = (extra.appearance as Record<string, unknown>) || {};
+  const extraTypography = (extra.typography as Record<string, unknown>) || {};
+  const passedStroke = extraAppearance.stroke as { color?: string; width?: number } | undefined;
 
-const fillOf = (tint: Tint | string): string => (tint in TINT ? TINT[tint as Tint] : tint);
-export const strokeOf = (tint: Tint | string): string => (tint in HUE ? HUE[tint as Tint] : tint);
+  let stroke = { color: strokeColor, width: 1.5 };
+  if (passedStroke) {
+    const strokeWidth = passedStroke.width ?? 1.5;
+    const strokeCol = passedStroke.color;
+    if (strokeCol) {
+      const fillCol = fillOf(tint);
+      const cr = contrast(fillCol, strokeCol);
+      if (cr > 2.0) {
+        stroke = { color: strokeColor, width: strokeWidth };
+      } else {
+        stroke = { color: strokeCol, width: strokeWidth };
+      }
+    } else {
+      stroke = { color: strokeColor, width: strokeWidth };
+    }
+  }
+
+  return {
+    id: nanoid(),
+    type: 'shape',
+    x,
+    y,
+    width,
+    height,
+    geometry: { kind: 'rect' },
+    text,
+    ...extra,
+    appearance: {
+      fill: [{ type: 'solid', color: fillOf(tint) }],
+      ...extraAppearance,
+      stroke,
+      cornerRadius: 0,
+    },
+    typography: {
+      fontSize: defaultFontSize,
+      fontWeight: 600,
+      color: INK,
+      align: 'center',
+      verticalAlign: 'middle',
+      ...extraTypography,
+    },
+  };
+};
 
 /**
  * A box in the shape of the thing it names — a database, a server, a queue.
@@ -247,8 +418,12 @@ export const glyph = (
 ): NewNodeInput =>
   box(x, y, width, height, text, tint, {
     geometry: { kind },
-    typography: { fontSize: 15, fontWeight: 600, color: INK, align: 'center', verticalAlign: 'middle' },
+    typography: { fontSize: height <= 84 ? 13 : 14, fontWeight: 600, color: INK, align: 'center', verticalAlign: 'middle' },
     ...extra,
+    appearance: {
+      ...((extra.appearance as Record<string, unknown>) || {}),
+      cornerRadius: 0,
+    },
   });
 
 /**
@@ -293,14 +468,19 @@ export function iconRow(
     width: ICON,
     height: ICON,
     geometry: { kind },
-    appearance: { fill: [{ type: 'solid', color: strokeOf(tint) }], opacity: 0.85, cornerRadius: 6 },
+    appearance: {
+      fill: [{ type: 'solid', color: strokeOf(tint) }],
+      stroke: { color: strokeOf(tint), width: 1 },
+      opacity: 0.85,
+      cornerRadius: 0,
+    },
   };
   const label: NewNodeInput = {
     id: nanoid(),
     type: 'text',
     x: x + PAD * 2 + ICON,
     y: y + height / 2 - 18,
-    width: width - PAD * 3 - ICON,
+    width: Math.max(50, width - PAD * 3 - ICON),
     height: 36,
     text,
     resize: 'none',
@@ -312,7 +492,7 @@ export function iconRow(
 /** A small pill: a status, a tag, a lane marker. */
 export const pill = (x: number, y: number, width: number, text: string, tint: Tint | string = 'slate'): NewNodeInput =>
   box(x, y, width, 34, text, tint, {
-    appearance: { fill: [{ type: 'solid', color: fillOf(tint) }], cornerRadius: 17 },
+    appearance: { fill: [{ type: 'solid', color: fillOf(tint) }], stroke: { color: strokeOf(tint), width: 1.5 }, cornerRadius: 0 },
     typography: { fontSize: 13, fontWeight: 600, color: INK, align: 'center', verticalAlign: 'middle' },
   });
 
@@ -326,7 +506,7 @@ export const decision = (x: number, y: number, width: number, height: number, te
 /** A start or an end. A pill, for the same reason. */
 export const terminator = (x: number, y: number, width: number, text: string, tint: Tint = 'indigo'): NewNodeInput =>
   box(x, y, width, 60, text, tint, {
-    appearance: { fill: [{ type: 'solid', color: fillOf(tint) }], cornerRadius: 30 },
+    appearance: { fill: [{ type: 'solid', color: fillOf(tint) }], stroke: { color: strokeOf(tint), width: 1.5 }, cornerRadius: 0 },
   });
 
 /** A plain band of colour behind a group — a swimlane, a phase, a zone. */
@@ -345,7 +525,12 @@ export const band = (
   width,
   height,
   geometry: { kind: 'rect' },
-  appearance: { fill: [{ type: 'solid', color: fillOf(tint) }], cornerRadius: 18, opacity },
+  appearance: {
+    fill: [{ type: 'solid', color: fillOf(tint) }],
+    stroke: { color: strokeOf(tint), width: 1 },
+    cornerRadius: 0,
+    opacity,
+  },
 });
 
 export const sticky = (
@@ -354,21 +539,26 @@ export const sticky = (
   text: string,
   theme: StickyTheme = 'yellow',
   extra: Extra = {}
-): NewNodeInput => ({
-  id: nanoid(),
-  type: 'sticky',
-  x,
-  y,
-  width: 180,
-  height: 180,
-  text,
-  theme,
-  fontSize: 15,
-  reactions: {},
-  tags: [],
-  pinned: false,
-  ...extra,
-});
+): NewNodeInput => {
+  const { appearance, ...restExtra } = extra;
+  const cleanAppearance = appearance ? { ...(appearance as object), sketch: undefined } : undefined;
+  return {
+    id: nanoid(),
+    type: 'sticky',
+    x,
+    y,
+    width: 180,
+    height: 180,
+    text,
+    theme,
+    fontSize: 15,
+    reactions: {},
+    tags: [],
+    pinned: false,
+    ...restExtra,
+    ...(cleanAppearance ? { appearance: cleanAppearance } : {}),
+  };
+};
 
 export const frame = (x: number, y: number, width: number, height: number, title: string): NewNodeInput => ({
   id: nanoid(),
@@ -593,9 +783,18 @@ export const zone = (
   tint: Tint | string,
   opacity = 0.42
 ): NewNodeInput[] => {
-  const ground = band(x, y, width, height, tint, opacity);
+  const strokeColor = strokeOf(tint);
+  const ground: NewNodeInput = {
+    ...band(x, y, width, height, tint, opacity),
+    appearance: {
+      fill: [{ type: 'solid', color: fillOf(tint) }],
+      stroke: { color: strokeColor, width: 1.5 },
+      cornerRadius: 0,
+      opacity,
+    },
+  };
   GROUNDS.add(ground);
-  return [ground, heading(x + 24, y + 18, name, 17)];
+  return [ground, heading(x + 24, y + 18, name, 17, Math.max(100, width - 48))];
 };
 
 /**

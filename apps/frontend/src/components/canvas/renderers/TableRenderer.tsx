@@ -196,7 +196,10 @@ export const TableRenderer: React.FC<{ node: TableNode }> = ({ node }) => {
           ctx.fillStyle = c.color;
           const mark = c.sort || c.filtered ? fs * 0.9 : 0;
           const room = c.w - layout.padX * 2 - mark;
-          const text = fitText(ctx, c.text, room);
+          const cellStr = typeof c.text === 'object' && c.text !== null
+            ? String((c.text as { value?: unknown; text?: unknown }).value ?? (c.text as { text?: unknown }).text ?? '')
+            : String(c.text ?? '');
+          const text = fitText(ctx, cellStr, room);
           const cy = c.y + c.h / 2 + 0.5;
           if (text) {
             if (c.align === 'center') {

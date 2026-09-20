@@ -92,7 +92,11 @@ const numberFormat = new Intl.NumberFormat(undefined, { maximumFractionDigits: 6
 
 /** The text a cell shows: the raw string read through its column's type. */
 export function formatCell(spec: TableSpec, r: number, c: number): string {
-  const raw = spec.cells[r]?.[c] ?? '';
+  const rawVal = spec.cells[r]?.[c] as unknown;
+  const raw =
+    typeof rawVal === 'object' && rawVal !== null
+      ? String((rawVal as { value?: unknown; text?: unknown }).value ?? (rawVal as { text?: unknown }).text ?? '')
+      : String(rawVal ?? '');
   if (spec.header && r === 0) return raw;
   if (isFormula(raw)) return formatValue(spec, c, evaluateCell(spec, r, c));
   const type = spec.columns[c]?.type ?? 'text';

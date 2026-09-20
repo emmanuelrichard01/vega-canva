@@ -118,6 +118,11 @@ export const CodeRenderer: React.FC<{ node: CodeNode }> = ({ node }) => {
           ctx.textAlign = 'right';
           ctx.fillStyle = row.highlighted ? theme.highlightBar : theme.gutter;
           ctx.fillText(String(row.lineNumber), m.padX + m.gutterWidth - m.fontSize, row.y + baselineShift);
+        } else if (spec.lineNumbers && !row.first) {
+          ctx.font = `${Math.round(m.fontSize * 0.82)}px ${CODE_FONT}`;
+          ctx.textAlign = 'right';
+          ctx.fillStyle = theme.gutter;
+          ctx.fillText('↳', m.padX + m.gutterWidth - m.fontSize, row.y + baselineShift);
         }
         if (editing) continue;
         ctx.textAlign = 'left';

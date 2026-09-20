@@ -14,6 +14,10 @@ export interface CameraPose {
 export interface FitOptions {
   /** Screen-space breathing room on every side, in pixels. */
   padding?: number;
+  paddingLeft?: number;
+  paddingRight?: number;
+  paddingTop?: number;
+  paddingBottom?: number;
   minZoom?: number;
   maxZoom?: number;
 }
@@ -73,8 +77,13 @@ export function fitPose(
    * inch of it. Screen-space padding is a constant number of pixels whatever
    * is being framed, which is what "breathing room" means.
    */
-  const usableW = Math.max(viewportWidth - padding * 2, 1);
-  const usableH = Math.max(viewportHeight - padding * 2, 1);
+  const padL = options.paddingLeft ?? options.padding ?? DEFAULT_PADDING;
+  const padR = options.paddingRight ?? options.padding ?? DEFAULT_PADDING;
+  const padT = options.paddingTop ?? options.padding ?? DEFAULT_PADDING;
+  const padB = options.paddingBottom ?? options.padding ?? DEFAULT_PADDING;
+
+  const usableW = Math.max(viewportWidth - padL - padR, 1);
+  const usableH = Math.max(viewportHeight - padT - padB, 1);
 
   const raw =
     width > 0 && height > 0
@@ -100,11 +109,13 @@ export function fitPose(
   const centreX = bounds.x + width / 2;
   const centreY = bounds.y + height / 2;
 
-  // `CameraSystem` maps world to screen as `screen = world * zoom + offset`,
-  // so the offset that puts a world point in the middle of the screen is:
+  // Middle of the usable viewport area:
+  const targetScreenX = padL + usableW / 2;
+  const targetScreenY = padT + usableH / 2;
+
   return {
-    x: viewportWidth / 2 - centreX * zoom,
-    y: viewportHeight / 2 - centreY * zoom,
+    x: targetScreenX - centreX * zoom,
+    y: targetScreenY - centreY * zoom,
     zoom,
   };
 }

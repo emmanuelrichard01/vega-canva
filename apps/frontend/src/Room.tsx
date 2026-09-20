@@ -22,6 +22,7 @@ import { useAuth } from './hooks/useAuth';
 import { doc, provider, metadataMap, deleteNode, localAuthorId, publishLocalIdentity, applyGroupPlan } from './engine/document';
 import { useRoomState } from './hooks/useSync';
 import { useOpeningFrame } from './hooks/useOpeningFrame';
+import { fitPose } from './engine/cameraFit';
 import { resolvePresenceColor, type ColorClaim } from './engine/presence/ColorPalette';
 import { initSyncBridge, useStore } from './hooks/useStore';
 import { editor } from './engine/api/EditorAPI';
@@ -110,23 +111,7 @@ let restoreConsumed = false;
  */
 function fitBoardToView(
   nodes: Array<{ x: number; y: number; width: number; height: number }>,
-  /**
-   * Frame without the glide.
-   *
-   * Used when the board is not on screen yet: gliding across an empty canvas
-   * and letting the content land mid-flight is what made a template arrive as
-   * a lurch. See the note in `Canvas`'s navigate handler.
-   */
   immediate = false,
-  /**
-   * Whether the side panels and the dock are actually on screen.
-   *
-   * The insets below are subtracted unconditionally, which is right while the
-   * chrome is up and wrong the moment it is not: in focus mode — and now
-   * whenever a force is armed — there are no panels, so reserving six hundred
-   * pixels for them fits the board into a band twice as narrow as the one it
-   * has, and centres it in a space that does not exist.
-   */
   chromeVisible = true
 ): void {
   if (nodes.length === 0) return;
@@ -140,49 +125,23 @@ function fitBoardToView(
   });
   if (!Number.isFinite(minX)) return;
 
-  const boardW = Math.max(1, maxX - minX);
-  const boardH = Math.max(1, maxY - minY);
-  const usableW = Math.max(320, cameraSystem.width - (chromeVisible ? PANEL_INSET * 2 : 0));
-  const usableH = Math.max(240, cameraSystem.height - (chromeVisible ? VERTICAL_INSET : 0));
+  const bounds = { x: minX, y: minY, width: maxX - minX, height: maxY - minY };
+  const pose = fitPose(bounds, cameraSystem.width, cameraSystem.height, {
+    ...cameraSystem.zoomLimits,
+    paddingLeft: chromeVisible ? 80 : 40,
+    paddingRight: chromeVisible ? 80 : 40,
+    paddingTop: chromeVisible ? 64 : 40,
+    paddingBottom: chromeVisible ? 110 : 40,
+  });
 
-  const zoom = Math.min(
-    (usableW / boardW) * FIT_MARGIN,
-    (usableH / boardH) * FIT_MARGIN,
-    // Never magnify: a board smaller than the window should sit at its own
-    // size rather than being blown up to fill the screen.
-    1
-  );
-
-  /**
-   * Centred in the *usable* band, not the stage.
-   *
-   * The tool dock sits over the bottom of the canvas and nothing sits over the
-   * top, so the space you can actually see is not centred on the stage — it is
-   * about half the dock's height higher. Centring on the stage put the bottom
-   * of every fitted board underneath the dock.
-   */
-  const verticalShift = chromeVisible ? DOCK_OBSTRUCTION / 2 / Math.max(0.02, zoom) : 0;
-
-  window.dispatchEvent(
-    new CustomEvent('navigateViewport', {
-      detail: {
-        x: minX + boardW / 2,
-        y: minY + boardH / 2 - verticalShift,
-        zoom: Math.max(0.02, zoom),
-        immediate,
-      },
-    })
-  );
+  if (pose) {
+    if (immediate) {
+      cameraSystem.setPose(pose.x, pose.y, pose.zoom);
+    } else {
+      cameraSystem.animateTo(pose.x, pose.y, pose.zoom, { duration: 450 });
+    }
+  }
 }
-
-/** Roughly a side panel, so a fitted board is not tucked under one. */
-const PANEL_INSET = 300;
-/** Header, ruler and the tool dock along the bottom. */
-const VERTICAL_INSET = 190;
-/** How much of the bottom the dock covers, in screen pixels. */
-const DOCK_OBSTRUCTION = 96;
-/** A little air around the content, so nothing touches an edge. */
-const FIT_MARGIN = 0.92;
 
 export default function Room() {
   const { user } = useAuth();

@@ -88,6 +88,7 @@ describe('framing a board when it opens', () => {
     // ...and frames as soon as the canvas reports a real one.
     camera.measured = true;
     engineEvents.emit('CameraChanged');
+    vi.advanceTimersByTime(100);
     expect(zoomToFit).toHaveBeenCalledTimes(1);
   });
 
@@ -98,6 +99,7 @@ describe('framing a board when it opens', () => {
 
     bounds = { x: 0, y: 0, width: 10, height: 10 };
     engineEvents.emit('VisibleSetUpdated');
+    vi.advanceTimersByTime(100);
     expect(zoomToFit).toHaveBeenCalledTimes(1);
   });
 
@@ -117,6 +119,7 @@ describe('framing a board when it opens', () => {
     engineEvents.emit('ObjectAdded');
     engineEvents.emit('VisibleSetUpdated');
     engineEvents.emit('CameraChanged');
+    vi.advanceTimersByTime(500);
     expect(zoomToFit).not.toHaveBeenCalled();
   });
 
@@ -135,6 +138,7 @@ describe('framing a board when it opens', () => {
 
     bounds = { x: 900, y: 900, width: 40, height: 40 };
     engineEvents.emit('ObjectAdded');
+    vi.advanceTimersByTime(500);
     expect(zoomToFit).not.toHaveBeenCalled();
   });
 
@@ -148,6 +152,33 @@ describe('framing a board when it opens', () => {
 
     bounds = { x: 0, y: 0, width: 10, height: 10 };
     engineEvents.emit('VisibleSetUpdated');
+    vi.advanceTimersByTime(100);
     expect(zoomToFit).not.toHaveBeenCalled();
+  });
+
+  it('debounces rapid node insertions and frames only once on the settled scene', () => {
+    camera.measured = true;
+    useOpeningFrame('room-a');
+    expect(zoomToFit).not.toHaveBeenCalled();
+
+    // Node 1 arrives
+    bounds = { x: 0, y: 0, width: 100, height: 100 };
+    engineEvents.emit('ObjectAdded');
+    vi.advanceTimersByTime(30);
+    expect(zoomToFit).not.toHaveBeenCalled();
+
+    // Node 2 arrives before debounce settles
+    bounds = { x: 0, y: 0, width: 500, height: 400 };
+    engineEvents.emit('ObjectAdded');
+    vi.advanceTimersByTime(30);
+    expect(zoomToFit).not.toHaveBeenCalled();
+
+    // Final visible set arrives and settles
+    bounds = { x: 0, y: 0, width: 1200, height: 800 };
+    engineEvents.emit('VisibleSetUpdated');
+    vi.advanceTimersByTime(100);
+
+    // Frames exactly once on the settled bounds, never jumping on intermediate nodes
+    expect(zoomToFit).toHaveBeenCalledTimes(1);
   });
 });

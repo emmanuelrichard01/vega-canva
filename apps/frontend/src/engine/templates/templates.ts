@@ -5,7 +5,7 @@ import { buildPreview, MAX_ITEMS_RICH, type BoardPreview } from '../model/boardP
 import { previewColorOf, previewPointsOf } from '../model/previewPaint';
 import {
   BRAND, BRAND_INK, HAIRLINE, HUE, INK, INK_FAINT, INK_MID, INK_SOFT, INK_STRONG,
-  layer, PAPER, PAPER_SOFT, RULE, SIGNAL_BAD, SIGNAL_OK, TINT,
+  layer, PAPER, PAPER_SOFT, RULE, SIGNAL_OK, strokeOf, contrast, TINT, chart, plot,
 } from './templateKit';
 import { SCIENCE_TEMPLATES } from './scienceTemplates';
 import { TABLE_TEMPLATES } from './tableTemplates';
@@ -146,40 +146,92 @@ const box = (
   text: string,
   fill: string,
   extra: Record<string, unknown> = {}
-): NewNodeInput => ({
-  id: nanoid(),
-  type: 'shape',
-  x,
-  y,
-  width,
-  height,
-  geometry: { kind: 'rect' },
-  appearance: { fill: [{ type: 'solid', color: fill }], cornerRadius: 10 },
-  text,
-  /**
-   * Ink, explicitly.
-   *
-   * A shape's text defaults to white, which is right for the saturated fills
-   * the shape tool produces and wrong for every fill used here — these are
-   * deliberately pale so the labels carry the meaning, and white on pale blue
-   * is a label nobody can read. The first build of these templates shipped
-   * exactly that.
-   */
-  typography: { fontSize: 18, fontWeight: 600, color: INK, align: 'center', verticalAlign: 'middle' },
-  ...extra,
-});
+): NewNodeInput => {
+  const extraAppearance = (extra.appearance as Record<string, unknown> | undefined) || {};
+  const extraTypography = (extra.typography as Record<string, unknown> | undefined) || {};
+  const passedStroke = extraAppearance.stroke as { color?: string; width?: number } | undefined;
+  const strokeColor = strokeOf(fill);
+  let stroke = { color: strokeColor, width: 1.5 };
+  if (passedStroke) {
+    const strokeWidth = passedStroke.width ?? 1.5;
+    const strokeCol = passedStroke.color;
+    if (strokeCol) {
+      const cr = contrast(fill, strokeCol);
+      if (cr > 2.0) {
+        stroke = { color: strokeColor, width: strokeWidth };
+      } else {
+        stroke = { color: strokeCol, width: strokeWidth };
+      }
+    } else {
+      stroke = { color: strokeColor, width: strokeWidth };
+    }
+  }
+  const defaultFontSize =
+    width <= 240 || height <= 60
+      ? (text.length > 20 ? 13 : 14)
+      : height <= 84
+      ? 15
+      : 16;
+  return {
+    id: nanoid(),
+    type: 'shape',
+    x,
+    y,
+    width,
+    height,
+    geometry: { kind: 'rect' },
+    text,
+    /**
+     * Ink, explicitly.
+     *
+     * A shape's text defaults to white, which is right for the saturated fills
+     * the shape tool produces and wrong for every fill used here — these are
+     * deliberately pale so the labels carry the meaning, and white on pale blue
+     * is a label nobody can read.
+     */
+    typography: {
+      fontSize: defaultFontSize,
+      fontWeight: 600,
+      color: INK,
+      align: 'center',
+      verticalAlign: 'middle',
+      ...extraTypography,
+    },
+    ...extra,
+    appearance: {
+      fill: [{ type: 'solid', color: fill }],
+      stroke,
+      ...extraAppearance,
+      cornerRadius: 0,
+    },
+  };
+};
 
-const label = (x: number, y: number, text: string, fontSize = 28): NewNodeInput => ({
-  id: nanoid(),
-  type: 'text',
-  x,
-  y,
-  width: 320,
-  height: fontSize * 1.6,
-  text,
-  resize: 'width',
-  typography: { fontSize, fontWeight: 700, color: BRAND_INK },
-});
+const label = (
+  x: number,
+  y: number,
+  text: string,
+  fontSize = 28,
+  width?: number,
+  extraTypography: Record<string, unknown> = {},
+  groundColor?: string
+): NewNodeInput => {
+  const ground = groundColor ?? (extraTypography.ground as string | undefined);
+  const { ground: _, ...cleanTypography } = extraTypography;
+  return {
+    id: nanoid(),
+    type: 'text',
+    x,
+    y,
+    width: width ?? (x === 0 ? (fontSize >= 24 ? 960 : 840) : Math.max(220, Math.min(560, Math.round(text.length * fontSize * 0.65)))),
+    height: Math.round(fontSize * 1.35),
+    text,
+    resize: 'width',
+    typography: { fontSize, fontWeight: fontSize >= 24 ? 700 : 500, color: BRAND_INK, ...cleanTypography },
+    ...(ground ? { appearance: { fill: [{ type: 'solid', color: ground }] } } : {}),
+  };
+};
+
 
 const frame = (x: number, y: number, width: number, height: number, title: string): NewNodeInput => ({
   id: nanoid(),
@@ -224,7 +276,6 @@ const hue = (t: number, saturation = 68, lightness = 62): string =>
 const BASE_TEMPLATES: Template[] = [
   {
     id: 'bloom',
-    featured: true,
     category: 'physics',
     name: 'Bloom',
     blurb: 'Five hundred shapes on a phyllotaxis spiral. Built to exercise the force tools.',
@@ -318,7 +369,10 @@ const BASE_TEMPLATES: Template[] = [
           // at the centre, where the shape is round and rotation is a no-op.
           rotation: (angle * 180) / Math.PI + 90,
           geometry: { kind: 'ellipse' },
-          appearance: { fill: [{ type: 'solid', color: hue(t * 0.85 + 0.05) }] },
+          appearance: {
+            fill: [{ type: 'solid', color: hue(t * 0.85 + 0.05) }],
+            stroke: { color: hue(t * 0.85 + 0.05, 75, 45), width: 1 },
+          },
         });
       }
       return nodes;
@@ -339,15 +393,12 @@ const BASE_TEMPLATES: Template[] = [
       const ROWS = Math.max(4, Math.round(25 * shrink));
       /**
        * The step grows as the grid thins, so the surface covers the same area
-       * whether it is 40x25 or 12x8. Trimming the count alone shrank the
-       * field to a third of its width and cropped the interference pattern
-       * down to a plain blue rectangle — the one thing the board exists to
-       * show, absent from its own card.
+       * and the overall shape is recognisable at a glance.
        */
-      const STEP = 46 / shrink;
+      const STEP = 44 / shrink;
       const nodes: NewNodeInput[] = [
-        label(0, -140, 'Wave field', 44),
-        label(0, -80, 'One thousand objects. Only what is in view is drawn.', 18),
+        label(0, -170, 'Wave field', 44),
+        label(0, -105, 'Forces → Attract or Repel, then drag across the surface.', 17),
       ];
 
       for (let row = 0; row < ROWS; row += 1) {
@@ -367,7 +418,8 @@ const BASE_TEMPLATES: Template[] = [
             geometry: { kind: 'rect' },
             appearance: {
               fill: [{ type: 'solid', color: hue(0.55 + wave * 0.12, 70, 50 + wave * 16) }],
-              cornerRadius: 4,
+              stroke: { color: hue(0.55 + wave * 0.12, 80, 38), width: 1 },
+              cornerRadius: 0,
             },
           });
         }
@@ -514,118 +566,187 @@ const BASE_TEMPLATES: Template[] = [
     id: 'landing',
     category: 'design',
     name: 'Landing page',
-    blurb: 'A composed desktop page at 1440: nav, split hero, feature row, footer.',
-    teaches: ['Frames', 'Layout', 'Export'],
-    objectCount: 64,
+    blurb: 'A high-end modern SaaS launch page: hero split, interactive canvas mockup, bento grid, metrics and footer.',
+    teaches: ['Frames', 'Layout', 'Bento grid', 'Export'],
+    objectCount: 81,
     build: () => {
-      /**
-       * A wireframe that is actually laid out.
-       *
-       * The previous version was seven grey rectangles stacked down a frame —
-       * technically a page, and useful for nothing: there was no hierarchy to
-       * learn from, no colour, and the "feature" row was three identical
-       * blocks with a caption dropped on top. A template is a starting point,
-       * and a starting point made of undifferentiated grey boxes leaves the
-       * person who opened it with all of the work still to do.
-       *
-       * This one is composed: a real navigation bar, a hero with a primary
-       * and a secondary action, an asymmetric split so the eye has somewhere
-       * to go, three feature cards that each carry a mark, a call-to-action
-       * band, and a footer with columns. Every measurement is a real one at
-       * 1440, so exporting the frame produces a usable comp.
-       */
       const PAGE = 1440;
-      const M = 80;                    // page margin
-      const COL = PAGE - M * 2;        // content width
+      const M = 80;
+      const COL = PAGE - M * 2; // 1280
 
-      const INK = INK_STRONG;
-      const MUTED = INK_FAINT;
-      const LINE = HAIRLINE;
-      const CARD = PAPER_SOFT;
+      const plate = (x: number, y: number, w: number, h: number, c: string, r = 0): NewNodeInput =>
+        box(x, y, w, h, '', c, { appearance: { fill: [{ type: 'solid', color: c }], stroke: { color: strokeOf(c), width: 1.5 }, cornerRadius: 0 } });
 
-      /** A plain filled block — the wireframe's stand-in for a picture. */
-      const plate = (x: number, y: number, w: number, h: number, c: string, r = 16): NewNodeInput =>
-        box(x, y, w, h, '', c, { appearance: { fill: [{ type: 'solid', color: c }], cornerRadius: r } });
-
-      /** A grey bar standing in for a line of body copy. */
-      const rule = (x: number, y: number, w: number, c = LINE): NewNodeInput =>
-        plate(x, y, w, 12, c, 6);
-
-      const button = (x: number, y: number, w: number, text: string, fill: string, ink: string): NewNodeInput =>
-        box(x, y, w, 56, text, fill, {
-          appearance: { fill: [{ type: 'solid', color: fill }], cornerRadius: 28 },
-          typography: { fontSize: 17, fontWeight: 600, color: ink, align: 'center', verticalAlign: 'middle' },
+      const btn = (x: number, y: number, w: number, text: string, fill: string, ink: string, r = 0): NewNodeInput =>
+        box(x, y, w, 48, text, fill, {
+          appearance: { fill: [{ type: 'solid', color: fill }], stroke: { color: strokeOf(fill), width: 1.5 }, cornerRadius: 0 },
+          typography: { fontSize: 14, fontWeight: 700, color: ink, align: 'center', verticalAlign: 'middle' },
         });
 
       const nodes: NewNodeInput[] = [
-        // A frame at a real screen size, so "export this" produces a real asset.
-        frame(0, 0, PAGE, 1980, 'Desktop 1440'),
+        frame(0, 0, PAGE, 2180, 'Desktop 1440 — High-End SaaS Launch'),
 
-        // ---- navigation ------------------------------------------------
-        plate(0, 0, PAGE, 88, PAPER, 0),
-        plate(M, 28, 32, 32, BRAND, 10),
-        rule(M + 46, 38, 84, INK),
-        rule(PAGE - M - 470, 40, 70, MUTED),
-        rule(PAGE - M - 370, 40, 62, MUTED),
-        rule(PAGE - M - 280, 40, 78, MUTED),
-        button(PAGE - M - 160, 16, 160, 'Sign up', INK, PAPER),
-        plate(0, 88, PAGE, 1, LINE, 0),
+        // ---- Nav Bar ----------------------------------------------------------
+        // ---- Nav Bar ----------------------------------------------------------
+        plate(0, 0, PAGE, 80, PAPER, 0),
+        plate(0, 80, PAGE, 1, HAIRLINE, 0),
+        plate(M, 22, 36, 36, BRAND, 0),
+        label(M + 46, 26, 'Vega', 20, 100, { fontWeight: 800, color: INK_STRONG, align: 'left' }),
+        label(M + 260, 28, 'Product', 14, 90, { fontWeight: 600, color: INK_MID, align: 'center' }),
+        label(M + 360, 28, 'Architecture', 14, 110, { fontWeight: 600, color: INK_MID, align: 'center' }),
+        label(M + 480, 28, 'Enterprise', 14, 90, { fontWeight: 600, color: INK_MID, align: 'center' }),
+        label(M + 580, 28, 'Changelog', 14, 90, { fontWeight: 600, color: INK_MID, align: 'center' }),
+        label(PAGE - M - 230, 28, 'Sign in', 14, 80, { fontWeight: 600, color: INK_MID, align: 'center' }),
+        btn(PAGE - M - 140, 16, 140, 'Get Started ↗', BRAND, BRAND_INK, 0),
 
-        // ---- hero: text left, picture right ----------------------------
-        label(M, 190, 'Build it together,', 62),
-        label(M, 268, 'in one place.', 62),
-        label(M, 380, 'One sentence that says what this does and who it is for,', 21),
-        label(M, 414, 'without saying "seamless" or "leverage".', 21),
-        button(M, 480, 190, 'Get started', BRAND, BRAND_INK),
-        button(M + 210, 480, 170, 'See a demo', PAPER, INK),
+        // ---- Hero Left Column -------------------------------------------------
+        box(M, 130, 240, 32, '✨  ENGINE ARCHITECTURE 2.0', TINT.amber, {
+          appearance: { fill: [{ type: 'solid', color: TINT.amber }], cornerRadius: 0 },
+          typography: { fontSize: 11, fontWeight: 700, color: INK_STRONG, align: 'center', verticalAlign: 'middle' },
+        }),
+        label(M, 178, 'The collaborative canvas', 44, 620, { fontWeight: 800, color: INK_STRONG, align: 'left', letterSpacing: -1 }),
+        label(M, 238, 'for system engineers.', 44, 620, { fontWeight: 800, color: '#4F46E5', align: 'left', letterSpacing: -1 }),
+        label(M, 310, 'Model microservices, review live RFCs, and map infrastructure together with zero latency local-first CRDT state.', 15, 540, { fontWeight: 450, color: INK_SOFT, align: 'left', lineHeight: 1.45 }),
+        btn(M, 400, 180, 'Deploy to Team ↗', BRAND, BRAND_INK, 0),
+        box(M + 200, 400, 160, 48, 'Read Tech Spec', PAPER, {
+          appearance: { fill: [{ type: 'solid', color: PAPER }], stroke: { color: RULE, width: 1.5 }, cornerRadius: 0 },
+          typography: { fontSize: 14, fontWeight: 600, color: INK_STRONG, align: 'center', verticalAlign: 'middle' },
+        }),
+        label(M, 470, '4.9/5 Developer Rating  ·  SOC2 Type II  ·  Local-First', 12, 480, { fontWeight: 500, color: INK_SOFT, align: 'left' }),
 
-        // The asymmetric half. A hero split down the middle reads as a table;
-        // 40/60 gives the headline room and still leaves the image dominant.
-        plate(700, 170, 660, 440, '#EEF2FF'),
-        plate(740, 210, 340, 180, '#C7D2FE'),
-        plate(740, 410, 160, 160, '#A5B4FC'),
-        plate(920, 410, 160, 160, '#DDD6FE'),
-        plate(1100, 210, 220, 360, TINT.indigo),
+        // ---- Hero Right Column: Mockup Window Shell ---------------------------
+        plate(680, 120, 680, 410, '#0F172A', 0),
+        box(696, 134, 648, 34, 'cluster-topology.vega · 3 peers online', '#1E293B', {
+          appearance: { fill: [{ type: 'solid', color: '#1E293B' }], cornerRadius: 0 },
+          typography: { fontSize: 12, fontWeight: 500, color: '#CBD5E1', align: 'center', verticalAlign: 'middle' },
+        }),
+        box(710, 145, 12, 12, '', '#EF4444', { appearance: { fill: [{ type: 'solid', color: '#EF4444' }], cornerRadius: 0 } }),
+        box(728, 145, 12, 12, '', '#F59E0B', { appearance: { fill: [{ type: 'solid', color: '#F59E0B' }], cornerRadius: 0 } }),
+        box(746, 145, 12, 12, '', '#10B981', { appearance: { fill: [{ type: 'solid', color: '#10B981' }], cornerRadius: 0 } }),
 
-        // ---- features ---------------------------------------------------
-        label(M, 720, 'Three things it does well', 38),
-        rule(M, 792, 380, MUTED),
+        // Mockup Nodes inside window
+        box(710, 195, 160, 64, 'API Gateway\nKong Ingress', '#1E293B', {
+          appearance: { fill: [{ type: 'solid', color: '#1E293B' }], stroke: { color: '#334155', width: 1.5 }, cornerRadius: 0 },
+          typography: { fontSize: 12, fontWeight: 600, color: '#F8FAFC', align: 'center', verticalAlign: 'middle' },
+        }),
+        box(900, 195, 160, 64, 'Auth Service\nGo · Envoy', '#1E293B', {
+          appearance: { fill: [{ type: 'solid', color: '#1E293B' }], stroke: { color: '#334155', width: 1.5 }, cornerRadius: 0 },
+          typography: { fontSize: 12, fontWeight: 600, color: '#F8FAFC', align: 'center', verticalAlign: 'middle' },
+        }),
+        box(1090, 195, 160, 64, 'Redis Edge\nCluster 8x', '#1E293B', {
+          appearance: { fill: [{ type: 'solid', color: '#1E293B' }], stroke: { color: '#334155', width: 1.5 }, cornerRadius: 0 },
+          typography: { fontSize: 12, fontWeight: 600, color: '#F8FAFC', align: 'center', verticalAlign: 'middle' },
+        }),
+        box(800, 300, 170, 64, 'PostgreSQL\nMulti-AZ Primary', '#1E293B', {
+          appearance: { fill: [{ type: 'solid', color: '#1E293B' }], stroke: { color: '#334155', width: 1.5 }, cornerRadius: 0 },
+          typography: { fontSize: 12, fontWeight: 600, color: '#F8FAFC', align: 'center', verticalAlign: 'middle' },
+        }),
+        box(1000, 300, 170, 64, 'Kafka Pipeline\n128 Partitions', '#1E293B', {
+          appearance: { fill: [{ type: 'solid', color: '#1E293B' }], stroke: { color: '#334155', width: 1.5 }, cornerRadius: 0 },
+          typography: { fontSize: 12, fontWeight: 600, color: '#F8FAFC', align: 'center', verticalAlign: 'middle' },
+        }),
+        box(740, 420, 160, 30, '● Elena (Staff Arch)', '#0369A1', {
+          appearance: { fill: [{ type: 'solid', color: '#0369A1' }], stroke: { color: '#02527D', width: 1.5 }, cornerRadius: 0 },
+          typography: { fontSize: 11, fontWeight: 600, color: '#FFFFFF', align: 'center', verticalAlign: 'middle' },
+        }),
+        box(1020, 420, 160, 30, '● Marcus (Infra)', '#6D28D9', {
+          appearance: { fill: [{ type: 'solid', color: '#6D28D9' }], stroke: { color: '#561FB0', width: 1.5 }, cornerRadius: 0 },
+          typography: { fontSize: 11, fontWeight: 600, color: '#FFFFFF', align: 'center', verticalAlign: 'middle' },
+        }),
+
+        // ---- Bento Section -----------------------------------------------------
+        label(M, 560, 'Built for Concurrency & Scale', 32, 700, { fontWeight: 800, color: INK_STRONG, align: 'left' }),
+        label(M, 620, 'Three technical breakthroughs delivering sub-16ms sync and zero input lag.', 15, 800, { fontWeight: 450, color: INK_SOFT, align: 'left' }),
+
+        // Card 1: Large Asymmetric Bento
+        plate(M, 660, 780, 320, TINT.indigo, 0),
+        label(M + 32, 686, 'GLOBAL DISTRIBUTED MESH', 11, 240, { fontWeight: 700, color: '#4338CA', align: 'left', letterSpacing: 1.5 }),
+        label(M + 32, 716, 'Sub-16ms Edge Sync', 22, 500, { fontWeight: 750, color: INK_STRONG, align: 'left' }),
+        label(M + 32, 756, 'CRDT state syncs over an edge mesh. Distributed teams experience zero perceived input lag.', 14, 520, { fontWeight: 450, color: INK_MID, align: 'left', lineHeight: 1.45 }),
+        box(M + 32, 830, 140, 60, '12ms\nUS-East (VA)', PAPER, {
+          appearance: { fill: [{ type: 'solid', color: PAPER }], cornerRadius: 0 },
+          typography: { fontSize: 11.5, fontWeight: 600, color: INK_STRONG, align: 'center', verticalAlign: 'middle' },
+        }),
+        box(M + 184, 830, 140, 60, '16ms\nEU-Central (DE)', PAPER, {
+          appearance: { fill: [{ type: 'solid', color: PAPER }], cornerRadius: 0 },
+          typography: { fontSize: 11.5, fontWeight: 600, color: INK_STRONG, align: 'center', verticalAlign: 'middle' },
+        }),
+        box(M + 336, 830, 140, 60, '19ms\nAP-East (JP)', PAPER, {
+          appearance: { fill: [{ type: 'solid', color: PAPER }], cornerRadius: 0 },
+          typography: { fontSize: 11.5, fontWeight: 600, color: INK_STRONG, align: 'center', verticalAlign: 'middle' },
+        }),
+
+        // Card 2: Stacked Top Right Bento
+        plate(M + 810, 660, 470, 150, TINT.green, 0),
+        label(M + 834, 674, 'Offline-First CRDT Storage', 17, 420, { fontWeight: 700, color: INK_STRONG, align: 'left' }),
+        label(M + 834, 712, 'Work offline anywhere. State resolves conflict-free upon reconnection.', 13, 430, { fontWeight: 450, color: INK_MID, align: 'left' }),
+        box(M + 834, 764, 180, 26, '100% Conflict-Free Sync', PAPER, {
+          appearance: { fill: [{ type: 'solid', color: PAPER }], cornerRadius: 0 },
+          typography: { fontSize: 11, fontWeight: 700, color: '#15803D', align: 'center', verticalAlign: 'middle' },
+        }),
+
+        // Card 3: Stacked Bottom Right Bento
+        plate(M + 810, 830, 470, 150, TINT.sky, 0),
+        label(M + 834, 844, 'Hardware-Accelerated WebGL', 17, 420, { fontWeight: 700, color: INK_STRONG, align: 'left' }),
+        label(M + 834, 882, 'Instanced WebGL pipeline renders 50,000+ nodes locked at 60 FPS.', 13, 430, { fontWeight: 450, color: INK_MID, align: 'left' }),
+        box(M + 834, 934, 160, 26, '60 FPS Frame Budget', PAPER, {
+          appearance: { fill: [{ type: 'solid', color: PAPER }], cornerRadius: 0 },
+          typography: { fontSize: 11, fontWeight: 700, color: '#0369A1', align: 'center', verticalAlign: 'middle' },
+        }),
+
+        // ---- Metrics Bar -------------------------------------------------------
+        plate(M, 1020, COL, 96, PAPER_SOFT, 0),
+        box(M + 20, 1034, 280, 68, '4.2M+\nNodes Synced Daily', PAPER_SOFT, { typography: { fontSize: 14, fontWeight: 650, color: INK_STRONG, align: 'center', verticalAlign: 'middle' } }),
+        box(M + 330, 1034, 280, 68, '< 14ms\nP99 Jitter Latency', PAPER_SOFT, { typography: { fontSize: 14, fontWeight: 650, color: INK_STRONG, align: 'center', verticalAlign: 'middle' } }),
+        box(M + 640, 1034, 280, 68, '99.995%\nGlobal Availability', PAPER_SOFT, { typography: { fontSize: 14, fontWeight: 650, color: INK_STRONG, align: 'center', verticalAlign: 'middle' } }),
+        box(M + 950, 1034, 280, 68, '180,000+\nEngineering Users', PAPER_SOFT, { typography: { fontSize: 14, fontWeight: 650, color: INK_STRONG, align: 'center', verticalAlign: 'middle' } }),
+
+        // ---- Testimonial Quote Card --------------------------------------------
+        plate(M, 1150, COL, 200, '#0F172A', 0),
+        label(M + 50, 1175, '“Vega has completely transformed our distributed architecture reviews. We moved all our system topologies, disaster recovery rehearsals, and RFC workshops onto it — the speed and collaborative polish are unmatched.”', 17, COL - 100, { fontWeight: 500, color: '#F1F5F9', align: 'left', lineHeight: 1.45, ground: '#0F172A' }),
+        label(M + 50, 1262, 'Dr. Aris Thorne  ·  VP Infrastructure, CloudScale', 13, 540, { fontWeight: 600, color: '#94A3B8', align: 'left', ground: '#0F172A' }),
+        box(PAGE - M - 210, 1260, 160, 30, 'Verified Enterprise', '#1E293B', {
+          appearance: { fill: [{ type: 'solid', color: '#1E293B' }], cornerRadius: 0 },
+          typography: { fontSize: 11, fontWeight: 600, color: '#38BDF8', align: 'center', verticalAlign: 'middle' },
+        }),
+
+        // ---- Conversion Banner -------------------------------------------------
+        plate(M, 1385, COL, 180, TINT.amber, 0),
+        label(M + 50, 1406, 'Design your next architecture together.', 28, 680, { fontWeight: 800, color: INK_STRONG, align: 'left' }),
+        label(M + 50, 1460, 'Free for teams in 30 seconds  ·  No credit card required', 15, 680, { fontWeight: 500, color: INK_MID, align: 'left' }),
+        btn(PAGE - M - 250, 1445, 200, 'Get Started Free ↗', BRAND, BRAND_INK, 0),
+
+        // ---- Footer Section ----------------------------------------------------
+        plate(0, 1600, PAGE, 1, HAIRLINE, 0),
+        plate(M, 1635, 36, 36, BRAND, 0),
+        label(M, 1680, 'The collaborative canvas for system architecture & RFC design.', 12, 280, { fontWeight: 450, color: INK_SOFT, align: 'left', lineHeight: 1.4 }),
+        label(M, 1730, '© 2026 Vega Studio Inc.', 11, 250, { fontWeight: 400, color: INK_SOFT, align: 'left' }),
+        box(M, 1765, 230, 28, '● All Systems 100% Operational', '#ECFDF5', {
+          appearance: { fill: [{ type: 'solid', color: '#ECFDF5' }], cornerRadius: 0 },
+          typography: { fontSize: 11, fontWeight: 600, color: '#047857', align: 'center', verticalAlign: 'middle' },
+        }),
+
+        // 4 Footer Columns
+        label(480, 1635, 'Product', 13, 140, { fontWeight: 700, color: INK_STRONG, align: 'left' }),
+        label(480, 1665, 'Infinite Canvas', 12, 140, { fontWeight: 450, color: INK_MID, align: 'left' }),
+        label(480, 1690, 'System Modeling', 12, 140, { fontWeight: 450, color: INK_MID, align: 'left' }),
+        label(480, 1715, 'Local-First CRDT', 12, 140, { fontWeight: 450, color: INK_MID, align: 'left' }),
+
+        label(680, 1635, 'Integrations', 13, 140, { fontWeight: 700, color: INK_STRONG, align: 'left' }),
+        label(680, 1665, 'GitHub & GitLab', 12, 140, { fontWeight: 450, color: INK_MID, align: 'left' }),
+        label(680, 1690, 'Slack & Discord', 12, 140, { fontWeight: 450, color: INK_MID, align: 'left' }),
+        label(680, 1715, 'VS Code Extension', 12, 140, { fontWeight: 450, color: INK_MID, align: 'left' }),
+
+        label(880, 1635, 'Resources', 13, 140, { fontWeight: 700, color: INK_STRONG, align: 'left' }),
+        label(880, 1665, 'Documentation', 12, 140, { fontWeight: 450, color: INK_MID, align: 'left' }),
+        label(880, 1690, 'Template Gallery', 12, 140, { fontWeight: 450, color: INK_MID, align: 'left' }),
+        label(880, 1715, 'Community Discord', 12, 140, { fontWeight: 450, color: INK_MID, align: 'left' }),
+
+        label(1080, 1635, 'Security & Trust', 13, 160, { fontWeight: 700, color: INK_STRONG, align: 'left' }),
+        label(1080, 1665, 'SOC2 Compliance', 12, 160, { fontWeight: 450, color: INK_MID, align: 'left' }),
+        label(1080, 1690, 'Privacy Policy', 12, 160, { fontWeight: 450, color: INK_MID, align: 'left' }),
+        label(1080, 1715, 'Terms of Service', 12, 160, { fontWeight: 450, color: INK_MID, align: 'left' }),
       ];
-
-      // Cards, each with its own mark — so the row reads as three things
-      // rather than as three copies of one thing.
-      const CARD_W = (COL - 40 * 2) / 3;
-      const MARKS = [BRAND, SIGNAL_OK, HUE.indigo];
-      [0, 1, 2].forEach((i) => {
-        const x = M + i * (CARD_W + 40);
-        nodes.push(plate(x, 860, CARD_W, 320, CARD));
-        nodes.push(plate(x + 32, 892, 48, 48, MARKS[i], 14));
-        nodes.push(label(x + 32, 970, `Feature ${i + 1}`, 24));
-        nodes.push(rule(x + 32, 1030, CARD_W - 64));
-        nodes.push(rule(x + 32, 1058, CARD_W - 100));
-        nodes.push(rule(x + 32, 1086, CARD_W - 140));
-      });
-
-      nodes.push(
-        // ---- call to action band ---------------------------------------
-        plate(M, 1260, COL, 280, INK, 24),
-        label(M + 60, 1330, 'Ready when you are.', 40),
-        label(M + 60, 1400, 'One line about starting, with no pricing invented.', 20),
-        button(PAGE - M - 260, 1360, 200, 'Start free', BRAND, BRAND_INK),
-
-        // ---- footer ------------------------------------------------------
-        plate(0, 1620, PAGE, 1, LINE, 0),
-        plate(M, 1680, 32, 32, BRAND, 10),
-        rule(M + 46, 1690, 84, INK),
-        rule(M, 1760, 210, MUTED),
-      );
-
-      // Four footer columns of links, which is the shape a real footer has.
-      [0, 1, 2, 3].forEach((c) => {
-        const x = 700 + c * 170;
-        nodes.push(rule(x, 1682, 74, INK));
-        [0, 1, 2].forEach((r) => nodes.push(rule(x, 1722 + r * 26, 96, MUTED)));
-      });
 
       return nodes;
     },
@@ -634,84 +755,283 @@ const BASE_TEMPLATES: Template[] = [
     id: 'social',
     category: 'design',
     name: 'Social kit',
-    blurb: 'Square post, story and banner at their true dimensions, ready to batch export.',
-    teaches: ['Frame presets', 'Batch export', 'Multi-format'],
+    blurb: 'Multi-channel brand kit at true dimensions: story, post, and cover banner ready to batch export.',
+    teaches: ['Frame presets', 'Batch export', 'Multi-format', 'Social graphics'],
+    objectCount: 39,
     build: () => [
-      /**
-       * Packed, not queued.
-       *
-       * The three frames used to sit in a single row — 1080, 1080 and 1500
-       * wide against heights of 1080, 1920 and 500 — so the board was nearly
-       * 4000px across with two-thirds of it empty air under the short ones.
-       * The tall story frame anchors a left column now and the two landscape
-       * formats stack beside it, which costs nothing, loses no fidelity, and
-       * turns a 2:1 letterbox into something close to square.
-       */
-      // Clear of the tallest frame's own name, which is drawn eighteen screen
-      // pixels above its top edge — about eighty-eight world units at the zoom
-      // this board fits to. The subtitle used to sit inside that band.
       label(0, -240, 'One idea, three formats', 36),
-      label(0, -180, 'True pixel dimensions, so what you draw is what gets posted.', 17),
+      label(0, -180, 'True pixel dimensions, ready to batch export for multi-channel launches.', 17),
 
-      // The tall one anchors the left column at full height.
+      // ==== 1. Story / Reel (1080 x 1920) =====================================
       frame(0, 0, 1080, 1920, 'Story 1080 x 1920'),
-      box(90, 760, 900, 260, 'Your headline', '#BFDBFE', {
-        typography: { fontSize: 64, fontWeight: 700, color: BRAND_INK, align: 'center', verticalAlign: 'middle' },
+      box(40, 40, 1000, 1840, '', '#0F172A', { appearance: { fill: [{ type: 'solid', color: '#0F172A' }], stroke: { color: '#334155', width: 1.5 }, cornerRadius: 0 } }),
+      box(90, 110, 170, 44, 'VEGA 2.0', BRAND, {
+        appearance: { fill: [{ type: 'solid', color: BRAND }], stroke: { color: strokeOf(BRAND), width: 1.5 }, cornerRadius: 0 },
+        typography: { fontSize: 15, fontWeight: 800, color: BRAND_INK, align: 'center', verticalAlign: 'middle' },
       }),
-      box(90, 1060, 900, 96, 'A supporting line', PAPER, {
-        typography: { fontSize: 28, fontWeight: 500, color: INK_SOFT, align: 'center', verticalAlign: 'middle' },
+      box(280, 114, 210, 36, 'MAJOR RELEASE', '#1E293B', {
+        appearance: { fill: [{ type: 'solid', color: '#1E293B' }], stroke: { color: '#334155', width: 1.5 }, cornerRadius: 0 },
+        typography: { fontSize: 12, fontWeight: 700, color: '#38BDF8', align: 'center', verticalAlign: 'middle', letterSpacing: 1.5 },
+      }),
+      label(90, 195, 'Think together\nin real time.', 54, 900, {
+        fontWeight: 850,
+        color: '#FFFFFF',
+        align: 'left',
+        lineHeight: 1.15,
+        ground: '#0F172A',
+      }),
+      label(90, 335, 'The infinite collaborative canvas engineered for systems architecture, RFC reviews, and complex diagrams.', 22, 900, {
+        fontWeight: 450,
+        color: '#CBD5E1',
+        align: 'left',
+        lineHeight: 1.4,
+        ground: '#0F172A',
       }),
 
-      // The two landscape formats stack against it, bottom-aligned to the
-      // same baseline so the three read as one set rather than three offcuts.
+      // Glass Feature Preview Container
+      box(90, 460, 900, 590, '', '#1E293B', {
+        appearance: { fill: [{ type: 'solid', color: '#1E293B' }], stroke: { color: '#334155', width: 1.5 }, cornerRadius: 0 },
+      }),
+      label(130, 504, 'cluster-sync.edge  ·  Multi-Region', 18, 400, {
+        fontWeight: 650,
+        color: '#F1F5F9',
+        align: 'left',
+        ground: '#1E293B',
+      }),
+      box(800, 496, 150, 36, '● 12ms P99', '#0369A1', {
+        appearance: { fill: [{ type: 'solid', color: '#0369A1' }], stroke: { color: '#02527D', width: 1.5 }, cornerRadius: 0 },
+        typography: { fontSize: 13, fontWeight: 700, color: '#FFFFFF', align: 'center', verticalAlign: 'middle' },
+      }),
+      box(130, 570, 230, 100, 'API Ingress\nKong Gateway', '#0F172A', {
+        appearance: { fill: [{ type: 'solid', color: '#0F172A' }], stroke: { color: '#1E293B', width: 1.5 }, cornerRadius: 0 },
+        typography: { fontSize: 16, fontWeight: 650, color: '#F8FAFC', align: 'center', verticalAlign: 'middle' },
+      }),
+      box(425, 570, 230, 100, 'Auth Engine\nOIDC / JWT', '#0F172A', {
+        appearance: { fill: [{ type: 'solid', color: '#0F172A' }], stroke: { color: '#1E293B', width: 1.5 }, cornerRadius: 0 },
+        typography: { fontSize: 16, fontWeight: 650, color: '#F8FAFC', align: 'center', verticalAlign: 'middle' },
+      }),
+      box(720, 570, 230, 100, 'Global Cache\nRedis 8-Node', '#0F172A', {
+        appearance: { fill: [{ type: 'solid', color: '#0F172A' }], stroke: { color: '#1E293B', width: 1.5 }, cornerRadius: 0 },
+        typography: { fontSize: 16, fontWeight: 650, color: '#F8FAFC', align: 'center', verticalAlign: 'middle' },
+      }),
+      box(130, 710, 820, 160, '✓ Local-First CRDT Storage\n✓ Instant Multi-Region Synchronization\n✓ Native SVG / Canvas Vector Acceleration', '#0F172A', {
+        appearance: { fill: [{ type: 'solid', color: '#0F172A' }], stroke: { color: '#334155', width: 1.5 }, cornerRadius: 0 },
+        typography: { fontSize: 19, fontWeight: 550, color: '#E2E8F0', align: 'left', verticalAlign: 'middle', lineHeight: 1.6 },
+      }),
+      box(130, 900, 820, 110, '', '#1E293B', {
+        appearance: { fill: [{ type: 'solid', color: '#1E293B' }], stroke: { color: '#334155', width: 1.5 }, cornerRadius: 0 },
+      }),
+      label(154, 924, '“Vega has completely replaced four separate tools for our distributed engineering teams.\nThe speed is unprecedented.”', 18, 772, {
+        fontWeight: 450,
+        color: '#94A3B8',
+        align: 'left',
+        lineHeight: 1.4,
+        ground: '#1E293B',
+      }),
+
+      // Stat Highlight Badges
+      box(90, 1100, 430, 170, '50,000+\nNodes @ 60 FPS', '#1E293B', {
+        appearance: { fill: [{ type: 'solid', color: '#1E293B' }], stroke: { color: '#334155', width: 1.5 }, cornerRadius: 0 },
+        typography: { fontSize: 26, fontWeight: 800, color: '#38BDF8', align: 'center', verticalAlign: 'middle' },
+      }),
+      box(560, 1100, 430, 170, '< 16ms\nGlobal Latency', '#1E293B', {
+        appearance: { fill: [{ type: 'solid', color: '#1E293B' }], stroke: { color: '#334155', width: 1.5 }, cornerRadius: 0 },
+        typography: { fontSize: 26, fontWeight: 800, color: '#10B981', align: 'center', verticalAlign: 'middle' },
+      }),
+
+      // Bottom Swipe-Up CTA pill
+      box(90, 1730, 900, 84, 'Swipe up to try Vega 2.0  ↑', BRAND, {
+        appearance: { fill: [{ type: 'solid', color: BRAND }], stroke: { color: strokeOf(BRAND), width: 1.5 }, cornerRadius: 0 },
+        typography: { fontSize: 24, fontWeight: 800, color: BRAND_INK, align: 'center', verticalAlign: 'middle' },
+      }),
+
+      // ==== 2. Square Post (1080 x 1080) =====================================
       frame(1180, 0, 1080, 1080, 'Square post 1080'),
-      box(1270, 320, 900, 220, 'Your headline', '#FDE68A', {
-        typography: { fontSize: 64, fontWeight: 700, color: BRAND_INK, align: 'center', verticalAlign: 'middle' },
+      box(1220, 40, 1000, 1000, '', '#0F172A', { appearance: { fill: [{ type: 'solid', color: '#0F172A' }], stroke: { color: '#334155', width: 1.5 }, cornerRadius: 0 } }),
+      box(1270, 90, 220, 36, 'BENCHMARK REPORT', '#1E293B', {
+        appearance: { fill: [{ type: 'solid', color: '#1E293B' }], stroke: { color: '#334155', width: 1.5 }, cornerRadius: 0 },
+        typography: { fontSize: 12, fontWeight: 700, color: '#FBBF24', align: 'center', verticalAlign: 'middle', letterSpacing: 1.5 },
       }),
-      box(1270, 590, 900, 96, 'A supporting line', PAPER, {
-        typography: { fontSize: 28, fontWeight: 500, color: INK_SOFT, align: 'center', verticalAlign: 'middle' },
+      label(1270, 148, 'Why leading engineering teams\nare moving to Vega.', 38, 900, {
+        fontWeight: 850,
+        color: '#FFFFFF',
+        align: 'left',
+        lineHeight: 1.2,
+        ground: '#0F172A',
+      }),
+      box(1270, 270, 900, 200, '3.4× Faster\nRFC Sign-off & System Alignment', '#1E293B', {
+        appearance: { fill: [{ type: 'solid', color: '#1E293B' }], stroke: { color: '#334155', width: 1.5 }, cornerRadius: 0 },
+        typography: { fontSize: 30, fontWeight: 800, color: '#38BDF8', align: 'center', verticalAlign: 'middle', lineHeight: 1.3 },
+      }),
+      box(1270, 500, 900, 240, '', '#1E293B', {
+        appearance: { fill: [{ type: 'solid', color: '#1E293B' }], stroke: { color: '#334155', width: 1.5 }, cornerRadius: 0 },
+      }),
+      label(1310, 540, '“We eliminated 4 separate diagram tools.\nSystem topology and live meeting discussions happen\nin the exact same workspace with zero lag.”', 22, 820, {
+        fontWeight: 450,
+        color: '#F1F5F9',
+        align: 'left',
+        lineHeight: 1.5,
+        ground: '#1E293B',
+      }),
+      box(1270, 770, 440, 52, '@sarah_dev  ·  Staff Systems Architect', '#1E293B', {
+        appearance: { fill: [{ type: 'solid', color: '#1E293B' }], stroke: { color: '#334155', width: 1.5 }, cornerRadius: 0 },
+        typography: { fontSize: 14, fontWeight: 650, color: '#CBD5E1', align: 'center', verticalAlign: 'middle' },
+      }),
+      box(1890, 770, 280, 52, 'vega.dev/canvas  ↗', BRAND, {
+        appearance: { fill: [{ type: 'solid', color: BRAND }], stroke: { color: strokeOf(BRAND), width: 1.5 }, cornerRadius: 0 },
+        typography: { fontSize: 15, fontWeight: 750, color: BRAND_INK, align: 'center', verticalAlign: 'middle' },
+      }),
+      label(1270, 856, '#SystemDesign   #Architecture   #CloudNative   #DeveloperTools', 14, 900, {
+        fontWeight: 600,
+        color: '#94A3B8',
+        align: 'left',
+        ground: '#0F172A',
       }),
 
+      // ==== 3. Banner / Header (1500 x 500) ===================================
       frame(1180, 1180, 1500, 500, 'Banner 1500 x 500'),
-      box(1260, 1350, 1340, 160, 'Your headline', '#FBCFE8', {
-        typography: { fontSize: 56, fontWeight: 700, color: BRAND_INK, align: 'center', verticalAlign: 'middle' },
+      box(1220, 1220, 1420, 420, '', '#0F172A', { appearance: { fill: [{ type: 'solid', color: '#0F172A' }], stroke: { color: '#334155', width: 1.5 }, cornerRadius: 0 } }),
+      box(1270, 1265, 48, 48, 'V', BRAND, {
+        appearance: { fill: [{ type: 'solid', color: BRAND }], stroke: { color: strokeOf(BRAND), width: 1.5 }, cornerRadius: 0 },
+        typography: { fontSize: 26, fontWeight: 800, color: BRAND_INK, align: 'center', verticalAlign: 'middle' },
+      }),
+      label(1335, 1272, 'Vega', 26, 110, {
+        fontWeight: 800,
+        color: '#FFFFFF',
+        align: 'left',
+        ground: '#0F172A',
+      }),
+      label(1270, 1335, 'The infinite collaborative canvas\nbuilt for serious systems engineering.', 26, 820, {
+        fontWeight: 800,
+        color: '#F8FAFC',
+        align: 'left',
+        lineHeight: 1.25,
+        ground: '#0F172A',
+      }),
+      label(1270, 1430, 'Local-first CRDT engine  ·  Sub-16ms latency  ·  Native vector performance', 15, 820, {
+        fontWeight: 500,
+        color: '#CBD5E1',
+        align: 'left',
+        ground: '#0F172A',
+      }),
+      box(1270, 1495, 230, 48, 'Get Started Free  ↗', BRAND, {
+        appearance: { fill: [{ type: 'solid', color: BRAND }], stroke: { color: strokeOf(BRAND), width: 1.5 }, cornerRadius: 0 },
+        typography: { fontSize: 14, fontWeight: 750, color: BRAND_INK, align: 'center', verticalAlign: 'middle' },
+      }),
+      box(2140, 1260, 450, 120, 'Microservices Architecture\nKong Ingress  →  Envoy Mesh', '#1E293B', {
+        appearance: { fill: [{ type: 'solid', color: '#1E293B' }], stroke: { color: '#334155', width: 1.5 }, cornerRadius: 0 },
+        typography: { fontSize: 16, fontWeight: 650, color: '#F8FAFC', align: 'center', verticalAlign: 'middle' },
+      }),
+      box(2180, 1410, 410, 120, 'Distributed Database Cluster\nPostgreSQL Multi-Region Primary', '#1E293B', {
+        appearance: { fill: [{ type: 'solid', color: '#1E293B' }], stroke: { color: '#334155', width: 1.5 }, cornerRadius: 0 },
+        typography: { fontSize: 16, fontWeight: 650, color: '#F8FAFC', align: 'center', verticalAlign: 'middle' },
       }),
     ],
   },
   {
     id: 'barchart',
     category: 'diagrams',
-    name: 'Bar chart',
-    blurb: 'A bar chart made of ordinary shapes, so every bar is directly editable.',
-    teaches: ['Shapes as data', 'Alignment', 'Text'],
-    build: () => {
-      const data: Array<[string, number]> = [
-        ['Mon', 120], ['Tue', 210], ['Wed', 170], ['Thu', 260],
-        ['Fri', 300], ['Sat', 90], ['Sun', 140],
-      ];
-      const BASE = 520;
-      const BAR = 88;
-      const GAP = 34;
+    name: 'Executive metrics',
+    blurb: 'Real-time telemetry across 32 edge regions: active concurrency, latency distribution, and throughput.',
+    teaches: ['Native charts', 'Metric cards', 'Data visualization', 'KPI tracking'],
+    objectCount: 23,
+    build: () => [
+      label(0, -180, 'Executive Metrics & Analytics', 42),
+      label(0, -120, 'Real-time telemetry across 32 edge regions: active concurrency, latency distribution, and throughput.', 17),
+      box(0, -50, 260, 36, 'Q3 2026 · Global Real-Time', TINT.slate, {
+        appearance: { fill: [{ type: 'solid', color: TINT.slate }], stroke: { color: strokeOf(TINT.slate), width: 1.5 }, cornerRadius: 0 },
+        typography: { fontSize: 13, fontWeight: 700, color: INK_MID, align: 'center', verticalAlign: 'middle' },
+      }),
 
-      return [
-        label(0, -140, 'Visits this week', 38),
-        // The axis is a shape like everything else, which is the point: this
-        // chart is not a widget, it is objects you can grab.
-        box(-20, BASE, data.length * (BAR + GAP) + 20, 3, '', RULE),
-        ...data.flatMap(([day, value], i) => {
-          const x = i * (BAR + GAP);
-          return [
-            box(x, BASE - value, BAR, value, '', hue(0.55 + i * 0.02, 65, 62)),
-            { ...label(x, BASE + 20, day, 18), width: BAR },
-            { ...label(x, BASE - value - 36, String(value), 16), width: BAR },
-          ];
+      // Top Metric Cards
+      box(0, 10, 380, 140, '', TINT.indigo, { appearance: { fill: [{ type: 'solid', color: TINT.indigo }], stroke: { color: strokeOf(TINT.indigo), width: 1.5 }, cornerRadius: 0 } }),
+      label(24, 30, 'Monthly Active Users', 13, 240, { fontWeight: 600, color: INK_MID, align: 'left' }),
+      label(24, 62, '248.6k', 36, 200, { fontWeight: 800, color: INK_STRONG, align: 'left' }),
+      box(240, 68, 116, 32, '▲ +24.2%', '#DCFCE7', {
+        appearance: { fill: [{ type: 'solid', color: '#DCFCE7' }], stroke: { color: '#86EFAC', width: 1.5 }, cornerRadius: 0 },
+        typography: { fontSize: 12, fontWeight: 700, color: '#15803D', align: 'center', verticalAlign: 'middle' },
+      }),
+
+      box(410, 10, 380, 140, '', TINT.sky, { appearance: { fill: [{ type: 'solid', color: TINT.sky }], stroke: { color: strokeOf(TINT.sky), width: 1.5 }, cornerRadius: 0 } }),
+      label(434, 30, 'Mean Sync Latency (P99)', 13, 240, { fontWeight: 600, color: INK_MID, align: 'left' }),
+      label(434, 62, '18.4ms', 36, 200, { fontWeight: 800, color: INK_STRONG, align: 'left' }),
+      box(650, 68, 116, 32, '▼ -6.1ms', '#DCFCE7', {
+        appearance: { fill: [{ type: 'solid', color: '#DCFCE7' }], stroke: { color: '#86EFAC', width: 1.5 }, cornerRadius: 0 },
+        typography: { fontSize: 12, fontWeight: 700, color: '#15803D', align: 'center', verticalAlign: 'middle' },
+      }),
+
+      box(820, 10, 380, 140, '', TINT.amber, { appearance: { fill: [{ type: 'solid', color: TINT.amber }], stroke: { color: strokeOf(TINT.amber), width: 1.5 }, cornerRadius: 0 } }),
+      label(844, 30, '30-Day Retention Rate', 13, 240, { fontWeight: 600, color: INK_MID, align: 'left' }),
+      label(844, 62, '78.2%', 36, 200, { fontWeight: 800, color: INK_STRONG, align: 'left' }),
+      box(1060, 68, 116, 32, '▲ +12.8%', '#DCFCE7', {
+        appearance: { fill: [{ type: 'solid', color: '#DCFCE7' }], stroke: { color: '#86EFAC', width: 1.5 }, cornerRadius: 0 },
+        typography: { fontSize: 12, fontWeight: 700, color: '#15803D', align: 'center', verticalAlign: 'middle' },
+      }),
+
+      // Primary Chart
+      chart(
+        0, 180,
+        plot('bar', {
+          title: 'Weekly Canvas Throughput',
+          subtitle: 'Processed CRDT transactions (thousands) vs target capacity',
+          categories: ['Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat', 'Sun'],
+          series: [
+            { name: 'Actual', values: [142, 198, 245, 290, 340, 110, 165] },
+            { name: 'Target', values: [150, 180, 220, 260, 300, 120, 150] },
+          ],
+          showValues: true,
+          compactNumbers: true,
+          valueSuffix: 'k',
         }),
-      ];
-    },
+        720, 420
+      ),
+
+      // Secondary Chart
+      chart(
+        760, 180,
+        plot('line', {
+          title: 'Active Concurrency Peak',
+          subtitle: 'Concurrent collaborative sessions across regions',
+          categories: ['00h', '04h', '08h', '12h', '16h', '20h'],
+          series: [
+            { name: 'US-East', values: [1200, 850, 4200, 8900, 9400, 6100] },
+            { name: 'EU-West', values: [3400, 1800, 7100, 8200, 6400, 4100] },
+          ],
+          showValues: false,
+          yAxisLabel: 'Sessions',
+        }),
+        440, 420
+      ),
+
+      // Bottom SLA Summary Band
+      box(0, 630, 1200, 150, '', PAPER_SOFT, {
+        appearance: { fill: [{ type: 'solid', color: PAPER_SOFT }], stroke: { color: HAIRLINE, width: 1 }, cornerRadius: 0 },
+      }),
+      label(30, 648, 'Edge Cluster SLA & Health', 16, 400, {
+        fontWeight: 700,
+        color: INK_STRONG,
+        align: 'left',
+      }),
+      box(30, 690, 260, 68, 'iad-1 · Virginia\n12.4ms avg  ·  99.998% uptime', PAPER, {
+        appearance: { fill: [{ type: 'solid', color: PAPER }], stroke: { color: HAIRLINE, width: 1 }, cornerRadius: 0 },
+        typography: { fontSize: 12.5, fontWeight: 600, color: INK_STRONG, align: 'center', verticalAlign: 'middle' },
+      }),
+      box(320, 690, 260, 68, 'fra-1 · Frankfurt\n16.1ms avg  ·  99.995% uptime', PAPER, {
+        appearance: { fill: [{ type: 'solid', color: PAPER }], stroke: { color: HAIRLINE, width: 1 }, cornerRadius: 0 },
+        typography: { fontSize: 12.5, fontWeight: 600, color: INK_STRONG, align: 'center', verticalAlign: 'middle' },
+      }),
+      box(610, 690, 260, 68, 'hnd-1 · Tokyo\n19.2ms avg  ·  99.999% uptime', PAPER, {
+        appearance: { fill: [{ type: 'solid', color: PAPER }], stroke: { color: HAIRLINE, width: 1 }, cornerRadius: 0 },
+        typography: { fontSize: 12.5, fontWeight: 600, color: INK_STRONG, align: 'center', verticalAlign: 'middle' },
+      }),
+      box(900, 690, 270, 68, 'syd-1 · Sydney\n24.8ms avg  ·  99.992% uptime', PAPER, {
+        appearance: { fill: [{ type: 'solid', color: PAPER }], stroke: { color: HAIRLINE, width: 1 }, cornerRadius: 0 },
+        typography: { fontSize: 12.5, fontWeight: 600, color: INK_STRONG, align: 'center', verticalAlign: 'middle' },
+      }),
+    ],
   },
   {
     id: 'spectrum',
-    featured: true,
     category: 'art',
     name: 'Spectrum',
     blurb: 'A colour wheel of 360 rotated wedges.',
@@ -736,7 +1056,11 @@ const BASE_TEMPLATES: Template[] = [
           height: 120,
           rotation: (angle * 180) / Math.PI + 90,
           geometry: { kind: 'rect' },
-          appearance: { fill: [{ type: 'solid', color: hue(t, 78, 58) }], cornerRadius: 8 },
+          appearance: {
+            fill: [{ type: 'solid', color: hue(t, 78, 58) }],
+            stroke: { color: hue(t, 85, 42), width: 1 },
+            cornerRadius: 0,
+          },
         });
       }
       return nodes;
@@ -761,8 +1085,8 @@ const BASE_TEMPLATES: Template[] = [
       const W = 78;
       const H = 44 * (FULL_ROWS / ROWS);
       const nodes: NewNodeInput[] = [
-        label(0, -150, 'Domino wall', 40),
-        label(0, -94, 'Forces → Shockwave, then click near the wall.', 18),
+        label(0, -160, 'Domino wall', 40),
+        label(0, -96, 'Forces → Shockwave, then click near the wall.', 18),
       ];
       for (let row = 0; row < ROWS; row += 1) {
         for (let col = 0; col < COLS; col += 1) {
@@ -778,201 +1102,198 @@ const BASE_TEMPLATES: Template[] = [
   {
     id: 'mindmap',
     category: 'diagrams',
-    name: 'Mind map',
-    blurb: 'Three levels, six branches and the four cross-links that stop it being a list in a circle.',
-    teaches: ['Radial layout', 'Curved routing', 'Cross-links'],
+    name: 'Opportunity solution tree',
+    blurb: 'Outcome-driven strategic discovery. Map business goals to customer opportunities and validation experiments.',
+    teaches: ['Radial layout', 'Curved routing', 'Cross-links', 'Strategic discovery'],
+    objectCount: 55,
     build: () => {
-      /**
-       * A mind map with a second level, and with the thing that actually
-       * makes one useful.
-       *
-       * The previous board was a centre and six labels — which is a
-       * hub-and-spoke diagram, and it is what every mind map template ships
-       * because it is the part that is easy to draw. It teaches the connector
-       * tool and nothing about mapping: six words arranged in a circle carry
-       * exactly the same information as six words in a column.
-       *
-       * The value of a mind map appears at the **third level**, where the
-       * branches get specific enough to disagree with each other, and in the
-       * **cross-links** — the arrows between branches that say "this is the
-       * same problem as that". Those are the lines somebody actually learns
-       * something from, and they are the reason a map is not an outline.
-       *
-       * The subject is a real one with real tensions in it, because an
-       * abstract map ("Idea → Thing A, Thing B") cannot have cross-links: you
-       * cannot connect two things that do not mean anything.
-       */
       const nodes: NewNodeInput[] = [];
 
-      const centre = box(-130, -55, 260, 110, 'Why is the\nboard slow?', '#FDE68A', {
-        appearance: { fill: [{ type: 'solid', color: '#FDE68A' }], cornerRadius: 55 },
-        typography: { fontSize: 20, fontWeight: 700, color: INK, align: 'center', verticalAlign: 'middle' },
+      const centre = box(-170, -60, 340, 120, 'TARGET OUTCOME\n65% Team Activation\nwithin 14 Days', '#FEF3C7', {
+        appearance: { fill: [{ type: 'solid', color: '#FEF3C7' }], stroke: { color: strokeOf('#FEF3C7'), width: 1.5 }, cornerRadius: 0 },
+        typography: { fontSize: 18, fontWeight: 800, color: INK_STRONG, align: 'center', verticalAlign: 'middle', lineHeight: 1.3 },
       });
       nodes.push(centre);
 
-      /** A branch, its tint, and the leaves hanging off it. */
-      const BRANCHES: Array<{ name: string; tint: string; leaves: string[] }> = [
-        { name: 'Too many objects', tint: TINT.blue, leaves: ['Nothing is culled', 'Every node re-renders', 'Off-screen still drawn'] },
-        { name: 'Each object costs too much', tint: TINT.green, leaves: ['Shadows are per-node', 'Text measured every frame', 'Sketch paths rebuilt'] },
-        { name: 'The browser', tint: '#FBD2E1', leaves: ['One canvas, one thread', 'GC pauses on pan', 'Retina = 4× pixels'] },
-        { name: 'The network', tint: '#DDD5F8', leaves: ['Awareness at 15Hz', 'Big CRDT updates', 'Images load late'] },
-        { name: 'It only feels slow', tint: '#FDDBBF', leaves: ['No loading state', 'Input lag, not FPS', 'Jank at the start of a drag'] },
-        { name: 'The machine', tint: '#C3E1FA', leaves: ['Four-year-old laptop', 'Integrated graphics', 'Forty other tabs'] },
+      interface Branch {
+        name: string;
+        tint: string;
+        leaves: string[];
+      }
+
+      const BRANCHES: Branch[] = [
+        {
+          name: 'Frictionless First 60s',
+          tint: TINT.sky,
+          leaves: ['Instant guest sandbox', 'One-click invite join', 'Guided template tour'],
+        },
+        {
+          name: 'Viral Collaboration',
+          tint: TINT.green,
+          leaves: ['Slack/Discord unfurl', 'Follow presenter mode', 'Live audio & cursors'],
+        },
+        {
+          name: 'Toolchain Integrations',
+          tint: TINT.violet,
+          leaves: ['GitHub PR embeds', 'Figma copy-paste', 'Linear issue 2-way sync'],
+        },
+        {
+          name: 'Engine Performance',
+          tint: TINT.amber,
+          leaves: ['Sub-16ms edge sync', 'Instanced GPU culling', 'Local-first CRDT'],
+        },
+        {
+          name: 'Enterprise Security',
+          tint: TINT.rose,
+          leaves: ['Zero-touch SAML/SSO', 'SOC2 audit log stream', 'Air-gapped deployment'],
+        },
+        {
+          name: 'Meeting Facilitation',
+          tint: TINT.blue,
+          leaves: ['Sticky cluster voting', 'Integrated sprint timer', 'Action ownership grid'],
+        },
       ];
 
       const branchNodes: NewNodeInput[] = [];
-      const leafByBranch: NewNodeInput[][] = [];
+      const leafNodesByBranch: NewNodeInput[][] = [];
 
       BRANCHES.forEach((branch, i) => {
         const angle = (i / BRANCHES.length) * Math.PI * 2 - Math.PI / 2;
-        const bx = Math.cos(angle) * 470;
+        const bx = Math.cos(angle) * 480;
         const by = Math.sin(angle) * 380;
-        const node = box(bx - 110, by - 42, 220, 84, branch.name, branch.tint, {
-          typography: { fontSize: 16, fontWeight: 650, color: INK, align: 'center', verticalAlign: 'middle' },
+        const node = box(bx - 120, by - 44, 240, 88, branch.name, branch.tint, {
+          appearance: { fill: [{ type: 'solid', color: branch.tint }], stroke: { color: strokeOf(branch.tint), width: 1.5 }, cornerRadius: 0 },
+          typography: { fontSize: 16, fontWeight: 700, color: INK_STRONG, align: 'center', verticalAlign: 'middle' },
         });
         branchNodes.push(node);
         nodes.push(node);
-        // Curved: a radial diagram drawn with right angles reads as a circuit
-        // board rather than as branches.
         nodes.push(link(centre.id as string, node.id as string, { routing: 'curved', endEnd: 'circle' }));
 
-        // The leaves fan outward from the branch, along the same ray.
         const leaves: NewNodeInput[] = [];
         branch.leaves.forEach((text, j) => {
-          const spread = (j - (branch.leaves.length - 1) / 2) * 0.34;
+          const spread = (j - (branch.leaves.length - 1) / 2) * 0.36;
           const la = angle + spread;
           const leaf = box(
-            Math.cos(la) * 860 - 95,
-            Math.sin(la) * 700 - 30,
-            190,
-            60,
+            Math.cos(la) * 880 - 105,
+            Math.sin(la) * 720 - 32,
+            210,
+            64,
             text,
             PAPER_SOFT,
             {
-              appearance: { fill: [{ type: 'solid', color: PAPER_SOFT }], cornerRadius: 10, stroke: { color: branch.tint, width: 2 } },
-              typography: { fontSize: 13, fontWeight: 500, color: INK_MID, align: 'center', verticalAlign: 'middle' },
+              appearance: { fill: [{ type: 'solid', color: PAPER_SOFT }], stroke: { color: HAIRLINE, width: 1.5 }, cornerRadius: 0 },
+              typography: { fontSize: 13, fontWeight: 600, color: INK, align: 'center', verticalAlign: 'middle' },
             }
           );
           leaves.push(leaf);
           nodes.push(leaf);
-          nodes.push(
-            link(node.id as string, leaf.id as string, {
-              routing: 'curved',
-              endEnd: 'none',
-              appearance: { stroke: { color: RULE, width: 1.5, cap: 'round' } },
-            })
-          );
+          nodes.push(link(node.id as string, leaf.id as string, { routing: 'curved' }));
         });
-        leafByBranch.push(leaves);
+        leafNodesByBranch.push(leaves);
       });
 
-      /*
-       * The cross-links — the whole reason to draw this as a map.
-       *
-       * Each one connects two leaves on *different* branches that turn out to
-       * be the same problem seen from two sides. Dashed and unarrowed,
-       * because they are not causation, they are recognition.
-       */
-      const tie = (a: NewNodeInput, b: NewNodeInput, text: string) =>
-        link(a.id as string, b.id as string, {
+      // Cross-links showing dependencies / synergies between branches
+      const crossLinks = [
+        link(leafNodesByBranch[0][0].id as string, leafNodesByBranch[1][0].id as string, {
+          label: 'viral loop',
           routing: 'curved',
-          endEnd: 'none',
-          label: text,
-          appearance: { stroke: { color: INK_FAINT, width: 1.5, cap: 'round', dash: [7, 6] } },
-        });
+          appearance: { stroke: { color: HUE.sky, width: 1.5, cap: 'round', dash: [6, 4] } },
+        }),
+        link(leafNodesByBranch[2][0].id as string, leafNodesByBranch[1][0].id as string, {
+          label: 'unfurl sync',
+          routing: 'curved',
+          appearance: { stroke: { color: HUE.violet, width: 1.5, cap: 'round', dash: [6, 4] } },
+        }),
+        link(leafNodesByBranch[3][0].id as string, leafNodesByBranch[1][1].id as string, {
+          label: 'low latency',
+          routing: 'curved',
+          appearance: { stroke: { color: HUE.green, width: 1.5, cap: 'round', dash: [6, 4] } },
+        }),
+        link(leafNodesByBranch[4][0].id as string, leafNodesByBranch[5][2].id as string, {
+          label: 'compliance',
+          routing: 'curved',
+          appearance: { stroke: { color: HUE.rose, width: 1.5, cap: 'round', dash: [6, 4] } },
+        }),
+      ];
+      nodes.push(...crossLinks);
 
-      nodes.push(
-        tie(leafByBranch[0][2], leafByBranch[1][0], 'same fix'),
-        tie(leafByBranch[2][2], leafByBranch[5][1], 'same cause'),
-        tie(leafByBranch[4][1], leafByBranch[3][0], 'measured wrong'),
-        tie(leafByBranch[1][1], leafByBranch[4][2], 'felt here')
-      );
-
-      nodes.push(
-        label(-1180, -1080, 'Mind map', 44),
-        label(-1180, -1024, 'Six branches, eighteen leaves, and four dashed ties between branches — which is where the thinking is.', 17)
-      );
-
-      return layer(nodes);
+      return layer([
+        label(-320, -700, 'Product Opportunity Solution Tree', 44),
+        label(-320, -632, 'Outcome-driven strategic discovery. Map business goals to customer opportunities and validation experiments.', 18),
+        ...nodes,
+      ]);
     },
   },
   {
     id: 'flowchart',
     category: 'diagrams',
-    name: 'Flowchart',
-    blurb: 'A real process, with the two loops back that make routing hard.',
-    teaches: ['Decision shapes', 'Loop-backs', 'Routing'],
+    name: 'Authentication & Session State Machine',
+    blurb: 'Enterprise token validation state machine with automated refresh loop-backs, OIDC redirects, and context injection.',
+    teaches: ['Decision shapes', 'Loop-backs', 'Orthogonal routing', 'State machines'],
+    objectCount: 21,
     build: () => {
-      /**
-       * A flowchart with somewhere to go backwards.
-       *
-       * The previous version was five boxes and one decision, all flowing
-       * down the page — which is the easy case for a connector system and
-       * therefore demonstrates nothing. Every arrow went the way arrows
-       * already want to go.
-       *
-       * Real processes loop. "Changes requested" sends you back up to the
-       * step you just left, and a route that has to leave a box, climb past
-       * two other boxes and re-enter one above it is the case orthogonal
-       * routing exists for. There are two of those here, and they are the
-       * only reason this board is worth opening.
-       *
-       * The shapes carry meaning too, which the old one did not do: a
-       * terminator is a pill, a decision is a diamond, a step is a rectangle.
-       * That is the convention every flowchart reader already knows, and it
-       * costs one geometry field.
-       */
       const term = (x: number, y: number, text: string, fill: string) =>
-        box(x, y, 190, 66, text, fill, { appearance: { fill: [{ type: 'solid', color: fill }], cornerRadius: 33 } });
+        box(x, y, 240, 66, text, fill, {
+          appearance: { fill: [{ type: 'solid', color: fill }], stroke: { color: strokeOf(fill), width: 1.5 }, cornerRadius: 0 },
+          typography: { fontSize: 13, fontWeight: 600, color: INK, align: 'center', verticalAlign: 'middle' },
+        });
 
       const decide = (x: number, y: number, text: string) =>
         box(x, y, 230, 170, text, TINT.amber, {
           geometry: { kind: 'polygon', points: 4 },
-          typography: { fontSize: 15, fontWeight: 600, color: INK, align: 'center', verticalAlign: 'middle' },
+          typography: { fontSize: 14, fontWeight: 600, color: INK, align: 'center', verticalAlign: 'middle' },
         });
 
       const COL = 420;
 
-      const start  = term(COL + 20, 0, 'Idea', TINT.indigo);
-      const draft  = box(COL, 130, 230, 84, 'Write the spec', TINT.blue);
-      const review = decide(COL, 274, 'Signed off?');
-      const build  = box(COL, 500, 230, 84, 'Build it', TINT.green);
-      const tests  = decide(COL, 634, 'Tests pass?');
-      const fix    = box(COL + 330, 634, 210, 84, 'Fix it', '#FEE2E2');
-      const ship   = box(COL, 860, 230, 84, 'Ship it', TINT.blue);
-      const done   = term(COL + 20, 994, 'Done', TINT.indigo);
-      const park   = box(COL - 340, 274, 210, 84, 'Park it', TINT.slate);
+      const start = term(COL - 5, 0, 'Incoming Protected Request', TINT.indigo);
+      const extract = box(COL, 130, 230, 84, 'Read Token & Session Cookie', TINT.blue, {
+        typography: { fontSize: 13, fontWeight: 600, color: INK, align: 'center', verticalAlign: 'middle' },
+      });
+      const checkToken = decide(COL, 274, 'Token Present?');
+      const redirectLogin = box(COL - 340, 274, 210, 84, 'Redirect to SSO Login', TINT.slate, {
+        typography: { fontSize: 13, fontWeight: 600, color: INK, align: 'center', verticalAlign: 'middle' },
+      });
+      const verifySig = box(COL, 500, 230, 84, 'Verify Signature (JWKS)', TINT.blue, {
+        typography: { fontSize: 13, fontWeight: 600, color: INK, align: 'center', verticalAlign: 'middle' },
+      });
+      const checkExpiry = decide(COL, 644, 'Token Expired?');
+      const refreshToken = box(COL + 330, 644, 210, 84, 'Refresh via Redis Cache', '#FEE2E2', {
+        typography: { fontSize: 13, fontWeight: 600, color: INK, align: 'center', verticalAlign: 'middle' },
+      });
+      const authorize = box(COL, 870, 230, 84, 'Authorize & Inject Context', TINT.green, {
+        typography: { fontSize: 13, fontWeight: 600, color: INK, align: 'center', verticalAlign: 'middle' },
+      });
+      const done = term(COL - 5, 1004, 'Forward to Upstream Service', TINT.indigo);
 
       return layer([
-        label(COL - 360, -140, 'Flowchart', 44),
-        label(COL - 360, -86, 'Two of these arrows travel back up the page. Drag a box and watch them solve.', 17),
+        label(COL - 360, -160, 'Authentication & Session Flow', 44),
+        label(COL - 360, -96, 'Enterprise token validation state machine with automated refresh loop-backs and OIDC redirects.', 17),
 
-        start, draft, review, build, tests, fix, ship, done, park,
+        start, extract, checkToken, redirectLogin, verifySig, checkExpiry, refreshToken, authorize, done,
 
-        link(start.id as string, draft.id as string),
-        link(draft.id as string, review.id as string),
+        link(start.id as string, extract.id as string),
+        link(extract.id as string, checkToken.id as string),
 
-        // Labelled, because the branches out of a decision are the one place
-        // an unlabelled arrow genuinely loses information.
-        link(review.id as string, build.id as string, { label: 'yes' }),
-        link(review.id as string, park.id as string, { label: 'no' }),
+        link(checkToken.id as string, verifySig.id as string, { label: 'yes' }),
+        link(checkToken.id as string, redirectLogin.id as string, { label: 'no' }),
 
-        link(build.id as string, tests.id as string),
-        link(tests.id as string, ship.id as string, { label: 'yes' }),
-        link(tests.id as string, fix.id as string, { label: 'no' }),
+        link(verifySig.id as string, checkExpiry.id as string),
+        link(checkExpiry.id as string, authorize.id as string, { label: 'valid' }),
+        link(checkExpiry.id as string, refreshToken.id as string, { label: 'expired' }),
 
-        // The loop back up. This is the route that has to climb past two
-        // boxes and re-enter one above where it started.
-        link(fix.id as string, build.id as string, { label: 'again' }),
-        // And the second one, from the sign-off decision back to the draft.
-        link(park.id as string, draft.id as string, { label: 'revise', routing: 'curved' }),
+        // Loop back: refresh climbs back up to verify signature
+        link(refreshToken.id as string, verifySig.id as string, { label: 're-validate', appearance: { stroke: { color: HUE.rose, width: 2 }, sketch: 'light' } }),
+        // Second loop back: login redirects back to token extraction
+        link(redirectLogin.id as string, extract.id as string, { label: 'authenticated', routing: 'curved', appearance: { stroke: { color: HUE.sky, width: 2 }, sketch: 'light' } }),
 
-        link(ship.id as string, done.id as string),
+        link(authorize.id as string, done.id as string),
       ]);
     },
   },
   {
     id: 'brainstorm',
+    featured: true,
     category: 'thinking',
     name: 'Brainstorm',
     blurb: 'A session already running: four lanes, thirteen notes, and the votes that sorted them.',
@@ -1041,7 +1362,7 @@ const BASE_TEMPLATES: Template[] = [
 
       const nodes: NewNodeInput[] = [
         label(0, -180, 'What should we build next?', 44),
-        label(0, -122, 'Double-click a note to edit it. Tab chains another one directly below.', 18),
+        label(0, -114, 'Double-click a note to edit it. Tab chains another one directly below.', 18),
       ];
 
       LANES.forEach((lane, i) => {
@@ -1074,91 +1395,160 @@ const BASE_TEMPLATES: Template[] = [
   {
     id: 'retro',
     category: 'thinking',
-    name: 'Retro',
-    blurb: 'Four columns including the one templates always omit: what anyone is actually doing.',
-    teaches: ['Frames as columns', 'Reactions', 'Tags'],
+    name: 'Agile Sprint Retrospective & Action Matrix',
+    blurb: 'Sailboat & 4Ls retrospective with live reaction tallies, categorical tags, and owned action accountability matrix.',
+    teaches: ['Frames as columns', 'Reaction counting', 'Sticky tags', 'Ownership matrix'],
+    objectCount: 44,
     build: () => {
-      /**
-       * A retro with the part that actually matters on it.
-       *
-       * The old board was three columns of two notes. Every real retro has a
-       * fourth column the templates always leave out — **what we are actually
-       * going to do** — and without it the exercise ends in a pile of
-       * observations nobody owns. The board that runs the meeting has to have
-       * somewhere for the meeting to land.
-       *
-       * The notes arrive with votes already on them, because the ordering a
-       * retro produces is the output: a column of six unranked complaints is
-       * the raw material, and the ranking is the work. Showing it done is the
-       * only way a template can teach that the reactions are for counting.
-       */
       const COL_W = 420;
-      const COL_GAP = 32;
+      const COL_GAP = 30;
       const colX = (i: number) => i * (COL_W + COL_GAP);
 
       type Card = [string, number, string[]];
 
       const COLUMNS: Array<{ title: string; hint: string; theme: StickyTheme; cards: Card[] }> = [
         {
-          title: 'Went well', hint: 'Name it so it keeps happening.', theme: 'mint',
+          title: '⛵ Wind in Our Sails',
+          hint: 'Accelerators: what made us fast and confident.',
+          theme: 'mint',
           cards: [
-            ['Shipped the editor rebuild', 5, []],
-            ['Design review took twenty minutes', 3, []],
-            ['Nobody worked a weekend', 4, []],
+            ['Shipped distributed CRDT sync 2 days early! 🚀', 6, ['infra']],
+            ['Zero customer regressions during v2.4 migration', 5, ['qa']],
+            ['Design token sync in Figma streamlined frontend', 4, ['design']],
           ],
         },
         {
-          title: 'Went badly', hint: 'The problem, not the person.', theme: 'peach',
+          title: '⚓ Anchors Holding Back',
+          hint: 'Friction: bottlenecks that caused drag.',
+          theme: 'peach',
           cards: [
-            ['Flaky tests blocked three merges', 6, ['ci']],
-            ['Scope moved twice mid-sprint', 4, []],
-            ['Standup ran to forty minutes', 2, []],
+            ['Flaky websocket tests blocked 3 PR merges in CI', 7, ['ci']],
+            ['Export modal scope crept late into the sprint', 5, ['scope']],
+            ['Daily standups ran over 25 mins without parking lot', 3, ['process']],
           ],
         },
         {
-          title: 'Try next', hint: 'Small enough to finish in one sprint.', theme: 'sky',
+          title: '🪨 Rocks / Risks Ahead',
+          hint: 'Hazards: emerging tech debt and blind spots.',
+          theme: 'yellow',
           cards: [
-            ['Quarantine the flaky suite', 5, ['ci']],
-            ['Freeze scope after day two', 3, []],
-            ['Pair on the hard parts', 2, []],
+            ['Safari WebGL memory leak when panning 10k nodes', 6, ['perf']],
+            ['Developer documentation falling behind v2.4 API', 4, ['docs']],
+            ['Need automated performance regression alerts', 3, ['infra']],
           ],
         },
         {
-          title: 'Actions', hint: 'An owner and a date, or it is a wish.', theme: 'yellow',
+          title: '🏝 The Island / Ideas',
+          hint: 'Aspirations: experiments and high-leverage bets.',
+          theme: 'sky',
           cards: [
-            ['Ana: quarantine the suite, Friday', 0, ['owned']],
-            ['Sam: scope freeze in the charter, Weds', 0, ['owned']],
+            ['Prototype canvas AI diagram copilot in Sprint 43', 8, ['ai']],
+            ['Add interactive presentation slide mode', 6, ['feature']],
+            ['Host monthly open office hours for community', 4, ['community']],
           ],
         },
       ];
 
       const nodes: NewNodeInput[] = [
-        label(0, -180, 'Sprint retro', 44),
-        label(0, -122, 'One note per point. React to agree, and the order that emerges is the agenda.', 18),
+        label(0, -180, 'Sprint 42 Retrospective', 44),
+        label(0, -114, 'Engine v2.4 launch review. Vote to agree, identify root causes, and commit to owned actions.', 18),
       ];
 
       COLUMNS.forEach((column, i) => {
         const x = colX(i);
-        nodes.push(frame(x, 0, COL_W, 940, column.title));
-        // The column's own instruction, inside the column. A legend off to
-        // one side is a legend nobody reads while they are working.
+        nodes.push(frame(x, 0, COL_W, 900, column.title));
         nodes.push({
-          id: nanoid(), type: 'text', x: x + 32, y: 54,
-          width: COL_W - 64, height: 22, text: column.hint, resize: 'width',
-          typography: { fontSize: 15, fontWeight: 500, color: HUE.slate },
+          id: nanoid(),
+          type: 'text',
+          x: x + 30,
+          y: 52,
+          width: COL_W - 60,
+          height: 22,
+          text: column.hint,
+          resize: 'width',
+          typography: { fontSize: 14, fontWeight: 500, color: HUE.slate },
         });
 
         column.cards.forEach(([text, votes, tags], k) => {
           nodes.push({
-            ...sticky(x + 32, 104 + k * 270, text, column.theme),
-            width: COL_W - 64,
-            height: 240,
+            ...sticky(x + 30, 96 + k * 250, text, column.theme),
+            width: COL_W - 60,
+            height: 220,
             tags,
-            reactions: votes > 0
-              ? { '👍': Array.from({ length: votes }, (_, v) => `demo-r-${i}-${k}-${v}`) }
-              : {},
+            reactions: votes > 0 ? { '👍': Array.from({ length: votes }, (_, v) => `demo-r-${i}-${k}-${v}`) } : {},
           });
         });
+      });
+
+      // Action Ownership & Accountability Matrix
+      const MATRIX_Y = 960;
+      const MATRIX_W = COL_W * 4 + COL_GAP * 3; // 1770
+      nodes.push(frame(0, MATRIX_Y, MATRIX_W, 320, 'Action Items & Ownership Matrix'));
+      nodes.push({
+        id: nanoid(),
+        type: 'text',
+        x: 32,
+        y: MATRIX_Y + 46,
+        width: 800,
+        height: 22,
+        text: 'Every action item has an explicit owner and deadline, or it is only a wish.',
+        resize: 'width',
+        typography: { fontSize: 14, fontWeight: 500, color: INK_MID },
+      });
+
+      const ACTIONS: Array<{ title: string; owner: string; due: string; priority: string; tint: string; ink: string }> = [
+        { title: 'Fix Safari WebGL memory leak', owner: '@marcus (Lead)', due: 'Friday', priority: 'URGENT', tint: TINT.rose, ink: '#9F1239' },
+        { title: 'Quarantine flaky CI websocket suite', owner: '@ana (DevOps)', due: 'Wednesday', priority: 'HIGH', tint: TINT.amber, ink: '#92400E' },
+        { title: 'Hard 15-minute cap on daily standup', owner: '@sam (Scrum)', due: 'Monday', priority: 'MEDIUM', tint: TINT.green, ink: '#166534' },
+        { title: 'Schedule RFC review for AI copilot', owner: '@elena (Staff)', due: 'Sprint 43', priority: 'NORMAL', tint: TINT.sky, ink: '#075985' },
+      ];
+
+      const CARD_W = (MATRIX_W - 64 - 3 * 24) / 4;
+      ACTIONS.forEach((act, idx) => {
+        const cx = 32 + idx * (CARD_W + 24);
+        const cy = MATRIX_Y + 84;
+        nodes.push(
+          box(cx, cy, CARD_W, 200, '', act.tint, {
+            appearance: { fill: [{ type: 'solid', color: act.tint }], stroke: { color: strokeOf(act.tint), width: 1.5 }, cornerRadius: 14 },
+          }),
+          {
+            id: nanoid(),
+            type: 'text',
+            x: cx + 20,
+            y: cy + 20,
+            width: CARD_W - 40,
+            height: 48,
+            text: act.title,
+            resize: 'width',
+            typography: { fontSize: 16, fontWeight: 700, color: INK_STRONG, align: 'left', lineHeight: 1.3 },
+          },
+          {
+            id: nanoid(),
+            type: 'text',
+            x: cx + 20,
+            y: cy + 78,
+            width: CARD_W - 40,
+            height: 24,
+            text: `Owner: ${act.owner}`,
+            resize: 'width',
+            typography: { fontSize: 13, fontWeight: 600, color: INK_MID, align: 'left' },
+          },
+          {
+            id: nanoid(),
+            type: 'text',
+            x: cx + 20,
+            y: cy + 108,
+            width: CARD_W - 40,
+            height: 24,
+            text: `Due Date: ${act.due}`,
+            resize: 'width',
+            typography: { fontSize: 13, fontWeight: 500, color: INK_SOFT, align: 'left' },
+          },
+          box(cx + 20, cy + 146, 110, 28, act.priority, PAPER, {
+            appearance: { fill: [{ type: 'solid', color: PAPER }], stroke: { color: strokeOf(act.tint), width: 1 }, cornerRadius: 14 },
+            typography: { fontSize: 11, fontWeight: 800, color: act.ink, align: 'center', verticalAlign: 'middle' },
+          })
+        );
       });
 
       return nodes;
@@ -1244,6 +1634,9 @@ const BASE_TEMPLATES: Template[] = [
         w: number, h: number, appearance: Record<string, unknown>, extra: Record<string, unknown> = {}
       ): NewNodeInput => {
         const p = at(col, row);
+        const fill = appearance.fill;
+        const fillColor = Array.isArray(fill) && fill[0]?.color ? fill[0].color : BRAND;
+        const stroke = appearance.stroke ?? { color: strokeOf(fillColor), width: 1.5 };
         return {
           id: nanoid(),
           type: 'shape',
@@ -1252,14 +1645,18 @@ const BASE_TEMPLATES: Template[] = [
           width: w,
           height: h,
           geometry: { kind: 'rect' },
-          appearance,
+          appearance: {
+            ...appearance,
+            stroke,
+            cornerRadius: 0,
+          },
           ...extra,
         };
       };
 
       const nodes: NewNodeInput[] = [
-        label(0, -210, 'Everything, on one sheet', 52),
-        label(0, -140, 'Nine plates. Every object on them is live. Select one and change it.', 20),
+        label(0, -220, 'Everything, on one sheet', 52),
+        label(0, -145, 'Nine plates. Every object on them is live. Select one and change it.', 20),
       ];
 
       // ---------------------------------------------------- 1. shapes -----
@@ -1280,7 +1677,7 @@ const BASE_TEMPLATES: Template[] = [
         const dy = 70 + Math.floor(i / 3) * 190;
         nodes.push(swatch(0, 0, dx, dy, 130, 110, {
           fill: [{ type: 'solid', color: '#C7D2FE' }],
-          stroke: { color: '#4F46E5', width: 2 },
+          stroke: { color: '#A5B4FC', width: 1.5 },
         }, { geometry }));
         nodes.push(note(0, 0, dx, dy + 122, name));
       });
@@ -1382,14 +1779,16 @@ const BASE_TEMPLATES: Template[] = [
           ['Mitred join', { color: '#4F46E5', width: 7, join: 'miter' }],
         ];
         STROKES.forEach(([name, stroke], i) => {
-          const dx = 40 + (i % 2) * 280;
+          const isTriangle = i >= 4;
+          const w = isTriangle ? 90 : 220;
+          const dx = 40 + (i % 2) * 280 + (isTriangle ? 65 : 0);
           const dy = 70 + Math.floor(i / 2) * 130;
-          nodes.push(swatch(2, 1, dx, dy, 220, 78, {
+          nodes.push(swatch(2, 1, dx, dy, w, 78, {
             fill: [{ type: 'solid', color: PAPER }],
             stroke,
-            cornerRadius: i >= 4 ? 0 : 10,
-          }, i >= 4 ? { geometry: { kind: 'polygon', points: 3 } } : {}));
-          nodes.push(note(2, 1, dx, dy + 88, name));
+            cornerRadius: isTriangle ? 0 : 10,
+          }, isTriangle ? { geometry: { kind: 'polygon', points: 3 } } : {}));
+          nodes.push(note(2, 1, 40 + (i % 2) * 280, dy + 88, name));
         });
       }
 
@@ -1451,7 +1850,6 @@ const BASE_TEMPLATES: Template[] = [
   },
   {
     id: 'halftone',
-    featured: true,
     category: 'art',
     name: 'Halftone',
     blurb: 'A lit sphere printed as a thousand dots, each sized by how much light falls on it.',
@@ -1527,7 +1925,11 @@ const BASE_TEMPLATES: Template[] = [
             width: size,
             height: size,
             geometry: { kind: 'ellipse' },
-            appearance: { fill: [{ type: 'solid', color: `hsl(${Math.round(h)}, ${Math.round(sat)}%, ${Math.round(l)}%)` }] },
+            appearance: {
+              fill: [{ type: 'solid', color: `hsl(${Math.round(h)}, ${Math.round(sat)}%, ${Math.round(l)}%)` }],
+              stroke: { color: `hsl(${Math.round(h)}, ${Math.round(sat)}%, ${Math.max(10, Math.round(l) - 15)}%)`, width: 1 },
+              cornerRadius: 0,
+            },
           });
         }
       }
@@ -1562,8 +1964,8 @@ const BASE_TEMPLATES: Template[] = [
       const GAP = 5;
 
       const nodes: NewNodeInput[] = [
-        label(0, -96, 'A year of anything', 40),
-        label(0, -44, 'One square per day. Fifty-three weeks across, seven days down.', 17),
+        label(0, -110, 'A year of anything', 40),
+        label(0, -50, 'One square per day. Fifty-three weeks across, seven days down.', 17),
       ];
 
       // Five steps, quiet to loud. A ramp rather than a palette, so the eye
@@ -1588,7 +1990,11 @@ const BASE_TEMPLATES: Template[] = [
             width: CELL,
             height: CELL,
             geometry: { kind: 'rect' },
-            appearance: { fill: [{ type: 'solid', color: STEPS[step] }], cornerRadius: 6 },
+            appearance: {
+              fill: [{ type: 'solid', color: STEPS[step] }],
+              stroke: { color: step === 0 ? '#CBD5E1' : STEPS[Math.min(step + 1, STEPS.length - 1)], width: 1 },
+              cornerRadius: 0,
+            },
           });
         }
       }
@@ -1633,7 +2039,11 @@ const BASE_TEMPLATES: Template[] = [
           width: SIZE,
           height: SIZE,
           geometry: { kind: 'ellipse' },
-          appearance: { fill: [{ type: 'solid', color: hue(i / COUNT, 62, 60) }] },
+          appearance: {
+            fill: [{ type: 'solid', color: hue(i / COUNT, 62, 60) }],
+            stroke: { color: hue(i / COUNT, 75, 40), width: 1.5 },
+            cornerRadius: 0,
+          },
           text: String(i + 1),
           typography: { fontSize: 22, fontWeight: 700, color: BRAND_INK, align: 'center', verticalAlign: 'middle' },
         };
@@ -1712,8 +2122,8 @@ const BASE_TEMPLATES: Template[] = [
       const LANE_W = 460;
       const LANE_GAP = 40;
       const nodes: NewNodeInput[] = [
-        label(0, -150, 'Sprint board', 44),
-        label(0, -96, 'Drag a card past a lane edge and the frame it belongs to changes with it.', 17),
+        label(0, -170, 'Sprint board', 44),
+        label(0, -105, 'Drag a card past a lane edge and the frame it belongs to changes with it.', 17),
       ];
 
       LANES.forEach((lane, i) => {
@@ -1725,9 +2135,8 @@ const BASE_TEMPLATES: Template[] = [
             width: 380,
             height: 210,
             tags,
-            // A count, not a name: the reaction only has to look counted.
             reactions: votes > 0
-              ? { '👍': Array.from({ length: votes }, (_, v) => `demo-${i}-${k}-${v}`) }
+              ? { '👍': Array.from({ length: votes }, (_, v) => `demo-s-${i}-${k}-${v}`) }
               : {},
           });
         });
@@ -1830,7 +2239,8 @@ const BASE_TEMPLATES: Template[] = [
           geometry: { kind: 'rect' },
           appearance: {
             fill: [{ type: 'solid', color: hue(i / COUNT, 72, 58) }],
-            cornerRadius: h / 2,
+            stroke: { color: hue(i / COUNT, 80, 42), width: 1 },
+            cornerRadius: 0,
           },
         });
       }
@@ -1840,85 +2250,181 @@ const BASE_TEMPLATES: Template[] = [
   {
     id: 'uikit',
     category: 'design',
-    name: 'Interface kit',
-    blurb: 'Buttons, fields, swatches and type at real sizes: a page of parts to build from.',
-    teaches: ['Frames', 'Type scale', 'Colour'],
-    objectCount: 36,
+    name: 'Interface kit & Design Tokens',
+    blurb: 'Color tokens, typography ramp, button matrices, inputs, segmented controls, status chips, and machined containers.',
+    teaches: ['Design tokens', 'Machined containers', 'Button matrices', 'Color ramps'],
+    objectCount: 56,
     build: () => {
-      /**
-       * The board a designer opens on day one.
-       *
-       * Every other template here is a finished artefact. This one is a
-       * *supply* — the pieces an interface is assembled from, drawn once at
-       * the sizes they are actually used at, so the first screen anyone lays
-       * out is not built from rectangles they guessed the height of.
-       *
-       * It doubles as the honest answer to "is this a design tool": a swatch
-       * row, a type ramp and three button states is the smallest thing that
-       * makes that question checkable.
-       */
       const nodes: NewNodeInput[] = [
-        label(0, -150, 'Interface kit', 44),
-        label(0, -96, 'Real control heights, a real type ramp, and a palette that goes with them.', 17),
-        frame(0, 0, 1240, 900, 'Kit'),
+        label(0, -170, 'Interface Kit & Design Tokens', 44),
+        label(0, -105, 'Color tokens, typography ramp, button matrices, inputs, segmented controls, status chips, and machined containers.', 17),
+        frame(0, 0, 1380, 1020, 'Design System Specification'),
       ];
 
-      // ---- palette -------------------------------------------------------
-      nodes.push(label(60, 44, 'Palette', 22));
-      const RAMP = [INK_STRONG, INK_MID, HUE.slate, INK_FAINT, RULE, HAIRLINE, TINT.slate];
-      const ACCENT = [BRAND, SIGNAL_BAD, SIGNAL_OK, HUE.blue, HUE.violet, HUE.pink];
-      RAMP.forEach((c, i) => {
-        nodes.push(box(60 + i * 92, 92, 80, 80, '', c, { appearance: { fill: [{ type: 'solid', color: c }], cornerRadius: 12 } }));
-      });
-      ACCENT.forEach((c, i) => {
-        nodes.push(box(60 + i * 92, 188, 80, 80, '', c, { appearance: { fill: [{ type: 'solid', color: c }], cornerRadius: 12 } }));
+      // ---- Section 1: Palette Ramp (Neutrals & Accents) -----------------------
+      nodes.push(label(60, 40, 'Palette Ramp', 20));
+      const NEUTRALS = [
+        { c: '#0F172A', label: '950' },
+        { c: '#334155', label: '700' },
+        { c: '#64748B', label: '500' },
+        { c: '#94A3B8', label: '400' },
+        { c: '#E2E8F0', label: '200' },
+        { c: '#F8FAFC', label: '50' },
+      ];
+      NEUTRALS.forEach((item, i) => {
+        nodes.push(
+          box(60 + i * 86, 76, 76, 56, item.label, item.c, {
+            appearance: { fill: [{ type: 'solid', color: item.c }], stroke: { color: strokeOf(item.c), width: 1.5 }, cornerRadius: 0 },
+            typography: { fontSize: 12, fontWeight: 700, color: i < 3 ? '#FFFFFF' : INK_STRONG, align: 'center', verticalAlign: 'middle' },
+          })
+        );
       });
 
-      // ---- type ramp -----------------------------------------------------
-      nodes.push(label(60, 312, 'Type', 22));
+      const ACCENTS = [
+        { c: BRAND, label: 'Brand', ink: BRAND_INK },
+        { c: '#DCFCE7', label: 'Online', ink: '#166534' },
+        { c: '#B91C1C', label: 'Danger', ink: '#FFFFFF' },
+        { c: '#1D4ED8', label: 'Blue', ink: '#FFFFFF' },
+        { c: '#6D28D9', label: 'Violet', ink: '#FFFFFF' },
+        { c: '#FEF3C7', label: 'Amber', ink: '#92400E' },
+      ];
+      ACCENTS.forEach((item, i) => {
+        nodes.push(
+          box(60 + i * 86, 142, 76, 56, item.label, item.c, {
+            appearance: { fill: [{ type: 'solid', color: item.c }], stroke: { color: strokeOf(item.c), width: 1.5 }, cornerRadius: 0 },
+            typography: { fontSize: 12, fontWeight: 700, color: item.ink, align: 'center', verticalAlign: 'middle' },
+          })
+        );
+      });
+
+      // ---- Section 2: Typography Scale ----------------------------------------
+      nodes.push(label(60, 230, 'Typography Scale', 20));
       const TYPE: Array<[string, number]> = [
-        ['Display 30', 30], ['Headline 24', 24], ['Title 16', 16], ['Body 13', 13], ['Label 11', 11],
+        ['Display 30 · SemiBold 650', 30],
+        ['Headline 24 · SemiBold 600', 24],
+        ['Title 16 · Medium 550', 16],
+        ['Body 13 · Regular 400', 13],
+        ['Label 11 · Medium Caps', 11],
       ];
-      let ty = 356;
+      let ty = 268;
       TYPE.forEach(([text, size]) => {
         nodes.push(label(60, ty, text, size));
-        ty += size * 1.9 + 10;
+        ty += size * 1.8 + 8;
       });
 
-      // ---- controls ------------------------------------------------------
-      nodes.push(label(660, 312, 'Controls', 22));
-      // The three heights the system actually has, drawn at those heights.
-      const BUTTONS: Array<[string, number, string, string]> = [
-        ['Primary  38', 38, BRAND, BRAND_INK],
-        ['Secondary  32', 32, TINT.slate, INK_STRONG],
-        ['Small  28', 28, PAPER, INK_MID],
-      ];
-      let by = 356;
-      BUTTONS.forEach(([text, h, fill, ink]) => {
-        nodes.push(box(660, by, 240, h, text, fill, {
-          appearance: { fill: [{ type: 'solid', color: fill }], cornerRadius: 8 },
-          typography: { fontSize: 13, fontWeight: 600, color: ink, align: 'center', verticalAlign: 'middle' },
-        }));
-        by += h + 18;
-      });
-
-      // Fields, at the same widths, so a form laid out from these lines up.
-      nodes.push(label(660, 520, 'Fields', 22));
-      ['Label', 'Placeholder', 'Filled value'].forEach((text, i) => {
-        nodes.push(box(660, 564 + i * 60, 480, 44, text, PAPER, {
-          appearance: { fill: [{ type: 'solid', color: PAPER }], cornerRadius: 8, stroke: { color: RULE, width: 1 } },
-          typography: { fontSize: 14, fontWeight: 400, color: HUE.slate, align: 'left', verticalAlign: 'middle' },
-        }));
-      });
-
-      // ---- chips ---------------------------------------------------------
-      nodes.push(label(60, 640, 'Chips', 22));
-      ['Draft', 'In review', 'Shipped', 'Blocked'].forEach((text, i) => {
-        nodes.push(box(60 + i * 130, 684, 116, 32, text, [HAIRLINE, TINT.amber, TINT.green, '#FEE2E2'][i], {
-          appearance: { fill: [{ type: 'solid', color: [HAIRLINE, TINT.amber, TINT.green, '#FEE2E2'][i] }], cornerRadius: 999 },
+      // ---- Section 3: Interactive Buttons -------------------------------------
+      nodes.push(label(680, 40, 'Button Variants', 20));
+      nodes.push(
+        box(680, 76, 190, 44, 'Primary ↗', BRAND, {
+          appearance: { fill: [{ type: 'solid', color: BRAND }], stroke: { color: strokeOf(BRAND), width: 1.5 }, cornerRadius: 0 },
+          typography: { fontSize: 13, fontWeight: 700, color: BRAND_INK, align: 'center', verticalAlign: 'middle' },
+        }),
+        box(885, 76, 190, 44, 'Secondary', '#1E293B', {
+          appearance: { fill: [{ type: 'solid', color: '#1E293B' }], stroke: { color: '#334155', width: 1.5 }, cornerRadius: 0 },
+          typography: { fontSize: 13, fontWeight: 650, color: '#F8FAFC', align: 'center', verticalAlign: 'middle' },
+        }),
+        box(1090, 76, 190, 44, 'Outline Button', PAPER, {
+          appearance: { fill: [{ type: 'solid', color: PAPER }], stroke: { color: HAIRLINE, width: 1.5 }, cornerRadius: 0 },
+          typography: { fontSize: 13, fontWeight: 600, color: INK_STRONG, align: 'center', verticalAlign: 'middle' },
+        }),
+        box(680, 132, 190, 40, 'Ghost Button', PAPER_SOFT, {
+          appearance: { fill: [{ type: 'solid', color: PAPER_SOFT }], stroke: { color: HAIRLINE, width: 1.5 }, cornerRadius: 0 },
+          typography: { fontSize: 13, fontWeight: 600, color: INK_MID, align: 'center', verticalAlign: 'middle' },
+        }),
+        box(885, 132, 190, 40, 'Destructive ✕', '#FEE2E2', {
+          appearance: { fill: [{ type: 'solid', color: '#FEE2E2' }], stroke: { color: '#FECDD3', width: 1.5 }, cornerRadius: 0 },
+          typography: { fontSize: 13, fontWeight: 700, color: '#991B1B', align: 'center', verticalAlign: 'middle' },
+        }),
+        box(1090, 132, 150, 36, 'Small Pill', TINT.slate, {
+          appearance: { fill: [{ type: 'solid', color: TINT.slate }], stroke: { color: strokeOf(TINT.slate), width: 1.5 }, cornerRadius: 0 },
           typography: { fontSize: 12, fontWeight: 600, color: INK_MID, align: 'center', verticalAlign: 'middle' },
-        }));
-      });
+        })
+      );
+
+      // ---- Section 4: Form Fields & States ------------------------------------
+      nodes.push(label(680, 200, 'Form Fields & States', 20));
+      nodes.push(
+        box(680, 236, 290, 44, 'name@company.com', PAPER, {
+          appearance: { fill: [{ type: 'solid', color: PAPER }], stroke: { color: HAIRLINE, width: 1.5 }, cornerRadius: 0 },
+          typography: { fontSize: 13, fontWeight: 400, color: INK_MID, align: 'left', verticalAlign: 'middle' },
+        }),
+        box(990, 236, 290, 44, 'elena.rostova@cloudscale.io', PAPER, {
+          appearance: { fill: [{ type: 'solid', color: PAPER }], stroke: { color: HAIRLINE, width: 1.5 }, cornerRadius: 0 },
+          typography: { fontSize: 13, fontWeight: 500, color: INK_STRONG, align: 'left', verticalAlign: 'middle' },
+        }),
+        box(680, 292, 290, 44, 'invalid-domain.xyz', '#FEF2F2', {
+          appearance: { fill: [{ type: 'solid', color: '#FEF2F2' }], stroke: { color: '#FECDD3', width: 1.5 }, cornerRadius: 0 },
+          typography: { fontSize: 13, fontWeight: 500, color: '#991B1B', align: 'left', verticalAlign: 'middle' },
+        }),
+        box(990, 292, 290, 44, '🔍  Search components, tokens...', PAPER_SOFT, {
+          appearance: { fill: [{ type: 'solid', color: PAPER_SOFT }], stroke: { color: HAIRLINE, width: 1.5 }, cornerRadius: 0 },
+          typography: { fontSize: 13, fontWeight: 450, color: INK_MID, align: 'left', verticalAlign: 'middle' },
+        })
+      );
+
+      // ---- Section 5: Segmented Controls & Chips ------------------------------
+      nodes.push(label(60, 560, 'Segmented Controls & Status Chips', 20));
+      nodes.push(
+        box(60, 600, 360, 44, '', TINT.slate, { appearance: { fill: [{ type: 'solid', color: TINT.slate }], stroke: { color: strokeOf(TINT.slate), width: 1.5 }, cornerRadius: 0 } }),
+        box(64, 604, 110, 36, 'Design', PAPER, {
+          appearance: { fill: [{ type: 'solid', color: PAPER }], stroke: { color: HAIRLINE, width: 1.5 }, cornerRadius: 0 },
+          typography: { fontSize: 13, fontWeight: 700, color: INK_STRONG, align: 'center', verticalAlign: 'middle' },
+        }),
+        box(180, 604, 110, 36, 'Prototype', TINT.slate, { appearance: { fill: [{ type: 'solid', color: TINT.slate }], stroke: { color: strokeOf(TINT.slate), width: 1.5 }, cornerRadius: 0 }, typography: { fontSize: 13, fontWeight: 500, color: INK_MID, align: 'center', verticalAlign: 'middle' } }),
+        box(296, 604, 110, 36, 'Code', TINT.slate, { appearance: { fill: [{ type: 'solid', color: TINT.slate }], stroke: { color: strokeOf(TINT.slate), width: 1.5 }, cornerRadius: 0 }, typography: { fontSize: 13, fontWeight: 500, color: INK_MID, align: 'center', verticalAlign: 'middle' } })
+      );
+
+      nodes.push(
+        box(60, 664, 130, 36, '● Operational', '#ECFDF5', {
+          appearance: { fill: [{ type: 'solid', color: '#ECFDF5' }], stroke: { color: strokeOf('#ECFDF5'), width: 1.5 }, cornerRadius: 0 },
+          typography: { fontSize: 12, fontWeight: 700, color: '#047857', align: 'center', verticalAlign: 'middle' },
+        }),
+        box(200, 664, 130, 36, '● Syncing', '#EFF6FF', {
+          appearance: { fill: [{ type: 'solid', color: '#EFF6FF' }], stroke: { color: strokeOf('#EFF6FF'), width: 1.5 }, cornerRadius: 0 },
+          typography: { fontSize: 12, fontWeight: 700, color: '#1D4ED8', align: 'center', verticalAlign: 'middle' },
+        }),
+        box(340, 664, 130, 36, '▲ Degraded', '#FFFBEB', {
+          appearance: { fill: [{ type: 'solid', color: '#FFFBEB' }], stroke: { color: strokeOf('#FFFBEB'), width: 1.5 }, cornerRadius: 0 },
+          typography: { fontSize: 12, fontWeight: 700, color: '#B45309', align: 'center', verticalAlign: 'middle' },
+        }),
+        box(480, 664, 130, 36, '✕ Offline', '#FEF2F2', {
+          appearance: { fill: [{ type: 'solid', color: '#FEF2F2' }], stroke: { color: strokeOf('#FEF2F2'), width: 1.5 }, cornerRadius: 0 },
+          typography: { fontSize: 12, fontWeight: 700, color: '#B91C1C', align: 'center', verticalAlign: 'middle' },
+        })
+      );
+
+      // ---- Section 6: Double-Bezel Hardware Container -------------------------
+      nodes.push(label(680, 360, 'Machined Double-Bezel Container Specimen', 20));
+      nodes.push(
+        box(680, 400, 600, 320, '', '#0F172A', { appearance: { fill: [{ type: 'solid', color: '#0F172A' }], stroke: { color: '#1E293B', width: 1.5 }, cornerRadius: 0 } }),
+        box(696, 416, 568, 288, '', '#1E293B', { appearance: { fill: [{ type: 'solid', color: '#1E293B' }], stroke: { color: '#334155', width: 1.5 }, cornerRadius: 0 } }),
+        box(716, 436, 528, 36, 'Hardware-Machined Bezel  ·  Physical tactile depth', '#0F172A', {
+          appearance: { fill: [{ type: 'solid', color: '#0F172A' }], stroke: { color: '#1E293B', width: 1.5 }, cornerRadius: 0 },
+          typography: { fontSize: 12, fontWeight: 600, color: '#CBD5E1', align: 'center', verticalAlign: 'middle' },
+        }),
+        box(716, 490, 250, 40, 'Collaborators (4 active)', '#0F172A', {
+          appearance: { fill: [{ type: 'solid', color: '#0F172A' }], stroke: { color: '#1E293B', width: 1.5 }, cornerRadius: 0 },
+          typography: { fontSize: 12, fontWeight: 600, color: '#CBD5E1', align: 'center', verticalAlign: 'middle' },
+        }),
+        box(986, 490, 258, 40, '99.995% Availability', '#0F172A', {
+          appearance: { fill: [{ type: 'solid', color: '#0F172A' }], stroke: { color: '#1E293B', width: 1.5 }, cornerRadius: 0 },
+          typography: { fontSize: 12, fontWeight: 600, color: '#CBD5E1', align: 'center', verticalAlign: 'middle' },
+        }),
+        box(716, 550, 528, 120, '“Machined hardware aesthetics:\nNested containers provide physical tactile depth on the canvas, eliminating flat digital monotony without adding heavy artificial drop shadows.”', '#0F172A', {
+          appearance: { fill: [{ type: 'solid', color: '#0F172A' }], stroke: { color: '#1E293B', width: 1.5 }, cornerRadius: 0 },
+          typography: { fontSize: 12.5, fontWeight: 450, color: '#E2E8F0', align: 'left', verticalAlign: 'middle', lineHeight: 1.45 },
+        })
+      );
+
+      // ---- Section 7: Avatars & Presence Tokens -------------------------------
+      nodes.push(label(60, 730, 'Avatar & Presence Indicators', 20));
+      nodes.push(
+        box(60, 770, 50, 50, 'AR', '#1D4ED8', { appearance: { fill: [{ type: 'solid', color: '#1D4ED8' }], stroke: { color: strokeOf('#1D4ED8'), width: 1.5 }, cornerRadius: 0 }, typography: { fontSize: 15, fontWeight: 700, color: '#FFFFFF', align: 'center', verticalAlign: 'middle' } }),
+        box(120, 770, 50, 50, 'SK', '#047857', { appearance: { fill: [{ type: 'solid', color: '#047857' }], stroke: { color: strokeOf('#047857'), width: 1.5 }, cornerRadius: 0 }, typography: { fontSize: 15, fontWeight: 700, color: '#FFFFFF', align: 'center', verticalAlign: 'middle' } }),
+        box(180, 770, 50, 50, 'EL', '#6D28D9', { appearance: { fill: [{ type: 'solid', color: '#6D28D9' }], stroke: { color: strokeOf('#6D28D9'), width: 1.5 }, cornerRadius: 0 }, typography: { fontSize: 15, fontWeight: 700, color: '#FFFFFF', align: 'center', verticalAlign: 'middle' } }),
+        box(240, 770, 50, 50, '+8', '#334155', { appearance: { fill: [{ type: 'solid', color: '#334155' }], stroke: { color: strokeOf('#334155'), width: 1.5 }, cornerRadius: 0 }, typography: { fontSize: 14, fontWeight: 700, color: '#F8FAFC', align: 'center', verticalAlign: 'middle' } }),
+        box(310, 775, 270, 40, 'Live Multi-User Cursors Active', PAPER, { appearance: { fill: [{ type: 'solid', color: PAPER }], stroke: { color: HAIRLINE, width: 1.5 }, cornerRadius: 0 }, typography: { fontSize: 13, fontWeight: 600, color: INK_MID, align: 'center', verticalAlign: 'middle' } })
+      );
 
       return nodes;
     },
@@ -1972,7 +2478,7 @@ const BASE_TEMPLATES: Template[] = [
       const fixture = (x: number, y: number, w: number, h: number, color = RULE): NewNodeInput => ({
         id: nanoid(), type: 'shape', x, y, width: w, height: h,
         geometry: { kind: 'rect' },
-        appearance: { fill: [{ type: 'solid', color }], cornerRadius: 6 },
+        appearance: { fill: [{ type: 'solid', color }], stroke: { color: strokeOf(color), width: 1 }, cornerRadius: 0 },
         material: 'stone',
         locked: true,
       });
@@ -1990,7 +2496,7 @@ const BASE_TEMPLATES: Template[] = [
             width: PEG,
             height: PEG,
             geometry: { kind: 'ellipse' },
-            appearance: { fill: [{ type: 'solid', color: INK_FAINT }] },
+            appearance: { fill: [{ type: 'solid', color: INK_FAINT }], stroke: { color: strokeOf(INK_FAINT), width: 1 } },
             material: 'stone',
             locked: true,
           });
@@ -2036,14 +2542,17 @@ const BASE_TEMPLATES: Template[] = [
           width: BALL,
           height: BALL,
           geometry: { kind: 'ellipse' },
-          appearance: { fill: [{ type: 'solid', color: hue(i / balls, 74, 60) }] },
+          appearance: {
+            fill: [{ type: 'solid', color: hue(i / balls, 74, 60) }],
+            stroke: { color: hue(i / balls, 80, 42), width: 1 },
+          },
           material: 'rubber',
         });
       }
 
       nodes.unshift(
-        label(-halfWidth - 40, -520, 'Pachinko', 44),
-        label(-halfWidth - 40, -462, 'Forces → Drop, set to Latch. Click above the pins and watch them sort.', 17),
+        label(-halfWidth - 40, -535, 'Pachinko', 44),
+        label(-halfWidth - 40, -470, 'Forces → Drop, set to Latch. Click above the pins and watch them sort.', 17),
       );
 
       return nodes;
@@ -2113,7 +2622,7 @@ const BASE_TEMPLATES: Template[] = [
       const axis = (x: number, y: number, w: number, h: number): NewNodeInput => ({
         id: nanoid(), type: 'shape', x, y, width: w, height: h,
         geometry: { kind: 'rect' },
-        appearance: { fill: [{ type: 'solid', color: INK_FAINT }], cornerRadius: 3 },
+        appearance: { fill: [{ type: 'solid', color: INK_FAINT }], stroke: { color: strokeOf(INK_FAINT), width: 1 }, cornerRadius: 0 },
       });
 
       /** An axis end-stop, set small and spaced so it reads as a scale mark. */
@@ -2123,8 +2632,8 @@ const BASE_TEMPLATES: Template[] = [
       });
 
       const nodes: NewNodeInput[] = [
-        label(-300, -220, 'Impact and effort', 44),
-        label(-300, -162, 'Position is the argument. Drag a note and you have changed your mind in public.', 18),
+        label(-300, -230, 'Impact and effort', 44),
+        label(-300, -165, 'Position is the argument. Drag a note and you have changed your mind in public.', 18),
       ];
 
       QUADRANTS.forEach(([x, y, title, wash]) => {
@@ -2143,7 +2652,7 @@ const BASE_TEMPLATES: Template[] = [
         // The horizontal axis, beneath, running the full width.
         axis(0, SPAN_Y + 64, SPAN_X, 6),
         tick(0, SPAN_Y + 96, 'Low effort'),
-        tick(SPAN_X - 190, SPAN_Y + 96, 'High effort'),
+        tick(SPAN_X - 190, SPAN_Y + 96, 'High effort')
       );
 
       /**

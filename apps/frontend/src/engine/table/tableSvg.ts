@@ -18,10 +18,13 @@ const esc = (s: string) =>
   s.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;');
 
 function fitText(text: string, room: number, fontSize: number, factor: number): string {
+  const str = typeof text === 'object' && text !== null
+    ? String((text as { value?: unknown; text?: unknown }).value ?? (text as { text?: unknown }).text ?? '')
+    : String(text ?? '');
   const per = fontSize * factor;
-  if (text.length * per <= room) return text;
+  if (str.length * per <= room) return str;
   const n = Math.max(0, Math.floor(room / per) - 1);
-  return n <= 0 ? '' : `${text.slice(0, n).trimEnd()}…`;
+  return n <= 0 ? '' : `${str.slice(0, n).trimEnd()}…`;
 }
 
 export function tableToSvg(

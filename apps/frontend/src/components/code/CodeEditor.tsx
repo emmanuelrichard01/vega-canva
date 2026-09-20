@@ -471,7 +471,26 @@ const Editor: React.FC<{ node: CodeNode; onClose: () => void }> = ({ node, onClo
                   >
                     {row.lineNumber}
                   </button>
-                ) : null
+                ) : (
+                  <span
+                    key={`w-${i}`}
+                    className="cded__num cded__num--wrap"
+                    aria-hidden
+                    style={{
+                      top: row.y - layout.contentTop,
+                      height: m.lineHeight,
+                      lineHeight: `${m.lineHeight}px`,
+                      fontSize: Math.round(m.fontSize * 0.82),
+                      paddingRight: m.fontSize,
+                      textAlign: 'right',
+                      color: theme.gutter,
+                      opacity: 0.65,
+                      pointerEvents: 'none',
+                    }}
+                  >
+                    ↳
+                  </span>
+                )
               )}
             </div>
           )}
@@ -485,7 +504,8 @@ const Editor: React.FC<{ node: CodeNode; onClose: () => void }> = ({ node, onClo
                   fontSize: m.fontSize,
                   lineHeight: `${m.lineHeight}px`,
                   whiteSpace: spec.wrap ? 'pre-wrap' : 'pre',
-                  wordBreak: spec.wrap ? 'break-all' : 'normal',
+                  wordBreak: spec.wrap ? 'break-word' : 'normal',
+                  overflowWrap: spec.wrap ? 'anywhere' : 'normal',
                 }}
               >
                 {lines.map((tokens, i) => (
@@ -513,7 +533,8 @@ const Editor: React.FC<{ node: CodeNode; onClose: () => void }> = ({ node, onClo
                   fontSize: m.fontSize,
                   lineHeight: `${m.lineHeight}px`,
                   whiteSpace: spec.wrap ? 'pre-wrap' : 'pre',
-                  wordBreak: spec.wrap ? 'break-all' : 'normal',
+                  wordBreak: spec.wrap ? 'break-word' : 'normal',
+                  overflowWrap: spec.wrap ? 'anywhere' : 'normal',
                   caretColor: theme.text,
                 }}
                 onChange={(e) => {

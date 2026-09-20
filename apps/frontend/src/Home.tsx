@@ -364,10 +364,17 @@ export const Home: React.FC = () => {
    * overriding them.
    */
   const showFeatured = !category && !query.trim();
-  const featured = useMemo(
-    () => (showFeatured ? matchedTemplates.filter((t) => t.featured) : []),
-    [showFeatured, matchedTemplates]
-  );
+  const featured = useMemo(() => {
+    if (!showFeatured) return [];
+    const CATEGORY_ORDER = ['thinking', 'science', 'work'];
+    return matchedTemplates
+      .filter((t) => t.featured)
+      .sort((a, b) => {
+        const ia = CATEGORY_ORDER.indexOf(a.category);
+        const ib = CATEGORY_ORDER.indexOf(b.category);
+        return (ia === -1 ? 99 : ia) - (ib === -1 ? 99 : ib);
+      });
+  }, [showFeatured, matchedTemplates]);
   const rest = useMemo(
     () => (showFeatured ? matchedTemplates.filter((t) => !t.featured) : matchedTemplates),
     [showFeatured, matchedTemplates]
@@ -845,7 +852,7 @@ export const Home: React.FC = () => {
                   word. These are here for one reason and it is checkable by
                   opening them: the number is the claim, so the number is the
                   heading. */}
-              <h3 className="stage__subhead">Built at scale</h3>
+              <h3 className="stage__subhead">Featured templates</h3>
               <div className="tgrid tgrid--featured">{featured.map(templateCard)}</div>
             </>
           )}

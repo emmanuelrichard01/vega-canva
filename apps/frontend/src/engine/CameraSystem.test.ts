@@ -80,3 +80,43 @@ describe('CameraSystem zoom direction', () => {
     expect(cameraSystem.zoom).toBe(zoomedOut);
   });
 });
+
+describe('CameraSystem animation', () => {
+  it('animates smoothly to target pose and calls onComplete', () => {
+    let completed = false;
+    cameraSystem.setPose(0, 0, 1);
+
+    cameraSystem.animateTo(200, 150, 1.5, {
+      duration: 0,
+      onComplete: () => {
+        completed = true;
+      },
+    });
+
+    expect(cameraSystem.x).toBe(200);
+    expect(cameraSystem.y).toBe(150);
+    expect(cameraSystem.zoom).toBe(1.5);
+    expect(completed).toBe(true);
+  });
+
+  it('cancels in-flight animation on manual pan, zoom, or setPose', () => {
+    cameraSystem.setPose(0, 0, 1);
+    cameraSystem.animateTo(500, 500, 2, { duration: 1000 });
+    expect(cameraSystem.isAnimating()).toBe(true);
+
+    cameraSystem.panBy(10, 10);
+    expect(cameraSystem.isAnimating()).toBe(false);
+
+    cameraSystem.animateTo(500, 500, 2, { duration: 1000 });
+    expect(cameraSystem.isAnimating()).toBe(true);
+
+    cameraSystem.zoomBy(1.1, 400, 300);
+    expect(cameraSystem.isAnimating()).toBe(false);
+
+    cameraSystem.animateTo(500, 500, 2, { duration: 1000 });
+    expect(cameraSystem.isAnimating()).toBe(true);
+
+    cameraSystem.setPose(100, 100, 1);
+    expect(cameraSystem.isAnimating()).toBe(false);
+  });
+});

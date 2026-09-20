@@ -52,7 +52,7 @@ export function badgedFavicon(svg: string): string {
 }
 
 export function tabTitle(title: string, unread = 0): string {
-  const name = title.trim() ? `${title.trim()} · ${PRODUCT}` : PRODUCT;
+  const name = title.trim() ? `${title.trim()} | ${PRODUCT}` : PRODUCT;
   return unread > 0 ? `(${unread > 99 ? '99+' : unread}) ${name}` : name;
 }
 

@@ -65,7 +65,7 @@ export const LinkPreview: React.FC<{ role: RoomRole }> = ({ role }) => {
   useEffect(() => setLoaded(false), [image]);
 
   const contents = total === 0 ? 'An empty board' : `${total.toLocaleString()} object${total === 1 ? '' : 's'} on the board`;
-  const title = hidden ? 'A board on Vega Studio' : `${name} · Vega Studio`;
+  const title = hidden ? 'A board on Vega Studio' : `${name} | Vega Studio`;
   const description = hidden
     ? 'Open the link to see the board and work on it together, live.'
     : `${contents}. Open it to ${role === 'viewer' ? 'look around' : 'draw, write and comment together'}, live, on Vega Studio.`;

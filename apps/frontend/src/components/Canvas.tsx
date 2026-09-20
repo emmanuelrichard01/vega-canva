@@ -645,52 +645,22 @@ export const Canvas: React.FC<CanvasProps> = ({ activeTool, selectedIds, setSele
   useEffect(() => {
     const handleNavigate = (e: any) => {
       const { x, y, zoom, immediate } = e.detail;
-      const startX = cameraSystem.x;
-      const startY = cameraSystem.y;
-      const startZoom = cameraSystem.zoom;
 
-      const targetX = (window.innerWidth / 2) - (x * zoom);
-      const targetY = (window.innerHeight / 2) - (y * zoom);
+      const targetX = (cameraSystem.width / 2) - (x * zoom);
+      const targetY = (cameraSystem.height / 2) - (y * zoom);
 
-      /**
-       * Framing something that is not on screen yet is not a journey.
-       *
-       * Every other caller here is navigating *from* somewhere *to* somewhere
-       * — a comment, a collaborator, a search hit — and the six-hundred
-       * millisecond glide is what makes that legible. A board being opened
-       * from a template is the opposite case: there is nothing on the canvas
-       * yet, so the glide is a camera sweeping across an empty surface, and
-       * the content lands mid-flight. Framing first and instantly means the
-       * board is already composed at the moment it appears.
-       */
       if (immediate) {
-        cameraSystem.x = targetX;
-        cameraSystem.y = targetY;
-        cameraSystem.zoom = zoom;
-        engineEvents.emit('CameraChanged', cameraSystem);
+        cameraSystem.setPose(targetX, targetY, zoom);
         return;
       }
 
-      const duration = 600;
-      const start = performance.now();
-
-      const animate = (time: number) => {
-        const progress = Math.min((time - start) / duration, 1);
-        const ease = 1 - Math.pow(1 - progress, 4);
-        
-        cameraSystem.x = startX + (targetX - startX) * ease;
-        cameraSystem.y = startY + (targetY - startY) * ease;
-        cameraSystem.zoom = startZoom + (zoom - startZoom) * ease;
-        engineEvents.emit('CameraChanged', cameraSystem);
-
-        if (progress < 1) {
-          requestAnimationFrame(animate);
-        }
-      };
-      requestAnimationFrame(animate);
+      cameraSystem.animateTo(targetX, targetY, zoom, { duration: 550 });
     };
     window.addEventListener('navigateViewport', handleNavigate);
-    return () => window.removeEventListener('navigateViewport', handleNavigate);
+    return () => {
+      cameraSystem.cancelAnimation();
+      window.removeEventListener('navigateViewport', handleNavigate);
+    };
   }, []);
 
   /**

@@ -111,6 +111,19 @@ describe('layout', () => {
     expect(wrapped.rows.filter((r) => r.lineNumber === 2).map((r) => r.first)).toEqual([true, false, false]);
   });
 
+  it('intelligently wraps at word and operator boundaries without splitting words', () => {
+    const codeLine = "const user: User = await db.find('x');";
+    // With 20 columns, breaking at '=' keeps words intact
+    const layout = layoutCode({ ...defaultCodeSpec(codeLine), wrap: true, lineNumbers: true, fontSize: 10 }, 12 * 2 + 26 + 6 * 20, 6);
+    expect(layout.columns).toBe(20);
+    const rowTexts = layout.rows.map((r) => r.tokens.map((t) => t.text).join(''));
+    expect(rowTexts.length).toBe(2);
+    expect(rowTexts[0]).toBe('const user: User = ');
+    expect(rowTexts[1]).toBe("await db.find('x');");
+    expect(layout.rows[0].first).toBe(true);
+    expect(layout.rows[1].first).toBe(false);
+  });
+
   it('sizes to the longest line', () => {
     expect(naturalCodeWidth({ ...spec, lineNumbers: false }, 6)).toBe(12 * 2 + 30 * 6);
   });
@@ -119,7 +132,11 @@ describe('layout', () => {
 describe('spec', () => {
   it('normalises anything into a drawable block', () => {
     const s = normalizeCodeSpec({ source: 42, theme: 'neon', fontSize: 900, highlights: [3, 3, -1, 1.5, 2], maxLines: 0 });
-    expect(s).toMatchObject({ source: '', theme: 'midnight', fontSize: 48, highlights: [2, 3], maxLines: null, lineNumbers: true });
+    expect(s).toMatchObject({ source: '', theme: 'midnight', fontSize: 48, highlights: [2, 3], maxLines: null, lineNumbers: true, wrap: true });
+  });
+
+  it('defaults new code blocks to wrap: true', () => {
+    expect(defaultCodeSpec().wrap).toBe(true);
   });
 });
 
