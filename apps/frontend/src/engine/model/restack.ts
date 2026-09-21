@@ -76,7 +76,7 @@ function enforceFrameHierarchy(
 
   for (const frame of frames) {
     const frameId = frame.id;
-    const descendants = descendantsOfFrame(frameId, all as Array<{ id: string; frameId?: string }>);
+    const descendants = descendantsOfFrame(frameId, all as unknown as Array<{ id: string; frameId?: string }>);
     if (descendants.length === 0) continue;
 
     const frameIdx = currentOrder.indexOf(frameId);

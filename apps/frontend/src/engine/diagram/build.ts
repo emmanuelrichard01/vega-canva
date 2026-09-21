@@ -287,7 +287,7 @@ export function buildDiagram(
       return 0;
     });
 
-    const frameNodes: AnyNode[] = [];
+    const frameNodes: NewNodeInput[] = [];
     for (const sub of sortedSubgraphs) {
       const clusterBox = clusterAt.get(sub.id);
       if (!clusterBox) continue;

@@ -36,7 +36,7 @@
  */
 
 import dagre from '@dagrejs/dagre';
-import type { MermaidGraph } from './mermaid';
+import type { MermaidGraph, MermaidSubgraph } from './mermaid';
 import type { Anchor } from '../model/connectorAnchor';
 
 export interface PlacedNode {

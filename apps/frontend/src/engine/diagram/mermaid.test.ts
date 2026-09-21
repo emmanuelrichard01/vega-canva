@@ -763,7 +763,7 @@ Persisted, Synced, Undoable
     // Verify all connectors have valid points on canvas
     const objectsMap: Record<string, any> = {};
     for (const obj of result.nodes) {
-      objectsMap[obj.id] = obj;
+      if (obj.id) objectsMap[obj.id] = obj;
     }
     const boxLookup = (id: string) => {
       const n = objectsMap[id];

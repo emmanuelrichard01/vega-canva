@@ -74,9 +74,9 @@ describe('restack', () => {
   });
 
   it('keeps children in front of their frame when the frame is brought to front', () => {
-    const frame: AnyNode = { ...node('f', 1, 0, 0, 500), type: 'frame' };
-    const child1: AnyNode = { ...node('c1', 2, 50, 50, 50), frameId: 'f' };
-    const child2: AnyNode = { ...node('c2', 3, 100, 100, 50), frameId: 'f' };
+    const frame = { ...node('f', 1, 0, 0, 500), type: 'frame' } as unknown as AnyNode;
+    const child1 = { ...node('c1', 2, 50, 50, 50), frameId: 'f' } as unknown as AnyNode;
+    const child2 = { ...node('c2', 3, 100, 100, 50), frameId: 'f' } as unknown as AnyNode;
     const outside = node('out', 4, 1000, 1000, 50);
     const all = [frame, child1, child2, outside];
 
@@ -88,9 +88,9 @@ describe('restack', () => {
   });
 
   it('never sends a child behind its parent frame when sent to back', () => {
-    const frame: AnyNode = { ...node('f', 1, 0, 0, 500), type: 'frame' };
-    const child1: AnyNode = { ...node('c1', 2, 50, 50, 50), frameId: 'f' };
-    const child2: AnyNode = { ...node('c2', 3, 100, 100, 50), frameId: 'f' };
+    const frame = { ...node('f', 1, 0, 0, 500), type: 'frame' } as unknown as AnyNode;
+    const child1 = { ...node('c1', 2, 50, 50, 50), frameId: 'f' } as unknown as AnyNode;
+    const child2 = { ...node('c2', 3, 100, 100, 50), frameId: 'f' } as unknown as AnyNode;
     const outside = node('out', 4, 1000, 1000, 50);
     const all = [frame, child1, child2, outside];
 
