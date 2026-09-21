@@ -1,6 +1,8 @@
 import React, { useMemo, useState } from 'react';
 import { useShallow } from 'zustand/react/shallow';
 import {
+  ArrowDown,
+  ArrowUp,
   BarChart3,
   BringToFront,
   FlipHorizontal,
@@ -11,7 +13,8 @@ import {
   SendToBack,
   StickyNote,
 } from 'lucide-react';
-import { applyNodePatches, localAuthorId, lowestZIndex, nextZIndex, provider, updateNodes } from '../engine/document';
+import { applyNodePatches, localAuthorId, provider, updateNodes } from '../engine/document';
+import { restackSelection } from '../engine/model/restack';
 import { useStore } from '../hooks/useStore';
 import { APPEARANCE_TYPES } from '../engine/objects/appearanceTypes';
 import { resolveAffordances, type AffordanceId } from '../engine/selection/affordances';
@@ -626,9 +629,9 @@ export const PropertiesPanel: React.FC<PropertiesPanelProps> = ({ selectedIds, o
           <button
             className="btn-icon btn-icon--sm" style={{ flex: 1 }}
             onClick={() => {
-              const base = nextZIndex();
-              const ordered = [...nodes].sort((a, b) => a.zIndex - b.zIndex);
-              applyNodePatches(ordered.map((n, i) => ({ id: n.id, changes: { zIndex: base + i } })));
+              const all = Object.values(useStore.getState().objects);
+              const patches = restackSelection(all, selectedIds, 'front');
+              if (patches.length > 0) applyNodePatches(patches);
             }}
             data-tooltip="Bring to front"
             aria-label="Bring to front"
@@ -636,9 +639,29 @@ export const PropertiesPanel: React.FC<PropertiesPanelProps> = ({ selectedIds, o
           <button
             className="btn-icon btn-icon--sm" style={{ flex: 1 }}
             onClick={() => {
-              const base = lowestZIndex() - nodes.length;
-              const ordered = [...nodes].sort((a, b) => a.zIndex - b.zIndex);
-              applyNodePatches(ordered.map((n, i) => ({ id: n.id, changes: { zIndex: base + i } })));
+              const all = Object.values(useStore.getState().objects);
+              const patches = restackSelection(all, selectedIds, 'forward');
+              if (patches.length > 0) applyNodePatches(patches);
+            }}
+            data-tooltip="Bring forward"
+            aria-label="Bring forward"
+          ><ArrowUp size={14} /></button>
+          <button
+            className="btn-icon btn-icon--sm" style={{ flex: 1 }}
+            onClick={() => {
+              const all = Object.values(useStore.getState().objects);
+              const patches = restackSelection(all, selectedIds, 'backward');
+              if (patches.length > 0) applyNodePatches(patches);
+            }}
+            data-tooltip="Send backward"
+            aria-label="Send backward"
+          ><ArrowDown size={14} /></button>
+          <button
+            className="btn-icon btn-icon--sm" style={{ flex: 1 }}
+            onClick={() => {
+              const all = Object.values(useStore.getState().objects);
+              const patches = restackSelection(all, selectedIds, 'back');
+              if (patches.length > 0) applyNodePatches(patches);
             }}
             data-tooltip="Send to back"
             aria-label="Send to back"

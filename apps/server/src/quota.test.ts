@@ -87,6 +87,62 @@ describe('IpDailyByteTracker', () => {
 
     redisTracker.stop();
   });
+
+  it('atomically reserves quota and rolls back on failure (synchronous)', () => {
+    const ip = '10.0.0.99';
+    const cap = 100 * 1024 * 1024; // 100MB
+
+    const res1 = tracker.reserve(ip, 60 * 1024 * 1024, cap);
+    expect(res1.allowed).toBe(true);
+    expect(tracker.getUsage(ip)).toBe(60 * 1024 * 1024);
+
+    // Exceeds remaining 40MB -> rejected without reservation
+    const res2 = tracker.reserve(ip, 50 * 1024 * 1024, cap);
+    expect(res2.allowed).toBe(false);
+    expect(tracker.getUsage(ip)).toBe(60 * 1024 * 1024);
+
+    // Release 20MB
+    tracker.release(ip, 20 * 1024 * 1024);
+    expect(tracker.getUsage(ip)).toBe(40 * 1024 * 1024);
+
+    // Now 50MB fits (40 + 50 <= 100)
+    const res3 = tracker.reserve(ip, 50 * 1024 * 1024, cap);
+    expect(res3.allowed).toBe(true);
+    expect(tracker.getUsage(ip)).toBe(90 * 1024 * 1024);
+  });
+
+  it('atomically reserves and releases quota via Redis', async () => {
+    const redisStore: Record<string, string> = {};
+    const mockRedis = {
+      get: vi.fn().mockImplementation(async (key: string) => redisStore[key] || null),
+      incrby: vi.fn().mockImplementation(async (key: string, inc: number) => {
+        const cur = parseInt(redisStore[key] || '0', 10);
+        redisStore[key] = String(cur + inc);
+        return cur + inc;
+      }),
+      expire: vi.fn().mockResolvedValue(1),
+    };
+
+    const redisTracker = new IpDailyByteTracker(mockRedis);
+    const ip = '2.2.2.2';
+    const cap = 50 * 1024 * 1024; // 50MB
+
+    const res1 = await redisTracker.reserveAsync(ip, 30 * 1024 * 1024, cap);
+    expect(res1.allowed).toBe(true);
+
+    // 30MB used, try 30MB (total 60MB > 50MB cap) -> rejected and rolled back
+    const res2 = await redisTracker.reserveAsync(ip, 30 * 1024 * 1024, cap);
+    expect(res2.allowed).toBe(false);
+
+    // Release 10MB
+    await redisTracker.releaseAsync(ip, 10 * 1024 * 1024);
+
+    // Now 25MB fits (20 + 25 <= 50)
+    const res3 = await redisTracker.reserveAsync(ip, 25 * 1024 * 1024, cap);
+    expect(res3.allowed).toBe(true);
+
+    redisTracker.stop();
+  });
 });
 
 describe('formatBytes', () => {

@@ -120,7 +120,7 @@ function anchorFor(
  * Positions for every node in a parsed graph using Dagre.
  */
 export function layoutGraph(graph: MermaidGraph, options: LayoutOptions): LayoutResult {
-  const g = new dagre.graphlib.Graph({ compound: true });
+  const g = new dagre.graphlib.Graph({ compound: true, multigraph: true });
   
   // Dagre uses TB instead of TD
   const rankdir = graph.direction === 'TD' ? 'TB' : graph.direction;
@@ -143,11 +143,24 @@ export function layoutGraph(graph: MermaidGraph, options: LayoutOptions): Layout
 
   const subgraphMap = new Map((graph.subgraphs ?? []).map((s) => [s.id, s]));
 
+  // Helper to recursively collect all descendant leaf node keys of a subgraph
+  const getDescendantLeafKeys = (sub: MermaidSubgraph): string[] => {
+    const direct = sub.nodeKeys.slice();
+    const children = (graph.subgraphs ?? []).filter((s) => s.parentSubgraphId === sub.id);
+    for (const child of children) {
+      direct.push(...getDescendantLeafKeys(child));
+    }
+    return direct;
+  };
+
   // Helper to resolve edge endpoints so Dagre edges connect between leaf nodes
   const resolveLeafKey = (key: string, isFrom: boolean): string => {
     const sub = subgraphMap.get(key);
-    if (sub && sub.nodeKeys.length > 0) {
-      return isFrom ? sub.nodeKeys[sub.nodeKeys.length - 1] : sub.nodeKeys[0];
+    if (sub) {
+      const leaves = getDescendantLeafKeys(sub);
+      if (leaves.length > 0) {
+        return isFrom ? leaves[leaves.length - 1] : leaves[0];
+      }
     }
     return key;
   };
@@ -155,8 +168,15 @@ export function layoutGraph(graph: MermaidGraph, options: LayoutOptions): Layout
   // Set subgraphs first so they exist for parenting in compound graph
   if (graph.subgraphs) {
     for (const sub of graph.subgraphs) {
-      if (sub.nodeKeys.length > 0) {
+      const leaves = getDescendantLeafKeys(sub);
+      if (leaves.length > 0) {
         g.setNode(sub.id, {});
+      }
+    }
+    // Establish compound nesting hierarchy between subgraphs
+    for (const sub of graph.subgraphs) {
+      if (sub.parentSubgraphId && g.hasNode(sub.parentSubgraphId) && g.hasNode(sub.id)) {
+        g.setParent(sub.id, sub.parentSubgraphId);
       }
     }
   }
@@ -166,12 +186,9 @@ export function layoutGraph(graph: MermaidGraph, options: LayoutOptions): Layout
     const size = sizeOf(node.key);
     g.setNode(node.key, { width: size.width, height: size.height });
     
-    // Assign to cluster if specified and cluster has children
-    if (node.subgraphId && subgraphMap.has(node.subgraphId)) {
-      const parentSub = subgraphMap.get(node.subgraphId);
-      if (parentSub && parentSub.nodeKeys.length > 0) {
-        g.setParent(node.key, node.subgraphId);
-      }
+    // Assign to cluster if specified and cluster has nodes
+    if (node.subgraphId && g.hasNode(node.subgraphId)) {
+      g.setParent(node.key, node.subgraphId);
     }
   }
 
@@ -181,25 +198,26 @@ export function layoutGraph(graph: MermaidGraph, options: LayoutOptions): Layout
    * graph before layout runs, so there is no position to choose by yet, and
    * declaration order is the only ordering that exists at that point.
    */
-  const routed: Array<{ from: string; to: string; fromLeaf: string; toLeaf: string }> = [];
-  for (const edge of graph.edges) {
+  const routed: Array<{ from: string; to: string; fromLeaf: string; toLeaf: string; name?: string }> = [];
+  graph.edges.forEach((edge, edgeIdx) => {
     const fromLeaf = resolveLeafKey(edge.from, true);
     const toLeaf = resolveLeafKey(edge.to, false);
     if (fromLeaf && toLeaf && fromLeaf !== toLeaf && g.hasNode(fromLeaf) && g.hasNode(toLeaf)) {
+      const edgeName = String(edgeIdx);
       // A label needs a channel of its own. Without these dagre lays the graph
       // out as though the edges were bare, and `B -->|yes| C` renders its word
       // on top of whatever the tighter layout put underneath it.
-      g.setEdge(fromLeaf, toLeaf, edge.label ? labelBox(edge.label) : {});
-      routed.push({ from: edge.from, to: edge.to, fromLeaf, toLeaf });
+      g.setEdge(fromLeaf, toLeaf, edge.label ? labelBox(edge.label) : {}, edgeName);
+      routed.push({ from: edge.from, to: edge.to, fromLeaf, toLeaf, name: edgeName });
     }
-  }
+  });
 
   // Calculate layout with safe fallback
   try {
     dagre.layout(g);
   } catch {
     // If Dagre layout fails on an edge case, remove compound grouping and retry
-    const fallbackG = new dagre.graphlib.Graph();
+    const fallbackG = new dagre.graphlib.Graph({ multigraph: true });
     fallbackG.setGraph({ rankdir, nodesep: 40, ranksep: 80 });
     fallbackG.setDefaultEdgeLabel(() => ({}));
     for (const node of graph.nodes) {
@@ -209,20 +227,20 @@ export function layoutGraph(graph: MermaidGraph, options: LayoutOptions): Layout
     for (const route of routed) {
       if (fallbackG.hasNode(route.fromLeaf) && fallbackG.hasNode(route.toLeaf)) {
         const edge = graph.edges.find((e) => e.from === route.from && e.to === route.to);
-        fallbackG.setEdge(route.fromLeaf, route.toLeaf, edge?.label ? labelBox(edge.label) : {});
+        fallbackG.setEdge(route.fromLeaf, route.toLeaf, edge?.label ? labelBox(edge.label) : {}, route.name);
       }
     }
     dagre.layout(fallbackG);
-    return extractLayout(fallbackG as unknown as DagreGraph, graph, options, routed);
+    return extractLayout(fallbackG as unknown as DagreGraph, graph, options, routed, getDescendantLeafKeys);
   }
 
-  return extractLayout(g as unknown as DagreGraph, graph, options, routed);
+  return extractLayout(g as unknown as DagreGraph, graph, options, routed, getDescendantLeafKeys);
 }
 
 interface DagreBox { x: number; y: number; width: number; height: number }
 interface DagreGraph {
   node(key: string): DagreBox | undefined;
-  edge(e: { v: string; w: string }): { points?: Array<{ x: number; y: number }> } | undefined;
+  edge(e: { v: string; w: string; name?: string }): { points?: Array<{ x: number; y: number }> } | undefined;
   hasNode(key: string): boolean;
 }
 
@@ -230,7 +248,8 @@ function extractLayout(
   g: DagreGraph,
   graph: MermaidGraph,
   options: LayoutOptions,
-  routed: Array<{ from: string; to: string; fromLeaf: string; toLeaf: string }>
+  routed: Array<{ from: string; to: string; fromLeaf: string; toLeaf: string; name?: string }>,
+  getDescendantLeafKeys: (sub: MermaidSubgraph) => string[]
 ): LayoutResult {
   /**
    * The top-left of everything, so the caller's origin means the top-left of
@@ -281,7 +300,8 @@ function extractLayout(
     }
     // The non-compound fallback path leaves clusters unsized, so the frame is
     // derived from what ended up inside it.
-    const children = sub.nodeKeys
+    const leaves = getDescendantLeafKeys(sub);
+    const children = leaves
       .map((k) => placedMap.get(k))
       .filter((b): b is PlacedNode => Boolean(b));
     if (children.length === 0) continue;
@@ -310,9 +330,14 @@ function extractLayout(
    */
   const edges: PlacedEdge[] = [];
   for (const route of routed) {
-    const points = g.edge({ v: route.fromLeaf, w: route.toLeaf })?.points;
+    const edgeObj = (route.name ? g.edge({ v: route.fromLeaf, w: route.toLeaf, name: route.name }) : undefined)
+      || g.edge({ v: route.fromLeaf, w: route.toLeaf });
+    const points = edgeObj?.points;
     edges.push({
-      ...route,
+      from: route.from,
+      to: route.to,
+      fromLeaf: route.fromLeaf,
+      toLeaf: route.toLeaf,
       fromAnchor: anchorFor(points?.[0], g.node(route.fromLeaf)),
       toAnchor: anchorFor(points?.[points.length - 1], g.node(route.toLeaf)),
     });

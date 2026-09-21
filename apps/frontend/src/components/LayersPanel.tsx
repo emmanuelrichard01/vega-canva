@@ -889,8 +889,12 @@ export const LayersPanel: React.FC<LayersPanelProps> = ({ selectedIds, overrideO
       const a = objects[id];
       const b = objects[neighbour];
       if (!a || !b) continue;
-      patches.push({ id, changes: { zIndex: b.zIndex } });
-      patches.push({ id: neighbour, changes: { zIndex: a.zIndex } });
+      if (b.zIndex === a.zIndex) {
+        patches.push({ id, changes: { zIndex: direction === 'up' ? a.zIndex + 1 : a.zIndex - 1 } });
+      } else {
+        patches.push({ id, changes: { zIndex: b.zIndex } });
+        patches.push({ id: neighbour, changes: { zIndex: a.zIndex } });
+      }
     }
 
     if (patches.length > 0) applyNodePatches(patches);

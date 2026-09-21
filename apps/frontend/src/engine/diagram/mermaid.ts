@@ -86,6 +86,8 @@ export interface MermaidSubgraph {
   id: string;
   title: string;
   nodeKeys: string[];
+  /** Parent subgraph ID if nested inside another subgraph */
+  parentSubgraphId?: string;
 }
 
 export type EdgeLine = 'solid' | 'dotted' | 'thick';
@@ -299,11 +301,170 @@ function readAtBlock(body: string): Record<string, string> {
   return out;
 }
 
+/**
+ * Splits a line on statement-separating semicolons, ignoring semicolons inside quotes or brackets.
+ */
+export function splitStatements(line: string): string[] {
+  const statements: string[] = [];
+  let current = '';
+  let inQuote: string | null = null;
+  let bracketDepth = 0;
+
+  for (let i = 0; i < line.length; i++) {
+    const ch = line[i];
+    if (inQuote) {
+      current += ch;
+      if (ch === inQuote) inQuote = null;
+      continue;
+    }
+    if (ch === '"' || ch === "'") {
+      inQuote = ch;
+      current += ch;
+      continue;
+    }
+    if (ch === '[' || ch === '(' || ch === '{') {
+      bracketDepth++;
+      current += ch;
+      continue;
+    }
+    if (ch === ']' || ch === ')' || ch === '}') {
+      if (bracketDepth > 0) bracketDepth--;
+      current += ch;
+      continue;
+    }
+    if (ch === ';' && bracketDepth === 0) {
+      const trimmed = current.trim();
+      if (trimmed) statements.push(trimmed);
+      current = '';
+      continue;
+    }
+    current += ch;
+  }
+  const trimmed = current.trim();
+  if (trimmed) statements.push(trimmed);
+  return statements;
+}
+
+/**
+ * Splits Mermaid flowchart source code into discrete statements, respecting
+ * multi-line quoted strings, bracketed labels, statement-separating semicolons,
+ * and comment lines (%%).
+ */
+export function tokenizeStatements(source: string): Array<{ text: string; lineNum: number }> {
+  const statements: Array<{ text: string; lineNum: number }> = [];
+  let current = '';
+  let inQuote: string | null = null;
+  let bracketDepth = 0;
+  let inComment = false;
+  let lineNum = 1;
+  let statementStartLine = 1;
+
+  const flush = () => {
+    const trimmed = current.trim();
+    if (trimmed && !trimmed.startsWith('%%')) {
+      statements.push({ text: trimmed, lineNum: statementStartLine });
+    }
+    current = '';
+  };
+
+  for (let i = 0; i < source.length; i++) {
+    const ch = source[i];
+    const nextCh = source[i + 1];
+
+    if (inComment) {
+      if (ch === '\n') {
+        inComment = false;
+        lineNum++;
+      }
+      continue;
+    }
+
+    if (!inQuote && bracketDepth === 0 && ch === '%' && nextCh === '%') {
+      inComment = true;
+      i++;
+      continue;
+    }
+
+    if (ch === '\\' && inQuote) {
+      current += ch;
+      if (nextCh !== undefined) {
+        current += nextCh;
+        i++;
+        if (nextCh === '\n') lineNum++;
+      }
+      continue;
+    }
+
+    if (inQuote) {
+      current += ch;
+      if (ch === inQuote) {
+        inQuote = null;
+      } else if (ch === '\n') {
+        lineNum++;
+      }
+      continue;
+    }
+
+    if (ch === '"' || ch === "'") {
+      if (!current.trim()) {
+        statementStartLine = lineNum;
+      }
+      inQuote = ch;
+      current += ch;
+      continue;
+    }
+
+    if (ch === '[' || ch === '(' || ch === '{') {
+      if (!current.trim()) {
+        statementStartLine = lineNum;
+      }
+      bracketDepth++;
+      current += ch;
+      continue;
+    }
+
+    if (ch === ']' || ch === ')' || ch === '}') {
+      if (bracketDepth > 0) bracketDepth--;
+      current += ch;
+      continue;
+    }
+
+    if (bracketDepth > 0) {
+      if (ch === '\n') {
+        lineNum++;
+        current += '\n';
+      } else {
+        current += ch;
+      }
+      continue;
+    }
+
+    // Top-level statement terminators: semicolon or newline
+    if (ch === '\n' || ch === ';') {
+      flush();
+      if (ch === '\n') {
+        lineNum++;
+      }
+      statementStartLine = lineNum;
+      continue;
+    }
+
+    if (!current.trim() && ch !== ' ' && ch !== '\t' && ch !== '\r') {
+      statementStartLine = lineNum;
+    }
+    current += ch;
+  }
+
+  flush();
+  return statements;
+}
+
 function readSingleNode(src: string): { node: MermaidNode; length: number; inlineClass?: string } | null {
-  const keyMatch = /^\s*([A-Za-z0-9_]+)/.exec(src);
+  // Support quoted keys ("My Node"[Label] or 'My Node') or kebab-case identifiers (auth-service, api-gw)
+  const keyMatch = /^\s*(?:"([^"]+)"|'([^']+)'|([A-Za-z0-9_]+(?:-[A-Za-z0-9_]+)*))/.exec(src);
   if (!keyMatch) return null;
-  const key = keyMatch[1];
-  let cursor = keyMatch[0].length;
+  const key = keyMatch[1] ?? keyMatch[2] ?? keyMatch[3];
+  const cursor = keyMatch[0].length;
   const rest = src.slice(cursor);
 
   let shape: MermaidShape = 'rect';
@@ -312,11 +473,6 @@ function readSingleNode(src: string): { node: MermaidNode; length: number; inlin
 
   /*
    * Mermaid 11's named form, checked before the brackets.
-   *
-   * It has to come first: `@{` is not one of the bracket openers, but the `{`
-   * inside it is, and a node read bracket-first would take `A@{ shape: cyl }`
-   * as a diamond labelled "shape: cyl". That is the failure this ordering
-   * exists to prevent, and it is silent.
    */
   if (rest.startsWith('@{')) {
     const close = rest.indexOf('}', 2);
@@ -328,7 +484,7 @@ function readSingleNode(src: string): { node: MermaidNode; length: number; inlin
       consumed = cursor + close + 1;
 
       const afterBlock = src.slice(consumed);
-      const classAfter = /^:::([A-Za-z0-9_]+)/.exec(afterBlock);
+      const classAfter = /^:::([A-Za-z0-9_-]+)/.exec(afterBlock);
       return {
         node: { key, label, shape },
         length: consumed + (classAfter ? classAfter[0].length : 0),
@@ -348,9 +504,9 @@ function readSingleNode(src: string): { node: MermaidNode; length: number; inlin
     break;
   }
 
-  // Check for inline class `:::className`
+  // Check for inline class `:::className` (allowing hyphens)
   const afterNode = src.slice(consumed);
-  const classMatch = /^:::([A-Za-z0-9_]+)/.exec(afterNode);
+  const classMatch = /^:::([A-Za-z0-9_-]+)/.exec(afterNode);
   let inlineClass: string | undefined;
   if (classMatch) {
     inlineClass = classMatch[1];
@@ -395,8 +551,8 @@ function readNodeList(src: string): { nodes: MermaidNode[]; length: number; inli
   return { nodes, length: totalLength, inlineClasses };
 }
 
-const EDGE_INLINE = /^\s*(--|-\.|==)\s*([^|>\-=.][^|>]*?)\s*(<-->|-->|---|<-.->|-\.->|-\.-|<==>|==>|===)\s*(?:\|\s*([^|]*?)\s*\|)?\s*/;
-const EDGE_PLAIN = /^\s*(<-->|-->|---|<-.->|-\.->|-\.-|<==>|==>|===)\s*(?:\|\s*([^|]*?)\s*\|)?\s*/;
+const EDGE_INLINE = /^\s*(--+|-\.+|==+)\s*([^|>\-=.][^|>]*?)\s*(<--+>|--+>|--+|<-[.-]+->|-[.-]+->|-[.-]+-|<==+>|==+>|==+)\s*(?:\|\s*([^|]*?)\s*\|)?\s*/;
+const EDGE_PLAIN = /^\s*(<--+>|--+>|--+|<-[.-]+->|-[.-]+->|-[.-]+-|<==+>|==+>|==+)\s*(?:\|\s*([^|]*?)\s*\|)?\s*/;
 
 function lineKind(connector: string): EdgeLine {
   if (connector.includes('.')) return 'dotted';
@@ -443,7 +599,7 @@ function readStyleBody(body: string): NodeStyle {
   for (const part of body.split(',')) {
     const [rawKey, ...rest] = part.split(':');
     const key = rawKey.trim().toLowerCase();
-    const value = rest.join(':').trim();
+    const value = rest.join(':').trim().replace(/;+$/, '').trim();
     if (!value) continue;
     if (key === 'fill') style.fill = value;
     else if (key === 'stroke') style.stroke = value;
@@ -457,17 +613,17 @@ function readStyleBody(body: string): NodeStyle {
 }
 
 function readStyle(line: string): { key: string; style: NodeStyle } | null {
-  const m = /^style\s+([A-Za-z0-9_]+)\s+(.+)$/i.exec(line);
+  const m = /^style\s+([A-Za-z0-9_-]+)\s+(.+)$/i.exec(line);
   return m ? { key: m[1], style: readStyleBody(m[2]) } : null;
 }
 
 function readClassDef(line: string): { name: string; style: NodeStyle } | null {
-  const m = /^classDef\s+([A-Za-z0-9_]+)\s+(.+)$/i.exec(line);
+  const m = /^classDef\s+([A-Za-z0-9_-]+)\s+(.+)$/i.exec(line);
   return m ? { name: m[1], style: readStyleBody(m[2]) } : null;
 }
 
 function readClassApply(line: string): { keys: string[]; name: string } | null {
-  const m = /^class\s+([A-Za-z0-9_,\s]+?)\s+([A-Za-z0-9_]+)\s*$/i.exec(line);
+  const m = /^class\s+([A-Za-z0-9_,\s-]+?)\s+([A-Za-z0-9_-]+)\s*$/i.exec(line);
   if (!m) return null;
   return { keys: m[1].split(',').map((k) => k.trim()).filter(Boolean), name: m[2] };
 }
@@ -492,15 +648,7 @@ export function looksLikeMermaid(text: string): boolean {
  * Parses Mermaid source into an editable diagram graph model.
  */
 export function parseMermaid(source: string): ParseResult {
-  const rawLines = source.split('\n');
-  const lines: Array<{ text: string; lineNum: number }> = [];
-
-  rawLines.forEach((l, idx) => {
-    const trimmed = l.trim();
-    if (trimmed && !trimmed.startsWith('%%')) {
-      lines.push({ text: trimmed, lineNum: idx + 1 });
-    }
-  });
+  const lines = tokenizeStatements(source);
 
   if (lines.length === 0) return { graph: null, error: null };
 
@@ -595,12 +743,18 @@ export function parseMermaid(source: string): ParseResult {
   };
 
   for (const { text: line, lineNum } of lines.slice(1)) {
-    // 1. Check for subgraph start
-    const subMatch = /^subgraph\s+([A-Za-z0-9_]+)(?:\s*\[\s*(.*?)\s*\])?(?:\s*"(.*?)")?\s*$/i.exec(line);
+    // 1. Check for subgraph start (supporting kebab-case IDs)
+    const subMatch = /^subgraph\s+([A-Za-z0-9_-]+)(?:\s*\[\s*(.*?)\s*\])?(?:\s*"(.*?)")?\s*$/i.exec(line);
     if (subMatch) {
       const id = subMatch[1];
       const title = cleanLabel(subMatch[2] || subMatch[3] || id);
-      const sub: MermaidSubgraph = { id, title, nodeKeys: [] };
+      const parentSub = subgraphStack[subgraphStack.length - 1];
+      const sub: MermaidSubgraph = {
+        id,
+        title,
+        nodeKeys: [],
+        parentSubgraphId: parentSub ? parentSub.id : undefined,
+      };
       subgraphs.push(sub);
       subgraphStack.push(sub);
       continue;
@@ -688,8 +842,7 @@ export function parseMermaid(source: string): ParseResult {
 
   const painted = [...nodes.values()]
     .filter((node) => {
-      const sub = subgraphMap.get(node.key);
-      return !sub || sub.nodeKeys.length === 0;
+      return !subgraphMap.has(node.key);
     })
     .map((node) => {
       const fromClass = classDefs.get(classNames.get(node.key) ?? '');

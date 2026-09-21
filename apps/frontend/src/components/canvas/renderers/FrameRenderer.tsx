@@ -32,6 +32,9 @@ export const FrameRenderer: React.FC<Props> = React.memo(({ node, stageScale }) 
   const columns = axisBands(node.width, node.layoutGuide?.columns);
   const rows = axisBands(node.height, node.layoutGuide?.rows);
 
+  const isDiagramFrame = Boolean((node as unknown as Record<string, unknown>).diagramId);
+  const strokeConfig = node.appearance?.stroke;
+
   return (
     <Group>
       {/* A frame is paper on a desk, and paper has an edge as well as a
@@ -53,42 +56,65 @@ export const FrameRenderer: React.FC<Props> = React.memo(({ node, stageScale }) 
         width={node.width}
         height={node.height}
         {...fill}
-        cornerRadius={node.appearance.cornerRadius ?? 0}
-        stroke="rgba(115,115,115,0.2)"
-        strokeWidth={1}
-        strokeScaleEnabled={false}
-        shadowColor="black"
-        shadowBlur={22}
-        // Doubled: at 0.05 the lift was theoretical. It still reads as a soft
-        // ground shadow rather than as a drawn outline.
-        shadowOpacity={0.1}
-        shadowOffsetY={10}
+        cornerRadius={node.appearance?.cornerRadius ?? (isDiagramFrame ? 8 : 0)}
+        stroke={strokeConfig?.color ?? 'rgba(115,115,115,0.2)'}
+        strokeWidth={strokeConfig?.width ?? 1}
+        dash={strokeConfig?.dash}
+        strokeScaleEnabled={!strokeConfig?.color}
+        shadowColor={isDiagramFrame ? 'transparent' : 'black'}
+        shadowBlur={isDiagramFrame ? 0 : 22}
+        shadowOpacity={isDiagramFrame ? 0 : 0.1}
+        shadowOffsetY={isDiagramFrame ? 0 : 10}
       />
 
-      {/* The name holds a constant size on screen instead of scaling with the
-          board — at 10% zoom a world-space label is sub-pixel, which is
-          exactly when you most need to tell one frame from another. Dividing
-          by the stage scale is the same trick the selection ring uses.
+      {/* For diagram frames (e.g. Mermaid subgraphs), render the title in the top-left
+          inside the frame matching the preview and exporting with the diagram.
+          For general canvas artboards/frames, render an agency-grade external title:
+          damped scaling with a strict maximum cap in world space so it never
+          balloons into an ugly billboard when zooming out. */}
+      {isDiagramFrame ? (
+        <Text
+          text={node.title ?? ''}
+          x={12}
+          y={12}
+          width={Math.max(40, node.width - 24)}
+          ellipsis={true}
+          wrap="none"
+          fontSize={11}
+          fontStyle="600"
+          letterSpacing={0.2}
+          fill={strokeConfig?.color ?? '#374151'}
+          fontFamily="Inter, -apple-system, sans-serif"
+          perfectDrawEnabled={false}
+          listening={false}
+        />
+      ) : (() => {
+        // Damped scale curve: stabilizes legibility when zooming out slightly,
+        // but strictly clamps to max 15px in world space (and stays anchored right above the frame)
+        // so it NEVER inflates into an oversized billboard when zooming far out.
+        const effectiveScale = Math.max(0.75, stageScale);
+        const titleFontSize = Math.min(15, Math.max(9, 11 / effectiveScale));
+        const titleY = -(titleFontSize + 5);
 
-          It is how you find the frame, not part of what the frame contains, so
-          it carries the chrome name and never appears in an export. It sits
-          above the frame's own box and so outside the export bounds anyway —
-          but a frame nested inside another would put its label squarely inside
-          the outer one's.
-
-          A fixed grey rather than a token: Konva paints to a canvas and cannot
-          resolve a CSS custom property, so `var(--text-tertiary)` would simply
-          be an invalid colour. This mid grey holds up against both boards. */}
-      <Text
-        text={node.title ?? 'Frame'}
-        name={EXPORT_CHROME}
-        y={-18 / stageScale}
-        fontSize={12 / stageScale}
-        fill="#9CA3AF"
-        fontFamily="Inter, sans-serif"
-        perfectDrawEnabled={false}
-        listening={false}
-      />
+        return (
+          <Text
+            text={node.title ?? 'Frame'}
+            name={EXPORT_CHROME}
+            x={0}
+            y={titleY}
+            width={Math.max(60, node.width)}
+            ellipsis={true}
+            wrap="none"
+            fontSize={titleFontSize}
+            fontStyle="500"
+            letterSpacing={0.2}
+            fill="#9CA3AF"
+            fontFamily="Inter, -apple-system, sans-serif"
+            perfectDrawEnabled={false}
+            listening={false}
+          />
+        );
+      })()}
 
       {/*
         The column measure.

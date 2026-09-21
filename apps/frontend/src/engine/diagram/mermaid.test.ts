@@ -2,6 +2,7 @@ import { describe, it, expect } from 'vitest';
 import { emitMermaid, parseMermaid, formatMermaid, parseMermaidLenient } from './mermaid';
 import { layoutGraph } from './layout';
 import { buildDiagram, diagramToMermaid } from './build';
+import { connectorPoints } from '../model/connector';
 import type { AnyNode } from '../model/schema';
 
 describe('parsing a flowchart', () => {
@@ -606,5 +607,171 @@ describe('subgraph membership is recorded once', () => {
     const c = graph.nodes.find((n) => n.key === 'C')!;
     expect(c.label).toBe('Process it');
     expect(c.subgraphId).toBe('S1');
+  });
+});
+
+describe('advanced mermaid syntax & developer ergonomics', () => {
+  it('parses kebab-case node IDs and subgraph IDs seamlessly', () => {
+    const src = `flowchart TD
+      subgraph cloud-infra ["Cloud Infrastructure"]
+        auth-service[Authentication] --> api-gw[API Gateway]
+      end
+      api-gw --> db-replica[(Database Replica)]`;
+    const { graph, error } = parseMermaid(src);
+    expect(error).toBeNull();
+    expect(graph?.nodes.map((n) => n.key)).toEqual(['auth-service', 'api-gw', 'db-replica']);
+    expect(graph?.nodes.find((n) => n.key === 'auth-service')?.subgraphId).toBe('cloud-infra');
+    expect(graph?.edges).toHaveLength(2);
+    expect(graph?.edges[0]).toEqual({ from: 'auth-service', to: 'api-gw', line: 'solid', arrow: true });
+  });
+
+  it('parses quoted node identifiers', () => {
+    const src = `flowchart LR
+      "Client Web"[Browser App] --> "API Gateway"
+      "API Gateway" --> "PostgreSQL Database"[(Main DB)]`;
+    const { graph, error } = parseMermaid(src);
+    expect(error).toBeNull();
+    expect(graph?.nodes.map((n) => n.key)).toEqual(['Client Web', 'API Gateway', 'PostgreSQL Database']);
+    expect(graph?.nodes[0].label).toBe('Browser App');
+    expect(graph?.nodes[1].label).toBe('API Gateway');
+    expect(graph?.nodes[2].label).toBe('Main DB');
+  });
+
+  it('handles statement-separating and trailing semicolons cleanly', () => {
+    const src = `flowchart TD; A[Start] --> B[Process]; B --> C[End];`;
+    const { graph, error } = parseMermaid(src);
+    expect(error).toBeNull();
+    expect(graph?.nodes).toHaveLength(3);
+    expect(graph?.edges).toHaveLength(2);
+  });
+
+  it('cleans trailing semicolons from style directives', () => {
+    const src = `flowchart TD
+      node-1[Node One] --> node-2[Node Two]
+      style node-1 fill:#ff9900,stroke:#333333;
+      classDef highlighted fill:#00ffff,stroke:#0000ff;
+      class node-2 highlighted`;
+    const { graph, error } = parseMermaid(src);
+    expect(error).toBeNull();
+    const node1 = graph?.nodes.find((n) => n.key === 'node-1');
+    expect(node1?.style?.fill).toBe('#ff9900');
+    expect(node1?.style?.stroke).toBe('#333333');
+    const node2 = graph?.nodes.find((n) => n.key === 'node-2');
+    expect(node2?.style?.fill).toBe('#00ffff');
+    expect(node2?.style?.stroke).toBe('#0000ff');
+  });
+
+  it('handles multi-line labels inside quotes and brackets', () => {
+    const src = `flowchart TB
+  DocTier["Document Tier (Yjs CRDT)
+Persisted, Synced, Undoable
+(objectsMap, groupsMap)"] --> HocuspocusSrv["Hocuspocus CRDT Server"]`;
+    const res = parseMermaid(src);
+    expect(res.error).toBeNull();
+    expect(res.graph?.nodes).toHaveLength(2);
+    expect(res.graph?.nodes[0].label).toContain('Document Tier');
+    expect(res.graph?.nodes[0].label).toContain('Persisted, Synced, Undoable');
+    expect(res.graph?.edges).toHaveLength(1);
+    expect(res.graph?.edges[0]).toEqual({ from: 'DocTier', to: 'HocuspocusSrv', line: 'solid', arrow: true });
+  });
+
+  it('handles user full exact diagram with nested subgraphs and cross-cluster edges', () => {
+    const src = `flowchart TB
+  subgraph Client ["Browser Client (React 19 + Vite)"]
+    direction TB
+    subgraph StateTiers ["Three Tiers of State"]
+      DocTier["Document Tier (Yjs CRDT)\\nPersisted, Synced, Undoable\\n(objectsMap, groupsMap)"]
+      AwarenessTier["Awareness Tier (Yjs Awareness)\\nEphemeral Multi-Client\\n(Cursors, Selections, In-Flight Throws)"]
+      TransientTier["Transient Tier (Module Stores / uSES)\\nSingle-Client In-Memory 60fps\\n(liveTransformStore, cropMode, railVeil)"]
+    end
+    
+    subgraph GraphicsEngine ["Canvas & Rendering Pipeline"]
+      CamSys["CameraSystem (rAF, Outside React)"]
+      SpatIdx["SpatialIndex (RBush R-Tree)"]
+      KonvaStage["React-Konva Stage 2D Scene Graph"]
+      MatterSim["Matter.js Physics (Client-Authoritative)"]
+    end
+  end
+
+  subgraph ServerSync ["Backend Sync & Persistence (Node.js / Express / Hocuspocus)"]
+    HocuspocusSrv["Hocuspocus CRDT Server"]
+    NetGuardSSRF["NetGuard & SafeFetch (SSRF Blocker)"]
+    ShareHMAC["ShareToken & Session Mint (HMAC-SHA256)"]
+    QuotaMgr["Quota & IP Rate Limiter"]
+    ReaperJob["Room Reaper Automation"]
+  end
+
+  subgraph Infra ["Storage & Infrastructure"]
+    PostgresDB[("PostgreSQL\\nCompacted Snapshots & replay_base")]
+    RedisBus[("Redis\\nPub/Sub Fanout & Shared Quotas")]
+    MinIOStore[("MinIO / S3\\nOut-of-band Media")]
+  end
+
+  Client -- "WebSocket (Yjs Sync Protocol)" --> HocuspocusSrv
+  Client -- "HTTP Uploads / Unfurl / Auth" --> ServerSync
+  HocuspocusSrv --> PostgresDB
+  HocuspocusSrv -.-> RedisBus
+  ServerSync --> MinIOStore`;
+
+    const parsed = parseMermaid(src);
+    expect(parsed.error).toBeNull();
+    const graph = parsed.graph!;
+
+    // Verify subgraphs and compound nesting
+    const clientSub = graph.subgraphs?.find((s) => s.id === 'Client');
+    const stateTiersSub = graph.subgraphs?.find((s) => s.id === 'StateTiers');
+    const graphicsSub = graph.subgraphs?.find((s) => s.id === 'GraphicsEngine');
+    expect(clientSub).toBeDefined();
+    expect(stateTiersSub?.parentSubgraphId).toBe('Client');
+    expect(graphicsSub?.parentSubgraphId).toBe('Client');
+
+    // Subgraphs should not be placed into graph.nodes
+    expect(graph.nodes.some((n) => n.key === 'Client')).toBe(false);
+    expect(graph.nodes.some((n) => n.key === 'ServerSync')).toBe(false);
+    expect(graph.edges).toHaveLength(5);
+
+    // Verify layout routing
+    const layout = layoutGraph(graph, { originX: 0, originY: 0 });
+    expect(layout.clusters).toHaveLength(5);
+    expect(layout.edges).toHaveLength(5);
+
+    const clientCluster = layout.clusters.find((c) => c.key === 'Client')!;
+    const stateCluster = layout.clusters.find((c) => c.key === 'StateTiers')!;
+    const graphicsCluster = layout.clusters.find((c) => c.key === 'GraphicsEngine')!;
+    expect(clientCluster).toBeDefined();
+
+    // Client frame bounds must enclose child clusters
+    expect(clientCluster.x).toBeLessThanOrEqual(stateCluster.x);
+    expect(clientCluster.x + clientCluster.width).toBeGreaterThanOrEqual(graphicsCluster.x + graphicsCluster.width);
+
+    // Verify canvas buildDiagram
+    const result = buildDiagram(graph, { x: 100, y: 100 }, undefined, { theme: 'indigo' });
+    const connectors = result.nodes.filter((o) => o.type === 'connector');
+    expect(connectors).toHaveLength(5);
+
+    // Connectors originating from or targeting subgraphs must connect to frame IDs
+    const clientToHocus = connectors.find((c: any) => c.label === 'WebSocket (Yjs Sync Protocol)');
+    expect(clientToHocus).toBeDefined();
+    expect((clientToHocus as any).from.nodeId).toBe(`${result.diagramId}-sub-Client`);
+    expect((clientToHocus as any).to.nodeId).toBe(`${result.diagramId}-HocuspocusSrv`);
+
+    const clientToServer = connectors.find((c: any) => c.label === 'HTTP Uploads / Unfurl / Auth');
+    expect(clientToServer).toBeDefined();
+    expect((clientToServer as any).from.nodeId).toBe(`${result.diagramId}-sub-Client`);
+    expect((clientToServer as any).to.nodeId).toBe(`${result.diagramId}-sub-ServerSync`);
+
+    // Verify all connectors have valid points on canvas
+    const objectsMap: Record<string, any> = {};
+    for (const obj of result.nodes) {
+      objectsMap[obj.id] = obj;
+    }
+    const boxLookup = (id: string) => {
+      const n = objectsMap[id];
+      return n ? { x: n.x, y: n.y, width: n.width, height: n.height } : null;
+    };
+    for (const conn of connectors) {
+      const pts = connectorPoints((conn as any).from, (conn as any).to, (conn as any).routing, boxLookup, null);
+      expect(pts.length).toBeGreaterThanOrEqual(4);
+    }
   });
 });

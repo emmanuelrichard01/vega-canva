@@ -15627,30 +15627,87 @@ body[data-zen='physics'] .forces-handle { bottom: 32px; }
   color: var(--text-secondary);
 }
 
-.mermaid-modal__code {
+.mermaid-modal__editor-wrap {
   flex: 1;
+  display: flex;
   min-height: 220px;
-  resize: none;
-  padding: var(--space-4);
+  position: relative;
   border: 1px solid var(--border-divider);
   border-radius: var(--radius-lg);
   background: var(--surface-secondary);
+  overflow: hidden;
+  transition: border-color var(--motion-hover), background-color var(--motion-hover);
+}
+
+.mermaid-modal__editor-wrap:hover {
+  background: var(--surface-hover);
+}
+
+.mermaid-modal__editor-wrap:focus-within {
+  border-color: var(--border-strong);
+  background: var(--surface-secondary);
+  box-shadow: 0 0 0 1px var(--border-strong);
+}
+
+.mm-gutter {
+  width: 44px;
+  flex-shrink: 0;
+  padding: var(--space-4) 0;
+  background: var(--surface-hover);
+  border-right: 1px solid var(--border-divider);
+  user-select: none;
+  overflow: hidden;
+  font-family: var(--font-mono, monospace);
+  font-size: var(--text-xs);
+  line-height: 1.6;
+  text-align: right;
+}
+
+.mm-gutter__line {
+  position: relative;
+  padding-right: 10px;
+  color: var(--text-disabled);
+  height: 22.4px;
+  font-variant-numeric: tabular-nums;
+  box-sizing: border-box;
+}
+
+.mm-gutter__line.is-error {
+  color: var(--status-warning, #EF4444);
+  font-weight: 700;
+  background: rgba(239, 68, 68, 0.14);
+}
+
+.mm-gutter__line.is-warn {
+  color: var(--amber-500, #F59E0B);
+  font-weight: 600;
+  background: rgba(245, 158, 11, 0.12);
+}
+
+.mermaid-modal__code {
+  flex: 1;
+  min-height: 100%;
+  resize: none;
+  padding: var(--space-4);
+  border: none;
+  outline: none;
+  background: transparent;
   color: var(--text-primary);
   font-family: var(--font-mono, monospace);
   font-size: var(--text-sm);
   line-height: 1.6;
   tab-size: 4;
-  transition: border-color var(--motion-hover), background-color var(--motion-hover);
+  overflow-y: auto;
+  white-space: pre;
 }
 
 .mermaid-modal__code:hover {
-  background: var(--surface-hover);
+  background: transparent;
 }
 
 .mermaid-modal__code:focus-visible {
   outline: none;
-  background: var(--surface-secondary);
-  border-color: var(--border-strong);
+  background: transparent;
 }
 
 .mermaid-modal__stage {

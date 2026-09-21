@@ -37,7 +37,7 @@ function framesInDocument(objects: Record<string, AnyNode>) {
 export function reassignFrame(nodeId: string): void {
   const objects = useStore.getState().objects;
   const node = objects[nodeId];
-  if (!node) return;
+  if (!node || node.type === 'connector') return;
 
   const frames = framesInDocument(objects);
   if (frames.length === 0 && !node.frameId) return;

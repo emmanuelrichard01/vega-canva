@@ -1,5 +1,6 @@
 import type { AnyNode } from './schema';
 import { nodeBounds, type NodePatch } from './selection';
+import { descendantsOfFrame } from './frames';
 
 /**
  * Moving a selection up and down the stack.
@@ -48,7 +49,59 @@ function stackOrder(nodes: readonly AnyNode[]): AnyNode[] {
 function overlaps(a: AnyNode, b: AnyNode): boolean {
   const p = nodeBounds(a);
   const q = nodeBounds(b);
-  return p.x < q.x + q.width && q.x < p.x + p.width && p.y < q.y + q.height && q.y < p.y + p.height;
+  const pw = Math.max(p.width, 1);
+  const ph = Math.max(p.height, 1);
+  const qw = Math.max(q.width, 1);
+  const qh = Math.max(q.height, 1);
+  return p.x < q.x + qw && q.x < p.x + pw && p.y < q.y + qh && q.y < p.y + ph;
+}
+
+/**
+ * Ensures that all descendants of any frame are positioned above that frame
+ * in the drawing order. If a frame moved toward the front, its children are
+ * lifted to sit on top of it. If a child moved toward the back, it stops at
+ * the frame's boundary and never sinks behind the frame's opaque canvas fill.
+ */
+function enforceFrameHierarchy(
+  order: string[],
+  moved: Set<string>,
+  all: readonly AnyNode[],
+  _selected: ReadonlySet<string>
+): { order: string[]; moved: Set<string> } {
+  const frames = all.filter((n) => n.type === 'frame');
+  if (frames.length === 0) return { order, moved };
+
+  let currentOrder = [...order];
+  const currentMoved = new Set(moved);
+
+  for (const frame of frames) {
+    const frameId = frame.id;
+    const descendants = descendantsOfFrame(frameId, all as Array<{ id: string; frameId?: string }>);
+    if (descendants.length === 0) continue;
+
+    const frameIdx = currentOrder.indexOf(frameId);
+    if (frameIdx < 0) continue;
+
+    // Any descendant that currently sits below the frame in the stack
+    const violations = descendants.filter((dId) => {
+      const dIdx = currentOrder.indexOf(dId);
+      return dIdx >= 0 && dIdx < frameIdx;
+    });
+
+    if (violations.length === 0) continue;
+
+    const violationSet = new Set(violations);
+    const remaining = currentOrder.filter((id) => !violationSet.has(id));
+    const newFrameIdx = remaining.indexOf(frameId);
+    currentOrder = [
+      ...remaining.slice(0, newFrameIdx + 1),
+      ...violations,
+      ...remaining.slice(newFrameIdx + 1),
+    ];
+    violations.forEach((v) => currentMoved.add(v));
+  }
+
+  return { order: currentOrder, moved: currentMoved };
 }
 
 /**
@@ -111,6 +164,10 @@ export function restackOrder(
     order = [...ids.slice(0, target), ...sinking, ids[target], ...above];
     moved = new Set(sinking);
   }
+
+  const adjusted = enforceFrameHierarchy(order, moved, all, selected);
+  order = adjusted.order;
+  moved = adjusted.moved;
 
   if (order.every((id, i) => id === ids[i])) return null;
   return { order, moved };

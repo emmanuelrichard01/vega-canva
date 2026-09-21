@@ -134,6 +134,98 @@ export class IpDailyByteTracker {
     return this.check(ip, incomingBytes, maxDailyBytes, now);
   }
 
+  /**
+   * Check if adding `incomingBytes` would exceed the daily cap and atomically
+   * reserve the bytes if allowed (synchronous).
+   */
+  public reserve(
+    ip: string,
+    incomingBytes: number,
+    maxDailyBytes: number,
+    now = Date.now()
+  ): { allowed: boolean; currentBytes: number; maxBytes: number } {
+    const currentBytes = this.getUsage(ip, now);
+    if (currentBytes + incomingBytes > maxDailyBytes) {
+      return { allowed: false, currentBytes, maxBytes: maxDailyBytes };
+    }
+    this.record(ip, incomingBytes, now);
+    return { allowed: true, currentBytes, maxBytes: maxDailyBytes };
+  }
+
+  /**
+   * Atomically reserve quota against Redis when attached, falling back to memory.
+   * If Redis exceeds quota after increment, rolls back the reservation immediately.
+   */
+  public async reserveAsync(
+    ip: string,
+    incomingBytes: number,
+    maxDailyBytes: number,
+    now = Date.now()
+  ): Promise<{ allowed: boolean; currentBytes: number; maxBytes: number }> {
+    if (this.redis) {
+      try {
+        const dateKey = new Date(now).toISOString().slice(0, 10);
+        const key = `quota:ip:${dateKey}:${ip}`;
+        const newTotal = await this.redis.incrby(key, incomingBytes);
+        await this.redis.expire(key, 172800); // 48 hours retention
+        if (newTotal > maxDailyBytes) {
+          // Exceeded: roll back the reservation atomically
+          await this.redis.incrby(key, -incomingBytes);
+          return { allowed: false, currentBytes: newTotal - incomingBytes, maxBytes: maxDailyBytes };
+        }
+        // Also reflect in local memory tracker
+        this.record(ip, incomingBytes, now);
+        return { allowed: true, currentBytes: newTotal - incomingBytes, maxBytes: maxDailyBytes };
+      } catch {
+        // Fall back to local memory if Redis fails
+        return this.reserve(ip, incomingBytes, maxDailyBytes, now);
+      }
+    }
+    return this.reserve(ip, incomingBytes, maxDailyBytes, now);
+  }
+
+  /**
+   * Release previously reserved bytes (e.g. if the upload stream fails or is rejected).
+   */
+  public release(ip: string, bytes: number): void {
+    const window = this.clients.get(ip);
+    if (!window || bytes <= 0) return;
+    let remainingToDeduct = bytes;
+    for (let i = window.uploads.length - 1; i >= 0 && remainingToDeduct > 0; i--) {
+      const u = window.uploads[i];
+      if (u.bytes <= remainingToDeduct) {
+        remainingToDeduct -= u.bytes;
+        window.uploads.splice(i, 1);
+      } else {
+        u.bytes -= remainingToDeduct;
+        remainingToDeduct = 0;
+      }
+    }
+    if (window.uploads.length === 0) {
+      this.clients.delete(ip);
+    }
+  }
+
+  /**
+   * Release previously reserved bytes asynchronously from both Redis and local memory.
+   */
+  public async releaseAsync(ip: string, bytes: number, now = Date.now()): Promise<void> {
+    this.release(ip, bytes);
+    if (this.redis && bytes > 0) {
+      try {
+        const dateKey = new Date(now).toISOString().slice(0, 10);
+        const key = `quota:ip:${dateKey}:${ip}`;
+        const newTotal = await this.redis.incrby(key, -bytes);
+        // Ensure counter does not drop below zero in case of skewed releases
+        if (newTotal < 0) {
+          await this.redis.incrby(key, -newTotal);
+        }
+      } catch {
+        /* local release succeeded */
+      }
+    }
+  }
+
   /** Record an accepted upload. */
   public record(ip: string, bytes: number, now = Date.now()): void {
     let window = this.clients.get(ip);

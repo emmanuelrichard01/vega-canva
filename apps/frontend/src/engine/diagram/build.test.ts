@@ -119,6 +119,31 @@ describe('buildDiagram: connector attachment', () => {
       expect(toCluster.to.anchor).toBeUndefined();
     }
   });
+
+  it('routes connectors as curved by default to match modal preview', () => {
+    const { connectors } = build('flowchart TD\n  A --> B');
+    const c = connectors[0] as unknown as { routing: string };
+    expect(c.routing).toBe('curved');
+  });
+
+  it('respects options.routing override when specified', () => {
+    const { graph } = parseMermaid('flowchart TD\n  A --> B');
+    const { nodes } = buildDiagram(graph!, { x: 0, y: 0 }, undefined, { routing: 'orthogonal' });
+    const c = nodes.find((n) => n.type === 'connector') as unknown as { routing: string };
+    expect(c.routing).toBe('orthogonal');
+  });
+
+  it('applies cornerRadius: 8 to subgraph frames matching preview rx=8', () => {
+    const { nodes } = buildDiagram(
+      parseMermaid('flowchart TD\n  subgraph S [Service]\n    A --> B\n  end').graph!,
+      { x: 0, y: 0 }
+    );
+    const frame = nodes.find((n) => n.type === 'frame') as unknown as {
+      appearance: { cornerRadius?: number };
+    };
+    expect(frame).toBeDefined();
+    expect(frame.appearance.cornerRadius).toBe(8);
+  });
 });
 
 describe('diagramNodeSizes: one answer, shared by preview and board', () => {

@@ -13,6 +13,7 @@ import { fitLineToBox, isLineLike } from '../engine/model/lineEnds';
 import { EXPORT_CHROME } from '../engine/export/chrome';
 import { OBJECT_NODE } from '../engine/export/isolate';
 import { moveFrameWithChildren, reassignFrame } from '../engine/interaction/frameMembership';
+import { descendantsOfFrame } from '../engine/model/frames';
 import { gridCellsOf } from '../engine/grid/gridNode';
 import { addTextToCell, cellAtPoint, isCellFree, reassignGridSlot } from '../engine/grid/gridSlotApply';
 import { roundPolygon } from '../engine/grid/gridLayout';
@@ -288,7 +289,7 @@ export const ObjectRenderer = React.memo(
       node?.frameId ? state.objects[node.frameId] : undefined
     );
     const clipRect =
-      ownerFrame && ownerFrame.type === 'frame'
+      node?.type !== 'connector' && ownerFrame && ownerFrame.type === 'frame'
         ? { x: ownerFrame.x, y: ownerFrame.y, width: ownerFrame.width, height: ownerFrame.height }
         : null;
 
@@ -472,52 +473,60 @@ export const ObjectRenderer = React.memo(
         const halfW = currentObj ? currentObj.width / 2 : 0;
         const halfH = currentObj ? currentObj.height / 2 : 0;
 
+        const stage = e.target.getStage();
+        const all = useStore.getState().objects;
         const selection = selectedIdsRef?.current;
+
+        // Collect all objects that should move together with objId:
+        const toMoveIds = new Set<string>();
         if (isSelected && selection && selection.length > 1) {
-          const stage = e.target.getStage();
-          const all = useStore.getState().objects;
+          selection.forEach((sid) => {
+            if (sid !== objId && all[sid]) toMoveIds.add(sid);
+          });
+        }
+
+        // Any frame being moved must also carry all its descendant children at 60fps!
+        const framesToExpand = [objId, ...toMoveIds].filter((sid) => all[sid]?.type === 'frame');
+        for (const fId of framesToExpand) {
+          const children = descendantsOfFrame(fId, Object.values(all));
+          for (const cId of children) {
+            if (cId !== objId && all[cId]) toMoveIds.add(cId);
+          }
+        }
+
+        if (toMoveIds.size > 0) {
           const siblings: Record<string, SiblingDragState> = {};
           connectorDragRef.current = [];
           const batch: Array<[string, { x: number; y: number }]> = [
             [objId, { x: e.target.x() - halfW, y: e.target.y() - halfH }],
           ];
-          selection
-            .filter((sid) => sid !== objId)
-            .forEach((sid) => {
-              const sibling = all[sid];
-              if (!sibling) return;
-              /**
-               * A connector is carried by its ends, never translated.
-               *
-               * Its route is drawn at `world - node.x`, so moving the group it
-               * sits in shifts the frame and the route compensates the other
-               * way: the arrow visibly lags and slides away from the objects it
-               * joins for the length of the drag, then snaps back on release
-               * when the box is recomputed. Bound ends follow their objects on
-               * their own; loose ends are moved at drop by
-               * `connectorDragPatch`.
-               */
-              if (sibling.type === 'connector') {
-                connectorDragRef.current.push(sid);
-                return;
-              }
-              const konvaNode = stage?.findOne('#' + sid);
-              const sHalfW = sibling.width / 2;
-              const sHalfH = sibling.height / 2;
-              const sx = konvaNode ? konvaNode.x() - sHalfW : sibling.x;
-              const sy = konvaNode ? konvaNode.y() - sHalfH : sibling.y;
-              batch.push([sid, { x: sx, y: sy }]);
-              siblings[sid] = {
-                rawX: sibling.x,
-                rawY: sibling.y,
-                nodeStartX: konvaNode ? konvaNode.x() : null,
-                nodeStartY: konvaNode ? konvaNode.y() : null,
-              };
-            });
+          toMoveIds.forEach((sid) => {
+            const sibling = all[sid];
+            if (!sibling) return;
+            /**
+             * A connector is carried by its ends, never translated.
+             */
+            if (sibling.type === 'connector') {
+              connectorDragRef.current.push(sid);
+              return;
+            }
+            const konvaNode = stage?.findOne('#' + sid);
+            const sHalfW = sibling.width / 2;
+            const sHalfH = sibling.height / 2;
+            const sx = konvaNode ? konvaNode.x() - sHalfW : sibling.x;
+            const sy = konvaNode ? konvaNode.y() - sHalfH : sibling.y;
+            batch.push([sid, { x: sx, y: sy }]);
+            siblings[sid] = {
+              rawX: sibling.x,
+              rawY: sibling.y,
+              nodeStartX: konvaNode ? konvaNode.x() : null,
+              nodeStartY: konvaNode ? konvaNode.y() : null,
+            };
+          });
           liveTransformStore.setBatch(batch);
           groupDragRef.current = { startX: e.target.x(), startY: e.target.y(), siblings };
           if (isAlt) {
-            altDragState.set(selection);
+            altDragState.set([objId, ...toMoveIds]);
           } else {
             altDragState.clear();
           }
@@ -702,6 +711,9 @@ export const ObjectRenderer = React.memo(
           const modifiedIds = [objId, ...Object.keys(groupDragRef.current.siblings)];
           const connectorPatches = syncConnectedConnectors(modifiedIds, updatedObjects);
           applyNodePatches([...nodePatches, ...connectorPatches]);
+          modifiedIds.forEach((id) => {
+            if (all[id]?.type !== 'frame') reassignFrame(id);
+          });
           groupDragRef.current = null;
           connectorDragRef.current = [];
           return;
@@ -1097,13 +1109,13 @@ export const ObjectRenderer = React.memo(
            */
           name={OBJECT_NODE}
           ref={shapeRef}
-          x={x + cx}
-          y={y + cy}
-          offsetX={cx}
-          offsetY={cy}
-          rotation={rotation}
-          scaleX={node.scaleX}
-          scaleY={node.scaleY}
+          x={node.type === 'connector' ? node.x : x + cx}
+          y={node.type === 'connector' ? node.y : y + cy}
+          offsetX={node.type === 'connector' ? 0 : cx}
+          offsetY={node.type === 'connector' ? 0 : cy}
+          rotation={node.type === 'connector' ? 0 : rotation}
+          scaleX={node.type === 'connector' ? 1 : node.scaleX}
+          scaleY={node.type === 'connector' ? 1 : node.scaleY}
           // Degrees in the document, matrix coefficients here. Konva's
           // `skewX` is the coefficient itself, not an angle, and this `tan` is
           // the only place the two conventions meet — the same arrangement

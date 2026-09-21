@@ -180,6 +180,7 @@ const LINE_DASH: Record<EdgeLine, number[] | undefined> = {
 export interface DiagramBuildOptions {
   theme?: DiagramThemeId;
   renderStyle?: 'crisp' | 'sketch';
+  routing?: 'curved' | 'orthogonal' | 'straight';
 }
 
 export interface BuiltDiagram {
@@ -206,6 +207,7 @@ export function buildDiagram(
   const diagramId = existingId ?? nanoid(8);
   const theme = DIAGRAM_THEMES[options?.theme ?? 'indigo'] || DIAGRAM_THEMES.indigo;
   const isSketch = options?.renderStyle === 'sketch';
+  const connectorRouting = options?.routing ?? 'curved';
 
   /**
    * Settled before sizing, because the box is measured in this face at this
@@ -277,12 +279,22 @@ export function buildDiagram(
 
   // Generate FrameNodes for Subgraphs / Clusters
   if (graph.subgraphs && graph.subgraphs.length > 0) {
-    for (const sub of graph.subgraphs) {
+    // Sort subgraphs so outer parents come before nested children, ensuring
+    // parent containers are created with a lower z-index and never occlude child frames.
+    const sortedSubgraphs = [...graph.subgraphs].sort((a, b) => {
+      if (b.parentSubgraphId === a.id) return -1;
+      if (a.parentSubgraphId === b.id) return 1;
+      return 0;
+    });
+
+    const frameNodes: AnyNode[] = [];
+    for (const sub of sortedSubgraphs) {
       const clusterBox = clusterAt.get(sub.id);
       if (!clusterBox) continue;
 
       const frameId = `${diagramId}-sub-${sub.id}`;
-      nodes.unshift({
+      const parentFrameId = sub.parentSubgraphId ? `${diagramId}-sub-${sub.parentSubgraphId}` : undefined;
+      frameNodes.push({
         id: frameId,
         type: 'frame',
         x: clusterBox.x,
@@ -290,10 +302,12 @@ export function buildDiagram(
         width: Math.max(120, clusterBox.width),
         height: Math.max(80, clusterBox.height),
         title: sub.title,
+        ...(parentFrameId ? { frameId: parentFrameId } : {}),
         [DIAGRAM_TAG]: diagramId,
         appearance: {
           fill: [{ type: 'solid', color: theme.clusterFill }],
           stroke: { color: theme.clusterStroke, width: 1.5, dash: [5, 4] },
+          cornerRadius: 8,
           ...(isSketch ? { sketch: 'light' } : {}),
         },
       });
@@ -301,13 +315,6 @@ export function buildDiagram(
       /**
        * Membership from `subgraphId`, which is the field `layout.ts` parents
        * by -- not from `sub.nodeKeys`.
-       *
-       * `frameId` is what makes `ObjectRenderer` clip a node to its frame's
-       * rectangle, so reading it from a different record than the one that
-       * decided *where the node was placed* is how a node ends up positioned
-       * outside a box and then cut to fit it. The two records agree now, and
-       * this reads the one that governs position so they cannot come apart
-       * again from this end.
        */
       for (const child of graph.nodes) {
         if (child.subgraphId !== sub.id) continue;
@@ -315,6 +322,9 @@ export function buildDiagram(
         if (childNode) childNode.frameId = frameId;
       }
     }
+
+    // Outer frames first, then nested child frames, then leaf shapes
+    nodes.unshift(...frameNodes);
   }
 
   const anchorEndFor = (
@@ -335,8 +345,8 @@ export function buildDiagram(
   };
 
   const resolveTargetId = (key: string): string | null => {
-    if (at.has(key)) return idFor(key);
     if (clusterAt.has(key)) return `${diagramId}-sub-${key}`;
+    if (at.has(key)) return idFor(key);
     return null;
   };
 
@@ -375,9 +385,8 @@ export function buildDiagram(
        */
       from: anchorEndFor(edge.from, edge.to, 'from', fromId),
       to: anchorEndFor(edge.from, edge.to, 'to', toId),
-      // Right angles, because that is what a flowchart reads as — the same
-      // reasoning the routing control's own hint gives.
-      routing: 'orthogonal',
+      // Curved routing by default to match the live modal preview's smooth Bézier S-curves
+      routing: connectorRouting,
       endStart: edge.bidirectional ? 'arrow' : 'none',
       endEnd: edge.arrow ? 'arrow' : 'none',
       ...(edge.label ? { label: edge.label } : {}),

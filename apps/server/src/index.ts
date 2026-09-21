@@ -477,8 +477,8 @@ app.post("/rooms/:roomId/media", requireRoom, mediaUploadLimiter, (req: any, res
   const clientIp = String(req.ip || req.socket?.remoteAddress || 'unknown');
   const uploaderKey = req.sessionUser?.uid ? `user:${req.sessionUser.uid}` : clientIp;
 
-  // 1. Enforce Daily Upload Quota (keyed by durable user session, falling back to IP)
-  const ipCheck = await ipDailyTracker.checkAsync(uploaderKey, fileSize, config.quotas.maxIpDailyBytes);
+  // 1. Atomically Reserve Daily Upload Quota (keyed by durable user session, falling back to IP)
+  const ipCheck = await ipDailyTracker.reserveAsync(uploaderKey, fileSize, config.quotas.maxIpDailyBytes);
   if (!ipCheck.allowed) {
     await cleanupFailedMedia(s3, s3Bucket, storageKey);
     return res.status(413).json({
@@ -489,6 +489,7 @@ app.post("/rooms/:roomId/media", requireRoom, mediaUploadLimiter, (req: any, res
   // 2. Enforce Room Storage Quota
   const roomCheck = await checkRoomStorageQuota(pool, roomId, fileSize, config.quotas.maxRoomBytes);
   if (!roomCheck.allowed) {
+    await ipDailyTracker.releaseAsync(uploaderKey, fileSize);
     await cleanupFailedMedia(s3, s3Bucket, storageKey);
     return res.status(413).json({
       error: `Room storage limit of ${formatBytes(config.quotas.maxRoomBytes)} exceeded. Currently used: ${formatBytes(roomCheck.currentBytes)}.`,
@@ -498,6 +499,7 @@ app.post("/rooms/:roomId/media", requireRoom, mediaUploadLimiter, (req: any, res
   // 3. Enforce Global Storage Ceiling
   const globalCheck = await checkGlobalStorageQuota(pool, fileSize, config.quotas.maxGlobalBytes);
   if (!globalCheck.allowed) {
+    await ipDailyTracker.releaseAsync(uploaderKey, fileSize);
     await cleanupFailedMedia(s3, s3Bucket, storageKey);
     return res.status(413).json({
       error: `Global storage ceiling reached (${formatBytes(config.quotas.maxGlobalBytes)}). Uploads temporarily paused.`,
@@ -527,12 +529,10 @@ app.post("/rooms/:roomId/media", requireRoom, mediaUploadLimiter, (req: any, res
       [mediaId, roomId, url, req.file.mimetype, fileSize, storageKey]
     );
 
-    // Record upload for user/IP rate tracking (async with Redis clustering support)
-    await ipDailyTracker.recordAsync(uploaderKey, fileSize);
-
     res.json({ id: mediaId, url, mimeType: req.file.mimetype, sizeBytes: fileSize });
   } catch (err) {
     console.error("Error inserting media ref:", err);
+    await ipDailyTracker.releaseAsync(uploaderKey, fileSize);
     await cleanupFailedMedia(s3, s3Bucket, storageKey, pool, mediaId);
     res.status(500).json({ error: "Database error processing media upload." });
   }

@@ -413,13 +413,11 @@ export function routeCurved(
   const c2 = { x: b.x + nb.x * reachB, y: b.y + nb.y * reachB };
 
   /**
-   * Enough segments that the curve reads as smooth at a sensible zoom, few
-   * enough that a board of connectors is not thousands of points. The line is
-   * re-sampled at a fixed count rather than adaptively: a point count that
-   * changed with length would make `connectorBounds` — and therefore culling —
-   * jitter while an endpoint is dragged.
+   * 48 steps for a silky, continuous, high-definition Bézier arc that looks
+   * like native vector curves at any zoom level, while maintaining constant
+   * sample count for deterministic hit-testing and bounding boxes.
    */
-  const STEPS = 24;
+  const STEPS = 48;
   const points: Point[] = [];
   for (let i = 0; i <= STEPS; i += 1) {
     const t = i / STEPS;
@@ -437,17 +435,38 @@ export function routeCurved(
 /**
  * How far a curved connector's control points reach from each end.
  *
- * Proportional to the span so a short link stays tight and a long one bows,
- * and capped so a connector across the whole board does not loop out of it.
+ * For aligned directional flows (e.g. bottom-to-top vertical or right-to-left
+ * horizontal), tension projects to half the delta along the flow axis. This
+ * guarantees monotonic progression without awkward S-bulges or reverse loops.
+ * For general/loopback trajectories, falls back to distance-proportional reach.
  */
 export function curveTension(a: Point, b: Point, na?: Point, _nb?: Point): number {
   const dist = Math.hypot(b.x - a.x, b.y - a.y);
   if (!na) {
     return Math.min(160, Math.max(30, dist * 0.4));
   }
-  const dx = (b.x - a.x) / (dist || 1);
-  const dy = (b.y - a.y) / (dist || 1);
-  const alignA = na.x * dx + na.y * dy;
+  const dx = b.x - a.x;
+  const dy = b.y - a.y;
+
+  // Natural vertical flow (top or bottom port exit)
+  if (Math.abs(na.y) > 0.5) {
+    const forwardY = dy * na.y;
+    if (forwardY > 0) {
+      return Math.max(20, Math.min(forwardY * 0.5, 160));
+    }
+  }
+
+  // Natural horizontal flow (left or right port exit)
+  if (Math.abs(na.x) > 0.5) {
+    const forwardX = dx * na.x;
+    if (forwardX > 0) {
+      return Math.max(20, Math.min(forwardX * 0.5, 160));
+    }
+  }
+
+  const udx = dx / (dist || 1);
+  const udy = dy / (dist || 1);
+  const alignA = na.x * udx + na.y * udy;
   const factor = alignA > 0 ? 0.38 : 0.28;
   return Math.min(160, Math.max(24, dist * factor));
 }

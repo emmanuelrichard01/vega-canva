@@ -99,6 +99,12 @@ export default defineConfig(({ mode }) => ({
               !dep.includes('app-diagram') &&
               !dep.includes('app-physics') &&
               !dep.includes('app-pathEdit') &&
+              !dep.includes('app-toolbar') &&
+              !dep.includes('app-layers') &&
+              !dep.includes('app-properties') &&
+              !dep.includes('app-learn') &&
+              !dep.includes('app-table') &&
+              !dep.includes('app-templates') &&
               !dep.includes('Room')
           );
         }
@@ -168,6 +174,12 @@ export default defineConfig(({ mode }) => ({
             id.includes('/engine/model/rough.ts') ||
             id.includes('/engine/model/roughShape')
           ) return 'app-rough';
+          if (id.includes('/components/ObjectContextToolbar') || id.includes('/components/toolbar/')) return 'app-toolbar';
+          if (id.includes('/components/LayersPanel')) return 'app-layers';
+          if (id.includes('/components/PropertiesPanel')) return 'app-properties';
+          if (id.includes('/components/learn/')) return 'app-learn';
+          if (id.includes('/components/table/')) return 'app-table';
+          if (id.includes('/engine/templates/')) return 'app-templates';
         },
       },
     },

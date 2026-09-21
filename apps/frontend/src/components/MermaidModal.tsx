@@ -16,6 +16,8 @@ import {
   Wand2,
   PenTool,
   LayoutTemplate,
+  Copy,
+  RotateCcw,
 } from 'lucide-react';
 import { useFocusTrap } from '../hooks/useFocusTrap';
 import { useDebouncedValue } from '../hooks/useDeferredValue';
@@ -501,6 +503,46 @@ const DIRECTIONS: ReadonlyArray<{ id: FlowDirection; Icon: typeof ArrowDown; lab
   { id: 'RL', Icon: ArrowLeft, label: 'Right to left' },
 ];
 
+/**
+ * Computes where a ray from `fromCenter` towards `toCenter` intersects the perimeter
+ * of the given rectangular box. Anchors arrowheads right at node boundaries in SVG preview.
+ */
+function clipRayToBox(
+  fromCenter: { x: number; y: number },
+  toCenter: { x: number; y: number },
+  box: { x: number; y: number; width: number; height: number }
+): { x: number; y: number } {
+  const cx = box.x + box.width / 2;
+  const cy = box.y + box.height / 2;
+  const dx = toCenter.x - fromCenter.x;
+  const dy = toCenter.y - fromCenter.y;
+  if (dx === 0 && dy === 0) return { x: cx, y: cy };
+
+  const hw = Math.max(1, box.width / 2);
+  const hh = Math.max(1, box.height / 2);
+
+  const sx = dx !== 0 ? Math.abs(hw / dx) : Infinity;
+  const sy = dy !== 0 ? Math.abs(hh / dy) : Infinity;
+  const t = Math.min(sx, sy);
+
+  if (!Number.isFinite(t)) return { x: cx, y: cy };
+
+  const signX = dx >= 0 ? 1 : -1;
+  const signY = dy >= 0 ? 1 : -1;
+
+  if (sx <= sy) {
+    return {
+      x: cx + signX * hw,
+      y: cy + (dy !== 0 ? signX * hw * (dy / dx) : 0),
+    };
+  } else {
+    return {
+      x: cx + (dx !== 0 ? signY * hh * (dx / dy) : 0),
+      y: cy + signY * hh,
+    };
+  }
+}
+
 export const MermaidModal: React.FC<Props> = ({
   open,
   onClose,
@@ -514,6 +556,7 @@ export const MermaidModal: React.FC<Props> = ({
   const [renderStyle, setRenderStyle] = useState<'crisp' | 'sketch'>('crisp');
 
   const textRef = useRef<HTMLTextAreaElement>(null);
+  const gutterRef = useRef<HTMLDivElement | null>(null);
   const panelRef = useFocusTrap(open, onClose);
 
   // Zoom & Pan State
@@ -522,6 +565,64 @@ export const MermaidModal: React.FC<Props> = ({
   const [pan, setPan] = useState({ x: 0, y: 0 });
   const isDragging = useRef(false);
   const lastMousePos = useRef({ x: 0, y: 0 });
+
+  const [copied, setCopied] = useState(false);
+  const sourceLines = useMemo(() => source.split('\n'), [source]);
+
+  const handleCopy = async () => {
+    try {
+      await navigator.clipboard.writeText(source);
+      setCopied(true);
+      setTimeout(() => setCopied(false), 1600);
+    } catch {
+      /* clipboard fallback */
+    }
+  };
+
+  const handleReset = () => {
+    setSource(initialSource || TEMPLATES[0].source);
+    setActiveTemplate(initialSource ? null : 'flowchart');
+  };
+
+  const handleEditorScroll = (e: React.UIEvent<HTMLTextAreaElement>) => {
+    if (gutterRef.current) {
+      gutterRef.current.scrollTop = e.currentTarget.scrollTop;
+    }
+  };
+
+  const handleEditorKeyDown = (e: React.KeyboardEvent<HTMLTextAreaElement>) => {
+    if ((e.metaKey || e.ctrlKey) && e.key === 'Enter') {
+      if (ready) {
+        onApply(source, { theme: themeId, renderStyle });
+        onClose();
+      }
+      return;
+    }
+    if (e.key === 'Tab') {
+      e.preventDefault();
+      const el = e.currentTarget;
+      const { selectionStart: s, selectionEnd: end, value } = el;
+      if (e.shiftKey) {
+        // Outdent: remove up to 4 leading spaces
+        const lineStart = value.lastIndexOf('\n', s - 1) + 1;
+        const linePrefix = value.slice(lineStart, lineStart + 4);
+        const spacesToRemove = linePrefix.match(/^ +/)?.[0].length || 0;
+        if (spacesToRemove > 0) {
+          const next = value.slice(0, lineStart) + value.slice(lineStart + spacesToRemove);
+          setSource(next);
+          requestAnimationFrame(() => {
+            const newPos = Math.max(lineStart, s - spacesToRemove);
+            el.setSelectionRange(newPos, newPos);
+          });
+        }
+      } else {
+        // Indent 4 spaces
+        const next = `${value.slice(0, s)}    ${value.slice(end)}`;
+        setSource(next);
+        requestAnimationFrame(() => el.setSelectionRange(s + 4, s + 4));
+      }
+    }
+  };
 
   useEffect(() => {
     if (open) {
@@ -1006,36 +1107,57 @@ export const MermaidModal: React.FC<Props> = ({
                 >
                   <Wand2 size={12} aria-hidden /> Format
                 </button>
+                <button
+                  type="button"
+                  className="mm-btn"
+                  onClick={handleCopy}
+                  title="Copy Mermaid code"
+                >
+                  {copied ? <Check size={12} aria-hidden /> : <Copy size={12} aria-hidden />}
+                  {copied ? 'Copied' : 'Copy'}
+                </button>
+                <button
+                  type="button"
+                  className="mm-btn"
+                  onClick={handleReset}
+                  title="Reset code"
+                >
+                  <RotateCcw size={12} aria-hidden /> Reset
+                </button>
               </div>
             </div>
 
-            <textarea
-              id="mermaid-source"
-              ref={textRef}
-              className="mermaid-modal__code"
-              value={source}
-              spellCheck={false}
-              onChange={(e) => {
-                setSource(e.target.value);
-                setActiveTemplate(null);
-              }}
-              onKeyDown={(e) => {
-                if ((e.metaKey || e.ctrlKey) && e.key === 'Enter') {
-                  if (ready) {
-                    onApply(source, { theme: themeId, renderStyle });
-                    onClose();
-                  }
-                }
-                if (e.key === 'Tab') {
-                  e.preventDefault();
-                  const el = e.currentTarget;
-                  const { selectionStart: s, selectionEnd: end, value } = el;
-                  const next = `${value.slice(0, s)}    ${value.slice(end)}`;
-                  setSource(next);
-                  requestAnimationFrame(() => el.setSelectionRange(s + 4, s + 4));
-                }
-              }}
-            />
+            <div className="mermaid-modal__editor-wrap">
+              <div className="mm-gutter" ref={gutterRef} aria-hidden="true">
+                {sourceLines.map((_, idx) => {
+                  const lineNum = idx + 1;
+                  const isErr = errorLine === lineNum;
+                  const isWarn = skippedLines.includes(lineNum);
+                  return (
+                    <div
+                      key={lineNum}
+                      className={`mm-gutter__line${isErr ? ' is-error' : ''}${isWarn ? ' is-warn' : ''}`}
+                      title={isErr ? error ?? 'Syntax error' : isWarn ? 'Line skipped in preview' : undefined}
+                    >
+                      {lineNum}
+                    </div>
+                  );
+                })}
+              </div>
+              <textarea
+                id="mermaid-source"
+                ref={textRef}
+                className="mermaid-modal__code"
+                value={source}
+                spellCheck={false}
+                onScroll={handleEditorScroll}
+                onChange={(e) => {
+                  setSource(e.target.value);
+                  setActiveTemplate(null);
+                }}
+                onKeyDown={handleEditorKeyDown}
+              />
+            </div>
           </div>
 
           {/* Right Live Preview Column */}
@@ -1560,29 +1682,45 @@ export const MermaidModal: React.FC<Props> = ({
                           )
                       )}
 
-                      {/* Render Edges */}
+                      {/* Render Edges with perimeter clipping & visible arrowheads */}
                       {graph?.edges.map((edge, i) => {
-                        const a = preview.at.get(edge.from) || preview.clusterAt.get(edge.from);
-                        const b = preview.at.get(edge.to) || preview.clusterAt.get(edge.to);
+                        const a = preview.clusterAt.get(edge.from) || preview.at.get(edge.from);
+                        const b = preview.clusterAt.get(edge.to) || preview.at.get(edge.to);
                         if (!a || !b) return null;
 
                         const ax = a.x + a.width / 2;
                         const ay = a.y + a.height / 2;
                         const bx = b.x + b.width / 2;
                         const by = b.y + b.height / 2;
-                        const midX = (ax + bx) / 2;
-                        const midY = (ay + by) / 2;
+
+                        // Clip ray to perimeter of box A and box B
+                        const startPt = clipRayToBox({ x: ax, y: ay }, { x: bx, y: by }, a);
+                        const endPt = clipRayToBox({ x: bx, y: by }, { x: ax, y: ay }, b);
+
+                        const midX = (startPt.x + endPt.x) / 2;
+                        const midY = (startPt.y + endPt.y) / 2;
+
+                        const isVertical = currentDirection === 'TD' || currentDirection === 'BT';
+                        const isNearlyStraight = Math.abs(startPt.x - endPt.x) < 4 || Math.abs(startPt.y - endPt.y) < 4;
+
+                        let pathD: string;
+                        if (isNearlyStraight) {
+                          pathD = `M ${startPt.x} ${startPt.y} L ${endPt.x} ${endPt.y}`;
+                        } else if (isVertical) {
+                          pathD = `M ${startPt.x} ${startPt.y} C ${startPt.x} ${midY}, ${endPt.x} ${midY}, ${endPt.x} ${endPt.y}`;
+                        } else {
+                          pathD = `M ${startPt.x} ${startPt.y} C ${midX} ${startPt.y}, ${midX} ${endPt.y}, ${endPt.x} ${endPt.y}`;
+                        }
 
                         return (
                           <g key={i}>
-                            <line
-                              x1={ax}
-                              y1={ay}
-                              x2={bx}
-                              y2={by}
+                            <path
+                              d={pathD}
+                              fill="none"
                               stroke={activeTheme.connectorColor}
                               strokeDasharray={edge.line === 'dotted' ? '3 4' : undefined}
                               strokeWidth={edge.line === 'thick' ? 3 : 1.75}
+                              strokeLinecap="round"
                               markerEnd={edge.arrow ? 'url(#mermaid-arrow-end)' : undefined}
                               markerStart={edge.bidirectional ? 'url(#mermaid-arrow-start)' : undefined}
                             />
@@ -1618,19 +1756,30 @@ export const MermaidModal: React.FC<Props> = ({
                       {graph?.nodes.map((node, nodeIdx) => {
                         const p = preview.at.get(node.key);
                         if (!p) return null;
+                        const lines = node.label.split('\n');
+                        const lineHeight = 15;
+                        const startY = p.y + p.height / 2 - ((lines.length - 1) * lineHeight) / 2 + 4;
                         return (
                           <g key={node.key}>
                             {renderPreviewShape(node, p, activeTheme, nodeIdx, renderStyle)}
                             <text
                               x={p.x + p.width / 2}
-                              y={p.y + p.height / 2 + 4}
+                              y={startY}
                               fontSize={12}
                               fontWeight={500}
                               fontFamily={renderStyle === 'sketch' ? 'Caveat, cursive' : 'Inter, sans-serif'}
                               fill={node.style?.color || activeTheme.textColor}
                               textAnchor="middle"
                             >
-                              {node.label.split('\n')[0].slice(0, 24)}
+                              {lines.map((line, lineIdx) => (
+                                <tspan
+                                  key={lineIdx}
+                                  x={p.x + p.width / 2}
+                                  dy={lineIdx === 0 ? 0 : lineHeight}
+                                >
+                                  {line}
+                                </tspan>
+                              ))}
                             </text>
                           </g>
                         );

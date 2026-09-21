@@ -193,3 +193,29 @@ describe('an anchored end', () => {
     expect(at(box(200, 100, 40, 200))).toEqual([200, 200]);
   });
 });
+
+describe('routeCurved: smooth continuous arc', () => {
+  it('generates 48 steps (98 coordinates) for high-definition silky curves', () => {
+    const pts = connectorPoints({ x: 0, y: 0 }, { x: 200, y: 300 }, 'curved', () => null);
+    // 49 points * 2 coordinates = 98
+    expect(pts.length).toBe(98);
+    expect(pts[0]).toBe(0);
+    expect(pts[1]).toBe(0);
+    expect(pts[96]).toBe(200);
+    expect(pts[97]).toBe(300);
+  });
+
+  it('guarantees monotonic vertical progression in vertical flow without backward bulges', () => {
+    // Top-to-bottom flow: from bottom port (0, 0) to top port (100, 200)
+    const pts = connectorPoints(
+      { x: 0, y: 0, port: 'bottom' },
+      { x: 100, y: 200, port: 'top' },
+      'curved',
+      () => null
+    );
+    // Check that Y coordinates monotonically increase from 0 to 200
+    for (let i = 3; i < pts.length; i += 2) {
+      expect(pts[i]).toBeGreaterThanOrEqual(pts[i - 2]);
+    }
+  });
+});

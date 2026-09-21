@@ -269,16 +269,19 @@ export function createNode(input: NewNodeInput): string {
   // moment the copy lands somewhere else. `?? undefined` because a null here
   // would be written into the Y.Map as a literal null and defeat every
   // `if (node.frameId)` downstream; undefined is dropped by the loop below.
+  // Connectors must NEVER belong to frames: they route across the canvas and
+  // must never be clipped to a frame container.
   node.frameId =
-    frameToJoin({
-      id,
-      type: input.type,
-      x: input.x,
-      y: input.y,
-      width: input.width,
-      height: input.height,
-    }) ??
-    undefined;
+    input.type === 'connector'
+      ? undefined
+      : (frameToJoin({
+          id,
+          type: input.type,
+          x: input.x,
+          y: input.y,
+          width: input.width,
+          height: input.height,
+        }) ?? (typeof input.frameId === 'string' ? input.frameId : undefined));
 
   const ymap = new Y.Map<unknown>();
   doc.transact(() => {

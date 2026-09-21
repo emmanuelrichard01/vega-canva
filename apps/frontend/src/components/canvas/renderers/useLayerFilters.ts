@@ -1,6 +1,7 @@
 import { useEffect } from 'react';
 import Konva from 'konva';
 import type React from 'react';
+import { cameraSystem } from '../../../engine/CameraSystem';
 
 /**
  * Layer blur, and the cache it requires.
@@ -24,6 +25,9 @@ import type React from 'react';
  * 3. **`pixelRatio` follows the display.** The default of 1 caches at CSS
  *    pixels, so every blurred object on a retina screen is visibly softer than
  *    its neighbours — for the wrong reason.
+ * 4. **Level of Detail (LOD) Downsampling**: When zoomed far out (zoom < 0.15),
+ *    Gaussian blurs are visually indistinguishable on screen. Bypassing bitmap
+ *    caching at extreme overviews saves substantial GPU texture memory.
  *
  * The caller supplies `deps` describing everything the bitmap depends on. It
  * cannot be derived here: this hook holds a ref to a Konva node, not the
@@ -40,7 +44,10 @@ export function useLayerFilters(
     const node = ref.current;
     if (!node) return;
 
-    if (radius <= 0) {
+    // LOD: when zoomed far out (< 15%), bypass blur filter caching
+    const isFarZoom = cameraSystem.zoom < 0.15;
+
+    if (radius <= 0 || isFarZoom) {
       // `filters([])` and not just clearing the cache: a node left holding a
       // filter list with no cache renders unfiltered but pays the check on
       // every draw, and re-caching it later for some other reason would
