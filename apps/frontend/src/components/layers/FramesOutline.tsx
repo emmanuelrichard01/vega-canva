@@ -109,7 +109,7 @@ const FrameThumb: React.FC<{ frame: AnyNode; children: AnyNode[] }> = ({ frame, 
         width={Math.max(1, w - 1)}
         height={Math.max(1, h - 1)}
         rx={1.5}
-        style={paper.startsWith('#') ? { fill: paper } : undefined}
+        style={paper.startsWith('#') ? ({ '--paper': paper } as React.CSSProperties) : undefined}
       />
       {children.slice(0, 40).map((c) => {
         const b = nodeBounds(c);

@@ -160,6 +160,17 @@ describe('migrateStoredLayout', () => {
     expect(migrated.order).toContain('comment');
   });
 
+  it('keeps a new seat put away when every tool it carries was put away', () => {
+    const raw = migrateStoredLayout({ order: ['select', 'image', 'hand'], hidden: ['grid', 'chart', 'table'] });
+    const migrated = normalizeLayout(raw);
+    expect(migrated.order).not.toContain('data');
+    expect(migrated.hidden).toContain('data');
+    expect(migrated.order).toContain('media');
+    // Stamped as current, so loading it again does not migrate it twice.
+    expect((raw as { v?: number }).v).toBe(LAYOUT_VERSION);
+    expect(migrateStoredLayout(raw)).toBe(raw);
+  });
+
   it('leaves a current layout alone', () => {
     const stored = { v: LAYOUT_VERSION, order: ['chart', 'select'], hidden: [] };
     expect(migrateStoredLayout(stored)).toBe(stored);

@@ -209,6 +209,22 @@ describe('useRoomShortcuts', () => {
     expect(options.setShowHelp).not.toHaveBeenCalled();
   });
 
+  it('hides and shows the interface on Mod+. and on \\', () => {
+    useRoomShortcuts(options);
+
+    const event = fireKeyDown({ key: '.', code: 'Period', ctrlKey: true });
+    expect(event.preventDefault).toHaveBeenCalled();
+    fireKeyDown({ key: '\\', code: 'Backslash' });
+    expect(options.setIsUiVisible).toHaveBeenCalledTimes(2);
+  });
+
+  it('leaves Mod+Shift+. to the text editor', () => {
+    useRoomShortcuts(options);
+
+    fireKeyDown({ key: '>', code: 'Period', ctrlKey: true, shiftKey: true });
+    expect(options.setIsUiVisible).not.toHaveBeenCalled();
+  });
+
   it('toggles command palette on Cmd+K', () => {
     useRoomShortcuts(options);
 

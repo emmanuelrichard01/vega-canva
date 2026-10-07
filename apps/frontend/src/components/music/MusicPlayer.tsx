@@ -1,45 +1,29 @@
 import React, { Suspense, lazy, useCallback, useState } from 'react';
 import { createPortal } from 'react-dom';
-import { Headphones } from 'lucide-react';
 import { useFloatingPanel } from '../ui/useFloatingPanel';
 import { PORTAL_SURFACE_ATTR } from '../ui/portalSurface';
-import { VinylGlyph } from './Turntable';
-import { stationById } from '../../engine/music/stations';
-import { useMusic } from '../../engine/music/musicStore';
-import { useLibrary } from '../../engine/music/library/libraryStore';
-import { useSpotify } from '../../engine/music/spotify/spotifyStore';
-import './music.css';
+import { VinylGlyph } from './VinylGlyph';
+import { usePlayingSignal } from '../../engine/music/playingSignal';
+import './trigger.css';
 
 const MusicPanel = lazy(() => import('./MusicPanel'));
 
 /**
- * The header's music control. Idle it is a headphones button; while anything
- * plays it becomes a small turning record. The player itself loads the first
- * time it is opened.
+ * The record beside your avatar: always there, still when idle, turning at
+ * 33⅓ rpm with a quiet ring while music plays. Its tooltip says what is
+ * playing. It imports only the playing-state signal; the player, its engine
+ * and Spotify load the first time it is opened.
  */
 export const MusicButton: React.FC<{ className?: string }> = ({ className }) => {
-  const music = useMusic();
-  const library = useLibrary();
-  const spotify = useSpotify();
+  const { playing, line } = usePlayingSignal();
   const [open, setOpen] = useState(false);
   const [trigger, setTrigger] = useState<HTMLButtonElement | null>(null);
   const [panel, setPanel] = useState<HTMLDivElement | null>(null);
   const close = useCallback(() => setOpen(false), []);
   const spot = useFloatingPanel({ open, trigger, panel, onClose: close });
 
-  const playing =
-    music.source === 'stations'
-      ? music.status === 'playing'
-      : music.source === 'library'
-        ? library.playing
-        : spotify.playing;
-  const what =
-    music.source === 'stations'
-      ? stationById(music.station).name
-      : music.source === 'library'
-        ? library.current?.title ?? 'Library'
-        : spotify.current?.name ?? 'Spotify';
-  const label = playing ? `Music: ${what}, playing` : 'Music';
+  // The name never changes; what is playing is announced separately and shown in the tooltip.
+  const tooltip = playing && line ? `Playing ${line}` : 'Music';
 
   return (
     <>
@@ -49,13 +33,17 @@ export const MusicButton: React.FC<{ className?: string }> = ({ className }) => 
         className={`btn-icon music-trigger${playing ? ' is-playing' : ''}${className ? ` ${className}` : ''}`}
         aria-haspopup="dialog"
         aria-expanded={open}
-        aria-label={label}
-        data-tooltip={label}
+        aria-pressed={playing}
+        aria-label="Music"
+        data-tooltip={open ? undefined : tooltip}
         data-tooltip-pos="bottom"
         onClick={() => setOpen((v) => !v)}
       >
-        {playing ? <VinylGlyph spinning /> : <Headphones size={16} strokeWidth={1.75} aria-hidden="true" />}
+        <VinylGlyph spinning={playing} size={18} />
       </button>
+      <span className="sr-only" role="status" aria-live="polite">
+        {playing && line ? `Playing ${line}` : ''}
+      </span>
       {open &&
         createPortal(
           <div

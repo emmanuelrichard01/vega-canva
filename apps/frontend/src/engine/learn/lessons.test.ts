@@ -1,8 +1,12 @@
+import { readFileSync } from 'node:fs';
+import { fileURLToPath } from 'node:url';
 import { describe, expect, it } from 'vitest';
 import { LINE_SEAT, TOOL_SHORTCUTS } from '../tools/shortcuts';
 import { TOOL_NAMES } from '../tools/toolNames';
 import { FORCE_IDS } from '../physics/forces';
-import { keyFor, LESSONS, lessonById, lessonForTool, type Lesson } from './lessons';
+import { keyFor, LEGACY_DEMO_IDS, LESSONS, lessonById, lessonForTool, type Lesson } from './lessons';
+import { isScripted } from './demoScript';
+import { CHORDS, chord } from './chords';
 
 const byId = (id: string): Lesson => {
   const lesson = lessonById(id);
@@ -61,11 +65,8 @@ describe('the lesson list', () => {
   it('has a lesson for every tool whose gesture is not obvious', () => {
     /** Tools that need no lesson, and why each one does not. */
     const NEEDS_NONE: Record<string, string> = {
-      select: 'Click a thing to select it. There is no second meaning to teach.',
+      select: 'Click a thing to select it. It is armed from the first frame, so a coach mark here would fire before anything else does; the modifiers are taught in the library (`select-more`).',
       hand: 'Drag to pan. The cursor already says so.',
-      eraser: 'Drag across what you want gone.',
-      pen: 'Freehand: press and draw. The Bézier pen is the one with a gesture, and it has `pen-anchors`.',
-      shape: 'Drag out a box. The shape *vocabulary* is a panel, taught where it is chosen rather than on arming the tool.',
     };
 
     const taught = new Set<string>();
@@ -148,7 +149,7 @@ describe('the lesson list', () => {
     // deliberately have none. These five are the ones the product is least
     // discoverable without, so their absence should fail loudly rather than
     // quietly.
-    for (const tool of ['grid', 'shape-line', 'connector', 'bezier-pen', 'sticky']) {
+    for (const tool of ['grid', 'shape-line', 'connector', 'bezier-pen', 'sticky', 'pen', 'eraser', 'shape', 'table', 'chart', 'frame']) {
       expect(lessonForTool(tool), tool).toBeDefined();
     }
     expect(lessonForTool('magnet')?.id).toBe('forces');
@@ -157,7 +158,7 @@ describe('the lesson list', () => {
   it('leaves the guessable tools alone', () => {
     // A coach mark on a tool whose whole behaviour is "drag out a rectangle" is
     // the thing that teaches people to dismiss coach marks unread.
-    for (const tool of ['select', 'hand', 'eraser', 'shape']) {
+    for (const tool of ['select', 'hand']) {
       expect(lessonForTool(tool), tool).toBeUndefined();
     }
   });
@@ -193,6 +194,63 @@ describe('the tools that have lessons', () => {
         if (forces.has(tool)) continue;
         expect(TOOL_NAMES[tool], `${tool} has no name`).toBeTruthy();
       }
+    }
+  });
+});
+
+describe('the demos lessons name', () => {
+  it('each exist, scripted or legacy', () => {
+    const legacy = new Set<string>(LEGACY_DEMO_IDS);
+    for (const lesson of LESSONS) {
+      if (!lesson.demo) continue;
+      expect(isScripted(lesson.demo) || legacy.has(lesson.demo), `${lesson.id} plays "${lesson.demo}"`).toBe(true);
+    }
+  });
+});
+
+describe('the recipes', () => {
+  const recipes = LESSONS.filter((l) => l.recipe);
+
+  it('are five, each raised from the library rather than a tool', () => {
+    expect(recipes.map((r) => r.id).sort()).toEqual([
+      'recipe-bento',
+      'recipe-flowchart',
+      'recipe-live-chart',
+      'recipe-present',
+      'recipe-retro',
+    ]);
+    for (const r of recipes) expect(r.trigger.on, r.id).toBe('library');
+  });
+
+  it('are short enough to finish', () => {
+    for (const r of recipes) {
+      expect(r.steps.length, r.id).toBeGreaterThanOrEqual(3);
+      expect(r.steps.length, r.id).toBeLessThanOrEqual(5);
+    }
+  });
+});
+
+describe('the keys in the copy', () => {
+  it('come from the chord table, not from the lessons', () => {
+    // A chord typed into a lesson is a chord the table cannot keep honest. Each
+    // chord that appears in the copy must be the table's own spelling.
+    const text = LESSONS.flatMap((l) => [l.gist, ...l.steps.flatMap((s) => [s.act, s.gives])]).join(' ');
+    expect(text).toContain(chord('arrangeInGrid'));
+    expect(text).toContain(chord('present'));
+    expect(text).toContain(chord('fitFrame'));
+    expect(text).toContain(chord('fillDown'));
+    expect(text).toContain(chord('columnMenu'));
+    expect(text).toContain(chord('cursorChat'));
+    expect(Object.keys(CHORDS).length).toBeGreaterThan(10);
+  });
+
+  it('never spell a modifier chord by hand', () => {
+    // The glyph and word spellings of the chords that carry a modifier are the
+    // table's to produce. A literal one in `lessons.ts` is a copy that will not
+    // follow a rebinding or the reader's platform.
+    const here = readFileSync(fileURLToPath(new URL('./lessons.ts', import.meta.url)), 'utf8');
+    for (const literal of ['Alt+Shift', 'Cmd+', 'Ctrl+', '⌥', '⌘', '⇧']) {
+      expect(here.includes(literal), `lessons.ts spells "${literal}" by hand`).toBe(false);
     }
   });
 });

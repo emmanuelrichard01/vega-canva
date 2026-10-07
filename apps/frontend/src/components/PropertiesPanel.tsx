@@ -60,6 +60,7 @@ import { TypographySection } from './panel/sections/TypographySection';
 import { ShapeGeometrySection } from './panel/sections/ShapeGeometrySection';
 import { ConnectorSection } from './panel/sections/ConnectorSection';
 import { ImageSection } from './panel/sections/ImageSection';
+import { IconSection } from './icons/IconSection';
 import { PhysicsMaterialSection, MetadataSection } from './panel/sections/PhysicsMaterialSection';
 import { StickySection } from './panel/sections/StickySection';
 import { SelectionColorsSection } from './panel/sections/SelectionColorsSection';
@@ -67,6 +68,7 @@ import { BoardSection } from './panel/sections/BoardSection';
 import { cornerRadiiOf } from '../engine/model/cornerRadii';
 import { FeatureBoundary } from './ui/FeatureBoundary';
 import { storageGet, storageSet } from '../utils/safeStorage';
+import { useSidewaysOverflowCheck } from './panel/overflowCheck';
 import './panel/panel.css';
 
 const DEFAULT_SHADOW: Shadow = {
@@ -209,6 +211,8 @@ const PropertiesPanelInner: React.FC<PropertiesPanelProps> = ({ selectedIds, ove
     useShallow((state) => selectedIds.map((id) => state.objects[id]).filter((n): n is AnyNode => Boolean(n)))
   );
   const [aspectLocked, setAspectLocked] = useState(false);
+  const [scroller, setScroller] = useState<HTMLDivElement | null>(null);
+  useSidewaysOverflowCheck(scroller);
 
   const nodes: AnyNode[] = useMemo(() => {
     if (!overrideObjects) return storeNodes;
@@ -227,7 +231,7 @@ const PropertiesPanelInner: React.FC<PropertiesPanelProps> = ({ selectedIds, ove
       <PanelSubjectContext.Provider value="none">
         <div className="props-shell">
           <WidthHandle />
-          <div className="props-panel custom-scrollbar">
+          <div ref={setScroller} className="props-panel custom-scrollbar">
             <header className="panel-head">
               <span className="panel-head__name">Board</span>
               {onCollapse && (
@@ -537,7 +541,7 @@ const PropertiesPanelInner: React.FC<PropertiesPanelProps> = ({ selectedIds, ove
     <PanelSubjectContext.Provider value={subject}>
       <div className="props-shell">
         <WidthHandle />
-        <div className="props-panel custom-scrollbar">
+        <div ref={setScroller} className="props-panel custom-scrollbar">
           <PanelHeader
             nodes={nodes}
             editors={editors}
@@ -588,6 +592,9 @@ const PropertiesPanelInner: React.FC<PropertiesPanelProps> = ({ selectedIds, ove
             setLayoutGuide={setLayoutGuide}
           />
           <ImageSection node={node as ImageNode} adjustments={adjustments} affords={affords} setAdjustment={setAdjustment} set={set} single={!isMulti} />
+          {node.type === 'icon' && !isMulti && (
+            <IconSection node={node} onChange={(patch) => set(patch as Partial<AnyNode>)} />
+          )}
 
           <TransformSection
             bounds={bounds}

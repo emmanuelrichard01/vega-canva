@@ -1,5 +1,7 @@
 import { TOOL_SHORTCUTS } from '../tools/shortcuts';
 import { FORCE_IDS } from '../physics/forces';
+import { chord } from './chords';
+import type { ScriptedId } from './demoScript';
 
 /**
  * What the interface cannot say for itself, written down once.
@@ -69,23 +71,36 @@ export interface LessonStep {
  * against objects) and a sentence naming both is a sentence you have to
  * imagine.
  *
+ * The same holds for the newer gestures: a stroke that snaps when you hold
+ * still, a chain that grows on Tab, a column that fills when you drag a corner
+ * are things that happen *over time*, and a sentence cannot show time.
+ *
+ * ## Two kinds of scene
+ *
+ * `ScriptedId` demos are driven by one clock (`demoScript.ts`): a ghost pointer,
+ * keycaps and the drawing all read the same time, so they can be paused,
+ * scrubbed and replaced by a three-frame storyboard under reduced motion. The
+ * rest are older CSS loops that stay as they are until their lesson changes.
+ *
  * The ones still without a scene fail the test in the other direction. A
  * comment is a pin and a thread, a voice note is a waveform, a frame is a box:
  * the words already put the right picture in your head, so a drawing would only
  * confirm it. `offline` has no gesture at all.
  */
-export type DemoId =
-  | 'route'
-  | 'fill-grid'
-  | 'reframe'
-  | 'bind'
-  | 'field'
-  | 'chain'
-  | 'boolean'
-  | 'pen'
-  | 'sizing'
-  | 'unfurl'
-  | 'code-shapes';
+export const LEGACY_DEMO_IDS = [
+  'route',
+  'reframe',
+  'field',
+  'boolean',
+  'pen',
+  'sizing',
+  'unfurl',
+  'code-shapes',
+] as const;
+
+export type LegacyDemoId = (typeof LEGACY_DEMO_IDS)[number];
+
+export type DemoId = LegacyDemoId | ScriptedId;
 
 /**
  * What raises a lesson on the canvas.
@@ -120,31 +135,39 @@ export interface Lesson {
   gist: string;
   steps: readonly LessonStep[];
   demo?: DemoId;
+  /**
+   * A recipe: several tools used together to make something, rather than one
+   * gesture. It is always `library`-triggered, because there is no tool whose
+   * arming means "I am about to build a flowchart", and it is always walkable
+   * (`walkthrough.ts`), because the point of a recipe is that you finish with
+   * the thing made.
+   */
+  recipe?: true;
 }
 
 export const LESSONS: readonly Lesson[] = [
   {
     id: 'grid-content',
     trigger: { on: 'tool', tools: ['grid'] },
-    title: 'A grid can hold your pictures',
-    gist: 'The modules are not decoration. Put pictures or captions in them and they fill each one edge to edge, then follow it when you change the arrangement.',
-    demo: 'fill-grid',
+    title: 'A grid is a live layout',
+    gist: 'The modules are not decoration. Put things in them and they fill each one edge to edge, then follow it when you change the arrangement. Or go the other way and let a grid form around what you already have.',
+    demo: 'arrange',
     steps: [
       {
-        act: 'Drop image files straight onto a module',
-        gives: 'Each picture fills it edge to edge, cropped to fit rather than squashed to fit',
+        act: 'Drag a picture, a note or any object onto a module',
+        gives: 'It is adopted: sized to the module, cropped to fit rather than squashed to fit',
       },
       {
-        act: 'Select some pictures and a grid, then Place in grid',
-        gives: 'They are dealt across the empty modules in the order you picked them',
+        act: `Select several objects and press ${chord('arrangeInGrid')}`,
+        gives: 'A grid forms around them with a cell for each, sized to what it holds',
+      },
+      {
+        act: 'Double-click a grid, or select it and press Enter',
+        gives: `Edit cells. ${chord('mergeCells')} merges the selected cells, ${chord('splitCells')} splits them, and dragging a border resizes the rows or columns`,
       },
       {
         act: 'Double-click a picture in a module',
         gives: 'Drag to move it inside its frame, scroll to zoom in on part of it',
-      },
-      {
-        act: 'Double-click an empty module',
-        gives: 'A caption, already sized and clipped to that module',
       },
       {
         act: 'Change the arrangement underneath it all',
@@ -163,23 +186,92 @@ export const LESSONS: readonly Lesson[] = [
     id: 'chart-data',
     trigger: { on: 'tool', tools: ['chart'] },
     title: 'A chart is a spreadsheet you can see',
-    gist: 'The numbers behind a chart are a real sheet. Select a range, paste a block in from Excel or Sheets, and watch the chart redraw beside them as you type.',
+    gist: 'The numbers behind a chart are a real sheet, or a range of a table on the board. Change a number and the chart redraws beside it. Drag a bar and the number follows.',
+    demo: 'chartlive',
     steps: [
       {
         act: 'Place a chart, then double-click it',
-        gives: 'Its data as a spreadsheet, with the chart live beside it',
+        gives: 'Its data as a spreadsheet, with the chart live beside it. Paste a block from Excel or Sheets and it lands as real rows and columns',
       },
       {
-        act: 'Paste a block copied from Excel or Sheets',
-        gives: 'Real rows and columns, not one cell of text. A single value pasted over a range fills it',
+        act: 'Select a range in a table and choose Chart this',
+        gives: 'A chart beside the table, linked to that range. Edit the table and the chart follows',
       },
       {
-        act: 'Select some numbers',
-        gives: 'Their sum, average, count, smallest and largest, along the bottom',
+        act: 'Select a chart and drag a bar or a point',
+        gives: 'The value moves with your pointer, and the number behind it changes to match',
+      },
+      {
+        act: 'Click a legend entry. Alt-click one',
+        gives: 'Click hides or shows that series. Alt-click shows it on its own',
+      },
+      {
+        act: 'Select a chart and double-click its title or an axis label',
+        gives: 'The text, open to edit in place',
       },
       {
         act: 'Leave a cell empty rather than typing 0',
         gives: 'A gap in the line. A missing reading is not a measured nought, and the chart draws the difference',
+      },
+    ],
+  },
+  {
+    id: 'pen-snap',
+    trigger: { on: 'tool', tools: ['pen'] },
+    title: 'Draw it roughly, hold, and it snaps clean',
+    gist: 'Keep the pen still for a beat at the end of a stroke and it becomes the shape you meant: a line, arrow, ellipse, box, diamond, triangle or polygon, drawn in the same brush.',
+    demo: 'snap',
+    steps: [
+      {
+        act: 'Draw a rough circle, box or arrow, then hold still',
+        gives: 'The stroke snaps to a clean version. Keep moving and it stays freehand, so handwriting is safe',
+      },
+      { act: 'Hold Shift while you draw', gives: 'A straight line from where you pressed to where you are' },
+      {
+        act: 'Pick Pen, Marker or Highlighter in the options that open with the tool',
+        gives: 'Three brushes. The highlighter lays translucent ink and never snaps. Snap to shapes can be switched off in the same place',
+      },
+    ],
+  },
+  {
+    id: 'eraser-lasso',
+    trigger: { on: 'tool', tools: ['eraser'] },
+    title: 'Erase with a loop',
+    gist: 'The eraser either wipes what it passes over or removes everything inside a loop you draw. Alt swaps between the two for one stroke.',
+    demo: 'lasso',
+    steps: [
+      {
+        act: 'Choose Lasso in the eraser options, then draw a loop',
+        gives: 'Everything the loop encloses is removed when you let go',
+      },
+      {
+        act: 'Hold Alt as you press',
+        gives: 'The other mode for that one stroke: the brush if Lasso is chosen, the lasso if the brush is',
+      },
+    ],
+  },
+  {
+    id: 'shape-library',
+    trigger: { on: 'tool', tools: ['shape'] },
+    title: 'Every shape, one search away',
+    gist: 'The shape seat opens a library you can search, pin and place from. Type what you are after, even loosely, and pick.',
+    demo: 'shapes',
+    steps: [
+      {
+        act: 'Open the shape library and type a few letters',
+        gives: 'Matching shapes, forgiving of typos. Your pins and recent shapes sit at the top',
+      },
+      {
+        act: 'Drag a tile onto the board',
+        gives: 'The shape lands where you let go. The library stays open, so you can drag out several in a row',
+      },
+      {
+        act: 'Hold Shift as you click a tile',
+        gives: 'The tool is armed and the library stays open',
+      },
+      {
+        act: 'Select a shape and look for small handles',
+        gives: 'Shapes with a setting, such as a star’s points, show a handle on the board that you can drag',
       },
     ],
   },
@@ -217,23 +309,34 @@ export const LESSONS: readonly Lesson[] = [
   {
     id: 'connector-bind',
     trigger: { on: 'tool', tools: ['connector'] },
-    title: 'An arrow that follows what it joins',
-    gist: 'A connector stores which two objects it joins, never a pair of coordinates, so rearranging a diagram never leaves an arrow pointing at nothing.',
-    demo: 'bind',
+    title: 'Grow a diagram from any shape',
+    gist: 'A connector stores which two objects it joins, never a pair of coordinates, so rearranging a diagram never leaves an arrow pointing at nothing. The quickest way to make one is from the shape you are on.',
+    demo: 'flow',
     steps: [
       {
-        act: 'Click one object, then the other',
+        act: 'Select a shape or note and bring the pointer near it',
+        gives: 'A magnet on each side. Click one for a connected copy on that side, with the line already routed',
+      },
+      {
+        act: `Press ${chord('quickNext')} with it selected`,
+        gives: 'The next shape in the direction the diagram is flowing, already connected. Keep pressing to build a chain',
+      },
+      {
+        act: `Press ${chord('quickBack')}`,
+        gives: 'Selection steps back to the shape that leads into this one',
+      },
+      {
+        act: 'Click one object, then the other, with the connector tool',
         gives: 'An arrow between them that survives either one being moved or resized',
       },
       {
-        act: 'Drop an end in the middle of an object',
-        gives: 'It binds to the object, and the route picks whichever side is shortest as things move',
+        act: 'Drop an end in the middle of an object, or on its edge',
+        gives: 'In the middle it picks whichever side is shortest as things move. On the edge it stays on that exact point',
       },
       {
-        act: 'Drop an end on the edge instead',
-        gives: 'It binds to that exact point and stays on it',
+        act: 'Double-click a connector',
+        gives: 'A label that sits on the line. Elbow and curved lines route around other objects, and the small handles on a segment move it',
       },
-      { act: 'Select a connector and drag either end', gives: 'The same aim, taken again' },
     ],
   },
   {
@@ -284,13 +387,28 @@ export const LESSONS: readonly Lesson[] = [
     id: 'sticky-chain',
     trigger: { on: 'tool', tools: ['sticky'] },
     title: 'One note, then eight more',
-    gist: 'Thinking out loud is never one note. Tab out of the one you are typing and the next appears beside it, already open.',
+    gist: 'Thinking out loud is never one note. Press Tab while you type and the next note appears beside it, already open.',
     demo: 'chain',
     steps: [
-      { act: 'Press Tab while typing a note', gives: 'The next note, beside it, with the caret in it' },
       {
-        act: 'Keep going',
-        gives: 'Five across, then a new row. The colour and size carry, so a train of thought looks like one',
+        act: `Press ${chord('chainRight')} while typing a note`,
+        gives: 'The next note, beside it, with the caret in it. Five across, then a new row',
+      },
+      {
+        act: `Press ${chord('chainDown')}`,
+        gives: 'The next note goes below instead. Colour and size carry, so a train of thought looks like one',
+      },
+      {
+        act: `Press ${chord('finishNote')}`,
+        gives: 'Finishes this note and opens the next, the same as Tab, for when Tab is busy',
+      },
+      {
+        act: 'Select notes and press 1 to 8',
+        gives: 'They take that colour, all at once',
+      },
+      {
+        act: `Select several and press ${chord('organiseByTheme')}`,
+        gives: `Notes of one colour gather into a column. Add Shift (${chord('organiseByAuthor')}) to gather by who wrote them`,
       },
       { act: 'Press Escape', gives: 'Out of the note and back to the board' },
     ],
@@ -343,11 +461,20 @@ export const LESSONS: readonly Lesson[] = [
   {
     id: 'frame-page',
     trigger: { on: 'tool', tools: ['frame'] },
-    title: 'A frame is a page',
-    gist: 'Not a group and not a box drawn around things. A frame is a region at a real size that clips what is inside it and exports on its own.',
+    title: 'A frame is a page, and a slide',
+    gist: 'Not a group and not a box drawn around things. A frame is a region at a real size that clips what is inside it, exports on its own and presents as a slide.',
+    demo: 'present',
     steps: [
       { act: 'Drag one out, or pick a preset size', gives: 'A named region at real dimensions' },
       { act: 'Put something across its edge', gives: 'The overhang is clipped, the way a page clips' },
+      {
+        act: `Press ${chord('present')}`,
+        gives: 'The frames present in reading order, starting from the selected one. Arrow keys move between them and Escape leaves',
+      },
+      {
+        act: `Select a frame and press ${chord('fitFrame')}`,
+        gives: 'It shrinks or grows to wrap exactly what it holds',
+      },
       {
         act: 'Export with several frames on the board',
         gives: 'One file each, or one document with a page each',
@@ -358,11 +485,34 @@ export const LESSONS: readonly Lesson[] = [
     id: 'table-cells',
     trigger: { on: 'tool', tools: ['table'] },
     title: 'A table is a small spreadsheet',
-    gist: 'The cells take formulas and pasted blocks, so the numbers on the board can do sums rather than sit there.',
+    gist: 'The cells take formulas, fills and pasted blocks, so the numbers on the board can do sums rather than sit there.',
+    demo: 'fill',
     steps: [
-      { act: 'Drag out a table, then double-click it', gives: 'Its cells, open to type in' },
-      { act: 'Start a cell with =, like =SUM(B2:B5)', gives: 'A total that recalculates as the numbers change' },
-      { act: 'Paste a block copied from Excel or Sheets', gives: 'Real rows and columns, not one cell of text' },
+      { act: 'Drag out a table, then double-click it', gives: 'Its cells, open to type in. Paste a block from Excel or Sheets and it lands as real rows and columns' },
+      {
+        act: 'Drag the small square at the corner of the selected cells',
+        gives: 'The cells you cover are filled from the ones you started with, carrying a series on where there is one',
+      },
+      {
+        act: `Select a range and press ${chord('fillDown')} or ${chord('fillRight')}`,
+        gives: 'Copies the first row down the range, or the first column across it',
+      },
+      {
+        act: 'Start a cell with =, like =SUM(B2:B5)',
+        gives: 'A total that recalculates as the numbers change. The formula bar above the table shows and edits it',
+      },
+      {
+        act: `Click the caret on a column heading, or press ${chord('columnMenu')}`,
+        gives: 'The column menu: sort, filter, and set what kind of column it is',
+      },
+      {
+        act: 'Give a column a richer type',
+        gives: 'Checkbox, rating, currency, date or choice, and each cell then edits as one',
+      },
+      {
+        act: 'Select a range and choose Chart this',
+        gives: 'A chart beside the table that stays linked to it',
+      },
     ],
   },
   {
@@ -372,6 +522,10 @@ export const LESSONS: readonly Lesson[] = [
     gist: 'A comment belongs to a place on the board rather than to a list beside it, so the conversation stays next to the thing it is about.',
     steps: [
       { act: 'Click anywhere, or on an object', gives: 'A pin, and a thread under it' },
+      {
+        act: 'Click on an object, then move that object',
+        gives: 'The pin goes with it, so the thread is never left pointing at empty board',
+      },
       { act: 'Type @ and a name', gives: 'That person, mentioned' },
       { act: 'Resolve it', gives: 'The pin goes quiet without the thread being lost' },
     ],
@@ -466,6 +620,162 @@ export const LESSONS: readonly Lesson[] = [
     steps: [
       { act: 'Lose the connection', gives: 'The board says so, once, and keeps accepting edits' },
       { act: 'Come back', gives: 'Your changes and everyone else’s, merged rather than fought over' },
+    ],
+  },
+  {
+    id: 'select-more',
+    trigger: { on: 'library' },
+    title: 'Select exactly what you mean',
+    gist: 'A click selects the top object. Holding a key changes what a click, a hover or a shortcut reaches.',
+    demo: 'select',
+    steps: [
+      { act: `Hold ${chord('addToSelection')} and click`, gives: 'Adds to the selection, or takes one out of it' },
+      {
+        act: `Hold ${chord('deepSelect')} and click`,
+        gives: 'Goes straight to the object inside a group or frame, instead of the group',
+      },
+      {
+        act: `${chord('selectBehind')}-click`,
+        gives: 'Picks the object behind the one on top. Keep going to work down the stack',
+      },
+      {
+        act: `Hold ${chord('measure')} over an object`,
+        gives: 'The distance to its neighbours, drawn on the board',
+      },
+      {
+        act: `Select one object, then press ${chord('similarFill')}`,
+        gives: `Everything with the same fill joins the selection. ${chord('similarType')}, ${chord('similarStroke')} and ${chord('similarFont')} match type, stroke and font instead`,
+      },
+    ],
+  },
+  {
+    id: 'cursor-chat',
+    trigger: { on: 'library' },
+    title: 'Say something at your pointer',
+    gist: 'On a shared board you can type a short message that follows your pointer and is seen by everyone, without opening a comment.',
+    demo: 'cursorchat',
+    steps: [
+      {
+        act: `Press ${chord('cursorChat')} with the pointer over the board`,
+        gives: 'A small box opens at your pointer, and everyone sees what you type as you type it',
+      },
+      { act: 'Press Enter', gives: 'Sends it. Escape cancels instead' },
+    ],
+  },
+  {
+    id: 'music-vinyl',
+    trigger: { on: 'library' },
+    title: 'The record beside your avatar',
+    gist: 'A board can have a soundtrack. The record button next to your avatar opens the music panel.',
+    steps: [
+      { act: 'Click the record beside your avatar', gives: 'The music panel: stations of recorded tracks, and Spotify if you have connected it' },
+      {
+        act: 'Pick a station',
+        gives: 'It plays for you. If you share what you are listening to, collaborators see it under your name',
+      },
+    ],
+  },
+
+  /* ---------------------------------------------------------------- recipes */
+
+  {
+    id: 'recipe-flowchart',
+    trigger: { on: 'library' },
+    recipe: true,
+    title: 'Flowchart in 60 seconds',
+    gist: 'Grow each step from the last with the keyboard, then drag one around and watch the lines re-route.',
+    demo: 'flow',
+    steps: [
+      { act: 'Draw a shape and leave it selected', gives: 'Your first step' },
+      {
+        act: `Press ${chord('quickNext')}`,
+        gives: 'The next step appears beside it, already joined by a connector',
+      },
+      {
+        act: `Press ${chord('quickNext')} twice more`,
+        gives: 'A chain of steps, each connected to the one before',
+      },
+      {
+        act: 'Drag one step somewhere else',
+        gives: 'The arrows follow and route around whatever is in the way',
+      },
+    ],
+  },
+  {
+    id: 'recipe-live-chart',
+    trigger: { on: 'library' },
+    recipe: true,
+    title: 'Live chart from a table',
+    gist: 'Type the numbers once, in a table, and let a chart read them. Change a number later and the chart redraws.',
+    demo: 'chartlive',
+    steps: [
+      { act: 'Drag out a table and type a few numbers', gives: 'Rows and columns you edit like a sheet' },
+      {
+        act: 'Select the numbers and choose Chart this',
+        gives: 'A chart beside the table, linked to that range',
+      },
+      {
+        act: 'Select the chart',
+        gives: 'Drag a bar to change its value, double-click the title to rename it, Alt-click a legend entry to show one series alone',
+      },
+    ],
+  },
+  {
+    id: 'recipe-bento',
+    trigger: { on: 'library' },
+    recipe: true,
+    title: 'Bento layout with Arrange in grid',
+    gist: 'Make the pieces first, in any order and any size, then let a grid gather them.',
+    demo: 'arrange',
+    steps: [
+      { act: 'Draw four or five shapes', gives: 'Any size, anywhere. They are the pieces of the layout' },
+      { act: 'Select them all', gives: 'Drag a box round them, or hold Shift and click each one' },
+      {
+        act: `Press ${chord('arrangeInGrid')}`,
+        gives: `They snap into a live grid with a cell each. Double-click the grid, select two cells and press ${chord('mergeCells')} to merge them`,
+      },
+    ],
+  },
+  {
+    id: 'recipe-retro',
+    trigger: { on: 'library' },
+    recipe: true,
+    title: 'Run a retro with stickies',
+    gist: 'Write fast, sort by colour, and put some music on from the record beside your avatar.',
+    demo: 'chain',
+    steps: [
+      {
+        act: `Write a note, press ${chord('chainRight')}, and write another`,
+        gives: 'Each note opens the next beside it',
+      },
+      {
+        act: 'Add a few more, then select them',
+        gives: 'Press 1 to 8 to give the selection a colour. One colour per column of the retro works well',
+      },
+      {
+        act: `Press ${chord('organiseByTheme')}`,
+        gives: 'Notes of one colour gather into a column, ready to talk through',
+      },
+    ],
+  },
+  {
+    id: 'recipe-present',
+    trigger: { on: 'library' },
+    recipe: true,
+    title: 'Present frames as slides',
+    gist: 'Each frame is a slide, shown in reading order. Fit the frames to their content first so nothing is cut off.',
+    demo: 'present',
+    steps: [
+      { act: 'Draw two frames side by side', gives: 'Each one is a slide.' },
+      { act: 'Put something inside each frame', gives: 'Anything inside a frame belongs to that slide' },
+      {
+        act: `Select a frame and press ${chord('fitFrame')}`,
+        gives: 'The frame wraps exactly what it holds',
+      },
+      {
+        act: `Press ${chord('present')}`,
+        gives: 'The slides play from the selected frame. Arrow keys move between them and Escape leaves',
+      },
     ],
   },
 ];

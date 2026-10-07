@@ -939,58 +939,220 @@ export function packageContour(w: number, h: number): ContourGeometry {
 }
 
 /**
- * A key: a ring for a bow, a shaft, and two bits.
+ * A key: a round bow with a hole in it, a straight blade, stepped teeth along
+ * one edge and a squared tip, lying on the diagonal.
  *
- * A compound shape, because a key's bow has a hole in it — which is the detail
- * that makes the silhouette read as a key rather than as a lollipop, and which
- * the outline it replaces could not express at all. That one went further
- * wrong: it was authored with curves and then drawn through its own
- * straight-sided fallback, so the round bow came out as a **diamond**.
+ * ## Laid out in the box, not stretched into it
  *
- * The bow's rim is picked up where the shaft leaves it, found by the tangent
- * rather than by an offset, so the two meet cleanly at any size.
+ * The other authored symbols are drawn once and scaled into whatever box they
+ * are given, which is right for a heart and wrong for anything with a circle in
+ * it: a key in a wide box would get an oval bow. So this one is *solved* for
+ * its box. The bow is always a true circle in the box's top-right corner, and
+ * the blade swings between flat and upright until the whole key fills the box
+ * exactly: near the diagonal in a squarish box, flat in a wide one, upright in
+ * a tall one. Past either end of the swing the blade lengthens instead, and
+ * the extra length goes between the bow and the teeth, so the cuts keep their
+ * spacing and angles at any aspect.
+ *
+ * ## The measurements
+ *
+ * Everything below is in key units: one unit is the length from the bow's
+ * centre to the tip of an unstretched key. The proportions are those of the
+ * glyph the shape was refined from (a bow about four tenths of the length in
+ * radius, a blade a sixth as wide, teeth a tenth deep), made regular: one
+ * blade width end to end, every tooth the same ramp and face at the same
+ * pitch, and a hint of radius at every corner so the joins read as cut metal
+ * rather than as pixels.
  */
-const keyUnit = unit(() => {
-  // Authored at a key’s own proportions and stretched into the box, like the
-  // other symbols here. Solved directly in the box, the bow can only be as
-  // wide as a third of the width and as tall as half the height, so in a
-  // square box the shape sat a fifth of its own height clear of the top edge.
-  const w = 100;
-  const h = 36;
-  const cy = h / 2;
-  const bowR = Math.min(h / 2, w * 0.34);
-  const bowCx = bowR;
-  const shaftHalf = bowR * 0.32;
-  // Where the shaft's edges meet the rim.
-  const theta = Math.asin(clamp(shaftHalf / bowR, -1, 1));
-  const meetX = bowCx + Math.sqrt(Math.max(0, bowR * bowR - shaftHalf * shaftHalf));
-  const bitDepth = h - (cy + shaftHalf);
-  const shaftLen = w - meetX;
-  const bit = Math.max(shaftLen * 0.16, 3);
+const KEY_CORE = 0.085;
+/** How far a tooth stands proud of the blade. */
+const KEY_TOOTH = 0.1;
+/**
+ * Tooth spacing, at most, and how one pitch divides: a long ramp down toward
+ * the bow (about 35° off the blade) and a short steep face back up (about 68°).
+ * A short blade packs its teeth closer, and the two cuts shrink together.
+ */
+const KEY_PITCH = 0.19;
+const KEY_RAMP_SHARE = 0.75;
+/** The flat between the last tooth and the bow, at least. */
+const KEY_SHOULDER = 0.06;
+/** The hole's centre, from the bow's centre away from the blade, as a share of the bow. */
+const KEY_HOLE_AT = 0.42;
+/** Corner softening on the blade, and the larger fillet where the blade meets the bow. */
+const KEY_ROUND = 0.014;
+const KEY_JOIN = 0.03;
 
-  const outer = pen()
-    // Round the bow the long way, from below the shaft to above it.
-    .arc(bowCx, cy, bowR, bowR, theta, Math.PI * 2 - theta)
-    .lineTo(meetX, cy - shaftHalf)
-    .lineTo(w, cy - shaftHalf)
-    .lineTo(w, cy + shaftHalf)
-    // The first bit, at the tip, cutting deepest.
-    .lineTo(w - bit, cy + shaftHalf)
-    .lineTo(w - bit, cy + shaftHalf + bitDepth)
-    .lineTo(w - bit * 2, cy + shaftHalf + bitDepth)
-    .lineTo(w - bit * 2, cy + shaftHalf)
-    // The second, shorter, a gap back along the shaft.
-    .lineTo(w - bit * 3.4, cy + shaftHalf)
-    .lineTo(w - bit * 3.4, cy + shaftHalf + bitDepth * 0.62)
-    .lineTo(w - bit * 4.4, cy + shaftHalf + bitDepth * 0.62)
-    .lineTo(w - bit * 4.4, cy + shaftHalf)
-    .lineTo(meetX, cy + shaftHalf)
-    .close();
+/** The blade's two edges, in key units across it: the plain edge and the tops of the teeth. */
+export const KEY_BLADE = { back: -KEY_CORE, front: KEY_CORE + KEY_TOOTH } as const;
 
-  return compound(outer, ellipseContour(bowCx, cy, bowR * 0.42, bowR * 0.42, 'ccw'));
-});
+export interface KeyLayout {
+  /** The bow's centre and radius, in the node's box. */
+  cx: number;
+  cy: number;
+  r: number;
+  /** Unit vector along the blade, from the bow towards the tip. */
+  ux: number;
+  uy: number;
+  /** Unit vector across the blade, towards the teeth. */
+  vx: number;
+  vy: number;
+  /** Box units per key unit. */
+  scale: number;
+  /** Bow radius and blade length (bow centre to tip), in key units. */
+  bow: number;
+  length: number;
+}
 
-export const keyContour = (w: number, h: number) => keyUnit(w, h);
+/** Where a point given in key units (along the blade, across it) lands in the box. */
+export function keyPoint(k: KeyLayout, along: number, across: number): Point {
+  return {
+    x: k.cx + (along * k.ux + across * k.vx) * k.scale,
+    y: k.cy + (along * k.uy + across * k.vy) * k.scale,
+  };
+}
+
+/** The extent of a key with its blade `theta` radians below flat, about the bow's centre. */
+function keyExtent(theta: number, length: number, bow: number) {
+  const ux = -Math.cos(theta);
+  const uy = Math.sin(theta);
+  const vx = -Math.sin(theta);
+  const vy = -Math.cos(theta);
+  // The tip's two corners are the only parts that reach past the bow: every
+  // tooth stands no prouder than the tip's top corner and sits nearer the bow.
+  const { back, front } = KEY_BLADE;
+  const xs = [-bow, bow, length * ux + front * vx, length * ux + back * vx];
+  const ys = [-bow, bow, length * uy + front * vy, length * uy + back * vy];
+  return { minX: Math.min(...xs), maxX: Math.max(...xs), minY: Math.min(...ys), maxY: Math.max(...ys) };
+}
+
+/**
+ * The angle, the blade length and the scale that make a key fill `w` × `h`.
+ *
+ * The aspect falls steadily as the blade swings from flat to upright, so the
+ * angle is found by bisection. Past either end the length has a closed form,
+ * because the bow then sets one of the two dimensions on its own.
+ */
+export function keyLayout(w: number, h: number, bow: number): KeyLayout {
+  const W = Math.max(w, 1e-6);
+  const H = Math.max(h, 1e-6);
+  const target = W / H;
+  const aspect = (t: number, l: number) => {
+    const e = keyExtent(t, l, bow);
+    return (e.maxX - e.minX) / (e.maxY - e.minY);
+  };
+
+  let theta: number;
+  let length = 1;
+  if (target >= aspect(0, 1)) {
+    theta = 0;
+    length = Math.max(1, 2 * bow * target - bow);
+  } else if (target <= aspect(Math.PI / 2, 1)) {
+    theta = Math.PI / 2;
+    length = Math.max(1, (2 * bow) / target - bow);
+  } else {
+    let lo = 0;
+    let hi = Math.PI / 2;
+    for (let i = 0; i < 40; i++) {
+      const mid = (lo + hi) / 2;
+      if (aspect(mid, 1) > target) lo = mid;
+      else hi = mid;
+    }
+    theta = (lo + hi) / 2;
+  }
+
+  const e = keyExtent(theta, length, bow);
+  const scale = Math.min(W / (e.maxX - e.minX), H / (e.maxY - e.minY));
+  return {
+    cx: -e.minX * scale,
+    cy: -e.minY * scale,
+    r: bow * scale,
+    ux: -Math.cos(theta),
+    uy: Math.sin(theta),
+    vx: -Math.sin(theta),
+    vy: -Math.cos(theta),
+    scale,
+    bow,
+    length,
+  };
+}
+
+/** The hole: on the bow's axis, on the side away from the blade. */
+export function keyHole(k: KeyLayout, holeRatio: number): { x: number; y: number; r: number } {
+  const at = keyPoint(k, -KEY_HOLE_AT * k.bow, 0);
+  return { x: at.x, y: at.y, r: holeRatio * k.r };
+}
+
+/** Where the hole's centre sits along the blade's axis, as a share of the bow. */
+export const KEY_HOLE_OFFSET = KEY_HOLE_AT;
+
+export function keyContour(w: number, h: number, teeth: number, bowRatio: number, holeRatio: number): ContourGeometry {
+  const k = keyLayout(w, h, bowRatio);
+  const R = k.bow;
+  const { back, front } = KEY_BLADE;
+  const L = k.length;
+  const n = clamp(Math.round(teeth), 1, 6);
+
+  // Where the blade's two edges leave the bow.
+  const uPlain = Math.sqrt(Math.max(0, R * R - back * back));
+  const uTeeth = Math.sqrt(Math.max(0, R * R - front * front));
+  // The teeth run back from the tip at one pitch, packed closer only when the
+  // blade is too short to hold them at full spacing.
+  const pitch = Math.max(0.05, Math.min(KEY_PITCH, (L - uTeeth - KEY_SHOULDER) / n));
+  const ramp = pitch * KEY_RAMP_SHARE;
+
+  // The blade, from the bow's teeth-side join to its plain-side join: along
+  // the tops toward the tip, and for each tooth a steep face down and a long
+  // ramp back up to the next peak; the last peak is the tip's own corner.
+  // Then across the squared tip and home along the plain edge.
+  const run: Array<[number, number]> = [[uTeeth, front]];
+  const shoulder = L - n * pitch;
+  if (shoulder - uTeeth > 1e-6) run.push([shoulder, front]);
+  for (let i = n - 1; i >= 0; i--) {
+    const peak = L - i * pitch;
+    run.push([peak - ramp, -back]);
+    run.push([peak, front]);
+  }
+  run.push([L, back]);
+  run.push([uPlain, back]);
+  const pts = run.map(([along, across]) => keyPoint(k, along, across));
+
+  const toward = (p: Point, q: Point, d: number): Point => {
+    const len = Math.hypot(q.x - p.x, q.y - p.y);
+    return len < 1e-9 ? p : { x: p.x + ((q.x - p.x) / len) * d, y: p.y + ((q.y - p.y) / len) * d };
+  };
+  const edge = (i: number) => Math.hypot(pts[i + 1].x - pts[i].x, pts[i + 1].y - pts[i].y);
+
+  // The bow, the long way round: from the plain-side join, away from the
+  // blade, to the teeth-side join, stopping a fillet short of each.
+  const axis = Math.atan2(k.uy, k.ux);
+  const fillet = KEY_JOIN / R;
+  const fromPlain = axis - Math.asin(-back / R) - fillet;
+  const toTeeth = axis + Math.asin(front / R) - Math.PI * 2 + fillet;
+  const p = pen().arc(k.cx, k.cy, k.r, k.r, fromPlain, toTeeth);
+
+  const joinPx = KEY_JOIN * k.scale;
+  const roundPx = KEY_ROUND * k.scale;
+  const into = toward(pts[0], pts[1], Math.min(joinPx, edge(0) / 2));
+  p.quadTo(pts[0].x, pts[0].y, into.x, into.y);
+  for (let i = 1; i < pts.length - 1; i++) {
+    const r = Math.min(roundPx, edge(i - 1) / 2, edge(i) / 2);
+    const a = toward(pts[i], pts[i - 1], r);
+    const b = toward(pts[i], pts[i + 1], r);
+    p.lineTo(a.x, a.y);
+    p.quadTo(pts[i].x, pts[i].y, b.x, b.y);
+  }
+  const last = pts.length - 1;
+  const out = toward(pts[last], pts[last - 1], Math.min(joinPx, edge(last - 1) / 2));
+  p.lineTo(out.x, out.y);
+  p.quadTo(pts[last].x, pts[last].y, k.cx + k.r * Math.cos(fromPlain), k.cy + k.r * Math.sin(fromPlain));
+  const outer = p.close();
+
+  const hole = keyHole(k, holeRatio);
+  // Fitted after the fact: softening the tip's corners pulls them off the
+  // box's edge by the fillet's sagitta, a fraction of a pixel the box would
+  // otherwise carry as air.
+  return fitContour(compound(outer, ellipseContour(hole.x, hole.y, hole.r, hole.r, 'ccw')), w, h);
+}
 
 /**
  * A gear: teeth with flat flanks, arcs at every tip and root, and a bore.

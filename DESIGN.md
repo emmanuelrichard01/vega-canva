@@ -304,6 +304,19 @@ overlays, 768px sheds header labels and goes touch-first.
 Spacing is a 4px scale. Groups are tight (4–8px), sections are generous
 (24–32px), and a heading always carries more space above it than below.
 
+A board has no top bar (Figma UI3): left column, canvas edge to edge, right
+column. Anything placed against that frame reads these tokens, set in
+`components/workspace/shell.css`, rather than measuring the panels:
+
+- `--header-h`: `0px` on a board.
+- `--inset-left` / `--inset-right`: how much of each side an open column
+  covers; `0px` while that column is a pill.
+- `--inset-top`: the band chrome always covers across the top (the ruler).
+- `--board-pill-h`: a closed column's corner pill, `--space-2` below
+  `--inset-top`.
+
+Script that needs the same numbers calls `boardInsets()` in `boardLayout.ts`.
+
 ## Elevation & Depth
 
 Hybrid, and **declared once per surface**. A surface takes a hairline border or
@@ -707,18 +720,22 @@ rule, `useFloatingPanel`.
 
 ### The header
 
-- **Three questions, left to right.** Which board and is it safe (mark, name,
-  save state); what can I do across the board (history, search, view); who is
-  here and how does work leave (people, comments, export, share). The middle
-  stays empty.
+- **Two headers, no bar.** The left column opens with which board this is and
+  whether it is safe: mark, name (click to rename), its menu, save state and
+  search. The right column opens with who is here and how work leaves: people,
+  comments, Share, then undo, redo and history, and zoom.
+- **Closed, a header is a pill in its corner.** `Mod+\` shrinks both columns to
+  pills; `\` or `Mod+.` hides the interface entirely. F6 cycles the regions.
 - **The board has a menu, on its name.** Rename, copy link, share, export,
-  view, history, search, shortcuts, tour, home.
+  view, history, music, search, shortcuts, tour, home.
 - **Settings are menu rows with switches.** Toggling one keeps the menu open.
   On is ink.
+- **Share is the only accent.** History is neutral until replay is on; the
+  unread badge is ink unless something names you.
 - **Controls report state.** Undo and Redo disable when there is nothing to do.
   A button that opens a panel looks pressed while the panel is open.
-- **Everyone is reachable.** The overflow count opens the roster. A live dot
-  marks whoever is doing something.
+- **Everyone is reachable.** Three faces at 20px and a count; the stack opens
+  the roster, where you follow someone or edit your profile.
 
 ### Help
 

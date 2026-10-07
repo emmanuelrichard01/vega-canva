@@ -10,6 +10,7 @@ import { editor } from '../engine/api/EditorAPI';
 import { EXPORT_CHROME } from '../engine/export/chrome';
 import { DataLinkOverlay } from './canvas/DataLinkOverlay';
 import { LayerHoverOutline } from './canvas/LayerHoverOutline';
+import { QuickCreateMagnets } from './canvas/QuickCreateMagnets';
 import { boardBackgroundStyle, useBoardBackground } from './canvas/boardBackground';
 import { SmartGuides } from './canvas/SmartGuides';
 import { MeasureOverlay } from './canvas/MeasureOverlay';
@@ -73,6 +74,7 @@ const NUDGE_KEYS: Record<string, [number, number]> = {
 import { setSlotFit } from '../engine/grid/gridSlotApply';
 import { CommentsOverlay } from "./CommentsOverlay";
 import { FramePresenter } from './canvas/FramePresenter';
+import { FrameNameEditor } from './canvas/FrameNameEditor';
 import { useContentShortcuts } from './canvas/useContentShortcuts';
 import { AudioRecordingHUD } from "./AudioRecordingHUD";
 import { useComments } from "../hooks/useComments";
@@ -1209,6 +1211,7 @@ export const Canvas: React.FC<CanvasProps> = ({ activeTool, selectedIds, setSele
         <Layer>
           <DataLinkOverlay selectedIds={selectedIds} />
           <LayerHoverOutline />
+          <QuickCreateMagnets selectedIds={selectedIds} activeTool={activeTool} />
 
           {/* The force field, drawn at the radius the simulation will actually
               use. Non-interactive so it never intercepts the press that applies
@@ -1351,6 +1354,7 @@ export const Canvas: React.FC<CanvasProps> = ({ activeTool, selectedIds, setSele
         <PresenceRenderer />
         <GestureOverlay />
         <FramePresenter />
+        <FrameNameEditor />
         <CommentsOverlay
           comments={comments}
           objects={objects}

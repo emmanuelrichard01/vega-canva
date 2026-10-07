@@ -1,4 +1,5 @@
 import { useEffect, useRef } from 'react';
+import { isPresenting } from '../engine/tools/presenting';
 import type { CanvasContextMenuActions, ContextTarget } from '../components/CanvasContextMenu';
 import { selectionBounds } from '../engine/model/selection';
 import { useStore } from './useStore';
@@ -42,6 +43,7 @@ export function useSelectionCommandKeys({
 
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
+      if (isPresenting()) return;
       if (e.defaultPrevented) return;
       const el = e.target as HTMLElement | null;
       if (

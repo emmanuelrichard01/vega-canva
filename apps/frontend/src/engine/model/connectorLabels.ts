@@ -52,6 +52,7 @@ export interface LabelRequest {
   points: readonly number[];
 }
 
+/** Where a label goes: the point its plate is centred on. */
 export interface Placed extends Point {
   /** Which candidate was taken, so a caller can tell "moved" from "preferred". */
   slot: number;
@@ -166,16 +167,11 @@ interface Rect {
 }
 
 /**
- * The plate hangs down and to the right of its point.
- *
- * Konva's `Label` anchors at its top-left corner, so that is what the box has
- * to be. Modelling it as centred would put every rectangle half a plate away
- * from where the plate really is, which is enough to let two of them touch
- * while this function reports them clear -- a collision test that is wrong in
- * the same direction as the bug it is preventing.
+ * The plate a label occupies at a point: centred on it, the way the canvas
+ * and the export draw a label, with the line broken around it.
  */
 function rectAt(p: Point, size: { w: number; h: number }): Rect {
-  return { x: p.x, y: p.y, w: size.w, h: size.h };
+  return { x: p.x - size.w / 2, y: p.y - size.h / 2, w: size.w, h: size.h };
 }
 
 function overlaps(a: Rect, b: Rect): boolean {

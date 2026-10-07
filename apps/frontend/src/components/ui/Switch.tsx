@@ -1,4 +1,5 @@
 import React from 'react';
+import { showTipIfTruncated } from '../panel/grammar/truncationTip';
 
 interface SwitchProps {
   /** `'mixed'` when a selection disagrees; pressing it turns everything on. */
@@ -33,6 +34,9 @@ export const Switch: React.FC<SwitchProps> = ({ checked, onChange, label, ariaLa
       onClick={() => onChange(checked !== true)}
       data-tooltip={tooltip}
       data-tooltip-pos="bottom"
+      onPointerOver={(e) =>
+        label && showTipIfTruncated(e.currentTarget, e.currentTarget.querySelector('.ui-switch__label'), tooltip)
+      }
       className={`ui-switch${block ? ' ui-switch--block' : ''}`}
     >
       {label && (

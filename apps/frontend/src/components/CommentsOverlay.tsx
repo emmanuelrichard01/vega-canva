@@ -12,7 +12,10 @@ import {
   lastMessage,
   mentionsMe,
   messageReactions,
+  objectLabel,
   relativeTime,
+  snippetOf,
+  threadPinLabel,
   type MentionCandidate,
 } from '../engine/comments/threads';
 import { readMarks } from '../engine/comments/readMarks';
@@ -100,6 +103,60 @@ function Avatar({ name, color, small }: { name: string; color: string; small?: b
   );
 }
 
+interface ThreadPinProps {
+  id: string;
+  left: number;
+  top: number;
+  author: string;
+  color: string;
+  snippet: string;
+  onObject: string | null;
+  count: number;
+  resolved: boolean;
+  unread: boolean;
+  forMe: boolean;
+  isOpen: boolean;
+  lastAt: number;
+  onToggle: (id: string) => void;
+}
+
+/**
+ * One pin. Memoised on primitives, so panning re-positions it without
+ * rebuilding its name or diffing its subtree, and the name is only composed
+ * when something it says changes.
+ */
+const ThreadPin = React.memo(function ThreadPin(props: ThreadPinProps) {
+  const { id, left, top, author, color, snippet, onObject, count, resolved, unread, forMe, isOpen, lastAt, onToggle } = props;
+  const label = useMemo(
+    () => threadPinLabel({ author, snippet, onObject, count, resolved, unread, forMe }),
+    [author, snippet, onObject, count, resolved, unread, forMe]
+  );
+  return (
+    <div
+      className="cmt-pin-anchor"
+      data-open={isOpen}
+      // Position is data-driven.
+      style={{ left, top }}
+    >
+      <button
+        type="button"
+        className="cmt-pin"
+        data-comment-pin={id}
+        data-open={isOpen}
+        data-resolved={resolved}
+        onClick={() => onToggle(id)}
+        aria-expanded={isOpen}
+        aria-label={label}
+        title={`${author} · ${relativeTime(lastAt)}`}
+      >
+        {unread && <span className="cmt-pin__unread" data-for-me={forMe} aria-hidden="true" />}
+        <Avatar name={author} color={color} />
+        <span>{count}</span>
+      </button>
+    </div>
+  );
+});
+
 export const CommentsOverlay: React.FC<CommentsOverlayProps> = ({
   comments,
   objects,
@@ -151,6 +208,27 @@ export const CommentsOverlay: React.FC<CommentsOverlayProps> = ({
     if (newest) readMarks.markRead(activeCommentId, newest);
   }, [activeCommentId, comments]);
 
+  /**
+   * Close the open thread and hand focus back to its pin, so a keyboard user
+   * lands where they were rather than at the top of the page. Clicking away
+   * does not use this: the pointer has already chosen where focus goes.
+   */
+  const openIdRef = useRef(activeCommentId);
+  openIdRef.current = activeCommentId;
+  const closeThread = useCallback(() => {
+    const id = openIdRef.current;
+    setActiveCommentId(null);
+    if (id) {
+      window.requestAnimationFrame(() => {
+        document.querySelector<HTMLElement>(`[data-comment-pin="${CSS.escape(id)}"]`)?.focus();
+      });
+    }
+  }, []);
+
+  const togglePin = useCallback((id: string) => {
+    setActiveCommentId((cur) => (cur === id ? null : id));
+  }, []);
+
   // The inbox asks for a thread by event; the camera fly-to is its own.
   useEffect(() => {
     const onFocus = (e: Event) => {
@@ -176,6 +254,7 @@ export const CommentsOverlay: React.FC<CommentsOverlayProps> = ({
   const draftInsert = useRef<((text: string) => void) | null>(null);
   const replyInsert = useRef<((text: string) => void) | null>(null);
   const draftInputRef = useRef<HTMLTextAreaElement>(null);
+  const replyInputRef = useRef<HTMLTextAreaElement>(null);
 
   // Inline editing of one's own message.
   const [editingMessageId, setEditingMessageId] = useState<string | null>(null);
@@ -199,6 +278,17 @@ export const CommentsOverlay: React.FC<CommentsOverlayProps> = ({
     engineEvents.on('CommentDraftRequested', handleDraft);
     return () => engineEvents.off('CommentDraftRequested', handleDraft);
   }, []);
+
+  // Opening a thread moves focus into its card: the reply field when you can
+  // write, the card itself when you can only read.
+  useEffect(() => {
+    if (!activeCommentId) return;
+    const frame = window.requestAnimationFrame(() => {
+      const target = replyInputRef.current ?? cardRef.current;
+      target?.focus({ preventScroll: true });
+    });
+    return () => window.cancelAnimationFrame(frame);
+  }, [activeCommentId]);
 
   // A half-typed reply belongs to the thread it was typed in.
   useEffect(() => {
@@ -271,7 +361,7 @@ export const CommentsOverlay: React.FC<CommentsOverlayProps> = ({
       if (e.key === 'Escape') {
         if (editingMessageId) setEditingMessageId(null);
         else if (draft) setDraft(null);
-        else if (activeCommentId) setActiveCommentId(null);
+        else if (activeCommentId) closeThread();
         return;
       }
       if (activeCommentId && e.altKey && (e.key === 'ArrowDown' || e.key === 'ArrowUp')) {
@@ -378,38 +468,25 @@ export const CommentsOverlay: React.FC<CommentsOverlayProps> = ({
       {visibleComments.map((comment) => {
         const world = worldPointOf(comment);
         const s = toScreen(world.x, world.y);
-        const unread = isUnread(comment, marks, currentAuthorId);
-        const forMe = mentionsMe(comment, marks, currentAuthorId);
-        const isOpen = activeCommentId === comment.id;
         const first = comment.messages?.[0];
-        const author = first?.authorName || 'Unknown';
-        const color = first?.authorColor || 'var(--text-secondary)';
-        const count = comment.messages?.length || 0;
-
         return (
-          <div
+          <ThreadPin
             key={comment.id}
-            className="cmt-pin-anchor"
-            data-open={isOpen}
-            // Position is data-driven.
-            style={{ left: s.x, top: s.y }}
-          >
-            <button
-              type="button"
-              className="cmt-pin"
-              data-comment-pin={comment.id}
-              data-open={isOpen}
-              data-resolved={comment.resolved}
-              onClick={() => setActiveCommentId(isOpen ? null : comment.id)}
-              aria-expanded={isOpen}
-              aria-label={`${forMe ? 'You were mentioned. ' : ''}${unread ? 'Unread thread' : 'Thread'} by ${author}, ${count} ${count === 1 ? 'message' : 'messages'}${comment.resolved ? ', resolved' : ''}`}
-              title={`${author} · ${relativeTime(lastMessage(comment)?.createdAt ?? comment.createdAt)}`}
-            >
-              {unread && <span className="cmt-pin__unread" data-for-me={forMe} aria-hidden="true" />}
-              <Avatar name={author} color={color} />
-              <span>{count}</span>
-            </button>
-          </div>
+            id={comment.id}
+            left={s.x}
+            top={s.y}
+            author={first?.authorName || 'Unknown'}
+            color={first?.authorColor || 'var(--text-secondary)'}
+            snippet={first ? snippetOf(first.body) : ''}
+            onObject={comment.objectId ? objectLabel(objects[comment.objectId]) : null}
+            count={comment.messages?.length || 0}
+            resolved={comment.resolved}
+            unread={isUnread(comment, marks, currentAuthorId)}
+            forMe={mentionsMe(comment, marks, currentAuthorId)}
+            isOpen={activeCommentId === comment.id}
+            lastAt={lastMessage(comment)?.createdAt ?? comment.createdAt}
+            onToggle={togglePin}
+          />
         );
       })}
 
@@ -422,6 +499,7 @@ export const CommentsOverlay: React.FC<CommentsOverlayProps> = ({
               <div
                 ref={cardRef}
                 className="cmt-card"
+                tabIndex={-1}
                 role="dialog"
                 aria-label={`Comment thread by ${activeThread.messages?.[0]?.authorName ?? 'Unknown'}`}
                 style={placeFrom(s, CARD_WIDTH, CARD_MAX_HEIGHT)}
@@ -470,7 +548,7 @@ export const CommentsOverlay: React.FC<CommentsOverlayProps> = ({
                   <button
                     type="button"
                     className="cmt-icon-btn"
-                    onClick={() => setActiveCommentId(null)}
+                    onClick={closeThread}
                     aria-label="Close thread"
                     title="Close (Esc)"
                   >
@@ -508,7 +586,7 @@ export const CommentsOverlay: React.FC<CommentsOverlayProps> = ({
                                 rows={2}
                                 autoFocus
                                 aria-label="Edit message"
-                                className="comment-edit-field"
+                                className="cmt-edit-field"
                               />
                               <div className="cmt-msg__edit-row">
                                 <button type="button" className="cmt-btn" onClick={() => setEditingMessageId(null)}>
@@ -544,9 +622,14 @@ export const CommentsOverlay: React.FC<CommentsOverlayProps> = ({
                                     type="button"
                                     className="cmt-reaction"
                                     aria-pressed={mine}
-                                    disabled={!canWrite}
-                                    onClick={() => toggleMessageReaction(activeThread.id, msg.id, emoji)}
-                                    title={who}
+                                    // aria-disabled rather than disabled: a disabled
+                                    // button shows no tooltip, and the tooltip is
+                                    // what says why it does nothing.
+                                    aria-disabled={!canWrite}
+                                    onClick={() => {
+                                      if (canWrite) toggleMessageReaction(activeThread.id, msg.id, emoji);
+                                    }}
+                                    title={canWrite ? who : `${who}. Viewers can read reactions but not add them.`}
                                     aria-label={`${emoji} ${authorIds.length}, from ${who}`}
                                   >
                                     <span className="cmt-reaction__emoji">{emoji}</span>
@@ -611,6 +694,7 @@ export const CommentsOverlay: React.FC<CommentsOverlayProps> = ({
                   <div className="cmt-card__foot">
                     <div className="cmt-grow">
                       <MentionInput
+                        inputRef={replyInputRef}
                         value={replyText}
                         onChange={setReplyText}
                         insertRef={replyInsert}

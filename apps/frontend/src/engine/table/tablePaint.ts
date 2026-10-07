@@ -113,7 +113,17 @@ export function cellPrims(cell: TableCellBox, layout: TableLayout, opts: PaintOp
       const value = fitLine(cell.text, room, (s) => m(s));
       const valueW = value ? m(value) : 0;
       const labelRoom = room - valueW - fs * 0.5;
-      const label = labelRoom >= fs * 2 ? fitLine(cell.footer.label, labelRoom, (s) => m(s, false, false, ls)) : '';
+      // The whole label, or the short one whole, before either is cut: `Sum`
+      // reads; `Sum of 1…` does not.
+      const fits = (s: string) => m(s, false, false, ls) <= labelRoom;
+      const label =
+        labelRoom < fs * 2
+          ? ''
+          : fits(cell.footer.label)
+            ? cell.footer.label
+            : cell.footer.short && fits(cell.footer.short)
+              ? cell.footer.short
+              : fitLine(cell.footer.short ?? cell.footer.label, labelRoom, (s) => m(s, false, false, ls));
       if (label) out.push({ t: 'text', x: cell.x + layout.padX, y: cell.y + cell.h / 2, s: label, size: ls, bold: false, italic: false, fill: MUTED, anchor: 'start' });
       out.push({ t: 'text', x: cell.x + cell.w - layout.padX, y: cell.y + cell.h / 2, s: value, size: fs, bold: true, italic: false, fill: cell.color, anchor: 'end' });
     }

@@ -180,6 +180,7 @@ export type DuplicateResult = 'server' | 'device';
  * sent to the server when it can.
  */
 export async function writeDuplicate(newId: string, plan: DuplicatePlan, name: string, timeoutMs = 8000): Promise<DuplicateResult> {
+  await assertRoomFor(plan.update.byteLength);
   const session = await openRoom(newId, {
     role: 'editor',
     access: {},
@@ -192,11 +193,45 @@ export async function writeDuplicate(newId: string, plan: DuplicatePlan, name: s
       });
     },
   });
+  let result: DuplicateResult = 'device';
   try {
-    if (session.connection !== 'synced') return 'device';
-    return (await acknowledged(session.provider, timeoutMs)) ? 'server' : 'device';
+    if (session.connection === 'synced' && (await acknowledged(session.provider, timeoutMs))) result = 'server';
   } finally {
     session.close();
+  }
+  // Only this device holds the copy, so it has to be there to be worth opening.
+  if (result === 'device') await assertStored(newId, plan.objectCount, timeoutMs);
+  return result;
+}
+
+const namedError = (name: 'QuotaExceededError' | 'NotStoredError', message: string) => Object.assign(new Error(message), { name });
+
+/**
+ * Refuse up front when the browser says there is not room for the copy.
+ * IndexedDB reports a full disk only as a failed background write, which
+ * nothing waits on, so asking first is the one way to fail before writing.
+ */
+async function assertRoomFor(bytes: number): Promise<void> {
+  try {
+    const estimate = await navigator.storage?.estimate?.();
+    if (!estimate?.quota || estimate.usage === undefined) return;
+    if (estimate.quota - estimate.usage < bytes * 2) throw namedError('QuotaExceededError', 'Not enough storage for the copy.');
+  } catch (err) {
+    if ((err as { name?: string })?.name === 'QuotaExceededError') throw err;
+  }
+}
+
+/** Read the copy back from this device, and fail if it did not land. */
+async function assertStored(roomId: string, objectCount: number, timeoutMs: number): Promise<void> {
+  if (typeof indexedDB === 'undefined') throw namedError('NotStoredError', 'This browser cannot store boards.');
+  const doc = new Y.Doc();
+  const local = new IndexeddbPersistence(roomId, doc);
+  try {
+    const synced = await settle(local.whenSynced.then(() => true), timeoutMs, false);
+    if (!synced || doc.getMap('objects').size < objectCount) throw namedError('NotStoredError', 'The copy was not stored.');
+  } finally {
+    void local.destroy();
+    doc.destroy();
   }
 }
 

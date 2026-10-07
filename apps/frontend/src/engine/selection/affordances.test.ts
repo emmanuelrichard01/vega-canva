@@ -254,7 +254,7 @@ describe('rules promoted from the surfaces', () => {
  */
 describe('surface declarations', () => {
   const MENU_RENDERS = new Set([
-    'group', 'ungroup', 'order', 'lock', 'visibility', 'delete', 'align', 'distribute',
+    'group', 'ungroup', 'order', 'lock', 'visibility', 'delete', 'align', 'distribute', 'to-path',
   ]);
 
   it('offers the menu only what the menu can run', () => {
@@ -324,5 +324,15 @@ describe('a line with corners of its own', () => {
 
   it('does not offer it for a closed shape', () => {
     expect(ids([shape('rect')])).not.toContain('line-vertices');
+  });
+});
+
+describe('convert to path', () => {
+  it('is offered for several closed shapes, not for lines or a lone mixed selection', () => {
+    expect(ids([shape('rect'), shape('ellipse')], 'menu')).toContain('to-path');
+    expect(ids([shape('rect')], 'menu')).toContain('to-path');
+    expect(ids([shape('rect'), shape('line')], 'menu')).not.toContain('to-path');
+    expect(ids([shape('rect'), shape('rect', { locked: true })].map((n) => ({ ...n, locked: true }) as AnyNode), 'menu'))
+      .not.toContain('to-path');
   });
 });

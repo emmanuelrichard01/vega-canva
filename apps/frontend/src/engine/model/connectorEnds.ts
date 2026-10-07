@@ -409,3 +409,50 @@ export function terminateRun(
   );
   return { run, start: startCap, end: endCap, size };
 }
+
+/** A crossing drawn on one leg of a route, as `connectorPathData` takes it. */
+interface LegHop {
+  seg: number;
+  at: number;
+}
+
+/**
+ * Pull both ends of a route back under their markers.
+ *
+ * When each trim fits inside its end leg, only the two end points move, so
+ * every leg stays where the route put it and jumps measured along the legs
+ * stay valid (those on the first leg shift by the start trim). When a trim has
+ * to remove whole legs, the run is cut with `trimPolyline` and the jumps are
+ * dropped, since the legs they were measured on are gone. The canvas and the
+ * SVG export both trim through this, so the file draws what the board draws.
+ */
+export function trimRunForCaps<H extends LegHop>(
+  flat: number[],
+  hops: readonly H[],
+  startInset: number,
+  endInset: number
+): { flat: number[]; hops: H[] } {
+  const n = flat.length / 2;
+  if (n < 2) return { flat, hops: [] };
+  const firstLen = Math.hypot(flat[2] - flat[0], flat[3] - flat[1]);
+  const lastLen = Math.hypot(flat[flat.length - 2] - flat[flat.length - 4], flat[flat.length - 1] - flat[flat.length - 3]);
+  const singleLeg = n === 2;
+  const fits = singleLeg ? startInset + endInset < firstLen : startInset < firstLen && endInset < lastLen;
+  if (!fits) {
+    return { flat: trimPolyline(trimPolyline(flat, startInset, true), endInset, false), hops: [] };
+  }
+  const out = flat.slice();
+  if (startInset > 0 && firstLen > 0) {
+    out[0] += ((flat[2] - flat[0]) / firstLen) * startInset;
+    out[1] += ((flat[3] - flat[1]) / firstLen) * startInset;
+  }
+  if (endInset > 0 && lastLen > 0) {
+    const k = flat.length;
+    out[k - 2] -= ((flat[k - 2] - flat[k - 4]) / lastLen) * endInset;
+    out[k - 1] -= ((flat[k - 1] - flat[k - 3]) / lastLen) * endInset;
+  }
+  return {
+    flat: out,
+    hops: hops.map((h) => (h.seg === 0 ? { ...h, at: h.at - startInset } : h)),
+  };
+}

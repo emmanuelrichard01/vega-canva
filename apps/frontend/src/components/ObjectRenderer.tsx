@@ -37,6 +37,7 @@ import { ChartRenderer } from './canvas/renderers/ChartRenderer';
 import { TableRenderer } from './canvas/renderers/TableRenderer';
 import { CodeRenderer } from './canvas/renderers/CodeRenderer';
 import { LinkRenderer } from './canvas/renderers/LinkRenderer';
+import { IconRenderer } from './canvas/renderers/IconRenderer';
 import { layoutCode as layoutCodeBlock, measureCharWidth } from '../engine/code/codeLayout';
 import { CODE_FONT } from '../engine/code/codeThemes';
 import { updateCode } from '../engine/code/codeApply';
@@ -1239,7 +1240,7 @@ export const ObjectRenderer = React.memo(
            */
           onMouseDown={(e) => {
             if (!selectable) return;
-            const isAdditive = Boolean(e.evt?.shiftKey || e.evt?.ctrlKey || e.evt?.metaKey);
+            const isAdditive = Boolean(e.evt?.shiftKey);
             if (isSelected && !isAdditive) return;
             onSelect(objId, e);
           }}
@@ -1510,5 +1511,8 @@ const NodeContent: React.FC<{ node: AnyNode; isEditing: boolean }> = ({ node, is
 
     case 'link':
       return <LinkRenderer node={node} />;
+
+    case 'icon':
+      return <IconRenderer node={node} />;
   }
 };

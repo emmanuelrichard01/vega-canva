@@ -1,6 +1,6 @@
-import { evaluateCell, isFormula, shiftRefs } from './tableFormula';
-import { formatCell, normRange, type CellRange } from './tableModel';
-import { cellKey, type CellAlign, type CellStyle, type TableMerge, type TableSpec } from './tableTypes';
+import { evaluateCell, isFormula, r1c1ToA1, shiftRefs } from './tableFormula';
+import { cellStyleAt, formatCell, normRange, type CellRange } from './tableModel';
+import { MAX_COLS, MAX_ROWS, type CellAlign, type CellStyle, type TableMerge, type TableSpec } from './tableTypes';
 
 /**
  * Cells on the clipboard, in three dialects.
@@ -44,7 +44,7 @@ export function copyCells(spec: TableSpec, rows: number[], range: Pick<CellRange
   for (const r of rows) {
     cells.push(spec.cells[r].slice(c0, c1 + 1));
     values.push(spec.cells[r].slice(c0, c1 + 1).map((_, j) => shownValue(spec, r, c0 + j)));
-    styles.push(spec.cells[r].slice(c0, c1 + 1).map((_, j) => spec.styles?.[cellKey(r, c0 + j)] ?? null));
+    styles.push(spec.cells[r].slice(c0, c1 + 1).map((_, j) => cellStyleAt(spec, r, c0 + j) ?? null));
   }
   const merges = (contiguous ? spec.merges ?? [] : [])
     .filter((m) => m.r >= r0 && m.c >= c0 && m.r + m.rs - 1 <= r1 && m.c + m.cs - 1 <= c1)
@@ -107,40 +107,74 @@ export interface PastedBlock {
   merges: TableMerge[];
 }
 
+/** The most cells a paste writes: the whole of the largest table, and no more. */
+export const PASTE_CELL_LIMIT = MAX_ROWS * MAX_COLS;
+const PASTE_MERGE_LIMIT = 1000;
+
 /**
  * An HTML table off the clipboard — from Sheets, Excel, Docs or a web page —
  * as cells with their formatting, or null when there is no table in it.
  * Merged cells are expanded into the grid they cover, so a pasted block is
  * always rectangular.
+ *
+ * ## Hostile markup
+ *
+ * Clipboard HTML is text anyone can put there. A `rowspan="65534"` on every
+ * cell asked for billions of grid entries and took the tab down. So every
+ * span is clamped to what is left of the largest table (2,000 × 60) from
+ * where it starts, rows and cells past that edge are dropped, the total cells
+ * written stop at the table's capacity, and only the outer table's own rows
+ * and cells are read — a `<table>` nested in a cell is that cell's text, not
+ * more rows.
+ *
+ * ## Formulas from Sheets
+ *
+ * Sheets puts each formula in `data-sheets-formula`, in R1C1 notation
+ * (`=R[0]C[-1]*2`). It is turned into A1 for the cell it lands in — `at` is
+ * where the block's top-left cell is stored — or, when it cannot be, the cell
+ * keeps the value it showed.
  */
-export function parseHtmlTable(html: string): PastedBlock | null {
+export function parseHtmlTable(html: string, at: { r: number; c: number } = { r: 0, c: 0 }): PastedBlock | null {
   if (typeof DOMParser === 'undefined' || !/<table/i.test(html)) return null;
   const doc = new DOMParser().parseFromString(html, 'text/html');
   const table = doc.querySelector('table');
   if (!table) return null;
   const grid: Array<Array<{ text: string; style: CellStyle | null } | undefined>> = [];
   const merges: TableMerge[] = [];
-  const trs = Array.from(table.querySelectorAll('tr')).slice(0, 2000);
-  trs.forEach((tr, r) => {
+  const trs = Array.from((table as HTMLTableElement).rows ?? []).slice(0, MAX_ROWS);
+  let written = 0;
+  let full = false;
+  for (let r = 0; r < trs.length && !full; r++) {
     grid[r] = grid[r] ?? [];
     let c = 0;
-    for (const td of Array.from(tr.querySelectorAll('td,th')).slice(0, 60)) {
-      while (grid[r][c]) c++;
-      const rs = Math.max(1, Math.min(2000, Number(td.getAttribute('rowspan')) || 1));
-      const cs = Math.max(1, Math.min(60, Number(td.getAttribute('colspan')) || 1));
+    for (const td of Array.from((trs[r] as HTMLTableRowElement).cells ?? [])) {
+      while (c < MAX_COLS && grid[r][c]) c++;
+      if (c >= MAX_COLS) break;
+      const rs = Math.max(1, Math.min(MAX_ROWS - r, Math.floor(Number(td.getAttribute('rowspan'))) || 1));
+      const cs = Math.max(1, Math.min(MAX_COLS - c, Math.floor(Number(td.getAttribute('colspan'))) || 1));
+      if (written + rs * cs > PASTE_CELL_LIMIT) {
+        full = true;
+        break;
+      }
+      written += rs * cs;
       const text = (td.textContent ?? '').replace(/ /g, ' ').replace(/\s*\n\s*/g, ' ').trim();
       const formula = td.getAttribute('data-sheets-formula');
+      const value = formula && isFormula(formula) ? r1c1ToA1(formula, at.r + r, at.c + c) ?? text : text;
       const style = styleOfElement(td as HTMLElement);
       for (let i = 0; i < rs; i++) {
-        grid[r + i] = grid[r + i] ?? [];
-        for (let j = 0; j < cs; j++) grid[r + i][c + j] = { text: i === 0 && j === 0 ? (formula && isFormula(formula) ? formula : text) : '', style: i === 0 && j === 0 ? style : null };
+        const row = (grid[r + i] = grid[r + i] ?? []);
+        for (let j = 0; j < cs; j++) {
+          if (i === 0 && j === 0) row[c] = { text: value, style };
+          else if (!row[c + j]) row[c + j] = { text: '', style: null };
+        }
       }
-      if (rs * cs > 1) merges.push({ r, c, rs, cs });
+      if (rs * cs > 1 && merges.length < PASTE_MERGE_LIMIT) merges.push({ r, c, rs, cs });
       c += cs;
     }
-  });
+  }
   if (!grid.length) return null;
-  const width = Math.max(...grid.map((row) => row.length));
+  const width = Math.min(MAX_COLS, Math.max(0, ...grid.map((row) => row.length)));
+  if (width === 0) return null;
   return {
     cells: grid.map((row) => Array.from({ length: width }, (_, c) => row[c]?.text ?? '')),
     styles: grid.map((row) => Array.from({ length: width }, (_, c) => row[c]?.style ?? null)),

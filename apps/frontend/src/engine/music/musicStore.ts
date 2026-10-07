@@ -1,6 +1,9 @@
 /**
- * The music player's state: what is selected, whether it plays, the volume,
- * and where the music comes from.
+ * The music player's state: which station is chosen, the volume, and where
+ * the music comes from.
+ *
+ * Stations are the six library categories; every one plays recorded tracks
+ * from the manifest (see `library/libraryStore.ts`). Nothing is synthesised.
  *
  * Personal by design. Nothing here goes into the shared document. The one
  * thing other people can see is an opt-in "listening to" line in presence,
@@ -8,65 +11,50 @@
  */
 import { useSyncExternalStore } from 'react';
 import { storageGetJson, storageSet } from '../../utils/safeStorage';
-import { musicEngine } from './engine';
-import { newSeed, variationTitle } from './describe';
-import { stationById, type StationId } from './stations';
-import { keyName } from './describe';
-import { publishMedia } from './mediaSession';
-import { getLibraryState, setLibraryVolume, stopLibrary, subscribeLibrary } from './library/libraryStore';
-import { categoryLabel } from './library/manifest';
-import { pauseSpotify, getSpotifyState, setSpotifyVolume } from './spotify/spotifyStore';
+import {
+  getLibraryState,
+  pauseLibrary,
+  playCategory,
+  primeLibraryAudio,
+  setLibraryVolume,
+  stopLibrary,
+  subscribeLibrary,
+  toggleLibrary,
+} from './library/libraryStore';
+import { KNOWN_CATEGORY_IDS, categoryLabel } from './library/manifest';
+import { spotifyAvailable } from './spotify/auth';
+import { pauseSpotify, getSpotifyState, setSpotifyVolume, subscribeSpotify } from './spotify/spotifyStore';
+import { claimPlayback, onOtherTabClaim } from './crossTab';
 
-export type MusicSource = 'stations' | 'library' | 'spotify';
-export type MusicStatus = 'idle' | 'playing' | 'paused';
+export type MusicSource = 'stations' | 'spotify';
 
 export interface MusicState {
-  status: MusicStatus;
-  station: StationId;
-  seed: number;
+  /** The chosen station: a library category slug. */
+  station: string;
   volume: number;
   source: MusicSource;
   /** Show "listening to …" to people in the board. Off by default. */
   shareListening: boolean;
-  /** Set when the engine stopped itself after the tab was hidden a long time. */
-  autoPaused: boolean;
 }
 
-interface Persisted {
-  station: StationId;
-  seed: number;
-  volume: number;
-  source: MusicSource;
-  shareListening: boolean;
-}
+type Persisted = MusicState;
 
 const KEY = 'vega.music';
 
 const saved = storageGetJson<Partial<Persisted>>(KEY, {});
 let state: MusicState = {
-  status: 'idle',
-  station: stationById(saved.station ?? 'lofi').id,
-  seed: typeof saved.seed === 'number' ? saved.seed >>> 0 : newSeed(),
+  station: typeof saved.station === 'string' && saved.station ? saved.station : 'lofi',
   volume: typeof saved.volume === 'number' ? Math.min(1, Math.max(0, saved.volume)) : 0.6,
-  source: saved.source === 'spotify' || saved.source === 'library' ? saved.source : 'stations',
+  // Anything but Spotify (including the old "library" tab) is the stations.
+  source: saved.source === 'spotify' && spotifyAvailable() ? 'spotify' : 'stations',
   shareListening: saved.shareListening === true,
-  autoPaused: false,
 };
 
 const listeners = new Set<() => void>();
 
 function set(patch: Partial<MusicState>) {
   state = { ...state, ...patch };
-  storageSet(
-    KEY,
-    JSON.stringify({
-      station: state.station,
-      seed: state.seed,
-      volume: state.volume,
-      source: state.source,
-      shareListening: state.shareListening,
-    } satisfies Persisted)
-  );
+  storageSet(KEY, JSON.stringify(state satisfies Persisted));
   listeners.forEach((fn) => fn());
   publishListening();
 }
@@ -85,9 +73,8 @@ export function useMusic(): MusicState {
 /** What other people see when sharing is on; null when nothing should show. */
 export function listeningLine(s: MusicState = state, library = getLibraryState()): string | null {
   if (!s.shareListening) return null;
-  if (s.source === 'stations' && s.status === 'playing') return `Listening to ${stationById(s.station).name}`;
-  // The category, never the track: a shared line says what kind of music, not exactly what.
-  if (s.source === 'library' && library.playing && library.current) return `Listening to ${categoryLabel(library.current.category)}`;
+  // The station, never the track: a shared line says what kind of music, not exactly what.
+  if (s.source === 'stations' && library.playing && library.current) return `Listening to ${categoryLabel(library.current.category)}`;
   return null;
 }
 
@@ -103,62 +90,40 @@ function publishListening() {
 }
 
 subscribeLibrary(() => publishListening());
-
-const engine = musicEngine();
-engine.setVolume(state.volume);
 setLibraryVolume(state.volume);
-engine.onAutoPause = () => set({ status: 'paused', autoPaused: true });
 
-function publishStation() {
-  const now = engine.nowPlaying;
-  publishMedia(
-    {
-      title: variationTitle(state.station, state.seed),
-      artist: stationById(state.station).name,
-      album: now ? `${keyName(now.key)} · ${now.bpm} BPM` : 'Vega focus music',
-    },
-    { play: () => void playStation(), pause: () => void pauseMusic(), next: () => void nextVariation() },
-    state.status === 'playing'
-  );
+// One tab plays at a time: starting music claims playback, and a claim from another tab pauses this one.
+let wasPlaying = false;
+function claimOnStart() {
+  const playing = getLibraryState().playing || getSpotifyState().playing;
+  if (playing && !wasPlaying) claimPlayback();
+  wasPlaying = playing;
 }
+subscribeLibrary(claimOnStart);
+subscribeSpotify(claimOnStart);
+onOtherTabClaim(() => {
+  if (getLibraryState().playing) pauseLibrary();
+  if (getSpotifyState().playing) void pauseSpotify();
+});
 
-/** Play the selected station, or switch to another. Call from a user gesture. */
-export async function playStation(station: StationId = state.station, seed = state.seed): Promise<void> {
+/** Plays a station's tracks. Picking the station already playing leaves it alone. Call from a user gesture. */
+export async function selectStation(station: string): Promise<void> {
+  // Inside the click's user activation, before anything is awaited.
+  primeLibraryAudio();
   if (state.source !== 'stations') leaveSource(state.source);
-  set({ station, seed, status: 'playing', source: 'stations', autoPaused: false });
-  try {
-    await engine.play(station, seed);
-    publishStation();
-  } catch {
-    set({ status: 'idle' });
-  }
+  set({ station, source: 'stations' });
+  await playCategory(station);
 }
 
-export async function pauseMusic(): Promise<void> {
-  if (state.status !== 'playing') return;
-  set({ status: 'paused' });
-  publishStation();
-  await engine.pause();
-}
-
+/** Play or pause the chosen station. */
 export function togglePlay(): Promise<void> {
-  return state.status === 'playing' && state.source === 'stations' ? pauseMusic() : playStation();
-}
-
-/** A new variation of the current station: new progression choices, key and tempo. */
-export function nextVariation(): Promise<void> {
-  return playStation(state.station, newSeed());
-}
-
-export function selectStation(station: StationId): Promise<void> {
-  // Picking the station that is already playing leaves it alone.
-  if (station === state.station && state.status === 'playing' && state.source === 'stations') return Promise.resolve();
-  return playStation(station, station === state.station ? state.seed : newSeed());
+  const lib = getLibraryState();
+  if (lib.playing || lib.current) return toggleLibrary();
+  return selectStation(state.station);
 }
 
 export function setMusicVolume(v: number): void {
   const volume = Math.min(1, Math.max(0, v));
-  engine.setVolume(volume);
   setLibraryVolume(volume);
   if (state.source === 'spotify') setSpotifyVolume(volume);
   set({ volume });
@@ -170,11 +135,7 @@ export function setShareListening(on: boolean): void {
 
 /** Silences a source that is being left, so two never play at once. */
 function leaveSource(source: MusicSource) {
-  if (source === 'stations' && state.status === 'playing') {
-    set({ status: 'paused' });
-    void engine.pause();
-  }
-  if (source === 'library') stopLibrary();
+  if (source === 'stations') stopLibrary();
   if (source === 'spotify' && getSpotifyState().playing) void pauseSpotify();
 }
 
@@ -182,7 +143,10 @@ function leaveSource(source: MusicSource) {
 export function switchSource(source: MusicSource): void {
   if (source === state.source) return;
   leaveSource(state.source);
-  set({ source, status: state.status === 'playing' ? 'paused' : state.status });
+  set({ source });
 }
 
-export const currentTitle = (s: MusicState = state) => variationTitle(s.station, s.seed);
+/** The known stations, then any extra categories the manifest adds. */
+export function stationIds(categories: readonly string[] = getLibraryState().categories): string[] {
+  return [...KNOWN_CATEGORY_IDS, ...categories.filter((c) => !KNOWN_CATEGORY_IDS.includes(c))];
+}

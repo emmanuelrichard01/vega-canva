@@ -33,6 +33,31 @@
   --tag-8-paper: #134E4A; --tag-8-ink: #CCFBF1;
 }
 
+/* --- content ink ---------------------------------------------------------------
+
+   The table's cells are content, always light paper whatever the app theme
+   (see tableLayout.ts), so the editor's marks drawn *on* them — the formula
+   fold, the choice chevron, the fill handle, the frozen band's paper — use
+   these fixed content tokens rather than theme tokens that turn light on a
+   dark board. Increased contrast strengthens them below. */
+:root {
+  --tbl-paper: #FFFFFF;
+  --tbl-ink: #1E293B;
+  --tbl-ink-muted: #475569;
+  --tbl-ink-soft: #64748B;
+  --tbl-rule: #94A3B8;
+  --tbl-shadow: rgb(15 23 42 / 40%);
+  --tbl-hover: rgb(30 41 59 / 6%);
+}
+
+:root[data-contrast='more'] {
+  --tbl-ink: #0F172A;
+  --tbl-ink-muted: #334155;
+  --tbl-ink-soft: #334155;
+  --tbl-rule: #475569;
+  --tbl-hover: rgb(15 23 42 / 12%);
+}
+
 .tbl-tag {
   display: inline-flex;
   align-items: center;
@@ -310,7 +335,7 @@
   left: 0;
   width: 0;
   height: 0;
-  border-top: calc(5px * var(--inv, 1)) solid #94A3B8;
+  border-top: calc(5px * var(--inv, 1)) solid var(--tbl-rule);
   border-right: calc(5px * var(--inv, 1)) solid transparent;
   pointer-events: none;
 }
@@ -322,8 +347,8 @@
   right: calc(6px * var(--inv, 1));
   width: calc(6px * var(--inv, 1));
   height: calc(6px * var(--inv, 1));
-  border-right: calc(1.5px * var(--inv, 1)) solid #64748B;
-  border-bottom: calc(1.5px * var(--inv, 1)) solid #64748B;
+  border-right: calc(1.5px * var(--inv, 1)) solid var(--tbl-ink-soft);
+  border-bottom: calc(1.5px * var(--inv, 1)) solid var(--tbl-ink-soft);
   opacity: 0;
   transform: translateY(-70%) rotate(45deg);
   pointer-events: none;
@@ -345,15 +370,16 @@
   cursor: pointer;
 }
 
-.tbled__foot:hover { background: rgb(30 41 59 / 6%); }
+.tbled__foot:hover:not(:disabled) { background: var(--tbl-hover); }
+.tbled__foot:disabled { cursor: default; }
 
 .tbled__foot:focus-visible {
-  outline: calc(2px * var(--inv, 1)) solid #1E293B;
+  outline: calc(2px * var(--inv, 1)) solid var(--tbl-ink);
   outline-offset: calc(-2px * var(--inv, 1));
 }
 
 .tbled__foot-add {
-  color: #475569;
+  color: var(--tbl-ink-muted);
   font-size: 0.82em;
   opacity: 0;
   transition: opacity var(--motion-hover);
@@ -374,8 +400,8 @@
   z-index: 2;
   width: calc(8px * var(--inv, 1));
   height: calc(8px * var(--inv, 1));
-  border: calc(1.5px * var(--inv, 1)) solid #FFFFFF;
-  background: #1E293B;
+  border: calc(1.5px * var(--inv, 1)) solid var(--tbl-paper);
+  background: var(--tbl-ink);
   transform: translate(-50%, -50%);
   cursor: crosshair;
 }
@@ -390,7 +416,7 @@
   position: absolute;
   z-index: 1;
   box-sizing: border-box;
-  border: calc(1.5px * var(--inv, 1)) dashed #1E293B;
+  border: calc(1.5px * var(--inv, 1)) dashed var(--tbl-ink);
   pointer-events: none;
 }
 
@@ -401,13 +427,37 @@
 .tbled-band {
   position: fixed;
   z-index: var(--z-canvas-overlay);
-  overflow: hidden;
-  background: #FFFFFF;
-  box-shadow: 0 6px 14px -8px rgb(15 23 42 / 40%);
+  background: var(--tbl-paper);
+  box-shadow: 0 6px 14px -8px var(--tbl-shadow);
   cursor: cell;
 }
 
-.tbled-band svg { display: block; }
+.tbled-band canvas { display: block; }
+
+/* The frozen rows' own numbers, over whatever rows have scrolled beneath —
+   the same chips as the editor's row gutter, at the same place. */
+.tbled-band__gutter {
+  position: absolute;
+  top: 0;
+  left: calc((8px + 20px + 6px) * -1);
+  width: calc(20px + 6px);
+}
+
+.tbled-band__label {
+  position: absolute;
+  left: 0;
+  right: 0;
+  box-sizing: border-box;
+  display: grid;
+  place-items: center;
+  border-radius: 5px;
+  background: var(--surface-elevated);
+  color: var(--text-tertiary);
+  box-shadow: 0 0 0 1px var(--border-strong) inset;
+  font-size: 10.5px;
+  font-weight: 600;
+  font-variant-numeric: tabular-nums;
+}
 
 /* --- the choice picker ------------------------------------------------------------ */
 
@@ -871,7 +921,7 @@
   width: 26px;
   height: 14px;
   border-radius: var(--radius-sm);
-  box-shadow: inset 0 0 0 1px rgb(15 23 42 / 14%);
+  box-shadow: inset 0 0 0 1px var(--border-strong);
 }
 
 /* The way into the cells: the section's one primary action, full width. */
@@ -915,3 +965,14 @@
   width: 100%;
   min-width: 0;
 }
+
+/* --- increased contrast ---------------------------------------------------------
+
+   Marks that read by a faint tint read by an edge instead. */
+:root[data-contrast='more'] .tbled__foot:focus-visible { outline-width: calc(3px * var(--inv, 1)); }
+:root[data-contrast='more'] .tbled__fill { width: calc(10px * var(--inv, 1)); height: calc(10px * var(--inv, 1)); }
+:root[data-contrast='more'] .tbled__fillpreview { border-width: calc(2px * var(--inv, 1)); }
+:root[data-contrast='more'] .tbled-band { box-shadow: 0 0 0 1px var(--border-strong), 0 6px 14px -8px var(--tbl-shadow); }
+:root[data-contrast='more'] .tbled-band__label { color: var(--text-secondary); }
+:root[data-contrast='more'] .tbl-tag { box-shadow: inset 0 0 0 1px currentColor; }
+:root[data-contrast='more'] .tbled__chev { opacity: 1; }

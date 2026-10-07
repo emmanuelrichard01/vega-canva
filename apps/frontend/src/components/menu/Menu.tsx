@@ -502,7 +502,8 @@ const MenuPanel: React.FC<PanelProps> = ({
                 case 'submenu': {
                   const isSub = entry.kind === 'submenu';
                   const disabled = Boolean(entry.disabled);
-                  const checked = entry.kind === 'item' ? entry.checked : undefined;
+                  const radio = entry.kind === 'item' && Boolean(entry.radio);
+                  const checked = entry.kind === 'item' ? (radio ? Boolean(entry.checked) : entry.checked) : undefined;
                   const detail =
                     entry.kind === 'item'
                       ? disabled && entry.disabledReason
@@ -516,7 +517,7 @@ const MenuPanel: React.FC<PanelProps> = ({
                         if (el) rows.current.set(index, el);
                         else rows.current.delete(index);
                       }}
-                      role={checked === undefined ? 'menuitem' : 'menuitemcheckbox'}
+                      role={radio ? 'menuitemradio' : checked === undefined ? 'menuitem' : 'menuitemcheckbox'}
                       aria-checked={checked}
                       tabIndex={-1}
                       className="menu__row"
@@ -548,7 +549,10 @@ const MenuPanel: React.FC<PanelProps> = ({
                       {entry.kind === 'item' && entry.shortcut && (
                         <kbd className="menu__key">{menuShortcut(entry.shortcut)}</kbd>
                       )}
-                      {checked !== undefined && entry.icon && (
+                      {radio && checked && entry.icon && (
+                        <Check size={14} className="menu__tick" aria-hidden="true" />
+                      )}
+                      {!radio && checked !== undefined && entry.icon && (
                         <span className="menu__toggle" data-on={checked || undefined} aria-hidden="true">
                           <span className="menu__toggle-dot" />
                         </span>

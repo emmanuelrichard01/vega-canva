@@ -62,7 +62,7 @@ export const TOUR: readonly TourStep[] = [
     id: 'dock',
     anchor: 'dock',
     title: 'Everything you can make',
-    body: 'Every tool lives here, each on one key. Press the key or click the icon, then draw on the board.',
+    body: 'Every tool lives here, most on a single key. Press the key or click the icon, then draw on the board.',
     side: 'top',
   },
   {
@@ -97,7 +97,7 @@ export const TOUR: readonly TourStep[] = [
     id: 'help',
     anchor: 'help',
     title: 'The rest of it',
-    body: 'Export, view settings, music, help and every shortcut live in the board menu, on the arrow beside the board\x27s name. Help is also on the question-mark key, and in the corner beside the radar.',
+    body: 'Export, view settings and help live in the board menu, on the arrow by the title. Press ? any time for every shortcut.',
     side: 'bottom',
   },
 ];

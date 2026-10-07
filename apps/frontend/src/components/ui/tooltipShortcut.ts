@@ -36,3 +36,27 @@ export function splitShortcut(raw: string): { text: string; shortcut?: string } 
   if (!LOOKS_LIKE_KEY.test(inner)) return { text: raw };
   return { text: raw.slice(0, m.index).trim(), shortcut: inner };
 }
+
+/**
+ * A shortcut as the keys to draw, for this machine.
+ *
+ * `Ctrl+Z` and `Cmd+Z` both mean "the command key", so a Mac shows `⌘ Z` and
+ * everything else shows `Ctrl Z`; Shift and Alt become `⇧` and `⌥` on a Mac and
+ * stay words elsewhere. Anything that is not a modifier is left as written.
+ */
+export function keycaps(shortcut: string, mac: boolean): string[] {
+  return shortcut.split(/\s*\+\s*(?=\S)/).map((raw) => {
+    const k = raw.trim();
+    const lower = k.toLowerCase();
+    const command = lower === 'ctrl' || lower === 'cmd' || lower === 'mod' || lower === 'meta' || lower === 'command';
+    if (mac) {
+      if (command) return '⌘';
+      if (lower === 'shift') return '⇧';
+      if (lower === 'alt' || lower === 'opt' || lower === 'option') return '⌥';
+      return k;
+    }
+    if (command) return 'Ctrl';
+    if (lower === 'opt' || lower === 'option') return 'Alt';
+    return k;
+  });
+}

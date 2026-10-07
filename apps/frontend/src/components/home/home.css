@@ -141,22 +141,15 @@
   background: var(--status-online);
 }
 
-.bcard__faces {
-  display: inline-flex;
-  align-items: center;
-}
-
-.bcard__face {
-  box-shadow: 0 0 0 1.5px var(--surface-primary);
-}
-
-.bcard__face + .bcard__face { margin-left: -5px; }
-
-.bcard__more-faces {
-  margin-left: 4px;
+/* In a row the count sits after the name, on the page rather than on a picture. */
+.bcard--list .bcard__live {
+  position: static;
+  flex: none;
+  padding: 0;
+  background: none;
+  box-shadow: none;
   color: var(--text-secondary);
-  font-size: var(--text-2xs);
-  font-weight: var(--weight-semibold);
+  font-size: var(--text-xs);
   font-variant-numeric: tabular-nums;
 }
 
@@ -182,15 +175,12 @@
   outline: none;
 }
 
-/* The list: a row whose name runs long and whose dates line up. */
-.bcard--list .bcard__body {
-  flex: 1;
-  min-width: 0;
-}
+/* The list: the row is the link's target, corners and all. */
+.bcard--list .bcard__title { min-width: 0; }
 
-.bcard--list .bcard__title { flex: 1; }
+.bcard--list .bcard__link { font-size: var(--text-base); }
 
-.bcard--list .bcard__link::after { border-radius: 0; }
+.bcard--list .bcard__link::after { border-radius: var(--radius-md); }
 
 .bcard--list:has(.bcard__link:focus-visible) {
   outline: 2px solid var(--focus-ring-color);
@@ -199,14 +189,10 @@
 
 .bcard--list:has(.bcard__link:focus-visible) .bcard__art { box-shadow: inset 0 0 0 1px var(--border-divider); }
 
-.bcard--list .bcard__meta { flex: none; justify-content: flex-end; }
-
 .bcard--list .bcard__more {
   position: relative;
   top: auto;
   right: auto;
-  flex: none;
-  margin-left: var(--space-1);
   box-shadow: none;
   background: transparent;
 }
@@ -570,7 +556,7 @@
   letter-spacing: -0.015em;
 }
 
-.tgrid--starters { grid-template-columns: repeat(auto-fit, minmax(260px, 1fr)); max-width: 1180px; }
+.tgrid--starters { grid-template-columns: repeat(auto-fit, minmax(260px, 1fr)); }
 
 /* --------------------------------------------------------------- odds */
 
@@ -621,4 +607,90 @@
   gap: var(--space-4);
   width: 264px;
   padding: var(--space-3);
+}
+
+/* ------------------------------------------------------------ the header */
+
+/* Wide enough for one row, the title and the controls share it and the
+   sentence under the title takes the full width below, so the controls never
+   wrap onto a second line beside a squeezed paragraph. Narrower, index.css
+   stacks the two bands. */
+@media (min-width: 901px) {
+  .lstage__head {
+    display: grid;
+    grid-template-columns: minmax(0, 1fr) auto;
+    align-items: center;
+    column-gap: var(--space-6);
+    row-gap: 6px;
+  }
+
+  .lstage__titles { display: contents; }
+  .lstage__title { grid-column: 1; grid-row: 1; min-width: 0; }
+  .lstage__lede { grid-column: 1 / -1; grid-row: 2; margin: 0; }
+
+  .lstage__tools {
+    grid-column: 2;
+    grid-row: 1;
+    flex-wrap: nowrap;
+  }
+
+  .lstage__search { flex: 0 1 280px; min-width: 180px; }
+}
+
+/* ------------------------------------------------------ increased contrast */
+
+/* The tokens do most of it (styles/contrast.css). What is left is what this
+   page hides or draws faintly on purpose: controls revealed on hover are
+   shown, rings get thicker, and secondary lines step up a tone. */
+[data-contrast='more'] .bcard__more { opacity: 1; box-shadow: inset 0 0 0 1px var(--border-strong); }
+
+[data-contrast='more'] .bcard--grid .bcard__live { box-shadow: inset 0 0 0 1px var(--border-strong); }
+
+[data-contrast='more'] .bcard__meta,
+[data-contrast='more'] .bcard__col--size,
+[data-contrast='more'] .bcard__col--when,
+[data-contrast='more'] .tcard__blurb,
+[data-contrast='more'] .tcard__meta,
+[data-contrast='more'] .blist__head { color: var(--text-secondary); }
+
+[data-contrast='more'] .tcard__art,
+[data-contrast='more'] .bcard__art { box-shadow: inset 0 0 0 1px var(--border-strong); }
+
+[data-contrast='more'] .tcard:hover .tcard__art,
+[data-contrast='more'] .bcard:hover .bcard__art { box-shadow: inset 0 0 0 2px var(--text-primary); }
+
+[data-contrast='more'] .bcard:has(.bcard__link:focus-visible) .bcard__art,
+[data-contrast='more'] .tcard:focus-visible .tcard__art {
+  box-shadow:
+    inset 0 0 0 1px var(--border-strong),
+    0 0 0 2px var(--surface-canvas),
+    0 0 0 5px var(--focus-ring-color);
+}
+
+[data-contrast='more'] .bcard--list:has(.bcard__link:focus-visible) { outline-width: 3px; }
+
+[data-contrast='more'] .lbtn[aria-pressed='true'] { box-shadow: inset 0 0 0 1px var(--text-primary); }
+
+[data-contrast='more'] .lstage__new-more { box-shadow: inset 1px 0 0 var(--accent-on); }
+
+[data-contrast='more'] .bcard--list:hover { box-shadow: inset 0 0 0 1px var(--border-strong); }
+
+/* ------------------------------------------------------------- one ring */
+
+/* The app's global focus ring is a box-shadow (index.css, FOCUS). Every
+   control on this page draws its own ring — an outline that follows its own
+   corner, or, on a card, a ring round the picture — so the global one is
+   withdrawn here rather than painted as a second ring beside it. The card's
+   link also keeps its static position, so its stretched hit area still
+   covers the card while it has focus. */
+.lib :where(
+  .bcard__link, .bcard__more, .tcard, .lbtn, .blist__sort, .lstage__new-go, .lstage__new-more,
+  .tpeek__icon, .tpeek__alt, .tpeek__use, .stage__error-x, .shelf__toggle, .qstart__primary, .qstart__alt
+):focus-visible {
+  box-shadow: none;
+}
+
+.lib .bcard__link:focus-visible {
+  position: static;
+  z-index: auto;
 }

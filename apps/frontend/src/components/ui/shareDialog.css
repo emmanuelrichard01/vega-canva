@@ -1,0 +1,452 @@
+/* ---------------------------------------------------------------------------
+   Share dialog (ShareModal.tsx), on the shared Dialog shell.
+
+   Sections are separated by space, not by boxes: the role list is one hairline
+   group, the link is one field, and nothing is a card inside the dialog.
+   --------------------------------------------------------------------------- */
+
+.sh .dlg__head {
+  padding-bottom: var(--space-3);
+}
+
+/* ------------------------------------------------------------------ people */
+
+.sh-people {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  margin-top: var(--space-1);
+}
+
+.sh-people__faces {
+  flex-shrink: 0;
+}
+
+.sh-people__text {
+  margin: 0;
+  font-size: var(--text-sm);
+  line-height: 1.45;
+  color: var(--text-secondary);
+}
+
+.sh-people__role {
+  color: var(--text-primary);
+  font-weight: var(--weight-medium);
+}
+
+/* -------------------------------------------------------------------- tabs */
+
+.sh-tabs {
+  display: flex;
+  gap: var(--space-4);
+  margin: 0 var(--space-6);
+  border-bottom: 1px solid var(--border-divider);
+  flex-shrink: 0;
+}
+
+.sh-tabs__tab {
+  position: relative;
+  height: var(--control-h-md);
+  padding: 0;
+  border: none;
+  background: transparent;
+  color: var(--text-secondary);
+  font: inherit;
+  font-size: var(--text-base);
+  font-weight: var(--weight-medium);
+  cursor: pointer;
+}
+
+.sh-tabs__tab:hover {
+  color: var(--text-primary);
+}
+
+.sh-tabs__tab[aria-selected='true'] {
+  color: var(--text-primary);
+  font-weight: var(--weight-semibold);
+}
+
+.sh-tabs__tab[aria-selected='true']::after {
+  content: '';
+  position: absolute;
+  left: 0;
+  right: 0;
+  bottom: -1px;
+  height: 2px;
+  border-radius: var(--radius-pill);
+  background: var(--text-primary);
+}
+
+.sh__body {
+  display: flex;
+  flex-direction: column;
+  padding-top: var(--space-5);
+}
+
+.sh-invite {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-6);
+}
+
+.sh-section {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+}
+
+.sh-section__title {
+  margin: 0;
+  font-size: var(--text-sm);
+  font-weight: var(--weight-semibold);
+  color: var(--text-primary);
+}
+
+.sh-hint {
+  margin: 0;
+  font-size: var(--text-sm);
+  line-height: 1.5;
+  color: var(--text-secondary);
+}
+
+.sh-hint--trust {
+  margin-top: var(--space-1);
+}
+
+/* ------------------------------------------------------------------- roles */
+
+.sh-roles {
+  display: flex;
+  flex-direction: column;
+  border-radius: var(--radius-lg);
+  box-shadow: inset 0 0 0 1px var(--border-divider);
+}
+
+.sh-role {
+  display: flex;
+  align-items: flex-start;
+  gap: var(--space-3);
+  padding: 10px var(--space-3);
+  border-radius: var(--radius-lg);
+  cursor: pointer;
+  outline: none;
+  transition: background-color var(--motion-hover);
+}
+
+.sh-role + .sh-role {
+  box-shadow: 0 -1px 0 var(--border-divider);
+  border-top-left-radius: 0;
+  border-top-right-radius: 0;
+}
+
+.sh-role:hover:not([aria-disabled]) {
+  background: var(--surface-hover);
+}
+
+.sh-role[aria-checked='true'] {
+  background: var(--surface-active);
+}
+
+.sh-role:focus-visible {
+  box-shadow: inset 0 0 0 var(--focus-ring-width) var(--focus-ring-color);
+}
+
+.sh-role[aria-disabled] {
+  cursor: not-allowed;
+}
+
+.sh-role__icon {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 28px;
+  height: 28px;
+  flex-shrink: 0;
+  border-radius: var(--radius-md);
+  background: var(--surface-secondary);
+  color: var(--text-secondary);
+}
+
+.sh-role[aria-checked='true'] .sh-role__icon {
+  background: var(--text-primary);
+  color: var(--surface-primary);
+}
+
+.sh-role__text {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
+}
+
+.sh-role__label {
+  font-size: var(--text-base);
+  font-weight: var(--weight-semibold);
+  color: var(--text-primary);
+}
+
+.sh-role[aria-disabled] .sh-role__label {
+  color: var(--text-secondary);
+}
+
+.sh-role__blurb {
+  font-size: var(--text-sm);
+  line-height: 1.45;
+  color: var(--text-secondary);
+}
+
+.sh-role__check {
+  display: inline-flex;
+  width: 16px;
+  margin-top: 6px;
+  flex-shrink: 0;
+  color: var(--text-primary);
+}
+
+/* -------------------------------------------------------------- link field */
+
+.sh-field {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  height: var(--control-h-lg);
+  padding: 0 3px 0 var(--space-3);
+  border-radius: var(--radius-lg);
+  background: var(--surface-primary);
+  box-shadow: inset 0 0 0 1px var(--border-strong);
+  color: var(--text-secondary);
+}
+
+.sh-field:has(input:focus-visible) {
+  box-shadow: inset 0 0 0 1.5px var(--focus-field-color);
+}
+
+.sh-field input {
+  flex: 1;
+  min-width: 0;
+  height: 100%;
+  padding: 0;
+  border: none;
+  background: transparent;
+  color: var(--text-primary);
+  font-family: var(--font-mono);
+  font-size: var(--text-sm);
+  text-overflow: ellipsis;
+}
+
+.sh-field input:focus-visible {
+  outline: none;
+}
+
+.sh-field[data-state='working'] input,
+.sh-field[data-state='error'] input,
+.sh-field[data-state='unavailable'] input {
+  font-family: var(--font-sans);
+  color: var(--text-secondary);
+}
+
+.sh-field__icon {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: var(--control-h-md);
+  height: var(--control-h-md);
+  flex-shrink: 0;
+  padding: 0;
+  border: none;
+  border-radius: var(--radius-md);
+  background: transparent;
+  color: var(--text-secondary);
+  cursor: pointer;
+}
+
+.sh-field__icon:hover:not(:disabled) {
+  background: var(--surface-hover);
+  color: var(--text-primary);
+}
+
+.sh-field__icon[aria-pressed='true'] {
+  background: var(--surface-active);
+  color: var(--text-primary);
+}
+
+.sh-field__icon:disabled {
+  color: var(--text-disabled);
+  cursor: not-allowed;
+}
+
+.sh-field__copy {
+  min-width: 104px;
+}
+
+.sh-field__copy[data-copied] {
+  background: var(--status-online);
+  color: var(--brand-ink);
+}
+
+.sh-field--code input {
+  font-size: var(--text-md);
+  letter-spacing: 0.08em;
+}
+
+/* ------------------------------------------------------------------ expiry */
+
+.sh-expiry {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--space-2);
+  font-size: var(--text-sm);
+  color: var(--text-secondary);
+}
+
+.sh-expiry label {
+  color: var(--text-primary);
+  font-weight: var(--weight-medium);
+}
+
+.sh-expiry select {
+  height: var(--control-h-sm);
+  padding: 0 var(--space-2);
+  border: none;
+  border-radius: var(--radius-md);
+  background: var(--surface-secondary);
+  box-shadow: inset 0 0 0 1px var(--control-border);
+  color: var(--text-primary);
+  font: inherit;
+  font-size: var(--text-sm);
+  cursor: pointer;
+}
+
+.sh-expiry__date {
+  color: var(--text-secondary);
+}
+
+/* ------------------------------------------------------------------ alerts */
+
+.sh-alert {
+  display: flex;
+  align-items: flex-start;
+  gap: var(--space-2);
+  padding: 10px var(--space-2) 10px var(--space-3);
+  border-radius: var(--radius-lg);
+  background: color-mix(in srgb, var(--status-danger) 9%, var(--surface-primary));
+  color: var(--text-primary);
+  font-size: var(--text-sm);
+  line-height: 1.45;
+}
+
+.sh-alert > svg {
+  flex-shrink: 0;
+  margin-top: 1px;
+  color: var(--status-danger);
+}
+
+.sh-alert__text {
+  flex: 1;
+  min-width: 0;
+}
+
+.sh-alert__then {
+  color: var(--text-secondary);
+}
+
+.sh-alert__retry {
+  height: var(--control-h-sm);
+  margin: -4px 0;
+  padding: var(--control-pad-sm);
+  color: var(--text-primary);
+}
+
+.sh-qr {
+  display: flex;
+  align-items: center;
+  gap: var(--space-4);
+  padding-top: var(--space-2);
+}
+
+.sh-system {
+  align-self: flex-start;
+}
+
+/* ------------------------------------------------------------- export tab */
+
+.sh-exports {
+  display: flex;
+  flex-direction: column;
+  margin: calc(-1 * var(--space-2)) calc(-1 * var(--space-2)) 0;
+}
+
+.sh-export {
+  display: flex;
+  align-items: center;
+  gap: var(--space-3);
+  width: 100%;
+  padding: 10px var(--space-2);
+  border: none;
+  border-radius: var(--radius-lg);
+  background: transparent;
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
+  transition: background-color var(--motion-hover);
+}
+
+.sh-export:hover {
+  background: var(--surface-hover);
+}
+
+.sh-export__icon {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 32px;
+  height: 32px;
+  flex-shrink: 0;
+  border-radius: var(--radius-md);
+  background: var(--surface-secondary);
+  color: var(--text-primary);
+}
+
+.sh-export__text {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
+}
+
+.sh-export__label {
+  font-size: var(--text-base);
+  font-weight: var(--weight-semibold);
+  color: var(--text-primary);
+}
+
+.sh-export__detail {
+  font-size: var(--text-sm);
+  color: var(--text-secondary);
+}
+
+.sh-export__go {
+  color: var(--text-tertiary);
+  transition: translate var(--motion-hover), color var(--motion-hover);
+}
+
+.sh-export:hover .sh-export__go {
+  translate: 2px 0;
+  color: var(--text-primary);
+}
+
+.sh-exports .sh-hint {
+  margin: var(--space-4) var(--space-2) 0;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .sh-export:hover .sh-export__go { translate: none; }
+}
+
+/* The link preview keeps its own layout; it is given the section rhythm. */
+.sh .share__unfurl {
+  margin-top: 0;
+}

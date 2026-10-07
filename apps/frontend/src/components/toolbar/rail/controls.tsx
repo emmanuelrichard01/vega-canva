@@ -1,4 +1,4 @@
-import React, { useRef } from 'react';
+import React, { useEffect, useRef } from 'react';
 import { Droplet } from 'lucide-react';
 import { applyNodePatches, undoManager } from '../../../engine/document';
 import { HACHURE_ANGLE, SHADING_DENSITIES } from '../../../engine/model/rough';
@@ -66,11 +66,13 @@ export function scrubValue(
  * Press on the glyph and drag sideways. A press that does not move still opens
  * the popover it sits in, which holds the precise slider; a drag never does.
  *
- * One drag is one undo step: capturing stops at both ends and the undo
- * manager's merge window is held open in between, however slowly the drag
- * goes. Writes go out at most once per frame (or per `throttleMs`, for values
- * whose every write is expensive), and Escape puts back the value the drag
- * started from.
+ * One drag is one undo step: capturing stops at pointerdown and at pointerup,
+ * and the undo manager's merge window is held open in between, however slowly
+ * the drag goes. Writes go out at most once per frame (or per `throttleMs`,
+ * for values whose every write re-lays something out), so a drag sends a frame's
+ * worth of updates to peers rather than one per pointer event. Escape puts back
+ * the value the drag started from. A rail that unmounts mid-drag commits what
+ * was written and gives the merge window back.
  */
 export const ScrubValue: React.FC<{
   value: number;
@@ -124,12 +126,14 @@ export const ScrubValue: React.FC<{
     } else {
       flush();
     }
-    if (d.moved) {
-      undoManager.captureTimeout = d.timeout;
-      undoManager.stopCapturing();
-    }
+    undoManager.captureTimeout = d.timeout;
+    undoManager.stopCapturing();
     drag.current = null;
   };
+
+  // Unmounted mid-drag (the selection changed under it): never leave the undo
+  // manager's merge window held open.
+  useEffect(() => () => finish(false), []); // eslint-disable-line react-hooks/exhaustive-deps
 
   const onPointerDown = (e: React.PointerEvent<HTMLSpanElement>) => {
     if (e.button !== 0) return;
@@ -153,6 +157,8 @@ export const ScrubValue: React.FC<{
       onKey,
     };
     window.addEventListener('keydown', onKey, true);
+    // Nothing before the drag merges into it.
+    undoManager.stopCapturing();
     e.currentTarget.setPointerCapture?.(e.pointerId);
   };
 
@@ -163,8 +169,7 @@ export const ScrubValue: React.FC<{
     if (!d.moved) {
       if (Math.abs(dx) < 3) return;
       d.moved = true;
-      // Nothing before the drag merges into it, and nothing inside it splits off.
-      undoManager.stopCapturing();
+      // Nothing inside the drag splits off, however long it pauses.
       undoManager.captureTimeout = Number.MAX_SAFE_INTEGER;
     }
     d.pending = scrubValue(d.start, dx, e, { min, max, step });
@@ -206,7 +211,7 @@ export const ScrubValue: React.FC<{
       onPointerCancel={end}
     >
       {children}
-      <span className="rail-scrub__value">{display ?? value}</span>
+      <span className="rail-scrub__value" aria-hidden="true">{display ?? value}</span>
     </span>
   );
 };

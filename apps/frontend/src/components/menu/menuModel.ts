@@ -27,6 +27,11 @@ export interface MenuItemEntry {
   /** A toggle, drawn with a check and announced as a checkbox. */
   checked?: boolean;
   /**
+   * One answer among its neighbours rather than a switch: announced as
+   * `menuitemradio`, with `checked` marking the current one by a tick.
+   */
+  radio?: boolean;
+  /**
    * Stay open after running. For settings toggles, where the reason for opening
    * a View menu is often to change two or three things.
    */

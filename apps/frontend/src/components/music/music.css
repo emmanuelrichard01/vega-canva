@@ -1,53 +1,4 @@
-/* Focus music: the header trigger, the player popover, and its turntable. */
-
-:root {
-  --tt-vinyl: #111113;
-  --vinyl-groove: rgba(255, 255, 255, 0.28);
-  --vinyl-label: var(--surface-elevated);
-}
-
-/* ------------------------------------------------------------ trigger */
-
-.music-trigger.is-playing { color: var(--text-primary); }
-
-.vinyl-glyph { display: block; }
-.vinyl-glyph.is-spinning {
-  /* 33⅓ rpm is one turn every 1.8 s. */
-  animation: vinylSpin 1.8s linear infinite;
-}
-@keyframes vinylSpin {
-  to { transform: rotate(360deg); }
-}
-
-/* ------------------------------------------------------------ popover */
-
-.music-panel {
-  position: fixed;
-  z-index: var(--z-popover);
-  box-sizing: border-box;
-  width: 340px;
-  padding: var(--space-4);
-  overflow-y: auto;
-  overscroll-behavior: contain;
-  scrollbar-width: thin;
-  border-radius: var(--radius-xl);
-  background: var(--surface-elevated);
-  box-shadow: var(--shadow-float), var(--shadow-lg);
-  color: var(--text-primary);
-  font-family: var(--font-sans);
-  animation: musicIn 160ms var(--ease-settle);
-}
-.music-panel[data-side='bottom'] { transform-origin: top center; }
-.music-panel[data-side='top'] { transform-origin: bottom center; }
-.music-panel[data-side='left'] { transform-origin: center right; }
-.music-panel[data-side='right'] { transform-origin: center left; }
-
-@keyframes musicIn {
-  from { opacity: 0; transform: scale(0.97); }
-  to { opacity: 1; transform: none; }
-}
-
-.music-loading { height: 420px; }
+/* Focus music: the player, its turntable and lists. The trigger and the popover shell are in trigger.css. */
 
 .music {
   display: flex;
@@ -78,7 +29,12 @@
   gap: var(--space-3);
   min-width: 0;
 }
-.music-hero--empty { grid-template-areas: 'deck body'; }
+.music-prompt {
+  margin: 0;
+  font-size: var(--text-base);
+  line-height: 1.4;
+  color: var(--text-secondary);
+}
 .music-hero__text { min-width: 0; }
 
 .music-hero__title {
@@ -149,15 +105,67 @@
 }
 .music-progress__time:last-child { text-align: right; }
 
+/* The credit some licences require wherever a track plays: present, never loud. */
+.music-credit {
+  grid-column: 1 / -1;
+  margin: calc(var(--space-1) * -1) 0 0;
+  font-size: var(--text-xs);
+  line-height: 1.4;
+  color: var(--text-secondary);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.music-credit a,
+.music-credits a {
+  color: inherit;
+  text-decoration: underline;
+  text-decoration-color: var(--border-strong);
+  text-underline-offset: 2px;
+  border-radius: 2px;
+}
+.music-credit a:hover,
+.music-credits a:hover { color: var(--text-primary); text-decoration-color: currentColor; }
+.music-credit a:focus-visible,
+.music-credits a:focus-visible { outline: 2px solid var(--focus-ring-color); outline-offset: 1px; }
+
 /* ------------------------------------------------------------ turntable */
 
 .tt {
+  /* Every colour of the deck lives here, so it can be themed in one place. The deck stays skeuomorphic: dark vinyl, brushed metal. */
   --tt-plinth: var(--surface-secondary);
+  --tt-plinth-edge: rgba(255, 255, 255, 0.5);
+  --tt-plinth-ring: var(--border-divider);
   --tt-platter: #26262b;
+  --tt-platter-shadow: 0 2px 4px rgba(0, 0, 0, 0.22), 0 0 0 1px rgba(0, 0, 0, 0.25);
+  --tt-vinyl: #111113;
+  --tt-groove: rgba(255, 255, 255, 0.045);
+  --tt-groove-gap: rgba(0, 0, 0, 0.55);
+  --tt-rim: rgba(255, 255, 255, 0.12);
+  --tt-label-edge: rgba(0, 0, 0, 0.35);
+  --tt-mark: rgba(255, 255, 255, 0.7);
+  --tt-sheen-a: rgba(255, 255, 255, 0.16);
+  --tt-sheen-b: rgba(255, 255, 255, 0.1);
+  --tt-spindle: #d9d9de;
+  --tt-spindle-shadow: rgba(0, 0, 0, 0.5);
+  --tt-arm-base: var(--surface-elevated);
+  --tt-arm-base-edge: var(--border-strong);
+  --tt-arm-tube: #c9c9cf;
+  --tt-arm-head: #3a3a40;
+  --tt-arm-hub: #9a9aa2;
+  --tt-arm-weight: #5c5c64;
+  --tt-arm-shadow: rgba(0, 0, 0, 0.35);
   position: relative;
   flex: none;
   width: var(--tt-size, 132px);
   height: var(--tt-size, 132px);
+}
+
+.dark-theme .tt {
+  --tt-plinth: var(--zinc-800);
+  --tt-plinth-edge: rgba(255, 255, 255, 0.06);
+  --tt-plinth-ring: rgba(255, 255, 255, 0.06);
+  --tt-platter: #0b0b0d;
 }
 
 .tt__plinth {
@@ -165,7 +173,7 @@
   inset: 0;
   border-radius: 14%;
   background: var(--tt-plinth);
-  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.5), inset 0 0 0 1px var(--border-divider);
+  box-shadow: inset 0 1px 0 var(--tt-plinth-edge), inset 0 0 0 1px var(--tt-plinth-ring);
 }
 
 /* Record, sheen and arm share the plinth's 100-unit box: the record is centred at 50,50 with radius 41. */
@@ -181,7 +189,7 @@
   inset: 7%;
   border-radius: 50%;
   background: var(--tt-platter);
-  box-shadow: 0 2px 4px rgba(0, 0, 0, 0.22), 0 0 0 1px rgba(0, 0, 0, 0.25);
+  box-shadow: var(--tt-platter-shadow);
 }
 
 .tt__record {
@@ -192,6 +200,10 @@
   width: 100%;
   height: 100%;
 }
+.tt__vinyl { fill: var(--tt-vinyl); }
+.tt__groove { stroke: var(--tt-groove); }
+.tt__groove--gap { stroke: var(--tt-groove-gap); }
+.tt__rim { stroke: var(--tt-rim); }
 
 .tt__label {
   position: absolute;
@@ -203,7 +215,7 @@
   overflow: hidden;
   transform: translate(-50%, -50%);
   background: var(--surface-active);
-  box-shadow: 0 0 0 1px rgba(0, 0, 0, 0.35);
+  box-shadow: 0 0 0 1px var(--tt-label-edge);
 }
 .tt__label > * {
   display: block;
@@ -220,7 +232,7 @@
   width: 2px;
   height: 3.4%;
   border-radius: 1px;
-  background: rgba(255, 255, 255, 0.7);
+  background: var(--tt-mark);
   transform: translateX(-50%);
 }
 
@@ -231,10 +243,10 @@
     conic-gradient(
       from 205deg,
       transparent 0deg,
-      rgba(255, 255, 255, 0.16) 18deg,
+      var(--tt-sheen-a) 18deg,
       transparent 42deg,
       transparent 180deg,
-      rgba(255, 255, 255, 0.1) 198deg,
+      var(--tt-sheen-b) 198deg,
       transparent 222deg
     );
   mask: radial-gradient(circle closest-side, transparent 28%, #000 29%, #000 81%, transparent 82%);
@@ -248,9 +260,9 @@
   width: 3%;
   height: 3%;
   border-radius: 50%;
-  background: #d9d9de;
+  background: var(--tt-spindle);
   transform: translate(-50%, -50%);
-  box-shadow: 0 1px 1px rgba(0, 0, 0, 0.5);
+  box-shadow: 0 1px 1px var(--tt-spindle-shadow);
 }
 
 .tt__arm {
@@ -261,12 +273,12 @@
   overflow: visible;
   pointer-events: none;
 }
-.tt__arm-base { fill: var(--surface-elevated); stroke: var(--border-strong); stroke-width: 0.6; }
-.tt__arm-tube { fill: none; stroke: #c9c9cf; stroke-width: 1.6; stroke-linecap: round; }
-.tt__arm-head { fill: #3a3a40; }
-.tt__arm-hub { fill: #9a9aa2; }
-.tt__arm-weight { fill: #5c5c64; }
-.tt__arm g { filter: drop-shadow(0 1px 1px rgba(0, 0, 0, 0.35)); }
+.tt__arm-base { fill: var(--tt-arm-base); stroke: var(--tt-arm-base-edge); stroke-width: 0.6; }
+.tt__arm-tube { fill: none; stroke: var(--tt-arm-tube); stroke-width: 1.6; stroke-linecap: round; }
+.tt__arm-head { fill: var(--tt-arm-head); }
+.tt__arm-hub { fill: var(--tt-arm-hub); }
+.tt__arm-weight { fill: var(--tt-arm-weight); }
+.tt__arm g { filter: drop-shadow(0 1px 1px var(--tt-arm-shadow)); }
 
 .tt__led {
   position: absolute;
@@ -293,9 +305,6 @@
   color: var(--text-tertiary);
   font-variant-numeric: tabular-nums;
 }
-
-.dark-theme .tt { --tt-plinth: var(--zinc-800); --tt-platter: #0b0b0d; }
-.dark-theme .tt__plinth { box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.06), inset 0 0 0 1px rgba(255, 255, 255, 0.06); }
 
 /* ------------------------------------------------------------ station grid */
 
@@ -334,7 +343,19 @@
   display: block;
   width: 100%;
   height: 100%;
+  object-fit: cover;
 }
+
+.music-tile--skeleton { cursor: default; }
+.music-tile--skeleton .music-tile__art { background: var(--surface-hover); }
+.music-tile--skeleton .music-tile__name {
+  width: 60%;
+  border-radius: var(--radius-sm);
+  background: var(--surface-hover);
+}
+
+/* The drawn station covers: crisp at any size. */
+.music-cover { display: block; overflow: hidden; }
 
 .music-tile:hover .music-tile__art { transform: translateY(-1px); }
 .music-tile.is-selected .music-tile__art { outline-color: var(--text-primary); }
@@ -523,6 +544,47 @@
   gap: var(--space-2);
 }
 
+.music-credits {
+  font-size: var(--text-sm);
+  color: var(--text-secondary);
+}
+.music-credits summary {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  padding: 2px 4px;
+  margin: -2px -4px;
+  border-radius: var(--radius-sm);
+  cursor: pointer;
+  list-style: none;
+  font-weight: 500;
+}
+.music-credits summary::-webkit-details-marker { display: none; }
+.music-credits summary::after {
+  content: '';
+  width: 6px;
+  height: 6px;
+  margin-left: 2px;
+  border-right: 1.5px solid currentColor;
+  border-bottom: 1.5px solid currentColor;
+  transform: translateY(-2px) rotate(45deg);
+  transition: transform var(--motion-hover);
+}
+.music-credits[open] summary::after { transform: translateY(1px) rotate(-135deg); }
+.music-credits summary:hover { color: var(--text-primary); }
+.music-credits summary:focus-visible { outline: 2px solid var(--focus-ring-color); outline-offset: 1px; }
+.music-credits ul {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+  margin: var(--space-2) 0 0;
+  padding: 0;
+  list-style: none;
+}
+.music-credits li { display: flex; flex-direction: column; gap: 1px; min-width: 0; }
+.music-credits__track { color: var(--text-primary); }
+.music-credits__source { font-size: var(--text-xs); }
+
 /* ------------------------------------------------------------ spotify */
 
 .music-spotify {
@@ -540,6 +602,9 @@
 }
 
 .music-connect {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
   align-self: flex-start;
   height: var(--control-h-md);
   margin-top: var(--space-1);
@@ -553,7 +618,23 @@
   font-weight: 600;
   cursor: pointer;
 }
+a.music-connect {
+  display: inline-flex;
+  align-items: center;
+  text-decoration: none;
+}
 .music-connect:hover { opacity: 0.88; }
+
+/* Where Spotify is playing when it is not this tab: information, not an error. */
+.music-notice {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: var(--space-1) var(--space-2);
+  font-size: var(--text-sm);
+  line-height: 1.45;
+  color: var(--text-secondary);
+}
 .music-connect:focus-visible { outline: 2px solid var(--focus-ring-color); outline-offset: 2px; }
 
 .music-spotify__account {
@@ -713,8 +794,112 @@
 .music-range:focus-visible::-moz-range-thumb { box-shadow: 0 0 0 2px var(--surface-elevated), 0 0 0 4px var(--focus-ring-color); }
 
 @media (prefers-reduced-motion: reduce) {
-  .music-panel { animation: none; }
-  .vinyl-glyph.is-spinning { animation: none; }
+  .music-credits summary::after { transition: none; }
   .music-tile:hover .music-tile__art { transform: none; }
   .music-range:hover::-webkit-slider-thumb { transform: none; }
 }
+
+/* ------------------------------------------------------------ spotify account, search, devices */
+
+.music-spotify--intro { gap: var(--space-3); }
+.music-spotify--intro .music-connect { margin-top: 0; }
+.music-spotify--intro .music-connect:disabled { opacity: 0.6; cursor: default; }
+
+.music-more summary {
+  display: inline;
+  list-style: none;
+  cursor: pointer;
+  font-size: var(--text-sm);
+  color: var(--text-secondary);
+  text-decoration: underline;
+  text-decoration-color: var(--border-strong);
+  text-underline-offset: 3px;
+}
+.music-more summary::-webkit-details-marker { display: none; }
+.music-more summary:hover { color: var(--text-primary); }
+.music-more summary:focus-visible { outline: 2px solid var(--focus-ring-color); outline-offset: 2px; border-radius: var(--radius-sm); }
+.music-more[open] summary { margin-bottom: var(--space-2); }
+
+.music-spotify__account { position: relative; }
+.music-account__avatar {
+  flex: none;
+  width: 24px;
+  height: 24px;
+  border-radius: var(--radius-pill);
+  object-fit: cover;
+}
+.music-account__avatar--blank {
+  display: inline-grid;
+  place-items: center;
+  background: var(--surface-active);
+  color: var(--text-secondary);
+  font-size: var(--text-xs);
+  font-weight: 600;
+}
+.music-account__name {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  color: var(--text-primary);
+  font-weight: 500;
+}
+
+.music-menu {
+  position: absolute;
+  top: calc(100% + 4px);
+  right: 0;
+  z-index: 1;
+  display: flex;
+  flex-direction: column;
+  min-width: 200px;
+  padding: var(--space-1);
+  border-radius: var(--radius-md);
+  background: var(--surface-elevated);
+  box-shadow: var(--shadow-float), 0 0 0 1px var(--border-divider);
+}
+.music-menu__item {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--space-2);
+  padding: 6px var(--space-2);
+  border: 0;
+  border-radius: var(--radius-sm);
+  background: none;
+  color: var(--text-primary);
+  font: inherit;
+  font-size: var(--text-sm);
+  text-align: left;
+  text-decoration: none;
+  cursor: pointer;
+}
+.music-menu__item:hover { background: var(--surface-hover); }
+.music-menu__item:focus-visible { outline: 2px solid var(--focus-ring-color); outline-offset: -2px; }
+
+.music-search__input,
+.music-select {
+  box-sizing: border-box;
+  width: 100%;
+  height: var(--control-h-md);
+  padding: 0 var(--space-2);
+  border: 0;
+  border-radius: var(--radius-md);
+  background: var(--surface-sunken);
+  color: var(--text-primary);
+  font: inherit;
+  font-size: var(--text-base);
+}
+.music-search__input::placeholder { color: var(--text-tertiary); }
+.music-search__input:focus-visible,
+.music-select:focus-visible { outline: 2px solid var(--focus-field-color, var(--focus-ring-color)); outline-offset: 0; }
+
+.music-device {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr);
+  align-items: center;
+  gap: var(--space-2);
+  font-size: var(--text-sm);
+  color: var(--text-secondary);
+}
+
+.music-error__tools { display: inline-flex; align-items: center; gap: var(--space-2); flex: none; }

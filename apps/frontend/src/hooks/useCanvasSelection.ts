@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useRef } from 'react';
+import Konva from 'konva';
 import { useStore } from './useStore';
 import { canSelectWith, opensPathWith } from '../engine/tools/shortcuts';
 import { DirectSelectTool } from '../engine/tools/DirectSelectTool';
@@ -7,9 +8,10 @@ import { groupToEnter, nodesInGroup, selectionWithin } from '../engine/model/gro
 import { anchorNear } from '../engine/model/pathEditing';
 import { cameraSystem } from '../engine/CameraSystem';
 import { applyMarquee, expandToUnits, marqueeHits, type MarqueeMode } from '../engine/interaction/marquee';
-import { nextBehind, stackAt } from '../engine/interaction/pick';
+import { nextBehind, stackAtPoint } from '../engine/interaction/pick';
 import { selectSimilar, type SimilarKey } from '../engine/interaction/selectSimilar';
 import { clientToWorld } from '../engine/interaction/clientToWorld';
+import { isDeepSelect } from '../engine/interaction/deepSelect';
 import { travelledEnough } from '../engine/interaction/altDuplicate';
 
 export interface CanvasSelectionOptions {
@@ -34,8 +36,27 @@ const MARQUEE_MODES: readonly MarqueeMode[] = ['replace', 'add', 'subtract', 'in
  *   repeated Alt+clicks walk down the pile. An Alt+*drag* still duplicates,
  *   so the choice is made on release, by whether the pointer travelled.
  * - **Marquee** catches whole units too, and combines by mode: replace, add
- *   (Shift), subtract (Alt) or intersect (Shift+Alt).
+ *   (Shift), subtract (Alt) or intersect (Shift+Alt). With the deep modifier
+ *   it catches objects instead of units.
+ * - **Select similar** from the keyboard: Alt+Shift+T (same type), F (fill),
+ *   S (stroke), N (font).
  */
+
+const SIMILAR_KEYS: Record<string, SimilarKey> = { KeyT: 'type', KeyF: 'fill', KeyS: 'stroke', KeyN: 'font' };
+
+/** Whether a pointer press landed on one of the Transformer's own handles. */
+function pressedOnAnchor(evt: PointerEvent): boolean {
+  try {
+    const stage = Konva.stages.find((st) => st.container().contains(evt.target as Node));
+    if (!stage) return false;
+    stage.setPointersPositions(evt);
+    const pos = stage.getPointerPosition();
+    const shape = pos ? stage.getIntersection(pos) : null;
+    return Boolean(shape && /_anchor/.test(shape.name() || ''));
+  } catch {
+    return false;
+  }
+}
 export function useCanvasSelection({
   activeTool,
   selectedIds,
@@ -80,9 +101,12 @@ export function useCanvasSelection({
       // A marquee touching one member of a group catches the group, the same
       // unit a click on that member would select.
       const order = Object.keys(objects);
-      const caught = expandToUnits(hits, (id) =>
-        selectionWithin(order, objects as NodeTable, groups, id, enteredGroupRef.current)
-      );
+      // A deep marquee (Ctrl/Cmd) catches the objects themselves.
+      const caught = d.deep
+        ? Array.from(new Set(hits))
+        : expandToUnits(hits, (id) =>
+            selectionWithin(order, objects as NodeTable, groups, id, enteredGroupRef.current)
+          );
 
       setSelectedIds((prev) => applyMarquee(prev, caught, mode));
     };
@@ -139,18 +163,22 @@ export function useCanvasSelection({
       if (!evt || typeof window === 'undefined') return;
       const startX = evt.clientX;
       const startY = evt.clientY;
-      const onUp = (up: PointerEvent | MouseEvent) => {
+      const cleanup = () => {
         window.removeEventListener('pointerup', onUp, true);
         window.removeEventListener('mouseup', onUp, true);
+        window.removeEventListener('pointercancel', cleanup, true);
+      };
+      const onUp = (up: PointerEvent | MouseEvent) => {
+        cleanup();
         if (travelledEnough(up.clientX - startX, up.clientY - startY, 1)) return;
         const world = clientToWorld(up.clientX, up.clientY);
-        const { objects } = useStore.getState();
-        const stack = stackAt(Object.values(objects), world.x, world.y, 2 / (cameraSystem.zoom || 1));
+        const stack = stackAtPoint(world.x, world.y, 2 / (cameraSystem.zoom || 1));
         const next = nextBehind(stack, before);
         if (next) setSelectedIds([next]);
       };
       window.addEventListener('pointerup', onUp, true);
       window.addEventListener('mouseup', onUp, true);
+      window.addEventListener('pointercancel', cleanup, true);
     },
     [setSelectedIds]
   );
@@ -165,18 +193,48 @@ export function useCanvasSelection({
       if (!evt.altKey || evt.shiftKey || evt.ctrlKey || evt.metaKey || evt.button !== 0) return;
       const target = evt.target as Element | null;
       if (!target?.closest?.('.konvajs-content')) return;
+      // Alt on a resize or rotate handle is that handle's own modifier.
+      if (pressedOnAnchor(evt)) return;
       armSelectBehind(evt, selectedRef.current);
     };
     window.addEventListener('pointerdown', onDown, true);
     return () => window.removeEventListener('pointerdown', onDown, true);
   }, [activeTool, armSelectBehind]);
 
+  // A press on the board ends any coasting from an earlier pan flick, so the
+  // board does not drift out from under the pointer.
+  useEffect(() => {
+    if (typeof window === 'undefined') return;
+    const onDown = (evt: PointerEvent) => {
+      if ((evt.target as Element | null)?.closest?.('.konvajs-content')) cameraSystem.stopMomentum();
+    };
+    window.addEventListener('pointerdown', onDown, true);
+    return () => window.removeEventListener('pointerdown', onDown, true);
+  }, []);
+
+  // Select similar from the keyboard: Alt+Shift+T / F / S / N.
+  useEffect(() => {
+    if (typeof window === 'undefined') return;
+    const onKey = (e: KeyboardEvent) => {
+      if (!e.altKey || !e.shiftKey || e.ctrlKey || e.metaKey) return;
+      const key = SIMILAR_KEYS[e.code];
+      if (!key) return;
+      const el = e.target as HTMLElement | null;
+      if (el?.isContentEditable || /^(INPUT|TEXTAREA|SELECT)$/.test(el?.tagName ?? '')) return;
+      e.preventDefault();
+      window.dispatchEvent(new CustomEvent('requestSelectSimilar', { detail: { key } }));
+    };
+    window.addEventListener('keydown', onKey);
+    return () => window.removeEventListener('keydown', onKey);
+  }, []);
+
   const handleObjectSelect = useCallback(
     (id: string, e?: any) => {
       if (!canSelectWith(activeTool)) return;
       const evt = e?.evt as (MouseEvent & { detail?: number }) | undefined;
       const shift = Boolean(evt?.shiftKey);
-      const deep = Boolean(evt?.ctrlKey || evt?.metaKey);
+      // Deep is Cmd on a Mac (Ctrl+click is a right-click there) and Ctrl elsewhere.
+      const deep = isDeepSelect(evt);
       const isAdditive = shift || deep;
 
       // Direct select opens path/shape for editing, or selects leaf node inside groups
@@ -215,17 +273,26 @@ export function useCanvasSelection({
         return;
       }
 
+      const { objects, groups } = useStore.getState();
+
       // Deep select: the object itself, through every group around it.
       if (deep) {
         if (shift) {
           setSelectedIds((prev) => (prev.includes(id) ? prev.filter((x) => x !== id) : [...prev, id]));
         } else {
-          setSelectedIds([id]);
+          // A *press* may be the start of a Ctrl+drag (no snap, no grid
+          // adoption). If the object or the unit it belongs to is already
+          // selected, the selection stays whole; collapsing it to one object
+          // would drag only that one. A *click* (released without a drag) is
+          // what narrows a selected unit down to the object itself.
+          const pressing = evt?.type === 'mousedown' || evt?.type === 'pointerdown';
+          const unit = selectionWithin(Object.keys(objects), objects as NodeTable, groups, id, enteredGroupRef.current);
+          setSelectedIds((prev) =>
+            pressing && (prev.includes(id) || unit.every((u) => prev.includes(u))) ? prev : [id]
+          );
         }
         return;
       }
-
-      const { objects, groups } = useStore.getState();
 
       // Double-click steps one level into nested group
       const table = objects as NodeTable;

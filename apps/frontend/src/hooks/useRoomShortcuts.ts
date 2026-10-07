@@ -1,10 +1,14 @@
 import { useEffect } from 'react';
+import { isPresenting } from '../engine/tools/presenting';
 import { undoManager } from '../engine/document';
 import { useStore } from './useStore';
 import { LINE_SEAT, TOOL_FOR_KEY, lineSeatFor } from '../engine/tools/shortcuts';
 import { toolModes } from '../engine/tools/toolModes';
 import { editor } from '../engine/api/EditorAPI';
 import { cameraSystem } from '../engine/CameraSystem';
+import { toggleIconBrowser } from '../engine/icons/iconStore';
+import { arrangeSelectionInGrid } from '../engine/grid/arrangeInGrid';
+import { canEditObjects } from '../engine/model/permissions';
 
 export interface RoomShortcutsOptions {
   selectTool: (toolId: string) => void;
@@ -38,7 +42,8 @@ export interface RoomShortcutsOptions {
  * - Zoom in / out / fit / reset (Cmd/Ctrl + +/-, bare +/-, 0, !)
  * - Tool hotkeys (from TOOL_FOR_KEY map)
  * - Export the selection (Cmd/Ctrl + Shift + E)
- * - Help (?), Toggle UI (\), side panels to pills and back (Mod+\)
+ * - Arrange the selection in a grid (Alt+Shift+G)
+ * - Help (?), Toggle UI (\ or Mod+.), side panels to pills and back (Mod+\)
  * - Panel dismissals on Escape
  */
 export function useRoomShortcuts({
@@ -129,6 +134,7 @@ export function useRoomShortcuts({
   // Main room shortcut router
   useEffect(() => {
     const handleKeyDown = (e: KeyboardEvent) => {
+      if (isPresenting()) return;
       if (e.defaultPrevented) return;
       if (e.target instanceof HTMLInputElement || e.target instanceof HTMLTextAreaElement) return;
       // A key pressed inside an open dialog or menu belongs to it: tool letters
@@ -182,6 +188,15 @@ export function useRoomShortcuts({
       if (hasModifier && !e.shiftKey && !e.altKey && e.code === 'Backslash' && togglePanelsCollapsed) {
         e.preventDefault();
         togglePanelsCollapsed();
+        return;
+      }
+
+      // Mod+. hides every panel, header and the dock (and brings them back),
+      // the chord Figma gives "Show/hide UI". `\` does the same without one.
+      if (hasModifier && !e.shiftKey && !e.altKey && e.code === 'Period') {
+        if ((e.target as { isContentEditable?: unknown } | null)?.isContentEditable === true) return;
+        e.preventDefault();
+        setIsUiVisible((prev) => !prev);
         return;
       }
 
@@ -246,6 +261,17 @@ export function useRoomShortcuts({
         return;
       }
 
+      // Alt+Shift+G (`arrangeGrid`) makes a multiple selection a live grid, the
+      // same act as the rail's button, whether or not the rail is showing.
+      if (e.altKey && e.shiftKey && !hasModifier && e.code === 'KeyG') {
+        if (e.repeat || selectedIds.length < 2 || !canEditObjects()) return;
+        if ((e.target as { isContentEditable?: unknown } | null)?.isContentEditable === true) return;
+        e.preventDefault();
+        const gridId = arrangeSelectionInGrid(selectedIds);
+        if (gridId) editor.select(gridId);
+        return;
+      }
+
       if (e.ctrlKey || e.metaKey || e.altKey) return;
 
       const key = e.key.toLowerCase();
@@ -256,6 +282,18 @@ export function useRoomShortcuts({
        */
       if (key === 'q') {
         toolModes.toggleLock();
+        return;
+      }
+
+      /**
+       * Shift+I opens the icon library. `I` is the Image tool, and the
+       * capital is the nearest neighbour: pictures from your disk on `I`,
+       * artwork from the libraries on Shift+I.
+       */
+      if (e.shiftKey && key === 'i') {
+        if (e.repeat) return;
+        e.preventDefault();
+        if (canEditObjects()) toggleIconBrowser();
         return;
       }
 

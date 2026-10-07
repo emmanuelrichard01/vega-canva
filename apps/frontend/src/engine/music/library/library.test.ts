@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import { categoryLabel, formatDuration, parseManifest, resolveMediaUrl } from './manifest';
 import { advance, createQueue, currentId, cycleRepeat, jumpTo, nextIndex, peekNext, previous, setShuffle, shuffled } from './queue';
-import { deckGains, equalPowerGains, fadeLength, fadeStart } from './crossfade';
+import { equalPowerGains, fadeLength } from './crossfade';
 
 const BASE = 'https://media.example.com/music/manifest.json';
 const track = (over: Record<string, unknown> = {}) => ({
@@ -166,16 +166,8 @@ describe('crossfade', () => {
   });
 
   it('shortens the fade for short tracks', () => {
-    expect(fadeLength(240, 200)).toBe(6);
+    expect(fadeLength(240, 200)).toBe(5);
     expect(fadeLength(9, 200)).toBe(3);
-    expect(fadeStart(240, 6)).toBe(234);
-    expect(fadeStart(2, 6)).toBe(0);
-  });
-
-  it('scales by volume, and cuts when the fade has no length', () => {
-    expect(deckGains(0, 0, 0.5)).toEqual({ out: 0, in: 0.5 });
-    const mid = deckGains(3, 6, 0.64);
-    expect(mid.in).toBeCloseTo(0.64 * Math.SQRT1_2);
-    expect(mid.out).toBeCloseTo(0.64 * Math.SQRT1_2);
+    expect(fadeLength(240, 200, 6)).toBe(6);
   });
 });

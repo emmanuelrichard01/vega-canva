@@ -77,6 +77,13 @@ export function nodeLabel(node: AnyNode): string {
       return 'Link';
     }
   }
+  /** An icon is named by its caption, then by the artwork it shows. */
+  if (node.type === 'icon') {
+    const caption = node.label?.trim();
+    if (caption) return caption.slice(0, 28);
+    const tail = node.iconId.split('/')[1];
+    return tail ? tail.replace(/-/g, ' ').replace(/^./, (c) => c.toUpperCase()).slice(0, 28) : 'Icon';
+  }
   const specific = specificName(node);
   if (specific) return specific;
   return `${node.type.charAt(0).toUpperCase()}${node.type.slice(1)}`;
@@ -185,6 +192,7 @@ export const TYPE_LABEL: Record<NodeType, string> = {
   table: 'Tables',
   code: 'Code',
   link: 'Links',
+  icon: 'Icons',
 };
 
 /**
@@ -197,5 +205,5 @@ export const TYPE_ORDER: NodeType[] = [
   // A chart is scaffolding's opposite -- it is the content -- but it sits
   // beside 'grid' because both are composite objects people look for by shape
   // rather than by the words inside them.
-  'frame', 'grid', 'chart', 'table', 'code', 'link', 'text', 'shape', 'path', 'connector', 'image', 'sticky', 'audio', 'comment',
+  'frame', 'grid', 'chart', 'table', 'code', 'link', 'icon', 'text', 'shape', 'path', 'connector', 'image', 'sticky', 'audio', 'comment',
 ];

@@ -1,6 +1,6 @@
 import React, { useState, useRef, useEffect, useLayoutEffect, useCallback, useMemo, useSyncExternalStore } from 'react';
 import ReactDOM from 'react-dom';
-import { ChevronDown, Check, Search, Upload, Laptop, AlertTriangle, Loader2, Share2, X } from 'lucide-react';
+import { ChevronDown, Check, Search, Upload, Laptop, AlertTriangle, Loader2, Share2, Trash2, X } from 'lucide-react';
 import { canvasFontFamily } from '../canvas/renderers/shared';
 import { ensureFontLoaded } from '../../engine/text/measure';
 import { CATEGORIES, FONTS, searchFonts, type FontEntry } from '../../engine/text/fontCatalogue';
@@ -52,6 +52,8 @@ interface Props {
   value: string;
   onChange: (val: string) => void;
   className?: string;
+  /** The selection disagrees: the trigger says Mixed, and no row is ticked. */
+  mixed?: boolean;
 }
 
 /** One row of the list: a built-in entry, or a board or device family. */
@@ -75,7 +77,9 @@ const FontRow: React.FC<{
   onHover: () => void;
   onShare?: (family: string) => void;
   sharing?: boolean;
-}> = ({ row, selected, active, canShare, onPick, onHover, onShare, sharing }) => {
+  /** Offered on the board's own fonts, to editors. */
+  onRemove?: (family: string) => void;
+}> = ({ row, selected, active, canShare, onPick, onHover, onShare, sharing, onRemove }) => {
   const ref = useRef<HTMLDivElement>(null);
   const [state, setState] = useState<'idle' | 'loading' | 'ready' | 'failed'>(() =>
     row.source === 'board' ? familyLoadState(row.family) : 'idle'
@@ -151,6 +155,18 @@ const FontRow: React.FC<{
           {sharing ? <Loader2 size={13} className="font-row__state--spin" aria-hidden="true" /> : <Share2 size={13} aria-hidden="true" />}
         </button>
       )}
+      {row.source === 'board' && onRemove && (
+        <button
+          type="button"
+          className="font-row__action font-row__action--remove"
+          onClick={() => onRemove(row.family)}
+          aria-label={`Remove ${row.family} from the board`}
+          data-tooltip="Remove from board"
+          data-tooltip-desc="Text set in it falls back for everyone"
+        >
+          <Trash2 size={13} aria-hidden="true" />
+        </button>
+      )}
     </div>
   );
 };
@@ -164,7 +180,7 @@ interface UploadNote {
 
 let noteSeq = 0;
 
-export const FontSelector: React.FC<Props> = ({ value, onChange, className = '' }) => {
+export const FontSelector: React.FC<Props> = ({ value, onChange, className = '', mixed = false }) => {
   const [isOpen, setIsOpen] = useState(false);
   const [query, setQuery] = useState('');
   const [recents, setRecents] = useState<string[]>([]);
@@ -313,7 +329,7 @@ export const FontSelector: React.FC<Props> = ({ value, onChange, className = '' 
       try {
         const { font } = await uploadFontFile(file);
         lastFamily = font.family;
-        setNotes((n) => n.map((x) => (x.id === id ? { ...x, status: 'done', message: `${font.family} ${font.style}` } : x)));
+        setNotes((n) => n.map((x) => (x.id === id ? { ...x, status: 'done', message: `Added ${font.family} ${font.style}` } : x)));
       } catch (err) {
         const message = err instanceof FontFileError ? err.message : `${file.name} could not be uploaded.`;
         setNotes((n) => n.map((x) => (x.id === id ? { ...x, status: 'error', message } : x)));
@@ -345,6 +361,23 @@ export const FontSelector: React.FC<Props> = ({ value, onChange, className = '' 
       setSharing(null);
       window.setTimeout(() => setNotes((n) => n.filter((x) => x.status !== 'done')), 4000);
     }
+  };
+
+  /** Take every face of a board font off the board. Editors only; text set in it falls back. */
+  const removeFromBoard = async (family: string) => {
+    if (!canEdit) return;
+    const { readBoardFonts, removeBoardFont } = await import('../../engine/document');
+    const removed = readBoardFonts()
+      .filter((f) => f.family === family)
+      .reduce((count, f) => count + (removeBoardFont(f.id) ? 1 : 0), 0);
+    const id = ++noteSeq;
+    setNotes((n) => [
+      ...n,
+      removed > 0
+        ? { id, name: family, status: 'done', message: `Removed ${family} from the board` }
+        : { id, name: family, status: 'error', message: `${family} could not be removed.` },
+    ]);
+    window.setTimeout(() => setNotes((n) => n.filter((x) => x.status !== 'done')), 4000);
   };
 
   const deviceAction = () => {
@@ -387,12 +420,20 @@ export const FontSelector: React.FC<Props> = ({ value, onChange, className = '' 
         onClick={() => setIsOpen(!isOpen)}
         aria-haspopup="listbox"
         aria-expanded={isOpen}
-        aria-label={missing ? `Font: ${displayFont}, not available on this device` : `Font: ${displayFont}`}
+        aria-label={
+          mixed ? 'Font: Mixed' : missing ? `Font: ${displayFont}, not available on this device` : `Font: ${displayFont}`
+        }
       >
-        <span className="font-trigger__name" style={{ fontFamily: canvasFontFamily(displayFont) }}>
-          {displayFont}
-        </span>
-        {missing && (
+        {mixed ? (
+          <span className="font-trigger__name" data-mixed>
+            Mixed
+          </span>
+        ) : (
+          <span className="font-trigger__name" style={{ fontFamily: canvasFontFamily(displayFont) }}>
+            {displayFont}
+          </span>
+        )}
+        {missing && !mixed && (
           <span className="font-trigger__missing" title="Not on this device. Text is shown in a substitute.">
             <AlertTriangle size={12} aria-hidden="true" />
           </span>
@@ -443,7 +484,7 @@ export const FontSelector: React.FC<Props> = ({ value, onChange, className = '' 
               />
             </div>
 
-            {missing && (
+            {missing && !mixed && (
               <div className="font-menu__banner" role="status">
                 <AlertTriangle size={14} aria-hidden="true" />
                 <div>
@@ -469,7 +510,7 @@ export const FontSelector: React.FC<Props> = ({ value, onChange, className = '' 
                     {n.status === 'done' && <Check size={12} aria-hidden="true" />}
                     {n.status === 'error' && <AlertTriangle size={12} aria-hidden="true" />}
                     <span className="font-note__text">
-                      {n.status === 'uploading' ? `Uploading ${n.name}…` : n.status === 'done' ? `Added ${n.message}` : n.message}
+                      {n.status === 'uploading' ? `Uploading ${n.name}…` : n.message}
                     </span>
                     {n.status === 'error' && (
                       <button
@@ -516,7 +557,7 @@ export const FontSelector: React.FC<Props> = ({ value, onChange, className = '' 
                         <FontRow
                           key={key}
                           row={row}
-                          selected={row.family === displayFont}
+                          selected={!mixed && row.family === displayFont}
                           active={flat[cursor]?.key === key}
                           canShare={canEdit}
                           onPick={selectFont}
@@ -525,6 +566,7 @@ export const FontSelector: React.FC<Props> = ({ value, onChange, className = '' 
                           }}
                           onShare={share}
                           sharing={sharing === row.family}
+                          onRemove={group.key === 'board' && canEdit ? (family) => void removeFromBoard(family) : undefined}
                         />
                       );
                     })}

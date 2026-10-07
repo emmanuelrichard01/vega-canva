@@ -7,6 +7,7 @@ import {
   MAX_COLS,
   MAX_OPTIONS,
   MAX_ROWS,
+  newTableId,
   refsSkipHeader,
   SUMMARY_LABELS,
   TAG_PAINTS,
@@ -43,6 +44,12 @@ export interface CellRange {
 }
 
 export const rowCount = (spec: TableSpec) => spec.cells.length;
+
+/** Fresh ids for tracks that did not exist before. */
+const freshIds = (n: number) => Array.from({ length: n }, () => newTableId());
+
+/** Ids edited alongside the tracks they name — or absent, when the spec carries none. */
+const editIds = (ids: string[] | undefined, edit: (ids: string[]) => string[]) => (ids ? edit([...ids]) : undefined);
 export const colCount = (spec: TableSpec) => spec.columns.length;
 
 /** Put a range the right way round and inside the table. */
@@ -107,7 +114,28 @@ export function inferType(values: string[]): CellType {
   return 'text';
 }
 
-const numberFormat = new Intl.NumberFormat(undefined, { maximumFractionDigits: 6 });
+const intl = new Intl.NumberFormat(undefined, { maximumFractionDigits: 6 });
+/** The locale's thousands separator, read once, for the whole-number fast path. */
+const GROUP = intl.formatToParts(1000).find((p) => p.type === 'group')?.value ?? ',';
+const MINUS = intl.formatToParts(-1).find((p) => p.type === 'minusSign')?.value ?? '-';
+
+/**
+ * Numbers as the locale writes them. Whole numbers — most of what a table
+ * holds, and every running total — are grouped by hand: `Intl` costs about
+ * ten microseconds a call, and a 2,000-row table formats thousands of them
+ * on every edit.
+ */
+const numberFormat = {
+  format(n: number): string {
+    if (Number.isSafeInteger(n)) {
+      const digits = String(Math.abs(n));
+      let out = '';
+      for (let i = digits.length; i > 0; i -= 3) out = i > 3 ? `${GROUP}${digits.slice(i - 3, i)}${out}` : `${digits.slice(0, i)}${out}`;
+      return n < 0 ? `${MINUS}${out}` : out;
+    }
+    return intl.format(n);
+  },
+};
 
 /** The text a cell shows: the raw string read through its column's type. */
 export function formatCell(spec: TableSpec, r: number, c: number): string {
@@ -186,12 +214,14 @@ export function valueText(spec: TableSpec, r: number, c: number): string {
 
 /** Left for words, right for numbers — unless the cell or column says otherwise. */
 export function alignFor(spec: TableSpec, r: number, c: number): CellAlign {
-  const own = spec.styles?.[cellKey(r, c)]?.align;
+  const own = cellStyleAt(spec, r, c)?.align;
   if (own) return own;
   if (spec.columns[c]?.align) return spec.columns[c].align!;
   const type = spec.columns[c]?.type ?? 'text';
   if (type === 'checkbox') return 'center';
-  if (spec.header && r === 0) return isNumericType(type) ? 'right' : 'left';
+  // A heading sits over what its column draws: right over numbers, left over
+  // stars, which start at the left like the rating cells under them.
+  if (spec.header && r === 0) return isNumericType(type) && type !== 'rating' ? 'right' : 'left';
   // A formula that computes a number reads as a number, even in a text column.
   if (type === 'text' && isFormula(spec.cells[r]?.[c] ?? '') && typeof evaluateCell(spec, r, c) === 'number') return 'right';
   return isNumericType(type) && type !== 'rating' ? 'right' : 'left';
@@ -343,6 +373,7 @@ export function applyView(spec: TableSpec): TableSpec {
     cells: reref(spec, rows.map((r) => [...spec.cells[r]]), 'row', (i) => inv[i] ?? i),
     styles: remapStyles(spec.styles, (r, c) => [rows.indexOf(r), c]),
     rowHeights: spec.rowHeights ? rows.map((r) => spec.rowHeights![r] ?? 1) : undefined,
+    rowIds: editIds(spec.rowIds, (ids) => rows.map((r) => ids[r] ?? newTableId())),
     merges: undefined,
     sort: undefined,
     filters: undefined,
@@ -479,6 +510,10 @@ export function insertRows(spec: TableSpec, at: number, count = 1): TableSpec {
     cells: reref(spec, cells, 'row', (r) => (r >= at ? r + count : r)),
     ...shift(spec, 'row', at, count),
     rowHeights: shiftRowHeights(spec, at, count),
+    rowIds: editIds(spec.rowIds, (ids) => {
+      ids.splice(at, 0, ...freshIds(count));
+      return ids;
+    }),
   };
 }
 
@@ -493,7 +528,13 @@ export function deleteRows(spec: TableSpec, from: number, count = 1): TableSpec 
   );
   // The header is row 0; deleting it promotes the next row, which is the
   // spreadsheet reading and never loses anything the person can see.
-  return { ...spec, cells, ...shift(spec, 'row', from, -count), rowHeights: shiftRowHeights(spec, from, -count) };
+  return {
+    ...spec,
+    cells,
+    ...shift(spec, 'row', from, -count),
+    rowHeights: shiftRowHeights(spec, from, -count),
+    rowIds: editIds(spec.rowIds, (ids) => ids.filter((_, r) => r < from || r >= from + count)),
+  };
 }
 
 /** How many of the rows from `from` on hold anything — what lowering the row count would lose. */
@@ -524,6 +565,10 @@ export function insertCols(spec: TableSpec, at: number, count = 1, template?: Pa
     columns,
     ...shift(spec, 'col', at, count),
     ...remapByColumn(spec, map, columns.length),
+    colIds: editIds(spec.colIds, (ids) => {
+      ids.splice(at, 0, ...freshIds(count));
+      return ids;
+    }),
   };
 }
 
@@ -534,7 +579,14 @@ export function deleteCols(spec: TableSpec, from: number, count = 1): TableSpec 
   const columns = spec.columns.filter((_, c) => keep(c));
   const map = (c: number) => (c < from ? c : c < from + count ? -1 : c - count);
   const moved = reref(spec, cells, 'col', map);
-  return { ...spec, cells: moved, columns, ...shift(spec, 'col', from, -count), ...remapByColumn(spec, map, columns.length) };
+  return {
+    ...spec,
+    cells: moved,
+    columns,
+    ...shift(spec, 'col', from, -count),
+    ...remapByColumn(spec, map, columns.length),
+    colIds: editIds(spec.colIds, (ids) => ids.filter((_, c) => keep(c))),
+  };
 }
 
 /**
@@ -544,8 +596,8 @@ export function deleteCols(spec: TableSpec, from: number, count = 1): TableSpec 
  */
 export function duplicateCol(spec: TableSpec, c: number): TableSpec {
   if (colCount(spec) + 1 > MAX_COLS) return spec;
-  const { width, type, align, options, multi } = spec.columns[c];
-  let next = insertCols(spec, c + 1, 1, { width, type, ...(align ? { align } : null), ...(options ? { options } : null), ...(multi ? { multi } : null) });
+  const { width, type, align, options, multi, style } = spec.columns[c];
+  let next = insertCols(spec, c + 1, 1, { width, type, ...(align ? { align } : null), ...(options ? { options } : null), ...(multi ? { multi } : null), ...(style ? { style } : null) });
   next = {
     ...next,
     cells: next.cells.map((row) => row.map((v, j) => (j === c + 1 ? (isFormula(row[c]) ? `=${shiftRefs(row[c].slice(1), 0, 1)}` : row[c]) : v))),
@@ -618,6 +670,8 @@ function permute(spec: TableSpec, axis: 'row' | 'col', order: number[]): TableSp
     merges: merges.length ? merges : undefined,
     ...(axis === 'row' && spec.rowHeights ? { rowHeights: order.map((o) => spec.rowHeights![o] ?? 1) } : null),
     ...(axis === 'col' ? remapByColumn(spec, (c) => inv[c] ?? c, columns.length) : null),
+    ...(axis === 'row' ? { rowIds: editIds(spec.rowIds, (ids) => order.map((o) => ids[o] ?? newTableId())) } : null),
+    ...(axis === 'col' ? { colIds: editIds(spec.colIds, (ids) => order.map((o) => ids[o] ?? newTableId())) } : null),
   };
 }
 
@@ -645,6 +699,36 @@ export function setCell(spec: TableSpec, r: number, c: number, text: string): Ta
     ...spec,
     cells: spec.cells.map((row, i) => (i === r ? row.map((v, j) => (j === c ? text : v)) : row)),
   };
+}
+
+/**
+ * Many cells written at once: each row touched is copied once, and the rows
+ * array once, however many cells change — where a `setCell` per cell copies
+ * the rows array per cell, and clearing a 2,000-row column did so 2,000 times.
+ */
+export function setCells(spec: TableSpec, edits: Iterable<readonly [number, number, string]>): TableSpec {
+  let cells: string[][] | null = null;
+  const copied = new Set<number>();
+  for (const [r, c, text] of edits) {
+    const row = (cells ?? spec.cells)[r];
+    if (!row || c < 0 || c >= row.length || row[c] === text) continue;
+    if (!cells) cells = [...spec.cells];
+    if (!copied.has(r)) {
+      cells[r] = [...cells[r]];
+      copied.add(r);
+    }
+    cells[r][c] = text;
+  }
+  return cells ? { ...spec, cells } : spec;
+}
+
+/** The stored cells a drawn range stands for, through the view's row order. */
+export function* storedCells(range: CellRange, order: readonly number[]): Generator<[number, number]> {
+  for (let vr = range.r0; vr <= range.r1; vr++) {
+    const r = order[vr];
+    if (r === undefined) continue;
+    for (let c = range.c0; c <= range.c1; c++) yield [r, c];
+  }
 }
 
 /**
@@ -679,6 +763,8 @@ export function setBlock(spec: TableSpec, r0: number, c0: number, block: string[
     columns,
     ...(spec.rowHeights && needRows > spec.cells.length ? { rowHeights: [...spec.rowHeights, ...Array.from({ length: needRows - spec.cells.length }, () => 1)] } : null),
     ...(spec.summary && needCols > spec.columns.length ? { summary: [...spec.summary, ...Array.from({ length: needCols - spec.columns.length }, () => null)] } : null),
+    rowIds: editIds(spec.rowIds, (ids) => [...ids, ...freshIds(Math.max(0, needRows - ids.length))]),
+    colIds: editIds(spec.colIds, (ids) => [...ids, ...freshIds(Math.max(0, needCols - ids.length))]),
   };
 }
 
@@ -704,8 +790,29 @@ export function rangeToTsv(spec: TableSpec, range: CellRange): string {
 // Rich types
 // ---------------------------------------------------------------------------
 
-/** The options a select column offers, with any value typed into it that is not one of them yet. */
+/** `optionsOf` per cells array and column, valid while the column's own options and the header are the same. */
+const optionsCache = new WeakMap<string[][], Map<number, { own: SelectOption[] | undefined; header: boolean; out: SelectOption[] }>>();
+
+/**
+ * The options a select column offers, with any value typed into it that is
+ * not one of them yet. Cached on the cells, so a layout that asks for every
+ * cell of a column reads the column once rather than once per cell.
+ */
 export function optionsOf(spec: TableSpec, c: number): SelectOption[] {
+  let byCol = optionsCache.get(spec.cells);
+  const own = spec.columns[c]?.options;
+  const hit = byCol?.get(c);
+  if (hit && hit.own === own && hit.header === spec.header) return hit.out;
+  const out = readOptions(spec, c);
+  if (!byCol) {
+    byCol = new Map();
+    optionsCache.set(spec.cells, byCol);
+  }
+  byCol.set(c, { own, header: spec.header, out });
+  return out;
+}
+
+function readOptions(spec: TableSpec, c: number): SelectOption[] {
   const own = spec.columns[c]?.options ?? [];
   const known = new Set(own.map((o) => o.label.toLowerCase()));
   const extra: SelectOption[] = [];
@@ -877,7 +984,7 @@ export function fillRange(spec: TableSpec, source: CellRange, target: CellRange)
   const up = t.r0 < s.r0;
   const right = t.c1 > s.c1;
   const left = t.c0 < s.c0;
-  let next = spec;
+  const edits: Array<[number, number, string]> = [];
   if (down || up) {
     for (let c = s.c0; c <= s.c1; c++) {
       const col: string[] = [];
@@ -887,7 +994,7 @@ export function fillRange(spec: TableSpec, source: CellRange, target: CellRange)
       const sign = up ? -1 : 1;
       const count = up ? s.r0 - t.r0 : t.r1 - s.r1;
       const gen = seriesFor(src, (k) => ({ dr: sign * (Math.floor(k / src.length) + 1) * src.length, dc: 0 }));
-      for (let k = 0; k < count; k++) next = setCell(next, from + sign * (k + 1), c, gen(k));
+      for (let k = 0; k < count; k++) edits.push([from + sign * (k + 1), c, gen(k)]);
     }
   } else if (right || left) {
     for (let r = s.r0; r <= s.r1; r++) {
@@ -897,10 +1004,10 @@ export function fillRange(spec: TableSpec, source: CellRange, target: CellRange)
       const sign = left ? -1 : 1;
       const count = left ? s.c0 - t.c0 : t.c1 - s.c1;
       const gen = seriesFor(src, (k) => ({ dr: 0, dc: sign * (Math.floor(k / src.length) + 1) * src.length }));
-      for (let k = 0; k < count; k++) next = setCell(next, r, from + sign * (k + 1), gen(k));
+      for (let k = 0; k < count; k++) edits.push([r, from + sign * (k + 1), gen(k)]);
     }
   }
-  return next;
+  return setCells(spec, edits);
 }
 
 // ---------------------------------------------------------------------------
@@ -920,8 +1027,8 @@ export function summaryChoices(type: CellType): SummaryAgg[] {
  * the whole table — as the text the footer draws. `visible` and `total` let
  * the footer say "of 14 visible" when a filter is on.
  */
-export function summarize(spec: TableSpec, c: number, agg: SummaryAgg): string {
-  const rows = viewRows(spec).filter((r) => !(spec.header && r === 0));
+export function summarize(spec: TableSpec, c: number, agg: SummaryAgg, drawn: readonly number[] = viewRows(spec)): string {
+  const rows = drawn.filter((r) => !(spec.header && r === 0));
   const type = spec.columns[c]?.type ?? 'text';
   const raws = rows.map((r) => spec.cells[r]?.[c] ?? '');
   const values = rows.map((r) => {
@@ -936,7 +1043,19 @@ export function summarize(spec: TableSpec, c: number, agg: SummaryAgg): string {
   });
   const nums = values.filter((v): v is number => typeof v === 'number');
   const filled = raws.filter((v) => v.trim() !== '').length;
-  const fmt = (v: number) => (type === 'date' ? formatSerial(v) : formatValue(spec, c, v));
+  // As many decimals as the column's own values show — an average of whole
+  // numbers reads 2.36, not 2.357143 — and at least two when an average or a
+  // median falls between whole numbers.
+  const places = Math.min(4, Math.max(0, ...raws.map((v) => (isFormula(v) ? 0 : /\.(\d+)/.exec(v.replace(/[^\d.]/g, ''))?.[1].length ?? 0))));
+  const fmt = (v: number) => {
+    if (type === 'date') return formatSerial(v);
+    if (type === 'currency') return formatValue(spec, c, v);
+    const shown = type === 'percent' ? v * 100 : v;
+    const spread = (agg === 'average' || agg === 'median') && !Number.isInteger(Math.round(shown * 1e9) / 1e9) ? 2 : 0;
+    const digits = Math.min(4, Math.max(places, spread));
+    const text = new Intl.NumberFormat(undefined, { maximumFractionDigits: digits, minimumFractionDigits: spread ? Math.min(digits, 2) : 0 }).format(shown);
+    return type === 'percent' ? `${text}%` : text;
+  };
   switch (agg) {
     case 'sum':
       return fmt(nums.reduce((a, b) => a + b, 0));
@@ -964,9 +1083,9 @@ export function summarize(spec: TableSpec, c: number, agg: SummaryAgg): string {
 }
 
 /** The footer's label for a column: `Sum`, or `Sum of 14 visible` while a filter hides rows. */
-export function summaryLabel(spec: TableSpec, agg: SummaryAgg): string {
+export function summaryLabel(spec: TableSpec, agg: SummaryAgg, drawn?: readonly number[]): string {
   if (!filtersActive(spec)) return SUMMARY_LABELS[agg];
-  const shown = viewRows(spec).length - (spec.header ? 1 : 0);
+  const shown = (drawn ?? viewRows(spec)).length - (spec.header ? 1 : 0);
   return `${SUMMARY_LABELS[agg]} of ${shown} visible`;
 }
 
@@ -976,20 +1095,159 @@ export const hasSummary = (spec: TableSpec) => Boolean(spec.summary?.some((s) =>
 // Formatting and merging
 // ---------------------------------------------------------------------------
 
-/** Apply a style to every cell in a range. `undefined` values clear that key. */
-export function styleRange(spec: TableSpec, range: CellRange, patch: CellStyle): TableSpec {
-  const { r0, c0, r1, c1 } = normRange(range, spec);
-  const styles: Record<string, CellStyle> = { ...(spec.styles ?? {}) };
-  for (let r = r0; r <= r1; r++) {
-    for (let c = c0; c <= c1; c++) {
-      const key = cellKey(r, c);
-      const next: CellStyle = { ...(styles[key] ?? {}), ...patch };
-      for (const k of Object.keys(next) as Array<keyof CellStyle>) if (next[k] === undefined || next[k] === false) delete next[k];
-      if (Object.keys(next).length) styles[key] = next;
+/**
+ * Style patches on stored cells, `undefined` values clearing their key — the
+ * styles map built once for the whole edit. Bold across a 2,000 × 60 range is
+ * one copy of the map, not 120,000 of them.
+ */
+export function styleCells(spec: TableSpec, entries: Iterable<readonly [number, number, CellStyle]>): TableSpec {
+  const edit = styleEditor(spec);
+  for (const [r, c, patch] of entries) edit(r, c, patch);
+  return edit.done();
+}
+
+/** A patch with its cleared keys gone, or null when it only clears. */
+function setPart(patch: CellStyle): CellStyle | null {
+  const out: CellStyle = {};
+  let any = false;
+  for (const k of Object.keys(patch) as Array<keyof CellStyle>) {
+    const v = patch[k];
+    if (v === undefined || v === false) continue;
+    (out as Record<string, unknown>)[k] = v;
+    any = true;
+  }
+  return any ? out : null;
+}
+
+/** A cell's style as drawn: its column's (`TableColumn.style`), under its own. */
+export function cellStyleAt(spec: TableSpec, r: number, c: number): CellStyle | undefined {
+  const own = spec.styles?.[`${r}:${c}`];
+  const col = spec.columns[c]?.style;
+  if (!col) return own;
+  if (!own) return col;
+  return { ...col, ...own };
+}
+
+/**
+ * One styles map, copied on the first change and written in place after that.
+ * A cell with no style yet takes the patch object itself — styles are never
+ * mutated, so 120,000 bold cells can share one `{ bold: true }`.
+ *
+ * A cell in a column that carries a style of its own is edited after that
+ * style has been handed down to the column's cells: a cell cannot say "not
+ * bold" over a bold column, so the column's style becomes theirs first.
+ */
+function styleEditor(spec: TableSpec) {
+  let styles: Record<string, CellStyle> | null = null;
+  let columns: TableColumn[] | null = null;
+  const rows = spec.cells.length;
+  const cols = spec.columns.length;
+  const parts = new Map<CellStyle, CellStyle | null>();
+  const handDown = (c: number) => {
+    const colStyle = (columns ?? spec.columns)[c]?.style;
+    if (!colStyle) return;
+    if (!columns) columns = [...spec.columns];
+    const { style: _gone, ...rest } = columns[c];
+    columns[c] = rest;
+    if (!styles) styles = { ...(spec.styles ?? {}) };
+    for (let r = 0; r < rows; r++) {
+      const key = `${r}:${c}`;
+      styles[key] = styles[key] ? { ...colStyle, ...styles[key] } : colStyle;
+    }
+  };
+  const edit = (r: number, c: number, patch: CellStyle) => {
+    if (r < 0 || c < 0 || r >= rows || c >= cols) return;
+    handDown(c);
+    const key = `${r}:${c}`;
+    const before = (styles ?? spec.styles)?.[key];
+    let next: CellStyle | null;
+    if (!before) {
+      let part = parts.get(patch);
+      if (part === undefined) {
+        part = setPart(patch);
+        parts.set(patch, part);
+      }
+      if (!part) return;
+      next = part;
+    } else {
+      next = setPart({ ...before, ...patch });
+    }
+    if (!styles) styles = { ...(spec.styles ?? {}) };
+    if (next) styles[key] = next;
+    else delete styles[key];
+  };
+  /**
+   * A patch on a whole column: the column's own style takes it, and the
+   * column's cells let go of the keys it sets, so the column's value shows.
+   */
+  edit.column = (c: number, patch: CellStyle) => {
+    if (c < 0 || c >= cols) return;
+    if (!columns) columns = [...spec.columns];
+    const col = columns[c];
+    const next = setPart({ ...(col.style ?? {}), ...patch });
+    const { style: _old, ...rest } = col;
+    columns[c] = next ? { ...rest, style: next } : rest;
+    const keys = Object.keys(patch) as Array<keyof CellStyle>;
+    const current = styles ?? spec.styles;
+    if (!current) return;
+    for (let r = 0; r < rows; r++) {
+      const key = `${r}:${c}`;
+      const own = current[key];
+      if (!own || !keys.some((k) => k in own)) continue;
+      if (!styles) styles = { ...(spec.styles ?? {}) };
+      const left = { ...own };
+      for (const k of keys) delete left[k];
+      if (Object.keys(left).length) styles[key] = left;
       else delete styles[key];
     }
+  };
+  edit.done = (): TableSpec => {
+    if (!styles && !columns) return spec;
+    let out: TableSpec = columns ? { ...spec, columns } : { ...spec };
+    if (styles) {
+      let any = false;
+      for (const _ in styles) {
+        any = true;
+        break;
+      }
+      out = { ...out, styles: any ? styles : undefined };
+    }
+    return out;
+  };
+  return edit;
+}
+
+/**
+ * Apply a style to every cell in a range. `undefined` values clear that key.
+ * A range that runs the full height of the table styles its columns instead.
+ */
+export function styleRange(spec: TableSpec, range: CellRange, patch: CellStyle): TableSpec {
+  const { r0, c0, r1, c1 } = normRange(range, spec);
+  const edit = styleEditor(spec);
+  if (r0 === 0 && r1 === spec.cells.length - 1) {
+    for (let c = c0; c <= c1; c++) edit.column(c, patch);
+    return edit.done();
   }
-  return { ...spec, styles: Object.keys(styles).length ? styles : undefined };
+  for (let r = r0; r <= r1; r++) for (let c = c0; c <= c1; c++) edit(r, c, patch);
+  return edit.done();
+}
+
+/**
+ * A style patch on every stored cell a drawn range stands for — the editor's
+ * bold, fill, ink, alignment, vertical alignment and wrap. When the range
+ * covers every stored row, it is the columns that are styled: one write per
+ * column, however long the table.
+ */
+export function styleStored(spec: TableSpec, range: CellRange, order: readonly number[], patch: CellStyle): TableSpec {
+  const edit = styleEditor(spec);
+  const stored = new Set<number>();
+  for (let vr = range.r0; vr <= range.r1; vr++) if (order[vr] !== undefined) stored.add(order[vr]);
+  if (stored.size === spec.cells.length) {
+    for (let c = range.c0; c <= range.c1; c++) edit.column(c, patch);
+    return edit.done();
+  }
+  for (const r of stored) for (let c = range.c0; c <= range.c1; c++) edit(r, c, patch);
+  return edit.done();
 }
 
 /** The shared value of one style key across a range, or `undefined` when mixed. */
@@ -998,7 +1256,7 @@ export function styleOf<K extends keyof CellStyle>(spec: TableSpec, range: CellR
   let first: CellStyle[K] | undefined;
   for (let r = r0; r <= r1; r++) {
     for (let c = c0; c <= c1; c++) {
-      const v = spec.styles?.[cellKey(r, c)]?.[key];
+      const v = cellStyleAt(spec, r, c)?.[key];
       if (r === r0 && c === c0) first = v;
       else if (v !== first) return undefined;
     }
@@ -1110,6 +1368,8 @@ export function tableFromCsv(text: string, base?: Partial<TableSpec>): TableSpec
     rowHeights: undefined,
     summary: undefined,
     refs: 2,
+    rowIds: freshIds(cells.length),
+    colIds: freshIds(cols),
   };
 }
 

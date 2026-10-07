@@ -1,0 +1,544 @@
+/* ------------------------------------------------------------ drawing tray */
+
+/* The Draw seat's tray: the tools as objects standing in a recess, then the
+   ink well. Shares the shelf's place above the dock and its `.tool-shelf`
+   class, so the bands placed from `--dock-h` clear it and the dock's arrow
+   keys leave it alone. See `DrawingTray`. */
+
+.tool-dock {
+  /* A critically damped spring: fast off the mark, settled without a rebound.
+     Sampled from 1 - (1 + wt)e^(-wt) at w = 8.5. */
+  --tray-spring: linear(0, 0.1, 0.287, 0.473, 0.627, 0.743, 0.827, 0.886, 0.925, 0.952, 0.969, 0.98, 0.987, 0.992, 0.995, 0.997, 1);
+}
+
+.tool-shelf.dock-tray {
+  padding: var(--space-1) var(--space-2) var(--space-1) var(--space-1);
+}
+
+.dock-tray__inner {
+  position: relative;
+  display: flex;
+  align-items: center;
+  gap: 2px;
+}
+
+/* The recess the tools stand in. Sunken against the panel, which is the one
+   piece of depth the tray adds; the panel itself keeps its single elevation. */
+.dock-tray__rack {
+  position: relative;
+  display: flex;
+  align-items: flex-start;
+  gap: 2px;
+  height: 66px;
+  padding: 0 var(--space-1);
+  overflow: hidden;
+  border-radius: var(--radius-md);
+  background: var(--surface-sunken);
+  box-shadow: inset 0 1px 2px rgba(0, 0, 0, 0.08);
+}
+
+.dark-theme .dock-tray__rack {
+  /* A step below the panel rather than the board's near-black, which read as
+     a hole cut through the tray. */
+  background: color-mix(in srgb, var(--surface-elevated) 72%, #000);
+  box-shadow: inset 0 1px 2px rgba(0, 0, 0, 0.4);
+}
+
+.dock-tray__tool {
+  position: relative;
+  display: flex;
+  justify-content: center;
+  width: 36px;
+  height: 66px;
+  padding: 0;
+  border: 0;
+  border-radius: var(--radius-sm);
+  background: none;
+  cursor: pointer;
+}
+
+/* Resting, sunk 12px below the rack's top edge; the lip hides the rest. */
+.dock-tray__tool .tool-art {
+  transform: translateY(12px);
+  filter: drop-shadow(1px 2px 1.5px rgba(0, 0, 0, 0.2));
+  transition: transform 460ms cubic-bezier(0.16, 1, 0.3, 1);
+  transition-timing-function: var(--tray-spring);
+}
+
+.dock-tray__tool:hover .tool-art {
+  transform: translateY(8px);
+}
+
+.dock-tray__tool[aria-checked='true'] .tool-art {
+  transform: translateY(4px);
+}
+
+.dock-tray__tool:focus-visible {
+  outline: 2px solid var(--focus-ring-color);
+  outline-offset: -2px;
+}
+
+/* The front lip: the panel's own surface, casting a short shadow up onto the
+   barrels so they read as standing behind it. */
+.dock-tray__lip {
+  position: absolute;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  z-index: 1;
+  height: 12px;
+  background: var(--surface-elevated);
+  box-shadow:
+    0 -1px 0 rgba(0, 0, 0, 0.06),
+    0 -5px 8px -4px rgba(0, 0, 0, 0.24);
+  pointer-events: none;
+}
+
+.dark-theme .dock-tray__lip {
+  box-shadow:
+    0 -1px 0 rgba(255, 255, 255, 0.08),
+    0 -5px 8px -4px rgba(0, 0, 0, 0.6);
+}
+
+/* The armed tool's mark on the lip, in ink. It carries the armed state where
+   the rise cannot: under reduced motion, and in increased contrast. */
+.dock-tray__tool[aria-checked='true']::after {
+  content: '';
+  position: absolute;
+  left: 50%;
+  bottom: 4px;
+  z-index: 2;
+  width: 14px;
+  height: 2px;
+  translate: -50% 0;
+  border-radius: var(--radius-pill);
+  background: var(--text-primary);
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .dock-tray__tool .tool-art { transition: none; }
+  .dock-tray__tool:hover .tool-art,
+  .dock-tray__tool[aria-checked='true'] .tool-art { transform: translateY(11px); }
+}
+
+:root[data-contrast='more'] .dock-tray__rack {
+  box-shadow: inset 0 0 0 1px var(--text-secondary);
+}
+
+:root[data-contrast='more'] .dock-tray__lip {
+  box-shadow: 0 -1px 0 var(--text-primary);
+}
+
+:root[data-contrast='more'] .dock-tray__tool .tool-art {
+  filter: none;
+}
+
+/* Below 900px: the same tools as glyphs, in one row of icon buttons. */
+.dock-tray__inner[data-mode='glyph'] .dock-tray__rack {
+  height: auto;
+  align-items: center;
+  padding: 0;
+  overflow: visible;
+  background: none;
+  box-shadow: none;
+}
+
+.dock-tray__inner[data-mode='glyph'] .dock-tray__tool {
+  width: var(--btn-size, var(--control-h-md));
+  height: var(--btn-size, var(--control-h-md));
+  align-items: center;
+}
+
+.dock-tray__inner[data-mode='glyph'] .dock-tray__tool::after {
+  bottom: 2px;
+  width: 10px;
+}
+
+/* The current tool in the tray is a neutral tint, as on the shelf: the ink
+   marker on the dock already says which seat is armed. */
+.tool-dock .dock-tray .dock-tray__tool.btn-icon.active,
+.tool-dock .dock-tray .dock-tray__tool.btn-icon.active:hover {
+  background: var(--surface-active);
+  color: var(--text-primary);
+}
+
+.dock-tray__rule {
+  height: 28px;
+}
+
+.dock-tray__well {
+  display: flex;
+  align-items: center;
+  gap: 2px;
+}
+
+/* `DrawTray`'s brush picker is the rack itself here, in art or glyphs. */
+.dock-tray__ink .draw-tray > .seg:first-child,
+.dock-tray__ink .draw-tray > .seg:first-child + .draw-tray__divider {
+  display: none;
+}
+
+/* ------------------------------------------------------------- width dots */
+
+.dock-widths {
+  display: flex;
+  align-items: center;
+  gap: 2px;
+}
+
+.dock-widths__btn {
+  display: grid;
+  place-items: center;
+  width: var(--control-h-sm);
+  height: var(--control-h-sm);
+  padding: 0;
+  border: 0;
+  border-radius: var(--radius-pill);
+  background: transparent;
+  cursor: pointer;
+  transition: background-color var(--motion-hover);
+}
+
+.dock-widths__btn:hover {
+  background: var(--surface-hover);
+}
+
+.dock-widths__btn[aria-checked='true'] {
+  background: var(--surface-active);
+}
+
+.dock-widths__btn:focus-visible {
+  outline: 2px solid var(--focus-ring-color);
+  outline-offset: 1px;
+}
+
+.dock-widths__dot {
+  border-radius: 50%;
+  background: var(--text-primary);
+}
+
+/* --------------------------------------------------------- brush settings */
+
+.dock-tray__settings {
+  position: absolute;
+  right: calc(-1 * var(--space-2));
+  bottom: calc(100% + var(--space-3));
+  z-index: 5;
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-3);
+  width: 252px;
+  padding: var(--space-3);
+  white-space: normal;
+}
+
+.dock-tray__settings-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--space-2);
+}
+
+.dock-tray__settings-label {
+  font-size: var(--text-xs);
+  color: var(--text-secondary);
+}
+
+.dock-tray__settings .slider__label {
+  font-size: var(--text-xs);
+}
+
+/* The tray is taller than a shelf; the bands above the dock clear it. */
+body:has(.dock-tray__inner[data-mode='art']) {
+  --dock-h: 148px;
+}
+
+/* ------------------------------------------------------------ seat caret */
+
+/* The corner mark on a seat with a menu, and the way into it. A real button
+   beside the seat, not inside it: the seat's click arms its tool, the caret's
+   opens the menu. Long-press and Up do the same from the seat itself. */
+.dock-caret {
+  position: absolute;
+  right: 0;
+  bottom: 0;
+  z-index: 1;
+  display: grid;
+  place-items: end;
+  width: 14px;
+  height: 14px;
+  padding: 0 3px 3px 0;
+  border: 0;
+  border-radius: 0 0 var(--radius-sm) 0;
+  background: none;
+  color: var(--text-secondary);
+  cursor: pointer;
+  opacity: 0.7;
+  transition: opacity var(--motion-hover);
+}
+
+.dock-caret svg {
+  display: block;
+  width: 5px;
+  height: 5px;
+}
+
+.dock-caret:hover,
+.dock-caret[aria-expanded='true'] {
+  opacity: 1;
+  color: var(--text-primary);
+}
+
+/* On the armed seat it sits on the ink marker, so it reverses with the glyph. */
+.dock-slot:has(> .dock-btn.active) > .dock-caret {
+  color: var(--surface-primary);
+}
+
+.tool-dock[data-held] .dock-slot:has(> .dock-btn.active) > .dock-caret {
+  color: var(--text-primary);
+}
+
+.dock-caret:focus-visible {
+  outline: 2px solid var(--focus-ring-color);
+  outline-offset: 0;
+  opacity: 1;
+}
+
+.tool-dock[data-editing] .dock-caret {
+  display: none;
+}
+
+/* --------------------------------------------------------- receding dock */
+
+/* While a stroke or a drag is under way on the board, the dock stands back.
+   The delay keeps a click from flashing it; the return is immediate. */
+.tool-dock[data-receding] {
+  opacity: 0.32;
+  transform: translateY(10px);
+  pointer-events: none;
+  transition:
+    opacity 260ms var(--ease-settle, cubic-bezier(0.16, 1, 0.3, 1)) 180ms,
+    transform 260ms var(--ease-settle, cubic-bezier(0.16, 1, 0.3, 1)) 180ms;
+}
+
+.tool-dock:not([data-receding]):not([data-shifted]) {
+  transition:
+    opacity 160ms var(--ease-settle, cubic-bezier(0.16, 1, 0.3, 1)),
+    transform 160ms var(--ease-settle, cubic-bezier(0.16, 1, 0.3, 1));
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .tool-dock[data-receding] {
+    transform: none;
+    transition: opacity 0s linear 180ms;
+  }
+}
+
+/* ----------------------------------------------------- tool library lists */
+
+/* The Insert library and the All tools panel. The list reaches through the
+   flyout panel's padding to its edges and reserves the scrollbar's gutter on
+   both sides, so the rows sit at equal insets with a scrollbar or without. */
+.tool-lib {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+  width: 356px;
+  max-width: calc(100vw - 2 * var(--gutter) - 16px);
+}
+
+.tool-lib__search {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  height: var(--control-h-md);
+  padding: 0 var(--space-2);
+  border: 1px solid var(--border-divider);
+  border-radius: var(--radius-md);
+  background: var(--surface-secondary);
+  color: var(--text-tertiary);
+  transition: border-color var(--motion-hover);
+}
+
+.tool-lib__search:focus-within {
+  border-color: var(--focus-field-color);
+}
+
+.tool-lib__search input {
+  flex: 1;
+  min-width: 0;
+  height: 100%;
+  padding: 0;
+  border: 0;
+  outline: none;
+  background: transparent;
+  color: var(--text-primary);
+  font: inherit;
+  font-size: var(--text-base);
+}
+
+.tool-lib__search input::placeholder { color: var(--text-tertiary); }
+.tool-lib__search input::-webkit-search-cancel-button { display: none; }
+
+.tool-lib__list {
+  max-height: clamp(180px, calc(100dvh - 260px), 420px);
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  scrollbar-width: thin;
+  scrollbar-gutter: stable both-edges;
+  margin-inline: calc(-1 * var(--space-2));
+  padding-inline: var(--space-1);
+}
+
+.tool-lib__group + .tool-lib__group {
+  margin-top: var(--space-1);
+  padding-top: var(--space-1);
+  border-top: 1px solid var(--border-divider);
+}
+
+.tool-lib__heading {
+  padding: var(--space-2) var(--space-2) var(--space-1);
+  font-size: var(--text-xs);
+  font-weight: var(--weight-semibold);
+  color: var(--text-tertiary);
+}
+
+.tool-lib__item {
+  display: flex;
+  align-items: center;
+  gap: 2px;
+}
+
+.tool-lib__row {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  min-height: 40px;
+  padding: var(--space-1) var(--space-2);
+  border: 0;
+  border-radius: var(--radius-sm);
+  background: transparent;
+  color: var(--text-primary);
+  text-align: left;
+  cursor: pointer;
+}
+
+.tool-lib__row:hover { background: var(--surface-hover); }
+.tool-lib__row[data-active] { background: var(--surface-active); }
+
+.tool-lib__row:focus-visible,
+.tool-lib__pin:focus-visible {
+  outline: 2px solid var(--focus-ring-color);
+  outline-offset: -2px;
+}
+
+.tool-lib__icon {
+  display: grid;
+  place-items: center;
+  flex: none;
+  width: 28px;
+  height: 28px;
+  border-radius: var(--radius-sm);
+  background: color-mix(in srgb, var(--text-primary) 6%, transparent);
+  color: var(--text-primary);
+}
+
+.tool-lib__icon svg { width: 18px; height: 18px; }
+
+.tool-lib__text {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+}
+
+.tool-lib__name {
+  font-size: var(--text-base);
+  font-weight: var(--weight-medium);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.tool-lib__desc {
+  font-size: var(--text-xs);
+  color: var(--text-secondary);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.tool-lib .tool-lib__key {
+  flex: none;
+  min-width: 18px;
+  padding: 1px 5px;
+  border-radius: var(--radius-sm);
+  background: color-mix(in srgb, var(--text-primary) 7%, transparent);
+  box-shadow: inset 0 -1px 0 var(--border-divider);
+  color: var(--text-secondary);
+  border: 0;
+  font-family: var(--font-mono);
+  font-size: var(--text-2xs);
+  line-height: 1.5;
+  text-align: center;
+}
+
+/* The pin and the "in Draw" note share one column, so names and keys align. */
+.tool-lib__pin,
+.tool-lib__home {
+  flex: none;
+  width: 44px;
+}
+
+.tool-lib__pin {
+  display: grid;
+  place-items: center;
+  height: 28px;
+  padding: 0;
+  border: 0;
+  border-radius: var(--radius-sm);
+  background: transparent;
+  color: var(--text-tertiary);
+  cursor: pointer;
+}
+
+.tool-lib__pin:hover { background: var(--surface-hover); color: var(--text-primary); }
+.tool-lib__pin[aria-pressed='true'] { color: var(--text-primary); }
+
+.tool-lib__home {
+  font-size: var(--text-2xs);
+  color: var(--text-tertiary);
+  text-align: center;
+  white-space: nowrap;
+}
+
+.tool-lib__empty {
+  margin: 0;
+  padding: var(--space-4) var(--space-2);
+  font-size: var(--text-sm);
+  color: var(--text-secondary);
+  text-align: center;
+}
+
+.tool-lib__foot {
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
+  padding-top: var(--space-1);
+  border-top: 1px solid var(--border-divider);
+}
+
+/* The connector shelf's avoid switch: a label and its track, on the shelf's row. */
+.tool-shelf .shelf-avoid {
+  display: flex;
+  align-items: center;
+  padding: 0 var(--space-1);
+}
+
+/* Edit mode loosens every seat with a slow tilt; the seat whose menu is open
+   holds still, so the panel hanging from it is not tilted with it. */
+.tool-dock[data-editing] .dock-slot:has(> .dock-flyout) {
+  animation: none;
+}

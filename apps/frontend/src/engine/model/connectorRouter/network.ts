@@ -8,7 +8,8 @@
  */
 
 import { isAxisSegment, moveSegment, type Hop } from './pathOps';
-import type { Pt } from './geometry';
+import type { Pt, Rect } from './geometry';
+import { fitCurve } from './curve';
 
 /** Distance between connectors sharing a channel. */
 export const CHANNEL_GAP = 8;
@@ -20,8 +21,11 @@ export interface NetworkRoute {
   points: readonly Pt[];
   /** Orthogonal routes take part in channel spreading; others only in jumps. */
   orthogonal: boolean;
-  /** Curved routes are sampled curves and take no part in either pass. */
+  /** Curved routes take no part in jumps; with a skeleton they spread by it. */
   curved?: boolean;
+  /** A curve's elbow skeleton and the boxes it keeps clear of; see `ConnectorRoute`. */
+  skeleton?: readonly Pt[];
+  clearance?: readonly Rect[];
   zIndex: number;
   jumps: JumpStyle;
   strokeWidth: number;
@@ -37,8 +41,11 @@ function stackCompare(a: NetworkRoute, b: NetworkRoute): number {
   return a.id < b.id ? -1 : a.id > b.id ? 1 : 0;
 }
 
-interface ChannelSeg {
-  route: number;
+/** One interior leg of an elbow route, as channel spreading sees it. */
+export interface ChannelSeg {
+  /** The route's id. */
+  id: string;
+  /** Index of the leg in the route, counting from the first leg out of the start. */
   seg: number;
   axis: 'h' | 'v';
   coord: number;
@@ -46,71 +53,171 @@ interface ChannelSeg {
   hi: number;
   /** Which side the route comes from and goes to: -2 (both low) … 2 (both high). */
   side: number;
-  id: string;
+}
+
+/** The interior legs of a route that lie on an axis line. The first and last legs belong to their ports. */
+export function channelSegments(id: string, pts: readonly Pt[]): ChannelSeg[] {
+  const out: ChannelSeg[] = [];
+  for (let s = 1; s + 2 < pts.length; s += 1) {
+    const p = pts[s];
+    const q = pts[s + 1];
+    const axis = isAxisSegment(p, q);
+    if (!axis) continue;
+    const coord = axis === 'h' ? p.y : p.x;
+    const lo = axis === 'h' ? Math.min(p.x, q.x) : Math.min(p.y, q.y);
+    const hi = axis === 'h' ? Math.max(p.x, q.x) : Math.max(p.y, q.y);
+    const sideOf = (pt: Pt) => Math.sign(axis === 'h' ? pt.y - coord : pt.x - coord);
+    out.push({ id, seg: s, axis, coord, lo, hi, side: sideOf(pts[s - 1]) + sideOf(pts[s + 2]) });
+  }
+  return out;
+}
+
+/** The channel line a leg runs down: its axis and its coordinate to the nearest unit. */
+export function lineKeyOf(seg: Pick<ChannelSeg, 'axis' | 'coord'>): number {
+  return Math.round(seg.coord) * 2 + (seg.axis === 'h' ? 0 : 1);
+}
+
+function segCompare(a: ChannelSeg, b: ChannelSeg): number {
+  return a.lo - b.lo || a.hi - b.hi || (a.id < b.id ? -1 : a.id > b.id ? 1 : a.seg - b.seg);
 }
 
 /**
- * Spread interior segments that run down the same channel.
+ * The offset of every leg on one channel line, in the order given.
  *
- * Segments on one line (within a unit) whose extents overlap are a bundle.
- * A bundle of n segments from different connectors is fanned out `CHANNEL_GAP`
- * apart, centred on the original line. Members are ordered by which side they
- * enter and leave from, so a connector arriving from the left takes the left
- * lane and the fan does not add crossings, then by id.
+ * Legs whose extents overlap are a bundle. A bundle of legs from two or more
+ * connectors is fanned out `CHANNEL_GAP` apart, centred on the original line.
+ * Members are ordered by which side they enter and leave from, so a connector
+ * arriving from the left takes the left lane and the fan adds no crossings,
+ * then by id. A line's offsets depend only on the legs on it, so a change
+ * re-spreads the lines it touches and nothing else.
  */
-export function spreadChannels(routes: readonly NetworkRoute[]): Pt[][] {
-  const out = routes.map((r) => r.points.map((p) => ({ ...p })));
-  const segs: ChannelSeg[] = [];
-  routes.forEach((route, r) => {
-    if (!route.orthogonal || route.curved) return;
-    const pts = route.points;
-    // Interior segments only: the first and last legs belong to their ports.
-    for (let s = 1; s + 2 < pts.length; s += 1) {
-      const p = pts[s];
-      const q = pts[s + 1];
-      const axis = isAxisSegment(p, q);
-      if (!axis) continue;
-      const coord = axis === 'h' ? p.y : p.x;
-      const lo = axis === 'h' ? Math.min(p.x, q.x) : Math.min(p.y, q.y);
-      const hi = axis === 'h' ? Math.max(p.x, q.x) : Math.max(p.y, q.y);
-      const before = pts[s - 1];
-      const after = pts[s + 2];
-      const sideOf = (pt: Pt) => Math.sign(axis === 'h' ? pt.y - coord : pt.x - coord);
-      segs.push({ route: r, seg: s, axis, coord, lo, hi, side: sideOf(before) + sideOf(after), id: route.id });
+export function lineOffsets(segs: readonly ChannelSeg[]): number[] {
+  const out = new Array<number>(segs.length).fill(0);
+  const order = segs.map((_, i) => i).sort((p, q) => segCompare(segs[p], segs[q]));
+  let k = 0;
+  while (k < order.length) {
+    let reach = segs[order[k]].hi;
+    let m = k + 1;
+    while (m < order.length && segs[order[m]].lo < reach - 1) {
+      reach = Math.max(reach, segs[order[m]].hi);
+      m += 1;
     }
-  });
-
-  segs.sort((a, b) => (a.axis !== b.axis ? (a.axis < b.axis ? -1 : 1) : a.coord - b.coord || a.lo - b.lo));
-
-  let i = 0;
-  while (i < segs.length) {
-    // One line: same axis, coordinates within a unit of the first.
-    let j = i + 1;
-    while (j < segs.length && segs[j].axis === segs[i].axis && segs[j].coord - segs[i].coord <= 1) j += 1;
-    const line = segs.slice(i, j).sort((a, b) => a.lo - b.lo);
-    // Bundles: overlapping extents along that line.
-    let k = 0;
-    while (k < line.length) {
-      let reach = line[k].hi;
-      let m = k + 1;
-      while (m < line.length && line[m].lo < reach - 1) {
-        reach = Math.max(reach, line[m].hi);
-        m += 1;
-      }
-      const bundle = line.slice(k, m);
-      if (new Set(bundle.map((s) => s.route)).size >= 2) {
-        bundle.sort((a, b) => a.side - b.side || (a.id < b.id ? -1 : a.id > b.id ? 1 : a.seg - b.seg));
-        const centre = (bundle.length - 1) / 2;
-        bundle.forEach((s, index) => {
-          const offset = (index - centre) * CHANNEL_GAP;
-          if (offset !== 0) moveSegment(out[s.route], s.seg, offset);
-        });
-      }
-      k = m;
+    const bundle = order.slice(k, m);
+    if (new Set(bundle.map((i) => segs[i].id)).size >= 2) {
+      bundle.sort((p, q) => {
+        const a = segs[p];
+        const b = segs[q];
+        return a.side - b.side || (a.id < b.id ? -1 : a.id > b.id ? 1 : a.seg - b.seg);
+      });
+      const centre = (bundle.length - 1) / 2;
+      bundle.forEach((i, index) => {
+        out[i] = (index - centre) * CHANNEL_GAP;
+      });
     }
-    i = j;
+    k = m;
   }
   return out;
+}
+
+/** A route's points with each leg moved by its offset. */
+export function applyOffsets(points: readonly Pt[], offsets: ReadonlyMap<number, number> | undefined): Pt[] {
+  const out = points.map((p) => ({ ...p }));
+  if (offsets) for (const [seg, offset] of offsets) if (offset !== 0) moveSegment(out, seg, offset);
+  return out;
+}
+
+/**
+ * Spread interior segments that run down the same channel, for a whole set
+ * of routes at once. See `lineOffsets`.
+ */
+export function spreadChannels(routes: readonly NetworkRoute[]): Pt[][] {
+  const lines = new Map<number, ChannelSeg[]>();
+  const index = new Map<string, number>();
+  routes.forEach((route, r) => {
+    index.set(route.id, r);
+    const legs = spreadSource(route);
+    if (!legs) return;
+    for (const seg of channelSegments(route.id, legs)) {
+      const k = lineKeyOf(seg);
+      const line = lines.get(k);
+      if (line) line.push(seg);
+      else lines.set(k, [seg]);
+    }
+  });
+  const offsets = routes.map(() => new Map<number, number>());
+  for (const line of lines.values()) {
+    const offs = lineOffsets(line);
+    line.forEach((seg, i) => {
+      if (offs[i] !== 0) offsets[index.get(seg.id)!].set(seg.seg, offs[i]);
+    });
+  }
+  return routes.map((route, r) => spreadRoute(route, offsets[r]));
+}
+
+/** The legs a route spreads by: an elbow route's own, a curve's skeleton, or none. */
+export function spreadSource(route: Pick<NetworkRoute, 'orthogonal' | 'curved' | 'points' | 'skeleton'>): readonly Pt[] | null {
+  if (route.curved) return route.skeleton ?? null;
+  return route.orthogonal ? route.points : null;
+}
+
+/** A route's drawing after spreading: its legs moved, and a curve refitted over its moved skeleton. */
+export function spreadRoute(
+  route: Pick<NetworkRoute, 'orthogonal' | 'curved' | 'points' | 'skeleton' | 'clearance'>,
+  offsets: ReadonlyMap<number, number> | undefined
+): Pt[] {
+  if (route.curved) {
+    if (!route.skeleton || !offsets || offsets.size === 0) return route.points.map((p) => ({ ...p }));
+    return fitCurve(applyOffsets(route.skeleton, offsets), route.clearance ?? []);
+  }
+  return applyOffsets(route.points, offsets);
+}
+
+/**
+ * Every elbow route's interior legs, by channel line, kept between frames.
+ *
+ * The canvas updates it per route as routes change, and re-spreads only the
+ * lines a change touches.
+ */
+export class ChannelIndex {
+  private lines = new Map<number, ChannelSeg[]>();
+  private byRoute = new Map<string, ChannelSeg[]>();
+
+  /** The lines a route currently runs down. */
+  keysOf(id: string): number[] {
+    return (this.byRoute.get(id) ?? []).map(lineKeyOf);
+  }
+
+  line(key: number): readonly ChannelSeg[] {
+    return this.lines.get(key) ?? [];
+  }
+
+  /** Record a route's legs, replacing whatever it had. */
+  set(id: string, points: readonly Pt[]): void {
+    this.delete(id);
+    const list = channelSegments(id, points);
+    if (list.length === 0) return;
+    this.byRoute.set(id, list);
+    for (const seg of list) {
+      const k = lineKeyOf(seg);
+      const line = this.lines.get(k);
+      if (line) line.push(seg);
+      else this.lines.set(k, [seg]);
+    }
+  }
+
+  delete(id: string): void {
+    const list = this.byRoute.get(id);
+    if (!list) return;
+    this.byRoute.delete(id);
+    for (const seg of list) {
+      const k = lineKeyOf(seg);
+      const line = this.lines.get(k);
+      if (!line) continue;
+      const i = line.indexOf(seg);
+      if (i >= 0) line.splice(i, 1);
+      if (line.length === 0) this.lines.delete(k);
+    }
+  }
 }
 
 /** Where `p→q` properly crosses `r→s`, as the parameter along each. */
@@ -192,8 +299,19 @@ export function pairHops(
   const upperHops = aUpper ? out[0] : out[1];
   const lowerHops = aUpper ? out[1] : out[0];
   for (let i = 0; i + 1 < pu.length; i += 1) {
+    const p = pu[i];
+    const q = pu[i + 1];
+    const pMinX = p.x < q.x ? p.x : q.x;
+    const pMaxX = p.x < q.x ? q.x : p.x;
+    const pMinY = p.y < q.y ? p.y : q.y;
+    const pMaxY = p.y < q.y ? q.y : p.y;
     for (let j = 0; j + 1 < pl.length; j += 1) {
-      const hit = crossing(pu[i], pu[i + 1], pl[j], pl[j + 1]);
+      const r = pl[j];
+      const t = pl[j + 1];
+      // Boxes first: most pairs of legs are nowhere near each other.
+      if ((r.x < pMinX && t.x < pMinX) || (r.x > pMaxX && t.x > pMaxX)) continue;
+      if ((r.y < pMinY && t.y < pMinY) || (r.y > pMaxY && t.y > pMaxY)) continue;
+      const hit = crossing(p, q, r, t);
       if (!hit) continue;
       if (style === 'arc') {
         const len = Math.hypot(pu[i + 1].x - pu[i].x, pu[i + 1].y - pu[i].y);
@@ -205,68 +323,6 @@ export function pairHops(
     }
   }
   return out;
-}
-
-/** An interior leg on an axis line, for finding the bundles a route belongs to. */
-interface LineSeg {
-  id: string;
-  axis: 'h' | 'v';
-  coord: number;
-  lo: number;
-  hi: number;
-}
-
-export function interiorSegments(id: string, points: readonly Pt[]): LineSeg[] {
-  const out: LineSeg[] = [];
-  for (let s = 1; s + 2 < points.length; s += 1) {
-    const p = points[s];
-    const q = points[s + 1];
-    const axis = isAxisSegment(p, q);
-    if (!axis) continue;
-    out.push({
-      id,
-      axis,
-      coord: axis === 'h' ? p.y : p.x,
-      lo: axis === 'h' ? Math.min(p.x, q.x) : Math.min(p.y, q.y),
-      hi: axis === 'h' ? Math.max(p.x, q.x) : Math.max(p.y, q.y),
-    });
-  }
-  return out;
-}
-
-/**
- * Every route that shares a channel bundle, directly or through others, with
- * the given segments. Spreading only moves segments within their bundle, so
- * re-spreading this set reproduces exactly what a whole-board pass would.
- */
-export function bundleClosure(
-  routes: ReadonlyMap<string, readonly Pt[]>,
-  seeds: readonly LineSeg[]
-): Set<string> {
-  const index = new Map<string, LineSeg[]>();
-  const bucket = (axis: string, coord: number) => `${axis}${Math.round(coord)}`;
-  for (const [id, pts] of routes) {
-    for (const seg of interiorSegments(id, pts)) {
-      const k = bucket(seg.axis, seg.coord);
-      const list = index.get(k) ?? [];
-      list.push(seg);
-      index.set(k, list);
-    }
-  }
-  const members = new Set<string>();
-  const queue = [...seeds];
-  while (queue.length > 0) {
-    const seg = queue.pop()!;
-    for (const d of [-1, 0, 1]) {
-      for (const other of index.get(bucket(seg.axis, Math.round(seg.coord) + d)) ?? []) {
-        if (members.has(other.id) || Math.abs(other.coord - seg.coord) > 1) continue;
-        if (other.lo >= seg.hi - 1 || seg.lo >= other.hi - 1) continue;
-        members.add(other.id);
-        queue.push(...interiorSegments(other.id, routes.get(other.id)!));
-      }
-    }
-  }
-  return members;
 }
 
 /** Both passes, in order: spread channels, then find crossings on the spread routes. */

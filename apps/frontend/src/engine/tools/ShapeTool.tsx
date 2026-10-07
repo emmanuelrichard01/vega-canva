@@ -3,9 +3,11 @@ import { nanoid } from 'nanoid';
 import { useStore } from '../../hooks/useStore';
 import { ThemeService } from '../ThemeService';
 import type { Tool, ToolContext } from './Tool';
+import type { EditorAPI } from '../api/EditorAPI';
 import { finishCreation } from './toolModes';
 import type { ShapeGeometry } from '../model/schema';
 import {
+  boxAt,
   placedSize,
   presetGeometry,
   shapeEntry,
@@ -30,6 +32,61 @@ import { bindCandidates } from '../model/connectorTargets';
 import { snapLineEndpoint } from '../interaction/lineMagneticSnap';
 import * as React from 'react';
 import { recordRecentShape } from './recentShapes';
+
+/**
+ * How a new closed shape looks: the theme's fill and ink, and a corner radius
+ * only when the preset's whole promise is the corner.
+ *
+ * A rectangle is a rectangle. The radius is a control in the panel and on the
+ * rail, and the default is the shape's own geometry; rounding is what you add.
+ * The one exception is a tile like "Rounded rectangle", which seeds a radius
+ * proportional to the size it is placed at. From then on it is an ordinary
+ * stored value, so resizing does not reshape a corner somebody has adjusted.
+ */
+function newShapeAppearance(preset: ShapePreset, width: number, height: number) {
+  const ratio = shapeEntry(preset).cornerRadiusRatio;
+  return {
+    fill: [{ type: 'solid' as const, color: ThemeService.getDefaultShapeFill(), opacity: 1 }],
+    stroke: { color: ThemeService.getDefaultStrokeColor(), width: 2 },
+    cornerRadius: ratio ? Math.round(Math.min(width, height) * ratio) : 0,
+  };
+}
+
+/**
+ * Place a closed preset centred on a board point, at its natural size, and
+ * select it: what a click on the board with the tool armed does, for callers
+ * outside the tool. The shape library uses it for a tile dragged onto the
+ * board and for Enter on a tile.
+ *
+ * Writes through `editor.createNode`, the same command path the tool takes, so
+ * it is one undo step and passes the document's role gate.
+ */
+export function placeShapeAt(
+  editor: Pick<EditorAPI, 'createNode' | 'select'>,
+  preset: ShapePreset,
+  at: { x: number; y: number }
+): string {
+  let { x, y, width, height } = boxAt(preset, at);
+  if (gridSnap.shouldSnap()) {
+    const snapped = gridSnap.snapPoint(x, y);
+    x = snapped.x;
+    y = snapped.y;
+  }
+  const id = nanoid();
+  recordRecentShape(preset);
+  editor.createNode({
+    id,
+    type: 'shape',
+    x,
+    y,
+    width,
+    height,
+    geometry: presetGeometry(preset),
+    appearance: newShapeAppearance(preset, width, height),
+  });
+  editor.select(id);
+  return id;
+}
 
 /** Minimum drag before a shape is sized by the drag rather than dropped at its own proportions. */
 const MIN_DRAG = 5;
@@ -426,35 +483,11 @@ export class ShapeTool implements Tool {
       width,
       height,
       geometry: run ? run.geometry : openGeometry,
-      appearance: {
-        fill: [{ type: 'solid', color: ThemeService.getDefaultShapeFill(), opacity: 1 }],
-        stroke: { color: ThemeService.getDefaultStrokeColor(), width: 2 },
-        /**
-         * A rectangle is a rectangle.
-         *
-         * This was 8, so every square anyone drew arrived with rounded
-         * corners nobody asked for — a style decision baked into the *tool*,
-         * which is the one place it cannot be undone by not choosing it. The
-         * corner radius is a control in the panel and on the rail; the default
-         * is the shape's own geometry, and rounding is what you add.
-         *
-         * The one exception is a tile whose whole promise is the corner —
-         * "Rounded rectangle" — which seeds one proportional to the shape it
-         * was dragged out at. Stored as the ordinary pixel value from then on,
-         * so resizing does not reshape a corner somebody has since adjusted.
-         */
-        cornerRadius: this.seededRadius(width, height),
-      },
+      appearance: newShapeAppearance(this.preset, width, height),
     });
 
     ctx.editor.select(nodeId);
     finishCreation();
-  }
-
-  /** The radius this preset asks for at this size, or none. */
-  private seededRadius(width: number, height: number): number {
-    const ratio = shapeEntry(this.preset).cornerRadiusRatio;
-    return ratio ? Math.round(Math.min(width, height) * ratio) : 0;
   }
 
   /**
@@ -721,7 +754,7 @@ export class ShapeTool implements Tool {
       geometry: this.geometry(),
       width,
       height,
-      appearance: { cornerRadius: this.seededRadius(width, height) },
+      appearance: { cornerRadius: newShapeAppearance(this.preset, width, height).cornerRadius },
     };
     const pathD = contourData(shapeToPath(dummyNode as any));
     const featurePaths = shapeFeaturePaths(dummyNode as any, 0, 0);

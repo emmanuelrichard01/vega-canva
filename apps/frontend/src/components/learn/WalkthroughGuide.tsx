@@ -1,4 +1,5 @@
 import React, { useEffect, useLayoutEffect, useRef, useState, useSyncExternalStore } from 'react';
+import './learn.css';
 import { Check, X } from 'lucide-react';
 import { useStore } from '../../hooks/useStore';
 import { walkthroughState } from '../../engine/learn/walkthroughState';
@@ -8,6 +9,7 @@ import { ringPath } from '../../engine/learn/tourSketch';
 import { cameraSystem } from '../../engine/CameraSystem';
 import { engineEvents } from '../../engine/EventBus';
 import { keyFor } from '../../engine/learn/lessons';
+import { isPresenting, subscribePresenting } from '../../engine/tools/presenting';
 import type { Box } from '../../engine/learn/tour';
 
 /**
@@ -68,6 +70,8 @@ export const WalkthroughGuide: React.FC<Props> = ({ selectedIds, visible }) => {
   );
 
   const objects = useStore((s) => s.objects);
+  /** Presenting writes nothing, so the one step that is about it has to ask. */
+  const presenting = useSyncExternalStore(subscribePresenting, isPresenting, isPresenting);
 
   /**
    * The step that has just been satisfied, held for one beat.
@@ -91,12 +95,12 @@ export const WalkthroughGuide: React.FC<Props> = ({ selectedIds, visible }) => {
    */
   useEffect(() => {
     if (!walk || !before) return;
-    const advanced = walkthroughState.observe({ objects, selected: selectedIds });
+    const advanced = walkthroughState.observe({ objects, selected: selectedIds, presenting });
     if (!advanced) return;
     setStruck(index);
     window.clearTimeout(beat.current);
     beat.current = window.setTimeout(() => setStruck(null), BEAT_MS);
-  }, [objects, selectedIds, walk, before, index]);
+  }, [objects, selectedIds, presenting, walk, before, index]);
 
   useEffect(() => () => window.clearTimeout(beat.current), []);
 
@@ -216,6 +220,16 @@ export const WalkthroughGuide: React.FC<Props> = ({ selectedIds, visible }) => {
               ))}
             </ol>
             <span className="walk__hint">Do it on the board to continue</span>
+            {/* Always there: a step that cannot be done where somebody is must
+                not strand them. A skipped run ends without being recorded as
+                finished (`walkthroughState.skip`). */}
+            <button
+              type="button"
+              className="walk__skip"
+              onClick={() => walkthroughState.skip({ objects, selected: selectedIds, presenting })}
+            >
+              {index + 1 < walk.steps.length ? 'Skip this step' : 'Skip and finish'}
+            </button>
           </div>
         </div>
 

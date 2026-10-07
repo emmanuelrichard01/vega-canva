@@ -1,38 +1,19 @@
 import React, { useId } from 'react';
-import { Pause, Play, Shuffle, SkipBack, SkipForward } from 'lucide-react';
+import { Pause, Play, SkipBack, SkipForward } from 'lucide-react';
 import { Turntable } from './Turntable';
-import { StationCover } from './StationCover';
-import { stationById, type StationId } from '../../engine/music/stations';
-import { keyName, variationTitle } from '../../engine/music/describe';
-import { musicEngine } from '../../engine/music/engine';
-import { nextVariation, togglePlay, useMusic } from '../../engine/music/musicStore';
-import {
-  seekLibrary,
-  skipLibrary,
-  toggleLibrary,
-  useLibrary,
-} from '../../engine/music/library/libraryStore';
+import { CategoryCover } from './CategoryCover';
+import { togglePlay, useMusic } from '../../engine/music/musicStore';
+import { seekLibrary, skipLibrary, useLibrary } from '../../engine/music/library/libraryStore';
 import { categoryLabel, formatDuration } from '../../engine/music/library/manifest';
+import { creditFor, type Credit } from '../../engine/music/library/credits';
 import { nextSpotifyTrack, pauseSpotify, previousSpotifyTrack, resumeSpotify, useSpotify } from '../../engine/music/spotify/spotifyStore';
 
-const KNOWN: readonly string[] = ['ambient', 'piano', 'lofi', 'synth', 'house', 'retro'];
-
-/** Cover art for a library track: its artwork, or the station art for its category. */
-export const TrackArt: React.FC<{ artwork: string | null; category: string; seed: number; size: number; className?: string }> = ({
-  artwork,
-  category,
-  seed,
-  size,
-  className,
-}) =>
+/** Cover art for a track: its own artwork, or its station's drawn cover. */
+export const TrackArt: React.FC<{ artwork: string | null; category: string; size: number; className?: string }> = ({ artwork, category, size, className }) =>
   artwork ? (
     <img className={`music-art ${className ?? ''}`} src={artwork} alt="" width={size} height={size} loading="lazy" referrerPolicy="no-referrer" />
-  ) : KNOWN.includes(category) ? (
-    <StationCover station={category as StationId} seed={seed} size={size} fluid className={`music-art ${className ?? ''}`} />
   ) : (
-    <span className={`music-art music-art--blank ${className ?? ''}`} aria-hidden="true">
-      {categoryLabel(category).slice(0, 1)}
-    </span>
+    <CategoryCover category={category} className={`music-art ${className ?? ''}`} />
   );
 
 interface View {
@@ -43,9 +24,10 @@ interface View {
   progress: { position: number; duration: number } | null;
   toggle: () => void;
   next: (() => void) | null;
-  nextLabel: string;
   previous: (() => void) | null;
   status: string | null;
+  /** Attribution for a recorded track; some licences require it wherever the track plays. */
+  credit: Credit | null;
 }
 
 /** What the hero shows, from whichever source is selected. */
@@ -55,37 +37,19 @@ function useView(): View | null {
   const spotify = useSpotify();
 
   if (music.source === 'stations') {
-    const station = stationById(music.station);
-    const playing = music.status === 'playing';
-    const now = playing ? musicEngine().nowPlaying : null;
-    return {
-      title: variationTitle(music.station, music.seed),
-      subtitle: now ? `${station.name} · ${keyName(now.key)} · ${now.bpm} BPM` : station.name,
-      art: <StationCover station={music.station} seed={music.seed} size={64} fluid />,
-      playing,
-      progress: null,
-      toggle: () => void togglePlay(),
-      next: () => void nextVariation(),
-      nextLabel: 'New variation',
-      previous: null,
-      status: music.autoPaused && !playing ? 'Paused while this tab was in the background' : null,
-    };
-  }
-
-  if (music.source === 'library') {
     const t = library.current;
     if (!t) return null;
     return {
       title: t.title,
       subtitle: `${t.artist} · ${categoryLabel(t.category)}`,
-      art: <TrackArt artwork={t.artwork} category={t.category} seed={t.title.length * 7919} size={64} />,
+      art: <TrackArt artwork={t.artwork} category={t.category} size={64} />,
       playing: library.playing,
       progress: { position: library.position, duration: library.duration || t.duration },
-      toggle: () => void toggleLibrary(),
+      toggle: () => void togglePlay(),
       next: () => void skipLibrary(1),
-      nextLabel: 'Next track',
       previous: () => void skipLibrary(-1),
       status: library.buffering ? 'Loading…' : null,
+      credit: creditFor(t),
     };
   }
 
@@ -100,29 +64,29 @@ function useView(): View | null {
     progress: null,
     toggle: () => void (spotify.playing ? pauseSpotify() : resumeSpotify(music.volume)),
     next: route?.kind === 'embed' ? null : () => void nextSpotifyTrack(),
-    nextLabel: 'Next track',
     previous: route?.kind === 'embed' ? null : () => void previousSpotifyTrack(),
     status: null,
+    credit: null,
   };
 }
 
 /**
  * The top of the player: the turntable with the current art as its label,
- * what is playing, and the transport.
+ * what is playing, the transport, and the track's credit.
  */
 export const NowPlaying: React.FC = () => {
   const view = useView();
+  const music = useMusic();
+  const spotify = useSpotify();
   const seekId = useId();
 
+  // Nothing yet: a one-line prompt, so the choices below are the content. Spotify has none to offer until it is connected.
   if (!view) {
+    if (music.source === 'spotify' && (!spotify.connected || spotify.limited)) return null;
     return (
-      <div className="music-hero music-hero--empty">
-        <Turntable playing={false} progress={null} label={<span className="music-art music-art--blank" />} size={112} />
-        <div className="music-hero__text">
-          <div className="music-hero__title">Nothing playing</div>
-          <div className="music-hero__subtitle">Pick something below to start.</div>
-        </div>
-      </div>
+      <p className="music-prompt" role="status">
+        {music.source === 'stations' ? 'Pick a station to start.' : 'Pick a playlist to start.'}
+      </p>
     );
   }
 
@@ -156,12 +120,8 @@ export const NowPlaying: React.FC = () => {
             {view.playing ? <Pause size={17} strokeWidth={2} aria-hidden="true" /> : <Play size={17} strokeWidth={2} aria-hidden="true" />}
           </button>
           {view.next && (
-            <button type="button" className="btn-icon" aria-label={view.nextLabel} data-tooltip={`${view.nextLabel} · →`} onClick={view.next}>
-              {view.nextLabel === 'New variation' ? (
-                <Shuffle size={16} strokeWidth={1.75} aria-hidden="true" />
-              ) : (
-                <SkipForward size={16} strokeWidth={1.75} aria-hidden="true" />
-              )}
+            <button type="button" className="btn-icon" aria-label="Next track" data-tooltip="Next track · →" onClick={view.next}>
+              <SkipForward size={16} strokeWidth={1.75} aria-hidden="true" />
             </button>
           )}
         </div>
@@ -187,6 +147,21 @@ export const NowPlaying: React.FC = () => {
           <span className="music-progress__time">−{formatDuration(Math.max(0, view.progress.duration - view.progress.position))}</span>
         </div>
       )}
+      {view.credit && <CreditLine credit={view.credit} />}
     </div>
   );
 };
+
+/** "Music: Title by Artist · Source", with the source linked when the licence names a page. */
+export const CreditLine: React.FC<{ credit: Credit }> = ({ credit }) => (
+  <p className="music-credit">
+    Music: {credit.title} by {credit.artist} ·{' '}
+    {credit.url ? (
+      <a href={credit.url} target="_blank" rel="noopener noreferrer">
+        {credit.source}
+      </a>
+    ) : (
+      credit.source
+    )}
+  </p>
+);

@@ -557,7 +557,12 @@
   display: inline-flex;
   align-items: center;
   gap: 8px;
+  min-width: 0;
   color: var(--text-tertiary);
+}
+
+.chartp-switch > svg {
+  flex-shrink: 0;
 }
 
 /* A native select in the field shape: the platform's own menu, in our box. */
@@ -1268,15 +1273,18 @@
 
 /* The two references a formula is written with, as a bar of their own: side
    by side on the heading they were wider than the heading. */
+/* Two triggers side by side while both fit their labels; one above the other
+   in a narrow panel, rather than either running past the edge. */
 .chartp-fxbar {
   display: grid;
-  grid-template-columns: 1fr 1fr;
+  grid-template-columns: repeat(auto-fit, minmax(min(100%, 120px), 1fr));
   gap: 6px;
 }
 
 .chartp-fxbar .pnpop__trigger {
   justify-content: center;
   width: 100%;
+  min-width: 0;
   height: var(--control-h-sm);
 }
 
@@ -2446,4 +2454,14 @@
 
 .chartp-series__row[data-hidden] .chartp-series__swatch {
   opacity: 0.35;
+}
+
+/* A narrow panel (240–260px) leaves 110–130px beside a row label: too little
+   for two fields, which then clip their own text. Such a row puts its label
+   above and gives the pair the full width instead. */
+@container props (max-width: 272px) {
+  .pg-row:has(> .pg-row__control > .chartp-pair, > .pg-row__control > .chartp-inline) {
+    grid-template-columns: minmax(0, 1fr);
+    row-gap: 6px;
+  }
 }

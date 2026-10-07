@@ -269,3 +269,20 @@
     opacity: 1;
   }
 }
+
+/* A selection set in more than one face. */
+.font-trigger__name[data-mixed] {
+  color: var(--text-tertiary);
+  font-style: normal;
+}
+
+/* Removing a board font is destructive for everyone: neutral at rest, red when reached. */
+.font-row__action--remove:hover,
+.font-row__action--remove:focus-visible {
+  color: var(--status-danger);
+}
+
+/* Increased contrast gives every resting control an edge; the trigger is one. */
+.font-trigger {
+  border-color: var(--control-border, transparent);
+}

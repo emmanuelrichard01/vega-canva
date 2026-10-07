@@ -2,7 +2,7 @@ import { useCallback, useSyncExternalStore } from 'react';
 import * as Y from 'yjs';
 import { commentsMap, doc, localAuthor, localAuthorId } from '../engine/document';
 import { extractMentions, reactionKey } from '../engine/comments/threads';
-import { canPostComments } from '../engine/model/permissions';
+import { canEditObjects, canPostComments } from '../engine/model/permissions';
 import { nanoid } from 'nanoid';
 
 export interface Message {
@@ -210,6 +210,7 @@ export function useComments() {
     messagesArray.delete(idx, 1);
   }, []);
 
+  /** Any commenter may resolve or reopen a thread: closing the loop is shared work. */
   const resolveComment = useCallback((threadId: string) => {
     if (!canPostComments()) return;
     const threadMap = commentsMap.get(threadId);
@@ -241,9 +242,24 @@ export function useComments() {
     });
   }, []);
 
+  /**
+   * Delete a whole thread. Its starter or an editor may; other commenters can
+   * reply and resolve but not erase someone else's conversation.
+   *
+   * The messages go, never the container: deleting the container would also
+   * discard a reply posted at the same moment, whereas an emptied thread is
+   * simply brought back by that reply (see the note on `snapshot`).
+   */
   const deleteComment = useCallback((threadId: string) => {
     if (!canPostComments()) return;
-    commentsMap.delete(threadId);
+    const threadMap = commentsMap.get(threadId);
+    if (!threadMap) return;
+    const messagesArray = threadMap.get('messages') as Y.Array<Message> | undefined;
+    if (!messagesArray) return;
+    const starter = messagesArray.get(0);
+    if (!canEditObjects() && starter?.authorId !== localAuthorId()) return;
+    // Only what this client has seen: a concurrent reply is not in the range.
+    messagesArray.delete(0, messagesArray.length);
   }, []);
 
   return {

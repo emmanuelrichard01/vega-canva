@@ -132,6 +132,10 @@
   }
 }
 
+.cmt-card:focus {
+  outline: none;
+}
+
 .cmt-card__head {
   display: flex;
   align-items: center;
@@ -368,9 +372,36 @@
   color: var(--text-primary);
 }
 
+.cmt-reaction[aria-disabled='true'] {
+  cursor: default;
+}
+
+.cmt-reaction[aria-disabled='true']:hover {
+  background: transparent;
+}
+
 .cmt-reaction__emoji {
   font-size: 13px;
   line-height: 1;
+}
+
+/* A message being edited in place. Focus is the neutral field colour, as in
+   every other text field. */
+.cmt-edit-field {
+  width: 100%;
+  resize: none;
+  padding: 6px 8px;
+  border: 1px solid var(--border-divider);
+  border-radius: var(--radius-md);
+  background: var(--surface-primary);
+  color: var(--text-primary);
+  font: 400 var(--text-base) / 1.4 var(--font-sans);
+}
+
+.cmt-edit-field:focus-visible {
+  outline: 1.5px solid var(--focus-field-color);
+  outline-offset: 0;
+  border-color: var(--focus-field-color);
 }
 
 /* ----------------------------------------------------------- Composer */
@@ -411,4 +442,59 @@
 .cmt-kbd {
   font: 500 var(--text-xs) / 1 var(--font-sans);
   color: var(--text-tertiary);
+}
+
+/* ------------------------------------------------- Increased contrast */
+
+/* Surfaces that rely on a shadow alone gain an edge, and the hairlines that
+   separate a card's parts become the strong border. */
+[data-contrast='more'] .cmt-pin {
+  box-shadow: inset 0 0 0 1px var(--border-strong), var(--shadow-md);
+}
+
+[data-contrast='more'] .cmt-pin:hover {
+  box-shadow: inset 0 0 0 1px var(--text-primary), var(--shadow-float);
+}
+
+[data-contrast='more'] .cmt-pin[data-open='true'] {
+  box-shadow: 0 0 0 2px var(--text-primary), var(--shadow-float);
+}
+
+[data-contrast='more'] .cmt-pin[data-resolved='true'] {
+  opacity: 0.85;
+}
+
+[data-contrast='more'] .cmt-pin__unread {
+  box-shadow: 0 0 0 2px var(--surface-elevated), 0 0 0 3px var(--border-strong);
+}
+
+[data-contrast='more'] .cmt-card,
+[data-contrast='more'] .cmt-composer {
+  box-shadow: var(--shadow-overlay), inset 0 0 0 1px var(--border-strong);
+}
+
+[data-contrast='more'] .cmt-card__head,
+[data-contrast='more'] .cmt-card__foot,
+[data-contrast='more'] .cmt-readonly {
+  border-color: var(--border-strong);
+}
+
+[data-contrast='more'] .cmt-msg__actions {
+  box-shadow: var(--shadow-float), inset 0 0 0 1px var(--border-strong);
+}
+
+[data-contrast='more'] .cmt-reaction,
+[data-contrast='more'] .cmt-edit-field {
+  border-color: var(--border-strong);
+}
+
+[data-contrast='more'] .cmt-reaction[aria-pressed='true'] {
+  border-color: var(--text-primary);
+}
+
+[data-contrast='more'] .cmt-msg__meta,
+[data-contrast='more'] .cmt-hint,
+[data-contrast='more'] .cmt-readonly,
+[data-contrast='more'] .cmt-card__title span {
+  color: var(--text-secondary);
 }

@@ -1,0 +1,96 @@
+{
+  "version": 1,
+  "loudness": "-16 LUFS integrated, -1.5 dBTP",
+  "tracks": [
+    {
+      "id": "ambient-aylex-innovating-care",
+      "category": "ambient",
+      "title": "Innovating Care",
+      "artist": "Aylex",
+      "duration": 151.4,
+      "url": "ambient/aylex-innovating-care.m4a",
+      "artwork": null,
+      "licence": "Free To Use (freetouse.com). Credit: \"Music track: Innovating Care by Aylex. Source: https://freetouse.com/music\""
+    },
+    {
+      "id": "ambient-epic-spectrum-ethos",
+      "category": "ambient",
+      "title": "Ethos",
+      "artist": "Epic Spectrum",
+      "duration": 184.2,
+      "url": "ambient/epic-spectrum-ethos.m4a",
+      "artwork": null,
+      "licence": "Free To Use (freetouse.com). Credit: \"Music track: Ethos by Epic Spectrum. Source: https://freetouse.com/music\""
+    },
+    {
+      "id": "piano-pufino-enlivening",
+      "category": "piano",
+      "title": "Enlivening",
+      "artist": "Pufino",
+      "duration": 152.9,
+      "url": "piano/pufino-enlivening.m4a",
+      "artwork": null,
+      "licence": "Free To Use (freetouse.com). Credit: \"Music track: Enlivening by Pufino. Source: https://freetouse.com/music\""
+    },
+    {
+      "id": "lofi-aventure-quiet-bounce",
+      "category": "lofi",
+      "title": "Quiet Bounce",
+      "artist": "Aventure",
+      "duration": 144,
+      "url": "lofi/aventure-quiet-bounce.m4a",
+      "artwork": null,
+      "licence": "Free To Use (freetouse.com). Credit: \"Music track: Quiet Bounce by Aventure. Source: https://freetouse.com/music\""
+    },
+    {
+      "id": "lofi-lukrembo-jay",
+      "category": "lofi",
+      "title": "Jay",
+      "artist": "Lukrembo",
+      "duration": 159,
+      "url": "lofi/lukrembo-jay.m4a",
+      "artwork": null,
+      "licence": "Free To Use (freetouse.com). Credit: \"Music track: Jay by Lukrembo. Source: https://freetouse.com/music\""
+    },
+    {
+      "id": "synth-alexgrohl-synthwave",
+      "category": "synth",
+      "title": "Synthwave",
+      "artist": "Alex Grohl",
+      "duration": 216.2,
+      "url": "synth/alexgrohl-synthwave.m4a",
+      "artwork": null,
+      "licence": "Pixabay Content License (https://pixabay.com/service/license-summary/). Synthwave by Alex Grohl."
+    },
+    {
+      "id": "house-aurec-filter-house",
+      "category": "house",
+      "title": "Filter House",
+      "artist": "Aurec",
+      "duration": 161,
+      "url": "house/aurec-filter-house.m4a",
+      "artwork": null,
+      "licence": "Pixabay Content License (https://pixabay.com/service/license-summary/). Filter House by Aurec."
+    },
+    {
+      "id": "house-aurec-funky-house",
+      "category": "house",
+      "title": "Funky House",
+      "artist": "Aurec",
+      "duration": 163.2,
+      "url": "house/aurec-funky-house.m4a",
+      "artwork": null,
+      "licence": "Pixabay Content License (https://pixabay.com/service/license-summary/). Funky House by Aurec."
+    },
+    {
+      "id": "retro-hitslab-retro-arcade",
+      "category": "retro",
+      "title": "Retro Arcade",
+      "artist": "HitsLab",
+      "duration": 60.8,
+      "url": "retro/hitslab-retro-arcade.m4a",
+      "artwork": null,
+      "licence": "Pixabay Content License (https://pixabay.com/service/license-summary/). Retro Arcade by HitsLab."
+    }
+  ]
+}

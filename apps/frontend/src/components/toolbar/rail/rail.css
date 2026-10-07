@@ -39,6 +39,18 @@
   touch-action: none;
 }
 
+/* The number being dragged is the thing being read, so it is set as data in
+   primary ink at the popover's body size, and it holds its width while the
+   digits change under the pointer. */
+.rail-scrub__value {
+  min-width: 2ch;
+  color: var(--text-primary);
+  font-size: var(--text-sm);
+  font-weight: var(--weight-medium);
+  font-variant-numeric: tabular-nums;
+  text-align: right;
+}
+
 /* Font family and size in one trigger: "Inter 24". */
 .rail-font {
   display: inline-flex;
@@ -148,6 +160,8 @@
 }
 
 .rail-list__label {
+  /* Takes the row, so a trailing check or measurement sits at the end. */
+  flex: 1 1 auto;
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
@@ -245,7 +259,16 @@
 }
 
 .rail-stepper .ctx-btn { min-width: 24px; padding: 0 4px; }
-.rail-stepper__value { min-width: 2ch; text-align: center; }
+/* Read like the scrub readouts beside it: the same size, ink and figures. */
+.rail-stepper .rail-stepper__value {
+  min-width: 2ch;
+  font-family: var(--font-sans);
+  font-size: var(--text-sm);
+  font-weight: var(--weight-medium);
+  font-variant-numeric: tabular-nums;
+  color: var(--text-primary);
+  text-align: center;
+}
 
 /* What is waiting outside the arrangement, said on the kind chip. */
 .rail-badge {
@@ -259,4 +282,24 @@
   color: var(--text-secondary);
   font-size: var(--text-2xs);
   font-variant-numeric: tabular-nums;
+}
+
+/* A colour chip on the dark rail. Dark ink (the default text colour) on a dark
+   surface has no edge of its own, so the chip carries a hairline ring of the
+   rail's own ink to stay visible as a control. */
+.dark-theme .ctx-toolbar .cp-trigger,
+.dark-theme .ctx-toolbar .fill-swatch {
+  border-color: color-mix(in srgb, var(--text-primary) 36%, transparent);
+}
+
+/* Increased contrast: the rail is one opaque surface with one edge. Its
+   elevation is the ring `--shadow-float` becomes in that mode; the resting
+   translucency and the veiled glass both go, because what shows through them
+   is whatever happens to be on the board. */
+:root[data-contrast='more'] .ctx-toolbar,
+:root[data-contrast='more'] .ctx-toolbar--veiled {
+  opacity: 1;
+  background: var(--surface-elevated);
+  backdrop-filter: none;
+  -webkit-backdrop-filter: none;
 }

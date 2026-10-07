@@ -2,7 +2,7 @@ import { describe, expect, it } from 'vitest';
 import { connectorRoute, type Box } from '../connector';
 import { CURVE_CLEARANCE, fitCurve, intrusion } from './curve';
 import { inflate, rectOf, type Pt, type Rect } from './geometry';
-import { OBSTACLE_MARGIN, type Obstacle } from './router';
+import { OBSTACLE_MARGIN, STUB, type Obstacle } from './router';
 
 const box = (x: number, y: number, width = 100, height = 60): Box => ({ x, y, width, height });
 
@@ -113,5 +113,186 @@ describe('fitCurve', () => {
     expect(pts.length).toBe(49);
     expect(pts[0]).toEqual({ x: 100, y: 30 });
     expect(pts[pts.length - 1]).toEqual({ x: 400, y: 230 });
+  });
+});
+
+function rng(seed: number) {
+  let s = seed >>> 0;
+  return () => (s = (s * 1664525 + 1013904223) >>> 0) / 2 ** 32;
+}
+
+/** A field of boxes between two ends, none overlapping either end's box. */
+function field(seed: number): { ends: Record<string, Box>; obstacles: Box[] } {
+  const r = rng(seed);
+  const a = box(0, r() * 300);
+  const b = box(700, r() * 300);
+  const obstacles: Box[] = [];
+  const near = (o: Box, e: Box) =>
+    o.x < e.x + e.width + 30 && o.x + o.width > e.x - 30 && o.y < e.y + e.height + 30 && o.y + o.height > e.y - 30;
+  while (obstacles.length < 8) {
+    const o = box(140 + r() * 440, -120 + r() * 520, 40 + r() * 80, 30 + r() * 70);
+    if (!near(o, a) && !near(o, b)) obstacles.push(o);
+  }
+  return { ends: { a, b }, obstacles };
+}
+
+describe('curved routes across random fields', () => {
+  const seeds = Array.from({ length: 40 }, (_, i) => i + 1);
+
+  it('never puts a sampled point inside an obstacle grown by the clearance', () => {
+    for (const seed of seeds) {
+      const { ends, obstacles } = field(seed);
+      const pts = route(ends, obstacles);
+      expect(intrusion(pts, obstacles.map(clear)), `seed ${seed}`).toBe(-1);
+    }
+  });
+
+  it('keeps its tangent continuous: no kink between consecutive samples', () => {
+    for (const seed of seeds) {
+      const { ends, obstacles } = field(seed);
+      const pts = route(ends, obstacles);
+      expect(sharpestTurn(pts), `seed ${seed}`).toBeLessThan(30);
+    }
+  });
+
+  it('leaves and arrives along the port normals', () => {
+    for (const seed of seeds.slice(0, 10)) {
+      const { ends, obstacles } = field(seed);
+      const pts = route(ends, obstacles);
+      expect(Math.abs(pts[1].y - pts[0].y), `seed ${seed}`).toBeLessThan(1e-3);
+      expect(pts[1].x).toBeGreaterThan(pts[0].x);
+      const n = pts.length;
+      expect(Math.abs(pts[n - 1].y - pts[n - 2].y), `seed ${seed}`).toBeLessThan(1e-3);
+      expect(pts[n - 2].x).toBeLessThan(pts[n - 1].x);
+    }
+  });
+
+  it('is identical whatever order the obstacles arrive in', () => {
+    for (const seed of seeds.slice(0, 10)) {
+      const { ends, obstacles } = field(seed);
+      const shuffled = [...obstacles].sort((p, q) => (p.x * 7 + p.y) % 13 - (q.x * 7 + q.y) % 13);
+      const forward = route(ends, obstacles);
+      const again = connectorRoute(
+        { nodeId: 'a', port: 'right' },
+        { nodeId: 'b', port: 'left' },
+        'curved',
+        (id) => ends[id] ?? null,
+        null,
+        {
+          avoid: true,
+          obstaclesIn: () =>
+            shuffled.map((o): Obstacle => ({ id: `o${obstacles.indexOf(o)}`, rect: inflate(rectOf(o), OBSTACLE_MARGIN) })),
+        }
+      ).points;
+      expect(JSON.stringify(again)).toBe(JSON.stringify(forward));
+    }
+  });
+});
+
+describe('fitCurve shape', () => {
+  it('keeps a long straight run straight between two turns', () => {
+    const skeleton = [
+      { x: 0, y: 0 },
+      { x: 40, y: 0 },
+      { x: 40, y: 400 },
+      { x: 80, y: 400 },
+    ];
+    const pts = fitCurve(skeleton, []);
+    // Points on the long vertical leg, away from both turns, sit exactly on it.
+    const onLeg = pts.filter((p) => p.y > 120 && p.y < 280);
+    for (const p of onLeg) expect(p.x).toBeCloseTo(40, 6);
+  });
+
+  it('turns a short jog between two long runs into a gentle S, not a wiggle', () => {
+    const skeleton = [
+      { x: 0, y: 0 },
+      { x: 200, y: 0 },
+      { x: 200, y: 10 },
+      { x: 400, y: 10 },
+    ];
+    const pts = fitCurve(skeleton, []);
+    expect(sharpestTurn(pts)).toBeLessThan(12);
+  });
+});
+
+describe('curved ends when a port faces away', () => {
+  /** Heading changes, signed, over the first `reach` units from one end. */
+  function headings(points: Pt[], fromEnd: boolean, reach: number): { steps: number[]; minRadius: number } {
+    const pts = fromEnd ? [...points].reverse() : points;
+    const steps: number[] = [];
+    let minRadius = Infinity;
+    let walked = 0;
+    let prev: number | null = null;
+    for (let i = 0; i + 1 < pts.length && walked < reach; i += 1) {
+      const dx = pts[i + 1].x - pts[i].x;
+      const dy = pts[i + 1].y - pts[i].y;
+      const len = Math.hypot(dx, dy);
+      if (len < 1e-9) continue;
+      const a = Math.atan2(dy, dx);
+      if (prev !== null) {
+        let d = a - prev;
+        while (d > Math.PI) d -= 2 * Math.PI;
+        while (d < -Math.PI) d += 2 * Math.PI;
+        steps.push((d * 180) / Math.PI);
+        if (Math.abs(d) > 1e-3) minRadius = Math.min(minRadius, len / Math.abs(d));
+      }
+      prev = a;
+      walked += len;
+    }
+    return { steps, minRadius };
+  }
+
+  // The target sits beside the source, its port on the far side: the route
+  // has to pass it and come back into the port, a U a short stub long.
+  const cases: Array<{ name: string; b: Box; fromPort: string; toPort: string }> = [];
+  for (const dy of [-40, -20, 20, 40]) {
+    cases.push({ name: `right of it, port away, dy ${dy}`, b: box(130, dy), fromPort: 'auto', toPort: 'right' });
+    cases.push({ name: `left of it, port away, dy ${dy}`, b: box(-130, dy), fromPort: 'auto', toPort: 'left' });
+  }
+  cases.push({ name: 'above it, entered from the side', b: box(0, -60), fromPort: 'auto', toPort: 'right' });
+  cases.push({ name: 'source port facing away', b: box(-220, 10), fromPort: 'right', toPort: 'auto' });
+
+  it('reaches the port along its normal, turning one way, with no teardrop', () => {
+    for (const c of cases) {
+      for (const avoid of [true, false]) {
+        const boxes = { a: box(0, 0), b: c.b };
+        const r = connectorRoute(
+          { nodeId: 'a', port: c.fromPort as never },
+          { nodeId: 'b', port: c.toPort as never },
+          'curved',
+          (id) => boxes[id as 'a' | 'b'] ?? null,
+          null,
+          { avoid }
+        );
+        const pts = r.points;
+        const label = `${c.name}, avoid ${avoid}`;
+        expect(sharpestTurn(pts), label).toBeLessThan(30);
+        const skeleton = r.skeleton ?? pts;
+        for (const fromEnd of [false, true]) {
+          const sk = fromEnd ? [...skeleton].reverse() : skeleton;
+          const p = fromEnd ? [...pts].reverse() : pts;
+          // Leaves (or arrives) along the stub the router gave the port.
+          const sx = Math.sign(sk[1].x - sk[0].x);
+          const sy = Math.sign(sk[1].y - sk[0].y);
+          expect(Math.sign(p[1].x - p[0].x), label).toBe(sx);
+          expect(Math.sign(p[1].y - p[0].y), label).toBe(sy);
+          if (sk.length < 4) continue;
+          const stub = { x: sk[1].x - sk[0].x, y: sk[1].y - sk[0].y };
+          const far = { x: sk[3].x - sk[2].x, y: sk[3].y - sk[2].y };
+          // Only a U (the leg after the turn runs back the way the stub came).
+          if (stub.x * far.x + stub.y * far.y >= 0) continue;
+          const width = Math.hypot(sk[2].x - sk[1].x, sk[2].y - sk[1].y);
+          const { steps, minRadius } = headings(p, false, Math.hypot(stub.x, stub.y) + width + 20);
+          const net = steps.reduce((s, d) => s + d, 0);
+          // Turns steadily one way round the U, never back on itself...
+          const back = steps.filter((d) => Math.sign(d) !== Math.sign(net) && Math.abs(d) > 1);
+          expect(back, label).toEqual([]);
+          // ...and round, not pinched into a teardrop at the port: a U as
+          // wide as a stub or less is a half circle, a wider one turns at
+          // least a stub's radius.
+          expect(minRadius, label).toBeGreaterThan(0.8 * Math.min(width / 2, STUB));
+        }
+      }
+    }
   });
 });

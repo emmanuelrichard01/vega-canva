@@ -78,8 +78,9 @@ import { previewColorOf, previewPointsOf } from './engine/model/previewPaint';
 import { useComments } from './hooks/useComments';
 import { CommentInbox } from './components/comments/CommentInbox';
 import { readMarks } from './engine/comments/readMarks';
-import { anchorPoint, unreadCount } from './engine/comments/threads';
+import { anchorPoint, mentionsMe, unreadCount } from './engine/comments/threads';
 import { GroupIsolationBar } from './components/ui/GroupIsolationBar';
+import { IconBrowserHost } from './components/icons/IconBrowserHost';
 
 /**
  * Whether this page load has already taken the pending backup.
@@ -950,6 +951,8 @@ export default function Room() {
   const openCommands = useCallback(() => setShowCommandPalette(true), []);
   const collapseRight = useCallback(() => setRightExpanded(false), []);
   const collapseLeft = useCallback(() => setLeftExpanded(false), []);
+  const commentUnread = unreadCount(comments, commentMarks, myAuthorId);
+  const commentMentioned = commentUnread > 0 && comments.some((t) => !t.resolved && mentionsMe(t, commentMarks, myAuthorId));
 
   /**
    * The board's frame, UI3-style: a left column, the canvas edge to edge, and a
@@ -1624,6 +1627,8 @@ export default function Room() {
           )}
         </Suspense>
         
+        <IconBrowserHost />
+
         <Suspense fallback={null}>
           {isForceTool(activeTool) && (
             <ForcesBar
@@ -1714,7 +1719,8 @@ export default function Room() {
             onToggleComments={toggleInbox}
             commentsOpen={showInbox}
             timelineOpen={showTimeTravel}
-            commentUnread={unreadCount(comments, commentMarks, myAuthorId)}
+            commentUnread={commentUnread}
+            commentMentioned={commentMentioned}
           />
           <PropertiesPanel
             selectedIds={selectedIds}
@@ -1731,7 +1737,8 @@ export default function Room() {
             onToggleComments={toggleInbox}
             commentsOpen={showInbox}
             timelineOpen={showTimeTravel}
-            commentUnread={unreadCount(comments, commentMarks, myAuthorId)}
+            commentUnread={commentUnread}
+            commentMentioned={commentMentioned}
             onExpand={canEdit ? expandRight : undefined}
           />
         </aside>

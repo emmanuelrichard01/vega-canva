@@ -1,6 +1,9 @@
 import { engineEvents } from './EventBus';
-import { clampZoom, prefersReducedMotion, rubberZoom } from './cameraMotion';
+import { clampZoom, isCoasting, momentumStep, prefersReducedMotion, rubberZoom, type Velocity } from './cameraMotion';
 import { fitPose, type FitBounds, type FitOptions } from './cameraFit';
+
+/** A wheel delta smaller than this is a trackpad pinch, not a mouse notch. */
+const PINCH_DELTA_BELOW = 40;
 
 export class CameraSystem {
   x: number = 0;
@@ -44,6 +47,8 @@ export class CameraSystem {
    * so the user never fights an ongoing programmatic transition.
    */
   cancelAnimation() {
+    this.stopMomentum();
+    this.clearSettle();
     if (this.animFrameId !== null) {
       if (typeof cancelAnimationFrame !== 'undefined') {
         cancelAnimationFrame(this.animFrameId);
@@ -57,7 +62,62 @@ export class CameraSystem {
   }
 
   isAnimating(): boolean {
-    return this.animFrameId !== null;
+    return this.animFrameId !== null || this.momentumFrameId !== null;
+  }
+
+  private momentumFrameId: number | null = null;
+
+  /**
+   * Coast after a flick: pan with `velocity` (screen px per ms), decaying by
+   * elapsed time. The camera owns the coast so that any other camera motion
+   * (wheel zoom, fly-to, a new press) can stop it; a coast in a tool would
+   * keep panning underneath them.
+   */
+  coast(velocity: Velocity) {
+    this.stopMomentum();
+    if (typeof requestAnimationFrame === 'undefined' || !isCoasting(velocity)) return;
+    let v = velocity;
+    let last = performance.now();
+    const frame = () => {
+      const now = performance.now();
+      const step = momentumStep(v, (now - last) / 1000);
+      last = now;
+      v = step.velocity;
+      if (!isCoasting(v)) {
+        this.momentumFrameId = null;
+        return;
+      }
+      // Moves the pose directly: `panBy` cancels animation, which includes this coast.
+      this.x += step.dx;
+      this.y += step.dy;
+      this.emitChange();
+      this.momentumFrameId = requestAnimationFrame(frame);
+    };
+    this.momentumFrameId = requestAnimationFrame(frame);
+  }
+
+  /** End any coast in progress. Safe to call when none is running. */
+  stopMomentum() {
+    if (this.momentumFrameId !== null) {
+      if (typeof cancelAnimationFrame !== 'undefined') cancelAnimationFrame(this.momentumFrameId);
+      this.momentumFrameId = null;
+    }
+  }
+
+  /**
+   * The zoom to show people: the real zoom, held inside the range. The camera
+   * itself may sit a little past a limit mid-gesture (see `zoomBy`); readouts
+   * and presence should not report that.
+   */
+  get reportedZoom(): number {
+    return clampZoom(this.zoom, this.minZoom, this.maxZoom);
+  }
+
+  private clearSettle() {
+    if (this.settleTimer !== null) {
+      clearTimeout(this.settleTimer);
+      this.settleTimer = null;
+    }
   }
 
   /**
@@ -198,11 +258,14 @@ export class CameraSystem {
    */
   zoomByWheel(deltaY: number, screenX: number, screenY: number) {
     if (!Number.isFinite(deltaY) || deltaY === 0) return;
+    // A trackpad pinch streams small deltas and gives at the limits; a mouse
+    // wheel notch reports a large one and stops at the limit.
+    const continuous = Math.abs(deltaY) < PINCH_DELTA_BELOW;
     const SENSITIVITY = 0.0125;
     // Clamped so one violent wheel notch (some mice report deltas in the
     // hundreds) cannot leap several zoom levels in a single event.
     const factor = Math.min(2, Math.max(0.5, Math.exp(-deltaY * SENSITIVITY)));
-    this.zoomBy(factor, screenX, screenY);
+    this.zoomBy(factor, screenX, screenY, continuous);
   }
 
   /**
@@ -212,8 +275,12 @@ export class CameraSystem {
    * Discrete wheel notches can use `zoomAt`, but a pinch gesture produces a
    * continuous ratio between finger distances and needs to apply it directly —
    * quantising a pinch to 1.1x steps feels broken on a trackpad or tablet.
+   *
+   * `rubber` lets a continuous pinch stretch a little past the zoom limits
+   * with resistance and ease back when it stops. Notches, buttons and keys
+   * stop at the limit.
    */
-  zoomBy(factor: number, screenX: number, screenY: number) {
+  zoomBy(factor: number, screenX: number, screenY: number, rubber = false) {
     this.cancelAnimation();
     const oldZoom = this.zoom;
 
@@ -221,7 +288,9 @@ export class CameraSystem {
     const pointerWorldX = (screenX - this.x) / oldZoom;
     const pointerWorldY = (screenY - this.y) / oldZoom;
 
-    const newZoom = rubberZoom(oldZoom, oldZoom * factor, this.minZoom, this.maxZoom);
+    const newZoom = rubber
+      ? rubberZoom(oldZoom, oldZoom * factor, this.minZoom, this.maxZoom)
+      : clampZoom(oldZoom * factor, this.minZoom, this.maxZoom);
     this.zoom = newZoom;
 
     // Re-anchor so that world point stays exactly under the same screen point.
@@ -229,7 +298,7 @@ export class CameraSystem {
     this.y = screenY - pointerWorldY * this.zoom;
 
     this.emitChange();
-    this.scheduleSettle(screenX, screenY);
+    if (rubber) this.scheduleSettle(screenX, screenY);
   }
 
   private settleTimer: ReturnType<typeof setTimeout> | null = null;

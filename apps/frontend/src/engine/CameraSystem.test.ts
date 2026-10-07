@@ -1,4 +1,4 @@
-import { describe, it, expect, beforeEach } from 'vitest';
+import { describe, it, expect, beforeEach, vi } from 'vitest';
 import { cameraSystem } from './CameraSystem';
 
 /**
@@ -153,9 +153,45 @@ describe('CameraSystem navigation APIs', () => {
 
   it('lets a pinch run a little past the limit, then settles back inside', async () => {
     cameraSystem.setPose(0, 0, cameraSystem.zoomLimits.maxZoom);
-    cameraSystem.zoomBy(1.5, 400, 300);
+    cameraSystem.zoomBy(1.5, 400, 300, true);
     expect(cameraSystem.zoom).toBeGreaterThan(cameraSystem.zoomLimits.maxZoom);
+    expect(cameraSystem.reportedZoom).toBe(cameraSystem.zoomLimits.maxZoom);
     await new Promise((r) => setTimeout(r, 600));
     expect(cameraSystem.zoom).toBeCloseTo(cameraSystem.zoomLimits.maxZoom, 5);
+  });
+
+  it('stops at the limit for a wheel notch, a key step or a button', () => {
+    const { maxZoom } = cameraSystem.zoomLimits;
+    cameraSystem.setPose(0, 0, maxZoom);
+    cameraSystem.zoomByWheel(-120, 400, 300);
+    expect(cameraSystem.zoom).toBe(maxZoom);
+    cameraSystem.zoomAt(1, 400, 300);
+    expect(cameraSystem.zoom).toBe(maxZoom);
+    cameraSystem.zoomBy(1.5, 400, 300);
+    expect(cameraSystem.zoom).toBe(maxZoom);
+  });
+
+  it('does not settle after a programmatic move replaces the gesture', async () => {
+    const { maxZoom } = cameraSystem.zoomLimits;
+    cameraSystem.setPose(0, 0, maxZoom);
+    cameraSystem.zoomBy(1.5, 400, 300, true);
+    cameraSystem.setPose(10, 20, 2);
+    await new Promise((r) => setTimeout(r, 400));
+    expect(cameraSystem.zoom).toBe(2);
+    expect(cameraSystem.x).toBe(10);
+  });
+
+  it('stops momentum when other camera motion starts', () => {
+    vi.stubGlobal('requestAnimationFrame', () => 1);
+    vi.stubGlobal('cancelAnimationFrame', () => {});
+    cameraSystem.setPose(0, 0, 1);
+    cameraSystem.coast({ x: 1, y: 0 });
+    expect(cameraSystem.isAnimating()).toBe(true);
+    cameraSystem.zoomBy(1.1, 400, 300);
+    expect(cameraSystem.isAnimating()).toBe(false);
+    cameraSystem.coast({ x: 1, y: 0 });
+    cameraSystem.animateTo(5, 5, 1, { duration: 0 });
+    expect(cameraSystem.isAnimating()).toBe(false);
+    vi.unstubAllGlobals();
   });
 });

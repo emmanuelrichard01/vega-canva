@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { placeInBox, placeParagraph, selectionBox } from './selectionTransform';
+import { countSelectionUnits, placeInBox, placeParagraph, selectionBox } from './selectionTransform';
 
 const node = (x: number, y: number, width: number, height: number, rotation = 0) => ({
   x, y, width, height, rotation,
@@ -129,5 +129,32 @@ describe('placeParagraph', () => {
   it('leaves the angle alone', () => {
     const placed = { x: 0, y: 0, width: 10, height: 10, rotation: 22 };
     expect(placeParagraph(placed, { width: 10, height: 30 }).rotation).toBe(22);
+  });
+});
+
+describe('countSelectionUnits', () => {
+  const objects: any = {
+    a: { id: 'a', parentId: 'g1' },
+    b: { id: 'b', parentId: 'g1' },
+    c: { id: 'c' },
+    f: { id: 'f', type: 'frame' },
+    k1: { id: 'k1', parentId: 'f' },
+    k2: { id: 'k2', parentId: 'f' },
+  };
+  const groups: any = { g1: { id: 'g1' } };
+  const order = Object.keys(objects);
+
+  it('counts a whole group as one', () => {
+    expect(countSelectionUnits(order, objects, groups, ['a', 'b'])).toBe(1);
+    expect(countSelectionUnits(order, objects, groups, ['a', 'b', 'c'])).toBe(2);
+  });
+
+  it('counts half a group as its members', () => {
+    expect(countSelectionUnits(order, objects, groups, ['a', 'c'])).toBe(2);
+  });
+
+  it('counts a frame as one, however much of it is also selected', () => {
+    expect(countSelectionUnits(order, objects, groups, ['f'])).toBe(1);
+    expect(countSelectionUnits(order, objects, groups, ['f', 'k1', 'k2', 'c'])).toBe(2);
   });
 });

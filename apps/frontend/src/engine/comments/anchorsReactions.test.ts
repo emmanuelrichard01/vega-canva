@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import * as Y from 'yjs';
-import { anchorFor, anchorPoint, messageReactions, reactionKey } from './threads';
+import { anchorFor, anchorPoint, messageReactions, objectLabel, reactionKey, snippetOf, threadPinLabel } from './threads';
 
 describe('fractional anchors', () => {
   const target = { x: 100, y: 100, width: 200, height: 100, rotation: 30 };
@@ -27,7 +27,7 @@ describe('message reactions', () => {
   it('keeps every concurrent reaction', () => {
     const a = new Y.Doc();
     const b = new Y.Doc();
-    a.getMap<Y.Map<boolean>>('t').set('reactions', new Y.Map());
+    a.getMap<Y.Map<boolean>>('t').set('reactions', new Y.Map<boolean>());
     Y.applyUpdate(b, Y.encodeStateAsUpdate(a));
 
     const reactionsOf = (d: Y.Doc) => d.getMap<Y.Map<boolean>>('t').get('reactions')!;
@@ -54,5 +54,24 @@ describe('message reactions', () => {
 
   it('reads nothing from an absent map', () => {
     expect(messageReactions(undefined, 'm1')).toEqual([]);
+  });
+});
+
+describe('pin names', () => {
+  it('names the author, the snippet and the object', () => {
+    expect(
+      threadPinLabel({ author: 'Ana', snippet: 'Make it bigger', onObject: 'Hero', count: 2, resolved: false, unread: true, forMe: false })
+    ).toBe('Unread thread by Ana on Hero: Make it bigger, 2 messages');
+    expect(
+      threadPinLabel({ author: 'Ana', snippet: '', onObject: null, count: 1, resolved: true, unread: false, forMe: true })
+    ).toBe('You were mentioned. Thread by Ana, 1 message, resolved');
+  });
+
+  it('shortens long text and falls back to the object kind', () => {
+    expect(snippetOf('@[Dana](d1) ' + 'x'.repeat(80)).length).toBeLessThanOrEqual(40);
+    expect(snippetOf('@[Dana](d1) hi')).toBe('@Dana hi');
+    expect(objectLabel({ type: 'image' })).toBe('Image');
+    expect(objectLabel({ type: 'frame', title: 'Cover' })).toBe('Cover');
+    expect(objectLabel(null)).toBeNull();
   });
 });

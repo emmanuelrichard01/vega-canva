@@ -1,4 +1,4 @@
-import type { AnyNode } from '../model/schema';
+import { isOpenShape, type AnyNode, type ShapeKind } from '../model/schema';
 
 /**
  * What a selection affords, worked out from the selection itself.
@@ -425,7 +425,10 @@ const RULES: readonly (Affordance & { when: (f: SelectionFacts) => boolean })[] 
      */
     id: 'to-path', label: 'Convert to path', weight: 17, surfaces: ['menu'],
     when: (f) =>
-      f.count === 1 && (f.uniformType === 'shape' || f.uniformType === 'text') && !f.locked,
+      !f.locked &&
+      ((f.count === 1 && (f.uniformType === 'shape' || f.uniformType === 'text')) ||
+        // Several shapes convert together, but only closed ones: an open line has no outline to give.
+        (f.count > 1 && f.uniformType === 'shape' && [...f.shapeKinds].every((k) => !isOpenShape(k as ShapeKind)))),
   },
   {
     id: 'align', label: 'Align', weight: 17, surfaces: ['toolbar', 'menu'],

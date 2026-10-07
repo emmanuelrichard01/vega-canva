@@ -5,6 +5,7 @@ import {
   MAX_VISIBLE,
   NOTICE_LIFETIME,
   pushNotice,
+  shiftExpiry,
   type Notice,
 } from './notices';
 
@@ -161,5 +162,14 @@ describe('hasExpiring', () => {
 
   it('is true as soon as anything is', () => {
     expect(hasExpiring(push([{ message: 'a', tone: 'error' }, { message: 'b' }]))).toBe(true);
+  });
+});
+
+describe('shiftExpiry', () => {
+  it('pushes timed notices back and leaves pinned ones alone', () => {
+    const list = push([{ message: 'a' }, { message: 'b', tone: 'error' }]);
+    const [a, b] = shiftExpiry(list, 5000);
+    expect(a.expiresAt).toBe(list[0].expiresAt! + 5000);
+    expect(b.expiresAt).toBeNull();
   });
 });

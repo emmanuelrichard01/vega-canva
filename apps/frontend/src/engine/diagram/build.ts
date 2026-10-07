@@ -387,9 +387,14 @@ export function buildDiagram(
       to: anchorEndFor(edge.from, edge.to, 'to', toId),
       // Curved routing by default to match the live modal preview's smooth Bézier S-curves
       routing: connectorRouting,
+      // New elbow and curved connectors route around what is in their way.
+      ...(connectorRouting !== 'straight' ? { avoid: true } : {}),
       endStart: edge.bidirectional ? 'arrow' : 'none',
       endEnd: edge.arrow ? 'arrow' : 'none',
-      ...(edge.label ? { label: edge.label } : {}),
+      // Placed at the middle of the run, explicitly: a label with a `t` is
+      // drawn there on the board and in every export alike, rather than left
+      // to the board-wide arrangement.
+      ...(edge.label ? { label: edge.label, labels: [{ id: 'l0', text: edge.label, t: 0.5 }] } : {}),
       appearance: {
         stroke: {
           color: theme.connectorColor,

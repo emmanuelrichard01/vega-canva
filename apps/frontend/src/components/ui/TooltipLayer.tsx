@@ -1,5 +1,20 @@
 import React, { useEffect, useRef, useState } from 'react';
-import { splitShortcut } from './tooltipShortcut';
+import { keycaps, splitShortcut } from './tooltipShortcut';
+import { IS_MAC } from '../menu/shortcuts';
+import { tooltips } from '../../engine/ui/tooltipManager';
+
+const anchorIds = new WeakMap<Element, string>();
+let anchorSeq = 0;
+/** A stable key for an anchor, so a suppression can name it. Prefers the element's own id. */
+export const anchorKey = (el: Element): string => {
+  if (el.id) return el.id;
+  let id = anchorIds.get(el);
+  if (!id) anchorIds.set(el, (id = `tip-anchor-${(anchorSeq += 1)}`));
+  return id;
+};
+
+const openSurfaces = (): HTMLElement[] =>
+  Array.from(document.querySelectorAll<HTMLElement>(SURFACES)).filter((el) => el.getClientRects().length > 0);
 
 /**
  * Every tooltip in the app, drawn once at the document root.
@@ -36,22 +51,14 @@ import { splitShortcut } from './tooltipShortcut';
  * mouse user does. The pseudo-element version was hover-only.
  */
 
-/** How long the pointer must rest before a tip appears, from cold. */
-const OPEN_DELAY = 380;
 /**
- * How long after a tip closes that the next one opens immediately.
- *
- * Without this, every control in a toolbar costs the full delay again, so
- * running along a row of eight buttons means waiting eight times to read eight
- * labels — which is precisely the moment someone is scanning a toolbar because
- * they do not yet know what the icons mean. Once the first tip has been earned,
- * the group is warm and the rest follow the pointer. Going quiet for longer
- * than this means the next tip is deliberate again and pays the full wait.
- *
- * This is the behaviour every desktop toolbar has had for thirty years, and
- * its absence is most of why tooltips here felt sluggish.
+ * Delay, warm window and suppression are the tooltip manager's rules
+ * (`engine/ui/tooltipManager`); this component draws what it allows.
  */
-const WARM_WINDOW = 900;
+/** How long a touch must be held to read a label. */
+const LONG_PRESS = 450;
+/** Open surfaces a tip must never cover, and which silence tips while up. */
+const SURFACES = '[role="menu"], .popover, [data-tooltip-surface]';
 /** Gap between the control and the tip. */
 const OFFSET = 8;
 /** Keep-away margin from the viewport edge. */
@@ -85,19 +92,12 @@ export const TooltipLayer: React.FC = () => {
   const [tip, setTip] = useState<Tip | null>(null);
   const timerRef = useRef<number | null>(null);
   const tipRef = useRef<HTMLDivElement>(null);
-  /** When the last tip closed, for the warm-window rule above. */
-  const lastClosedRef = useRef(0);
-  /** Whether a tip is currently up, tracked outside state so listeners see it. */
-  const openRef = useRef(false);
 
   useEffect(() => {
     const clear = () => {
       if (timerRef.current) window.clearTimeout(timerRef.current);
       timerRef.current = null;
-      if (openRef.current) {
-        lastClosedRef.current = Date.now();
-        openRef.current = false;
-      }
+      tooltips.hidden();
       setTip(null);
     };
 
@@ -112,7 +112,7 @@ export const TooltipLayer: React.FC = () => {
 
       const requested = (el.getAttribute('data-tooltip-pos') as Side) || 'top';
       const { text, shortcut } = splitShortcut(raw);
-      openRef.current = true;
+      tooltips.shown(anchorKey(el));
       setTip({
         text,
         shortcut,
@@ -124,34 +124,70 @@ export const TooltipLayer: React.FC = () => {
       });
     };
 
-    const onOver = (e: Event) => {
-      const target = (e.target as HTMLElement)?.closest?.('[data-tooltip]') as HTMLElement | null;
-      if (!target) return;
+    /**
+     * Whether this anchor may be tipped at all right now.
+     *
+     * An anchor that is open (`aria-expanded`) is never tipped: its flyout is
+     * the better label. And while any menu or popover is open no tip shows,
+     * because a tip over an open surface is the clash this prevents.
+     */
+    const allowed = (el: HTMLElement) =>
+      el.getAttribute('aria-expanded') !== 'true' && openSurfaces().length === 0;
+
+    const request = (target: HTMLElement, via: 'pointer' | 'focus' | 'longpress') => {
       if (timerRef.current) window.clearTimeout(timerRef.current);
-      /**
-       * A control that opens a menu never takes the instant path.
-       *
-       * Those controls revoke their own tooltip by dropping `data-tooltip`
-       * when their flyout opens, and that revocation is a React re-render —
-       * which cannot beat a synchronous `show()` in the same event. Hovering a
-       * dock button while the layer was warm therefore painted the tip
-       * *directly on top of* the flyout it belongs to, in the same space above
-       * the same button. Measured: tip at 192,551 over a flyout at 128,471.
-       *
-       * Waiting the full delay gives the menu time to open and the attribute
-       * time to go, after which `show` reads no tooltip and does nothing. The
-       * flyout is a better label than the tip was.
-       */
-      const opensMenu = target.getAttribute('aria-haspopup') === 'menu';
-      // Warm: a tip is up, or one has just come down. Follow the pointer with
-      // no wait, so scanning a toolbar reads as one continuous gesture.
-      const warm = openRef.current || Date.now() - lastClosedRef.current < WARM_WINDOW;
-      if (warm && !opensMenu) {
+      timerRef.current = null;
+      if (!allowed(target)) return;
+      const decision = tooltips.decide(anchorKey(target), via);
+      if (decision.action === 'blocked') return;
+      // A control that opens a menu always waits a beat, so the menu's own
+      // open can revoke the tip before it paints.
+      if (decision.action === 'show' && !(via === 'pointer' && target.getAttribute('aria-haspopup') === 'menu')) {
         show(target);
         return;
       }
-      timerRef.current = window.setTimeout(() => show(target), OPEN_DELAY);
+      const ms = decision.action === 'wait' ? decision.ms : 120;
+      timerRef.current = window.setTimeout(() => {
+        if (allowed(target) && !tooltips.isSuppressed(anchorKey(target))) show(target);
+      }, ms);
     };
+
+    const onOver = (e: Event) => {
+      // Touch has no hover; its label comes from a long-press.
+      if ((e as PointerEvent).pointerType === 'touch') return;
+      const target = (e.target as HTMLElement)?.closest?.('[data-tooltip]') as HTMLElement | null;
+      if (target) request(target, 'pointer');
+    };
+
+    // Keyboard focus is deliberate: immediate, and only for keyboard focus.
+    const onFocus = (e: Event) => {
+      const target = (e.target as HTMLElement)?.closest?.('[data-tooltip]') as HTMLElement | null;
+      if (!target) return;
+      let visible = true;
+      try { visible = target.matches(':focus-visible'); } catch { /* older engines: allow */ }
+      if (visible) request(target, 'focus');
+    };
+
+    let pressTimer: number | null = null;
+    const cancelPress = () => {
+      if (pressTimer) window.clearTimeout(pressTimer);
+      pressTimer = null;
+    };
+    const onTouchDown = (e: PointerEvent) => {
+      if (e.pointerType !== 'touch') return;
+      const target = (e.target as HTMLElement)?.closest?.('[data-tooltip]') as HTMLElement | null;
+      cancelPress();
+      if (target) pressTimer = window.setTimeout(() => request(target, 'longpress'), LONG_PRESS);
+    };
+    const onKeyDown = (e: KeyboardEvent) => {
+      if (e.key === 'Escape') clear();
+    };
+    const stopListening = tooltips.onSuppress(() => clear());
+    // A menu or popover mounting hides whatever tip is up.
+    const surfaceWatch = new MutationObserver(() => {
+      if (tooltips.open && openSurfaces().length > 0) clear();
+    });
+    surfaceWatch.observe(document.body, { childList: true });
 
     const onOut = (e: Event) => {
       const target = (e.target as HTMLElement)?.closest?.('[data-tooltip]');
@@ -161,7 +197,11 @@ export const TooltipLayer: React.FC = () => {
 
     document.addEventListener('pointerover', onOver);
     document.addEventListener('pointerout', onOut);
-    document.addEventListener('focusin', onOver);
+    document.addEventListener('focusin', onFocus);
+    document.addEventListener('pointerdown', onTouchDown, true);
+    document.addEventListener('pointerup', cancelPress, true);
+    document.addEventListener('pointercancel', cancelPress, true);
+    window.addEventListener('keydown', onKeyDown, true);
     document.addEventListener('focusout', onOut);
     // A tip anchored to a control that has just scrolled away would hang in
     // empty space; the same goes for a press, which usually changes something.
@@ -172,7 +212,14 @@ export const TooltipLayer: React.FC = () => {
     return () => {
       document.removeEventListener('pointerover', onOver);
       document.removeEventListener('pointerout', onOut);
-      document.removeEventListener('focusin', onOver);
+      document.removeEventListener('focusin', onFocus);
+      document.removeEventListener('pointerdown', onTouchDown, true);
+      document.removeEventListener('pointerup', cancelPress, true);
+      document.removeEventListener('pointercancel', cancelPress, true);
+      window.removeEventListener('keydown', onKeyDown, true);
+      stopListening();
+      surfaceWatch.disconnect();
+      cancelPress();
       document.removeEventListener('focusout', onOut);
       window.removeEventListener('scroll', clear, true);
       document.removeEventListener('pointerdown', clear, true);
@@ -198,6 +245,10 @@ export const TooltipLayer: React.FC = () => {
 
     // A tip that would sit above the top of the window flips below its
     // control, which is the same thing every menu does when it runs out of room.
+    const hitsSurface = openSurfaces().some((surface) => {
+      const r = surface.getBoundingClientRect();
+      return rect.left < r.right && rect.right > r.left && rect.top < r.bottom && rect.bottom > r.top;
+    });
     const flip = tip.side === 'top' && rect.top < EDGE;
     /**
      * Written unconditionally, including when there is nothing to correct.
@@ -210,7 +261,9 @@ export const TooltipLayer: React.FC = () => {
      * near the panel's edge sitting somewhere it had never been positioned,
      * usually half off screen.
      */
-    el.style.transform = `${transformFor(flip ? 'bottom' : tip.side)} translateX(${dx}px)`;
+    const opposite: Record<Side, Side> = { top: 'bottom', bottom: 'top', left: 'right', right: 'left' };
+    const placed = flip ? 'bottom' : hitsSurface ? opposite[tip.side] : tip.side;
+    el.style.transform = `${transformFor(placed)} translateX(${dx}px)`;
 
     /**
      * One frame later, check the tip is still wanted.
@@ -277,7 +330,13 @@ export const TooltipLayer: React.FC = () => {
     >
       <span className="tip__head">
         <span className="tip__text">{tip.text}</span>
-        {tip.shortcut && <kbd className="tip__key">{tip.shortcut}</kbd>}
+        {tip.shortcut && (
+          <span className="tip__keys">
+            {keycaps(tip.shortcut, IS_MAC).map((k, i) => (
+              <kbd key={i} className="tip__key">{k}</kbd>
+            ))}
+          </span>
+        )}
       </span>
       {tip.desc && <span className="tip__desc">{tip.desc}</span>}
     </div>

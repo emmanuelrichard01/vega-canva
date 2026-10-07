@@ -1,45 +1,6 @@
 import React from 'react';
 import { createPortal } from 'react-dom';
-import {
-  AlignVerticalJustifyCenter,
-  AlignVerticalJustifyEnd,
-  AlignVerticalJustifyStart,
-  ArrowDownToLine,
-  ArrowDownWideNarrow,
-  ArrowLeftToLine,
-  ArrowRightToLine,
-  ArrowUpNarrowWide,
-  ArrowUpToLine,
-  Baseline,
-  BetweenHorizontalEnd,
-  BetweenHorizontalStart,
-  BetweenVerticalEnd,
-  BetweenVerticalStart,
-  Bold,
-  ChartColumn,
-  Check,
-  ChevronDown,
-  Columns3,
-  Eraser,
-  Eye,
-  Funnel,
-  Italic,
-  PaintBucket,
-  PanelBottom,
-  Plus,
-  Rows3,
-  Sigma,
-  Snowflake,
-  TableCellsMerge,
-  TableCellsSplit,
-  TextAlignCenter,
-  TextAlignEnd,
-  TextAlignStart,
-  TextWrap,
-  Trash2,
-  UnfoldHorizontal,
-  UnfoldVertical,
-} from 'lucide-react';
+import { Check, ChevronDown, Eye, Plus } from 'lucide-react';
 import './table.css';
 import './tableTools.css';
 import { useStore } from '../../hooks/useStore';
@@ -47,50 +8,53 @@ import { cameraSystem } from '../../engine/CameraSystem';
 import { engineEvents } from '../../engine/EventBus';
 import { textEditing } from '../../engine/interaction/textEditing';
 import { undoManager } from '../../engine/document';
+import { canEditObjects, subscribeRoomRole } from '../../engine/model/permissions';
 import { collaboratorStore } from '../../engine/presence/collaboratorStore';
 import { createChartFromTableRange } from '../../engine/chart/chartFromTable';
-import { layoutTable, rowAtY, type TableCellBox } from '../../engine/table/tableLayout';
+import { layoutTable, rowAtY, safeHref, type TableCellBox } from '../../engine/table/tableLayout';
 import { checkboxHit, ratingHit } from '../../engine/table/tablePaint';
 import { paintMeasure, tableMeasure } from '../../engine/table/tableMeasure';
-import { tableToSvg } from '../../engine/table/tableSvg';
+import { buildSketch, primsCache } from '../../engine/table/tableCanvas';
 import { ensureTableRegistry } from '../../engine/table/tableRegistry';
 import * as M from '../../engine/table/tableModel';
-import { fitTableColumns, fitTableRows, rowHeightOf, updateTable, updateTableGrowing } from '../../engine/table/tableApply';
 import {
+  drawnHeight,
+  fitTableColumns,
+  fitTableRows,
+  rowHeightOf,
+  saveDefaultView,
+  updateTable,
+  updateTableGrowing,
+} from '../../engine/table/tableApply';
+import { effectiveSpec, hasOwnView, resetView, subscribeViews, viewsVersion } from '../../engine/table/tableView';
+import { subscribeNothing, subscribeVolatile, volatileEpoch } from '../../engine/table/tableVolatile';
+import {
+  bindTableId,
   FORMULA_FUNCTIONS,
   formulaError,
+  hasVolatile,
   isFormula,
   referencesIn,
   refNameIn,
   rowLabel as labelOfRow,
-  shiftRefs,
   storedOf,
 } from '../../engine/table/tableFormula';
-import { clipForPaste, clipToHtml, clipToTsv, copyCells, decodeClip, encodeClip, parseHtmlTable, VEGA_CELLS, type PastedBlock } from '../../engine/table/tableClipboard';
-import {
-  CELL_TYPES,
-  CELL_TYPE_LABELS,
-  filterOn,
-  refsSkipHeader,
-  SUMMARY_LABELS,
-  type CellAlign,
-  type CellStyle,
-  type CellType,
-  type CellVAlign,
-  type SummaryAgg,
-  type TableSpec,
-} from '../../engine/table/tableTypes';
+import { clipToHtml, clipToTsv, copyCells, encodeClip, VEGA_CELLS, type PastedBlock } from '../../engine/table/tableClipboard';
+import { refsSkipHeader, SUMMARY_LABELS, filterOn, type CellAlign, type CellStyle, type CellType, type CellVAlign, type SummaryAgg, type TableSpec } from '../../engine/table/tableTypes';
 import type { TableNode } from '../../engine/model/schema';
+import { seedFor } from '../../engine/model/rough';
 import { PORTAL_SURFACE_ATTR } from '../ui/portalSurface';
-import { ColorPickerPopover } from '../ui/ColorPickerPopover';
 import { Menu, type MenuAnchor } from '../menu/Menu';
 import type { MenuEntry } from '../menu/menuModel';
 import { columnLetter, useSheet, type SheetPos, type SheetRange } from '../sheet/useSheet';
-import { columnMenuEntries, setSummary, TYPE_ICONS } from './columnMenu';
+import { columnMenuEntries, columnName, setSummary } from './columnMenu';
 import { FilterPanel } from './FilterPanel';
 import { CellPicker, type PickerChoice } from './CellPicker';
-import { MenuItem, Sep, Tool } from './tableControls';
-import { colourName, FILLS, INKS } from './tableColours';
+import { FrozenBand } from './FrozenBand';
+import { MenuBody, type MenuState } from './TableContextMenu';
+import { TableToolbar, type Pop, type ToolbarModel } from './TableToolbar';
+import { callAt, Cells, InsertDot, Signature, span, spokenCell, type Axis, type CellHandlers } from './tableEditorParts';
+import { pasteBlock, readClipboardBlock } from './tableEditorClipboard';
 
 /**
  * A table's cells, open for editing where the table is.
@@ -127,6 +91,14 @@ import { colourName, FILLS, INKS } from './tableColours';
  * beside the cell suggests functions, shows the signature of the one the
  * caret is in, and previews the result before it is committed.
  *
+ * ## Whose view, and who may write
+ *
+ * The grid shows this person's own sort and filter (`tableView.ts`): choosing
+ * one writes nothing to the board. A viewer or commenter gets the same grid
+ * read-only — select, copy, sort and filter for themselves — and a plain
+ * "View only" in the toolbar; nothing here offers them an edit, so nothing
+ * here attempts one.
+ *
  * ## Cost
  *
  * The editor re-renders on every camera frame to stay on its table, so the
@@ -155,71 +127,23 @@ const CHUNK = 24;
 
 /** The colours references are outlined in, in order of appearance — as every spreadsheet does. */
 const REF_COLORS = ['#2563EB', '#DC2626', '#059669', '#9333EA', '#EA580C', '#0891B2'];
-const QUICK_FUNCTIONS = ['SUM', 'AVERAGE', 'COUNT', 'MIN', 'MAX'];
 
-type Axis = 'col' | 'row';
-type Pop = 'fill' | 'ink' | 'valign' | 'format' | 'fx' | 'sort' | 'filter' | 'struct' | null;
+const subscribeRole = (fn: () => void) => subscribeRoomRole(() => fn());
 
-interface MenuState {
-  kind: Axis | 'cell';
-  /** Drawn rows and columns the menu acts on. */
-  r0: number;
-  r1: number;
-  c0: number;
-  c1: number;
-  x: number;
-  y: number;
-}
-
-interface CellHandlers {
-  down: (cell: TableCellBox, e: React.PointerEvent) => void;
-  enter: (cell: TableCellBox) => void;
-  click: (cell: TableCellBox, e: React.MouseEvent) => void;
-  dbl: (cell: TableCellBox) => void;
-  menu: (cell: TableCellBox, e: React.MouseEvent) => void;
-}
-
-const span = (a: number, b: number) => Array.from({ length: Math.max(0, b - a + 1) }, (_, i) => a + i);
-
-/** The function call the caret is inside, and which argument — for the signature hint. */
-function callAt(text: string): { name: string; arg: number } | null {
-  let depth = 0;
-  let arg = 0;
-  let inString = false;
-  for (let i = text.length - 1; i >= 0; i--) {
-    const ch = text[i];
-    if (ch === '"') {
-      inString = !inString;
-      continue;
-    }
-    if (inString) continue;
-    if (ch === ')') depth++;
-    else if (ch === '(') {
-      if (depth === 0) {
-        const m = /([A-Za-z][A-Za-z0-9.]*)$/.exec(text.slice(0, i));
-        return m ? { name: m[1].toUpperCase(), arg } : null;
-      }
-      depth--;
-    } else if ((ch === ',' || ch === ';') && depth === 0) arg++;
-  }
-  return null;
-}
-
-/** A link a cell holds, if it is one a browser may open: http and https only. */
-const safeHref = (text: string) => (/^https?:\/\/[^\s]+$/i.test(text.trim()) ? text.trim() : null);
-
-export const TableEditor: React.FC<{ nodeId: string; onClose: () => void }> = ({ nodeId, onClose }) => {
+export const TableEditor: React.FC<{ nodeId: string; onClose: () => void; readOnly?: boolean }> = ({ nodeId, onClose, readOnly }) => {
   const node = useStore((s) => s.objects[nodeId]);
+  // The role can change while the editor is open; the grid follows it.
+  const canEdit = React.useSyncExternalStore(subscribeRole, canEditObjects, canEditObjects);
   React.useEffect(() => {
     if (!node || node.type !== 'table') onClose();
   }, [node, onClose]);
   if (!node || node.type !== 'table') return null;
-  return <Editor node={node} onClose={onClose} />;
+  return <Editor node={node} onClose={onClose} readOnly={Boolean(readOnly) || !canEdit} />;
 };
 
 ensureTableRegistry();
 
-const Editor: React.FC<{ node: TableNode; onClose: () => void }> = ({ node, onClose }) => {
+const Editor: React.FC<{ node: TableNode; onClose: () => void; readOnly: boolean }> = ({ node, onClose, readOnly }) => {
   // Announced as an edit, like typing into text: the transform handles step
   // back while the cells are open — see `textEditing`.
   React.useEffect(() => {
@@ -238,7 +162,16 @@ const Editor: React.FC<{ node: TableNode; onClose: () => void }> = ({ node, onCl
     };
   }, []);
 
-  const spec = node.table;
+  // This person's own sort and filter, and TODAY's minute.
+  const viewVersion = React.useSyncExternalStore(subscribeViews, viewsVersion, () => 0);
+  const minute = React.useSyncExternalStore(hasVolatile(node.table) ? subscribeVolatile : subscribeNothing, volatileEpoch, () => 0);
+  const spec = React.useMemo(
+    () => effectiveSpec(node.id, node.table),
+    // viewVersion: the view lives outside the node.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    [node.id, node.table, viewVersion]
+  );
+  const ownView = hasOwnView(node.id);
   const skip = refsSkipHeader(spec);
   /** Column shares while an edge is being dragged, and the table width while the last one is. */
   const [widths, setWidths] = React.useState<number[] | null>(null);
@@ -250,11 +183,17 @@ const Editor: React.FC<{ node: TableNode; onClose: () => void }> = ({ node, onCl
     let s = spec;
     if (widths) s = { ...s, columns: s.columns.map((c, i) => ({ ...c, width: widths[i] ?? c.width })) };
     if (heights) s = { ...s, rowHeights: heights };
-    return s;
-  }, [spec, widths, heights]);
+    // The drag's draft is this table, for any formula that reads it by title.
+    return s === spec ? s : bindTableId(s, node.id);
+  }, [spec, widths, heights, node.id]);
   const tableW = liveWidth ?? node.width;
-  const tableH = liveHeight ?? node.height;
-  const layout = React.useMemo(() => layoutTable(shown, tableW, tableH), [shown, tableW, tableH]);
+  const tableH = liveHeight ?? drawnHeight(node, spec);
+  const layout = React.useMemo(
+    () => layoutTable(shown, tableW, tableH),
+    // minute: TODAY and NOW move without the spec changing.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    [shown, tableW, tableH, minute]
+  );
   const cellAt = React.useMemo(() => {
     const m = new Map<number, TableCellBox>();
     for (const cell of layout.cells) m.set(cell.vr * 4096 + cell.c, cell);
@@ -265,7 +204,8 @@ const Editor: React.FC<{ node: TableNode; onClose: () => void }> = ({ node, onCl
   const identity = M.isIdentityView(spec);
   /** The first row that can move or be inserted before: the header stays on top. */
   const floor = spec.header ? 1 : 0;
-  const measure = React.useMemo(() => paintMeasure(Boolean(node.appearance?.sketch)), [node.appearance?.sketch]);
+  const sketch = node.appearance?.sketch;
+  const measure = React.useMemo(() => paintMeasure(Boolean(sketch)), [sketch]);
 
   const rowTop = (vr: number) => (vr <= rows.length ? layout.rowY[Math.max(0, vr)] : layout.rowY[rows.length]);
   const rowHt = (vr: number) => layout.rowHs[vr] ?? layout.rowH;
@@ -310,21 +250,11 @@ const Editor: React.FC<{ node: TableNode; onClose: () => void }> = ({ node, onCl
     const n = useStore.getState().objects[node.id];
     return n && n.type === 'table' ? n : node;
   };
+  /** The table as this person sees it *now*: every edit is made to this. */
+  const liveSpec = () => effectiveSpec(node.id, live().table);
   const apply = (next: TableSpec, extra?: { width?: number; height?: number }) => updateTable(live(), next, extra);
   /** An edit to some columns' text: they widen (and wrapped rows grow) to show it, in the same step. */
   const grow = (next: TableSpec, touched: number[]) => updateTableGrowing(live(), next, touched);
-
-  /** Run `fn` over every stored cell a drawn range stands for. */
-  const eachStored = (range: SheetRange, base: TableSpec, fn: (s: TableSpec, r: number, c: number) => TableSpec) => {
-    let next = base;
-    const order = M.viewRows(base);
-    for (let vr = range.r0; vr <= range.r1; vr++) {
-      const r = order[vr];
-      if (r === undefined) continue;
-      for (let c = range.c0; c <= range.c1; c++) next = fn(next, r, c);
-    }
-    return next;
-  };
 
   const [pop, setPop] = React.useState<Pop>(null);
   const openPop = (p: Pop) => setPop((cur) => (cur === p ? null : p));
@@ -342,9 +272,18 @@ const Editor: React.FC<{ node: TableNode; onClose: () => void }> = ({ node, onCl
   /** The fill handle being dragged: the range it would fill. */
   const [fillDrag, setFillDrag] = React.useState<SheetRange | null>(null);
   const [notice, setNotice] = React.useState<string | null>(null);
+  const timers = React.useRef(new Set<number>());
+  React.useEffect(() => {
+    const pending = timers.current;
+    return () => pending.forEach((t) => window.clearTimeout(t));
+  }, []);
   const say = (text: string) => {
     setNotice(text);
-    window.setTimeout(() => setNotice((n) => (n === text ? null : n)), 2600);
+    const t = window.setTimeout(() => {
+      timers.current.delete(t);
+      setNotice((n) => (n === text ? null : n));
+    }, 2600);
+    timers.current.add(t);
   };
 
   const typeOf = (c: number): CellType => spec.columns[c]?.type ?? 'text';
@@ -352,48 +291,22 @@ const Editor: React.FC<{ node: TableNode; onClose: () => void }> = ({ node, onCl
 
   // ---- writing blocks -------------------------------------------------------
 
-  /**
-   * Write a block in from a drawn cell. In an unsorted, unfiltered table the
-   * drawn rows are the stored rows and the table grows to take the block; in
-   * a view, rows map through the view's order, and a block longer than the
-   * view waits for a decision rather than losing its last rows.
-   */
-  const writeBlockAt = (vr: number, c: number, block: PastedBlock, base = live().table) => {
-    const s = base;
-    const width = Math.max(1, ...block.cells.map((line) => line.length));
-    const touched = span(c, c + width - 1);
-    if (M.isIdentityView(s)) {
-      let next = M.setBlock(s, vr, c, block.cells);
-      block.styles.forEach((line, i) =>
-        line.forEach((st, j) => {
-          if (st) next = M.styleRange(next, { r0: vr + i, c0: c + j, r1: vr + i, c1: c + j }, st);
-        })
-      );
-      for (const m of block.merges) next = M.mergeRange(next, { r0: vr + m.r, c0: c + m.c, r1: vr + m.r + m.rs - 1, c1: c + m.c + m.cs - 1 });
-      grow(next, touched);
-      return { r0: vr, c0: c, r1: vr + block.cells.length - 1, c1: c + width - 1 };
-    }
-    const order = M.viewRows(s);
-    if (vr + block.cells.length > order.length) {
+  /** Write a block in from a drawn cell; a block longer than a sorted or filtered view waits for a decision. */
+  const writeBlockAt = (vr: number, c: number, block: PastedBlock, base = liveSpec()) => {
+    const out = pasteBlock(base, vr, c, block);
+    if ('pending' in out) {
       setPendingPaste({ vr, c, block });
       return null;
     }
-    let next = s;
-    block.cells.forEach((line, i) => {
-      const r = order[vr + i];
-      line.forEach((text, j) => {
-        if (c + j < next.columns.length) next = M.setCell(next, r, c + j, text);
-      });
-    });
-    grow(next, touched);
-    return { r0: vr, c0: c, r1: vr + block.cells.length - 1, c1: c + width - 1 };
+    grow(out.spec, out.touched);
+    return out.range;
   };
 
   const resolvePending = (how: 'clear' | 'fit') => {
     const p = pendingPaste;
     setPendingPaste(null);
     if (!p) return;
-    const s = live().table;
+    const s = liveSpec();
     if (how === 'clear') {
       // The paste lands where its first row is stored, in the table as entered.
       const r = M.viewRows(s)[p.vr] ?? s.cells.length;
@@ -405,21 +318,27 @@ const Editor: React.FC<{ node: TableNode; onClose: () => void }> = ({ node, onCl
     writeBlockAt(p.vr, p.c, { ...p.block, cells: p.block.cells.slice(0, room), styles: p.block.styles.slice(0, room) });
   };
 
+  const clearRange = (range: SheetRange) => {
+    const s = liveSpec();
+    apply(M.setCells(s, Array.from(M.storedCells(range, M.viewRows(s)), ([r, c]) => [r, c, ''] as const)));
+  };
+
   const sheet = useSheet({
     rows: rows.length,
     cols,
+    readOnly,
     read: (vr, c) => spec.cells[rows[vr]]?.[c] ?? '',
     write: (vr, c, text) => {
-      const s = live().table;
+      const s = liveSpec();
       const r = M.viewRows(s)[vr];
       if (r !== undefined) grow(M.setCell(s, r, c, text), [c]);
     },
     writeBlock: (vr, c, block) => {
       writeBlockAt(vr, c, { cells: block, styles: block.map((line) => line.map(() => null)), merges: [] });
     },
-    clear: (range) => apply(eachStored(range, live().table, (s, r, c) => M.setCell(s, r, c, ''))),
+    clear: clearRange,
     appendRow: () => {
-      const s = live().table;
+      const s = liveSpec();
       apply(M.insertRows(s, s.cells.length, 1));
     },
     onFormat: (key) => toggleStyle(key),
@@ -429,7 +348,7 @@ const Editor: React.FC<{ node: TableNode; onClose: () => void }> = ({ node, onCl
     onFill: (dir, range) => fillShortcut(dir, range),
     intercept: (e, focus, range) => interceptKey(e, focus, range),
     copy: (range) => {
-      const s = live().table;
+      const s = liveSpec();
       const order = M.viewRows(s);
       const clip = copyCells(
         s,
@@ -438,7 +357,11 @@ const Editor: React.FC<{ node: TableNode; onClose: () => void }> = ({ node, onCl
       );
       return { plain: clipToTsv(clip), html: clipToHtml(clip), json: { type: VEGA_CELLS, data: encodeClip(clip) } };
     },
-    paste: (data, range, valuesOnly) => pasteRich(data, range, valuesOnly),
+    paste: (data, range, valuesOnly) => {
+      const block = readClipboardBlock(data, liveSpec(), range, valuesOnly);
+      if (!block || !block.cells.length) return null;
+      return writeBlockAt(range.r0, range.c0, block) ?? range;
+    },
   });
   const focusSink = React.useRef(sheet.focusSink);
   focusSink.current = sheet.focusSink;
@@ -447,22 +370,25 @@ const Editor: React.FC<{ node: TableNode; onClose: () => void }> = ({ node, onCl
 
   // ---- formatting -----------------------------------------------------------
 
-  const style = (patch: CellStyle) => apply(eachStored(sheet.range, live().table, (s, r, c) => M.styleRange(s, { r0: r, c0: c, r1: r, c1: c }, patch)));
-  const styleAtFocus = spec.styles?.[`${focusStored.r}:${focusStored.c}`] ?? {};
+  /** A style on the selection, written once — a column at a time when whole columns are selected. */
+  const style = (patch: CellStyle) => {
+    const s = liveSpec();
+    apply(M.styleStored(s, sheet.range, M.viewRows(s), patch));
+  };
+  const styleAtFocus = M.cellStyleAt(spec, focusStored.r, focusStored.c) ?? {};
   const toggleStyle = (key: 'bold' | 'italic' | 'wrap') => {
     if (key !== 'wrap') {
       style({ [key]: styleAtFocus[key] ? undefined : true });
       return;
     }
     // Wrapping changes how tall rows need to be, so it is a growing edit.
-    const on = !styleAtFocus.wrap;
-    const s = eachStored(sheet.range, live().table, (x, r, c) => M.styleRange(x, { r0: r, c0: c, r1: r, c1: c }, { wrap: on ? true : undefined }));
-    grow(s, span(sheet.range.c0, sheet.range.c1));
+    const s = liveSpec();
+    grow(M.styleStored(s, sheet.range, M.viewRows(s), { wrap: styleAtFocus.wrap ? undefined : true }), span(sheet.range.c0, sheet.range.c1));
   };
   const align = (a: CellAlign) => style({ align: styleAtFocus.align === a ? undefined : a });
   const valign = (v: CellVAlign) => style({ valign: v === 'middle' ? undefined : v });
   const setType = (type: CellType) => {
-    let s = live().table;
+    let s = liveSpec();
     for (let c = sheet.range.c0; c <= sheet.range.c1; c++) s = M.setColumnType(s, c, type);
     apply(s);
   };
@@ -472,19 +398,19 @@ const Editor: React.FC<{ node: TableNode; onClose: () => void }> = ({ node, onCl
 
   /** Insert a stored row, and put the cursor at its start so typing fills it. */
   const insertRowAt = (stored: number) => {
-    const s = live().table;
+    const s = liveSpec();
     apply(M.insertRows(s, stored, 1));
     if (M.isIdentityView(s)) sheet.place({ r: stored, c: 0 });
   };
   /** Insert a column, and put the cursor on its heading so typing names it. */
   const insertColAt = (at: number) => {
-    apply(M.insertCols(live().table, at, 1));
+    apply(M.insertCols(liveSpec(), at, 1));
     sheet.place({ r: 0, c: at });
   };
 
   /** Delete the stored rows behind drawn rows `vr0..vr1`. */
   const deleteViewRows = (vr0: number, vr1: number) => {
-    const s = live().table;
+    const s = liveSpec();
     const order = M.viewRows(s);
     const stored = new Set<number>();
     for (let vr = vr0; vr <= vr1; vr++) if (order[vr] !== undefined) stored.add(order[vr]);
@@ -492,19 +418,19 @@ const Editor: React.FC<{ node: TableNode; onClose: () => void }> = ({ node, onCl
     [...stored].sort((a, b) => b - a).forEach((r) => (next = M.deleteRows(next, r, 1)));
     apply(next);
   };
-  const deleteColRange = (c0: number, c1: number) => apply(M.deleteCols(live().table, c0, c1 - c0 + 1));
+  const deleteColRange = (c0: number, c1: number) => apply(M.deleteCols(liveSpec(), c0, c1 - c0 + 1));
   const merged = M.mergeAt(spec, focusStored.r, focusStored.c);
   const canMerge = identity && (sheet.range.r1 > sheet.range.r0 || sheet.range.c1 > sheet.range.c0);
-  const merge = () => apply(M.mergeRange(live().table, sheet.range));
-  const unmerge = () => apply(M.unmergeRange(live().table, sheet.range));
+  const merge = () => apply(M.mergeRange(liveSpec(), sheet.range));
+  const unmerge = () => apply(M.unmergeRange(liveSpec(), sheet.range));
   const multi = sheet.range.r1 > sheet.range.r0 || sheet.range.c1 > sheet.range.c0;
   const freezeRows = (n: number) => {
-    const s = live().table;
+    const s = liveSpec();
     const cur = s.frozen;
     apply({ ...s, frozen: n > 0 || cur?.cols ? { rows: n, cols: cur?.cols ?? 0 } : undefined });
   };
   const toggleSummary = () => {
-    const s = live().table;
+    const s = liveSpec();
     if (M.hasSummary(s)) {
       apply({ ...s, summary: undefined });
       return;
@@ -520,8 +446,9 @@ const Editor: React.FC<{ node: TableNode; onClose: () => void }> = ({ node, onCl
 
   // ---- view -----------------------------------------------------------------
 
+  /** This person's sort: it goes to their own view and writes nothing. */
   const sortCol = (c: number, dir: 'asc' | 'desc' | null) => {
-    const s = live().table;
+    const s = liveSpec();
     const same = dir && s.sort?.col === c && s.sort.dir === dir;
     apply({ ...s, sort: !dir || same ? undefined : { col: c, dir } });
   };
@@ -530,23 +457,24 @@ const Editor: React.FC<{ node: TableNode; onClose: () => void }> = ({ node, onCl
 
   /** Tick or untick every checkbox cell in a range, all to the opposite of the focused one. */
   const toggleChecks = (range: SheetRange, at: SheetPos) => {
-    const s = live().table;
+    const s = liveSpec();
     const r = rows[at.r];
     const on = !M.isChecked(s.cells[r]?.[at.c] ?? '');
-    apply(
-      eachStored(range, s, (x, rr, c) =>
-        x.columns[c]?.type === 'checkbox' && !(x.header && rr === 0) && !isFormula(x.cells[rr]?.[c] ?? '') ? M.setCell(x, rr, c, on ? 'TRUE' : 'FALSE') : x
-      )
-    );
+    const edits = Array.from(M.storedCells(range, M.viewRows(s)))
+      .filter(([rr, c]) => s.columns[c]?.type === 'checkbox' && !(s.header && rr === 0) && !isFormula(s.cells[rr]?.[c] ?? ''))
+      .map(([rr, c]) => [rr, c, on ? 'TRUE' : 'FALSE'] as const);
+    apply(M.setCells(s, edits));
   };
-  const setRating = (range: SheetRange, n: number) =>
-    apply(
-      eachStored(range, live().table, (x, r, c) =>
-        x.columns[c]?.type === 'rating' && !(x.header && r === 0) ? M.setCell(x, r, c, n ? String(n) : '') : x
-      )
-    );
+  const setRating = (range: SheetRange, n: number) => {
+    const s = liveSpec();
+    const edits = Array.from(M.storedCells(range, M.viewRows(s)))
+      .filter(([r, c]) => s.columns[c]?.type === 'rating' && !(s.header && r === 0))
+      .map(([r, c]) => [r, c, n ? String(n) : ''] as const);
+    apply(M.setCells(s, edits));
+  };
 
   const openPicker = (p: SheetPos, initial = '') => {
+    if (readOnly) return;
     if (isHeaderVr(p.r) || isFormula(spec.cells[rows[p.r]]?.[p.c] ?? '')) {
       sheet.begin(p, initial || undefined);
       return;
@@ -577,7 +505,7 @@ const Editor: React.FC<{ node: TableNode; onClose: () => void }> = ({ node, onCl
 
   /** A picked value written, any choice that is new added to the column's options in the same step. */
   const writePicked = (vr: number, c: number, value: string) => {
-    let s = live().table;
+    let s = liveSpec();
     const r = M.viewRows(s)[vr];
     if (r === undefined) return;
     if (s.columns[c]?.type === 'select') for (const l of M.selectLabels(value)) s = M.addOption(s, c, l);
@@ -599,7 +527,7 @@ const Editor: React.FC<{ node: TableNode; onClose: () => void }> = ({ node, onCl
     const header = isHeaderVr(focus.r);
     const raw = spec.cells[rows[focus.r]]?.[focus.c] ?? '';
     if (e.altKey && e.key === 'ArrowDown') {
-      if (!header && (t === 'select' || t === 'person') && !isFormula(raw)) openPicker(focus);
+      if (!readOnly && !header && (t === 'select' || t === 'person') && !isFormula(raw)) openPicker(focus);
       else openColumnMenu(focus.c, null, true);
       return true;
     }
@@ -610,7 +538,7 @@ const Editor: React.FC<{ node: TableNode; onClose: () => void }> = ({ node, onCl
         return true;
       }
     }
-    if (header || mod || e.altKey || isFormula(raw)) return false;
+    if (readOnly || header || mod || e.altKey || isFormula(raw)) return false;
     if (t === 'checkbox' && (e.key === ' ' || e.key === 'Enter')) {
       toggleChecks(range, focus);
       return true;
@@ -630,11 +558,11 @@ const Editor: React.FC<{ node: TableNode; onClose: () => void }> = ({ node, onCl
 
   /** Fill from a drawn source block into a drawn target; drawn rows are stored rows here. */
   const fillInto = (source: SheetRange, target: SheetRange) => {
-    if (!M.isIdentityView(live().table)) {
+    const s = liveSpec();
+    if (!M.isIdentityView(s)) {
       say('Filling needs the unsorted, unfiltered table');
       return;
     }
-    const s = live().table;
     const next = M.fillRange(s, source, target);
     if (next === s) return;
     grow(next, span(target.c0, target.c1));
@@ -657,7 +585,7 @@ const Editor: React.FC<{ node: TableNode; onClose: () => void }> = ({ node, onCl
 
   /** The fill handle double-clicked: down as far as the column beside the selection has values. */
   const fillToNeighbour = () => {
-    const s = live().table;
+    const s = liveSpec();
     const range = sheet.range;
     const side = range.c0 > 0 ? range.c0 - 1 : range.c1 + 1 < cols ? range.c1 + 1 : -1;
     if (side < 0) return;
@@ -708,46 +636,6 @@ const Editor: React.FC<{ node: TableNode; onClose: () => void }> = ({ node, onCl
     window.addEventListener('pointermove', move);
     window.addEventListener('pointerup', up);
     window.addEventListener('pointercancel', up);
-  };
-
-  // ---- the clipboard --------------------------------------------------------
-
-  /**
-   * A paste with more than text: cells copied from a table on the board (their
-   * formulas moved by how far they travelled), or a table from a spreadsheet
-   * or a web page with its formatting. Null falls back to the plain paste.
-   */
-  const pasteRich = (data: DataTransfer, range: SheetRange, valuesOnly: boolean): SheetRange | null => {
-    const s = live().table;
-    const order = M.viewRows(s);
-    const at = { r: order[range.r0] ?? s.cells.length, c: range.c0 };
-    let block: PastedBlock | null = null;
-    let json = '';
-    try {
-      json = data.getData(VEGA_CELLS);
-    } catch {
-      json = '';
-    }
-    const clip = json ? decodeClip(json) : null;
-    if (clip) {
-      // One cell into a selected range fills it, each copy moved to its own place.
-      if (clip.cells.length === 1 && clip.cells[0].length === 1 && (range.r1 > range.r0 || range.c1 > range.c0)) {
-        const raw = clip.cells[0][0];
-        const cells = span(range.r0, range.r1).map((vr) =>
-          span(range.c0, range.c1).map((c) => {
-            if (valuesOnly) return clip.values[0][0];
-            const r = order[vr] ?? vr;
-            return isFormula(raw) ? `=${shiftRefs(raw.slice(1), r - clip.origin.r, c - clip.origin.c)}` : raw;
-          })
-        );
-        block = { cells, styles: cells.map((line) => line.map(() => (valuesOnly ? null : clip.styles[0]?.[0] ?? null))), merges: [] };
-      } else block = clipForPaste(clip, at, valuesOnly);
-    } else if (!valuesOnly) {
-      const html = data.getData('text/html');
-      if (html) block = parseHtmlTable(html);
-    }
-    if (!block || !block.cells.length) return null;
-    return writeBlockAt(range.r0, range.c0, block) ?? range;
   };
 
   // ---- formulas -------------------------------------------------------------
@@ -816,7 +704,7 @@ const Editor: React.FC<{ node: TableNode; onClose: () => void }> = ({ node, onCl
 
   /** AutoSum: the numbers directly above the cursor, the way every spreadsheet finds them. */
   const autoFunction = (fn: string) => {
-    const s = live().table;
+    const s = liveSpec();
     const { r, c } = focusStored;
     const numeric = (rr: number) => {
       const v = s.cells[rr]?.[c] ?? '';
@@ -905,10 +793,11 @@ const Editor: React.FC<{ node: TableNode; onClose: () => void }> = ({ node, onCl
     if (formulaError(draft)) return { text: '…', tone: 'pending' as const };
     const r = rows[sheet.edit.r];
     if (r === undefined) return null;
-    const text = M.formatCell(M.setCell(spec, r, sheet.edit.c, draft), r, sheet.edit.c);
+    // The preview is this table, too: a reference to it by title reads it.
+    const text = M.formatCell(bindTableId(M.setCell(spec, r, sheet.edit.c, draft), node.id), r, sheet.edit.c);
     return { text: `= ${text || '(empty)'}`, tone: /^#/.test(text) ? ('error' as const) : ('ok' as const) };
-  }, [writingFormula, draft, spec, rows, sheet.edit]);
-  const measureText = React.useMemo(() => tableMeasure(Boolean(node.appearance?.sketch)), [node.appearance?.sketch]);
+  }, [writingFormula, draft, spec, rows, sheet.edit, node.id]);
+  const measureText = React.useMemo(() => tableMeasure(Boolean(sketch)), [sketch]);
 
   const onInputKey = (e: React.KeyboardEvent<HTMLTextAreaElement | HTMLInputElement>) => {
     if (suggestions.length) {
@@ -947,7 +836,7 @@ const Editor: React.FC<{ node: TableNode; onClose: () => void }> = ({ node, onCl
    * the table — the right edge of a table is a handle in every editor.
    */
   const beginResize = (c: number, e: React.PointerEvent) => {
-    if (e.button !== 0) return;
+    if (e.button !== 0 || readOnly) return;
     e.preventDefault();
     e.stopPropagation();
     const startX = e.clientX;
@@ -987,7 +876,7 @@ const Editor: React.FC<{ node: TableNode; onClose: () => void }> = ({ node, onCl
       // A click is not a resize: a double-click to fit must not first write
       // two resizes that change nothing.
       if (!moved) return;
-      const s = live().table;
+      const s = liveSpec();
       apply({ ...s, columns: s.columns.map((col, i) => ({ ...col, width: current[i] ?? col.width })) }, last ? { width } : undefined);
     };
     window.addEventListener('pointermove', move);
@@ -997,7 +886,7 @@ const Editor: React.FC<{ node: TableNode; onClose: () => void }> = ({ node, onCl
 
   /** Drag a row's bottom edge: the row takes more of the height, and the table grows by it. */
   const beginRowResize = (vr: number, e: React.PointerEvent) => {
-    if (e.button !== 0) return;
+    if (e.button !== 0 || readOnly) return;
     e.preventDefault();
     e.stopPropagation();
     const r = rows[vr];
@@ -1005,19 +894,20 @@ const Editor: React.FC<{ node: TableNode; onClose: () => void }> = ({ node, onCl
     const startY = e.clientY;
     const unit = rowHeightOf(live());
     const start = Array.from({ length: spec.cells.length }, (_, i) => spec.rowHeights?.[i] ?? 1);
-    const startH = node.height;
+    const startH = tableH;
+    const nodeH = node.height;
     let current = start;
-    let height = startH;
     let moved = false;
+    let delta = 0;
     const move = (ev: PointerEvent) => {
       const dy = (ev.clientY - startY) / zoom;
       if (!moved && Math.abs(dy) * zoom < 2) return;
       moved = true;
       const w = Math.min(20, Math.max(0.4, start[r] + dy / unit));
       current = start.map((x, i) => (i === r ? w : x));
-      height = startH + (w - start[r]) * unit;
+      delta = (w - start[r]) * unit;
       setHeights(current);
-      setLiveHeight(height);
+      setLiveHeight(startH + delta);
     };
     const up = () => {
       window.removeEventListener('pointermove', move);
@@ -1026,7 +916,7 @@ const Editor: React.FC<{ node: TableNode; onClose: () => void }> = ({ node, onCl
       setHeights(null);
       setLiveHeight(null);
       if (!moved) return;
-      apply({ ...live().table, rowHeights: current.some((x) => x !== 1) ? current : undefined }, { height });
+      apply({ ...liveSpec(), rowHeights: current.some((x) => x !== 1) ? current : undefined }, { height: nodeH + delta });
     };
     window.addEventListener('pointermove', move);
     window.addEventListener('pointerup', up);
@@ -1035,13 +925,14 @@ const Editor: React.FC<{ node: TableNode; onClose: () => void }> = ({ node, onCl
 
   /** A double-click on a row's edge: wrapped rows fit their lines, others go back to standard. */
   const fitRow = (vr: number) => {
+    if (readOnly) return;
     const r = rows[vr];
     if (r === undefined) return;
     if (fitTableRows(live(), [r])) return;
-    const s = live().table;
+    const s = liveSpec();
     if ((s.rowHeights?.[r] ?? 1) !== 1) {
       const unit = rowHeightOf(live());
-      apply(M.setRowHeight(s, r, 1), { height: node.height + (1 - (s.rowHeights?.[r] ?? 1)) * unit });
+      apply(M.setRowHeight(s, r, 1), { height: live().height + (1 - (s.rowHeights?.[r] ?? 1)) * unit });
     }
   };
 
@@ -1099,7 +990,7 @@ const Editor: React.FC<{ node: TableNode; onClose: () => void }> = ({ node, onCl
         return;
       }
       if (before < 0 || (before >= from && before <= to + 1)) return;
-      const s = live().table;
+      const s = liveSpec();
       const next = axis === 'col' ? M.moveCols(s, from, to, before) : M.moveRows(s, from, to, before);
       if (next === s) return;
       apply(next);
@@ -1120,7 +1011,7 @@ const Editor: React.FC<{ node: TableNode; onClose: () => void }> = ({ node, onCl
 
   const wholeCols = sheet.range.r0 === 0 && sheet.range.r1 === rows.length - 1;
   const wholeRows = sheet.range.c0 === 0 && sheet.range.c1 === cols - 1;
-  const rowsMovable = identity && wholeRows && sheet.range.r0 >= floor;
+  const rowsMovable = !readOnly && identity && wholeRows && sheet.range.r0 >= floor;
 
   // ---- menus ----------------------------------------------------------------
 
@@ -1141,6 +1032,7 @@ const Editor: React.FC<{ node: TableNode; onClose: () => void }> = ({ node, onCl
       ? columnMenuEntries({
           spec,
           col: appMenuCol,
+          readOnly,
           apply: (next) => apply(next),
           fit: () => fitTableColumns(live(), [appMenuCol]),
           filterPanel: (close) => <FilterPanel spec={spec} col={appMenuCol} apply={(next) => apply(next)} close={close} />,
@@ -1155,18 +1047,18 @@ const Editor: React.FC<{ node: TableNode; onClose: () => void }> = ({ node, onCl
       anchor: { kind: 'rect', rect, prefer: 'below', align: 'end' },
       entries: [
         { kind: 'heading', id: 'h', label: 'Summarise this column' },
-        { kind: 'item', id: 'none', label: 'None', ...(agg === null ? { trailing: <Check size={14} aria-label="Current" /> } : null), onSelect: () => apply(setSummary(live().table, c, null)) },
+        { kind: 'item', id: 'none', label: 'None', ...(agg === null ? { trailing: <Check size={14} aria-label="Current" /> } : null), onSelect: () => apply(setSummary(liveSpec(), c, null)) },
         ...M.summaryChoices(typeOf(c)).map(
           (a): MenuEntry => ({
             kind: 'item',
             id: a,
             label: SUMMARY_LABELS[a],
             ...(agg === a ? { trailing: <Check size={14} aria-label="Current" /> } : null),
-            onSelect: () => apply(setSummary(live().table, c, a)),
+            onSelect: () => apply(setSummary(liveSpec(), c, a)),
           })
         ),
         { kind: 'separator', id: 's' },
-        { kind: 'item', id: 'off', label: 'Hide the summary row', onSelect: () => apply({ ...live().table, summary: undefined }) },
+        { kind: 'item', id: 'off', label: 'Hide the summary row', onSelect: () => apply({ ...liveSpec(), summary: undefined }) },
       ],
     });
   };
@@ -1175,6 +1067,10 @@ const Editor: React.FC<{ node: TableNode; onClose: () => void }> = ({ node, onCl
   const openMenu = (kind: MenuState['kind'], at: { r: number; c: number }, e: React.MouseEvent) => {
     e.preventDefault();
     e.stopPropagation();
+    if (readOnly) {
+      if (!sheet.inRange(at.r, at.c)) sheet.select(at);
+      return;
+    }
     if (sheet.edit) sheet.commit();
     setPop(null);
     const r = sheet.range;
@@ -1221,7 +1117,7 @@ const Editor: React.FC<{ node: TableNode; onClose: () => void }> = ({ node, onCl
 
   /** A chart of the selection, beside the table, following it. */
   const chartSelection = (range: SheetRange) => {
-    const s = live().table;
+    const s = liveSpec();
     const order = M.viewRows(s);
     const stored = span(range.r0, range.r1).map((vr) => order[vr]).filter((r) => r !== undefined);
     let r0 = Math.min(...stored);
@@ -1253,6 +1149,12 @@ const Editor: React.FC<{ node: TableNode; onClose: () => void }> = ({ node, onCl
     },
     click: (cell, e) => {
       if (e.button !== 0 || sheet.edit || e.shiftKey) return;
+      if (cell.kind === 'url' && (e.metaKey || e.ctrlKey)) {
+        const href = safeHref(cell.text);
+        if (href) window.open(href, '_blank', 'noopener,noreferrer');
+        return;
+      }
+      if (readOnly) return;
       const box = (e.currentTarget as HTMLElement).getBoundingClientRect();
       const x = cell.x + (e.clientX - box.left) / zoom;
       const y = cell.y + (e.clientY - box.top) / zoom;
@@ -1261,12 +1163,10 @@ const Editor: React.FC<{ node: TableNode; onClose: () => void }> = ({ node, onCl
         const n = ratingHit(cell, layout, x, y, measure);
         // A click on the star already set clears it: the way back to none.
         if (n !== null) setRating({ r0: cell.vr, c0: cell.c, r1: cell.vr, c1: cell.c }, n === cell.rating ? 0 : n);
-      } else if (cell.kind === 'url' && (e.metaKey || e.ctrlKey)) {
-        const href = safeHref(cell.text);
-        if (href) window.open(href, '_blank', 'noopener,noreferrer');
       }
     },
     dbl: (cell) => {
+      if (readOnly) return;
       const t = typeOf(cell.c);
       if (!cell.header && (t === 'select' || t === 'person')) openPicker({ r: cell.vr, c: cell.c });
       else if (!cell.header && (t === 'checkbox' || t === 'rating') && !cell.formula) return;
@@ -1312,7 +1212,7 @@ const Editor: React.FC<{ node: TableNode; onClose: () => void }> = ({ node, onCl
     return skip && r === 0 ? 'H' : String(labelOfRow(skip, r ?? vr));
   };
   const editKey = sheet.edit ? `${sheet.edit.r}:${sheet.edit.c}` : null;
-  const showFill = identity && !sheet.edit && !drag && !writingFormula && !picker && !fillDrag;
+  const showFill = !readOnly && identity && !sheet.edit && !drag && !writingFormula && !picker && !fillDrag;
 
   /** One line where something will go: an insert under the pointer, or a block being dragged. */
   const guide = drag
@@ -1423,8 +1323,8 @@ const Editor: React.FC<{ node: TableNode; onClose: () => void }> = ({ node, onCl
 
   /**
    * Frozen tracks hold their place on screen while the table runs off it: a
-   * band drawn from the same SVG the table exports, pinned to the top (and
-   * left) of the free board while the rest pans under it.
+   * band pinned to the top (and left) of the free board while the rest pans
+   * under it, painted from the same layout (`FrozenBand`).
    */
   const frozen = layout.frozen;
   const stageTop = stage?.top ?? 0;
@@ -1432,10 +1332,14 @@ const Editor: React.FC<{ node: TableNode; onClose: () => void }> = ({ node, onCl
   const frozenW = frozen.cols > 0 ? colX(frozen.cols) : 0;
   const stickTop = frozen.rows > 0 && top < stageTop && top + (tableH - frozenH) * zoom > stageTop;
   const stickLeft = frozen.cols > 0 && left < freeLeft && left + (tableW - frozenW) * zoom > freeLeft;
-  const svgMarkup = React.useMemo(
-    () => (stickTop || stickLeft ? tableToSvg(shown, tableW, tableH, { id: node.id, sketch: node.appearance?.sketch, sketchSeed: node.appearance?.sketchSeed }) : ''),
-    [stickTop, stickLeft, shown, tableW, tableH, node.id, node.appearance?.sketch, node.appearance?.sketchSeed]
-  );
+  const bandSeed = React.useMemo(() => seedFor(node.id, node.appearance?.sketchSeed), [node.id, node.appearance?.sketchSeed]);
+  const bandPaint = React.useMemo(() => {
+    if (!stickTop && !stickLeft) return null;
+    return {
+      prims: primsCache(layout, measure, Boolean(sketch)),
+      sketchPaths: sketch && typeof Path2D !== 'undefined' ? buildSketch(layout, bandSeed, sketch) : null,
+    };
+  }, [stickTop, stickLeft, layout, measure, sketch, bandSeed]);
   const bandDown = (e: React.PointerEvent, ox: number, oy: number) => {
     e.preventDefault();
     e.stopPropagation();
@@ -1486,6 +1390,7 @@ const Editor: React.FC<{ node: TableNode; onClose: () => void }> = ({ node, onCl
   const metaText = filtered
     ? `${rows.length - (spec.header ? 1 : 0)} of ${spec.cells.length - (spec.header ? 1 : 0)} rows`
     : `${spec.cells.length} × ${cols}`;
+  const status = notice ?? (ownView ? `Your view · ${metaText}` : metaText);
   const hiddenRuns: Array<{ from: number; to: number }> = [];
   spec.columns.forEach((col, c) => {
     if (!col.hidden) return;
@@ -1496,297 +1401,62 @@ const Editor: React.FC<{ node: TableNode; onClose: () => void }> = ({ node, onCl
 
   const pickerCell = picker ? boxOf(picker.vr, picker.c) : null;
 
+  /** What a screen reader hears as the cursor moves: where, under which heading, and what is there. */
+  const focusCell = cellAt.get(sheet.focus.r * 4096 + sheet.focus.c);
+  const heading = spec.header && !isHeaderVr(sheet.focus.r) ? columnName(spec, sheet.focus.c) : '';
+  const announce = `${columnLetter(sheet.focus.c)}${rowLabel(sheet.focus.r)}${heading ? `, ${heading}` : ''}: ${focusCell ? spokenCell(focusCell) : 'Empty'}${multi ? `, ${sheet.range.r1 - sheet.range.r0 + 1} by ${sheet.range.c1 - sheet.range.c0 + 1} selected` : ''}`;
+
+  const toolbar: ToolbarModel = {
+    spec,
+    readOnly,
+    pop,
+    openPop,
+    closePop: () => setPop(null),
+    run,
+    styleAtFocus,
+    typeAtFocus,
+    focus: focusStored,
+    cols: { c0: sheet.range.c0, c1: sheet.range.c1 },
+    multi,
+    identity,
+    canMerge,
+    merged: Boolean(merged),
+    frozenRows: frozen.rows,
+    hasSummary: M.hasSummary(spec),
+    ownView,
+    status,
+    toggleStyle,
+    style,
+    align,
+    valign,
+    setType,
+    autoFunction,
+    writeFormula,
+    sortCol,
+    keepOrder: () => apply(M.applyView(liveSpec())),
+    applySpec: (next) => apply(next),
+    chart: () => chartSelection(sheet.range),
+    merge,
+    unmerge,
+    insertRowAt,
+    insertColAt,
+    freezeRows,
+    toggleSummary,
+    deleteRows: () => deleteViewRows(sheet.range.r0, sheet.range.r1),
+    deleteCols: () => deleteColRange(sheet.range.c0, sheet.range.c1),
+    fitAll: () => fitTableColumns(live()),
+    saveDefaultView: () => saveDefaultView(live()),
+    resetView: () => resetView(node.id),
+    done: () => {
+      sheet.commit();
+      onClose();
+    },
+  };
+
   return createPortal(
     <>
-      <div ref={barRef} className="tbled-bar" style={{ left: barLeft, top: barTop }} role="toolbar" aria-label="Table" {...portal}>
-        <div className="tbled-bar__row">
-          {/* Type: how the text looks. */}
-          <div className="tbled-bar__group" role="group" aria-label="Text">
-            <Tool label="Bold" shortcut="Ctrl B" pressed={Boolean(styleAtFocus.bold)} onClick={() => toggleStyle('bold')}>
-              <Bold size={15} />
-            </Tool>
-            <Tool label="Italic" shortcut="Ctrl I" pressed={Boolean(styleAtFocus.italic)} onClick={() => toggleStyle('italic')}>
-              <Italic size={15} />
-            </Tool>
-            <div className="tbled-bar__pop">
-              <Tool label={`Text colour · ${colourName(INKS, styleAtFocus.color) ?? 'Automatic'}`} pressed={pop === 'ink'} onClick={() => openPop('ink')}>
-                <Baseline size={15} />
-                <span className="tbled-bar__chip" style={{ background: styleAtFocus.color ?? '#0F172A' }} />
-              </Tool>
-              {pop === 'ink' && (
-                <div className="tbled-menu tbled-menu--swatches" role="group" aria-label="Text colour">
-                  <button
-                    type="button"
-                    className="tbled-swatch tbled-swatch--none"
-                    aria-label="Automatic text colour"
-                    data-tooltip="Automatic"
-                    onClick={() => run(() => style({ color: undefined }))}
-                  />
-                  {INKS.map((ink) => (
-                    <button
-                      key={ink.hex}
-                      type="button"
-                      className="tbled-swatch tbled-swatch--ink"
-                      style={{ color: ink.hex }}
-                      aria-label={`Text ${ink.name}`}
-                      data-tooltip={ink.name}
-                      aria-pressed={styleAtFocus.color === ink.hex}
-                      onClick={() => run(() => style({ color: ink.hex }))}
-                    >
-                      A
-                    </button>
-                  ))}
-                  <div className="tbled-menu__custom">
-                    <ColorPickerPopover label="Custom" allowNone={false} color={styleAtFocus.color ?? '#0F172A'} onChange={(color) => style({ color })} contrastAgainst={styleAtFocus.fill ?? '#FFFFFF'} />
-                  </div>
-                </div>
-              )}
-            </div>
-            <div className="tbled-bar__pop">
-              <Tool label={`Cell fill · ${colourName(FILLS, styleAtFocus.fill) ?? 'None'}`} pressed={pop === 'fill'} onClick={() => openPop('fill')}>
-                <PaintBucket size={15} />
-                <span className="tbled-bar__chip" style={{ background: styleAtFocus.fill ?? 'transparent' }} />
-              </Tool>
-              {pop === 'fill' && (
-                <div className="tbled-menu tbled-menu--swatches" role="group" aria-label="Cell fill">
-                  <button type="button" className="tbled-swatch tbled-swatch--none" aria-label="No fill" data-tooltip="No fill" onClick={() => run(() => style({ fill: undefined }))} />
-                  {FILLS.map((f) => (
-                    <button
-                      key={f.hex}
-                      type="button"
-                      className="tbled-swatch"
-                      style={{ background: f.hex }}
-                      aria-label={`Fill ${f.name}`}
-                      data-tooltip={f.name}
-                      aria-pressed={styleAtFocus.fill === f.hex}
-                      onClick={() => run(() => style({ fill: f.hex }))}
-                    />
-                  ))}
-                  <div className="tbled-menu__custom">
-                    <ColorPickerPopover label="Custom" color={styleAtFocus.fill ?? '#FFFFFF'} onChange={(fill) => style({ fill: fill === 'transparent' ? undefined : fill })} />
-                  </div>
-                </div>
-              )}
-            </div>
-            <Tool label="Wrap text" pressed={Boolean(styleAtFocus.wrap)} onClick={() => toggleStyle('wrap')}>
-              <TextWrap size={15} />
-            </Tool>
-          </div>
-          <span className="tbled-bar__sep" />
-          {/* Align: where the text sits. */}
-          <div className="tbled-bar__group" role="group" aria-label="Alignment">
-            <Tool label="Align left" pressed={styleAtFocus.align === 'left'} onClick={() => align('left')}>
-              <TextAlignStart size={15} />
-            </Tool>
-            <Tool label="Align centre" pressed={styleAtFocus.align === 'center'} onClick={() => align('center')}>
-              <TextAlignCenter size={15} />
-            </Tool>
-            <Tool label="Align right" pressed={styleAtFocus.align === 'right'} onClick={() => align('right')}>
-              <TextAlignEnd size={15} />
-            </Tool>
-            <div className="tbled-bar__pop">
-              <Tool label="Vertical alignment" pressed={pop === 'valign'} onClick={() => openPop('valign')}>
-                {styleAtFocus.valign === 'top' ? (
-                  <AlignVerticalJustifyStart size={15} />
-                ) : styleAtFocus.valign === 'bottom' ? (
-                  <AlignVerticalJustifyEnd size={15} />
-                ) : (
-                  <AlignVerticalJustifyCenter size={15} />
-                )}
-              </Tool>
-              {pop === 'valign' && (
-                <div className="tbled-menu tbled-menu--list" role="menu">
-                  <MenuItem icon={<AlignVerticalJustifyStart size={15} />} label="Top" pressed={styleAtFocus.valign === 'top'} onClick={() => run(() => valign('top'))} />
-                  <MenuItem icon={<AlignVerticalJustifyCenter size={15} />} label="Middle" pressed={!styleAtFocus.valign} onClick={() => run(() => valign('middle'))} />
-                  <MenuItem icon={<AlignVerticalJustifyEnd size={15} />} label="Bottom" pressed={styleAtFocus.valign === 'bottom'} onClick={() => run(() => valign('bottom'))} />
-                </div>
-              )}
-            </div>
-          </div>
-          <span className="tbled-bar__sep" />
-          {/* Data: what the values are and which rows show. */}
-          <div className="tbled-bar__group" role="group" aria-label="Data">
-            <div className="tbled-bar__pop">
-              <Tool label={`Column type · ${CELL_TYPE_LABELS[typeAtFocus]}`} pressed={pop === 'format'} onClick={() => openPop('format')}>
-                {TYPE_ICONS[typeAtFocus]}
-                <ChevronDown size={12} className="tbled-tool__caret" />
-              </Tool>
-              {pop === 'format' && (
-                <div className="tbled-menu tbled-menu--list" role="menu">
-                  <div className="tbled-menu__label">
-                    {sheet.range.c1 > sheet.range.c0
-                      ? `Columns ${columnLetter(sheet.range.c0)}–${columnLetter(sheet.range.c1)}`
-                      : `Column ${columnLetter(sheet.range.c0)}`}
-                  </div>
-                  {CELL_TYPES.map((t) => (
-                    <MenuItem
-                      key={t}
-                      icon={TYPE_ICONS[t]}
-                      label={CELL_TYPE_LABELS[t]}
-                      pressed={typeAtFocus === t}
-                      hint={typeAtFocus === t ? '✓' : undefined}
-                      onClick={() => run(() => setType(t))}
-                    />
-                  ))}
-                </div>
-              )}
-            </div>
-            <div className="tbled-bar__pop">
-              <Tool label="Functions" pressed={pop === 'fx'} onClick={() => openPop('fx')}>
-                <Sigma size={15} />
-              </Tool>
-              {pop === 'fx' && (
-                <div className="tbled-menu tbled-menu--list tbled-menu--fx" role="menu">
-                  <div className="tbled-menu__label">Quick — reads the numbers above</div>
-                  {QUICK_FUNCTIONS.map((name) => (
-                    <MenuItem
-                      key={name}
-                      icon={<Sigma size={14} />}
-                      label={name[0] + name.slice(1).toLowerCase()}
-                      hint={name}
-                      onClick={() => {
-                        setPop(null);
-                        autoFunction(name);
-                      }}
-                    />
-                  ))}
-                  <span className="tbled-ctx__sep" role="separator" />
-                  <div className="tbled-menu__label">All functions</div>
-                  {FORMULA_FUNCTIONS.map((f) => (
-                    <button
-                      key={f.name}
-                      type="button"
-                      role="menuitem"
-                      className="tbled-fx__opt"
-                      onPointerDown={(e) => e.preventDefault()}
-                      onClick={() => {
-                        setPop(null);
-                        writeFormula(`=${f.name}()`, 1);
-                      }}
-                    >
-                      <span className="tbled-fx__name">{f.name}</span>
-                      <span className="tbled-fx__optdoc">{f.doc}</span>
-                    </button>
-                  ))}
-                </div>
-              )}
-            </div>
-            <div className="tbled-bar__pop">
-              <Tool label={spec.sort ? `Sorted by ${columnLetter(spec.sort.col)}` : 'Sort'} pressed={pop === 'sort' || Boolean(spec.sort)} onClick={() => openPop('sort')}>
-                {spec.sort?.dir === 'desc' ? <ArrowDownWideNarrow size={15} /> : <ArrowUpNarrowWide size={15} />}
-              </Tool>
-              {pop === 'sort' && (
-                <div className="tbled-menu tbled-menu--list" role="menu">
-                  <div className="tbled-menu__label">Column {columnLetter(focusStored.c)}</div>
-                  <MenuItem
-                    icon={<ArrowUpNarrowWide size={15} />}
-                    label="A → Z, smallest first"
-                    pressed={spec.sort?.col === focusStored.c && spec.sort.dir === 'asc'}
-                    onClick={() => run(() => sortCol(focusStored.c, 'asc'))}
-                  />
-                  <MenuItem
-                    icon={<ArrowDownWideNarrow size={15} />}
-                    label="Z → A, largest first"
-                    pressed={spec.sort?.col === focusStored.c && spec.sort.dir === 'desc'}
-                    onClick={() => run(() => sortCol(focusStored.c, 'desc'))}
-                  />
-                  {spec.sort && (
-                    <>
-                      <Sep />
-                      <MenuItem icon={<Eraser size={15} />} label="Back to the order as entered" onClick={() => run(() => sortCol(focusStored.c, null))} />
-                      <MenuItem icon={<Check size={15} />} label="Keep this order" hint="writes it in" onClick={() => run(() => apply(M.applyView(live().table)))} />
-                    </>
-                  )}
-                </div>
-              )}
-            </div>
-            <div className="tbled-bar__pop">
-              <Tool
-                label={filtered ? 'Filtered — filter this column' : 'Filter this column'}
-                pressed={pop === 'filter' || Boolean(filterOn(spec, focusStored.c))}
-                onClick={() => openPop('filter')}
-              >
-                <Funnel size={15} />
-              </Tool>
-              {pop === 'filter' && (
-                <div className="tbled-menu tbled-menu--panel">
-                  <FilterPanel spec={spec} col={focusStored.c} apply={(next) => apply(next)} close={() => setPop(null)} />
-                </div>
-              )}
-            </div>
-            <Tool label="Chart this selection" onClick={() => chartSelection(sheet.range)}>
-              <ChartColumn size={15} />
-            </Tool>
-          </div>
-          <span className="tbled-bar__sep" />
-          {/* Structure: cells, rows and columns. */}
-          <div className="tbled-bar__group" role="group" aria-label="Structure">
-            {merged && !canMerge ? (
-              <Tool label="Unmerge" onClick={unmerge}>
-                <TableCellsSplit size={15} />
-              </Tool>
-            ) : (
-              <Tool label={identity ? 'Merge cells' : 'Merging needs the unsorted, unfiltered table'} disabled={!canMerge} onClick={merge}>
-                <TableCellsMerge size={15} />
-              </Tool>
-            )}
-            <div className="tbled-bar__pop">
-              <Tool label="Rows and columns" pressed={pop === 'struct'} onClick={() => openPop('struct')}>
-                <Rows3 size={15} />
-              </Tool>
-              {pop === 'struct' && (
-                <div className="tbled-menu tbled-menu--list" role="menu">
-                  <MenuItem
-                    icon={<BetweenHorizontalStart size={15} />}
-                    label="Row above"
-                    disabled={spec.header && focusStored.r === 0}
-                    onClick={() => run(() => insertRowAt(focusStored.r))}
-                  />
-                  <MenuItem icon={<BetweenHorizontalEnd size={15} />} label="Row below" onClick={() => run(() => insertRowAt(focusStored.r + 1))} />
-                  <MenuItem icon={<BetweenVerticalStart size={15} />} label="Column left" onClick={() => run(() => insertColAt(focusStored.c))} />
-                  <MenuItem icon={<BetweenVerticalEnd size={15} />} label="Column right" onClick={() => run(() => insertColAt(focusStored.c + 1))} />
-                  <Sep />
-                  <MenuItem
-                    icon={<Snowflake size={15} />}
-                    label={frozen.rows > 0 ? 'Unfreeze rows' : spec.header ? 'Freeze the header row' : 'Freeze the first row'}
-                    onClick={() => run(() => freezeRows(frozen.rows > 0 ? 0 : 1))}
-                  />
-                  <MenuItem icon={<PanelBottom size={15} />} label={M.hasSummary(spec) ? 'Hide the summary row' : 'Show a summary row'} onClick={() => run(toggleSummary)} />
-                  <Sep />
-                  <MenuItem
-                    icon={<Rows3 size={15} />}
-                    tone="danger"
-                    label={multi ? 'Delete selected rows' : 'Delete row'}
-                    onClick={() => run(() => deleteViewRows(sheet.range.r0, sheet.range.r1))}
-                  />
-                  <MenuItem
-                    icon={<Columns3 size={15} />}
-                    tone="danger"
-                    label={multi ? 'Delete selected columns' : 'Delete column'}
-                    onClick={() => run(() => deleteColRange(sheet.range.c0, sheet.range.c1))}
-                  />
-                </div>
-              )}
-            </div>
-            <Tool label="Fit columns to content" onClick={() => fitTableColumns(live())}>
-              <UnfoldHorizontal size={15} />
-            </Tool>
-          </div>
-          <span className="tbled-bar__spacer" />
-          <span className="tbled-bar__meta" role="status" aria-live="polite">
-            {notice ?? metaText}
-          </span>
-          <button
-            type="button"
-            className="tbled-bar__done"
-            onClick={() => {
-              sheet.commit();
-              onClose();
-            }}
-          >
-            <Check size={14} /> Done
-          </button>
-        </div>
+      <div ref={barRef} className="tbled-bar" style={{ left: barLeft, top: barTop }} role="toolbar" aria-label={readOnly ? 'Table, view only' : 'Table'} {...portal}>
+        <TableToolbar m={toolbar} />
 
         {/* The formula bar: where the focused cell is, and what it really holds. */}
         <div className="tbled-fx" role="group" aria-label="Formula bar">
@@ -1821,9 +1491,11 @@ const Editor: React.FC<{ node: TableNode; onClose: () => void }> = ({ node, onCl
             className="tbled-fx__input"
             aria-label="The focused cell's contents"
             spellCheck={false}
+            readOnly={readOnly}
             value={fxValue}
-            placeholder={isHeaderVr(sheet.focus.r) ? 'Column heading' : 'A value, or = to start a formula'}
+            placeholder={readOnly ? '' : isHeaderVr(sheet.focus.r) ? 'Column heading' : 'A value, or = to start a formula'}
             onFocus={(e) => {
+              if (readOnly) return;
               if (!sheet.edit) {
                 setBarEditing(true);
                 sheet.begin(sheet.focus);
@@ -1832,6 +1504,7 @@ const Editor: React.FC<{ node: TableNode; onClose: () => void }> = ({ node, onCl
               setCaret(n);
             }}
             onChange={(e) => {
+              if (readOnly) return;
               if (!sheet.edit) {
                 setBarEditing(true);
                 sheet.begin(sheet.focus, e.target.value);
@@ -1841,7 +1514,14 @@ const Editor: React.FC<{ node: TableNode; onClose: () => void }> = ({ node, onCl
               setPick(0);
             }}
             onSelect={(e) => setCaret(e.currentTarget.selectionEnd ?? 0)}
-            onKeyDown={onInputKey}
+            onKeyDown={(e) => {
+              if (readOnly) {
+                e.stopPropagation();
+                if (e.key === 'Escape' || e.key === 'Enter') focusSink.current();
+                return;
+              }
+              onInputKey(e);
+            }}
             onBlur={() => {
               if (barEditing && !refDrag.current) {
                 sheet.commit();
@@ -1873,6 +1553,7 @@ const Editor: React.FC<{ node: TableNode; onClose: () => void }> = ({ node, onCl
         ref={rootRef}
         className="tbled"
         data-dragging={drag ? drag.axis : undefined}
+        data-readonly={readOnly || undefined}
         style={
           {
             left,
@@ -1887,21 +1568,23 @@ const Editor: React.FC<{ node: TableNode; onClose: () => void }> = ({ node, onCl
       >
         {/* Insert lanes: a dot on every boundary, a `+` when approached. The
             end boundary is the add strip's job, so the lanes stop one short. */}
-        <div className="tbled__lane tbled__lane--cols">
-          {span(0, cols - 1)
-            .filter((b) => !spec.columns[b].hidden)
-            .map((b) => (
-              <InsertDot
-                key={b}
-                axis="col"
-                style={{ left: colX(b) }}
-                label={`Insert a column before ${columnLetter(b)}`}
-                onHover={(on) => setHint(on ? { axis: 'col', at: b } : null)}
-                onInsert={() => insertColAt(b)}
-              />
-            ))}
-        </div>
-        {identity && (
+        {!readOnly && (
+          <div className="tbled__lane tbled__lane--cols">
+            {span(0, cols - 1)
+              .filter((b) => !spec.columns[b].hidden)
+              .map((b) => (
+                <InsertDot
+                  key={b}
+                  axis="col"
+                  style={{ left: colX(b) }}
+                  label={`Insert a column before ${columnLetter(b)}`}
+                  onHover={(on) => setHint(on ? { axis: 'col', at: b } : null)}
+                  onInsert={() => insertColAt(b)}
+                />
+              ))}
+          </div>
+        )}
+        {!readOnly && identity && (
           <div className="tbled__lane tbled__lane--rows">
             {span(Math.max(floor, firstRow), lastRow).map((b) => (
               <InsertDot
@@ -1933,14 +1616,14 @@ const Editor: React.FC<{ node: TableNode; onClose: () => void }> = ({ node, onCl
                 }}
                 className="tbled__colhead"
                 data-selected={inSel || undefined}
-                data-movable={(wholeCols && inSel) || undefined}
+                data-movable={(!readOnly && wholeCols && inSel) || undefined}
                 data-frozen={c < frozen.cols || undefined}
                 style={{ left: x, width: layout.colW[c] }}
                 onPointerDown={(e) => {
                   if (e.button !== 0) return;
                   e.preventDefault();
                   setPop(null);
-                  if (!e.shiftKey && wholeCols && inSel) startDrag('col', sheet.range.c0, sheet.range.c1, c, e);
+                  if (!readOnly && !e.shiftKey && wholeCols && inSel) startDrag('col', sheet.range.c0, sheet.range.c1, c, e);
                   else sheet.selectCol(c, e.shiftKey);
                 }}
                 onContextMenu={(e) => {
@@ -1967,36 +1650,39 @@ const Editor: React.FC<{ node: TableNode; onClose: () => void }> = ({ node, onCl
                 >
                   <ChevronDown />
                 </button>
-                <span
-                  className="tbled__resize"
-                  title="Drag to resize · double-click to fit"
-                  onPointerDown={(e) => beginResize(c, e)}
-                  onDoubleClick={(e) => {
-                    e.stopPropagation();
-                    fitTableColumns(live(), [c]);
-                  }}
-                />
+                {!readOnly && (
+                  <span
+                    className="tbled__resize"
+                    title="Drag to resize · double-click to fit"
+                    onPointerDown={(e) => beginResize(c, e)}
+                    onDoubleClick={(e) => {
+                      e.stopPropagation();
+                      fitTableColumns(live(), [c]);
+                    }}
+                  />
+                )}
               </div>
             );
           })}
-          {hiddenRuns.map((run) => (
-            <button
-              key={run.from}
-              type="button"
-              className="tbled__unhide"
-              style={{ left: colX(run.from) }}
-              aria-label={`Show hidden column${run.to > run.from ? 's' : ''} ${columnLetter(run.from)}${run.to > run.from ? `–${columnLetter(run.to)}` : ''}`}
-              data-tooltip={`Show ${columnLetter(run.from)}${run.to > run.from ? `–${columnLetter(run.to)}` : ''}`}
-              onPointerDown={(e) => e.preventDefault()}
-              onClick={() => {
-                let s = live().table;
-                for (let c = run.from; c <= run.to; c++) s = M.setHidden(s, c, false);
-                apply(s);
-              }}
-            >
-              <Eye />
-            </button>
-          ))}
+          {!readOnly &&
+            hiddenRuns.map((run) => (
+              <button
+                key={run.from}
+                type="button"
+                className="tbled__unhide"
+                style={{ left: colX(run.from) }}
+                aria-label={`Show hidden column${run.to > run.from ? 's' : ''} ${columnLetter(run.from)}${run.to > run.from ? `–${columnLetter(run.to)}` : ''}`}
+                data-tooltip={`Show ${columnLetter(run.from)}${run.to > run.from ? `–${columnLetter(run.to)}` : ''}`}
+                onPointerDown={(e) => e.preventDefault()}
+                onClick={() => {
+                  let s = liveSpec();
+                  for (let c = run.from; c <= run.to; c++) s = M.setHidden(s, c, false);
+                  apply(s);
+                }}
+              >
+                <Eye />
+              </button>
+            ))}
         </div>
         <div className="tbled__rows">
           {span(firstRow, lastRow).map((vr) => {
@@ -2019,22 +1705,43 @@ const Editor: React.FC<{ node: TableNode; onClose: () => void }> = ({ node, onCl
                 onContextMenu={(e) => openMenu('row', { r: vr, c: 0 }, e)}
               >
                 {rowLabel(vr)}
-                <span
-                  className="tbled__rowresize"
-                  title="Drag to resize · double-click to fit"
-                  onPointerDown={(e) => beginRowResize(vr, e)}
-                  onDoubleClick={(e) => {
-                    e.stopPropagation();
-                    fitRow(vr);
-                  }}
-                />
+                {!readOnly && (
+                  <span
+                    className="tbled__rowresize"
+                    title="Drag to resize · double-click to fit"
+                    onPointerDown={(e) => beginRowResize(vr, e)}
+                    onDoubleClick={(e) => {
+                      e.stopPropagation();
+                      fitRow(vr);
+                    }}
+                  />
+                )}
               </div>
             );
           })}
         </div>
 
-        <div className="tbled__grid" style={{ fontSize: layout.fontSize }}>
-          <Cells cells={windowCells} editing={editKey} handlers={handlers} onFooter={openSummaryMenu} />
+        <div
+          className="tbled__grid"
+          role="grid"
+          aria-label={readOnly ? 'Table cells, view only' : 'Table cells'}
+          aria-readonly={readOnly || undefined}
+          aria-rowcount={rows.length + (layout.footer ? 1 : 0)}
+          aria-colcount={cols}
+          aria-multiselectable="true"
+          style={{ fontSize: layout.fontSize }}
+        >
+          <Cells
+            cells={windowCells}
+            editing={editKey}
+            handlers={handlers}
+            onFooter={openSummaryMenu}
+            r0={sheet.range.r0}
+            c0={sheet.range.c0}
+            r1={sheet.range.r1}
+            c1={sheet.range.c1}
+            readOnly={readOnly}
+          />
 
           {multi && !drag && !writingFormula && <div className="tbled__range" style={rectOf(sheet.range)} />}
           {!sheet.edit && !drag && <div className="tbled__focus" style={focusBox} />}
@@ -2084,6 +1791,7 @@ const Editor: React.FC<{ node: TableNode; onClose: () => void }> = ({ node, onCl
               spellCheck={false}
               wrap={styleAtFocus.wrap ? 'soft' : 'off'}
               value={sheet.edit.draft}
+              aria-label={`Editing ${columnLetter(sheet.edit.c)}${rowLabel(sheet.edit.r)}`}
               style={{
                 ...editBox,
                 width: styleAtFocus.wrap ? editBox.width : editWidth,
@@ -2119,60 +1827,78 @@ const Editor: React.FC<{ node: TableNode; onClose: () => void }> = ({ node, onCl
         </div>
 
         {/* Add at the end: the right edge takes a column, the bottom a row. */}
-        <button
-          type="button"
-          tabIndex={-1}
-          className="tbled__append"
-          data-axis="col"
-          aria-label="Add a column"
-          data-tooltip="Add column"
-          onPointerDown={(e) => e.preventDefault()}
-          onPointerEnter={() => setHint({ axis: 'col', at: cols })}
-          onPointerLeave={() => setHint(null)}
-          onClick={() => insertColAt(cols)}
-        >
-          <span className="tbled__appendpill">
-            <Plus />
-          </span>
-        </button>
-        <button
-          type="button"
-          tabIndex={-1}
-          className="tbled__append"
-          data-axis="row"
-          aria-label="Add a row"
-          data-tooltip="Add row"
-          onPointerDown={(e) => e.preventDefault()}
-          onPointerEnter={() => setHint({ axis: 'row', at: rows.length })}
-          onPointerLeave={() => setHint(null)}
-          onClick={() => insertRowAt(live().table.cells.length)}
-        >
-          <span className="tbled__appendpill">
-            <Plus />
-          </span>
-        </button>
-        <textarea {...sheet.sinkProps} />
+        {!readOnly && (
+          <>
+            <button
+              type="button"
+              tabIndex={-1}
+              className="tbled__append"
+              data-axis="col"
+              aria-label="Add a column"
+              data-tooltip="Add column"
+              onPointerDown={(e) => e.preventDefault()}
+              onPointerEnter={() => setHint({ axis: 'col', at: cols })}
+              onPointerLeave={() => setHint(null)}
+              onClick={() => insertColAt(cols)}
+            >
+              <span className="tbled__appendpill">
+                <Plus />
+              </span>
+            </button>
+            <button
+              type="button"
+              tabIndex={-1}
+              className="tbled__append"
+              data-axis="row"
+              aria-label="Add a row"
+              data-tooltip="Add row"
+              onPointerDown={(e) => e.preventDefault()}
+              onPointerEnter={() => setHint({ axis: 'row', at: rows.length })}
+              onPointerLeave={() => setHint(null)}
+              onClick={() => insertRowAt(liveSpec().cells.length)}
+            >
+              <span className="tbled__appendpill">
+                <Plus />
+              </span>
+            </button>
+          </>
+        )}
+        <textarea {...sheet.sinkProps} aria-readonly={readOnly || undefined} />
+        <div className="tbled__announce" role="status" aria-live="polite" aria-atomic="true">
+          {announce}
+        </div>
       </div>
 
-      {stickTop && (
-        <div
-          className="tbled-band tbled-band--rows"
-          style={{ left, top: stageTop, width: tableW * zoom, height: frozenH * zoom }}
+      {stickTop && bandPaint && (
+        <FrozenBand
+          axis="rows"
+          layout={layout}
+          prims={bandPaint.prims}
+          sketch={sketch}
+          sketchPaths={bandPaint.sketchPaths}
+          zoom={zoom}
+          left={left}
+          top={stageTop}
+          extent={frozenH}
+          rowLabels={span(0, frozen.rows - 1).map((vr) => ({ top: rowTop(vr), height: rowHt(vr), label: rowLabel(vr) }))}
           onPointerDown={(e) => bandDown(e, left, stageTop)}
-          {...portal}
-        >
-          <svg viewBox={`0 0 ${tableW} ${frozenH}`} width={tableW * zoom} height={frozenH * zoom} aria-hidden="true" dangerouslySetInnerHTML={{ __html: svgMarkup }} />
-        </div>
+          portal={portal}
+        />
       )}
-      {stickLeft && (
-        <div
-          className="tbled-band tbled-band--cols"
-          style={{ left: freeLeft, top, width: frozenW * zoom, height: tableH * zoom }}
+      {stickLeft && bandPaint && (
+        <FrozenBand
+          axis="cols"
+          layout={layout}
+          prims={bandPaint.prims}
+          sketch={sketch}
+          sketchPaths={bandPaint.sketchPaths}
+          zoom={zoom}
+          left={freeLeft}
+          top={top}
+          extent={frozenW}
           onPointerDown={(e) => bandDown(e, freeLeft, top)}
-          {...portal}
-        >
-          <svg viewBox={`0 0 ${frozenW} ${tableH}`} width={frozenW * zoom} height={tableH * zoom} aria-hidden="true" dangerouslySetInnerHTML={{ __html: svgMarkup }} />
-        </div>
+          portal={portal}
+        />
       )}
 
       {picker && pickerCell && (
@@ -2281,9 +2007,9 @@ const Editor: React.FC<{ node: TableNode; onClose: () => void }> = ({ node, onCl
               fit: () => run(() => fitTableColumns(live(), span(menu.c0, menu.c1))),
               fitRows: () => run(() => span(menu.r0, menu.r1).forEach((vr) => fitRow(vr))),
               sort: (dir) => run(() => sortCol(menu.c0, dir)),
-              clear: () => run(() => apply(eachStored(menu, live().table, (s, r, c) => M.setCell(s, r, c, '')))),
-              merge: () => run(() => apply(M.mergeRange(live().table, menu))),
-              unmerge: () => run(() => apply(M.unmergeRange(live().table, menu))),
+              clear: () => run(() => clearRange(menu)),
+              merge: () => run(() => apply(M.mergeRange(liveSpec(), menu))),
+              unmerge: () => run(() => apply(M.unmergeRange(liveSpec(), menu))),
               deleteRows: () => run(() => deleteViewRows(menu.r0, menu.r1)),
               deleteCols: () => run(() => deleteColRange(menu.c0, menu.c1)),
               fillDown: () => run(() => fillShortcut('down', menu)),
@@ -2311,256 +2037,5 @@ const Editor: React.FC<{ node: TableNode; onClose: () => void }> = ({ node, onCl
       )}
     </>,
     document.body
-  );
-};
-
-/**
- * The cells, memoised — hit targets and the editor's own marks, not text: the
- * canvas underneath draws every cell's content, open or closed.
- *
- * The editor re-renders on every camera frame to stay over its table, and on
- * every hover of a `+`. None of that changes a cell, so the cells are their
- * own component, fed the rows near the viewport and a stable handlers ref —
- * a re-render of the editor does not reconcile a single cell unless the
- * window, the layout or the cell being typed into changed.
- */
-const Cells = React.memo<{
-  cells: TableCellBox[];
-  editing: string | null;
-  handlers: React.MutableRefObject<CellHandlers>;
-  onFooter: (c: number, e: React.MouseEvent) => void;
-}>(({ cells, editing, handlers, onFooter }) => (
-  <>
-    {cells.map((cell) => {
-      const key = `${cell.vr}:${cell.c}`;
-      if (cell.r < 0) {
-        return (
-          <button
-            key={key}
-            type="button"
-            className="tbled__foot"
-            style={{ left: cell.x, top: cell.y, width: cell.w, height: cell.h }}
-            aria-label={cell.footer?.label ? `${cell.footer.label}: ${cell.text}. Change the summary` : 'Add a summary for this column'}
-            onPointerDown={(e) => e.preventDefault()}
-            onClick={(e) => onFooter(cell.c, e)}
-          >
-            {!cell.footer?.label && <span className="tbled__foot-add">Summarise</span>}
-          </button>
-        );
-      }
-      return (
-        <div
-          key={key}
-          className="tbled__cell"
-          data-header={cell.header || undefined}
-          data-kind={cell.kind}
-          data-editing={editing === key || undefined}
-          style={{ left: cell.x, top: cell.y, width: cell.w, height: cell.h }}
-          onPointerDown={(e) => handlers.current.down(cell, e)}
-          onPointerEnter={() => handlers.current.enter(cell)}
-          onClick={(e) => handlers.current.click(cell, e)}
-          onDoubleClick={() => handlers.current.dbl(cell)}
-          onContextMenu={(e) => handlers.current.menu(cell, e)}
-        >
-          {cell.formula && <span className="tbled__ftick" aria-hidden="true" />}
-          {(cell.kind === 'select' || cell.kind === 'person') && <span className="tbled__chev" aria-hidden="true" />}
-        </div>
-      );
-    })}
-  </>
-));
-Cells.displayName = 'Cells';
-
-/** A function's signature with the argument the caret is in set in bold. */
-const Signature: React.FC<{ sig: string; arg: number; doc: string }> = ({ sig, arg, doc }) => {
-  const open = sig.indexOf('(');
-  const name = sig.slice(0, open);
-  const params = sig.slice(open + 1, -1).split(', ').filter(Boolean);
-  let at = Math.min(arg, params.length - 1);
-  if (params[at] === '…') at = Math.max(0, params.length - 2);
-  return (
-    <div className="tbled-fxbar__sig">
-      <code>
-        {name}(
-        {params.map((p, i) => (
-          <React.Fragment key={i}>
-            {i > 0 && ', '}
-            {i === at ? <b>{p}</b> : p}
-          </React.Fragment>
-        ))}
-        )
-      </code>
-      <span className="tbled-fxbar__doc">{doc}</span>
-    </div>
-  );
-};
-
-/** A boundary in an insert lane: a faint dot that opens into a `+`. */
-const InsertDot: React.FC<{
-  axis: Axis;
-  style: React.CSSProperties;
-  label: string;
-  onHover: (on: boolean) => void;
-  onInsert: () => void;
-}> = ({ axis, style, label, onHover, onInsert }) => (
-  <button
-    type="button"
-    tabIndex={-1}
-    className="tbled__ins"
-    data-axis={axis}
-    style={style}
-    aria-label={label}
-    data-tooltip={label}
-    onPointerDown={(e) => e.preventDefault()}
-    onPointerEnter={() => onHover(true)}
-    onPointerLeave={() => onHover(false)}
-    onClick={() => {
-      onHover(false);
-      onInsert();
-    }}
-  >
-    <span className="tbled__insdot">
-      <Plus />
-    </span>
-  </button>
-);
-
-interface MenuActions {
-  insertRowAbove: () => void;
-  insertRowBelow: () => void;
-  insertColLeft: () => void;
-  insertColRight: () => void;
-  fit: () => void;
-  fitRows: () => void;
-  sort: (dir: 'asc' | 'desc') => void;
-  clear: () => void;
-  merge: () => void;
-  unmerge: () => void;
-  deleteRows: () => void;
-  deleteCols: () => void;
-  fillDown: () => void;
-  fillRight: () => void;
-  wrap: () => void;
-  chart: () => void;
-  freezeHere: () => void;
-}
-
-/**
- * What a right-click offers, by where it landed.
- *
- * A number is about rows, and a cell about both — every spreadsheet's
- * arrangement; a letter opens the column menu. The heading names what the
- * menu acts on ("Rows 3–5"): a right-click inside a selection acts on the
- * selection and outside it on the one thing clicked, and that should never be
- * a surprise.
- */
-const MenuBody: React.FC<{
-  menu: MenuState;
-  spec: TableSpec;
-  rows: number[];
-  cols: number;
-  identity: boolean;
-  rowLabel: (vr: number) => string;
-  wrapped: boolean;
-  frozenRows: number;
-  actions: MenuActions;
-}> = ({ menu, spec, rows, cols, identity, rowLabel, wrapped, frozenRows, actions }) => {
-  const nCols = menu.c1 - menu.c0 + 1;
-  const nRows = menu.r1 - menu.r0 + 1;
-  const headerOnly = spec.header && rows[menu.r0] === 0 && nRows === 1;
-  const title =
-    menu.kind === 'row'
-      ? nRows > 1
-        ? `Rows ${rowLabel(menu.r0)}–${rowLabel(menu.r1)}`
-        : headerOnly
-          ? 'Header row'
-          : `Row ${rowLabel(menu.r0)}`
-      : nRows * nCols > 1
-        ? `${nRows} × ${nCols} cells`
-        : `Cell ${columnLetter(menu.c0)}${rowLabel(menu.r0)}`;
-  const aboveBlocked = spec.header && rows[menu.r0] === 0;
-  const isMerged = Boolean(M.mergeAt(spec, rows[menu.r0] ?? 0, menu.c0));
-  const canMerge = identity && nRows * nCols > 1;
-  const sorted = spec.sort?.col === menu.c0 ? spec.sort.dir : null;
-
-  const rowItems = (
-    <>
-      <MenuItem
-        icon={<ArrowUpToLine size={15} />}
-        label="Insert row above"
-        disabled={aboveBlocked}
-        hint={aboveBlocked ? 'header stays on top' : undefined}
-        onClick={actions.insertRowAbove}
-      />
-      <MenuItem icon={<ArrowDownToLine size={15} />} label="Insert row below" onClick={actions.insertRowBelow} />
-    </>
-  );
-  const deleteRowItem = (
-    <MenuItem
-      icon={<Trash2 size={15} />}
-      tone="danger"
-      label={nRows > 1 ? `Delete ${nRows} rows` : 'Delete row'}
-      disabled={nRows >= spec.cells.length}
-      onClick={actions.deleteRows}
-    />
-  );
-
-  return (
-    <>
-      <div className="tbled-ctx__head">{title}</div>
-      {menu.kind === 'row' && (
-        <>
-          {rowItems}
-          <Sep />
-          <MenuItem icon={<UnfoldVertical size={15} />} label="Fit height to text" hint="double-click edge" onClick={actions.fitRows} />
-          <MenuItem
-            icon={<Snowflake size={15} />}
-            label={frozenRows === menu.r1 + 1 ? 'Unfreeze rows' : `Freeze up to row ${rowLabel(menu.r1)}`}
-            onClick={actions.freezeHere}
-          />
-          <MenuItem icon={<Eraser size={15} />} label="Clear contents" onClick={actions.clear} />
-          <Sep />
-          {deleteRowItem}
-        </>
-      )}
-      {menu.kind === 'cell' && (
-        <>
-          <MenuItem icon={<ChartColumn size={15} />} label="Chart this" onClick={actions.chart} />
-          <MenuItem icon={<ArrowDownToLine size={15} />} label="Fill down" hint="Ctrl D" disabled={!identity} onClick={actions.fillDown} />
-          <MenuItem icon={<ArrowRightToLine size={15} />} label="Fill right" hint="Ctrl R" disabled={!identity} onClick={actions.fillRight} />
-          <MenuItem icon={<TextWrap size={15} />} label={wrapped ? 'Stop wrapping text' : 'Wrap text'} onClick={actions.wrap} />
-          <Sep />
-          {rowItems}
-          <MenuItem icon={<ArrowLeftToLine size={15} />} label="Insert column left" onClick={actions.insertColLeft} />
-          <MenuItem icon={<ArrowRightToLine size={15} />} label="Insert column right" onClick={actions.insertColRight} />
-          <Sep />
-          <MenuItem icon={<UnfoldHorizontal size={15} />} label={nCols > 1 ? 'Fit columns to content' : 'Fit column to content'} hint="double-click edge" onClick={actions.fit} />
-          <MenuItem icon={<ArrowUpNarrowWide size={15} />} label={`Sort ${columnLetter(menu.c0)}, A → Z`} pressed={sorted === 'asc'} onClick={() => actions.sort('asc')} />
-          <MenuItem icon={<ArrowDownWideNarrow size={15} />} label={`Sort ${columnLetter(menu.c0)}, Z → A`} pressed={sorted === 'desc'} onClick={() => actions.sort('desc')} />
-          <Sep />
-          {isMerged && !canMerge ? (
-            <MenuItem icon={<TableCellsSplit size={15} />} label="Unmerge" onClick={actions.unmerge} />
-          ) : (
-            <MenuItem
-              icon={<TableCellsMerge size={15} />}
-              label="Merge cells"
-              disabled={!canMerge}
-              hint={!identity ? 'turn off sort and filter' : undefined}
-              onClick={actions.merge}
-            />
-          )}
-          <MenuItem icon={<Eraser size={15} />} label="Clear contents" hint="Delete" onClick={actions.clear} />
-          <Sep />
-          {deleteRowItem}
-          <MenuItem
-            icon={<Trash2 size={15} />}
-            tone="danger"
-            label={nCols > 1 ? `Delete ${nCols} columns` : 'Delete column'}
-            disabled={nCols >= cols}
-            onClick={actions.deleteCols}
-          />
-        </>
-      )}
-    </>
   );
 };

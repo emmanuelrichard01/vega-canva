@@ -394,3 +394,52 @@ export function relativeTime(timestamp: number, now = Date.now()): string {
   if (days < 7) return `${days}d ago`;
   return new Date(timestamp).toLocaleDateString([], { month: 'short', day: 'numeric' });
 }
+
+// ---------------------------------------------------------------------------
+// Names
+// ---------------------------------------------------------------------------
+
+/** The first words of a message as a human reads them, for names and previews. */
+export function snippetOf(body: string, max = 40): string {
+  const flat = plainText(body).replace(/\s+/g, ' ').trim();
+  return flat.length > max ? `${flat.slice(0, max - 1).trimEnd()}…` : flat;
+}
+
+/**
+ * What to call the object a thread is attached to: its title or text when it
+ * has one, else its kind ("Image", "Shape"). Null for a thread on bare canvas.
+ */
+export function objectLabel(
+  node: { type?: string; title?: string; text?: string } | null | undefined
+): string | null {
+  if (!node) return null;
+  const named = (node.title || node.text || '').replace(/\s+/g, ' ').trim();
+  if (named) return named.length > 28 ? `${named.slice(0, 27).trimEnd()}…` : named;
+  const kind = node.type ?? 'object';
+  return kind.charAt(0).toUpperCase() + kind.slice(1);
+}
+
+/**
+ * The accessible name of a thread's pin: who started it, what it says, what it
+ * is on, and what state it is in. The visible pin is only an avatar and a count.
+ */
+export function threadPinLabel(parts: {
+  author: string;
+  snippet: string;
+  onObject: string | null;
+  count: number;
+  resolved: boolean;
+  unread: boolean;
+  forMe: boolean;
+}): string {
+  const { author, snippet, onObject, count, resolved, unread, forMe } = parts;
+  return [
+    forMe ? 'You were mentioned. ' : '',
+    unread ? 'Unread thread' : 'Thread',
+    ` by ${author}`,
+    onObject ? ` on ${onObject}` : '',
+    snippet ? `: ${snippet}` : '',
+    `, ${count} ${count === 1 ? 'message' : 'messages'}`,
+    resolved ? ', resolved' : '',
+  ].join('');
+}

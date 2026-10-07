@@ -1,5 +1,7 @@
 import { describe, it, expect } from 'vitest';
-import { nextBehind, stackAt } from './pick';
+import { nextBehind, stackAt, stackAtPoint } from './pick';
+import { spatialIndex } from '../SpatialIndex';
+import { engineEvents } from '../EventBus';
 
 const node = (id: string, x: number, y: number, w: number, h: number, zIndex: number, extra: Record<string, unknown> = {}) =>
   ({ id, type: 'shape', x, y, width: w, height: h, zIndex, rotation: 0, scaleX: 1, scaleY: 1, locked: false, ...extra }) as any;
@@ -43,5 +45,21 @@ describe('nextBehind', () => {
   it('handles a pile of one or none', () => {
     expect(nextBehind(['only'], ['only'])).toBe('only');
     expect(nextBehind([], [])).toBeNull();
+  });
+});
+
+describe('stackAtPoint', () => {
+  it('asks the spatial index, so far-away objects are never tested', () => {
+    spatialIndex.clear();
+    const near = node('near', 0, 0, 100, 100, 1);
+    near.geometry = { kind: 'rect' };
+    const far = node('far', 5000, 5000, 100, 100, 2);
+    far.geometry = { kind: 'rect' };
+    engineEvents.emit('ObjectAdded', near);
+    engineEvents.emit('ObjectAdded', far);
+    expect(stackAtPoint(50, 50)).toEqual(['near']);
+    expect(stackAtPoint(5050, 5050)).toEqual(['far']);
+    expect(stackAtPoint(2000, 2000)).toEqual([]);
+    spatialIndex.clear();
   });
 });

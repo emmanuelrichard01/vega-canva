@@ -51,6 +51,7 @@ export type ShapeParamField =
   | 'waveHeight'
   | 'pinCount'
   | 'teeth'
+  | 'bowRatio'
   | 'shelfCount'
   | 'innerRatio'
   | 'points';
@@ -180,6 +181,11 @@ export const SHAPE_PARAMS: Partial<Record<ShapeKind, ShapeParamGroup>> = {
   ] },
   cpu: { label: 'Processor', params: [COUNT('pinCount', 'Pins per side', [2, 6], 3, 'Contacts on each edge of the package')] },
   gear: { label: 'Gear', params: [COUNT('teeth', 'Teeth', [4, 24], 8)] },
+  key: { label: 'Key', params: [
+    COUNT('teeth', 'Teeth', [2, 4], 3, 'Cuts along the blade'),
+    PERCENT('bowRatio', 'Bow', [0.3, 0.5, 0.05], 0.4, 'The ring, against the length of the key'),
+    PERCENT('innerRatio', 'Hole', [0.1, 0.4, 0.05], 0.2, 'The hole, as a share of the ring'),
+  ] },
   server: { label: 'Server rack', params: [COUNT('shelfCount', 'Bays', [2, 6], 3, 'Rack units stacked down the face')] },
   badge: { label: 'Seal', params: [
     COUNT('points', 'Scallops', [6, 36], 12),

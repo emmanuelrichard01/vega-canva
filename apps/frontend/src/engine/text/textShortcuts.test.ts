@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import { DEFAULT_TYPOGRAPHY } from '../model/schema';
-import { applyFormat, detectListShortcut, formatCommandFor, stepFontSize } from './textShortcuts';
+import { applyFormat, detectListShortcut, formatCommandFor, stepFontSize, undoListShortcut } from './textShortcuts';
 
 const chord = (
   key: string,
@@ -16,14 +16,23 @@ const chord = (
 
 describe('detectListShortcut', () => {
   it('turns a leading "- " or "1. " into a list and strips it', () => {
-    expect(detectListShortcut('- ', 2, undefined)).toEqual({ list: 'bullet', value: '', caret: 0 });
-    expect(detectListShortcut('1. buy milk', 3, undefined)).toEqual({ list: 'number', value: 'buy milk', caret: 0 });
+    expect(detectListShortcut('- ', 2, undefined)).toEqual({ list: 'bullet', value: '', caret: 0, prefix: '- ' });
+    expect(detectListShortcut('1. buy milk', 3, undefined)).toEqual({ list: 'number', value: 'buy milk', caret: 0, prefix: '1. ' });
   });
 
   it('leaves mid-sentence dashes and existing lists alone', () => {
     expect(detectListShortcut('a - ', 4, undefined)).toBeNull();
     expect(detectListShortcut('x\n- ', 4, undefined)).toBeNull();
     expect(detectListShortcut('- ', 2, 'bullet')).toBeNull();
+  });
+
+  it('does not read a lone "o " as a list', () => {
+    expect(detectListShortcut('o ', 2, undefined)).toBeNull();
+  });
+
+  it('gives the prefix back on undo', () => {
+    expect(undoListShortcut('- ', 'milk')).toEqual({ value: '- milk', caret: 2 });
+    expect(undoListShortcut(null, 'milk')).toBeNull();
   });
 });
 

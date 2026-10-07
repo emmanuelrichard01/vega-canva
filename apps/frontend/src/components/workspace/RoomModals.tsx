@@ -4,6 +4,7 @@ import type { CanvasContextMenuActions, ContextTarget } from '../CanvasContextMe
 import { CanvasContextMenu } from '../CanvasContextMenu';
 import type { DiagramBuildOptions } from '../../engine/diagram/build';
 import { useStore } from '../../hooks/useStore';
+import { canEditObjects } from '../../engine/model/permissions';
 import { ModalLoader } from '../ui/Loading';
 import { FeatureBoundary } from '../ui/FeatureBoundary';
 import { MotionConfig } from 'framer-motion';
@@ -258,7 +259,8 @@ export const RoomModals: React.FC<RoomModalsProps> = ({
       <FeatureBoundary name="table editor" variant="modal" resetKey={tableEditNodeId} onClose={() => setTableEditNodeId(null)}>
         <Suspense fallback={null}>
           {tableEditNodeId && (
-            <TableEditor key={tableEditNodeId} nodeId={tableEditNodeId} onClose={() => setTableEditNodeId(null)} />
+            // A viewer or commenter opens the same grid read-only: select, copy, and their own sort and filter.
+            <TableEditor key={tableEditNodeId} nodeId={tableEditNodeId} readOnly={!canEditObjects()} onClose={() => setTableEditNodeId(null)} />
           )}
         </Suspense>
       </FeatureBoundary>

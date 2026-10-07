@@ -10,7 +10,8 @@ import { undoManager } from '../../engine/document';
 import type { SketchLevel } from '../../engine/model/rough';
 import type { TableNode } from '../../engine/model/schema';
 import * as M from '../../engine/table/tableModel';
-import { copyTableCsv, exportTableCsv, fitTableColumns, importCsvIntoTable, updateTable } from '../../engine/table/tableApply';
+import { copyTableCsv, exportTableCsv, fitTableColumns, importCsvIntoTable, saveDefaultView, updateTable } from '../../engine/table/tableApply';
+import { effectiveSpec, hasOwnView, resetView, subscribeViews, viewsVersion } from '../../engine/table/tableView';
 import {
   CELL_TYPE_LABELS,
   DEFAULT_ACCENT,
@@ -59,13 +60,36 @@ const BAR_COLOURS = ['#2563EB', '#16A34A', '#D97706', '#9333EA'];
  * summary have one place each.
  */
 export const TableSection: React.FC<{ node: TableNode }> = ({ node }) => {
-  const spec = node.table;
-  const apply = (next: TableSpec) => updateTable(node, next);
-  const patch = (p: Partial<TableSpec>) => apply({ ...spec, ...p });
+  // The table as this person sees it: their own sort and filter over the shared one.
+  const viewVersion = React.useSyncExternalStore(subscribeViews, viewsVersion, () => 0);
+  const spec = React.useMemo(
+    () => effectiveSpec(node.id, node.table),
+    // viewVersion: the view lives outside the node.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    [node.id, node.table, viewVersion]
+  );
+  const ownView = hasOwnView(node.id);
+  /** The node as the store has it now — an edit made after another in the same frame builds on it, not on this render's copy. */
+  const live = (): TableNode => {
+    const n = useStore.getState().objects[node.id];
+    return n && n.type === 'table' ? (n as TableNode) : node;
+  };
+  const liveSpec = () => effectiveSpec(node.id, live().table);
+  const apply = (next: TableSpec) => updateTable(live(), next);
+  const patch = (p: Partial<TableSpec>) => apply({ ...liveSpec(), ...p });
   const [notice, setNotice] = React.useState<{ text: string; undo?: boolean } | null>(null);
+  const timers = React.useRef(new Set<number>());
+  React.useEffect(() => {
+    const pending = timers.current;
+    return () => pending.forEach((t) => window.clearTimeout(t));
+  }, []);
   const say = (text: string, undo = false) => {
     setNotice({ text, undo });
-    window.setTimeout(() => setNotice((n) => (n?.text === text ? null : n)), 4000);
+    const t = window.setTimeout(() => {
+      timers.current.delete(t);
+      setNotice((n) => (n?.text === text ? null : n));
+    }, 4000);
+    timers.current.add(t);
   };
   const [menu, setMenu] = React.useState<{ col: number; anchor: MenuAnchor } | null>(null);
   const [filterFor, setFilterFor] = React.useState<{ col: number; anchor: MenuAnchor } | null>(null);
@@ -78,6 +102,8 @@ export const TableSection: React.FC<{ node: TableNode }> = ({ node }) => {
 
   /** Lowering the count past cells with something in them says what went, with a way back. */
   const setRows = (n: number) => {
+    const spec = liveSpec();
+    const rows = spec.cells.length;
     const target = Math.max(1, Math.min(2000, Math.round(n)));
     if (target > rows) apply(M.insertRows(spec, rows, target - rows));
     else if (target < rows) {
@@ -87,6 +113,8 @@ export const TableSection: React.FC<{ node: TableNode }> = ({ node }) => {
     }
   };
   const setCols = (n: number) => {
+    const spec = liveSpec();
+    const cols = spec.columns.length;
     const target = Math.max(1, Math.min(60, Math.round(n)));
     if (target > cols) apply(M.insertCols(spec, cols, target - cols));
     else if (target < cols) {
@@ -98,7 +126,7 @@ export const TableSection: React.FC<{ node: TableNode }> = ({ node }) => {
 
   const columnOptions = spec.columns.map((_, c) => ({ value: String(c), label: columnName(spec, c), icon: TYPE_ICONS[spec.columns[c].type] }));
 
-  const setRule = (i: number, p: Partial<ColourRule>) => patch({ rules: (spec.rules ?? []).map((r, j) => (j === i ? { ...r, ...p } : r)) });
+  const setRule = (i: number, p: Partial<ColourRule>) => patch({ rules: (liveSpec().rules ?? []).map((r, j) => (j === i ? { ...r, ...p } : r)) });
   /**
    * A new rule starts on the column most like a status — the fewest distinct
    * values — and on its most common value, so it colours something the moment
@@ -166,7 +194,7 @@ export const TableSection: React.FC<{ node: TableNode }> = ({ node }) => {
               <ClipboardCopy size={14} />
             </IconToggle>
             <span className="tblpanel-actions__end">
-              <TableExampleButton onPick={apply} />
+              <TableExampleButton onPick={(example) => updateTable(live(), example, undefined, 'shared')} />
             </span>
           </div>
         </div>
@@ -403,13 +431,25 @@ export const TableSection: React.FC<{ node: TableNode }> = ({ node }) => {
             }}
           />
         </Row>
-        {(spec.sort || M.filtersActive(spec)) && (
+        {ownView ? (
           <Note>
-            A view: the stored rows are untouched.{' '}
-            <button type="button" className="tblpanel-link tblpanel-link--inline" onClick={() => apply(M.applyView(spec))}>
-              Keep this order
+            Your view — only you see this order and filter.{' '}
+            <button type="button" className="tblpanel-link tblpanel-link--inline" onClick={() => saveDefaultView(live())}>
+              Save as default view
+            </button>{' '}
+            <button type="button" className="tblpanel-link tblpanel-link--inline" onClick={() => resetView(node.id)}>
+              Back to the default
             </button>
           </Note>
+        ) : (
+          (spec.sort || M.filtersActive(spec)) && (
+            <Note>
+              The default view: the stored rows are untouched.{' '}
+              <button type="button" className="tblpanel-link tblpanel-link--inline" onClick={() => apply(M.applyView(liveSpec()))}>
+                Keep this order
+              </button>
+            </Note>
+          )
         )}
       </Section>
 

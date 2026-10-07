@@ -17,7 +17,12 @@ import type { TableSpec } from './tableTypes';
 type TableNodeT = Extract<AnyNode, { type: 'table' }>;
 
 let byTitle = new Map<string, { id: string; spec: TableSpec }>();
-let idOfSpec = new WeakMap<TableSpec, string>();
+/**
+ * A table's node id by its cells array — shared by the stored spec, a person's
+ * sorted or filtered view of it and the editor's live drag, so every one of
+ * them is known as the same table.
+ */
+let idOfCells = new WeakMap<string[][], string>();
 let version = 0;
 let lastTables: TableNodeT[] = [];
 let installed = false;
@@ -33,9 +38,9 @@ function rebuild(objects: Record<string, AnyNode>): void {
   if (same) return;
   lastTables = tables;
   byTitle = new Map();
-  idOfSpec = new WeakMap();
+  idOfCells = new WeakMap();
   for (const t of tables) {
-    idOfSpec.set(t.table, t.id);
+    idOfCells.set(t.table.cells, t.id);
     const title = tableTitle(t).toLowerCase();
     // Two tables with one title: the lower id answers, on every client alike.
     if (title && !byTitle.has(title)) byTitle.set(title, { id: t.id, spec: t.table });
@@ -63,7 +68,7 @@ export function ensureTableRegistry(): void {
   });
   setTableResolver({
     byTitle: (title) => byTitle.get(title.trim().toLowerCase()) ?? null,
-    idOf: (spec) => idOfSpec.get(spec) ?? null,
+    idOf: (spec) => idOfCells.get(spec.cells) ?? null,
     version: () => version,
   });
 }

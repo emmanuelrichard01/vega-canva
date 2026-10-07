@@ -1,8 +1,13 @@
-import { Group, Rect } from 'react-konva';
+import { Group, Rect, Text } from 'react-konva';
 import type { Tool, ToolContext } from './Tool';
-import { marqueeModeFor, type MarqueeMode } from '../interaction/marquee';
+import { marqueeActivity, marqueeModeFor, type MarqueeMode } from '../interaction/marquee';
+import { isDeepSelect } from '../interaction/deepSelect';
 import { canvasChromeContrast } from '../ui/contrast';
-import { chromeSurfaceColor, HALO_PX } from '../interaction/chromeHalo';
+import { chromeSurfaceColor, chromeToken, HALO_PX } from '../interaction/chromeHalo';
+import '../../components/canvas/selectChrome.css';
+
+/** What each combining mode shows beside the cursor. Replace shows nothing. */
+const MODE_GLYPH: Partial<Record<MarqueeMode, string>> = { add: '+', subtract: '−', intersect: '×' };
 
 /** Below this drag, in screen pixels, a press on the board is a click, not a marquee. */
 const CLICK_SLOP = 4;
@@ -21,6 +26,8 @@ export class SelectTool implements Tool {
    * modifier pressed mid-drag changes the outcome, as it does in Figma.
    */
   private mode: MarqueeMode = 'replace';
+  /** Ctrl/Cmd held: the marquee catches objects, not whole groups. */
+  private deep = false;
 
   onPointerDown(ctx: ToolContext, e: any) {
     const stage = e.target.getStage?.() ?? e.target;
@@ -28,6 +35,8 @@ export class SelectTool implements Tool {
     if (e.target === stage) {
       this.isMarquee = true;
       this.mode = marqueeModeFor(e.evt);
+      this.deep = isDeepSelect(e.evt);
+      marqueeActivity.set(true);
       const pos = this.getPointerPos(ctx, e);
       this.startX = pos.x;
       this.startY = pos.y;
@@ -43,6 +52,7 @@ export class SelectTool implements Tool {
       this.currentX = pos.x;
       this.currentY = pos.y;
       this.mode = marqueeModeFor(e.evt);
+      this.deep = isDeepSelect(e.evt);
       this.publish(ctx);
     }
   }
@@ -50,6 +60,7 @@ export class SelectTool implements Tool {
   onPointerUp(ctx: ToolContext) {
     if (this.isMarquee) {
       this.isMarquee = false;
+      marqueeActivity.set(false);
       ctx.setOverlayState?.(null);
 
       const zoom = ctx.camera.zoom || 1;
@@ -73,9 +84,14 @@ export class SelectTool implements Tool {
       // `useCanvasSelection` resolves the box to ids and combines them with
       // the selection by `mode`. `additive` stays for listeners without modes.
       document.dispatchEvent(new CustomEvent('marqueeSelect', {
-        detail: { minX, minY, maxX, maxY, mode: this.mode, additive: this.mode === 'add' }
+        detail: { minX, minY, maxX, maxY, mode: this.mode, additive: this.mode === 'add', deep: this.deep }
       }));
     }
+  }
+
+  onDeactivate() {
+    this.isMarquee = false;
+    marqueeActivity.set(false);
   }
 
   renderOverlay(ctx: ToolContext, overlayState: any) {
@@ -85,13 +101,24 @@ export class SelectTool implements Tool {
       const y = Math.min(overlayState.startY, overlayState.currentY);
       const width = Math.abs(overlayState.currentX - overlayState.startX);
       const height = Math.abs(overlayState.currentY - overlayState.startY);
-      // Subtracting draws dashed, so the gesture says it removes before release.
-      const subtracting = overlayState.mode === 'subtract' || overlayState.mode === 'intersect';
+      const mode: MarqueeMode = overlayState.mode;
+      const glyph = MODE_GLYPH[mode];
 
       // Read per draw: the overlay re-renders on every pointer move, so a
-      // contrast change shows on the next one.
+      // contrast or theme change shows on the next one.
       const { strokeScale, halo } = canvasChromeContrast();
       const line = strokeScale / zoom;
+      const colour = chromeToken('--canvas-marquee', '#3B82F6');
+      // Each removing mode has its own line: subtract is dashed, intersect is
+      // dotted and heavier, so the two read apart before release.
+      const dash =
+        mode === 'subtract' ? [4 / zoom, 3 / zoom] : mode === 'intersect' ? [1 / zoom, 3 / zoom] : undefined;
+      const stroke = mode === 'intersect' ? line * 1.75 : line;
+
+      const px = 1 / zoom;
+      const pill = 16 * px;
+      const gx = overlayState.currentX + 14 * px;
+      const gy = overlayState.currentY + 14 * px;
 
       return (
         <Group listening={false}>
@@ -102,7 +129,7 @@ export class SelectTool implements Tool {
               width={width}
               height={height}
               stroke={chromeSurfaceColor()}
-              strokeWidth={line + (2 * HALO_PX) / zoom}
+              strokeWidth={stroke + (2 * HALO_PX) / zoom}
               cornerRadius={2 / zoom}
               listening={false}
             />
@@ -112,13 +139,42 @@ export class SelectTool implements Tool {
             y={y}
             width={width}
             height={height}
-            fill="rgba(59, 130, 246, 0.08)"
-            stroke="#3B82F6"
-            strokeWidth={line}
-            dash={subtracting ? [4 / zoom, 3 / zoom] : undefined}
+            fill={chromeToken('--canvas-marquee-fill', 'rgba(59, 130, 246, 0.08)')}
+            stroke={colour}
+            strokeWidth={stroke}
+            dash={dash}
+            lineCap={mode === 'intersect' ? 'round' : undefined}
             cornerRadius={2 / zoom}
             listening={false}
           />
+          {glyph && (
+            <>
+              <Rect
+                x={gx}
+                y={gy}
+                width={pill}
+                height={pill}
+                cornerRadius={4 * px}
+                fill={chromeToken('--canvas-marquee-glyph', '#18181B')}
+                listening={false}
+              />
+              <Text
+                x={gx}
+                y={gy}
+                width={pill}
+                height={pill}
+                align="center"
+                verticalAlign="middle"
+                text={glyph}
+                fontSize={13 * px}
+                fontStyle="600"
+                fontFamily="Inter, sans-serif"
+                fill={chromeToken('--canvas-marquee-glyph-ink', '#FFFFFF')}
+                listening={false}
+                perfectDrawEnabled={false}
+              />
+            </>
+          )}
         </Group>
       );
     }
@@ -133,6 +189,7 @@ export class SelectTool implements Tool {
       currentX: this.currentX,
       currentY: this.currentY,
       mode: this.mode,
+      deep: this.deep,
     });
   }
 

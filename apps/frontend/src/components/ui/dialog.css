@@ -1,0 +1,292 @@
+/* ---------------------------------------------------------------------------
+   Dialog shell (components/ui/Dialog.tsx)
+
+   One elevation: the overlay shadow, never a border as well. Under increased
+   contrast `--shadow-overlay` is re-declared as a solid 3:1 edge, which is the
+   whole of this surface's contrast handling.
+
+   Motion: the panel settles in from 8px below on the shared exponential
+   ease-out and leaves faster than it came. Reduced motion keeps the fade and
+   drops the movement.
+   --------------------------------------------------------------------------- */
+
+.dlg-scrim {
+  position: fixed;
+  inset: 0;
+  z-index: var(--z-dialog);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: var(--space-6) var(--space-4);
+  background: color-mix(in srgb, var(--brand-ink) 32%, transparent);
+  animation: dlgScrimIn 180ms var(--ease-settle) both;
+}
+
+.dark-theme .dlg-scrim {
+  background: color-mix(in srgb, var(--surface-canvas) 72%, transparent);
+}
+
+.dlg-scrim[data-state='closing'] {
+  animation: dlgScrimOut 140ms ease-in both;
+}
+
+.dlg {
+  position: relative;
+  display: flex;
+  flex-direction: column;
+  width: 100%;
+  max-height: min(100%, 880px);
+  min-height: 0;
+  overflow: hidden;
+  background: var(--surface-primary);
+  color: var(--text-primary);
+  border-radius: var(--radius-2xl);
+  box-shadow: var(--shadow-overlay);
+  font-family: var(--font-sans);
+  outline: none;
+  animation: dlgIn 260ms var(--ease-settle) both;
+}
+
+.dlg[data-state='closing'] {
+  animation: dlgOut 140ms ease-in both;
+}
+
+.dlg:focus-visible {
+  box-shadow: var(--shadow-overlay);
+}
+
+.dlg--sm { max-width: 420px; }
+.dlg--md { max-width: 520px; }
+.dlg--lg { max-width: 860px; }
+.dlg--xl { max-width: 1040px; height: min(100%, 720px); }
+
+@keyframes dlgScrimIn {
+  from { opacity: 0; }
+  to { opacity: 1; }
+}
+
+@keyframes dlgScrimOut {
+  from { opacity: 1; }
+  to { opacity: 0; }
+}
+
+@keyframes dlgIn {
+  from { opacity: 0; transform: translateY(8px) scale(0.985); }
+  to { opacity: 1; transform: none; }
+}
+
+@keyframes dlgOut {
+  from { opacity: 1; transform: none; }
+  to { opacity: 0; transform: translateY(4px) scale(0.99); }
+}
+
+@keyframes dlgFade {
+  from { opacity: 0; }
+  to { opacity: 1; }
+}
+
+@keyframes dlgFadeOut {
+  from { opacity: 1; }
+  to { opacity: 0; }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .dlg { animation: dlgFade 120ms linear both; }
+  .dlg[data-state='closing'] { animation: dlgFadeOut 90ms linear both; }
+}
+
+/* ------------------------------------------------------------------ header */
+
+.dlg__head {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: var(--space-4);
+  padding: var(--space-5) var(--space-5) var(--space-4) var(--space-6);
+  flex-shrink: 0;
+}
+
+.dlg__heading {
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-1);
+}
+
+.dlg__title {
+  margin: 0;
+  padding-top: 2px;
+  font-size: var(--text-lg);
+  font-weight: var(--weight-semibold);
+  line-height: 1.3;
+  letter-spacing: -0.01em;
+  color: var(--text-primary);
+  text-wrap: balance;
+}
+
+.dlg__description {
+  margin: 0;
+  font-size: var(--text-base);
+  line-height: 1.5;
+  color: var(--text-secondary);
+  max-width: 60ch;
+}
+
+.dlg__head-actions {
+  display: flex;
+  align-items: center;
+  gap: var(--space-1);
+  flex-shrink: 0;
+}
+
+.dlg__close {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: var(--control-h-md);
+  height: var(--control-h-md);
+  padding: 0;
+  border: none;
+  border-radius: var(--radius-lg);
+  background: transparent;
+  color: var(--text-secondary);
+  cursor: pointer;
+  transition: background-color var(--motion-hover), color var(--motion-hover);
+}
+
+.dlg__close:hover {
+  background: var(--surface-hover);
+  color: var(--text-primary);
+}
+
+/* ------------------------------------------------------------- body, foot */
+
+.dlg__body {
+  flex: 1 1 auto;
+  min-height: 0;
+  overflow-y: auto;
+  overflow-x: hidden;
+  padding: 0 var(--space-6) var(--space-6);
+}
+
+.dlg__foot {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  flex-shrink: 0;
+  padding: var(--space-3) var(--space-5) var(--space-3) var(--space-6);
+  border-top: 1px solid var(--border-divider);
+  min-height: calc(var(--control-h-lg) + 2 * var(--space-3));
+}
+
+/* ----------------------------------------------------------------- buttons
+   The dialogs' text buttons. Primary is ink, the inverse of the panel: the
+   accent stays with the header's Share and with armed states. */
+
+.dlg-btn {
+  box-sizing: border-box;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: var(--space-2);
+  height: var(--control-h-md);
+  padding: var(--control-pad-md);
+  border: none;
+  border-radius: var(--radius-lg);
+  background: transparent;
+  color: var(--text-secondary);
+  font: inherit;
+  font-size: var(--text-base);
+  font-weight: var(--weight-medium);
+  line-height: 1;
+  white-space: nowrap;
+  cursor: pointer;
+  transition: background-color var(--motion-hover), color var(--motion-hover);
+}
+
+.dlg-btn:hover:not(:disabled) {
+  background: var(--surface-hover);
+  color: var(--text-primary);
+}
+
+.dlg-btn--lg {
+  height: var(--control-h-lg);
+  padding: var(--control-pad-lg);
+}
+
+.dlg-btn--outline {
+  color: var(--text-primary);
+  box-shadow: inset 0 0 0 1px var(--border-strong);
+}
+
+.dlg-btn--primary {
+  background: var(--text-primary);
+  color: var(--surface-primary);
+  font-weight: var(--weight-semibold);
+}
+
+.dlg-btn--primary:hover:not(:disabled) {
+  background: color-mix(in srgb, var(--text-primary) 84%, var(--text-secondary));
+  color: var(--surface-primary);
+}
+
+.dlg-btn--primary:disabled {
+  background: var(--surface-secondary);
+  color: var(--text-disabled);
+  cursor: not-allowed;
+}
+
+/* Darkened from the status red so white text clears 4.5:1 on it. */
+.dlg-btn--danger {
+  background: color-mix(in srgb, var(--status-danger) 82%, var(--brand-ink));
+  color: var(--text-inverse);
+  font-weight: var(--weight-semibold);
+}
+
+.dlg-btn--danger:hover:not(:disabled) {
+  background: color-mix(in srgb, var(--status-danger) 70%, var(--brand-ink));
+  color: var(--text-inverse);
+}
+
+.dlg-btn:disabled {
+  cursor: not-allowed;
+}
+
+.dlg-btn svg {
+  flex-shrink: 0;
+}
+
+.dlg-spin {
+  animation: spin 1s linear infinite;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .dlg-spin { animation-duration: 2.4s; }
+}
+
+/* A small screen gets the whole height: a dialog with its own scroll inside a
+   page that also scrolls is two scrollbars for one task. */
+@media (max-width: 640px) {
+  .dlg-scrim {
+    padding: var(--space-2);
+    align-items: flex-end;
+  }
+
+  .dlg,
+  .dlg--xl {
+    max-height: calc(100% - var(--space-4));
+    height: auto;
+  }
+
+  .dlg__head {
+    padding: var(--space-4) var(--space-3) var(--space-3) var(--space-4);
+  }
+
+  .dlg__body {
+    padding: 0 var(--space-4) var(--space-4);
+  }
+
+  .dlg__foot {
+    padding: var(--space-3) var(--space-3) var(--space-3) var(--space-4);
+  }
+}

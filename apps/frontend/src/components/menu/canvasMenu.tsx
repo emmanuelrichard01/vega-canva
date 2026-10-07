@@ -62,6 +62,9 @@ import {
   Unlock,
   Workflow,
   Scan,
+  Presentation,
+  Frame as FrameIcon,
+  LayoutGrid,
 } from 'lucide-react';
 import type { AnyNode } from '../../engine/model/schema';
 import { isOpenShape } from '../../engine/model/schema';
@@ -98,6 +101,9 @@ import { LINK_DISPLAY_LABELS, type LinkDisplay } from '../../engine/link/linkTyp
 import { LinkDisplayIcon } from '../toolbar/LinkRailSection';
 import { openLinkComposerFor } from '../link/openLinkComposer';
 import { notify } from '../../engine/ui/notices';
+import { requestPresentation, resizeFramesToFit } from '../canvas/useContentShortcuts';
+import { applyOrganiseStickies } from '../../engine/tools/organiseStickies';
+import type { FrameNode } from '../../engine/model/schema';
 import { SHORTCUTS } from './shortcuts';
 
 /**
@@ -533,6 +539,42 @@ export function selectionMenu(input: CanvasMenuInput): MenuEntry[] {
       ].filter(Boolean) as MenuEntry[]
     : [];
 
+  const frames = nodes.filter((n): n is FrameNode => n.type === 'frame');
+  const stickies = nodes.filter((n) => n.type === 'sticky');
+  const content: MenuEntry[] = [
+    // Presenting only reads the board, so viewers get it too.
+    frames.length > 0 && {
+      kind: 'item',
+      id: 'present',
+      label: frames.length === 1 ? 'Present from this frame' : 'Present',
+      icon: <Presentation size={I} />,
+      shortcut: SHORTCUTS.present,
+      onSelect: () => requestPresentation(frames[0].id),
+    },
+    canEdit && frames.length > 0 && {
+      kind: 'item',
+      id: 'fit-frame',
+      label: frames.length === 1 ? 'Resize frame to fit' : 'Resize frames to fit',
+      icon: <FrameIcon size={I} />,
+      shortcut: SHORTCUTS.fitFrame,
+      onSelect: () => {
+        if (resizeFramesToFit(frames, allObjects) === 0) {
+          notify({ tone: 'info', message: frames.length > 1 ? 'These frames already fit what they hold.' : 'This frame already fits what it holds.' });
+        }
+      },
+    },
+    canEdit && stickies.length > 1 && {
+      kind: 'submenu',
+      id: 'organise',
+      label: 'Organise stickies',
+      icon: <LayoutGrid size={I} />,
+      entries: [
+        { kind: 'item', id: 'organise-colour', label: 'By colour', shortcut: SHORTCUTS.organiseColour, onSelect: () => void applyOrganiseStickies(stickies, 'theme') },
+        { kind: 'item', id: 'organise-author', label: 'By author', shortcut: SHORTCUTS.organiseAuthor, onSelect: () => void applyOrganiseStickies(stickies, 'author') },
+      ],
+    },
+  ].filter(Boolean) as MenuEntry[];
+
   const clipboard: MenuEntry = {
     kind: 'strip',
     id: 'clipboard',
@@ -629,6 +671,14 @@ export function selectionMenu(input: CanvasMenuInput): MenuEntry[] {
     : [];
 
   const noun = uniformType ? kindNoun(nodes[0], true) : null;
+  const similar = (key: 'type' | 'fill' | 'stroke' | 'font', label: string, shortcut: string): MenuEntry => ({
+    kind: 'item',
+    id: `select-same-${key}`,
+    label,
+    icon: <MousePointerSquareDashed size={I} />,
+    shortcut,
+    onSelect: () => window.dispatchEvent(new CustomEvent('requestSelectSimilar', { detail: { key } })),
+  });
   const find: MenuEntry[] = [
     {
       kind: 'submenu',
@@ -636,13 +686,18 @@ export function selectionMenu(input: CanvasMenuInput): MenuEntry[] {
       label: 'Select',
       icon: <MousePointerSquareDashed size={I} />,
       entries: [
-        noun && {
+        similar('type', 'All with same type', SHORTCUTS.selectSameType),
+        similar('fill', 'All with same fill', SHORTCUTS.selectSameFill),
+        similar('stroke', 'All with same stroke', SHORTCUTS.selectSameStroke),
+        similar('font', 'All with same font', SHORTCUTS.selectSameFont),
+        { kind: 'separator', id: 'sep-select-same' },
+        noun && uniformType === 'shape' && {
           kind: 'item',
           id: 'select-kind',
-          // A shape matches on its geometry — rectangles with rectangles — so
-          // "All shapes" would promise more than it selects.
-          label: uniformType === 'shape' ? 'Same shape' : `All ${noun}`,
-          icon: <MousePointerSquareDashed size={I} />,
+          // A shape matches on its geometry, rectangles with rectangles, so
+          // "same type" would promise more than it selects.
+          label: 'Same shape',
+          icon: <Shapes size={I} />,
           onSelect: () => a.selectMatching('kind'),
         },
         noun && {
@@ -701,6 +756,7 @@ export function selectionMenu(input: CanvasMenuInput): MenuEntry[] {
 
   return tidy([
     ...specific,
+    ...content,
     { kind: 'separator', id: 'sep-specific' },
     clipboard,
     { kind: 'separator', id: 'sep-clipboard' },
@@ -789,6 +845,16 @@ export function boardMenu(input: CanvasMenuInput): MenuEntry[] {
     },
     { kind: 'item', id: 'zoom-reset', label: 'Zoom to 100%', icon: <Focus size={I} />, shortcut: SHORTCUTS.zoomReset, onSelect: a.zoomReset },
     { kind: 'separator', id: 'sep-view' },
+    {
+      kind: 'item',
+      id: 'present',
+      label: 'Present',
+      icon: <Presentation size={I} />,
+      shortcut: SHORTCUTS.present,
+      disabled: !Object.values(allObjects).some((n) => n.type === 'frame'),
+      disabledReason: 'Add a frame to present',
+      onSelect: () => requestPresentation(),
+    },
     canEdit && { kind: 'item', id: 'csv-table', label: 'Import CSV as table…', icon: <Table2 size={I} />, onSelect: a.importCsvTable },
     {
       kind: 'submenu',

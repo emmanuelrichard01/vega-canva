@@ -21,7 +21,7 @@ import {
   type Obstacle,
   type Segment,
 } from './connectorRouter/router';
-import { applyNudges, type SegmentNudge } from './connectorRouter/pathOps';
+import { applyNudges, type LegRef, type SegmentNudge } from './connectorRouter/pathOps';
 import { CURVE_CLEARANCE, fitCurve, intrusion } from './connectorRouter/curve';
 
 /** The four sides an end can attach to, plus "work it out". */
@@ -362,6 +362,34 @@ export interface ConnectorRoute {
   degraded: boolean;
   /** Obstacles the route went around, for cache keys and invalidation. */
   obstacleIds: string[];
+  /**
+   * For a curve fitted over an elbow route: that route, and the boxes the
+   * curve keeps clear of. Channel spreading moves the skeleton's legs and
+   * refits the curve, so parallel curves fan apart the way elbows do.
+   */
+  skeleton?: Point[];
+  clearance?: Rect[];
+  /**
+   * For an elbow route, what each segment is: an interior leg's key and how
+   * far a nudge moved it, or null. The editor's segment grips read it.
+   */
+  legs?: Array<LegRef | null>;
+  /**
+   * Where the router read obstacles and other routes from. A change outside
+   * it cannot move this route. Absent for a straight or free curved route,
+   * which read nothing.
+   */
+  reads?: Rect;
+}
+
+/** The side next to `port`, turning counter-clockwise: where a loop comes back in. */
+function adjacentSide(port: Exclude<Port, 'auto'>): Exclude<Port, 'auto'> {
+  switch (port) {
+    case 'right': return 'top';
+    case 'top': return 'left';
+    case 'left': return 'bottom';
+    case 'bottom': return 'right';
+  }
 }
 
 /**
@@ -413,10 +441,24 @@ export function connectorRoute(
   const fromLoose = fromBox ? null : { x: from.x ?? 0, y: from.y ?? 0 };
   const toLoose = toBox ? null : { x: to.x ?? 0, y: to.y ?? 0 };
 
-  const a = resolveEnd(from, toBox, boxOf, toLoose, attachOf);
-  const b = resolveEnd(to, fromBox, boxOf, fromLoose, attachOf);
+  // A connector from an object back to itself is a loop: out of one side
+  // and back into the next one round, the way Figma and Lucidchart draw it.
+  // Nothing faces anything, so the ports are chosen here: the start's own
+  // side (right when it has none) and the side after it.
+  const loop = Boolean(from.nodeId && from.nodeId === to.nodeId && fromBox);
+  const a = loop ? resolveEnd(from, null, boxOf, null, attachOf) : resolveEnd(from, toBox, boxOf, toLoose, attachOf);
+  let b: ReturnType<typeof resolveEnd>;
+  if (loop) {
+    const named = to.port && to.port !== 'auto' ? to.port : null;
+    const side = to.anchor ? null : named && named !== a.port ? named : adjacentSide(a.port);
+    b = resolveEnd(side ? { ...to, port: side } : to, null, boxOf, null, attachOf);
+  } else {
+    b = resolveEnd(to, fromBox, boxOf, fromLoose, attachOf);
+  }
 
-  if (routing === 'straight') {
+  // A straight loop would be a line from a side to itself; it is drawn as
+  // the elbow loop instead.
+  if (routing === 'straight' && !loop) {
     return { points: [a.point, b.point], orthogonal: false, degraded: false, obstacleIds: [] };
   }
   const shift = options.pairShift ?? 0;
@@ -432,7 +474,7 @@ export function connectorRoute(
   // A curve that does not avoid is the free Bézier between the ends, unless
   // that Bézier would loop back through either end's own box; then it is
   // fitted over an elbow route around the two ends like any other curve.
-  if (routing === 'curved' && !options.avoid) {
+  if (routing === 'curved' && !options.avoid && !loop) {
     const free = routeCurved(start, end, a.port, b.port);
     const own = [ownOf(from.nodeId, a.box), ownOf(to.nodeId, b.box)]
       .filter((r): r is Rect => Boolean(r))
@@ -464,13 +506,20 @@ export function connectorRoute(
       orthogonal: false,
       degraded: routed.degraded,
       obstacleIds: routed.obstacleIds,
+      skeleton: routed.points,
+      clearance: boxes,
+      reads: routed.corridor,
     };
   }
+  // Nudged legs stay out of whatever the route went around, own boxes included.
+  const nudged = applyNudges(routed.points, options.nudges, routed.obstacles);
   return {
-    points: applyNudges(routed.points, options.nudges),
+    points: nudged.points,
     orthogonal: true,
     degraded: routed.degraded,
     obstacleIds: routed.obstacleIds,
+    legs: nudged.legs,
+    reads: routed.corridor,
   };
 }
 

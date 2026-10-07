@@ -1,7 +1,7 @@
 import React, { Suspense, lazy, useEffect, useState } from 'react';
 
 /**
- * Ctrl+Shift+P, and nothing else until it is pressed.
+ * Ctrl+Shift+P in development, and nothing else until it is pressed.
  *
  * This component is mounted at the app root on every screen, so whatever it
  * imports ships with the first chunk the browser parses. It used to import the
@@ -17,10 +17,14 @@ const PerformanceHud = lazy(() =>
   import('./PerformanceHud').then((m) => ({ default: m.PerformanceHud }))
 );
 
+/** A developer tool: production builds neither listen for the chord nor ship the readout. */
+const ENABLED = import.meta.env.DEV;
+
 export const PerformanceOverlay: React.FC = () => {
   const [visible, setVisible] = useState(false);
 
   useEffect(() => {
+    if (!ENABLED) return;
     const handleKeyDown = (e: KeyboardEvent) => {
       // Toggle HUD with Ctrl+Shift+P
       if (e.ctrlKey && e.shiftKey && e.code === 'KeyP') {
@@ -31,7 +35,7 @@ export const PerformanceOverlay: React.FC = () => {
     return () => window.removeEventListener('keydown', handleKeyDown);
   }, []);
 
-  if (!visible) return null;
+  if (!ENABLED || !visible) return null;
 
   return (
     <Suspense fallback={null}>

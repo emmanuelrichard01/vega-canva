@@ -1,9 +1,9 @@
 import React from 'react';
-import { Clock, ImagePlus, Minus, Plus, Shuffle, Space } from 'lucide-react';
+import { ChevronDown, Clock, Grid3x3, ImagePlus, Minus, Plus, Shuffle, Space } from 'lucide-react';
 import { setGridRecipe } from '../../../engine/grid/gridApply';
 import { switchKind, type GridRecipe } from '../../../engine/grid/gridBuild';
 import { GRID_HINTS, GRID_KINDS, GRID_LABELS } from '../../../engine/grid/gridLayout';
-import { gridContent } from '../../../engine/grid/gridSlotApply';
+import { gridEditMode } from '../../../engine/grid/gridEditMode';
 import { GRID_PALETTES } from '../../../engine/grid/gridStyle';
 import type { GridNode } from '../../../engine/model/schema';
 import { useStore } from '../../../hooks/useStore';
@@ -14,19 +14,24 @@ import { RailAnatomy, type RailVerb } from './anatomy';
 import { ScrubValue } from './controls';
 import type { SingleRail } from './types';
 import { fillGridFromFiles, trackLabel } from './gridActions';
+import { parkedCount } from './gridSlotIndex';
 
 const MIN_TRACKS = 1;
 const MAX_TRACKS = 24;
 const MAX_GAP = 200;
+/** A gap write re-lays out every module, so a scrub writes at most this often. */
+const GAP_SCRUB_MS = 80;
 
 
 /**
- * A grid: its palette as paint, then its tracks, its gap, its system, another
- * draw of the same system, and pictures to put in it.
+ * A grid leads with its arrangement, the picker that says what it is; then its
+ * palette as paint, its tracks, its gap, its cells, pictures to put in it, and
+ * another draw of the same system.
  */
 export const GridRail: SingleRail<GridNode> = ({ node, conditional, tail, tailControls }) => {
   const recipe = node.grid;
-  const parked = useStore((s) => gridContent(s.objects, node.id).parked);
+  // A number, so the rail re-renders only when the count changes.
+  const parked = useStore((s) => parkedCount(s.objects, node.id));
   const apply = (next: GridRecipe) => setGridRecipe(node.id, next);
   const patchSpec = (patch: Partial<GridRecipe['spec']>) => apply({ ...recipe, spec: { ...recipe.spec, ...patch } });
   const tracks = trackLabel(recipe);
@@ -71,7 +76,7 @@ export const GridRail: SingleRail<GridNode> = ({ node, conditional, tail, tailCo
         <RailPopover
           label="Gap"
           trigger={
-            <ScrubValue value={gap} min={0} max={MAX_GAP} onChange={setGap}>
+            <ScrubValue value={gap} min={0} max={MAX_GAP} throttleMs={GAP_SCRUB_MS} onChange={setGap}>
               <Space size={16} />
             </ScrubValue>
           }
@@ -81,10 +86,62 @@ export const GridRail: SingleRail<GridNode> = ({ node, conditional, tail, tailCo
       ),
     },
     {
-      id: 'system',
+      id: 'cells',
       controls: 1,
       node: (
-        <RailPopover label={`Arrangement: ${GRID_LABELS[recipe.spec.kind]}`} trigger={<GridKindIcon kind={recipe.spec.kind} size={16} />} align="start">
+        <RailButton label="Edit cells" hint="Pick, merge and split modules (Enter)" onClick={() => gridEditMode.enter(node.id)}>
+          <Grid3x3 size={16} />
+        </RailButton>
+      ),
+    },
+    {
+      id: 'images',
+      controls: 1,
+      node: (
+        <RailButton label="Fill with images" hint="Choose pictures to fill the free modules" onClick={() => fillGridFromFiles(node)}>
+          <ImagePlus size={16} />
+        </RailButton>
+      ),
+    },
+    {
+      id: 'shuffle',
+      controls: 1,
+      node: (
+        <RailButton
+          label="Reshuffle"
+          hint="Another draw of the same system (undoable)"
+          onClick={() => patchSpec({ seed: Math.floor(Math.random() * 100000) })}
+        >
+          <Shuffle size={16} />
+        </RailButton>
+      ),
+    }
+  );
+
+  return (
+    <RailAnatomy
+      kind={
+        <RailPopover
+          label={
+            parked > 0
+              ? `Arrangement: ${GRID_LABELS[recipe.spec.kind]}. ${parked} ${parked === 1 ? 'item has' : 'items have'} no module in this arrangement`
+              : `Arrangement: ${GRID_LABELS[recipe.spec.kind]}`
+          }
+          trigger={
+            <span className="rail-kind">
+              <GridKindIcon kind={recipe.spec.kind} size={16} />
+              <span className="rail-kind__name">{GRID_LABELS[recipe.spec.kind]}</span>
+              {parked > 0 && (
+                <span className="rail-badge" aria-hidden="true">
+                  <Clock size={11} aria-hidden />
+                  {parked}
+                </span>
+              )}
+              <ChevronDown size={12} aria-hidden className="rail-kind__chevron" />
+            </span>
+          }
+          align="start"
+        >
           <span className="ctx-popover__label">Arrangement</span>
           <div className="ctx-shape-grid">
             {GRID_KINDS.map((kind) => (
@@ -101,50 +158,15 @@ export const GridRail: SingleRail<GridNode> = ({ node, conditional, tail, tailCo
               </button>
             ))}
           </div>
-        </RailPopover>
-      ),
-    },
-    {
-      id: 'shuffle',
-      controls: 1,
-      node: (
-        <RailButton
-          label="Reshuffle"
-          hint="Another draw of the same system (undoable)"
-          onClick={() => patchSpec({ seed: Math.floor(Math.random() * 100000) })}
-        >
-          <Shuffle size={16} />
-        </RailButton>
-      ),
-    },
-    {
-      id: 'images',
-      controls: 1,
-      node: (
-        <RailButton label="Fill with images" hint="Choose pictures to fill the free modules" onClick={() => fillGridFromFiles(node)}>
-          <ImagePlus size={16} />
-        </RailButton>
-      ),
-    }
-  );
-
-  return (
-    <RailAnatomy
-      kind={
-        <span className="ctx-kind">
-          <GridKindIcon kind={recipe.spec.kind} size={15} />
-          {GRID_LABELS[recipe.spec.kind]}
           {parked > 0 && (
-            <span
-              className="rail-badge"
-              data-tooltip={`${parked} ${parked === 1 ? 'item has' : 'items have'} no module in this arrangement. They wait below the grid and return when there is room.`}
-            >
-              <Clock size={11} aria-hidden />
-              {parked}
-            </span>
+            <p className="ctx-popover__note">
+              {parked} {parked === 1 ? 'item has' : 'items have'} no module in this arrangement. They wait below the grid
+              and return when there is room.
+            </p>
           )}
-        </span>
+        </RailPopover>
       }
+      kindControls={1}
       paint={
         <RailPopover
           label="Palette"

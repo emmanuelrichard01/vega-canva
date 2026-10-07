@@ -1,7 +1,6 @@
 /**
  * Play order for library tracks: shuffle and repeat, per category. Pure.
  */
-import { createRng } from '../rng';
 
 export type RepeatMode = 'off' | 'all' | 'one';
 
@@ -14,12 +13,24 @@ export interface Queue {
   repeat: RepeatMode;
 }
 
+/** mulberry32: a small seeded generator, so a shuffle can be replayed in tests. */
+function seeded(seed: number): () => number {
+  let a = seed >>> 0;
+  return () => {
+    a = (a + 0x6d2b79f5) >>> 0;
+    let t = a;
+    t = Math.imul(t ^ (t >>> 15), t | 1);
+    t ^= t + Math.imul(t ^ (t >>> 7), t | 61);
+    return ((t ^ (t >>> 14)) >>> 0) / 4294967296;
+  };
+}
+
 /** Fisher–Yates with a seeded generator. */
 export function shuffled<T>(items: readonly T[], seed: number): T[] {
   const out = [...items];
-  const rng = createRng(seed);
+  const next = seeded(seed);
   for (let i = out.length - 1; i > 0; i--) {
-    const j = Math.floor(rng.next() * (i + 1));
+    const j = Math.floor(next() * (i + 1));
     [out[i], out[j]] = [out[j], out[i]];
   }
   return out;

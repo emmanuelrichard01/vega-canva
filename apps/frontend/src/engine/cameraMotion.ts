@@ -72,19 +72,19 @@ export function rubberZoom(current: number, requested: number, min: number, max:
   const logMax = Math.log(max);
   const logMin = Math.log(min);
   const cur = Math.log(Math.max(current, 1e-9));
-  const req = Math.log(requested);
+  const delta = Math.log(requested) - cur;
 
-  if (req > logMax) {
-    const base = Math.max(cur, logMax);
-    const over = Math.max(0, cur - logMax) + Math.max(0, req - base) * RESISTANCE;
-    return Math.exp(logMax + Math.min(give, over));
-  }
-  if (req < logMin) {
-    const base = Math.min(cur, logMin);
-    const under = Math.max(0, logMin - cur) + Math.max(0, base - req) * RESISTANCE;
-    return Math.exp(logMin - Math.min(give, under));
-  }
-  return requested;
+  // Undo the resistance to find where the gesture itself has got to, apply the
+  // request there, then resist again. A reversal inside the overshoot walks
+  // back out at the same rate the gesture walked in, instead of freezing.
+  let virtual = cur;
+  if (cur > logMax) virtual = logMax + (cur - logMax) / RESISTANCE;
+  else if (cur < logMin) virtual = logMin - (logMin - cur) / RESISTANCE;
+  virtual += delta;
+
+  if (virtual > logMax) return Math.exp(logMax + Math.min(give, (virtual - logMax) * RESISTANCE));
+  if (virtual < logMin) return Math.exp(logMin - Math.min(give, (logMin - virtual) * RESISTANCE));
+  return Math.exp(virtual);
 }
 
 export function clampZoom(zoom: number, min: number, max: number): number {

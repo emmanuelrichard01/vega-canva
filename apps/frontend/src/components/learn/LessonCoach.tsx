@@ -1,8 +1,9 @@
-import React, { useEffect, useRef, useState, useSyncExternalStore } from 'react';
+import React, { useEffect, useLayoutEffect, useRef, useState, useSyncExternalStore } from 'react';
 import { X } from 'lucide-react';
 import { useStore } from '../../hooks/useStore';
 import { learnState } from '../../engine/learn/learnState';
 import { keyFor, lessonForTool, type Lesson } from '../../engine/learn/lessons';
+import { coachPlacement } from '../../engine/learn/coachAnchor';
 import { LessonDemo } from './LessonDemo';
 
 /**
@@ -41,12 +42,29 @@ import { LessonDemo } from './LessonDemo';
  * radar and the zoom control. `NoticeLayer` picked the same place for the same
  * reason, and the two are stacked rather than overlapping.
  *
- * ## Why one mute and not one dismissal each
+ * ## Why one mute, and also one dismissal each
  *
  * Somebody who closes the third of these has told you something about all
- * twelve. Making them close twelve is the product not listening. Muting is
- * reversible from the reference library, which is where a person who changed
- * their mind would go looking.
+ * twelve. Making them close twelve is the product not listening, so there is a
+ * mute for all of them, reversible from the reference library.
+ *
+ * But "I know this one" is a different thing from "I want none of them", and
+ * conflating the two pushes people to the mute. So each card also has its own
+ * "Do not show this again", which retires that lesson alone.
+ *
+ * ## Why it appears at most twice
+ *
+ * A card that returns every time the tool is armed until you happen to make
+ * something is a nag. It is allowed two appearances (`MAX_SHOWS`): the first
+ * is often while the pointer is somewhere else, and after the second it lives
+ * in the reference.
+ *
+ * ## Why it points at the seat
+ *
+ * The card is centred on the dock seat of the tool that raised it, with a tail
+ * down to it (`coachAnchor`), so the answer arrives over the thing it is about.
+ * It never takes the keyboard or the pointer: it is a note on the board's
+ * edge, and Escape puts it away without being consumed.
  */
 
 interface Props {
@@ -85,6 +103,10 @@ export const LessonCoach: React.FC<Props> = ({ activeTool, visible }) => {
    * that already has work on it, which is most boards.
    */
   const countAtShow = useRef(0);
+  const shownId = useRef<string | null>(null);
+  const card = useRef<HTMLElement>(null);
+  /** Where the card sits so that its tail reaches the armed seat. */
+  const [place, setPlace] = useState<{ left: number; tail: number | null } | null>(null);
 
   /**
    * `learnState` is read during render rather than through the snapshot,
@@ -92,17 +114,27 @@ export const LessonCoach: React.FC<Props> = ({ activeTool, visible }) => {
    * notifies the same listeners. One subscription, both facts.
    */
   const found = lessonForTool(activeTool);
+  /**
+   * The card already on screen is never withdrawn by its own appearance
+   * counting against it: showing it the second time is what retires it, and a
+   * card that vanished the instant it appeared would be a flicker.
+   */
   const candidate: Lesson | undefined =
-    found && !learnState.isLearned(found.id) ? found : undefined;
+    found && (found.id === shownId.current || !learnState.isRetired(found.id)) ? found : undefined;
   const candidateId = candidate?.id ?? null;
 
   useEffect(() => {
     if (muted || !candidateId) {
+      shownId.current = null;
       setShown(null);
       return;
     }
     const t = window.setTimeout(() => {
       countAtShow.current = Object.keys(useStore.getState().objects).length;
+      if (candidate && shownId.current !== candidate.id) {
+        shownId.current = candidate.id;
+        learnState.noteShown(candidate.id);
+      }
       setShown(candidate ?? null);
     }, SETTLE_MS);
     return () => window.clearTimeout(t);
@@ -128,6 +160,11 @@ export const LessonCoach: React.FC<Props> = ({ activeTool, visible }) => {
     }
   }, [objectCount, shown]);
 
+  /** Once the card is gone, it is an ordinary candidate again: retired or not as the counts say. */
+  useEffect(() => {
+    if (!shown) shownId.current = null;
+  }, [shown]);
+
   /** Escape puts it away without teaching anything, and without muting. */
   useEffect(() => {
     if (!shown) return;
@@ -141,13 +178,47 @@ export const LessonCoach: React.FC<Props> = ({ activeTool, visible }) => {
     return () => window.removeEventListener('keydown', onKey);
   }, [shown]);
 
+  /**
+   * Measured against the real seat and the real parent, because the card is
+   * positioned inside the board's container and the seat is measured in the
+   * window: the same two-spaces mistake `walkAnchor` exists to prevent.
+   */
+  useLayoutEffect(() => {
+    const el = card.current;
+    if (!shown || !el) {
+      setPlace(null);
+      return;
+    }
+    const measure = () => {
+      const seat = document.querySelector<HTMLElement>('[data-tour="dock"] .dock-btn.active');
+      const seatBox = seat?.getBoundingClientRect();
+      const origin = (el.offsetParent as HTMLElement | null)?.getBoundingClientRect().left ?? 0;
+      const p = coachPlacement(
+        seatBox ? { left: seatBox.left, width: seatBox.width } : null,
+        { width: el.offsetWidth },
+        { width: window.innerWidth }
+      );
+      setPlace(p.tail === null ? null : { left: p.centre - origin, tail: p.tail });
+    };
+    measure();
+    window.addEventListener('resize', measure);
+    return () => window.removeEventListener('resize', measure);
+  }, [shown, visible]);
+
   if (!visible || !shown) return null;
 
   const key = keyFor(shown);
 
   return (
-    <aside className="coach" role="note" aria-label={shown.title}>
-      {shown.demo && <LessonDemo demo={shown.demo} />}
+    <aside
+      ref={card}
+      className="coach"
+      role="note"
+      aria-label={shown.title}
+      data-anchored={place ? '' : undefined}
+      style={place ? ({ left: place.left, '--coach-tail': `${place.tail}px` } as React.CSSProperties) : undefined}
+    >
+      {shown.demo && <LessonDemo demo={shown.demo} maxLoops={3} />}
 
       <div className="coach__body">
         <div className="coach__head">
@@ -174,11 +245,23 @@ export const LessonCoach: React.FC<Props> = ({ activeTool, visible }) => {
         </ul>
 
         <div className="coach__foot">
-          {/* Not "Got it". Pressing that is a claim about the future, and the
-              honest offer here is the one about every other hint as well. */}
-          <button type="button" className="coach__mute" onClick={() => learnState.mute()}>
-            Stop showing tips
-          </button>
+          {/* Two offers, kept apart: this one, or all of them. */}
+          <span className="coach__quiet">
+            <button
+              type="button"
+              className="coach__mute"
+              onClick={() => {
+                learnState.dismiss(shown.id);
+                setShown(null);
+              }}
+            >
+              Do not show this again
+            </button>
+            <span aria-hidden="true">·</span>
+            <button type="button" className="coach__mute" onClick={() => learnState.mute()}>
+              Stop all tips
+            </button>
+          </span>
           <span className="coach__more">
             Press <kbd>?</kbd> for the rest
           </span>

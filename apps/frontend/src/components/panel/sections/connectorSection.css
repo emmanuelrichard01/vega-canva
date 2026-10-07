@@ -1,0 +1,73 @@
+/* The connector section's label list: one field per word on the run, each
+   with its remove button, and a quiet add row under them. */
+
+.conn-labels {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-1, 4px);
+  width: 100%;
+}
+
+.conn-labels__row {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  align-items: center;
+  gap: var(--space-1, 4px);
+}
+
+.conn-labels__input {
+  min-width: 0;
+  height: var(--control-h-sm, 28px);
+  padding: 0 var(--space-2, 8px);
+  border: 1px solid transparent;
+  border-radius: var(--radius-sm, 6px);
+  background: var(--surface-hover);
+  color: var(--text-primary);
+  font: inherit;
+  font-size: var(--text-xs, 12px);
+  transition: border-color var(--motion-hover, 120ms ease-out);
+}
+
+.conn-labels__input:hover {
+  border-color: var(--border-divider);
+}
+
+.conn-labels__input:focus-visible,
+.conn-labels__input:focus {
+  outline: none;
+  border-color: var(--focus-field-color);
+  box-shadow: inset 0 0 0 0.5px var(--focus-field-color);
+}
+
+.conn-labels__add {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  align-self: flex-start;
+  height: var(--control-h-sm, 28px);
+  padding: 0 var(--space-2, 8px);
+  border: none;
+  border-radius: var(--radius-sm, 6px);
+  background: transparent;
+  color: var(--text-secondary);
+  font: inherit;
+  font-size: var(--text-xs, 12px);
+  cursor: pointer;
+  transition: background var(--motion-hover, 120ms ease-out), color var(--motion-hover, 120ms ease-out);
+}
+
+.conn-labels__add:hover {
+  background: var(--surface-hover);
+  color: var(--text-primary);
+}
+
+.conn-labels__add:focus-visible {
+  outline: 2px solid var(--focus-ring-color);
+  outline-offset: 1px;
+}
+
+/* Reverse rides at the end of the "Joins" line it changes. */
+.conn-reverse {
+  margin-left: auto;
+  flex-shrink: 0;
+}

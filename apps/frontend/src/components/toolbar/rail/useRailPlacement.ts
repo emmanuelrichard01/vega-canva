@@ -6,7 +6,15 @@ import { railVeil, type VeilKind } from '../../../engine/interaction/railVeil';
 import { textEditing } from '../../../engine/interaction/textEditing';
 import { inflate, placeRail, selectionHull, type RailSide } from '../../../engine/interaction/railPlacement';
 import { setRailSubject } from '../railSubject';
-import { DEFAULT_HEADER_H, EDGE_MARGIN, chromeInset, freeStrip, readPx, type ChromeMetrics } from './railBounds';
+import {
+  DEFAULT_HEADER_H,
+  EDGE_MARGIN,
+  chromeFromTokens,
+  chromeInset,
+  freeStrip,
+  readFrameTokens,
+  type ChromeMetrics,
+} from './railBounds';
 
 /** The rail's resting height, used before it has been measured. */
 const RAIL_HEIGHT = 40;
@@ -44,9 +52,14 @@ export interface RailPlacement {
  *
  * The triggers are the camera, the selection's objects moving or changing,
  * the chrome resizing (side panels, the dock and its shelf, the rail itself),
- * the window, and the gesture veil. Each burst of them costs at most one
- * placement on the next frame. Nothing runs between them, and nothing runs at
- * all while the rail is hidden or veiled.
+ * the shell republishing its frame tokens, the window, and the gesture veil.
+ * Each burst of them costs at most one placement on the next frame. Nothing
+ * runs between them, and nothing runs at all while the rail is hidden, veiled
+ * or suspended for an editor that brings its own bar.
+ *
+ * The free strip comes from the shell's frame tokens (`--inset-top`, falling
+ * back to `--header-h`, and `--inset-left` / `--inset-right`), read once per
+ * chrome change. Where a side token is absent the panel's edge is measured.
  *
  * Position is written to the anchor's transform, never through React. Only the
  * side, the veiled state and visibility are state, because they decide what is
@@ -57,8 +70,10 @@ export function useRailPlacement(opts: {
   isBulk: boolean;
   selectedIds: readonly string[] | undefined;
   sidebarsVisible: boolean;
+  /** An editor with its own bar is open on the selection: place nothing, listen to nothing. */
+  suspended?: boolean;
 }): RailPlacement {
-  const { activeId, isBulk, selectedIds, sidebarsVisible } = opts;
+  const { activeId, isBulk, selectedIds, sidebarsVisible, suspended = false } = opts;
   const anchorRef = useRef<HTMLDivElement>(null);
   const railRef = useRef<HTMLDivElement>(null);
   const [placement, setPlacement] = useState<RailSide>('top');
@@ -75,7 +90,8 @@ export function useRailPlacement(opts: {
   const wroteToRef = useRef<HTMLElement | null>(null);
 
   useEffect(() => {
-    if (!activeId && !isBulk) {
+    if ((!activeId && !isBulk) || suspended) {
+      lastRef.current.visible = false;
       setIsVisible(false);
       return;
     }
@@ -84,16 +100,20 @@ export function useRailPlacement(opts: {
     const chrome: ChromeMetrics = { headerH: DEFAULT_HEADER_H, dockH: 0, insetLeft: EDGE_MARGIN, insetRight: EDGE_MARGIN };
     const stageOrigin = { left: 0, top: 0 };
 
-    /** Chrome geometry: read on resize, not on every placement. */
+    /** Chrome geometry: read when the chrome changes, not on every placement. */
     const measureChrome = () => {
       const left = document.querySelector(LEFT_PANEL)?.getBoundingClientRect() ?? null;
       const right = document.querySelector(RIGHT_PANEL)?.getBoundingClientRect() ?? null;
-      chrome.insetLeft = chromeInset(left, 'left', window.innerWidth);
-      chrome.insetRight = chromeInset(right, 'right', window.innerWidth);
+      Object.assign(
+        chrome,
+        chromeFromTokens(readFrameTokens(), {
+          insetLeft: chromeInset(left, 'left', window.innerWidth),
+          insetRight: chromeInset(right, 'right', window.innerWidth),
+        })
+      );
       // The dock's own top edge, shelf included, rather than a token about it.
       const dock = document.querySelector(DOCK)?.getBoundingClientRect();
       chrome.dockH = dock && dock.height > 0 ? Math.max(0, window.innerHeight - dock.top) : 0;
-      chrome.headerH = readPx(getComputedStyle(document.documentElement).getPropertyValue('--header-h'), DEFAULT_HEADER_H);
       const canvas = document.querySelector('.konvajs-content')?.getBoundingClientRect();
       if (canvas) {
         stageOrigin.left = canvas.left;
@@ -163,7 +183,8 @@ export function useRailPlacement(opts: {
     let frame = 0;
     let chromeDirty = true;
     const schedule = () => {
-      if (frame) return;
+      // Hidden under a gesture: nothing to place until the veil lifts, which schedules again.
+      if (frame || railVeil.held) return;
       frame = requestAnimationFrame(() => {
         frame = 0;
         if (chromeDirty) {
@@ -195,9 +216,19 @@ export function useRailPlacement(opts: {
       if (el) railObserver.observe(el);
     };
 
+    // The shell republishes its frame by toggling attributes on the root.
+    const tokenObserver = new MutationObserver(scheduleChrome);
+    tokenObserver.observe(document.documentElement, {
+      attributes: true,
+      attributeFilter: ['data-surface', 'data-left-panel', 'data-right-panel', 'style', 'class'],
+    });
+
     const onVeil = () => {
-      if (railVeil.held) hide();
-      else schedule();
+      if (railVeil.held) {
+        if (frame) cancelAnimationFrame(frame);
+        frame = 0;
+        hide();
+      } else schedule();
     };
     const handleDragStart = (e: Event) => {
       railVeil.begin((e as CustomEvent<{ kind?: VeilKind }>).detail?.kind ?? 'gesture');
@@ -230,6 +261,7 @@ export function useRailPlacement(opts: {
       unsubscribeVeil();
       observer.disconnect();
       railObserver.disconnect();
+      tokenObserver.disconnect();
       engineEvents.off('CameraChanged', schedule);
       engineEvents.off('ObjectMoved', onObjectChange);
       engineEvents.off('ObjectModified', onObjectChange);
@@ -239,7 +271,7 @@ export function useRailPlacement(opts: {
       window.removeEventListener('pointerup', handlePointerRelease, true);
       window.removeEventListener('pointercancel', handlePointerRelease, true);
     };
-  }, [activeId, isBulk, bulkKey, sidebarsVisible]);
+  }, [activeId, isBulk, bulkKey, sidebarsVisible, suspended]);
 
   return { anchorRef, railRef, placement, clear, isVisible };
 }

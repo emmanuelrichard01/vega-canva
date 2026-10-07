@@ -1,0 +1,27 @@
+/*
+ * Colours for the selection-side canvas chrome that Konva draws itself: the
+ * Alt measurement and the marquee. Konva cannot read `var()`, so these are
+ * plain values (no color-mix) that `engine/interaction/chromeHalo.ts` reads
+ * off <body>, where the theme class lives.
+ */
+:root {
+  --canvas-measure: #F0308C;
+  /* White 11px text on this pill: about 5.7:1. */
+  --canvas-measure-label: #C21A6E;
+  --canvas-measure-ink: #FFFFFF;
+  --canvas-marquee: #3B82F6;
+  --canvas-marquee-fill: rgba(59, 130, 246, 0.08);
+  /* The marquee's mode glyph: a surface pill with ink inside. */
+  --canvas-marquee-glyph: #18181B;
+  --canvas-marquee-glyph-ink: #FFFFFF;
+}
+
+.dark-theme {
+  --canvas-measure: #FF5CA8;
+  --canvas-measure-label: #C21A6E;
+  --canvas-measure-ink: #FFFFFF;
+  --canvas-marquee: #60A5FA;
+  --canvas-marquee-fill: rgba(96, 165, 250, 0.12);
+  --canvas-marquee-glyph: #F4F4F5;
+  --canvas-marquee-glyph-ink: #18181B;
+}

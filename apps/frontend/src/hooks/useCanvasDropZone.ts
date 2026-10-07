@@ -11,6 +11,7 @@ import { cellAtPoint, freeCellsFrom, gridAtPoint, placeImageInCell } from '../en
 import { importSvg } from '../engine/clipboard/svgImport';
 import { uploadMedia } from '../engine/media/upload';
 import { layoutDroppedImages, type DropRect } from '../engine/media/dropLayout';
+import { useStore } from './useStore';
 
 const IMAGE_PLACE_MAX = 800;
 const MULTI_PLACE_STEP = 24;
@@ -22,6 +23,28 @@ export const measureImage = (url: string): Promise<{ width: number; height: numb
     img.onerror = () => resolve({ width: 300, height: 300 });
     img.src = url;
   });
+
+/** A grid module to fill from, instead of whatever lies under a pointer. */
+export interface PlaceTarget {
+  gridId: string;
+  startCell: number;
+}
+
+type Placer = (files: File[], at?: { x: number; y: number }, target?: PlaceTarget) => Promise<void>;
+
+/** The mounted board's placer. One board is mounted at a time. */
+let activePlacer: Placer | null = null;
+
+/**
+ * Place files on the board through the same path a drop takes: upload,
+ * measure, create, and fill a grid's free modules from `startCell` on, in
+ * reading order, wrapping round. For callers with files in hand and no drop
+ * event, such as the grid rail's Fill with images. Resolves once every file
+ * has been placed; does nothing while no board is mounted.
+ */
+export function placeFiles(files: FileList | File[], target: PlaceTarget): Promise<void> {
+  return activePlacer ? activePlacer(Array.from(files), undefined, target) : Promise.resolve();
+}
 
 interface UseCanvasDropZoneOptions {
   roomId: string;
@@ -206,7 +229,7 @@ export function useCanvasDropZone({ roomId, status, setSelectedIds }: UseCanvasD
   );
 
   const placeFiles = useCallback(
-    async (files: FileList | File[], at?: { x: number; y: number }) => {
+    async (files: FileList | File[], at?: { x: number; y: number }, target?: PlaceTarget) => {
       const list = Array.from(files);
       const usable = list.filter((f) => f.type.startsWith('image/') || f.type.startsWith('audio/'));
       if (usable.length === 0) return;
@@ -224,8 +247,11 @@ export function useCanvasDropZone({ roomId, status, setSelectedIds }: UseCanvasD
        * note in one would be a player squashed to whatever shape the grid
        * happened to make. Dropped audio lands on the board as it always did.
        */
-      const grid = at ? gridAtPoint(at) : null;
-      const startCell = grid ? cellAtPoint(grid, at!) : null;
+      const targetGrid = target ? useStore.getState().objects[target.gridId] : undefined;
+      const grid = targetGrid?.type === 'grid' ? targetGrid : at ? gridAtPoint(at) : null;
+      const startCell = target && targetGrid ? target.startCell : grid ? cellAtPoint(grid, at!) : null;
+      // Anything that does not go in a module lands beside the grid it was aimed at.
+      if (!at && grid) at = { x: grid.x + grid.width / 2, y: grid.y + grid.height / 2 };
       const freeCells =
         grid && startCell !== null ? freeCellsFrom(grid.id, startCell) : [];
 
@@ -271,6 +297,13 @@ export function useCanvasDropZone({ roomId, status, setSelectedIds }: UseCanvasD
     },
     [placeFile]
   );
+
+  useEffect(() => {
+    activePlacer = placeFiles;
+    return () => {
+      if (activePlacer === placeFiles) activePlacer = null;
+    };
+  }, [placeFiles]);
 
   useEffect(() => {
     const onDragOver = (e: DragEvent) => {

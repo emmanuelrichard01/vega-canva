@@ -1,13 +1,11 @@
 /**
- * Whether music has been asked for in this tab, without loading any of it.
+ * Requests to open the music player from elsewhere (the board menu), without
+ * loading any of it.
  *
- * The player, its stations and Spotify are thousands of lines most boards
- * never use, so the header imports none of them up front. Nothing can be
- * playing until someone opens the player, so "asked for" is the only fact the
- * header needs: once it is true, the header loads the player's button and
- * keeps it there for the rest of the session. The player then lives in that
- * button's own panel, never inside a menu that closes when focus moves into
- * an embedded player.
+ * The header's record button is always present and subscribes here; a
+ * request makes it click itself, so the player opens in that button's own
+ * panel, never inside a menu that closes when focus moves into an embedded
+ * player.
  */
 type Listener = () => void;
 const listeners = new Set<Listener>();

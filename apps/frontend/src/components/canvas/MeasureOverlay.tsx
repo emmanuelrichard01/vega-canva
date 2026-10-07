@@ -4,22 +4,19 @@ import { EXPORT_CHROME } from '../../engine/export/chrome';
 import { useStore } from '../../hooks/useStore';
 import { nodeBounds } from '../../engine/SceneGraph';
 import { clientToWorld } from '../../engine/interaction/clientToWorld';
-import { stackAt } from '../../engine/interaction/pick';
+import { marqueeActivity } from '../../engine/interaction/marquee';
+import { stackAtPoint } from '../../engine/interaction/pick';
 import { formatDistance, measureBetween, type MeasureBox, type MeasureSegment } from '../../engine/interaction/measure';
 import { railVeil } from '../../engine/interaction/railVeil';
+import { cameraSystem } from '../../engine/CameraSystem';
 import { useCameraZoom } from '../../engine/useCameraZoom';
 import { canvasChromeContrast, useContrast } from '../../engine/ui/contrast';
-import { chromeSurfaceColor, HALO_PX } from '../../engine/interaction/chromeHalo';
+import { chromeSurfaceColor, chromeToken, HALO_PX, useChromeDark } from '../../engine/interaction/chromeHalo';
+import './selectChrome.css';
 
 interface Props {
   selectedIds: readonly string[];
 }
-
-/** The same magenta as the smart guides: both are measurements, not selection. */
-const MEASURE_COLOR = '#F0308C';
-/** The label pill: a deeper magenta, so white 11px text clears 4.5:1 (about 5.7:1). */
-const LABEL_FILL = '#C21A6E';
-const LABEL_INK = '#FFFFFF';
 
 function unionBox(ids: readonly string[]): MeasureBox | null {
   const { objects } = useStore.getState();
@@ -47,7 +44,10 @@ function unionBox(ids: readonly string[]): MeasureBox | null {
 export const MeasureOverlay: React.FC<Props> = ({ selectedIds }) => {
   const zoom = useCameraZoom();
   const { enhanced } = useContrast();
+  // Colours are baked into Konva nodes, so a theme switch has to redraw them.
+  useChromeDark();
   const moving = useSyncExternalStore(railVeil.subscribe, railVeil.getMoveSnapshot, railVeil.getMoveSnapshot);
+  const marqueeing = useSyncExternalStore(marqueeActivity.subscribe, marqueeActivity.get, marqueeActivity.get);
   const [alt, setAlt] = useState(false);
   const [targetId, setTargetId] = useState<string | null>(null);
 
@@ -65,7 +65,8 @@ export const MeasureOverlay: React.FC<Props> = ({ selectedIds }) => {
     };
   }, []);
 
-  const active = alt && !moving && selectedIds.length > 0;
+  // Alt during a marquee means subtract, not measure.
+  const active = alt && !moving && !marqueeing && selectedIds.length > 0;
 
   useEffect(() => {
     if (!active || typeof window === 'undefined') {
@@ -78,7 +79,7 @@ export const MeasureOverlay: React.FC<Props> = ({ selectedIds }) => {
       const target = e.target as Element | null;
       if (!target?.closest?.('.konvajs-content')) return setTargetId(null);
       const world = clientToWorld(e.clientX, e.clientY);
-      const stack = stackAt(Object.values(useStore.getState().objects), world.x, world.y);
+      const stack = stackAtPoint(world.x, world.y, 1 / (cameraSystem.zoom || 1));
       setTargetId(stack.find((id) => !chosen.has(id)) ?? null);
     };
     window.addEventListener('pointermove', onMove);
@@ -101,6 +102,10 @@ export const MeasureOverlay: React.FC<Props> = ({ selectedIds }) => {
   const line = hair * strokeScale;
   const haloWidth = line + 2 * HALO_PX * hair;
   const surface = halo ? chromeSurfaceColor() : '';
+  // The same magenta as the smart guides: both are measurements, not selection.
+  const MEASURE_COLOR = chromeToken('--canvas-measure', '#F0308C');
+  const LABEL_FILL = chromeToken('--canvas-measure-label', '#C21A6E');
+  const LABEL_INK = chromeToken('--canvas-measure-ink', '#FFFFFF');
 
   return (
     <Group listening={false} name={EXPORT_CHROME}>

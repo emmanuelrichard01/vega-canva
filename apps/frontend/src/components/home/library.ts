@@ -35,9 +35,15 @@ export type PinMap = Record<string, number>;
  *
  * Kept until the server reports the board under that name, because the name
  * the dashboard reads back lags a rename by however long it takes somebody to
- * open the board.
+ * open the board. `was` is the name the board had when this one was typed, so
+ * a later rename from somewhere else can be told apart from the stale one.
  */
-export type NameMap = Record<string, { name: string; sent: boolean }>;
+export interface PendingName {
+  name: string;
+  sent: boolean;
+  was?: string;
+}
+export type NameMap = Record<string, PendingName>;
 
 export const RECENTS_KEY = 'recentWorkspaces';
 export const REMOVED_KEY = 'vega_removed_workspaces';
@@ -83,20 +89,37 @@ function readRecord<T>(key: string, valid: (value: unknown) => value is T): Reco
 }
 
 const isTime = (v: unknown): v is number => typeof v === 'number' && Number.isFinite(v) && v > 0;
-const isNameEntry = (v: unknown): v is { name: string; sent: boolean } =>
+const isNameEntry = (v: unknown): v is PendingName =>
   !!v && typeof (v as { name?: unknown }).name === 'string' && !!(v as { name: string }).name.trim();
 
 export const readPins = (): PinMap => readRecord(PINS_KEY, isTime);
 export const readNames = (): NameMap => {
-  const raw = readRecord<unknown>(NAMES_KEY, (v): v is unknown => true);
+  const raw = readRecord<unknown>(NAMES_KEY, (_v): _v is unknown => true);
   const out: NameMap = {};
   for (const [id, v] of Object.entries(raw)) {
     // Older entries were the bare string.
     if (typeof v === 'string' && v.trim()) out[id] = { name: v, sent: false };
-    else if (isNameEntry(v)) out[id] = { name: v.name, sent: Boolean((v as { sent?: unknown }).sent) };
+    else if (isNameEntry(v)) {
+      out[id] = { name: v.name, sent: Boolean((v as { sent?: unknown }).sent) };
+      if (typeof v.was === 'string') out[id].was = v.was;
+    }
   }
   return out;
 };
+
+/**
+ * What the server's title for a board means for a name typed here.
+ *
+ * `settled`: the server now reports the typed name, so it can be forgotten.
+ * `superseded`: the server reports a third name — somebody renamed the board
+ * after this name was sent — so theirs wins. `pending`: the server still
+ * reports the old name, which it does until somebody opens the board.
+ */
+export function reconcileName(pending: PendingName, serverTitle: string): 'settled' | 'superseded' | 'pending' {
+  if (pending.name === serverTitle) return 'settled';
+  if (pending.sent && pending.was !== undefined && serverTitle !== pending.was) return 'superseded';
+  return 'pending';
+}
 
 /** Read the current stored value, change it, write it back, return it. */
 function mutate<T>(read: () => T, key: string, change: (current: T) => T): T {
@@ -163,6 +186,10 @@ export function displayName(board: ShelfBoard, names: NameMap): string {
 
 /** Whether this device's link to a board lets it change the board. */
 export const canEditBoard = (board: LibraryBoard) => !board.role || board.role === 'editor';
+
+/** Whether the invite this device holds for a board has run out. */
+export const inviteExpired = (board: LibraryBoard, now = Date.now()) =>
+  typeof board.inviteExpires === 'number' && board.inviteExpires > 0 && board.inviteExpires <= now;
 
 export interface LibraryGroup {
   id: BoardGroup['id'] | 'pinned' | 'all' | 'recent';

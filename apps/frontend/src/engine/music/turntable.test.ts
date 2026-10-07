@@ -69,7 +69,7 @@ describe('turntable', () => {
   });
 
   it('parks the arm off the record and tracks inward with progress', () => {
-    expect(armAngle(0, 0.5)).toBe(-24);
+    expect(armAngle(0, 0.5)).toBe(-20);
     expect(armAngle(1, 0)).toBe(-12);
     expect(armAngle(1, 1)).toBe(8);
     expect(armAngle(1, 0.5)).toBeGreaterThan(armAngle(1, 0.2));

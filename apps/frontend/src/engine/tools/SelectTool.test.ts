@@ -55,10 +55,11 @@ describe('SelectTool', () => {
       currentX: 100,
       currentY: 150,
       mode: 'replace',
+      deep: false,
     });
   });
 
-  it('detects additive modifier keys (Shift, Ctrl, Meta)', () => {
+  it('treats Ctrl/Cmd as a deep marquee, not an additive one', () => {
     const tool = new SelectTool();
     const mockStage: any = {
       getPointerPosition: () => ({ x: 0, y: 0 }),
@@ -71,16 +72,16 @@ describe('SelectTool', () => {
       setOverlayState,
     } as any;
 
-    // Test with Ctrl key
+    // Ctrl on this platform, or Cmd on a Mac
     tool.onPointerDown(mockCtx, {
       target: mockStage,
-      evt: { ctrlKey: true },
+      evt: { ctrlKey: true, metaKey: true },
     });
 
     mockStage.getPointerPosition = () => ({ x: 50, y: 60 });
     tool.onPointerMove(mockCtx, {
       target: mockStage,
-      evt: { ctrlKey: true },
+      evt: { ctrlKey: true, metaKey: true },
     });
 
     tool.onPointerUp(mockCtx);
@@ -93,8 +94,9 @@ describe('SelectTool', () => {
           minY: 0,
           maxX: 50,
           maxY: 60,
-          mode: 'add',
-          additive: true,
+          mode: 'replace',
+          additive: false,
+          deep: true,
         },
       })
     );

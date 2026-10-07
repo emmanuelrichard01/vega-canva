@@ -22,3 +22,18 @@ describe('recent shapes', () => {
     expect(getRecentShapes()[0]).toBe('shape-11');
   });
 });
+
+describe('pinned shapes', () => {
+  it('toggles a pin, keeps one of each, and tells subscribers', async () => {
+    const { getPinnedShapes, subscribePinnedShapes, togglePinnedShape } = await import('./recentShapes');
+    let calls = 0;
+    const off = subscribePinnedShapes(() => calls++);
+    expect(togglePinnedShape('cloud')).toBe(true);
+    expect(togglePinnedShape('gear')).toBe(true);
+    expect(getPinnedShapes()).toEqual(['cloud', 'gear']);
+    expect(togglePinnedShape('cloud')).toBe(false);
+    expect(getPinnedShapes()).toEqual(['gear']);
+    expect(calls).toBe(3);
+    off();
+  });
+});

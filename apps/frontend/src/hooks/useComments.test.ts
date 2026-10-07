@@ -38,6 +38,34 @@ describe('useComments', () => {
     expect(result.current.comments[0].messages.map((m) => m.body)).toEqual(['reply']);
   });
 
+  it('deletes a thread only for its starter or an editor, and keeps the container', () => {
+    const { result } = renderHook(() => useComments());
+    act(() => result.current.addComment(0, 0, 'mine'));
+    const mine = result.current.comments.at(-1)!;
+    // A thread someone else started.
+    act(() => {
+      doc.transact(() => {
+        const m = new Y.Map();
+        m.set('id', 'theirs');
+        m.set('resolved', false);
+        m.set('createdAt', 5);
+        const arr = new Y.Array();
+        arr.push([{ id: 'x', authorId: 'them', body: 'hi', createdAt: 5 }]);
+        m.set('messages', arr);
+        doc.getMap('comments').set('theirs', m);
+      });
+    });
+    setRoomRole('commenter');
+    act(() => result.current.deleteComment('theirs'));
+    expect(result.current.comments.some((t) => t.id === 'theirs')).toBe(true);
+    act(() => result.current.deleteComment(mine.id));
+    expect(result.current.comments.some((t) => t.id === mine.id)).toBe(false);
+    expect(doc.getMap('comments').has(mine.id)).toBe(true);
+    setRoomRole('editor');
+    act(() => result.current.deleteComment('theirs'));
+    expect(result.current.comments.some((t) => t.id === 'theirs')).toBe(false);
+  });
+
   it('refuses writes from a viewer', () => {
     setRoomRole('viewer');
     const { result } = renderHook(() => useComments());

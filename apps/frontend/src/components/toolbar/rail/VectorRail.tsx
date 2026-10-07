@@ -1,5 +1,5 @@
 import React, { useSyncExternalStore } from 'react';
-import { Trash2 } from 'lucide-react';
+import { Brush, Check, ChevronDown, Highlighter, PenLine, Trash2 } from 'lucide-react';
 import { pathEdit } from '../../../engine/interaction/pathEdit';
 import {
   alignPickedAnchors,
@@ -16,7 +16,7 @@ import { CornerIcon, SketchControl, StrokeControl, SymmetricIcon } from './contr
 import { KindLabel } from './kind';
 import { kindOf } from './kindOf';
 import { drawnStrokeWidth } from './strokeDefaults';
-import { appearanceOf, type SingleRail } from './types';
+import { appearanceOf, updateNode, type SingleRail } from './types';
 
 /** Point editing goes through the direct-select tool, which owns the anchor handles. */
 function setTool(id: 'select' | 'direct-select') {
@@ -146,9 +146,10 @@ export const VectorRail: SingleRail<PathNode> = ({ node, subject, conditional, t
     );
   }
 
+  // Nothing to pick for a pen path, so no chip restating "Path": the toolbar's
+  // own label says what it acts on.
   return (
     <RailAnatomy
-      kind={<KindLabel icon={kind.icon} name={kind.name} />}
       paint={
         <>
           <FillEditor paint={appearance.fill?.[0]} onChange={(fill) => setAppearance({ fill: [fill] })} />
@@ -164,18 +165,69 @@ export const VectorRail: SingleRail<PathNode> = ({ node, subject, conditional, t
   );
 };
 
+type BrushKind = 'pen' | 'marker' | 'highlighter';
+
+const BRUSHES: { id: BrushKind; label: string; hint: string; icon: React.ReactNode }[] = [
+  { id: 'pen', label: 'Pen', hint: 'Pressure-shaped ink', icon: <PenLine size={15} /> },
+  { id: 'marker', label: 'Marker', hint: 'An even felt-tip line', icon: <Brush size={15} /> },
+  { id: 'highlighter', label: 'Highlighter', hint: 'A wide translucent band over what is under it', icon: <Highlighter size={15} /> },
+];
+
+/** The brush a stroke was drawn with, which it can be redrawn as. Absent is the pen. */
+const BrushControl: React.FC<{ node: PathNode }> = ({ node }) => {
+  const geometry = node.geometry as PathNode['geometry'] & { brush?: 'marker' | 'highlighter' };
+  const current: BrushKind = geometry.brush ?? 'pen';
+  const active = BRUSHES.find((b) => b.id === current) ?? BRUSHES[0];
+  return (
+    <RailPopover
+      label={`Brush: ${active.label}`}
+      align="start"
+      trigger={
+        <span className="rail-kind">
+          {active.icon}
+          <span className="rail-kind__name">{active.label}</span>
+          <ChevronDown size={12} aria-hidden className="rail-kind__chevron" />
+        </span>
+      }
+    >
+      {(close) => (
+        <div className="rail-list" role="radiogroup" aria-label="Brush">
+          {BRUSHES.map((b) => (
+            <button
+              key={b.id}
+              type="button"
+              role="radio"
+              aria-checked={b.id === current}
+              className="rail-list__item"
+              data-tooltip={b.hint}
+              onClick={() => {
+                updateNode(node.id, { geometry: { ...geometry, brush: b.id === 'pen' ? undefined : b.id } });
+                close();
+              }}
+            >
+              {b.icon}
+              <span className="rail-list__label">{b.label}</span>
+              {b.id === current && <Check size={13} aria-hidden />}
+            </button>
+          ))}
+        </div>
+      )}
+    </RailPopover>
+  );
+};
+
 /**
- * A pencil stroke: its ink, and whether it is sketched.
+ * A pencil stroke: its brush leads, then its ink, and whether it is sketched.
  *
  * Sketching redraws it from its centreline as a line gone over twice, which is
  * a second way to draw rather than a filter over the first.
  */
-export const FreehandRail: SingleRail<PathNode> = ({ node, subject, conditional, tail, tailControls }) => {
+export const FreehandRail: SingleRail<PathNode> = ({ node, conditional, tail, tailControls }) => {
   const { appearance, setAppearance } = appearanceOf(node);
-  const kind = kindOf(node, subject);
   return (
     <RailAnatomy
-      kind={<KindLabel icon={kind.icon} name={kind.name} />}
+      kind={<BrushControl node={node} />}
+      kindControls={1}
       paint={<StrokeControl appearance={appearance} width={drawnStrokeWidth(node)} onChange={setAppearance} />}
       paintControls={1}
       verbs={[

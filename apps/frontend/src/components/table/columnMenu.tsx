@@ -88,6 +88,11 @@ export interface ColumnMenuContext {
   fit?: () => void;
   /** Where filtering happens: a panel of its own, given the column. */
   filterPanel: (close: () => void) => React.ReactNode;
+  /**
+   * Sort and filter only — the person's own view, which writes nothing — for
+   * somebody who may read the table but not change it.
+   */
+  readOnly?: boolean;
 }
 
 /** A column's name for a menu: its heading, or its letter. */
@@ -96,7 +101,7 @@ export function columnName(spec: TableSpec, c: number): string {
   return head || `Column ${columnLetter(c)}`;
 }
 
-export function columnMenuEntries({ spec, col, apply, fit, filterPanel }: ColumnMenuContext): MenuEntry[] {
+export function columnMenuEntries({ spec, col, apply, fit, filterPanel, readOnly }: ColumnMenuContext): MenuEntry[] {
   const column = spec.columns[col];
   const type = column?.type ?? 'text';
   const sorted = spec.sort?.col === col ? spec.sort.dir : null;
@@ -152,6 +157,38 @@ export function columnMenuEntries({ spec, col, apply, fit, filterPanel }: Column
       })
     ),
   ];
+
+  const viewEntries: MenuEntry[] = [
+    {
+      kind: 'item',
+      id: 'sort-asc',
+      label: numericSort ? 'Sort smallest first' : 'Sort A → Z',
+      icon: <ArrowUpNarrowWide size={I} />,
+      ...current(sorted === 'asc'),
+      onSelect: () => apply({ ...spec, sort: sorted === 'asc' ? undefined : { col, dir: 'asc' } }),
+    },
+    {
+      kind: 'item',
+      id: 'sort-desc',
+      label: numericSort ? 'Sort largest first' : 'Sort Z → A',
+      icon: <ArrowDownWideNarrow size={I} />,
+      ...current(sorted === 'desc'),
+      onSelect: () => apply({ ...spec, sort: sorted === 'desc' ? undefined : { col, dir: 'desc' } }),
+    },
+    { kind: 'submenu', id: 'filter', label: filtered ? 'Filter · on' : 'Filter by this column…', icon: <Funnel size={I} />, panel: filterPanel },
+    ...(filtered
+      ? [
+          {
+            kind: 'item',
+            id: 'filter-clear',
+            label: 'Clear filter',
+            icon: <FunnelX size={I} />,
+            onSelect: () => apply(M.setFilter(spec, col, null)),
+          } as MenuEntry,
+        ]
+      : []),
+  ];
+  if (readOnly) return [{ kind: 'heading', id: 'head', label: columnName(spec, col) }, ...viewEntries];
 
   return [
     { kind: 'heading', id: 'head', label: columnName(spec, col) },

@@ -18,6 +18,7 @@ import { registerMediaRoutes } from './routes/media';
 import { registerRoomRoutes } from './routes/rooms';
 import { adminCheck, registerAdminRoutes } from './routes/admin';
 import { registerStatusRoutes, type LiveReader } from './routes/status';
+import { registerMusicRoutes } from './routes/music';
 import { logger } from './observability';
 
 /**
@@ -80,7 +81,9 @@ export function createApp(deps: AppDeps): Express {
       },
       credentials: true,
       methods: ['GET', 'HEAD', 'PUT', 'POST', 'DELETE', 'OPTIONS'],
-      allowedHeaders: ['Content-Type', 'Authorization', 'X-Requested-With', 'X-Session-Token', 'X-Invite-Token'],
+      allowedHeaders: ['Content-Type', 'Authorization', 'X-Requested-With', 'X-Session-Token', 'X-Invite-Token', 'Range'],
+      // The music player seeks with range requests and reads their answers.
+      exposedHeaders: ['Content-Range', 'Accept-Ranges', 'Content-Length'],
       maxAge: 86400,
     })
   );
@@ -170,6 +173,12 @@ export function createApp(deps: AppDeps): Express {
     limiter: rateLimit(20, 0.4, redis, 'rl:status'),
     minRoomIdLength: config.minRoomIdLength,
     live: deps.live,
+  });
+
+  registerMusicRoutes(app, {
+    s3: deps.s3,
+    bucket: deps.bucket,
+    limiter: rateLimit(240, 8, redis, 'rl:music'),
   });
 
   registerShareRoutes(app, {

@@ -37,6 +37,24 @@
   overflow-y: auto;
 }
 
+/* The windowed list: the outer box is the whole list's height, so the
+   scrollbar is honest; the slice holds only the rows in view, moved down to
+   where they sit. Both measures arrive as custom properties. */
+.layers-window {
+  position: relative;
+  height: var(--window-h, auto);
+}
+
+.layers-window__slice {
+  transform: translateY(var(--window-top, 0));
+}
+
+/* Someone else editing this object: their colour, and an ink chosen against it. */
+.layers-panel .layer-row__editing {
+  background: var(--editor, var(--surface-active));
+  color: var(--editor-ink, var(--text-primary));
+}
+
 /* ── Rows ────────────────────────────────────────────────────────────────── */
 
 /* Every row is the same height, which is what lets the list be windowed. The
@@ -296,7 +314,7 @@
 }
 
 .frame-thumb__paper {
-  fill: var(--surface-primary);
+  fill: var(--paper, var(--surface-primary));
   stroke: var(--border-strong);
   stroke-width: 1;
 }

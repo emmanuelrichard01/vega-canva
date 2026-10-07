@@ -1,8 +1,22 @@
 import React from 'react';
-import type { DemoId } from '../../engine/learn/lessons';
+import type { DemoId, LegacyDemoId } from '../../engine/learn/lessons';
+import { isScripted } from '../../engine/learn/demoScript';
+import { ScriptedDemo } from './ScriptedDemo';
 
 /**
  * The gesture, drawn and looping.
+ *
+ * ## Two kinds of demo, and which is which
+ *
+ * Lessons whose gesture happens over time (a stroke that snaps when you hold
+ * still, a chain growing on Tab, a column filling from a corner) are scripted:
+ * `ScriptedDemo` plays them from one clock with a ghost pointer and keycaps, and
+ * they can be paused, scrubbed and shown as a three-frame storyboard under
+ * reduced motion. Those are in `engine/learn/demoScript` and `scenes`.
+ *
+ * What is left in this file are the older loops, drawn as CSS keyframes. They
+ * stay for the lessons whose gesture has not changed, and move to a script the
+ * next time their lesson does.
  *
  * ## Why a drawing rather than a recording
  *
@@ -16,25 +30,14 @@ import type { DemoId } from '../../engine/learn/lessons';
  * the gesture rather than the pixels of one particular board, so nothing here
  * goes stale when a panel moves.
  *
- * ## Why six scenes and not seventeen
- *
- * Several lessons are the same gesture underneath: clicking a run of points
- * builds a line and builds a path. One drawing per lesson would be seventeen
- * things to keep true, most of them near-duplicates, and the near-duplicates
- * are what drift. So there are six, for the six gestures nobody can guess, and
- * a lesson with no demo is one whose steps carry it alone.
- *
  * An animation that adds nothing is worse than none. It takes the eye first,
  * and then does not repay it.
  *
- * ## Why the motion is CSS
+ * ## Why the motion here is CSS
  *
- * No timer, no animation frame, no state. A coach mark can be on screen for
- * several minutes while somebody works, and a React loop ticking behind it
- * would be re-rendering a decoration over a canvas that needs the frame. CSS
- * keyframes run off the main thread and stop dead under
- * `prefers-reduced-motion`, which is handled once in the stylesheet rather than
- * in every scene here.
+ * No timer, no animation frame, no state. CSS keyframes run off the main thread
+ * and stop dead under `prefers-reduced-motion`, which is handled once in the
+ * stylesheet rather than in every scene here.
  */
 
 const VIEW = { w: 168, h: 96 };
@@ -93,57 +96,6 @@ const RouteDemo: React.FC = () => (
 );
 
 /**
- * Pictures landing in the modules of a grid.
- *
- * The point being made is *cover*: each tile arrives at a different shape and
- * leaves filling its module edge to edge, because "cropped to fit rather than
- * squashed to fit" is a sentence that only lands once you have seen it happen.
- */
-const FillGridDemo: React.FC = () => (
-  <svg viewBox={`0 0 ${VIEW.w} ${VIEW.h}`} className="demo" aria-hidden="true">
-    {/* The empty modules, which stay put. A grid's frame never moves; only
-        what is in it does. */}
-    {[
-      [30, 20, 48, 30],
-      [86, 20, 52, 30],
-      [30, 58, 52, 22],
-      [90, 58, 48, 22],
-    ].map(([x, y, w, h], i) => (
-      <rect
-        key={i}
-        x={x}
-        y={y}
-        width={w}
-        height={h}
-        rx="4"
-        fill="none"
-        stroke="var(--border-strong)"
-        strokeWidth="1.5"
-        strokeDasharray="3 3"
-      />
-    ))}
-    {[
-      [30, 20, 48, 30],
-      [86, 20, 52, 30],
-      [30, 58, 52, 22],
-      [90, 58, 48, 22],
-    ].map(([x, y, w, h], i) => (
-      <rect
-        key={`f${i}`}
-        className={`demo__tile demo__tile--${i}`}
-        x={x}
-        y={y}
-        width={w}
-        height={h}
-        rx="4"
-        fill="var(--accent)"
-        opacity={0.85 - i * 0.14}
-      />
-    ))}
-  </svg>
-);
-
-/**
  * A picture moving inside a frame that does not move.
  *
  * The whole idea of reframing in a module, in one loop: the outer rectangle is
@@ -184,48 +136,6 @@ const ReframeDemo: React.FC = () => (
 );
 
 /**
- * A box being moved, and the arrow keeping hold of it.
- *
- * A connector's claim is entirely about what happens *later*, so the demo has
- * to show the later: one box walks away and the arrow re-aims rather than
- * stretching off into nothing.
- *
- * ## Why the target swings on an arc
- *
- * The first version translated the box, the line and the head as one group,
- * which moved all three together and therefore demonstrated nothing at all:
- * the arrow did not follow the box, it *was* the box. Redrawing a line between
- * a fixed point and a moving one needs the endpoint recomputed, and SVG
- * geometry attributes are not reliably animatable from CSS.
- *
- * Swinging the whole assembly about the source's edge is the same picture with
- * arithmetic that CSS can do. The link is a fixed length because the target
- * stays a fixed distance away, so a rotation is exact rather than an
- * approximation, and what you see is an arrow re-aiming at a box that has
- * moved. The slight tilt the box picks up reads as being dragged, which is
- * what is happening.
- */
-const BindDemo: React.FC = () => (
-  <svg viewBox={`0 0 ${VIEW.w} ${VIEW.h}`} className="demo" aria-hidden="true">
-    {/* The end that does not move, so there is something to move relative to. */}
-    <rect x="14" y="34" width="42" height="28" rx="5" fill="var(--text-primary)" opacity="0.18" />
-
-    <g className="demo__swing">
-      <path
-        className="demo__link"
-        d="M56 48 L100 48"
-        stroke="var(--text-primary)"
-        strokeWidth="2.2"
-        strokeLinecap="round"
-        fill="none"
-      />
-      <path d="M100 48 L92 44.4 L92 51.6 Z" fill="var(--text-primary)" />
-      <rect x="100" y="34" width="44" height="28" rx="5" fill="var(--accent)" opacity="0.9" />
-    </g>
-  </svg>
-);
-
-/**
  * A field passing over a scatter of objects.
  *
  * The ring is the subject, not the dots. "That circle is exactly how far the
@@ -255,31 +165,6 @@ const FieldDemo: React.FC = () => (
       strokeDasharray="4 4"
     />
     <Cursor className="demo__cursor demo__cursor--field" />
-  </svg>
-);
-
-/**
- * Notes appearing one after another, in a row.
- *
- * The gesture is a keystroke, which cannot be drawn, so what is drawn is the
- * *rate*: four notes arriving faster than anyone could place them by hand,
- * which is the actual claim being made about Tab.
- */
-const ChainDemo: React.FC = () => (
-  <svg viewBox={`0 0 ${VIEW.w} ${VIEW.h}`} className="demo" aria-hidden="true">
-    {[0, 1, 2, 3].map((i) => (
-      <rect
-        key={i}
-        className={`demo__note demo__note--${i}`}
-        x={20 + i * 34}
-        y={34}
-        width="28"
-        height="28"
-        rx="3"
-        fill="var(--accent)"
-        opacity={0.9 - i * 0.12}
-      />
-    ))}
   </svg>
 );
 
@@ -522,13 +407,10 @@ const CodeShapesDemo: React.FC = () => (
   </svg>
 );
 
-const SCENES: Record<DemoId, React.FC> = {
+const SCENES: Record<LegacyDemoId, React.FC> = {
   route: RouteDemo,
-  'fill-grid': FillGridDemo,
   reframe: ReframeDemo,
-  bind: BindDemo,
   field: FieldDemo,
-  chain: ChainDemo,
   boolean: BooleanDemo,
   pen: PenDemo,
   sizing: SizingDemo,
@@ -536,7 +418,20 @@ const SCENES: Record<DemoId, React.FC> = {
   'code-shapes': CodeShapesDemo,
 };
 
-export const LessonDemo: React.FC<{ demo: DemoId }> = ({ demo }) => {
+interface Props {
+  demo: DemoId;
+  /** Stop a scripted demo on its result after this many loops. See `ScriptedDemo`. */
+  maxLoops?: number;
+}
+
+export const LessonDemo: React.FC<Props> = ({ demo, maxLoops }) => {
+  if (isScripted(demo)) {
+    return (
+      <div className="demo-stage demo-stage--live">
+        <ScriptedDemo id={demo} maxLoops={maxLoops} />
+      </div>
+    );
+  }
   const Scene = SCENES[demo];
   if (!Scene) return null;
   return (

@@ -17,11 +17,18 @@ export interface MediaHandlers {
   pause: () => void;
   next?: () => void;
   previous?: () => void;
+  /** Seconds; offered only by sources that can seek. */
+  seekTo?: (seconds: number) => void;
+}
+
+export interface MediaPosition {
+  position: number;
+  duration: number;
 }
 
 const session = (): MediaSession | null => (typeof navigator !== 'undefined' && 'mediaSession' in navigator ? navigator.mediaSession : null);
 
-export function publishMedia(info: MediaInfo, handlers: MediaHandlers, playing: boolean): void {
+export function publishMedia(info: MediaInfo, handlers: MediaHandlers, playing: boolean, position?: MediaPosition): void {
   const ms = session();
   if (!ms || typeof MediaMetadata === 'undefined') return;
   try {
@@ -38,6 +45,17 @@ export function publishMedia(info: MediaInfo, handlers: MediaHandlers, playing: 
     ms.setActionHandler('previoustrack', handlers.previous ?? null);
   } catch {
     // Some browsers reject individual actions; the rest still work.
+  }
+  try {
+    const seek = handlers.seekTo;
+    ms.setActionHandler('seekto', seek ? (d) => d.seekTime !== undefined && seek(d.seekTime) : null);
+    if (position && position.duration > 0 && 'setPositionState' in ms) {
+      ms.setPositionState({ duration: position.duration, position: Math.min(position.duration, Math.max(0, position.position)), playbackRate: 1 });
+    } else if ('setPositionState' in ms) {
+      ms.setPositionState();
+    }
+  } catch {
+    // Older browsers have no seek action or position state.
   }
 }
 

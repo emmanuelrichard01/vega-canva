@@ -531,3 +531,35 @@ export function presentationOrder<
   rows.sort((a, b) => a.top - b.top);
   return rows.flatMap((r) => r.items.sort((a, b) => a.x - b.x || (a.id < b.id ? -1 : a.id > b.id ? 1 : 0)));
 }
+
+/**
+ * The frames a presentation walks: visible top-level frames only.
+ *
+ * A frame nested inside another is part of that slide, not a slide of its own.
+ */
+export function presentableFrames<T extends { type: string; hidden?: boolean; frameId?: string }>(
+  nodes: readonly T[]
+): Array<T & { type: 'frame' }> {
+  return nodes.filter((n): n is T & { type: 'frame' } => n.type === 'frame' && !n.hidden && !n.frameId);
+}
+
+/**
+ * The camera pose that fits `box` in a stage of `stage` size with `padding`
+ * on every side. `x`/`y` are stage-space offsets, the camera's own convention,
+ * so the box lands centred in the stage.
+ */
+export function slidePose(
+  box: { x: number; y: number; width: number; height: number },
+  stage: { width: number; height: number },
+  padding: number
+): { x: number; y: number; zoom: number } {
+  const zoom = Math.min(
+    Math.max(1, stage.width - padding * 2) / Math.max(1, box.width),
+    Math.max(1, stage.height - padding * 2) / Math.max(1, box.height)
+  );
+  return {
+    zoom,
+    x: stage.width / 2 - (box.x + box.width / 2) * zoom,
+    y: stage.height / 2 - (box.y + box.height / 2) * zoom,
+  };
+}

@@ -69,8 +69,8 @@ import type { AnyNode, NodeType } from '../model/schema';
  * teaches nothing, and that is the specific weakness this replaces.
  */
 export type Observation =
-  /** A node of this type that was not there when the step began. */
-  | { of: 'created'; type: NodeType }
+  /** Nodes of this type that were not there when the step began (one unless `min` says more). */
+  | { of: 'created'; type: NodeType; min?: number }
   /** A new line or path with at least this many vertices. Proves a route. */
   | { of: 'vertices'; min: number }
   /** A new connector with both ends bound to an object. */
@@ -99,7 +99,24 @@ export type Observation =
    * because the claim is precisely that the arrows were never given
    * coordinates.
    */
-  | { of: 'moved' };
+  | { of: 'moved' }
+  /**
+   * A node that is a different size than when the step began.
+   *
+   * For "fit the frame to what it holds", which changes nothing but a frame's
+   * box. Restricted to nodes already present, for the reason `moved` is.
+   */
+  | { of: 'resized' }
+  /** A chart made since the step began that reads its numbers from a table. */
+  | { of: 'linked' }
+  /**
+   * The board is being presented right now.
+   *
+   * The one observation that is about a mode rather than the document, because
+   * presenting writes nothing: the only evidence that somebody did it is that
+   * it is happening.
+   */
+  | { of: 'presented' };
 
 /**
  * What the board looked like when a step began.
@@ -124,23 +141,29 @@ export interface Digest {
    * per node is the least that can answer "has anything moved".
    */
   at: ReadonlyMap<string, string>;
+  /** And how big each was, as `"w,h"`, for the one step that is about size. */
+  size: ReadonlyMap<string, string>;
 }
 
 export interface Snapshot {
   objects: Readonly<Record<string, AnyNode>>;
   selected: readonly string[];
+  /** Whether the frames are being presented. Absent counts as no. */
+  presenting?: boolean;
 }
 
 export function digest(objects: Readonly<Record<string, AnyNode>>): Digest {
   const ids = new Set<string>();
   const framed = new Set<string>();
   const at = new Map<string, string>();
+  const size = new Map<string, string>();
   for (const [id, node] of Object.entries(objects)) {
     ids.add(id);
     if (node.frameId) framed.add(id);
     at.set(id, `${Math.round(node.x)},${Math.round(node.y)}`);
+    size.set(id, `${Math.round(node.width)},${Math.round(node.height)}`);
   }
-  return { ids, framed, at };
+  return { ids, framed, at, size };
 }
 
 /** The nodes that have appeared since the digest was taken. */
@@ -159,7 +182,7 @@ function fresh(now: Snapshot, before: Digest): AnyNode[] {
 export function satisfied(observe: Observation, before: Digest, now: Snapshot): boolean {
   switch (observe.of) {
     case 'created':
-      return fresh(now, before).some((n) => n.type === observe.type);
+      return fresh(now, before).filter((n) => n.type === observe.type).length >= (observe.min ?? 1);
 
     case 'vertices':
       /**
@@ -204,6 +227,19 @@ export function satisfied(observe: Observation, before: Digest, now: Snapshot): 
        * card filling itself in.
        */
       return fresh(now, before).some((n) => n.type === 'link' && n.link?.status === 'ready');
+
+    case 'resized':
+      return Object.entries(now.objects).some(([id, node]) => {
+        if (node.type === 'connector') return false;
+        const was = before.size.get(id);
+        return was !== undefined && was !== `${Math.round(node.width)},${Math.round(node.height)}`;
+      });
+
+    case 'linked':
+      return fresh(now, before).some((n) => n.type === 'chart' && Boolean(n.chart?.link));
+
+    case 'presented':
+      return Boolean(now.presenting);
 
     case 'moved':
       /**
@@ -289,8 +325,11 @@ export const WALKTHROUGHS: readonly Walkthrough[] = [
     lesson: 'connector-bind',
     tool: 'connector',
     steps: [
+      // From a magnet, then from the keyboard. Both leave the same fact, a
+      // connector with both ends bound, so the second step is told apart from
+      // the first only by being a new one.
       { step: 0, observe: { of: 'connected' } },
-      { step: 3, observe: { of: 'selected', min: 1 } },
+      { step: 1, observe: { of: 'connected' } },
     ],
   },
   {
@@ -367,7 +406,73 @@ export const WALKTHROUGHS: readonly Walkthrough[] = [
   },
 ];
 
-const BY_LESSON = new Map(WALKTHROUGHS.map((w) => [w.lesson, w]));
+/**
+ * The recipes, performed.
+ *
+ * A recipe is a lesson whose steps are about *making something* with several
+ * tools, and the walkthrough that performs it is no different in kind: the
+ * words live in the lesson, each step names the observation that proves it.
+ *
+ * A recipe step that cannot be observed is left out of the sequence rather than
+ * faked, and its words stay in the lesson as advice. `recipe-live-chart` ends at
+ * the link for that reason: "drag a bar" is a fact about the chart's spec that
+ * nothing here can tell apart from any other edit.
+ */
+export const RECIPE_WALKTHROUGHS: readonly Walkthrough[] = [
+  {
+    lesson: 'recipe-flowchart',
+    tool: 'shape',
+    steps: [
+      { step: 0, observe: { of: 'created', type: 'shape' } },
+      { step: 1, observe: { of: 'connected' } },
+      // Two more presses, two more connectors. The step began after the first
+      // one, so those are the only ones it counts.
+      { step: 2, observe: { of: 'created', type: 'connector', min: 2 } },
+      { step: 3, observe: { of: 'moved' } },
+    ],
+  },
+  {
+    lesson: 'recipe-live-chart',
+    tool: 'table',
+    steps: [
+      { step: 0, observe: { of: 'created', type: 'table' } },
+      { step: 1, observe: { of: 'linked' } },
+    ],
+  },
+  {
+    lesson: 'recipe-bento',
+    tool: 'shape',
+    steps: [
+      { step: 0, observe: { of: 'created', type: 'shape', min: 4 } },
+      { step: 1, observe: { of: 'selected', min: 4 } },
+      { step: 2, observe: { of: 'created', type: 'grid' } },
+    ],
+  },
+  {
+    lesson: 'recipe-retro',
+    tool: 'sticky',
+    steps: [
+      { step: 0, observe: { of: 'created', type: 'sticky', min: 2 } },
+      { step: 1, observe: { of: 'selected', min: 3 } },
+      { step: 2, observe: { of: 'moved' } },
+    ],
+  },
+  {
+    lesson: 'recipe-present',
+    tool: 'frame',
+    steps: [
+      { step: 0, observe: { of: 'created', type: 'frame', min: 2 } },
+      { step: 1, observe: { of: 'framed' } },
+      { step: 2, observe: { of: 'resized' } },
+      { step: 3, observe: { of: 'presented' } },
+    ],
+  },
+];
+
+/** Every walkthrough, recipes included. */
+export const ALL_WALKTHROUGHS: readonly Walkthrough[] = [...WALKTHROUGHS, ...RECIPE_WALKTHROUGHS];
+
+const BY_LESSON = new Map(ALL_WALKTHROUGHS.map((w) => [w.lesson, w]));
 
 /** The walkthrough for a lesson, if that lesson has one. */
 export const walkthroughFor = (lessonId: string): Walkthrough | undefined =>

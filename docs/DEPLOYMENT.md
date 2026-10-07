@@ -350,26 +350,150 @@ the system.
 
 ---
 
-## 9. Music: built-in stations and Spotify
+## 9. Music: stations and Spotify
 
-The six built-in stations (Acoustic Ambient, Peaceful Piano, Lo-fi, Synth,
-House, Retro) are generated in the browser with Web Audio. They need no
-configuration, download nothing, and carry no licensing obligations.
+The player opens from the record beside your avatar in the board header (and
+in the collapsed header pill), or from the board menu's **Music…** item. It has
+two sources: the stations and, optionally, Spotify.
 
-Spotify is optional. To enable it:
+### Stations: recorded tracks
+
+The six stations (Acoustic Ambient, Peaceful Piano, Lo-fi, Synth, House,
+Retro) play recorded tracks listed in a manifest, one station per category.
+Nothing is synthesised and nothing is bundled into the frontend: tracks
+stream on demand. If the manifest cannot be loaded (offline, server down, a
+broken manifest) the player says "Music is unavailable right now" with a Try
+again button; a station with no tracks says so and offers to check again.
+
+**Where they come from.** By default the frontend reads
+`<VITE_API_URL>/music/v1/manifest.json`, served by the server's music route
+(`apps/server/src/routes/music.ts`) from the private bucket's `music/v1/`
+prefix. The route supports Range requests (206), sends CORS headers that
+expose `Content-Range`, `Accept-Ranges` and `Content-Length`, caches tracks for
+a year as immutable and the manifest for five minutes. To serve the files
+from a CDN instead, set `VITE_MUSIC_BASE_URL` to the folder that holds
+`manifest.json` (or `VITE_MUSIC_MANIFEST_URL` to the manifest itself). Either
+host must send CORS headers: the player decodes tracks with Web Audio, which
+reads them with `fetch(..., { mode: 'cors', credentials: 'omit' })` and streams
+first plays through an `<audio crossOrigin="anonymous">` element. Without CORS
+the tracks still play, but without gapless transitions.
+
+**Upload layout.** One folder per category under a versioned prefix. Tracks
+are immutable: to replace one, upload under a new name (or a new `v<n>`
+prefix) and update the manifest.
+
+```
+music/v1/manifest.json
+music/v1/ambient/aylex-innovating-care.m4a
+music/v1/piano/pufino-enlivening.m4a
+music/v1/lofi/…   music/v1/synth/…   music/v1/house/…   music/v1/retro/…
+```
+
+The server route accepts only `music/v<n>/manifest.json` and
+`music/v<n>/<category>/<slug>.m4a` (lowercase slugs), so nothing else in the
+bucket is reachable.
+
+**Manifest format.**
+
+```json
+{
+  "version": 1,
+  "tracks": [
+    {
+      "id": "ambient-aylex-innovating-care",
+      "category": "ambient",
+      "title": "Innovating Care",
+      "artist": "Aylex",
+      "duration": 151.4,
+      "url": "ambient/aylex-innovating-care.m4a",
+      "artwork": null,
+      "licence": "Free To Use (freetouse.com). Credit: \"Music track: Innovating Care by Aylex. Source: https://freetouse.com/music\""
+    }
+  ]
+}
+```
+
+- `category` is one of `ambient`, `piano`, `lofi`, `synth`, `house`, `retro`,
+  the six stations. Other lowercase slugs work and appear as extra stations
+  with a title-cased name.
+- `artwork` is optional. Without it, the station's own drawn cover is used.
+- `url` and `artwork` resolve against the manifest's own address; only
+  `https:` (or `http:` from an `http:` manifest, for local work) is accepted.
+- `duration` is in seconds; `title`, `url` and `licence` are required.
+- **`licence` is required and must carry the credit.** The player shows
+  "Music: Title by Artist · Source" under whatever is playing and lists every
+  track under **Credits**. freetouse.com tracks require that attribution;
+  Pixabay tracks are credited with title, artist and "Pixabay". The source is
+  recognised from the licence text, and its first `https://` link is used.
+- A bad entry is skipped and reported in the console; the rest still load.
+
+**Encoding.** Match the supplied set:
+AAC-LC 128 kbps in `.m4a`, 44.1 kHz stereo, `-movflags +faststart` (the index
+first, so playback starts before the download finishes), loudness-normalised
+to -16 LUFS integrated with a -1.5 dBTP true-peak limit. For example:
+
+```
+ffmpeg -i in.wav -af loudnorm=I=-16:TP=-1.5:LRA=11 -ar 44100 \
+  -c:a aac -b:a 128k -movflags +faststart out.m4a
+```
+
+Keep the MP4 edit list ffmpeg writes: the player reads it to trim the
+encoder's priming and padding samples, which is what makes loops gapless.
+
+**How playback stays seamless.** The first play of a track streams through
+`<audio>` so it starts at once; meanwhile the whole file is fetched and
+decoded. Every later transition plays decoded buffers scheduled on the audio
+clock: a 5 s equal-power crossfade between tracks, a 3 s crossfade when a
+single-track station (Peaceful Piano, Synth and Retro in the supplied set)
+loops into its own start. Fades are placed where the music is at its
+typical level: after any silence or quiet intro of the incoming track, and
+before the outgoing track's fading tail. The next track is fetched as
+soon as the current one starts and decoded once its transition is within
+about 30 s; a transition is committed to the audio clock 12 s ahead, so a
+throttled background tab still crossfades. If the next track is not ready by
+3 s before the fade, the current one loops while the download retries. A
+download that makes no progress for 25 s is abandoned and retried, and at most
+one track is decoded at a time. Decoded audio is about 10 MB a minute at
+48 kHz (about 6.5 MB at the 32 kHz the player uses when the browser reports
+4 GB of memory or less); only the current and next track are decoded and held,
+plus the compressed bytes of the next one until it is decoded. If the browser
+suspends the audio (a call, another app, a frozen tab) the player resumes it
+and re-plans the transition, and shows Paused if it cannot. Only one tab plays
+at a time: starting music in a tab pauses the others.
+
+**Local preview.** Serve a folder with `manifest.json` and the category
+folders with CORS and Range support, for example
+`npx http-server <folder> -p 8090 --cors`, and build with
+`VITE_MUSIC_BASE_URL=http://127.0.0.1:8090`.
+
+### Spotify
+
+Spotify is optional. With `VITE_SPOTIFY_CLIENT_ID` unset, the Spotify tab says
+it is not set up and the stations work as usual. To enable it:
 
 1. Create an app at <https://developer.spotify.com/dashboard>. Select **Web API**
    and **Web Playback SDK**.
-2. Under **Redirect URIs**, register one entry per origin the frontend is served
-   from, each ending in `/spotify-callback`. Spotify matches them exactly:
-   - `https://your-domain.example/spotify-callback`
+2. Under **Redirect URIs**, register these exactly (no trailing slash):
+   - `https://vscanva.vercel.app/spotify-callback` (production; `vercel.json`'s
+     SPA rewrite serves the app there).
    - `http://127.0.0.1:5173/spotify-callback` for local development. Spotify no
-     longer accepts `localhost`; use the loopback IP and open the app on it.
+     longer accepts `localhost`. The dev server listens on 127.0.0.1; if the app
+     is opened at `localhost` anyway, Connect moves to the same page on
+     127.0.0.1 by itself (carrying `?spotify=connect`, which is removed on
+     arrival) and starts sign-in there, because the verifier and state live in
+     that origin's sessionStorage. People never see this.
    - Preview deployments each need their own entry, or set
-     `VITE_SPOTIFY_REDIRECT_URI` to one fixed origin.
+     `VITE_SPOTIFY_REDIRECT_URI` to one fixed origin and open previews there.
 3. Set `VITE_SPOTIFY_CLIENT_ID` (and optionally `VITE_SPOTIFY_REDIRECT_URI`)
    where the frontend is built, then rebuild. Both values are public; there is
    no client secret, because sign-in uses Authorization Code with PKCE.
+
+The scopes requested are `playlist-read-private playlist-read-collaborative
+user-library-read user-read-playback-state user-modify-playback-state
+streaming user-read-email user-read-private`.
+
+Without `VITE_SPOTIFY_CLIENT_ID` the Spotify tab is hidden in production
+builds; development builds show "Spotify isn't configured".
 
 **Development mode limit.** A new Spotify app runs in development mode: only
 the Spotify accounts you list under **User Management** (25 at most) can
@@ -378,11 +502,29 @@ applying for extended quota in the dashboard.
 
 **What plays where.**
 - Premium accounts play in the tab through the Web Playback SDK, which loads
-  from `sdk.scdn.co` on first use.
-- Other accounts play on a device where Spotify is already open, through the
-  Connect API.
-- With no device available, the player falls back to Spotify's embed player,
-  which plays previews.
+  from `sdk.scdn.co` on first use. A grant without the `streaming` scope plays
+  elsewhere and the player offers to reconnect.
+- If the SDK cannot start, Premium accounts play on a device where Spotify is
+  already open, through the Connect API. Spotify allows playback control for
+  Premium only.
+- Free accounts, and anyone with no device available, get Spotify's embed
+  player, which plays previews. The player says which of these is happening
+  and why.
+
+**Errors people see.** A cancelled consent, a sign-in that cannot be verified
+(state mismatch), an expired code, and a 403 for an account missing from a
+limited-access app's allowlist ("This Spotify app is in limited access. Ask the
+board owner to add your Spotify account.") each get a plain message and a way
+to try again. An expired token refreshes on its own, including after a 401; a
+refresh Spotify refuses (`invalid_grant`, or a 400/401 from the token endpoint)
+signs the tab out, while being offline or a 5xx keeps the tokens and tries
+again on the next call.
+
+**Pause, resume and volume.** Pause then Space continues in place (the SDK's
+`resume()`, or `PUT /me/player/play` with no body on a device); the playlist
+starts over only when there is nothing to continue. The volume slider drives
+the in-tab player and a device (`PUT /me/player/volume`). The embed has its
+own volume, and the player says so.
 
 **Tokens.** Access and refresh tokens live in the tab's `sessionStorage`. They
 never reach the board or the server. "Disconnect" forgets them in that tab.

@@ -7,6 +7,8 @@ import { canEditObjects } from '../../engine/model/permissions';
 import { hugBox } from '../../engine/model/frames';
 import { nodeBounds } from '../../engine/model/selection';
 import { applyOrganiseStickies } from '../../engine/tools/organiseStickies';
+import { isPresenting } from '../../engine/tools/presenting';
+import { notify } from '../../engine/ui/notices';
 
 /**
  * Board shortcuts for stickies and frames.
@@ -48,6 +50,8 @@ export function useContentShortcuts({ selectedIds }: { selectedIds: readonly str
 
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
+      // Presenting is read-only, and the presenter owns the keys.
+      if (isPresenting()) return;
       if (e.defaultPrevented || e.repeat) return;
       if (keyBelongsToFocus(e.key)) return;
       const ids = selectedRef.current;
@@ -93,7 +97,19 @@ export function useContentShortcuts({ selectedIds }: { selectedIds: readonly str
         const frames = selected.filter((n): n is FrameNode => n.type === 'frame');
         if (frames.length === 0) return;
         claim();
-        resizeFramesToFit(frames, all);
+        if (resizeFramesToFit(frames, all) === 0) {
+          const empty = frames.every((f) => !Object.values(all).some((n) => n.frameId === f.id));
+          notify({
+            tone: 'info',
+            message: empty
+              ? frames.length > 1
+                ? 'These frames are empty, so there is nothing to fit.'
+                : 'This frame is empty, so there is nothing to fit.'
+              : frames.length > 1
+                ? 'These frames already fit what they hold.'
+                : 'This frame already fits what it holds.',
+          });
+        }
       }
     };
     window.addEventListener('keydown', onKey, true);

@@ -1,5 +1,6 @@
 import type { AnyNode } from '../model/schema';
 import { compareStacking } from '../model/stacking';
+import { spatialIndex } from '../SpatialIndex';
 import { marqueeHits } from './marquee';
 
 /**
@@ -21,6 +22,21 @@ export function stackAt(nodes: Iterable<AnyNode>, x: number, y: number, toleranc
     .sort(compareStacking)
     .reverse()
     .map((n) => n.id);
+}
+
+/**
+ * `stackAt` against the live board, asking the spatial index for the few
+ * objects near the point rather than walking every object on every pointer
+ * move. Only those candidates are tested and sorted.
+ */
+export function stackAtPoint(x: number, y: number, tolerance = 0): string[] {
+  const candidates = spatialIndex.query({
+    minX: x - tolerance,
+    minY: y - tolerance,
+    maxX: x + tolerance,
+    maxY: y + tolerance,
+  });
+  return stackAt(candidates, x, y, tolerance);
 }
 
 /**

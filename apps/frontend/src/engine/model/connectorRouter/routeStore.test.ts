@@ -6,7 +6,7 @@ import { nodeRect } from './obstacles';
 import { intersects, type Rect } from './geometry';
 import { routeBoard } from './routeBoard';
 import { attachLookup, boxLookup } from '../connectorTargets';
-import { routeOrthogonalAvoiding, OBSTACLE_MARGIN, type Obstacle } from './router';
+import { routeOrthogonalAvoiding, scratchSizes, OBSTACLE_MARGIN, type Obstacle } from './router';
 import { inflate } from './geometry';
 
 function shape(id: string, x: number, y: number, w = 100, h = 60): AnyNode {
@@ -197,6 +197,72 @@ describe('RouteStore', () => {
   });
 });
 
+describe('RouteStore determinism', () => {
+  function crowd(): Record<string, AnyNode> {
+    const objects: Record<string, AnyNode> = {};
+    for (let i = 0; i < 24; i += 1) objects[`n${i}`] = shape(`n${i}`, (i % 6) * 170, Math.floor(i / 6) * 150);
+    for (let i = 0; i < 14; i += 1) {
+      const from = `n${(i * 5) % 24}`;
+      const to = `n${(i * 7 + 11) % 24}`;
+      if (from === to) continue;
+      objects[`k${i}`] = connector(`k${i}`, from, to, {
+        from: { nodeId: from, port: 'auto' },
+        to: { nodeId: to, port: 'auto' },
+        routing: i % 4 === 3 ? 'curved' : 'orthogonal',
+        zIndex: i,
+      });
+    }
+    return objects;
+  }
+
+  function settle(objects: Record<string, AnyNode>) {
+    const board = new FakeBoard();
+    board.objects = objects;
+    const store = new RouteStore(board.env());
+    const ids = Object.keys(objects).filter((id) => id.startsWith('k'));
+    for (const id of ids) store.subscribe(id, () => {});
+    store.flush();
+    return { board, store, ids };
+  }
+
+  it('draws the same board whatever order the document lists objects in', () => {
+    const objects = crowd();
+    const shuffled: Record<string, AnyNode> = {};
+    const keys = Object.keys(objects);
+    for (let i = 0; i < keys.length; i += 1) {
+      const k = keys[(i * 7) % keys.length];
+      shuffled[k] = objects[k];
+    }
+    const a = settle(objects);
+    const b = settle(shuffled);
+    for (const id of a.ids) {
+      expect(JSON.stringify(b.store.get(id)), id).toBe(JSON.stringify(a.store.get(id)));
+    }
+  });
+
+  it('after a drag, matches routing the final board from scratch', () => {
+    const { board, store, ids } = settle(crowd());
+    for (let f = 0; f < 8; f += 1) {
+      board.move('n8', { x: 2 * 170 + f * 14, y: 150 + f * 9 });
+      board.tick();
+    }
+    // Commit where the drag ended, as the canvas does on release.
+    const committed = { ...board.objects, n8: shape('n8', 2 * 170 + 7 * 14, 150 + 7 * 9) };
+    board.set(committed, ['n8']);
+    board.move('n8', null);
+    store.flush();
+    const snapshot = routeBoard(committed, { boxOf: boxLookup(committed), attachOf: attachLookup(committed) });
+    for (const id of ids) {
+      const live = store.get(id)!;
+      const fresh = snapshot.get(id)!;
+      expect(live.flat, id).toEqual(fresh.points.flatMap((p) => [p.x, p.y]));
+      expect(live.hops.map((h) => [h.seg, Math.round(h.at * 100), h.kind]), id).toEqual(
+        fresh.hops.map((h) => [h.seg, Math.round(h.at * 100), h.kind])
+      );
+    }
+  });
+});
+
 describe('routing cost', () => {
   // Wall-clock limits are not asserted: CI machines share cores. The search
   // size is what the time budget depends on, and it is deterministic.
@@ -257,5 +323,172 @@ describe('routing cost', () => {
     // Ten frames of a drag reroute a small slice of the 80, not the board.
     console.info(`drag: ${routed} reroutes over 10 frames (${bound} bound to the dragged shape)`);
     expect(routed).toBeLessThan(10 * 12);
+  });
+});
+
+describe('RouteStore and routeBoard agree', () => {
+  function crowd(): Record<string, AnyNode> {
+    const objects: Record<string, AnyNode> = {};
+    for (let i = 0; i < 24; i += 1) objects[`n${i}`] = shape(`n${i}`, (i % 6) * 170, Math.floor(i / 6) * 150);
+    for (let i = 0; i < 16; i += 1) {
+      const from = `n${(i * 5) % 24}`;
+      const to = `n${(i * 7 + 11) % 24}`;
+      if (from === to) continue;
+      const id = `k${String(i).padStart(2, '0')}`;
+      objects[id] = connector(id, from, to, {
+        from: { nodeId: from, port: 'auto' },
+        to: { nodeId: to, port: 'auto' },
+        routing: i % 5 === 4 ? 'curved' : 'orthogonal',
+        zIndex: i,
+        // Every third one hidden: neither drawn nor read by the others.
+        hidden: i % 3 === 0,
+      });
+    }
+    return objects;
+  }
+
+  function expectParity(store: RouteStore, objects: Record<string, AnyNode>) {
+    const snapshot = routeBoard(objects, { boxOf: boxLookup(objects), attachOf: attachLookup(objects) });
+    for (const node of Object.values(objects)) {
+      if (node.type !== 'connector') continue;
+      if (node.hidden) {
+        expect(store.get(node.id), node.id).toBeNull();
+        expect(snapshot.has(node.id), node.id).toBe(false);
+        continue;
+      }
+      const live = store.get(node.id)!;
+      const fresh = snapshot.get(node.id)!;
+      expect(live.flat, node.id).toEqual(fresh.points.flatMap((p) => [p.x, p.y]));
+      expect(live.hops.map((h) => [h.seg, Math.round(h.at * 100), h.kind]), node.id).toEqual(
+        fresh.hops.map((h) => [h.seg, Math.round(h.at * 100), h.kind])
+      );
+    }
+  }
+
+  function settled(objects: Record<string, AnyNode>) {
+    const board = new FakeBoard();
+    board.objects = objects;
+    const store = new RouteStore(board.env());
+    for (const id of Object.keys(objects)) if (objects[id].type === 'connector') store.subscribe(id, () => {});
+    store.flush();
+    return { board, store };
+  }
+
+  it('skips hidden connectors exactly as the export does', () => {
+    const { board, store } = settled(crowd());
+    expectParity(store, board.objects);
+  });
+
+  it('still agrees after connectors are hidden and shown again', () => {
+    const { board, store } = settled(crowd());
+    const flipped = { ...board.objects };
+    const ids = ['k00', 'k01', 'k04', 'k07'].filter((id) => flipped[id]);
+    for (const id of ids) flipped[id] = { ...flipped[id], hidden: !flipped[id].hidden } as AnyNode;
+    board.set(flipped, ids);
+    store.flush();
+    expectParity(store, flipped);
+  });
+
+  it('drops a deleted connector even when the change list leaves it out', () => {
+    const { board, store } = settled(crowd());
+    const victim = Object.keys(board.objects).find((id) => id.startsWith('k') && !board.objects[id].hidden)!;
+    const rest = { ...board.objects };
+    delete rest[victim];
+    // A removal reported with `removed: []` and nothing changed.
+    board.set(rest, [], []);
+    store.flush();
+    expect(store.get(victim)).toBeNull();
+    const internals = store as unknown as { entries: Map<string, unknown>; outputs: Map<string, unknown> };
+    expect(internals.entries.has(victim)).toBe(false);
+    expect(internals.outputs.has(victim)).toBe(false);
+    expectParity(store, rest);
+  });
+});
+
+describe('self connectors', () => {
+  const inBox = { minX: 1, minY: 1, maxX: 99, maxY: 59 };
+
+  function routeOf(objects: Record<string, AnyNode>) {
+    const board = new FakeBoard();
+    board.objects = objects;
+    const store = new RouteStore(board.env());
+    store.subscribe('c', () => {});
+    store.flush();
+    return store.get('c')!.points;
+  }
+
+  it('loops out of one side and back into the next one round', () => {
+    const pts = routeOf({
+      a: shape('a', 0, 0),
+      c: connector('c', 'a', 'a', { from: { nodeId: 'a', port: 'auto' }, to: { nodeId: 'a', port: 'auto' } }),
+    });
+    // Out of the right side's middle, heading right; into the top's middle, heading down.
+    expect(pts[0]).toEqual({ x: 100, y: 30 });
+    expect(pts[1].x).toBeGreaterThan(100);
+    expect(pts[pts.length - 1]).toEqual({ x: 50, y: 0 });
+    expect(pts[pts.length - 2].y).toBeLessThan(0);
+    // Never through the box itself.
+    expect(crosses(pts.flatMap((p) => [p.x, p.y]), inBox)).toBe(false);
+  });
+
+  it('draws a loop for a zero-size object too', () => {
+    const pts = routeOf({
+      dot: shape('dot', 40, 40, 0, 0),
+      c: connector('c', 'dot', 'dot', { from: { nodeId: 'dot', port: 'auto' }, to: { nodeId: 'dot', port: 'auto' } }),
+    });
+    expect(pts.length).toBeGreaterThanOrEqual(4);
+    const xs = pts.map((p) => p.x);
+    const ys = pts.map((p) => p.y);
+    // A real loop with some size, not a stub out and back on itself.
+    expect(Math.max(...xs) - Math.min(...xs)).toBeGreaterThan(8);
+    expect(Math.max(...ys) - Math.min(...ys)).toBeGreaterThan(8);
+  });
+
+  it('keeps a named start side and comes back into the side after it, curved as well', () => {
+    const pts = routeOf({
+      a: shape('a', 0, 0),
+      c: connector('c', 'a', 'a', {
+        from: { nodeId: 'a', port: 'bottom' },
+        to: { nodeId: 'a', port: 'auto' },
+        routing: 'curved',
+      }),
+    });
+    expect(pts[0]).toEqual({ x: 50, y: 60 });
+    expect(pts[pts.length - 1]).toEqual({ x: 100, y: 30 });
+    expect(crosses(pts.flatMap((p) => [p.x, p.y]), inBox)).toBe(false);
+  });
+
+  it('draws a straight self connector as the loop, not a line across the box', () => {
+    const pts = routeOf({
+      a: shape('a', 0, 0),
+      c: connector('c', 'a', 'a', { from: { nodeId: 'a', port: 'auto' }, to: { nodeId: 'a', port: 'auto' }, routing: 'straight' }),
+    });
+    expect(pts.length).toBeGreaterThan(2);
+    expect(crosses(pts.flatMap((p) => [p.x, p.y]), inBox)).toBe(false);
+  });
+});
+
+describe('router scratch buffers', () => {
+  it('lets go of buffers an oversized search grew', () => {
+    // 8100 small boxes: about 270 candidate lines each way, so the search
+    // state (lines x lines x 4 headings) passes what the buffers keep.
+    const obstacles: Obstacle[] = [];
+    for (let i = 0; i < 8100; i += 1) {
+      const x = (i % 90) * 22 + 30;
+      const y = Math.floor(i / 90) * 22 + 30;
+      obstacles.push({ id: `o${i}`, rect: { minX: x, minY: y, maxX: x + 8, maxY: y + 8 } });
+    }
+    routeOrthogonalAvoiding({
+      a: { x: 0, y: 0 },
+      dirA: 0,
+      b: { x: 2040, y: 2040 },
+      dirB: 0,
+      obstaclesIn: () => obstacles,
+      maxExpansions: 200_000,
+    });
+    const sizes = scratchSizes();
+    expect(sizes.states).toBeLessThanOrEqual(1 << 18);
+    expect(sizes.intervals).toBeLessThanOrEqual(1 << 18);
+    expect(sizes.heap).toBeLessThanOrEqual(1 << 18);
   });
 });

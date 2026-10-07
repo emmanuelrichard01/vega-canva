@@ -627,10 +627,11 @@ export const SHAPE_ENTRIES = [
   {
     preset: 'key',
     label: 'Key',
-    hint: 'A pierced bow on a toothed shaft. A credential.',
-    keywords: ['auth', 'password', 'secret', 'credential', 'api key', 'token'],
+    hint: 'A pierced bow on a toothed blade. A credential.',
+    keywords: ['auth', 'authentication key', 'password', 'secret', 'credential', 'api key', 'token', 'access', 'unlock'],
     geometry: { kind: 'key' },
-    glyph: [24, 9],
+    // Square, which lays the blade on the diagonal the glyph was drawn at. See `keyLayout`.
+    glyph: SQUARE,
   },
   {
     preset: 'gear',
@@ -860,6 +861,16 @@ export function placedSize(preset: ShapePreset): { width: number; height: number
   const [gw, gh] = SHAPE_BY_PRESET[preset].glyph ?? [1, 1];
   const scale = PLACED_LONG_SIDE / Math.max(gw, gh);
   return { width: Math.round(gw * scale), height: Math.round(gh * scale) };
+}
+
+/**
+ * The box a preset lands in when it is placed centred on a point: its natural
+ * size, centred there. What a click with the tool armed, a tile dropped on the
+ * board and Enter on a tile all produce.
+ */
+export function boxAt(preset: ShapePreset, at: { x: number; y: number }): { x: number; y: number; width: number; height: number } {
+  const { width, height } = placedSize(preset);
+  return { x: at.x - width / 2, y: at.y - height / 2, width, height };
 }
 
 /** `shape-rect` etc. — the ids the ToolManager registers. */

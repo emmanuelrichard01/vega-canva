@@ -34,9 +34,10 @@ export interface RailAnatomyProps {
   verbs?: readonly RailVerb[];
   /**
    * A self-contained section that fills paint and verbs on its own, ending in
-   * its own divider. Only the chart rail uses it; its control count is not
-   * trimmed here, so `rail.component.test.tsx` asserts that the chart rail,
-   * section and tail together, stays within the cap.
+   * its own divider. Only the chart rail uses it. Its control count is not
+   * trimmed here because its optional controls are exclusive by chart kind;
+   * `rail.component.test.tsx` holds every chart kind, with Paste style and the
+   * tail seated, within the cap.
    */
   section?: React.ReactNode;
   /** Paste style, when it applies. */

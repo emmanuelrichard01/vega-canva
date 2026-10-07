@@ -22,7 +22,7 @@ function sticky(id: string, x: number, y: number, theme: StickyTheme, author = '
     reactions: {},
     tags: [],
     pinned: false,
-  } as StickyNode;
+  } as unknown as StickyNode;
 }
 
 describe('organiseStickies', () => {

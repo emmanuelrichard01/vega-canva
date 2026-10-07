@@ -120,6 +120,13 @@ describe('buildDiagram: connector attachment', () => {
     }
   });
 
+  it('places an edge label at an explicit t, so the board and every export agree on it', () => {
+    const { connectors } = build('flowchart TD\n  A -->|Yes| B');
+    const c = connectors[0] as unknown as { label: string; labels: Array<{ id: string; text: string; t?: number }> };
+    expect(c.label).toBe('Yes');
+    expect(c.labels).toEqual([{ id: 'l0', text: 'Yes', t: 0.5 }]);
+  });
+
   it('routes connectors as curved by default to match modal preview', () => {
     const { connectors } = build('flowchart TD\n  A --> B');
     const c = connectors[0] as unknown as { routing: string };

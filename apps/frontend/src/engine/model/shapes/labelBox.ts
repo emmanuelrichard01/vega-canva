@@ -17,7 +17,7 @@
 import type { ShapeNode } from '../schema';
 import { clamp } from './pen';
 import { param } from './params';
-import { chatBodyHeight, lockBodyTop, multiDocumentStep, sequentialReelRadius } from './contours';
+import { KEY_BLADE, chatBodyHeight, keyLayout, keyPoint, lockBodyTop, multiDocumentStep, sequentialReelRadius } from './contours';
 
 export interface LabelBox {
   x: number;
@@ -29,9 +29,10 @@ export interface LabelBox {
 /**
  * Kinds whose interior detail runs through where the label goes. Their label
  * box is a compact band, and the renderer backs it with a plate of the
- * shape's own fill so the detail breaks around the words.
+ * shape's own fill so the detail breaks around the words. A key's label sits
+ * beside the key rather than on it, so its plate is the tag it hangs from.
  */
-const PLATED: ReadonlySet<string> = new Set(['server', 'globe', 'database', 'package', 'summing_junction', 'or_junction']);
+const PLATED: ReadonlySet<string> = new Set(['server', 'globe', 'database', 'package', 'summing_junction', 'or_junction', 'key']);
 
 export function labelPlated(kind: string): boolean {
   return PLATED.has(kind);
@@ -262,6 +263,7 @@ export function shapeLabelBox(node: Pick<ShapeNode, 'geometry' | 'width' | 'heig
     case 'gear':
       return centred(0.5, 0.5);
     case 'key':
+      return keyLabelBox(w, h, param(g, 'bowRatio'));
     case 'bolt':
     case 'plane':
       // Too slight to hold a line inside; the label centres on the glyph and
@@ -271,4 +273,86 @@ export function shapeLabelBox(node: Pick<ShapeNode, 'geometry' | 'width' | 'heig
     default:
       return rect(0, 0, w, h);
   }
+}
+
+/**
+ * A key's label: beside the key, not on it.
+ *
+ * Nothing on a key holds a line of text. The blade is a sixth of the key's
+ * length across and the bow is mostly hole and rim, so a label laid over the
+ * glyph ran across the teeth, which is the part that says "key". It goes in a
+ * corner the key leaves empty instead, preferring the blade's plain side: under
+ * the bow on the diagonal, under the blade when the key lies flat, beside it
+ * when it stands upright, and above the teeth (never across them) only when
+ * that is where the room is. The renderer backs it with a plate of the key's
+ * own fill (see `PLATED`), so it reads as a tag on the key and its ink is
+ * chosen against that plate rather than against the board behind it.
+ *
+ * Found by trying rectangles anchored in the three corners the bow does not
+ * hold, and keeping the largest that clears the bow and the blade's footprint
+ * by a small gap, among those tall enough for a line of text: a sliver along
+ * an edge can out-measure a corner and still hold nothing.
+ */
+function keyLabelBox(w: number, h: number, bow: number): LabelBox {
+  const k = keyLayout(w, h, bow);
+  const gap = Math.max(2, k.r * 0.1);
+  const blade = [
+    keyPoint(k, 0, KEY_BLADE.back),
+    keyPoint(k, k.length, KEY_BLADE.back),
+    keyPoint(k, k.length, KEY_BLADE.front),
+    keyPoint(k, 0, KEY_BLADE.front),
+  ];
+  const axes = [
+    { x: 1, y: 0 },
+    { x: 0, y: 1 },
+    { x: k.ux, y: k.uy },
+    { x: k.vx, y: k.vy },
+  ];
+
+  const clear = (x0: number, y0: number, x1: number, y1: number): boolean => {
+    const nx = clamp(k.cx, x0, x1);
+    const ny = clamp(k.cy, y0, y1);
+    if (Math.hypot(nx - k.cx, ny - k.cy) < k.r + gap) return false;
+    const corners = [
+      { x: x0, y: y0 },
+      { x: x1, y: y0 },
+      { x: x1, y: y1 },
+      { x: x0, y: y1 },
+    ];
+    // Separating axes: the box's own two and the blade's two.
+    return axes.some((a) => {
+      const box = corners.map((p) => p.x * a.x + p.y * a.y);
+      const bar = blade.map((p) => p.x * a.x + p.y * a.y);
+      return Math.min(...box) - Math.max(...bar) >= gap || Math.min(...bar) - Math.max(...box) >= gap;
+    });
+  };
+
+  const STEPS = 24;
+  const minHeight = h * 0.2;
+  /** The teeth side counts for less: a label there reads as part of the cut. */
+  const TEETH_SIDE = 0.6;
+  let best: LabelBox = { x: 0, y: 0, width: 0, height: 0 };
+  let bestScore = 0;
+  for (let i = 0; i < STEPS; i++) {
+    for (let j = 0; j < STEPS; j++) {
+      const x = (w * i) / STEPS;
+      const y = (h * j) / STEPS;
+      const far = (w * (STEPS - i)) / STEPS;
+      const deep = (h * (STEPS - j)) / STEPS;
+      const tries: Array<[LabelBox, number]> = [
+        [{ x, y, width: w - x, height: h - y }, 1],
+        [{ x: 0, y, width: far, height: h - y }, 1],
+        [{ x: 0, y: 0, width: far, height: deep }, TEETH_SIDE],
+      ];
+      for (const [r, weight] of tries) {
+        const score = r.width * r.height * weight;
+        if (r.height < minHeight || score <= bestScore) continue;
+        if (clear(r.x, r.y, r.x + r.width, r.y + r.height)) {
+          best = r;
+          bestScore = score;
+        }
+      }
+    }
+  }
+  return best.width > 0 ? best : { x: 0, y: 0, width: w, height: h };
 }

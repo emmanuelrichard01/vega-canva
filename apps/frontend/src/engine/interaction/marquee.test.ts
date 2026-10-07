@@ -40,8 +40,9 @@ describe('marquee modes', () => {
   it('maps modifiers to a mode', () => {
     expect(marqueeModeFor({})).toBe('replace');
     expect(marqueeModeFor({ shiftKey: true })).toBe('add');
-    expect(marqueeModeFor({ ctrlKey: true })).toBe('add');
-    expect(marqueeModeFor({ metaKey: true })).toBe('add');
+    // Ctrl/Cmd is the deep modifier, not a mode.
+    expect(marqueeModeFor({ ctrlKey: true })).toBe('replace');
+    expect(marqueeModeFor({ metaKey: true })).toBe('replace');
     expect(marqueeModeFor({ altKey: true })).toBe('subtract');
     expect(marqueeModeFor({ altKey: true, shiftKey: true })).toBe('intersect');
     expect(marqueeModeFor(null)).toBe('replace');

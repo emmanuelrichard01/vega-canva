@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { splitShortcut } from './tooltipShortcut';
+import { keycaps, splitShortcut } from './tooltipShortcut';
 
 /**
  * The tip's label/accelerator split.
@@ -67,5 +67,18 @@ describe('splitShortcut', () => {
       text: 'Duplicate',
       shortcut: 'Cmd + D',
     });
+  });
+});
+
+describe('keycaps', () => {
+  it('draws the command key as a glyph on a Mac and as Ctrl elsewhere', () => {
+    expect(keycaps('Ctrl+Shift+Z', true)).toEqual(['⌘', '⇧', 'Z']);
+    expect(keycaps('Cmd+Alt+C', false)).toEqual(['Ctrl', 'Alt', 'C']);
+    expect(keycaps('Opt+G', false)).toEqual(['Alt', 'G']);
+  });
+
+  it('leaves a lone key alone', () => {
+    expect(keycaps('?', true)).toEqual(['?']);
+    expect(keycaps('+', false)).toEqual(['+']);
   });
 });

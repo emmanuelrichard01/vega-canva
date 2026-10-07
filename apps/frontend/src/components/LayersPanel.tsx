@@ -1245,7 +1245,7 @@ const LayersPanelInner: React.FC<LayersPanelProps> = ({ selectedIds, overrideObj
           <span
             className="layer-row__editing"
             /**
-             * Only the two colours are inline, because only they are data.
+             * Only the two colours are passed in, as custom properties, because only they are data.
              *
              * The ink is chosen against the badge rather than assumed white:
              * presence colours span the whole palette, so a fixed white label
@@ -1253,7 +1253,7 @@ const LayersPanelInner: React.FC<LayersPanelProps> = ({ selectedIds, overrideObj
              * the lime were effectively unreadable. `readableOn` is already
              * imported here for the type icons and answers the same question.
              */
-            style={{ background: activeEditor.color, color: readableOn(activeEditor.color, darkTheme) }}
+            style={{ '--editor': activeEditor.color, '--editor-ink': readableOn(activeEditor.color, darkTheme) } as React.CSSProperties}
             title={`${activeEditor.name} is currently editing this item`}
           >
             <span className="layer-row__editing-dot" aria-hidden="true" />
@@ -1477,8 +1477,8 @@ const LayersPanelInner: React.FC<LayersPanelProps> = ({ selectedIds, overrideObj
           // The outer element carries the full scroll height so the scrollbar
           // is honest about the list length, while only the windowed slice is
           // actually in the DOM.
-          <div style={{ height: vwindow.totalHeight, position: 'relative' }}>
-            <div style={{ transform: `translateY(${vwindow.offsetTop}px)` }}>
+          <div className="layers-window" style={{ '--window-h': `${vwindow.totalHeight}px` } as React.CSSProperties}>
+            <div className="layers-window__slice" style={{ '--window-top': `${vwindow.offsetTop}px` } as React.CSSProperties}>
               {visibleRows.map((item) => {
                 if (item.kind === 'object') return renderRow(item.obj, item.indent);
 
@@ -1550,7 +1550,7 @@ const LayersPanelInner: React.FC<LayersPanelProps> = ({ selectedIds, overrideObj
                     onMouseLeave={() => layerHover.clearPanel()}
                     className={`layer-row layer-row--group${groupSelected ? ' is-selected' : ''}${
                       hint === 'inside' ? ' is-drop-into' : ''
-                    }`}
+                    }${canvasHovered && memberIds.includes(canvasHovered) ? ' is-hovered' : ''}`}
                     data-dragging={memberIds.includes(draggedId ?? '') || undefined}
                     style={{ '--indent': `${12 + item.indent}px` } as React.CSSProperties}
                   >

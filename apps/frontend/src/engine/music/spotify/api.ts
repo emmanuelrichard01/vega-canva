@@ -1,7 +1,7 @@
 /**
  * The few Spotify Web API calls the player makes.
  */
-import { accessToken } from './auth';
+import { accessToken, readTokens } from './auth';
 
 const API = 'https://api.spotify.com/v1';
 
@@ -21,6 +21,7 @@ export interface SpotifyProfile {
   /** 'premium' unlocks in-browser playback through the Web Playback SDK. */
   product: string;
   country: string;
+  image: string | null;
 }
 
 export interface SpotifyDevice {
@@ -32,31 +33,45 @@ export interface SpotifyDevice {
 
 export class SpotifyError extends Error {
   readonly status: number;
-  constructor(message: string, status: number) {
+  /** Spotify's machine-readable reason, such as `PREMIUM_REQUIRED` or `NO_ACTIVE_DEVICE`. */
+  readonly reason: string | null;
+  constructor(message: string, status: number, reason: string | null = null) {
     super(message);
     this.status = status;
+    this.reason = reason;
   }
 }
 
-async function call<T>(path: string, init: RequestInit = {}, fetchImpl: typeof fetch = fetch): Promise<T | null> {
-  const token = await accessToken(fetchImpl);
-  if (!token) throw new SpotifyError('Not connected to Spotify.', 401);
-  const res = await fetchImpl(`${API}${path}`, {
-    ...init,
-    headers: { ...(init.headers ?? {}), Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' },
-  });
+/** One Web API call. A 401 refreshes the token and tries once more; a second 401 is an error. */
+async function call<T>(path: string, init: RequestInit = {}, fetchImpl: typeof fetch = (...a) => fetch(...a)): Promise<T | null> {
+  const send = async (force: boolean) => {
+    const token = await accessToken(fetchImpl, Date.now(), force);
+    // Tokens that survived a failed refresh mean Spotify could not be reached, not that the person signed out.
+    if (!token) throw new SpotifyError(readTokens() ? "Spotify isn't responding." : 'Not connected to Spotify.', readTokens() ? 503 : 401);
+    return fetchImpl(`${API}${path}`, {
+      ...init,
+      headers: { ...(init.headers ?? {}), Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' },
+    });
+  };
+  let res = await send(false);
+  if (res.status === 401) res = await send(true);
   if (res.status === 204) return null;
   const body = await res.json().catch(() => null);
   if (!res.ok) {
     const message = body?.error?.message ?? `Spotify responded ${res.status}.`;
-    throw new SpotifyError(message, res.status);
+    throw new SpotifyError(message, res.status, typeof body?.error?.reason === 'string' ? body.error.reason : null);
   }
   return body as T;
 }
 
 export async function fetchProfile(fetchImpl?: typeof fetch): Promise<SpotifyProfile> {
-  const me = await call<{ display_name?: string; id: string; product?: string; country?: string }>('/me', {}, fetchImpl);
-  return { name: me?.display_name || me?.id || 'Spotify', product: me?.product ?? 'free', country: me?.country ?? '' };
+  const me = await call<{ display_name?: string; id: string; product?: string; country?: string; images?: { url: string }[] | null }>('/me', {}, fetchImpl);
+  return {
+    name: me?.display_name || me?.id || 'Spotify',
+    product: me?.product ?? 'free',
+    country: me?.country ?? '',
+    image: me?.images?.[0]?.url ?? null,
+  };
 }
 
 /** The person's playlists, with Liked Songs first. Capped at 100 playlists. */
@@ -109,6 +124,24 @@ export async function startPlayback(playlist: SpotifyPlaylist, deviceId: string 
   await call(`/me/player/play${query}`, { method: 'PUT', body: JSON.stringify(body) }, fetchImpl);
 }
 
+/** Continues what the device was playing, where it stopped. An empty body means "resume". */
+export async function resumePlayback(deviceId: string | null, fetchImpl?: typeof fetch): Promise<void> {
+  const query = deviceId ? `?device_id=${encodeURIComponent(deviceId)}` : '';
+  await call(`/me/player/play${query}`, { method: 'PUT' }, fetchImpl);
+}
+
+/** Moves playback to a device and keeps it playing. */
+export async function transferPlayback(deviceId: string, fetchImpl?: typeof fetch): Promise<void> {
+  await call('/me/player', { method: 'PUT', body: JSON.stringify({ device_ids: [deviceId], play: true }) }, fetchImpl);
+}
+
+/** Volume of a device, 0 to 100. */
+export async function setDeviceVolume(percent: number, deviceId: string | null, fetchImpl?: typeof fetch): Promise<void> {
+  const params = new URLSearchParams({ volume_percent: String(Math.round(Math.min(100, Math.max(0, percent)))) });
+  if (deviceId) params.set('device_id', deviceId);
+  await call(`/me/player/volume?${params.toString()}`, { method: 'PUT' }, fetchImpl);
+}
+
 export async function pausePlayback(deviceId: string | null, fetchImpl?: typeof fetch): Promise<void> {
   const query = deviceId ? `?device_id=${encodeURIComponent(deviceId)}` : '';
   await call(`/me/player/pause${query}`, { method: 'PUT' }, fetchImpl);
@@ -117,6 +150,11 @@ export async function pausePlayback(deviceId: string | null, fetchImpl?: typeof 
 export async function skipNext(deviceId: string | null, fetchImpl?: typeof fetch): Promise<void> {
   const query = deviceId ? `?device_id=${encodeURIComponent(deviceId)}` : '';
   await call(`/me/player/next${query}`, { method: 'POST' }, fetchImpl);
+}
+
+/** The playlist in Spotify's own web player, where full tracks play. */
+export function openInSpotifyUrl(playlist: SpotifyPlaylist): string {
+  return playlist.kind === 'playlist' ? `https://open.spotify.com/playlist/${encodeURIComponent(playlist.id)}` : 'https://open.spotify.com/collection/tracks';
 }
 
 /** The embed URL for the final fallback: Spotify's own player in an iframe. */

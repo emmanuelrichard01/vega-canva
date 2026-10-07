@@ -103,7 +103,7 @@ export const Turntable: React.FC<{
           cy={50}
           r={r}
           fill="none"
-          stroke={gap ? 'rgba(0,0,0,0.55)' : 'rgba(255,255,255,0.045)'}
+          className={gap ? 'tt__groove tt__groove--gap' : 'tt__groove'}
           strokeWidth={gap ? 0.9 : 0.35}
         />
       );
@@ -123,9 +123,9 @@ export const Turntable: React.FC<{
         <div className="tt__platter" />
         <div className="tt__record" ref={recordRef}>
           <svg className="tt__grooves" viewBox="0 0 100 100">
-            <circle cx={50} cy={50} r={RECORD_R} fill="var(--tt-vinyl)" />
+            <circle cx={50} cy={50} r={RECORD_R} className="tt__vinyl" />
             {grooves}
-            <circle cx={50} cy={50} r={RECORD_R - 0.4} fill="none" stroke="rgba(255,255,255,0.12)" strokeWidth={0.5} />
+            <circle cx={50} cy={50} r={RECORD_R - 0.4} fill="none" className="tt__rim" strokeWidth={0.5} />
           </svg>
           <div className="tt__label">{label}</div>
           {/* A small mark on the label, so the turn is visible even on plain art. */}
@@ -168,18 +168,3 @@ function usePrefersReducedMotion(): boolean {
   }, [query]);
   return reduced;
 }
-
-/**
- * The header's playing indicator: a 16px record that turns at 33⅓ rpm.
- * A CSS animation, so it costs nothing on the main thread.
- */
-export const VinylGlyph: React.FC<{ spinning: boolean }> = ({ spinning }) => (
-  <svg className={`vinyl-glyph${spinning ? ' is-spinning' : ''}`} viewBox="0 0 16 16" width={16} height={16} aria-hidden="true">
-    <circle cx={8} cy={8} r={7.25} fill="currentColor" />
-    <circle cx={8} cy={8} r={5.2} fill="none" stroke="var(--vinyl-groove)" strokeWidth={0.6} />
-    <circle cx={8} cy={8} r={3.6} fill="none" stroke="var(--vinyl-groove)" strokeWidth={0.6} />
-    <circle cx={8} cy={8} r={2.2} fill="var(--vinyl-label)" />
-    <rect x={7.6} y={6.1} width={0.8} height={1.1} rx={0.3} fill="currentColor" />
-    <circle cx={8} cy={8} r={0.6} fill="currentColor" />
-  </svg>
-);

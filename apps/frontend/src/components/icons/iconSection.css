@@ -1,0 +1,15 @@
+.icon-caption {
+  width: 100%;
+  height: 28px;
+  box-sizing: border-box;
+  padding: 0 8px;
+  border: 0;
+  border-radius: var(--radius-md);
+  background: var(--surface-hover);
+  color: var(--text-primary);
+  font: inherit;
+  font-size: var(--text-sm);
+  outline: none;
+}
+.icon-caption::placeholder { color: var(--text-tertiary); }
+.icon-caption:focus-visible { outline: 1.5px solid var(--focus-field-color); outline-offset: 0; }

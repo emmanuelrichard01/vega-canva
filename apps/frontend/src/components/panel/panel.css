@@ -29,6 +29,9 @@
   min-height: 0;
   overflow-x: hidden;
   overflow-y: auto;
+  /* Rows read the panel's own width, not the window's, to decide when two
+     fields side by side no longer fit beside a label. */
+  container: props / inline-size;
   padding-bottom: var(--space-6, 24px);
   background: var(--surface-primary);
   user-select: none;

@@ -41,6 +41,12 @@ export interface SheetRange {
 export interface SheetModel {
   rows: number;
   cols: number;
+  /**
+   * Select and copy only: the keys that move and select still work, and
+   * Ctrl+C copies, but nothing begins an edit, clears, cuts, pastes, fills or
+   * formats — for a person who may read the grid but not change it.
+   */
+  readOnly?: boolean;
   /** The raw text of a cell — what editing starts from and copying takes. */
   read: (r: number, c: number) => string;
   write: (r: number, c: number, text: string) => void;
@@ -155,6 +161,10 @@ export function useSheet(model: SheetModel) {
   );
 
   const begin = (p: SheetPos = focus, initial?: string) => {
+    if (modelRef.current.readOnly) {
+      select(p);
+      return;
+    }
     select(p);
     setEdit({ r: p.r, c: p.c, draft: initial ?? modelRef.current.read(p.r, p.c) });
   };
@@ -211,6 +221,15 @@ export function useSheet(model: SheetModel) {
       return;
     }
     const key = k.toLowerCase();
+    // Read-only: only what moves, selects, copies or leaves gets through.
+    if (modelRef.current.readOnly) {
+      const moves = Boolean(arrows[k]) || ['Tab', 'Home', 'End', 'PageUp', 'PageDown', 'Escape'].includes(k) || (mod && (key === 'a' || key === 'c'));
+      if (!moves) {
+        if (!mod || key !== 'v') stop();
+        else e.preventDefault();
+        return;
+      }
+    }
     if (mod && !e.altKey && key === 'z' && modelRef.current.onUndo) {
       stop();
       if (e.shiftKey) modelRef.current.onRedo?.();
@@ -326,11 +345,12 @@ export function useSheet(model: SheetModel) {
 
   const onCut = (e: React.ClipboardEvent) => {
     onCopy(e);
-    modelRef.current.clear(range);
+    if (!modelRef.current.readOnly) modelRef.current.clear(range);
   };
 
   const onPaste = (e: React.ClipboardEvent) => {
     e.preventDefault();
+    if (modelRef.current.readOnly) return;
     const only = valuesOnly.current;
     valuesOnly.current = false;
     const handled = modelRef.current.paste?.(e.clipboardData, range, only);

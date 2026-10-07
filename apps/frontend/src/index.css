@@ -3784,6 +3784,12 @@ textarea:focus-visible {
   .tip[data-side] { animation-duration: 1ms; }
 }
 
+.tip__keys { display: inline-flex; flex-shrink: 0; gap: 2px; }
+
+/* Increased contrast: the tip gets a hairline edge and its keys a stronger chip. */
+[data-contrast='more'] .tip { outline: 1px solid var(--text-inverse); outline-offset: -1px; }
+[data-contrast='more'] .tip__key { background: rgb(255 255 255 / 0.3); }
+
 /* =========================================
    ANIMATIONS
    ========================================= */
@@ -4865,14 +4871,13 @@ input.slider__value:focus-visible {
  * appears to sag in the middle. It is the same fault the header had.
  *
  * Fixed here rather than at fifteen call sites because that is the only way it
- * stays fixed. A number typed into a seat is a number the seventeenth seat will
- * get wrong, and several of these icons are shared components whose size is
- * passed in from elsewhere. Lucide draws its stroke in user units, so scaling
- * the box keeps the weight identical to a glyph authored at this size.
+ * stays fixed. 20px, the size the dock's own glyph set (`components/dock/
+ * glyphs.tsx`) is drawn for: a 24-unit grid at a 1.75 stroke, which lands near
+ * 1.5 device pixels here. Shared icons passed in from elsewhere scale to it.
  */
 .dock-btn svg {
-  width: 18px;
-  height: 18px;
+  width: 20px;
+  height: 20px;
 }
 
 .tool-dock[data-editing] .dock-slot {
@@ -5216,8 +5221,9 @@ body:has(.tool-shelf) { --dock-h: 112px; }
 
 /* ------------------------------------------------------------- dock sheet */
 
-/* A seat's sheet: Shape, Grid, Chart, Table. See `DockSheet` -- sections on
-   one scroll, icon tiles or captioned cards, one line of words at the foot. */
+/* A seat's sheet: Grid, Chart, Table. See `DockSheet` -- sections on one
+   scroll, icon tiles or captioned cards, one line of words at the foot. The
+   Shape seat's library is its own sheet; see `shapeLibrary.css`. */
 .dock-sheet {
   display: flex;
   flex-direction: column;
@@ -5357,8 +5363,21 @@ body:has(.tool-shelf) { --dock-h: 112px; }
 
 .seat-menu__sheet {
   align-self: stretch;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
   padding-bottom: var(--space-2);
   border-bottom: 1px solid var(--border-divider);
+}
+
+/* The shape library opens with its own quick row and Recent row, so the seat
+   menu's row of common shapes would be the same choices twice. With it gone
+   the row is narrower than the library, and the panel takes the library's
+   width: equal insets left and right, rather than a gap on the right where a
+   wider row used to stretch the panel past a fixed-width sheet. */
+.seat-menu:has(.shape-lib) > .seat-menu__row > .seat-menu__quick[role='group'],
+.seat-menu:has(.shape-lib) > .seat-menu__row > .seat-menu__quick[role='group'] + .seat-menu__rule {
+  display: none;
 }
 
 .seat-menu__row {
@@ -6556,30 +6575,9 @@ body:has(.tool-shelf) { --dock-h: 112px; }
   color: var(--text-primary);
 }
 
-/* A corner mark on any button with more behind it. Three of the dock's tools
-   held whole flyouts — shapes, frames, forces — with nothing on the button to
-   say so, which is how a shape picker goes unfound.
-
-   Deliberately a real child element and **not** `::after`. Tooltips have since
-   moved to a root-level node, so the pseudo-element is no longer spoken for —
-   but a dot that is a real element can be positioned against the button's own
-   padding and read by `.dock-btn.active` for its brighter state, neither of
-   which a pseudo-element shared with something else could do. */
+/* A seat with a menu marks it with a corner caret, which is also the way in.
+   See `.dock-caret` in `components/dock/dock.css`. */
 .dock-more { position: relative; }
-
-.dock-more__dot {
-  position: absolute;
-  right: 4px;
-  bottom: 4px;
-  width: 3px;
-  height: 3px;
-  border-radius: 50%;
-  background: currentColor;
-  opacity: 0.5;
-  pointer-events: none;
-}
-
-.tool-dock .btn-icon.active .dock-more__dot { opacity: 0.9; }
 
 /* ---------------------------------------------------------- the dock marker */
 
@@ -8835,7 +8833,7 @@ body:has(.tool-shelf) { --dock-h: 112px; }
 
 .tgrid {
   display: grid;
-  grid-template-columns: repeat(auto-fill, minmax(248px, 1fr));
+  grid-template-columns: repeat(auto-fill, minmax(220px, 1fr));
   gap: var(--space-4);
 }
 
@@ -8844,7 +8842,7 @@ body:has(.tool-shelf) { --dock-h: 112px; }
    you make in a blurb. */
 .tgrid { row-gap: var(--space-8); }
 
-.tgrid--featured { grid-template-columns: repeat(auto-fit, minmax(320px, 1fr)); }
+.tgrid--featured { grid-template-columns: repeat(auto-fit, minmax(260px, 1fr)); }
 .tgrid--featured .tcard__art { aspect-ratio: 3 / 2; }
 .tgrid--featured .tcard__name { font-size: var(--text-xl); letter-spacing: -0.02em; }
 
@@ -8878,11 +8876,10 @@ body:has(.tool-shelf) { --dock-h: 112px; }
   aspect-ratio: 16 / 10;
   overflow: hidden;
   border-radius: var(--radius-xl);
-  background: var(--surface-primary);
+  background: var(--surface-secondary);
+  /* The art's one edge. Hover adds the lift; nothing else draws a frame. */
   box-shadow: inset 0 0 0 1px var(--border-divider);
   transition: transform var(--motion-hover), box-shadow var(--motion-hover);
-  border-bottom: 1px solid var(--border-divider);
-  background: var(--surface-secondary);
 }
 
 .tcard__art .cover,
@@ -8896,11 +8893,8 @@ body:has(.tool-shelf) { --dock-h: 112px; }
   box-shadow: inset 0 0 0 1px var(--border-strong), var(--shadow-md);
 }
 
+/* Focus rings the picture: see home.css. */
 .tcard:focus-visible { outline: none; }
-
-.tcard:focus-visible .tcard__art {
-  box-shadow: inset 0 0 0 1px var(--border-strong), 0 0 0 3px color-mix(in srgb, var(--focus-ring-color) 35%, transparent);
-}
 
 .tcard__body,
 .bcard__body {
@@ -8950,122 +8944,135 @@ body:has(.tool-shelf) { --dock-h: 112px; }
 /* ## The list
 
    The same board, for the question a grid cannot answer: which of forty is
-   called "Q3". A row is a small picture, a name that can run long, and the
-   date in a column that lines up down the page — which is the whole point of a
-   list and is why the date is tabular here and not in the grid. */
-/* ## Why this does not clip
+   called "Q3". A row is a small picture, a name that can run long, its size
+   and the date, each in a column that lines up down the page under a header
+   that names it and sorts by it.
 
-   It carried `overflow: hidden`, which was there for one reason — to stop a
-   hovered first or last row painting a square corner over the container's
-   rounded one — and it took a board's action menu with it. The menu is
-   positioned inside a row, so the row's clipping ancestor cut it off, and on
-   the last row it was removed from the screen entirely: the control opened and
-   nothing appeared.
+   Rows sit on the page, separated by hairlines, with no box round a group:
+   the group heading already says where one run ends and the next begins. No
+   ancestor clips, so a row's action menu can always leave the row. */
+.blist,
+.blist__head {
+  --blist-cols: 60px minmax(0, 1fr) 112px 148px 28px;
+}
 
-   The corners are handled where they actually belong, on the rows that have
-   them (below), so nothing needs to be clipped and a popover inside a row can
-   leave the row. A container that hides its own overflow can never hold a
-   menu, and this one always had to. */
 .blist {
   display: flex;
   flex-direction: column;
-  border-radius: var(--radius-xl);
-  box-shadow: inset 0 0 0 1px var(--border-divider);
+}
+
+.bcard--list,
+.blist__head {
+  display: grid;
+  grid-template-columns: var(--blist-cols);
+  align-items: center;
+  column-gap: var(--space-4);
+  padding: 0 var(--space-2);
 }
 
 .bcard--list {
-  flex-direction: row;
-  align-items: center;
-  gap: var(--space-3);
   height: 52px;
-  padding: 0 var(--space-3);
-  border-radius: 0;
+  border-radius: var(--radius-md);
   transition: background-color var(--motion-hover);
 }
 
-.bcard--list + .bcard--list { box-shadow: inset 0 1px 0 var(--border-divider); }
-
-/* The list's corners, on the rows that own them — so `.blist` does not have to
-   clip, and can therefore hold a menu. `--radius-xl` matches the container. */
-.bcard--list:first-child { border-radius: var(--radius-xl) var(--radius-xl) 0 0; }
-.bcard--list:last-child { border-radius: 0 0 var(--radius-xl) var(--radius-xl); }
-.bcard--list:only-child { border-radius: var(--radius-xl); }
+.bcard--list + .bcard--list::before {
+  content: "";
+  position: absolute;
+  top: 0;
+  left: var(--space-2);
+  right: var(--space-2);
+  border-top: 1px solid var(--border-divider);
+}
 
 .bcard--list:hover { background: var(--surface-hover); }
+.bcard--list:hover::before,
+.bcard--list:hover + .bcard--list::before { border-top-color: transparent; }
 
 .bcard--list .bcard__art {
-  flex: none;
   width: 60px;
   aspect-ratio: 16 / 10;
-  border-radius: var(--radius-md);
-  border-bottom: none;
+  border-radius: var(--radius-sm);
 }
 
 /* The picture does not lift in a row: the row itself is the target. */
 .bcard--list:hover .bcard__art { transform: none; box-shadow: inset 0 0 0 1px var(--border-divider); }
 
-
-.bcard--list .bcard__body {
-  flex-direction: row;
-  align-items: baseline;
-  justify-content: space-between;
-  gap: var(--space-4);
-  padding: 0;
-}
-
-.bcard--list .bcard__name {
-  flex: 1;
+.bcard__col--size,
+.bcard__col--when {
   min-width: 0;
   overflow: hidden;
+  color: var(--text-tertiary);
+  font-size: var(--text-sm);
+  font-variant-numeric: tabular-nums;
   text-overflow: ellipsis;
   white-space: nowrap;
 }
 
-.bcard--list .bcard__meta {
-  flex: none;
-  text-align: right;
-  white-space: nowrap;
-  font-variant-numeric: tabular-nums;
+.bcard__col--size { text-align: right; }
+
+.bcard__col--when {
+  display: flex;
+  align-items: center;
+  gap: 6px;
 }
 
 /* At 60px the caption in an empty board's cover is unreadable anyway, and it
    turns the one empty row into the noisiest thing in the list. */
 .bcard--list .cover__hint { display: none; }
 
-
-
-/* A row on a narrow screen drops the date rather than squeezing the name. */
-@media (max-width: 620px) {
-  .bcard--list .bcard__meta { display: none; }
-}
-
-/* ## Grouped by when you last had it open
-
-   The heading is small and quiet — it labels a stretch of the grid, it is not
-   a section title competing with the page's own. */
-.lgroup + .lgroup { margin-top: var(--space-8); }
-
-.lgroup__head {
-  display: flex;
-  align-items: center;
-  gap: var(--space-2);
-  margin: 0 0 var(--space-3);
+.blist__head {
+  height: 32px;
+  margin-bottom: var(--space-1);
+  color: var(--text-tertiary);
   font-size: var(--text-xs);
-  font-weight: var(--weight-semibold);
-  letter-spacing: 0.06em;
-  text-transform: uppercase;
-  color: var(--text-tertiary);
+  font-weight: var(--weight-medium);
 }
 
-.lgroup__count {
-  padding: 1px 6px;
-  border-radius: 999px;
-  background: var(--surface-secondary);
-  font-size: var(--text-2xs);
-  letter-spacing: 0;
-  font-variant-numeric: tabular-nums;
-  color: var(--text-tertiary);
+.blist__head-size { text-align: right; }
+
+.blist__sort {
+  justify-self: start;
+  height: 24px;
+  margin-left: -6px;
+  padding: 0 6px;
+  border: none;
+  border-radius: var(--radius-sm);
+  background: transparent;
+  color: inherit;
+  font: inherit;
+  cursor: pointer;
 }
+
+.blist__sort:hover { color: var(--text-primary); background: var(--surface-hover); }
+.blist__sort[aria-pressed='true'] { color: var(--text-primary); font-weight: var(--weight-semibold); }
+
+.blist__sort:focus-visible {
+  outline: 2px solid var(--focus-ring-color);
+  outline-offset: 1px;
+}
+
+/* A row on a narrow screen drops the size and then the date, rather than
+   squeezing the name. */
+@media (max-width: 760px) {
+  .blist,
+  .blist__head { --blist-cols: 60px minmax(0, 1fr) 120px 28px; }
+  .bcard__col--size,
+  .blist__head-size { display: none; }
+}
+
+@media (max-width: 520px) {
+  .blist,
+  .blist__head { --blist-cols: 48px minmax(0, 1fr) 28px; }
+  .bcard__col--when,
+  .blist__sort--when { display: none; }
+  .bcard--list .bcard__art { width: 48px; }
+}
+
+/* ## Grouped by when you last had it open, or pinned
+
+   Group headings are set in home.css. */
+.lgroup + .lgroup { margin-top: var(--space-8); }
 
 /* ------------------------------------------------------------- narrow ----- */
 
@@ -9265,38 +9272,6 @@ body[data-rulers='off'] {
    caption rather than as content. */
 .radar-title { color: var(--text-secondary); }
 
-/* ------------------------------------------------------- the header ---
-   One fixed height (`--header-h`, with the layout tokens). While something is
-   being dragged the bar recedes in opacity rather than hiding or resizing:
-   nothing moves, and a click lands where the control already was. See
-   `components/workspace/shell.css`. */
-
-.workspace-header {
-  z-index: 120;
-  /* Opacity only. No layout property is animated here. */
-  transition: opacity 180ms var(--ease-settle);
-  /* `height` and `padding` are not repeated here. They belong to the base
-     rule, which is the only place either is now declared. */
-}
-
-/* The receded opacity itself is set inline by `WorkspaceShell`, not here.
-   Two reasons, and the second is the real one:
-
-   - There is no `:hover` restore to fight with. A drag means your pointer is
-     on the canvas by definition, so hovering the bar *during* one cannot
-     happen — the rule would only ever have been dead weight in the cascade.
-   - It is a single value derived from a single piece of React state, and
-     keeping it beside that state means the two cannot disagree. An attribute
-     selector adds a second place for the answer to live and a cascade to lose
-     in, for no gain.
-
-   The floor is 0.6 rather than something fainter: this must read as "standing
-   back", not as "disabled" — the sync dot and the unread badge stay legible,
-   because those are the two things you might genuinely need mid-drag. */
-
-@media (prefers-reduced-motion: reduce) {
-  .workspace-header { transition-duration: 1ms; }
-}
 
 
 /* The brand primitives used to be declared here, a fourth `:root` block 4000
@@ -11569,8 +11544,8 @@ html.dark-theme,
 /* ===========================================================================
    LESSON DEMOS — the gesture, drawn and looping
    ---------------------------------------------------------------------------
-   Six scenes for the six gestures nobody can guess, shared between the coach
-   mark and the reference library. Every animation here is transform, opacity
+   The older CSS loops, shared between the coach mark and the reference library.
+   The scripted demos are in components/learn/learn.css. Every animation here is transform, opacity
    or a dash offset, so a demo sitting on screen for several minutes costs no
    layout work on a canvas that needs the frame.
    =========================================================================== */
@@ -11638,29 +11613,6 @@ html.dark-theme,
   100%     { transform: translate(26px, 70px); }
 }
 
-/* --- fill-grid: pictures landing in modules ----------------------------- */
-
-.demo__tile {
-  transform-box: fill-box;
-  transform-origin: center;
-  animation: demoLand 4.8s var(--ease-settle) infinite;
-}
-
-.demo__tile--0 { animation-delay: 0.15s; }
-.demo__tile--1 { animation-delay: 0.5s; }
-.demo__tile--2 { animation-delay: 0.85s; }
-.demo__tile--3 { animation-delay: 1.2s; }
-
-/* Arriving at the wrong shape and settling into the module's is the whole
-   point: "cropped to fit rather than squashed to fit" only lands once you have
-   watched it happen. */
-@keyframes demoLand {
-  0%       { opacity: 0; transform: translateY(-14px) scale(0.62); }
-  14%      { opacity: 1; transform: translateY(0) scale(1.06); }
-  22%, 82% { opacity: 1; transform: none; }
-  96%,100% { opacity: 0; transform: none; }
-}
-
 /* --- reframe: a picture moving under a frame that does not ------------- */
 
 .demo__pan { animation: demoPan 6s var(--ease-settle) infinite alternate; }
@@ -11668,32 +11620,6 @@ html.dark-theme,
 @keyframes demoPan {
   from { transform: translateX(0); }
   to   { transform: translateX(-30px); }
-}
-
-/* --- bind: the arrow keeps hold ---------------------------------------- */
-
-/* Swung about the source's edge, so the link re-aims rather than travelling
-   with the thing it is pointing at. `transform-box: view-box` is what makes the
-   origin below mean a point in the drawing rather than a point in the group's
-   own bounding box, which moves as the group turns. */
-.demo__swing {
-  transform-box: view-box;
-  transform-origin: 56px 48px;
-  animation: demoSwing 5.4s var(--ease-settle) infinite alternate;
-}
-
-@keyframes demoSwing {
-  from { transform: rotate(-12deg); }
-  to   { transform: rotate(12deg); }
-}
-
-.demo__link {
-  stroke-dasharray: 4 4;
-  animation: demoCrawl 1.6s linear infinite;
-}
-
-@keyframes demoCrawl {
-  to { stroke-dashoffset: -8; }
 }
 
 /* --- field: the ring is the subject ------------------------------------ */
@@ -11714,26 +11640,6 @@ html.dark-theme,
 @keyframes demoNudge {
   from { transform: translate(0, 0); }
   to   { transform: translate(11px, -7px); }
-}
-
-/* --- chain: the rate, which is the actual claim about Tab -------------- */
-
-.demo__note {
-  transform-box: fill-box;
-  transform-origin: left center;
-  animation: demoPop 4s var(--ease-settle) infinite;
-}
-
-.demo__note--0 { animation-delay: 0.1s; }
-.demo__note--1 { animation-delay: 0.45s; }
-.demo__note--2 { animation-delay: 0.8s; }
-.demo__note--3 { animation-delay: 1.15s; }
-
-@keyframes demoPop {
-  0%       { opacity: 0; transform: scale(0.3); }
-  12%      { opacity: 1; transform: scale(1.08); }
-  20%, 84% { opacity: 1; transform: none; }
-  98%,100% { opacity: 0; transform: none; }
 }
 
 /* --- boolean: the four results, against the two shapes that made them ----
@@ -11881,8 +11787,6 @@ html.dark-theme,
   .demo { animation: none !important; }
   .demo__route { stroke-dashoffset: 0; }
   .demo__tap { opacity: 0; }
-  .demo__tile,
-  .demo__note { opacity: 1; }
   .demo__cursor--route { transform: translate(144px, 26px); }
   .demo__cursor--field,
   .demo__field { transform: translate(84px, 46px); }
@@ -18389,7 +18293,7 @@ body[data-zen='physics'] .forces-handle { bottom: 32px; }
 
 .walk__hint {
   color: var(--text-tertiary);
-  font-size: var(--text-2xs);
+  font-size: var(--text-xs);
 }
 
 .walk__close {
@@ -21294,25 +21198,6 @@ html[data-precise] .canvas-container[data-cursor-mode] .konvajs-content canvas {
   outline-offset: var(--focus-ring-offset);
 }
 .feature-fallback__button--quiet { border-color: transparent; background: transparent; color: var(--text-secondary); }
-
-/* A comment being edited in place. Focus is shown with the neutral field
-   colour, as every other text field is (DESIGN.md, Inputs). */
-.comment-edit-field {
-  width: 100%;
-  resize: none;
-  background: var(--surface-primary);
-  border: 1px solid var(--border-divider);
-  border-radius: var(--radius-md);
-  padding: 6px 8px;
-  color: var(--text-primary);
-  font-size: 13px;
-  font-family: var(--font-sans);
-}
-.comment-edit-field:focus-visible {
-  outline: 1.5px solid var(--focus-field-color);
-  outline-offset: 0;
-  border-color: var(--focus-field-color);
-}
 
 /* ===========================================================================
    DASHBOARD → BOARD

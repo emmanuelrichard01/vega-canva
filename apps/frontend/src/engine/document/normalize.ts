@@ -13,6 +13,8 @@ import type { PlotCurve } from '../chart/chartPlot';
 import { normalizeTableSpec } from '../table/tableTypes';
 import { normalizeCodeSpec } from '../code/codeTypes';
 import { normalizeLinkSpec } from '../link/linkTypes';
+import { normalizeIconSpec } from '../icons/iconSpec';
+import { nudgeKey, parseNudgeKey } from '../model/connectorRouter/pathOps';
 import { LIST_STYLES, MAX_ALT_LENGTH } from '../model/schema';
 import { CALLOUT_TAILS, clampParam, shapeParams } from '../model/shapeParams';
 import { CYCLE_UNITS } from '../text/colorCycle';
@@ -1340,7 +1342,7 @@ export function normalizeNode(raw: any, id?: string): AnyNode {
           : null),
         ...(raw?.avoid === true ? { avoid: true } : null),
         ...(raw?.jumps === 'none' || raw?.jumps === 'arc' || raw?.jumps === 'gap' ? { jumps: raw.jumps } : null),
-        ...connectorNudges(raw?.nudges),
+        ...connectorNudges(raw),
       };
 
     /**
@@ -1375,12 +1377,18 @@ export function normalizeNode(raw: any, id?: string): AnyNode {
         appearance: normalizeAppearance(raw),
       };
 
-    /** A table's grid, made rectangular and total — see `normalizeTableSpec`. */
+    /**
+     * A table's grid, made rectangular and total — see `normalizeTableSpec`.
+     * It reads either stored shape. `tableRefs` marks a table whose formulas
+     * count rows the spreadsheet's way, kept beside the spec where an older
+     * build that drops the spec's own `refs` leaves it alone.
+     */
     case 'table':
       return {
         ...base,
         type: 'table',
-        table: normalizeTableSpec(raw?.table),
+        table: normalizeTableSpec(raw?.table, { refsMarked: raw?.tableRefs === 2, cacheKey: base.id || undefined }),
+        ...(raw?.tableRefs === 2 ? { tableRefs: 2 as const } : null),
         appearance: normalizeAppearance(raw),
       };
 
@@ -1400,6 +1408,14 @@ export function normalizeNode(raw: any, id?: string): AnyNode {
         type: 'link',
         link: normalizeLinkSpec(raw?.link),
         appearance: normalizeAppearance(raw),
+      };
+
+    /** A library icon: a reference into a pack, validated — see `normalizeIconSpec`. */
+    case 'icon':
+      return {
+        ...base,
+        type: 'icon',
+        ...normalizeIconSpec(raw),
       };
 
     case 'frame':
@@ -1834,14 +1850,40 @@ function connectorLabels(raw: any): { labels?: Array<{ id: string; text: string;
   return out.length > 0 ? { labels: out } : {};
 }
 
-function connectorNudges(raw: any): { nudges?: Array<{ seg: number; offset: number; of: number }> } {
-  if (!Array.isArray(raw)) return {};
-  const out: Array<{ seg: number; offset: number; of: number }> = [];
-  for (const n of raw.slice(0, 64)) {
-    if (!Number.isInteger(n?.seg) || !Number.isInteger(n?.of) || !Number.isFinite(n?.offset)) continue;
-    if (n.seg < 0 || n.of < 1 || n.seg >= n.of || n.offset === 0) continue;
-    out.push({ seg: n.seg, of: n.of, offset: clamp(n.offset, -5000, 5000) });
+/**
+ * A connector's segment nudges, one per leg.
+ *
+ * Each leg's nudge is stored under its own key on the node (`nudge:h:120`;
+ * see `nudgeKey`), so two people nudging different legs at once both keep
+ * theirs: the CRDT merges per key, and only two edits of the same leg
+ * resolve last-write-wins. A `nudges` list (what a copy of a node carries)
+ * is read too; a per-leg key overrides the list's entry for the same leg.
+ */
+function connectorNudges(raw: any): { nudges?: Array<{ axis: 'h' | 'v'; at: number; offset: number }> } {
+  const byKey = new Map<string, { axis: 'h' | 'v'; at: number; offset: number }>();
+  if (Array.isArray(raw?.nudges)) {
+    for (const n of raw.nudges.slice(0, 64)) {
+      if ((n?.axis !== 'h' && n?.axis !== 'v') || !Number.isFinite(n?.at) || !Number.isFinite(n?.offset)) continue;
+      const at = Math.round(n.at);
+      byKey.set(nudgeKey({ axis: n.axis, at }), { axis: n.axis, at, offset: n.offset });
+    }
   }
+  if (raw && typeof raw === 'object') {
+    for (const key of Object.keys(raw)) {
+      const leg = parseNudgeKey(key);
+      if (!leg) continue;
+      const offset = raw[key];
+      if (Number.isFinite(offset)) byKey.set(key, { ...leg, offset });
+      else byKey.delete(key);
+    }
+  }
+  const out: Array<{ axis: 'h' | 'v'; at: number; offset: number }> = [];
+  for (const n of byKey.values()) {
+    if (n.offset === 0) continue;
+    out.push({ axis: n.axis, at: n.at, offset: clamp(Math.round(n.offset), -5000, 5000) });
+    if (out.length >= 64) break;
+  }
+  out.sort((p, q) => (p.axis === q.axis ? p.at - q.at : p.axis < q.axis ? -1 : 1));
   return out.length > 0 ? { nudges: out } : {};
 }
 

@@ -1,5 +1,6 @@
 import {
   alignFor,
+  cellStyleAt,
   formatCell,
   hasSummary,
   isChecked,
@@ -13,10 +14,10 @@ import {
   viewRows,
 } from './tableModel';
 import {
-  cellKey,
   DEFAULT_ACCENT,
   filterOn,
   isNumericType,
+  SUMMARY_LABELS,
   TAG_PAINTS,
   type CellAlign,
   type CellVAlign,
@@ -28,6 +29,9 @@ import { evaluateCell, isErr, isFormula, parseDateText, ruleTest, type FValue } 
 
 /** Link ink on the table's paper: AA on white and on every light tint. */
 export const LINK_INK = '#1D4ED8';
+
+/** A link a cell holds that a browser may open — http and https only; anything else is text, never a link. */
+export const safeHref = (text: string) => (/^https?:\/\/[^\s]+$/i.test(text.trim()) ? text.trim() : null);
 
 const ERROR_TEXT = /^#(?:REF!|DIV\/0!|NAME\?|VALUE!|CYCLE!|ERROR!|NUM!|N\/A)$/;
 
@@ -84,8 +88,12 @@ export interface TableCellBox {
   blank?: boolean;
   /** A data bar: its share of the column's largest magnitude, and its colour. */
   bar?: { t: number; color: string; negative: boolean };
-  /** A summary cell in the footer row, with the aggregation's name. */
-  footer?: { label: string };
+  /**
+   * A summary cell in the footer row: the aggregation's name, and a shorter
+   * one to fall back to — `Sum of 14 visible`, then `Sum` — before the
+   * painter gives the label up for the value.
+   */
+  footer?: { label: string; short?: string };
 }
 
 export interface TableSegment {
@@ -290,6 +298,22 @@ export function drawnWeight(spec: TableSpec): number {
   return Math.max(1, weights.reduce((a, b) => a + b, 0) + (footer ? 1 : 0));
 }
 
+interface RowEntry {
+  vr: number;
+  y: number;
+  h: number;
+  cells: TableCellBox[];
+  segments: TableSegment[];
+  /** Each formula cell's value when the row was laid out: a row whose values moved is laid out again. */
+  values?: Array<FValue | undefined>;
+}
+
+/** Laid-out rows by row array, per columns array — a table's columns are its own, so tables never share an entry. */
+/** Two formula results that draw the same. */
+const sameValue = (a: FValue | undefined, b: FValue) => a === b || (isErr(a) && isErr(b) && a.err === b.err);
+
+const rowCaches = new WeakMap<object, { sig: unknown[]; rows: WeakMap<string[], RowEntry> }>();
+
 export function layoutTable(spec: TableSpec, width: number, height: number): TableLayout {
   const ink = themeInk(spec.theme, spec.accent ?? DEFAULT_ACCENT);
   const { rows, weights, footer: withFooter } = drawnWeights(spec);
@@ -322,6 +346,16 @@ export function layoutTable(spec: TableSpec, width: number, height: number): Tab
   const segments: TableSegment[] = [];
   const cols = spec.columns.length;
   const body = rows.filter((r) => !(spec.header && r === 0));
+  // A select column's options, read once per layout rather than once per cell.
+  const optionsByCol = new Map<number, ReturnType<typeof optionsOf>>();
+  const optionsFor = (c: number) => {
+    let hit = optionsByCol.get(c);
+    if (!hit) {
+      hit = optionsOf(spec, c);
+      optionsByCol.set(c, hit);
+    }
+    return hit;
+  };
 
   // Colour rules by column, their tests built once per layout. A rule reads
   // the cell's value — a formula's result included — so it recolours with
@@ -377,111 +411,153 @@ export function layoutTable(spec: TableSpec, width: number, height: number): Tab
     return { t: Math.min(1, Math.abs(v) / abs), color: b.color, negative: v < 0 };
   };
 
-  rows.forEach((r, vr) => {
+  /** One cell's box and the rules on its right and bottom edges; nothing when a merge covers it. */
+  const layCell = (r: number, c: number, vr: number, rowRule: ColourRule | undefined, out: { cells: TableCellBox[]; segments: TableSegment[] }) => {
     const header = spec.header && r === 0;
     const zebraFill = !header && ink.zebra && (vr - (spec.header ? 1 : 0)) % 2 === 1 ? ink.zebra : null;
+    let w = colW[c];
+    let h = rowHs[vr];
+    // Merges only hold while the drawn rows are the stored rows; sorted or
+    // filtered, a merge would span rows that are no longer beside it.
+    if (identity) {
+      const m = mergeAt(spec, r, c);
+      if (m) {
+        if (m.r !== r || m.c !== c) return;
+        w = colW.slice(c, c + m.cs).reduce((a, b) => a + b, 0);
+        h = rowY[Math.min(rows.length, vr + m.rs)] - rowY[vr];
+      }
+    }
+    const style = cellStyleAt(spec, r, c);
+    const firstCol = !header && spec.firstColumn && c === 0;
+    const raw = spec.cells[r]?.[c] ?? '';
+    const formula = !header && isFormula(raw);
+    const type = spec.columns[c].type;
+    const text = formatCell(spec, r, c);
+    // A formula that failed says so in red — `#REF!` in body ink reads as
+    // data, and it is the one value in the table that is not.
+    const errored = formula && ERROR_TEXT.test(text);
+    const rule = header ? undefined : ruleFor(r, c) ?? rowRule;
+    const scaled = header ? null : scaleFor(r, c);
+    const fill = rule?.fill ?? scaled ?? style?.fill ?? (header ? ink.headerFill : firstCol ? ink.firstCol ?? ink.headerFill : zebraFill);
+    const painted = Boolean(rule?.fill ?? scaled ?? style?.fill);
+
+    const box: TableCellBox = {
+      r,
+      c,
+      vr,
+      x: colX[c],
+      y: rowY[vr],
+      w,
+      h,
+      text,
+      align: alignFor(spec, r, c),
+      valign: style?.valign ?? 'middle',
+      bold: rule?.bold ?? style?.bold ?? (header || Boolean(firstCol)),
+      italic: style?.italic ?? false,
+      color: rule?.color ?? style?.color ?? (errored ? '#B91C1C' : header ? ink.headerText : fill && painted ? inkOn(fill) : ink.text),
+      fill,
+      header,
+      ...(header && spec.sort?.col === c ? { sort: spec.sort.dir } : null),
+      ...(header && filterOn(spec, c) && (filterOn(spec, c)!.values || filterOn(spec, c)!.query.trim()) ? { filtered: true } : null),
+      ...(style?.wrap ? { wrap: true } : null),
+      ...(formula ? { formula: true } : null),
+    };
+
+    if (!header && !errored) {
+      const value = formula ? evaluateCell(spec, r, c) : null;
+      if (type === 'checkbox') {
+        box.kind = 'checkbox';
+        box.checked = formula ? value === true || (typeof value === 'number' && value !== 0) : isChecked(raw);
+        box.text = '';
+      } else if (type === 'select' && !formula) {
+        const opts = optionsFor(c);
+        const labels = selectLabels(raw);
+        if (labels.length) {
+          box.kind = 'select';
+          box.tags = labels.map((label) => {
+            const o = opts.find((x) => x.label.toLowerCase() === label.toLowerCase());
+            const p = TAG_PAINTS[o ? o.tag : 0];
+            return { label, paper: p.paper, ink: p.ink };
+          });
+        }
+      } else if (type === 'rating') {
+        box.kind = 'rating';
+        box.rating = formula ? (typeof value === 'number' ? Math.max(0, Math.min(5, Math.round(value))) : 0) : ratingOf(raw);
+        box.text = '';
+        // An unrated cell shows nothing, as Airtable's and Notion's do; five grey stars down a column read as data.
+        if (!formula && raw.trim() === '') box.blank = true;
+      } else if (type === 'url' && text && safeHref(text)) {
+        box.kind = 'url';
+        if (!rule?.color && !style?.color) box.color = LINK_INK;
+      } else if (type === 'person' && text.trim()) {
+        box.kind = 'person';
+      }
+      if (isNumericType(type) || type === 'date') {
+        const bar = barFor(r, c);
+        if (bar) box.bar = bar;
+      }
+      if (formula && isErr(value) && box.kind) delete box.kind;
+    }
+    out.cells.push(box);
+
+    // The right and bottom edges of this cell, per the theme.
+    const right = colX[c] + w;
+    const bottom = rowY[vr] + h;
+    if (ink.colLine && right < width - 0.5) {
+      out.segments.push({ x1: right, y1: rowY[vr], x2: right, y2: bottom, width: 1, color: ink.colLine });
+    }
+    const lastRow = bottom >= height - 0.5;
+    if (!lastRow) {
+      if (header && ink.headerRule.width > 0) {
+        out.segments.push({ x1: colX[c], y1: bottom, x2: right, y2: bottom, width: ink.headerRule.width, color: ink.headerRule.color });
+      } else if (!header && ink.rowLine) {
+        out.segments.push({ x1: colX[c], y1: bottom, x2: right, y2: bottom, width: 1, color: ink.rowLine });
+      }
+    }
+  };
+
+  /**
+   * Rows are laid out again only where something about them changed.
+   *
+   * A keystroke changes one row's text, but every row used to be laid out
+   * afresh — 120,000 boxes for a 2,000 × 60 table. A row whose array is the
+   * same (the read boundary keeps unchanged rows' arrays), at the same place,
+   * under the same columns, styles and theme keeps its boxes; only its
+   * formula cells, whose values can move with any edit, are laid out again.
+   * Tables with colour rules, scales, bars or merges — whose cells read other
+   * rows — and the header, which carries the view's marks, are always fresh.
+   */
+  const optionsSig = spec.columns
+    .map((col, c) => (col.type === 'select' ? optionsFor(c).map((o) => `${o.label}\u0000${o.tag}`).join('\u0001') : ''))
+    .join('\u0002');
+  const sig: unknown[] = [spec.styles, spec.theme, spec.accent, spec.header, spec.firstColumn, spec.currency, width, height, optionsSig];
+  const cacheable = !spec.rules?.length && !spec.scales?.length && !spec.bars?.length && !(identity && spec.merges?.length);
+  let cache = cacheable ? rowCaches.get(spec.columns) : undefined;
+  if (cacheable && (!cache || cache.sig.length !== sig.length || cache.sig.some((v, i) => v !== sig[i]))) {
+    cache = { sig, rows: new WeakMap() };
+    rowCaches.set(spec.columns, cache);
+  }
+
+  rows.forEach((r, vr) => {
+    const header = spec.header && r === 0;
+    const rowArr = spec.cells[r];
+    const hit = !header && cache && rowArr ? cache.rows.get(rowArr) : undefined;
+    if (hit && hit.vr === vr && hit.y === rowY[vr] && hit.h === rowHs[vr] && (!hit.values || hit.values.every((v, i) => v === undefined || sameValue(v, evaluateCell(spec, r, hit.cells[i].c))))) {
+      cells.push(...hit.cells);
+      segments.push(...hit.segments);
+      return;
+    }
+    const out = { cells: [] as TableCellBox[], segments: [] as TableSegment[] };
     const rowRule = header ? undefined : rowRuleFor(r);
     for (let c = 0; c < cols; c++) {
       if (colW[c] === 0) continue;
-      let w = colW[c];
-      let h = rowHs[vr];
-      // Merges only hold while the drawn rows are the stored rows; sorted or
-      // filtered, a merge would span rows that are no longer beside it.
-      if (identity) {
-        const m = mergeAt(spec, r, c);
-        if (m) {
-          if (m.r !== r || m.c !== c) continue;
-          w = colW.slice(c, c + m.cs).reduce((a, b) => a + b, 0);
-          h = rowY[Math.min(rows.length, vr + m.rs)] - rowY[vr];
-        }
-      }
-      const style = spec.styles?.[cellKey(r, c)];
-      const firstCol = !header && spec.firstColumn && c === 0;
-      const raw = spec.cells[r]?.[c] ?? '';
-      const formula = !header && isFormula(raw);
-      const type = spec.columns[c].type;
-      const text = formatCell(spec, r, c);
-      // A formula that failed says so in red — `#REF!` in body ink reads as
-      // data, and it is the one value in the table that is not.
-      const errored = formula && ERROR_TEXT.test(text);
-      const rule = header ? undefined : ruleFor(r, c) ?? rowRule;
-      const scaled = header ? null : scaleFor(r, c);
-      const fill = rule?.fill ?? scaled ?? style?.fill ?? (header ? ink.headerFill : firstCol ? ink.firstCol ?? ink.headerFill : zebraFill);
-      const painted = Boolean(rule?.fill ?? scaled ?? style?.fill);
-
-      const box: TableCellBox = {
-        r,
-        c,
-        vr,
-        x: colX[c],
-        y: rowY[vr],
-        w,
-        h,
-        text,
-        align: alignFor(spec, r, c),
-        valign: style?.valign ?? 'middle',
-        bold: rule?.bold ?? style?.bold ?? (header || Boolean(firstCol)),
-        italic: style?.italic ?? false,
-        color: rule?.color ?? style?.color ?? (errored ? '#B91C1C' : header ? ink.headerText : fill && painted ? inkOn(fill) : ink.text),
-        fill,
-        header,
-        ...(header && spec.sort?.col === c ? { sort: spec.sort.dir } : null),
-        ...(header && filterOn(spec, c) && (filterOn(spec, c)!.values || filterOn(spec, c)!.query.trim()) ? { filtered: true } : null),
-        ...(style?.wrap ? { wrap: true } : null),
-        ...(formula ? { formula: true } : null),
-      };
-
-      if (!header && !errored) {
-        const value = formula ? evaluateCell(spec, r, c) : null;
-        if (type === 'checkbox') {
-          box.kind = 'checkbox';
-          box.checked = formula ? value === true || (typeof value === 'number' && value !== 0) : isChecked(raw);
-          box.text = '';
-        } else if (type === 'select' && !formula) {
-          const opts = optionsOf(spec, c);
-          const labels = selectLabels(raw);
-          if (labels.length) {
-            box.kind = 'select';
-            box.tags = labels.map((label) => {
-              const o = opts.find((x) => x.label.toLowerCase() === label.toLowerCase());
-              const p = TAG_PAINTS[o ? o.tag : 0];
-              return { label, paper: p.paper, ink: p.ink };
-            });
-          }
-        } else if (type === 'rating') {
-          box.kind = 'rating';
-          box.rating = formula ? (typeof value === 'number' ? Math.max(0, Math.min(5, Math.round(value))) : 0) : ratingOf(raw);
-          box.text = '';
-          // An unrated cell shows nothing, as Airtable's and Notion's do; five grey stars down a column read as data.
-          if (!formula && raw.trim() === '') box.blank = true;
-        } else if (type === 'url' && text) {
-          box.kind = 'url';
-          if (!rule?.color && !style?.color) box.color = LINK_INK;
-        } else if (type === 'person' && text.trim()) {
-          box.kind = 'person';
-        }
-        if (isNumericType(type) || type === 'date') {
-          const bar = barFor(r, c);
-          if (bar) box.bar = bar;
-        }
-        if (formula && isErr(value) && box.kind) delete box.kind;
-      }
-      cells.push(box);
-
-      // The right and bottom edges of this cell, per the theme.
-      const right = colX[c] + w;
-      const bottom = rowY[vr] + h;
-      if (ink.colLine && right < width - 0.5) {
-        segments.push({ x1: right, y1: rowY[vr], x2: right, y2: bottom, width: 1, color: ink.colLine });
-      }
-      const lastRow = bottom >= height - 0.5;
-      if (!lastRow) {
-        if (header && ink.headerRule.width > 0) {
-          segments.push({ x1: colX[c], y1: bottom, x2: right, y2: bottom, width: ink.headerRule.width, color: ink.headerRule.color });
-        } else if (!header && ink.rowLine) {
-          segments.push({ x1: colX[c], y1: bottom, x2: right, y2: bottom, width: 1, color: ink.rowLine });
-        }
-      }
+      layCell(r, c, vr, rowRule, out);
+    }
+    cells.push(...out.cells);
+    segments.push(...out.segments);
+    if (!header && cache && rowArr) {
+      const values = out.cells.some((b) => b.formula) ? out.cells.map((b) => (b.formula ? evaluateCell(spec, r, b.c) : undefined)) : undefined;
+      cache.rows.set(rowArr, { vr, y: rowY[vr], h: rowHs[vr], cells: out.cells, segments: out.segments, values });
     }
   });
 
@@ -499,7 +575,7 @@ export function layoutTable(spec: TableSpec, width: number, height: number): Tab
         y: footer.y,
         w: colW[c],
         h: footer.h,
-        text: agg ? summarize(spec, c, agg) : '',
+        text: agg ? summarize(spec, c, agg, rows) : '',
         align: 'right',
         valign: 'middle',
         bold: true,
@@ -507,7 +583,7 @@ export function layoutTable(spec: TableSpec, width: number, height: number): Tab
         color: ink.headerText === '#FFFFFF' ? '#0F172A' : ink.headerText,
         fill: ink.footerFill,
         header: false,
-        ...(agg ? { footer: { label: summaryLabel(spec, agg) } } : { footer: { label: '' } }),
+        ...(agg ? { footer: { label: summaryLabel(spec, agg, rows), short: SUMMARY_LABELS[agg] } } : { footer: { label: '' } }),
       });
       if (ink.colLine && colX[c] + colW[c] < width - 0.5) {
         segments.push({ x1: colX[c] + colW[c], y1: footer.y, x2: colX[c] + colW[c], y2: footer.y + footer.h, width: 1, color: ink.colLine });

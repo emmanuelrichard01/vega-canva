@@ -199,6 +199,11 @@ export const PanelHeader: React.FC<PanelHeaderProps> = ({
           className="panel-head__name panel-head__name--button"
           aria-label={`${typeName}: ${shownName}. Rename`}
           data-tooltip="Rename"
+          // A name cut short by the ellipsis is spelled out in the tooltip.
+          onPointerOver={(e) => {
+            const el = e.currentTarget;
+            el.setAttribute('data-tooltip', el.scrollWidth > el.clientWidth + 1 ? `Rename “${shownName}”` : 'Rename');
+          }}
           onClick={() => {
             setDraft(node.title ?? '');
             setEditing(true);

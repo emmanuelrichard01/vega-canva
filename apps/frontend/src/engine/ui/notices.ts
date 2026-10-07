@@ -189,6 +189,17 @@ export function expireNotices(list: readonly Notice[], now: number): Notice[] {
   return list.filter((n) => n.expiresAt === null || n.expiresAt > now);
 }
 
+/**
+ * Push every timed notice's departure back by `by` milliseconds.
+ *
+ * Hovering the stack holds the clock: the time spent reading is not spent
+ * against the notice, so it leaves a full lifetime after the pointer does.
+ */
+export function shiftExpiry(list: readonly Notice[], by: number): Notice[] {
+  if (by <= 0) return list.slice();
+  return list.map((n) => (n.expiresAt === null ? n : { ...n, expiresAt: n.expiresAt + by }));
+}
+
 /** Whether anything in this list is waiting on a timer, so a tick is worth running. */
 export function hasExpiring(list: readonly Notice[]): boolean {
   return list.some((n) => n.expiresAt !== null);
@@ -203,6 +214,8 @@ type Listener = () => void;
 const listeners = new Set<Listener>();
 let notices: Notice[] = [];
 let timer: number | undefined;
+/** When the stack was last held still by a pointer or focus, or null while it runs. */
+let heldAt: number | null = null;
 
 function emit() {
   listeners.forEach((fn) => fn());
@@ -235,7 +248,7 @@ function schedule() {
 
   window.clearTimeout(timer);
   timer = undefined;
-  if (!hasExpiring(notices)) return;
+  if (heldAt !== null || !hasExpiring(notices)) return;
 
   const now = Date.now();
   const soonest = notices.reduce(
@@ -263,6 +276,7 @@ export const notices$ = {
   notify(input: NoticeInput | string): string {
     const normalized = typeof input === 'string' ? { message: input } : input;
     const before = notices;
+    // A notice that arrives while the stack is held waits with the rest.
     notices = pushNotice(notices, normalized, Date.now());
     // The id of whatever this turned into: a new notice, or the one it folded
     // into. Either is the thing the caller would want to dismiss.
@@ -270,6 +284,23 @@ export const notices$ = {
     emit();
     schedule();
     return added?.id ?? '';
+  },
+
+  /** Stop the expiry clock while somebody is reading the stack. */
+  hold() {
+    if (heldAt !== null) return;
+    heldAt = Date.now();
+    schedule();
+  },
+
+  /** Start it again, crediting the time spent held. */
+  release() {
+    if (heldAt === null) return;
+    const waited = Date.now() - heldAt;
+    heldAt = null;
+    notices = shiftExpiry(notices, waited);
+    emit();
+    schedule();
   },
 
   dismiss(id: string) {
@@ -295,3 +326,7 @@ export const notices$ = {
  * has nothing to add, and the object form is still there for the ones that do.
  */
 export const notify = (input: NoticeInput | string): string => notices$.notify(input);
+
+/** A confirmation with Undo on it: the one action a notice most often carries. */
+export const notifyUndoable = (message: string, undo: () => void): string =>
+  notices$.notify({ message, tone: 'success', action: { label: 'Undo', run: undo }, duration: 6000 });

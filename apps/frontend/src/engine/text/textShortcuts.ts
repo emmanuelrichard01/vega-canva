@@ -16,7 +16,6 @@ const LIST_PREFIXES: ReadonlyArray<{ pattern: RegExp; list: ListStyle }> = [
   { pattern: /^1[.)] $/, list: 'number' },
   { pattern: /^a[.)] $/, list: 'letter' },
   { pattern: /^-- $/, list: 'dash' },
-  { pattern: /^o $/, list: 'circle' },
 ];
 
 /**
@@ -24,22 +23,36 @@ const LIST_PREFIXES: ReadonlyArray<{ pattern: RegExp; list: ListStyle }> = [
  *
  * Only fires while the prefix is the whole of the text before the caret on the
  * first line, so typing "- " in the middle of a sentence stays literal. Returns
- * the list style and the text with the prefix removed, or null.
+ * the list style, the text with the prefix removed and the prefix itself (so
+ * Backspace at the start of the block can give it back), or null.
  */
 export function detectListShortcut(
   value: string,
   caret: number,
   current: ListStyle | undefined
-): { list: ListStyle; value: string; caret: number } | null {
+): { list: ListStyle; value: string; caret: number; prefix: string } | null {
   if (current) return null;
   const before = value.slice(0, caret);
   if (before.includes('\n')) return null;
   for (const { pattern, list } of LIST_PREFIXES) {
     if (pattern.test(before)) {
-      return { list, value: value.slice(caret), caret: 0 };
+      return { list, value: value.slice(caret), caret: 0, prefix: before };
     }
   }
   return null;
+}
+
+/**
+ * Backspace at the very start of a block that a typed prefix just turned into
+ * a list: the list is dropped and the prefix is typed back, so the shortcut can
+ * be refused the way every editor allows. Null when there is nothing to undo.
+ */
+export function undoListShortcut(
+  prefix: string | null,
+  value: string
+): { value: string; caret: number } | null {
+  if (!prefix) return null;
+  return { value: prefix + value, caret: prefix.length };
 }
 
 export type FormatCommand =
@@ -81,8 +94,8 @@ export function formatCommandFor(e: {
     return null;
   }
   if (key === 'x') return 'strikethrough';
-  if (e.code === 'Digit7' || key === '7' || key === '&') return 'numbers';
-  if (e.code === 'Digit8' || key === '8' || key === '*') return 'bullets';
+  if (e.code === 'Digit7' || key === '&') return 'numbers';
+  if (e.code === 'Digit8' || key === '*') return 'bullets';
   if (e.code === 'Period' || key === '.' || key === '>') return 'grow';
   if (e.code === 'Comma' || key === ',' || key === '<') return 'shrink';
   if (key === 'l') return 'align-left';

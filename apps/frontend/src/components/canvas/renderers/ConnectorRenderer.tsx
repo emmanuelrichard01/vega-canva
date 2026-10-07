@@ -1,20 +1,20 @@
 import React from 'react';
-import { Circle, Group, Label, Line, Path, Tag, Text } from 'react-konva';
+import { Circle, Group, Line, Path, Rect, Text } from 'react-konva';
 import { Html } from 'react-konva-utils';
 import { nanoid } from 'nanoid';
 import type Konva from 'konva';
-import { roughLoop, roughPolyline, seedFor } from '../../../engine/model/rough';
+import { sketchedCap, sketchedRun } from '../../../engine/model/connectorSketch';
 import {
   publishConnectorLabel,
   retractConnectorLabel,
   slotFor,
   subscribeConnectorLabels,
 } from '../../../engine/model/connectorLabelStore';
-import { estimateLabelSize } from '../../../engine/model/connectorLabels';
 import { DEFAULT_CONNECTOR_INK, type ConnectorLabel, type ConnectorNode } from '../../../engine/model/schema';
 import { connectorBounds, ELBOW_RADIUS, type Box } from '../../../engine/model/connector';
-import { capExtentPoints, connectorCaps, trimPolyline } from '../../../engine/model/connectorEnds';
-import { DERIVED_ORIGIN, doc, provider, updateNode } from '../../../engine/document';
+import { capExtentPoints, connectorCaps, trimRunForCaps } from '../../../engine/model/connectorEnds';
+import { DERIVED_ORIGIN, applyNodePatches, provider, updateNode } from '../../../engine/document';
+import { electedClient, isElectedWriter } from '../../../engine/document/election';
 import { canEditObjects } from '../../../engine/model/permissions';
 import { collaboratorStore } from '../../../engine/presence/collaboratorStore';
 import { useStore } from '../../../hooks/useStore';
@@ -24,14 +24,19 @@ import { liveTransformStore } from '../../../engine/model/liveTransformStore';
 import { useCameraZoom } from '../../../engine/useCameraZoom';
 import { cameraSystem } from '../../../engine/CameraSystem';
 import { useConnectorRoute } from '../../../engine/model/connectorRouter/liveRoutes';
-import { connectorPathData, type Hop } from '../../../engine/model/connectorRouter/pathOps';
+import { connectorPathData } from '../../../engine/model/connectorRouter/pathOps';
 import {
-  labelAnchor,
+  LABEL_GAP,
+  autoLabelKey,
+  autoLabelRequests,
+  labelCentre,
   labelEditStore,
   labelFontSize,
+  labelTextWidth,
   labelsOf,
   projectOnRoute,
   resample,
+  sentenceCase,
 } from '../../../engine/model/connectorLabelLayout';
 import { strokeColor, strokeDashProps, strokeWidth } from './shared';
 import '../connectorLabel.css';
@@ -105,43 +110,6 @@ function useEasedCurve(flat: number[], curved: boolean): number[] {
 }
 
 /**
- * Pull both ends back under their markers, keeping every segment where the
- * route put it when the trim fits inside the end legs, so jumps measured
- * along those legs stay where they were. Returns null hops when the trim had
- * to remove whole legs and the measurements no longer apply.
- */
-function trimForCaps(
-  flat: number[],
-  hops: readonly Hop[],
-  startInset: number,
-  endInset: number
-): { flat: number[]; hops: Hop[] } {
-  const n = flat.length / 2;
-  if (n < 2) return { flat, hops: [] };
-  const firstLen = Math.hypot(flat[2] - flat[0], flat[3] - flat[1]);
-  const lastLen = Math.hypot(flat[flat.length - 2] - flat[flat.length - 4], flat[flat.length - 1] - flat[flat.length - 3]);
-  const singleLeg = n === 2;
-  const fits = singleLeg ? startInset + endInset < firstLen : startInset < firstLen && endInset < lastLen;
-  if (!fits) {
-    return { flat: trimPolyline(trimPolyline(flat, startInset, true), endInset, false), hops: [] };
-  }
-  const out = flat.slice();
-  if (startInset > 0 && firstLen > 0) {
-    out[0] += ((flat[2] - flat[0]) / firstLen) * startInset;
-    out[1] += ((flat[3] - flat[1]) / firstLen) * startInset;
-  }
-  if (endInset > 0 && lastLen > 0) {
-    const k = flat.length;
-    out[k - 2] -= ((flat[k - 2] - flat[k - 4]) / lastLen) * endInset;
-    out[k - 1] -= ((flat[k - 1] - flat[k - 3]) / lastLen) * endInset;
-  }
-  return {
-    flat: out,
-    hops: hops.map((h) => (h.seg === 0 ? { ...h, at: h.at - startInset } : h)),
-  };
-}
-
-/**
  * A connector, drawn from the route store's answer for it.
  *
  * Routes are computed once per connector, for the whole board, by
@@ -167,23 +135,24 @@ export const ConnectorRenderer: React.FC<Props> = React.memo(({ node }) => {
   const shownLabels: ConnectorLabel[] =
     drafting?.isNew ? [...labels, { id: drafting.labelId, text: '', t: drafting.t }] : labels;
 
-  // Labels nobody placed join the board-wide arrangement, one entry each.
+  // Labels nobody placed join the board-wide arrangement, one entry each,
+  // exactly as the export arranges them (`autoLabelRequests`).
   const autoKey = labels
     .filter((l) => l.t === undefined)
     .map((l) => `${l.id}:${l.text}`)
     .join('|');
   React.useEffect(() => {
-    const auto = labels.filter((l) => l.t === undefined);
-    for (const l of auto) publishConnectorLabel(`${node.id}#${l.id}`, l.text, target);
+    const requests = autoLabelRequests(node, target);
+    for (const r of requests) publishConnectorLabel(r.id, r.text, r.points);
     return () => {
-      for (const l of auto) retractConnectorLabel(`${node.id}#${l.id}`);
+      for (const r of requests) retractConnectorLabel(r.id);
     };
     // `target` is compared by content inside the store.
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [node.id, autoKey, target]);
   const slotsVersion = React.useSyncExternalStore(
     subscribeConnectorLabels,
-    () => labels.map((l) => slotFor(`${node.id}#${l.id}`)).map((s) => (s ? `${s.x},${s.y}` : '-')).join('|'),
+    () => labels.map((l) => slotFor(autoLabelKey(node.id, l.id))).map((s) => (s ? `${s.x},${s.y}` : '-')).join('|'),
     () => ''
   );
   void slotsVersion;
@@ -191,10 +160,12 @@ export const ConnectorRenderer: React.FC<Props> = React.memo(({ node }) => {
   /**
    * Keep the stored box in step with the route, on a trailing delay.
    *
-   * Written by one client: the lowest clientID among the editors whose
-   * viewport shows the connector (and so have it mounted). Viewers and
-   * commenters never take part, since the server refuses their writes. Never
-   * during a gesture, and only when the box has drifted by more than a unit.
+   * Written by one client: the room's elected writer (`isElectedWriter`)
+   * when its viewport shows the connector, and otherwise the lowest clientID
+   * among the editors whose viewport does (only they have it mounted).
+   * Viewers and commenters never take part, since the server refuses their
+   * writes. Never during a gesture, and only when the box has drifted by more
+   * than a unit.
    */
   const routeKey = target.join(',');
   const capKey = [node.endStart ?? 'none', node.endEnd ?? 'none', node.endScale ?? 1, strokeWidth(node.appearance) || 2].join(':');
@@ -219,13 +190,19 @@ export const ConnectorRenderer: React.FC<Props> = React.memo(({ node }) => {
     });
     const rawBox = connectorBounds([...target, ...capExtentPoints(caps.start), ...capExtentPoints(caps.end)]);
 
-    const awareness = provider.awareness;
-    const myId = awareness?.clientID || 0;
-    const states = awareness?.getStates?.();
-    const editors = remotes
-      .filter((r) => states?.get(r.clientId)?.canWrite === true && r.viewport && viewportShows(r.viewport, rawBox))
-      .map((r) => r.clientId);
-    if (editors.length > 0 && Math.min(myId, ...editors) !== myId) return;
+    if (!isElectedWriter()) {
+      const awareness = provider.awareness;
+      const myId = awareness?.clientID || 0;
+      const states = awareness?.getStates?.();
+      const showing = remotes.filter(
+        (r) => states?.get(r.clientId)?.canWrite === true && r.viewport && viewportShows(r.viewport, rawBox)
+      );
+      const elected = states ? electedClient(states) : null;
+      // The elected writer has it on screen and will write it.
+      if (elected !== null && showing.some((r) => r.clientId === elected)) return;
+      const editors = showing.map((r) => r.clientId);
+      if (editors.length > 0 && Math.min(myId, ...editors) !== myId) return;
+    }
 
     const box = {
       x: Math.round(rawBox.x),
@@ -243,9 +220,9 @@ export const ConnectorRenderer: React.FC<Props> = React.memo(({ node }) => {
     const timer = window.setTimeout(() => {
       if (liveTransformStore.active) return;
       // Bookkeeping, not an edit: kept out of everyone's undo stack.
-      doc.transact(() => {
-        updateNode(node.id, { x: box.x, y: box.y, width: box.width, height: box.height });
-      }, DERIVED_ORIGIN);
+      applyNodePatches([{ id: node.id, changes: { x: box.x, y: box.y, width: box.width, height: box.height } }], {
+        origin: DERIVED_ORIGIN,
+      });
     }, 0);
     return () => window.clearTimeout(timer);
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -269,35 +246,31 @@ export const ConnectorRenderer: React.FC<Props> = React.memo(({ node }) => {
     scale: node.endScale,
   });
 
-  const trimmed = trimForCaps(points, route.curved ? [] : route.hops, startCap?.inset ?? 0, endCap?.inset ?? 0);
+  const trimmed = trimRunForCaps(points, route.curved ? [] : route.hops, startCap?.inset ?? 0, endCap?.inset ?? 0);
 
-  // A hand-drawn marker reads as a smudge below this size, so small ones stay crisp.
-  const SKETCHABLE_CAP = 13;
   const sketchLevel = node.appearance?.sketch;
-  const sketchCaps = Boolean(sketchLevel) && capSize >= SKETCHABLE_CAP;
+  const sketch = sketchLevel
+    ? { id: node.id, sketchSeed: node.appearance?.sketchSeed, level: sketchLevel, width, curved: route.curved, dashed }
+    : null;
 
-  const marker = (cap: typeof startCap, key: string) => {
+  const marker = (cap: typeof startCap, key: 'start' | 'end') => {
     if (!cap) return null;
+    const rough = sketch ? sketchedCap(cap, key, capSize, sketch) : null;
+    if (rough) {
+      return (
+        <Path
+          key={key}
+          data={rough}
+          stroke={stroke}
+          strokeWidth={width}
+          fill={cap.filled ? stroke : undefined}
+          fillEnabled={cap.filled}
+          lineCap="round"
+          lineJoin="round"
+        />
+      );
+    }
     if (cap.circle) {
-      if (sketchCaps) {
-        const { x, y, radius } = cap.circle;
-        const ring = Array.from({ length: 16 }, (_, i) => {
-          const a = (i / 16) * Math.PI * 2;
-          return { x: x + Math.cos(a) * radius, y: y + Math.sin(a) * radius };
-        });
-        return (
-          <Path
-            key={key}
-            data={roughLoop(ring, { seed: seedFor(node.id + key, node.appearance?.sketchSeed), level: sketchLevel, width })}
-            stroke={stroke}
-            strokeWidth={width}
-            fill={cap.filled ? stroke : undefined}
-            fillEnabled={cap.filled}
-            lineCap="round"
-            lineJoin="round"
-          />
-        );
-      }
       return (
         <Circle
           key={key}
@@ -307,25 +280,6 @@ export const ConnectorRenderer: React.FC<Props> = React.memo(({ node }) => {
           fill={cap.filled ? stroke : undefined}
           stroke={stroke}
           strokeWidth={width}
-        />
-      );
-    }
-    if (sketchCaps && cap.points) {
-      return (
-        <Path
-          key={key}
-          data={roughPolyline(pairsOf(cap.points), {
-            seed: seedFor(node.id + key, node.appearance?.sketchSeed),
-            level: sketchLevel,
-            width,
-            closed: cap.filled,
-          })}
-          stroke={stroke}
-          strokeWidth={width}
-          fill={cap.filled ? stroke : undefined}
-          fillEnabled={cap.filled}
-          lineCap="round"
-          lineJoin="round"
         />
       );
     }
@@ -345,16 +299,7 @@ export const ConnectorRenderer: React.FC<Props> = React.memo(({ node }) => {
 
   // A sketched run goes through the sketcher: elbows keep their overshoot,
   // curves take one continuous pass, and a dashed line takes one lap.
-  const sketched = sketchLevel
-    ? roughPolyline(pairsOf(trimmed.flat), {
-        seed: seedFor(node.id, node.appearance?.sketchSeed),
-        closed: false,
-        level: sketchLevel,
-        width,
-        asCurve: route.curved || undefined,
-        passes: dashed ? 1 : undefined,
-      })
-    : '';
+  const sketched = sketch ? sketchedRun(pairsOf(trimmed.flat), sketch) : '';
 
   const data = sketched
     ? sketched
@@ -382,9 +327,42 @@ export const ConnectorRenderer: React.FC<Props> = React.memo(({ node }) => {
   const fontSize = labelFontSize(width);
   const plate = canvasPlateFill(dark);
   const ink = readableOnSurface(stroke, plate);
+  const PAD = 3;
+
+  /**
+   * Where each label sits, in the group's space, and the box the line breaks
+   * around. The break is a real gap in the line (the line is clipped), not a
+   * plate painted over it, so a label reads the same over a coloured zone as
+   * over the board.
+   */
+  const placed = shownLabels.map((label) => {
+    const anchor = labelCentre(label, target, label.t === undefined ? slotFor(autoLabelKey(node.id, label.id)) : null);
+    const editing = drafting?.labelId === label.id;
+    const textWidth = labelTextWidth(editing ? label.text || 'Label' : label.text, fontSize);
+    const w = textWidth + PAD * 2;
+    const h = fontSize + PAD * 2;
+    return { label, editing, x: anchor.x - node.x, y: anchor.y - node.y, w, h };
+  });
+  const gaps = placed
+    .filter((p) => p.editing || p.label.text.trim())
+    .map((p) => ({
+      x: p.x - p.w / 2 - LABEL_GAP,
+      y: p.y - p.h / 2 - LABEL_GAP,
+      w: p.w + LABEL_GAP * 2,
+      h: p.h + LABEL_GAP * 2,
+    }));
+  const clipGaps = gaps.length
+    ? (ctx: Konva.Context) => {
+        // Everything, minus each label's box: even-odd makes the boxes holes.
+        ctx.rect(-1e6, -1e6, 2e6, 2e6);
+        for (const g of gaps) ctx.rect(g.x, g.y, g.w, g.h);
+        return ['evenodd'] as never;
+      }
+    : undefined;
 
   return (
     <Group>
+      <Group clipFunc={clipGaps}>
       <Path
         data={data}
         stroke={stroke}
@@ -397,19 +375,11 @@ export const ConnectorRenderer: React.FC<Props> = React.memo(({ node }) => {
         onDblClick={addLabelAt}
         onDblTap={addLabelAt as never}
       />
+      </Group>
       {marker(startCap, 'start')}
       {marker(endCap, 'end')}
 
-      {shownLabels.map((label) => {
-        const editing = drafting?.labelId === label.id;
-        const slot = label.t === undefined ? slotFor(`${node.id}#${label.id}`) : null;
-        // The arrangement places a plate by its top-left corner; labels are drawn centred.
-        const size = estimateLabelSize(label.text);
-        const anchor = slot
-          ? { x: slot.x + size.w / 2, y: slot.y + size.h / 2 }
-          : labelAnchor(target, label.t ?? 0.5, label.dn ?? 0);
-        const x = anchor.x - node.x;
-        const y = anchor.y - node.y;
+      {placed.map(({ label, editing, x, y, w, h }) => {
         if (editing) {
           return (
             <LabelInput
@@ -418,29 +388,42 @@ export const ConnectorRenderer: React.FC<Props> = React.memo(({ node }) => {
               y={y}
               fontSize={fontSize}
               initial={label.text}
-              onDone={(text) => commitLabel(node, labels, drafting!, text)}
+              onDone={(text) => commitLabel(node, drafting!, text)}
             />
           );
         }
         if (!label.text.trim()) return null;
         return (
-          // The plate is the board's colour and erases the line beneath the
-          // word, the way FigJam breaks a connector around its label.
-          <Label
+          // The line is clipped around the word; the plate under it, in the
+          // board's colour, also hides any other line that crosses here, so
+          // the word reads the same wherever it lands.
+          <Group
             key={label.id}
             x={x}
             y={y}
-            offsetX={estimateWidth(label.text, fontSize) / 2}
-            offsetY={(fontSize + 6) / 2}
             onDblClick={(e) => {
               if (!editable) return;
               e.cancelBubble = true;
               labelEditStore.set({ connectorId: node.id, labelId: label.id, t: label.t ?? 0.5, isNew: false });
             }}
           >
-            <Tag fill={plate} cornerRadius={3} />
-            <Text text={label.text} fontSize={fontSize} fontStyle="500" padding={3} fill={ink} />
-          </Label>
+            <Rect x={-w / 2} y={-h / 2} width={w} height={h} cornerRadius={3} fill={plate} />
+            <Text
+              x={-w / 2}
+              y={-h / 2}
+              width={w}
+              height={h}
+              align="center"
+              verticalAlign="middle"
+              text={label.text}
+              fontSize={fontSize}
+              fontStyle="500"
+              fontFamily="Inter, system-ui, sans-serif"
+              padding={PAD}
+              fill={ink}
+              wrap="none"
+            />
+          </Group>
         );
       })}
     </Group>
@@ -453,14 +436,14 @@ function estimateWidth(text: string, fontSize: number): number {
   return text.length * fontSize * 0.56 + 6;
 }
 
-function commitLabel(
-  node: ConnectorNode,
-  labels: ConnectorLabel[],
-  draft: { labelId: string; t: number; isNew: boolean },
-  text: string
-): void {
+function commitLabel(node: ConnectorNode, draft: { labelId: string; t: number; isNew: boolean }, text: string): void {
   labelEditStore.set(null);
-  const clean = text.trim();
+  // Against the labels the document holds now, so an edit made elsewhere
+  // while this one was typed is kept.
+  const current = useStore.getState().objects[node.id];
+  if (current?.type !== 'connector') return;
+  const labels = labelsOf(current as ConnectorNode);
+  const clean = sentenceCase(text);
   let next: ConnectorLabel[];
   if (draft.isNew) {
     if (!clean) return;

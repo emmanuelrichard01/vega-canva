@@ -1,0 +1,396 @@
+/* ---------------------------------------------------------------------------
+   SHAPE LIBRARY
+
+   The Shape seat's full sheet. See `ShapeSheet.tsx`. It sits inside the dock
+   flyout, whose panel is the one elevated surface: nothing in here adds a
+   border-and-shadow card of its own. The preview card and the drag ghost are
+   separate floating layers, portalled to the body.
+
+   Tiles are 40px on a 2px gap, eight across: a 334px grid in a 344px sheet.
+   The measurements come from `LIBRARY_LAYOUT` as custom properties. The scroll
+   reaches through the panel's padding to its edges, reserves the scrollbar's
+   gutter on both sides and centres the grid in what remains, so the grid's
+   left and right insets are equal with any scrollbar or none; the header is
+   inset to the same lines.
+   --------------------------------------------------------------------------- */
+
+.shape-lib {
+  --shape-lib-specimen-fill: var(--surface-primary);
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+  max-width: calc(100vw - 2 * var(--gutter, 16px) - 16px);
+  animation: shape-lib-in 160ms var(--ease-settle) both;
+}
+
+/* The one authored moment: the sheet settles up into place as it opens. */
+@keyframes shape-lib-in {
+  from { opacity: 0; transform: translateY(4px); }
+  to { opacity: 1; transform: none; }
+}
+
+.shape-lib__head {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+  /* To the grid's edges: half of what the sheet has beyond the grid. */
+  padding-inline: calc((100% - var(--shape-lib-grid)) / 2);
+}
+
+.shape-lib__search {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  height: 32px;
+  padding: 0 var(--space-1) 0 var(--space-2);
+  border: 1px solid var(--border-divider);
+  border-radius: var(--radius-md);
+  background: var(--surface-secondary);
+  color: var(--text-tertiary);
+  transition: border-color var(--motion-hover);
+}
+
+/* A field shows focus by its border, in the neutral field tone. */
+.shape-lib__search:focus-within { border-color: var(--focus-field-color); }
+
+.shape-lib__search input {
+  flex: 1;
+  min-width: 0;
+  height: 100%;
+  padding: 0;
+  border: 0;
+  background: transparent;
+  color: var(--text-primary);
+  font: inherit;
+  font-size: var(--text-base);
+  outline: none;
+}
+
+.shape-lib__search input:focus-visible { box-shadow: none; }
+.shape-lib__search input::placeholder { color: var(--text-tertiary); }
+.shape-lib__search input::-webkit-search-cancel-button { display: none; }
+
+.shape-lib__clear {
+  display: grid;
+  place-items: center;
+  width: 24px;
+  height: 24px;
+  padding: 0;
+  border: 0;
+  border-radius: var(--radius-sm);
+  background: transparent;
+  color: var(--text-tertiary);
+  cursor: pointer;
+}
+
+.shape-lib__clear:hover { background: var(--surface-hover); color: var(--text-primary); }
+
+/* The jump control: one segment per family, the one in view pressed. */
+.shape-lib__jump {
+  display: flex;
+  gap: 2px;
+  padding: 2px;
+  border-radius: var(--radius-md);
+  background: var(--surface-secondary);
+}
+
+.shape-lib__jump button {
+  flex: 1 1 auto;
+  min-width: 0;
+  height: 24px;
+  padding: 0 var(--space-1);
+  border: 0;
+  border-radius: var(--radius-sm);
+  background: transparent;
+  color: var(--text-secondary);
+  font: inherit;
+  font-size: var(--text-xs);
+  font-weight: var(--weight-medium);
+  white-space: nowrap;
+  cursor: pointer;
+  transition: background-color var(--motion-hover), color var(--motion-hover);
+}
+
+.shape-lib__jump button:hover { color: var(--text-primary); }
+
+/* Where you are, in ink on the panel's own surface: a position, not a choice. */
+.shape-lib__jump button[aria-current='true'] {
+  background: var(--surface-elevated);
+  color: var(--text-primary);
+  box-shadow: 0 0 0 1px var(--border-divider);
+}
+
+/* The scroll. Its height is fixed, so a search never resizes the flyout under
+   the pointer, and clamped to the window so a short one still shows the search. */
+.shape-lib__body {
+  position: relative;
+  height: clamp(168px, calc(100dvh - 300px), 404px);
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  scrollbar-width: thin;
+  /* Out to the panel's edges, with the gutter reserved on both sides, so the
+     scrollbar (or its absence) never weighs on one side of the grid. */
+  margin-inline: calc(-1 * var(--space-2));
+  scrollbar-gutter: stable both-edges;
+}
+
+/* Every row of the scroll, headings and hairlines included, is the grid's
+   width and centred on the panel. */
+.shape-lib__body > * {
+  width: var(--shape-lib-grid);
+  margin-inline: auto;
+}
+
+.shape-lib__section + .shape-lib__section { margin-top: var(--space-2); }
+
+/* The quick row stands apart from the families by a hairline, not a label. */
+.shape-lib__section[data-kind='quick'] {
+  padding-bottom: var(--space-2);
+  border-bottom: 1px solid var(--border-divider);
+}
+
+/* Sticky inside its own section, so the next heading pushes it off. */
+.shape-lib__heading {
+  position: sticky;
+  top: 0;
+  z-index: 2;
+  padding: var(--space-2) 2px var(--space-1);
+  background: var(--surface-elevated);
+  font-size: var(--text-xs);
+  font-weight: var(--weight-semibold);
+  color: var(--text-tertiary);
+}
+
+.shape-lib__grid {
+  display: grid;
+  grid-template-columns: repeat(var(--shape-lib-cols), var(--shape-lib-tile));
+  gap: var(--shape-lib-gap);
+}
+
+.shape-lib__cell {
+  position: relative;
+  width: var(--shape-lib-tile);
+  height: var(--shape-lib-tile);
+}
+
+.shape-lib__tile {
+  display: grid;
+  place-items: center;
+  width: 100%;
+  height: 100%;
+  padding: 0;
+  border: 0;
+  border-radius: var(--radius-md);
+  background: transparent;
+  color: var(--text-secondary);
+  cursor: pointer;
+  transition: background-color var(--motion-hover), color var(--motion-hover);
+}
+
+.shape-lib__tile:hover {
+  background: var(--surface-hover);
+  color: var(--text-primary);
+}
+
+/* The armed shape: an ink ring. Selection is ink in this product; the accent
+   is for states that are switched on, and focus is graphite. */
+.shape-lib__tile[data-current] {
+  background: var(--surface-active);
+  color: var(--text-primary);
+  box-shadow: inset 0 0 0 1.5px var(--text-primary);
+}
+
+.shape-lib__tile:focus-visible {
+  outline: 2px solid var(--focus-ring-color);
+  outline-offset: 1px;
+  box-shadow: none;
+  z-index: 1;
+}
+
+.shape-lib__tile[data-current]:focus-visible { box-shadow: inset 0 0 0 1.5px var(--text-primary); }
+
+.shape-lib__tile svg { pointer-events: none; }
+
+/* The pin: a star on the tile's corner, shown on hover or focus. */
+.shape-lib__pin {
+  position: absolute;
+  top: 1px;
+  right: 1px;
+  z-index: 1;
+  display: grid;
+  place-items: center;
+  width: 16px;
+  height: 16px;
+  padding: 0;
+  border: 0;
+  border-radius: var(--radius-sm);
+  background: transparent;
+  color: var(--text-tertiary);
+  cursor: pointer;
+  opacity: 0;
+  transition: opacity var(--motion-hover), color var(--motion-hover);
+}
+
+.shape-lib__cell:hover .shape-lib__pin,
+.shape-lib__cell:focus-within .shape-lib__pin { opacity: 1; }
+
+.shape-lib__pin:hover { color: var(--text-primary); background: var(--surface-hover); }
+
+.shape-lib__pin[aria-pressed='true'] { color: var(--text-primary); }
+.shape-lib__pin[aria-pressed='true'] svg { fill: currentColor; }
+
+/* Without hover, a pin is shown where it is set, so it can be taken off. */
+@media (hover: none) {
+  .shape-lib__pin[aria-pressed='true'] { opacity: 1; }
+}
+
+.shape-lib[data-carrying] .shape-lib__pin { opacity: 0; }
+
+.shape-lib__empty {
+  margin-block: var(--space-4) var(--space-1);
+  padding-inline: 2px;
+  font-size: var(--text-sm);
+  color: var(--text-secondary);
+}
+
+.shape-lib__icons {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  height: 32px;
+  margin-top: var(--space-2);
+  padding: 0 var(--space-2);
+  border: 0;
+  border-top: 1px solid var(--border-divider);
+  border-radius: 0;
+  background: transparent;
+  color: var(--text-secondary);
+  font: inherit;
+  font-size: var(--text-sm);
+  cursor: pointer;
+}
+
+.shape-lib__icons:hover { color: var(--text-primary); background: var(--surface-hover); }
+
+/* ---------------------------------------------------------------- preview card */
+
+.shape-lib-card {
+  --shape-lib-specimen-fill: var(--surface-primary);
+  position: fixed;
+  z-index: var(--z-tooltip, 9000);
+  left: -9999px;
+  top: 0;
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-1);
+  padding: var(--space-3);
+  border-radius: var(--radius-xl);
+  background: var(--surface-elevated);
+  box-shadow: var(--shadow-overlay);
+  color: var(--text-primary);
+  pointer-events: none;
+  opacity: 0;
+}
+
+.shape-lib-card[data-ready] {
+  opacity: 1;
+  transition: opacity 120ms var(--ease-settle);
+}
+
+.shape-lib-card__picture {
+  height: 96px;
+  margin-bottom: var(--space-2);
+  padding: var(--space-3);
+  border-radius: var(--radius-lg);
+  background: var(--surface-secondary);
+  color: var(--text-primary);
+}
+
+.shape-lib-card__title {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+}
+
+.shape-lib-card__name {
+  font-size: var(--text-md);
+  font-weight: var(--weight-semibold);
+}
+
+.shape-lib-card__key {
+  padding: 1px 5px;
+  border: 1px solid var(--border-divider);
+  border-radius: var(--radius-sm);
+  font-family: var(--font-sans);
+  font-size: var(--text-2xs);
+  color: var(--text-secondary);
+}
+
+.shape-lib-card__pinned {
+  display: inline-flex;
+  align-items: center;
+  gap: 3px;
+  margin-left: auto;
+  font-size: var(--text-xs);
+  color: var(--text-tertiary);
+}
+
+.shape-lib-card__pinned svg { fill: currentColor; }
+
+.shape-lib-card__hint {
+  margin: 0;
+  font-size: var(--text-sm);
+  line-height: 1.45;
+  color: var(--text-secondary);
+}
+
+.shape-lib-card__aliases {
+  margin: 0;
+  font-size: var(--text-xs);
+  line-height: 1.45;
+  color: var(--text-tertiary);
+}
+
+/* ------------------------------------------------------------------ drag ghost */
+
+/* Over the board, the shape at the size it will land at the current zoom; over
+   the chrome, where letting go puts nothing down, a small token. */
+.shape-lib-ghost {
+  position: fixed;
+  left: 0;
+  top: 0;
+  z-index: var(--z-tooltip, 9000);
+  pointer-events: none;
+  opacity: 0.88;
+  filter: drop-shadow(0 6px 14px rgb(0 0 0 / 0.18));
+  transition: width 120ms var(--ease-settle), height 120ms var(--ease-settle), opacity 120ms var(--ease-settle);
+}
+
+.shape-lib-ghost[data-over='chrome'] { opacity: 0.6; }
+
+/* ------------------------------------------------------------ preferences */
+
+@media (prefers-reduced-motion: reduce) {
+  .shape-lib { animation-name: shape-lib-fade; }
+  .shape-lib-card[data-ready],
+  .shape-lib-ghost { transition: none; }
+}
+
+@keyframes shape-lib-fade {
+  from { opacity: 0; }
+  to { opacity: 1; }
+}
+
+/* Increased contrast: the rings go to full weight and every tile shows its
+   edge, so state reads without relying on a tint. */
+:root[data-contrast='more'] .shape-lib__tile[data-current] { box-shadow: inset 0 0 0 2px var(--text-primary); }
+:root[data-contrast='more'] .shape-lib__tile:hover { box-shadow: inset 0 0 0 1px var(--border-strong); }
+:root[data-contrast='more'] .shape-lib__jump button[aria-current='true'] { box-shadow: 0 0 0 1.5px var(--text-primary); }
+:root[data-contrast='more'] .shape-lib__pin { color: var(--text-secondary); }
+:root[data-contrast='more'] .shape-lib-card { box-shadow: var(--shadow-overlay); }
+
+@media (forced-colors: active) {
+  .shape-lib__tile[data-current] { outline: 2px solid Highlight; outline-offset: -2px; }
+  .shape-lib__jump button[aria-current='true'] { outline: 1px solid Highlight; }
+  .shape-lib-card { border: 1px solid CanvasText; }
+}

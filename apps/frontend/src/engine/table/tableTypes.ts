@@ -26,6 +26,8 @@
  */
 
 import { migrateFormulaRows } from './tableFormula';
+import { nanoid } from 'nanoid';
+import { isLiveShape, liveToRaw, uniqueIds } from './tableLive';
 
 export type CellType =
   | 'text'
@@ -119,6 +121,12 @@ export interface TableColumn {
   options?: SelectOption[];
   /** A select column that holds several choices per cell, written `a;b`. */
   multi?: boolean;
+  /**
+   * Formatting for the whole column, under each cell's own: bold across a
+   * selected column is one entry here rather than one per row — 60 writes for
+   * a whole 2,000-row table instead of 120,000 (`tableModel.styleStored`).
+   */
+  style?: CellStyle;
 }
 
 export interface CellStyle {
@@ -242,9 +250,19 @@ export interface TableSpec {
    * How row numbers in formulas are counted. 2 is the spreadsheet's way —
    * the header is row 1 and data starts at row 2 — so a formula copied out to
    * Sheets or Excel means the same cells. Absent is the older count, where the
-   * header had no number; `normalizeTableSpec` rewrites those formulas once.
+   * header had no number. A table is read in the count it was written in; the
+   * document migration rewrites older formulas once (`migrateTableRefs`) and
+   * marks the node so it can never happen twice (`TableNode.tableRefs`).
    */
   refs?: 2;
+  /**
+   * Who each stored row and column is, in order, for the shared document: a
+   * row inserted by one person while another types elsewhere is a new id,
+   * not a renumbering, so both edits merge (`tableCrdt.ts`). Not drawn and
+   * not exported; every structural operation in `tableModel` carries them.
+   */
+  rowIds?: string[];
+  colIds?: string[];
 }
 
 export const DEFAULT_ACCENT = '#2563EB';
@@ -324,6 +342,46 @@ function readOptions(v: unknown): SelectOption[] | undefined {
   return out.length ? out : undefined;
 }
 
+/** A cell or column style, with only the keys and values it may hold; undefined when empty. */
+function readStyle(value: unknown): CellStyle | undefined {
+  if (!isObj(value)) return undefined;
+  const s: CellStyle = {};
+  if (value.bold === true) s.bold = true;
+  if (value.italic === true) s.italic = true;
+  if (color(value.color)) s.color = color(value.color);
+  if (color(value.fill)) s.fill = color(value.fill);
+  if (typeof value.align === 'string') s.align = oneOf(value.align, ALIGNS, 'left');
+  if (value.wrap === true) s.wrap = true;
+  if (typeof value.valign === 'string' && value.valign !== 'middle') s.valign = oneOf(value.valign, VALIGNS, 'middle');
+  if (s.valign === 'middle') delete s.valign;
+  return Object.keys(s).length ? s : undefined;
+}
+
+/** Shallow equality of two flat records of plain values. */
+function sameFlat(a: object | undefined, b: object | undefined): boolean {
+  if (a === b) return true;
+  if (!a || !b) return false;
+  const ak = Object.keys(a);
+  if (ak.length !== Object.keys(b).length) return false;
+  return ak.every((k) => (a as Record<string, unknown>)[k] === (b as Record<string, unknown>)[k]);
+}
+
+/**
+ * The last read's columns and styles, kept when this read's are the same
+ * values — so a keystroke leaves them the same objects, and what is cached on
+ * them (laid-out rows) survives it.
+ */
+function shareShape(prev: TableSpec | undefined, columns: TableColumn[], styles: Record<string, CellStyle>): { columns: TableColumn[]; styles: Record<string, CellStyle> } {
+  if (!prev) return { columns, styles };
+  const sameCols =
+    prev.columns.length === columns.length && prev.columns.every((c, i) => JSON.stringify(c) === JSON.stringify(columns[i]));
+  let outStyles = styles;
+  const before = prev.styles ?? {};
+  const keys = Object.keys(styles);
+  if (keys.length === Object.keys(before).length && keys.every((k) => sameFlat(before[k], styles[k]))) outStyles = before;
+  return { columns: sameCols ? prev.columns : columns, styles: outStyles };
+}
+
 function readFilter(f: unknown, cols: number): TableFilter | null {
   if (!isObj(f) || !inCols(f.col, cols)) return null;
   const query = typeof f.query === 'string' ? f.query.slice(0, 200) : '';
@@ -333,6 +391,50 @@ function readFilter(f: unknown, cols: number): TableFilter | null {
   return { col: f.col, query, ...(values ? { values } : null) };
 }
 
+/** A fresh id for a row or column. */
+export const newTableId = () => nanoid(10);
+
+/** Ids a table read without any — stable, so two reads of one stored table agree. */
+const positionalIds = (prefix: string, n: number) => Array.from({ length: n }, (_, i) => `${prefix}${i}`);
+
+/** `ids` when it names each of `n` tracks once; otherwise the positional ids. */
+function idsFor(ids: unknown, n: number, prefix: string): string[] {
+  if (Array.isArray(ids) && ids.length >= n) {
+    const head = uniqueIds(ids.slice(0, n));
+    if (head.length === n && head.every((id) => /^[\w-]{1,40}$/.test(id))) return head;
+  }
+  return positionalIds(prefix, n);
+}
+
+export interface NormalizeTableOptions {
+  /**
+   * The node is marked as counted the spreadsheet's way (`tableRefs: 2`):
+   * true even when an older build wrote the spec back without `refs`.
+   */
+  refsMarked?: boolean;
+  /**
+   * The node the spec belongs to. Rows whose text did not change come back as
+   * the same arrays as the last read of that node — and `cells` itself, when
+   * nothing changed — so a sort or a resize keeps every formula value.
+   */
+  cacheKey?: string;
+}
+
+const lastRead = new Map<string, TableSpec>();
+const READ_CACHE_MAX = 512;
+
+/** `next` with each row that equals the same row of `prev` replaced by it, and `prev` itself when every row does. */
+function shareRows(prev: string[][], next: string[][]): string[][] {
+  let same = prev.length === next.length;
+  const out = next.map((row, r) => {
+    const old = prev[r];
+    if (old && old.length === row.length && old.every((v, c) => v === row[c])) return old;
+    same = false;
+    return row;
+  });
+  return same ? prev : out;
+}
+
 /**
  * A `TableSpec` every reader can rely on.
  *
@@ -340,10 +442,14 @@ function readFilter(f: unknown, cols: number): TableFilter | null {
  * return a missing required field. The grid is made rectangular, every column
  * gets a definition, and merges that overlap or run off the table are dropped
  * rather than trusted — two merges claiming one cell would draw it twice.
- * Formulas written under the older row count are rewritten to the
- * spreadsheet's (`migrateTableRefs`).
+ *
+ * Reads the stored merged shape too (`tableLive.ts`), so nothing downstream
+ * knows which shape a table is kept in. Formulas are read in the count they
+ * were written in and never rewritten here: the document migration does that
+ * once, where it can mark it done.
  */
-export function normalizeTableSpec(raw: unknown): TableSpec {
+export function normalizeTableSpec(input: unknown, opts: NormalizeTableOptions = {}): TableSpec {
+  const raw = isLiveShape(input) ? liveToRaw(input) : input;
   const src = isObj(raw) ? raw : {};
   const rowsIn = Array.isArray(src.cells) ? src.cells.slice(0, MAX_ROWS) : [];
   let cols = Math.min(
@@ -351,7 +457,7 @@ export function normalizeTableSpec(raw: unknown): TableSpec {
     Math.max(1, ...rowsIn.map((r) => (Array.isArray(r) ? r.length : 0)), Array.isArray(src.columns) ? src.columns.length : 0)
   );
   if (!Number.isFinite(cols)) cols = 1;
-  const cells: string[][] = rowsIn.length
+  let cells: string[][] = rowsIn.length
     ? rowsIn.map((r) =>
         Array.from({ length: cols }, (_, c) => {
           const v = Array.isArray(r) ? r[c] : undefined;
@@ -359,6 +465,8 @@ export function normalizeTableSpec(raw: unknown): TableSpec {
         })
       )
     : defaultTableSpec(4, cols).cells;
+  const prevRead = opts.cacheKey ? lastRead.get(opts.cacheKey) : undefined;
+  if (prevRead) cells = shareRows(prevRead.cells, cells);
 
   const columnsIn = Array.isArray(src.columns) ? src.columns : [];
   const columns: TableColumn[] = Array.from({ length: cols }, (_, c) => {
@@ -367,6 +475,7 @@ export function normalizeTableSpec(raw: unknown): TableSpec {
     const align = oneOf(col.align, ALIGNS, 'left');
     const type = oneOf(col.type, CELL_TYPES, 'text');
     const options = type === 'select' ? readOptions(col.options) : undefined;
+    const style = readStyle(col.style);
     return {
       width: Math.min(20, Math.max(0.2, w)),
       type,
@@ -374,30 +483,27 @@ export function normalizeTableSpec(raw: unknown): TableSpec {
       ...(col.hidden === true ? { hidden: true } : null),
       ...(options ? { options } : null),
       ...(type === 'select' && col.multi === true ? { multi: true } : null),
+      ...(style ? { style } : null),
     };
   });
   // A table always shows at least one column.
   if (columns.every((c) => c.hidden)) delete columns[0].hidden;
 
   const rows = cells.length;
-  const styles: Record<string, CellStyle> = {};
+  let styles: Record<string, CellStyle> = {};
   if (isObj(src.styles)) {
     for (const [key, value] of Object.entries(src.styles)) {
       const m = /^(\d+):(\d+)$/.exec(key);
       if (!m || !isObj(value)) continue;
       if (Number(m[1]) >= rows || Number(m[2]) >= cols) continue;
-      const s: CellStyle = {};
-      if (value.bold === true) s.bold = true;
-      if (value.italic === true) s.italic = true;
-      if (color(value.color)) s.color = color(value.color);
-      if (color(value.fill)) s.fill = color(value.fill);
-      if (typeof value.align === 'string') s.align = oneOf(value.align, ALIGNS, 'left');
-      if (value.wrap === true) s.wrap = true;
-      if (typeof value.valign === 'string' && value.valign !== 'middle') s.valign = oneOf(value.valign, VALIGNS, 'middle');
-      if (s.valign === 'middle') delete s.valign;
-      if (Object.keys(s).length) styles[key] = s;
+      const s = readStyle(value);
+      if (s) styles[key] = s;
     }
   }
+
+  const shared = shareShape(prevRead, columns, styles);
+  styles = shared.styles;
+  const sharedColumns = shared.columns;
 
   const merges: TableMerge[] = [];
   const claimed = new Set<string>();
@@ -484,7 +590,7 @@ export function normalizeTableSpec(raw: unknown): TableSpec {
 
   const spec: TableSpec = {
     cells,
-    columns,
+    columns: sharedColumns,
     header: src.header !== false,
     ...(src.firstColumn === true ? { firstColumn: true } : null),
     theme: oneOf(src.theme, TABLE_THEMES, 'clean'),
@@ -505,7 +611,13 @@ export function normalizeTableSpec(raw: unknown): TableSpec {
     ...(frozen && (frozen.rows > 0 || frozen.cols > 0) ? { frozen } : null),
     ...(rowHeights ? { rowHeights } : null),
     ...(summary ? { summary } : null),
-    ...(src.refs === 2 ? { refs: 2 as const } : null),
+    ...(src.refs === 2 || opts.refsMarked ? { refs: 2 as const } : null),
+    rowIds: idsFor(src.rowIds, rows, 'r'),
+    colIds: idsFor(src.colIds, cols, 'c'),
   };
-  return migrateTableRefs(spec);
+  if (opts.cacheKey) {
+    if (lastRead.size >= READ_CACHE_MAX && !lastRead.has(opts.cacheKey)) lastRead.clear();
+    lastRead.set(opts.cacheKey, spec);
+  }
+  return spec;
 }

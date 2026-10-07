@@ -1,0 +1,85 @@
+/* The drawing tray's physical tools. See `ToolArt.tsx`.
+
+   The fixed materials are tokens here, so a theme or contrast change is a
+   style change. The inks (`--ink`, `--hl`, `--note`) are set inline by the
+   tray from the current settings, and the tips derive from them. */
+
+.tool-art {
+  display: block;
+  overflow: visible;
+  /* Materials that are not the ink. */
+  --art-plastic: #ebe8e2;
+  --art-label: #f4f2ed;
+  --art-rubber: #f2a3a1;
+  --art-sleeve: #3d5f8f;
+  --art-lacquer: #24344d;
+  --art-grip: #1d1f23;
+  /* A hairline around every part, so a pale tool keeps its shape on a pale
+     panel and a dark one on a dark panel. */
+  --art-edge: rgba(0, 0, 0, 0.26);
+  /* The tips: darker than the ink they lay down. */
+  --ink-tip: color-mix(in srgb, var(--ink, #1f2937) 68%, #000);
+  --ink-deep: color-mix(in srgb, var(--ink, #1f2937) 82%, #000);
+  --hl-cap: color-mix(in srgb, var(--hl, #fde047) 62%, #fff);
+  --hl-tip: color-mix(in srgb, var(--hl, #fde047) 74%, #000);
+  --note-edge: color-mix(in srgb, var(--note, #fde68a) 84%, #000);
+}
+
+.dark-theme .tool-art {
+  --art-plastic: #d9d6cf;
+  --art-label: #e6e3dc;
+  --art-lacquer: #2f4566;
+  --art-edge: rgba(255, 255, 255, 0.24);
+}
+
+.tool-art .part {
+  stroke: var(--art-edge);
+  stroke-width: 0.6;
+}
+
+.tool-art .ink-tip {
+  stroke: color-mix(in srgb, var(--art-edge) 100%, transparent);
+  stroke-width: 0.5;
+}
+
+.tool-art .nib-line {
+  stroke: #3a3e45;
+}
+
+.tool-art .nib-hole {
+  fill: #3a3e45;
+}
+
+/* Increased contrast: flat colour and a solid edge. The gradients, the
+   specular stripe and the seam shadows all go; every part keeps its outline in
+   the text colour, so each tool reads as a clean silhouette on either theme. */
+:root[data-contrast='more'] .tool-art .shade {
+  display: none;
+}
+
+:root[data-contrast='more'] .tool-art .part,
+:root[data-contrast='more'] .tool-art .ink-tip {
+  stroke: var(--text-primary);
+  stroke-width: 1.2;
+}
+
+:root[data-contrast='more'] .tool-art {
+  --art-plastic: #ffffff;
+  --art-label: #ffffff;
+}
+
+:root[data-contrast='more'] .dark-theme .tool-art {
+  --art-plastic: #e6e6e6;
+  --art-label: #e6e6e6;
+}
+
+@media (forced-colors: active) {
+  .tool-art .part,
+  .tool-art .ink-tip {
+    stroke: CanvasText;
+    stroke-width: 1.2;
+  }
+  .tool-art .shade {
+    display: none;
+  }
+}

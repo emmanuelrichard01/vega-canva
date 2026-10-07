@@ -3,15 +3,40 @@
  * builder every reader draws from.
  */
 
-import type { Pt } from './geometry';
+import type { Pt, Rect } from './geometry';
 
-/** A user's offset of one interior segment, along that segment's normal. */
+/**
+ * A user's offset of one interior leg of an elbow route, along its normal.
+ *
+ * Keyed by the leg itself, not by its position in the list: `axis` is the
+ * way the leg runs and `at` its coordinate across that axis where the router
+ * puts it, rounded to a unit. A nudge applies to the interior leg the router
+ * still puts on that line, and to nothing once no leg runs there.
+ */
 export interface SegmentNudge {
-  /** Index of the segment, counting from the first leg out of the start. */
-  seg: number;
+  axis: 'h' | 'v';
+  at: number;
   offset: number;
-  /** How many segments the route had when the nudge was made. */
-  of: number;
+}
+
+/** What one segment of a drawn elbow route is, for the editor's grips. */
+export interface LegRef {
+  axis: 'h' | 'v';
+  /** The leg's coordinate before any nudge, rounded: its key. */
+  at: number;
+  /** How far a nudge moved it, after clamping. */
+  nudge: number;
+}
+
+/** The document key a nudge is stored under, one per leg. */
+export function nudgeKey(n: Pick<SegmentNudge, 'axis' | 'at'>): string {
+  return `nudge:${n.axis}:${n.at}`;
+}
+
+/** The leg a stored key names, or null for any other key. */
+export function parseNudgeKey(key: string): Pick<SegmentNudge, 'axis' | 'at'> | null {
+  const m = /^nudge:([hv]):(-?\d+)$/.exec(key);
+  return m ? { axis: m[1] as 'h' | 'v', at: Number(m[2]) } : null;
 }
 
 export function segmentCount(points: readonly Pt[]): number {
@@ -25,29 +50,85 @@ export function isAxisSegment(p: Pt, q: Pt): 'h' | 'v' | null {
 }
 
 /**
- * Apply stored nudges to an orthogonal route.
- *
- * Only interior segments move (the first and last legs are bound to their
- * ports), and a nudge recorded against a route of a different shape is
- * ignored: once the topology changes, "the third segment" names a different
+ * The interior legs of an elbow route, by segment index: each leg's axis and
+ * key coordinate, or null for an end leg (bound to its port) and any slanted
  * segment.
  */
-export function applyNudges(points: readonly Pt[], nudges: readonly SegmentNudge[] | undefined): Pt[] {
-  const out = points.map((p) => ({ ...p }));
-  if (!nudges || nudges.length === 0) return out;
-  const count = segmentCount(out);
-  for (const n of nudges) {
-    if (n.of !== count) continue;
-    if (n.seg <= 0 || n.seg >= count - 1) continue;
-    moveSegment(out, n.seg, n.offset);
+export function interiorLegs(points: readonly Pt[]): Array<Pick<SegmentNudge, 'axis' | 'at'> | null> {
+  const count = segmentCount(points);
+  const out: Array<Pick<SegmentNudge, 'axis' | 'at'> | null> = new Array(count).fill(null);
+  for (let seg = 1; seg < count - 1; seg += 1) {
+    const axis = isAxisSegment(points[seg], points[seg + 1]);
+    if (!axis) continue;
+    out[seg] = { axis, at: Math.round(axis === 'h' ? points[seg].y : points[seg].x) };
   }
   return out;
+}
+
+/**
+ * How far a leg can move toward `offset` before it, or the legs either side
+ * stretching to meet it, enters an obstacle. `obstacles` are already
+ * inflated by the router's margin, so a clamped leg keeps that clearance. An
+ * obstacle the leg already runs through does not stop it.
+ */
+export function clampNudge(points: readonly Pt[], seg: number, offset: number, obstacles: readonly Rect[]): number {
+  const p = points[seg];
+  const q = points[seg + 1];
+  const axis = isAxisSegment(p, q);
+  if (!axis || offset === 0) return offset;
+  const h = axis === 'h';
+  const c = h ? p.y : p.x;
+  const lo = h ? Math.min(p.x, q.x) : Math.min(p.y, q.y);
+  const hi = h ? Math.max(p.x, q.x) : Math.max(p.y, q.y);
+  let limit = offset;
+  for (const r of obstacles) {
+    const rLo = h ? r.minX : r.minY;
+    const rHi = h ? r.maxX : r.maxY;
+    if (!(rLo < hi && rHi > lo)) continue;
+    const near = h ? r.minY : r.minX;
+    const far = h ? r.maxY : r.maxX;
+    if (near < c && far > c) continue;
+    if (limit > 0 && near >= c) limit = Math.min(limit, near - c);
+    else if (limit < 0 && far <= c) limit = Math.max(limit, far - c);
+  }
+  return limit;
+}
+
+/**
+ * Apply stored nudges to an elbow route.
+ *
+ * Each nudge moves the interior leg its key names, clamped so the leg stays
+ * out of `obstacles`. A nudge whose leg the route no longer has is ignored;
+ * the first and last legs belong to their ports and never move. Returns the
+ * moved points and, per segment, what each interior leg is and how far it
+ * moved.
+ */
+export function applyNudges(
+  points: readonly Pt[],
+  nudges: readonly SegmentNudge[] | undefined,
+  obstacles: readonly Rect[] = []
+): { points: Pt[]; legs: Array<LegRef | null> } {
+  const out = points.map((p) => ({ ...p }));
+  const keys = interiorLegs(points);
+  const legs: Array<LegRef | null> = keys.map((k) => (k ? { ...k, nudge: 0 } : null));
+  if (!nudges || nudges.length === 0) return { points: out, legs };
+  for (const n of nudges) {
+    if (!Number.isFinite(n.offset) || n.offset === 0) continue;
+    const seg = keys.findIndex((k) => k !== null && k.axis === n.axis && k.at === n.at);
+    if (seg < 0 || legs[seg]!.nudge !== 0) continue;
+    const offset = clampNudge(out, seg, n.offset, obstacles);
+    if (offset === 0) continue;
+    moveSegment(out, seg, offset);
+    legs[seg]!.nudge = offset;
+  }
+  return { points: out, legs };
 }
 
 /** Shift segment `seg` along its normal; its neighbours stretch to stay joined. */
 export function moveSegment(points: Pt[], seg: number, offset: number): void {
   const p = points[seg];
   const q = points[seg + 1];
+  if (!p || !q) return;
   const axis = isAxisSegment(p, q);
   if (!axis || !Number.isFinite(offset)) return;
   if (axis === 'h') {

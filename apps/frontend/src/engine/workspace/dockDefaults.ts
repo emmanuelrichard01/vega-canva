@@ -41,10 +41,22 @@ const listeners = new Set<Listener>();
 function read(): DockLayout {
   try {
     const raw = localStorage.getItem(KEY);
+    const stored: unknown = raw ? JSON.parse(raw) : null;
+    const migrated = migrateStoredLayout(stored);
     // Normalised on the way *in*, not on the way out: every reader then gets a
     // layout that is already safe, and the repair happens once per load rather
     // than once per render.
-    return normalizeLayout(migrateStoredLayout(raw ? JSON.parse(raw) : null));
+    const next = normalizeLayout(migrated);
+    // A layout brought forward from an older version is written back once, so
+    // the next load reads it as current instead of migrating it again.
+    if (migrated !== stored) {
+      try {
+        localStorage.setItem(KEY, JSON.stringify({ v: LAYOUT_VERSION, ...next }));
+      } catch {
+        /* persistence is a nicety; the migrated layout still applies now */
+      }
+    }
+    return next;
   } catch {
     // A corrupt or unavailable store must not take the toolbar down with it —
     // and the toolbar is the one piece of chrome you cannot work without.

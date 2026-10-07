@@ -8,9 +8,16 @@ import { provider } from '../../engine/document';
 import { Menu } from '../menu/Menu';
 import { withShortcut } from '../menu/shortcuts';
 import { parseZoomInput, zoomMenuEntries } from './zoomMenu';
+import { boardInsets } from './boardLayout';
+import { selectionBounds } from '../../engine/model/selection';
+import type { FitBounds } from '../../engine/cameraFit';
 
 /** One step of the − and + buttons, the same step the menu's rows take. */
 const STEP = 1.25;
+/** Breathing room around a fit, before the columns and the dock are added. */
+const FIT_PADDING = 64;
+/** The dock floats over the bottom of the board; a fit keeps work above it. */
+const DOCK_CLEARANCE = 48;
 
 /**
  * The zoom readout, which is also where zoom is set.
@@ -21,11 +28,11 @@ const STEP = 1.25;
  * chevron opens the menu of fits and fixed stops. Escape puts the value back.
  */
 export const ZoomControl: React.FC<{ compact?: boolean }> = ({ compact = false }) => {
-  const [percent, setPercent] = useState(() => Math.round(cameraSystem.zoom * 100));
+  const [percent, setPercent] = useState(() => Math.round(cameraSystem.reportedZoom * 100));
   useEffect(() => {
     const sync = () =>
       setPercent((prev) => {
-        const next = Math.round(cameraSystem.zoom * 100);
+        const next = Math.round(cameraSystem.reportedZoom * 100);
         return next === prev ? prev : next;
       });
     sync();
@@ -52,9 +59,22 @@ export const ZoomControl: React.FC<{ compact?: boolean }> = ({ compact = false }
   const zoomBy = (factor: number) => cameraSystem.zoomBy(factor, cameraSystem.width / 2, cameraSystem.height / 2);
 
   /** About the middle of what is on screen, so a stop never jumps somewhere else. */
-  const setZoom = (factor: number) => {
-    const centre = cameraSystem.screenToWorld(cameraSystem.width / 2, cameraSystem.height / 2);
-    window.dispatchEvent(new CustomEvent('navigateViewport', { detail: { x: centre.x, y: centre.y, zoom: factor } }));
+  const setZoom = (factor: number) => cameraSystem.zoomToLevel(factor);
+
+  /**
+   * Fit a world box into the canvas that is showing: the open columns sit over
+   * the board, so their width is added to the fit's padding on that side.
+   */
+  const fly = (bounds: FitBounds | null, maxZoom?: number) => {
+    if (!bounds) return;
+    const inset = boardInsets();
+    cameraSystem.flyToBounds(bounds, {
+      paddingLeft: FIT_PADDING + inset.left,
+      paddingRight: FIT_PADDING + inset.right,
+      paddingTop: FIT_PADDING,
+      paddingBottom: FIT_PADDING + DOCK_CLEARANCE,
+      ...(maxZoom !== undefined ? { maxZoom } : {}),
+    });
   };
 
   const commit = () => {
@@ -164,10 +184,12 @@ export const ZoomControl: React.FC<{ compact?: boolean }> = ({ compact = false }
             {
               zoomIn: () => zoomBy(STEP),
               zoomOut: () => zoomBy(1 / STEP),
-              fitAll: () => editor.zoomToFit({ smooth: true }),
+              fitAll: () => fly(editor.contentBounds()),
               zoomToSelection: () => {
                 const { objects } = useStore.getState();
-                editor.zoomToNodes(menuRect.selection.map((id) => objects[id]).filter(Boolean), { smooth: true });
+                const nodes = menuRect.selection.map((id) => objects[id]).filter(Boolean);
+                // A lone small object is not blown up past 200%.
+                fly(selectionBounds(nodes), Math.min(2, cameraSystem.zoomLimits.maxZoom));
               },
               setZoom,
             }

@@ -4,7 +4,24 @@ import { solidFillOf } from '../model/labelInk';
 import { useStore } from '../../hooks/useStore';
 import { THEMES } from '../model/stickyThemes';
 import type { AnyNode, ConnectorNode, ImageNode, PathNode, ShapeNode, TextNode, Typography } from '../model/schema';
-import { connectorPoints, type Box } from '../model/connector';
+import { connectorPoints, ELBOW_RADIUS } from '../model/connector';
+import { routeBoard, type BoardRoute } from '../model/connectorRouter/routeBoard';
+import { connectorPathData } from '../model/connectorRouter/pathOps';
+import { attachLookup, boxLookup } from '../model/connectorTargets';
+import { connectorCaps, trimRunForCaps } from '../model/connectorEnds';
+import { sketchedCap, sketchedRun } from '../model/connectorSketch';
+import {
+  LABEL_GAP,
+  arrangeLabels,
+  autoLabelKey,
+  labelCentre,
+  labelFontSize,
+  labelTextWidth,
+  labelsOf,
+} from '../model/connectorLabelLayout';
+import type { Placed } from '../model/connectorLabels';
+import { readableOnSurface } from '../model/color';
+import { DEFAULT_CONNECTOR_INK } from '../model/schema';
 import { gridCellsOf } from '../grid/gridNode';
 import { roundPolygon } from '../grid/gridLayout';
 import { cellGeometry } from '../grid/gridBuild';
@@ -15,7 +32,7 @@ import {
   LABEL_INSET,
   LABEL_SIZE,
 } from '../grid/gridStyle';
-import { fillsInterior, roughLoop, roughPolyline, seedFor } from '../model/rough';
+import { fillsInterior } from '../model/rough';
 import { SvgPaintDefs } from './svgPaint';
 import { assembleSvg } from './svgDocument';
 import { fetchBlob, inlineImageSources } from './inlineImages';
@@ -40,6 +57,7 @@ import { chartToSvg } from '../chart/chartSvg';
 import { tableToSvg } from '../table/tableSvg';
 import { codeToSvg } from '../code/codeSvg';
 import { linkToSvg } from '../link/linkSvg';
+import { iconToSvg, preloadIcons } from '../icons/iconSvg';
 import { cornerRadiiOf, fitRadii, isPerCorner, roundedRectPath } from '../model/cornerRadii';
 import { attr, escapeXml, num } from './markup';
 import { compareStacking } from '../model/stacking';
@@ -197,90 +215,148 @@ function textMarkup(node: TextNode): string {
  */
 
 /**
- * A connector as SVG.
+ * A connector as SVG, drawn the way the canvas draws it.
  *
- * **This case did not exist.** The exporter's switch handled every other type
- * and simply fell through for `connector`, so every arrow in a flowchart was
- * silently dropped from the file — the boxes exported, the lines joining them
- * did not, and the result was a diagram with its meaning removed. PNG never
- * showed it because that path captures the stage rather than walking the
- * document.
- *
- * The route is recomputed here from the same `connectorPoints` the renderer
- * uses, rather than read off the node: a connector's geometry is *derived*, so
- * there is nothing stored to serialize. Passing the same `boxOf` means the
- * arrow in the file takes the same path as the arrow on the board.
+ * The route comes from `routeBoard`, the same routing the canvas's route store
+ * runs (avoidance, channel spreading, line jumps), from the same snapshot, so
+ * the arrow in the file takes the board's path. The run is trimmed under its
+ * markers by `trimRunForCaps`, elbows and jumps are drawn by
+ * `connectorPathData`, and a sketched connector goes through
+ * `connectorSketch`, with the run seeded by the id and each marker by the id
+ * plus its end, exactly as on the canvas. Labels break the line through a
+ * mask, as the canvas breaks it with a clip.
  */
+const exportRoutes = new WeakMap<object, Map<string, BoardRoute>>();
+
+function routesFor(objects: Record<string, AnyNode>): Map<string, BoardRoute> {
+  let routes = exportRoutes.get(objects);
+  if (!routes) {
+    routes = routeBoard(objects, { boxOf: boxLookup(objects), attachOf: attachLookup(objects) });
+    exportRoutes.set(objects, routes);
+  }
+  return routes;
+}
+
+const exportLabels = new WeakMap<object, Map<string, Placed>>();
+
+/**
+ * Where every unplaced label on the board goes: the canvas's arrangement
+ * (`placeConnectorLabels`), run over the same routes, so a label that dodged
+ * another on the board dodges it in the file too.
+ */
+function labelSlotsFor(objects: Record<string, AnyNode>): Map<string, Placed> {
+  let slots = exportLabels.get(objects);
+  if (!slots) {
+    const routes = routesFor(objects);
+    const drawn: Array<{ node: ConnectorNode; flat: number[] }> = [];
+    for (const [id, route] of routes) {
+      const node = objects[id] as ConnectorNode | undefined;
+      if (node) drawn.push({ node, flat: route.points.flatMap((p) => [p.x, p.y]) });
+    }
+    slots = arrangeLabels(drawn);
+    exportLabels.set(objects, slots);
+  }
+  return slots;
+}
+
+/** Jump size and clearance, matching the canvas at 100%. */
+const EXPORT_HOP_RADIUS = 6;
+const EXPORT_HOP_CLEARANCE = 8;
+
 function connectorMarkup(node: ConnectorNode, objects: Record<string, AnyNode>): string {
-  const boxOf = (id: string): Box | null => {
-    const n = objects[id];
-    return n ? { x: n.x, y: n.y, width: n.width, height: n.height } : null;
-  };
-  const world = connectorPoints(node.from, node.to, node.routing, boxOf);
+  const route = routesFor(objects).get(node.id);
+  const world = route
+    ? route.points.flatMap((p) => [p.x, p.y])
+    : connectorPoints(node.from, node.to, node.routing, boxLookup(objects), attachLookup(objects));
   if (world.length < 4) return '';
 
-  const stroke = node.appearance?.stroke?.color ?? '#64748B';
-  const width = node.appearance?.stroke?.width ?? 2;
+  const strokeValue = node.appearance?.stroke?.color;
+  const stroke = strokeValue && strokeValue !== 'transparent' ? strokeValue : DEFAULT_CONNECTOR_INK;
+  const width = node.appearance?.stroke?.width || 2;
   const dash = dashAttrs(node.appearance?.stroke);
-  const pts: { x: number; y: number }[] = [];
-  for (let i = 0; i + 1 < world.length; i += 2) pts.push({ x: world[i], y: world[i + 1] });
+  const dashed = (node.appearance?.stroke?.dash?.length ?? 0) > 0;
+  const curved = route ? route.curved : node.routing === 'curved';
+  const orthogonal = route ? route.orthogonal : false;
 
-  /**
-   * The heads, and the run trimmed back under them.
-   *
-   * These used to be omitted outright, on the reasoning that `endCapShape`
-   * works in the renderer's local frame and half-reproducing it here would put
-   * arrowheads slightly wrong on every line. That reasoning was sound and the
-   * conclusion was not: `terminateRun` takes a flat world-space run and returns
-   * the trimmed run plus both caps, and `openShapeMarkup` a hundred lines below
-   * has been calling it that way for lines and arrows all along. There was
-   * nothing to reproduce — only a second caller to add.
-   *
-   * The cost of leaving it was the same one this file's header describes for
-   * connectors themselves: **an exported flowchart had no arrowheads**, so
-   * every edge lost its direction and a process diagram became an undirected
-   * graph. A diagram with its direction removed is not a smaller version of the
-   * diagram.
-   */
-  const { run: trimmed, start: startCap, end: endCap } = terminateRun(world, {
+  const caps = connectorCaps(world, {
     start: node.endStart ?? 'none',
-    end: node.endEnd ?? 'arrow',
+    end: node.endEnd ?? 'none',
     strokeWidth: width,
     scale: node.endScale,
-    // A connector's route is orthogonal or curved and arrives at its target at
-    // the route's own angle, never the box diagonal — so the cap has to face
-    // along the run. `extend` keeps every corner of the route intact and puts
-    // the head beyond the last point, which is what the canvas does.
-    align: 'extend',
   });
+  const trimmed = trimRunForCaps(world, curved ? [] : route?.hops ?? [], caps.start?.inset ?? 0, caps.end?.inset ?? 0);
+  const run: { x: number; y: number }[] = [];
+  for (let i = 0; i + 1 < trimmed.flat.length; i += 2) run.push({ x: trimmed.flat[i], y: trimmed.flat[i + 1] });
 
-  const tpts: { x: number; y: number }[] = [];
-  for (let i = 0; i + 1 < trimmed.length; i += 2) tpts.push({ x: trimmed[i], y: trimmed[i + 1] });
-
-  // Sketched connectors export as the sketch, made exactly as the canvas makes
-  // it — same seed, same sketcher for the route kind, same nib — so the strokes
-  // in the file are the same strokes. Generated in world space here, so it
-  // needs no transform. A dashed connector takes one lap, as on the canvas.
-  const run = tpts.length >= 2 ? tpts : pts;
-  const sketchOptions = node.appearance?.sketch
-    ? {
-        seed: seedFor(node.id, node.appearance.sketchSeed),
-        closed: false,
-        level: node.appearance.sketch,
-        width,
-        passes: (node.appearance.stroke?.dash?.length ?? 0) > 0 ? 1 : undefined,
-      }
+  const sketch = node.appearance?.sketch
+    ? { id: node.id, sketchSeed: node.appearance.sketchSeed, level: node.appearance.sketch, width, curved, dashed }
     : null;
-  const d = sketchOptions
-    ? node.routing === 'curved'
-      ? roughLoop(run, sketchOptions)
-      : roughPolyline(run, sketchOptions)
-    : `M ${(tpts.length >= 2 ? tpts : pts).map((p) => `${p.x} ${p.y}`).join(' L ')}`;
+  const d = sketch
+    ? sketchedRun(run, sketch)
+    : connectorPathData(run, {
+        cornerRadius: orthogonal ? node.cornerRadius ?? ELBOW_RADIUS : 0,
+        hops: trimmed.hops,
+        hopRadius: EXPORT_HOP_RADIUS,
+        hopClearance: EXPORT_HOP_CLEARANCE,
+      });
+
+  // Labels, and the holes they cut in the line.
+  const fontSize = labelFontSize(width);
+  const ink = readableOnSurface(stroke, '#FFFFFF');
+  const slots = labelSlotsFor(objects);
+  const placed = labelsOf(node)
+    .filter((l) => l.text.trim())
+    .map((l) => {
+      const at = labelCentre(l, world, l.t === undefined ? slots.get(autoLabelKey(node.id, l.id)) : null);
+      const w = labelTextWidth(l.text, fontSize) + 6;
+      const h = fontSize + 6;
+      return { text: l.text, x: at.x, y: at.y, w, h };
+    });
+  let mask = '';
+  let maskRef = '';
+  if (placed.length > 0) {
+    const id = `cl-${node.id.replace(/[^A-Za-z0-9_-]/g, '')}`;
+    let minX = Infinity;
+    let minY = Infinity;
+    let maxX = -Infinity;
+    let maxY = -Infinity;
+    for (let i = 0; i + 1 < world.length; i += 2) {
+      minX = Math.min(minX, world[i]);
+      maxX = Math.max(maxX, world[i]);
+      minY = Math.min(minY, world[i + 1]);
+      maxY = Math.max(maxY, world[i + 1]);
+    }
+    const pad = 64;
+    const holes = placed
+      .map(
+        (p) =>
+          `<rect x="${num(p.x - p.w / 2 - LABEL_GAP)}" y="${num(p.y - p.h / 2 - LABEL_GAP)}" width="${num(p.w + LABEL_GAP * 2)}" height="${num(p.h + LABEL_GAP * 2)}" fill="black" />`
+      )
+      .join('');
+    mask = `<mask id="${id}" maskUnits="userSpaceOnUse" x="${num(minX - pad)}" y="${num(minY - pad)}" width="${num(maxX - minX + pad * 2)}" height="${num(maxY - minY + pad * 2)}"><rect x="${num(minX - pad)}" y="${num(minY - pad)}" width="${num(maxX - minX + pad * 2)}" height="${num(maxY - minY + pad * 2)}" fill="white" />${holes}</mask>`;
+    maskRef = ` mask="url(#${id})"`;
+  }
+  const labelMarkup = placed
+    .map(
+      (p) =>
+        `<text x="${num(p.x)}" y="${num(p.y)}" text-anchor="middle" dominant-baseline="central" font-family="Inter, system-ui, sans-serif" font-size="${fontSize}" font-weight="500" fill="${attr(ink)}">${escapeXml(p.text)}</text>`
+    )
+    .join('');
+
+  const capPart = (cap: typeof caps.start, key: 'start' | 'end') => {
+    const rough = sketch ? sketchedCap(cap, key, caps.size, sketch) : null;
+    if (rough && cap) {
+      return `<path d="${rough}" fill="${attr(cap.filled ? stroke : 'none')}" stroke="${attr(stroke)}" stroke-width="${width}" stroke-linecap="round" stroke-linejoin="round" />`;
+    }
+    return capMarkup(cap, stroke, width);
+  };
 
   const parts = [
-    `<path d="${d}" fill="none" stroke="${attr(stroke)}" stroke-width="${width}"${dash} stroke-linecap="round" stroke-linejoin="round" />`,
-    capMarkup(startCap, stroke, width),
-    capMarkup(endCap, stroke, width),
+    mask,
+    `<path d="${d}" fill="none" stroke="${attr(stroke)}" stroke-width="${width}"${dash} stroke-linecap="round" stroke-linejoin="round"${maskRef} />`,
+    capPart(caps.start, 'start'),
+    capPart(caps.end, 'end'),
+    labelMarkup,
   ];
   return parts.filter(Boolean).join('');
 }
@@ -599,6 +675,7 @@ export class SVGExporter implements Exporter {
 
     const parts: string[] = [];
     const defs = new SvgPaintDefs();
+    await preloadIcons(nodes);
 
     /**
      * Image bytes are pulled into the file before the walk begins.
@@ -893,6 +970,11 @@ export class SVGExporter implements Exporter {
         /** A link as its card, and as a link. An embed exports as its poster. */
         case 'link':
           parts.push(`<g transform="translate(${node.x} ${node.y})">${linkToSvg(node.link, node.width, node.height, node.id)}</g>`);
+          break;
+
+        /** A library icon: the pack's sanitised paths, and its caption. */
+        case 'icon':
+          parts.push(`<g transform="translate(${node.x} ${node.y})">${iconToSvg(node, node.width, node.height)}</g>`);
           break;
 
         case 'comment':

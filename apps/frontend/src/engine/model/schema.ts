@@ -54,6 +54,7 @@ export const NODE_TYPES = [
   'table',
   'code',
   'link',
+  'icon',
 ] as const;
 
 export type NodeType = (typeof NODE_TYPES)[number];
@@ -84,8 +85,13 @@ import type { LinkSpec } from '../link/linkTypes';
  * deletes the key, and it only runs when the stored version is behind. Leaving
  * a superseded field lying in the CRDT is how the next reader comes to believe
  * it means something.
+ *
+ * 4 (2026-10-07): tables. Formulas written in the older row count are
+ * rewritten to the spreadsheet's once, here rather than on every read, and
+ * each table is stored in the merged shape concurrent edits need
+ * (`migrateTableNode`); the node's `tableRefs` mark keeps both from repeating.
  */
-export const SCHEMA_VERSION = 3;
+export const SCHEMA_VERSION = 4;
 
 // ---------------------------------------------------------------------------
 // Shared value types
@@ -1058,8 +1064,10 @@ export interface ShapeGeometry {
   waveHeight?: number;
   /** CPU: contact pins on each edge of the package. */
   pinCount?: number;
-  /** Gear: radial cogs. */
+  /** Gear: radial cogs. Key: the cuts along the blade. */
   teeth?: number;
+  /** Key: the bow's radius, as a ratio of the key's length. */
+  bowRatio?: number;
   /** Server: rack units drawn across the face. Database: decks in the stack. */
   shelfCount?: number;
   /**
@@ -1578,6 +1586,13 @@ export interface ChartNode extends BaseNode {
 export interface TableNode extends BaseNode {
   type: 'table';
   table: TableSpec;
+  /**
+   * The table's formulas count rows the spreadsheet's way (header row 1).
+   * Set by the document migration and by every table write; lives beside the
+   * spec so an older build writing the spec back without `refs` cannot make
+   * a newer one migrate the formulas a second time.
+   */
+  tableRefs?: 2;
   appearance?: Appearance;
 }
 
@@ -1602,6 +1617,25 @@ export interface LinkNode extends BaseNode {
   appearance?: Appearance;
 }
 
+/**
+ * A library icon (cloud, vendor or platform artwork) placed on the board.
+ *
+ * Stores only the reference. The artwork is fetched from the pack on demand and
+ * drawn from a shared cache, so a board of a thousand icons holds a thousand
+ * short strings, never a thousand SVGs. See `engine/icons/`.
+ */
+export interface IconNode extends BaseNode {
+  type: 'icon';
+  /** Pack id: lowercase letters, digits and hyphens. */
+  pack: string;
+  /** Icon id inside the pack, `category/name`. */
+  iconId: string;
+  /** Recolours every non-white paint. Absent draws the vendor colours. */
+  colour?: string;
+  /** Caption drawn beneath the icon. */
+  label?: string;
+}
+
 export type AnyNode =
   | TextNode
   | ShapeNode
@@ -1616,7 +1650,8 @@ export type AnyNode =
   | ChartNode
   | TableNode
   | CodeNode
-  | LinkNode;
+  | LinkNode
+  | IconNode;
 
 // ---------------------------------------------------------------------------
 // Narrowing helpers

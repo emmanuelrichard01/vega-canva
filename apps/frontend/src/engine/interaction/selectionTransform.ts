@@ -31,6 +31,7 @@
  * callers cannot drift, and — being free of Konva and React — it can be tested
  * directly, which none of the previous versions could.
  */
+import { nodesInGroup, selectionUnits, type Groups, type NodeTable } from '../model/groupTree';
 
 export interface Box {
   x: number;
@@ -189,4 +190,38 @@ export function placeParagraph(placed: Placed, laid: { width: number; height: nu
     width: laid.width,
     height: laid.height,
   };
+}
+
+/**
+ * How many things a selection is, as a person counts them: a group is one, a
+ * frame is one whatever it holds, and members carried by a selected group or
+ * frame add nothing. Selecting a frame and its ten children is one thing.
+ */
+export function countSelectionUnits(
+  order: readonly string[],
+  objects: NodeTable,
+  groups: Groups,
+  selected: readonly string[]
+): number {
+  const chosen = new Set(selected);
+  const units = selectionUnits(order, objects, groups, selected);
+  const carriedByFrame = (id: string): boolean => {
+    let at = objects[id]?.parentId;
+    const seen = new Set<string>();
+    while (at && !seen.has(at)) {
+      seen.add(at);
+      const parent = objects[at] as { type?: string; parentId?: string } | undefined;
+      if (!parent) return false;
+      if (parent.type === 'frame' && chosen.has(at)) return true;
+      at = parent.parentId;
+    }
+    return false;
+  };
+  const loose = units.nodes.filter((id) => !carriedByFrame(id)).length;
+  // A group inside a selected frame is carried by it too.
+  const looseGroups = units.groups.filter((g) => {
+    const members = nodesInGroup(order, objects, groups, g);
+    return members.length === 0 || !members.every((m) => carriedByFrame(m));
+  }).length;
+  return loose + looseGroups;
 }

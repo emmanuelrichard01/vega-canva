@@ -92,11 +92,35 @@ export function marqueeHits(nodes: Iterable<AnyNode>, box: MarqueeBox): string[]
  * What a marquee does with what it catches.
  *
  * - `replace`: the catch becomes the selection.
- * - `add`: Shift (or Ctrl/Cmd) keeps what was selected and adds the catch.
+ * - `add`: Shift keeps what was selected and adds the catch.
  * - `subtract`: Alt removes the catch from the selection.
  * - `intersect`: Shift+Alt keeps only what was selected *and* caught.
+ *
+ * The deep modifier (see `deepSelect`) is not a mode: it changes what counts
+ * as caught, by skipping `expandToUnits`, and combines with any of these.
  */
 export type MarqueeMode = 'replace' | 'add' | 'subtract' | 'intersect';
+
+/**
+ * Whether a marquee is being dragged. Other Alt-driven overlays (the measure
+ * lines) read this to stay out of the way, since Alt means "subtract" here.
+ */
+const marqueeListeners = new Set<() => void>();
+let marqueeOn = false;
+export const marqueeActivity = {
+  subscribe(listener: () => void) {
+    marqueeListeners.add(listener);
+    return () => {
+      marqueeListeners.delete(listener);
+    };
+  },
+  get: () => marqueeOn,
+  set(next: boolean) {
+    if (marqueeOn === next) return;
+    marqueeOn = next;
+    marqueeListeners.forEach((l) => l());
+  },
+};
 
 export interface ModifierState {
   shiftKey?: boolean;
@@ -106,7 +130,7 @@ export interface ModifierState {
 }
 
 export function marqueeModeFor(mods: ModifierState | null | undefined): MarqueeMode {
-  const add = Boolean(mods?.shiftKey || mods?.ctrlKey || mods?.metaKey);
+  const add = Boolean(mods?.shiftKey);
   const alt = Boolean(mods?.altKey);
   if (alt && add) return 'intersect';
   if (alt) return 'subtract';

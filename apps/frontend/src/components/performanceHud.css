@@ -1,0 +1,39 @@
+/* Developer-only readout (see PerformanceOverlay). Tokens only, so it follows the theme. */
+.perf-hud {
+  position: fixed;
+  top: 80px;
+  right: 24px;
+  z-index: var(--z-toast);
+  width: 248px;
+  padding: 12px 14px;
+  border-radius: var(--radius-lg, 12px);
+  background: var(--surface-elevated);
+  box-shadow: var(--shadow-float);
+  color: var(--text-secondary);
+  font-family: var(--font-mono, ui-monospace, monospace);
+  font-size: 11px;
+  font-variant-numeric: tabular-nums;
+  pointer-events: none;
+  user-select: none;
+}
+.perf-hud__head {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  padding-bottom: 8px;
+  margin-bottom: 8px;
+  border-bottom: 1px solid var(--border-subtle, var(--surface-hover));
+}
+.perf-hud__title { color: var(--text-primary); font-weight: 600; }
+.perf-hud__fps { color: var(--text-primary); font-weight: 600; }
+.perf-hud__rows { display: flex; flex-direction: column; gap: 6px; margin: 0; }
+.perf-hud__rows > div { display: flex; justify-content: space-between; gap: 12px; }
+.perf-hud__rows dt { color: var(--text-tertiary); }
+.perf-hud__rows dd { margin: 0; color: var(--text-primary); }
+.perf-hud__rows--ruled {
+  margin-top: 8px;
+  padding-top: 8px;
+  border-top: 1px solid var(--border-subtle, var(--surface-hover));
+}
+/* Slow readings are named by colour and by weight, so they do not rely on hue alone. */
+.perf-hud [data-bad] { color: var(--status-offline); font-weight: 700; }

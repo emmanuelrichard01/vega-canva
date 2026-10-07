@@ -46,6 +46,8 @@ interface State {
   index: number;
   /** The board as it was when that step began. */
   before: Digest | null;
+  /** Steps passed over without being done, so a skipped run is not recorded as completed. */
+  skipped: number;
   /** Lesson ids whose walkthrough has been completed. */
   done: readonly string[];
 }
@@ -69,7 +71,7 @@ function readDone(): readonly string[] {
   }
 }
 
-let state: State = { walk: null, index: 0, before: null, done: readDone() };
+let state: State = { walk: null, index: 0, before: null, skipped: 0, done: readDone() };
 
 function commit(next: State) {
   state = next;
@@ -105,7 +107,7 @@ export const walkthroughState = {
   start(lessonId: string, snapshot: Snapshot) {
     const walk = walkthroughFor(lessonId);
     if (!walk) return;
-    commit({ ...state, walk, index: 0, before: digest(snapshot.objects) });
+    commit({ ...state, walk, index: 0, before: digest(snapshot.objects), skipped: 0 });
   },
 
   /**
@@ -129,10 +131,16 @@ export const walkthroughState = {
        * in it has now been observed — better evidence than the coach mark
        * accepts, so it would be strange for the card to keep offering.
        */
+      if (state.skipped > 0) {
+        // Finished, but not every gesture was performed, so neither the walkthrough
+        // nor the lesson is recorded as learned.
+        commit({ walk: null, index: 0, before: null, skipped: 0, done: state.done });
+        return true;
+      }
       learnState.learn(walk.lesson);
       const done = state.done.includes(walk.lesson) ? state.done : [...state.done, walk.lesson];
       persist(done);
-      commit({ walk: null, index: 0, before: null, done });
+      commit({ walk: null, index: 0, before: null, skipped: 0, done });
       return true;
     }
 
@@ -144,6 +152,26 @@ export const walkthroughState = {
   },
 
   /**
+   * Pass over the current step without doing it.
+   *
+   * Some steps cannot be done where somebody is (no picture to hand, a panel
+   * they have closed), and a sequence that cannot be left forward is one they
+   * abandon. A skipped run is not a completed one: it ends without recording
+   * the walkthrough as done and without retiring the lesson, because neither
+   * would be true.
+   */
+  skip(snapshot: Snapshot) {
+    const { walk, index } = state;
+    if (!walk) return;
+    const next = index + 1;
+    if (next >= walk.steps.length) {
+      commit({ ...state, walk: null, index: 0, before: null, skipped: 0 });
+      return;
+    }
+    commit({ ...state, index: next, before: digest(snapshot.objects), skipped: state.skipped + 1 });
+  },
+
+  /**
    * Leave without finishing, and without recording it as done.
    *
    * Deliberately not the same as completing it: somebody who stops halfway has
@@ -152,6 +180,6 @@ export const walkthroughState = {
    */
   stop() {
     if (!state.walk) return;
-    commit({ ...state, walk: null, index: 0, before: null });
+    commit({ ...state, walk: null, index: 0, before: null, skipped: 0 });
   },
 };

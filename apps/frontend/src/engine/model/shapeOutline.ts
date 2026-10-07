@@ -340,7 +340,7 @@ export function shapeOutline(
     case 'or_gate':
       return curve(orGateContour(w, h));
     case 'key':
-      return curve(keyContour(w, h), false);
+      return curve(keyContour(w, h, param(g, 'teeth'), param(g, 'bowRatio'), param(g, 'innerRatio')), false);
     case 'gear':
       return curve(gearContour(w, h, param(g, 'teeth')), false);
     case 'user':

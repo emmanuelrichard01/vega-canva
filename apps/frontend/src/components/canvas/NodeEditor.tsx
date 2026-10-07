@@ -12,7 +12,8 @@ import { measureStickyHeight, stickyFit, STICKY_FONT_FAMILY } from './renderers/
 import { STICKY_LINE_HEIGHT } from '../../engine/model/stickyText';
 import { chainSticky, type ChainDirection } from '../../engine/tools/stickyChain';
 import { updateNode } from '../../engine/document';
-import { applyFormat, detectListShortcut, formatCommandFor } from '../../engine/text/textShortcuts';
+import { applyFormat, detectListShortcut, undoListShortcut } from '../../engine/text/textShortcuts';
+import { editorKeyIntent } from './nodeEditorKeys';
 import type { Typography } from '../../engine/model/schema';
 import { domTextStyle } from './renderers/shared';
 
@@ -54,6 +55,8 @@ export const NodeEditor: React.FC<Props> = ({ node, onCommit, onCancel }) => {
   const [, forceReposition] = useState(0);
   const cancelledRef = React.useRef(false);
   const chainRef = React.useRef<ChainDirection | null>(null);
+  /** The prefix a typed list shortcut consumed, until anything else is typed. */
+  const listPrefixRef = React.useRef<string | null>(null);
   const textareaRef = React.useRef<HTMLTextAreaElement>(null);
 
   /**
@@ -309,6 +312,8 @@ export const NodeEditor: React.FC<Props> = ({ node, onCommit, onCancel }) => {
       Date.now() - openedAtRef.current < FOCUS_GRACE_MS
     ) {
       recoveredRef.current += 1;
+      // The blur is not a commit, so a pending chain must not outlive it.
+      chainRef.current = null;
       // Deferred to the next frame: focusing from inside the blur handler is
       // re-entrant and browsers may discard it while the old focus is still
       // being torn down.
@@ -370,12 +375,14 @@ export const NodeEditor: React.FC<Props> = ({ node, onCommit, onCancel }) => {
             ? detectListShortcut(e.target.value, e.target.selectionStart ?? 0, blockTypography.list)
             : null;
           if (listShortcut && blockTypography) {
+            listPrefixRef.current = listShortcut.prefix;
             writeTypography({ ...blockTypography, list: listShortcut.list });
             setValue(listShortcut.value);
             const el = e.target;
             requestAnimationFrame(() => el.setSelectionRange(listShortcut.caret, listShortcut.caret));
             return;
           }
+          listPrefixRef.current = null;
           setValue(e.target.value);
           // Bare text boxes grow with their content; containers (sticky,
           // shape, comment) wrap inside fixed bounds.
@@ -403,31 +410,44 @@ export const NodeEditor: React.FC<Props> = ({ node, onCommit, onCancel }) => {
         wrap={node.type === 'text' && node.resize === 'width' ? 'off' : 'soft'}
         onBlur={handleBlur}
         onKeyDown={(e) => {
-          if (e.key === 'Escape') {
-            e.preventDefault();
-            cancelledRef.current = true;
-            e.currentTarget.blur();
+          const target = e.currentTarget;
+          // Backspace at the very start of a block a typed prefix just made a
+          // list gives the prefix back, so the shortcut can be refused.
+          if (
+            e.key === 'Backspace' &&
+            !e.nativeEvent.isComposing &&
+            blockTypography?.list &&
+            target.selectionStart === 0 &&
+            target.selectionEnd === 0
+          ) {
+            const undone = undoListShortcut(listPrefixRef.current, value);
+            if (undone) {
+              e.preventDefault();
+              listPrefixRef.current = null;
+              writeTypography({ ...blockTypography, list: undefined });
+              setValue(undone.value);
+              requestAnimationFrame(() => target.setSelectionRange(undone.caret, undone.caret));
+            }
           }
-          // Tab chains a new note to the right, Shift+Tab one below, and the
-          // caret moves into it: a run of ideas costs one keystroke each. A
-          // literal tab character in a sticky is worth nothing.
-          if (e.key === 'Tab' && isSticky) {
+          const intent = editorKeyIntent(
+            { ...e, isComposing: e.nativeEvent.isComposing },
+            { sticky: isSticky, formattable: blockTypography !== null }
+          );
+          if (intent) {
             e.preventDefault();
-            chainRef.current = e.shiftKey ? 'down' : 'right';
-            e.currentTarget.blur();
-          }
-          // Cmd/Ctrl+Enter finishes editing; on a sticky it also starts the next.
-          if (e.key === 'Enter' && (e.metaKey || e.ctrlKey)) {
-            e.preventDefault();
-            if (isSticky) chainRef.current = 'right';
-            e.currentTarget.blur();
-          }
-          // Formatting chords apply to the whole block, which is the unit the
-          // schema stores. Stickies keep their fixed handwriting face.
-          const command = blockTypography ? formatCommandFor(e) : null;
-          if (command && blockTypography) {
-            e.preventDefault();
-            writeTypography(applyFormat(blockTypography, command));
+            if (intent.kind === 'cancel') {
+              cancelledRef.current = true;
+              target.blur();
+            } else if (intent.kind === 'chain') {
+              chainRef.current = intent.direction;
+              target.blur();
+            } else if (intent.kind === 'finish') {
+              target.blur();
+            } else if (blockTypography) {
+              // Formatting chords apply to the whole block, which is the unit
+              // the schema stores.
+              writeTypography(applyFormat(blockTypography, intent.command));
+            }
           }
           // Stop canvas-level shortcuts (tool switches, delete) from firing
           // while typing.

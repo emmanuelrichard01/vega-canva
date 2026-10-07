@@ -2,10 +2,12 @@ import React, { useCallback, useMemo } from 'react';
 import {
   Clock, Download, Layers as LayersIcon, MessageSquare, Mic, MousePointer2,
   PenLine, Play, Share2, Sparkles, Square, StickyNote, Type,
-  Code2, HelpCircle, ArrowLeft, Link2, Contrast,
+  Code2, HelpCircle, ArrowLeft, Link2, Contrast, Presentation, LayoutGrid, MousePointerSquareDashed,
 } from 'lucide-react';
 import { isContrastEnhanced, toggleContrast } from '../engine/ui/contrast';
 import { HandIcon } from './workspace/HandIcon';
+import { IconsGlyph } from './icons/IconsGlyph';
+import { ICON_PACK_LABELS, openIconBrowser } from '../engine/icons/iconStore';
 import { provider } from '../engine/document';
 /**
  * The shared label, not a private copy.
@@ -21,6 +23,8 @@ import { nodeLabel } from '../engine/model/nodeLabel';
 import { viewportCenter } from '../engine/presence/PresenceTypes';
 import { useStore } from '../hooks/useStore';
 import { TOOL_SHORTCUTS } from '../engine/tools/shortcuts';
+import { requestPresentation } from './canvas/useContentShortcuts';
+import { SHORTCUTS, menuShortcut } from './menu/shortcuts';
 import { PaletteDialog } from './palette/PaletteDialog';
 import { fuzzyScore, type PaletteItem } from './palette/paletteMatch';
 import type { AnyNode } from '../engine/model/schema';
@@ -38,6 +42,19 @@ const TYPE_ICONS: Record<string, React.ReactNode> = {
   audio: <Mic size={16} />,
   comment: <MessageSquare size={16} />,
 };
+
+/** Select everything sharing one property with the current selection. */
+const selectSimilar = (key: 'type' | 'fill' | 'stroke' | 'font') => () =>
+  window.dispatchEvent(new CustomEvent('requestSelectSimilar', { detail: { key } }));
+
+/**
+ * Organise the selected stickies. The selection lives in the canvas, which owns
+ * the chord, so the palette presses it rather than keeping a second copy.
+ */
+const organiseStickies = (byAuthor: boolean) => () =>
+  window.dispatchEvent(
+    new KeyboardEvent('keydown', { key: 'o', code: 'KeyO', ctrlKey: true, altKey: true, shiftKey: byAuthor, cancelable: true })
+  );
 
 const flyTo = (x: number, y: number) => {
   window.dispatchEvent(new CustomEvent('navigateViewport', { detail: { x, y, zoom: 1 } }));
@@ -70,6 +87,11 @@ export const CommandPalette: React.FC<CommandPaletteProps> = ({ onClose, onSelec
       { id: 'shape-rect', label: 'Add rectangle', group: 'Create', icon: <Square size={16} />, shortcut: key('shape'), perform: run('shape-rect') },
       { id: 'code', label: 'Add code block', detail: 'Highlighted code you can edit on the board', group: 'Create', icon: <Code2 size={16} />, perform: run('code') },
       { id: 'link', label: 'Add link', detail: 'A card, or a player for videos, Figma and Spotify', group: 'Create', icon: <Link2 size={16} />, perform: run('link') },
+      { id: 'icons', label: 'Insert icon…', detail: 'AWS, Azure, Google Cloud and Kubernetes architecture icons', keywords: 'icon cloud architecture vendor', group: 'Create', icon: <IconsGlyph size={16} />, shortcut: 'Shift+I', perform: () => openIconBrowser() },
+      ...ICON_PACK_LABELS.map((pack) => ({
+        id: `icons-${pack.id}`, label: `${pack.name} icons`, keywords: `icon library ${pack.id}`, group: 'Create',
+        icon: <IconsGlyph size={16} />, perform: () => openIconBrowser({ pack: pack.id }),
+      })),
       { id: 'comment', label: 'Add comment', group: 'Create', icon: <MessageSquare size={16} />, shortcut: key('comment'), perform: run('comment') },
 
       { id: 'select', label: 'Select tool', group: 'Tools', icon: <MousePointer2 size={16} />, shortcut: key('select'), perform: run('select') },
@@ -77,6 +99,13 @@ export const CommandPalette: React.FC<CommandPaletteProps> = ({ onClose, onSelec
       { id: 'tidy', label: 'Tidy up canvas', detail: 'Cluster objects by colour', group: 'Tools', icon: <Sparkles size={16} />, perform: run('tidy') },
       { id: 'diagram', label: 'Diagram from code', detail: 'Write a flowchart in Mermaid, or read a selected one back out', group: 'Tools', icon: <Code2 size={16} />, perform: run('diagram') },
       { id: 'help', label: 'Keyboard shortcuts & help', group: 'Tools', icon: <HelpCircle size={16} />, shortcut: '?', perform: run('help') },
+      { id: 'present', label: 'Present', detail: 'Step through the board’s frames', keywords: 'slideshow frames', group: 'Tools', icon: <Presentation size={16} />, shortcut: menuShortcut(SHORTCUTS.present), perform: () => requestPresentation() },
+      { id: 'organise-colour', label: 'Organise stickies by colour', detail: 'Select two or more stickies first', keywords: 'sort group notes', group: 'Tools', icon: <LayoutGrid size={16} />, shortcut: menuShortcut(SHORTCUTS.organiseColour), perform: organiseStickies(false) },
+      { id: 'organise-author', label: 'Organise stickies by author', detail: 'Select two or more stickies first', keywords: 'sort group notes', group: 'Tools', icon: <LayoutGrid size={16} />, shortcut: menuShortcut(SHORTCUTS.organiseAuthor), perform: organiseStickies(true) },
+      { id: 'select-same-type', label: 'Select all with same type', detail: 'Widen the selection', group: 'Tools', icon: <MousePointerSquareDashed size={16} />, shortcut: menuShortcut(SHORTCUTS.selectSameType), perform: selectSimilar('type') },
+      { id: 'select-same-fill', label: 'Select all with same fill', detail: 'Widen the selection', group: 'Tools', icon: <MousePointerSquareDashed size={16} />, shortcut: menuShortcut(SHORTCUTS.selectSameFill), perform: selectSimilar('fill') },
+      { id: 'select-same-stroke', label: 'Select all with same stroke', detail: 'Widen the selection', group: 'Tools', icon: <MousePointerSquareDashed size={16} />, shortcut: menuShortcut(SHORTCUTS.selectSameStroke), perform: selectSimilar('stroke') },
+      { id: 'select-same-font', label: 'Select all with same font', detail: 'Widen the selection', group: 'Tools', icon: <MousePointerSquareDashed size={16} />, shortcut: menuShortcut(SHORTCUTS.selectSameFont), perform: selectSimilar('font') },
       { id: 'zoom-fit', label: 'Zoom to fit', detail: 'Frame everything on the canvas', group: 'View', icon: <LayersIcon size={16} />, perform: run('zoom-fit') },
       { id: 'contrast', label: isContrastEnhanced() ? 'Use standard contrast' : 'Increase contrast', detail: 'Stronger text, borders and focus rings', keywords: 'accessibility', group: 'View', icon: <Contrast size={16} />, perform: toggleContrast },
       { id: 'reset-view', label: 'Reset view to origin', group: 'View', icon: <LayersIcon size={16} />, shortcut: '0', perform: run('reset-view') },

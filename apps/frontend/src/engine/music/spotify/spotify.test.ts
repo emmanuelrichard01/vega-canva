@@ -140,7 +140,7 @@ describe('sign-in callback', () => {
   it('reports a declined consent', async () => {
     pending('s');
     const out = await completeSpotifySignIn('?error=access_denied&state=s');
-    expect(out.result).toEqual({ status: 'error', error: 'Spotify access was not granted.' });
+    expect(out.result).toEqual({ status: 'error', error: "You cancelled the Spotify sign-in. Connect again whenever you're ready." });
   });
 
   it('never returns to another origin', async () => {
@@ -160,8 +160,10 @@ describe('planPlayback', () => {
       { id: 'a', name: 'Phone', isActive: false },
       { id: 'b', name: 'Laptop', isActive: true },
     ];
-    expect(planPlayback({ premium: false, sdkDeviceId: null, devices })).toEqual({ kind: 'device', deviceId: 'b', name: 'Laptop' });
-    expect(planPlayback({ premium: false, sdkDeviceId: null, devices: [devices[0]] })).toEqual({ kind: 'device', deviceId: 'a', name: 'Phone' });
+    expect(planPlayback({ premium: true, sdkDeviceId: null, devices })).toEqual({ kind: 'device', deviceId: 'b', name: 'Laptop' });
+    expect(planPlayback({ premium: true, sdkDeviceId: null, devices: [devices[0]] })).toEqual({ kind: 'device', deviceId: 'a', name: 'Phone' });
+    // Spotify lets only Premium accounts control playback, so a free account goes straight to the embed.
+    expect(planPlayback({ premium: false, sdkDeviceId: null, devices })).toEqual({ kind: 'embed' });
   });
 
   it('uses the embed player when nothing else can play', () => {

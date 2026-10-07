@@ -49,9 +49,31 @@ describe('rubberZoom', () => {
     expect(z).toBeCloseTo(0.05 / ZOOM_GIVE, 10);
   });
 
-  it('comes straight back inside when the gesture reverses', () => {
-    const over = rubberZoom(5, 6, 0.05, 5);
-    expect(rubberZoom(over, 3, 0.05, 5)).toBe(3);
+  it('walks back out when the gesture reverses inside the overshoot, at the top', () => {
+    const over = rubberZoom(5, 5.3, 0.05, 5);
+    expect(over).toBeGreaterThan(5);
+    const back = rubberZoom(over, over / 1.05, 0.05, 5);
+    expect(back).toBeLessThan(over);
+    // Enough reversal returns to the limit and then inside the range.
+    let z = over;
+    for (let i = 0; i < 60; i++) z = rubberZoom(z, z / 1.05, 0.05, 5);
+    expect(z).toBeLessThan(5);
+  });
+
+  it('walks back out when the gesture reverses inside the overshoot, at the bottom', () => {
+    const under = rubberZoom(0.05, 0.047, 0.05, 5);
+    expect(under).toBeLessThan(0.05);
+    const back = rubberZoom(under, under * 1.05, 0.05, 5);
+    expect(back).toBeGreaterThan(under);
+    let z = under;
+    for (let i = 0; i < 60; i++) z = rubberZoom(z, z * 1.05, 0.05, 5);
+    expect(z).toBeGreaterThan(0.05);
+  });
+
+  it('reverses immediately from a fully stretched overshoot', () => {
+    let z = 5;
+    for (let i = 0; i < 100; i++) z = rubberZoom(z, z * 2, 0.05, 5);
+    expect(rubberZoom(z, z / 1.1, 0.05, 5)).toBeLessThan(z);
   });
 
   it('ignores a non-positive request', () => {

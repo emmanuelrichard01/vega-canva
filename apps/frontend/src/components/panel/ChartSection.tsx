@@ -41,7 +41,7 @@ import './chartPanel.css';
 import { CategoryAxisFields, SeriesRows, TableSource, TextSizeRow } from './chartPanelData';
 import { useLinkedSpec } from './useLinkedSpec';
 import { NumberStepper } from '../ui/NumberStepper';
-import { Slider } from '../ui/Slider';
+import { NumberField } from './grammar';
 import { Switch } from '../ui/Switch';
 import { SegmentedControl } from '../ui/SegmentedControl';
 import { ColorPickerPopover } from '../ui/ColorPickerPopover';
@@ -1358,45 +1358,42 @@ const MarkFields: React.FC<FieldProps> = ({ spec, patch }) => {
 
       {hasBars(kind) && (
         <Row label="Corners">
-          <Slider
+          <NumberField
             label="Corner radius"
-            labelHidden
             value={spec.cornerRadius ?? 3}
             min={0}
             max={16}
             unit="px"
-            origin={3}
-            onChange={(v) => patch({ cornerRadius: v === 3 ? undefined : v })}
+            scrub={false}
+            onChange={(v, { commit }) => commit && patch({ cornerRadius: v === 3 ? undefined : v })}
           />
         </Row>
       )}
 
       {area && (
         <Row label="Fill">
-          <Slider
+          <NumberField
             label="Area opacity"
-            labelHidden
             value={Math.round((spec.areaOpacity ?? 0.22) * 100)}
             min={5}
             max={90}
             unit="%"
-            origin={22}
-            onChange={(v) => patch({ areaOpacity: v === 22 ? undefined : v / 100 })}
+            scrub={false}
+            onChange={(v, { commit }) => commit && patch({ areaOpacity: v === 22 ? undefined : v / 100 })}
           />
         </Row>
       )}
 
       {kind === 'donut' && (
         <Row label="Hole" hint="The inner radius, as a share of the outer">
-          <Slider
+          <NumberField
             label="Hole"
-            labelHidden
             value={Math.round((spec.innerRadius ?? 0.55) * 100)}
             min={15}
             max={85}
             unit="%"
-            origin={55}
-            onChange={(v) => patch({ innerRadius: v === 55 ? undefined : v / 100 })}
+            scrub={false}
+            onChange={(v, { commit }) => commit && patch({ innerRadius: v === 55 ? undefined : v / 100 })}
           />
         </Row>
       )}

@@ -1,8 +1,9 @@
 /**
  * The music library manifest: which recordings exist and where they stream from.
  *
- * Tracks are never bundled. The manifest lists files on a CDN or bucket
- * (`VITE_MUSIC_BASE_URL`), and the player streams them with HTML audio.
+ * Tracks are never bundled. The manifest lists files under a base URL: the
+ * server's `/music/v1` route by default, or `VITE_MUSIC_BASE_URL` (a CDN or
+ * bucket). The player streams and decodes them on demand.
  * Parsing is strict about the things that matter (a playable URL, a licence)
  * and forgiving about the rest: a bad entry is skipped and reported, never
  * allowed to break the whole library.
@@ -11,8 +12,8 @@
  * ```json
  * { "version": 1,
  *   "tracks": [{ "id": "piano-001", "category": "piano", "title": "Morning Light",
- *                "artist": "Ana Ruiz", "duration": 184.2, "url": "piano/morning-light.mp3",
- *                "artwork": "piano/morning-light.jpg", "licence": "CC BY 4.0, Ana Ruiz" }] }
+ *                "artist": "Ana Ruiz", "duration": 184.2, "url": "piano/morning-light.m4a",
+ *                "artwork": null, "licence": "CC BY 4.0. Credit: \"Morning Light by Ana Ruiz\"" }] }
  * ```
  */
 
@@ -40,6 +41,21 @@ export interface ParsedManifest {
 export const MAX_TRACKS = 5000;
 const CATEGORY_RE = /^[a-z0-9][a-z0-9-]{0,39}$/;
 
+/**
+ * Where the manifest lives.
+ *
+ * `VITE_MUSIC_MANIFEST_URL` names it directly; otherwise it is
+ * `manifest.json` under `VITE_MUSIC_BASE_URL`, and with neither set, under
+ * the server's own music route (`<API_BASE>/music/v1`).
+ */
+export function manifestLocation(env: { VITE_MUSIC_MANIFEST_URL?: unknown; VITE_MUSIC_BASE_URL?: unknown }, apiBase: string): string {
+  const read = (v: unknown) => (typeof v === 'string' ? v.trim() : '');
+  const direct = read(env.VITE_MUSIC_MANIFEST_URL);
+  if (direct) return direct;
+  const base = read(env.VITE_MUSIC_BASE_URL) || `${apiBase.replace(/\/+$/, '')}/music/v1`;
+  return `${base.replace(/\/+$/, '')}/manifest.json`;
+}
+
 const KNOWN_CATEGORIES: Record<string, string> = {
   ambient: 'Acoustic Ambient',
   piano: 'Peaceful Piano',
@@ -48,6 +64,21 @@ const KNOWN_CATEGORIES: Record<string, string> = {
   house: 'House',
   retro: 'Retro',
 };
+
+/** The six stations, in display order. Each plays the manifest's tracks of that category. */
+export const KNOWN_CATEGORY_IDS = Object.keys(KNOWN_CATEGORIES);
+
+const BLURBS: Record<string, string> = {
+  ambient: 'Warm, unhurried textures',
+  piano: 'Solo piano, gentle and spacious',
+  lofi: 'Dusty beats for deep work',
+  synth: 'Retro-futurist synthwave',
+  house: 'Steady four-on-the-floor',
+  retro: 'Chiptune, upbeat',
+};
+
+/** One line describing a station, for its tooltip. */
+export const categoryBlurb = (category: string): string | null => BLURBS[category] ?? null;
 
 /** A category's display name: the known label, or the slug in title case. */
 export function categoryLabel(category: string): string {

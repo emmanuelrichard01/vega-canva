@@ -2,6 +2,7 @@ import React, { useRef, useState } from 'react';
 import { ChevronDown } from 'lucide-react';
 import { Menu } from '../../menu/Menu';
 import type { MenuEntry } from '../../menu/menuModel';
+import { showTipIfTruncated } from './truncationTip';
 
 export interface SelectOption<V extends string = string> {
   value: V;
@@ -66,6 +67,12 @@ export function Select<V extends string = string>({ label, value, options, onCha
         aria-label={`${label}: ${mixed ? 'Mixed' : current?.label ?? value}`}
         disabled={Boolean(disabledReason)}
         data-tooltip={disabledReason}
+        onPointerOver={(e) =>
+          showTipIfTruncated(e.currentTarget, e.currentTarget.querySelector('.pg-select__value'), disabledReason)
+        }
+        onFocus={(e) =>
+          showTipIfTruncated(e.currentTarget, e.currentTarget.querySelector('.pg-select__value'), disabledReason)
+        }
         onClick={() => {
           setKeyboard(false);
           setOpen((v) => !v);

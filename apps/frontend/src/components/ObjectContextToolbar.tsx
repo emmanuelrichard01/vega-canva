@@ -18,6 +18,8 @@ import { KindLabel } from './toolbar/rail/kind';
 import { kindOf } from './toolbar/rail/kindOf';
 import { MultiRail } from './toolbar/rail/MultiRail';
 import { describeMix } from './toolbar/rail/describeMix';
+import { withMultiSelectExtras } from './toolbar/rail/menuExtras';
+import { useGridEditMode } from '../engine/grid/gridEditMode';
 import './toolbar/rail/rail.css';
 
 /**
@@ -54,11 +56,20 @@ const ObjectContextToolbarInner: React.FC<Props> = ({ selectedId, selectedIds, s
   const bulkIds = selectedIds || [];
   const activeId = isBulk ? null : selectedId;
 
+  // A table's, code block's or grid's own editor brings its own bar; the object
+  // rail stands down, and stops placing itself, while one is open on it.
+  const tableEditing = useStore((s) => s.tableEditNodeId);
+  const codeEditing = useStore((s) => s.codeEditNodeId);
+  const gridEditing = useGridEditMode().gridId;
+  const suspended =
+    !isBulk && (Boolean(tableEditing) || Boolean(codeEditing) || (Boolean(activeId) && gridEditing === activeId));
+
   const { anchorRef, railRef, placement, clear, isVisible } = useRailPlacement({
     activeId,
     isBulk,
     selectedIds,
     sidebarsVisible,
+    suspended,
   });
 
   const liveNode = useStore((state) => (activeId ? state.objects[activeId] : undefined));
@@ -67,9 +78,6 @@ const ObjectContextToolbarInner: React.FC<Props> = ({ selectedId, selectedIds, s
   const bulkNodes = useStore(
     useShallow((state) => (isBulk ? (bulkIds.map((id) => state.objects[id]).filter(Boolean) as AnyNode[]) : EMPTY_NODES))
   );
-  // A table's or code block's editor brings its own bar; the object rail steps back.
-  const tableEditing = useStore((s) => s.tableEditNodeId);
-  const codeEditing = useStore((s) => s.codeEditNodeId);
   const copiedStyle = useSyncExternalStore(styleClipboard.subscribe, styleClipboard.get, styleClipboard.get);
 
   // A combine preview must not outlive the rail that showed it: a selection
@@ -79,21 +87,26 @@ const ObjectContextToolbarInner: React.FC<Props> = ({ selectedId, selectedIds, s
     booleanPreview.set(null);
   }, [activeId, isBulk, selectedIds]);
 
-  if ((!activeId && !isBulk) || !isVisible) return null;
+  if ((!activeId && !isBulk) || !isVisible || suspended) return null;
 
-  /** The `⋯`: the right-click menu for what the rail shows, built when opened. */
+  /**
+   * The `⋯`: the right-click menu for what the rail shows, built when opened.
+   * A multiple selection also gets the rows the menu does not carry for one
+   * yet: select-similar, and Convert to path where Points would have to convert.
+   */
   const moreButton = (nodes: AnyNode[]) => (
     <RailMenuButton
-      entries={() =>
-        selectionMenu({
+      entries={() => {
+        const entries = selectionMenu({
           nodes,
           allObjects: useStore.getState().objects,
           actions: menuActions,
           canEdit: true,
           style: styleClipboard.get(),
           atPointer: false,
-        })
-      }
+        });
+        return nodes.length > 1 ? withMultiSelectExtras(entries, nodes) : entries;
+      }}
     />
   );
 
@@ -118,9 +131,17 @@ const ObjectContextToolbarInner: React.FC<Props> = ({ selectedId, selectedIds, s
     </RailButton>
   );
 
-  const frame = (key: string, label: string, children: React.ReactNode) => (
+  const frame = (key: string, label: string, description: string, children: React.ReactNode) => (
     <AnimatePresence>
-      <Rail id={key} label={label} placement={placement} clear={clear} anchorRef={anchorRef} ref={railRef}>
+      <Rail
+        id={key}
+        label={label}
+        description={description}
+        placement={placement}
+        clear={clear}
+        anchorRef={anchorRef}
+        ref={railRef}
+      >
         {children}
       </Rail>
     </AnimatePresence>
@@ -130,17 +151,16 @@ const ObjectContextToolbarInner: React.FC<Props> = ({ selectedId, selectedIds, s
    * A locked selection says so and offers one way out. Copying, exporting and
    * commenting on a locked object are still what it is for, so `⋯` stays.
    */
-  const lockedRail = (key: string, chip: React.ReactNode, label: string, nodes: AnyNode[]) =>
-    frame(
+  const lockedRail = (key: string, chip: React.ReactNode, label: string, what: string, nodes: AnyNode[]) => {
+    const reason = nodes.length === 1 ? 'Locked, so it cannot be moved or restyled' : 'All locked, so they cannot be moved or restyled';
+    return frame(
       `${key}-locked`,
       label,
+      `${what}. ${reason}.`,
       <>
         {chip}
         <Divider />
-        <span
-          className="ctx-locked"
-          data-tooltip={nodes.length === 1 ? 'Locked, so it cannot be moved or restyled' : 'All locked, so they cannot be moved or restyled'}
-        >
+        <span className="ctx-locked" data-tooltip={reason}>
           <Lock size={13} aria-hidden="true" />
           Locked
         </span>
@@ -152,6 +172,7 @@ const ObjectContextToolbarInner: React.FC<Props> = ({ selectedId, selectedIds, s
         {moreButton(nodes)}
       </>
     );
+  };
 
   if (isBulk) {
     const label = `${bulkNodes.length} objects`;
@@ -162,11 +183,12 @@ const ObjectContextToolbarInner: React.FC<Props> = ({ selectedId, selectedIds, s
           {bulkNodes.length}
         </span>
       );
-      return lockedRail('union', chip, label, bulkNodes);
+      return lockedRail('union', chip, label, describeMix(bulkNodes), bulkNodes);
     }
     return frame(
       'union',
       label,
+      describeMix(bulkNodes),
       <MultiRail
         nodes={bulkNodes}
         ids={bulkIds}
@@ -177,15 +199,16 @@ const ObjectContextToolbarInner: React.FC<Props> = ({ selectedId, selectedIds, s
     );
   }
 
-  if (!liveNode || tableEditing || codeEditing) return null;
+  if (!liveNode) return null;
   const node = liveNode;
   const subject = railSubjectOf(node);
   const kind = kindOf(node, subject);
-  if (node.locked) return lockedRail(node.id, <KindLabel icon={kind.icon} name={kind.name} />, kind.name, [node]);
+  if (node.locked) return lockedRail(node.id, <KindLabel icon={kind.icon} name={kind.name} />, kind.name, kind.name, [node]);
 
   const Section = RAIL_SECTIONS[subject];
   return frame(
     node.id,
+    kind.name,
     kind.name,
     <Section
       node={node}

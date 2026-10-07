@@ -1,6 +1,6 @@
 // @vitest-environment jsdom
 import { describe, expect, it } from 'vitest';
-import { boardRegions, nextRegion } from './boardLayout';
+import { boardRegions, dockLeft, nextRegion } from './boardLayout';
 
 function regions() {
   document.body.innerHTML = `
@@ -26,5 +26,36 @@ describe('board regions', () => {
 
   it('starts at the first region when focus is outside all of them', () => {
     expect(nextRegion(regions(), document.body, false)?.dataset.region).toBe('0');
+  });
+});
+
+describe('dock placement', () => {
+  const DOCK = 517; // an odd width, which a half-width translate would put on half a pixel
+
+  it('is centred on the window, on a whole pixel, whatever the columns do', () => {
+    for (const viewport of [1440, 1280]) {
+      const closed = dockLeft(viewport, DOCK, []);
+      expect(Number.isInteger(closed)).toBe(true);
+      expect(closed).toBe(Math.round((viewport - DOCK) / 2));
+      // Columns open, at their narrowest and widest, beside the dock's row.
+      for (const [left, right] of [[268, 240], [388, 360]]) {
+        const open = dockLeft(viewport, DOCK, [
+          { left: 28, right: left },
+          { left: viewport - right, right: viewport },
+        ]);
+        expect(open).toBe(closed);
+      }
+    }
+  });
+
+  it('steps clear of a column it would run under, by the least that clears it', () => {
+    // 1024 wide, a 288px inspector against the right edge: centred, the dock
+    // would end at 770, past the inspector's 736.
+    const left = dockLeft(1024, DOCK, [{ left: 736, right: 1024 }]);
+    expect(left + DOCK).toBe(736 - 8);
+  });
+
+  it('stays centred when it cannot clear both columns', () => {
+    expect(dockLeft(900, DOCK, [{ left: 0, right: 300 }, { left: 600, right: 900 }])).toBe(Math.round((900 - DOCK) / 2));
   });
 });

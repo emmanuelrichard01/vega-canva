@@ -1,5 +1,7 @@
 import { describe, expect, it } from 'vitest';
-import { HUG_PADDING, MIN_FRAME_SIZE, hugBox, presentationOrder } from './frames';
+import { HUG_PADDING, MIN_FRAME_SIZE, hugBox, presentableFrames, presentationOrder, slidePose } from './frames';
+import { nodeBounds } from './selection';
+import type { AnyNode } from './schema';
 
 const f = (id: string, x: number, y: number, width = 100, height = 100) => ({ id, x, y, width, height });
 
@@ -43,5 +45,36 @@ describe('presentationOrder', () => {
     const frames = [f('a', 0, 0), f('b', 150, 0), f('c', 0, 150), f('d', 150, 150)];
     const reversed = presentationOrder([...frames].reverse()).map((x) => x.id);
     expect(reversed).toEqual(presentationOrder(frames).map((x) => x.id));
+  });
+});
+
+describe('presentableFrames', () => {
+  it('keeps visible top-level frames only', () => {
+    const nodes = [
+      { type: 'frame', id: 'a' },
+      { type: 'frame', id: 'nested', frameId: 'a' },
+      { type: 'frame', id: 'hidden', hidden: true },
+      { type: 'sticky', id: 's' },
+    ];
+    expect(presentableFrames(nodes).map((n) => n.id)).toEqual(['a']);
+  });
+});
+
+describe('slidePose', () => {
+  it('centres the box in the stage with padding all round', () => {
+    const pose = slidePose({ x: 100, y: 50, width: 400, height: 200 }, { width: 1000, height: 600 }, 50);
+    expect(pose.zoom).toBe(2.25);
+    expect(100 * pose.zoom + pose.x + (400 * pose.zoom) / 2).toBeCloseTo(500);
+    expect(50 * pose.zoom + pose.y + (200 * pose.zoom) / 2).toBeCloseTo(300);
+  });
+
+  it('fits a rotated frame by its rotated bounds', () => {
+    const frame = { id: 'f', type: 'frame', x: 0, y: 0, width: 200, height: 100, rotation: 90, scaleX: 1, scaleY: 1 } as unknown as AnyNode;
+    const box = nodeBounds(frame);
+    expect(box.width).toBeCloseTo(100);
+    expect(box.height).toBeCloseTo(200);
+    const pose = slidePose(box, { width: 500, height: 500 }, 50);
+    // The tall side decides: 400 / 200.
+    expect(pose.zoom).toBeCloseTo(2);
   });
 });

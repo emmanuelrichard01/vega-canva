@@ -84,7 +84,7 @@ export const isSettled = (s: TurntableState, playing: boolean): boolean =>
  * track plays, the way a real arm follows the spiral groove.
  */
 export function armAngle(arm: number, progress: number | null): number {
-  const REST = -24;
+  const REST = -20;
   const LEAD_IN = -12;
   const RUN_OUT = 8;
   const onRecord = LEAD_IN + (RUN_OUT - LEAD_IN) * Math.min(1, Math.max(0, progress ?? 0.18));

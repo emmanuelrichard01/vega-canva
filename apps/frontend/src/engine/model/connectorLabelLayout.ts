@@ -8,7 +8,7 @@
  */
 
 import type { ConnectorLabel, ConnectorNode } from './schema';
-import { pointAlong } from './connectorLabels';
+import { placeConnectorLabels, pointAlong, type LabelRequest, type Placed } from './connectorLabels';
 
 export interface Pt {
   x: number;
@@ -27,6 +27,41 @@ export function labelFontSize(strokeWidth: number): number {
   if (strokeWidth <= 2) return 12;
   if (strokeWidth <= 4) return 14;
   return 18;
+}
+
+/** The key a label is arranged under on the board: its connector and its own id. */
+export function autoLabelKey(connectorId: string, labelId: string): string {
+  return `${connectorId}#${labelId}`;
+}
+
+/**
+ * The labels of a connector that nobody placed, as requests to the board-wide
+ * arrangement (`placeConnectorLabels`), on the route as drawn. The canvas
+ * publishes exactly these; the export arranges exactly these.
+ */
+export function autoLabelRequests(node: Pick<ConnectorNode, 'id' | 'labels' | 'label'>, flat: readonly number[]): LabelRequest[] {
+  return labelsOf(node)
+    .filter((l) => l.t === undefined)
+    .map((l) => ({ id: autoLabelKey(node.id, l.id), text: l.text, points: flat }));
+}
+
+/** The arrangement of every unplaced label on a set of drawn routes. */
+export function arrangeLabels(
+  connectors: Iterable<{ node: Pick<ConnectorNode, 'id' | 'labels' | 'label'>; flat: readonly number[] }>
+): Map<string, Placed> {
+  const requests: LabelRequest[] = [];
+  for (const { node, flat } of connectors) requests.push(...autoLabelRequests(node, flat));
+  return placeConnectorLabels(requests);
+}
+
+/**
+ * Where a label is drawn, centred: at its own `t` and `dn` when it has been
+ * placed, otherwise in the arrangement's slot, and at the middle of the run
+ * before there is one.
+ */
+export function labelCentre(label: ConnectorLabel, flat: readonly number[], slot: Placed | null | undefined): Pt {
+  if (label.t === undefined && slot) return { x: slot.x, y: slot.y };
+  return labelAnchor(flat, label.t ?? 0.5, label.dn ?? 0);
 }
 
 /** The unit tangent of a route at `t`, from a short chord either side. */
@@ -116,3 +151,49 @@ export function resample(flat: readonly number[], count: number): number[] {
   }
   return out;
 }
+
+/**
+ * A label as it is stored: trimmed, in sentence case. The first letter is
+ * capitalised and the rest left as typed, so "yes" reads "Yes" and an
+ * acronym or a name typed in capitals keeps them.
+ */
+export function sentenceCase(text: string): string {
+  const clean = text.trim();
+  if (!clean) return clean;
+  const first = clean.charAt(0);
+  const upper = first.toLocaleUpperCase();
+  return upper === first ? clean : upper + clean.slice(1);
+}
+
+let measureContext: CanvasRenderingContext2D | null | undefined;
+const widthCache = new Map<string, number>();
+
+/**
+ * The width of a label's text at a size, measured with the canvas the board
+ * draws on when there is one, and estimated otherwise (tests, the server).
+ */
+export function labelTextWidth(text: string, fontSize: number): number {
+  const key = `${fontSize}|${text}`;
+  const cached = widthCache.get(key);
+  if (cached !== undefined) return cached;
+  if (measureContext === undefined) {
+    const jsdom = typeof navigator !== 'undefined' && /jsdom/i.test(navigator.userAgent);
+    try {
+      measureContext =
+        typeof document !== 'undefined' && !jsdom ? document.createElement('canvas').getContext('2d') : null;
+    } catch {
+      measureContext = null;
+    }
+  }
+  let width = text.length * fontSize * 0.56;
+  if (measureContext) {
+    measureContext.font = `500 ${fontSize}px Inter, system-ui, sans-serif`;
+    width = measureContext.measureText(text).width;
+  }
+  if (widthCache.size > 2000) widthCache.clear();
+  widthCache.set(key, width);
+  return width;
+}
+
+/** How far the line stops short of a label's text on each side, in world units. */
+export const LABEL_GAP = 4;

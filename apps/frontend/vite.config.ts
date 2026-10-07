@@ -60,6 +60,25 @@ function siteMeta(siteUrl: string): Plugin {
 const EXPORT_SHARED =
   /\/engine\/export\/(chrome|DocumentImport|restoreDocument|pendingRestore|exportScope|renderScope|isolate|ExportTypes|filenames)\./;
 
+/**
+ * Modules the dashboard (`Home.tsx`) imports that board-only chunks also
+ * import. Listed by file rather than by folder: a folder such as
+ * `components/menu/` also holds the canvas menus, which would come with it.
+ */
+const LIBRARY_SHARED = new RegExp(
+  [
+    '/components/menu/(Menu|menuModel|shortcuts)\\.',
+    '/components/ui/Avatar\\.',
+    '/engine/presence/collaborators\\.',
+    '/engine/cursor/remoteCursor\\.',
+    '/engine/model/(stickyThemes|stacking|connector|connectorAnchor|previewPaint|boardPreview)\\.',
+    '/engine/model/connectorRouter/(curve|pathOps|router|geometry)\\.',
+    '/engine/chart/expression\\.',
+    '/engine/room/roomCode\\.',
+    '/engine/export/(filenames|ExportTypes|DocumentImport|pendingRestore)\\.',
+  ].join('|')
+);
+
 /** Module ids with Windows separators folded to `/`, so one pattern serves both. */
 const posixId = (id: string) => id.replace(/\\/g, '/');
 const inPackage = (...names: string[]) => {
@@ -71,6 +90,10 @@ const inSource = (pattern: RegExp) => (id: string) => pattern.test(posixId(id));
 // https://vite.dev/config/
 export default defineConfig(({ mode }) => ({
   plugins: [react(), siteMeta(loadEnv(mode, process.cwd(), 'VITE_').VITE_SITE_URL || DEFAULT_SITE_URL)],
+  // The loopback IP rather than `localhost`: Spotify accepts only 127.0.0.1 as a
+  // local redirect, and sign-in must start on the origin it returns to.
+  // `npm run dev -- --host` still serves the LAN.
+  server: { host: '127.0.0.1', port: 5173 },
   build: {
     /**
      * The largest chunk is `vendor-sentry` (~475 kB raw, ~156 kB gzipped),
@@ -116,6 +139,14 @@ export default defineConfig(({ mode }) => ({
              * modules cannot claim it and drag itself onto the entry path.
              */
             { name: 'shell', priority: 50, tags: ['$initial'] },
+            /**
+             * What the dashboard shares with the board's panels. Above the
+             * `app-*` groups, which would otherwise capture these as their own
+             * dependencies — the menu went to `app-toolbar` and the connector
+             * geometry behind template covers to `app-export` — and make the
+             * dashboard download the toolbar and the exporter to render.
+             */
+            { name: 'lib-shared', priority: 20, test: inSource(LIBRARY_SHARED) },
             /**
              * The export engine, minus the modules the live canvas shares with
              * it (`EXPORT_SHARED`). One shared constant left in the export

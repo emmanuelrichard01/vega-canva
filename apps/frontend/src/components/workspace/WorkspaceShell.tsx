@@ -1,4 +1,4 @@
-import React, { Suspense, lazy, useEffect, useRef, useState, useSyncExternalStore } from 'react';
+import React, { useEffect, useRef, useState, useSyncExternalStore } from 'react';
 import { useRoomState } from '../../hooks/useSync';
 import { CollaborationLayer } from './CollaborationLayer';
 import {
@@ -43,6 +43,7 @@ import { notify } from '../../engine/ui/notices';
 import { tourState } from '../../engine/learn/tourState';
 import { ZoomControl } from './ZoomControl';
 import { musicSlot } from './musicSlot';
+import MusicHeaderSlot from './MusicHeaderSlot';
 import { contrastMenuItem } from '../ui/contrastMenu';
 import { useContrast } from '../../engine/ui/contrast';
 import './shell.css';
@@ -66,8 +67,6 @@ import './shell.css';
 /** One glyph size for both headers; 16 lands Lucide on whole pixels. */
 const ICON = 16;
 
-/** The music player, fetched the first time someone asks for it. */
-const MusicHeaderSlot = lazy(() => import('./MusicHeaderSlot'));
 
 /** What a board created a moment ago is called until someone names it. */
 export const UNTITLED_BOARD = 'Untitled board';
@@ -423,6 +422,8 @@ interface RightProps {
   onToggleComments: () => void;
   /** Unresolved threads with something you have not read. */
   commentUnread: number;
+  /** Whether any of them names you, the one case the count takes the accent. */
+  commentMentioned?: boolean;
   /** Whether the comments inbox is open, so its button can say so. */
   commentsOpen?: boolean;
   /** Whether history replay is running, so its button can say so. */
@@ -437,14 +438,13 @@ const BoardHeaderRightInner: React.FC<RightProps> = ({
   onToggleTimeline,
   onToggleComments,
   commentUnread,
+  commentMentioned = false,
   commentsOpen = false,
   timelineOpen = false,
   onExpand,
 }) => {
   const { canUndo, canRedo } = useUndoAvailability();
   const receded = useReceded();
-  /** Once the player has been opened, its button keeps a seat here for the session. See `musicSlot`. */
-  const musicRequested = useSyncExternalStore(musicSlot.subscribe, musicSlot.getSnapshot, musicSlot.getSnapshot);
 
   const share = (
     <button className="hdr-btn hdr-btn--primary" onClick={onShareClick} aria-label="Share this board" data-tour="share">
@@ -459,22 +459,21 @@ const BoardHeaderRightInner: React.FC<RightProps> = ({
       aria-pressed={commentsOpen}
       data-tooltip={commentUnread > 0 ? `${commentUnread} unread ${commentUnread === 1 ? 'comment' : 'comments'}` : 'Comments'}
       data-tooltip-pos="bottom"
-      aria-label={commentUnread > 0 ? `Comments, ${commentUnread} unread` : 'Comments'}
+      aria-label={
+        commentUnread > 0 ? `Comments, ${commentUnread} unread${commentMentioned ? ', you are mentioned' : ''}` : 'Comments'
+      }
     >
       <MessageSquare size={ICON} />
       {commentUnread > 0 && (
-        <span className="hdr-badge" aria-hidden="true">
+        <span className="hdr-badge" data-mention={commentMentioned || undefined} aria-hidden="true">
           {commentUnread > 9 ? '9+' : commentUnread}
         </span>
       )}
     </button>
   );
 
-  const music = musicRequested && (
-    <Suspense fallback={null}>
-      <MusicHeaderSlot />
-    </Suspense>
-  );
+  /** The record sits right beside your own face, in both header forms. The player itself loads on first open. */
+  const music = <MusicHeaderSlot />;
 
   if (variant === 'pill') {
     return (
@@ -506,8 +505,8 @@ const BoardHeaderRightInner: React.FC<RightProps> = ({
       <div className="board-head__row">
         <RoleBadge />
         <CollaborationLayer />
-        <span className="board-head__fill" />
         {music}
+        <span className="board-head__fill" />
         {comments}
         {share}
       </div>

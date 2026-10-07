@@ -8,19 +8,36 @@
 
 /* A board has no top bar (UI3): a left column, the canvas edge to edge, and a
    right column. `boardLayout.ts` marks the root; these are what everything
-   placed against the frame reads. `--inset-*` is how much of each side an open
-   column covers, and 0 while it is a pill. */
+   placed against the frame reads.
+
+   - `--header-h`: 0px on a board. The dashboard keeps its own.
+   - `--inset-left` / `--inset-right`: how much of each side an open column
+     covers, gap included on the left. 0px while that column is a pill.
+   - `--inset-top`: the band across the top that chrome always covers (the
+     horizontal ruler, 0px when rulers are off).
+   - `--board-pill-h`: a closed column's pill, which sits `--space-2` below
+     `--inset-top` in its corner.
+
+   Declared on `body`, not the root, because the ruler switch sets
+   `--ruler-size` and `--shell-inset` on `body`, and a custom property
+   resolves the variables it uses where it is declared. Everything that reads
+   these (the dock, the rail, notices, portaled menus) is inside `body`. */
 :root[data-surface='board'] {
   --header-h: 0px;
-  --inset-left: 0px;
-  --inset-right: 0px;
 }
 
-:root[data-surface='board'][data-left-panel='open'] {
+:root[data-surface='board'] body {
+  --inset-left: 0px;
+  --inset-right: 0px;
+  --inset-top: calc(var(--header-h) + var(--ruler-size, 0px));
+  --board-pill-h: 40px;
+}
+
+:root[data-surface='board'][data-left-panel='open'] body {
   --inset-left: calc(var(--shell-inset, 28px) + var(--layers-w, var(--panel-w)) + var(--space-2));
 }
 
-:root[data-surface='board'][data-right-panel='open'] {
+:root[data-surface='board'][data-right-panel='open'] body {
   --inset-right: var(--inspector-w, var(--panel-w));
 }
 
@@ -34,10 +51,22 @@
   width: var(--layers-w, var(--panel-w));
 }
 
-/* The dock centres on the canvas that is actually showing. */
+/* The dock is centred on the window, not on the canvas between the columns,
+   so opening, closing or resizing a column never moves it. The base rule
+   centres the box; `useDockPlacement` sets `--dock-shift` to the whole pixel
+   that lands it on, and steps it clear of a column only on a window too narrow
+   for both. Its shelves and flyouts are its children and go with it. */
 :root[data-surface='board'] .tool-dock {
-  left: var(--inset-left);
-  right: var(--inset-right);
+  translate: var(--dock-shift, 0px) 0;
+}
+
+/* Only a real step clear of a column is animated, never a half-pixel fix. */
+:root[data-surface='board'] .tool-dock[data-shifted] {
+  transition: translate 200ms var(--ease-settle, cubic-bezier(0.16, 1, 0.3, 1));
+}
+
+@media (prefers-reduced-motion: reduce) {
+  :root[data-surface='board'] .tool-dock[data-shifted] { transition: none; }
 }
 
 /* Each column is its header, then the panel it hosts, which takes the rest. */
@@ -143,6 +172,17 @@
   flex: none;
 }
 
+/* The save state's word gives way to the board's name in a narrow column;
+   its mark, tooltip and live announcement stay. */
+.board-head--left.board-head--panel {
+  container-type: inline-size;
+}
+
+@container (max-width: 320px) {
+  .board-head--left .sync-pip__label { display: none; }
+  .board-head--left .sync-pip[data-said] { padding: 0 4px; }
+}
+
 /* ---------------------------------------------------------------- pills */
 
 /* A closed column is its header as a pill in that top corner, clear of the
@@ -150,7 +190,7 @@
    shadow, no border. */
 .board-pill {
   position: absolute;
-  top: calc(var(--header-h) + var(--ruler-size, 0px) + var(--space-2));
+  top: calc(var(--inset-top) + var(--space-2));
   z-index: 96;
   max-width: calc(50vw - var(--space-6));
   border-radius: var(--radius-lg);
@@ -163,7 +203,7 @@
 .board-pill--right { right: var(--space-2); }
 
 .board-pill .board-head--pill {
-  height: 40px;
+  height: var(--board-pill-h);
   padding: 0 var(--space-1);
 }
 
@@ -180,17 +220,18 @@
   :root[data-surface='board'] .hierarchy-panel.panel-surface,
   :root[data-surface='board'] .context-inspector.panel-surface,
   .board-pill { animation: none; }
-  .board-head { transition: none; }
+  .board-head,
+  .hdr-presence { transition: none; }
 }
 
 /* The comments inbox opens under the right header, whichever form it has. */
 :root[data-surface='board'] .comment-inbox {
-  top: calc(var(--ruler-size, 0px) + var(--space-2) + 48px);
+  top: calc(var(--inset-top) + var(--space-2) + var(--board-pill-h) + var(--space-2));
   right: var(--space-2);
 }
 
 :root[data-surface='board'][data-right-panel='open'] .comment-inbox {
-  top: calc(var(--ruler-size, 0px) + var(--space-2) + 84px);
+  top: calc(var(--inset-top) + var(--space-2) + 84px);
   right: 0;
 }
 
@@ -226,10 +267,68 @@
 }
 
 /* A count of unread comments is information, not a call to action, so it is
-   ink rather than the accent. */
+   ink rather than the accent; it takes the accent only when one of them names
+   you. */
 .board-head .hdr-badge {
   background: var(--text-primary);
   color: var(--surface-primary);
+}
+
+.board-head .hdr-badge[data-mention] {
+  background: var(--accent);
+  color: var(--accent-on);
+}
+
+/* People: one button around the stack of faces, which opens the roster. */
+.hdr-presence {
+  display: inline-flex;
+  align-items: center;
+  flex: none;
+  height: var(--control-h-sm);
+  padding: 0 var(--space-1) 0 6px;
+  border: 0;
+  border-radius: var(--radius-pill);
+  background: transparent;
+  cursor: pointer;
+  transition: background-color var(--motion-hover);
+}
+
+.hdr-presence:hover,
+.hdr-presence[aria-expanded='true'] {
+  background: var(--surface-hover);
+}
+
+.hdr-presence:focus-visible {
+  outline: 2px solid var(--focus-ring-color);
+  outline-offset: 1px;
+}
+
+/* The stack sits on the header's own surface, so its cut-out rings do too. */
+.board-head .avatar-stack > .avatar {
+  box-shadow: 0 0 0 1.5px var(--surface-elevated);
+}
+
+.board-head .avatar-stack > .avatar[data-ring='1'] {
+  box-shadow: 0 0 0 1.5px var(--surface-elevated), 0 0 0 3px var(--avatar-ring);
+}
+
+/* Ringed faces sit side by side rather than overlapping: a 3px ring cut into
+   its neighbour's face reads as one smudge at 20px. */
+.board-head .avatar-stack > .avatar + .avatar {
+  margin-left: 5px;
+}
+
+.board-head .hdr-people {
+  display: inline-flex;
+  align-items: center;
+  margin: 0;
+}
+
+/* The music record sits right after your face: easy to find, part of "you". */
+.board-head .hdr-music {
+  display: inline-flex;
+  align-items: center;
+  flex: none;
 }
 
 /* History is a mode colour only while replay is running. */
@@ -382,147 +481,11 @@
   .zoom-ctl__menu svg { transition: none; }
 }
 
-/* ------------------------------------------------------------ share dialog */
-
-/* Invite or Export. The chosen tab takes an inked ground, not the accent: it
-   is a view of the dialog, not a state that is on. */
-.share__tabs {
-  display: flex;
-  gap: 2px;
-  padding: 2px;
-  border-radius: var(--radius-md);
-  background: var(--surface-secondary);
-}
-
-.share__tab {
-  flex: 1;
-  height: var(--control-h-sm);
-  border: 0;
-  border-radius: calc(var(--radius-md) - 2px);
-  background: transparent;
-  color: var(--text-secondary);
-  font-family: inherit;
-  font-size: var(--text-sm);
-  font-weight: var(--weight-semibold);
-  cursor: pointer;
-  transition: background-color var(--motion-hover), color var(--motion-hover);
-}
-
-.share__tab:hover { color: var(--text-primary); }
-
-.share__tab[aria-selected='true'] {
-  background: var(--surface-primary);
-  color: var(--text-primary);
-  box-shadow: var(--shadow-sm);
-}
-
-.share__tab:focus-visible {
-  outline: 2px solid var(--focus-ring-color);
-  outline-offset: 1px;
-}
-
-/* A pane keeps the dialog's own section rhythm. */
-.share__pane {
-  display: flex;
-  flex-direction: column;
-  gap: var(--space-5);
-}
-
-.share__mode[aria-disabled='true'] {
-  color: var(--text-disabled);
-  background: transparent;
-  cursor: not-allowed;
-}
-
-/* The ways out, as rows: what it is, then what it is for. One hairline list
-   rather than four cards. */
-.share__exports {
-  display: flex;
-  flex-direction: column;
-  border: 1px solid var(--border-divider);
-  border-radius: var(--radius-lg);
-  overflow: hidden;
-}
-
-.share__export {
-  display: flex;
-  align-items: center;
-  gap: var(--space-3);
-  min-height: 52px;
-  padding: var(--space-2) var(--space-3);
-  border: 0;
-  background: var(--surface-primary);
-  color: var(--text-primary);
-  font-family: inherit;
-  text-align: left;
-  cursor: pointer;
-  transition: background-color var(--motion-hover);
-}
-
-.share__export + .share__export {
-  border-top: 1px solid var(--border-divider);
-}
-
-.share__export:hover { background: var(--surface-hover); }
-
-.share__export:focus-visible {
-  outline: 2px solid var(--focus-ring-color);
-  outline-offset: -2px;
-}
-
-.share__export-icon {
-  display: grid;
-  place-items: center;
-  flex: none;
-  width: 32px;
-  height: 32px;
-  border-radius: var(--radius-md);
-  background: var(--surface-secondary);
-  color: var(--text-secondary);
-}
-
-.share__export-text {
-  display: flex;
-  flex-direction: column;
-  gap: 1px;
-  min-width: 0;
-  flex: 1;
-}
-
-.share__export-label {
-  font-size: var(--text-md);
-  font-weight: var(--weight-semibold);
-}
-
-.share__export-detail {
-  font-size: var(--text-sm);
-  color: var(--text-secondary);
-}
-
-.share__export-go {
-  flex: none;
-  color: var(--text-tertiary);
-  transition: translate var(--motion-hover), color var(--motion-hover);
-}
-
-.share__export:hover .share__export-go {
-  color: var(--text-primary);
-  translate: 2px 0;
-}
-
-@media (prefers-reduced-motion: reduce) {
-  .share__export:hover .share__export-go { translate: none; }
-}
-
 /* The shelf is one row by design. A segmented choice in it never wraps under
    itself; the shelf scrolls before that, see `.tool-shelf`'s max width. */
 .tool-shelf .seg {
   flex: none;
   flex-wrap: nowrap;
-}
-.share__mode[aria-disabled='true']:hover {
-  color: var(--text-disabled);
-  background: transparent;
 }
 
 /* ------------------------------------------------------------- board foot */

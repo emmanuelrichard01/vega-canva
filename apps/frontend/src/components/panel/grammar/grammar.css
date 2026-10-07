@@ -118,6 +118,20 @@
   padding: var(--space-1) var(--section-pad-x) var(--section-pad-y);
 }
 
+/* A section inside a section (the Table section's Style, Size, Columns)
+   shares the outer body's inset instead of adding a second one, so its rows
+   line up with every other row and keep their width in a narrow panel. */
+.pg-section__body .pg-section__head {
+  padding-left: 0;
+  padding-right: 0;
+  margin-right: calc(-1 * var(--space-1));
+}
+
+.pg-section__body .pg-section__body {
+  padding-left: 0;
+  padding-right: 0;
+}
+
 /* ── Small icon button (section +, ⋯, row actions) ───────────────────────── */
 
 .pg-icon-btn {
@@ -192,6 +206,31 @@
 .pg-row__control > .pg-select,
 .pg-row__control > .pg-color {
   flex: 1;
+}
+
+/* A control gives width back before it pushes past the panel's edge: every
+   child may shrink below its content, and text inside truncates (with the
+   full value as a tooltip) rather than widening the row. */
+.pg-row__control > *,
+.pg-row__control > .font-select {
+  min-width: 0;
+}
+
+.pg-row__control .ui-switch {
+  flex-shrink: 1;
+  min-width: 0;
+  max-width: 100%;
+}
+
+.pg-row__control .ui-switch__track {
+  flex-shrink: 0;
+}
+
+.pg-row__control .ui-switch__label {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 .pg-pair {

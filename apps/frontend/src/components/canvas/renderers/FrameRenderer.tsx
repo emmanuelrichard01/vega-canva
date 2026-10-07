@@ -6,7 +6,8 @@ import { axisBands } from '../../../engine/model/layoutGuide';
 import type { FrameNode } from '../../../engine/model/schema';
 import { useCameraZoom } from '../../../engine/useCameraZoom';
 import { useFillProps } from './useFillProps';
-import { ThemeService } from '../../../engine/ThemeService';
+import { chromeToken, useChromeDark } from '../../../engine/interaction/chromeHalo';
+import { requestFrameRename } from '../FrameNameEditor';
 
 interface Props {
   node: FrameNode;
@@ -23,6 +24,9 @@ interface Props {
  */
 export const FrameRenderer: React.FC<Props> = React.memo(({ node }) => {
   const stageScale = useCameraZoom();
+  // Re-read on a theme switch: Konva cannot resolve `var()`, so the label's
+  // token is resolved to a literal at draw time.
+  const dark = useChromeDark();
   const fill = useFillProps(node.appearance, { x: 0, y: 0, width: node.width, height: node.height }, '#FFFFFF');
 
   // The frame's own box, origin-anchored, so `safeAreaBox` hands back the
@@ -109,10 +113,15 @@ export const FrameRenderer: React.FC<Props> = React.memo(({ node }) => {
             wrap="none"
             fontSize={titleFontSize}
             fontStyle="500"
-            fill={ThemeService.isDarkMode() ? '#A1A1AA' : '#6B7280'}
+            fill={chromeToken('--text-tertiary', dark ? '#A1A1AA' : '#6B7280')}
             fontFamily="Inter, -apple-system, sans-serif"
             perfectDrawEnabled={false}
-            listening={false}
+            // The name is a handle: pressing it selects (and drags) the frame
+            // through the group, and a double-click renames it.
+            onDblClick={(e) => {
+              e.cancelBubble = true;
+              requestFrameRename(node.id);
+            }}
           />
         );
       })()}

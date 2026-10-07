@@ -1,4 +1,5 @@
 import { useEffect } from 'react';
+import { isPresenting } from '../../engine/tools/presenting';
 import type React from 'react';
 import { useStore } from '../../hooks/useStore';
 import { applyNodePatches, updateNode } from '../../engine/document';
@@ -31,6 +32,7 @@ export function useCanvasShortcuts({
 }) {
   useEffect(() => {
     const handleKeyDown = (e: KeyboardEvent) => {
+      if (isPresenting()) return;
       if (keyBelongsToFocus(e.key)) return;
       // Viewing history is read-only. The canvas is showing a past state while
       // the live document sits untouched behind it, so Delete or Cmd+D here

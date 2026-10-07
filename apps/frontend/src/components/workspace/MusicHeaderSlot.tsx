@@ -1,13 +1,15 @@
 import React, { useEffect, useRef } from 'react';
 import { MusicButton } from '../music/MusicPlayer';
 import { musicSlot } from './musicSlot';
+import { hasSignInNotice, resumeSpotifyIntent } from '../../engine/music/spotify/auth';
 
 /**
- * The player's button in the header, loaded on first request.
+ * The record button beside your avatar, in the panel header and the pill.
  *
- * Opening it is a click on its own trigger: the button owns its panel's
- * state, and a request from the board menu should behave exactly as if the
- * button had been pressed.
+ * It is always present and costs almost nothing: the button reads only the
+ * playing-state signal, and the player loads the first time it opens. The
+ * board menu's Music item opens it by clicking this same trigger, so both
+ * paths behave identically.
  */
 const MusicHeaderSlot: React.FC = () => {
   const host = useRef<HTMLSpanElement>(null);
@@ -20,6 +22,13 @@ const MusicHeaderSlot: React.FC = () => {
     };
     openIfAsked();
     return musicSlot.subscribe(openIfAsked);
+  }, []);
+
+  // A hop from a loopback address lands here with the intent to connect; a sign-in that just returned opens the player to show how it went.
+  useEffect(() => {
+    void resumeSpotifyIntent().then(() => {
+      if (hasSignInNotice()) musicSlot.request();
+    });
   }, []);
 
   return (

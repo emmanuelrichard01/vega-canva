@@ -9,7 +9,7 @@ import { parseDocumentExport } from './engine/export/DocumentImport';
 import { looksLikeLibrary, mergeLibrary, parseLibrary, serializeLibrary } from './engine/room/libraryIndex';
 import { looksLikeRoomCode, roomIdFromCode } from './engine/room/roomCode';
 import { notices$ } from './engine/ui/notices';
-import { stashPendingRestore, stashPendingTemplate, takePendingTemplate } from './engine/export/pendingRestore';
+import { hasPendingRestore, stashPendingRestore, stashPendingTemplate, takePendingRestore, takePendingTemplate } from './engine/export/pendingRestore';
 import { CATEGORIES, TEMPLATES, type Template, type TemplateCategory } from './engine/templates/templates';
 import { loadPreview, type BoardPreview } from './engine/model/boardPreview';
 import { slugify } from './engine/export/filenames';
@@ -19,10 +19,11 @@ import { TemplateCard } from './components/home/TemplateCard';
 import { TemplatePeek } from './components/home/TemplatePeek';
 import { templateCover } from './components/home/templateCover';
 import { useBoardStatus } from './components/home/useBoardStatus';
+import { useGridColumns } from './components/home/useGridColumns';
 import { useRovingGrid } from './components/home/useRovingGrid';
 import {
-  LIBRARY_KEYS, REMOVED_LIMIT, canEditBoard, cleanBoardName, displayName, focusAfterRemoval, insertAt, libraryGroups,
-  mutateNames, mutatePins, mutateRecents, mutateRemoved, readNames, readPins, readRecents, readRemoved, togglePin,
+  LIBRARY_KEYS, REMOVED_LIMIT, canEditBoard, cleanBoardName, displayName, focusAfterRemoval, insertAt, inviteExpired, libraryGroups,
+  mutateNames, mutatePins, mutateRecents, mutateRemoved, readNames, readPins, readRecents, readRemoved, reconcileName, togglePin,
   upsertRecent, type LibraryBoard, type NameMap, type PinMap, type RemovedBoard,
 } from './components/home/library';
 import { BOARD_SORTS, whenOpened, type BoardSort, type ShelfBoard } from './engine/room/boardShelf';
@@ -185,7 +186,8 @@ export const Home: React.FC = () => {
   /**
    * The server's name for a board wins over the one this device remembers —
    * somebody may have renamed it since — except for a name typed here, which
-   * is shown until the server reports the board under it.
+   * is shown until the server reports the board under it, or under a name
+   * somebody else gave it afterwards.
    */
   useEffect(() => {
     if (status.boards.size === 0) return;
@@ -195,11 +197,9 @@ export const Home: React.FC = () => {
       const title = status.boards.get(room.id)?.title;
       if (!title) continue;
       const pending = names[room.id];
-      if (pending) {
-        if (pending.name === title) settled.push(room.id);
-      } else if (title !== room.name) {
-        renamed.set(room.id, title);
-      }
+      const outcome = pending ? reconcileName(pending, title) : null;
+      if (outcome === 'settled' || outcome === 'superseded') settled.push(room.id);
+      if ((outcome === null || outcome === 'superseded') && title !== room.name) renamed.set(room.id, title);
     }
     if (settled.length) {
       setNames(mutateNames((current) => {
@@ -223,7 +223,7 @@ export const Home: React.FC = () => {
         .then((m) => m.renameRemote(id, pending.name, { invite: entry?.invite }))
         .then((result) => {
           if (result === 'renamed') {
-            setNames(mutateNames((n) => (n[id]?.name === pending.name ? { ...n, [id]: { name: pending.name, sent: true } } : n)));
+            setNames(mutateNames((n) => (n[id]?.name === pending.name ? { ...n, [id]: { ...n[id], sent: true } } : n)));
           } else if (result === 'refused') {
             setNames(mutateNames((n) => {
               const { [id]: _drop, ...rest } = n;
@@ -268,12 +268,18 @@ export const Home: React.FC = () => {
     [showFeatured, matchedTemplates]
   );
 
-  /** Five, so the row under the boards fills a wide window's tracks. */
-  const suggestedTemplates = useMemo(
-    () => [...TEMPLATES].sort((a, b) => Number(Boolean(b.featured)) - Number(Boolean(a.featured))).slice(0, 5),
+  /** Featured first. The seam shows exactly one row of them, however many tracks that is. */
+  const templatePool = useMemo(
+    () => [...TEMPLATES].sort((a, b) => Number(Boolean(b.featured)) - Number(Boolean(a.featured))).slice(0, 8),
     []
   );
-  const starters = useMemo(() => suggestedTemplates.slice(0, 3), [suggestedTemplates]);
+  const [seamGrid, setSeamGrid] = useState<HTMLDivElement | null>(null);
+  const seamColumns = useGridColumns(seamGrid, 5);
+  const suggestedTemplates = useMemo(() => templatePool.slice(0, Math.max(1, seamColumns)), [templatePool, seamColumns]);
+  const starters = useMemo(() => templatePool.slice(0, 3), [templatePool]);
+  /** Browsing every category, each one is a single row; its button shows the rest. */
+  const [shelfGrid, setShelfGrid] = useState<HTMLDivElement | null>(null);
+  const shelfColumns = useGridColumns(shelfGrid, 5);
 
   const hasRooms = recentRooms.length > 0;
 
@@ -281,11 +287,11 @@ export const Home: React.FC = () => {
   const visibleTemplates = useMemo<Template[]>(() => {
     if (view === 'templates') {
       if (!showFeatured) return rest;
-      return [...featured, ...CATEGORIES.flatMap((c) => rest.filter((t) => t.category === c.id))];
+      return [...featured, ...CATEGORIES.flatMap((c) => rest.filter((t) => t.category === c.id).slice(0, shelfColumns))];
     }
     if (!hasRooms) return starters;
     return query.trim() ? [] : suggestedTemplates;
-  }, [view, showFeatured, rest, featured, hasRooms, starters, query, suggestedTemplates]);
+  }, [view, showFeatured, rest, featured, shelfColumns, hasRooms, starters, query, suggestedTemplates]);
 
   const boardGroups = useMemo(
     () => libraryGroups(recentRooms, { pins, names, sort, query }),
@@ -432,12 +438,30 @@ export const Home: React.FC = () => {
     notices$.notify({ message: next[board.id] ? `Pinned “${board.name}”.` : `Unpinned “${board.name}”.`, tone: 'success' });
   };
 
-  /** Whether this device can rename a board from here, and why not. */
+  /**
+   * Why this device cannot rename a board from here, or `null` when it can.
+   * A view or comment link hides Rename altogether (`canEditBoard`); these
+   * are the cases where the control is shown but cannot work right now.
+   */
   const renameBlock = (board: ShelfBoard): string | null => {
     const entry = entryOf(board.id);
-    if (entry && !canEditBoard(entry)) return `Your link to this board is a ${entry.role} link, so it cannot be renamed from here.`;
-    if (status.restricted && !entry?.invite) return 'This server needs an invite link to change a board. Open the board from its invite to rename it.';
+    if (entry?.invite && inviteExpired(entry)) return 'The invite this device has for this board has expired. Open the board from a current invite to rename it.';
+    if (status.restricted && !entry?.invite) return 'This server only takes changes through an invite link, and this device has none for this board.';
     return null;
+  };
+
+  /** Why the server turned a rename down, as far as this device can tell. */
+  const refusalReason = (board: ShelfBoard, previous: string): string => {
+    const entry = entryOf(board.id);
+    if (entry?.invite && inviteExpired(entry)) return `“${previous}” kept its name: the invite this device has for it has expired.`;
+    if (status.restricted && !entry?.invite) return `“${previous}” kept its name: this server only takes changes through an invite link, and this device has none for it.`;
+    if (entry?.invite) return `“${previous}” kept its name: the server did not accept a change through the invite this device has for it.`;
+    return `“${previous}” kept its name: the server did not accept the change from this device.`;
+  };
+
+  const canRenameHere = (board: ShelfBoard) => {
+    const entry = entryOf(board.id);
+    return (!entry || canEditBoard(entry)) && renameBlock(board) === null;
   };
 
   const commitRename = (board: ShelfBoard, typed: string | null) => {
@@ -448,15 +472,16 @@ export const Home: React.FC = () => {
     const previous = entryOf(board.id)?.name ?? board.name;
     if (!name || name === displayName(board, names)) return;
 
+    const was = statusOf(board.id)?.title ?? previous;
     setRecentRooms(mutateRecents((list) => list.map((r) => (r.id === board.id ? { ...r, name } : r))));
-    setNames(mutateNames((n) => ({ ...n, [board.id]: { name, sent: false } })));
+    setNames(mutateNames((n) => ({ ...n, [board.id]: { name, sent: false, was } })));
     retried.current.add(board.id);
     const invite = entryOf(board.id)?.invite;
     void loadRemote()
       .then((m) => m.renameRemote(board.id, name, { invite }))
       .then((result) => {
         if (result === 'renamed') {
-          setNames(mutateNames((n) => (n[board.id]?.name === name ? { ...n, [board.id]: { name, sent: true } } : n)));
+          setNames(mutateNames((n) => (n[board.id]?.name === name ? { ...n, [board.id]: { ...n[board.id], sent: true } } : n)));
           return;
         }
         if (result === 'refused') {
@@ -465,12 +490,7 @@ export const Home: React.FC = () => {
             return restNames;
           }));
           setRecentRooms(mutateRecents((list) => list.map((r) => (r.id === board.id ? { ...r, name: previous } : r))));
-          notices$.notify({
-            message: status.restricted
-              ? `This server needs an invite link to change “${previous}”. Open the board from its invite to rename it.`
-              : `“${previous}” kept its name: your link to it does not allow changes.`,
-            tone: 'error',
-          });
+          notices$.notify({ message: refusalReason(board, previous), tone: 'error' });
           return;
         }
         notices$.notify({
@@ -495,11 +515,18 @@ export const Home: React.FC = () => {
     const remote = await loadRemote();
     const plan = await remote.planDuplicate(board.id, { invite }).catch(() => null);
     if (!plan) {
-      notices$.notify({ message: `Could not reach “${name}”, and this device has no copy of it. Try again when you are online.`, tone: 'error' });
+      notices$.notify({ message: `Could not reach “${name}”, and this device holds no copy of what is on it. Try again when you are online.`, tone: 'error' });
       return;
     }
     if (plan.objectCount === 0) {
-      notices$.notify({ message: `“${name}” has nothing on it yet, so there is nothing to copy. Start a new board instead.`, tone: 'info' });
+      notices$.notify({
+        message: statusOf(board.id)?.exists === false
+          ? `“${name}” is no longer on the server, so there is nothing to copy.`
+          : plan.fromServer
+            ? `“${name}” is empty, so a copy would be a blank board. Use New board instead.`
+            : `Could not reach “${name}”, and this device’s copy of it is empty. Try again when you are online.`,
+        tone: 'info',
+      });
       return;
     }
 
@@ -512,25 +539,38 @@ export const Home: React.FC = () => {
         if (where === 'device') {
           notices$.notify({ message: `“${copyName}” is saved on this device and reaches the server when it can.`, tone: 'info' });
         }
+        // A backup or template still waiting in this tab would be poured
+        // into the copy when it opens, replacing what was just copied.
+        if (hasPendingRestore()) takePendingRestore();
+        takePendingTemplate();
         goToBoard(`/room/${newId}`);
-      } catch {
-        notices$.notify({ message: `Could not save “${copyName}”. This browser may be out of storage space.`, tone: 'error' });
+      } catch (err) {
+        const reason = (err as { name?: string })?.name;
+        notices$.notify({
+          message: reason === 'QuotaExceededError'
+            ? `Could not save “${copyName}”: this browser is out of storage space. Free some space, or remove boards you no longer need from this device, and try again.`
+            : reason === 'NotStoredError'
+              ? `Could not save “${copyName}”: the server could not be reached and this browser did not keep the copy. Check that this site may store data, then try again.`
+              : `Could not save “${copyName}”. Try again, or download a backup of “${name}” and restore it instead.`,
+          tone: 'error',
+          duration: null,
+        });
       }
     };
 
     const cautions: string[] = [];
     if (!plan.fromServer) {
-      cautions.push('the server could not be reached, so this copies what this device last saw, without changes made since');
+      cautions.push('the server could not be reached, so this copies only what this device last saw of it');
     }
     if (plan.mediaCount > 0) {
       cautions.push(
-        `${plan.mediaCount} image or audio file${plan.mediaCount === 1 ? '' : 's'} will still load from the original board: ` +
-        'anyone you share the copy with could find the original’s address, and they stop loading if the original is deleted'
+        `its ${plan.mediaCount === 1 ? 'image or audio file still loads' : `${plan.mediaCount} image and audio files still load`} from the original, ` +
+        'so they stop working if the original is deleted'
       );
     }
     if (cautions.length === 0) { await go(); return; }
     notices$.notify({
-      message: `Before you copy “${name}”: ${cautions.join('; ')}.`,
+      message: `Before you copy “${name}”: ${cautions.join(', and ')}.`,
       tone: 'warning',
       duration: null,
       action: { label: 'Copy anyway', run: () => void go() },
@@ -609,7 +649,15 @@ export const Home: React.FC = () => {
     if (looksLikeLibrary(text)) { loadLibrary(text); return; }
     const result = parseDocumentExport(text);
     if (!result.ok) { setRestoreError(result.error); return; }
-    stashPendingRestore(text);
+    // Stored compactly: the stash shares this tab's session storage quota.
+    let compact = text;
+    try { compact = JSON.stringify(JSON.parse(text)); } catch { /* parsed above, so unreachable */ }
+    takePendingRestore(); // so a stale one cannot pass for this one below
+    stashPendingRestore(compact);
+    if (!hasPendingRestore()) {
+      setRestoreError('This backup is too large to hand to a new board from here. Start a new board and restore it from the board’s Export panel instead.');
+      return;
+    }
     goToBoard(`/room/${nanoid(10)}`);
   };
 
@@ -699,6 +747,9 @@ export const Home: React.FC = () => {
     const missing = statusOf(board.id)?.exists === false;
     const cannotCopy = copyBlock(board);
     const cannotRename = renameBlock(board);
+    // A view or comment link can never rename, so the command is not offered.
+    const entry = entryOf(board.id);
+    const mayRename = !entry || canEditBoard(entry);
     const remove: MenuEntry = {
       kind: 'item', id: 'remove', label: 'Remove from this device', icon: <X size={15} />, shortcut: 'Delete', danger: true,
       detail: 'The board itself is untouched', onSelect: () => removeRoom(board),
@@ -706,7 +757,9 @@ export const Home: React.FC = () => {
     const entries: MenuEntry[] = [
       { kind: 'item', id: 'open-tab', label: 'Open in new tab', icon: <ExternalLink size={15} />, onSelect: () => { window.open(`/room/${board.id}`, '_blank', 'noopener'); } },
       { kind: 'item', id: 'copy-link', label: 'Copy link', icon: <Copy size={15} />, onSelect: () => void copyAddress(board) },
-      { kind: 'item', id: 'rename', label: 'Rename', icon: <Pencil size={15} />, shortcut: 'F2', disabled: Boolean(cannotRename), disabledReason: cannotRename ?? undefined, onSelect: () => setRenaming(board.id) },
+      ...(mayRename
+        ? [{ kind: 'item' as const, id: 'rename', label: 'Rename', icon: <Pencil size={15} />, shortcut: 'F2', disabled: Boolean(cannotRename), disabledReason: cannotRename ?? undefined, onSelect: () => setRenaming(board.id) }]
+        : []),
       { kind: 'item', id: 'duplicate', label: 'Duplicate', icon: <CopyPlus size={15} />, disabled: Boolean(cannotCopy), disabledReason: cannotCopy ?? undefined, onSelect: () => void duplicateBoard(board) },
       pins[board.id]
         ? { kind: 'item', id: 'pin', label: 'Unpin', icon: <PinOff size={15} />, shortcut: 'P', onSelect: () => togglePinned(board) }
@@ -788,9 +841,9 @@ export const Home: React.FC = () => {
           <div className="tgrid tgrid--featured">{featured.map((t) => templateCard(t, 'featured'))}</div>
         </>
       )}
-      {CATEGORIES.map((c) => {
+      {CATEGORIES.filter((c) => rest.some((t) => t.category === c.id)).map((c, index) => {
         const inCategory = rest.filter((t) => t.category === c.id);
-        if (inCategory.length === 0) return null;
+        const shown = inCategory.slice(0, shelfColumns);
         return (
           <section key={c.id} className="tsection" aria-labelledby={`tsection-${c.id}`}>
             <header className="tsection__head">
@@ -798,14 +851,14 @@ export const Home: React.FC = () => {
                 <h2 className="tsection__title" id={`tsection-${c.id}`}>{c.label}</h2>
                 <p className="tsection__blurb">{c.blurb}</p>
               </div>
-              {inCategory.length > 4 && (
-                <button type="button" className="lbtn" onClick={() => goTemplates(c.id)} aria-label={`Show only ${c.label}, ${inCategory.length} templates`}>
-                  {inCategory.length}
+              {inCategory.length > shown.length && (
+                <button type="button" className="lbtn" onClick={() => goTemplates(c.id)} aria-label={`Show all ${inCategory.length} ${c.label} templates`}>
+                  All {inCategory.length}
                   <ChevronRight size={14} aria-hidden="true" />
                 </button>
               )}
             </header>
-            <div className="tgrid">{inCategory.map((t) => templateCard(t, c.id))}</div>
+            <div className="tgrid" ref={index === 0 ? setShelfGrid : undefined}>{shown.map((t) => templateCard(t, c.id))}</div>
           </section>
         );
       })}
@@ -865,7 +918,7 @@ export const Home: React.FC = () => {
                 status={statusOf(room.id)}
                 pinned={Boolean(pins[room.id])}
                 renaming={renaming === room.id}
-                canRename={renameBlock(room) === null}
+                canRename={canRenameHere(room)}
                 menuOpen={menu?.kind === 'board' && menu.board.id === room.id}
                 onOpenMenu={(board, anchor) => setMenu({ kind: 'board', board, anchor, focusFirst: anchor.kind === 'rect' })}
                 onStartRename={(board) => setRenaming(board.id)}
@@ -1215,7 +1268,7 @@ export const Home: React.FC = () => {
                   <ChevronRight size={14} aria-hidden="true" />
                 </button>
               </header>
-              <div className="tgrid tgrid--seam">{suggestedTemplates.map((t) => templateCard(t, 'seam'))}</div>
+              <div className="tgrid tgrid--seam" ref={setSeamGrid}>{suggestedTemplates.map((t) => templateCard(t, 'seam'))}</div>
             </section>
           )}
         </div>

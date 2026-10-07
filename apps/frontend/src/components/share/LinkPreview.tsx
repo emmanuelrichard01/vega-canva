@@ -1,6 +1,6 @@
 import React, { useEffect, useMemo, useState } from 'react';
 import { EyeOff } from 'lucide-react';
-import { metadataMap, roomId as currentRoomId } from '../../engine/document/doc';
+import { roomId as currentRoomId } from '../../engine/document/doc';
 import { setBoardMetadata } from '../../engine/document/mutations';
 import { useRoomState } from '../../hooks/useSync';
 import { useRoomPermissions } from '../../hooks/useRoomPermissions';

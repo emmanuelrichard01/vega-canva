@@ -15,14 +15,18 @@
 import type { Point, ShapeGeometry, ShapeKind } from '../schema';
 import { SHAPE_PARAMS, clampParam, type ShapeParamField } from '../shapeParams';
 import { param } from './params';
-import { multiDocumentStep } from './contours';
+import { KEY_HOLE_OFFSET, keyLayout, keyPoint, multiDocumentStep, type KeyLayout } from './contours';
 
 export interface ParamHandle {
   field: ShapeParamField;
   /** What the knob is for, as a tooltip and an accessible name. */
   label: string;
-  position(w: number, h: number, value: number): Point;
-  value(w: number, h: number, p: Point): number;
+  /**
+   * Both take the whole geometry as well, for a knob whose place depends on the
+   * shape's other dials: a key's hole sits in a bow whose size is a dial too.
+   */
+  position(w: number, h: number, value: number, geometry?: ShapeGeometry): Point;
+  value(w: number, h: number, p: Point, geometry?: ShapeGeometry): number;
 }
 
 /** Slant and taper: the knob sits on whichever edge is the short one. */
@@ -95,8 +99,30 @@ const HANDLES: Partial<Record<ShapeKind, readonly ParamHandle[]>> = {
       value: (w, h, p) => ((w / 2 - p.x) * 2) / Math.min(w, h),
     },
   ],
+  key: [
+    {
+      field: 'innerRatio',
+      label: 'Hole',
+      // On the hole's rim, on the axis away from the blade, so the knob rides
+      // the edge it moves.
+      position: (w, h, v, g) => {
+        const k = keyFor(w, h, g);
+        return keyPoint(k, -(KEY_HOLE_OFFSET + v) * k.bow, 0);
+      },
+      value: (w, h, p, g) => {
+        const k = keyFor(w, h, g);
+        const out = -((p.x - k.cx) * k.ux + (p.y - k.cy) * k.uy) / k.r;
+        return out - KEY_HOLE_OFFSET;
+      },
+    },
+  ],
   donut: [{ field: 'innerRatio', label: 'Hole', position: (w, h, v) => ({ x: w / 2 + (v * w) / 2, y: h / 2 }), value: (w, _h, p) => (p.x - w / 2) / (w / 2) }],
 };
+
+/** A key's layout for its box, with the bow the geometry asks for. */
+function keyFor(w: number, h: number, g: ShapeGeometry | undefined): KeyLayout {
+  return keyLayout(w, h, param(g ?? { kind: 'key' }, 'bowRatio'));
+}
 
 /** The handles a kind offers. Empty for kinds with no on-canvas dial. */
 export function paramHandles(kind: ShapeKind): readonly ParamHandle[] {
@@ -106,7 +132,7 @@ export function paramHandles(kind: ShapeKind): readonly ParamHandle[] {
 /** A pointer at `p` as a stored value: mapped, clamped and snapped to the dial's step. */
 export function handleValue(geometry: ShapeGeometry, handle: ParamHandle, w: number, h: number, p: Point): number {
   const declared = SHAPE_PARAMS[geometry.kind]?.params.find((d) => d.field === handle.field);
-  const raw = handle.value(w, h, p);
+  const raw = handle.value(w, h, p, geometry);
   if (!declared || !Number.isFinite(raw)) return param(geometry, handle.field);
   const stepped = Math.round(raw / (declared.step / 5)) * (declared.step / 5);
   return clampParam(declared, stepped);
@@ -114,5 +140,5 @@ export function handleValue(geometry: ShapeGeometry, handle: ParamHandle, w: num
 
 /** Where the knob sits for the geometry as stored (or as dragged). */
 export function handlePosition(geometry: ShapeGeometry, handle: ParamHandle, w: number, h: number): Point {
-  return handle.position(w, h, param(geometry, handle.field));
+  return handle.position(w, h, param(geometry, handle.field), geometry);
 }

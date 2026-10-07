@@ -31,13 +31,31 @@ import { LESSONS } from './lessons';
 
 const STORAGE_KEY = 'vega_lessons_v1';
 const MUTED_KEY = 'vega_lessons_muted_v1';
+const DISMISSED_KEY = 'vega_lessons_dismissed_v1';
+const SHOWN_KEY = 'vega_lessons_shown_v1';
+
+/**
+ * How many times a coach mark may appear without being acted on.
+ *
+ * Two, and then it stays in the library. A hint that returns on every arming of
+ * the tool until you happen to make something is the nagging this product
+ * promises not to do; once is too few, because the first appearance is often
+ * while the pointer is somewhere else.
+ */
+export const MAX_SHOWS = 2;
 
 interface State {
   /** Lesson ids whose gesture has actually been performed. */
   learned: readonly string[];
   /** No coach marks at all. The library still works. */
   muted: boolean;
+  /** Lesson ids the person asked never to be shown again. Not the same as learned. */
+  dismissed: readonly string[];
+  /** How many times each coach mark has appeared. */
+  shown: Readonly<Record<string, number>>;
 }
+
+const EMPTY: State = { learned: [], muted: false, dismissed: [], shown: {} };
 
 type Listener = () => void;
 
@@ -47,22 +65,35 @@ const listeners = new Set<Listener>();
 const KNOWN = new Set(LESSONS.map((l) => l.id));
 
 function read(): State {
-  if (typeof localStorage === 'undefined') return { learned: [], muted: false };
+  if (typeof localStorage === 'undefined') return EMPTY;
   try {
-    const raw = localStorage.getItem(STORAGE_KEY);
-    const parsed = raw ? JSON.parse(raw) : null;
-    return {
-      // Filtered against the real list, so a lesson that was renamed or
-      // removed cannot leave a permanent ghost in somebody's storage.
-      learned: Array.isArray(parsed)
+    // Filtered against the real list, so a lesson that was renamed or removed
+    // cannot leave a permanent ghost in somebody's storage.
+    const ids = (key: string): string[] => {
+      const raw = localStorage.getItem(key);
+      const parsed = raw ? JSON.parse(raw) : null;
+      return Array.isArray(parsed)
         ? parsed.filter((id): id is string => typeof id === 'string' && KNOWN.has(id))
-        : [],
+        : [];
+    };
+    const rawShown = localStorage.getItem(SHOWN_KEY);
+    const parsedShown = rawShown ? JSON.parse(rawShown) : null;
+    const shown: Record<string, number> = {};
+    if (parsedShown && typeof parsedShown === 'object' && !Array.isArray(parsedShown)) {
+      for (const [id, n] of Object.entries(parsedShown)) {
+        if (KNOWN.has(id) && typeof n === 'number' && n > 0) shown[id] = Math.floor(n);
+      }
+    }
+    return {
+      learned: ids(STORAGE_KEY),
       muted: localStorage.getItem(MUTED_KEY) === 'yes',
+      dismissed: ids(DISMISSED_KEY),
+      shown,
     };
   } catch {
     // Private browsing, a full quota, or a policy that blocks storage. Coaching
     // that throws is worse than coaching that repeats.
-    return { learned: [], muted: false };
+    return EMPTY;
   }
 }
 
@@ -81,6 +112,8 @@ function commit(next: State) {
   try {
     localStorage.setItem(STORAGE_KEY, JSON.stringify(next.learned));
     localStorage.setItem(MUTED_KEY, next.muted ? 'yes' : 'no');
+    localStorage.setItem(DISMISSED_KEY, JSON.stringify(next.dismissed));
+    localStorage.setItem(SHOWN_KEY, JSON.stringify(next.shown));
   } catch {
     // Kept in memory for this session even when it cannot be written. The
     // in-memory value is what the surfaces actually read.
@@ -97,6 +130,26 @@ export const learnState = {
   },
 
   isLearned: (id: string): boolean => state.learned.includes(id),
+
+  /**
+   * Whether the coach mark should stop appearing: the gesture has been done,
+   * the person said never, or it has been shown as often as it is allowed to
+   * be. The library is unaffected by any of the three.
+   */
+  isRetired: (id: string): boolean =>
+    state.learned.includes(id) || state.dismissed.includes(id) || (state.shown[id] ?? 0) >= MAX_SHOWS,
+
+  /** The coach mark for this lesson has just appeared. */
+  noteShown(id: string) {
+    if (!KNOWN.has(id)) return;
+    commit({ ...state, shown: { ...state.shown, [id]: (state.shown[id] ?? 0) + 1 } });
+  },
+
+  /** "Do not show this one again": this lesson only, and forever. */
+  dismiss(id: string) {
+    if (!KNOWN.has(id) || state.dismissed.includes(id)) return;
+    commit({ ...state, dismissed: [...state.dismissed, id] });
+  },
 
   /** Retire a lesson, because its gesture has now been performed. */
   learn(id: string) {

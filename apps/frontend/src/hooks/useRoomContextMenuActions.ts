@@ -21,6 +21,7 @@ import { isLineLike } from '../engine/model/lineEnds';
 import { lineEdit } from '../engine/interaction/lineEdit';
 import { pathEdit } from '../engine/interaction/pathEdit';
 import { textToPath, flattenToPath, outlineStrokeOf } from '../engine/document/vectorOps';
+import { convertSelectionToPaths } from '../components/toolbar/rail/menuExtras';
 import { breakApartGrid } from '../engine/grid/gridApply';
 import { fillGridWithImages, releaseSlots } from '../engine/grid/gridSlotApply';
 import type { CopyResult } from './useRoomClipboard';
@@ -284,6 +285,12 @@ export function useRoomContextMenuActions({
   }, [selectedIds]);
 
   const handleToPath = useCallback(() => {
+    if (selectedIds.length > 1) {
+      // Several closed shapes become paths together, as one undo step; the selection follows them.
+      const live = liveObjects();
+      convertSelectionToPaths(selectedIds.map((id) => live[id]).filter(Boolean));
+      return;
+    }
     if (selectedIds.length !== 1) return;
     const target = liveObjects()[selectedIds[0]];
 

@@ -18,7 +18,7 @@ npm install                      # once, at the repo root (npm workspaces)
 npm run dev -w apps/frontend     # Vite on :5173
 ```
 
-Open `http://localhost:5173`. You land on a dashboard; creating a workspace
+Open `http://127.0.0.1:5173`. You land on a dashboard; creating a workspace
 navigates to `/room/:id`. Copy that URL into another window to collaborate.
 
 ```bash

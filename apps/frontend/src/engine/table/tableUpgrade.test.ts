@@ -55,9 +55,15 @@ describe('spreadsheet-true row numbers', () => {
   it('reads an unmarked spec the old way, so nothing written before changes meaning', () => {
     const legacy = { ...table([['Item', 'Cost'], ['Tea', '4'], ['Cake', '6'], ['Total', '=SUM(B1:B2)']]), refs: undefined };
     expect(val(legacy, 3, 1)).toBe(10);
+    // Read as written: the rewrite is the document migration's, done once.
     const read = normalizeTableSpec(legacy);
-    expect(read.cells[3][1]).toBe('=SUM(B2:B3)');
+    expect(read.cells[3][1]).toBe('=SUM(B1:B2)');
+    expect(read.refs).toBeUndefined();
     expect(val(read, 3, 1)).toBe(10);
+    // A node marked as migrated reads the spreadsheet count even without `refs`.
+    const marked = normalizeTableSpec({ ...legacy, cells: [...legacy.cells.slice(0, 3), ['Total', '=SUM(B2:B3)']] }, { refsMarked: true });
+    expect(marked.refs).toBe(2);
+    expect(val(marked, 3, 1)).toBe(10);
   });
 
   it('keeps an armed filter with nothing typed, and folds the older single filter in', () => {

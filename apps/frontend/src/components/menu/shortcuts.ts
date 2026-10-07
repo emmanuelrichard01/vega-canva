@@ -82,6 +82,15 @@ export const SHORTCUTS = {
   fitAll: 'Mod+1',
   zoomIn: 'Mod+=',
   zoomOut: 'Mod+-',
+  arrangeGrid: 'Alt+Shift+G',
+  present: 'Mod+Alt+Enter',
+  fitFrame: 'Mod+Alt+Shift+R',
+  organiseColour: 'Mod+Alt+O',
+  organiseAuthor: 'Mod+Alt+Shift+O',
+  selectSameType: 'Alt+Shift+T',
+  selectSameFill: 'Alt+Shift+F',
+  selectSameStroke: 'Alt+Shift+S',
+  selectSameFont: 'Alt+Shift+N',
 } as const;
 
 export type ShortcutId = keyof typeof SHORTCUTS;
@@ -118,6 +127,15 @@ export const SHORTCUT_LABELS: Record<ShortcutId, string> = {
   fitAll: 'Fit all',
   zoomIn: 'Zoom in',
   zoomOut: 'Zoom out',
+  arrangeGrid: 'Arrange in grid',
+  present: 'Present',
+  fitFrame: 'Resize frame to fit',
+  organiseColour: 'Organise stickies by colour',
+  organiseAuthor: 'Organise stickies by author',
+  selectSameType: 'Select same type',
+  selectSameFill: 'Select same fill',
+  selectSameStroke: 'Select same stroke',
+  selectSameFont: 'Select same font',
 };
 
 // ------------------------------------------------------------ finding a key

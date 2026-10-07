@@ -110,7 +110,13 @@ export const NoticeLayer: React.FC = () => {
   if (notices.length === 0) return null;
 
   return (
-    <div className="notice-layer">
+    <div
+      className="notice-layer"
+      onPointerEnter={notices$.hold}
+      onPointerLeave={notices$.release}
+      onFocus={notices$.hold}
+      onBlur={notices$.release}
+    >
       {/* Oldest at the top, so the newest sits nearest the dock and nothing
           that is already on screen moves down into the reader's eye line. */}
       {notices.map((notice) => (

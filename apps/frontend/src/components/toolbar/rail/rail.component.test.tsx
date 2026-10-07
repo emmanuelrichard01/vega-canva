@@ -11,6 +11,10 @@ import { RAIL_CONTROL_CAP } from './verbs';
 import { MultiRail } from './MultiRail';
 import { RAIL_SECTIONS } from './registry';
 import { railSubjectOf, type RailSubjectKind } from './subject';
+import { CHART_KINDS } from '../../../engine/chart/chartTypes';
+import type { ChartNode } from '../../../engine/model/schema';
+import { withMultiSelectExtras } from './menuExtras';
+import type { MenuEntry } from '../../menu/menuModel';
 
 afterEach(cleanup);
 
@@ -112,6 +116,29 @@ describe('rail registry', () => {
   });
 });
 
+describe('chart rail', () => {
+  // The chart section fills paint and verbs itself, so the anatomy cannot trim
+  // it. It is safe because its optional controls are exclusive by kind: the data
+  // sheet and CSV belong to kinds with data, Lock plane and Reset view to plotted
+  // functions, and no kind has both. This holds it, with Paste style seated.
+  it.each(CHART_KINDS as readonly string[])('%s: stays within the cap with Paste style and the tail', (kind) => {
+    const base = FIXTURES.chart as ChartNode;
+    const node = { ...base, chart: { ...base.chart, kind } } as ChartNode;
+    const Section = RAIL_SECTIONS.chart;
+    const paste = (
+      <RailButton label="Paste style" onClick={() => {}}>
+        P
+      </RailButton>
+    );
+    const { container } = render(
+      <div className="ctx-toolbar">
+        <Section node={node} subject="chart" menuActions={actions} conditional={paste} tail={tail} tailControls={2} />
+      </div>
+    );
+    expect(countControls(container)).toBeLessThanOrEqual(RAIL_CONTROL_CAP);
+  });
+});
+
 describe('multi-select rail', () => {
   const shapes = [0, 1, 2].map((i) =>
     normalizeNode({ id: `m${i}`, type: 'shape', x: i * 150, y: i * 7, width: 100, height: 60, geometry: { kind: 'rect' } })
@@ -127,6 +154,93 @@ describe('multi-select rail', () => {
     expect(getByLabelText('Tidy up')).toBeTruthy();
     expect(getByLabelText('Arrange in grid')).toBeTruthy();
     expect(countControls(container)).toBeLessThanOrEqual(RAIL_CONTROL_CAP);
+  });
+
+  const labels = (root: HTMLElement) =>
+    Array.from(root.querySelectorAll<HTMLElement>(RAIL_CONTROL_SELECTOR))
+      .filter((el) => !el.closest('.ctx-popover'))
+      .map((el) => el.getAttribute('aria-label'));
+
+  it('keeps arrangement, Group and Lock when Paste style takes a seat', () => {
+    const paste = (
+      <RailButton label="Paste style" onClick={() => {}}>
+        P
+      </RailButton>
+    );
+    const { container } = render(
+      <div className="ctx-toolbar">
+        <MultiRail nodes={shapes} ids={shapes.map((n) => n.id)} conditional={paste} tail={<RailMenuButton entries={() => []} />} tailControls={1} />
+      </div>
+    );
+    const shown = labels(container);
+    for (const must of ['Align and distribute', 'Group', 'Lock all', 'Paste style', 'More actions']) {
+      expect(shown).toContain(must);
+    }
+    expect(countControls(container)).toBeLessThanOrEqual(RAIL_CONTROL_CAP);
+  });
+
+  it('keeps Lock for a set of connectors, after route and ends', () => {
+    const lines = [0, 1, 2].map((i) =>
+      normalizeNode({ id: `k${i}`, type: 'connector', from: { x: 0, y: i * 40 }, to: { x: 100, y: i * 40 } })
+    );
+    const { container } = render(
+      <div className="ctx-toolbar">
+        <MultiRail nodes={lines} ids={lines.map((n) => n.id)} conditional={null} tail={<RailMenuButton entries={() => []} />} tailControls={1} />
+      </div>
+    );
+    const shown = labels(container);
+    for (const must of ['Route', 'Ends', 'Align and distribute', 'Group', 'Lock all']) expect(shown).toContain(must);
+  });
+
+  it('offers Points only when every object is already a pen path', () => {
+    const paths = [0, 1].map((i) =>
+      normalizeNode({
+        id: `p${i}`,
+        type: 'path',
+        x: i * 80,
+        geometry: { kind: 'bezier', closed: true, segments: [{ x: 0, y: 0 }, { x: 40, y: 0 }, { x: 20, y: 30 }] },
+      })
+    );
+    const pathsOnly = render(
+      <div className="ctx-toolbar">
+        <MultiRail nodes={paths} ids={paths.map((n) => n.id)} conditional={null} tail={<RailMenuButton entries={() => []} />} tailControls={1} />
+      </div>
+    );
+    expect(labels(pathsOnly.container)).toContain('Points');
+    pathsOnly.unmount();
+
+    const mixed = [paths[0], shapes[0]];
+    const withShape = render(
+      <div className="ctx-toolbar">
+        <MultiRail nodes={mixed} ids={mixed.map((n) => n.id)} conditional={null} tail={<RailMenuButton entries={() => []} />} tailControls={1} />
+      </div>
+    );
+    expect(labels(withShape.container)).not.toContain('Points');
+  });
+
+  it('puts Convert to path and select-similar in the overflow for shapes', () => {
+    const entries: MenuEntry[] = [
+      { kind: 'separator', id: 'sep-specific' },
+      { kind: 'submenu', id: 'select', label: 'Select', entries: [] },
+    ];
+    const out = withMultiSelectExtras(entries, shapes);
+    expect(out[0].id).toBe('to-path');
+    const select = out.find((e) => e.id === 'select');
+    const ids = select && select.kind === 'submenu' ? (select.entries ?? []).map((e) => e.id) : [];
+    expect(ids).toEqual(['select-same-fill', 'select-same-stroke', 'select-same-type', 'select-same-font']);
+    // Nothing doubled when the menu already has its own row.
+    const again = withMultiSelectExtras(out, shapes);
+    expect(again.filter((e) => e.id === 'to-path')).toHaveLength(1);
+  });
+
+  it('offers Organise for a set of stickies', () => {
+    const notes = [0, 1].map((i) => normalizeNode({ id: `n${i}`, type: 'sticky', x: i * 220, text: 'Idea' }));
+    const { getByLabelText } = render(
+      <div className="ctx-toolbar">
+        <MultiRail nodes={notes} ids={notes.map((n) => n.id)} conditional={null} tail={<RailMenuButton entries={() => []} />} tailControls={1} />
+      </div>
+    );
+    expect(getByLabelText('Organise notes')).toBeTruthy();
   });
 
   it('leads with route and ends for a set of connectors', () => {
@@ -205,6 +319,27 @@ describe('rail keyboard', () => {
     window.removeEventListener('keydown', onWindowKey);
     expect(document.activeElement).not.toBe(two);
     expect(onWindowKey).not.toHaveBeenCalled();
+  });
+
+  it('is one Tab stop, held by the control last focused', () => {
+    const { getByLabelText } = renderRail();
+    const stops = () => ['One', 'Two', 'Three'].filter((l) => getByLabelText(l).tabIndex === 0);
+    expect(stops()).toEqual(['One']);
+    getByLabelText('Two').focus();
+    expect(stops()).toEqual(['Two']);
+  });
+
+  it('describes the selection through aria-describedby', () => {
+    const anchorRef = React.createRef<HTMLDivElement>();
+    const { getByRole } = render(
+      <Rail id="d" placement="top" anchorRef={anchorRef} label="3 objects" description="2 shapes, 1 connector">
+        <RailButton label="One" onClick={() => {}}>1</RailButton>
+      </Rail>
+    );
+    const toolbar = getByRole('toolbar');
+    const id = toolbar.getAttribute('aria-describedby');
+    expect(id).toBeTruthy();
+    expect(document.getElementById(id!)?.textContent).toBe('2 shapes, 1 connector');
   });
 
   it('counts swatch triggers as rail controls', () => {

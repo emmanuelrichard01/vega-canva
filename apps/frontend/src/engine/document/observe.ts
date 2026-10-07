@@ -14,32 +14,6 @@ export interface NodeChangeSet {
   local: boolean;
 }
 
-/**
- * Resolve the top-level node id that owns a deeply-nested Yjs event target.
- *
- * A change to `node.appearance.stroke.width` reports its event target as the
- * nested map, not the node — so subscribers have to walk back up to the entry
- * in `objectsMap` to know which node actually changed. That walk was
- * hand-rolled twice (once in the sync module, once in the store), and both
- * copies ran on every single change, producing two identical scene-graph
- * upserts per edit and therefore doubled `ObjectMoved` traffic into the
- * spatial index and the visible-set hook.
- */
-function resolveRootId(target: unknown): string | null {
-  let cursor = target as { parent?: unknown } | null;
-
-  while (cursor && cursor !== (objectsMap as unknown)) {
-    if (cursor.parent === (objectsMap as unknown)) {
-      for (const [id, value] of objectsMap.entries()) {
-        if ((value as unknown) === (cursor as unknown)) return id;
-      }
-      return null;
-    }
-    cursor = cursor.parent as { parent?: unknown } | null;
-  }
-
-  return null;
-}
 
 /**
  * Subscribe to node-level changes. Returns an unsubscribe function.

@@ -2,9 +2,9 @@ import { describe, expect, it } from 'vitest';
 import { normalizeNode } from '../../../engine/document/normalize';
 import type { AnyNode } from '../../../engine/model/schema';
 import { fitVerbs, RAIL_CONTROL_CAP, type RailVerb } from './verbs';
-import { chromeInset, EDGE_MARGIN, freeStrip, readPx } from './railBounds';
+import { chromeFromTokens, chromeInset, DEFAULT_HEADER_H, EDGE_MARGIN, freeStrip, readPx } from './railBounds';
 import { railSubjectOf } from './subject';
-import { inferGap, inferRows, tidySelection } from './tidy';
+import { inferGap, inferRowGap, inferRows, layoutRows, tidySelection } from './tidy';
 
 const box = (id: string, x: number, y: number, w = 100, h = 60, extra: Record<string, unknown> = {}): AnyNode =>
   normalizeNode({ id, type: 'shape', x, y, width: w, height: h, geometry: { kind: 'rect' }, ...extra });
@@ -86,6 +86,25 @@ describe('placement bounds', () => {
     expect(chromeInset({ left: 0, right: 0, width: 0, height: 0 }, 'left', 1440)).toBe(EDGE_MARGIN);
     expect(chromeInset(null, 'right', 1440)).toBe(EDGE_MARGIN);
   });
+
+  const measured = { insetLeft: 300, insetRight: 280 };
+  const none = { insetTop: null, insetLeft: null, insetRight: null, headerH: null };
+
+  it('stands below --inset-top, falling back to --header-h and then the default', () => {
+    expect(chromeFromTokens({ ...none, insetTop: 56, headerH: 0 }, measured).headerH).toBe(56);
+    expect(chromeFromTokens({ ...none, headerH: 0 }, measured).headerH).toBe(0);
+    expect(chromeFromTokens(none, measured).headerH).toBe(DEFAULT_HEADER_H);
+  });
+
+  it('takes the sides from --inset-left / --inset-right, measuring only where they are absent', () => {
+    const fromTokens = chromeFromTokens({ ...none, insetLeft: 316, insetRight: 0 }, measured);
+    expect(fromTokens.insetLeft).toBe(316);
+    // A column shrunk to a pill publishes 0; the plain margin is kept.
+    expect(fromTokens.insetRight).toBe(EDGE_MARGIN);
+    const fromPanels = chromeFromTokens(none, measured);
+    expect(fromPanels.insetLeft).toBe(300);
+    expect(fromPanels.insetRight).toBe(280);
+  });
 });
 
 describe('tidy up', () => {
@@ -107,13 +126,48 @@ describe('tidy up', () => {
     const nodes = [box('a', 0, 0), box('b', 170, 12), box('c', 5, 150), box('d', 160, 140)];
     const after = applied(nodes, tidySelection(nodes));
     const gap = inferGap(inferRows(nodes));
+    const rowGap = inferRowGap(layoutRows(nodes).bands)!;
     expect(after.get('a')!.x).toBe(0);
     expect(after.get('b')!.x).toBe(100 + gap);
     expect(after.get('c')!.x).toBe(0);
     expect(after.get('d')!.x).toBe(100 + gap);
-    // Same height boxes in a row share a top; the second row starts one gap below the first.
+    // Same height boxes in a row share a top; the second row starts one row gap below the first.
     expect(after.get('a')!.y).toBe(after.get('b')!.y);
-    expect(after.get('c')!.y).toBe(after.get('a')!.y + 60 + gap);
+    expect(after.get('c')!.y).toBe(after.get('a')!.y + 60 + rowGap);
+  });
+
+  it('keeps the spacing of a single column, read from between its rows', () => {
+    const nodes = [box('a', 0, 0), box('b', 6, 120), box('c', -4, 240)];
+    const after = applied(nodes, tidySelection(nodes));
+    const ys = ['a', 'b', 'c'].map((id) => after.get(id)!.y as number).sort((p, q) => p - q);
+    expect(ys[1] - ys[0]).toBe(60 + 60);
+    expect(ys[2] - ys[1]).toBe(60 + 60);
+    // One column: everyone shares a centre line.
+    expect(new Set(['a', 'b', 'c'].map((id) => after.get(id)!.x)).size).toBe(1);
+  });
+
+  it('does not let a tall item beside a 2x2 group swallow the second row', () => {
+    const nodes = [
+      box('a', 0, 0),
+      box('b', 120, 0),
+      box('c', 0, 100),
+      box('d', 120, 100),
+      box('tall', 260, 0, 100, 160),
+    ];
+    const { rows, spanners } = layoutRows(nodes);
+    expect(rows.map((r) => r.map((i) => i.node.id))).toEqual([
+      ['a', 'b', 'tall'],
+      ['c', 'd'],
+    ]);
+    expect(spanners.map((s) => s.item.node.id)).toEqual(['tall']);
+
+    const after = applied(nodes, tidySelection(nodes));
+    // The 2x2 stays two rows at the gap between them, and the tall item keeps its column.
+    expect(after.get('c')!.y).toBe(100);
+    expect(after.get('d')!.y).toBe(100);
+    expect(after.get('a')!.y).toBe(0);
+    expect(after.get('tall')!.y).toBe(0);
+    expect(after.get('tall')!.x).toBeGreaterThan((after.get('b')!.x as number) + 100);
   });
 
   it('leaves connectors and locked objects where they are', () => {

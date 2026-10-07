@@ -55,4 +55,19 @@ describe('NumberStepper', () => {
     rerender(<NumberStepper value={12} onChange={() => {}} aria-label="Width" />);
     expect(field(container).value).toBe('12');
   });
+
+  it('rounds an arrow step to the field precision', () => {
+    const onChange = vi.fn();
+    const { container } = render(<NumberStepper value={2.3} onChange={onChange} aria-label="Weight" />);
+    fireEvent.keyDown(field(container), { key: 'ArrowDown' });
+    expect(onChange).toHaveBeenCalledWith(1.3);
+  });
+
+  it('leaves the left and right arrows to the caret', () => {
+    const onChange = vi.fn();
+    const { container } = render(<NumberStepper value={5} onChange={onChange} aria-label="Width" />);
+    fireEvent.keyDown(field(container), { key: 'ArrowLeft' });
+    fireEvent.keyDown(field(container), { key: 'ArrowRight' });
+    expect(onChange).not.toHaveBeenCalled();
+  });
 });

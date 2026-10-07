@@ -1,5 +1,5 @@
 import React, { useMemo, useState } from 'react';
-import { Circle, Group, Line } from 'react-konva';
+import { Circle, Group, Line, Rect } from 'react-konva';
 import type Konva from 'konva';
 import { updateNode } from '../../engine/document';
 import { EXPORT_CHROME } from '../../engine/export/chrome';
@@ -21,6 +21,9 @@ import {
 import type { ConnectorNode } from '../../engine/model/schema';
 import { useStore } from '../../hooks/useStore';
 import { claimCursor } from '../../engine/cursor/cursorOverride';
+import { useConnectorRoute } from '../../engine/model/connectorRouter/liveRoutes';
+import { isAxisSegment, nudgeKey, type LegRef } from '../../engine/model/connectorRouter/pathOps';
+import { canEditObjects } from '../../engine/model/permissions';
 
 interface Props {
   node: ConnectorNode;
@@ -82,7 +85,10 @@ export const ConnectorEditor: React.FC<Props> = ({ node, stageScale }) => {
   const attach = useMemo(() => attachLookup(objects), [objects]);
   const candidates = useMemo(() => bindCandidates(objects), [objects]);
 
-  const points = connectorPoints(from, to, node.routing, lookup, attach);
+  // The route as drawn (avoidance, spreading and nudges included) while the
+  // ends rest; a plain reroute of the dragged end while one moves.
+  const drawn = useConnectorRoute(node.id);
+  const points = live || !drawn ? connectorPoints(from, to, node.routing, lookup, attach) : drawn.flat;
   const a = { x: points[0], y: points[1] };
   const b = { x: points[points.length - 2], y: points[points.length - 1] };
 
@@ -230,8 +236,133 @@ export const ConnectorEditor: React.FC<Props> = ({ node, stageScale }) => {
           />
         )}
       </Group>
+      {!live && drawn?.orthogonal && canEditObjects() && (
+        <SegmentHandles node={node} points={drawn.points} legs={drawn.legs ?? []} stageScale={stageScale} />
+      )}
       {handleFor('from')}
       {handleFor('to')}
+    </Group>
+  );
+};
+
+/**
+ * A grip on the middle of each interior leg of an elbow route.
+ *
+ * Dragging one slides that leg along its normal, the way Lucidchart and
+ * draw.io let you move a segment, and stores the move as an offset from where
+ * the router puts the leg, keyed by the leg's axis and its line (`nudges`),
+ * not as a point. The route stays derived: the offset holds while the router
+ * puts that leg on that line, the route keeps it out of obstacles, and a
+ * nudge whose leg is gone is ignored and cleared on the next nudge. Each leg
+ * is written under its own key, so two people nudging different legs at once
+ * both keep theirs. The first and last legs belong to their ports and have
+ * no grip.
+ */
+const SegmentHandles: React.FC<{
+  node: ConnectorNode;
+  points: readonly { x: number; y: number }[];
+  legs: readonly (LegRef | null)[];
+  stageScale: number;
+}> = ({ node, points, legs, stageScale }) => {
+  const [drag, setDrag] = useState<{ seg: number; delta: number } | null>(null);
+  const count = points.length - 1;
+  if (count < 3) return null;
+
+  const long = 14 / stageScale;
+  const short = 6 / stageScale;
+
+  const commit = (seg: number, delta: number) => {
+    setDrag(null);
+    const leg = legs[seg];
+    if (!leg || Math.abs(delta) < 0.5) return;
+    const changes: Record<string, number | undefined> = {};
+    // Nudges whose leg this route no longer has.
+    const live = new Set(legs.filter((l): l is LegRef => Boolean(l)).map((l) => nudgeKey(l)));
+    for (const n of node.nudges ?? []) if (!live.has(nudgeKey(n))) changes[nudgeKey(n)] = undefined;
+    // Zero is written, not removed, so it also overrides a copied list's entry.
+    changes[nudgeKey(leg)] = Math.round(leg.nudge + delta);
+    updateNode(node.id, changes);
+  };
+
+  const preview = (() => {
+    if (!drag) return null;
+    const moved = points.map((p) => ({ ...p }));
+    const p = moved[drag.seg];
+    const q = moved[drag.seg + 1];
+    if (isAxisSegment(p, q) === 'h') {
+      p.y += drag.delta;
+      q.y += drag.delta;
+    } else {
+      p.x += drag.delta;
+      q.x += drag.delta;
+    }
+    return moved.flatMap((pt) => [pt.x, pt.y]);
+  })();
+
+  const grips: React.ReactNode[] = [];
+  for (let seg = 1; seg < count - 1; seg += 1) {
+    const p = points[seg];
+    const q = points[seg + 1];
+    const axis = isAxisSegment(p, q);
+    if (!axis || !legs[seg]) continue;
+    // Too short to grab without covering the corners either side.
+    if (Math.hypot(q.x - p.x, q.y - p.y) < 28 / stageScale) continue;
+    const horizontal = axis === 'h';
+    const mid = { x: (p.x + q.x) / 2, y: (p.y + q.y) / 2 };
+    const w = horizontal ? long : short;
+    const h = horizontal ? short : long;
+    grips.push(
+      <Rect
+        key={seg}
+        x={mid.x}
+        y={mid.y}
+        offsetX={w / 2}
+        offsetY={h / 2}
+        width={w}
+        height={h}
+        cornerRadius={short / 2}
+        fill="#FFFFFF"
+        stroke={ACCENT}
+        strokeWidth={1.5 / stageScale}
+        draggable
+        name={EXPORT_CHROME}
+        dragBoundFunc={function (this: Konva.Node, pos) {
+          // Only along the leg's normal, in screen space.
+          const abs = this.getAbsolutePosition();
+          return horizontal ? { x: abs.x, y: pos.y } : { x: pos.x, y: abs.y };
+        }}
+        onDragStart={() => {
+          window.dispatchEvent(new CustomEvent('canvas-drag-start'));
+          setDrag({ seg, delta: 0 });
+        }}
+        onDragMove={(e: Konva.KonvaEventObject<DragEvent>) => {
+          const delta = horizontal ? e.target.y() - mid.y : e.target.x() - mid.x;
+          setDrag({ seg, delta });
+        }}
+        onDragEnd={(e: Konva.KonvaEventObject<DragEvent>) => {
+          window.dispatchEvent(new CustomEvent('canvas-drag-end'));
+          const delta = horizontal ? e.target.y() - mid.y : e.target.x() - mid.x;
+          e.target.position(mid);
+          commit(seg, delta);
+        }}
+        onMouseEnter={() => claimCursor('connector-segment', horizontal ? 'ns-resize' : 'ew-resize')}
+        onMouseLeave={() => claimCursor('connector-segment', null)}
+      />
+    );
+  }
+
+  return (
+    <Group>
+      {preview && (
+        <Line
+          points={preview}
+          stroke={ACCENT}
+          strokeWidth={1 / stageScale}
+          dash={[4 / stageScale, 4 / stageScale]}
+          listening={false}
+        />
+      )}
+      {grips}
     </Group>
   );
 };

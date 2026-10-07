@@ -6,6 +6,8 @@ import {
   satisfied,
   stepCopy,
   unwalkable,
+  ALL_WALKTHROUGHS,
+  RECIPE_WALKTHROUGHS,
   WALKTHROUGHS,
   walkthroughFor,
   type Observation,
@@ -35,9 +37,10 @@ import type { AnyNode } from '../model/schema';
 const node = (id: string, over: Partial<AnyNode> = {}): AnyNode =>
   ({ id, type: 'shape', x: 0, y: 0, width: 10, height: 10, ...over }) as unknown as AnyNode;
 
-const snap = (objects: AnyNode[], selected: string[] = []): Snapshot => ({
+const snap = (objects: AnyNode[], selected: string[] = [], presenting = false): Snapshot => ({
   objects: Object.fromEntries(objects.map((n) => [n.id, n])),
   selected,
+  presenting,
 });
 
 const empty = digest({});
@@ -46,7 +49,7 @@ const empty = digest({});
 
 describe('a walkthrough refers to a lesson rather than restating it', () => {
   it('names a lesson that exists', () => {
-    for (const walk of WALKTHROUGHS) {
+    for (const walk of ALL_WALKTHROUGHS) {
       expect(lessonById(walk.lesson), `no lesson "${walk.lesson}"`).toBeDefined();
       expect(lessonOf(walk)).toBeDefined();
     }
@@ -55,7 +58,7 @@ describe('a walkthrough refers to a lesson rather than restating it', () => {
   it('indexes only steps the lesson actually has', () => {
     // The reference this shape introduces, and the one nothing else can catch:
     // a lesson losing a step leaves a walkthrough pointing past the end of it.
-    for (const walk of WALKTHROUGHS) {
+    for (const walk of ALL_WALKTHROUGHS) {
       const lesson = lessonById(walk.lesson)!;
       walk.steps.forEach((at, i) => {
         expect(at.step, `${walk.lesson}[${i}]`).toBeLessThan(lesson.steps.length);
@@ -68,7 +71,7 @@ describe('a walkthrough refers to a lesson rather than restating it', () => {
     // `toolNames.ts` documents four places where a hard-coded shortcut went
     // stale. A walkthrough that arms a tool the dock does not have is the same
     // failure wearing a different hat.
-    for (const walk of WALKTHROUGHS) {
+    for (const walk of ALL_WALKTHROUGHS) {
       if (!walk.tool) continue;
       expect(TOOL_SHORTCUTS[walk.tool], `"${walk.tool}" is not a tool`).toBeDefined();
     }
@@ -98,7 +101,7 @@ describe('a walkthrough refers to a lesson rather than restating it', () => {
      * A lesson triggered by a tool is, by definition, one of those. A
      * `library` lesson begins in a dialog and correctly arms nothing.
      */
-    for (const walk of WALKTHROUGHS) {
+    for (const walk of ALL_WALKTHROUGHS) {
       const trigger = lessonById(walk.lesson)!.trigger;
       if (trigger.on !== 'tool') continue;
       expect(walk.tool, `${walk.lesson} begins on the board and arms nothing`).toBeTruthy();
@@ -106,13 +109,13 @@ describe('a walkthrough refers to a lesson rather than restating it', () => {
   });
 
   it('has at least two steps, or it is a coach mark with extra machinery', () => {
-    for (const walk of WALKTHROUGHS) {
+    for (const walk of ALL_WALKTHROUGHS) {
       expect(walk.steps.length, walk.lesson).toBeGreaterThanOrEqual(2);
     }
   });
 
   it('offers each lesson at most once', () => {
-    const ids = WALKTHROUGHS.map((w) => w.lesson);
+    const ids = ALL_WALKTHROUGHS.map((w) => w.lesson);
     expect(new Set(ids).size).toBe(ids.length);
   });
 
@@ -128,11 +131,19 @@ describe('a walkthrough refers to a lesson rather than restating it', () => {
         // and find a spreadsheet, which is why `image-reframe` is here too.
         'chart-data',
         'comment-thread',
+        // Taught by the coach mark and the reference. Each is a held key or a
+        // pause (a modifier, a hold-to-snap) that leaves no fact in the document.
+        'cursor-chat',
         'direct-select',
+        'eraser-lasso',
         'forces',
         'grid-content',
         'image-reframe',
+        'music-vinyl',
         'offline',
+        'pen-snap',
+        'select-more',
+        'shape-library',
         // Same reason as `chart-data`: a cell editor session and a paste from
         // another program, neither of which leaves a fact in the document.
         'table-cells',
@@ -309,8 +320,15 @@ describe('every walkthrough can be finished', () => {
     [
       node('shape-a'),
       node('shape-b'),
+      node('shape-c'),
+      node('shape-d'),
       node('sticky-1', { type: 'sticky' }),
+      node('sticky-2', { type: 'sticky' }),
       node('frame-1', { type: 'frame' }),
+      node('frame-2', { type: 'frame' }),
+      node('table-1', { type: 'table' }),
+      node('grid-1', { type: 'grid' }),
+      node('chart-1', { type: 'chart', chart: { kind: 'bar', link: { nodeId: 'table-1' } } } as unknown as Partial<AnyNode>),
       node('in-frame', { frameId: 'frame-1' }),
       node('path-1', { type: 'path' }),
       // A card that finished unfurling, for `unfurled`.
@@ -319,7 +337,7 @@ describe('every walkthrough can be finished', () => {
         link: { url: 'https://a.test', display: 'auto', status: 'ready' },
       } as Partial<AnyNode>),
       // Present in `before` below and at a different place here, for `moved`.
-      node('mover', { x: 400 }),
+      node('mover', { x: 400, width: 20 }),
       node('route', {
         geometry: { kind: 'line', vertices: [{ x: 0, y: 0 }, { x: 5, y: 5 }, { x: 9, y: 1 }] },
       } as Partial<AnyNode>),
@@ -328,8 +346,14 @@ describe('every walkthrough can be finished', () => {
         from: { nodeId: 'shape-a' },
         to: { nodeId: 'shape-b' },
       } as Partial<AnyNode>),
+      node('conn-2', {
+        type: 'connector',
+        from: { nodeId: 'shape-b' },
+        to: { nodeId: 'shape-c' },
+      } as Partial<AnyNode>),
     ],
-    ['shape-a', 'shape-b']
+    ['shape-a', 'shape-b', 'shape-c', 'shape-d'],
+    true
   );
 
   /**
@@ -346,7 +370,7 @@ describe('every walkthrough can be finished', () => {
    */
   const before = digest({ mover: node('mover') as never });
 
-  for (const walk of WALKTHROUGHS) {
+  for (const walk of ALL_WALKTHROUGHS) {
     it(`${walk.lesson} has no step that cannot be reached`, () => {
       walk.steps.forEach((at, i) => {
         expect(satisfied(at.observe, before, board), `${walk.lesson} step ${i}`).toBe(true);
@@ -364,5 +388,47 @@ describe('the words are the lesson’s', () => {
 
   it('ends quietly rather than throwing on an index the lesson lost', () => {
     expect(stepCopy(walkthroughFor('line-route')!, 99)).toBeUndefined();
+  });
+});
+
+describe('the observations the recipes added', () => {
+  it('counts how many were made, not only whether one was', () => {
+    const before = digest({});
+    const one = snap([node('a', { type: 'sticky' })]);
+    const two = snap([node('a', { type: 'sticky' }), node('b', { type: 'sticky' })]);
+    const obs: Observation = { of: 'created', type: 'sticky', min: 2 };
+    expect(satisfied(obs, before, one)).toBe(false);
+    expect(satisfied(obs, before, two)).toBe(true);
+  });
+
+  it('does not count what was already on the board toward a count', () => {
+    const before = digest({ a: node('a', { type: 'sticky' }) });
+    const now = snap([node('a', { type: 'sticky' }), node('b', { type: 'sticky' })]);
+    expect(satisfied({ of: 'created', type: 'sticky', min: 2 }, before, now)).toBe(false);
+  });
+
+  it('knows a chart is linked only when it reads from a table', () => {
+    const before = digest({});
+    const loose = snap([node('c', { type: 'chart', chart: { kind: 'bar' } } as unknown as Partial<AnyNode>)]);
+    const tied = snap([node('c', { type: 'chart', chart: { kind: 'bar', link: { nodeId: 't' } } } as unknown as Partial<AnyNode>)]);
+    expect(satisfied({ of: 'linked' }, before, loose)).toBe(false);
+    expect(satisfied({ of: 'linked' }, before, tied)).toBe(true);
+  });
+
+  it('notices a frame that changed size, and not one that merely moved', () => {
+    const before = digest({ f: node('f', { type: 'frame' }) });
+    expect(satisfied({ of: 'resized' }, before, snap([node('f', { type: 'frame', x: 50 })]))).toBe(false);
+    expect(satisfied({ of: 'resized' }, before, snap([node('f', { type: 'frame', width: 80 })]))).toBe(true);
+  });
+
+  it('notices presenting, and only while it is happening', () => {
+    expect(satisfied({ of: 'presented' }, digest({}), snap([], [], true))).toBe(true);
+    expect(satisfied({ of: 'presented' }, digest({}), snap([]))).toBe(false);
+  });
+
+  it('gives every recipe a walkthrough, in the table that holds them', () => {
+    const recipes = LESSONS.filter((l) => l.recipe).map((l) => l.id).sort();
+    expect(RECIPE_WALKTHROUGHS.map((w) => w.lesson).sort()).toEqual(recipes);
+    for (const id of recipes) expect(isWalkable(id), id).toBe(true);
   });
 });

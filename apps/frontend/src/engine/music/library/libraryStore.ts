@@ -1,27 +1,29 @@
 /**
- * The Library source: recorded tracks from a manifest, streamed on demand.
+ * The stations' music: recorded tracks from a manifest, streamed on demand.
  *
- * Configured by `VITE_MUSIC_BASE_URL` (the folder holding `manifest.json` and
- * the audio), or `VITE_MUSIC_MANIFEST_URL` to point at the manifest
- * directly. Unconfigured, the Library does not appear and the generated
- * stations remain the default.
+ * Each station is a manifest category. The manifest comes from the server's
+ * `/music/v1` route unless `VITE_MUSIC_BASE_URL` (the folder holding
+ * `manifest.json` and the audio) or `VITE_MUSIC_MANIFEST_URL` says
+ * otherwise; see `manifestLocation`. If it cannot be loaded, the player says
+ * so and offers to retry. Nothing is ever synthesised in its place.
  */
 import { useSyncExternalStore } from 'react';
 import { storageGetJson, storageSet } from '../../../utils/safeStorage';
-import { parseManifest, type LibraryTrack } from './manifest';
+import { manifestLocation, parseManifest, type LibraryTrack } from './manifest';
+import { API_BASE } from '../../../utils/endpoints';
 import { advance, createQueue, currentId, cycleRepeat, jumpTo, peekNext, previous, setShuffle, type Queue, type RepeatMode } from './queue';
 import { LibraryPlayer } from './libraryPlayer';
 import { clearMedia, publishMedia } from '../mediaSession';
 import { categoryLabel } from './manifest';
 
-export type LibraryStatus = 'unconfigured' | 'idle' | 'loading' | 'ready' | 'error';
+export type LibraryStatus = 'idle' | 'loading' | 'ready' | 'error';
 
 export interface LibraryState {
   status: LibraryStatus;
   error: string | null;
   tracks: LibraryTrack[];
   categories: string[];
-  /** The category being browsed and played; null is everything. */
+  /** The station (category) being played. */
   category: string | null;
   queue: Queue | null;
   current: LibraryTrack | null;
@@ -44,19 +46,15 @@ interface Persisted {
 
 const KEY = 'vega.music.library';
 
-export function manifestUrl(): string | null {
-  const direct = (import.meta.env.VITE_MUSIC_MANIFEST_URL as string | undefined)?.trim();
-  if (direct) return direct;
-  const base = (import.meta.env.VITE_MUSIC_BASE_URL as string | undefined)?.trim();
-  if (!base) return null;
-  return `${base.replace(/\/+$/, '')}/manifest.json`;
+export function manifestUrl(): string {
+  const env = import.meta.env as Record<string, unknown>;
+  return manifestLocation({ VITE_MUSIC_MANIFEST_URL: env.VITE_MUSIC_MANIFEST_URL, VITE_MUSIC_BASE_URL: env.VITE_MUSIC_BASE_URL }, API_BASE);
 }
 
-export const libraryConfigured = (): boolean => manifestUrl() !== null;
 
 const saved = storageGetJson<Partial<Persisted>>(KEY, {});
 let state: LibraryState = {
-  status: libraryConfigured() ? 'idle' : 'unconfigured',
+  status: 'idle',
   error: null,
   tracks: [],
   categories: [],
@@ -147,8 +145,15 @@ function publish() {
   if (!t) return;
   publishMedia(
     { title: t.title, artist: t.artist, album: categoryLabel(t.category), artwork: t.artwork },
-    { play: () => void resumeLibrary(), pause: pauseLibrary, next: () => void skipLibrary(1), previous: () => void skipLibrary(-1) },
-    state.playing
+    {
+      play: () => void resumeLibrary(),
+      pause: pauseLibrary,
+      next: () => void skipLibrary(1),
+      previous: () => void skipLibrary(-1),
+      seekTo: (s) => seekLibrary(s),
+    },
+    state.playing,
+    { position: state.position, duration: state.duration || t.duration }
   );
 }
 
@@ -156,16 +161,16 @@ function publish() {
 let loading: Promise<void> | null = null;
 export function loadLibrary(fetchImpl: typeof fetch = fetch): Promise<void> {
   const url = manifestUrl();
-  if (!url) return Promise.resolve();
   if (state.status === 'ready') return Promise.resolve();
   loading ??= (async () => {
     set({ status: 'loading', error: null });
     try {
-      const res = await fetchImpl(url, { cache: 'no-cache' });
+      const res = await fetchImpl(url, { cache: 'no-cache', mode: 'cors', credentials: 'omit' });
       if (!res.ok) throw new Error(`The music library could not be loaded (${res.status}).`);
       const parsed = parseManifest(await res.json(), url);
       if (parsed.problems.length > 0) console.warn('[music] manifest problems:\n' + parsed.problems.join('\n'));
-      const category = state.category && parsed.categories.includes(state.category) ? state.category : null;
+      // A station with no tracks stays chosen: the player says so rather than switching away.
+      const category = state.category;
       const last = parsed.tracks.find((t) => t.id === saved.lastTrack) ?? null;
       set({ status: 'ready', tracks: parsed.tracks, categories: parsed.categories, category, current: state.current ?? last });
     } catch (e) {
@@ -177,11 +182,27 @@ export function loadLibrary(fetchImpl: typeof fetch = fetch): Promise<void> {
   return loading;
 }
 
+/** Fetches the manifest again, for Retry: picks up new tracks or a server that came back. */
+export function reloadLibrary(fetchImpl: typeof fetch = fetch): Promise<void> {
+  if (loading) return loading;
+  set({ status: 'idle' });
+  return loadLibrary(fetchImpl);
+}
+
 function buildQueue(startId: string | null, category: string | null = state.category): Queue {
   return createQueue(
     tracksIn(state, category).map((t) => t.id),
     { shuffle: state.shuffle, repeat: state.repeat, seed: nextSeed(), startId }
   );
+}
+
+/**
+ * Creates and resumes the audio context. Call it synchronously at the top of
+ * the handler for a click, before any `await`, so the browser sees playback
+ * start inside the user's gesture.
+ */
+export function primeLibraryAudio(): void {
+  ensurePlayer().prime();
 }
 
 /** Plays a track, queueing the rest of its category behind it. Call from a user gesture. */
@@ -195,6 +216,24 @@ export async function playTrack(id: string): Promise<void> {
   await p.play(track);
   p.preload(byId(peekNext(queue)));
   publish();
+}
+
+/**
+ * Plays a station: its tracks in order (or shuffled), looping. Picking the
+ * station already playing leaves it alone; one that has no tracks plays
+ * nothing, and the player says so. Call from a user gesture.
+ */
+export async function playCategory(category: string): Promise<void> {
+  if (state.status !== 'ready') await loadLibrary();
+  if (state.category !== category) set({ category });
+  const tracks = tracksIn(state, category);
+  if (tracks.length === 0) return;
+  if (state.current?.category === category) {
+    if (!state.playing) await resumeLibrary();
+    return;
+  }
+  const start = state.shuffle ? tracks[Math.floor(Math.random() * tracks.length)] : tracks[0];
+  await playTrack(start.id);
 }
 
 export async function resumeLibrary(): Promise<void> {

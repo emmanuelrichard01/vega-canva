@@ -28,11 +28,16 @@ export const VectorEditIcon: React.FC<{ size?: number }> = ({ size = 15 }) => (
  *
  * ## A toolbar the keyboard can use
  *
- * It was a row of buttons with nothing saying so: no `role`, no name, and the
- * only way along it was Tab through thirty stops. It is announced as a toolbar
- * now, named for what it acts on, and moves the way toolbars move — Left and
- * Right between controls, Home and End to the ends. Alt+F10, the long-standing
- * "go to the toolbar" key in editors, puts the keyboard on it from the board.
+ * Announced as a toolbar, named for what it acts on, and described by what the
+ * selection is (`description`: the kind, the mix, why it is locked). It is one
+ * Tab stop with a roving tabindex: the control last used holds the stop, Left
+ * and Right move between controls, Home and End go to the ends. Alt+F10, the
+ * long-standing "go to the toolbar" key in editors, puts the keyboard on it
+ * from the board.
+ *
+ * A verb pressed from the keyboard that remounts the rail (Group, Convert to
+ * path, anything that changes the selection) gets the keyboard back on the
+ * same slot of the new rail rather than dropping it on the page.
  */
 export const Rail = React.forwardRef<
   HTMLDivElement,
@@ -43,14 +48,44 @@ export const Rail = React.forwardRef<
     anchorRef: React.RefObject<HTMLDivElement | null>;
     /** What the rail acts on, for assistive tech: "Rectangle", "3 objects". */
     label?: string;
+    /**
+     * What the selection is, said to assistive tech through `aria-describedby`:
+     * the kind chip's name, the mix behind a count, why it is locked.
+     */
+    description?: string;
     children: React.ReactNode;
   }
->(({ id, placement, clear = true, anchorRef, label = 'Selection', children }, railRef) => {
+>(({ id, placement, clear = true, anchorRef, label = 'Selection', description, children }, railRef) => {
   const own = React.useRef<HTMLDivElement | null>(null);
   const [openId, setOpenId] = React.useState<string | null>(null);
   const group = React.useMemo(() => ({ openId, setOpenId }), [openId]);
+  const descriptionId = React.useId();
   // A different subject is a different rail: nothing it had open carries over.
   React.useEffect(() => setOpenId(null), [id]);
+
+  // One Tab stop. The DOM is the source of truth for which controls exist, so
+  // the stop is re-dealt whenever the rail's contents change.
+  React.useLayoutEffect(() => {
+    const rail = own.current;
+    if (!rail) return;
+    // A new subject starts its stop at the front, unless a keyboard verb is
+    // waiting to land back on its own slot.
+    if (!pendingRestore) roving.index = 0;
+    const deal = () => {
+      const controls = railControls(rail);
+      if (controls.length === 0) return;
+      const at = Math.min(roving.index, controls.length - 1);
+      controls.forEach((el, i) => {
+        const want = i === at ? 0 : -1;
+        if (el.tabIndex !== want) el.tabIndex = want;
+      });
+      restoreFocus(controls);
+    };
+    deal();
+    const observer = new MutationObserver(deal);
+    observer.observe(rail, { childList: true, subtree: true, attributes: true, attributeFilter: ['disabled'] });
+    return () => observer.disconnect();
+  }, [id]);
 
   React.useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
@@ -58,7 +93,8 @@ export const Rail = React.forwardRef<
       const rail = own.current;
       if (!rail) return;
       e.preventDefault();
-      railControls(rail)[0]?.focus();
+      const controls = railControls(rail);
+      controls[Math.min(roving.index, controls.length - 1)]?.focus();
     };
     window.addEventListener('keydown', onKey);
     return () => window.removeEventListener('keydown', onKey);
@@ -71,6 +107,11 @@ export const Rail = React.forwardRef<
     const controls = railControls(e.currentTarget);
     const at = controls.indexOf(target);
     if (at < 0) return;
+    if (e.key === 'Enter' || e.key === ' ') {
+      // A keyboard press: if it remounts the rail, the keyboard comes back here.
+      armRestore(at);
+      return;
+    }
     if (e.key === 'Escape') {
       // Back to the board, keeping the selection: the board's own Escape
       // deselects, and that is the second press, not this one.
@@ -90,6 +131,20 @@ export const Rail = React.forwardRef<
     // not also move the object it is describing.
     e.stopPropagation();
     controls[next].focus();
+  };
+
+  /** The control that takes focus holds the Tab stop. */
+  const onFocus = (e: React.FocusEvent<HTMLDivElement>) => {
+    const target = e.target as HTMLElement;
+    if (target.closest(RAIL_POPUPS) || !target.matches(RAIL_CONTROL_SELECTOR)) return;
+    const controls = railControls(e.currentTarget);
+    const at = controls.indexOf(target);
+    if (at < 0) return;
+    roving.index = at;
+    controls.forEach((el, i) => {
+      const want = i === at ? 0 : -1;
+      if (el.tabIndex !== want) el.tabIndex = want;
+    });
   };
 
   return (
@@ -125,10 +180,25 @@ export const Rail = React.forwardRef<
             data-side={placement}
             role="toolbar"
             aria-label={`${label} tools`}
+            aria-describedby={description ? descriptionId : undefined}
             aria-orientation="horizontal"
             onKeyDown={onKeyDown}
+            onFocus={onFocus}
+            onClickCapture={(e) => {
+              // A click with no pointer behind it (assistive tech, Enter): keyboard intent.
+              if (e.detail !== 0) return;
+              const target = (e.target as HTMLElement).closest<HTMLElement>(RAIL_CONTROL_SELECTOR);
+              if (!target || target.closest(RAIL_POPUPS)) return;
+              const at = railControls(e.currentTarget).indexOf(target);
+              if (at >= 0) armRestore(at);
+            }}
             style={{ position: 'relative', pointerEvents: 'auto' }}
           >
+            {description && (
+              <span id={descriptionId} className="sr-only">
+                {description}
+              </span>
+            )}
             <RailSideContext.Provider value={placement === 'top' ? 'top' : 'bottom'}>
               <RailPopoverGroup.Provider value={group}>{children}</RailPopoverGroup.Provider>
             </RailSideContext.Provider>
@@ -139,6 +209,47 @@ export const Rail = React.forwardRef<
   );
 });
 Rail.displayName = 'Rail';
+
+/**
+ * Which slot of the rail holds the Tab stop. Module state because there is one
+ * rail, and a verb that remounts it must not reset where the keyboard was.
+ */
+const roving = { index: 0 };
+
+/** Pending after a keyboard press: put focus back on this slot if the rail remounts. */
+let pendingRestore: { index: number; until: number } | null = null;
+const RESTORE_WINDOW_MS = 1500;
+
+function armRestore(index: number) {
+  pendingRestore = { index, until: performance.now() + RESTORE_WINDOW_MS };
+}
+
+/** Focus fell to the page because the control under it was removed: catch it. */
+function restoreFocus(controls: HTMLElement[]) {
+  if (!pendingRestore) return;
+  if (performance.now() > pendingRestore.until) {
+    pendingRestore = null;
+    return;
+  }
+  const active = document.activeElement;
+  if (active && active !== document.body) return;
+  const target = controls[Math.min(pendingRestore.index, controls.length - 1)];
+  pendingRestore = null;
+  target?.focus({ preventScroll: true });
+}
+
+if (typeof window !== 'undefined') {
+  // A pointer press, or focus going anywhere off the rail, is a new intention:
+  // nothing the keyboard did earlier may pull focus back.
+  window.addEventListener('pointerdown', () => (pendingRestore = null), true);
+  window.addEventListener(
+    'focusin',
+    (e) => {
+      if (!(e.target as HTMLElement | null)?.closest?.('.ctx-toolbar')) pendingRestore = null;
+    },
+    true
+  );
+}
 
 /**
  * The rail's `⋯`: the right-click menu, opened from the rail.

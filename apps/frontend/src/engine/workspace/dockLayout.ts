@@ -140,6 +140,11 @@ export const LAYOUT_VERSION = 2;
  * the position of the first of each family, and are put away, so the person's
  * arrangement keeps its shape instead of growing three new seats at the end.
  * The folded seats can be pinned back from edit mode.
+ *
+ * A family none of whose tools was on the dock (all put away) gives a seat
+ * that is put away too: someone who removed Grid, Chart and Table did not ask
+ * for a Data button. The result carries the current version, so it is only
+ * ever migrated once.
  */
 export function migrateStoredLayout(raw: unknown): unknown {
   if (!raw || typeof raw !== 'object') return raw;
@@ -158,8 +163,14 @@ export function migrateStoredLayout(raw: unknown): unknown {
     folded.push(item as DockSeat);
     if (!order.includes(into)) order.push(into);
   }
-  const hidden = [...(Array.isArray(source.hidden) ? source.hidden : []), ...folded];
-  return { order, hidden };
+  const hidden: unknown[] = [...(Array.isArray(source.hidden) ? source.hidden : []), ...folded];
+  // A family that was entirely put away keeps its new seat put away as well.
+  // Without this, the normalizer's "unmentioned seats arrive visible" rule
+  // would add the seat at the end of the dock.
+  for (const host of new Set(Object.values(FOLD))) {
+    if (!order.includes(host) && !hidden.includes(host)) hidden.push(host);
+  }
+  return { v: LAYOUT_VERSION, order, hidden };
 }
 
 /**

@@ -1,17 +1,50 @@
 import React, { useCallback, useEffect, useRef, useState } from 'react';
-import { AlertCircle, Archive, Check, ChevronRight, Clock, Copy, FileText, Hash, Image as ImageIcon, Info, Link as LinkIcon, PenTool, QrCode, Share2, X, MessageSquare, Edit3, Eye } from 'lucide-react';
+import {
+  AlertCircle,
+  Archive,
+  Check,
+  ChevronRight,
+  Clock,
+  Copy,
+  Edit3,
+  Eye,
+  FileText,
+  Hash,
+  Image as ImageIcon,
+  Loader2,
+  Lock,
+  MessageSquare,
+  PenTool,
+  QrCode,
+  RotateCw,
+  Share2,
+  ShieldCheck,
+} from 'lucide-react';
 import { formatRoomCode, roomCodeFor } from '../engine/room/roomCode';
-import { useFocusTrap } from '../hooks/useFocusTrap';
 import { inviteMintUrl, roomRequestHeaders } from '../utils/endpoints';
-import { metadataMap, roomId as currentRoomId } from '../engine/document/doc';
+import { metadataMap, provider, roomId as currentRoomId } from '../engine/document/doc';
 import { useRoomState } from '../hooks/useSync';
 import { copyLink, shareLink, shareSheetWorthwhile } from '../engine/share/copyLink';
 import { getRoomRole, type RoomRole } from '../engine/model/permissions';
+import { readCollaborators } from '../engine/presence/collaborators';
 import type { ExportFormat } from '../engine/export/ExportTypes';
 import { menuShortcut, SHORTCUTS } from './menu/shortcuts';
-import './workspace/shell.css';
+import { Dialog, DialogBody, DialogHeader } from './ui/Dialog';
+import { AvatarStack } from './ui/Avatar';
+import { tooltipProps } from './ui/Tooltip';
 import { LinkPreview } from './share/LinkPreview';
 import { ShareQr } from './share/ShareQr';
+import {
+  ROLE_RANK,
+  expiryDate,
+  linkToShow,
+  mintRecovery,
+  readMintResponse,
+  roleBlockedReason,
+  wasShortened,
+  type MintState,
+} from './share/shareModel';
+import './ui/shareDialog.css';
 
 interface ShareModalProps {
   onClose: () => void;
@@ -19,508 +52,447 @@ interface ShareModalProps {
   onExport?: (format: ExportFormat) => void;
 }
 
-/** How much each role may do, so a link is never offered above the tab's own. */
-const RANK: Record<RoomRole, number> = { viewer: 0, commenter: 1, editor: 2 };
-
 /**
- * The ways work leaves the board, as the Export tab offers them. Each opens the
- * export dialog already set to its format, where the region, scale and
- * background are chosen with a preview.
+ * The ways work leaves the board. Each opens the export dialog already set to
+ * its format, where the area, scale and background are chosen with a preview.
  */
 const EXPORTS: ReadonlyArray<{ format: ExportFormat; label: string; detail: string; Icon: typeof FileText }> = [
-  { format: 'png', label: 'Image', detail: 'PNG, for slides, chat and documents', Icon: ImageIcon },
-  { format: 'svg', label: 'Vector', detail: 'SVG, sharp at any size and editable in Figma', Icon: PenTool },
-  { format: 'pdf', label: 'Document', detail: 'PDF, for printing and handing over', Icon: FileText },
+  { format: 'png', label: 'Image', detail: 'PNG for slides, chat and documents', Icon: ImageIcon },
+  { format: 'svg', label: 'Vector', detail: 'SVG that stays sharp and opens in Figma or Illustrator', Icon: PenTool },
+  { format: 'pdf', label: 'Document', detail: 'PDF for printing and handing over, a page per frame', Icon: FileText },
   { format: 'json', label: 'Backup', detail: 'Everything on the board, to restore later', Icon: Archive },
 ];
 
-type Copied = 'link' | 'code' | null;
-
-/** Declared once so the three buttons cannot drift apart in styling or order. */
-const MODES: ReadonlyArray<{ id: RoomRole; label: string; Icon: typeof Edit3; blurb: string }> = [
-  {
-    id: 'editor',
-    label: 'Edit',
-    Icon: Edit3,
-    blurb: 'Full access: draw, move, delete, and share it onward.',
-  },
-  {
-    id: 'commenter',
-    label: 'Comment',
-    Icon: MessageSquare,
-    blurb: 'Read the board and leave comments. The drawing tools stay away.',
-  },
-  {
-    id: 'viewer',
-    label: 'View',
-    Icon: Eye,
-    blurb: 'Read and export only. Edits are refused by the server, not just hidden.',
-  },
+/** The three answers to "what can someone with this link do", in plain words. */
+const ROLES: ReadonlyArray<{ id: RoomRole; label: string; Icon: typeof Edit3; blurb: string }> = [
+  { id: 'editor', label: 'Can edit', Icon: Edit3, blurb: 'Draw, move and delete anything, and share the board onward.' },
+  { id: 'commenter', label: 'Can comment', Icon: MessageSquare, blurb: 'Read the board and leave comments. The drawing tools are not offered.' },
+  { id: 'viewer', label: 'Can view', Icon: Eye, blurb: 'Look around and export. The server refuses edits, so this is a real limit.' },
 ];
 
-/** How long a link may live. `0` is the default and means it does not expire. */
+/** How long a signed link lives. `0` means it does not expire. */
 const EXPIRIES: ReadonlyArray<{ id: string; label: string; seconds: number }> = [
-  { id: 'never', label: 'No expiry', seconds: 0 },
-  { id: '24h', label: '24 hours', seconds: 24 * 60 * 60 },
-  { id: '7d', label: '7 days', seconds: 7 * 24 * 60 * 60 },
-  { id: '30d', label: '30 days', seconds: 30 * 24 * 60 * 60 },
+  { id: 'never', label: 'Never', seconds: 0 },
+  { id: '24h', label: 'In 24 hours', seconds: 24 * 60 * 60 },
+  { id: '7d', label: 'In 7 days', seconds: 7 * 24 * 60 * 60 },
+  { id: '30d', label: 'In 30 days', seconds: 30 * 24 * 60 * 60 },
 ];
 
-/**
- * "7 days" as the day it actually stops working.
- *
- * A duration is what you choose; a date is what you need afterwards. "Expires
- * in 30 days" told from the moment of choosing is a fact about a moment
- * nobody will remember, and it is the wrong half of the sentence to keep —
- * the question people come back with is "is that link still good", and
- * "Tuesday 14 October" answers it where "30 days" does not.
- */
-function expiryDate(seconds: number): string | null {
-  if (!seconds) return null;
-  const when = new Date(Date.now() + seconds * 1000);
-  const sameYear = when.getFullYear() === new Date().getFullYear();
-  return when.toLocaleDateString(undefined, {
-    weekday: seconds <= 7 * 24 * 60 * 60 ? 'long' : undefined,
-    day: 'numeric',
-    month: 'long',
-    year: sameYear ? undefined : 'numeric',
-  });
-}
-
-type MintState =
-  | { kind: 'idle' }
-  | { kind: 'working' }
-  | { kind: 'ready'; url: string; ttlSeconds: number }
-  | { kind: 'unavailable' }
-  | { kind: 'error'; message: string };
+const ROLE_SHORT: Record<RoomRole, string> = { editor: 'can edit', commenter: 'can comment', viewer: 'can view' };
 
 export const ShareModal: React.FC<ShareModalProps> = ({ onClose, onExport }) => {
+  return (
+    <Dialog onClose={onClose} size="md" className="sh">
+      <ShareBody onExport={onExport} />
+    </Dialog>
+  );
+};
+
+const ShareBody: React.FC<{ onExport?: (format: ExportFormat) => void }> = ({ onExport }) => {
   /** This tab's own role. A link it hands out can carry no more than this. */
   const ownRole = getRoomRole();
   const [tab, setTab] = useState<'invite' | 'export'>('invite');
-  const [selectedRole, setSelectedRole] = useState<RoomRole>(ownRole);
+  const [role, setRole] = useState<RoomRole>(ownRole);
   const [expiry, setExpiry] = useState(EXPIRIES[0]);
   const [mint, setMint] = useState<MintState>({ kind: 'idle' });
-  const [copied, setCopied] = useState<Copied>(null);
-  const [failed, setFailed] = useState(false);
+  const [copied, setCopied] = useState<'link' | 'code' | null>(null);
+  const [copyFailed, setCopyFailed] = useState(false);
   const [showQr, setShowQr] = useState(false);
-  const dialogRef = useFocusTrap(true, onClose);
-  const modesRef = useRef<HTMLDivElement>(null);
+  const rolesRef = useRef<HTMLDivElement>(null);
   const { awarenessUsers } = useRoomState();
-  // The board's name travels with a copied link, so that pasting into Slack or
-  // a document gives its title rather than an opaque address. See `copyLink`.
-  const boardName = metadataMap.get('name')?.toString().trim() || 'Untitled Workspace';
-  const here = Array.from(awarenessUsers.values()).filter((u: { user?: unknown }) => u?.user).length;
 
+  const boardName = metadataMap.get('name')?.toString().trim() || 'Untitled Workspace';
   const roomId = currentRoomId;
   const fullAccessLink = `${window.location.origin}/room/${roomId}`;
   const code = roomCodeFor(roomId);
 
+  const myId = provider.awareness?.clientID;
+  const me = myId !== undefined ? awarenessUsers.get(myId)?.user : undefined;
+  const others = readCollaborators(awarenessUsers, myId);
+
   /**
-   * An edit link needs no minting.
-   *
-   * A signed token for `editor` grants exactly what the plain room link
-   * already grants, so asking the server for one would add a round trip, a
-   * failure mode and an expiry to a link that is the room's own address. The
-   * restricted roles are the ones that have to be signed, because a role only
-   * means something when somebody else decided it.
+   * An edit link needs no minting: a signed `editor` token grants exactly what
+   * the board's own address already grants. The restricted roles are signed,
+   * because a role only means something when somebody else decided it.
    */
-  const needsToken = selectedRole !== 'editor';
-  /**
-   * The link to hand out, or `null` while there is none yet.
-   *
-   * A restricted role never falls back to the board's own address: that
-   * address is full access, and showing it in a selectable field while a
-   * signed link is on its way, or has failed, would hand out edit rights.
-   */
-  const link = !needsToken ? fullAccessLink : mint.kind === 'ready' ? mint.url : null;
+  const needsToken = role !== 'editor';
+  const link = linkToShow(role, fullAccessLink, mint);
+
+  /** Which request is current, so a slow answer for an earlier choice is dropped. */
+  const requestSeq = useRef(0);
 
   const requestLink = useCallback(async () => {
+    const seq = ++requestSeq.current;
     if (!needsToken) {
       setMint({ kind: 'idle' });
       return;
     }
     setMint({ kind: 'working' });
+    const settle = (next: MintState) => {
+      if (seq === requestSeq.current) setMint(next);
+    };
     try {
       const res = await fetch(inviteMintUrl(roomId), {
         method: 'POST',
         // The tab's own invite, if it came through one: the server will not
         // mint a link above the role that invite carries.
         headers: roomRequestHeaders({ 'Content-Type': 'application/json' }),
-        body: JSON.stringify({ role: selectedRole, ttlSeconds: expiry.seconds }),
+        body: JSON.stringify({ role, ttlSeconds: expiry.seconds }),
       });
-
-      if (res.status === 501) {
-        // A specific state, not a failure: the deployment has no signing key,
-        // so a restricted link is something it cannot honestly offer.
-        setMint({ kind: 'unavailable' });
-        return;
-      }
-      if (!res.ok) {
-        const body = await res.json().catch(() => null);
-        setMint({ kind: 'error', message: body?.error ?? 'The link could not be created.' });
-        return;
-      }
-
-      // The server caps the life of a link to what is left of this tab's own
-      // invite, so the expiry shown is the one it returns, not the one asked for.
-      const body = await res.json();
-      const ttl = Number.isFinite(body?.ttlSeconds) ? Number(body.ttlSeconds) : expiry.seconds;
-      setMint({ kind: 'ready', url: `${window.location.origin}/i/${body.token}`, ttlSeconds: ttl });
+      const body = await res.json().catch(() => null);
+      settle(readMintResponse(res.status, body, { origin: window.location.origin, role, requestedTtl: expiry.seconds }));
     } catch {
-      setMint({ kind: 'error', message: 'The server could not be reached.' });
+      settle({ kind: 'error', message: 'The server could not be reached.' });
     }
-  }, [needsToken, roomId, selectedRole, expiry.seconds]);
+  }, [needsToken, roomId, role, expiry.seconds]);
 
-  // A new link whenever the terms of it change. Minting is cheap and the
-  // alternative is a stale link sitting under a role it no longer matches.
+  // A new link whenever its terms change, so a link never sits under a role it
+  // no longer matches.
   useEffect(() => {
     void requestLink();
   }, [requestLink]);
 
   const confirm = (what: 'link' | 'code') => {
-    setFailed(false);
+    setCopyFailed(false);
     setCopied(what);
     window.setTimeout(() => setCopied((c) => (c === what ? null : c)), 2200);
   };
 
-  /**
-   * The link, as a titled link where that is understood and a plain URL
-   * everywhere else. The room code stays plain text, because it is a code —
-   * there is nothing for a title to attach to.
-   */
+  /** The link as a titled link where that is understood, and the code as plain text. */
   const copy = async (what: 'link' | 'code', text: string) => {
-    const outcome = what === 'link' ? await copyLink(text, boardName) : await plainCopy(text);
-    if (outcome === 'failed') setFailed(true);
+    let outcome: 'rich' | 'plain' | 'failed';
+    if (what === 'link') outcome = await copyLink(text, boardName);
+    else {
+      try {
+        await navigator.clipboard.writeText(text);
+        outcome = 'plain';
+      } catch {
+        outcome = 'failed';
+      }
+    }
+    if (outcome === 'failed') setCopyFailed(true);
     else confirm(what);
   };
 
-  const plainCopy = async (text: string) => {
-    try {
-      await navigator.clipboard.writeText(text);
-      return 'plain' as const;
-    } catch {
-      return 'failed' as const;
-    }
-  };
-
-  const mode = MODES.find((m) => m.id === selectedRole)!;
-  const linkReady = link !== null;
-  const expiresOn = needsToken && mint.kind === 'ready' ? expiryDate(mint.ttlSeconds) : null;
-  /** True when the server gave this link less time than was asked for. */
-  const shortened = needsToken && mint.kind === 'ready' && mint.ttlSeconds > 0 && (expiry.seconds === 0 || mint.ttlSeconds < expiry.seconds);
-  /** Why each role this tab cannot hand out is unavailable, said on the control. */
-  const roleReason = (id: RoomRole) =>
-    RANK[id] > RANK[ownRole] ? `Your ${ownRole === 'viewer' ? 'view' : 'comment'} link can't share ${id === 'editor' ? 'edit' : 'comment'} access` : undefined;
+  const ready = mint.kind === 'ready' && link !== null;
+  const expiresOn = needsToken && ready ? expiryDate(mint.ttlSeconds) : null;
+  const shortened = needsToken && ready && wasShortened(expiry.seconds, mint.ttlSeconds);
 
   /**
-   * Arrow keys across the three modes.
-   *
-   * They are one choice with three answers, which is a radio group, and a
-   * radio group is arrow-navigable everywhere else in every application a
-   * person has ever used. Three adjacent buttons that each need their own Tab
-   * stop is the version of this that passes an automated check and fails a
-   * person using the keyboard.
+   * Arrows move through the roles this tab may hand out, as in any radio group.
+   * The ones it may not are skipped, and say why on their own row.
    */
-  const onModeKeys = (event: React.KeyboardEvent) => {
-    const step = event.key === 'ArrowRight' || event.key === 'ArrowDown' ? 1 : event.key === 'ArrowLeft' || event.key === 'ArrowUp' ? -1 : 0;
+  const onRoleKeys = (event: React.KeyboardEvent) => {
+    const step =
+      event.key === 'ArrowDown' || event.key === 'ArrowRight' ? 1 : event.key === 'ArrowUp' || event.key === 'ArrowLeft' ? -1 : 0;
     if (!step) return;
     event.preventDefault();
-    const allowed = MODES.filter((m) => RANK[m.id] <= RANK[ownRole]);
-    const index = allowed.findIndex((m) => m.id === selectedRole);
-    const next = allowed[(index + step + allowed.length) % allowed.length];
-    setSelectedRole(next.id);
-    modesRef.current?.querySelector<HTMLButtonElement>(`[data-role="${next.id}"]`)?.focus();
+    const allowed = ROLES.filter((r) => ROLE_RANK[r.id] <= ROLE_RANK[ownRole]);
+    const at = allowed.findIndex((r) => r.id === role);
+    const next = allowed[(at + step + allowed.length) % allowed.length];
+    setRole(next.id);
+    rolesRef.current?.querySelector<HTMLElement>(`[data-role="${next.id}"]`)?.focus();
   };
 
+  const people = (
+    <div className="sh-people">
+      {(me || others.length > 0) && (
+        <AvatarStack
+          className="sh-people__faces"
+          size={24}
+          max={5}
+          people={[
+            ...(me ? [{ key: 'me', name: String(me.name ?? 'You'), color: String(me.color ?? '#6B7280'), you: true }] : []),
+            ...others.map((p) => ({ key: p.clientId, name: p.name, color: p.color })),
+          ]}
+        />
+      )}
+      <p className="sh-people__text">
+        {others.length === 0
+          ? 'Only you are here right now.'
+          : others.length === 1
+            ? `You and ${others[0].name} are here now.`
+            : `You and ${others.length} others are here now.`}{' '}
+        <span className="sh-people__role">You {ROLE_SHORT[ownRole]}.</span>
+      </p>
+    </div>
+  );
+
   return (
-    <div className="share" onClick={onClose}>
-      <div
-        ref={dialogRef}
-        role="dialog"
-        aria-modal="true"
-        aria-labelledby="share-title"
-        className="share__panel panel-surface"
-        onClick={(e) => e.stopPropagation()}
-      >
-        <div className="share__head">
-          <div>
-            <h2 id="share-title" className="share__title">Share this board</h2>
-            {/*
-              * Who is already here.
-              *
-              * Sharing is a social act and this dialog was the one place in the
-              * app that did not know it: you could send an edit link to four
-              * people while four people were already drawing on the board, and
-              * nothing here said so. It is also the honest framing for the
-              * warning at the foot — "the link is the key" means rather more
-              * when the room is not empty.
-              */}
-            {here > 1 && (
-              <p className="share__present">
-                <span className="share__present-dot" aria-hidden="true" />
-                {here} people are on this board right now
-              </p>
-            )}
-          </div>
-          <button className="share__close" onClick={onClose} aria-label="Close">
-            <X size={16} />
-          </button>
-        </div>
+    <>
+      <DialogHeader title="Share this board" description={people} />
 
-        {onExport && (
-          <div className="share__tabs" role="tablist" aria-label="Share or export">
-            {(['invite', 'export'] as const).map((id) => (
-              <button
-                key={id}
-                id={`share-tab-${id}`}
-                type="button"
-                role="tab"
-                aria-selected={tab === id}
-                aria-controls={`share-pane-${id}`}
-                tabIndex={tab === id ? 0 : -1}
-                className="share__tab"
-                onClick={() => setTab(id)}
-                onKeyDown={(e) => {
-                  if (e.key !== 'ArrowLeft' && e.key !== 'ArrowRight') return;
-                  e.preventDefault();
-                  const other = id === 'invite' ? 'export' : 'invite';
-                  setTab(other);
-                  (e.currentTarget.parentElement?.querySelector(`#share-tab-${other}`) as HTMLElement | null)?.focus();
-                }}
-              >
-                {id === 'invite' ? 'Invite' : 'Export'}
-              </button>
-            ))}
-          </div>
-        )}
-
-        {tab === 'export' && onExport ? (
-          <div className="share__pane" id="share-pane-export" role="tabpanel" aria-labelledby="share-tab-export">
-            <div className="share__exports">
-              {EXPORTS.map(({ format, label, detail, Icon }) => (
-                <button key={format} type="button" className="share__export" onClick={() => onExport(format)}>
-                  <span className="share__export-icon" aria-hidden="true"><Icon size={16} /></span>
-                  <span className="share__export-text">
-                    <span className="share__export-label">{label}</span>
-                    <span className="share__export-detail">{detail}</span>
-                  </span>
-                  <ChevronRight size={15} className="share__export-go" aria-hidden="true" />
-                </button>
-              ))}
-            </div>
-            <p className="share__hint">
-              Each opens the export settings with a preview, where you choose the area, scale and background.
-              {' '}{menuShortcut(SHORTCUTS.export)} opens them from anywhere on the board.
-            </p>
-          </div>
-        ) : (
-        <div className="share__pane" id="share-pane-invite" role={onExport ? 'tabpanel' : undefined} aria-labelledby={onExport ? 'share-tab-invite' : undefined}>
-
-        {/* The choice and its explanation are one unit: the panel's own flex
-            gap sets the rhythm between sections, and these two are a section. */}
-        <div className="share__choice">
-        {/* A radio group, because it is one choice with three answers. The
-            roving tab stop keeps it to a single Tab stop and makes the arrow
-            keys work, which is what every other radio group in every
-            application already does. */}
-        <div
-          ref={modesRef}
-          className="share__modes"
-          role="radiogroup"
-          aria-label="What the link allows"
-          onKeyDown={onModeKeys}
-        >
-          {MODES.map(({ id, label, Icon }) => (
+      {onExport && (
+        <div className="sh-tabs" role="tablist" aria-label="Share or export">
+          {(['invite', 'export'] as const).map((id) => (
             <button
               key={id}
+              id={`sh-tab-${id}`}
               type="button"
-              role="radio"
-              data-role={id}
-              // `aria-checked` alone drives the lit state, in CSS. A parallel
-              // `is-active` class would be a second copy of the same fact.
-              aria-checked={selectedRole === id}
-              tabIndex={selectedRole === id ? 0 : -1}
-              className="share__mode"
-              aria-disabled={roleReason(id) ? true : undefined}
-              aria-describedby={roleReason(id) ? 'share-role-limit' : undefined}
-              data-tooltip={roleReason(id)}
-              onClick={() => { if (!roleReason(id)) setSelectedRole(id); }}
+              role="tab"
+              aria-selected={tab === id}
+              aria-controls={`sh-pane-${id}`}
+              tabIndex={tab === id ? 0 : -1}
+              className="sh-tabs__tab"
+              onClick={() => setTab(id)}
+              onKeyDown={(e) => {
+                if (e.key !== 'ArrowLeft' && e.key !== 'ArrowRight') return;
+                e.preventDefault();
+                const other = id === 'invite' ? 'export' : 'invite';
+                setTab(other);
+                e.currentTarget.parentElement?.querySelector<HTMLElement>(`#sh-tab-${other}`)?.focus();
+              }}
             >
-              <Icon size={13} aria-hidden="true" />
-              {label}
+              {id === 'invite' ? 'Invite' : 'Export'}
             </button>
           ))}
         </div>
+      )}
 
-        <p className="share__blurb">{mode.blurb}</p>
-        {ownRole !== 'editor' && (
-          <p className="share__hint" id="share-role-limit">
-            You opened this board with a {ownRole === 'viewer' ? 'view' : 'comment'} link, so the links you share can carry no more than that.
-          </p>
-        )}
-        </div>
-
-        <div className="share__field">
-          <LinkIcon size={15} aria-hidden="true" />
-          <input
-            type="text"
-            readOnly
-            value={
-              link ??
-              (mint.kind === 'unavailable'
-                ? 'Restricted links are not enabled on this server'
-                : mint.kind === 'error'
-                  ? 'No link yet'
-                  : 'Creating a link…')
-            }
-            aria-label={`Link that opens this board in ${mode.label.toLowerCase()} mode`}
-            onFocus={(e) => e.currentTarget.select()}
-            onClick={(e) => e.currentTarget.select()}
-          />
-          {/* The code beside the link, not in a menu: handing a board to a
-              phone or a room screen is the second most common way this dialog
-              is used, and it is the one that cannot be done by copying. */}
-          <button
-            type="button"
-            className="share__qr-toggle"
-            aria-pressed={showQr}
-            aria-label={showQr ? 'Hide the QR code' : 'Show a QR code for this link'}
-            disabled={!linkReady}
-            onClick={() => setShowQr((on) => !on)}
-            title="Open on a phone"
-          >
-            <QrCode size={15} aria-hidden="true" />
-          </button>
-          <button
-            className={`share__copy${copied === 'link' ? ' is-copied' : ''}`}
-            onClick={() => { if (link) void copy('link', link); }}
-            disabled={!linkReady}
-            aria-live="polite"
-          >
-            {copied === 'link' ? <Check size={14} /> : <Copy size={14} />}
-            {copied === 'link' ? 'Copied' : 'Copy'}
-          </button>
-        </div>
-
-        {showQr && link && (
-          <div className="share__qr">
-            <ShareQr url={link} label={mode.label.toLowerCase()} />
-            <p className="share__qr-note">
-              Point a phone camera at this to open the board — it carries the
-              same {mode.label.toLowerCase()} access as the link above.
-            </p>
-          </div>
-        )}
-
-        {/* Only where it beats the copy button that is already here: on a
-            phone, sharing means picking a thread, and the operating system is
-            much better at that than a dialog is. */}
-        {shareSheetWorthwhile() && link && (
-          <button
-            type="button"
-            className="share__system"
-            onClick={() => void shareLink(link, boardName)}
-          >
-            <Share2 size={14} aria-hidden="true" />
-            Share with an app
-          </button>
-        )}
-
-        {/* Only a signed link can carry an expiry, so the control appears
-            exactly where it means something. */}
-        {needsToken && mint.kind !== 'unavailable' && (
-          <div className="share__expiry">
-            <Clock size={13} aria-hidden="true" />
-            <label htmlFor="share-expiry">Expires</label>
-            <select
-              id="share-expiry"
-              value={expiry.id}
-              onChange={(e) =>
-                setExpiry(EXPIRIES.find((x) => x.id === e.target.value) ?? EXPIRIES[0])
-              }
-            >
-              {EXPIRIES.map((option) => (
-                <option key={option.id} value={option.id}>{option.label}</option>
-              ))}
-            </select>
-            {/* The date, not the duration. "30 days" is the choice; "14
-                October" is the thing anybody will need to know later. */}
-            {expiresOn && (
-              <span className="share__expiry-date">
-                until {expiresOn}
-                {shortened ? ', when your own link runs out' : ''}
-              </span>
-            )}
-          </div>
-        )}
-
-        {mint.kind === 'error' && (
-          <p className="share__failed" role="alert">
-            <AlertCircle size={14} aria-hidden="true" />
-            {mint.message}
-          </p>
-        )}
-
-        {/*
-          * The code is the board's own address, so it is *full access* --
-          * which is exactly why it cannot sit under a View link. Offering
-          * both at once would hand back everything the restricted link
-          * withholds, in a smaller font.
-          */}
-        {code && !needsToken && (
-          /* The code and the sentence explaining it are one unit, like the
-             choice and its blurb above. The panel's gap is for sections. */
-          <div className="share__choice">
-            <div className="share__field share__field--code">
-              <Hash size={15} aria-hidden="true" />
-              <input
-                type="text"
-                readOnly
-                value={formatRoomCode(code)}
-                aria-label="Room code for this board"
-                onFocus={(e) => e.currentTarget.select()}
-                onClick={(e) => e.currentTarget.select()}
-              />
-              <button
-                className={`share__copy${copied === 'code' ? ' is-copied' : ''}`}
-                onClick={() => void copy('code', formatRoomCode(code))}
-                aria-live="polite"
-              >
-                {copied === 'code' ? <Check size={14} /> : <Copy size={14} />}
-                {copied === 'code' ? 'Copied' : 'Copy'}
+      <DialogBody className="sh__body">
+        {tab === 'export' && onExport ? (
+          <div id="sh-pane-export" role="tabpanel" aria-labelledby="sh-tab-export" className="sh-exports">
+            {EXPORTS.map(({ format, label, detail, Icon }) => (
+              <button key={format} type="button" className="sh-export" onClick={() => onExport(format)}>
+                <span className="sh-export__icon" aria-hidden="true">
+                  <Icon size={16} />
+                </span>
+                <span className="sh-export__text">
+                  <span className="sh-export__label">{label}</span>
+                  <span className="sh-export__detail">{detail}</span>
+                </span>
+                <ChevronRight size={15} className="sh-export__go" aria-hidden="true" />
               </button>
-            </div>
-            <p className="share__hint">
-              The same board, for when a link is awkward to pass along — read it
-              out, and it carries the same full access.
+            ))}
+            <p className="sh-hint">
+              Each opens the export settings with a preview, where you choose the area, scale and background.{' '}
+              {menuShortcut(SHORTCUTS.export)} opens them from anywhere on the board.
             </p>
           </div>
-        )}
+        ) : (
+          <div
+            id="sh-pane-invite"
+            role={onExport ? 'tabpanel' : undefined}
+            aria-labelledby={onExport ? 'sh-tab-invite' : undefined}
+            className="sh-invite"
+          >
+            <section className="sh-section" aria-labelledby="sh-access-title">
+              <h3 id="sh-access-title" className="sh-section__title">
+                Anyone with the link
+              </h3>
+              <div
+                ref={rolesRef}
+                className="sh-roles"
+                role="radiogroup"
+                aria-labelledby="sh-access-title"
+                aria-describedby={ownRole !== 'editor' ? 'sh-role-limit' : undefined}
+                onKeyDown={onRoleKeys}
+              >
+                {ROLES.map(({ id, label, Icon, blurb }) => {
+                  const reason = roleBlockedReason(id, ownRole);
+                  const checked = role === id;
+                  return (
+                    <div
+                      key={id}
+                      role="radio"
+                      data-role={id}
+                      aria-checked={checked}
+                      aria-disabled={reason ? true : undefined}
+                      aria-describedby={`sh-role-${id}-why`}
+                      // Disabled roles stay focusable by Tab from the group's
+                      // own stop, so their reason can be reached; arrows skip them.
+                      tabIndex={checked ? 0 : -1}
+                      className="sh-role"
+                      onClick={() => {
+                        if (!reason) setRole(id);
+                      }}
+                      onKeyDown={(e) => {
+                        if ((e.key === ' ' || e.key === 'Enter') && !reason) {
+                          e.preventDefault();
+                          setRole(id);
+                        }
+                      }}
+                    >
+                      <span className="sh-role__icon" aria-hidden="true">
+                        {reason ? <Lock size={14} /> : <Icon size={14} />}
+                      </span>
+                      <span className="sh-role__text">
+                        <span className="sh-role__label">{label}</span>
+                        <span id={`sh-role-${id}-why`} className="sh-role__blurb">
+                          {reason ?? blurb}
+                        </span>
+                      </span>
+                      <span className="sh-role__check" aria-hidden="true">
+                        {checked && <Check size={15} />}
+                      </span>
+                    </div>
+                  );
+                })}
+              </div>
+              {ownRole !== 'editor' && (
+                <p className="sh-hint" id="sh-role-limit">
+                  The server caps a link at the access of the person making it. You opened this board with a{' '}
+                  {ownRole === 'viewer' ? 'view' : 'comment'} link, so the links you make can carry no more than that.
+                </p>
+              )}
+            </section>
 
-        {failed && (
-          <p className="share__failed" role="alert">
-            <AlertCircle size={14} aria-hidden="true" />
-            The browser would not let us copy that. Select it above and copy it
-            yourself.
-          </p>
-        )}
+            <section className="sh-section" aria-label="The link">
+              <div className="sh-field" data-state={mint.kind}>
+                {mint.kind === 'working' ? (
+                  <Loader2 size={15} className="dlg-spin" aria-hidden="true" />
+                ) : (
+                  <ShieldCheck size={15} aria-hidden="true" data-signed={needsToken || undefined} />
+                )}
+                <input
+                  type="text"
+                  readOnly
+                  value={
+                    link ??
+                    (mint.kind === 'unavailable'
+                      ? 'This server cannot sign restricted links'
+                      : mint.kind === 'error'
+                        ? 'No link yet'
+                        : 'Creating a signed link…')
+                  }
+                  aria-label={`Link that opens this board for people who ${ROLE_SHORT[role]}`}
+                  aria-busy={mint.kind === 'working' || undefined}
+                  onFocus={(e) => e.currentTarget.select()}
+                  onClick={(e) => e.currentTarget.select()}
+                />
+                <button
+                  type="button"
+                  className="sh-field__icon"
+                  aria-pressed={showQr}
+                  aria-label={showQr ? 'Hide the QR code' : 'Show a QR code for this link'}
+                  disabled={!link}
+                  onClick={() => setShowQr((on) => !on)}
+                  {...tooltipProps({ label: 'Open on a phone', side: 'top' })}
+                >
+                  <QrCode size={15} aria-hidden="true" />
+                </button>
+                <button
+                  type="button"
+                  className="dlg-btn dlg-btn--primary sh-field__copy"
+                  data-autofocus
+                  data-copied={copied === 'link' || undefined}
+                  onClick={() => {
+                    if (link) void copy('link', link);
+                  }}
+                  disabled={!link}
+                >
+                  {copied === 'link' ? <Check size={14} aria-hidden="true" /> : <Copy size={14} aria-hidden="true" />}
+                  <span aria-live="polite">{copied === 'link' ? 'Copied' : 'Copy link'}</span>
+                </button>
+              </div>
 
-        <LinkPreview role={selectedRole} />
+              {needsToken && mint.kind !== 'unavailable' && (
+                <div className="sh-expiry">
+                  <Clock size={13} aria-hidden="true" />
+                  <label htmlFor="sh-expiry">Expires</label>
+                  <select
+                    id="sh-expiry"
+                    value={expiry.id}
+                    onChange={(e) => setExpiry(EXPIRIES.find((x) => x.id === e.target.value) ?? EXPIRIES[0])}
+                  >
+                    {EXPIRIES.map((option) => (
+                      <option key={option.id} value={option.id}>
+                        {option.label}
+                      </option>
+                    ))}
+                  </select>
+                  {expiresOn && (
+                    <span className="sh-expiry__date">
+                      Works until {expiresOn}
+                      {shortened ? ', when your own link runs out' : ''}
+                    </span>
+                  )}
+                </div>
+              )}
 
-        <p className="share__caveat">
-          <Info size={13} aria-hidden="true" />
-          <span>
-            {mint.kind === 'unavailable'
-              ? 'This server has no signing key, so it can only make full-access links. Set SHARE_SECRET to enable Comment and View.'
-              : needsToken
-                ? 'The role is signed, so this link cannot be edited into an edit link. Anyone who already knows the board’s address still has full access.'
-                : 'There are no accounts on this board: the link is the key. Anyone who has it can edit, and a link cannot be taken back once it is out.'}
-          </span>
-        </p>
-        </div>
+              {mint.kind === 'error' && (
+                <div className="sh-alert" role="alert">
+                  <AlertCircle size={15} aria-hidden="true" />
+                  <span className="sh-alert__text">
+                    {mint.message}
+                    {mintRecovery(mint) && <span className="sh-alert__then"> {mintRecovery(mint)}</span>}
+                  </span>
+                  <button type="button" className="dlg-btn sh-alert__retry" onClick={() => void requestLink()}>
+                    <RotateCw size={13} aria-hidden="true" /> Try again
+                  </button>
+                </div>
+              )}
+
+              {copyFailed && (
+                <div className="sh-alert" role="alert">
+                  <AlertCircle size={15} aria-hidden="true" />
+                  <span className="sh-alert__text">
+                    The browser would not let us copy that. Select the link above and copy it yourself.
+                  </span>
+                </div>
+              )}
+
+              {/* Signed-link awareness: say what kind of link this is and what it cannot do. */}
+              <p className="sh-hint sh-hint--trust">
+                {mint.kind === 'unavailable'
+                  ? 'Comment and view links have to be signed by the server, and this one has no signing key. Only edit links can be shared until SHARE_SECRET is set.'
+                  : needsToken
+                    ? 'A signed link: the server seals the role into it, so nobody can edit it into an edit link. Anyone who already has the board’s own address still has full access.'
+                    : 'There are no accounts on this board, so the link is the key. Anyone who has it can edit, and a link that is out cannot be taken back.'}
+              </p>
+
+              {showQr && link && (
+                <div className="sh-qr">
+                  <ShareQr url={link} label={ROLE_SHORT[role]} />
+                  <p className="sh-hint">
+                    Point a phone camera at this to open the board. It carries the same access as the link.
+                  </p>
+                </div>
+              )}
+
+              {shareSheetWorthwhile() && link && (
+                <button type="button" className="dlg-btn dlg-btn--outline sh-system" onClick={() => void shareLink(link, boardName)}>
+                  <Share2 size={14} aria-hidden="true" />
+                  Share with an app
+                </button>
+              )}
+            </section>
+
+            {/* The code is the board's own address, so it is full access, which
+                is why it never sits under a comment or view link. */}
+            {code && !needsToken && (
+              <section className="sh-section" aria-labelledby="sh-code-title">
+                <h3 id="sh-code-title" className="sh-section__title">
+                  Room code
+                </h3>
+                <div className="sh-field sh-field--code">
+                  <Hash size={15} aria-hidden="true" />
+                  <input
+                    type="text"
+                    readOnly
+                    value={formatRoomCode(code)}
+                    aria-label="Room code for this board"
+                    onFocus={(e) => e.currentTarget.select()}
+                    onClick={(e) => e.currentTarget.select()}
+                  />
+                  <button
+                    type="button"
+                    className="dlg-btn dlg-btn--outline sh-field__copy"
+                    data-copied={copied === 'code' || undefined}
+                    onClick={() => void copy('code', formatRoomCode(code))}
+                  >
+                    {copied === 'code' ? <Check size={14} aria-hidden="true" /> : <Copy size={14} aria-hidden="true" />}
+                    <span aria-live="polite">{copied === 'code' ? 'Copied' : 'Copy'}</span>
+                  </button>
+                </div>
+                <p className="sh-hint">For reading out in a meeting. It opens the same board with full access.</p>
+              </section>
+            )}
+
+            <LinkPreview role={role} />
+          </div>
         )}
-      </div>
-    </div>
+      </DialogBody>
+    </>
   );
 };

@@ -1,6 +1,7 @@
 import * as Y from 'yjs';
 import { SCHEMA_VERSION } from '../model/schema';
 import { isCanonical, normalizeNode } from './normalize';
+import { migrateTableNode } from '../table/tableCrdt';
 
 /**
  * The schema migration, parameterised over the document it operates on.
@@ -29,6 +30,11 @@ export function migrateDoc(
 
   target.transact(() => {
     nodes.forEach((ymap, id) => {
+      // Tables first, and whether or not the node is otherwise canonical: their
+      // formulas' row count and their stored shape are not field-level fixes
+      // (`migrateTableNode` marks the node, so this runs once per table).
+      if (ymap.get('type') === 'table' && migrateTableNode(ymap)) migrated++;
+
       const raw = ymap.toJSON() as Record<string, unknown>;
 
       if (isCanonical(raw)) {

@@ -97,7 +97,7 @@ describe('useCanvasSelection', () => {
     expect(selection.sort()).toEqual(['a', 'b']);
   });
 
-  it('deep-selects through groups with Ctrl or Cmd, and toggles with Shift added', () => {
+  it('deep-selects through groups with the deep modifier, and toggles with Shift added', () => {
     useStore.setState({
       objects: {
         a: { ...box('a', 0, 0, 10, 10), parentId: 'g' },
@@ -110,10 +110,27 @@ describe('useCanvasSelection', () => {
     expect(selection.sort()).toEqual(['a', 'b']);
     result.current.handleObjectSelect('a', { evt: { ctrlKey: true } });
     expect(selection).toEqual(['a']);
-    result.current.handleObjectSelect('b', { evt: { metaKey: true, shiftKey: true } });
+    result.current.handleObjectSelect('b', { evt: { ctrlKey: true, shiftKey: true } });
     expect(selection).toEqual(['a', 'b']);
-    result.current.handleObjectSelect('a', { evt: { metaKey: true, shiftKey: true } });
+    result.current.handleObjectSelect('a', { evt: { ctrlKey: true, shiftKey: true } });
     expect(selection).toEqual(['b']);
+  });
+
+  it('keeps a selection whole when Ctrl is pressed on a member, so Ctrl+drag moves all of it', () => {
+    useStore.setState({
+      objects: {
+        a: { ...box('a', 0, 0, 10, 10), parentId: 'g' },
+        b: { ...box('b', 50, 0, 10, 10), parentId: 'g' },
+      },
+      groups: { g: { id: 'g' } },
+    });
+    const { result } = mount();
+    result.current.handleObjectSelect('a', { evt: {} });
+    result.current.handleObjectSelect('a', { evt: { ctrlKey: true, type: 'mousedown' } });
+    expect(selection.sort()).toEqual(['a', 'b']);
+    // Released without a drag, it is a click, and narrows to the object.
+    result.current.handleObjectSelect('a', { evt: { ctrlKey: true, type: 'click' } });
+    expect(selection).toEqual(['a']);
   });
 
   it('selects every object with the same fill on requestSelectSimilar', () => {

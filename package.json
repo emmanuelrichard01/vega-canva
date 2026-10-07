@@ -18,7 +18,8 @@
     "postinstall": "node scripts/ensure-esbuild.js"
   },
   "devDependencies": {
-    "esbuild-wasm": "^0.28.2"
+    "esbuild-wasm": "^0.28.2",
+    "jsdom": "^26.1.0"
   },
   "overrides": {
     "esbuild": "$esbuild-wasm"

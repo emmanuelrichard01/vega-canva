@@ -11,6 +11,8 @@ import {
 } from '../model/connectorTargets';
 import { endPoint } from '../model/connectorTargets';
 import { bindingAt } from '../model/connectorBinding';
+import { nodeBounds } from '../SceneGraph';
+import { connectorDefaults } from './connectorDefaults';
 
 /** Below this the two ends are the same place, and there is no connector. */
 const MIN_DRAG = 6;
@@ -22,6 +24,13 @@ const MIN_DRAG = 6;
  * click-move-click gesture entirely.
  */
 const DRAG_SCREEN = 5;
+/**
+ * How close the pointer has to come to an object, in screen px, before its
+ * ports show. Ports on everything at once turned a busy board into a field of
+ * rings; near the pointer they answer "where can this land" exactly where the
+ * question is being asked.
+ */
+const MAGNET_REACH_SCREEN = 72;
 
 /**
  * Drawing a connector.
@@ -33,21 +42,20 @@ const DRAG_SCREEN = 5;
  * Dragging from one to the other does the same thing, and is the faster of the
  * two over a short hop. See `pending` for why both exist.
  *
- * While the tool is active every connectable object shows its four ports, and
- * the nearest one lights up as you approach — so the thing you are aiming at
- * tells you what it will do before you commit, rather than after. Aim at the
- * middle instead and the whole object lights up: that is `auto`, and the route
- * picks a side. Aim anywhere else on the edge and a dot shows the exact spot
- * it will attach to.
+ * While the tool is active, objects near the pointer show their four ports,
+ * and the nearest one lights up as you approach, so the thing you are aiming
+ * at tells you what it will do before you commit. Aim at the middle instead
+ * and the whole object lights up: that is `auto`, and the route picks a side.
+ * Aim anywhere else on the edge and a dot shows the exact spot it will attach
+ * to.
  *
- * ## Why ports are shown for *everything* while drawing
+ * ## Why ports show near the pointer, not everywhere
  *
- * The alternative is revealing them only on the object under the pointer,
- * which is what most tools do and which hides the answer to the question you
- * actually have: *what can I connect to?* On a board of mixed content — notes,
- * images, frames, drawings — that is not obvious, and finding out by trial is
- * the slow way. They cost one small ring each and disappear the moment the
- * tool does.
+ * Under the pointer alone hides the question you actually have while
+ * aiming: what nearby can I connect to? Everywhere at once answers it for the
+ * whole board and buries the answer in rings. Within a short reach of the
+ * pointer (`MAGNET_REACH_SCREEN`) the neighbours you might be aiming at all
+ * show, and nothing else does.
  *
  * ## Both ends must land on an object
  *
@@ -207,6 +215,12 @@ export class ConnectorTool implements Tool {
     const minX = Math.min(start.x, end.x);
     const minY = Math.min(start.y, end.y);
 
+    // What the next connector comes out as is the person's own preference,
+    // set on the connector shelf. Avoidance is on for new elbow and curved
+    // connectors when the preference says so; a straight line has nothing to
+    // route around.
+    const defaults = connectorDefaults.getSnapshot();
+
     const id = nanoid();
     ctx.editor.createNode({
       id,
@@ -219,8 +233,10 @@ export class ConnectorTool implements Tool {
       height: Math.max(1, Math.abs(end.y - start.y)),
       from: this.from,
       to,
-      routing: 'orthogonal',
-      arrowEnd: true,
+      routing: defaults.routing,
+      endStart: defaults.endStart,
+      endEnd: defaults.endEnd,
+      ...(defaults.avoid && defaults.routing !== 'straight' ? { avoid: true } : null),
       // Round caps written explicitly rather than defaulted in the renderer:
       // a connector reads better with them, and stating it in the document is
       // what lets the Cap control show and change it.
@@ -286,9 +302,17 @@ export class ConnectorTool implements Tool {
   private pushOverlay(ctx: ToolContext) {
     const objects = useStore.getState().objects;
     const ports: Array<{ x: number; y: number; nodeId: string; side: string }> = [];
+    const reach = MAGNET_REACH_SCREEN / (ctx.camera.zoom || 1);
+    const { x: cx, y: cy } = this.cursorWorld;
 
     for (const node of Object.values(objects)) {
       if (!isConnectable(node)) continue;
+      // Ports show on objects near the pointer, and on the one the gesture
+      // started from so its anchor stays visible.
+      if (node.id !== this.from?.nodeId) {
+        const b = nodeBounds(node);
+        if (cx < b.minX - reach || cx > b.maxX + reach || cy < b.minY - reach || cy > b.maxY + reach) continue;
+      }
       // On the outline, not on the box. A ring floating beside a triangle
       // points at a place the arrow will not go.
       for (const { side, point } of portPointsFor(node)) {
@@ -298,7 +322,13 @@ export class ConnectorTool implements Tool {
 
     const target = this.endAt(this.cursorWorld, ctx);
     const preview = this.from
-      ? connectorPoints(this.from, target, 'orthogonal', boxLookup(objects), attachLookup(objects))
+      ? connectorPoints(
+          this.from,
+          target,
+          connectorDefaults.getSnapshot().routing,
+          boxLookup(objects),
+          attachLookup(objects)
+        )
       : null;
 
     /**

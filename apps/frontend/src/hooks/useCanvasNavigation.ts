@@ -53,7 +53,7 @@ export function useCanvasNavigation({
         y: -cameraSystem.y / cameraSystem.zoom,
         width: cameraSystem.width,
         height: cameraSystem.height,
-        zoom: cameraSystem.zoom,
+        zoom: cameraSystem.reportedZoom,
       });
     };
     publish();
@@ -162,7 +162,7 @@ export function useCanvasNavigation({
     const next = touchMetrics(e.touches as unknown as TouchList);
     const prev = pinchRef.current;
 
-    cameraSystem.zoomBy(next.dist / prev.dist, next.midX, next.midY);
+    cameraSystem.zoomBy(next.dist / prev.dist, next.midX, next.midY, true);
     cameraSystem.panBy(next.midX - prev.midX, next.midY - prev.midY);
 
     pinchRef.current = next;

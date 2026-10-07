@@ -14,6 +14,7 @@ import {
   Table2,
   Code2,
   Link2,
+  Shapes,
   type LucideIcon,
 } from 'lucide-react';
 import type { NodeType } from '../../engine/model/schema';
@@ -56,6 +57,7 @@ export const TYPE_ICON: Record<NodeType, LucideIcon> = {
   sticky: StickyNote,
   audio: Mic,
   comment: MessageSquare,
+  icon: Shapes,
 };
 
 /**

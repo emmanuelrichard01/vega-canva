@@ -6,6 +6,8 @@ import { applyReactionToggle, seedReactions } from './reactions';
 import { frameForNode } from '../model/frames';
 import { getColorForUser } from '../presence/ColorPalette';
 import { canEditObjects, canPostComments, getRoomRole } from '../model/permissions';
+import { writeTable } from '../table/tableCrdt';
+import type { TableSpec } from '../table/tableTypes';
 
 /**
  * The write path for canvas objects, groups and board metadata.
@@ -373,6 +375,43 @@ export function updateNode(id: string, updates: Record<string, unknown>): void {
      * Comparing first means a run of edits by one person writes the pair once.
      * A `Y.Map` read is local and cheap; the write is neither.
      */
+    stampUpdatedBy(ymap, localAuthorId());
+  });
+}
+
+// ---------------------------------------------------------------------------
+// Tables
+// ---------------------------------------------------------------------------
+
+/**
+ * Write a table node's spec — as a diff into its merged shape, so other
+ * people's edits to other cells survive (`tableCrdt.ts`) — together with any
+ * size change, in one transaction: one undo step, which takes back only this
+ * person's changes. A table still stored as one whole value is converted on
+ * this first write.
+ *
+ * `prev` is the spec the edit was made from (the node as last read), so
+ * unchanged rows are skipped without reading the document.
+ */
+export function updateTableNode(
+  id: string,
+  spec: TableSpec,
+  prev: TableSpec | undefined,
+  patch: Record<string, unknown> = {}
+): void {
+  if (refuseWrite('updateTableNode')) return;
+  const ymap = objectsMap.get(id);
+  if (!ymap) return;
+  doc.transact(() => {
+    writeTable(ymap, spec, prev);
+    Object.entries(patch).forEach(([key, value]) => {
+      if (value === undefined) ymap.delete(key);
+      else ymap.set(key, value);
+    });
+    // The merged shape counts rows the spreadsheet's way; the mark says so
+    // where an older build writing the node back cannot strip it.
+    if (ymap.get('tableRefs') !== 2) ymap.set('tableRefs', 2);
+    ymap.set('updatedAt', Date.now());
     stampUpdatedBy(ymap, localAuthorId());
   });
 }

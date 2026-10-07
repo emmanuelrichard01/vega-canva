@@ -20,6 +20,7 @@ import {
   placeInBox,
   placeParagraph,
   selectionBox,
+  countSelectionUnits,
   type Box,
   type Placed,
 } from '../../engine/interaction/selectionTransform';
@@ -28,7 +29,7 @@ import { RotateZones } from './RotateZones';
 import { layoutCode, measureCharWidth } from '../../engine/code/codeLayout';
 import { CODE_FONT } from '../../engine/code/codeThemes';
 import { canvasChromeContrast, useContrast } from '../../engine/ui/contrast';
-import { chromeSurfaceColor } from '../../engine/interaction/chromeHalo';
+import { chromeSurfaceColor, useChromeDark } from '../../engine/interaction/chromeHalo';
 
 interface Props {
   selectedIds: string[];
@@ -182,6 +183,8 @@ export const SelectionTransformer: React.FC<Props> = ({ selectedIds, stageRef })
    */
   const { enhanced } = useContrast();
   const { strokeScale, halo } = canvasChromeContrast(enhanced);
+  // The surface colour is baked into Konva nodes, so a theme switch redraws it.
+  const dark = useChromeDark();
   const haloRef = useRef({ halo, surface: '' });
   haloRef.current = { halo, surface: halo ? chromeSurfaceColor() : '' };
   useEffect(() => {
@@ -198,7 +201,7 @@ export const SelectionTransformer: React.FC<Props> = ({ selectedIds, stageRef })
     }
     tr.forceUpdate();
     tr.getLayer()?.batchDraw();
-  }, [halo, selectedIds]);
+  }, [halo, dark, selectedIds]);
   /** Live dimensions (e.g. 240 × 180) or angle (e.g. 45°) HUD badge while transforming. */
   const [liveBadge, setLiveBadge] = useState<{ text: string; x: number; y: number } | null>(null);
 
@@ -930,10 +933,18 @@ export const SelectionTransformer: React.FC<Props> = ({ selectedIds, stageRef })
    */
   // A multi-selection says how many it holds as well as how big it is, so a
   // marquee that caught one object too many is visible before anything moves.
+  // Counted in units, as a person counts: a group or a frame is one.
+  const unitCount =
+    selectedIds.length > 1
+      ? (() => {
+          const { objects, groups } = useStore.getState();
+          return countSelectionUnits(Object.keys(objects), objects as never, groups, selectedIds);
+        })()
+      : 1;
   const restingBadge =
     !transforming && selectionBounds && selectedIds.length >= 1
       ? {
-          text: `${selectedIds.length > 1 ? `${selectedIds.length} objects · ` : ''}${Math.round(selectionBounds.bounds.width)} × ${Math.round(selectionBounds.bounds.height)}`,
+          text: `${unitCount > 1 ? `${unitCount} objects · ` : ''}${Math.round(selectionBounds.bounds.width)} × ${Math.round(selectionBounds.bounds.height)}`,
           x: selectionBounds.bounds.x + selectionBounds.bounds.width / 2,
           // Below the box, clear of the bottom handles and their padding.
           y: selectionBounds.bounds.y + selectionBounds.bounds.height + BADGE_DROP / (stageRef.current?.scaleX() || 1),
